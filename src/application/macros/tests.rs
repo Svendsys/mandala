@@ -124,11 +124,9 @@ fn macro_source_allows_action_gates_destructive_actions_for_non_user() {
             Action::DoubleClickActivate,
             Action::EditSelection,
             Action::EditSelectionClean,
-            // Same dispatch surface (`open_single_line_edit`)
-            // as `EditSelection` — a
-            // hostile macro firing this with an edge label /
-            // portal selection forces the user into an inline
-            // editor over selected content.
+            // Opens an editor as `EditSelection` does — a hostile
+            // macro firing this with a label selected forces the
+            // user into an inline editor over selected content.
             Action::LabelEditOnSelection,
             Action::NewDocument,
             // Parametric filesystem variants — denylisted for
@@ -157,9 +155,8 @@ fn macro_source_allows_action_gates_destructive_actions_for_non_user() {
             Action::SplitSection {
                 at_grapheme: "".into(),
             },
-            // Destructive on commit — pin explicitly so the
-            // `set_node_aabb` / `set_section_aabb` commit on
-            // right-button release stays gated.
+            // Destructive on commit — pin explicitly so the resize
+            // its right-button release commits stays gated.
             Action::FastResizeStart,
         ] {
             assert!(!tier.allows_action(&a), "{:?} tier should reject {:?}", tier, a);

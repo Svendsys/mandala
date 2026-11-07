@@ -110,11 +110,10 @@ pub(in crate::application::app) fn handle_color_picker_mouse_move(
     // Only mark dirty when the picker's interactive state
     // actually moved. Mouse events arrive at ~120 Hz and the
     // user can drag many cursor pixels within the same hue
-    // slot or sat/val cell; without this gate the throttle
-    // runs full-canvas rebuilds for cursor jiggle that has no
-    // visible effect, and the cross feels laggier than the
-    // wheel because cells are smaller (more boundary crossings
-    // per visit).
+    // slot or sat/val cell; without this gate every jiggle
+    // rebuilds the picker's overlay for no visible effect, and the
+    // cross feels laggier than the wheel because cells are smaller
+    // (more boundary crossings per visit).
     let mut state_changed = false;
     if let Some(OpenPicker {
         hue_deg,

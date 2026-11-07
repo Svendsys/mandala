@@ -270,8 +270,7 @@ pub(crate) fn duplicate_bench_ids(entries: &[BenchEntry]) -> Vec<String> {
 /// `tests/` directory of `lib/baumhard/src`, not reached through a
 /// `#[cfg(test)] mod` declaration. Inside them every inline `mod` is
 /// read, `cfg(test)`-gated ones included, since a gated module of a
-/// tests tree (`shape_tests::log_routing` (gone)) is one of the shapes the
-/// census counts. A wrapper is a fn whose body is one call of a
+/// tests tree is one of the shapes the census counts. A wrapper is a fn whose body is one call of a
 /// function named `do_*`, as a statement or as the tail; anything
 /// more is plain.
 ///

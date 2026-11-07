@@ -14,8 +14,8 @@
 //!
 //! Two commands are sugar over the primitives and add no semantics
 //! of their own: `input.drag` is a move, a press, a run of moves and
-//! a release, paced one per frame so the throttled drag drains
-//! between them; `input.click_node` is a move to a node's center and
+//! a release, paced one per frame so the drag's frame runs between
+//! them; `input.click_node` is a move to a node's center and
 //! a click. `input.pending` reads the injected-input queue's depth.
 //!
 //! Every handler validates the whole request before it touches the
@@ -219,7 +219,7 @@ pub(super) const FAMILY: Family = Family {
         CommandSpec {
             name: "input.drag",
             summary: "Drag with a mouse button: a move to `from`, a press, `steps` moves to `to` and a \
-                      release, queued one per frame so the throttled drag drains between them.",
+                      release, queued one per frame so the drag's frame runs between them.",
             params: &[
                 ParamSpec::new("from_x", ParamType::Number, true, "Start x, in `space`."),
                 ParamSpec::new("from_y", ParamType::Number, true, "Start y, in `space`."),

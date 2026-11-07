@@ -181,8 +181,8 @@ fn test_console_frame_width_stable_for_wide_char_scrollback() {
 // -----------------------------------------------------------------
 // Console border source-string tests
 //
-// The border draw uses baumhard's `BorderGlyphSet::box_drawing_rounded`
-// via `build_console_border_strings(cols, rows)`.
+// The border draw is `build_console_border_strings(cols, rows)`, in
+// rounded box-drawing glyphs.
 // -----------------------------------------------------------------
 
 #[test]

@@ -99,10 +99,10 @@ pub enum MouseGesture {
     /// before the timer fires aborts the long-press candidate,
     /// because that gesture is a one-finger pan instead.
     ///
-    /// Half of the touch route to a resize: once in Resize mode, a
-    /// finger that lands on a handle drags it, on native
-    /// (`app::touch_handle` (gone), #160). `FastResizeStart` has no touch
-    /// binding because this is its touch route.
+    /// Half of the touch route to a resize; the other, a finger on a
+    /// handle, returns with the resize mode in V1-C7 (#248).
+    /// `FastResizeStart` has no touch binding because this is its touch
+    /// route (#160).
     ///
     /// **The only touch gesture that reaches this table**, and
     /// deliberately so. Tap, one-finger pan and pinch-zoom are the

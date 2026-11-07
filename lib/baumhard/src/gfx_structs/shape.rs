@@ -102,11 +102,8 @@ impl NodeShape {
     /// This matches [`Self::contains_local`] and the BVH's
     /// `bounds.x > 0.0 && bounds.y > 0.0` guard in `bvh_find`:
     /// a zero-size node renders nothing, so selecting nothing for
-    /// it is the internally consistent answer. Small behavior
-    /// change from the pre-shape `rect_select` (gone) (which would have
-    /// matched a point-sized node under the cursor) — considered
-    /// an improvement and noted here so a future test author can
-    /// find the rationale.
+    /// it is the internally consistent answer, even though a
+    /// point-sized node under the cursor is then not matched.
     ///
     /// O(1). No allocation.
     #[inline]

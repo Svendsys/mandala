@@ -836,16 +836,17 @@ fn test_the_console_source_scan_reads_what_it_claims_to() {
 ///
 /// `Word::hint` and `Key::hint` are free text sitting one line above
 /// the [`super::Vocabulary`] they describe, and nothing held the two
-/// together. `border color` was declared as
+/// together. The `border` verb (gone with the old model) declared its
+/// `color` subverb as
 ///
 /// ```text
 /// Subverb::bare("color", "per-field", "set border color (#hex|var|preset|reset)")
 ///     .taking(&[Form::slots(&[Slot::req(free_words("#hex|var(--name)", COLOR_PRESET_WORDS))])])
 /// ```
 ///
-/// with `COLOR_PRESETS = ["accent", "edge", "fg", "reset"]` beside
-/// it. `border color preset` answers `ERR color: unknown color
-/// 'preset'`; `border color accent` succeeds. Both hints named the
+/// with `COLOR_PRESETS` (gone) `= ["accent", "edge", "fg", "reset"]`
+/// beside it. `border color preset` answered `ERR color: unknown color
+/// 'preset'`; `border color accent` succeeded. Both hints named the
 /// value the slot refuses and omitted the three it accepts, and the
 /// engine then *pinned* them — into `border <TAB>`, `canvas border
 /// <TAB>`, `border preview <TAB>` and `help BORDER`.

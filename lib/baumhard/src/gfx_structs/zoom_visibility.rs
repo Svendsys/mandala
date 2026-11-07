@@ -126,9 +126,9 @@ impl ZoomVisibility {
     /// construction boundary (§B10 "prefer surfaces that
     /// compose"). O(1).
     ///
-    /// The verifier (`maptool verify` / `verify::zoom_bounds`)
-    /// enforces the same rules at load time for authored JSON;
-    /// this constructor is its programmatic counterpart.
+    /// A map's own zoom windows are held to the same rules when the
+    /// document is loaded and edited (`document::mutation::validate`);
+    /// this constructor is their counterpart for glyph trees.
     pub fn try_new(min: Option<f32>, max: Option<f32>) -> Option<Self> {
         if let Some(m) = min {
             if !m.is_finite() {
@@ -150,9 +150,7 @@ impl ZoomVisibility {
 
     /// Replace-not-intersect cascade: if either of `override_min` /
     /// `override_max` is `Some`, return a window built from them as-is;
-    /// otherwise inherit `parent` unchanged. Matches the cascade
-    /// posture the portal font-clamp resolver already uses for
-    /// `PortalEndpointState.text_{min,max}_font_size_pt`. O(1).
+    /// otherwise inherit `parent` unchanged. O(1).
     ///
     /// "Replace" rather than "intersect" is the user-facing rule:
     /// setting only a `min` on a label means "override the edge's

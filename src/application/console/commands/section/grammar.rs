@@ -15,10 +15,10 @@
 //! narrows on it and `section resize fill w=99` is refused by name
 //! (`spec::Form::admits_prefix`). `move`'s lives only in its key
 //! lists, which an empty positional list admits equally, so the
-//! engine offers and accepts their union and `execute_move` (gone) refuses
-//! the mix by hand, naming both shapes. That handwritten guard is
-//! one of the two bespoke semantics issue #27's fix plan names as
-//! staying behind the table.
+//! engine offers and accepts their union, and refusing the mix,
+//! naming both shapes, is the verb body's — a handwritten guard, one
+//! of the two bespoke semantics issue #27's fix plan names as staying
+//! behind the table, which returns with V1-C5 (#246).
 //!
 //! This level is also where `KNOWN_VERBS` used to live: a second
 //! nine-entry vocabulary beside `VERBS`, in a different order, that

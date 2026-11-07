@@ -26,11 +26,11 @@ use glam::Vec2;
 // ---------------------------------------------------------------------------
 // Shared test helpers
 // ---------------------------------------------------------------------------
-// The original repeat_while test was built with ~4 lines of boilerplate per
-// node and ~2 lines per position assertion. These helpers flatten both into a
-// single line each so the test's intent is readable at a glance. They are
-// also the building blocks for the focused mutation tests at the bottom of
-// this file.
+// A tree built by hand costs ~4 lines of boilerplate per node and ~2 lines
+// per position assertion. These helpers flatten both into a single line
+// each so a test's intent is readable at a glance. They are also the
+// building blocks for the focused mutation tests at the bottom of this
+// file.
 
 use crate::gfx_structs::tests::fixtures::{append_area, mk_area};
 

@@ -9,8 +9,9 @@ one of them ripples into everything above it.
 The fundamentals are:
 
 - **Mutations and undo round-trips** — every `GfxMutator` variant,
-  every `UndoAction` variant, every forward-and-back. A mutation that
-  cannot be undone correctly is a corruption waiting to happen.
+  every `MapOp` the writer applies, every forward-and-back through
+  its history. A mutation that cannot be undone correctly is a
+  corruption waiting to happen.
 - **Unicode and grapheme handling** — every primitive in
   `lib/baumhard/src/util/grapheme_chad.rs`. Emoji, combining marks,
   regional indicators, ZWJ sequences. Test the surprising inputs
@@ -273,7 +274,7 @@ on hardware, and so does the suite.
   values in, values out (`application::renderer::tests` is the
   exemplar), and a decision made next to a `&mut Renderer` is split
   out as a pure function and pinned there (`rect_select_frame`,
-  `MiddleButtonRoute`, `ReleaseRefresh`, the pump's `Iteration` fake).
+  `MiddleButtonRoute`, the pump's `Iteration` fake).
   That split is still the right shape whenever it is available: a
   pure function needs no device, runs in microseconds, and fails
   naming the one decision that broke.
@@ -328,9 +329,9 @@ container gets lavapipe through the apt-over-HTTPS recipe in the
 `mandala-drive` skill.
 
 **Assertions are on state, never on pixels.** The document's bytes
-(`loader::to_json_value`), the undo stack, the installed tree, what a
-rebuild left in the renderer (`text_buffer_owner_count`, the camera,
-the geometry-dirty flag), the redraw ledger. lavapipe's rasterization
+(`Document::save_json`), the history, the glyph layers, what a sync
+applied to the renderer (its apply log, the camera, the status line),
+the redraw ledger. lavapipe's rasterization
 is not a hardware GPU's, so a pixel assertion would hold on one
 machine and not another, and §T10's no-snapshot rule stands.
 

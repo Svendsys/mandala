@@ -128,9 +128,8 @@ pub enum GlyphTreeEvent {
 /// `Eq`, and **not reflexive**: the numeric payloads are `f32`, so a
 /// mutation carrying a `NaN` is not equal to itself. Use
 /// [`GfxMutation::writes_the_same`] — not `==` — for "would these two
-/// write the same thing", which is the question
-/// `flat_mutations` (gone) asked before collapsing an AST's nested
-/// payloads into one list.
+/// write the same thing", the question a caller asks before collapsing
+/// an AST's nested payloads into one list.
 /// `==` is still the right operator for an ordinary value
 /// comparison; it is only the *agreement* predicate that needs the
 /// reflexive form.
@@ -220,18 +219,14 @@ impl GfxMutation {
     ///
     /// Derived `PartialEq` over `f32` is not an equivalence relation:
     /// `NaN != NaN`, so a mutation carrying a `NaN` is not `==` to
-    /// itself. That matters because
-    /// `flat_mutations` (gone) collapsed an AST only when every payload
-    /// beneath the root
-    /// agrees with the one it returns, and
-    /// `scope::self_and_descendants` (gone)
-    /// built its AST by cloning **one** list into two `Macro` nodes
-    /// — so that comparison is a payload against itself. Under `==`
-    /// a `NaN` there declines the whole mutator while the identical
-    /// payload under
-    /// `scope::self_only` (gone)
-    /// applies: two helpers differing only in scope disagreeing on
-    /// whether the mutation runs at all.
+    /// itself. That matters to a caller that collapses an AST only
+    /// when every payload beneath the root agrees with the one it
+    /// returns, over an AST built by cloning **one** list into two
+    /// `Macro` nodes — so that comparison is a payload against itself.
+    /// Under `==` a `NaN` there declines the whole mutator while the
+    /// identical payload in a one-node AST applies: two ASTs differing
+    /// only in shape would disagree on whether the mutation runs at
+    /// all.
     ///
     /// Two payloads agree when they are `==` **or** when they are
     /// structurally identical. The second disjunct is what restores

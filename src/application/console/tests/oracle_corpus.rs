@@ -193,9 +193,9 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::TwoSectionNode, "section frame PREVIEW "),
     (Sel::Node, "help AL"),
     (Sel::Node, "zoom C"),
-    // The exact half: a kv key filters case-sensitively because
-    // `stage_kv` matches it that way, so an upper-case key offers
-    // nothing rather than offering a row the verb would reject.
+    // The exact half: a kv key filters case-sensitively because the
+    // verb matches it that way, so an upper-case key offers nothing
+    // rather than offering a row the verb would reject.
     // screenshot
     (Sel::None, "screenshot "),
     (Sel::None, "screenshot frame="),

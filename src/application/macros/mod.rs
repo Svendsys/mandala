@@ -115,8 +115,8 @@ pub enum MacroStep {
 }
 
 /// How a `MacroStep::CustomMutation` resolves its target node id at
-/// dispatch time. `CurrentSelection` matches the selection-driven
-/// click-trigger path; `NodeId` lets a macro target a specific node
+/// dispatch time. `CurrentSelection` targets the selection; `NodeId`
+/// lets a macro target a specific node
 /// regardless of selection state (useful for "open the inbox" style
 /// shortcuts).
 ///

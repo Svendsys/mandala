@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Unit tests for keybinds — parsing, matching, default config,
-//! custom-mutation binding lifecycle, JSON round-trip, and
+//! edit-binding lifecycle, JSON round-trip, and
 //! contextual resolution.
 
 use super::*;
@@ -206,7 +206,7 @@ fn test_default_config_resolves_every_documented_binding() {
 }
 
 #[test]
-fn test_custom_mutation_binding_resolves_when_no_built_in_action() {
+fn test_an_edit_binding_resolves_when_no_built_in_action_is_bound() {
     let mut bindings = HashMap::new();
     bindings.insert("Ctrl+Shift+M".into(), "my-mutation".into());
     let cfg = KeybindConfig {
@@ -218,7 +218,7 @@ fn test_custom_mutation_binding_resolves_when_no_built_in_action() {
 }
 
 #[test]
-fn test_custom_mutation_binding_loses_to_builtin_action_via_event_loop() {
+fn test_an_edit_binding_and_an_action_on_one_combo_resolve_independently() {
     // `edit_for` is only called after `action_for`
     // returns None — a combo bound to both resolves to the
     // built-in. This test just locks the resolver shape: both
@@ -235,7 +235,7 @@ fn test_custom_mutation_binding_loses_to_builtin_action_via_event_loop() {
 }
 
 #[test]
-fn test_custom_mutation_invalid_combo_is_skipped() {
+fn test_an_edit_binding_with_an_invalid_combo_is_skipped() {
     let mut bindings = HashMap::new();
     bindings.insert("Z+X".into(), "invalid".into()); // two non-modifier keys
     bindings.insert("Ctrl+M".into(), "valid".into());
@@ -248,7 +248,7 @@ fn test_custom_mutation_invalid_combo_is_skipped() {
 }
 
 #[test]
-fn test_set_custom_mutation_binding_adds_and_replaces() {
+fn test_set_edit_binding_adds_and_replaces() {
     let mut resolved = KeybindConfig::default().resolve();
     let prev = resolved.set_edit_binding("Ctrl+Shift+M", "first".into()).unwrap();
     assert!(prev.is_none());
@@ -261,7 +261,7 @@ fn test_set_custom_mutation_binding_adds_and_replaces() {
 }
 
 #[test]
-fn test_remove_custom_mutation_binding_returns_removed_id() {
+fn test_remove_edit_binding_returns_the_removed_id() {
     let mut resolved = KeybindConfig::default().resolve();
     resolved.set_edit_binding("Ctrl+Shift+M", "id-1".into()).unwrap();
     let prev = resolved.remove_edit_binding("Ctrl+Shift+M").unwrap();
@@ -548,9 +548,8 @@ fn test_is_destructive_destructive_set_is_pinned() {
         ActionKind::OpenDocument,
         ActionKind::SaveDocumentAs,
         ActionKind::NewDocumentAt,
-        // FastResizeStart commits through `set_node_aabb` /
-        // `set_section_aabb` on the right-button release that
-        // ends the gesture, so it is destructive.
+        // FastResizeStart starts a resize the right-button release
+        // commits, so it is destructive.
         ActionKind::FastResizeStart,
         // Section text + structural mutators are destructive
         // (rewrite text content, change the sections vector
@@ -931,11 +930,8 @@ fn test_a_long_press_binding_resolves_to_enter_resize_mode() {
 ///
 /// 1. `FastResizeStart` ships bound to `Ctrl+RightDrag` alone, which
 ///    needs a mouse. The touch route to a resize is `LongPress` →
-///    `EnterResizeMode`, then a finger on a handle — which until #160
-///    panned the camera instead, so a touch-only user could not resize
-///    at all. A finger that lands on a handle in Resize mode now drives
-///    the handle drag (`app::touch_handle` (gone)); native-only, as the drag
-///    state is (CLAUDE.md's Dual-target registry).
+///    `EnterResizeMode`, then a finger on a handle, which returns with
+///    the resize mode in V1-C7 (#248).
 /// 2. An existing `keybinds.json` naming `"TwoFingerDrag"` used to
 ///    be **silently accepted and never match**: `KeyBind::parse`
 ///    takes any non-modifier word as a key, so a retired token parsed

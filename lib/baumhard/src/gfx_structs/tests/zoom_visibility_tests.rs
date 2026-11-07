@@ -241,8 +241,8 @@ pub fn do_try_new_enforces_invariants() {
 
 /// `DeltaGlyphArea` round-trip: an `Assign` delta writes a window
 /// onto a previously-unbounded area; a follow-up `Assign` with
-/// unbounded clears it. Pins the mutator-surface contract that
-/// custom mutations depend on for zoom-triggered LOD transitions.
+/// unbounded clears it. Pins the mutator-surface contract that an
+/// authored mutator depends on for zoom-triggered LOD transitions.
 #[test]
 pub fn test_zoom_visibility_assign_round_trip() {
     do_zoom_visibility_assign_round_trip();

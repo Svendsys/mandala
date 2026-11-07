@@ -364,8 +364,8 @@ macro_rules! keybind_field_order_check {
 ///         JumpToRoot => jump_to_root = [],       // default unbound
 ///     }
 ///     parametric {
-///         SetPathAnchor { from, to } => set_edge_anchor,
-///         SetPathContent(glyph) => set_edge_body_glyph,
+///         SetPathAnchor { from, to } => set_path_anchor,
+///         SetPathContent(glyph) => set_path_content,
 ///     }
 ///     unbindable {
 ///         // Variant => the reason it has no key surface. The reason

@@ -9,9 +9,9 @@
 //! [`build`](crate::engine::builder::build()) walks it recursively and consults a [`BuildContext`](crate::engine::builder::BuildContext) for
 //! runtime values — counts, mutation lists, and the resolution of a
 //! payload's templates per iteration — returning a [`BuildError`](crate::engine::builder::BuildError) for
-//! an AST no mutator tree can express. Custom mutations carry their
-//! payload as a `MutatorNode`; the color picker, console overlay, and
-//! user widgets all reach for the same builder.
+//! an AST no mutator tree can express. An authored mutator is a
+//! `MutatorNode`; the color picker, console overlay, and user widgets
+//! all reach for the same builder.
 
 mod ast;
 mod build;

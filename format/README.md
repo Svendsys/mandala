@@ -21,8 +21,9 @@ by V1-E4 (#256).
 - [`fonts.md`](./fonts.md) — the bundled faces, how a map names a
   family, weight within a family, and ornament fallback
 - [`mutations.md`](./mutations.md) — the glyph mutation vocabulary
-  (`GfxMutation`, the `MutatorNode` AST); its custom-mutation carrier
-  sections describe the deleted model, which edits replace (V1-D1, #250)
+  (`GfxMutation`, the `MutatorNode` AST) that glyph trees are edited
+  with; the old carrier around it is gone, and edits replace it
+  (V1-D1, #250)
 - [`macros.md`](./macros.md) — `Macro` carrier, the two-tier loader,
   privilege gates, and the threat model
 

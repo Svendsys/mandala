@@ -363,9 +363,8 @@ mod tests {
         assert_eq!(target.shape, NodeShape::Ellipse);
     }
 
-    /// Authored zoom-visibility windows survive the round-trip.
-    /// Locks the §B2 latent-bug fix that made `edge_handle.rs`'s
-    /// mutator stop omitting `ZoomVisibility` from its delta.
+    /// Authored zoom-visibility windows survive the round-trip: a
+    /// delta built from an area carries its `ZoomVisibility` (§B2).
     #[test]
     fn full_assign_from_preserves_authored_zoom_window() {
         use crate::core::primitives::Applicable;

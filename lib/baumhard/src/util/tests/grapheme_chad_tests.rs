@@ -1890,8 +1890,7 @@ pub fn test_split_graphemes_owned() {
     do_split_graphemes_owned();
 }
 
-/// [`split_graphemes_owned`] is the border-pattern splitter lifted
-/// out of `border_pattern.rs`. Its contract is that concatenating the
+/// [`split_graphemes_owned`]'s contract is that concatenating the
 /// pieces reproduces the input and every piece is exactly one
 /// cluster.
 pub fn do_split_graphemes_owned() {

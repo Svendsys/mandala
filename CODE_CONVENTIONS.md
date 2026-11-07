@@ -213,30 +213,17 @@ decision, not a drive-by edit.
     `last_click` tracker run before the funnel. They're not
     user-named effects; they're machinery the funnel rests on.
 
-    **One thing on that same path is a user-named effect, and it is
-    deliberately not an `Action`:** a click or tap that lands on a
-    node runs `click_triggers::fire_onclick_triggers`, which applies
-    whatever `OnClick` `CustomMutation`s the *map author* bound to
-    it, plus their document actions. Those are authored effects by
-    definition. They stay outside the funnel because the funnel
-    reifies behaviors the *application* names — one `Action` per
-    user-facing verb, bindable by key — whereas these are named per
-    node in the document and reach the model through the mutation
-    pipeline instead.
-
-    **They carry no `SourceTier`, and that is a gap rather than a
-    sanction.** An earlier draft of this bullet explained their
-    ungated-ness by saying the trust boundary for document content
-    is the loader — which contradicts this project's actual stated
-    threat model, where a `.mandala.json` is *untrusted* and a
-    "hostile shared mindmap" is named as the adversary
-    (`src/application/macros/mod.rs`). The loader validates shape,
-    not intent. The correct statement is that `OnClick` triggers
-    are outside the *dispatch funnel*, not outside the security
-    posture: they are a second route from map content to
-    `apply_document_actions` that never passes `dispatch_macro`,
-    which is exactly why the gating rule below says *every* apply
-    site rather than that one.
+    **A node's click trigger, when V1-D3 (#252) brings it back, is
+    a user-named effect on that same path and deliberately not an
+    `Action`:** it is named per node by the *map author*, where the
+    funnel reifies behaviors the *application* names — one `Action`
+    per user-facing verb, bindable by key. Outside the funnel is not
+    outside the security posture: a `.mandala.json` is *untrusted*
+    and a "hostile shared mindmap" is the named adversary
+    (`src/application/macros/mod.rs`), and the loader validates
+    shape, not intent. So a trigger is a route from map content to
+    an edit that never passes `dispatch_macro`, which is why the
+    gating rule below says *every* apply site rather than that one.
   - **Per-frame continuous-gesture state.** A drag's per-cursor-move
     delta (e.g. `RenderDecree::CameraPan(dx, dy)` in `event_cursor_moved`)
     legitimately stays inline. For a *mouse* drag the funnel still
@@ -261,8 +248,8 @@ decision, not a drive-by edit.
     The line this carve-out draws is therefore "is the effect a
     continuous camera delta?", not "did a funneled press start it".
     A continuous gesture that *mutates the document* per frame is a
-    different question and is not covered here — see the
-    `ThrottledDrag` ladder.
+    different question and is not covered here: V1-C7 (#248) gives
+    such gestures their transactions.
 
   Anything else — a new gesture or a new console-verb behavior that
   mutates document state or changes view state — must go through the
@@ -286,43 +273,19 @@ decision, not a drive-by edit.
   MUST hold as new dispatch surfaces are added (IPC included —
   `format/ipc.md` §"Trust model").
 
-  `DocumentAction` (carried by `MacroStep::CustomMutation`) is
-  `#[non_exhaustive]`. Today every variant is a pure in-memory
-  canvas-theme write, safe to expose. **Any new variant that
-  performs file I/O, network access, arbitrary content load, or
-  cross-process side effects MUST be gated at *every site that
-  applies a `DocumentAction`*** (look up the existing `allows_*`
-  pattern on `SourceTier` and extend it).
-
-  **"Every site" is the load-bearing phrase, and this paragraph
-  used to say "at the `dispatch_macro` site" instead — which is
-  wrong in the direction that matters.** `dispatch_macro` is not
-  the only route from a `.mandala.json` to
-  `MindMapDocument::apply_document_actions`. There are three, and
-  the second is the one a hostile map would take:
-
-  1. The keybind / macro tier —
-     `cross_dispatch::dispatch_custom_mutation_for_key` and the two
-     `MacroDispatchTarget` impls — which is the route
-     `dispatch_macro`'s gates cover.
-  2. `click_triggers::fire_onclick_triggers` — a node's `OnClick`
-     binding, authored **in the map**, fired by a click or a touch
-     tap. It carries no `SourceTier` at all, because it is document
-     content rather than a dispatch surface. A variant gated only
-     at `dispatch_macro` stays fully reachable here.
-  3. `console::commands::mutation` — the `mutation` console verb,
-     User tier by construction, since the user typed it.
-
-  Routes 1 and 2 land through one body since #144,
-  `app::fire_custom_mutation`, and it carries no tier of its own:
-  a gate placed there has to be told which route fired it, or sit
-  at the two callers. Either way it is still every route, not one.
-
-  Nothing turns on this today: both shipped variants
-  (`SetThemeVariant`, `SetThemeVariables`) are in-memory theme
-  writes and route 2 is harmless for them. The instruction is
-  written down correctly now so the first dangerous variant does
-  not get gated at one site and shipped as though it were gated.
+  **An effect a map can carry that performs file I/O, network
+  access, arbitrary content load, or cross-process side effects
+  MUST be gated at *every site that applies it*** (look up the
+  existing `allows_*` pattern on `SourceTier` and extend it).
+  "Every site" is the load-bearing phrase: `dispatch_macro` is not
+  the only route from a `.mandala.json` to an edit. When V1-D1
+  (#250) brings back the edit by id (`MacroStep::CustomMutation`)
+  and V1-D3 (#252) the node's click trigger, there are three — the
+  keybind and macro tier, which `dispatch_macro`'s gates cover; the
+  click trigger, authored **in the map** and carrying no
+  `SourceTier`, the one a hostile map would take; and the console,
+  User tier by construction — and a gate at one of them is not a
+  gate.
 
   Source-tier assignment is loader-pinned. Each loader call site
   hardcodes the tier; nothing in the on-disk format can affect it.
@@ -528,7 +491,7 @@ industrial cost/benefit reasoning. This is not license for speculation.
   `Error` enums. Adding one is a project-scale discussion.
 - **Interactive paths must not panic.** Interactive paths are
   `Application::run` and everything reachable from it after the first
-  frame: input, mutation, undo/redo, scene rebuild, render, document
+  frame: input, mutation, undo/redo, the view's sync, render, document
   mutation. Degrade the frame, log via `log::warn!`/`log::error!`, keep
   running. A crash during editing is the one user-visible failure this
   codebase cannot tolerate. Defensive `let Some(...) else { return; }`

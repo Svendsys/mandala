@@ -557,9 +557,8 @@ pub(crate) struct CitationScan {
 /// - **one test** otherwise, which has to be declared verbatim.
 ///
 /// Declarations are harvested by text rather than by `syn` on
-/// purpose: the throttled-interaction trait tests are emitted by
-/// `macro_rules!`, and a parser sees that body as opaque tokens while
-/// the `fn test_…` inside it is right there in the text. Over-reading
+/// purpose: a test a `macro_rules!` body emits is opaque tokens to a
+/// parser, while the `fn test_…` inside it is right there in the text. Over-reading
 /// a declaration weakens the check by one name; under-reading it
 /// fails a run over a test that exists, which is the worse of the two
 /// and the one a parser would produce here.

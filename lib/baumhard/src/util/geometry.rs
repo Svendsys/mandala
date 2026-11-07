@@ -134,7 +134,7 @@ pub fn vec2_area(vec: Vec2) -> f32 {
 ///
 /// ```text
 /// grep -rnE "\+ *[A-Za-z0-9_.()]+( as f32)? *(\* *0\.5|/ *2\.0)" --include=*.rs src lib crates \
-///   | grep -vE "aabb_center|center_vec2|pos \+ size|pos_vec2"
+///   | grep -vE "aabb_center|pos \+ size"
 /// ```
 ///
 /// Widening the operand class was not enough on its own: the first
@@ -148,13 +148,7 @@ pub fn vec2_area(vec: Vec2) -> f32 {
 /// the color picker's scalar layout (radii, ring sums, and the
 /// `preview_pos + preview_size * 0.5` the picker computes without
 /// ever naming a `Vec2`), deliberately off-center probe points, and
-/// half-extent terms inside larger anchor formulas. It also leaves
-/// the old model-space centers in `document::mutations`
-/// (`flower_layout` (gone), `tree_cascade` (gone)), which this helper could
-/// not express at all: the old model's `Position` and `Size` were
-/// `f64`, and routing them
-/// through a `Vec2` would round the layout arithmetic to `f32` to
-/// save a multiplication. The other
+/// half-extent terms inside larger anchor formulas. The other
 /// midpoint *form* — `(min + max) * 0.5` over two corners rather
 /// than a corner and an extent — is a different signature, so it does
 /// not appear here at all and this helper does not cover it
@@ -204,13 +198,11 @@ pub fn aabb_center(pos: Vec2, size: Vec2) -> Vec2 {
 /// a *new* `#[inline]` needs a benchmark that resolves it, and
 /// `AGENTS.md` forbids an agent from running one, so omission is the
 /// only compliant outcome. There would be something to resolve —
-/// this is `pub` with a cross-crate caller (`mandala`'s
-/// `document::hit_test::point_in_node_aabb` (gone)) and the workspace
+/// this is `pub`, so a cross-crate caller may come, and the workspace
 /// release profile keeps `codegen-units = 16` with thin-local LTO,
 /// which by the root `Cargo.toml`'s own words leaves cross-crate
 /// inlining on the table. The stakes are small — the genuinely hot
-/// caller, `bvh_find`, is in-crate, and the cross-crate one runs per
-/// pointer event rather than per glyph — but "small" is a guess and
+/// caller, `bvh_find`, is in-crate — but "small" is a guess and
 /// the rule is not.
 pub fn aabb_contains(point: Vec2, min: Vec2, max: Vec2) -> bool {
     point.x >= min.x && point.x <= max.x && point.y >= min.y && point.y <= max.y
@@ -233,12 +225,9 @@ pub fn almost_equal_vec2(vec1: Vec2, vec2: Vec2) -> bool {
 /// `(Some(a), Some(b)) -> almost_equal(a, b)`, mismatched-tag
 /// pairs (`Some` vs `None`) -> false.
 ///
-/// Used by per-axis edge / portal-label setters to short-circuit
-/// "no-op writes" when the user re-types a value that's
-/// within-epsilon of the stored one. Centralized here so the
-/// setter no-op contract is single-sourced across edges/style.rs,
-/// edge_label_drag, portal_label_drag, and the connection cache's
-/// font-size diff. Cost: O(1).
+/// For a setter to short-circuit a "no-op write" when the user
+/// re-types a value that's within-epsilon of the stored one, so every
+/// setter's no-op contract is this one. Cost: O(1).
 pub fn option_almost_equal(a: Option<f32>, b: Option<f32>) -> bool {
     match (a, b) {
         (None, None) => true,

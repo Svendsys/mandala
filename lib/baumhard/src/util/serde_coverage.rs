@@ -182,9 +182,9 @@ pub struct TypeInfo {
     ///
     /// An externally tagged enum writes its variant as the single
     /// member of a wrapper object, which is a JSON level serde's
-    /// ignored-key path does not report — so the old model's route
-    /// expansion (`expand_route` (gone)) had to put it back. The names
-    /// are here so a test can drive a variant question over **every**
+    /// ignored-key path does not report — so a reader of unknown keys
+    /// has to put it back. The names are here so a test can drive a
+    /// variant question over **every**
     /// variant a type can meet rather than the two somebody thought of.
     ///
     /// Because these are JSON member names, they are resolved the way
@@ -1688,7 +1688,7 @@ fn unread_serde_attrs_with_fields(attrs: &[Attribute], fields: &Fields) -> Vec<S
     out
 }
 
-/// `"serialized::CustomMutationIn"` → `"CustomMutationIn"`.
+/// `"outer::inner::Name"` → `"Name"`.
 fn last_path_segment(path: &str) -> String {
     path.rsplit("::").next().unwrap_or(path).trim().to_string()
 }
@@ -3105,8 +3105,7 @@ mod tests {
     /// exercises.**
     ///
     /// `RenameRule` is a *published* derivation: what it says a field
-    /// or a variant is called is what the strictness gates read, and
-    /// what the old model's `expand_route` (gone) was driven over. Nothing in this crate
+    /// or a variant is called is what the strictness gates read. Nothing in this crate
     /// carries a `rename_all` today, so replacing
     /// `apply_to_variant`'s body with `format!("MUTANT_{ident}")`
     /// left all 1354 tests green, as did seven of the eight

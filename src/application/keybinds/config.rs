@@ -271,38 +271,15 @@ keybind_surface! {
         /// as `["Escape"]`.
         TextEditCancel => text_edit_cancel = [],
 
-        // ── Border / border preview ──────────────────────────────
-        /// Discard the active border preview.
-        ///
-        /// **Default: unbound** — but the user-visible Esc behavior
-        /// is "if a preview is active, cancel it; otherwise exit the
-        /// current mode", because [`Action::ExitMode`] (the default
-        /// Esc binding) calls `cancel_border_preview()` first and
-        /// short-circuits if a preview was canceled. See
-        /// `app/dispatch/action_core.rs` for the chain. The chain
-        /// lives in `ExitMode`'s body rather than as a separate
-        /// keybind because the resolver maps `(context, key) →
-        /// Action` deterministically and can't fall through from one
-        /// Action to another based on document state.
-        ///
-        /// Bind this entry to opt out of the chain — e.g. to put
-        /// preview-cancel on a different key while leaving `Escape`
-        /// bound to plain `ExitMode`. The verb path `border preview
-        /// cancel` is the primary surface and works regardless.
+        // ── Frames and frame previews (V1-C5, #246) ──────────────
+        /// Revert the open frame preview. Default unbound.
         CancelFramePreview => cancel_frame_preview = [],
-        /// Commit the active border preview through the matching
-        /// committing setter. No default binding — users opt in.
-        /// Unlike `cancel_border_preview`, commit isn't part of any
-        /// implicit chain — the `border preview commit` verb is the
-        /// primary surface and a binding here is purely opt-in
-        /// muscle-memory.
+        /// Commit the open frame preview. Default unbound.
         CommitFramePreview => commit_frame_preview = [],
-        /// Advance the selected node(s)' border preset to the next
-        /// entry in `BORDER_PRESETS`, wrapping at the end. Mirrors
-        /// `border preset cycle`; default unbound.
+        /// Advance the selected nodes' frame content to the next of
+        /// its kind, wrapping at the end. Default unbound.
         CycleFrameContent => cycle_frame_content = [],
-        /// Flip `style.show_frame` per selected node. Mirrors
-        /// `border toggle`; default unbound.
+        /// Show or hide each selected node's frame. Default unbound.
         ToggleFrameVisible => toggle_frame_visible = [],
 
         // ── Mouse-gesture Actions ────────────────────────────────
@@ -373,10 +350,9 @@ keybind_surface! {
         SelectPrevSibling => select_prev_sibling = ["Alt+k"],
 
         // ── TextEdit cursor primitives ───────────────────────────
-        // Bodies live in `dispatch::apply_text_edit_action`; the
-        // editor's modal handler routes through dispatch when a
-        // binding matches and falls back to literal-character
-        // insertion otherwise.
+        // The node text editor's keys, which V1-C8 (#249) rebuilds:
+        // a binding that matches dispatches its Action, and any other
+        // key is a literal character.
         /// Move the editor cursor one grapheme left.
         ///
         /// Unbound until V1-C8 (#249) rebuilds it on the one writer
@@ -501,14 +477,12 @@ keybind_surface! {
         /// bind it themselves (and lose newline insertion in
         /// exchange). Note: *any* TextEdit action bound to Enter
         /// wins over literal-newline insertion — the action lookup
-        /// runs before the literal-character fallback in
-        /// `handle_text_edit_key`.
+        /// runs before the literal-character fallback.
         TextEditCommit => text_edit_commit = [],
 
         // ── LabelEdit cursor primitives ──────────────────────────
-        // Same routing path as the TextEdit primitives but
-        // single-line — no Up/Down/Word*. Defaults mirror what
-        // `route_single_line_key` previously hardcoded.
+        // Same routing as the TextEdit primitives but single-line —
+        // no Up/Down/Word*.
         /// Move the label cursor one grapheme left.
         ///
         /// Unbound until V1-C8 (#249) rebuilds it on the one writer
@@ -590,8 +564,7 @@ keybind_surface! {
         SetPathAnchor { from, to } => set_path_anchor,
         /// `body glyph=<dot|dash|double|wave|chain>`.
         SetPathContent(glyph) => set_path_content,
-        /// `border <field>=<value>` on the selected node(s). One kv
-        /// per binding; multi-kv border edits stay console-only.
+        /// One field of the selected nodes' frames, named by `field`.
         SetFrameField { field, value } => set_frame_field,
         /// `cap from=<arrow|circle|diamond|none> to=<…>`.
         SetPathCap { from, to } => set_path_cap,
@@ -602,18 +575,16 @@ keybind_surface! {
         /// `args = [target_kind, field, value]` where `target_kind ∈
         /// {node, section, canvas-border, canvas-sf, canvas-sf-focused}`
         /// (kebab-case, matching [`super::BorderPreviewTargetKind`]'s
-        /// strum-`IntoStaticStr`-derived form). `field` is one of the
-        /// `border` kv keys (`preset`, `font`, `size`, `color`,
-        /// `palette`, `field`, `padding`, `top`, `bottom`, `left`,
-        /// `right`, `tl`, `tr`, `bl`, `br`); `value` is the same
-        /// kv-form string the verb accepts. Maps to
+        /// strum-`IntoStaticStr`-derived form), and `field` and `value`
+        /// name the frame field previewed. Maps to
         /// [`Action::SetFramePreview`].
         SetFramePreview { target_kind, field, value } => set_frame_preview,
-        /// `edge type=<cross_link|parent_child>`.
+        /// The selected path's kind: `cross_link|parent_child`.
         SetEdgeType(edge_type) => set_edge_type,
-        /// `edge display_mode=<line|portal>`.
+        /// How the selected link is drawn: `line|portal`.
         SetLinkKind(display_mode) => set_link_kind,
-        /// `edge reset=<straight|curve|style|position>`.
+        /// Reset part of the selected path:
+        /// `straight|curve|style|position`.
         ResetPath(reset_kind) => reset_path,
         /// `font set <family>` on the current selection.
         SetFontFamily(family) => set_font_family,

@@ -1157,8 +1157,8 @@ itself. So nothing an agent sends writes lines into a console the
 user has open, or leaves its overlay stale. No fake open modal is
 built to scrape. **The full
 side-effect drain still runs**: `ConsoleSideEffect::ReplaceDocument`
-(the document swap for `open` / `new`), `rebuild_all`, and any modal
-handoff, because "behaviorally identical to a human typing it" (§2)
+(the document swap for `open` / `new`), the view's sync, and any
+modal handoff, because "behaviorally identical to a human typing it" (§2)
 requires those effects, not just the return value. What IPC skips is
 the human's half: an open console's scrollback and the command
 history are left alone, by `act.console` and by the `act.action` /

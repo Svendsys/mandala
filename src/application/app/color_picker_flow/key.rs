@@ -28,9 +28,8 @@ use crate::application::keybinds::Action;
 
 /// A picker-modal effect named by an `Action`. Produced by
 /// [`picker_op_for`]; consumed by the `dispatch_action` arm, which
-/// owns the renderer-driving half (`cancel_color_picker` (gone),
-/// `commit_color_picker` (gone), `commit_color_picker_to_selection` (gone),
-/// [`apply_picker_nudge`]).
+/// owns the renderer-driving half ([`apply_picker_nudge`], and the
+/// cancel and commit V1-C7 (#248) rebuilds on transactions).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::application::app) enum PickerOp {
     /// Close without writing the previewed color back

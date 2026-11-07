@@ -278,7 +278,7 @@ mod tests {
 
     /// No arguments is the view, at the window's size, into the
     /// working-directory default, with a sidecar — and the verb never
-    /// touches the document, so the line costs no scene rebuild.
+    /// touches the document, so the line costs the view no sync.
     #[test]
     fn test_a_bare_screenshot_is_the_view_with_a_sidecar() {
         assert_eq!(

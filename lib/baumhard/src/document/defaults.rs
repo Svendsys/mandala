@@ -183,15 +183,16 @@ pub struct BuiltIn {
 /// module docs; each value names its source.
 pub const BUILT_IN: BuiltIn = BuiltIn {
     node: BuiltInNode {
-        // #235's table. Today's `default_shape()` is "rectangle"; its
-        // corner radius was `corner_radius_percent`, deleted by D13.
+        // #235's table. The old model's `default_shape()` (gone) was
+        // "rectangle"; its corner radius, `corner_radius_percent`, went
+        // with D13.
         shape: Shape::Rectangle {
             radius: Percent::new(0),
         },
     },
-    // Size: `DEFAULT_RUN_SIZE_PT`; color: `DEFAULT_NODE_TEXT_COLOR`;
-    // both src/application/document/defaults.rs. Upright regular:
-    // `default_text_run` sets neither bold nor italic.
+    // Size and color: the old model's `DEFAULT_RUN_SIZE_PT` (gone) and
+    // `DEFAULT_NODE_TEXT_COLOR` (gone). Upright regular, as its
+    // `default_text_run` (gone) was.
     section: text(FontSize::Pt(24.0), Rgba::opaque(0xff, 0xff, 0xff)),
     frame: BuiltInFrame {
         // D25 (amended #235): a Frame element is shown unless it says
@@ -219,8 +220,8 @@ pub const BUILT_IN: BuiltIn = BuiltIn {
     },
     ring: BuiltInRing {
         // Size: #235's table (amended: a ring's size is its text size,
-        // always `Rel`). Color: `DEFAULT_NODE_FRAME_COLOR`,
-        // src/application/document/defaults.rs.
+        // always `Rel`). Color: the old model's
+        // `DEFAULT_NODE_FRAME_COLOR` (gone).
         text: text(FontSize::Rel(0.06), Rgba::opaque(0x30, 0xb0, 0x82)),
     },
     connector: BuiltInPath {
@@ -242,9 +243,9 @@ pub const BUILT_IN: BuiltIn = BuiltIn {
         // The path's midpoint, on the path (#235's table).
         t: 0.5,
         offset: 0.0,
-        // On a path: the path's size times `DEFAULT_LABEL_SIZE_FACTOR`
-        // (`EdgeLabelConfig::effective_font_size_pt`), in the edge's
-        // color (`EdgeLabelConfig`'s "edge color cascade").
+        // On a path: the path's size times the label factor, in the
+        // path's color — the old model's `DEFAULT_LABEL_SIZE_FACTOR`
+        // (gone) and its edge color cascade.
         on_connector: text(
             FontSize::Pt(PATH_TEXT_SIZE_PT * LABEL_SIZE_FACTOR),
             CONNECTOR_COLOR,
@@ -255,9 +256,10 @@ pub const BUILT_IN: BuiltIn = BuiltIn {
         on_portal_end: text(FontSize::Pt(PORTAL_MARKER_SIZE_PT), LINK_COLOR),
     },
     portal_end: BuiltInPortalEnd {
-        // `PortalEndpointState::border_t` `None`: face the other end.
+        // Face the other end, as the old model's unset `border_t` (gone)
+        // did.
         border_t: BorderPoint::Auto,
-        // `PortalEndpointState::perpendicular_offset` `None`: flush.
+        // Flush, as its unset `perpendicular_offset` (gone) was.
         offset: 0.0,
         // #235's table: the first portal glyph.
         content: "\u{25C8}",

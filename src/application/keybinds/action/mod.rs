@@ -12,25 +12,19 @@ use super::context::InputContext;
 
 // ── Action payload enums ─────────────────────────────────────────
 //
-// Typed discriminators for the parametric Action variants whose
-// underlying console verb fans across a small fixed set of axes.
-// Promoting these into the variant payload (instead of one Action
-// variant per axis) keeps the dispatcher's match arm exhaustive
-// without a `_ => log::error!(...)` "fan-out missed inner-match"
-// guard, and eliminates the `set_color_bg / _text / _border`-style
-// listing tax across `KeybindConfig`, `is_destructive`,
-// `wasm_compatibility`, and `context`.
-//
-// Each carries a kv-key string at the boundary so the verb-core's
-// existing `apply_kvs`-style trait dispatch reaches the same code
-// path the typed `bg|text|border` console kv would have hit.
+// Typed discriminators for the parametric Action variants that fan
+// across a small fixed set of axes. Promoting these into the variant
+// payload (instead of one Action variant per axis) keeps a dispatch
+// match exhaustive without a "fan-out missed inner-match" guard, and
+// keeps one row per Action in `KeybindConfig`, `is_destructive`,
+// `wasm_compatibility` and `context`. Each serializes as the kv key a
+// keybind or macro spells it with.
 
-/// Which color axis a [`Action::SetColor`] targets. Mirrors the
-/// `bg|text|border` kv key on the `color` console verb. The strum
-/// derives generate the bidirectional kv-key conversion: `Bg.into()
-/// == "bg"` (via `IntoStaticStr`) and `"bg".parse::<ColorAxis>() ==
-/// Ok(Bg)` (via `EnumString`) — the verb-core consults these at the
-/// boundary, replacing what was three hand-rolled match blocks.
+/// Which color axis a [`Action::SetColor`] targets: the `bg|text|border`
+/// kv key of the `color` console verb's grammar. The strum derives
+/// generate the bidirectional kv-key conversion: `Bg.into() == "bg"`
+/// (via `IntoStaticStr`) and `"bg".parse::<ColorAxis>() == Ok(Bg)` (via
+/// `EnumString`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, IntoStaticStr, EnumString)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
@@ -40,40 +34,33 @@ pub enum ColorAxis {
     Border,
 }
 
-/// Which border-slot a [`Action::SetFramePreview`] targets.
-/// Discriminator for the `<verb> preview <kv>=…` Action surface
-/// — five variants mirror the five committing setters
-/// (`set_node_border_config` (gone) /
-/// `set_section_frame_border_config` (gone) /
-/// `set_canvas_default_border` (gone) /
-/// `set_canvas_default_section_frame_border_config(focused=false|true)` (gone)).
+/// Which frame a [`Action::SetFramePreview`] previews: a node's, a
+/// section's, or one of the theme's frame defaults. A keybind spells it
+/// in kebab case.
 ///
 /// Same strum-derive shape as [`ColorAxis`]: `Node.into() ==
 /// "node"`, `"node".parse::<BorderPreviewTargetKind>() ==
-/// Ok(Node)`. Replaces the prior `target_kind: String`
-/// stringly-typed discriminator that could accept typos at
-/// runtime.
+/// Ok(Node)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, IntoStaticStr, EnumString)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum BorderPreviewTargetKind {
-    /// `border preview` — per-node `style.border` for selected nodes.
+    /// The selected nodes' frames.
     Node,
-    /// `section frame preview` — per-section `frame_border` (gone) for
-    /// selected section pairs.
+    /// The selected sections' frames.
     Section,
-    /// `canvas border preview` — `Canvas.default_border`.
+    /// The theme's default node frame.
     CanvasBorder,
-    /// `canvas section-frame preview` — `Canvas.default_section_frame_border`.
+    /// The theme's default section frame.
     CanvasSf,
-    /// `canvas section-frame focused preview` — `Canvas.default_focused_section_frame_border`.
+    /// The theme's default frame of a focused section.
     CanvasSfFocused,
 }
 
-/// Which font slot a [`Action::SetFont`] targets. Mirrors the
-/// `size|min|max` kv key on the `font` console verb. Family
-/// (`SetFontFamily`) lives on its own Action because the verb
-/// dispatches it through a different code path.
+/// Which font slot a [`Action::SetFont`] targets: the `size|min|max`
+/// kv key of the `font` console verb's grammar. The family is its own
+/// Action, [`Action::SetFontFamily`], since its value is a name rather
+/// than a size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, IntoStaticStr, EnumString)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
@@ -83,12 +70,9 @@ pub enum FontSlot {
     Max,
 }
 
-/// Which zoom bound a [`Action::SetZoom`] targets. Mirrors the
-/// `min|max` kv key on the `zoom` console verb. Clearing both at
-/// once lives on its own [`Action::ClearZoom`] variant — the
-/// verb-core takes a `(min, max)` pair where each half is an
-/// `OptionEdit<f32>`, and `Clear/Clear` is a meaningfully distinct
-/// operation from `Keep/Keep`.
+/// Which zoom bound a [`Action::SetZoom`] targets: the `min|max` kv key
+/// of the `zoom` console verb's grammar. Clearing both at once is its
+/// own Action, [`Action::ClearZoom`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, IntoStaticStr, EnumString)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
@@ -125,6 +109,13 @@ pub enum ZoomBound {
 /// would silently bypass the gate from non-User macro tiers. The
 /// `#[non_exhaustive]` is the structural signal that "review the
 /// gate when extending."
+///
+/// **The Actions that edit the map are owned by the issues that
+/// rebuild them on the one writer** (`app::dispatch::families`: V1-C4
+/// to V1-C8, D1 and D3). Until its owner lands, each answers
+/// `unhandled` with a `debug!` naming the owner; the variants stay so a
+/// user's keybinds and macros naming them still load. Their docs say
+/// what each is for and name the owner.
 ///
 /// Some variants carry payload (e.g. `String` paths, kv-shaped
 /// `(field, value)` tuples) so `Copy` is impossible — payload-bearing
@@ -170,107 +161,70 @@ pub enum Action {
     #[action(context = Document, wasm = Compatible)]
     Redo,
     /// Enter reparent mode for the currently selected nodes.
+    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
     #[action(context = Document, wasm = NativeOnly)]
     EnterReparentMode,
     /// Enter connect mode for the currently selected node.
+    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
     #[action(context = Document, wasm = NativeOnly)]
     EnterConnectMode,
-    /// Confirm a reparent operation by clicking on a target node
-    /// (or empty canvas to promote sources to root). Sources come
-    /// from `InteractionMode::Reparent { sources }`; the payload
-    /// carries the target node id (`None` for empty-canvas → root).
-    /// NativeOnly today because the click-handler path that surfaces
-    /// the hit target lives natively only; the mode enum itself is
-    /// cross-platform. Classified `is_destructive = true` so the
-    /// privilege gate (`SourceTier::allows_action`) denylists non-User
-    /// macro tiers; the arm body's `mem::replace(.., Default)` is
-    /// an additional runtime guard (stale fire outside Reparent
-    /// mode is a no-op).
+    /// Confirm a reparent onto a target node, whose id the payload
+    /// carries (`None`: an empty-canvas click, which promotes the
+    /// sources to roots). Destructive, so the macro privilege gate
+    /// (`SourceTier::allows_action`) denies it to every tier but the
+    /// user's.
+    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     ReparentToTarget(Option<String>),
-    /// Confirm a connect operation by clicking on a target node
-    /// (or empty canvas to exit Connect mode without creating an
-    /// edge). Source comes from `InteractionMode::Connect { source }`; the
-    /// payload carries the target node id (`None` for empty-canvas
-    /// → mode-exit only, mirroring `ReparentToTarget`'s shape).
-    /// NativeOnly + `is_destructive = true` per the same reasoning
-    /// as `ReparentToTarget`.
+    /// Confirm a connect onto a target node, whose id the payload
+    /// carries (`None`: an empty-canvas click, which leaves connect mode
+    /// with no connector made). Destructive, as
+    /// [`Self::ReparentToTarget`] is.
+    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     ConnectToTarget(Option<String>),
-    /// Delete the current selection (currently: selected edge).
+    /// Delete the current selection.
+    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
     #[action(context = Document, wasm = Compatible, destructive)]
     DeleteSelection,
-    /// Exit the active interaction mode (Reparent / Connect / Resize)
-    /// back to `Default`. Cross-platform: the mode-clear + scene
-    /// rebuild slice runs on both targets via `dispatch_compatible`;
-    /// the native-only residual (clearing `hovered_node` (gone) for the
-    /// Reparent/Connect overlay rebuild) runs in the native arm.
+    /// Leave the active interaction mode for `Default`, and dismiss a
+    /// refusal's status line. Both targets.
     #[action(context = Document, wasm = Compatible)]
     ExitMode,
     /// Create a new unattached (orphan) node at the cursor position.
+    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
     #[action(context = Document, wasm = Compatible, destructive)]
     CreateOrphanNode,
     /// Detach every currently selected node from its parent.
+    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
     #[action(context = Document, wasm = Compatible, destructive)]
     OrphanSelection,
-    /// Open the inline text editor on the currently selected single node
-    /// with the node's existing text, cursor at end.
-    ///
-    /// **Today this is the umbrella "edit" Action** — for node /
-    /// section / SectionRange selections it dispatches through
-    /// [`Action::EnterNodeEdit`]; for `EdgeLabel` / `PortalLabel` /
-    /// `PortalText` it opens the relevant inline editor directly.
-    /// Multi / MultiSection / Edge / None silently no-op.
+    /// Edit the selection's text with its existing text, the cursor at
+    /// the end: a node's spans, or a label's or a ring's single line.
+    /// Answers `unhandled` until V1-C8 (#249) rebuilds it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     EditSelection,
-    /// Same as `EditSelection` but opens the editor with an empty buffer.
+    /// [`Self::EditSelection`], starting from an empty buffer.
+    /// Answers `unhandled` until V1-C8 (#249) rebuilds it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     EditSelectionClean,
-    /// Enter NodeEdit mode on the currently selected node.
-    /// Resolution rules:
-    /// - `Single(node)` / `Section(s)` / `SectionRange { sel: s, .. }` →
-    ///   `InteractionMode::NodeEdit { node_id }` (where `node_id` is
-    ///   the owning node).
-    /// - **Single-section short-circuit**: if the active node has
-    ///   `sections.len() == 1`, the helper opens the text editor on
-    ///   section 0 in the same call. This preserves today's
-    ///   "Enter on a node opens the editor" UX for legacy migrated
-    ///   maps. Multi-section nodes stay in NodeEdit and let the user
-    ///   pick which section to edit (a second Enter, or a click on
-    ///   a section followed by Enter).
-    /// - `Multi` / `MultiSection` / `Edge*` / `None` → no-op + log.
-    ///
-    /// **WASM: NativeOnly** — not for the text editor, which the
-    /// browser already runs (`CreateOrphanNodeAndEdit` opens it
-    /// there through the same `open_text_edit` (gone)), but for the section
-    /// half of NodeEdit the browser lacks: section click routing
-    /// (`InteractionMode::click_resolves_to_section` (gone)), the
-    /// outside-click exit, and the section-edit entry
-    /// ([`Action::EnterSectionEdit`]). #229 tracks porting them.
-    ///
-    /// `destructive` — the single-section short-circuit opens the
-    /// editor, which can clear text on the spot. User-tier-only via
-    /// the macro privilege gate.
+    /// Enter node-edit mode on the selected node, where a section is
+    /// picked to edit; a node of one section opens its editor at once.
+    /// Destructive, since the editor it may open can clear text on the
+    /// spot.
+    /// Answers `unhandled` until V1-C8 (#249) rebuilds it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     EnterNodeEdit,
-    /// Same as [`Action::EnterNodeEdit`] but the (potentially-opened)
-    /// editor starts with an empty buffer rather than the section's
-    /// existing text. Mirrors the `EditSelectionClean` posture.
+    /// [`Self::EnterNodeEdit`], with the editor it may open starting
+    /// from an empty buffer.
+    /// Answers `unhandled` until V1-C8 (#249) rebuilds it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     EnterNodeEditClean,
-    /// Open the section text editor on the active section while in
-    /// NodeEdit mode.
-    /// - Active mode must be `InteractionMode::NodeEdit { node_id }`.
-    /// - Selection determines the section: `Section(s)` /
-    ///   `SectionRange { sel: s, .. }` use `s.section_idx`;
-    ///   `Single(node_id)` defaults to section 0; anything else no-ops.
-    /// - The editor opens via `open_text_edit` (gone). NodeEdit mode stays
-    ///   active; closing the editor (commit or cancel) returns to
-    ///   `NodeEdit` mode (not `Default` — `ExitMode` does that).
-    ///
-    /// Sits in [`InputContext::NodeEdit`] so binding it to `Enter`
-    /// at the NodeEdit context doesn't shadow the same key at the
-    /// Document level (which is bound to `EnterNodeEdit`).
+    /// Open the editor on the picked section while in node-edit mode;
+    /// closing it returns to node-edit mode. In
+    /// [`InputContext::NodeEdit`], so a key bound to it there does not
+    /// shadow the same key at the document level.
+    /// Answers `unhandled` until V1-C8 (#249) rebuilds it.
     #[action(context = NodeEdit, wasm = NativeOnly, destructive)]
     EnterSectionEdit,
     /// Open (or toggle) the CLI console.
@@ -295,99 +249,41 @@ pub enum Action {
     /// page cannot do on the user's behalf.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     Quit,
-    /// Copy the focused component's clipboard representation.
-    /// **WASM:** the underlying `clipboard::write_clipboard` is a
-    /// log-and-no-op stub today (async-clipboard integration
-    /// pending). The Action is classified `Compatible` because it
-    /// doesn't crash, but the user-visible behavior is "nothing
-    /// happens." Tracked in `work_plans/WASM_CONVERGENCE.md`.
+    /// Copy the selection's clipboard representation. On the browser
+    /// the OS clipboard is a stub (`clipboard::write_clipboard`;
+    /// `CLAUDE.md` "Dual-target status").
+    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
     #[action(context = Document, wasm = Compatible, destructive)]
     Copy,
-    /// Paste the system clipboard's text content into the focused component.
-    /// **WASM:** same stub posture as `Copy` — `read_clipboard`
-    /// returns `None`.
+    /// Paste the system clipboard's text into the selection. On the
+    /// browser `clipboard::read_clipboard` returns `None`.
+    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
     #[action(context = Document, wasm = Compatible, destructive)]
     Paste,
-    /// Cut: copy then clear the focused component's clipboard representation.
-    /// **WASM:** same stub posture as `Copy`.
+    /// Cut: copy, then clear, the selection's clipboard representation.
+    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
     #[action(context = Document, wasm = Compatible, destructive)]
     Cut,
-    /// Enter resize mode on the current selection. Resolves the
-    /// selection into a `ResizeTarget` (see
-    /// `application::app::interaction_mode`):
-    /// - `Single(node)` → `Resize { target: Node(node_id) }`.
-    /// - `Section(s)` / `SectionRange` with `s.size == Some(_)` →
-    ///   `Resize { target: Section { node_id, section_idx } }`.
-    /// - `Section` with `size == None` (fill-parent) → no-op + log
-    ///   (None-sized sections have no AABB to stretch).
-    /// - `Multi` / `MultiSection` / `Edge*` / `None` → no-op + log.
-    ///
-    /// On success the active node / section emits 8 resize handles
-    /// (NW, N, NE, E, SE, S, SW, W); anchor drag transitions
-    /// `DragState` through the existing throttled-resize gestures.
-    /// `ExitMode` (Esc) returns to `Default`.
-    ///
-    /// **WASM: NativeOnly until the resize gesture is wired
-    /// cross-platform.** The mode flip itself is target-agnostic
-    /// (the cross-platform `apply_enter_resize_mode` (gone) arm could
-    /// run on WASM today), but WASM has no `DragState`, no
-    /// throttled-drag pipeline, and no handle hit-test in
-    /// `run_wasm/event_mouse_click.rs` — so a flip on WASM would
-    /// render handles the user can't use. Rather than ship that
-    /// (no half-features), the Action is `NativeOnly` until Batches
-    /// 4 / 7 land the WASM gesture pipeline. Reclassification is a
-    /// one-line change at that point.
-    ///
-    /// **This is the touch route to a resize.** Default-bound to
-    /// `LongPress` as well as `r`; on native a finger that then lands
-    /// on a handle drags it (`app::touch_handle` (gone), #160), which is why
-    /// [`Self::FastResizeStart`] needs no touch binding.
-    ///
-    /// Non-destructive — flips a mode bit and triggers a scene
-    /// rebuild, no document mutation. The actual resize commit
-    /// happens later via `set_node_aabb` (gone) / `set_section_aabb` (gone) on
-    /// drag release; that path is gated separately.
+    /// Enter resize mode on the selected node or section: its handles
+    /// are drawn on the chrome, and dragging one resizes it in a
+    /// transaction. `ExitMode` returns to `Default`. Not destructive:
+    /// the mode change edits nothing, and the drag's commit is gated
+    /// on its own. The touch route to a resize, as a long-press, which
+    /// is why [`Self::FastResizeStart`] needs no touch binding.
+    /// NativeOnly while the browser has no drag-state machine.
+    /// Answers `unhandled` until V1-C7 (#248) rebuilds it.
     #[action(context = Document, wasm = NativeOnly)]
     EnterResizeMode,
-    /// Start a corner-anchored fast-resize gesture from a held
-    /// mouse button's drag. The drag gesture's threshold cross in
-    /// `event_cursor_moved.rs` dispatches this Action with a
-    /// `DispatchHit` built from the press — the press-time body
-    /// hit, the press-time canvas position and the button holding
-    /// the gesture (#194). The arm infers the corner anchor from
-    /// that position via `infer_resize_anchor` (gone), and arms
-    /// `Throttled(NodeResize | SectionResize)` owned by that
-    /// button, whose release finalizes via `set_node_aabb` (gone) /
-    /// `set_section_aabb` (gone). Default-bound to `Ctrl+RightDrag`, so
-    /// the right button owns it. A hit no button holds (IPC
-    /// `act.action` with a target) is refused, since no release
-    /// could end the drag.
-    ///
-    /// **Destructive on commit** (the release at the end of the
-    /// drag writes through), but the *Action itself* is just a
-    /// gesture-start signal — it doesn't mutate the document.
-    /// User-tier-only macro privilege mirrors the EnterNodeEdit /
-    /// EnterSectionEdit split: the gesture starts a
-    /// destructive flow, even though the start itself is
-    /// non-mutating.
-    ///
-    /// **WASM: NativeOnly** — the gesture relies on the
-    /// `DragState` machinery in `event_mouse_click.rs` /
-    /// `event_cursor_moved.rs` which is `cfg(not(target_arch =
-    /// "wasm32"))`. It ships bound to `Ctrl+RightDrag` alone: the
-    /// `TwoFingerDrag` touch peer it used to carry is gone, because
-    /// two fingers on a canvas now drive the camera directly. WASM
-    /// gets fast-resize when the browser gains a drag-state
-    /// machine.
-    ///
-    /// **A mouse accelerator by design** (#160). Touch reaches the
-    /// same resize through [`Self::EnterResizeMode`]: long-press a
-    /// node, then drag one of its handles with a finger.
-    ///
-    /// Marked `destructive` so the macro privilege gate
-    /// (`SourceTier::allows_action`) blocks System / Plugin /
-    /// Project tiers; only User-tier macros (the user's keybind
-    /// config + interactive console) can fire it.
+    /// Start a corner-anchored resize from a held mouse button's drag:
+    /// the drag's threshold cross dispatches it with a hit built from
+    /// the press (the body hit, the canvas position and the button,
+    /// #194), and the corner nearest the press is the one that moves.
+    /// The gesture starts a destructive flow, so the macro privilege
+    /// gate (`SourceTier::allows_action`) denies it to every tier but
+    /// the user's. A mouse accelerator by design (#160): touch reaches
+    /// the same resize through [`Self::EnterResizeMode`]. NativeOnly
+    /// while the browser has no drag-state machine.
+    /// Answers `unhandled` until V1-C7 (#248) rebuilds it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     FastResizeStart,
 
@@ -467,10 +363,14 @@ pub enum Action {
     ConsoleScrollHome,
 
     // ── Color Picker ─────────────────────────────────────────────
+    // Owned by V1-C7 (#248), with the picker's transactions; until it
+    // lands each answers `unhandled`.
     /// Cancel the color picker (contextual mode only; ignored in standalone).
+    /// Answers `unhandled` until V1-C7 (#248) rebuilds it.
     #[action(context = ColorPicker, wasm = NativeOnly)]
     PickerCancel,
     /// Commit the current color (contextual: close; standalone: apply to selection).
+    /// Answers `unhandled` until V1-C7 (#248) rebuilds it.
     #[action(context = ColorPicker, wasm = NativeOnly)]
     PickerCommit,
     /// Nudge hue −15°.
@@ -493,6 +393,9 @@ pub enum Action {
     PickerNudgeValUp,
 
     // ── Label Editor ─────────────────────────────────────────────
+    // This section's Actions, and every `TextEdit*` and `LabelEdit*`
+    // below, are owned by V1-C8 (#249), with text editing on spans;
+    // until it lands each answers `unhandled`.
     /// Cancel the inline label editor (discard changes).
     #[action(context = LabelEdit, wasm = NativeOnly)]
     LabelEditCancel,
@@ -513,27 +416,17 @@ pub enum Action {
     // gesture below can be bound to a key, and every keyboard
     // binding below can be bound to a gesture.
     // ─────────────────────────────────────────────────────────────
-    /// Default-bound to `DoubleClick`. Dispatches by what the click hit:
-    /// `Node` → open text editor, `PortalMarker`/`PortalText` → pan to
-    /// partner endpoint, `EdgeLabel` → open inline label editor,
-    /// `Empty` → fire `CreateOrphanNodeAndEdit` if it's bound (default
-    /// off — the gesture is intentionally unbound for empty-canvas
-    /// double-clicks).
-    ///
-    /// **WASM: mixed-branch**, classified `NativeOnly` under the "ANY
-    /// NativeOnly branch" rule. Both targets resolve the gesture
-    /// through this table and run one shared body
-    /// (`cross_dispatch::pointer`), so rebinding or unbinding
-    /// `double_click_activate` takes effect in the browser too. Three
-    /// of the four routes are fully cross-platform; the `EdgeLabel`
-    /// route commits the selection on both targets and then opens the
-    /// single-line editor on native only, since the browser has no
-    /// single-line editor yet. Same shape as `EditSelection`.
+    /// What a double-click does to what it hit: edit a node's text or a
+    /// label's line, or follow a link to its other end. Default-bound
+    /// to `DoubleClick`; both targets resolve the gesture through this
+    /// table (`cross_dispatch::pointer`).
+    /// Answers `unhandled` until V1-C8 (#249) rebuilds it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     DoubleClickActivate,
     /// Create an unattached node at the cursor and immediately open
     /// its text editor with an empty buffer. Sibling of `CreateOrphanNode`
     /// which only creates and selects (no editor). Default unbound.
+    /// Answers `unhandled` until V1-C8 (#249) rebuilds it.
     #[action(context = Document, wasm = Compatible, destructive)]
     CreateOrphanNodeAndEdit,
     /// Camera pan: while it runs, the canvas follows the pointer.
@@ -625,10 +518,8 @@ pub enum Action {
     TextEditCursorEnd,
 
     // ── TextEdit shift-select cursor primitives (TextEdit
-    // context). Same as their non-`Select` siblings, but they
-    // additionally seed the editor's `selection_anchor` (if
-    // unset) so the (anchor, cursor) pair defines a sub-range
-    // that lifts to `SelectionState::SectionRange` on close.
+    // context). Same as their non-`Select` siblings, but they extend
+    // a selection from where it was anchored.
     /// Extend selection one grapheme left.
     #[action(context = TextEdit, wasm = Compatible)]
     TextEditCursorLeftSelect,
@@ -672,8 +563,8 @@ pub enum Action {
     /// than a literal-character keystroke.
     #[action(context = TextEdit, wasm = Compatible)]
     TextEditInsertSpace,
-    /// Commit the editor's buffer to the model and close. Default unbound
-    /// (Enter is literal in the multi-line node editor).
+    /// Commit the editor's buffer to the document and close. Default
+    /// unbound (Enter is literal in the multi-line node editor).
     #[action(context = TextEdit, wasm = Compatible)]
     TextEditCommit,
 
@@ -703,14 +594,14 @@ pub enum Action {
 
     // ── Console-verb Actions (Document context) ─────────────────
     /// Open the glyph-wheel color picker as a standalone palette.
-    /// Mirrors `color picker on`.
+    /// Answers `unhandled` until V1-C7 (#248) rebuilds it.
     #[action(context = Document, wasm = NativeOnly)]
     OpenColorPicker,
-    /// Close the glyph-wheel color picker. Mirrors `color picker off`.
+    /// Close the glyph-wheel color picker.
+    /// Answers `unhandled` until V1-C7 (#248) rebuilds it.
     #[action(context = Document, wasm = NativeOnly)]
     CloseColorPicker,
-    /// Open the inline label editor on the currently-selected edge.
-    /// Mirrors `label edit`.
+    /// Open the inline label editor on the selected connector.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     LabelEditOnSelection,
     /// Toggle the FPS overlay on/off. Mirrors `fps on` ↔ `fps off`.
@@ -725,156 +616,120 @@ pub enum Action {
     #[action(context = Document, wasm = NativeOnly, destructive)]
     NewDocument,
 
-    // ── Parametric console-verb Actions (Document context) ──────
-    // Each wraps a parameterised console verb so the user can bind
-    // the verb directly without authoring a macro. Free-form
-    // `String` payloads are parsed at dispatch time; bad values
-    // emit a warn-log and the dispatch returns `Handled` (no
-    // scrollback — Action arms have no scrollback surface).
-    /// Mirror `anchor from=<side> to=<side>` on the selected edge.
-    /// Sides: `auto|top|right|bottom|left`. Single-edge selection.
+    // ── Parametric field Actions (Document context) ─────────────
+    // Each sets one field of the selection from a keybind or a macro,
+    // without a console line. Free-form `String` payloads are parsed
+    // when dispatched. Owned by V1-C5 (#246) for nodes, sections,
+    // frames and the theme, and V1-C6 (#247) for connectors, links,
+    // labels and rings; until then each answers `unhandled`.
+    /// Set the selected connector's anchor sides, `from` and `to`:
+    /// `auto|top|right|bottom|left`.
+    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetPathAnchor { from: String, to: String },
-    /// Mirror `body glyph=<dot|dash|double|wave|chain>` on the
-    /// selected edge.
+    /// Set the selected connector's path content: the glyph its ring
+    /// draws (`dot|dash|double|wave|chain`).
+    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetPathContent(String),
-    /// Mirror `border <field>=<value>` on the selected node(s).
-    /// Single kv per binding (multi-kv border edits stay
-    /// console-only). Field names: `preset|font|size|color|palette|
-    /// field|padding|top|bottom|left|right|tl|tr|bl|br`.
-    ///
-    /// The field name is a string checked at dispatch, not at
-    /// bind time: a misspelled `field` loads, and only a press
-    /// reveals it (a logged warning, no edit). Typed per-field
-    /// variants (`SetBorderPreset`, `SetBorderColor`, ...) that
-    /// would catch it at load do not exist yet; #227 tracks adding
-    /// them and retiring this one.
+    /// Set one field of the selected nodes' frames, named by `field`.
+    /// The name is a string checked when dispatched, not at bind time;
+    /// #227 tracks typed per-field variants that would catch a
+    /// misspelling at load.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetFrameField { field: String, value: String },
-    /// Mirror `border preset cycle` — advance the selected
-    /// node(s)' border preset to the next entry in
-    /// `BORDER_PRESETS`, wrapping at the end. No payload, so
-    /// bindable to a single key for one-press preset cycling, as
-    /// `cycle_border_preset` (gone). This doc claimed that from the day
-    /// the variant landed and the config field did not exist until
-    /// #32 — the drift class the `keybind_surface!` table closes.
+    /// Advance the selected nodes' frame content to the next of its
+    /// kind, wrapping at the end. No payload, so one key cycles it.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     CycleFrameContent,
-    /// Mirror `border toggle` — flip `style.show_frame` per
-    /// selected node. No payload (each node is toggled
-    /// independently), so bindable to a single key for one-press
-    /// border-on/off cycling, as `toggle_border_visible` (gone). Same
-    /// missing-field history as [`Action::CycleFrameContent`].
+    /// Show or hide each selected node's frame, each node on its own.
+    /// No payload, so one key toggles it.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     ToggleFrameVisible,
-    /// Stage a single-kv border preview against the live
-    /// selection. `target_kind: BorderPreviewTargetKind` is a
-    /// typed enum (kebab-case-serialized: `node` / `section` /
-    /// `canvas-border` / `canvas-sf` / `canvas-sf-focused`)
-    /// that picks the committing setter `commit_border_preview` (gone)
-    /// will route to; replaces the prior stringly-typed
-    /// discriminator that could accept typos at runtime. Single
-    /// kv per binding (preview-set keybinds; multi-kv preview
-    /// stays console-only). Mirrors the `<verb> preview
-    /// <field>=<value>` console path without the model write.
-    ///
-    /// **`Section` target requires a section-shaped selection**
-    /// (`Section` / `SectionRange` / `MultiSection`). On
-    /// `Single(node_id)` the resolver in
-    /// `apply_set_border_preview` (gone) falls through (no `section=K`
-    /// payload exists on the Action variant) and the keybind
-    /// becomes a no-op. The console verb path requires `section=K`
-    /// to disambiguate; the keybind has no kv side-channel so
-    /// authors who want a section preview keybind should bind it
-    /// to a navigation key that lands a section-shaped selection
-    /// first, or use the console verb.
+    /// Preview one frame field on the frame `target_kind` names
+    /// ([`BorderPreviewTargetKind`]) without writing it: an open
+    /// transaction that [`Self::CommitFramePreview`] commits and
+    /// [`Self::CancelFramePreview`] reverts.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetFramePreview {
         target_kind: BorderPreviewTargetKind,
         field: String,
         value: String,
     },
-    /// Commit the active border preview through the matching
-    /// committing setter and clear the preview slot. No-op when
-    /// no preview is active.
+    /// Commit the open frame preview. Nothing when none is open.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     CommitFramePreview,
-    /// Discard the active border preview without writing the
-    /// model. No-op when no preview is active. Default-bound to
-    /// **nothing** in `KeybindConfig::default()` — Esc cancels
-    /// previews through `Action::ExitMode`'s body (which calls
-    /// `cancel_border_preview()` (gone) first and short-circuits when a
-    /// preview was canceled). The chain lives inside ExitMode
-    /// because the keybind resolver maps `(context, key) →
-    /// Action` deterministically and can't fall through. Bind
-    /// this entry to opt out of the chain (e.g. preview-cancel
-    /// on a different key while leaving Esc on plain ExitMode).
+    /// Revert the open frame preview. Nothing when none is open.
+    /// Default-bound to nothing.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     CancelFramePreview,
-    /// Mirror `cap from=<arrow|circle|diamond|none> to=<...>` on the
-    /// selected edge.
+    /// Set the selected connector's end caps, `from` and `to`:
+    /// `arrow|circle|diamond|none`.
+    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetPathCap { from: String, to: String },
-    /// Mirror `color <axis>=<color>` on the current selection.
-    /// `axis` picks the field group (background, text, or border);
-    /// `value` is the user-facing color string (`#rrggbb`,
-    /// `var(--name)`, palette key, etc.) which the verb-core parses.
+    /// Set one color of the selection: `axis` picks the background, the
+    /// text or the frame, and `value` is a color as a map spells one
+    /// (`#rrggbb`, a theme variable, a palette key).
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetColor { axis: ColorAxis, value: String },
-    /// Mirror `edge type=<cross_link|parent_child>` on the selected
-    /// edge.
+    /// Set the selected path's kind: a connector between parent and
+    /// child, or a cross link.
+    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetEdgeType(String),
-    /// Mirror `edge display_mode=<line|portal>` on the selected edge.
+    /// Set how the selected link is drawn: a line, or a portal at each
+    /// end.
+    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetLinkKind(String),
-    /// Mirror `edge reset=<straight|curve|style|position>` on the
-    /// selected edge.
+    /// Reset one part of the selected path to its default:
+    /// `straight|curve|style|position`.
+    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     ResetPath(String),
-    /// Mirror `font set <family>` on the current selection. Unknown
-    /// family names silently no-op (the verb path surfaces a typed
-    /// error; the Action arm has no scrollback).
+    /// Set the selection's font family by name.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetFontFamily(String),
-    /// Mirror `font <slot>=<pt>` on the current selection.
-    /// `slot` picks `size|min|max`; `value` is the raw pt string
-    /// parsed at dispatch time (non-finite or non-positive values
-    /// silently no-op). `min` / `max` are selection-aware:
-    /// applicable to edge / edge-label / portal-text channels;
-    /// nodes have no screen-space clamp and no-op silently.
+    /// Set one font size of the selection, in points: `slot` picks the
+    /// size or its screen-space clamp (`size|min|max`).
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetFont { slot: FontSlot, value: String },
-    /// Mirror `label text=<text>` on the selected edge / portal
-    /// label. Empty payload clears the label.
+    /// Set the selected path's label text; an empty payload clears it.
+    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetLabelText(String),
-    /// Mirror `label position=<start|middle|end>` on the selected
-    /// line-mode edge. Portal selections silently no-op (they use
-    /// the `position_t=<f32>` shape, not named anchors).
+    /// Set where along the selected path its label sits:
+    /// `start|middle|end`.
+    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetLabelPosition(String),
-    /// Mirror `spacing value=<tight|normal|wide|<float>>` on the
-    /// selected edge.
+    /// Set the spacing of the selected path's glyphs:
+    /// `tight|normal|wide`, or a number.
+    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetPathSpacing(String),
-    /// Mirror `zoom <bound>=<zoom|unset>` on the current selection.
-    /// `bound` picks `min|max`; `value` is `"unset"`, `""`, or a
-    /// positive finite float string. Inverted bounds (`min > max`)
-    /// silently no-op.
+    /// Set one bound of the zoom range the selection draws in:
+    /// `bound` picks `min|max`, and `value` is a positive zoom or
+    /// `unset`.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetZoom { bound: ZoomBound, value: String },
-    /// Mirror `zoom clear` — drop both `min_zoom_to_render` (gone) and
-    /// `max_zoom_to_render` (gone) on the current selection. Unit
-    /// variant — no payload.
+    /// Clear both bounds of the zoom range the selection draws in.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     ClearZoom,
-    /// Mirror `section move dx=<dx> dy=<dy>` — nudge the
-    /// selected section by `(dx, dy)` canvas units. Keybind /
-    /// macro path for the per-frame-safe section move. AABB
-    /// rejection on overflow surfaces as a `log::warn!` and
-    /// no-op.
+    /// Move the selected section by `(dx, dy)` canvas units.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     //
     // Stringly-typed payload convention: f64 / usize fields on
     // `Action` variants ride as `String` because the enum
@@ -884,48 +739,41 @@ pub enum Action {
     // variant and to any future numeric-payload Action.
     #[action(context = Document, wasm = Compatible)]
     SetSectionOffsetDelta { dx: String, dy: String },
-    /// Mirror `section resize w=<w> h=<h>` — pin the selected
-    /// section's size to `(w, h)`. Same AABB validation as the
-    /// verb path. `w` / `h` are parsed at dispatch time.
+    /// Set the selected section's size to `(w, h)`.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetSectionSizeAbs { w: String, h: String },
-    /// Mirror `section resize fill` — flip the selected section
-    /// back to fill-parent (`size = None`). The verb literal is
-    /// `fill`, not `none`, which read as "remove the section".
+    /// Let the selected section fill its node again, with no size of
+    /// its own.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetSectionSizeFillParent,
-    /// Mirror `section move x=<x> y=<y> [section=<idx>]` — pin the
-    /// selected section's `offset` to `(x, y)`. The absolute
-    /// setter, distinct from the `dx` / `dy` delta form.
-    ///
-    /// Bindable as `set_section_offset_abs`. It was macro-only
-    /// until #32, for no reason its neighbours did not share: the
-    /// delta form had a config field and the absolute one did not.
+    /// Place the selected section at `(x, y)`: the absolute form of
+    /// [`Self::SetSectionOffsetDelta`].
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetSectionOffsetAbs { x: String, y: String },
-    /// Mirror `section text "<text>" [runs=preserve|clear]`.
-    /// `runs_mode = "preserve"` clips existing runs to the new text
-    /// length and extends the last one's style over appended text;
-    /// `"clear"` collapses to a single run. Destructive.
+    /// Replace the selected section's text, keeping its spans' styles
+    /// (`runs_mode = "preserve"`) or collapsing them to one
+    /// (`"clear"`). Destructive.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible, destructive)]
     SetSectionText { text: String, runs_mode: String },
-    /// Mirror `section add [at=<idx>] [text="<text>"]`. `at = ""`
-    /// appends; `"K"` inserts at K. `text = ""` makes an empty
-    /// section. Destructive.
+    /// Add a section to the selected node, at index `at` (empty:
+    /// appended), holding `text`. Destructive.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible, destructive)]
     AddSection { at: String, text: String },
-    /// Mirror `section delete [section=<idx>]`. Errors when the
-    /// node has only one section — the model invariant.
+    /// Delete the selected section; a node keeps at least one.
     /// Destructive.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible, destructive)]
     DeleteSection,
-    /// Mirror `section split at=<grapheme>`. `"K"` splits at
-    /// grapheme K; `at_grapheme = ""` is **rejected** with a
-    /// warn-log, matching the verb, which requires `at=` because
-    /// split-at-end-of-text silently creates an empty suffix
-    /// section nobody wants. The field name disambiguates from
-    /// `AddSection { at }`'s section-vector index (different
-    /// units). Destructive.
+    /// Split the selected section at grapheme `at_grapheme`, which is
+    /// required: a split at the end would only add an empty section.
+    /// Named apart from [`Self::AddSection`]'s `at`, a section index.
+    /// Destructive.
+    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible, destructive)]
     SplitSection { at_grapheme: String },
     /// Mirror `open <path>` — replace the current document with the
@@ -962,7 +810,7 @@ pub enum Action {
 /// The Mandala application targets both native (winit + desktop wgpu)
 /// and WASM (browser canvas + web wgpu). Today native has every
 /// modal and state machine; WASM has a curated subset (document,
-/// renderer, node text editor, mouse, keyboard). The
+/// renderer, mouse, keyboard). The
 /// [`Action::wasm_compatibility`] method classifies each variant
 /// based on which target's machinery it requires.
 ///
@@ -977,16 +825,14 @@ pub enum Action {
 pub enum WasmCompatibility {
     /// Action works identically on native and WASM today. Its
     /// dispatch arm reads / writes only state both targets have:
-    /// `MindMapDocument`, `Renderer`, `TextEditState`, mouse
-    /// gestures, the macro registry. Safe to fire from the browser's
-    /// `dispatch_compatible` path.
+    /// `MindMapDocument`, `Renderer`, mouse gestures, the macro
+    /// registry. Safe to fire from the browser's `dispatch_compatible`
+    /// path.
     Compatible,
     /// Action requires a native-only system not yet ported to
-    /// WASM (console, color picker, inline label / portal-text
-    /// editors, `DragState`, filesystem `save`). The `InteractionMode`
-    /// enum itself is cross-platform; only the click-handler paths
-    /// that read it on native still gate Reparent / Connect arms here.
-    /// Currently a no-op on WASM; the convergence path is to
+    /// WASM (console, color picker, inline label editors,
+    /// `DragState`, filesystem `save`). Currently a no-op on WASM;
+    /// the convergence path is to
     /// either port the underlying system or surface a WASM-
     /// specific equivalent and flip the classification to
     /// `Compatible`. Tracked in `work_plans/WASM_CONVERGENCE.md`.

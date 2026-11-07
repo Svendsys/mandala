@@ -332,7 +332,7 @@ pub(crate) enum CanvasOutcome {
 pub(crate) struct Screenshot {
     pub(crate) outcome: CaptureOutcome,
     /// The app needed no further frame once the capture was taken: no
-    /// animation running, no throttled drag or picker hover pending, no
+    /// animation running, no drag frame or picker hover pending, no
     /// injected input queued, no camera geometry waiting to rebuild. A
     /// capture taken unsettled may show a frame the next one moves on
     /// from; `clock.wait until=settled` is what waits for it.

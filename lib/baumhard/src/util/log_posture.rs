@@ -8,7 +8,7 @@
 //!    area is one or more lowercase words joined by `::`, a space or
 //!    a hyphen — `"macros: …"`, `"font::attrs: …"`, `"console
 //!    history: …"`, `"type-to-edit: …"`. A function name
-//!    (`"apply_custom_mutation: …"`) passes this reader, because
+//!    (`"submit_region: …"`) passes this reader, because
 //!    telling a function from a subsystem is a judgment the reader
 //!    cannot make; a CamelCase `Action` name, a `{placeholder}` where
 //!    the area should be, and a message with no prefix at all do not.

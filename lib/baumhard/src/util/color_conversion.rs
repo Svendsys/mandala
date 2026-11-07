@@ -271,7 +271,7 @@ pub fn hsv_to_hex(h: f32, s: f32, v: f32) -> String {
 /// path can't recover the original variable name without an
 /// additional reverse-lookup table. Document this limit at the
 /// reverse-converter call site so authors know what survives a
-/// custom-mutation round-trip.
+/// round-trip through a mutator's JSON.
 pub fn rgba_to_hex(rgba: FloatRgba) -> String {
     let u = convert_f32_to_u8(&rgba);
     if rgba[3] >= 1.0 {

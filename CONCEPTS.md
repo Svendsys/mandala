@@ -278,8 +278,8 @@ If `Tree` is the *noun*, `MutatorTree` is the
 descendant of channel 2, repeat until the predicate fails." The
 walker pairs the two up by channel (or sibling position, depending on
 the instruction), applies matching mutations in place, and leaves the
-rest alone. This is the seam custom mutations
-([§4](#4-the-mutation-framework)) ride on.
+rest alone. This is the seam the mutation framework
+([§4](#4-the-mutation-framework)) rides on.
 
 Also in `lib/baumhard/src/engine/tree.rs`. Minimal — an
 `Arena<Mutator<E, M>>` and a `root: NodeId`, its children kept in key
@@ -727,7 +727,7 @@ matching predicate X"), some need spatial routing ("apply this
 to whichever node contains this point"), some need
 position-indexed pairing ("apply these N mutators to these N
 siblings, zip-style"). `Instruction` is the vocabulary. This is
-how one custom mutation can sweep a whole subtree without
+how one mutator can sweep a whole subtree without
 hand-listing every target.
 
 `lib/baumhard/src/engine/mutator.rs`.
@@ -867,71 +867,24 @@ path, so enable only when background legibility demands it.
 
 ### `NodeShape`
 
-A pluggable hit-test shape — `Rectangle` or
-`Ellipse` — shared between the BVH descent and the border builder.
+A pluggable hit-test shape — `Rectangle` or `Ellipse` — the
+silhouette a node's body occupies for the projector's hit test.
 
-A node's clickable silhouette and what is drawn around it must
-agree. `NodeShape` names the two shapes today (rectangle, ellipse)
-and gives the hit test one source of truth for "is this point
-inside?"; the border builder resolves the same spelling to the same
-variant and frames only a rectangle. Nothing draws the shape itself:
-a node draws no fill (V1-B12). Adding a new shape is one enum variant
-and the match arms the compiler then demands; `shape.rs`'s own
-module header is the recipe. What makes it safe to follow is that
-the arms are not remembered: three `match`es over `NodeShape` in
-`shape.rs` are exhaustive — `style_spellings`, `contains_local`,
-`intersects_local_aabb` — so a planted variant is three E0004s.
+A node's clickable silhouette and its document shape must agree. The
+projection keeps one `NodeShape` per visible node, taken from the
+node's typed `Shape` (`document::values::Shape`), and asks it whether
+a point or a rubber-band rectangle lands on the node. Nothing draws
+the shape itself: a node draws no fill (V1-B12), and its frame is text
+along the outline (`flow`). Adding a shape is one enum variant and the
+match arms the compiler then demands: `contains_local` and
+`intersects_local_aabb` are exhaustive `match`es over `NodeShape`, so
+a planted variant does not compile until it has both.
 
 `lib/baumhard/src/gfx_structs/shape.rs`.
 `contains_local` does point-in-AABB or point-in-ellipse
 (normalized coordinates, `nx² + ny² ≤ 1`); degenerate bounds
 always return `false`. `intersects_local_aabb` supports
 rect-select with conservative approximation for ellipses.
-
-The format's shape vocabulary (`KNOWN_SHAPES`, published in
-`format/enums.md` and enforced by `maptool verify`) is wider
-than the variant set: `"hexagon"`, `"diamond"`,
-`"parallelogram"` and `"rounded_rectangle"` are canonical but
-have no variant yet. `ShapeSpelling` is the pure
-classifier that separates those from a genuine typo —
-`Modeled` / `KnownNotYetModeled` / `Unrecognized` /
-`Unspecified` — and `is_author_error` / `is_quiet_fallback`
-are the two predicates it exposes for the reporting
-decision. Before it existed, every hexagon in the demo map
-warned on every load (issue #118).
-
-`ShapeReport` is the second half of the split: the *routing*
-as a value. `ShapeSpelling::report` composes the two
-predicates into `Some(UnknownSpelling)` /
-`Some(RectangleSubstituted)` / `None`, `ShapeReport::level`
-is the single definition of which `log::Level` each carries,
-and `from_style_string` does nothing but pick the literal
-macro per arm — literal because `log`'s release compile-out
-folds on a level the compiler can see, which a
-`log::log!(computed, …)` would defeat. The value being a
-value is what makes the decision ordinary testable data;
-what is left, arm-to-macro, is a fact about source text and
-`shape_tests.rs`'s `log_routing` reads it as one, holding
-`from_style_string`'s body to a whitelist rather than
-searching it for `log::` calls.
-
-`KNOWN_SHAPES` is restated five times across three files —
-three lists in `format/enums.md`, `LEGACY_SHAPE_ORDINALS` in
-`crates/maptool/src/convert/enums.rs`, and the `shape_type`
-ordinal table in `format/migration.md` — and each is pinned
-back by a test that reads the restatement. The first four
-derive their expectation from the constant directly; the
-ordinal table is pinned to `LEGACY_SHAPE_ORDINALS` instead,
-which is itself pinned to the constant, so the chain closes
-in two hops rather than one. Either way, widening the
-vocabulary is still one edit plus the copies the suite names
-for you. The table in `shape.rs`'s `KNOWN_SHAPES` doc is the
-index.
-
-Shape-aware borders (glyph-drawn frames that follow
-the ellipse outline, not just the AABB) wait on the
-[`GlyphBorderConfig`](#border-geometry) side; the primitive
-surface here is ready.
 
 ### `ZoomVisibility`
 
@@ -945,7 +898,7 @@ zoomed in on its region and noise when the whole map is on
 screen; an overview landmark is a guide when zoomed out and
 redundant up close. `ZoomVisibility` lets authors say "this
 appears between 1.5× and 3× zoom" and have the renderer silently
-honor it — no script, no custom mutation, just two fields.
+honor it — no script, no mutator, just two fields.
 
 `lib/baumhard/src/gfx_structs/zoom_visibility.rs`.
 Two `Option<f32>` fields, a `contains(zoom) -> bool` predicate;
@@ -1239,7 +1192,7 @@ channels with the same template"), and the builder walks the AST
 with a `BuildContext` to resolve runtime values (counts, templates,
 dynamically-chosen mutations) into a concrete tree ready for
 `walk_tree_from`. This is the seam
-[custom mutations](#4-the-mutation-framework) attach to.
+[the mutation framework](#4-the-mutation-framework) attaches to.
 
 `lib/baumhard/src/engine/builder/`. The AST:
 `MutatorNode::{Void, Single, Macro, Instruction, Repeat}`, each naming
@@ -1334,26 +1287,6 @@ currently maintain them. Per-tree BVH descent (`Tree::descendant_at`)
 handles hit-testing today; when the region index is wired, region
 mutations must go through the mutator pipeline or the index will
 drift silently.
-
-### Animation primitives — `AnimationTiming`, `Easing`, `Followup`
-
-The vocabulary for motion: a serializable timing
-envelope on a mutation, an easing curve, and a reserved slot for
-what happens after a run completes.
-
-A "grow font" that snaps is fine; one that
-animates reads better. Rather than a general scheduler, motion
-here rides on the change that causes it: an animated change is a
-writer transaction (D28), and presentations (V1-D2) are what will
-author one. The old model's timed custom mutations went with it.
-
-A second, generic vocabulary — `AnimationDef` / `AnimationInstance`
-/ `Timeline` / `TimelineEvent` in `core/animation.rs` — was
-deleted in #41. It had no implementers of its `Mutable` bound, no
-callers, and an `update` signature that took its instance by value
-and returned nothing, so it could not have driven a tick as
-written. The long-form scheduling it stood for is the `Followup`
-slot's job when that lands.
 
 ### Utilities — `grapheme_chad`, `color`, `geometry`
 
@@ -1872,24 +1805,14 @@ there is no terminal, so that log line did not exist for the person
 holding the file (#107).
 
 A placard is an ordinary one-node document
-(`src/application/document/placard.rs`) whose text is the headline,
-the path or URL that was asked for, the loader's message in full,
-and a line confirming nothing was written. Because it is a document, it
-reaches the screen through the same projection as any other
-document (§1 "Everything is glyphs") — no second pipeline, no
-renderer pass, and nothing that needs a GPU to test. The message is
-wrapped with `grapheme_chad::wrap_to_display_width`, so a path
-containing an emoji folds without shattering.
-
-"In full" has one bound, and it is not stylistic: a loader message
-is as long as the file makes it, because serde quotes an offending
-JSON string back verbatim. So the source and the message are each
-elided in the *middle* — both ends kept, a one-line notice between
-— past `PLACARD_HEAD_CLUSTERS + PLACARD_TAIL_CLUSTERS`. Nothing the
-loader realistically emits comes near that (the longest, a 400-node
-parent-cycle report, is 56 wrapped lines), and the budget is what
-keeps the placard a map the loader itself accepts: unbounded, a
-4 MB message asks for a node twice as tall as `MAX_NODE_AXIS`.
+(`MindMapDocument::load_failure_placard`) whose text is the headline,
+the path or URL that was asked for — on a line of its own unless the
+message already names it (`document/placard.rs`) — and the loader's
+message. Because it is a document, it reaches the screen through the
+same projection as any other document (§1 "Everything is glyphs") —
+no second pipeline, no renderer pass, and nothing that needs a GPU to
+test. It is bound to no file, so a reflexive save cannot overwrite
+the file that failed to load.
 
 `src/application/app/startup_load.rs` is the decision. Each init
 path has one entry — `native_startup_document` and
@@ -2055,24 +1978,14 @@ the camera instead, and the variant is gone rather than
 default-unbound, because a binding firing on the same event as
 the camera step would be a conflict rather than a choice.
 
-Two consequences of that deletion, both since closed (#160).
-**A touch-only user lost every resize, not only
-`FastResizeStart`**: the route this paragraph used to offer —
-long-press into `Resize`, then drag a handle — did not exist,
-because a one-finger drag is always the recognizer's `Pan` and
-moved the camera out from under the handle. Now a finger that
-starts a gesture on a handle in `Resize` mode is the left button
-until it lifts (`app/touch_handle.rs`): it drives the press,
-cursor-move and release handlers a mouse drives, so the handle drag
-is the one that already exists, and it is never fed to the
-recognizer. Every other touch is unchanged, so one-finger pan and
-pinch keep their meaning everywhere off a handle. That makes
-`FastResizeStart` a mouse accelerator by design rather than by
-accident. Native-only, as the drag state is. **And an existing
-`keybinds.json` naming `"TwoFingerDrag"` was silently accepted and
-never matched**, because `KeyBind::parse` takes any non-modifier
-word; a retired name is now refused at parse time through the
-`RETIRED_NAMES` table, with a diagnostic saying what replaced it.
+The resize mode and its handle drag went with the old model, and
+V1-C7 (#248) brings them back as transactions — with them the route
+a finger takes onto a handle, which keeps `FastResizeStart` a mouse
+accelerator by design (#160). **An existing `keybinds.json` naming
+`"TwoFingerDrag"` was silently accepted and never matched**, because
+`KeyBind::parse` takes any non-modifier word; a retired name is now
+refused at parse time through the `RETIRED_NAMES` table, with a
+diagnostic saying what replaced it.
 
 ### `Renderer`
 
@@ -2284,10 +2197,10 @@ through `CommandTarget`, the app-side execution context. There is no
 parallel control path, so undo, gates and side effects match the
 keystroke each stands in for. The `query` family is the read half of
 the loop: `query.document`, `.selection`, `.camera`, `.mode`,
-`.status`, `.animations`, `.editors` and `.undo` return what a person
-reads off the chrome. They go through `observe()` and `&self`
-reads on `CommandTarget` (`document()`, `animation_pause()` and
-`shell_state()`), so a query cannot dirty the document, push undo or
+`.status`, `.editors` and `.undo` return what a person reads off
+the chrome. They go through `observe()` and `&self` reads on
+`CommandTarget` (`document()` and `shell_state()`), so a query cannot
+dirty the document, push undo or
 ask for a frame. Each wire form is an exhaustive-`match` projection beside the state it
 exposes (`document/ipc_state.rs`, `app/ipc_state.rs`), not a mirror
 struct, so a new `InteractionMode` or `DragState` variant breaks the
@@ -2306,7 +2219,7 @@ delivered to the same `on_*` entry points those events
 reach, so the drag state machines, double-click timing and modal
 steals cannot tell them apart. `input.drag` paces its samples one per
 frame through the injected-input queue (`ipc/injected.rs`), so the
-throttled drag drains between its moves as under a real hand;
+drag's frame runs between its moves as under a real hand;
 `input.click_node` is a move and a click at a node's center, and
 `input.pending` reports how many injected samples are still queued,
 so a client polls it to zero before reading what a drag did. The
@@ -2551,16 +2464,16 @@ Some(&DispatchHit { click_hit, canvas_pos }))`.
 `macro_bindings` runs the Action — the macro never gets a chance.
 To override a built-in Action with a macro, first unbind the
 Action's keybind (set `copy: []`) and then bind the macro. Same
-applies for built-in vs. custom-mutation collision.
+applies for a built-in vs. an edit binding.
 
 **Macro privilege model.** Macros are tagged by their loader tier
 (`SourceTier { App | User | Map | Inline }`); the dispatcher
 fail-closes on tier-restricted surfaces (`ConsoleLine` and
 destructive / I/O `Action` variants). Authoritative threat model
 + surface enumeration + tier-by-tier permissions:
-[`format/macros.md`](./format/macros.md). The `#[non_exhaustive]`
-gate on `DocumentAction` ensures any new I/O variant must add a
-matching dispatcher carve-out.
+[`format/macros.md`](./format/macros.md). An effect a map can
+carry that does I/O is gated at every site that applies it
+(CODE_CONVENTIONS §3).
 
 **Dispatch status per gesture.** `DoubleClick`, `MiddleClick`,
 `LeftDrag`, `WheelUp`, `WheelDown` are dispatched through
@@ -2711,10 +2624,11 @@ Four things the shape is load-bearing for:
   the shape that reads `w=`. `section move`'s two forms differ
   only in their *keys*, so an empty positional list admits
   both equally; deciding between them would mean letting
-  whichever key was typed first pick the form. That exclusion
-  stays a handwritten guard in `execute_move`, with a message
-  naming both shapes — one of the two bespoke semantics #27's
-  fix plan names as staying behind the table.
+  whichever key was typed first pick the form. That exclusion is
+  the verb's own, a handwritten guard with a message naming both
+  shapes — one of the two bespoke semantics #27's fix plan names as
+  staying behind the table — which returns with the verb's body
+  (V1-C5, #246).
 - **No verb sees a raw token index.** `spec::descent` is the
   only reader of token order. A handler asks
   `descent.subverb()`, `descent.parent_name(0)` and
@@ -2936,19 +2850,8 @@ repetition, so there is no second order to disagree with.
 Three skips are possible at resolve time and all three are
 logged, never panicked: an unparseable combo, the wrong number
 of args, and an arg that is not a valid value for its field.
-The dispatch arms call `pub(crate)` mutation cores extracted
-from each console verb, so the same setter path runs whether
-the user types the verb or fires the bound key — including
-`CycleFrameContent` / `ToggleFrameVisible` (cores in
-`console/commands/border/execute.rs`) and the font-size slots
-(one selection dispatcher in `console/commands/font.rs`).
-Section-targeted Action variants resolve their `(node_id,
-section_idx)` through the shared cascade in
-`console/commands/section/target.rs`, whose
-`SectionTargetPolicy` names the two places the Action path
-legitimately differs from the verb path (no document to count
-sections, so no single-section auto-resolve; a genuine
-multi-section selection is rejected rather than collapsed). Filesystem
+The editing Actions among them answer `unhandled` until their
+owners rebuild them on the writer (`app::dispatch::families`). Filesystem
 variants (`OpenDocument`, `SaveDocumentAs`, `NewDocumentAt`) are
 `NativeOnly` and denylisted from non-User macro tiers per the
 privilege gate.

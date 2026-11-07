@@ -286,8 +286,8 @@ pub fn do_document_resolve_built_in_by_flow() {
             assert_ne!(a, b);
         }
     }
-    // A portal label reads like its marker, 1:1 (today's
-    // `resolve_portal_endpoint_text_style`), and like no path label.
+    // A portal label reads like its marker, 1:1, and like no path
+    // label.
     assert_eq!(BUILT_IN.label.on_portal_end, BUILT_IN.portal_end.text);
     assert_ne!(BUILT_IN.label.on_portal_end, BUILT_IN.label.on_link);
     assert_eq!(BUILT_IN.label.on_portal_end.size, FontSize::Pt(50.0));

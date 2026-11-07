@@ -194,10 +194,9 @@ On a predicate, two element-level fields select these elements:
 matches only a run.
 
 A run mutation that reaches an element of another kind changes
-nothing and is logged, in every build. A scope such as
-`SelfAndDescendants` sends one list to elements of every kind, so
-`{"RunOpacity": 0.5}` meets areas, models and voids and leaves them as
-they were.
+nothing and is logged, in every build: one list sent to elements of
+every kind — `{"RunOpacity": 0.5}` under a `RepeatWhileAlwaysTrue` —
+meets areas, models and voids and leaves them as they were.
 
 ## `mutator` — the MutatorNode AST
 
@@ -260,9 +259,7 @@ Five variants:
   mutations applied to the matched target. `mutations` is
   `{ "Literal": [...] }` for baked-in values or
   `{ "Runtime": "<label>" }` for runtime-supplied values. `children`
-  default to empty; used by the `SelfAndDescendants` scope topology
-  (a Macro on the anchor whose child is an `Instruction` walking
-  descendants).
+  default to empty.
 - **`Instruction { kind, channel, instruction, children }`** — control
   flow wrapping inner children. Instructions:
   - `RepeatWhileAlwaysTrue` — apply children to every descendant of
@@ -273,58 +270,7 @@ Five variants:
     its subtree, before the predicate is asked.
     Note the predicate genuinely filters: a `RepeatWhile` whose
     predicate is the bare `{ "fields": [] }` shape (no fields,
-    `always_match` absent/false) matches **nothing**. Today's
-    flat-apply path has no predicate evaluator, so it declines any
-    `RepeatWhile` that isn't `always_match` and warns instead of
-    applying — the alternative would be landing the payload on the
-    whole scope set, the inverse of what the AST says.
-    Extraction is **all-or-nothing**: one such `RepeatWhile`
-    *anywhere* in the AST declines the whole mutator, nested just as
-    much as at the root. Honoring a root while dropping a nested
-    branch would be the worse failure of the two — the root's payload
-    would blanket every target, the nested payload would land
-    nowhere, and nothing would warn.
-
-    The same argument decides shapes with **no** unevaluatable node
-    in them. `Macro{[L1], children: [Macro{[L2]}]}` is extractable
-    top to bottom and still declines, because one flat list cannot be
-    both `L1` and `L2` — picking `L1` lands `L2` nowhere, which is the
-    identical failure by a different road. So the rule is: every
-    payload anywhere in the AST must **agree with** the one
-    extracted. `scope::self_and_descendants` satisfies it exactly
-    (its root and nested `Macro` carry two clones of the same list);
-    nesting *differing* payloads is declined, not merged.
-    Concatenating them instead would turn that helper into a
-    double-apply.
-
-    "Agree" is *would write the same thing*, which is deliberately
-    not `==` on the payload: the numeric fields are `f32`, so `==`
-    is not reflexive and a `NaN` would make the duplicated payload
-    of `scope::self_and_descendants` disagree with **itself** and
-    decline, while the same payload under `scope::self_only` — with
-    nothing to compare — applied. Two payloads agree when they are
-    `==` **or** structurally identical, so `NaN` agrees with itself
-    and `0.0` still agrees with `-0.0`. `NaN` does not agree with
-    `inf`.
-
-    Two corollaries of "every payload must agree":
-
-    - An `Instruction` wrapper carrying its own `mutation` — a
-      `Runtime` hole or a per-cell `Template` — is
-      declined. Both are payloads the flat path provably cannot
-      evaluate. The scope helpers all set `"mutation": "None"`.
-    - A `Void` **on channel 0** is transparent, since it carries no
-      mutation of its own: an empty one cannot lose anything and does
-      not decline, while one wrapping a disagreeing payload still
-      surfaces the disagreement. Off channel 0 it declines — a
-      `Void`'s channel is branch routing (the walker aligns its
-      children only against the target child on that channel), and
-      the flat path produces one list applied to whole elements with
-      nothing to route on. All the scope helpers build on channel 0.
-      `Single` declines in every form, including
-      `"mutation": "None"`: it is a leaf whose `channel` selects the
-      target it writes, so admitting it would widen the flat path
-      into precisely the routing it cannot honor.
+    `always_match` absent/false) matches **nothing**.
   - `SpatialDescend(<OrderedVec2>)` — find the smallest descendant
     whose own box holds the point (the first in pre-order on a tie)
     and deliver the instruction's attached mutation to it. Only for

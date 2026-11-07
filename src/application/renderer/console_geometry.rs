@@ -187,8 +187,8 @@ impl ConsoleFrameLayout {
 }
 
 /// Build the four border strings (top, bottom, left_column,
-/// right_column) for the console frame using the rounded
-/// `BorderGlyphSet` preset: `╭─...─╮`, `│` stacked, `╰─...─╯`.
+/// right_column) for the console frame in rounded box-drawing glyphs:
+/// `╭─...─╮`, `│` stacked, `╰─...─╯`.
 ///
 /// `cols` is the total width of the top/bottom rows in monospace
 /// character cells, including both corners — so `cols >= 2` is

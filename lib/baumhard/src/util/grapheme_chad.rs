@@ -833,8 +833,7 @@ pub fn truncate_to_byte_budget(s: &str, max_bytes: usize) -> (&str, bool) {
 /// Split `s` into its grapheme clusters, each owned as a `String`.
 ///
 /// Exists for the cluster-vector layouts that must outlive the source
-/// string — `SidePattern`'s parsed border sections are the caller
-/// this was lifted from. Prefer borrowing iteration (`take_graphemes`,
+/// string. Prefer borrowing iteration (`take_graphemes`,
 /// `find_byte_index_of_grapheme`) wherever the source stays alive:
 /// this shape is the expensive one.
 ///

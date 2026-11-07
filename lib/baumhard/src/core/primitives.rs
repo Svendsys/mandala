@@ -284,11 +284,10 @@ impl ColorFontRegions {
 
     /// Insert a region, replacing any existing region with the same
     /// key. An inverted range (`start > end`) is dropped with a
-    /// warning rather than panicking — `submit_region` is reachable
-    /// from interactive text-edit paths (the app-level `text_edit` (gone)
-    /// module's `Type` action, which V1-C8 rebuilds), and
-    /// CODE_CONVENTIONS.md §9 says those must not abort the editor over a
-    /// single bad mutation.
+    /// warning rather than panicking — `submit_region` is a text
+    /// editor's to call on every keystroke, and CODE_CONVENTIONS.md §9
+    /// says an interactive path must not abort the editor over a single
+    /// bad mutation.
     pub fn submit_region(&mut self, region: ColorFontRegion) {
         if region.range.start > region.range.end {
             warn!(
@@ -608,9 +607,8 @@ impl ColorFontRegions {
     ///   left by `magnitude` so the region sits flush against the
     ///   remaining-text boundary.
     ///
-    /// Used by the text-edit path's backspace / delete handlers (the
-    /// app-level `text_edit` (gone) module, which V1-C8 rebuilds) to keep per-run color and
-    /// `AppFont` pins intact across character deletion instead of
+    /// For a text editor's backspace and delete: it keeps per-run color
+    /// and `AppFont` pins intact across character deletion instead of
     /// rebuilding the region set from a heuristic.
     ///
     /// Costs: O(n) over existing regions; one collect + one extend.
@@ -994,22 +992,18 @@ pub enum Flag {
     /// emitted by the walker today.
     MutationEvents,
     /// Marks every element belonging to a *section* subtree — both
-    /// the section-area `GlyphArea` and the structural section-model
-    /// `GlyphModel` grandchild that sits beneath it (the old model's
-    /// `MindSection` (gone)). The flag is *not*
-    /// limited to the literal "root" of a section despite the
-    /// variant name; spreading it across both elements lets
-    /// arena-walking consumers (`apply_drag_delta` (gone),
-    /// `apply_tree_highlights` (gone)) recurse on a flag check without
-    /// re-deriving section identity per step. The container area
-    /// of a mindmap node and any child mind-node areas inside the
+    /// the section-area `GlyphArea` and the structural `GlyphModel`
+    /// grandchild that sits beneath it. The flag is *not* limited to
+    /// the literal "root" of a section despite the variant name;
+    /// spreading it across both elements lets an arena walk recurse on
+    /// a flag check without re-deriving section identity per step. A
+    /// node's container area and the areas of child nodes inside the
     /// same parent are *not* flagged.
     ///
     /// Click-routing, scene-builder iteration, and per-section
     /// style mutations filter on this flag. Flag-only — payload-
     /// free; the section's index inside its owning node lives on
-    /// the document side (the old `MindMapTree` (gone) reverse-lookup
-    /// tables), not on the flag itself.
+    /// the document side, not on the flag itself.
     SectionRoot,
 }
 

@@ -1015,7 +1015,7 @@ impl Renderer {
     /// update `self.fps` according to the active display mode.
     /// Wall-clock (rather than the duration of the `render()` call)
     /// is load-bearing: `render()` can early-return on a contended
-    /// font-system lock under heavy drag / scene-rebuild load, which
+    /// font-system lock under heavy drag / sync load, which
     /// would otherwise shrink the measured cost to a near-zero
     /// early-return and inflate the reported FPS into the hundreds of
     /// thousands.

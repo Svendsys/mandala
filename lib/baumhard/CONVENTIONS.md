@@ -308,8 +308,8 @@ access to it.
 - **A caller already holding the guard measures via a `*_with`
   variant, never a nested acquire.** Thread the live
   `&mut FontSystem` into the composable API — `metric_cache::glyph_*_with`,
-  `border_run_specs_with`, `measure_glyph_ink_bounds`,
-  `measure_text_block_unbounded` — so a cold key shapes through the
+  `measure_glyph_ink_bounds`, `measure_text_block_unbounded` — so a
+  cold key shapes through the
   guard the caller holds. A second acquire on the same thread is a
   guaranteed deadlock (issue P0-06). The lock-acquiring wrapper is for
   callers that hold no guard.
@@ -493,10 +493,10 @@ rationale.
 
   1. **The body cannot compile into the library.** `syn` is a
      dev-dependency, so a `pub` body in a `pub mod tests;` tree
-     cannot call it — the tree is part of the library. The whole
-     `shape_tests::log_routing` module is `cfg(test)`-gated for
-     that reason and its tests are plain by construction; the gate
-     does not even see them. The same holds for a body that reads a
+     cannot call it — the tree is part of the library. A module of
+     such tests is `cfg(test)`-gated for that reason and its tests are
+     plain by construction; the gate does not even see them. The same
+     holds for a body that reads a
      `cfg(test)` step counter, as `engine::tests::deep_tests`'
      counted-climb tests do.
   2. **The body drives a panic.** Criterion iterates what it is
