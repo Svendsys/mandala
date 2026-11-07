@@ -13,6 +13,9 @@
 //!                                           │ their journals
 //!                                           ▼
 //!                       LayerRenderer::apply(projector's ++ overlays')
+//!                                           │ LayerChanges
+//!                                           ▼
+//!                       chrome builders ──▶ LayerRenderer::apply_chrome
 //!                                           │
 //!                                           ▼ discard every journal
 //! ```
@@ -28,6 +31,14 @@
 //! calls none of this: the renderer applies the camera when it draws
 //! (§12.4).
 //!
+//! **Chrome that follows the document** registers a
+//! [`chrome::ChromeBuilder`] at load ([`MapView::load_with_chrome`]):
+//! the hook V1-C7's handles and V1-C8's caret register on, so neither
+//! edits this pass. A pass that changed the layers hands its
+//! `LayerChanges` to every builder before it discards them, and applies
+//! what they return to the chrome layer under one journal in the same
+//! pass ([module docs](chrome)).
+//!
 //! **One font lease per pass** (#241, B7's note): a load and a sync each
 //! hold one `FontSystemLease`, taken at the first font read and released
 //! when the pass ends, never across frames.
@@ -40,6 +51,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 mod band;
+pub(crate) mod chrome;
 pub(crate) mod inspect;
 pub(crate) mod overlay;
 #[cfg(test)]
@@ -49,11 +61,12 @@ use baumhard::arena::NodeId;
 use baumhard::document::resolve::resolve_background;
 use baumhard::document::writer::feed::ChangeRecord;
 use baumhard::engine::anchor::Anchors;
-use baumhard::engine::journal::JournalBuilder;
+use baumhard::engine::journal::{Journal, JournalBuilder};
 use baumhard::engine::tree::TreeError;
 #[cfg(not(target_arch = "wasm32"))]
 use baumhard::flow::Rect;
 use baumhard::font::fonts::FontSystemLease;
+use baumhard::gfx_structs::element::GfxElement;
 #[cfg(not(target_arch = "wasm32"))]
 use baumhard::gfx_structs::mutator::{GfxMutation, GfxMutator};
 use baumhard::gfx_structs::tree::{GfxMutatorTree, GfxTree};
@@ -65,6 +78,7 @@ use glam::Vec2;
 use crate::application::document::MindMapDocument;
 use crate::application::renderer::{LayerRenderer, Renderer};
 
+use self::chrome::{ChromeBuilder, PassChanges};
 use self::overlay::{Overlay, OverlayJournals, SELECTION_HIGHLIGHT};
 
 /// The view of one open map. See the [module docs](self).
@@ -76,9 +90,14 @@ pub(crate) struct MapView {
     /// The chrome layer (design §12.1): view-only glyphs built from app
     /// state rather than the document — the rubber band
     /// (`view::band`, native), and V1-C7's handles and V1-C8's section frames to
-    /// come. Drawn above the five layers; written only through
-    /// [`Self::apply_chrome`], whose journal the renderer applies.
+    /// come. Drawn above the five layers; written only under a journal
+    /// the renderer applies — [`Self::apply_chrome`]'s, or a sync
+    /// pass's for its chrome builders.
     chrome: GfxTree,
+    /// The chrome that follows the document ([`chrome::ChromeBuilder`]),
+    /// in the order they were registered at load: handed every sync
+    /// pass's `LayerChanges`.
+    chrome_builders: Vec<Box<dyn ChromeBuilder>>,
     /// The rubber band's four runs in [`Self::chrome`]. Native, with
     /// the rubber band.
     #[cfg(not(target_arch = "wasm32"))]
@@ -117,33 +136,50 @@ impl MapView {
     /// placed once, under one font lease; one walk of each layer by the
     /// renderer.
     pub(crate) fn load(doc: &mut MindMapDocument, renderer: &mut Renderer) -> MapView {
-        let (mut view, stamps) = Self::project(doc);
+        Self::load_with_chrome(doc, renderer, Vec::new())
+    }
+
+    /// [`Self::load`], with `builders` registered for the chrome that
+    /// follows the document ([`chrome::ChromeBuilder`]): each is planted
+    /// in the chrome layer before the renderer loads it, and from then on
+    /// handed every sync pass's changes. Cost: [`Self::load`]'s, and each
+    /// builder's planting.
+    pub(crate) fn load_with_chrome(
+        doc: &mut MindMapDocument,
+        renderer: &mut Renderer,
+        builders: Vec<Box<dyn ChromeBuilder>>,
+    ) -> MapView {
+        let (mut view, stamps) = Self::project(doc, builders);
         renderer.load_view(&view.layers, &view.chrome);
         renderer.set_background(resolve_background(doc.doc().tree(), &mut ()).0);
         stamps.discard(&mut view.layers);
         view
     }
 
-    /// The projection half of [`Self::load`]: the view of `doc`, its
-    /// highlight stamped, and the stamps' journals still to discard.
-    fn project(doc: &mut MindMapDocument) -> (MapView, OverlayJournals) {
+    /// The projection half of [`Self::load_with_chrome`]: the view of
+    /// `doc`, its chrome builders planted, its highlight stamped, and the
+    /// stamps' journals still to discard.
+    fn project(
+        doc: &mut MindMapDocument,
+        mut builders: Vec<Box<dyn ChromeBuilder>>,
+    ) -> (MapView, OverlayJournals) {
         doc.take_changes();
         let mut layers = GlyphLayers::new();
         let projector = {
             let mut fonts = FontSystemLease::new("view::load");
             Projector::project_full(doc.doc(), &mut layers, &mut fonts)
         };
-        #[cfg_attr(
-            target_arch = "wasm32",
-            expect(unused_mut, reason = "the band is planted on native only")
-        )]
         let mut chrome = chrome_layer();
         #[cfg(not(target_arch = "wasm32"))]
         let band = band::plant(&mut chrome);
+        for builder in &mut builders {
+            builder.plant(&mut chrome);
+        }
         let mut view = MapView {
             projector,
             layers,
             chrome,
+            chrome_builders: builders,
             #[cfg(not(target_arch = "wasm32"))]
             band,
             #[cfg(not(target_arch = "wasm32"))]
@@ -176,9 +212,15 @@ impl MapView {
     /// line when it changes — the one place every family's refusal is
     /// drawn, on both targets.
     ///
+    /// When the layers changed, the chrome builders are handed the
+    /// changes ([`chrome::PassChanges`]) and what they return is applied
+    /// to the chrome, and by the renderer, before the pass discards its
+    /// journals.
+    ///
     /// Cost: the projector's update (proportional to the changes and their
-    /// readers), the overlay's re-stamp (the runs named), the renderer's
-    /// apply (the elements the journals name); O(1) for the status line.
+    /// readers), the overlay's re-stamp (the runs named), each chrome
+    /// builder's reading of the changes, the renderer's apply (the
+    /// elements the journals name); O(1) for the status line.
     pub(crate) fn sync(&mut self, doc: &mut MindMapDocument, renderer: &mut Renderer) -> bool {
         let status_changed = self.show_status(doc, renderer);
         let Some(pass) = self.advance(doc) else {
@@ -190,11 +232,67 @@ impl MapView {
             .into_iter()
             .flat_map(LayerRenderer::journals_of);
         renderer.apply_layer_journals(&self.layers, projected.chain(pass.stamps.journals()));
-        if pass.changes.is_some() {
+        if let Some(changes) = &pass.changes {
             renderer.set_background(resolve_background(doc.doc().tree(), &mut ()).0);
+            if let Some(journal) = self.follow_chrome(changes, doc) {
+                renderer.apply_chrome_journal(&self.chrome, &journal);
+                journal.discard(&mut self.chrome);
+            }
         }
         self.finish(pass);
         true
+    }
+
+    /// Hand a pass's `changes` to every chrome builder and apply what
+    /// they return to the chrome layer, under one journal: the chrome
+    /// half of a sync pass. `None` when no builder asked for anything,
+    /// or when a mutator was refused — which reverts everything the
+    /// builders applied in this pass, and is logged.
+    ///
+    /// Cost: each builder's reading of `changes`; the walks the
+    /// mutators make.
+    fn follow_chrome(
+        &mut self,
+        changes: &LayerChanges,
+        doc: &MindMapDocument,
+    ) -> Option<Journal<GfxElement>> {
+        if self.chrome_builders.is_empty() {
+            return None;
+        }
+        let pass = PassChanges {
+            changes,
+            doc: doc.doc(),
+            projector: &self.projector,
+        };
+        let mutators: Vec<(GfxMutatorTree, Anchors)> = self
+            .chrome_builders
+            .iter_mut()
+            .flat_map(|builder| builder.follow(&pass))
+            .collect();
+        if mutators.is_empty() {
+            return None;
+        }
+        match self.journal_chrome(&mutators) {
+            Ok(journal) => Some(journal),
+            Err(error) => {
+                log::warn!("view: a chrome builder's mutator was refused: {error}");
+                None
+            }
+        }
+    }
+
+    /// Apply `mutators` to the chrome layer under one journal and close
+    /// it: the one way the chrome is written. A refusal reverts
+    /// everything applied before it and is returned.
+    fn journal_chrome(
+        &mut self,
+        mutators: &[(GfxMutatorTree, Anchors)],
+    ) -> Result<Journal<GfxElement>, TreeError> {
+        let mut journal = JournalBuilder::new();
+        for (mutator, anchors) in mutators {
+            mutator.apply_at_journaled(&mut self.chrome, anchors, |_, _| (), &mut journal)?;
+        }
+        Ok(journal.close(&self.chrome))
     }
 
     /// Hand the document's status line to the renderer when it is not the
@@ -250,8 +348,18 @@ impl MapView {
     /// read what the pipeline wrote ([`Self::sync_for_test`]).
     #[cfg(test)]
     pub(crate) fn for_test(doc: &MindMapDocument) -> MapView {
+        Self::for_test_with_chrome(doc, Vec::new())
+    }
+
+    /// [`Self::for_test`], with `builders` registered as
+    /// [`Self::load_with_chrome`] registers them.
+    #[cfg(test)]
+    pub(crate) fn for_test_with_chrome(
+        doc: &MindMapDocument,
+        builders: Vec<Box<dyn ChromeBuilder>>,
+    ) -> MapView {
         let mut doc = MindMapDocument::new(doc.doc().clone(), None, doc.history_limit());
-        let (mut view, stamps) = Self::project(&mut doc);
+        let (mut view, stamps) = Self::project(&mut doc, builders);
         stamps.discard(&mut view.layers);
         view
     }
@@ -271,8 +379,23 @@ impl MapView {
             .journals()
             .flat_map(|(layer, journal)| journal.touched().map(move |(id, _)| (layer, id)))
             .collect();
+        let chrome = match &pass.changes {
+            Some(changes) => match self.follow_chrome(changes, doc) {
+                Some(journal) => {
+                    let touched = journal.touched().map(|(id, _)| id).collect();
+                    journal.discard(&mut self.chrome);
+                    touched
+                }
+                None => Vec::new(),
+            },
+            None => Vec::new(),
+        };
         self.finish(pass);
-        Some(SyncReport { projected, stamped })
+        Some(SyncReport {
+            projected,
+            stamped,
+            chrome,
+        })
     }
 
     /// The change records synced since the event loop last cleared them
@@ -345,11 +468,7 @@ impl MapView {
         mutators: &[(GfxMutatorTree, Anchors)],
         renderer: &mut Renderer,
     ) -> Result<(), TreeError> {
-        let mut journal = JournalBuilder::new();
-        for (mutator, anchors) in mutators {
-            mutator.apply_at_journaled(&mut self.chrome, anchors, |_, _| (), &mut journal)?;
-        }
-        let journal = journal.close(&self.chrome);
+        let journal = self.journal_chrome(mutators)?;
         renderer.apply_chrome_journal(&self.chrome, &journal);
         journal.discard(&mut self.chrome);
         Ok(())
@@ -440,6 +559,8 @@ pub(crate) struct SyncReport {
     pub(crate) projected: usize,
     /// The glyphs the overlay stamped or cleared, by layer.
     pub(crate) stamped: Vec<(baumhard::projection::Layer, NodeId)>,
+    /// The chrome elements the chrome builders' journal touched.
+    pub(crate) chrome: Vec<NodeId>,
 }
 
 /// An empty chrome layer: a `Void` root, drawn after the five glyph

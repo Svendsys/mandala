@@ -790,17 +790,10 @@ impl Renderer {
     /// Bring the drawn chrome layer up to date after a glyph mutator was
     /// applied to it, from that change's journal
     /// ([`layers::LayerRenderer::apply_chrome`]): what
-    /// `view::MapView::apply_chrome` hands over before it discards the
-    /// journal.
+    /// `view::MapView::apply_chrome` or a sync pass's chrome builders
+    /// hand over before the journal is discarded.
     ///
     /// Cost: O(the elements the journal names).
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(
-            dead_code,
-            reason = "the chrome's one user so far, the rubber band, is native; V1-C7's and V1-C8's chrome is both targets'"
-        )
-    )]
     pub(crate) fn apply_chrome_journal(&mut self, chrome: &GfxTree, journal: &Journal<GfxElement>) {
         self.layer_renderer.apply_chrome(chrome, journal);
     }

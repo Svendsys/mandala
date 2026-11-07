@@ -76,8 +76,9 @@ pub(super) fn runs_for(rect: Option<Rect>) -> [GlyphRunData; 4] {
     ]
 }
 
-/// One box run of `text` at `origin`, in the band's style.
-fn run_of(text: &str, origin: Vec2, opacity: f32, fonts: &mut FontSystemLease) -> GlyphRunData {
+/// One box run of `text` at `origin`, in the band's style. The view's
+/// tests build the chrome hook's test builder's run with it too.
+pub(super) fn run_of(text: &str, origin: Vec2, opacity: f32, fonts: &mut FontSystemLease) -> GlyphRunData {
     let [r, g, b, _] = SELECTION_HIGHLIGHT.0;
     let style = ResolvedText {
         font: AppFont::Any,

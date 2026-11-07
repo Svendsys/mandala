@@ -101,13 +101,6 @@ pub(crate) struct LayerRenderer {
 }
 
 /// The scratch index of the chrome layer: after the five glyph layers'.
-#[cfg_attr(
-    target_arch = "wasm32",
-    expect(
-        dead_code,
-        reason = "the chrome's one user so far, the rubber band, is native; V1-C7's and V1-C8's chrome is both targets'"
-    )
-)]
 const CHROME: usize = 5;
 
 /// [`LayerRenderer::apply`]'s working space.
@@ -245,13 +238,6 @@ impl LayerRenderer {
     /// looked at.
     ///
     /// Cost: O(the elements the journal names).
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(
-            dead_code,
-            reason = "the chrome's one user so far, the rubber band, is native; V1-C7's and V1-C8's chrome is both targets'"
-        )
-    )]
     pub(crate) fn apply_chrome(&mut self, chrome: &GfxTree, journal: &Journal<GfxElement>) {
         #[cfg(test)]
         {

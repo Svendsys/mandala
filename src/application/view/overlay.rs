@@ -215,7 +215,7 @@ fn write(
 /// connector, a link or a node. `None` for a group, and for a glyph the
 /// projector names no element for. O(the depth to the owner, at most
 /// three).
-fn owner_of(doc: &Document, projector: &Projector, layer: Layer, glyph: NodeId) -> Option<NodeId> {
+pub(super) fn owner_of(doc: &Document, projector: &Projector, layer: Layer, glyph: NodeId) -> Option<NodeId> {
     let mut at = projector.element_of(layer, glyph)?;
     // A node draws nothing of its own, only groups: a glyph whose element
     // is a node is its group, and only runs are stamped.

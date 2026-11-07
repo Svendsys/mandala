@@ -230,3 +230,128 @@ fn test_undo_and_redo_reach_the_layers() {
         "and drawn again"
     );
 }
+
+/// A chrome builder that follows one node, for the hook's test: one run,
+/// planted hidden at load, set visible each time a pass writes a run
+/// the node owns. Where its run is and how often it was handed a pass
+/// are shared with the test.
+#[cfg(not(target_arch = "wasm32"))]
+struct Follower {
+    target: NodeId,
+    run: std::rc::Rc<std::cell::Cell<Option<NodeId>>>,
+    calls: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl super::chrome::ChromeBuilder for Follower {
+    fn plant(&mut self, chrome: &mut baumhard::gfx_structs::tree::GfxTree) {
+        let mut fonts = baumhard::font::fonts::FontSystemLease::new("view::tests (follower plant)");
+        let run = super::band::run_of("", glam::Vec2::ZERO, 0.0, &mut fonts);
+        let id = chrome
+            .insert_child(
+                chrome.root(),
+                baumhard::gfx_structs::element::GfxElement::new_run(
+                    run,
+                    baumhard::projection::RUN_CHANNEL,
+                    0,
+                ),
+                baumhard::engine::tree::Placement::Last,
+            )
+            .expect("the chrome's root takes a child");
+        self.run.set(Some(id));
+    }
+
+    fn follow(
+        &mut self,
+        pass: &super::chrome::PassChanges<'_>,
+    ) -> Vec<(
+        baumhard::gfx_structs::tree::GfxMutatorTree,
+        baumhard::engine::anchor::Anchors,
+    )> {
+        use baumhard::gfx_structs::mutator::{GfxMutation, GfxMutator};
+        self.calls.set(self.calls.get() + 1);
+        if !pass.touches(self.target) {
+            return Vec::new();
+        }
+        let mut fonts = baumhard::font::fonts::FontSystemLease::new("view::tests (follower)");
+        let run = super::band::run_of("\u{25A1}", glam::Vec2::ZERO, 1.0, &mut fonts);
+        vec![(
+            baumhard::gfx_structs::tree::GfxMutatorTree::new_with(GfxMutator::new(
+                GfxMutation::RunSet(Box::new(run)),
+                baumhard::projection::RUN_CHANNEL,
+            )),
+            baumhard::engine::anchor::Anchors::Nodes(vec![self.run.get().expect("planted at load")]),
+        )]
+    }
+}
+
+/// **A chrome builder is handed every pass's `LayerChanges`, before the
+/// pass discards them, and its chrome is written in the same pass**
+/// (`view::chrome`, the hook V1-C7's handles and V1-C8's caret register
+/// on). A builder that follows node `a` re-stamps its run when an edit
+/// writes `a`'s runs, and the pass's chrome journal names that run and
+/// nothing else.
+///
+/// Controls: a frame with no document change — what a pan or a zoom is
+/// to the view, which applies the camera when it draws — runs no pass
+/// and reaches no builder; a selection alone changes no layer and
+/// reaches no builder either; an edit to another node is handed to the
+/// builder, which finds `a` untouched and re-stamps nothing.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_a_chrome_builder_follows_the_layer_changes_that_touch_its_target() {
+    let mut doc = testament();
+    let (a, b) = two_drawn_roots(&doc, &MapView::for_test(&doc));
+    let run = std::rc::Rc::new(std::cell::Cell::new(None));
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let follower = Follower {
+        target: a,
+        run: run.clone(),
+        calls: calls.clone(),
+    };
+    let mut view = MapView::for_test_with_chrome(&doc, vec![Box::new(follower)]);
+    let planted = run.get().expect("the builder is planted at load");
+    let opacity = |view: &MapView| {
+        view.chrome()
+            .get(planted)
+            .and_then(|node| node.get().glyph_run().map(|run| run.opacity()))
+            .expect("the planted run is in the chrome")
+    };
+    assert_eq!(opacity(&view), 0.0, "planted hidden");
+
+    assert!(
+        view.sync_for_test(&mut doc).is_none(),
+        "control: with no document change there is no pass"
+    );
+    assert_eq!(calls.get(), 0, "control: a pan reaches no builder");
+
+    doc.selection.select_only(a);
+    let selected = view.sync_for_test(&mut doc).expect("the selection changed");
+    assert_eq!(selected.projected, 0, "a selection is not a document change");
+    assert_eq!(calls.get(), 0, "control: a selection alone reaches no builder");
+    assert!(selected.chrome.is_empty());
+
+    type_into(&mut doc, b);
+    let elsewhere = view.sync_for_test(&mut doc).expect("an edit");
+    assert!(elsewhere.projected > 0, "the edit wrote b's runs");
+    assert_eq!(
+        calls.get(),
+        1,
+        "a pass that changed the layers reaches the builder"
+    );
+    assert!(
+        elsewhere.chrome.is_empty(),
+        "control: an edit to another node re-stamps nothing"
+    );
+    assert_eq!(opacity(&view), 0.0, "control: the run is as planted");
+
+    type_into(&mut doc, a);
+    let on_target = view.sync_for_test(&mut doc).expect("an edit");
+    assert_eq!(calls.get(), 2);
+    assert_eq!(
+        on_target.chrome,
+        vec![planted],
+        "an edit to the target re-stamps its run, and only it, in the same pass"
+    );
+    assert_eq!(opacity(&view), 1.0, "the run was rewritten");
+}
