@@ -33,9 +33,11 @@ pub enum ProjectionInput {
     /// nothing.
     Size(NodeId),
     /// Which node a node hangs from, as projection state holds it: what
-    /// its connector is drawn from. Marked when the projector hangs it
-    /// somewhere (`reparent`, `create_subtree`), so a connector reads its own node's parent and
-    /// never the parent's whole children row (ruling B7.5 on #241, D15).
+    /// its connector is drawn from. Marked when the projector re-hangs a
+    /// kept node (`reparent`); a node it creates is read only by its own
+    /// connector, created and resolved with it. So a connector reads its
+    /// own node's parent and never the parent's whole children row
+    /// (ruling B7.5 on #241, D15).
     Parent(NodeId),
     /// Which ring is just inside a ring in its frame, as the projection
     /// holds its rings: the one ring whose extent its placement clears.

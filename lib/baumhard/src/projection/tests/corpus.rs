@@ -8,7 +8,7 @@
 use glam::Vec2;
 
 use crate::arena::NodeId;
-use crate::document::element::{DocElement, DocKind, PaletteGroup};
+use crate::document::element::{DocElement, DocKind, PaletteGroup, RingData, SpanData};
 use crate::document::ids::Document;
 use crate::document::mutation::compose;
 use crate::document::mutation::ops::{
@@ -24,6 +24,8 @@ use crate::document::writer::EditRequest;
 use crate::engine::anchor::Anchors;
 use crate::engine::key::BranchKey;
 use crate::engine::mutator::Mutator;
+use crate::engine::structure::{StructOp, Subtree};
+use crate::engine::tree::Placement;
 use crate::font::fonts::AppFont;
 use crate::projection::tests::maps::load_map;
 use crate::util::tests::choices::Choices;
@@ -312,6 +314,19 @@ fn single(kind: DocKind, mutation: DocMutation, anchors: Vec<NodeId>) -> EditReq
     EditRequest::new(
         vec![DocStep::fixed(DocWalk::new(mutator, Anchors::Nodes(anchors)))],
         "generated",
+    )
+}
+
+/// A request of the one structural `op` at `target`, a mutator of
+/// `kind`, named `name`.
+fn structure(op: StructOp<DocElement>, kind: DocKind, target: NodeId, name: &'static str) -> EditRequest {
+    let mutator = DocMutatorTree::new_with(Mutator::new_structure(op, BranchKey::new(kind, 0)));
+    EditRequest::new(
+        vec![DocStep::fixed(DocWalk::new(
+            mutator,
+            Anchors::Nodes(vec![target]),
+        ))],
+        name,
     )
 }
 
@@ -681,6 +696,38 @@ pub fn edit_named(
             let node = pick(c, doc, K::Node)?;
             EditRequest::new(compose::add_section(doc, node, None).ok()?, name)
         }
+        // A ring inserted just inside another of its frame, on that
+        // ring's channel: the ring it lands inside of clears it, and
+        // every ring outside moves out.
+        "structure::insert a ring" => {
+            let outer = pick(c, doc, K::Ring)?;
+            let frame = doc.parent(outer)?;
+            let Some(DocElement::Ring(r)) = doc.get(outer) else {
+                return None;
+            };
+            let ring = Subtree {
+                root: DocElement::Ring(RingData {
+                    channel: r.channel,
+                    style: Default::default(),
+                }),
+                children: vec![Subtree::leaf(DocElement::Span(SpanData {
+                    text: words(c, 2),
+                    style: Default::default(),
+                    link: None,
+                }))],
+            };
+            structure(
+                StructOp::Insert {
+                    subtree: ring,
+                    at: Placement::Before(outer),
+                },
+                K::Frame,
+                frame,
+                name,
+            )
+        }
+        // A ring removed from its frame: the rings outside it move in.
+        "structure::remove a ring" => structure(StructOp::Remove, K::Ring, pick(c, doc, K::Ring)?, name),
         // Several steps on one element in one request, so one record
         // carries them all: a structural step and a field step, or a
         // geometry field and a field its resolution reads (the review of
@@ -786,8 +833,9 @@ fn layout_op(c: &mut Choices) -> LayoutOp {
 
 /// Every edit [`edit`] draws: each op of the vocabulary — a `Text` op
 /// named per owner, its seven text ops drawn within it — each
-/// composite builder, and requests of several steps on one element
-/// (`multi::`). `LinkOp::SetKind` is drawn as
+/// composite builder, a ring inserted inside another and a ring removed
+/// (`structure::`: no op or builder adds or takes one ring), and
+/// requests of several steps on one element (`multi::`). `LinkOp::SetKind` is drawn as
 /// `compose::set_link_kind`, the one shape the validator lets it take.
 pub const EDITS: &[&str] = &[
     "Map::SetName",
@@ -864,6 +912,8 @@ pub const EDITS: &[&str] = &[
     "compose::delete_text",
     "compose::split_section",
     "compose::add_section",
+    "structure::insert a ring",
+    "structure::remove a ring",
     "multi::reparent and restyle",
     "multi::move and resize",
     "multi::nudge, align and restyle a section",

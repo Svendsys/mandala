@@ -187,9 +187,9 @@ impl Projector {
             self.queue(work, Dependent::new(id, Stage::Carry));
             self.queue(work, Dependent::new(id, Stage::Geometry));
             // Whatever waited for it to be drawn — a link into it — now
-            // draws, and what reads where it hangs reads it again.
+            // draws. Where it hangs is read only by its own connector,
+            // which is created below and resolved fresh.
             self.mark(work, ProjectionInput::Visibility(id));
-            self.mark(work, ProjectionInput::Parent(id));
             let units: Vec<NodeId> = units_in_order(tree, id).collect();
             for unit in units {
                 self.create_unit(tree, unit, id, work);
