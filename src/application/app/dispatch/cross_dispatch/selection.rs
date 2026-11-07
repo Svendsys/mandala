@@ -136,3 +136,99 @@ pub(in crate::application::app) fn apply_selection_move(
     }
     changed
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::document::tests_common::testament;
+
+    /// The tree read the slow way, as an oracle: a node's parent is the
+    /// node whose children include it.
+    fn oracle_parent(doc: &MindMapDocument, node: NodeId) -> Option<NodeId> {
+        every_node(doc.doc()).find(|&candidate| doc.doc().children(candidate).any(|child| child == node))
+    }
+
+    /// A node's row: every node, in pre-order, that shares its parent.
+    fn oracle_row(doc: &MindMapDocument, node: NodeId) -> Vec<NodeId> {
+        let parent = doc.doc().parent(node);
+        every_node(doc.doc())
+            .filter(|&other| doc.doc().parent(other) == parent)
+            .collect()
+    }
+
+    /// **The keyboard's moves follow the document's tree**, checked
+    /// over every node of the testament map against the tree read the
+    /// slow way: `SelectParent` selects the node it hangs from,
+    /// `SelectChild` its first child in sibling order, and the sibling
+    /// moves the next and previous node of its row, wrapping.
+    ///
+    /// Controls: a top-level node has no parent and a leaf no child, and
+    /// a move that has nowhere to go reports no change and leaves the
+    /// selection where it was; the map has both, and nodes with each
+    /// move, so no branch of the check is vacuous.
+    #[test]
+    fn test_the_keyboard_moves_follow_the_document_tree() {
+        let mut doc = testament();
+        let nodes: Vec<NodeId> = every_node(doc.doc()).collect();
+        let (mut parents, mut children, mut rows, mut top_level, mut leaves) = (0, 0, 0, 0, 0);
+        for &node in &nodes {
+            doc.selection.select_only(node);
+            let parent = oracle_parent(&doc, node);
+            assert_eq!(select_parent_in(&mut doc), parent.is_some(), "parent of {node:?}");
+            match parent {
+                Some(parent) => {
+                    parents += 1;
+                    assert_eq!(doc.selection.first(), Some(parent), "parent of {node:?}");
+                }
+                None => {
+                    top_level += 1;
+                    assert_eq!(
+                        doc.selection.first(),
+                        Some(node),
+                        "a top-level node stays selected"
+                    );
+                }
+            }
+
+            doc.selection.select_only(node);
+            let child = every_node(doc.doc()).find(|&other| doc.doc().parent(other) == Some(node));
+            assert_eq!(select_child_in(&mut doc), child.is_some(), "child of {node:?}");
+            match child {
+                Some(child) => {
+                    children += 1;
+                    assert_eq!(doc.selection.first(), Some(child), "first child of {node:?}");
+                }
+                None => {
+                    leaves += 1;
+                    assert_eq!(doc.selection.first(), Some(node), "a leaf stays selected");
+                }
+            }
+
+            let row = oracle_row(&doc, node);
+            let at = row
+                .iter()
+                .position(|&n| n == node)
+                .expect("a node is in its own row");
+            for (forward, expected) in [
+                (true, row[(at + 1) % row.len()]),
+                (false, row[(at + row.len() - 1) % row.len()]),
+            ] {
+                doc.selection.select_only(node);
+                let moved = select_sibling_in(&mut doc, forward);
+                if row.len() < 2 {
+                    assert!(!moved, "an only child has no sibling");
+                    assert_eq!(doc.selection.first(), Some(node));
+                } else {
+                    rows += 1;
+                    assert!(moved, "sibling of {node:?}");
+                    assert_eq!(doc.selection.first(), Some(expected), "sibling of {node:?}");
+                }
+            }
+        }
+        assert!(
+            parents > 0 && children > 0 && rows > 0 && top_level > 0 && leaves > 0,
+            "control: every branch was exercised (parents {parents}, children {children}, \
+             sibling moves {rows}, top-level {top_level}, leaves {leaves})"
+        );
+    }
+}
