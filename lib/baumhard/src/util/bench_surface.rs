@@ -465,6 +465,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_frames_secondary_rule_keeps_only_what_holds_what_it_held",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
             "test_flow_halves_a_box_with_no_ink_touches_nothing",
             CannotCompileIntoTheLibrary,
         ),

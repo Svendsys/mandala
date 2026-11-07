@@ -1434,6 +1434,78 @@ fn test_flow_halves_a_line_brought_home_makes_no_touch_its_lines_did_not() {
     );
 }
 
+/// Review 5811563882 (#309, ruling B16.1d): a frame's secondary rule keeps
+/// lines it brings home only where they hold what the frame held — each
+/// break, the offset its inks want, and no touch its lines did not make —
+/// held at the one body that decides it for `Layout::reach_ends`
+/// (`holds_what_it_held`), not only at the touch check it asks. On the
+/// two lines' boxes of
+/// `test_flow_halves_a_line_brought_home_makes_no_touch_its_lines_did_not`:
+/// in a frame whose lines touched already a touch kept is kept, and a new
+/// touch beside the old one refused; in a frame whose lines did not touch,
+/// any touch refused and lines apart kept; a break lost, or the offset
+/// past its tolerance, refused; and the offset, which costs the frame a
+/// weighing, read only once the breaks hold.
+///
+/// Controls (run, not committed): the overlapping frame's touch check in
+/// `holds_what_it_held` replaced by `true` — the waiver review 5810838863
+/// found, at the rule's acceptance, where all 232 `flow::` tests stayed
+/// green with it — red on "a touch its lines did not make"; the breaks'
+/// check dropped, red on "a break lost"; the offset read first, red on
+/// "the offset read".
+#[test]
+fn test_flow_halves_a_frames_secondary_rule_keeps_only_what_holds_what_it_held() {
+    use crate::flow::place::halves::holds_what_it_held_seam;
+    let ink = |x0: f32, x1: f32| (Vec2::new(x0, 0.0), Vec2::new(x1, 10.0));
+    let first = vec![ink(0.0, 5.0), ink(10.0, 15.0), ink(20.0, 25.0)];
+    let before = vec![first.clone(), vec![ink(4.0, 8.0)]];
+    let wider = vec![first.clone(), vec![ink(4.0, 11.0)]];
+    let apart = vec![first.clone(), vec![ink(6.0, 8.0)]];
+    let breaks = ([true, false], [true, false]);
+    let holds = |breaks, off: f32, (before, after): (&[_], &[_]), overlap| {
+        holds_what_it_held_seam(breaks, || off, 1.0, before, after, overlap)
+    };
+    assert!(
+        holds(breaks, 0.5, (&before, &before), true),
+        "precondition: lines that touched already, as they were, hold what they held"
+    );
+    assert!(
+        !holds(breaks, 0.5, (&before, &wider), true),
+        "lines that touched already kept with a touch its lines did not make"
+    );
+    assert!(
+        !holds(breaks, 0.5, (&apart, &before), false),
+        "lines that did not touch kept with a touch"
+    );
+    assert!(
+        holds(breaks, 0.5, (&apart, &apart), false),
+        "lines that did not touch, apart still, refused"
+    );
+    assert!(
+        holds(([false, false], [false, true]), 0.5, (&apart, &apart), false),
+        "a junction that was no break may be one: refused"
+    );
+    assert!(
+        !holds(([true, true], [true, false]), 0.5, (&apart, &apart), false),
+        "lines kept with a break lost"
+    );
+    assert!(
+        !holds_what_it_held_seam(
+            ([true, true], [false, true]),
+            || panic!("the offset read where a break was lost"),
+            1.0,
+            &apart,
+            &apart,
+            false,
+        ),
+        "lines kept with a break lost, the offset unread"
+    );
+    assert!(
+        !holds(breaks, 1.5, (&apart, &apart), false),
+        "lines kept with the offset their inks want past its tolerance"
+    );
+}
+
 #[test]
 fn test_flow_halves_hold_on_every_aspect() {
     the_sweep();
