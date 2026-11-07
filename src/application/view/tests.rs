@@ -10,7 +10,12 @@ use std::collections::BTreeSet;
 use baumhard::arena::NodeId;
 use baumhard::document::element::DocKind;
 use baumhard::document::mutation::compose;
+use baumhard::document::mutation::ops::{DocMutation, DocMutatorTree, NodeOp};
+use baumhard::document::mutation::step::{DocStep, DocWalk};
 use baumhard::document::writer::EditRequest;
+use baumhard::engine::anchor::Anchors;
+use baumhard::engine::key::BranchKey;
+use baumhard::engine::mutator::Mutator;
 
 use super::inspect::{children_of_kind, element_bounds, runs_of};
 use super::MapView;
@@ -354,4 +359,80 @@ fn test_a_chrome_builder_follows_the_layer_changes_that_touch_its_target() {
         "an edit to the target re-stamps its run, and only it, in the same pass"
     );
     assert_eq!(opacity(&view), 1.0, "the run was rewritten");
+
+    // A removal is a write: a node folded away, hidden or deleted stops
+    // drawing, and its follower must hear of it. `c` is a drawn node
+    // whose parent `p` is drawn too, so folding `p` takes `c` away.
+    let (p, c) = every_node(doc.doc())
+        .filter(|&c| !runs(&view, &doc, c).is_empty())
+        .find_map(|c| {
+            let p = doc.doc().parent(c)?;
+            (doc.doc().get(p).map(|e| e.kind()) == Some(DocKind::Node) && !runs(&view, &doc, p).is_empty())
+                .then_some((p, c))
+        })
+        .expect("the testament map has a drawn node under a drawn node");
+    let run = std::rc::Rc::new(std::cell::Cell::new(None));
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+    let mut view = MapView::for_test_with_chrome(
+        &doc,
+        vec![Box::new(Follower {
+            target: c,
+            run: run.clone(),
+            calls: calls.clone(),
+        })],
+    );
+    let planted = run.get().expect("planted at load");
+    let node_op = |doc: &mut MindMapDocument, node: NodeId, op: NodeOp| {
+        let mutator = DocMutatorTree::new_with(Mutator::new(
+            DocMutation::Node(op),
+            BranchKey::new(DocKind::Node, 0),
+        ));
+        doc.apply_for_test(EditRequest::new(
+            vec![DocStep::fixed(DocWalk::new(mutator, Anchors::Nodes(vec![node])))],
+            "view::tests (removal)",
+        ))
+        .expect("applies");
+    };
+
+    node_op(&mut doc, p, NodeOp::SetFolded(true));
+    let folded = view.sync_for_test(&mut doc).expect("the fold is synced");
+    assert!(
+        runs(&view, &doc, c).is_empty(),
+        "precondition: folding p takes c away"
+    );
+    assert_eq!(
+        folded.chrome,
+        vec![planted],
+        "a node folded away touches its follower"
+    );
+    node_op(&mut doc, p, NodeOp::SetFolded(false));
+    view.sync_for_test(&mut doc).expect("the unfold is synced");
+    assert!(
+        !runs(&view, &doc, c).is_empty(),
+        "precondition: unfolding p draws c again"
+    );
+
+    node_op(&mut doc, c, NodeOp::SetHidden(true));
+    let hidden = view.sync_for_test(&mut doc).expect("the hide is synced");
+    assert!(runs(&view, &doc, c).is_empty(), "precondition: c is hidden");
+    assert_eq!(hidden.chrome, vec![planted], "a hidden node touches its follower");
+    node_op(&mut doc, c, NodeOp::SetHidden(false));
+    view.sync_for_test(&mut doc).expect("the unhide is synced");
+
+    let steps = compose::delete(doc.doc(), &[c]).expect("composes");
+    doc.apply_for_test(EditRequest {
+        steps,
+        label: "delete".into(),
+    })
+    .expect("applies");
+    let deleted = view.sync_for_test(&mut doc).expect("the delete is synced");
+    assert!(
+        !every_node(doc.doc()).any(|n| n == c) && runs(&view, &doc, c).is_empty(),
+        "precondition: c is gone from the document and draws nothing"
+    );
+    assert_eq!(
+        deleted.chrome,
+        vec![planted],
+        "a deleted node touches its follower"
+    );
 }

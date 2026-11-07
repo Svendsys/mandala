@@ -20,6 +20,7 @@
 use baumhard::arena::NodeId;
 use baumhard::document::ids::Document;
 use baumhard::engine::anchor::Anchors;
+use baumhard::engine::journal::Touch;
 use baumhard::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 use baumhard::projection::{Layer, LayerChanges, Projector};
 
@@ -53,12 +54,16 @@ pub(crate) struct PassChanges<'a> {
 impl PassChanges<'_> {
     /// Whether the pass wrote a run `element` owns — a node's, through
     /// its sections, frames and labels, or a connector's or a link's —
-    /// in any layer: the question a handle or a caret asks of its
-    /// target. An element the run's owner merely descends from is not
+    /// in any layer, a removal included: the question a handle or a
+    /// caret asks of its target. A node deleted, hidden or folded away
+    /// is touched by the removal of what it drew, which is read from the
+    /// owner the projector recorded when it wrote the removal
+    /// ([`LayerChanges::removed_owner`]), since by now it has forgotten
+    /// the glyph. An element the run's owner merely descends from is not
     /// touched by it.
     ///
-    /// Cost: O(the runs the pass wrote × the depth to each one's owner,
-    /// at most three); no walk of a layer or of the document.
+    /// Cost: O(the elements the pass wrote × the depth to each one's
+    /// owner, at most three); no walk of a layer or of the document.
     #[cfg_attr(
         not(test),
         expect(
@@ -68,10 +73,13 @@ impl PassChanges<'_> {
     )]
     pub(crate) fn touches(&self, element: NodeId) -> bool {
         Layer::ALL.into_iter().any(|layer| {
-            self.changes
-                .journal(layer)
-                .touched()
-                .any(|(glyph, _)| owner_of(self.doc, self.projector, layer, glyph) == Some(element))
+            self.changes.journal(layer).touched().any(|(glyph, touch)| {
+                let owner = match touch {
+                    Touch::Removed => self.changes.removed_owner(layer, glyph),
+                    _ => owner_of(self.doc, self.projector, layer, glyph),
+                };
+                owner == Some(element)
+            })
         })
     }
 }
