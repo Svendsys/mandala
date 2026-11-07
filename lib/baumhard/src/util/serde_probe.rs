@@ -23,10 +23,9 @@
 //! spelling resolved, `rename_all` applied, the identifier used only
 //! where nothing overrode it. An enum's impl names its variants the
 //! same way. A `Vec` field asks for [`Deserializer::deserialize_seq`]
-//! whatever it is spelled or aliased as, and a tuple asks for
-//! [`Deserializer::deserialize_tuple`], which is the distinction
-//! between "an index an edit can move" and "a position the format
-//! fixes".
+//! whatever it is spelled or aliased as, and a tuple for
+//! [`Deserializer::deserialize_tuple`]; the probe walks into both for
+//! the types inside them.
 //!
 //! [`derived_shape`] hands the derived impls a `Deserializer` that
 //! answers every request with the emptiest value that satisfies it and
@@ -65,8 +64,8 @@
 //! and `serde_coverage::tests::test_every_alias_reaches_both_published_surfaces`
 //! hold the two together. Its array half — which members hold growable
 //! arrays of key-bearing values — served the old model's unknown-key
-//! capture, deleted in V1-C3, and is kept only as far as the probe's own
-//! tests exercise it.
+//! capture and was deleted with it in V1-C3: a sequence is walked for
+//! what is inside it, and nothing about it is recorded.
 //!
 //! Test-only: nothing in a shipped build deserializes a model type
 //! from a probe. Unlike its counterpart it reads no files and pulls in
@@ -100,8 +99,9 @@ type Error = serde_json::Error;
 /// A recursion reaches bottom one of two ways, and the probe has to
 /// do both. Through an `Option`, a sequence or a map there is an
 /// emptier value to answer with, and [`Mode::Terminate`] answers it.
-/// Through a **required enum payload** there is not — `Repeat {
-/// template: Box<MutatorNode> }` has no empty form — so terminating
+/// Through a **required enum payload** there is not — a variant
+/// `Deeper(Box<Holder>)` whose `Holder` holds the enum again has no
+/// empty form — so terminating
 /// means picking a different variant, which is what
 /// [`terminating_variant`] does. What is left over is a type with no
 /// bottoming variant anywhere on the cycle; that one really cannot be
@@ -131,56 +131,15 @@ enum Mode {
     Terminate,
 }
 
-/// One growable array the derived impls asked for.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct DerivedSequence {
-    /// The JSON member the array sits under — a struct field's
-    /// serde name, or the variant name of an externally tagged
-    /// newtype variant, which is the member an array payload is
-    /// written under.
-    pub member: String,
-    /// `true` when an unrecognized key can be captured at or below an
-    /// element: somewhere inside one, serde asks for a struct or a
-    /// struct variant, which is the shape whose unclaimed members
-    /// reach `deserialize_ignored_any`.
-    pub key_bearing: bool,
-    /// Where the probe met it, as `Container.member`, for a failure
-    /// message a reader can act on.
-    pub site: String,
-}
-
 /// Everything one [`derived_shape`] sweep recorded.
 #[derive(Debug, Clone, Default)]
 pub struct DerivedShape {
     members: BTreeMap<String, BTreeSet<String>>,
     variants: BTreeMap<String, Vec<String>>,
-    sequences: BTreeMap<String, DerivedSequence>,
-    unnamed_sequences: BTreeSet<String>,
     opaque_sites: BTreeSet<String>,
 }
 
 impl DerivedShape {
-    /// Every JSON member name that holds a growable array whose
-    /// elements can carry named keys — the compiler's answer to the
-    /// question the old format's schema published.
-    ///
-    /// Cost: one pass over the recorded sequences; allocates the set.
-    pub fn key_bearing_sequences(&self) -> BTreeSet<String> {
-        self.sequences
-            .values()
-            .filter(|seq| seq.key_bearing)
-            .map(|seq| seq.member.clone())
-            .collect()
-    }
-
-    /// Every growable array the sweep met, key-bearing or not, keyed
-    /// by member name — so a caller can say *why* a member is absent
-    /// from [`Self::key_bearing_sequences`] rather than only that it
-    /// is.
-    pub fn sequences(&self) -> &BTreeMap<String, DerivedSequence> {
-        &self.sequences
-    }
-
     /// The JSON member names the derived `Deserialize` impl for
     /// `container` accepts, or `None` when no value of that type was
     /// reached. Struct variants are keyed `"Enum::Variant"`.
@@ -191,24 +150,6 @@ impl DerivedShape {
     /// The variant names the derived impl for `container` accepts.
     pub fn variants_of(&self, container: &str) -> Option<&[String]> {
         self.variants.get(container).map(Vec::as_slice)
-    }
-
-    /// Growable arrays the sweep met at a place with **no** JSON
-    /// member name to publish them under — inside a tuple, as the
-    /// value of a map whose keys are data, or nested directly inside
-    /// another array, as `Vec<Vec<T>>` is.
-    ///
-    /// Empty for the model today. It is reported rather than dropped
-    /// for the same reason [`crate::util::serde_coverage`] reports a
-    /// name it cannot resolve: an array with no publishable name is a
-    /// positional route the document cannot warn anybody about, and
-    /// silence about it reads as absence.
-    ///
-    /// The nesting case is one only this derivation can see: a walk of
-    /// *fields* (the source walk's array half, deleted in V1-C3) sees
-    /// `Vec<Vec<T>>` as one field and never asks about the inner array.
-    pub fn unnamed_sequences(&self) -> &BTreeSet<String> {
-        &self.unnamed_sequences
     }
 
     /// Every place the walk answered a `deserialize_any` — where it
@@ -304,8 +245,8 @@ struct Memory {
     /// for the earlier field while this attributes it to the most
     /// recently accepted one, and the offending spelling is filed
     /// under the wrong member — nothing is dropped, and every distinct
-    /// field is still offered and walked, but `sequences()`'s
-    /// per-member map is wrong for that entry. The shape is
+    /// field is still offered and walked, but a site a message names
+    /// below that field can carry the wrong spelling. The shape is
     /// self-announcing: rustc emits `unreachable pattern … no value
     /// can reach this` on such an alias, so it cannot be introduced
     /// silently. No type in the model has one.
@@ -349,10 +290,8 @@ impl Memory {
     /// Every spelling the derive accepts for the field `container`'s
     /// `FIELDS` entry number `at` names, that entry first.
     ///
-    /// A route is recorded against the spelling the *file* used, so an
-    /// array reached through an aliased field is published under all
-    /// of them — the answer the source walk's array half gave from the
-    /// other side until V1-C3 deleted it.
+    /// A value reached through an aliased field sits under every one
+    /// of them, since a file may write any.
     fn spellings(&self, container: &str, fields: &[&str], at: usize) -> Vec<String> {
         let mut out: Vec<String> = fields
             .get(at)
@@ -458,10 +397,6 @@ struct Run<'a> {
     /// Container names currently open on the walk's path — the
     /// recursion guard.
     active: Vec<String>,
-    /// How many times a struct or a struct variant has been asked
-    /// for. Compared before and after an element to decide whether
-    /// the element can carry named keys.
-    named_key_sites: usize,
     /// The key a [`Fields`] map is waiting to be asked the value of.
     pending_key: Option<PendingKey>,
     /// What the sweep has recorded.
@@ -476,8 +411,8 @@ struct Run<'a> {
 /// and that no earlier pass took, is queued as a plan of its own —
 /// the same choices up to that enum, then the untaken variant. The
 /// queue drains when every reachable variant has been inside at least
-/// one pass, so a `Vec` that only exists under `Mutation`'s
-/// fourteenth variant is still found.
+/// one pass, so a type that only exists under an enum's fourteenth
+/// variant is still reached.
 ///
 /// A pass that ends by learning a `FIELDS` group boundary is replayed
 /// rather than counted, which is how an `#[serde(alias = "…")]` is
@@ -519,7 +454,6 @@ pub fn derived_shape<T: DeserializeOwned>() -> DerivedShape {
             trace: Vec::new(),
             memory: &mut memory,
             active: Vec::new(),
-            named_key_sites: 0,
             pending_key: None,
             shape,
         };
@@ -544,9 +478,9 @@ pub fn derived_shape<T: DeserializeOwned>() -> DerivedShape {
                  `#[serde(flatten)]` field, which makes the derive ask for a map and then \
                  miss the members it declared, and a `#[serde(tag = \"…\")]` enum, which \
                  buffers through `Content` and refuses a unit. Both are independently \
-                 banned from every loadable type by \
-                 `loader::tests::test_no_loadable_type_can_swallow_an_unknown_key`, so a \
-                 red here from either is that alarm a second time — anything else is a \
+                 banned from every type the format reads by \
+                 `format_strict_tests::test_every_type_the_format_reads_denies_unknown_fields`, \
+                 so a red here from either is that alarm a second time — anything else is a \
                  shape to teach it rather than one to narrow what it walks.",
                 std::any::type_name::<T>()
             );
@@ -596,7 +530,7 @@ struct Probe<'a, 'r> {
     member: Vec<String>,
     /// Where this value sits when [`Self::member`] is empty, as a
     /// path through the positions that reach it —
-    /// `MindEdge.control_points[0]`, `Tupled::Both.1`. Two unnamed
+    /// `Nesting.rows[0][0]`, `TwiceTupled::Both[1]`. Two unnamed
     /// arrays in one container are two places and have to read as
     /// two.
     slot: String,
@@ -626,28 +560,6 @@ fn site_of(run: &Run<'_>, member: &[String], slot: &str) -> String {
     match member.first() {
         Some(name) => format!("{container}.{name}"),
         None => slot.to_string(),
-    }
-}
-
-/// Record a growable array under every member name that holds it,
-/// merging with any earlier sighting: the same member name met twice
-/// is key-bearing if it was key-bearing anywhere.
-fn record_sequence(run: &mut Run<'_>, member: Vec<String>, site: String, key_bearing: bool) {
-    if member.is_empty() {
-        run.shape.unnamed_sequences.insert(site);
-        return;
-    }
-    for name in member {
-        let entry = run
-            .shape
-            .sequences
-            .entry(name.clone())
-            .or_insert_with(|| DerivedSequence {
-                member: name,
-                key_bearing: false,
-                site: site.clone(),
-            });
-        entry.key_bearing |= key_bearing;
     }
 }
 
@@ -754,43 +666,25 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
             depth,
         } = self;
         let site = site_of(run, &member, &slot);
-        if mode == Mode::Terminate {
-            let out = visitor.visit_seq(Elements {
-                run: &mut *run,
-                parent: site.clone(),
-                at: 0,
-                remaining: 0,
-                mode,
-                depth,
-            })?;
-            record_sequence(run, member, site, false);
-            return Ok(out);
-        }
-        let depth = deeper(depth, &site)?;
-        // The element is probed inside `visit_seq`, so the count of
-        // named-key sites before and after it is exactly "did serde
-        // ask for a struct anywhere at or below one element". That is
-        // the question the published list turns on, and asking it
-        // this way costs no second traversal.
-        let before = run.named_key_sites;
-        let out = visitor.visit_seq(Elements {
-            run: &mut *run,
-            parent: site.clone(),
+        // One element while exploring, so what an element holds is
+        // reached; none once the walk is only trying to stop.
+        let (remaining, depth) = match mode {
+            Mode::Terminate => (0, depth),
+            Mode::Explore => (1, deeper(depth, &site)?),
+        };
+        visitor.visit_seq(Elements {
+            run,
+            parent: site,
             at: 0,
-            remaining: 1,
+            remaining,
             mode,
             depth,
-        })?;
-        let key_bearing = run.named_key_sites > before;
-        record_sequence(run, member, site, key_bearing);
-        Ok(out)
+        })
     }
 
     fn deserialize_tuple<V: Visitor<'de>>(self, len: usize, visitor: V) -> Result<V::Value, Error> {
-        // A tuple is an array whose arity the format fixes, so an
-        // edit cannot slide a route onto a different position. It is
-        // walked for what is inside it and never recorded as a
-        // growable array.
+        // A tuple is an array whose arity the format fixes; it is
+        // walked for what is inside each position.
         let parent = site_of(self.run, &self.member, &self.slot);
         let depth = deeper(self.depth, "tuple")?;
         visitor.visit_seq(Elements {
@@ -821,8 +715,8 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
     }
 
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
-        // Not a named-key site: a map's members are data — a palette
-        // name, a node id — so none of them is ever "unrecognized".
+        // A map's members are data, not schema: one entry is walked
+        // for what its key and value hold.
         let entries = usize::from(self.mode == Mode::Explore);
         let parent = site_of(self.run, &self.member, &self.slot);
         let depth = deeper(self.depth, "map")?;
@@ -846,11 +740,6 @@ impl<'de, 'a, 'r> Deserializer<'de> for Probe<'a, 'r> {
         let Probe { run, mode, depth, .. } = self;
         let depth = deeper(depth, name)?;
         record_container(run, name, fields);
-        // A struct hands every member it does not claim to
-        // `deserialize_ignored_any`, which is what the loader's
-        // capture wraps — so this is the shape that makes an element
-        // able to carry a key.
-        run.named_key_sites += 1;
         let mode = descend_mode(run, name, mode);
         run.active.push(name.to_string());
         let out = visitor.visit_map(Fields {
@@ -987,8 +876,8 @@ fn flatten_hint(site: &str, error: Error) -> Error {
         "{error}, asked for as a map at `{site}`. A `#[serde(flatten)]` field is what \
          turns a struct's `deserialize_struct` into a `deserialize_map`, and the probe \
          has no member names to answer one with — so this is a flattened type, and \
-         `loader::tests::test_no_loadable_type_can_swallow_an_unknown_key` is already \
-         refusing it for swallowing captured keys."
+         `format_strict_tests::test_every_type_the_format_reads_denies_unknown_fields` \
+         already refuses it on every type the format reads, for swallowing unknown keys."
     ))
 }
 
@@ -1181,16 +1070,15 @@ impl<'de, 'a, 'r> VariantAccess<'de> for Variant<'a, 'r> {
 
     fn newtype_variant_seed<T: DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value, Error> {
         // Noted before the payload is walked, not after: the pass
-        // that finds `Repeat { template: Box<MutatorNode> }` is the
-        // same pass that then has to terminate inside it, and it can
+        // that finds a recursive boxed payload (the tests' `Spinner`)
+        // is the same pass that then has to terminate inside it, and it can
         // only rule the variant out if the fact is already recorded.
         self.run
             .memory
             .note(self.container, self.at, VariantKind::Payload);
         // An externally tagged newtype variant writes its payload as
         // the single member of a wrapper object, so the variant name
-        // *is* the JSON member a `Vec` payload sits under — and the
-        // member a positional route through it would be published as.
+        // *is* the JSON member the payload sits under.
         let member = vec![self.variant.to_string()];
         let slot = site_of(self.run, &member, self.container);
         seed.deserialize(Probe {
@@ -1226,7 +1114,6 @@ impl<'de, 'a, 'r> VariantAccess<'de> for Variant<'a, 'r> {
             .note(self.container, self.at, VariantKind::Payload);
         let key = format!("{}::{}", self.container, self.variant);
         record_container(self.run, &key, fields);
-        self.run.named_key_sites += 1;
         let out = visitor.visit_map(Fields {
             run: &mut *self.run,
             container: key.clone(),
@@ -1246,9 +1133,8 @@ mod tests {
     use serde::Deserialize;
     use std::collections::BTreeSet as StdBTreeSet;
 
-    /// An object with a member no field claims — the shape whose
-    /// presence below an array is what makes the array's indexes
-    /// worth publishing.
+    /// An object with one member, so a test can tell whether the
+    /// probe reached it.
     #[derive(Deserialize)]
     struct Leaf {
         #[allow(dead_code)]
@@ -1262,8 +1148,16 @@ mod tests {
         x: i64,
     }
 
-    /// `Vec<Leaf>` wearing a name that says nothing about what it is.
-    type Leaves = Vec<Leaf>;
+    /// One more, reached only through a type alias.
+    #[derive(Deserialize)]
+    struct AliasedLeaf {
+        #[allow(dead_code)]
+        x: f64,
+    }
+
+    /// `Vec<AliasedLeaf>` wearing a name that says nothing about what
+    /// it is.
+    type Leaves = Vec<AliasedLeaf>;
 
     /// The names the *file* uses, none of which is the identifier.
     #[derive(Deserialize)]
@@ -1278,26 +1172,42 @@ mod tests {
         plain_scalar: f64,
     }
 
-    /// Three arrays, one of which is not spelled `Vec` and one of
-    /// which is not spelled at all, plus one whose elements no key
-    /// can hide in.
+    /// Two arrays, one of which is not spelled `Vec` and one of which
+    /// is not spelled at all.
     #[derive(Deserialize)]
     struct Sequences {
         #[allow(dead_code)]
         aliased: Leaves,
         #[allow(dead_code)]
         ordered: StdBTreeSet<OrderedLeaf>,
-        #[allow(dead_code)]
-        opaque: Vec<f64>,
     }
 
-    /// A variant whose payload is an array, a variant whose payload
-    /// is a fixed-arity tuple, and a fixed-arity array field.
+    /// Three leaves, each reachable one way only: through an array
+    /// payload of a newtype variant, through a tuple variant's second
+    /// position, and through a fixed-arity array field.
+    #[derive(Deserialize)]
+    struct LiteralLeaf {
+        #[allow(dead_code)]
+        l: f64,
+    }
+
+    #[derive(Deserialize)]
+    struct PairLeaf {
+        #[allow(dead_code)]
+        p: f64,
+    }
+
+    #[derive(Deserialize)]
+    struct FixedLeaf {
+        #[allow(dead_code)]
+        f: f64,
+    }
+
     #[derive(Deserialize)]
     #[allow(dead_code)]
     enum Payloads {
-        Literal(Vec<Leaf>),
-        Pair(f64, Leaf),
+        Literal(Vec<LiteralLeaf>),
+        Pair(f64, PairLeaf),
     }
 
     #[derive(Deserialize)]
@@ -1305,11 +1215,11 @@ mod tests {
         #[allow(dead_code)]
         payload: Payloads,
         #[allow(dead_code)]
-        fixed: [Leaf; 2],
+        fixed: [FixedLeaf; 2],
     }
 
-    /// An array reachable only through the *second* variant of an
-    /// enum, which one pass of the walk cannot see.
+    /// A type reachable only through the *second* variant of an enum,
+    /// which one pass of the walk cannot see.
     #[derive(Deserialize)]
     enum Branching {
         #[allow(dead_code)]
@@ -1327,7 +1237,7 @@ mod tests {
     #[derive(Deserialize)]
     struct Deep {
         #[allow(dead_code)]
-        buried: Vec<Leaf>,
+        buried: f64,
     }
 
     /// A type that contains itself, which every real model does
@@ -1340,21 +1250,12 @@ mod tests {
         name: String,
     }
 
-    /// An array with nowhere to be published: position 0 of a tuple
-    /// variant, which no member names.
-    #[derive(Deserialize)]
-    enum Tupled {
-        #[allow(dead_code)]
-        Both(Vec<Leaf>, f64),
-    }
-
-    /// Two of them in one container, plus a third nested inside a
-    /// named one — three distinct places with no member name between
-    /// them.
+    /// Two self-describing values at positions no member names, plus
+    /// one nested inside a named array — three distinct places.
     #[derive(Deserialize)]
     enum TwiceTupled {
         #[allow(dead_code)]
-        Both(Vec<Leaf>, Vec<Leaf>),
+        Both(serde_json::Value, serde_json::Value),
     }
 
     #[derive(Deserialize)]
@@ -1362,7 +1263,7 @@ mod tests {
         #[allow(dead_code)]
         pair: TwiceTupled,
         #[allow(dead_code)]
-        rows: Vec<Vec<Leaf>>,
+        rows: Vec<Vec<serde_json::Value>>,
     }
 
     /// A struct serde reads as a *map* rather than a struct, because
@@ -1401,8 +1302,8 @@ mod tests {
     /// unit, which is the shape that used to swallow the probe
     /// whole: serde buffers the object into a `Content`, the probe's
     /// `deserialize_any` answers `visit_unit`, `URoot` matches, and
-    /// `Items`'s array and `ULeaf`'s members are gone with no error
-    /// raised anywhere.
+    /// `Items`'s `ULeaf` members are gone with no error raised
+    /// anywhere.
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Untagged {
@@ -1431,8 +1332,7 @@ mod tests {
 
     /// `#[serde(alias)]` on both surfaces the derive names: a field,
     /// where the extra spelling joins `FIELDS`, and a variant, where
-    /// it joins `VARIANTS`. `waypoints` is the live shape — the name
-    /// a `MindEdge::control_points` migration would take.
+    /// it joins `VARIANTS`.
     #[derive(Deserialize)]
     struct Aliased {
         #[serde(alias = "waypoints")]
@@ -1446,9 +1346,18 @@ mod tests {
     enum AliasedPayload {
         #[serde(alias = "lit")]
         #[allow(dead_code)]
-        Literal(Vec<Leaf>),
+        Literal(Vec<LiteralLeaf>),
         #[allow(dead_code)]
         Bare,
+    }
+
+    /// The containers in `names` the sweep did **not** reach.
+    fn missed(shape: &DerivedShape, names: &[&str]) -> Vec<String> {
+        names
+            .iter()
+            .filter(|name| shape.members_of(name).is_none())
+            .map(|name| (*name).to_string())
+            .collect()
     }
 
     /// **The member names come from the generated code, so every
@@ -1459,8 +1368,8 @@ mod tests {
     /// does not supply: `rename_all = "camelCase"` produces
     /// `controlPoints` and `plainScalar`, and the `deserialize` arm of
     /// a list-form `rename` produces `points` while the `serialize`
-    /// arm is correctly ignored — a captured route is recorded
-    /// against the shape that was read.
+    /// arm is correctly ignored — what a file is read with is the
+    /// shape that counts.
     #[test]
     fn test_the_probe_reads_the_member_names_the_derive_generated() {
         let shape = derived_shape::<Renaming>();
@@ -1476,99 +1385,64 @@ mod tests {
             "the derived impl's FIELDS list is the on-disk truth, identifiers and \
              `serialize` renames included in neither"
         );
-        assert_eq!(
-            shape.key_bearing_sequences(),
-            ["controlPoints", "points"]
-                .iter()
-                .map(|name| (*name).to_string())
-                .collect::<BTreeSet<String>>(),
-            "and the arrays are published under those same names"
-        );
     }
 
     /// **An array is what asks for a sequence, not what is spelled
     /// `Vec`.** A type alias hides the spelling entirely and a
-    /// `BTreeSet` never had it; both are JSON arrays whose element
-    /// order a save can change. `Vec<f64>` is the control — an array
-    /// whose elements have no members for a key to hide in, so no
-    /// captured route ever crosses its indexes.
+    /// `BTreeSet` never had it; the probe walks into both and reaches
+    /// the type each element is.
     #[test]
-    fn test_the_probe_sees_an_aliased_and_a_non_vec_sequence() {
+    fn test_the_probe_walks_into_an_aliased_and_a_non_vec_sequence() {
         let shape = derived_shape::<Sequences>();
-        let arrays = shape.key_bearing_sequences();
+        let missed = missed(&shape, &["AliasedLeaf", "OrderedLeaf"]);
         assert!(
-            arrays.contains("aliased"),
-            "a `Vec` behind a type alias is still a `Vec`: {arrays:?}"
-        );
-        assert!(
-            arrays.contains("ordered"),
-            "a `BTreeSet` is an array on disk and a save re-sorts it, which is if \
-             anything a stronger reason to publish it: {arrays:?}"
-        );
-        assert!(
-            !arrays.contains("opaque"),
-            "`Vec<f64>` holds nothing a key can be unrecognized inside: {arrays:?}"
-        );
-        assert!(
-            shape.sequences().contains_key("opaque"),
-            "though it is still an array, and the walk has to know that to say why it \
-             is absent: {:?}",
-            shape.sequences()
+            missed.is_empty(),
+            "every element type behind an array is reached, however the array is \
+             spelled; missed: {missed:?}"
         );
     }
 
-    /// **An externally tagged newtype variant publishes its payload
-    /// under the variant's name**, which is the member a route
-    /// crosses — `{"Literal": [ … ]}`. A tuple variant and a
-    /// fixed-arity array are the controls: both are arrays on disk,
-    /// neither has a length an edit can change, so neither is a place
-    /// a route can be *moved*.
+    /// **Every payload form is walked into**: a newtype variant's
+    /// array, a tuple variant's positions and a fixed-arity array
+    /// field each lead to a type reachable no other way.
     #[test]
-    fn test_the_probe_publishes_a_newtype_variant_payload_under_the_variant_name() {
+    fn test_the_probe_walks_into_every_payload_form() {
         let shape = derived_shape::<CarriesPayload>();
-        let arrays = shape.key_bearing_sequences();
-        assert!(
-            arrays.contains("Literal"),
-            "the variant name is the JSON member its array payload sits under: {arrays:?}"
+        assert_eq!(
+            shape.variants_of("Payloads"),
+            Some(["Literal".to_string(), "Pair".to_string()].as_slice()),
         );
-        assert!(
-            !arrays.contains("Pair"),
-            "a tuple variant's arity is fixed by the format: {arrays:?}"
-        );
-        assert!(!arrays.contains("fixed"), "and so is `[Leaf; 2]`'s: {arrays:?}");
-        assert!(
-            shape.unnamed_sequences().is_empty(),
-            "nothing here is an array without a name: {:?}",
-            shape.unnamed_sequences()
-        );
+        let missed = missed(&shape, &["LiteralLeaf", "PairLeaf", "FixedLeaf"]);
+        assert!(missed.is_empty(), "missed: {missed:?}");
     }
 
     /// **One pass through an enum sees one variant.** The sweep
     /// re-runs the walk with the untaken variant planned in, and
-    /// `buried` exists only under the second one — a probe that
-    /// stopped after a single pass would report the type as carrying
-    /// no arrays at all, which is the silent-under-report this whole
-    /// module exists to rule out.
+    /// `Deep` exists only under the second one — a probe that stopped
+    /// after a single pass would never report its members, which is
+    /// the silent under-report this whole module exists to rule out.
     #[test]
-    fn test_the_probe_reaches_an_array_behind_a_second_enum_variant() {
-        let arrays = derived_shape::<Branching>().key_bearing_sequences();
+    fn test_the_probe_reaches_a_type_behind_a_second_enum_variant() {
+        let shape = derived_shape::<Branching>();
         assert!(
-            arrays.contains("buried"),
-            "the variant sweep has to reach every variant, not the first one: {arrays:?}"
+            shape.members_of("Shallow").is_some(),
+            "control: the first variant is reached on the first pass"
+        );
+        assert!(
+            shape.members_of("Deep").is_some(),
+            "the variant sweep has to reach every variant, not the first one"
         );
     }
 
     /// A type that contains itself has to bottom out rather than
     /// spin: the walk empties every container once a name reappears
-    /// on its own path, and the array is still recorded from the
-    /// outer sighting.
+    /// on its own path, and the type's members are still recorded
+    /// from the outer sighting.
     #[test]
     fn test_the_probe_terminates_on_a_recursive_type() {
-        let arrays = derived_shape::<Recursive>().key_bearing_sequences();
-        assert!(
-            arrays.contains("children"),
-            "the recursive array is still an array: {arrays:?}"
-        );
+        let shape = derived_shape::<Recursive>();
+        let expected: BTreeSet<String> = ["children", "name"].iter().map(|n| (*n).to_string()).collect();
+        assert_eq!(shape.members_of("Recursive"), Some(&expected));
     }
 
     /// **Emptying every container is not enough to bottom out.** A
@@ -1577,14 +1451,11 @@ mod tests {
     /// a unit variant where there is one, and otherwise a variant
     /// nothing has yet found a payload behind.
     ///
-    /// `MutatorNode::Repeat { template: Box<MutatorNode> }` is this
-    /// shape in the live model, and it survives only because `Void`
-    /// is declared before it. Declaration order is not a property the
-    /// format has an opinion about — an externally tagged enum reads
-    /// the same however its variants are ordered, and both
-    /// derivations reorder together — so a purely cosmetic reorder
-    /// must not be able to stop the sweep. `Stop` is second here for
-    /// exactly that reason.
+    /// Declaration order is not a property the format has an opinion
+    /// about — an externally tagged enum reads the same however its
+    /// variants are ordered, and both derivations reorder together —
+    /// so a purely cosmetic reorder must not be able to stop the
+    /// sweep. `Stop` is second here for exactly that reason.
     #[test]
     fn test_the_probe_terminates_through_a_boxed_enum_newtype_variant() {
         let shape = derived_shape::<Holder>();
@@ -1594,19 +1465,17 @@ mod tests {
             "the sweep has to have reached the enum at all"
         );
         assert!(
-            shape.key_bearing_sequences().contains("leaves"),
-            "and to have walked past it to the rest of the container: {:?}",
-            shape.key_bearing_sequences()
+            shape.members_of("Leaf").is_some(),
+            "and to have walked past it to the rest of the container"
         );
     }
 
     /// **`#[serde(alias = "…")]` is a spelling the derive writes
     /// down, on both surfaces.** A field's aliases join its `FIELDS`
     /// entry and a variant's join `VARIANTS`, sorted, grouped with the
-    /// name they alias — so the probe sees every one of them and the
-    /// published list has to carry all of them, because a file may
-    /// write any and a captured route is recorded against whichever
-    /// it wrote.
+    /// name they alias — so the probe sees every one of them, and the
+    /// published lists carry all of them, because a file may write
+    /// any.
     ///
     /// The grouping is the part that needs doing rather than reading:
     /// offering `FIELDS` blindly hands the derived visitor the same
@@ -1629,14 +1498,11 @@ mod tests {
             "and a variant's are in `VARIANTS`, grouped with the name they alias and \
              sorted inside the group — which is the order `serde_derive` emits"
         );
-        let arrays = shape.key_bearing_sequences();
-        for spelling in ["control_points", "waypoints", "Literal", "lit"] {
-            assert!(
-                arrays.contains(spelling),
-                "a route can cross the array under any spelling the derive accepts, so \
-                 every one of them is published: {arrays:?}"
-            );
-        }
+        let missed = missed(&shape, &["Leaf", "LiteralLeaf"]);
+        assert!(
+            missed.is_empty(),
+            "and the walk goes on below an aliased field and an aliased variant: {missed:?}"
+        );
     }
 
     /// **The one blind spot that says nothing, made to say
@@ -1650,23 +1516,20 @@ mod tests {
     ///
     /// So the probe records where it answered a `deserialize_any`.
     /// The site is not itself a verdict — a `serde_json::Value` is a
-    /// legitimate one and the model has two — but it is a place the
-    /// derivation stopped seeing, and a list of those is a thing a
-    /// test can pin.
+    /// legitimate one — but it is a place the derivation stopped
+    /// seeing, and a list of those is a thing a test can pin.
     #[test]
     fn test_the_probe_names_the_place_an_untagged_enum_stopped_it() {
         let shape = derived_shape::<CarriesUntagged>();
         assert!(
-            !shape.key_bearing_sequences().contains("maybe"),
+            shape.members_of("ULeaf").is_none(),
             "the untagged enum's array variant really is invisible — this is the blind \
-             spot, not a claim that there is none: {:?}",
-            shape.key_bearing_sequences()
+             spot, not a claim that there is none"
         );
         assert!(
-            shape.key_bearing_sequences().contains("visible"),
+            shape.members_of("Leaf").is_some(),
             "and the rest of the container is walked as usual, so the report has to be \
-             what distinguishes the two: {:?}",
-            shape.key_bearing_sequences()
+             what distinguishes the two"
         );
         assert_eq!(
             shape.opaque_sites(),
@@ -1677,57 +1540,26 @@ mod tests {
         );
     }
 
-    /// An array at a place with no member name is reported rather
-    /// than dropped. A schema publishes member names, and
-    /// there is none here to publish — so the honest answer is to
-    /// hand it to a reader, not to leave a positional route the
-    /// document cannot mention.
+    /// **A place with no member name is named by the path that reaches
+    /// it, and two of them are two places.** The site used to be the
+    /// enclosing container's name, so a container holding two
+    /// self-describing values reported one — and the report exists
+    /// precisely so a reader can go and look at each.
     #[test]
-    fn test_the_probe_reports_an_array_that_has_no_member_name() {
-        let shape = derived_shape::<Tupled>();
-        assert_eq!(
-            shape.unnamed_sequences().len(),
-            1,
-            "position 0 of a tuple variant is an array nothing names: {:?}",
-            shape.unnamed_sequences()
-        );
-        assert!(
-            shape.key_bearing_sequences().is_empty(),
-            "and it must not be published under a name it does not have: {:?}",
-            shape.key_bearing_sequences()
-        );
-    }
-
-    /// **An unnamed array is a *place*, and two of them are two
-    /// places.** The site used to be the enclosing container's name,
-    /// so a container holding two of them reported one — and the
-    /// report exists precisely so a reader can go and look at each.
-    ///
-    /// `rows` is the shape only this derivation can see at all. The
-    /// source walk classifies fields, and `Vec<Vec<Leaf>>` is one
-    /// field: it sees the outer array, names it `rows`, and never
-    /// asks what the element is. The inner array has no member name
-    /// of its own and is a positional route just the same.
-    #[test]
-    fn test_two_unnamed_arrays_in_one_container_are_two_reports() {
+    fn test_two_unnamed_places_in_one_container_are_two_reports() {
         let shape = derived_shape::<Nesting>();
-        let unnamed = shape.unnamed_sequences();
+        let expected: BTreeSet<String> = [
+            "TwiceTupled::Both[0]",
+            "TwiceTupled::Both[1]",
+            "Nesting.rows[0][0]",
+        ]
+        .iter()
+        .map(|site| (*site).to_string())
+        .collect();
         assert_eq!(
-            unnamed.len(),
-            3,
-            "both tuple positions and the nested array are separate places: {unnamed:?}"
-        );
-        for site in ["TwiceTupled::Both[0]", "TwiceTupled::Both[1]", "Nesting.rows[0]"] {
-            assert!(
-                unnamed.contains(site),
-                "and each is named by the path that reaches it: {unnamed:?}"
-            );
-        }
-        assert!(
-            shape.key_bearing_sequences().contains("rows"),
-            "the outer array keeps its name — the nesting is an extra report, not a \
-             replacement: {:?}",
-            shape.key_bearing_sequences()
+            shape.opaque_sites(),
+            &expected,
+            "both tuple positions and the value inside the nested array are separate places"
         );
     }
 
@@ -1741,8 +1573,8 @@ mod tests {
     /// every field it declared. `missing field \`named\`` on its own
     /// sends a reader looking at the field. It is not a defect this
     /// module has to fix: `flatten` is independently refused on every
-    /// loadable type, for hiding captured keys, so this red is that
-    /// one arriving from the other side and the message says so.
+    /// type the format reads, for hiding unknown keys, so this red is
+    /// that one arriving from the other side and the message says so.
     #[test]
     #[should_panic(expected = "A `#[serde(flatten)]` field is what")]
     fn test_a_flattened_field_says_what_stopped_the_probe() {
