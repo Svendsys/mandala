@@ -1434,6 +1434,9 @@ pub fn face_char_ink(
 /// An entry is a key and two points, some 40 bytes.
 pub const OUTLINE_CACHE_ENTRIES: usize = 1 << 16;
 
+/// The outline cache's entries: bounds by font system and scaler key.
+type OutlineEntries = rustc_hash::FxHashMap<(u64, CacheKey), Option<(Vec2, Vec2)>>;
+
 thread_local! {
     /// The outline cache (#304): each glyph's outline bounds by its font
     /// system ([`FontSystem::instance`]) and its face, glyph id, size,
@@ -1451,8 +1454,7 @@ thread_local! {
     /// `mem::swap`), which brings its own number. A database never reuses
     /// an id, so faces added or removed through `db_mut` cannot make an
     /// entry name another face.
-    static OUTLINE_BOUNDS: std::cell::RefCell<rustc_hash::FxHashMap<(u64, CacheKey), Option<(Vec2, Vec2)>>> =
-        std::cell::RefCell::default();
+    static OUTLINE_BOUNDS: std::cell::RefCell<OutlineEntries> = std::cell::RefCell::default();
     /// Outlines read on this thread: the cache's misses.
     static OUTLINE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
