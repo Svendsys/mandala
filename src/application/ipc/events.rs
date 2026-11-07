@@ -552,6 +552,9 @@ pub(crate) mod fixture {
 
     pub(crate) struct EventsApp {
         pub(crate) doc: MindMapDocument,
+        /// The change records drained from `doc`, as the view keeps
+        /// them for an observation (`view::MapView::pending_feed`).
+        pub(crate) changes: Vec<baumhard::document::writer::feed::ChangeRecord>,
         pub(crate) camera: Camera2D,
         pub(crate) mode: InteractionMode,
         /// Whether the funnels reported a pixel change.
@@ -563,11 +566,21 @@ pub(crate) mod fixture {
         pub(crate) fn new() -> Self {
             EventsApp {
                 doc: MindMapDocument::new_blank(None, 50),
+                changes: Vec::new(),
                 camera: Camera2D::new(800, 600),
                 mode: InteractionMode::Default,
                 changed: false,
                 clock: crate::application::clock::AppClock::default(),
             }
+        }
+    }
+
+    impl EventsApp {
+        /// One committed change, its records drained as the view drains
+        /// them.
+        pub(crate) fn change(&mut self) {
+            self.doc.create_root_for_test();
+            self.changes.extend(self.doc.take_changes());
         }
     }
 
@@ -578,7 +591,7 @@ pub(crate) mod fixture {
         /// Every console line stands for one committed document
         /// change, whatever it says.
         fn run_console_line(&mut self, _: &str) -> Option<LineOutcome> {
-            self.doc.create_root_for_test();
+            self.change();
             self.changed = true;
             Some(LineOutcome::Ran(ExecResult::Ok(String::new())))
         }
@@ -592,10 +605,10 @@ pub(crate) mod fixture {
         /// real step loop does.
         fn run_macro_steps(&mut self, steps: &[MacroStep], after_step: &mut dyn FnMut(Observed<'_>)) -> bool {
             for _ in steps {
-                self.doc.create_root_for_test();
+                self.change();
                 after_step(Observed {
                     document: Some(&self.doc),
-                    changes: &[],
+                    changes: &self.changes,
                     camera: &self.camera,
                     mode: &self.mode,
                 });
@@ -606,7 +619,7 @@ pub(crate) mod fixture {
         fn observed(&self) -> Option<Observed<'_>> {
             Some(Observed {
                 document: Some(&self.doc),
-                changes: &[],
+                changes: &self.changes,
                 camera: &self.camera,
                 mode: &self.mode,
             })

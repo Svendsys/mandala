@@ -105,7 +105,8 @@ mod tests {
     /// close-the-console flag.
     fn run_fps(args: &[&str]) -> (ExecResult, Option<ConsoleSideEffect>, bool) {
         let tokens: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
-        let mut doc = MindMapDocument::new_blank(None);
+        let mut doc = MindMapDocument::new_blank(None, 50);
+        let revision = doc.revision();
         let mut eff = ConsoleEffects::new(&mut doc);
         let result = execute_fps(&Args::new(&tokens), &mut eff);
         (result, eff.side_effect.take(), eff.close_console)

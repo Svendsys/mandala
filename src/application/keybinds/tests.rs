@@ -732,12 +732,12 @@ fn test_double_click_activate_default_resolves_to_action() {
 fn test_set_border_preview_keybind_round_trips_through_json() {
     use crate::application::keybinds::BorderPreviewTargetKind;
     let json = r#"{
-        "set_border_preview": [
+        "set_frame_preview": [
             { "combo": "Ctrl+H", "args": ["node", "preset", "heavy"] }
         ]
     }"#;
     let cfg = KeybindConfig::from_json(json).unwrap();
-    assert_eq!(cfg.set_border_preview.len(), 1);
+    assert_eq!(cfg.set_frame_preview.len(), 1);
     let r = cfg.resolve();
     assert_eq!(
         r.action_for_context(InputContext::Document, "h", true, false, false),
@@ -773,7 +773,7 @@ fn test_border_preview_target_kind_strum_round_trip() {
     assert!(BorderPreviewTargetKind::from_str("nodes").is_err());
 }
 
-/// `cancel_border_preview` ships unbound by default — the
+/// `cancel_frame_preview` ships unbound by default — the
 /// keybind system has no per-action active-state guard, so
 /// defaulting Esc would conflict with the existing Esc-bound
 /// actions in the Document context (`exit_mode` etc.). Users
@@ -783,7 +783,7 @@ fn test_border_preview_target_kind_strum_round_trip() {
 fn test_cancel_border_preview_is_unbound_by_default() {
     let cfg = KeybindConfig::default();
     assert!(
-        cfg.cancel_border_preview.is_empty(),
+        cfg.cancel_frame_preview.is_empty(),
         "CancelFramePreview must not have a default binding (would conflict with `exit_mode`)"
     );
     let r = cfg.resolve();
@@ -797,16 +797,16 @@ fn test_cancel_border_preview_is_unbound_by_default() {
 
 /// Users can opt in to a custom binding via the JSON config —
 /// pin the round-trip path that landing
-/// `cancel_border_preview` and `commit_border_preview` work.
+/// `cancel_frame_preview` and `commit_frame_preview` work.
 #[test]
 fn test_border_preview_keybinds_round_trip_through_json() {
     let json = r#"{
-        "cancel_border_preview": ["Ctrl+Escape"],
-        "commit_border_preview": ["Ctrl+Enter"]
+        "cancel_frame_preview": ["Ctrl+Escape"],
+        "commit_frame_preview": ["Ctrl+Enter"]
     }"#;
     let cfg = KeybindConfig::from_json(json).unwrap();
-    assert_eq!(cfg.cancel_border_preview, vec!["Ctrl+Escape"]);
-    assert_eq!(cfg.commit_border_preview, vec!["Ctrl+Enter"]);
+    assert_eq!(cfg.cancel_frame_preview, vec!["Ctrl+Escape"]);
+    assert_eq!(cfg.commit_frame_preview, vec!["Ctrl+Enter"]);
     let r = cfg.resolve();
     assert_eq!(
         r.action_for_context(InputContext::Document, "escape", true, false, false),
@@ -1737,7 +1737,7 @@ fn test_json_roundtrip_all_contexts() {
 #[test]
 fn test_parametric_set_edge_anchor_resolves_with_two_args() {
     let cfg = KeybindConfig {
-        set_edge_anchor: vec![ParametricBinding {
+        set_path_anchor: vec![ParametricBinding {
             combo: "Ctrl+Shift+a".into(),
             args: vec!["top".into(), "auto".into()],
         }],
@@ -1756,7 +1756,7 @@ fn test_parametric_set_edge_anchor_resolves_with_two_args() {
 #[test]
 fn test_parametric_set_edge_body_glyph_resolves_with_one_arg() {
     let cfg = KeybindConfig {
-        set_edge_body_glyph: vec![ParametricBinding {
+        set_path_content: vec![ParametricBinding {
             combo: "Ctrl+b".into(),
             args: vec!["dash".into()],
         }],
@@ -1780,7 +1780,7 @@ fn test_parametric_wrong_arg_count_is_skipped() {
     // chords so the assertion is about "no parametric Action got
     // built", not "the default got shadowed."
     let cfg = KeybindConfig {
-        set_edge_anchor: vec![ParametricBinding {
+        set_path_anchor: vec![ParametricBinding {
             combo: "Ctrl+F8".into(),
             args: vec!["top".into()], // missing the `to` arg
         }],
@@ -1796,11 +1796,11 @@ fn test_parametric_wrong_arg_count_is_skipped() {
 #[test]
 fn test_parametric_binding_round_trips_through_json() {
     let cfg = KeybindConfig {
-        set_edge_anchor: vec![ParametricBinding {
+        set_path_anchor: vec![ParametricBinding {
             combo: "Ctrl+Shift+a".into(),
             args: vec!["top".into(), "auto".into()],
         }],
-        set_edge_body_glyph: vec![ParametricBinding {
+        set_path_content: vec![ParametricBinding {
             combo: "Ctrl+b".into(),
             args: vec!["dash".into()],
         }],
@@ -1808,14 +1808,14 @@ fn test_parametric_binding_round_trips_through_json() {
     };
     let json = serde_json::to_string(&cfg).unwrap();
     let parsed = KeybindConfig::from_json(&json).unwrap();
-    assert_eq!(parsed.set_edge_anchor, cfg.set_edge_anchor);
-    assert_eq!(parsed.set_edge_body_glyph, cfg.set_edge_body_glyph);
+    assert_eq!(parsed.set_path_anchor, cfg.set_path_anchor);
+    assert_eq!(parsed.set_path_content, cfg.set_path_content);
 }
 
 #[test]
 fn test_parametric_set_border_field_resolves_with_two_args() {
     let cfg = KeybindConfig {
-        set_border_field: vec![ParametricBinding {
+        set_frame_field: vec![ParametricBinding {
             combo: "Ctrl+Shift+b".into(),
             args: vec!["preset".into(), "rounded".into()],
         }],
@@ -1881,11 +1881,11 @@ fn test_parametric_edge_structural_resolve() {
             combo: "F4".into(),
             args: vec!["cross_link".into()],
         }],
-        set_edge_display_mode: vec![ParametricBinding {
+        set_link_kind: vec![ParametricBinding {
             combo: "F5".into(),
             args: vec!["portal".into()],
         }],
-        reset_edge: vec![ParametricBinding {
+        reset_path: vec![ParametricBinding {
             combo: "F6".into(),
             args: vec!["style".into()],
         }],
@@ -1960,15 +1960,15 @@ fn test_parametric_font_family_size_resolve() {
 #[test]
 fn test_parametric_label_text_position_resolve() {
     let cfg = KeybindConfig {
-        set_edge_label_text: vec![ParametricBinding {
+        set_label_text: vec![ParametricBinding {
             combo: "F9".into(),
             args: vec!["hello".into()],
         }],
-        set_edge_label_position: vec![ParametricBinding {
+        set_label_position: vec![ParametricBinding {
             combo: "F10".into(),
             args: vec!["middle".into()],
         }],
-        set_spacing: vec![ParametricBinding {
+        set_path_spacing: vec![ParametricBinding {
             combo: "F11".into(),
             args: vec!["wide".into()],
         }],
@@ -2223,7 +2223,7 @@ fn test_a_malformed_value_under_any_known_key_costs_only_that_key() {
 #[test]
 fn test_parametric_set_edge_cap_resolves_with_two_args() {
     let cfg = KeybindConfig {
-        set_edge_cap: vec![ParametricBinding {
+        set_path_cap: vec![ParametricBinding {
             combo: "Ctrl+Shift+c".into(),
             args: vec!["arrow".into(), "none".into()],
         }],
@@ -2330,7 +2330,7 @@ fn test_parametric_binding_user_partial_config_only_overrides_listed_field() {
     // with only the parametric field set leaves every other binding
     // at its default.
     let json = r#"{
-        "set_edge_body_glyph": [
+        "set_path_content": [
             { "combo": "Ctrl+b", "args": ["dash"] }
         ]
     }"#;
@@ -2407,7 +2407,7 @@ const SENTINEL_COMBO: &str = "Ctrl+Shift+Alt+F9";
 fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Action)> {
     vec![
         (
-            "set_edge_anchor",
+            "set_path_anchor",
             &["top", "auto"],
             Action::SetPathAnchor {
                 from: "top".into(),
@@ -2415,12 +2415,12 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
             },
         ),
         (
-            "set_edge_body_glyph",
+            "set_path_content",
             &["dash"],
             Action::SetPathContent("dash".into()),
         ),
         (
-            "set_border_field",
+            "set_frame_field",
             &["preset", "rounded"],
             Action::SetFrameField {
                 field: "preset".into(),
@@ -2428,7 +2428,7 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
             },
         ),
         (
-            "set_edge_cap",
+            "set_path_cap",
             &["arrow", "none"],
             Action::SetPathCap {
                 from: "arrow".into(),
@@ -2444,7 +2444,7 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
             },
         ),
         (
-            "set_border_preview",
+            "set_frame_preview",
             &["node", "preset", "rounded"],
             Action::SetFramePreview {
                 target_kind: BorderPreviewTargetKind::Node,
@@ -2458,11 +2458,11 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
             Action::SetEdgeType("cross_link".into()),
         ),
         (
-            "set_edge_display_mode",
+            "set_link_kind",
             &["portal"],
             Action::SetLinkKind("portal".into()),
         ),
-        ("reset_edge", &["style"], Action::ResetPath("style".into())),
+        ("reset_path", &["style"], Action::ResetPath("style".into())),
         (
             "set_font_family",
             &["Norse"],
@@ -2477,16 +2477,16 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
             },
         ),
         (
-            "set_edge_label_text",
+            "set_label_text",
             &["hello"],
             Action::SetLabelText("hello".into()),
         ),
         (
-            "set_edge_label_position",
+            "set_label_position",
             &["middle"],
             Action::SetLabelPosition("middle".into()),
         ),
-        ("set_spacing", &["wide"], Action::SetPathSpacing("wide".into())),
+        ("set_path_spacing", &["wide"], Action::SetPathSpacing("wide".into())),
         (
             "set_zoom",
             &["min", "0.5"],
@@ -2610,7 +2610,7 @@ fn test_every_declared_binding_resolves_to_its_action() {
     // they default to empty — then resolve and demand that every
     // Action with a key surface came back out.
     //
-    // Pre-fix, `set_border_preview` had a struct field and no row in
+    // Pre-fix, `set_frame_preview` had a struct field and no row in
     // `resolve()`: it deserialized, it round-tripped through JSON,
     // and it bound nothing. That shape fails here.
     use strum::IntoEnumIterator;
@@ -2788,8 +2788,8 @@ fn test_unit_variants_bind_through_the_simple_surface() {
         "clear_zoom": ["Shift+F12"],
         "set_section_size_fill_parent": ["Ctrl+F12"],
         "delete_section": ["Alt+F12"],
-        "cycle_border_preset": ["Ctrl+F5"],
-        "toggle_border_visible": ["Ctrl+F6"]
+        "cycle_frame_content": ["Ctrl+F5"],
+        "toggle_frame_visible": ["Ctrl+F6"]
     }"#;
     let resolved = KeybindConfig::from_json(json).unwrap().resolve();
     for (key, ctrl, shift, alt, expected) in [

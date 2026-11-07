@@ -153,10 +153,10 @@ pub(in crate::application::app) fn run_macro_steps<T: MacroDispatchTarget>(
             MacroStep::ConsoleLine { line } => {
                 // **Privilege gate.** `ConsoleLine` runs an arbitrary
                 // console verb, including filesystem-touching ones.
-                // Only `SourceTier::User` macros may carry it —
-                // app-bundled, map-inline, and node-inline tiers
-                // come from sources the user didn't necessarily
-                // author, so they cannot do file I/O via macros.
+                // Only `SourceTier::User` macros may carry it — every
+                // other tier comes from a source the user did not
+                // necessarily author, so it cannot do file I/O via a
+                // macro.
                 if !source.allows_console_line() {
                     // Fail-closed: a tier that's not allowed to run
                     // console verbs aborts the rest of the macro.
@@ -188,10 +188,10 @@ pub(in crate::application::app) fn run_macro_steps<T: MacroDispatchTarget>(
 
 #[cfg(test)]
 mod tests {
-    //! Mock-target tests for the privilege-gating step loop.
-    //! Drives `dispatch_macro` against a recording mock so the gate
-    //! contract is verified at the actual loop body, not just
-    //! through the per-step simulator in `macros/mod.rs`.
+    //! Mock-target tests for the privilege-gating step loop. Drives
+    //! `run_macro_steps` and `dispatch_macro` against a recording mock
+    //! so the gate contract is verified at the actual loop body, not
+    //! just through the per-step simulator in `macros/tests.rs`.
 
     use super::*;
     use crate::application::keybinds::Action;
@@ -199,15 +199,10 @@ mod tests {
     use crate::application::source_tier::SourceTier;
 
     /// Mock target: records every method invocation in order.
-    /// `Default` selection → `current_selection_node_id` returns
-    /// `Some("sel".into())`; flip via the field on construction.
     struct MockTarget {
         registry: MacroRegistry,
         calls: Vec<String>,
-        current_selection: Option<String>,
-        known_nodes: Vec<String>,
         action_outcome: DispatchOutcome,
-        custom_mutation_applied: bool,
         console_line_executed: bool,
     }
 
@@ -216,10 +211,7 @@ mod tests {
             Self {
                 registry,
                 calls: Vec::new(),
-                current_selection: Some("sel".into()),
-                known_nodes: vec!["n1".into(), "sel".into()],
                 action_outcome: DispatchOutcome::Handled,
-                custom_mutation_applied: true,
                 console_line_executed: true,
             }
         }
@@ -233,19 +225,9 @@ mod tests {
             self.calls.push(format!("action:{:?}", action));
             self.action_outcome
         }
-        fn apply_custom_mutation(&mut self, id: &str, node_id: &str) -> bool {
-            self.calls.push(format!("custom:{}@{}", id, node_id));
-            self.custom_mutation_applied
-        }
         fn execute_console_line(&mut self, line: &str) -> bool {
             self.calls.push(format!("console:{}", line));
             self.console_line_executed
-        }
-        fn current_selection_node_id(&self) -> Option<String> {
-            self.current_selection.clone()
-        }
-        fn has_node(&self, node_id: &str) -> bool {
-            self.known_nodes.iter().any(|n| n == node_id)
         }
     }
 
@@ -268,439 +250,114 @@ mod tests {
 
     /// The anonymous-sequence entry runs the same gated loop as a
     /// registered macro. At `User`, the tier IPC's `act.macro steps`
-    /// pins, every step kind runs; at any other tier the same gate
-    /// fires. Nothing about arriving without a registry entry
-    /// changes what a step may do.
+    /// pins, an Action and a console line run; at `App` the same
+    /// console line is refused and the rest aborted.
     #[test]
     fn test_run_macro_steps_gates_an_anonymous_sequence_by_the_tier_it_is_given() {
         let steps = vec![
             MacroStep::Action { action: Action::Undo },
-            MacroStep::ConsoleLine {
-                line: "fps on".into(),
-            },
-            MacroStep::Action {
-                action: Action::DeleteSelection,
-            },
+            MacroStep::ConsoleLine { line: "fps on".into() },
         ];
         let mut user = MockTarget::new(MacroRegistry::new());
-        assert!(run_macro_steps(
-            "(ipc steps)",
-            &steps,
-            SourceTier::User,
-            &mut user
-        ));
-        assert_eq!(
-            user.calls,
-            vec![
-                "action:Undo".to_string(),
-                "console:fps on".to_string(),
-                "action:DeleteSelection".to_string(),
-            ],
-            "User tier runs every step, the registry never consulted"
-        );
-        let mut map = MockTarget::new(MacroRegistry::new());
-        assert!(run_macro_steps("(ipc steps)", &steps, SourceTier::Map, &mut map));
-        assert_eq!(
-            map.calls,
-            vec!["action:Undo".to_string()],
-            "the gate is the same gate"
-        );
+        assert!(run_macro_steps("(ipc steps)", &steps, SourceTier::User, &mut user));
+        assert_eq!(user.calls, vec!["action:Undo".to_string(), "console:fps on".to_string()]);
+
+        let mut app = MockTarget::new(MacroRegistry::new());
+        assert!(run_macro_steps("(ipc steps)", &steps, SourceTier::App, &mut app));
+        assert_eq!(app.calls, vec!["action:Undo".to_string()], "the console line is refused");
     }
 
-    /// A gate rejection is logged under `GATE_REJECTED_CODE`, which is
-    /// how a caller collecting diagnostics (the IPC reply's
-    /// `warnings`) tells the fail-closed abort from an ordinary
-    /// degrade. Both rejection sites carry it.
+    /// Both rejections are logged under `GATE_REJECTED_CODE`, so a
+    /// caller collecting diagnostics can tell the abort from a degrade.
     #[test]
     fn test_a_gate_rejection_is_logged_with_its_code() {
         use baumhard::util::log::capture::capture;
-
         baumhard::util::test_logger::install();
         for (label, step) in [
+            ("console-c0de", MacroStep::ConsoleLine { line: "save".into() }),
             (
-                "gate-code-action-3f1a",
+                "action-c0de",
                 MacroStep::Action {
                     action: Action::SaveDocument,
                 },
-            ),
-            (
-                "gate-code-console-3f1a",
-                MacroStep::ConsoleLine { line: "save".into() },
             ),
         ] {
             let mut t = MockTarget::new(MacroRegistry::new());
-            let (ran, captured) = capture(|| run_macro_steps(label, &[step], SourceTier::Inline, &mut t));
+            let (ran, captured) = capture(|| run_macro_steps(label, &[step], SourceTier::App, &mut t));
             assert!(!ran);
-            assert!(t.calls.is_empty());
-            let rejection = captured
+            assert!(t.calls.is_empty(), "{label}: nothing ran");
+            let record = captured
                 .records
                 .iter()
                 .find(|r| r.message.contains(label))
-                .unwrap_or_else(|| panic!("{label}: the rejection must be logged; saw {captured:?}"));
-            assert_eq!(rejection.code.as_deref(), Some(GATE_REJECTED_CODE), "{label}");
-            assert_eq!(rejection.level, log::Level::Warn);
+                .unwrap_or_else(|| panic!("{label} is logged: {captured:?}"));
+            assert_eq!(record.code.as_deref(), Some(GATE_REJECTED_CODE));
         }
     }
 
+    /// Fail-closed: `[Undo, ConsoleLine, SaveDocument]` from the App
+    /// tier runs Undo, refuses the console line and never reaches the
+    /// save, which it would also have refused.
     #[test]
-    fn unknown_macro_id_returns_false() {
-        let mut t = MockTarget::new(MacroRegistry::new());
-        assert!(!dispatch_macro("missing", &mut t));
-        assert!(t.calls.is_empty());
-    }
-
-    #[test]
-    fn user_tier_macro_runs_all_step_kinds() {
+    fn test_a_rejected_step_aborts_the_rest_of_the_macro() {
         let m = macro_with_steps(
-            "u1",
+            "m",
             vec![
                 MacroStep::Action { action: Action::Undo },
-                MacroStep::CustomMutation {
-                    id: "mut1".into(),
-                    target: MacroTarget::CurrentSelection,
-                },
                 MacroStep::ConsoleLine {
-                    line: "fps on".into(),
+                    line: "save /tmp/evil".into(),
                 },
-            ],
-        );
-        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::User)]));
-        assert!(dispatch_macro("u1", &mut t));
-        assert_eq!(
-            t.calls,
-            vec![
-                "action:Undo".to_string(),
-                "custom:mut1@sel".to_string(),
-                "console:fps on".to_string(),
-            ],
-        );
-    }
-
-    /// **Issue #31 acceptance criterion 1, at the macro loop.**
-    /// `MacroStep::Action` must be able to drive every picker
-    /// Action. Pre-fix the eight `Picker*` bodies lived inside the
-    /// picker's key handler and `dispatch_action` had no arms for
-    /// them, so a macro step reached the dispatcher and fell to
-    /// `_ => Unhandled` — a silent no-op. This pins the step loop
-    /// half of the contract: the gate lets them through and each
-    /// one lands on `target.dispatch_action`. The arm that
-    /// receives them is pinned separately by `picker_op_for`'s
-    /// exhaustiveness walk (which is that arm's match guard).
-    #[test]
-    fn user_tier_macro_drives_every_picker_action() {
-        let picker_actions = [
-            Action::PickerCancel,
-            Action::PickerCommit,
-            Action::PickerNudgeHueDown,
-            Action::PickerNudgeHueUp,
-            Action::PickerNudgeSatDown,
-            Action::PickerNudgeSatUp,
-            Action::PickerNudgeValDown,
-            Action::PickerNudgeValUp,
-        ];
-        let steps: Vec<MacroStep> = picker_actions
-            .iter()
-            .map(|a| MacroStep::Action { action: a.clone() })
-            .collect();
-        let m = macro_with_steps("picker", steps);
-        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::User)]));
-        assert!(dispatch_macro("picker", &mut t));
-        let expected: Vec<String> = picker_actions.iter().map(|a| format!("action:{:?}", a)).collect();
-        assert_eq!(t.calls, expected, "every picker Action must reach the dispatcher");
-    }
-
-    /// The picker Actions are non-destructive, so the privilege
-    /// gate lets them through from every tier — a map-authored
-    /// macro can drive the wheel. Pinned value-explicitly because
-    /// a future reclassification of `PickerCommit` as destructive
-    /// would silently take this away, and the abort is fail-closed
-    /// (the whole rest of the macro stops).
-    #[test]
-    fn non_user_tiers_may_drive_the_picker() {
-        for tier in [SourceTier::App, SourceTier::Map, SourceTier::Inline] {
-            let m = macro_with_steps(
-                "p",
-                vec![
-                    MacroStep::Action {
-                        action: Action::PickerNudgeHueUp,
-                    },
-                    MacroStep::Action {
-                        action: Action::PickerCommit,
-                    },
-                ],
-            );
-            let mut t = MockTarget::new(registry_with(vec![(m, tier)]));
-            assert!(dispatch_macro("p", &mut t), "{:?} tier", tier);
-            assert_eq!(
-                t.calls,
-                vec![
-                    "action:PickerNudgeHueUp".to_string(),
-                    "action:PickerCommit".to_string(),
-                ],
-                "{:?} tier must reach both picker steps",
-                tier
-            );
-        }
-    }
-
-    #[test]
-    fn map_tier_console_line_fail_closed_aborts_remaining_steps() {
-        // `[Undo, ConsoleLine, SaveDocument]` from Map tier:
-        // Undo runs, ConsoleLine is rejected (Map tier can't run
-        // console), SaveDocument MUST NOT run.
-        let m = macro_with_steps(
-            "m1",
-            vec![
-                MacroStep::Action { action: Action::Undo },
-                MacroStep::ConsoleLine { line: "save".into() },
                 MacroStep::Action {
                     action: Action::SaveDocument,
                 },
             ],
         );
-        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::Map)]));
-        // any_ran is true (Undo executed)
-        assert!(dispatch_macro("m1", &mut t));
-        // Only Undo recorded — ConsoleLine + SaveDocument both
-        // skipped by the abort.
+        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::App)]));
+        assert!(dispatch_macro("m", &mut t), "the Undo ran");
         assert_eq!(t.calls, vec!["action:Undo".to_string()]);
     }
 
+    /// The edit step runs nothing until V1-D1 (#250) rebuilds edits, and
+    /// so bumps nothing: a macro of only that step is not handled.
+    /// Control: the same macro with an Action beside it is.
     #[test]
-    fn map_tier_destructive_action_fail_closed_aborts() {
-        // Map tier carrying a destructive Action: the gate aborts
-        // before the dispatch_action call lands.
-        let m = macro_with_steps(
-            "m2",
-            vec![
-                MacroStep::Action { action: Action::Undo },
-                MacroStep::Action {
-                    action: Action::DeleteSelection,
-                },
-                MacroStep::Action { action: Action::Undo },
-            ],
-        );
-        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::Map)]));
-        assert!(dispatch_macro("m2", &mut t));
-        // Only the first non-destructive Undo ran.
-        assert_eq!(t.calls, vec!["action:Undo".to_string()]);
-    }
-
-    #[test]
-    fn current_selection_none_skips_custom_mutation_step() {
-        let m = macro_with_steps(
-            "u3",
-            vec![
-                MacroStep::CustomMutation {
-                    id: "mut1".into(),
-                    target: MacroTarget::CurrentSelection,
-                },
-                MacroStep::Action { action: Action::Undo },
-            ],
-        );
-        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::User)]));
-        t.current_selection = None;
-        // any_ran true because the Undo Action ran
-        assert!(dispatch_macro("u3", &mut t));
-        // CustomMutation step skipped (no resolvable target);
-        // Undo ran. Note `continue` not abort — selection-empty
-        // is a soft skip.
-        assert_eq!(t.calls, vec!["action:Undo".to_string()]);
-    }
-
-    #[test]
-    fn missing_node_id_skips_custom_mutation_step() {
-        let m = macro_with_steps(
-            "u4",
-            vec![
-                MacroStep::CustomMutation {
-                    id: "mut1".into(),
-                    target: MacroTarget::NodeId("missing".into()),
-                },
-                MacroStep::Action { action: Action::Undo },
-            ],
-        );
-        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::User)]));
-        // `known_nodes` is `["n1", "sel"]` — "missing" isn't there.
-        assert!(dispatch_macro("u4", &mut t));
-        // Same posture: CustomMutation soft-skipped, Undo ran.
-        assert_eq!(t.calls, vec!["action:Undo".to_string()]);
-    }
-
-    #[test]
-    fn empty_macro_returns_false() {
-        let m = macro_with_steps("empty", vec![]);
-        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::User)]));
-        assert!(!dispatch_macro("empty", &mut t));
+    fn test_an_edit_step_runs_nothing_until_edits_are_rebuilt() {
+        let edit = MacroStep::CustomMutation {
+            id: "nudge".into(),
+            target: MacroTarget::CurrentSelection,
+        };
+        let only = macro_with_steps("only", vec![edit.clone()]);
+        let mixed = macro_with_steps("mixed", vec![edit, MacroStep::Action { action: Action::Undo }]);
+        let mut t = MockTarget::new(registry_with(vec![(only, SourceTier::User), (mixed, SourceTier::User)]));
+        assert!(!dispatch_macro("only", &mut t));
         assert!(t.calls.is_empty());
+        assert!(dispatch_macro("mixed", &mut t));
+        assert_eq!(t.calls, vec!["action:Undo".to_string()]);
     }
 
+    /// An Action that does not apply, and a console line that soft-skips,
+    /// do not count as having run.
     #[test]
-    fn unhandled_action_outcome_does_not_set_any_ran() {
-        // Action steps that return `Unhandled` (e.g. dispatched in
-        // a context where they don't apply) must NOT count as "ran".
-        let m = macro_with_steps("u5", vec![MacroStep::Action { action: Action::Undo }]);
+    fn test_unhandled_steps_do_not_count_as_run() {
+        let m = macro_with_steps(
+            "m",
+            vec![
+                MacroStep::Action { action: Action::Undo },
+                MacroStep::ConsoleLine { line: "fps on".into() },
+            ],
+        );
         let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::User)]));
         t.action_outcome = DispatchOutcome::Unhandled;
-        // The dispatch_action call landed on the mock, but
-        // any_ran stays false because Outcome wasn't Handled.
-        assert!(!dispatch_macro("u5", &mut t));
-        assert_eq!(t.calls, vec!["action:Undo".to_string()]);
-    }
-
-    #[test]
-    fn user_tier_console_line_bumps_any_ran_when_executed() {
-        // Test from parity reviewer: pin `any_ran=true` semantics
-        // when ConsoleLine actually executes (the line fires).
-        let m = macro_with_steps(
-            "u_console",
-            vec![MacroStep::ConsoleLine {
-                line: "fps on".into(),
-            }],
-        );
-        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::User)]));
-        t.console_line_executed = true;
-        // any_ran=true because the console line "ran" (mock
-        // returned true).
-        assert!(dispatch_macro("u_console", &mut t));
-        assert_eq!(t.calls, vec!["console:fps on".to_string()]);
-    }
-
-    #[test]
-    fn user_tier_console_line_skip_does_not_bump_any_ran() {
-        // Test from parity reviewer: when `execute_console_line`
-        // returns false (e.g. no document loaded on native, or
-        // WASM no-console-runtime soft-skip), `any_ran` stays
-        // false. Pre-Track-B native preserved this through an
-        // inline `if let Some(doc)` guard; the trait extraction
-        // moves the guard into the impl + return-bool contract.
-        let m = macro_with_steps(
-            "u_console_skip",
-            vec![MacroStep::ConsoleLine { line: "save".into() }],
-        );
-        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::User)]));
         t.console_line_executed = false;
-        // The mock recorded the call, but the macro returns false
-        // because the only step's "execution" was a soft-skip.
-        assert!(!dispatch_macro("u_console_skip", &mut t));
-        assert_eq!(t.calls, vec!["console:save".to_string()]);
+        assert!(!dispatch_macro("m", &mut t));
+        assert_eq!(t.calls.len(), 2, "both steps were offered");
     }
 
+    /// An unknown id runs nothing.
     #[test]
-    fn custom_mutation_returns_false_does_not_bump_any_ran() {
-        // Test from parity reviewer: when `apply_custom_mutation`
-        // returns false (e.g. unknown mutation id, or document
-        // setter rejected the apply), `any_ran` stays false for
-        // that step. The macro overall still returns false if no
-        // other step succeeded.
-        let m = macro_with_steps(
-            "u_cm_failed",
-            vec![MacroStep::CustomMutation {
-                id: "unknown".into(),
-                target: MacroTarget::CurrentSelection,
-            }],
-        );
-        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::User)]));
-        t.custom_mutation_applied = false;
-        assert!(!dispatch_macro("u_cm_failed", &mut t));
-        // The mock recorded the call (apply was attempted) — only
-        // the bool return signals the rebuild gate / any_ran flag.
-        assert_eq!(t.calls, vec!["custom:unknown@sel".to_string()]);
-    }
-
-    #[test]
-    fn inline_tier_destructive_action_first_step_aborts() {
-        // Inline tier (highest precedence, lowest trust) — first
-        // step is a destructive Action, gate aborts immediately.
-        // any_ran is false because nothing ran.
-        let m = macro_with_steps(
-            "i1",
-            vec![MacroStep::Action {
-                action: Action::DeleteSelection,
-            }],
-        );
-        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::Inline)]));
-        assert!(!dispatch_macro("i1", &mut t));
+    fn test_an_unknown_macro_runs_nothing() {
+        let mut t = MockTarget::new(MacroRegistry::new());
+        assert!(!dispatch_macro("no-such-macro", &mut t));
         assert!(t.calls.is_empty());
-    }
-
-    /// App tier (bundled with the binary, not user-authored) is
-    /// gated identically to Map / Inline. Pins symmetric coverage
-    /// — the Map tier was tested above; this test pins the same
-    /// fail-closed posture for App so a regression that
-    /// special-cased one tier without the other gets caught.
-    #[test]
-    fn app_tier_console_line_fail_closed_aborts_remaining_steps() {
-        let m = macro_with_steps(
-            "a1",
-            vec![
-                MacroStep::Action { action: Action::Undo },
-                MacroStep::ConsoleLine {
-                    line: "fps on".into(),
-                },
-                MacroStep::Action {
-                    action: Action::SaveDocument,
-                },
-            ],
-        );
-        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::App)]));
-        assert!(dispatch_macro("a1", &mut t));
-        assert_eq!(
-            t.calls,
-            vec!["action:Undo".to_string()],
-            "App-tier ConsoleLine must abort remaining steps so post-gate \
-             SaveDocument can't sneak through",
-        );
-    }
-
-    /// App tier rejects destructive Actions. Symmetric with the
-    /// Map-tier test above.
-    #[test]
-    fn app_tier_destructive_action_fail_closed_aborts() {
-        let m = macro_with_steps(
-            "a2",
-            vec![
-                MacroStep::Action { action: Action::Undo },
-                MacroStep::Action { action: Action::Cut },
-                MacroStep::Action { action: Action::Undo },
-            ],
-        );
-        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::App)]));
-        assert!(dispatch_macro("a2", &mut t));
-        assert_eq!(
-            t.calls,
-            vec!["action:Undo".to_string()],
-            "App-tier destructive Action must abort: only the pre-gate \
-             benign Undo runs",
-        );
-    }
-
-    /// Inline-tier ConsoleLine is the highest-risk tier-violation
-    /// path: a hostile mindmap can ship a node-inline macro that
-    /// runs `save /etc/passwd` on first interaction. Fail-closed
-    /// must hold; the test pins exactly that.
-    #[test]
-    fn inline_tier_console_line_fail_closed_aborts_remaining_steps() {
-        let m = macro_with_steps(
-            "i_console",
-            vec![
-                MacroStep::Action { action: Action::Undo },
-                MacroStep::ConsoleLine {
-                    line: "save /tmp/exfil.json".into(),
-                },
-                MacroStep::Action {
-                    action: Action::NewDocument,
-                },
-            ],
-        );
-        let mut t = MockTarget::new(registry_with(vec![(m, SourceTier::Inline)]));
-        assert!(dispatch_macro("i_console", &mut t));
-        assert_eq!(
-            t.calls,
-            vec!["action:Undo".to_string()],
-            "Inline-tier ConsoleLine must abort: the malicious save line \
-             never reaches `execute_console_line`, and the post-gate \
-             NewDocument never reaches `dispatch_action`",
-        );
     }
 }

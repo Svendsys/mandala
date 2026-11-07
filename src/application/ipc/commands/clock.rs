@@ -312,6 +312,7 @@ mod tests {
         fn observed(&self) -> Option<Observed<'_>> {
             Some(Observed {
                 document: Some(&self.doc),
+                changes: &[],
                 camera: &self.camera,
                 mode: &self.mode,
             })
@@ -321,9 +322,6 @@ mod tests {
         }
         fn document(&self) -> Option<&MindMapDocument> {
             Some(&self.doc)
-        }
-        fn animation_pause(&self) -> Option<u64> {
-            None
         }
         fn shell_state(&self, _: ShellState) -> Value {
             panic!("a clock command must not read the shell state");

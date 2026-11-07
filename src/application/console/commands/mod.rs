@@ -200,6 +200,23 @@ pub(super) const TRANSACTIONS_OWNER: &str = "V1-C7 (#248)";
 /// The owner of node editing (`mode node-edit`), as a refusal names it.
 pub(super) const TEXT_OWNER: &str = "V1-C8 (#249)";
 
+/// The verbs an owner rebuilds on the one writer, with the owner each
+/// refusal names: what the tests hold the refusals and the registry
+/// against.
+#[cfg(test)]
+pub(crate) const REBUILT_VERBS: &[(&str, &str)] = &[
+    ("node", FIELD_NODES_OWNER),
+    ("section", FIELD_NODES_OWNER),
+    ("color", FIELD_NODES_OWNER),
+    ("font", FIELD_NODES_OWNER),
+    ("zoom", FIELD_NODES_OWNER),
+    ("anchor", FIELD_PATHS_OWNER),
+    ("body", FIELD_PATHS_OWNER),
+    ("cap", FIELD_PATHS_OWNER),
+    ("label", FIELD_PATHS_OWNER),
+    ("spacing", FIELD_PATHS_OWNER),
+];
+
 /// The answer a console verb that edited the old model gets until
 /// `owner` rebuilds it on the one writer: an error naming the owner, and
 /// the same at `debug!` — the console's peer of an unhandled Action
@@ -247,18 +264,7 @@ mod tests {
     /// with its grammar for help and completion.
     #[test]
     fn test_a_rebuilt_verb_refuses_naming_its_owner() {
-        for (verb, owner) in [
-            ("node", FIELD_NODES_OWNER),
-            ("section", FIELD_NODES_OWNER),
-            ("color", FIELD_NODES_OWNER),
-            ("font", FIELD_NODES_OWNER),
-            ("zoom", FIELD_NODES_OWNER),
-            ("anchor", FIELD_PATHS_OWNER),
-            ("body", FIELD_PATHS_OWNER),
-            ("cap", FIELD_PATHS_OWNER),
-            ("label", FIELD_PATHS_OWNER),
-            ("spacing", FIELD_PATHS_OWNER),
-        ] {
+        for &(verb, owner) in REBUILT_VERBS {
             let command = command_by_name(verb).expect("registered");
             let mut doc = crate::application::document::MindMapDocument::new_blank(None, 50);
             let revision = doc.revision();

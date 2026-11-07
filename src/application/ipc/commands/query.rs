@@ -472,7 +472,6 @@ mod tests {
     use super::*;
     use crate::application::console::LineOutcome;
     use crate::application::document::tests_common::load_test_doc;
-    use crate::application::document::UndoAction;
     use crate::application::ipc::events::Observed;
     use crate::application::ipc::registry::tests::{run_attached, run_detached};
     use crate::application::ipc::space::Point;
@@ -493,7 +492,6 @@ mod tests {
     /// value, since the real projections are tested where they live.
     struct LoadedApp {
         doc: Option<MindMapDocument>,
-        pause: Option<u64>,
         clock: crate::application::clock::AppClock,
     }
 
@@ -501,7 +499,6 @@ mod tests {
         fn with_fixture() -> Self {
             LoadedApp {
                 doc: Some(load_test_doc()),
-                pause: None,
                 clock: crate::application::clock::AppClock::default(),
             }
         }
@@ -528,9 +525,6 @@ mod tests {
         }
         fn document(&self) -> Option<&MindMapDocument> {
             self.doc.as_ref()
-        }
-        fn animation_pause(&self) -> Option<u64> {
-            self.pause
         }
         fn shell_state(&self, which: ShellState) -> Value {
             json!({ "shell_state": format!("{which:?}") })
@@ -598,13 +592,12 @@ mod tests {
         }
     }
 
-    const ALL_QUERIES: [&str; 8] = [
+    const ALL_QUERIES: [&str; 7] = [
         r#"{"id":1,"cmd":"query.document"}"#,
         r#"{"id":1,"cmd":"query.selection"}"#,
         r#"{"id":1,"cmd":"query.camera"}"#,
         r#"{"id":1,"cmd":"query.mode"}"#,
         r#"{"id":1,"cmd":"query.status"}"#,
-        r#"{"id":1,"cmd":"query.animations"}"#,
         r#"{"id":1,"cmd":"query.editors"}"#,
         r#"{"id":1,"cmd":"query.undo"}"#,
     ];
@@ -627,10 +620,9 @@ mod tests {
     fn test_the_document_queries_say_when_no_document_loaded() {
         let mut app = LoadedApp {
             doc: None,
-            pause: None,
             clock: crate::application::clock::AppClock::default(),
         };
-        for frame in [ALL_QUERIES[0], ALL_QUERIES[1], ALL_QUERIES[5], ALL_QUERIES[7]] {
+        for frame in [ALL_QUERIES[0], ALL_QUERIES[1], ALL_QUERIES[6]] {
             let (reply, repaint) = run_attached(frame, &mut app);
             assert_eq!(reply["error"]["code"], json!("no_document"), "{frame}");
             assert!(
@@ -641,7 +633,7 @@ mod tests {
             );
             assert!(!repaint);
         }
-        for frame in [ALL_QUERIES[2], ALL_QUERIES[3], ALL_QUERIES[4], ALL_QUERIES[6]] {
+        for frame in [ALL_QUERIES[2], ALL_QUERIES[3], ALL_QUERIES[4], ALL_QUERIES[5]] {
             let (reply, _) = run_attached(frame, &mut app);
             assert_eq!(reply["ok"], json!(true), "{frame}: {reply}");
         }
@@ -652,22 +644,17 @@ mod tests {
     /// decoder and the registry with a real loaded document behind
     /// the target. None reaches an act funnel (each would panic), none
     /// raises the repaint flag, and the document is exactly as it
-    /// was: `dirty`, the undo depth, the selection and the whole
-    /// model.
+    /// was: its revision, its history and the whole model.
     #[test]
     fn test_every_query_through_the_registry_leaves_the_document_untouched() {
         let mut app = LoadedApp::with_fixture();
-        {
-            let doc = app.doc.as_mut().expect("loaded");
-            doc.dirty = true;
-            doc.undo_stack.push(UndoAction::CreateEdge { index: 0 });
-        }
-        let model_before =
-            serde_json::to_value(&app.doc.as_ref().expect("loaded").mindmap).expect("serializes");
+        app.doc.as_mut().expect("loaded").create_root_for_test();
+        let doc = app.doc.as_mut().expect("loaded");
+        let (revision, model_before) = (doc.revision(), doc.save_json().expect("saves"));
 
         let mut frames: Vec<&str> = ALL_QUERIES.to_vec();
-        frames.push(r#"{"id":2,"cmd":"query.document","fields":["mindmap","counts","dirty"]}"#);
-        frames.push(r#"{"id":2,"cmd":"query.document","pointer":"/nodes/0/position"}"#);
+        frames.push(r#"{"id":2,"cmd":"query.document","fields":["document","nodes","dirty"]}"#);
+        frames.push(r#"{"id":2,"cmd":"query.document","pointer":"/name"}"#);
         frames.push(r#"{"id":2,"cmd":"query.undo","limit":3}"#);
         for frame in frames {
             let (reply, repaint) = run_attached(frame, &mut app);
@@ -675,92 +662,77 @@ mod tests {
             assert!(!repaint, "{frame}: a query must not ask for a frame");
         }
 
-        let doc = app.doc.as_ref().expect("loaded");
-        assert!(doc.dirty, "dirty is untouched");
-        assert_eq!(doc.undo_stack.len(), 1, "no undo entry is pushed or popped");
-        assert_eq!(
-            serde_json::to_value(&doc.mindmap).expect("serializes"),
-            model_before,
-            "the model is untouched"
-        );
+        let doc = app.doc.as_mut().expect("loaded");
+        assert!(doc.is_dirty(), "dirty is untouched");
+        assert_eq!(doc.revision(), revision, "no change is made or undone");
+        assert_eq!(doc.save_json().expect("saves"), model_before, "the model is untouched");
     }
 
     /// The queries answer with what the document holds, through the
     /// registry: the default summary, the filter, a pointer, the undo
-    /// stack, the selection and the animations.
+    /// history and the selection, by integer id.
     #[test]
     fn test_the_document_queries_report_the_loaded_document() {
         let mut app = LoadedApp::with_fixture();
-        {
+        let node = {
             let doc = app.doc.as_mut().expect("loaded");
-            doc.dirty = true;
-            doc.undo_stack.push(UndoAction::CreateEdge { index: 7 });
-            doc.selection = crate::application::document::SelectionState::Single("0".into());
-        }
-        let node_count = app.doc.as_ref().expect("loaded").mindmap.nodes.len();
+            doc.create_root_for_test();
+            let node = crate::application::document::selection::every_node(doc.doc())
+                .next()
+                .expect("a node");
+            doc.selection.select_only(node);
+            node
+        };
+        let doc = app.doc.as_ref().expect("loaded");
+        let node_count = crate::application::document::selection::every_node(doc.doc()).count();
+        let ident = crate::application::view::inspect::ident_of(doc.doc(), node).expect("a node").0;
+        let name = doc.name().to_string();
 
         let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.document"}"#, &mut app);
         assert_eq!(reply["result"]["dirty"], json!(true));
-        assert_eq!(reply["result"]["undo_depth"], json!(1));
-        assert_eq!(reply["result"]["counts"]["nodes"], json!(node_count));
-        assert!(reply["result"].get("mindmap").is_none(), "the model is opt-in");
+        assert_eq!(reply["result"]["history"], json!({"undo": 1, "redo": 0}));
+        assert_eq!(reply["result"]["nodes"], json!(node_count));
+        assert_eq!(reply["result"]["name"], json!(name));
+        assert!(reply["result"]["revision"].as_u64().is_some());
+        assert!(reply["result"].get("document").is_none(), "the model is opt-in");
 
         let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.document","fields":["dirty"]}"#, &mut app);
         assert_eq!(reply["result"], json!({ "dirty": true }));
 
-        let (reply, _) = run_attached(
-            r#"{"id":1,"cmd":"query.document","pointer":"/nodes/0/id"}"#,
-            &mut app,
-        );
-        assert_eq!(reply["result"], json!({ "mindmap": "0" }));
+        let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.document","pointer":"/name"}"#, &mut app);
+        assert_eq!(reply["result"], json!({ "document": name }));
 
         let (reply, _) = run_attached(
-            r#"{"id":1,"cmd":"query.document","pointer":"/nodes/no-such-node"}"#,
+            r#"{"id":1,"cmd":"query.document","pointer":"/no/such/part"}"#,
             &mut app,
         );
         assert_eq!(reply["error"]["code"], json!("not_found"));
 
         let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.undo"}"#, &mut app);
-        assert_eq!(
-            reply["result"],
-            json!({ "depth": 1, "entries": [{ "kind": "CreateEdge", "index": 7 }] })
-        );
+        assert_eq!(reply["result"]["depth"], json!(1));
+        assert_eq!(reply["result"]["entries"][0]["label"], json!("test: create root"));
         let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.selection"}"#, &mut app);
-        assert_eq!(reply["result"], json!({ "kind": "Single", "node_id": "0" }));
+        assert_eq!(reply["result"], json!({ "count": 1, "elements": [{ "node": ident }] }));
         let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.camera"}"#, &mut app);
         assert_eq!(reply["result"], json!({ "shell_state": "Camera" }));
     }
 
-    /// **`query.document` round-trips through the registry** (issue
-    /// #64's acceptance criterion): asked for `mindmap`, the reply
-    /// parses back to the model the document holds.
+    /// **`query.document` round-trips through the registry**: asked for
+    /// `document`, the reply loads back to the map the document holds.
     #[test]
     fn test_the_model_round_trips_through_the_registry() {
         let mut app = LoadedApp::with_fixture();
         let (reply, _) = run_attached(
-            r#"{"id":1,"cmd":"query.document","fields":["mindmap"]}"#,
+            r#"{"id":1,"cmd":"query.document","fields":["document"]}"#,
             &mut app,
         );
-        let reparsed: baumhard::mindmap::model::MindMap =
-            serde_json::from_value(reply["result"]["mindmap"].clone()).expect("the reply is a MindMap");
+        let reloaded = baumhard::document::format::load(&reply["result"]["document"].to_string())
+            .expect("the reply is a map");
         assert_eq!(
-            serde_json::to_value(&reparsed).expect("serializes"),
-            serde_json::to_value(&app.doc.as_ref().expect("loaded").mindmap).expect("serializes"),
+            baumhard::document::format::save(&reloaded).expect("saves"),
+            app.doc.as_mut().expect("loaded").save_json().expect("saves"),
             "what the agent reads is what the app holds"
         );
-    }
-
-    /// `query.animations` through the registry reports the pause a
-    /// tree-mutating drag puts on the tick, which only the app knows.
-    #[test]
-    fn test_query_animations_carries_the_apps_pause_state() {
-        let mut app = LoadedApp::with_fixture();
-        let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.animations"}"#, &mut app);
-        assert_eq!(reply["result"]["paused"], json!(false));
-        assert_eq!(reply["result"]["active"], json!(false));
-        app.pause = Some(0);
-        let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.animations"}"#, &mut app);
-        assert_eq!(reply["result"]["paused"], json!(true));
     }
 
     fn refused(frame: &str) -> (String, String) {
@@ -779,7 +751,7 @@ mod tests {
     /// A query that takes no parameters rejects a stray one, naming it.
     #[test]
     fn test_a_parameterless_query_refuses_a_stray_parameter() {
-        for cmd in ["selection", "camera", "mode", "status", "animations", "editors"] {
+        for cmd in ["selection", "camera", "mode", "status", "editors"] {
             assert_eq!(
                 refused(&format!(r#"{{"id":1,"cmd":"query.{cmd}","limit":1}}"#)),
                 ("invalid_params".into(), "limit".into()),
@@ -849,7 +821,7 @@ mod tests {
     fn test_the_default_request_is_everything_but_the_model() {
         let parsed = request(None, None, None, None).expect("parses");
         assert_eq!(parsed.fields.len(), DocumentField::ALL.len() - 1);
-        assert!(!parsed.fields.contains(&DocumentField::Mindmap));
+        assert!(!parsed.fields.contains(&DocumentField::Document));
         assert_eq!(parsed.pointer, None);
         assert_eq!(parsed.to_file, None);
     }
@@ -857,11 +829,11 @@ mod tests {
     #[test]
     fn test_a_pointer_alone_implies_the_model_and_fields_reply_in_document_order() {
         let parsed = request(None, Some("/nodes"), None, None).expect("parses");
-        assert_eq!(parsed.fields, vec![DocumentField::Mindmap]);
-        let parsed = request(Some(json!(["counts", "dirty", "counts"])), None, None, None).expect("parses");
+        assert_eq!(parsed.fields, vec![DocumentField::Document]);
+        let parsed = request(Some(json!(["nodes", "dirty", "nodes"])), None, None, None).expect("parses");
         assert_eq!(
             parsed.fields,
-            vec![DocumentField::Dirty, DocumentField::Counts],
+            vec![DocumentField::Dirty, DocumentField::Nodes],
             "deduplicated, in the document's order"
         );
     }
@@ -872,7 +844,7 @@ mod tests {
         let dir = scratch_dir("write");
         let path = dir.join("model.json");
         let request = request(
-            Some(json!(["mindmap", "counts"])),
+            Some(json!(["document", "nodes"])),
             None,
             Some(path.to_str().expect("utf-8")),
             None,

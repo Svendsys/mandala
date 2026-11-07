@@ -4,7 +4,7 @@
 //! the expected suggestions for command-name prefixes, kv keys, kv
 //! values, and unknown commands.
 
-use super::fixtures::{load_test_doc, select_first_edge};
+use super::fixtures::{load_test_doc, select_first_path};
 use crate::application::console::completion::complete;
 use crate::application::console::ConsoleContext;
 
@@ -22,7 +22,7 @@ fn test_complete_command_name_empty_input() {
     let ctx = ConsoleContext::from_document(&doc);
     let results = complete("", 0, &ctx);
     assert!(results.iter().any(|c| c.text == "help"));
-    // Non-applicable commands (e.g. `anchor` without edge selected)
+    // Non-applicable commands (e.g. `anchor` without a path selected)
     // should be hidden.
     assert!(!results.iter().any(|c| c.text == "anchor"));
 }
@@ -30,7 +30,7 @@ fn test_complete_command_name_empty_input() {
 #[test]
 fn test_complete_anchor_kv_keys() {
     let mut doc = load_test_doc();
-    let _ = select_first_edge(&mut doc);
+    let _ = select_first_path(&mut doc);
     let ctx = ConsoleContext::from_document(&doc);
     let results = complete("anchor ", 7, &ctx);
     let names: Vec<&str> = results.iter().map(|c| c.text.as_str()).collect();
@@ -41,7 +41,7 @@ fn test_complete_anchor_kv_keys() {
 #[test]
 fn test_complete_anchor_kv_values() {
     let mut doc = load_test_doc();
-    let _ = select_first_edge(&mut doc);
+    let _ = select_first_path(&mut doc);
     let ctx = ConsoleContext::from_document(&doc);
     let results = complete("anchor from=", 12, &ctx);
     let names: Vec<&str> = results.iter().map(|c| c.text.as_str()).collect();

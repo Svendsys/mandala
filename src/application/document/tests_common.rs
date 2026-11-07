@@ -24,3 +24,8 @@ pub(crate) fn load_map(name: &str) -> MindMapDocument {
 pub(crate) fn testament() -> MindMapDocument {
     load_map("testament")
 }
+
+/// [`testament`], under the name the older suites call it by.
+pub(crate) fn load_test_doc() -> MindMapDocument {
+    testament()
+}

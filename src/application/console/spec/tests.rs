@@ -236,7 +236,7 @@ fn test_every_usage_form_leads_with_its_verb() {
 /// union.
 #[test]
 fn test_every_form_key_reaches_the_popup_and_help() {
-    let doc = crate::application::document::tests_common::load_test_doc();
+    let doc = crate::application::document::tests_common::testament();
     let ctx = crate::application::console::ConsoleContext::from_document(&doc);
     let mut probes = 0usize;
     let mut keys_seen = 0usize;
@@ -1065,129 +1065,13 @@ fn test_a_repeated_key_resolves_to_its_last_occurrence() {
 /// with all of them, because one table answers for every level it
 /// serves.
 fn dispatchers() -> Vec<(&'static str, Vec<&'static Grammar>, Vec<&'static str>)> {
-    use crate::application::console::commands::{
-        border, canvas, clock, color, font, fps, label, mode, mutation, node, record, section, zoom,
-    };
+    use crate::application::console::commands::{clock, fps, mode, record};
     vec![
         ("fps", vec![&fps::GRAMMAR], fps::routed_names()),
-        ("mutation", vec![&mutation::GRAMMAR], mutation::routed_names()),
-        ("node", vec![&node::GRAMMAR], node::routed_names()),
         ("mode", vec![&mode::GRAMMAR], mode::routed_names()),
         ("clock", vec![&clock::GRAMMAR], clock::routed_names()),
         ("record", vec![&record::GRAMMAR], record::routed_names()),
-        ("font", vec![&font::GRAMMAR], font::routed_names()),
-        ("label", vec![&label::GRAMMAR], label::routed_names()),
-        ("color", vec![&color::GRAMMAR], color::routed_names()),
-        ("zoom", vec![&zoom::GRAMMAR], zoom::routed_names()),
-        (
-            "section",
-            vec![&section::grammar::SECTION],
-            section::routed_names(),
-        ),
-        (
-            "section frame",
-            vec![&section::SECTION_FRAME],
-            section::frame_routed_names(),
-        ),
-        ("border", vec![&border::grammar::BORDER], border::routed_names()),
-        (
-            "canvas subjects",
-            vec![
-                &canvas::grammar::CANVAS_BORDER,
-                &canvas::grammar::CANVAS_SECTION_FRAME,
-                &canvas::grammar::CANVAS_SECTION_FRAME_FOCUSED,
-            ],
-            canvas::routed_names(),
-        ),
-        (
-            "border preview",
-            vec![
-                &border::grammar::BORDER_PREVIEW,
-                &canvas::grammar::CANVAS_BORDER_PREVIEW,
-                &canvas::grammar::CANVAS_SECTION_FRAME_PREVIEW,
-                &canvas::grammar::CANVAS_FOCUSED_PREVIEW,
-                &section::SECTION_FRAME_PREVIEW,
-            ],
-            border::preview_routed_names(),
-        ),
     ]
-}
-
-/// Every shared subverb set a dispatcher hands on through a
-/// `route::Delegates` row, with the names the set's own table routes.
-/// A dispatcher reports a delegated set's names as routed, so the set's
-/// table has to be held against the set here.
-/// [`test_every_delegated_set_is_a_listed_shared_set`] refuses a
-/// delegated set missing from this list.
-fn shared_sets() -> Vec<(&'static str, &'static [Subverb], Vec<&'static str>)> {
-    use crate::application::console::commands::border;
-    vec![(
-        "border per-field",
-        border::grammar::POSITIONAL_SUBVERBS,
-        border::positional_routed_names(),
-    )]
-}
-
-/// Every dispatcher that hands a shared set on, with the sets it hands
-/// on (each exports them beside its `routed_names()`).
-fn delegating_dispatchers() -> Vec<(&'static str, Vec<&'static [Subverb]>)> {
-    use crate::application::console::commands::{border, canvas};
-    vec![
-        ("border", border::delegated_sets()),
-        ("canvas subjects", canvas::delegated_sets()),
-    ]
-}
-
-/// Every set a dispatcher delegates is listed in [`shared_sets`].
-///
-/// The failing input is a second shared set handed on through a new
-/// `Delegates` row with no `shared_sets()` entry. The delegating
-/// dispatcher reports all of that set's names as routed, so the level
-/// test stays green, and nothing holds the set against its own table:
-/// a row added to the set with no table row would reach `route::miss`,
-/// #155's failure one level down. Sets are compared by their names
-/// rather than by address, for the reason `route::declares` gives.
-#[test]
-fn test_every_delegated_set_is_a_listed_shared_set() {
-    let names = |set: &[Subverb]| set.iter().map(|s| s.name).collect::<Vec<_>>();
-    let listed: Vec<Vec<&'static str>> = shared_sets().into_iter().map(|(_, set, _)| names(set)).collect();
-    for (site, sets) in delegating_dispatchers() {
-        for set in sets {
-            assert!(
-                listed.contains(&names(set)),
-                "{site}: delegates the shared set {:?}, which `shared_sets()` does not list, so \
-                 nothing holds it against its own table",
-                names(set)
-            );
-        }
-    }
-}
-
-/// A shared set's own table routes exactly the set.
-///
-/// The failing input is a row added to a shared set — `border`'s
-/// per-field subverbs, composed by four levels — with no row in the
-/// set's table. Every composing dispatcher reports the name as routed,
-/// because it hands the whole set on, so the exactness test over the
-/// levels stays green and the subverb reaches `route::miss` on all
-/// four. This holds the set's table instead.
-#[test]
-fn test_every_shared_set_table_routes_exactly_its_set() {
-    for (site, set, routed) in shared_sets() {
-        let declared: Vec<&'static str> = set.iter().map(|s| s.name).collect();
-        for name in &declared {
-            assert!(
-                routed.contains(name),
-                "{site}: the shared set declares subverb '{name}' but its table does not route it"
-            );
-        }
-        for name in &routed {
-            assert!(
-                declared.contains(name),
-                "{site}: routes subverb '{name}', which the shared set does not declare"
-            );
-        }
-    }
 }
 
 /// A route table handles exactly the subverbs its levels declare.
@@ -1255,6 +1139,14 @@ fn test_every_level_with_subverbs_has_a_listed_dispatcher() {
         .collect();
     for (verb, grammar) in all_levels() {
         if grammar.subverbs().all(|s| s.child.is_some()) {
+            continue;
+        }
+        // A verb its owner rebuilds refuses whole and routes nothing
+        // until then (`commands::rebuilt_by`).
+        if crate::application::console::commands::REBUILT_VERBS
+            .iter()
+            .any(|(rebuilt, _)| *rebuilt == verb)
+        {
             continue;
         }
         assert!(

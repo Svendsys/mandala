@@ -812,9 +812,6 @@ mod tests {
         fn document(&self) -> Option<&MindMapDocument> {
             panic!("a capture reaches the document through the engine");
         }
-        fn animation_pause(&self) -> Option<u64> {
-            panic!("a capture must not read the animation pause");
-        }
         fn shell_state(&self, _: ShellState) -> Value {
             panic!("a capture must not read the shell state");
         }

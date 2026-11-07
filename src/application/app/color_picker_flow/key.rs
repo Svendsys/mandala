@@ -375,18 +375,13 @@ mod tests {
         assert_eq!(picker_op_for(&Action::ExitMode), None);
     }
 
-    /// A picker open in Contextual mode bound to edge 0 of the
-    /// testament map, seeded at a known HSV. Enough state for the
-    /// nudge path — layout / ink offsets are only read by the
-    /// renderer, which this path never touches.
+    /// A picker open in Contextual mode, seeded at a known HSV. Enough
+    /// state for the nudge path — layout / ink offsets are only read by
+    /// the renderer, which this path never touches.
     fn open_contextual_picker(hsv: (f32, f32, f32)) -> ColorPickerState {
-        use crate::application::color_picker::{PickerHandle, PickerMode, CROSSHAIR_CENTER_CELL};
+        use crate::application::color_picker::{PickerMode, CROSSHAIR_CENTER_CELL};
         ColorPickerState::Open(Box::new(OpenPicker {
-            mode: PickerMode::Contextual {
-                handle: PickerHandle::Edge(0),
-                seed_var_ref: None,
-                seed_hsv: hsv,
-            },
+            mode: PickerMode::Contextual { seed_hsv: hsv },
             hue_deg: hsv.0,
             sat: hsv.1,
             val: hsv.2,
@@ -410,43 +405,16 @@ mod tests {
         }))
     }
 
-    /// The nudge actually lands: HSV moves on the picker, the
-    /// document's transient preview is restamped with the new hex,
-    /// and the throttled drain is flagged. This is the effect half
-    /// of `PickerOp::Nudge` — `dispatch_action`'s picker arm calls
-    /// exactly this function.
+    /// The nudge actually lands: HSV moves on the picker. This is the
+    /// effect half of `PickerOp::Nudge`.
     #[test]
-    fn test_apply_picker_nudge_moves_hsv_and_restamps_the_document_preview() {
-        let mut doc = crate::application::document::tests_common::load_test_doc();
-        assert!(
-            !doc.mindmap.edges.is_empty(),
-            "testament map is expected to carry edges for the Edge(0) handle"
-        );
+    fn test_apply_picker_nudge_moves_hsv() {
         let mut state = open_contextual_picker((10.0, 0.5, 0.5));
-        let mut hover = ColorPickerHoverInteraction::default();
-        doc.color_picker_preview = None;
-
-        assert!(apply_picker_nudge(
-            PickerNudge::HueUp,
-            &mut state,
-            &mut doc,
-            &mut hover
-        ));
-
+        assert!(apply_picker_nudge(PickerNudge::HueUp, &mut state));
         let Some(OpenPicker { hue_deg, .. }) = state.as_open() else {
             panic!("nudge must not close the picker");
         };
         assert_eq!(*hue_deg, 25.0);
-        let preview = doc
-            .color_picker_preview
-            .expect("nudge restamps the document's transient preview");
-        assert_eq!(preview.color, baumhard::util::color::hsv_to_hex(25.0, 0.5, 0.5));
-        use crate::application::app::throttled_interaction::ThrottledInteraction;
-        assert!(hover.has_pending(), "the per-frame drain must be flagged");
-        assert!(
-            hover.canvas_needs_rebuild(),
-            "the canvas must repaint the previewed edge"
-        );
     }
 
     /// A keyboard nudge takes over from the pointer: the stale
@@ -454,19 +422,11 @@ mod tests {
     /// value the keyboard just chose.
     #[test]
     fn test_apply_picker_nudge_clears_a_stale_hover_preview() {
-        let mut doc = crate::application::document::tests_common::load_test_doc();
         let mut state = open_contextual_picker((10.0, 0.5, 0.5));
         if let Some(OpenPicker { hover_preview, .. }) = state.as_open_mut() {
             *hover_preview = Some((200.0, 0.1, 0.9));
         }
-        let mut hover = ColorPickerHoverInteraction::default();
-
-        assert!(apply_picker_nudge(
-            PickerNudge::SatUp,
-            &mut state,
-            &mut doc,
-            &mut hover
-        ));
+        assert!(apply_picker_nudge(PickerNudge::SatUp, &mut state));
 
         let Some(OpenPicker {
             hover_preview, sat, ..
@@ -482,17 +442,8 @@ mod tests {
     /// a macro can fire `PickerNudgeHueUp` at any time.
     #[test]
     fn test_apply_picker_nudge_on_a_closed_picker_is_a_noop() {
-        let mut doc = crate::application::document::tests_common::load_test_doc();
         let mut state = ColorPickerState::Closed;
-        let mut hover = ColorPickerHoverInteraction::default();
-        assert!(!apply_picker_nudge(
-            PickerNudge::HueUp,
-            &mut state,
-            &mut doc,
-            &mut hover
-        ));
-        use crate::application::app::throttled_interaction::ThrottledInteraction;
-        assert!(!hover.has_pending());
+        assert!(!apply_picker_nudge(PickerNudge::HueUp, &mut state));
     }
 
     // ── Picker-arm decline branches ─────────────────────────────

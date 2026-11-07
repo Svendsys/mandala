@@ -894,7 +894,6 @@ fn node_target(
 mod tests {
     use super::*;
     use baumhard::gfx_structs::camera::Camera2D;
-    use baumhard::mindmap::tree_builder::MindMapTree;
     use glam::Vec2;
 
     use crate::application::console::LineOutcome;
@@ -907,7 +906,8 @@ mod tests {
     use crate::application::ipc::{CommandTarget, SceneView, ShellState};
     use crate::application::keybinds::Action;
     use crate::application::macros::MacroStep;
-    use crate::application::scene_host::AppScene;
+    use crate::application::view::inspect::{element_bounds, ident_of};
+    use crate::application::view::MapView;
 
     /// **Every `button` doc lists the words `BUTTON_WORDS` holds, in its
     /// order, spelled by `button_words_prose`** — the docs are `&'static
@@ -943,8 +943,7 @@ mod tests {
     /// it unchanged is `app/ipc_target.rs`'s one match.
     struct InputApp {
         doc: Option<MindMapDocument>,
-        tree: Option<MindMapTree>,
-        scene: AppScene,
+        view: MapView,
         camera: Camera2D,
         queue: InjectedQueue,
         applied: Vec<Sample<Surface>>,
@@ -952,17 +951,16 @@ mod tests {
 
     impl InputApp {
         /// The fixture, projected, with the camera centered on its
-        /// first node at zoom 2 so canvas and surface differ.
+        /// first drawn node at zoom 2 so canvas and surface differ.
         fn with_fixture() -> Self {
             let doc = load_test_doc();
-            let (tree, scene) = crate::application::app::project_scene_for_tests(&doc, 2.0);
+            let view = MapView::for_test(&doc);
             let mut camera = Camera2D::new(1280, 720);
             camera.zoom = 2.0;
-            camera.position = doc.mindmap.nodes[&first_node(&doc)].center_vec2();
+            camera.position = drawn_center(&doc, &view, first_node(&doc, &view));
             InputApp {
                 doc: Some(doc),
-                tree: Some(tree),
-                scene,
+                view,
                 camera,
                 queue: InjectedQueue::default(),
                 applied: Vec::new(),
@@ -970,8 +968,22 @@ mod tests {
         }
     }
 
-    fn first_node(doc: &MindMapDocument) -> String {
-        doc.mindmap.nodes.keys().min().cloned().expect("fixture nodes")
+    /// The fixture's first node that draws something.
+    fn first_node(doc: &MindMapDocument, view: &MapView) -> baumhard::arena::NodeId {
+        crate::application::document::selection::every_node(doc.doc())
+            .find(|&n| element_bounds(doc.doc(), view.projector(), view.layers(), n).is_some())
+            .expect("a drawn node")
+    }
+
+    /// The center of what `element` draws.
+    fn drawn_center(doc: &MindMapDocument, view: &MapView, element: baumhard::arena::NodeId) -> Vec2 {
+        let rect = element_bounds(doc.doc(), view.projector(), view.layers(), element).expect("drawn");
+        rect.origin + rect.size / 2.0
+    }
+
+    /// `node`'s integer id, as a request names it.
+    fn ident(doc: &MindMapDocument, node: baumhard::arena::NodeId) -> u32 {
+        ident_of(doc.doc(), node).expect("a node").0
     }
 
     impl CommandTarget for InputApp {
@@ -996,17 +1008,13 @@ mod tests {
         fn document(&self) -> Option<&MindMapDocument> {
             self.doc.as_ref()
         }
-        fn animation_pause(&self) -> Option<u64> {
-            None
-        }
         fn shell_state(&self, _: ShellState) -> Value {
             panic!("raw input must not read the shell state");
         }
         fn scene(&self) -> Option<SceneView<'_>> {
             Some(SceneView {
                 document: self.doc.as_ref()?,
-                mindmap_tree: self.tree.as_ref(),
-                app_scene: &self.scene,
+                view: &self.view,
                 camera: &self.camera,
             })
         }
@@ -1111,7 +1119,7 @@ mod tests {
         r#"{"id":1,"cmd":"input.text","text":"hi"}"#,
         r#"{"id":1,"cmd":"input.touch","phase":"started","pointer_id":0,"x":1,"y":2}"#,
         r#"{"id":1,"cmd":"input.drag","from_x":0,"from_y":0,"to_x":10,"to_y":0}"#,
-        r#"{"id":1,"cmd":"input.click_node","node_id":"0"}"#,
+        r#"{"id":1,"cmd":"input.click_node","node_id":1}"#,
         r#"{"id":1,"cmd":"input.pending"}"#,
     ];
 
@@ -1201,11 +1209,11 @@ mod tests {
                 "button",
             ),
             (
-                r#"{"id":1,"cmd":"input.click_node","node_id":"0","section":-1}"#,
+                r#"{"id":1,"cmd":"input.click_node","node_id":1,"section":-1}"#,
                 "section",
             ),
             (
-                r#"{"id":1,"cmd":"input.click_node","node_id":"0","mods":["hyper"]}"#,
+                r#"{"id":1,"cmd":"input.click_node","node_id":1,"mods":["hyper"]}"#,
                 "mods",
             ),
         ] {
@@ -1566,13 +1574,14 @@ mod tests {
         assert_eq!(app.queue.len(), 1003);
     }
 
-    /// `click_node` aims at the center of the node's model AABB, or of
-    /// the section's, and clicks there: a move, a press, a release,
-    /// reported in surface pixels.
+    /// `click_node` aims at the center of the node's drawn box, and
+    /// clicks there: a move, a press, a release, reported in surface
+    /// pixels.
     #[test]
-    fn test_click_node_clicks_the_model_center_through_the_camera() {
+    fn test_click_node_clicks_the_drawn_center_through_the_camera() {
         let mut app = InputApp::with_fixture();
-        let id = first_node(app.doc.as_ref().expect("doc"));
+        let doc = app.doc.as_ref().expect("doc");
+        let id = ident(doc, first_node(doc, &app.view));
         let (reply, repaint) = run_attached(
             &json!({"id":1,"cmd":"input.click_node","node_id":id,"mods":["ctrl"]}).to_string(),
             &mut app,
@@ -1594,93 +1603,58 @@ mod tests {
         );
     }
 
+    /// A section is aimed at by its own drawn box; a section index past
+    /// the node's, an id no node has and an id that is not an integer
+    /// are each refused for what they are.
     #[test]
-    fn test_click_node_aims_at_a_section_by_the_tree_builders_rule() {
-        let mut doc = load_test_doc();
-        let id = first_node(&doc);
-        {
-            let node = doc.mindmap.nodes.get_mut(&id).expect("node");
-            let mut second = node.sections[0].clone();
-            second.offset = baumhard::mindmap::model::Position { x: 10.0, y: 20.0 };
-            second.size = Some(baumhard::mindmap::model::Size {
-                width: 30.0,
-                height: 40.0,
-            });
-            node.sections.push(second);
-        }
-        let node = &doc.mindmap.nodes[&id];
-        assert_eq!(
-            node_target(&doc, &id, Some(1), 1.0),
-            Ok(Vec2::new(
-                (node.position.x + 25.0) as f32,
-                (node.position.y + 40.0) as f32
-            )),
-            "an explicit section size: the offset plus half the size"
+    fn test_click_node_aims_at_a_section_and_refuses_what_it_cannot_aim_at() {
+        use crate::application::view::inspect::children_of_kind;
+        use baumhard::document::element::DocKind;
+        let doc = load_test_doc();
+        let view = MapView::for_test(&doc);
+        let camera = Camera2D::new(1280, 720);
+        let scene = SceneView {
+            document: &doc,
+            view: &view,
+            camera: &camera,
+        };
+        let node = crate::application::document::selection::every_node(doc.doc())
+            .find(|&n| children_of_kind(doc.doc(), n, DocKind::Section).count() >= 2)
+            .expect("a node with two sections");
+        let second = children_of_kind(doc.doc(), node, DocKind::Section).nth(1).expect("the second");
+        let count = children_of_kind(doc.doc(), node, DocKind::Section).count();
+        let id = json!(ident(&doc, node));
+        assert_eq!(node_target(&scene, &id, Some(1)), Ok(drawn_center(&doc, &view, second)));
+        assert_ne!(
+            node_target(&scene, &id, Some(1)),
+            node_target(&scene, &id, None),
+            "a section is not its node's center"
         );
-        assert_eq!(
-            node_target(&doc, &id, Some(0), 1.0),
-            Ok(node.center_vec2()),
-            "a section that fills its node aims at the node's center"
-        );
-        assert_eq!(node_target(&doc, &id, Some(2), 1.0), Err(Aim::NoSection(2)));
-        assert_eq!(node_target(&doc, "no.such.node", None, 1.0), Err(Aim::Missing));
-        let node = doc.mindmap.nodes.get_mut(&id).expect("node");
-        node.min_zoom_to_render = Some(1.5);
-        node.max_zoom_to_render = Some(3.0);
-        assert_eq!(
-            node_target(&doc, &id, None, 1.0),
-            Err(Aim::OutsideZoomWindow),
-            "below the window the scene does not draw it"
-        );
-        assert_eq!(
-            node_target(&doc, &id, None, 4.0),
-            Err(Aim::OutsideZoomWindow),
-            "nor above it"
-        );
-        assert!(
-            node_target(&doc, &id, None, 2.0).is_ok(),
-            "inside it, it is drawn"
-        );
+        assert_eq!(node_target(&scene, &id, Some(count)), Err(Aim::NoSection(count)));
+        assert_eq!(node_target(&scene, &json!(4_000_000), None), Err(Aim::Missing));
+        assert!(matches!(node_target(&scene, &json!("1.2"), None), Err(Aim::NotANode(_))));
     }
 
+    /// What a hand could not click is refused, and nothing is sent: an
+    /// id no node has, a section past the node's, a node off screen.
     #[test]
     fn test_click_node_refuses_what_a_hand_could_not_click() {
         let mut app = InputApp::with_fixture();
         let doc = app.doc.as_ref().expect("doc");
-        let parent = doc
-            .mindmap
-            .nodes
-            .values()
-            .find_map(|n| n.parent_id.clone())
-            .expect("the fixture has a child node");
-        let child = doc
-            .mindmap
-            .nodes
-            .values()
-            .find(|n| n.parent_id.as_deref() == Some(parent.as_str()))
-            .map(|n| n.id.clone())
-            .expect("child");
-        app.doc
-            .as_mut()
-            .expect("doc")
-            .mindmap
-            .nodes
-            .get_mut(&parent)
-            .expect("parent")
-            .folded = true;
+        let id = ident(doc, first_node(doc, &app.view));
         for (frame, code, says) in [
             (
-                json!({"id":1,"cmd":"input.click_node","node_id":"no.such.node"}),
+                json!({"id":1,"cmd":"input.click_node","node_id":4_000_000}),
                 "not_found",
                 "no node",
             ),
             (
-                json!({"id":1,"cmd":"input.click_node","node_id":child}),
-                "not_found",
-                "folded",
+                json!({"id":1,"cmd":"input.click_node","node_id":"1.2"}),
+                "invalid_params",
+                "integer",
             ),
             (
-                json!({"id":1,"cmd":"input.click_node","node_id":parent,"section":99}),
+                json!({"id":1,"cmd":"input.click_node","node_id":id,"section":99}),
                 "invalid_params",
                 "section",
             ),
@@ -1697,7 +1671,7 @@ mod tests {
         }
         app.camera.position += Vec2::new(1.0e6, 0.0);
         let (reply, _) = run_attached(
-            &json!({"id":1,"cmd":"input.click_node","node_id":parent}).to_string(),
+            &json!({"id":1,"cmd":"input.click_node","node_id":id}).to_string(),
             &mut app,
         );
         assert_eq!(reply["error"]["code"], json!("not_found"), "{reply}");
@@ -1710,43 +1684,14 @@ mod tests {
         assert!(app.applied.is_empty(), "nothing was clicked");
     }
 
-    /// A node outside its zoom window is not drawn, so a click at
-    /// its center would land on empty canvas: refused, nothing sent.
-    #[test]
-    fn test_click_node_refuses_a_node_outside_its_zoom_window() {
-        let mut app = InputApp::with_fixture();
-        let id = first_node(app.doc.as_ref().expect("doc"));
-        let node = app
-            .doc
-            .as_mut()
-            .expect("doc")
-            .mindmap
-            .nodes
-            .get_mut(&id)
-            .expect("node");
-        node.min_zoom_to_render = Some(3.0);
-        let (reply, repaint) = run_attached(
-            &json!({"id":1,"cmd":"input.click_node","node_id":id}).to_string(),
-            &mut app,
-        );
-        assert_eq!(reply["error"]["code"], json!("not_found"), "{reply}");
-        assert!(
-            reply["error"]["message"]
-                .as_str()
-                .is_some_and(|m| m.contains("zoom")),
-            "{reply}"
-        );
-        assert!(!repaint);
-        assert!(app.applied.is_empty());
-    }
-
     /// Behind queued samples a click would land after they may have
     /// moved the camera, and the reply could not say where: it is
     /// refused `busy` with the queue depth, and queues nothing.
     #[test]
     fn test_click_node_is_busy_while_samples_are_queued() {
         let mut app = InputApp::with_fixture();
-        let id = first_node(app.doc.as_ref().expect("doc"));
+        let doc = app.doc.as_ref().expect("doc");
+        let id = ident(doc, first_node(doc, &app.view));
         run_attached(
             r#"{"id":1,"cmd":"input.drag","from_x":0,"from_y":0,"to_x":40,"to_y":0,"steps":2}"#,
             &mut app,
@@ -1781,7 +1726,7 @@ mod tests {
     fn test_click_node_needs_a_loaded_document() {
         let mut app = InputApp::with_fixture();
         app.doc = None;
-        let (reply, _) = run_attached(r#"{"id":1,"cmd":"input.click_node","node_id":"0"}"#, &mut app);
+        let (reply, _) = run_attached(r#"{"id":1,"cmd":"input.click_node","node_id":1}"#, &mut app);
         assert_eq!(reply["error"]["code"], json!("no_document"));
         assert!(reply["error"]["message"]
             .as_str()

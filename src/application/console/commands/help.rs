@@ -167,7 +167,7 @@ mod tests {
     /// positional has no vocabulary to offer.
     #[test]
     fn test_complete_help_takes_one_arg() {
-        let doc = crate::application::document::tests_common::load_test_doc();
+        let doc = crate::application::document::tests_common::testament();
         let ctx = crate::application::console::ConsoleContext::from_document(&doc);
         let popup = |line: &str| crate::application::console::completion::complete(line, line.len(), &ctx);
         assert!(!popup("help a").is_empty());
@@ -194,7 +194,7 @@ mod tests {
     /// undocumented at the same time.
     #[test]
     fn test_help_for_publishes_its_four_derived_blocks() {
-        let doc = crate::application::document::tests_common::load_test_doc();
+        let doc = crate::application::document::tests_common::testament();
         let ctx = crate::application::console::ConsoleContext::from_document(&doc);
         let text_of = |name: &str| -> Vec<String> {
             match help_for(name, &ctx) {
@@ -267,7 +267,7 @@ mod tests {
     /// silent about the one argument `help` documents.
     #[test]
     fn test_help_completion_offers_the_all_argument() {
-        let doc = crate::application::document::tests_common::load_test_doc();
+        let doc = crate::application::document::tests_common::testament();
         let ctx = crate::application::console::ConsoleContext::from_document(&doc);
         let popup = |line: &str| -> Vec<String> {
             crate::application::console::completion::complete(line, line.len(), &ctx)
