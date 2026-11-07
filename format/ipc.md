@@ -2352,10 +2352,12 @@ that observes behavior and must not become observable behavior.
 script starts, the same document and the same command sequence leave
 the same laid-out scene: `scene.dump` is byte-identical across runs,
 whatever the wall clock did meanwhile and whenever virtual time began
-(`test_the_same_document_twice_dumps_byte_identical_scenes` holds two
-independently loaded views of one document to it: the document's arena,
-the projector's layers and the dump's walk are all in document order,
-so nothing depends on an order a process chooses). What the contract
+(`test_the_same_stepped_script_twice_dumps_byte_identical_scenes` holds
+two independently loaded views of one document, each driven through the
+same script of a selection, a pan, a zoom, an edit and its undo, to it:
+the document's arena, the projector's layers and the dump's walk are all
+in document order, so nothing depends on an order a process chooses —
+except, until #323 lands, the font state, which shaping still reads). What the contract
 does not cover: `now_ms` itself, whose virtual origin is the
 real reading at engagement, and anything a concurrent human does.
 

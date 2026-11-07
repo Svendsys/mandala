@@ -668,28 +668,33 @@ mod tests {
         }
     }
 
-    /// **The determinism contract** (`format/ipc.md` §`clock`): the same
-    /// document, loaded twice into two independent views, dumps the same
-    /// scene byte for byte — every element, its box, its verdict and its
-    /// text. Nothing in the dump depends on an iteration order a process
-    /// chooses: the document's arena, the projector's layers and the
-    /// dump's walk are all in document order.
+    /// **Same script twice → identical scene dumps**, the determinism
+    /// contract (`format/ipc.md` §`clock`): two independent loads of the
+    /// same document, each driven through the same script — the loads
+    /// themselves, a selection, a pan, a zoom, an edit and its undo, each
+    /// synced through the view's pipeline — dump the same scene byte for
+    /// byte at every step: every element, its box, its verdict and its
+    /// text, culled ones included. Nothing in the dump depends on an
+    /// iteration order a process chooses: the document's arena, the
+    /// projector's layers and the dump's walk are all in document order.
     ///
-    /// Control: the same document at another camera dumps differently,
-    /// so the comparison is of a reading that depends on its input, not
-    /// of two empty replies.
+    /// Controls: consecutive steps dump differently, so each comparison
+    /// is of a reading that depends on the script; and the dumps hold the
+    /// map, not two empty replies.
     ///
-    /// **The process's font state is settled first**: every shipped map
-    /// is projected once before either load. Shaping is not yet a
-    /// function of the document alone — projecting a map that names
-    /// other families (any of `maps/demos/`) changes how a later
-    /// testament load measures a bold span ("Lord God": 377.77 against
-    /// 375.53 canvas units), in one thread and across threads. That is a
-    /// defect of the font state, reported on the cut-over (#244) for the
-    /// font work's owner, and this test does not claim it away: it pins
-    /// what holds once the faces in use stop changing.
+    /// **Weakened until #323 (V1-B21) lands, and order-sensitive until
+    /// then.** Shaping is not yet a function of the document alone:
+    /// projecting a map that names other families (any of `maps/demos/`)
+    /// changes how a later testament load measures a bold span ("Lord
+    /// God": 377.77 against 375.53 canvas units), in one thread and
+    /// across threads. So every shipped map is projected once first, to
+    /// settle the faces those maps name. That does not close the race:
+    /// libtest runs other tests on other threads between the two runs,
+    /// and one that shapes a family no shipped map names can still move
+    /// the font state mid-comparison. A red run of this test is read as
+    /// #323, not as a regression, until #323 reverts the priming.
     #[test]
-    fn test_the_same_document_twice_dumps_byte_identical_scenes() {
+    fn test_the_same_stepped_script_twice_dumps_byte_identical_scenes() {
         for dir in ["maps", "maps/demos"] {
             let root = baumhard::util::doc_fixtures::repo_path(dir);
             for entry in std::fs::read_dir(&root).expect("the maps list") {
@@ -707,23 +712,44 @@ mod tests {
             labels: true,
             portals: true,
         };
-        let (first, first_view, camera) = fixture();
-        let (second, second_view, _) = fixture();
-        let one = serde_json::to_string(&read_scene(&scene(&first, &first_view, &camera), all, true))
-            .expect("the dump serializes");
-        let two = serde_json::to_string(&read_scene(&scene(&second, &second_view, &camera), all, true))
-            .expect("the dump serializes");
+        let run = || -> Vec<String> {
+            let (mut doc, mut view, mut camera) = fixture();
+            let mut dumps = Vec::new();
+            let mut dump = |doc: &MindMapDocument, view: &MapView, camera: &Camera2D| {
+                dumps.push(
+                    serde_json::to_string(&read_scene(&scene(doc, view, camera), all, true))
+                        .expect("the dump serializes"),
+                );
+            };
+            dump(&doc, &view, &camera);
+            let node = every_node(doc.doc())
+                .find(|&n| element_bounds(doc.doc(), view.projector(), view.layers(), n).is_some())
+                .expect("a drawn node");
+            doc.selection.select_only(node);
+            view.sync_for_test(&mut doc);
+            camera.position += glam::Vec2::new(400.0, -250.0);
+            dump(&doc, &view, &camera);
+            camera.zoom *= 2.0;
+            dump(&doc, &view, &camera);
+            doc.create_root_for_test();
+            view.sync_for_test(&mut doc);
+            dump(&doc, &view, &camera);
+            doc.undo();
+            view.sync_for_test(&mut doc);
+            dump(&doc, &view, &camera);
+            dumps
+        };
+        let first = run();
+        let second = run();
         assert!(
-            one.len() > 10_000,
+            first[0].len() > 10_000,
             "precondition: the dump holds the map ({} bytes)",
-            one.len()
+            first[0].len()
         );
-        assert_eq!(one, two, "two independent loads dump the same scene");
-        let mut moved = camera;
-        moved.zoom *= 2.0;
-        let three = serde_json::to_string(&read_scene(&scene(&first, &first_view, &moved), all, true))
-            .expect("the dump serializes");
-        assert_ne!(one, three, "control: another camera dumps another scene");
+        for (at, pair) in first.windows(2).enumerate() {
+            assert_ne!(pair[0], pair[1], "control: step {} changes the dump", at + 1);
+        }
+        assert_eq!(first, second, "the same script dumps the same scenes");
     }
 
     /// The dump names every node it reports by integer id, at a box whose

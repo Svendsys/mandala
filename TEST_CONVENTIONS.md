@@ -698,9 +698,9 @@ Two refinements, each paid for in that epic:
 A test whose meaning depends on its fixture holding some property
 asserts that property before the assertion that depends on it, with
 a message that says what the test would otherwise prove.
-`test_the_same_document_twice_dumps_byte_identical_scenes` guards its
-comparison with `assert!(one.len() > 10_000, "precondition: the dump
-holds the map …")`, so two empty dumps cannot agree their way to a
+`test_the_same_stepped_script_twice_dumps_byte_identical_scenes` guards
+its comparison with `assert!(first[0].len() > 10_000, "precondition: the
+dump holds the map …")`, so two empty dumps cannot agree their way to a
 pass, and
 `test_the_console_source_scan_reads_what_it_claims_to` exists because
 a scan that read nothing finds nothing. These guards are the cheap,
