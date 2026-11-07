@@ -144,14 +144,16 @@ pub(crate) struct BoxKey {
 /// A shaped path flow and the key it was shaped from.
 #[derive(Clone, Debug)]
 pub(crate) struct RunFlow {
-    pub(crate) key: RunKey,
+    /// Shared with the projector's shaping cache (`projection::shapes`).
+    pub(crate) key: Arc<RunKey>,
     pub(crate) shaped: Arc<ShapedRun>,
 }
 
 /// A shaped box flow and the key it was shaped from.
 #[derive(Clone, Debug)]
 pub(crate) struct BoxFlow {
-    pub(crate) key: BoxKey,
+    /// Shared with the projector's shaping cache (`projection::shapes`).
+    pub(crate) key: Arc<BoxKey>,
     pub(crate) shaped: Arc<ShapedBox>,
 }
 

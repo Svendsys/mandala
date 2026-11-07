@@ -30,6 +30,7 @@ use crate::projection::geometry::{
     self, curve_between, drawn_rect, label_center, points, portal_point, reach,
 };
 use crate::projection::input::{Dependent, ProjectionInput, Reads, Stage};
+use crate::projection::shapes::ShapeCache;
 use crate::projection::state::{
     BoxFlow, BoxKey, EndState, LabelState, OwnFields, PathFlow, Placed, RingResolved, RunFlow, RunKey,
     UnitBody,
@@ -142,16 +143,27 @@ fn flow_spans(spans: &[(String, ResolvedText)]) -> Vec<FlowSpan<'_>> {
         .collect()
 }
 
-/// `cache`'s shaping when it was shaped from `key`; otherwise `key`
-/// shaped now, and kept. Cost: nothing for an unchanged key; one shaping
-/// otherwise.
-fn shaped_run(cache: &mut Option<RunFlow>, key: RunKey, fonts: &mut FontSystemLease) -> Arc<ShapedRun> {
+/// `cache`'s shaping when it was shaped from `key`; otherwise the shaping
+/// of an equal key another unit holds (`shapes`); otherwise `key` shaped
+/// now. Kept either way. Cost: nothing for an unchanged key; a hash of
+/// the key for one another unit shaped; one shaping otherwise.
+fn shaped_run(
+    cache: &mut Option<RunFlow>,
+    key: RunKey,
+    shapes: &mut ShapeCache,
+    fonts: &mut FontSystemLease,
+) -> Arc<ShapedRun> {
     if let Some(flow) = cache {
-        if flow.key == key {
+        if *flow.key == key {
             return flow.shaped.clone();
         }
     }
-    let shaped = memo::run(&key, || Arc::new(shape_run(&flow_spans(&key.spans), 1.0, fonts)));
+    // On a hit the cache hands back the key the sharers hold, and this
+    // unit keeps that one (`projection::shapes`).
+    let mut key = Arc::new(key);
+    let shaped = shapes.run(&mut key, |key| {
+        memo::run(key, || Arc::new(shape_run(&flow_spans(&key.spans), 1.0, fonts)))
+    });
     *cache = Some(RunFlow {
         key,
         shaped: shaped.clone(),
@@ -160,12 +172,20 @@ fn shaped_run(cache: &mut Option<RunFlow>, key: RunKey, fonts: &mut FontSystemLe
 }
 
 /// [`shaped_run`] for a box flow.
-fn shaped_box(cache: &mut Option<BoxFlow>, key: BoxKey, fonts: &mut FontSystemLease) -> bool {
-    if cache.as_ref().is_some_and(|flow| flow.key == key) {
+fn shaped_box(
+    cache: &mut Option<BoxFlow>,
+    key: BoxKey,
+    shapes: &mut ShapeCache,
+    fonts: &mut FontSystemLease,
+) -> bool {
+    if cache.as_ref().is_some_and(|flow| *flow.key == key) {
         return false;
     }
-    let shaped = memo::boxed(&key, || {
-        Arc::new(shape_box(&flow_spans(&key.spans), key.min, key.align, fonts))
+    let mut key = Arc::new(key);
+    let shaped = shapes.boxed(&mut key, |key| {
+        memo::boxed(key, || {
+            Arc::new(shape_box(&flow_spans(&key.spans), key.min, key.align, fonts))
+        })
     });
     *cache = Some(BoxFlow { key, shaped });
     true
@@ -454,7 +474,7 @@ impl Projector {
         let UnitBody::Section(state) = &mut unit.body else {
             return;
         };
-        shaped_box(&mut state.flow, key, fonts);
+        shaped_box(&mut state.flow, key, &mut self.shapes, fonts);
         unit.slots[0].element = Some(id);
         unit.slots[0].spans = ids;
         self.queue(work, Dependent::new(id, Stage::Geometry));
@@ -679,7 +699,7 @@ impl Projector {
             let UnitBody::Ring(state) = &mut unit.body else {
                 return;
             };
-            shaped_run(&mut state.flow.flow, key, fonts);
+            shaped_run(&mut state.flow.flow, key, &mut self.shapes, fonts);
         }
         // Its placement reads its own text style, which its resolution
         // may have changed with the key unchanged.
@@ -953,7 +973,12 @@ impl Projector {
         line.drawn = true;
         line.resolved = Some((resolved, text));
         line.flows[0].id = Some(id);
-        shaped_run(&mut line.flows[0].flow, RunKey { spans: body_spans }, fonts);
+        shaped_run(
+            &mut line.flows[0].flow,
+            RunKey { spans: body_spans },
+            &mut self.shapes,
+            fonts,
+        );
         unit.slots[0].element = Some(id);
         unit.slots[0].spans = body_ids;
         for (k, cap) in cap_flows.into_iter().enumerate() {
@@ -961,7 +986,7 @@ impl Projector {
             match cap {
                 Some((cap, ids, spans)) => {
                     flow.id = Some(cap);
-                    shaped_run(&mut flow.flow, RunKey { spans }, fonts);
+                    shaped_run(&mut flow.flow, RunKey { spans }, &mut self.shapes, fonts);
                     unit.slots[k + 1].element = Some(cap);
                     unit.slots[k + 1].spans = ids;
                 }
@@ -983,6 +1008,7 @@ impl Projector {
                         min: None,
                         align: Align::Center,
                     },
+                    &mut self.shapes,
                     fonts,
                 );
                 unit.slots[3].element = Some(label);
@@ -1078,7 +1104,12 @@ impl Projector {
             match resolved {
                 Some((end, marker_ids, marker_spans, label)) => {
                     state.marker.id = Some(end);
-                    shaped_run(&mut state.marker.flow, RunKey { spans: marker_spans }, fonts);
+                    shaped_run(
+                        &mut state.marker.flow,
+                        RunKey { spans: marker_spans },
+                        &mut self.shapes,
+                        fonts,
+                    );
                     unit.slots[2 * k].element = Some(end);
                     unit.slots[2 * k].spans = marker_ids;
                     match label {
@@ -1091,6 +1122,7 @@ impl Projector {
                                     min: None,
                                     align: Align::Center,
                                 },
+                                &mut self.shapes,
                                 fonts,
                             );
                             unit.slots[2 * k + 1].element = Some(label);
@@ -1354,11 +1386,13 @@ fn clearance(inset: f32, gap: f32, (heights, rings): (f32, u32)) -> f32 {
 /// debug build that shaping is most of the suite's time. Shaping is a
 /// pure function of the shape key, and the oracle compares shapes by
 /// value, so the full projection a check makes may share the shaping of
-/// an equal key it shaped before (`memo::sharing`). Nothing else ever
-/// shares: the projector's own reuse is its state's, by key, and the
-/// tests of that reuse (pointer-equal `Arc`s) never run inside
-/// `sharing`. Outside the test build the memo is not there: each
-/// function calls its shaper.
+/// an equal key it shaped before (`memo::sharing`). Within one projector
+/// the shaping cache (`projection::shapes`, #304) shares equal keys in
+/// every build; the memo is the same sharing across projectors, which
+/// only the oracle's fresh full projections want, and the tests of the
+/// projector's reuse (pointer-equal `Arc`s) never run inside `sharing`.
+/// Outside the test build the memo is not there: a key the cache does
+/// not hold is shaped.
 pub(crate) mod memo {
     use std::sync::Arc;
 

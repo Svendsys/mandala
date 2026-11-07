@@ -125,8 +125,8 @@
 //!
 //! The one input outside that set is the font database itself, which
 //! `RegionFamilies::resolve` and cosmic-text's shaper both consult.
-//! It is loaded once, by `fonts::load_fonts` behind a `lazy_static`,
-//! and never mutated again — `db_mut` has exactly one call site in
+//! It is built once, complete, by `fonts::complete_font_system` behind a
+//! `lazy_static` (#323), and never mutated again — `db_mut` has exactly one call site in
 //! the workspace — so it cannot invalidate a cached buffer at
 //! runtime. A future runtime font load would have to clear this
 //! cache, and this paragraph exists to tell whoever writes one.

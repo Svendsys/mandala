@@ -9,7 +9,7 @@
 use std::cell::Cell;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
@@ -44,25 +44,28 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
     map
 }
 
-/// Register every compiled-in font with [`FONT_SYSTEM`], returning
-/// the `AppFont → fontdb ID` map callers use to resolve faces.
+/// The font system [`FONT_SYSTEM`] holds, built complete before it is put
+/// in the lock (#323): the host's faces, every compiled-in face, each
+/// [`fallback::ORNAMENT_FALLBACK`] face at every weight
+/// ([`fallback::register_every_weight`], #297), and none of the host's
+/// faces that bear a compiled family's name ([`remove_shadowing_faces`],
+/// ruling R30.1). The compiled faces' ids go to `COMPILED_IDS`, which
+/// [`COMPILED_FONT_ID_MAP`] reads.
 ///
-/// Acquires the `FONT_SYSTEM` **write** guard through
-/// [`acquire_font_system_write`] (§B5: every write acquire routes
-/// through the helper). A caller already holding any `FONT_SYSTEM`
-/// guard on this thread makes the acquire panic at once, naming both
-/// sites, instead of hanging — but that never happens in practice
-/// because [`init`] runs `load_fonts` at startup, before any guard
-/// is held. Each [`fallback::ORNAMENT_FALLBACK`] face is registered at
-/// every weight ([`fallback::register_every_weight`], #297). Once they
-/// are registered, every other face that bears a compiled family's name
-/// is removed ([`remove_shadowing_faces`], ruling R30.1). Costs: one lock
-/// acquisition, one `load_font_source` call per entry in
+/// So the set of faces anything is shaped with is the same from the first
+/// shaping on, whoever takes the lock first and whatever it shapes. Until
+/// #323 the compiled faces were registered lazily, on the first read of
+/// `COMPILED_FONT_ID_MAP` — at [`init`], or when a span first pinned a
+/// compiled family — and text in the default family shaped before that
+/// was shaped with the host's faces alone: one map laid out differently
+/// after another had been opened.
+///
+/// It takes no lock: the value is not yet in one. Costs:
+/// `fallback::new_font_system`, one `load_font_source` call per entry in
 /// [`FONT_SOURCES`], eight database inserts per fallback face, and one
 /// walk over every face in the database.
-fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
-    debug!("Waiting for font-system write lock");
-    let mut font_system = acquire_font_system_write("load_fonts");
+fn complete_font_system() -> FontSystem {
+    let mut font_system = fallback::new_font_system();
     // Where the host's faces are: indexed by `FontSystem::new`, ahead of
     // the compiled set.
     #[cfg(test)]
@@ -80,13 +83,30 @@ fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
         }
     }
     let removed = remove_shadowing_faces(&mut font_system, &compiled_font_id_map);
+    FACE_SET_GENERATION.fetch_add(1, Ordering::Release);
     #[cfg(test)]
     let _ = SHADOWING_FACES_REMOVED.set(removed);
     #[cfg(not(test))]
     drop(removed);
-    drop(font_system);
-    debug!("Released font-system lock.");
-    compiled_font_id_map
+    let _ = COMPILED_IDS.set(compiled_font_id_map);
+    font_system
+}
+
+/// The compiled faces' ids, as [`complete_font_system`] registered them.
+static COMPILED_IDS: OnceLock<FxHashMap<AppFont, TinyVec<[ID; 8]>>> = OnceLock::new();
+
+/// How many times the font system's set of faces has been changed: once,
+/// when the font system is built with the compiled faces
+/// ([`complete_font_system`]), before anything can shape with it. A cache of
+/// shapings records it and lets its entries go when it moves
+/// (`projection::shapes`, #304), since a shaping depends on the faces
+/// installed as well as on its text and style.
+static FACE_SET_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// The font system's face-set generation (`FACE_SET_GENERATION`). Reads
+/// no lock. Cost: one atomic load.
+pub fn face_set_generation() -> u64 {
+    FACE_SET_GENERATION.load(Ordering::Acquire)
 }
 
 /// Remove from the database every face that is not compiled in and bears
@@ -295,26 +315,33 @@ lazy_static! {
     /// hold the lock invisibly, and a same-thread re-acquire under it
     /// could no longer be told from ordinary contention.
     ///
-    /// Built by [`fallback::new_font_system`], whose fallback lists reach
-    /// the compiled ornament faces before any host face (#297).
-    static ref FONT_SYSTEM: RecursiveRwLock<FontSystem> = RecursiveRwLock::new(fallback::new_font_system());
-    /// `AppFont → fontdb face IDs` map populated on first access by
-    /// [`load_fonts`]. Read-only after initialization.
-    pub static ref COMPILED_FONT_ID_MAP: FxHashMap<AppFont, TinyVec<[ID; 8]>> = load_fonts();
+    /// Built complete by [`complete_font_system`] — every compiled face
+    /// registered, the fallback lists reaching the compiled ornament faces
+    /// before any host face (#297) — before it is put in the lock, so the
+    /// first acquire, by anyone, already holds the faces every later one
+    /// does (#323).
+    static ref FONT_SYSTEM: RecursiveRwLock<FontSystem> = RecursiveRwLock::new(complete_font_system());
+    /// `AppFont → fontdb face IDs` map, from the same build as
+    /// [`FONT_SYSTEM`]: reading it builds the font system if nothing has
+    /// yet, and takes no lock. Read-only.
+    pub static ref COMPILED_FONT_ID_MAP: FxHashMap<AppFont, TinyVec<[ID; 8]>> = {
+        lazy_static::initialize(&FONT_SYSTEM);
+        COMPILED_IDS.get().cloned().unwrap_or_default()
+    };
 }
 
-/// Force lazy initialization of [`COMPILED_FONT_ID_MAP`] — and, via
-/// it, the one-time `FONT_SYSTEM` write-lock that registers every
-/// compiled-in font — and the `FAMILY_INDEX` that
-/// [`loaded_families_iter`] / [`app_font_by_family`] read.
-/// Call once at program start before any shaping / measurement
-/// path. Doing both eagerly here closes a latent re-entrant-read
-/// risk: `FAMILY_INDEX`'s lazy build acquires `FONT_SYSTEM.read()`,
-/// and `mindnode_section_area` indirectly calls
-/// `app_font_by_family` from inside the tree builder; if a future
-/// caller ever holds `FONT_SYSTEM.write()` while invoking the tree
-/// builder, the lazy path would deadlock. Eager init at startup
-/// makes that impossible.
+/// Warm up the font state now rather than at its first use: build the
+/// font system, with every compiled face (`complete_font_system`), and
+/// the `FAMILY_INDEX` that [`loaded_families_iter`] /
+/// [`app_font_by_family`] read. **Warm-up only** (#323): what anything is
+/// shaped with does not depend on whether, or when, this ran, since the
+/// font system is built complete whoever reaches it first. The app calls
+/// it at startup so the build's cost is paid there, not in a first frame.
+/// It also builds `FAMILY_INDEX` before anything could hold the write
+/// guard: that build takes the read guard, and `mindnode_section_area`
+/// reaches `app_font_by_family` from inside the tree builder, so a caller
+/// holding `FONT_SYSTEM.write()` while invoking the tree builder would
+/// otherwise re-enter the lock.
 pub fn init() {
     ensure_warm();
 }
@@ -391,8 +418,8 @@ pub fn clamp_to_font_window(value: f32, min: f32, max: f32) -> f32 {
 }
 
 /// Force the font lazy-statics a `FONT_SYSTEM` write acquire depends
-/// on to build **now** — `COMPILED_FONT_ID_MAP` (via `load_fonts`,
-/// which itself takes the write guard) and `FAMILY_INDEX` (via
+/// on to build **now** — `COMPILED_FONT_ID_MAP` (which builds the font
+/// system and takes no lock) and `FAMILY_INDEX` (via
 /// `build_family_index`, which takes the read guard). Library-callable
 /// counterpart to the app-only [`init`]: a caller that is about to
 /// hold the write guard and will reach `face_family_name_for_pin` /
@@ -438,18 +465,8 @@ static FAMILY_INDEX: OnceLock<Vec<(String, AppFont)>> = OnceLock::new();
 /// native-only divergence `format/fonts.md` opens by describing.
 /// Sorting is alphabetical so a UI list is stable.
 fn build_family_index() -> Vec<(String, AppFont)> {
-    // Force `COMPILED_FONT_ID_MAP`'s lazy-static init **before** we
-    // grab the `FONT_SYSTEM` read lock. `load_fonts()` (the lazy
-    // initializer) needs `FONT_SYSTEM.write()`, and a same-thread
-    // read-then-write deadlocks the worker. `init()` documents this
-    // ordering at the top of the module and explicitly does both
-    // initializations in the right order, but tests / call paths
-    // that reach `app_font_by_family` without going through
-    // `init()` first (the cosmic-text tree builder, the inline text
-    // editor, the console completion popup) would otherwise hit the
-    // race. Touching `.capacity()` is enough to drive the
-    // lazy_static — `load_fonts()` runs on this line, returns, and
-    // releases its write guard before the read below acquires.
+    // The compiled faces' ids, which come with the font system's build
+    // and take no lock (#323).
     COMPILED_FONT_ID_MAP.capacity();
 
     // Reverse map id → AppFont so we can attribute each face to a
@@ -1038,7 +1055,7 @@ fn adopt_write(
 /// compile:
 ///
 /// 1. **This function**, the default. Used by every call site that
-///    must measure or shape and can afford to wait: `load_fonts`, the
+///    must measure or shape and can afford to wait: the
 ///    metric cache's miss path, and the renderer's border / handle /
 ///    overlay rebuilds.
 /// 2. [`try_acquire_font_system_write`] — non-blocking, for the
@@ -1352,9 +1369,9 @@ pub fn measure_glyph_ink_bounds(
 /// point off the curve does not widen it. The flow's ornaments are
 /// stepped by it (#291, ruling R31).
 ///
-/// Cost: one outline scale through `swash_cache`'s scaler, uncached (a
-/// `Fit` reshapes at many sizes, and every size would be an entry), and
-/// one pass over its commands; no allocation beyond the commands.
+/// Cost: one lookup in the outline cache (`cached_outline_bounds`);
+/// on a miss, one outline scale through `swash_cache`'s scaler and one
+/// pass over its commands.
 pub fn glyph_outline_ink(
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
@@ -1368,8 +1385,7 @@ pub fn glyph_outline_ink(
         glyph.font_weight,
         glyph.cache_key_flags | CacheKeyFlags::DISABLE_HINTING,
     );
-    let commands = swash_cache.get_outline_commands_uncached(font_system, key)?;
-    let (low, high) = outline_bounds(&commands)?;
+    let (low, high) = cached_outline_bounds(font_system, swash_cache, key)?;
     let offset = Vec2::new(
         glyph.font_size * glyph.x_offset,
         -glyph.font_size * glyph.y_offset,
@@ -1387,8 +1403,8 @@ pub fn glyph_outline_ink(
 /// where the face maps no glyph to `ch`, or draws nothing for it. What a
 /// frame's text reads its x-height from, the ink of an `x` (#308).
 ///
-/// Cost: one character-map lookup, and one outline scale through
-/// `swash_cache`'s scaler, uncached.
+/// Cost: one character-map lookup, and one lookup in the outline cache
+/// (`cached_outline_bounds`), an outline scale on a miss.
 pub fn face_char_ink(
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
@@ -1408,12 +1424,91 @@ pub fn face_char_ink(
         of.font_weight,
         CacheKeyFlags::DISABLE_HINTING,
     );
-    let commands = swash_cache.get_outline_commands_uncached(font_system, key)?;
-    let (low, high) = outline_bounds(&commands)?;
+    let (low, high) = cached_outline_bounds(font_system, swash_cache, key)?;
     // An outline's `y` points up, the canvas's down.
     let min = Vec2::new(low.x, -high.y);
     let max = Vec2::new(high.x, -low.y);
     (min.is_finite() && max.is_finite()).then_some((min, max))
+}
+
+/// How many outline bounds `cached_outline_bounds` keeps on a thread
+/// before it lets them all go and starts again: a bound on its memory,
+/// which a `Fit` that probes many sizes would otherwise grow without one.
+/// An entry is a key and two points, some 40 bytes.
+pub const OUTLINE_CACHE_ENTRIES: usize = 1 << 16;
+
+/// The outline cache's entries: bounds by font system and scaler key.
+type OutlineEntries = rustc_hash::FxHashMap<(u64, CacheKey), Option<(Vec2, Vec2)>>;
+
+thread_local! {
+    /// The outline cache (#304): each glyph's outline bounds by its font
+    /// system ([`FontSystem::instance`]) and its face, glyph id, size,
+    /// weight and flags (its scaler's [`CacheKey`]), `None` for a glyph
+    /// with no outline.
+    ///
+    /// Read and written only through `cached_outline_bounds`, with the
+    /// `&mut FontSystem` its caller holds, the locked one's through its
+    /// guard: the cache is used under the font-lock discipline
+    /// (lib/baumhard/CONVENTIONS.md §B5) and needs no lock of its own. A
+    /// face id means a face only within one database, and only for that
+    /// database's life; the instance number is the font system's own, given
+    /// when it is made with its database, so no entry kept for one font
+    /// system answers another, nor a value put in its place (`*guard =`,
+    /// `mem::swap`), which brings its own number. A database never reuses
+    /// an id, so faces added or removed through `db_mut` cannot make an
+    /// entry name another face.
+    static OUTLINE_BOUNDS: std::cell::RefCell<OutlineEntries> = std::cell::RefCell::default();
+    /// Outlines read on this thread: the cache's misses.
+    static OUTLINE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many outlines have been read off their faces on this thread
+/// (`cached_outline_bounds`'s misses): a work counter, so a test reads
+/// what inking cost by difference, never by a clock.
+pub fn outline_reads() -> u64 {
+    OUTLINE_READS.with(std::cell::Cell::get)
+}
+
+/// The bounds of the outline `key` names, in its own coordinates
+/// ([`outline_bounds`]): kept per face, glyph id, size, weight and flags,
+/// so each is read off its face once, and the next measure of the same
+/// glyph at the same size reads nothing. `None` for a glyph with no
+/// outline.
+///
+/// The size is part of the key, rather than one outline kept per glyph
+/// and scaled, because the bounds are solved on the scaled outline, and
+/// scaling them afterwards would round differently: the cache answers
+/// exactly what a read would.
+///
+/// Each entry is kept for its font system alone, by the system's
+/// instance number ([`FontSystem::instance`]): a face id means a face
+/// only within its own database, so an entry kept by id alone would name
+/// another face in another font system.
+///
+/// Cost: one hash lookup; on a miss, one outline scale through
+/// `swash_cache`'s scaler and one pass over its commands, and the whole
+/// cache let go first if it holds [`OUTLINE_CACHE_ENTRIES`].
+fn cached_outline_bounds(
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    key: CacheKey,
+) -> Option<(Vec2, Vec2)> {
+    let entry = (font_system.instance(), key);
+    if let Some(bounds) = OUTLINE_BOUNDS.with(|cache| cache.borrow().get(&entry).copied()) {
+        return bounds;
+    }
+    OUTLINE_READS.with(|reads| reads.set(reads.get() + 1));
+    let bounds = swash_cache
+        .get_outline_commands_uncached(font_system, key)
+        .and_then(|commands| outline_bounds(&commands));
+    OUTLINE_BOUNDS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= OUTLINE_CACHE_ENTRIES {
+            cache.clear();
+        }
+        cache.insert(entry, bounds);
+    });
+    bounds
 }
 
 /// The bounding box of an outline's commands, `(min, max)` in its own

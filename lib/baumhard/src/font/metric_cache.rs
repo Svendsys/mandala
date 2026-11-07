@@ -236,8 +236,8 @@ pub fn glyph_advance(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> f32
         return v;
     }
     // Miss: warm the font lazy-statics BEFORE acquiring so a
-    // `Some(face)` pin lookup under the guard can't re-enter
-    // `load_fonts` (see `ensure_warm`), then acquire through the
+    // `Some(face)` lookup under the guard can't re-enter the lock to
+    // build `FAMILY_INDEX` (see `ensure_warm`), then acquire through the
     // helper (the lock is private; there is no raw `.write()`) and
     // shape. A caller that already holds the guard panics here at once,
     // naming both sites, rather than waiting on itself.
@@ -300,8 +300,8 @@ pub fn glyph_ink(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> InkExte
     if let Some(v) = probe(&INK_EXTENT_CACHE, face, size_pt, grapheme) {
         return v;
     }
-    // Warm before acquiring (see `ensure_warm`) so a `Some(face)` pin
-    // lookup under the guard can't re-enter `load_fonts`.
+    // Warm before acquiring (see `ensure_warm`) so a `Some(face)`
+    // lookup under the guard can't re-enter the lock.
     ensure_warm();
     let mut guard = acquire_font_system_write("metric_cache::glyph_ink");
     glyph_ink_with(&mut guard, face, size_pt, grapheme)

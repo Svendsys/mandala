@@ -75,6 +75,8 @@ mod hit;
 mod input;
 /// The five layers, and one update's journals of them.
 mod layers;
+/// The projector's shaping cache: one shaping per key (#304, ruling B7.4).
+mod shapes;
 /// The stages of a node's and a unit's projection.
 mod stages;
 /// What the projector keeps per projected element.
@@ -131,6 +133,9 @@ pub struct Projector {
     /// Each label a unit projects, and that unit: what
     /// [`Projector::label_pos`] reads.
     pub(crate) label_hosts: FxHashMap<NodeId, NodeId>,
+    /// One shaping per key, for every unit whose key is equal
+    /// ([`shapes`]).
+    pub(crate) shapes: shapes::ShapeCache,
     /// Every piece of work the last call ran, in order: what the tests of
     /// the dependency index read. Test builds only: the product keeps no
     /// log of its work.

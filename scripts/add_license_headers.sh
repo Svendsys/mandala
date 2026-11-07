@@ -21,8 +21,14 @@ elif [ -n "${1:-}" ]; then
     exit 2
 fi
 
+# `./vendor` is pruned: it holds other projects' code, vendored under
+# its own license (cosmic-text, MIT OR Apache-2.0, with its LICENSE files
+# beside it; vendor/cosmic-text/PATCHES.md). Giving those files our
+# MPL-2.0 header would misstate their license, so this script neither
+# checks nor writes them.
 mapfile -t files < <(find . \
-    -type d \( -name target -o -name dist -o -name .git -o -name node_modules \) -prune \
+    -path ./vendor -prune \
+    -o -type d \( -name target -o -name dist -o -name .git -o -name node_modules \) -prune \
     -o -type f -name '*.rs' -print)
 
 missing=()

@@ -552,9 +552,10 @@ pub fn border_run_specs(
     node_size: (f32, f32),
 ) -> Vec<BorderRunSpec> {
     // Warm the font lazy-statics BEFORE taking the guard. Resolving a
-    // face under the guard lazily builds `FAMILY_INDEX` /
-    // `COMPILED_FONT_ID_MAP`, and that build acquires `FONT_SYSTEM`
-    // via `load_fonts` — a same-thread re-entry that would time out.
+    // face under the guard lazily builds `FAMILY_INDEX`, and that build
+    // acquires `FONT_SYSTEM` for reading — a same-thread re-entry that
+    // would panic. (`COMPILED_FONT_ID_MAP` takes no lock: it is built
+    // with the font system, #323.)
     // Production warms this at `fonts::init()`, so this is a no-op
     // there; it only matters for unlocked callers that skip `init()`
     // (the tree-builder path, unit tests). See `fonts::ensure_warm`.
@@ -571,9 +572,8 @@ pub fn border_run_specs(
 /// design §B5 and the `measure_glyph_ink_bounds` primitive share.
 ///
 /// Assumes `fonts::init()` has run (the standard §B5 invariant): the
-/// face-resolution and pin lookups here read the already-built
-/// `FAMILY_INDEX` / `COMPILED_FONT_ID_MAP` without triggering
-/// `load_fonts`, so nothing under this guard re-acquires it.
+/// face-resolution lookups here read the already-built `FAMILY_INDEX`
+/// without building it, so nothing under this guard re-acquires it.
 pub fn border_run_specs_with(
     font_system: &mut FontSystem,
     border_style: &BorderStyle,

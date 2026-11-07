@@ -197,6 +197,46 @@ fn node_available() -> bool {
         .is_ok_and(|out| out.status.success())
 }
 
+/// The root manifest's `[patch.crates-io]` table, each `path` made
+/// absolute, for the probe's own manifest: cargo reads `[patch]` from the
+/// workspace root only, and the probe is a workspace of its own, so
+/// without it the probe would build baumhard against crates.io's
+/// cosmic-text rather than the patched one the app builds with (#304).
+/// Written from the root's table, so the two cannot drift. Empty when the
+/// root patches nothing.
+fn root_patches(root: &Path) -> String {
+    let manifest = fs::read_to_string(root.join("Cargo.toml")).expect("the root Cargo.toml must be readable");
+    let mut table = String::new();
+    let mut inside = false;
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            inside = line == "[patch.crates-io]";
+            continue;
+        }
+        if !inside || line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (name, rest) = line
+            .split_once('=')
+            .unwrap_or_else(|| panic!("a patch the probe cannot read: {line:?}"));
+        let path = rest
+            .split_once("path = \"")
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .map(|(path, _)| path)
+            .unwrap_or_else(|| panic!("a patch that is not a path: {line:?}"));
+        table.push_str(&format!(
+            "{} = {{ path = {:?} }}\n",
+            name.trim(),
+            root.join(path).display().to_string()
+        ));
+    }
+    if table.is_empty() {
+        return table;
+    }
+    format!("[patch.crates-io]\n{table}\n")
+}
+
 /// Rewrite `path` only when its content changes, so an unchanged file
 /// keeps its mtime and cargo has no reason to rebuild.
 fn write_if_changed(path: &Path, content: &[u8]) {
@@ -239,7 +279,8 @@ fn test_font_lock_helpers_run_on_wasm32() {
     // baumhard both. The module's debug info is most of its size on
     // disk, and nothing reads it: the test judges the module by what
     // it prints and by its panic messages, and a wasm trap has no
-    // host stack for a line table to symbolize.
+    // host stack for a line table to symbolize. The root's patches
+    // (`root_patches`) are repeated for the same reason as its profile.
     let manifest = format!(
         "[package]\n\
          name = \"{probe_crate}\"\n\
@@ -256,9 +297,11 @@ fn test_font_lock_helpers_run_on_wasm32() {
          \n\
          [workspace]\n\
          \n\
+         {patches}\
          [profile.dev]\n\
          debug = false\n",
         baumhard = root.join("lib/baumhard").display().to_string(),
+        patches = root_patches(&root),
     );
     write_if_changed(&stage.join("Cargo.toml"), manifest.as_bytes());
     write_if_changed(

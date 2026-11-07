@@ -1,0 +1,172 @@
+# cosmic-text 0.19.0, vendored with a patch (V1-B14, #304).
+#
+# This is the crate as published on crates.io (`Cargo.toml` as cargo
+# normalized it, `src/`, its licenses and README), with its test and
+# bench targets and their dev-dependencies left out, since their files
+# are not vendored. The root manifest's `[patch.crates-io]` (and
+# `fuzz/Cargo.toml`'s) points every `cosmic-text = "0.19.0"` in the
+# graph here: baumhard's and glyphon's alike, so there is one copy of
+# its types.
+#
+# The crate keeps its own license, MIT OR Apache-2.0 (LICENSE-MIT,
+# LICENSE-APACHE); the repository's MPL-2.0 header check skips
+# `vendor/`. What differs from the published source is listed, with
+# why, in PATCHES.md, is the whole of `mandala.patch` (this file
+# included), and is marked `MANDALA PATCH` where it is. In short: the
+# font fallback's merge is linear in the run instead of quadratic, a
+# code point no face draws is found once per font system instead of once
+# per shaping, a line can take another's shaping at other sizes, and the
+# shaper counts its work per thread (`shape_work`). Drop the patch when
+# upstream releases an equivalent fix; until then, upgrading cosmic-text
+# means re-applying it (PATCHES.md says how).
+
+[package]
+edition = "2021"
+rust-version = "1.89"
+name = "cosmic-text"
+version = "0.19.0"
+authors = ["Jeremy Soller <jeremy@system76.com>"]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Pure Rust multi-line text handling"
+documentation = "https://docs.rs/cosmic-text/latest/cosmic_text/"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pop-os/cosmic-text"
+
+[package.metadata.docs.rs]
+features = ["vi"]
+
+[features]
+default = [
+    "std",
+    "swash",
+    "fontconfig",
+]
+fontconfig = [
+    "fontdb/fontconfig",
+    "std",
+]
+monospace_fallback = []
+no_std = [
+    "hashbrown",
+    "dep:libm",
+    "skrifa/libm",
+    "core_maths",
+    "swash?/libm",
+]
+peniko = []
+shape-run-cache = []
+std = [
+    "fontdb/memmap",
+    "fontdb/std",
+    "harfrust/std",
+    "linebender_resource_handle/std",
+    "skrifa/std",
+    "swash?/std",
+    "sys-locale",
+    "unicode-bidi/std",
+]
+vi = [
+    "modit",
+    "syntect",
+    "cosmic_undo_2",
+]
+warn_on_missing_glyphs = []
+wasm-web = ["sys-locale?/js"]
+
+[lib]
+name = "cosmic_text"
+path = "src/lib.rs"
+
+[dependencies.bitflags]
+version = "2.10.0"
+
+[dependencies.core_maths]
+version = "0.1.1"
+optional = true
+
+[dependencies.cosmic_undo_2]
+version = "0.2.0"
+optional = true
+
+[dependencies.fontdb]
+version = "0.23"
+default-features = false
+
+[dependencies.harfrust]
+version = "0.5.0"
+default-features = false
+
+[dependencies.hashbrown]
+version = "0.17"
+optional = true
+default-features = false
+
+[dependencies.libm]
+version = "0.2.16"
+optional = true
+
+[dependencies.linebender_resource_handle]
+version = "0.1.1"
+default-features = false
+
+[dependencies.log]
+version = "0.4.29"
+
+[dependencies.modit]
+version = "0.1.5"
+optional = true
+
+[dependencies.rangemap]
+version = "1.7.1"
+
+[dependencies.rustc-hash]
+version = "2.1.1"
+default-features = false
+
+[dependencies.self_cell]
+version = "1.2.2"
+
+[dependencies.skrifa]
+version = "0.40.0"
+default-features = false
+
+[dependencies.smol_str]
+version = "0.3.2"
+default-features = false
+
+[dependencies.swash]
+version = "0.2.6"
+features = [
+    "render",
+    "scale",
+]
+optional = true
+default-features = false
+
+[dependencies.syntect]
+version = "5.3.0"
+optional = true
+
+[dependencies.sys-locale]
+version = "0.3.2"
+optional = true
+
+[dependencies.unicode-bidi]
+version = "0.3.18"
+features = ["hardcoded-data"]
+default-features = false
+
+[dependencies.unicode-linebreak]
+version = "0.1.5"
+
+[dependencies.unicode-script]
+version = "0.5.8"
+
+[dependencies.unicode-segmentation]
+version = "1.12.0"

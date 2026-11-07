@@ -19,6 +19,9 @@ pub mod lines_tests;
 pub mod outline_tests;
 pub mod place_tests;
 pub mod readable_tests;
+/// A size-only reshape lays the run's shaping out again (#304).
+#[cfg(test)]
+mod reshape_tests;
 /// A `Repeat` ring's work budget: past it, and what it holds back.
 #[cfg(test)]
 mod ring_budget_tests;

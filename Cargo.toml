@@ -1,5 +1,21 @@
 [workspace]
 members = ["lib/baumhard", "lib/mandala_derive", "crates/maptool", "crates/mandalactl", "crates/workspace-hack"]
+# A patched dependency's source, not a member: see `[patch.crates-io]`.
+exclude = ["vendor/cosmic-text"]
+
+# Where `cosmic-text` comes from: `vendor/cosmic-text`, the published
+# 0.19.0 with a patch (V1-B14, #304), for every crate in the graph that
+# asks for it — baumhard and glyphon both, so there is one copy of its
+# types. The patch makes the font fallback's merge linear in a run's
+# length (it was quadratic: one 262 KB span took 596 s to project), finds
+# a codepoint no face draws once per font system, and counts the
+# shaper's work; `vendor/cosmic-text/src/shape.rs` lists it.
+# `baumhard::util::manifests` holds this table to the rule it was given:
+# a patch replaces a crate at the version the members ask for, from a
+# path inside the repository, and every other workspace that builds
+# baumhard (the fuzz crate, the wasm32 probe) carries the same entry.
+[patch.crates-io]
+cosmic-text = { path = "vendor/cosmic-text" }
 
 [workspace.package]
 license = "MPL-2.0"
