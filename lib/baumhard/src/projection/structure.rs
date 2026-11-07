@@ -19,7 +19,8 @@ use crate::projection::input::{Dependent, ProjectionInput, Stage};
 use crate::projection::layers::{GlyphLayers, Layer, LayerBuilders};
 use crate::projection::stages::PhaseWork;
 use crate::projection::state::{
-    LineState, NodeState, Owner, PortalState, ProjectedUnit, RingState, SectionState, UnitBody,
+    LineState, NodeState, Owner, OwnFields, PortalState, ProjectedUnit, RingState, SectionState,
+    UnitBody,
 };
 use crate::projection::Projector;
 
@@ -480,15 +481,57 @@ impl Projector {
             }
         }
         for &id in &touched.ids {
-            if element(tree, id).is_none() {
+            let Some(el) = element(tree, id) else {
                 continue;
-            }
-            if self.nodes.contains_key(&id) {
-                self.queue(work, Dependent::new(id, Stage::Carry));
+            };
+            if let Some(state) = self.nodes.get(&id) {
+                // A node: its geometry, and its carry when what the carry
+                // read of it changed — a drag carries nothing.
+                if let DocElement::Node(data) = el {
+                    let read = (crate::projection::stages::own_opacity(data.opacity), data.zoom);
+                    if state.carried_from != Some(read) {
+                        self.queue(work, Dependent::new(id, Stage::Carry));
+                    }
+                }
                 self.queue(work, Dependent::new(id, Stage::Geometry));
             } else if let Some(unit) = self.own_unit(tree, id) {
-                self.queue(work, Dependent::new(unit, Stage::Resolve));
+                let stage = self.touch_stage(el, id, unit);
+                self.queue(work, Dependent::new(unit, stage));
             }
+        }
+    }
+
+    /// The stage of `unit` a touch of its element `id` (`el`) runs: what
+    /// the element's fields that no input kind names feed (B1's
+    /// granularity note; the review of #317). Its input kinds' readers
+    /// are marked by the record. O(1).
+    ///
+    /// - A span's text is read by its unit's resolution: `Resolve`.
+    /// - A label's, a portal end's and a cap's own fields are all named
+    ///   by an input kind, and their placement fields are read when the
+    ///   unit is placed: `Place`, so dragging one resolves no text.
+    /// - The unit's own element: `Resolve` when the fields its resolution
+    ///   read changed ([`OwnFields`]: a section's minimum size and
+    ///   alignment, a path's visibility, a link's target and kind);
+    ///   otherwise what changed is geometry — a section's offset, read by
+    ///   its box (`Geometry`), or a path's anchors, control points and
+    ///   zoom window, read when it is placed (`Place`).
+    fn touch_stage(&self, el: &DocElement, id: NodeId, unit: NodeId) -> Stage {
+        if id != unit {
+            return match el.kind() {
+                DocKind::Label | DocKind::PortalEnd | DocKind::CapStart | DocKind::CapEnd => Stage::Place,
+                _ => Stage::Resolve,
+            };
+        }
+        let Some(projected) = self.units.get(&unit) else {
+            return Stage::Resolve;
+        };
+        if projected.own != OwnFields::of(el) {
+            return Stage::Resolve;
+        }
+        match projected.body {
+            UnitBody::Section(_) => Stage::Geometry,
+            _ => Stage::Place,
         }
     }
 

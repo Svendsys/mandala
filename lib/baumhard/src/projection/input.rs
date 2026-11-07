@@ -27,6 +27,11 @@ pub enum ProjectionInput {
     Visibility(NodeId),
     /// A node's effective opacity: its own times every ancestor's.
     Opacity(NodeId),
+    /// A node's drawn size, what its rings' relative sizes are taken of
+    /// (#241 amendment 1). Marked with its [`Self::Geometry`] when the
+    /// size changed, and not when the node only moved: a drag reshapes
+    /// nothing.
+    Size(NodeId),
     /// Which node a node hangs from, as projection state holds it: what
     /// its connector is drawn from. Marked when the projector hangs it
     /// somewhere (`reparent`, `create_subtree`), so a connector reads its own node's parent and

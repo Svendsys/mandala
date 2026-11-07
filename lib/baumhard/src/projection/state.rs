@@ -37,6 +37,11 @@ pub(crate) struct NodeState {
     pub(crate) opacity: f32,
     /// The zoom window its sections and rings render in.
     pub(crate) zoom: Option<ZoomWindow>,
+    /// Its own fields its carry read and no input kind names — its own
+    /// opacity and its zoom window — as last carried: a touch of the node
+    /// carries it again only when they changed, so a drag carries
+    /// nothing. `None` until it is first carried.
+    pub(crate) carried_from: Option<(f32, Option<ZoomWindow>)>,
     /// Its drawn rectangle.
     pub(crate) rect: Rect,
     /// Its resolved shape.
@@ -59,6 +64,7 @@ impl NodeState {
             binding: None,
             opacity: 1.0,
             zoom: None,
+            carried_from: None,
             rect,
             shape,
             outline: crate::flow::outline(rect, shape),
@@ -308,6 +314,63 @@ pub(crate) struct ProjectedUnit {
     pub(crate) retired: Vec<RunSlot>,
     /// What it keeps.
     pub(crate) body: UnitBody,
+    /// The fields of its own element its resolution read and no input
+    /// kind names, as last resolved: a touch of the element resolves it
+    /// again only when they changed, and otherwise only places it.
+    pub(crate) own: OwnFields,
+}
+
+/// The fields of a unit's own element that its resolution reads and that
+/// no [`InputKind`](crate::document::deps::InputKind) names. A touch of
+/// the element with these unchanged changed only what placement reads
+/// — a section's offset, a path's anchors, control points and zoom
+/// window — so it is placed and not resolved (B1's granularity note; the
+/// review of #317). A label's and a portal end's own fields are all
+/// named by an input kind, so neither has any here.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) enum OwnFields {
+    /// Not resolved yet.
+    #[default]
+    Unread,
+    /// A section's minimum size and alignment: its shaping key's.
+    Section {
+        /// Its `min_size`.
+        min: Option<Vec2>,
+        /// Its `align`.
+        align: Option<crate::document::values::Align>,
+    },
+    /// A ring: nothing beyond what its input kinds name.
+    Ring,
+    /// A path's visibility, and a link's target and kind.
+    Path {
+        /// Its `visible`.
+        visible: bool,
+        /// A link's `to` and `kind`; `None` for a connector.
+        link: Option<(NodeId, crate::document::values::LinkKind)>,
+    },
+}
+
+impl OwnFields {
+    /// The fields `element` holds now, as a unit of its kind reads them.
+    pub(crate) fn of(element: &crate::document::element::DocElement) -> OwnFields {
+        use crate::document::element::DocElement as E;
+        match element {
+            E::Section(s) => OwnFields::Section {
+                min: s.min_size,
+                align: s.align,
+            },
+            E::Ring(_) => OwnFields::Ring,
+            E::Connector(c) => OwnFields::Path {
+                visible: c.path.visible,
+                link: None,
+            },
+            E::Link(l) => OwnFields::Path {
+                visible: l.path.visible,
+                link: Some((l.to, l.kind)),
+            },
+            _ => OwnFields::Unread,
+        }
+    }
 }
 
 /// The slots a unit of `body`'s kind has.
@@ -328,6 +391,7 @@ impl ProjectedUnit {
             slots: slots_for(&body),
             retired: Vec::new(),
             body,
+            own: OwnFields::Unread,
         }
     }
 

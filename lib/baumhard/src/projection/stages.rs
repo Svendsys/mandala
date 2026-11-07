@@ -31,7 +31,8 @@ use crate::projection::geometry::{
 };
 use crate::projection::input::{Dependent, ProjectionInput, Reads, Stage};
 use crate::projection::state::{
-    BoxFlow, BoxKey, EndState, LabelState, PathFlow, Placed, RingResolved, RunFlow, RunKey, UnitBody,
+    BoxFlow, BoxKey, EndState, LabelState, OwnFields, PathFlow, Placed, RingResolved, RunFlow, RunKey,
+    UnitBody,
 };
 use crate::projection::structure::element;
 use crate::projection::Projector;
@@ -69,6 +70,10 @@ pub(crate) struct PhaseWork {
     pub(crate) created: FxHashSet<NodeId>,
     /// The top of each subtree this update made visible, to write whole.
     pub(crate) pending_roots: Vec<NodeId>,
+    /// Sections whose box within their node is due: their offset applied
+    /// to their shaped size, after every section of the update is shaped
+    /// and before any node is measured.
+    pub(crate) boxes: Vec<NodeId>,
     /// Kept nodes whose parent changed.
     pub(crate) moves: Vec<NodeId>,
     /// Kept nodes touched in place, whose place in their row may have
@@ -262,8 +267,15 @@ impl Projector {
     /// Mark `dep` to run, in the phase its stage and unit belong to.
     /// O(1).
     pub(crate) fn queue(&self, work: &mut PhaseWork, dep: Dependent) {
+        let section = matches!(
+            self.units.get(&dep.unit).map(|u| &u.body),
+            Some(UnitBody::Section(_))
+        );
         let phase = match dep.stage {
             Stage::Carry => CARRY,
+            // A section's geometry is its box: due in the sections phase,
+            // before its node is measured from it.
+            Stage::Geometry if section => SECTIONS,
             Stage::Geometry => MEASURE,
             _ => match self.units.get(&dep.unit).map(|u| &u.body) {
                 Some(UnitBody::Section(_)) if dep.stage == Stage::Resolve => SECTIONS,
@@ -287,6 +299,7 @@ impl Projector {
                 let depth = self.nodes.get(&dep.unit).map_or(0, |n| n.depth);
                 work.carry.push(Reverse((depth, dep.unit)));
             }
+            SECTIONS if dep.stage == Stage::Geometry => work.boxes.push(dep.unit),
             SECTIONS => work.to_resolve.push(dep.unit),
             MEASURE => work.measure.push(dep.unit),
             PLACE => match self.units.get(&dep.unit).map(|u| &u.body) {
@@ -323,6 +336,11 @@ impl Projector {
         while let Some(id) = work.to_resolve.pop() {
             if work.take(Dependent::new(id, Stage::Resolve)) {
                 self.section_resolve(tree, id, work, fonts);
+            }
+        }
+        while let Some(id) = work.boxes.pop() {
+            if work.take(Dependent::new(id, Stage::Geometry)) {
+                self.section_geometry(tree, id, work);
             }
         }
         work.phase = MEASURE;
@@ -374,11 +392,7 @@ impl Projector {
             parent.and_then(|(_, s)| s.binding),
             &mut Reads(&mut reads),
         );
-        let own = if data.opacity.is_finite() {
-            data.opacity.clamp(0.0, 1.0)
-        } else {
-            1.0
-        };
+        let own = own_opacity(data.opacity);
         let opacity = own * parent.map_or(1.0, |(_, s)| s.opacity);
         if let Some((p, _)) = parent {
             reads.push(ProjectionInput::Opacity(p));
@@ -391,6 +405,7 @@ impl Projector {
         let changed_binding = state.binding != binding;
         let changed_opacity = state.opacity != opacity;
         let changed_zoom = state.zoom != zoom;
+        state.carried_from = Some((own, zoom));
         state.binding = binding;
         state.opacity = opacity;
         state.zoom = zoom;
@@ -430,24 +445,44 @@ impl Projector {
             min: data.min_size,
             align: data.align.unwrap_or(Align::Left),
         };
-        let offset = geometry::usable_point(data.offset);
+        let own = OwnFields::of(&DocElement::Section(data.clone()));
         self.deps.record(Dependent::new(id, Stage::Resolve), &reads);
+        let Some(unit) = self.units.get_mut(&id) else {
+            return;
+        };
+        unit.own = own;
+        let UnitBody::Section(state) = &mut unit.body else {
+            return;
+        };
+        shaped_box(&mut state.flow, key, fonts);
+        unit.slots[0].element = Some(id);
+        unit.slots[0].spans = ids;
+        self.queue(work, Dependent::new(id, Stage::Geometry));
+        self.queue(work, Dependent::new(id, Stage::Place));
+    }
+
+    /// A section's box within its node: its offset, its shaped size. What
+    /// a nudge of the section runs, and nothing before it: an offset is
+    /// read here, never by its resolution. Marks what read its box, its
+    /// node's measure, and its own placement, when the box changed. O(1).
+    fn section_geometry(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut PhaseWork) {
+        let Some(DocElement::Section(data)) = element(tree, id) else {
+            return;
+        };
+        let offset = geometry::usable_point(data.offset);
         let Some(unit) = self.units.get_mut(&id) else {
             return;
         };
         let UnitBody::Section(state) = &mut unit.body else {
             return;
         };
-        shaped_box(&mut state.flow, key, fonts);
         let size = state.flow.as_ref().map_or(Vec2::ZERO, |f| f.shaped.size);
         let local = Some(Rect::new(offset, size));
-        let changed = state.local != local;
-        state.local = local;
-        unit.slots[0].element = Some(id);
-        unit.slots[0].spans = ids;
-        if changed {
-            self.mark(work, ProjectionInput::Geometry(id));
+        if state.local == local {
+            return;
         }
+        state.local = local;
+        self.mark(work, ProjectionInput::Geometry(id));
         self.queue(work, Dependent::new(id, Stage::Place));
     }
 
@@ -486,11 +521,15 @@ impl Projector {
         if state.rect == rect && state.shape == shape {
             return;
         }
+        let resized = state.rect.size != rect.size;
         state.rect = rect;
         state.shape = shape;
         state.outline = outline(rect, shape);
         self.bodies.set(id, rect, geometry::node_shape(shape));
         self.mark(work, ProjectionInput::Geometry(id));
+        if resized {
+            self.mark(work, ProjectionInput::Size(id));
+        }
     }
 
     /// Phase B for a section: its run at its node's position plus its
@@ -580,6 +619,7 @@ impl Projector {
         };
         state.spans = spans;
         state.text = Some(text);
+        unit.own = OwnFields::Ring;
         unit.slots[0].element = Some(id);
         unit.slots[0].spans = ids;
         self.queue(work, Dependent::new(id, Stage::Shape));
@@ -603,17 +643,19 @@ impl Projector {
             .spans
             .iter()
             .any(|(_, s)| matches!(s.size, FontSize::Rel(_)));
+        // A relative size is taken of the node's drawn size, never of
+        // where it is: a node moved, not resized, shapes nothing.
+        let reads: Vec<ProjectionInput> = if relative {
+            vec![ProjectionInput::Size(node)]
+        } else {
+            Vec::new()
+        };
         let key = RunKey {
             spans: state
                 .spans
                 .iter()
                 .map(|(t, s)| (t.clone(), in_points(*s, rect)))
                 .collect(),
-        };
-        let reads: Vec<ProjectionInput> = if relative {
-            vec![ProjectionInput::Geometry(node)]
-        } else {
-            Vec::new()
         };
         self.deps.record(Dependent::new(id, Stage::Shape), &reads);
         let Some(unit) = self.units.get_mut(&id) else {
@@ -761,6 +803,10 @@ impl Projector {
             _ => None,
         };
         let visible = el.as_path().is_some_and(|p| p.visible);
+        let own = OwnFields::of(el);
+        if let Some(unit) = self.units.get_mut(&id) {
+            unit.own = own;
+        }
         let mut reads = Vec::new();
         match (el, ends) {
             // A link reads whether the node it leads to is drawn.
@@ -1246,6 +1292,16 @@ impl Projector {
             portal.end[k].center = centers[k].0;
             portal.end[k].label.center = centers[k].1;
         }
+    }
+}
+
+/// A node's own opacity as its carry reads it: clamped to `0..=1`, and
+/// `1` for a value that is not finite.
+pub(crate) fn own_opacity(opacity: f32) -> f32 {
+    if opacity.is_finite() {
+        opacity.clamp(0.0, 1.0)
+    } else {
+        1.0
     }
 }
 

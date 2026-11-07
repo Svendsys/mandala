@@ -841,3 +841,146 @@ fn test_projection_a_move_out_of_a_wide_row_runs_one_connector() {
     );
     p.check().unwrap();
 }
+
+/// Node 1, holding a portal link to node 2; node 2 under it, its
+/// connector labeled and bent by one control point. Every element a
+/// geometry-only drag moves, with text beside it that a text change
+/// re-resolves.
+fn dragged_parts() -> Document {
+    load_map(json!({"nodes": [
+        text_node(1, None, 0.0, json!({"text": "from"}), json!({
+            "links": [{"to": 2, "kind": "portal", "ends": [{}, {}]}]
+        })),
+        text_node(2, Some(1), 400.0, json!({"text": "to"}), json!({
+            "connector": {
+                "label": {"t": 0.5, "spans": [{"text": "label"}]},
+                "control_points": [[10.0, -20.0]]
+            }
+        })),
+    ]}))
+}
+
+/// Apply one `mutation` of `kind` to `target` and return the units whose
+/// `Resolve` ran.
+fn resolved_by(p: &mut Projected, kind: DocKind, mutation: DocMutation, target: NodeId) -> FxHashSet<NodeId> {
+    apply(p, request(single(kind, mutation), vec![target], "edit")).discard(&mut p.layers);
+    ran(p, Stage::Resolve)
+}
+
+#[test]
+fn test_projection_a_geometry_only_drag_of_a_unit_part_resolves_nothing() {
+    use crate::document::mutation::ops::{LabelOp, PathOp, PortalEndOp, SectionOp};
+    let doc = dragged_parts();
+    let (one, two) = (ident(&doc, 1), ident(&doc, 2));
+    let connector = kid(&doc, two, DocKind::Connector);
+    let label = kid(&doc, connector, DocKind::Label);
+    let label_span = kid(&doc, label, DocKind::Span);
+    let portal = kid(&doc, one, DocKind::Link);
+    let end = kid(&doc, portal, DocKind::PortalEnd);
+    let (section, section_span) = section_of(&doc, 2);
+    let mut p = Projected::new(doc);
+
+    // A label dragged along its connector.
+    let r = resolved_by(&mut p, DocKind::Label, DocMutation::Label(LabelOp::SetT(Some(0.8))), label);
+    assert!(r.is_empty(), "a label drag resolves nothing: {r:?}");
+    p.check().unwrap();
+    // The control: the label's text.
+    let r = resolved_by(&mut p, DocKind::Span, DocMutation::Span(SpanOp::SetText("moved".into())), label_span);
+    assert!(r.contains(&connector), "the label's text resolves its connector: {r:?}");
+    p.check().unwrap();
+
+    // A portal marker dragged round its node.
+    let r = resolved_by(
+        &mut p,
+        DocKind::PortalEnd,
+        DocMutation::PortalEnd(PortalEndOp::SetBorderT(Some(0.3))),
+        end,
+    );
+    assert!(r.is_empty(), "a marker drag resolves nothing: {r:?}");
+    p.check().unwrap();
+    // The control: the marker's text.
+    let r = resolved_by(
+        &mut p,
+        DocKind::PortalEnd,
+        DocMutation::PortalEnd(PortalEndOp::SetContent(Some("◆".into()))),
+        end,
+    );
+    assert!(r.contains(&portal), "the marker's text resolves its link: {r:?}");
+    p.check().unwrap();
+
+    // A section nudged within its node.
+    let r = resolved_by(
+        &mut p,
+        DocKind::Section,
+        DocMutation::Section(SectionOp::Nudge(Vec2::new(6.0, 4.0))),
+        section,
+    );
+    assert!(r.is_empty(), "a section nudge resolves nothing: {r:?}");
+    p.check().unwrap();
+    // The control: the section's text.
+    let r = resolved_by(&mut p, DocKind::Span, DocMutation::Span(SpanOp::SetText("too".into())), section_span);
+    assert!(r.contains(&section), "the section's text resolves it: {r:?}");
+    p.check().unwrap();
+
+    // A control point moved.
+    let r = resolved_by(
+        &mut p,
+        DocKind::Connector,
+        DocMutation::Path(PathOp::SetControlPoints(vec![Vec2::new(-30.0, 25.0)])),
+        connector,
+    );
+    assert!(r.is_empty(), "a control-point move resolves nothing: {r:?}");
+    p.check().unwrap();
+    // The control: the connector's text.
+    let r = resolved_by(
+        &mut p,
+        DocKind::Connector,
+        DocMutation::Path(PathOp::SetContent(Some("~".into()))),
+        connector,
+    );
+    assert!(r.contains(&connector), "the connector's text resolves it: {r:?}");
+    p.check().unwrap();
+}
+
+#[test]
+fn test_projection_a_drag_carries_and_shapes_nothing_a_resize_and_a_fade_do() {
+    let (doc, top, _, _, ring) = palette_subtree();
+    let mut p = Projected::new(doc);
+    apply(
+        &mut p,
+        request(
+            single(DocKind::Node, DocMutation::Node(NodeOp::Nudge(Vec2::new(40.0, 0.0)))),
+            vec![top],
+            "drag",
+        ),
+    )
+    .discard(&mut p.layers);
+    assert!(ran(&p, Stage::Carry).is_empty(), "a drag carries nothing: {:?}", p.projector.ran);
+    assert!(ran(&p, Stage::Shape).is_empty(), "nor shapes anything: {:?}", p.projector.ran);
+    p.check().unwrap();
+
+    // The controls: a resize reshapes the relative ring, and a fade
+    // carries the node again.
+    apply(
+        &mut p,
+        request(
+            single(DocKind::Node, DocMutation::Node(NodeOp::SetMinSize(Some(Vec2::new(500.0, 300.0))))),
+            vec![top],
+            "resize",
+        ),
+    )
+    .discard(&mut p.layers);
+    assert!(ran(&p, Stage::Shape).contains(&ring), "a resize reshapes the relative ring");
+    p.check().unwrap();
+    apply(
+        &mut p,
+        request(
+            single(DocKind::Node, DocMutation::Node(NodeOp::SetOpacity(0.5))),
+            vec![top],
+            "fade",
+        ),
+    )
+    .discard(&mut p.layers);
+    assert!(ran(&p, Stage::Carry).contains(&top), "a fade carries the node again");
+    p.check().unwrap();
+}
