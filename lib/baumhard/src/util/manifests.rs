@@ -162,6 +162,24 @@ impl Dep {
     }
 }
 
+/// One entry of a `[patch.crates-io]` table: the crate it replaces, and
+/// the directory, relative to its manifest, the replacement is read from.
+///
+/// The rule this module decided for patches (#304): a patch replaces a
+/// crate **at the version the members ask for**, so the asking stays
+/// honest; **from a path inside the repository**, so what is built is
+/// in review; and **in every workspace that builds baumhard**, so the
+/// fuzz crate and the wasm32 probe build against the same code as the
+/// app. The parser refuses a patch that is not a bare `path`, and the
+/// tests below hold the rest against the real manifests.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Patch {
+    /// The crate replaced.
+    pub(crate) name: String,
+    /// Where its replacement is, relative to the manifest's directory.
+    pub(crate) path: String,
+}
+
 /// The dependency declarations of one manifest.
 #[derive(Debug, Clone)]
 pub(crate) struct Manifest {
@@ -169,6 +187,8 @@ pub(crate) struct Manifest {
     pub(crate) path: String,
     /// Every declaration found, in file order.
     pub(crate) deps: Vec<Dep>,
+    /// Its `[patch.crates-io]` entries, in file order.
+    pub(crate) patches: Vec<Patch>,
 }
 
 impl Manifest {
@@ -264,6 +284,8 @@ enum Section {
     /// A dependency table proper: the lines under it are
     /// `name = <value>` declarations.
     Table(Table),
+    /// The `[patch.crates-io]` table: its lines are [`Patch`]es.
+    Patch,
     /// A per-dependency sub-table — `[dependencies.serde_json]`,
     /// `[workspace.dependencies.serde]`,
     /// `[target.'cfg(unix)'.dependencies.foo]`. The lines under it
@@ -288,7 +310,10 @@ enum Section {
 /// rules applies to them as written — but both redirect where a
 /// dependency comes from, which is close enough that the first person
 /// to add one should have to decide what these rules mean for it
-/// rather than have this list decide silently.
+/// rather than have this list decide silently. That decision has been
+/// made for one of them, `[patch.crates-io]` ([`Patch`], #304), and
+/// it is read as [`Section::Patch`]; every other `patch` table, and
+/// `replace`, is still refused.
 const NON_DEPENDENCY_ROOTS: [&str; 12] = [
     "package",
     "lib",
@@ -368,6 +393,9 @@ fn section_for(path: &str, header: &str) -> Section {
             name: name.to_string(),
         };
     }
+    if header == "patch.crates-io" {
+        return Section::Patch;
+    }
     let root = header.split('.').next().unwrap_or(header);
     // `patch` and `replace` get their own refusal, because the generic
     // one below ends in advice — "add its root to
@@ -408,6 +436,7 @@ fn section_for(path: &str, header: &str) -> Section {
 /// every test here checks.
 pub(crate) fn parse(path: &str, text: &str) -> Manifest {
     let mut deps = Vec::new();
+    let mut patches = Vec::new();
     let mut section = Section::Other;
     // The declaration a `[dependencies.<name>]` header opened, filled
     // in from the key lines below it and pushed when the section ends.
@@ -463,6 +492,7 @@ pub(crate) fn parse(path: &str, text: &str) -> Manifest {
 
         match &section {
             Section::Other => continue,
+            Section::Patch => patches.push(parse_patch(path, raw, lhs, rhs)),
             Section::Table(table) => deps.push(parse_dep(path, raw, lhs, rhs, table.clone())),
             Section::Dep { .. } => {
                 let dep = pending
@@ -477,6 +507,35 @@ pub(crate) fn parse(path: &str, text: &str) -> Manifest {
     Manifest {
         path: path.to_string(),
         deps,
+        patches,
+    }
+}
+
+/// Read one `[patch.crates-io]` line: `name = { path = "..." }` and
+/// nothing else, since [`Patch`]'s rule is that a patch is a path inside
+/// the repository. A `git`, `branch`, `rev`, `version` or any other key
+/// is refused rather than recorded: it would be a source the rule was
+/// not written about.
+fn parse_patch(path: &str, raw: &str, lhs: &str, rhs: &str) -> Patch {
+    let name = lhs.trim().trim_matches('"').to_string();
+    let body = rhs
+        .strip_prefix('{')
+        .and_then(|r| r.strip_suffix('}'))
+        .map(str::trim)
+        .unwrap_or_else(|| panic!("{path}: patch {raw:?} is not an inline table"));
+    let value = inline_value(body, "path").unwrap_or_else(|| {
+        panic!("{path}: patch {raw:?} names no `path`; a patch here is a path inside the repository")
+    });
+    let path_value = quoted(value);
+    assert!(
+        body.matches('=').count() == 1,
+        "{path}: patch {raw:?} has keys beside `path`. A patch here is a path inside the \
+         repository and nothing else (`util::manifests::Patch`); a git source, a branch or a \
+         version is a different decision, to be made here with a test that says what it is."
+    );
+    Patch {
+        name,
+        path: path_value,
     }
 }
 
@@ -1147,19 +1206,245 @@ name = "test_bench"
         );
     }
 
-    /// `[patch]` and `[replace]` are refused, and *what the refusal
-    /// says* is the point of pinning it: the generic unclassified-
-    /// section message ends by suggesting `NON_DEPENDENCY_ROOTS`,
-    /// which for these two would silence the refusal in one line and
-    /// call it a fix. Pinning a fork is a routine edit, so the first
-    /// person to hit this must read why rather than how.
+    /// `[patch]` tables other than `[patch.crates-io]`, and `[replace]`,
+    /// are refused, and *what the refusal says* is the point of pinning
+    /// it: the generic unclassified-section message ends by suggesting
+    /// `NON_DEPENDENCY_ROOTS`, which for these would silence the refusal
+    /// in one line and call it a fix. Pinning a fork is a routine edit,
+    /// so the first person to hit this must read why rather than how.
     #[test]
     #[should_panic(expected = "Do not add `patch` to `NON_DEPENDENCY_ROOTS`")]
     fn test_parser_refuses_a_patched_source_with_its_reason() {
         parse(
             "fixture/Cargo.toml",
-            "[patch.crates-io]\nstrum = { path = \"../strum\" }\n",
+            "[patch.'https://github.com/example/strum']\nstrum = { path = \"../strum\" }\n",
         );
+    }
+
+    /// `[patch.crates-io]` is the one patch table that has a rule
+    /// ([`Patch`]): its entries are read as patches, not dependencies.
+    #[test]
+    fn test_parser_reads_a_crates_io_patch_as_a_path() {
+        let m = fixture(
+            "fixture/Cargo.toml",
+            "[patch.crates-io]\ncosmic-text = { path = \"vendor/cosmic-text\" } # why\n\n\
+             [dependencies]\nserde = \"1\"\n",
+        );
+        assert_eq!(
+            m.patches,
+            vec![Patch {
+                name: "cosmic-text".to_string(),
+                path: "vendor/cosmic-text".to_string(),
+            }]
+        );
+        assert_eq!(
+            m.deps.iter().map(Dep::crate_name).collect::<Vec<_>>(),
+            vec!["serde"],
+            "a patch is not a dependency, and the table after it is still read"
+        );
+    }
+
+    /// A patch from anything but a bare path is a source [`Patch`]'s rule
+    /// was not written about, and is refused rather than recorded.
+    #[test]
+    #[should_panic(expected = "has keys beside `path`")]
+    fn test_parser_refuses_a_patch_with_a_git_source_beside_its_path() {
+        parse(
+            "fixture/Cargo.toml",
+            "[patch.crates-io]\nstrum = { path = \"strum\", branch = \"main\" }\n",
+        );
+    }
+
+    /// A patch with no path at all names a source outside the repository.
+    #[test]
+    #[should_panic(expected = "names no `path`")]
+    fn test_parser_refuses_a_patch_from_git() {
+        parse(
+            "fixture/Cargo.toml",
+            "[patch.crates-io]\nstrum = { git = \"https://github.com/example/strum\" }\n",
+        );
+    }
+
+    /// `[package]`'s `key`, from a manifest's text.
+    fn package_field(text: &str, key: &str) -> Option<String> {
+        let mut in_package = false;
+        for line in text.lines().map(str::trim) {
+            if line.starts_with('[') {
+                in_package = line == "[package]";
+                continue;
+            }
+            if !in_package {
+                continue;
+            }
+            if let Some((lhs, rhs)) = line.split_once('=') {
+                if lhs.trim() == key {
+                    return Some(quoted(rhs));
+                }
+            }
+        }
+        None
+    }
+
+    /// `dir/rel`, with `.` and `..` folded, or `None` when `rel` is
+    /// absolute or climbs above the repository.
+    fn inside_repo(dir: &str, rel: &str) -> Option<String> {
+        if rel.starts_with('/') || rel.contains(':') {
+            return None;
+        }
+        let mut parts: Vec<&str> = dir.split('/').filter(|p| !p.is_empty()).collect();
+        for part in rel.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    parts.pop()?;
+                }
+                part => parts.push(part),
+            }
+        }
+        Some(parts.join("/"))
+    }
+
+    /// What breaks [`Patch`]'s rule in the root manifest's `patches`,
+    /// against the members' declarations: a patch outside the
+    /// repository, a patch whose manifest (read through `read`, by
+    /// repo-relative path) is not the crate it replaces, or one whose
+    /// version is not the one every member that names the crate asks
+    /// for.
+    fn patch_violations(
+        root: &Manifest,
+        members: &[Manifest],
+        read: impl Fn(&str) -> Option<String>,
+    ) -> Vec<String> {
+        let mut found = Vec::new();
+        for patch in &root.patches {
+            let Some(dir) = inside_repo("", &patch.path) else {
+                found.push(format!(
+                    "{}: {} is outside the repository",
+                    patch.name, patch.path
+                ));
+                continue;
+            };
+            let Some(text) = read(&format!("{dir}/Cargo.toml")) else {
+                found.push(format!("{}: {dir}/Cargo.toml cannot be read", patch.name));
+                continue;
+            };
+            if package_field(&text, "name").as_deref() != Some(patch.name.as_str()) {
+                found.push(format!("{}: {dir} is not the crate {}", patch.name, patch.name));
+                continue;
+            }
+            let version = package_field(&text, "version").unwrap_or_default();
+            let asked: BTreeSet<String> = members
+                .iter()
+                .flat_map(Manifest::member_deps)
+                .chain(root.workspace_deps())
+                .filter(|dep| dep.crate_name() == patch.name)
+                .filter_map(|dep| dep.version.clone())
+                .collect();
+            if asked.is_empty() {
+                found.push(format!(
+                    "{}: no member asks for it, so nothing is patched",
+                    patch.name
+                ));
+            } else if asked != BTreeSet::from([version.clone()]) {
+                found.push(format!(
+                    "{}: patched at {version}, where the members ask for {asked:?}",
+                    patch.name
+                ));
+            }
+        }
+        found
+    }
+
+    /// The rule's checker, held to fixtures that break each clause, and to
+    /// one that keeps them all.
+    #[test]
+    fn test_the_patch_rule_refuses_each_clause_it_holds() {
+        let crate_at =
+            |name: &str, version: &str| format!("[package]\nname = \"{name}\"\nversion = \"{version}\"\n");
+        let read = |path: &str| match path {
+            "vendor/strum/Cargo.toml" => Some(crate_at("strum", "0.28.0")),
+            "vendor/serde/Cargo.toml" => Some(crate_at("serde", "1.0.0")),
+            _ => None,
+        };
+        let members = [fixture("a/Cargo.toml", "[dependencies]\nstrum = \"0.28.0\"\n")];
+        let root = |patch: &str| fixture("Cargo.toml", &format!("[patch.crates-io]\n{patch}\n"));
+
+        let kept = patch_violations(&root("strum = { path = \"vendor/strum\" }"), &members, read);
+        assert!(kept.is_empty(), "a patch that keeps the rule: {kept:?}");
+        for (patch, clause) in [
+            ("strum = { path = \"../strum\" }", "outside the repository"),
+            ("strum = { path = \"vendor/missing\" }", "cannot be read"),
+            ("strum = { path = \"vendor/serde\" }", "is not the crate strum"),
+            ("serde = { path = \"vendor/serde\" }", "no member asks for it"),
+        ] {
+            let found = patch_violations(&root(patch), &members, read);
+            assert!(
+                found.iter().any(|v| v.contains(clause)),
+                "{patch}: expected a violation saying {clause:?}, got {found:?}"
+            );
+        }
+        let older = [fixture("a/Cargo.toml", "[dependencies]\nstrum = \"0.27\"\n")];
+        let found = patch_violations(&root("strum = { path = \"vendor/strum\" }"), &older, read);
+        assert!(
+            found
+                .iter()
+                .any(|v| v.contains("patched at 0.28.0, where the members ask for")),
+            "a patch at another version than the members ask for: {found:?}"
+        );
+    }
+
+    /// The real root manifest keeps the rule, and it has a patch to keep
+    /// it with (cosmic-text, #304).
+    #[test]
+    fn test_every_patch_replaces_the_version_members_ask_for_from_inside_the_repo() {
+        let manifests = workspace_manifests();
+        let root = manifests
+            .iter()
+            .find(|m| m.path == "Cargo.toml")
+            .expect("the root manifest is read");
+        assert!(
+            root.patches.iter().any(|patch| patch.name == "cosmic-text"),
+            "precondition: the root manifest patches cosmic-text: {:?}",
+            root.patches
+        );
+        let found = patch_violations(root, &manifests, |path| {
+            std::fs::read_to_string(repo_path(path)).ok()
+        });
+        assert!(found.is_empty(), "patches that break the rule: {found:?}");
+        for manifest in manifests.iter().filter(|m| m.path != "Cargo.toml") {
+            assert!(
+                manifest.patches.is_empty(),
+                "{}: cargo reads patches from the workspace root only; this one is ignored",
+                manifest.path
+            );
+        }
+    }
+
+    /// The fuzz crate is a workspace of its own, so the root's patches do
+    /// not reach it: it carries the same ones, to the same directories.
+    /// (The wasm32 probe writes its manifest's patches from the root's,
+    /// `tests/wasm_font_lock.rs`.)
+    #[test]
+    fn test_the_fuzz_workspace_carries_the_roots_patches() {
+        let read = |path: &str| {
+            let text = std::fs::read_to_string(repo_path(path)).unwrap_or_else(|e| panic!("{path}: {e}"));
+            parse(path, &text)
+        };
+        let resolved = |manifest: &Manifest, dir: &str| {
+            manifest
+                .patches
+                .iter()
+                .map(|patch| {
+                    let at = inside_repo(dir, &patch.path).unwrap_or_else(|| {
+                        panic!("{}: {} is outside the repository", manifest.path, patch.path)
+                    });
+                    (patch.name.clone(), at)
+                })
+                .collect::<BTreeSet<_>>()
+        };
+        let root = resolved(&read("Cargo.toml"), "");
+        assert!(!root.is_empty(), "precondition: the root manifest has a patch");
+        assert_eq!(resolved(&read("fuzz/Cargo.toml"), "fuzz"), root);
     }
 
     /// A wrapped declaration is the same declaration. This is the
