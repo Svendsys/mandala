@@ -247,16 +247,19 @@ the parity trajectory (or why none is owed):
   The touch vocabulary that reaches no `Action` — tap, one-finger pan and
   pinch-zoom — runs on both targets through `dispatch::apply_touch_effect`.
 - **Rubber-band select** (`DragState::SelectingRect`,
-  `src/application/app/drain_frame.rs`,
-  `MapView::{nodes_in, set_preview, preview}`) —
+  `src/application/app/drain_frame.rs`, `src/application/view/band.rs`,
+  `MapView::{nodes_in, set_band_targets, band_targets, set_band}`) —
   native-only because `DragState` and the per-frame drain are:
   the browser has no drag-state machine and no `AboutToWait` to
   hang a per-frame hit-test off, so there is nothing for a
   Shift+drag to enter. **The read is deliberately not gated.**
-  The view's overlay (`view::overlay`) tints the preview when one is
-  set and the selection otherwise, on both targets; only the gesture
-  that sets it, and the three `MapView` methods it calls, are native.
-  On wasm32 the preview is therefore always `None`. Parity for the gesture itself
+  The view's overlay (`view::overlay`) tints what a band covers while
+  one is out and the selection otherwise, on both targets; only the
+  gesture, the band drawn on the chrome layer (`view::band`) and the
+  four `MapView` methods they use are native. On wasm32 the band's
+  targets are therefore always `None`. The chrome layer's write path
+  (`MapView::apply_chrome`, a sync pass's chrome builders) is both
+  targets'. Parity for the gesture itself
   rides on the browser gaining a drag-state machine — a press
   needs somewhere to be pending before it can promote — and is
   not yet scheduled. What the browser lacks for it is the
@@ -264,11 +267,9 @@ the parity trajectory (or why none is owed):
   draining a drag state — not a frame: the browser's frame exists
   (`run_wasm/event_redraw_requested.rs`) and runs an injected sample
   and the view's sync.
-- **Animations** — the per-frame animation drain, its pause during a
-  drag and the animated custom mutations it ticked were deleted with the
-  old model (V1-C3, #244), on both targets. Animated edits return with
-  V1-D1 (#250) and presentations with V1-D2 (#251), each as a
-  transaction on the document's writer.
+- **Animations** — none run, on either target, since V1-C3 (#244).
+  Animated edits return with V1-D1 (#250) and presentations with
+  V1-D2 (#251), each as a transaction on the document's writer.
 - **Virtual-clock stepping: the native frame it steps**
   (`src/application/app/heartbeat.rs`; IPC-09/#69) — what a step
   runs at each heartbeat on native is native's whole frame: the
