@@ -163,8 +163,8 @@ fn test_writes_the_same_is_reflexive_where_partial_eq_is_not() {
 }
 
 /// The property the derived `PartialEq` cannot provide, and the
-/// reason [`GfxMutation::writes_the_same`] exists: `flat_mutations`
-/// decides whether a mutator runs by asking whether two payloads
+/// reason [`GfxMutation::writes_the_same`] exists: `flat_mutations` (gone)
+/// decided whether a mutator ran by asking whether two payloads
 /// agree, and `scope::self_and_descendants` asks that of a payload
 /// and a clone of itself.
 pub fn do_writes_the_same_is_reflexive_where_partial_eq_is_not() {
@@ -222,7 +222,7 @@ fn test_instruction_repeat_while_always_true() {
 
 /// Build a target tree with a root and two children, then apply a
 /// `RepeatWhile(always_true)` instruction. The instruction node's
-/// child mutator carries a position delta; `repeat_while` applies
+/// child mutator carries a position delta; the repeat applies
 /// that child mutator to each target descendant that satisfies the
 /// predicate, recursing depth-first.
 pub fn do_instruction_repeat_while_always_true() {

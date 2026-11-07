@@ -44,28 +44,25 @@ pub const FIT_MIN: f32 = 0.5;
 /// bounds: the upper end of [`BUILT_IN`]'s fit.
 pub const FIT_MAX: f32 = 2.0;
 
-/// The color of connector text: `default_parent_child_edge`'s
-/// `#888888`, `src/application/document/defaults.rs`.
+/// The color of connector text: `#888888`, the old model's parent-child
+/// edge default (`default_parent_child_edge` (gone)), kept so a converted
+/// map draws as it did.
 const CONNECTOR_COLOR: Rgba = Rgba::opaque(0x88, 0x88, 0x88);
 
-/// The color of line-link and portal text: `default_cross_link_edge`'s
-/// and `default_portal_edge`'s `#aa88cc`,
-/// `src/application/document/defaults.rs`.
+/// The color of line-link and portal text: `#aa88cc`, the old model's
+/// cross-link and portal edge defaults (`default_cross_link_edge` (gone),
+/// `default_portal_edge` (gone)), kept so a converted map draws as it did.
 const LINK_COLOR: Rgba = Rgba::opaque(0xaa, 0x88, 0xcc);
 
-/// The size of a portal marker, in points:
-/// `DEFAULT_PORTAL_MARKER_FONT_SIZE_PT` in
-/// `lib/baumhard/src/mindmap/tree_builder/portal_style.rs`.
+/// The size of a portal marker, in points (#235's table).
 pub const PORTAL_MARKER_SIZE_PT: f32 = 50.0;
 
-/// The size of connector and link text, in points:
-/// `default_connection_font_size()` in
-/// `lib/baumhard/src/mindmap/model/edge.rs`.
+/// The size of connector and link text, in points: the old model's
+/// connection default (`default_connection_font_size` (gone)), kept so a
+/// converted map draws as it did.
 pub const PATH_TEXT_SIZE_PT: f32 = 12.0;
 
-/// How much larger a label's text is than its path's:
-/// `DEFAULT_LABEL_SIZE_FACTOR` in
-/// `lib/baumhard/src/mindmap/model/edge.rs`.
+/// How much larger a label's text is than its path's (#235's table).
 pub const LABEL_SIZE_FACTOR: f32 = 1.1;
 
 /// The text every flow falls back to before its size and color: no
@@ -229,9 +226,9 @@ pub const BUILT_IN: BuiltIn = BuiltIn {
     connector: BuiltInPath {
         // #235's table.
         fit: FitMode::Repeat,
-        // `GlyphConnectionConfig::default().spacing`, mindmap/model/edge.rs.
+        // #235's table.
         spacing: 0.0,
-        // `default_connection_body()`, mindmap/model/edge.rs.
+        // #235's table: the middle dot.
         content: "\u{00B7}",
         text: text(FontSize::Pt(PATH_TEXT_SIZE_PT), CONNECTOR_COLOR),
     },
@@ -242,8 +239,7 @@ pub const BUILT_IN: BuiltIn = BuiltIn {
         text: text(FontSize::Pt(PATH_TEXT_SIZE_PT), LINK_COLOR),
     },
     label: BuiltInLabel {
-        // `EdgeLabelConfig::effective_position_t`'s midpoint and
-        // `effective_perpendicular_offset`'s `0.0`, mindmap/model/edge.rs.
+        // The path's midpoint, on the path (#235's table).
         t: 0.5,
         offset: 0.0,
         // On a path: the path's size times `DEFAULT_LABEL_SIZE_FACTOR`
@@ -255,9 +251,7 @@ pub const BUILT_IN: BuiltIn = BuiltIn {
         ),
         on_link: text(FontSize::Pt(PATH_TEXT_SIZE_PT * LABEL_SIZE_FACTOR), LINK_COLOR),
         // Beside a portal end: the marker's size and color at 1:1,
-        // `resolve_portal_endpoint_text_style` in
-        // mindmap/tree_builder/portal_style.rs, which skips the label
-        // factor on purpose.
+        // without the label factor, on purpose (#235's table).
         on_portal_end: text(FontSize::Pt(PORTAL_MARKER_SIZE_PT), LINK_COLOR),
     },
     portal_end: BuiltInPortalEnd {
@@ -265,7 +259,7 @@ pub const BUILT_IN: BuiltIn = BuiltIn {
         border_t: BorderPoint::Auto,
         // `PortalEndpointState::perpendicular_offset` `None`: flush.
         offset: 0.0,
-        // `PORTAL_GLYPH_PRESETS[0]`, mindmap/model/edge.rs.
+        // #235's table: the first portal glyph.
         content: "\u{25C8}",
         text: text(FontSize::Pt(PORTAL_MARKER_SIZE_PT), LINK_COLOR),
     },

@@ -490,8 +490,8 @@ mod tests {
     fn test_string_or_object_reads_a_variant_name_or_a_json_object() {
         assert_eq!(built("act.action", &["Undo"])["action"], json!("Undo"));
         assert_eq!(
-            built("act.action", &["{\"OpenDocument\":\"m.mindmap.json\"}"])["action"],
-            json!({"OpenDocument": "m.mindmap.json"})
+            built("act.action", &["{\"OpenDocument\":\"m.mandala.json\"}"])["action"],
+            json!({"OpenDocument": "m.mandala.json"})
         );
     }
 
@@ -633,8 +633,8 @@ mod tests {
         let err = refused("act.macro", &["steps={\"kind\":\"Action\"}"]);
         assert!(err.contains("`steps`") && err.contains("JSON array"), "{err}");
         assert_eq!(
-            built("scene.dump", &["kinds=nodes,edges"])["kinds"],
-            json!(["nodes", "edges"])
+            built("scene.dump", &["kinds=nodes,paths"])["kinds"],
+            json!(["nodes", "paths"])
         );
     }
 
@@ -651,8 +651,8 @@ mod tests {
     fn test_console_line_after_double_dash_is_one_value() {
         let params = built("act.console", &["--", "fps=on"]);
         assert_eq!(params["line"], json!("fps=on"));
-        let params = built("act.console", &["open maps/a=b.mindmap.json"]);
-        assert_eq!(params["line"], json!("open maps/a=b.mindmap.json"));
+        let params = built("act.console", &["open maps/a=b.mandala.json"]);
+        assert_eq!(params["line"], json!("open maps/a=b.mandala.json"));
     }
 
     #[test]

@@ -2,16 +2,16 @@
 
 //! The `query` family: read-only views of what the application knows
 //! (`format/ipc.md` §`query`): the document, the selection, the camera,
-//! the interaction mode, the status line, the running animations, the
-//! modal editors and the undo stack. What a person reads off the screen
+//! the interaction mode, the status line, the open modals and the undo
+//! history. What a person reads off the screen
 //! chrome and the app's mental state, as JSON.
 //!
 //! **Read-only by construction.** A handler reaches the app through
 //! [`Call::observe`] (`&`), never [`Call::drive`], and the two reads the
 //! target offers are `&MindMapDocument` and a `&self` projection of the
 //! shell state ([`CommandTarget::document`], [`CommandTarget::shell_state`]).
-//! So a query cannot flip `dirty`, push an undo entry, rebuild a scene
-//! or ask for a frame. There is no mutation route to defend because
+//! So a query cannot change the document, push an undo entry, project
+//! anything or ask for a frame. There is no mutation route to defend because
 //! none is reachable.
 //!
 //! **No mirror structs.** The wire form of each piece of state is a
@@ -45,23 +45,23 @@ pub(super) const FAMILY: Family = Family {
     commands: &[
         CommandSpec {
             name: "query.document",
-            summary: "The open document: path, dirty flag, undo depth, map metadata, counts, and \
-                      on request the whole model.",
+            summary: "The open document: path, dirty flag, name, node count, revision, history \
+                      depth, and on request the whole model.",
             params: &[
                 ParamSpec::new(
                     "fields",
                     ParamType::Array,
                     false,
-                    "Which parts to return, as strings: file_path, dirty, undo_depth, map, counts, \
-                     mindmap. Default: all but mindmap, the one part whose size is unbounded.",
+                    "Which parts to return, as strings: file_path, dirty, name, nodes, revision, history, \
+                     document. Default: all but document, the one part whose size is unbounded.",
                 ),
                 ParamSpec::new(
                     "pointer",
                     ParamType::String,
                     false,
-                    "An RFC 6901 JSON Pointer into the serialized model (\"/nodes/1.2\", \"/edges/0\"). \
-                     The reply's mindmap is then the value found there. Implies fields=[\"mindmap\"] \
-                     when fields is omitted; refused when fields lacks mindmap.",
+                    "An RFC 6901 JSON Pointer into the saved map (\"/name\", \"/nodes/0\"). The reply's \
+                     document is then the value found there. Implies fields=[\"document\"] when fields \
+                     is omitted; refused when fields lacks document.",
                 ),
                 // Native: the browser has no filesystem (`format/ipc.md`
                 // §Transport "Browser").
@@ -98,26 +98,22 @@ pub(super) const FAMILY: Family = Family {
                     ParamType::Boolean,
                     "Whether the document has unsaved changes.",
                 ),
+                ResultSpec::new("name", ParamType::String, "The map's name."),
+                ResultSpec::new("nodes", ParamType::Integer, "How many nodes the map holds."),
                 ResultSpec::new(
-                    "undo_depth",
+                    "revision",
                     ParamType::Integer,
-                    "How many entries the undo stack holds.",
+                    "The document's revision: it advances with every change, an undo and a redo included.",
                 ),
                 ResultSpec::new(
-                    "map",
+                    "history",
                     ParamType::Object,
-                    "{name, version} of the loaded map.",
+                    "{undo, redo}: how many entries the history holds each way.",
                 ),
                 ResultSpec::new(
-                    "counts",
+                    "document",
                     ParamType::Object,
-                    "{nodes, edges, sections, palettes, custom_mutations, macros}.",
-                ),
-                ResultSpec::new(
-                    "mindmap",
-                    ParamType::Object,
-                    "The model through its own serde, in the .mindmap.json shape; with pointer, the \
-                     value found there.",
+                    "The map in the .mandala.json shape a save writes; with pointer, the value found there.",
                 ),
                 ResultSpec::new(
                     "path",
@@ -135,14 +131,17 @@ pub(super) const FAMILY: Family = Family {
         },
         CommandSpec {
             name: "query.selection",
-            summary: "The current selection: the SelectionState variant and its ids.",
+            summary: "The current selection: the selected elements, by name, in the order they were selected.",
             params: &[],
-            result: &[ResultSpec::new(
-                "kind",
-                ParamType::String,
-                "The variant: None, Single, Multi, Section, MultiSection, SectionRange, Edge, \
-                 EdgeLabel, PortalLabel or PortalText. The variant's own ids sit beside it.",
-            )],
+            result: &[
+                ResultSpec::new("count", ParamType::Integer, "How many elements are selected."),
+                ResultSpec::new(
+                    "elements",
+                    ParamType::Array,
+                    "Each selected element by its name: {node: <id>} for a node, {node: <id>, \
+                     connector: true} or {node: <id>, link: <index>} for a path.",
+                ),
+            ],
             support: Support::Everywhere,
             run: selection,
         },
@@ -174,36 +173,31 @@ pub(super) const FAMILY: Family = Family {
         },
         CommandSpec {
             name: "query.mode",
-            summary: "The interaction mode, the drag state machine, the open modal, the hovered node and the pointer.",
+            summary: "The interaction mode, the drag state machine, the open modals and the pointer.",
             params: &[],
             result: &[
                 ResultSpec::new(
                     "interaction_mode",
                     ParamType::Object,
-                    "{kind: Default|Reparent|Connect|NodeEdit|Resize, …}: the mode and its ids.",
+                    "{kind: Default}: the mode.",
                 ),
                 ResultSpec::new(
                     "drag_state",
                     ParamType::Object,
-                    "{kind: None|Pending|PendingRight|Panning|SelectingRect|Throttled, …}; a Throttled \
-                     drag names its gesture.",
+                    "{kind: None|Pending|PendingRight|Panning|SelectingRect, …}; a pending press names \
+                     the element it landed on.",
                 ),
                 ResultSpec::new(
                     "modals",
                     ParamType::Array,
                     "Every open modal, in the order the keyboard handler consults them: console, \
-                     color_picker, single_line_edit, text_edit. The picker claims only its own keys.",
+                     color_picker. The picker claims only its own keys.",
                 ),
                 ResultSpec::new(
                     "key_owner",
                     ParamType::String,
-                    "Who receives an ordinary key: console, single_line_edit, text_edit, or none \
-                     (normal dispatch). Never color_picker, which claims only its own keys.",
-                ),
-                ResultSpec::new(
-                    "hovered_node",
-                    ParamType::String,
-                    "The node id under the pointer, or null.",
+                    "Who receives an ordinary key: console, or none (normal dispatch). Never \
+                     color_picker, which claims only its own keys.",
                 ),
                 ResultSpec::new(
                     "cursor_pos",
@@ -216,47 +210,27 @@ pub(super) const FAMILY: Family = Family {
         },
         CommandSpec {
             name: "query.status",
-            summary: "The mode-status line the renderer shows, such as \"editing: <id> — section [1 of 3]\".",
+            summary: "The status lines: the renderer's mode line and the document's last refusal.",
             params: &[],
-            result: &[ResultSpec::new(
-                "text",
-                ParamType::String,
-                "The status line, or null when none is showing (Default mode).",
-            )],
+            result: &[
+                ResultSpec::new(
+                    "text",
+                    ParamType::String,
+                    "The mode-status line, or null when none is showing (Default mode).",
+                ),
+                ResultSpec::new(
+                    "document",
+                    ParamType::String,
+                    "The line the document's last refused change left, such as the busy message an \
+                     open interactive edit answers with; null when the last change was accepted.",
+                ),
+            ],
             support: Support::Everywhere,
             run: status,
         },
         CommandSpec {
-            name: "query.animations",
-            summary: "The running animations and their clocks.",
-            params: &[],
-            result: &[
-                ResultSpec::new(
-                    "active",
-                    ParamType::Boolean,
-                    "Whether any animation instance is running (it is ticking unless paused).",
-                ),
-                ResultSpec::new(
-                    "paused",
-                    ParamType::Boolean,
-                    "Whether a tree-mutating drag has suspended the tick; the animations are then \
-                     frozen and each reports phase paused.",
-                ),
-                ResultSpec::new("count", ParamType::Integer, "How many animations are running."),
-                ResultSpec::new(
-                    "animations",
-                    ParamType::Array,
-                    "One entry per instance: target_id, section_idx, mutation_id, start_ms, \
-                     elapsed_ms, phase (delay|running|due|paused), progress (0 to 1, before easing), \
-                     timing.",
-                ),
-            ],
-            support: Support::Everywhere,
-            run: animations,
-        },
-        CommandSpec {
             name: "query.editors",
-            summary: "The modal editors' live state and the document's active previews.",
+            summary: "The open modals' live state: the console and the color picker.",
             params: &[],
             result: &[
                 ResultSpec::new(
@@ -269,31 +243,13 @@ pub(super) const FAMILY: Family = Family {
                     ParamType::Object,
                     "The open color picker: mode, hue_deg, sat, val, gesture; null when closed.",
                 ),
-                ResultSpec::new(
-                    "single_line_edit",
-                    ParamType::Object,
-                    "The edge-label / portal-caption editor: target, buffer, cursor_grapheme_pos, \
-                     original; null when closed.",
-                ),
-                ResultSpec::new(
-                    "text_edit",
-                    ParamType::Object,
-                    "The node text editor: node_id, section_idx, buffer, cursor_grapheme_pos, \
-                     selection_anchor; null when closed.",
-                ),
-                ResultSpec::new(
-                    "previews",
-                    ParamType::Object,
-                    "The scene-only substitutions the document is showing: label_edit, portal_text_edit, \
-                     color_picker, border, rect_select; each null when none is live.",
-                ),
             ],
             support: Support::Everywhere,
             run: editors,
         },
         CommandSpec {
             name: "query.undo",
-            summary: "The undo stack: its depth and its newest entries, newest first.",
+            summary: "The undo history: its depth each way and its newest entries, newest first.",
             params: &[ParamSpec::new(
                 "limit",
                 ParamType::Integer,
@@ -301,11 +257,12 @@ pub(super) const FAMILY: Family = Family {
                 "How many entries to return, newest first. Default 20, at most 1000.",
             )],
             result: &[
-                ResultSpec::new("depth", ParamType::Integer, "How many entries the stack holds."),
+                ResultSpec::new("depth", ParamType::Integer, "How many entries Undo can take."),
+                ResultSpec::new("redo_depth", ParamType::Integer, "How many entries Redo can take."),
                 ResultSpec::new(
                     "entries",
                     ParamType::Array,
-                    "Newest first: {kind, node_ids?, index?}, the order Undo takes them.",
+                    "Newest first, the order Undo takes them: {label, source, revision}.",
                 ),
             ],
             support: Support::Everywhere,
@@ -364,7 +321,8 @@ fn parse_document_request(
             if words.is_empty() {
                 return Err(Refusal::Invalid(
                     "fields",
-                    "`fields` must name at least one of file_path, dirty, undo_depth, map, counts, mindmap"
+                    "`fields` must name at least one of file_path, dirty, name, nodes, revision, history, \
+                     document"
                         .into(),
                 ));
             }
@@ -405,14 +363,14 @@ fn parse_document_request(
         }
     };
     let fields = match (explicit, &pointer) {
-        (Some(fields), Some(_)) if !fields.contains(&DocumentField::Mindmap) => {
+        (Some(fields), Some(_)) if !fields.contains(&DocumentField::Document) => {
             return Err(Refusal::Invalid(
                 "pointer",
-                "`pointer` narrows `mindmap`, which `fields` does not select".into(),
+                "`pointer` narrows `document`, which `fields` does not select".into(),
             ))
         }
         (Some(fields), _) => fields,
-        (None, Some(_)) => vec![DocumentField::Mindmap],
+        (None, Some(_)) => vec![DocumentField::Document],
         (None, None) => DocumentField::ALL
             .into_iter()
             .filter(|f| f.is_default())
@@ -468,7 +426,7 @@ fn document(call: &mut Call<'_>) -> Reply {
 }
 
 fn selection(call: &mut Call<'_>) -> Reply {
-    with_document(call, |doc, _| doc.selection.to_ipc_json())
+    with_document(call, |doc, _| doc.ipc_selection_json())
 }
 
 fn camera(call: &mut Call<'_>) -> Reply {
@@ -481,18 +439,6 @@ fn mode(call: &mut Call<'_>) -> Reply {
 
 fn status(call: &mut Call<'_>) -> Reply {
     with_shell(call, ShellState::Status)
-}
-
-fn animations(call: &mut Call<'_>) -> Reply {
-    // The app clock: the one the per-frame drain ticks animations
-    // against, so `elapsed_ms` and `phase` agree with what the next
-    // tick will do — virtual milliseconds under a virtual clock, which
-    // makes them a pure function of the step sequence. A
-    // drag-suspended tick is reported as a pause rather than as a
-    // clock that keeps running.
-    with_document(call, |doc, app| {
-        doc.ipc_animations_json(app.clock().now_whole_ms(), app.animation_pause())
-    })
 }
 
 fn editors(call: &mut Call<'_>) -> Reply {
@@ -526,7 +472,6 @@ mod tests {
     use super::*;
     use crate::application::console::LineOutcome;
     use crate::application::document::tests_common::load_test_doc;
-    use crate::application::document::UndoAction;
     use crate::application::ipc::events::Observed;
     use crate::application::ipc::registry::tests::{run_attached, run_detached};
     use crate::application::ipc::space::Point;
@@ -547,7 +492,6 @@ mod tests {
     /// value, since the real projections are tested where they live.
     struct LoadedApp {
         doc: Option<MindMapDocument>,
-        pause: Option<u64>,
         clock: crate::application::clock::AppClock,
     }
 
@@ -555,7 +499,6 @@ mod tests {
         fn with_fixture() -> Self {
             LoadedApp {
                 doc: Some(load_test_doc()),
-                pause: None,
                 clock: crate::application::clock::AppClock::default(),
             }
         }
@@ -582,9 +525,6 @@ mod tests {
         }
         fn document(&self) -> Option<&MindMapDocument> {
             self.doc.as_ref()
-        }
-        fn animation_pause(&self) -> Option<u64> {
-            self.pause
         }
         fn shell_state(&self, which: ShellState) -> Value {
             json!({ "shell_state": format!("{which:?}") })
@@ -652,13 +592,12 @@ mod tests {
         }
     }
 
-    const ALL_QUERIES: [&str; 8] = [
+    const ALL_QUERIES: [&str; 7] = [
         r#"{"id":1,"cmd":"query.document"}"#,
         r#"{"id":1,"cmd":"query.selection"}"#,
         r#"{"id":1,"cmd":"query.camera"}"#,
         r#"{"id":1,"cmd":"query.mode"}"#,
         r#"{"id":1,"cmd":"query.status"}"#,
-        r#"{"id":1,"cmd":"query.animations"}"#,
         r#"{"id":1,"cmd":"query.editors"}"#,
         r#"{"id":1,"cmd":"query.undo"}"#,
     ];
@@ -681,10 +620,9 @@ mod tests {
     fn test_the_document_queries_say_when_no_document_loaded() {
         let mut app = LoadedApp {
             doc: None,
-            pause: None,
             clock: crate::application::clock::AppClock::default(),
         };
-        for frame in [ALL_QUERIES[0], ALL_QUERIES[1], ALL_QUERIES[5], ALL_QUERIES[7]] {
+        for frame in [ALL_QUERIES[0], ALL_QUERIES[1], ALL_QUERIES[6]] {
             let (reply, repaint) = run_attached(frame, &mut app);
             assert_eq!(reply["error"]["code"], json!("no_document"), "{frame}");
             assert!(
@@ -695,7 +633,7 @@ mod tests {
             );
             assert!(!repaint);
         }
-        for frame in [ALL_QUERIES[2], ALL_QUERIES[3], ALL_QUERIES[4], ALL_QUERIES[6]] {
+        for frame in [ALL_QUERIES[2], ALL_QUERIES[3], ALL_QUERIES[4], ALL_QUERIES[5]] {
             let (reply, _) = run_attached(frame, &mut app);
             assert_eq!(reply["ok"], json!(true), "{frame}: {reply}");
         }
@@ -706,22 +644,17 @@ mod tests {
     /// decoder and the registry with a real loaded document behind
     /// the target. None reaches an act funnel (each would panic), none
     /// raises the repaint flag, and the document is exactly as it
-    /// was: `dirty`, the undo depth, the selection and the whole
-    /// model.
+    /// was: its revision, its history and the whole model.
     #[test]
     fn test_every_query_through_the_registry_leaves_the_document_untouched() {
         let mut app = LoadedApp::with_fixture();
-        {
-            let doc = app.doc.as_mut().expect("loaded");
-            doc.dirty = true;
-            doc.undo_stack.push(UndoAction::CreateEdge { index: 0 });
-        }
-        let model_before =
-            serde_json::to_value(&app.doc.as_ref().expect("loaded").mindmap).expect("serializes");
+        app.doc.as_mut().expect("loaded").create_root_for_test();
+        let doc = app.doc.as_mut().expect("loaded");
+        let (revision, model_before) = (doc.revision(), doc.save_json().expect("saves"));
 
         let mut frames: Vec<&str> = ALL_QUERIES.to_vec();
-        frames.push(r#"{"id":2,"cmd":"query.document","fields":["mindmap","counts","dirty"]}"#);
-        frames.push(r#"{"id":2,"cmd":"query.document","pointer":"/nodes/0/position"}"#);
+        frames.push(r#"{"id":2,"cmd":"query.document","fields":["document","nodes","dirty"]}"#);
+        frames.push(r#"{"id":2,"cmd":"query.document","pointer":"/name"}"#);
         frames.push(r#"{"id":2,"cmd":"query.undo","limit":3}"#);
         for frame in frames {
             let (reply, repaint) = run_attached(frame, &mut app);
@@ -729,11 +662,11 @@ mod tests {
             assert!(!repaint, "{frame}: a query must not ask for a frame");
         }
 
-        let doc = app.doc.as_ref().expect("loaded");
-        assert!(doc.dirty, "dirty is untouched");
-        assert_eq!(doc.undo_stack.len(), 1, "no undo entry is pushed or popped");
+        let doc = app.doc.as_mut().expect("loaded");
+        assert!(doc.is_dirty(), "dirty is untouched");
+        assert_eq!(doc.revision(), revision, "no change is made or undone");
         assert_eq!(
-            serde_json::to_value(&doc.mindmap).expect("serializes"),
+            doc.save_json().expect("saves"),
             model_before,
             "the model is untouched"
         );
@@ -741,80 +674,74 @@ mod tests {
 
     /// The queries answer with what the document holds, through the
     /// registry: the default summary, the filter, a pointer, the undo
-    /// stack, the selection and the animations.
+    /// history and the selection, by integer id.
     #[test]
     fn test_the_document_queries_report_the_loaded_document() {
         let mut app = LoadedApp::with_fixture();
-        {
+        let node = {
             let doc = app.doc.as_mut().expect("loaded");
-            doc.dirty = true;
-            doc.undo_stack.push(UndoAction::CreateEdge { index: 7 });
-            doc.selection = crate::application::document::SelectionState::Single("0".into());
-        }
-        let node_count = app.doc.as_ref().expect("loaded").mindmap.nodes.len();
+            doc.create_root_for_test();
+            let node = crate::application::document::selection::every_node(doc.doc())
+                .next()
+                .expect("a node");
+            doc.selection.select_only(node);
+            node
+        };
+        let doc = app.doc.as_ref().expect("loaded");
+        let node_count = crate::application::document::selection::every_node(doc.doc()).count();
+        let ident = crate::application::view::inspect::ident_of(doc.doc(), node)
+            .expect("a node")
+            .0;
+        let name = doc.name().to_string();
 
         let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.document"}"#, &mut app);
         assert_eq!(reply["result"]["dirty"], json!(true));
-        assert_eq!(reply["result"]["undo_depth"], json!(1));
-        assert_eq!(reply["result"]["counts"]["nodes"], json!(node_count));
-        assert!(reply["result"].get("mindmap").is_none(), "the model is opt-in");
+        assert_eq!(reply["result"]["history"], json!({"undo": 1, "redo": 0}));
+        assert_eq!(reply["result"]["nodes"], json!(node_count));
+        assert_eq!(reply["result"]["name"], json!(name));
+        assert!(reply["result"]["revision"].as_u64().is_some());
+        assert!(reply["result"].get("document").is_none(), "the model is opt-in");
 
         let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.document","fields":["dirty"]}"#, &mut app);
         assert_eq!(reply["result"], json!({ "dirty": true }));
 
-        let (reply, _) = run_attached(
-            r#"{"id":1,"cmd":"query.document","pointer":"/nodes/0/id"}"#,
-            &mut app,
-        );
-        assert_eq!(reply["result"], json!({ "mindmap": "0" }));
+        let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.document","pointer":"/name"}"#, &mut app);
+        assert_eq!(reply["result"], json!({ "document": name }));
 
         let (reply, _) = run_attached(
-            r#"{"id":1,"cmd":"query.document","pointer":"/nodes/no-such-node"}"#,
+            r#"{"id":1,"cmd":"query.document","pointer":"/no/such/part"}"#,
             &mut app,
         );
         assert_eq!(reply["error"]["code"], json!("not_found"));
 
         let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.undo"}"#, &mut app);
+        assert_eq!(reply["result"]["depth"], json!(1));
+        assert_eq!(reply["result"]["entries"][0]["label"], json!("test: create root"));
+        let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.selection"}"#, &mut app);
         assert_eq!(
             reply["result"],
-            json!({ "depth": 1, "entries": [{ "kind": "CreateEdge", "index": 7 }] })
+            json!({ "count": 1, "elements": [{ "node": ident }] })
         );
-        let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.selection"}"#, &mut app);
-        assert_eq!(reply["result"], json!({ "kind": "Single", "node_id": "0" }));
         let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.camera"}"#, &mut app);
         assert_eq!(reply["result"], json!({ "shell_state": "Camera" }));
     }
 
-    /// **`query.document` round-trips through the registry** (issue
-    /// #64's acceptance criterion): asked for `mindmap`, the reply
-    /// parses back to the model the document holds.
+    /// **`query.document` round-trips through the registry**: asked for
+    /// `document`, the reply loads back to the map the document holds.
     #[test]
     fn test_the_model_round_trips_through_the_registry() {
         let mut app = LoadedApp::with_fixture();
         let (reply, _) = run_attached(
-            r#"{"id":1,"cmd":"query.document","fields":["mindmap"]}"#,
+            r#"{"id":1,"cmd":"query.document","fields":["document"]}"#,
             &mut app,
         );
-        let reparsed: baumhard::mindmap::model::MindMap =
-            serde_json::from_value(reply["result"]["mindmap"].clone()).expect("the reply is a MindMap");
+        let reloaded = baumhard::document::format::load(&reply["result"]["document"].to_string())
+            .expect("the reply is a map");
         assert_eq!(
-            serde_json::to_value(&reparsed).expect("serializes"),
-            serde_json::to_value(&app.doc.as_ref().expect("loaded").mindmap).expect("serializes"),
+            baumhard::document::format::save(&reloaded).expect("saves"),
+            app.doc.as_mut().expect("loaded").save_json().expect("saves"),
             "what the agent reads is what the app holds"
         );
-    }
-
-    /// `query.animations` through the registry reports the pause a
-    /// tree-mutating drag puts on the tick, which only the app knows.
-    #[test]
-    fn test_query_animations_carries_the_apps_pause_state() {
-        let mut app = LoadedApp::with_fixture();
-        let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.animations"}"#, &mut app);
-        assert_eq!(reply["result"]["paused"], json!(false));
-        assert_eq!(reply["result"]["active"], json!(false));
-        app.pause = Some(0);
-        let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.animations"}"#, &mut app);
-        assert_eq!(reply["result"]["paused"], json!(true));
     }
 
     fn refused(frame: &str) -> (String, String) {
@@ -833,7 +760,7 @@ mod tests {
     /// A query that takes no parameters rejects a stray one, naming it.
     #[test]
     fn test_a_parameterless_query_refuses_a_stray_parameter() {
-        for cmd in ["selection", "camera", "mode", "status", "animations", "editors"] {
+        for cmd in ["selection", "camera", "mode", "status", "editors"] {
             assert_eq!(
                 refused(&format!(r#"{{"id":1,"cmd":"query.{cmd}","limit":1}}"#)),
                 ("invalid_params".into(), "limit".into()),
@@ -903,7 +830,7 @@ mod tests {
     fn test_the_default_request_is_everything_but_the_model() {
         let parsed = request(None, None, None, None).expect("parses");
         assert_eq!(parsed.fields.len(), DocumentField::ALL.len() - 1);
-        assert!(!parsed.fields.contains(&DocumentField::Mindmap));
+        assert!(!parsed.fields.contains(&DocumentField::Document));
         assert_eq!(parsed.pointer, None);
         assert_eq!(parsed.to_file, None);
     }
@@ -911,11 +838,11 @@ mod tests {
     #[test]
     fn test_a_pointer_alone_implies_the_model_and_fields_reply_in_document_order() {
         let parsed = request(None, Some("/nodes"), None, None).expect("parses");
-        assert_eq!(parsed.fields, vec![DocumentField::Mindmap]);
-        let parsed = request(Some(json!(["counts", "dirty", "counts"])), None, None, None).expect("parses");
+        assert_eq!(parsed.fields, vec![DocumentField::Document]);
+        let parsed = request(Some(json!(["nodes", "dirty", "nodes"])), None, None, None).expect("parses");
         assert_eq!(
             parsed.fields,
-            vec![DocumentField::Dirty, DocumentField::Counts],
+            vec![DocumentField::Dirty, DocumentField::Nodes],
             "deduplicated, in the document's order"
         );
     }
@@ -926,7 +853,7 @@ mod tests {
         let dir = scratch_dir("write");
         let path = dir.join("model.json");
         let request = request(
-            Some(json!(["mindmap", "counts"])),
+            Some(json!(["document", "nodes"])),
             None,
             Some(path.to_str().expect("utf-8")),
             None,

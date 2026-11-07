@@ -1,8 +1,8 @@
 # Demo: ZoomIn zooms toward the point under it, one 1.1x step at a time.
-# Map: maps/testament.mindmap.json, 800x600 (the default size).
+# Map: maps/testament.mandala.json, 800x600 (the default size).
 #
 # --- setup (never in the picture) ---------------------------------------
-# Frame the node "Arpachshad" (1.2.0.0.0.0.0.0.0.0.0.2) dead center at
+# Frame the node "Arpachshad" (node 26) dead center at
 # zoom 1.0: ZoomFit puts it on screen, a click selects it, CenterOnSelection
 # centers the camera on it, ZoomReset zooms to 1.0 about the screen center
 # (where it now is), and DeselectAll takes the selection highlight out of
@@ -11,7 +11,7 @@
 # virtual) and in a window (which starts real); setting it again is a no-op.
 clock.set_mode virtual
 act.action ZoomFit --wait-settled
-input.click_node 1.2.0.0.0.0.0.0.0.0.0.2 --wait-settled
+input.click_node 26 --wait-settled
 act.action CenterOnSelection --wait-settled
 act.action ZoomReset --wait-settled
 act.action DeselectAll --wait-settled

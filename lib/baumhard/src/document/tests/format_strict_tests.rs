@@ -7,10 +7,10 @@
 //! These read the crate's source through
 //! [`TypeGraph`](crate::util::serde_coverage::TypeGraph), so they are
 //! test-only and native-only, like the graph. The graph indexes types by
-//! **bare name**: the format's types carry a `Dto` suffix (or are
-//! `Named`, `Objects`, …) so as not to reuse a name another file
-//! declares, and `test_type_graph_has_no_ambiguous_names` fails the day
-//! one does.
+//! module path and these tests ask it by **bare name**: the format's
+//! types carry a `Dto` suffix (or are `Named`, `Objects`, …) so as not
+//! to reuse a name another module declares, and asking the graph for a
+//! name two modules declare panics rather than answer for one of them.
 
 use crate::document::tests::format_support::FIXTURES;
 use crate::util::serde_coverage::{crate_src_root, TypeGraph, TypeKind};

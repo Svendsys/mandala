@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! GPU-side presentation: every wgpu device, every cosmic-text
-//! rasterization, every text and border buffer Mandala paints
-//! lives under [`Renderer`]. A frame is its clear — the map's one
-//! background — and glyphs, and nothing else (V1-B12). `Renderer` reads the
-//! intermediate representations it is handed — a `GfxTree` per canvas
-//! role (nodes, borders, connections, labels, portals, handles), and the
-//! projection's glyph layers with the journals of what changed in them;
+//! rasterization, every text buffer Mandala paints lives under
+//! [`Renderer`]. A frame is its clear — the map's one background — and
+//! glyphs, and nothing else (V1-B12). `Renderer` reads the intermediate
+//! representations it is handed — the projection's glyph layers and the
+//! chrome layer, with the journals of what changed in them, and the
+//! overlay trees of the screen-space modals;
 //! it never reaches into the document directly, and the document never
 //! holds GPU resources (CODE_CONVENTIONS §3 "Model / view
 //! separation").
@@ -20,9 +20,8 @@
 //!   parameterized over camera and target, and the window's
 //!   per-frame driver over it (`Renderer::process`); composes the
 //!   buffer layers in draw order.
-//! - [`tree_buffers`] / [`tree_walker`] — `GfxElement` tree
-//!   → text-buffer projection. The tree walker
-//!   is where the bulk of canvas-content shaping happens.
+//! - [`tree_walker`] — `GfxElement` tree → text buffers: how the
+//!   console's and the color picker's overlay trees are shaped.
 //! - [`glyph_runs`] — the positioned-glyph pass: every glyph of a
 //!   `GlyphRun` at its own canvas position, from the run's one
 //!   shaped buffer, through an atlas and a pipeline of its own, in
@@ -38,16 +37,14 @@
 //! - [`backdrop`] — the opaque backdrops behind the console and the
 //!   color picker, drawn as a grid of full-block glyphs (`█`) in the
 //!   console's pass, under the modal's text.
-//! - [`selection_overlay`] — the rubber-band selection
-//!   rectangle, the one canvas visual with no model behind it.
-//! - [`borders`] — node-frame buffers (the box-drawing
-//!   glyph runs around each node).
+//! - [`chrome_text`] — the screen-space chrome's text buffers and
+//!   the glyph-advance measurement modal frames are laid out with.
 //! - [`console_pass`] / [`console_geometry`] — the console
 //!   overlay's glyph-tree pass + pure-function layout math.
 //! - [`color_picker`] — the glyph-wheel picker overlay.
 //! - [`camera`] — camera framing and the screen-space ↔
 //!   canvas-space mapping (`screen_to_canvas`,
-//!   `canvas_per_pixel`, `fit_camera_to_tree`).
+//!   `fit_camera_to_content`).
 //! - `capture` (native-only) — the offscreen frame a screenshot
 //!   draws through the same prepare / encode pair as the window,
 //!   and its readback.
@@ -67,8 +64,8 @@ mod backdrop;
 // native-gated (CLAUDE.md "Dual-target status"), so on wasm32 the
 // builders compile with no caller. Scoped to wasm32 so the host
 // lint, which can see the shell, stays armed.
-mod borders;
 mod camera;
+mod chrome_text;
 // Offscreen capture and readback. Native-only at the module boundary:
 // a browser cannot block on a buffer map (CLAUDE.md "Dual-target
 // status", "Screenshot capture").
@@ -95,54 +92,34 @@ mod layers;
 mod overlay_dispatch;
 mod pipeline;
 mod render;
-mod scene_shape_cache;
 // How an authored color is written to a target of a given format: the
 // one answer the clear, glyphon and the glyph-run pass share.
 mod target_encoding;
-// Test-only reach-through to the shared scene shape pass. The pass
-// takes a `&Scene` rather than a `&mut Renderer` precisely so its
-// granularity can be asserted without a live device (§T8), and that
-// only helps if the assertion can name it: the canvas half's fixture
-// is a real `AppScene` projected by `app::scene_rebuild`'s
-// `CanvasFrame`, which lives outside this module. The module stays
-// private in a shipped build, so nothing here widens the renderer's
-// production surface.
-#[cfg(test)]
-pub(crate) use scene_shape_cache::{refresh, ScenePassKind, ShapedSceneElement};
 // Rubber-band selection rectangle. Driven by the native-gated
 // drag state machine.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-mod selection_overlay;
-mod tree_buffers;
 mod tree_walker;
 
 #[cfg(test)]
 pub(crate) use adapter::probe_adapter;
 pub use adapter::AdapterPolicy;
-pub use borders::measure_max_glyph_advance;
+pub use chrome_text::measure_max_glyph_advance;
+// Both targets': the scene inspection measures an element by it
+// (`view::inspect`).
+pub(crate) use camera::content_bounds;
 // The screenshot engine's half of the renderer's surface, native-only
 // with the engine (`application::capture`).
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use camera::{content_bounds, FIT_PADDING_FRACTION};
+pub(crate) use camera::FIT_PADDING_FRACTION;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use capture::{CaptureFailure, CapturedPixels};
-// Which canvas set a capture's frame draws; the window's frames are
-// always the live one (`render::render`).
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use scene_shape_cache::CanvasSource;
-// Test-only, beside `refresh` above: the capture composition is pure
-// over two projected scenes, and the test that holds it to the roles'
-// zoom split needs the segment vocabulary to read its answer.
-#[cfg(test)]
-pub(crate) use scene_shape_cache::{compose_capture_canvas, CanvasSegment, CaptureCanvas, ShapedSet};
 // For the watchdog's test that holds the two bounds together.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use capture::GPU_WAIT as CAPTURE_GPU_WAIT;
 // Both shells read a skipped frame's reason (`Renderer::process`).
 pub(crate) use render::FrameSkip;
-// For the GPU-backed tests that feed the layer renderer the projector's
-// journals, as the app's pipeline will (V1-C3).
-#[cfg(test)]
+// The view's pipeline hands the layer renderer the projector's journals
+// through it (`view::MapView::sync`).
 pub(crate) use layers::LayerRenderer;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use render::ModalLayer;
@@ -179,14 +156,13 @@ use web_time::Instant;
 use baumhard::engine::journal::Journal;
 use baumhard::font::{Attrs, Buffer};
 use baumhard::gfx_structs::element::GfxElement;
+use baumhard::gfx_structs::tree::GfxTree;
 use baumhard::projection::{GlyphLayers, Layer};
 use glyphon::{Cache, SwashCache, TextAtlas, TextRenderer, Viewport};
 use log::{error, info, warn};
 // Also read by the GPU-backed test that checks what a renderer handed
 // its passes.
 pub(crate) use target_encoding::TargetEncoding;
-
-use rustc_hash::FxHashMap;
 
 use wgpu::{Color, Device, Instance, MultisampleState, Queue, Surface, SurfaceConfiguration, TextureFormat};
 use winit::dpi::PhysicalSize;
@@ -224,7 +200,9 @@ const MODE_STATUS_OVERLAY_BOUNDS: (f32, f32) = (640.0, 24.0);
 /// `Color::rgba(0, 230, 255, 255)` would disagree with `#00E5FF`, whose
 /// green channel is 229.
 pub(crate) const MODE_STATUS_COLOR: baumhard::font::Color =
-    baumhard::font::color::cosmic_color_from_color(baumhard::mindmap::SELECTION_HIGHLIGHT);
+    baumhard::font::color::cosmic_color_from_color(baumhard::util::color::Color {
+        rgba: crate::application::view::overlay::SELECTION_HIGHLIGHT.0,
+    });
 
 /// Fixed-size ring buffer of frame intervals (microseconds) with an
 /// O(1) running sum. Backs `FpsDisplayMode::Debug`'s rolling-average
@@ -320,7 +298,7 @@ pub struct Renderer {
     /// atlas, because glyphon's cannot be reached from outside it.
     glyph_runs: glyph_runs::GlyphRunPass,
     /// The render state of the projection's glyph layers (design §13.1):
-    /// kept per glyph element, written by [`Self::load_layers`] and
+    /// kept per glyph element, written by [`Self::load_view`] and
     /// [`Self::apply_layer_journals`] only, and drawn every frame through
     /// `glyph_runs`, after the canvas trees' runs.
     layer_renderer: layers::LayerRenderer,
@@ -348,14 +326,11 @@ pub struct Renderer {
     /// last. Used to skip re-shaping when the integer value hasn't
     /// changed since the last rebuild.
     last_fps_shaped: Option<usize>,
-    /// Pending mode-status overlay text, set by the app's
-    /// scene-rebuild path on every mode-affecting action and consumed
-    /// by [`Self::rebuild_mode_status_overlay_if_needed`] at the next
-    /// frame. `None` clears the overlay (Default mode); `Some(text)`
-    /// shows it. Computing the string in `scene_rebuild.rs` (rather
-    /// than the renderer) keeps the renderer model-agnostic and lets
-    /// the source of truth — `(mode, selection, doc)` — stay on the
-    /// app side.
+    /// Pending status-line text, set by the view's sync with the
+    /// document's status (D28) and consumed by
+    /// [`Self::rebuild_mode_status_overlay_if_needed`] at the next
+    /// frame. `None` clears the line; `Some(text)` shows it. The string
+    /// is the document's, so the renderer stays model-agnostic.
     mode_status_text: Option<String>,
     /// Screen-space text buffer(s) carrying the mode-status line
     /// (e.g. `editing: <node-id> — section [N of M]`). Sibling of
@@ -393,25 +368,6 @@ pub struct Renderer {
     fps_pending_idle_paint: bool,
 
     camera: Camera2D,
-    /// Mindmap text buffers keyed by `GfxElement::unique_id`.
-    ///
-    /// The key is the raw `usize`. It used to be that `usize`
-    /// stringified, justified as fitting "the edit / undo paths'
-    /// Dewey-decimal addressing" — but no Dewey-decimal string ever
-    /// reaches this map: every writer and every reader has a
-    /// `unique_id` integer in hand and was allocating a `String` to
-    /// spell it, once per element per rebuild and once per moved
-    /// node per drained drag frame.
-    ///
-    /// The value is a `Vec<MindMapTextBuffer>` because the tree
-    /// walker emits **multiple buffers per element** when an
-    /// outline halo is configured: one buffer per halo offset
-    /// emitted before the main glyph, all sharing the same
-    /// `unique_id`. Pre-vec the store collapsed every halo onto the
-    /// main glyph (last-write-wins via `insert`); the vec preserves
-    /// emission order so halos stay behind the main glyph at render
-    /// time.
-    mindmap_buffers: FxHashMap<usize, Vec<MindMapTextBuffer>>,
     /// Screen-space geometry of the color picker's opaque backdrop, in
     /// window pixels. Captured inside
     /// `rebuild_color_picker_overlay_buffers`; each frame draws it as
@@ -419,74 +375,11 @@ pub struct Renderer {
     /// whenever the picker is closed, and when its spec asks for a
     /// transparent backdrop.
     color_picker_backdrop: Option<(f32, f32, f32, f32)>,
-    /// The rubber-band selection rectangle's four shaped edges, and
-    /// nothing else. Camera-transformed. Written only by
-    /// [`Self::rebuild_selection_rect_overlay`] and dropped only by
-    /// [`Self::clear_selection_rect_overlay`]; the color picker, the FPS
-    /// readout and the mode-status line each have their own store.
-    ///
-    /// The exclusivity is load-bearing rather than incidental:
-    /// `app::drain_frame::drain_rect_select` — a plain code span
-    /// because `app` is a private module and rustdoc cannot resolve
-    /// a link into one — clears this on every frame no rubber band
-    /// is live, so anything else parked here would be wiped. The
-    /// doc used to read "temporary overlay buffers (e.g., selection
-    /// rectangle)", which invited exactly that.
-    overlay_buffers: Vec<MindMapTextBuffer>,
-    /// `(char_count, row_count)` of the most recent selection-rect
-    /// shape held in [`Self::overlay_buffers`]. Per-tick rebuilds
-    /// reuse the existing shaped buffers (just update positions)
-    /// when these counts match, avoiding 4 fresh `cosmic_text`
-    /// shapings per drag tick. `None` whenever the overlay is
-    /// cleared or holds a non-selection-rect shape.
-    selection_rect_shape_cache: Option<(usize, usize)>,
-    /// Screen-space output produced by walking the overlay sub-scene
-    /// of the app's
-    /// [`AppScene`](crate::application::scene_host::AppScene), in
-    /// draw order, one entry per walked element. Populated by
-    /// [`Self::rebuild_overlay_scene_buffers`] and drawn alongside
-    /// the existing console/color-picker overlay buffer lists. Empty
-    /// until an overlay migrates to a tree.
-    ///
-    /// Each entry carries the shaping inputs its buffers came from
-    /// so the next pass can reuse them unchanged; see
-    /// [`scene_shape_cache`] for the reuse rule. That is also why
-    /// this is a `Vec` of per-element groups rather than one flat
-    /// buffer list — the grouping is what a walk position can be
-    /// checked against.
-    overlay_scene_elements: Vec<scene_shape_cache::ShapedSceneElement>,
-    /// Canvas-space output for the same
-    /// [`AppScene`](crate::application::scene_host::AppScene)'s
-    /// canvas sub-scene (borders, connections, portals, etc.),
-    /// grouped and reused by the same rule. Populated by
-    /// [`Self::rebuild_canvas_scene_buffers`]. Drawn in the main
-    /// camera-transformed pass. Empty until a canvas component
-    /// migrates to a tree.
-    ///
-    /// Holding each element's output inside the element's own entry
-    /// is what keeps the order glyphon draws them in stable while only
-    /// part of the scene re-shapes. No entry holds a fill: a map draws
-    /// no rect (V1-B12).
-    canvas_scene_elements: Vec<scene_shape_cache::ShapedSceneElement>,
-    /// A capture's canvas: the shaped output of the capture engine's
-    /// scratch scene — the zoom-dependent roles projected at the
-    /// capture's zoom — and the draw order that interleaves it with
-    /// the live set above. Filled by
-    /// [`Self::rebuild_capture_canvas_buffers`] right before a capture
-    /// framed at another zoom draws, read only by a frame prepared with
-    /// [`scene_shape_cache::CanvasSource::Composed`], and reused across
-    /// such captures by the same rule as the live set. Empty on the
-    /// browser, which has no capture engine.
-    capture_canvas: scene_shape_cache::CaptureCanvas,
-    /// Set whenever the camera *zoom* changes. The document-side
-    /// `SceneConnectionCache` stores pre-clip samples whose spacing
-    /// depends on `GlyphConnectionConfig::effective_font_size_pt`, which
-    /// is a function of zoom — so on zoom the cache must be flushed
-    /// before the next scene build re-samples. `SceneConnectionCache`
-    /// enforces this internally via `ensure_zoom`, but we still raise
-    /// this flag so the event loop can explicitly clear the cache and
-    /// re-run the connection rebuild.
-    connection_geometry_dirty: bool,
+    /// The console's and the color picker's shaped buffers, in draw
+    /// order: made from the overlay trees of the app's
+    /// [`AppScene`](crate::application::scene_host::AppScene) by
+    /// [`Self::rebuild_overlay_scene_buffers`], drawn in the chrome pass.
+    overlay_shapes: overlay_dispatch::OverlayShapes,
     /// Screen-space geometry of the console's opaque backdrop, in
     /// window pixels: `(left, top, width, height)`. Captured inside
     /// `rebuild_console_overlay_buffers` so each frame can lay its
@@ -773,14 +666,8 @@ impl Renderer {
             glyphon_cache,
             viewport,
             camera,
-            mindmap_buffers: Default::default(),
             color_picker_backdrop: None,
-            overlay_buffers: Vec::new(),
-            selection_rect_shape_cache: None,
-            overlay_scene_elements: Vec::new(),
-            canvas_scene_elements: Vec::new(),
-            capture_canvas: Default::default(),
-            connection_geometry_dirty: false,
+            overlay_shapes: overlay_dispatch::OverlayShapes::default(),
             console_backdrop: None,
             backdrop_cell: None,
             #[cfg(test)]
@@ -796,15 +683,14 @@ impl Renderer {
         }
     }
 
-    /// How many tree elements hold shaped text buffers right now —
-    /// the keys of the per-element buffer table `rebuild_buffers_from_tree`
-    /// refills. For the GPU-backed tests (TEST_CONVENTIONS §T8), which
-    /// assert on what a rebuild left in the renderer rather than on
-    /// pixels: a deleted node's buffers are gone after the rebuild that
-    /// follows the delete, and back after the one that follows the undo.
+    /// How many glyphon text buffers the renderer holds: the overlays'
+    /// (FPS, mode status, rubber band, console and picker). The glyph
+    /// layers add none — what the GPU-backed tests hold a run to.
     #[cfg(test)]
-    pub(crate) fn text_buffer_owner_count(&self) -> usize {
-        self.mindmap_buffers.len()
+    pub(crate) fn glyphon_buffer_count(&self) -> usize {
+        self.fps_overlay_buffers.len()
+            + self.mode_status_overlay_buffers.len()
+            + self.overlay_shapes.elements.len()
     }
 
     /// What the positioned-glyph pass held at the last prepared frame,
@@ -830,18 +716,7 @@ impl Renderer {
         &self.layer_renderer
     }
 
-    /// How many glyphon text areas the canvas scene hands the main
-    /// pass: one per shaped buffer. A `GlyphRun` adds none — that is
-    /// the per-glyph buffer the positioned-glyph pass does away with.
-    #[cfg(test)]
-    pub(crate) fn canvas_text_buffer_count(&self) -> usize {
-        scene_shape_cache::buffer_count(&self.canvas_scene_elements)
-    }
-
-    /// Current camera zoom level, used by the event loop when it
-    /// needs to pass the active zoom into `CanvasFrame::new` (the
-    /// connection, label, and portal passes consume it via
-    /// `GlyphConnectionConfig::effective_font_size_pt`).
+    /// Current camera zoom level.
     pub fn camera_zoom(&self) -> f32 {
         self.camera.zoom
     }
@@ -858,10 +733,10 @@ impl Renderer {
     }
 
     /// The text of the cyan mode-status line, or `None` when none is
-    /// showing. Read-only: [`Self::set_mode_status_text`] is the
-    /// writer, called by the app's scene-rebuild paths.
-    // Native-driver-only: the IPC `query.status` reader, as above.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    /// showing. Read-only: `set_mode_status_text` is the writer, called
+    /// by the view's sync with the document's status, and by native's
+    /// console when it switches the mode; `query.status` reads it on both
+    /// targets.
     pub fn mode_status_text(&self) -> Option<&str> {
         self.mode_status_text.as_deref()
     }
@@ -892,20 +767,16 @@ impl Renderer {
         self.clear_color = clear_color_for(background, self.format);
     }
 
-    /// Take the projection's glyph layers as a whole: what loading a
-    /// document does ([`layers::LayerRenderer::load`]). Every frame after
-    /// draws them, on both targets, the window's and every capture's.
+    /// Take the projection's glyph layers and the chrome layer as a
+    /// whole: what installing a document does
+    /// ([`layers::LayerRenderer::load`], `view::MapView::load`). Every
+    /// frame after draws them, on both targets, the window's and every
+    /// capture's.
     ///
     /// Cost: one walk of each layer.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the app's projector is wired to the layer renderer by V1-C3 (#244)"
-        )
-    )]
-    pub(crate) fn load_layers(&mut self, layers: &GlyphLayers) {
+    pub(crate) fn load_view(&mut self, layers: &GlyphLayers, chrome: &GfxTree) {
         self.layer_renderer.load(layers);
+        self.layer_renderer.load_chrome(chrome);
     }
 
     /// Bring the drawn layers up to date after a projector update, from
@@ -915,19 +786,30 @@ impl Renderer {
     /// apply: the camera reaches the layers at draw time.
     ///
     /// Cost: O(the elements the journals name).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the app's projector is wired to the layer renderer by V1-C3 (#244)"
-        )
-    )]
     pub(crate) fn apply_layer_journals<'j>(
         &mut self,
         layers: &GlyphLayers,
         journals: impl IntoIterator<Item = (Layer, &'j Journal<GfxElement>)>,
     ) {
         self.layer_renderer.apply(layers, journals);
+    }
+
+    /// Bring the drawn chrome layer up to date after a glyph mutator was
+    /// applied to it, from that change's journal
+    /// ([`layers::LayerRenderer::apply_chrome`]): what
+    /// `view::MapView::apply_chrome` hands over before it discards the
+    /// journal.
+    ///
+    /// Cost: O(the elements the journal names).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the chrome's one user so far, the rubber band, is native; V1-C7's and V1-C8's chrome is both targets'"
+        )
+    )]
+    pub(crate) fn apply_chrome_journal(&mut self, chrome: &GfxTree, journal: &Journal<GfxElement>) {
+        self.layer_renderer.apply_chrome(chrome, journal);
     }
 
     /// The color every frame is cleared to, as the render pass is
@@ -1005,27 +887,6 @@ impl Renderer {
         self.fps_display_mode
     }
 
-    /// Returns and resets the connection geometry-dirty flag. Called by
-    /// the event loop once per frame; a `true` return means the zoom
-    /// changed, so the document-side scene cache must be flushed before
-    /// the next scene build.
-    pub fn take_connection_geometry_dirty(&mut self) -> bool {
-        std::mem::replace(&mut self.connection_geometry_dirty, false)
-    }
-
-    /// Non-consuming peek of [`Self::take_connection_geometry_dirty`].
-    /// Used by the idle-CPU `needs_continuation` predicate to
-    /// decide whether the loop should keep iterating without
-    /// burning the flag — `take` would consume it before the
-    /// next `drain_camera_geometry_rebuild` got a chance to react.
-    // Native-driver-only: read by the native idle-CPU
-    // `needs_continuation` predicate; the browser's rAF loop has no
-    // idle state to decide about.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub fn connection_geometry_dirty(&self) -> bool {
-        self.connection_geometry_dirty
-    }
-
     /// Forward a redraw request to the underlying winit window. On
     /// web (winit-web) this schedules an internal
     /// `requestAnimationFrame`; multiple calls in one event chain
@@ -1075,11 +936,11 @@ impl Renderer {
         self.render()
     }
 
-    /// Set the mode-status overlay text. `None` clears the overlay
-    /// (Default mode); `Some(text)` shows the line on the next
-    /// frame. Called from the app's scene-rebuild paths on every
-    /// mode-affecting action — the renderer trusts the app to
-    /// recompute the string when (mode, selection, doc) changes.
+    /// Set the status line's text. `None` clears it; `Some(text)` shows
+    /// the line on the next frame. The writer is the view's sync
+    /// (`MapView::sync`), which hands over the document's status — what
+    /// a refused change says (D28) — whenever it changes, on both
+    /// targets; native's console clears it when it switches the mode.
     pub fn set_mode_status_text(&mut self, text: Option<String>) {
         self.mode_status_text = text;
     }
@@ -1111,7 +972,7 @@ impl Renderer {
         self.mode_status_overlay_buffers.clear();
         if let Some(text) = self.mode_status_text.as_deref() {
             let attrs = Attrs::new().color(MODE_STATUS_COLOR);
-            let buf = borders::create_border_buffer(
+            let buf = chrome_text::create_text_buffer(
                 &mut font_system,
                 text,
                 &attrs,
@@ -1158,7 +1019,7 @@ impl Renderer {
         };
         let attrs = Attrs::new().color(baumhard::font::Color::rgba(255, 235, 0, 255));
         let buf =
-            borders::create_border_buffer(&mut font_system, &text, &attrs, 16.0, (8.0, 8.0), (200.0, 24.0));
+            chrome_text::create_text_buffer(&mut font_system, &text, &attrs, 16.0, (8.0, 8.0), (200.0, 24.0));
         self.fps_overlay_buffers.clear();
         self.fps_overlay_buffers.push(buf);
         self.last_fps_shaped = self.fps;
@@ -1325,29 +1186,14 @@ impl Renderer {
         // `prepare_frame` sizes it to the target it draws.
         self.camera.set_viewport_size(width, height);
         // Canvas-space glyph positions and shaped buffers survive a
-        // viewport resize; the per-frame `visible_at` cull handles
-        // whether each buffer falls inside the new bounds.
+        // viewport resize; the glyph-run pass culls each run against
+        // the new bounds every frame.
     }
 }
 
 pub struct MindMapTextBuffer {
     pub buffer: Buffer,
     pub pos: (f32, f32),
-    /// The `(dx, dy)` this buffer was emitted at relative to its
-    /// authoring `GlyphArea`'s anchor — `(0, 0)` for a main glyph,
-    /// one of [`OutlineStyle::offsets`](baumhard::gfx_structs::area_fields::OutlineStyle::offsets)
-    /// for an outline-halo stamp. Kept so a position-only patch
-    /// (`Renderer::patch_drag_positions`) can re-derive
-    /// `pos = anchor + emission_offset` instead of collapsing every
-    /// halo of a dragged element onto its main glyph.
-    pub emission_offset: (f32, f32),
-    pub bounds: (f32, f32),
-    /// Per-`GlyphArea` zoom window copied in at buffer-build time.
-    /// The main render loop skips this buffer whenever
-    /// `camera.zoom` falls outside the window. Default (both
-    /// bounds `None`) renders at every zoom — existing buffers pay
-    /// nothing.
-    pub zoom_visibility: baumhard::gfx_structs::zoom_visibility::ZoomVisibility,
 }
 
 impl MindMapTextBuffer {
@@ -1355,35 +1201,14 @@ impl MindMapTextBuffer {
     /// a tree registered at `offset`, is drawn: `anchor +
     /// emission_offset + offset`, summed in that order.
     ///
-    /// The one spelling of the stamp-placement sum. The walker places
-    /// every buffer it emits through it, and both position patches —
-    /// [`place_at`](Self::place_at) on the scene passes,
-    /// `Renderer::patch_drag_positions` on the mindmap — re-derive
-    /// through it, so a patched buffer lands bit-for-bit where shaping
-    /// would have put it, and an outlined element's halo stamps keep
-    /// their ring instead of collapsing onto the glyph.
+    /// The one spelling of the stamp-placement sum: the walker places
+    /// every buffer it emits through it, an outlined element's halo
+    /// stamps each at their own offset.
     pub(super) fn stamp_pos(anchor: (f32, f32), emission_offset: (f32, f32), offset: Vec2) -> (f32, f32) {
         (
             anchor.0 + emission_offset.0 + offset.x,
             anchor.1 + emission_offset.1 + offset.y,
         )
-    }
-
-    /// Re-place this buffer for a moved `anchor` / `offset`, keeping
-    /// the stamp offset it was emitted at. No shaping.
-    pub(super) fn place_at(&mut self, anchor: (f32, f32), offset: Vec2) {
-        self.pos = Self::stamp_pos(anchor, self.emission_offset, offset);
-    }
-
-    /// Should this text buffer render at the current camera
-    /// state? Asks the one cull predicate, `Camera2D::visibility`,
-    /// which the IPC scene introspection reports verbatim. Pure,
-    /// no allocation; the render loop calls this once per buffer
-    /// per frame in the `main_text_areas` collector.
-    pub(super) fn visible_at(&self, camera: &baumhard::gfx_structs::camera::Camera2D) -> bool {
-        let pos = Vec2::new(self.pos.0, self.pos.1);
-        let size = Vec2::new(self.bounds.0, self.bounds.1);
-        camera.visibility(pos, size, self.zoom_visibility).is_visible()
     }
 }
 

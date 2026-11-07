@@ -1991,7 +1991,7 @@ pub fn test_wrap_to_display_width() {
 /// [`wrap_to_display_width`] is the reflow half of the display-width
 /// family — [`truncate_to_display_width`] clips the overflow away,
 /// this folds it onto the next line. The load-failure placard
-/// ([`crate::mindmap::placard`]) turns a loader message into node
+/// (the app's `MindMapDocument::load_failure_placard`) turns a loader message into node
 /// sections with it, so every clause of its contract is something a
 /// user can see on a rejected map: a mid-cluster split would shatter
 /// an emoji in a file path, a dropped over-wide cluster would
@@ -2085,7 +2085,7 @@ pub fn do_wrap_to_display_width() {
             "Failed to parse mindmap JSON: expected value at line 1 column 1",
             24,
         ),
-        ("/home/user/maps/a-very-long-file-name.mindmap.json", 12),
+        ("/home/user/maps/a-very-long-file-name.mandala.json", 12),
         ("👨‍👩‍👧 family 🇺🇸 flag 日本語 text", 6),
         ("   leading and trailing   ", 5),
         ("one\ntwo\n\nthree", 3),

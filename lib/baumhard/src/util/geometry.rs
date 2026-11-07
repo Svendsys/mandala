@@ -26,8 +26,8 @@ pub fn almost_equal(a: f32, b: f32) -> bool {
 }
 
 /// `|a - b| <= 1e-9`. The f64 counterpart of [`almost_equal`], for
-/// the model-space coordinates that are `f64` — `MindNode.position`,
-/// `MindNode.size`, `MindSection.offset` — where "did this land
+/// the coordinates that are `f64` — the touch gesture's pans and
+/// scales among them — where "did this land
 /// back where it started?" is the question and raw `==` answers it
 /// only by luck.
 ///
@@ -63,9 +63,8 @@ pub fn is_positive_finite(f: f32) -> bool {
 /// `±∞`, and negative numbers, but allows zero (a zero-width
 /// node or zero-coord position is a valid layout input).
 ///
-/// Used by `document::mutations::*` layout helpers that walk
-/// `MindNode.size` / `position` (both `f64`) before applying
-/// derived math; a non-finite or negative coord fed into
+/// A guard for `f64` geometry before derived math; a non-finite or
+/// negative coord fed into
 /// trigonometry produces NaN that propagates into every
 /// downstream row, so the safe-coord check stops the cascade
 /// at the source. Cost: O(1).
@@ -123,14 +122,11 @@ pub fn vec2_area(vec: Vec2) -> f32 {
 }
 
 /// AABB center from a top-left position + size pair. O(1), no
-/// heap. Equivalent to [`crate::mindmap::model::MindNode::center_vec2`]
-/// for the case where only the geometry is in scope (anchor
-/// resolution paths, scene-builder portal-pair midpoint compute);
-/// where a `MindNode` is in scope, prefer the method.
+/// heap.
 ///
 /// **Finding the ones that got away.** Every open-coded `pos + size *
-/// 0.5` in the workspace routes through this function or through
-/// `center_vec2`, and the census that says so has to be re-run with a
+/// 0.5` in the workspace routes through this function, and the census
+/// that says so has to be re-run with a
 /// pattern whose operand class admits tuple indices and casts —
 /// `[a-zA-Z_.]+` matches neither `.0` (digits) nor ` as f32 `
 /// (spaces), and a sweep verified with it reported "done" while six
@@ -153,10 +149,10 @@ pub fn vec2_area(vec: Vec2) -> f32 {
 /// `preview_pos + preview_size * 0.5` the picker computes without
 /// ever naming a `Vec2`), deliberately off-center probe points, and
 /// half-extent terms inside larger anchor formulas. It also leaves
-/// the model-space centers in `document::mutations` (`flower_layout`,
-/// `tree_cascade`), which this helper cannot express at all:
-/// [`crate::mindmap::model::Position`] and
-/// [`crate::mindmap::model::Size`] are `f64`, and routing them
+/// the old model-space centers in `document::mutations`
+/// (`flower_layout` (gone), `tree_cascade` (gone)), which this helper could
+/// not express at all: the old model's `Position` and `Size` were
+/// `f64`, and routing them
 /// through a `Vec2` would round the layout arithmetic to `f32` to
 /// save a multiplication. The other
 /// midpoint *form* — `(min + max) * 0.5` over two corners rather
@@ -197,7 +193,7 @@ pub fn aabb_center(pos: Vec2, size: Vec2) -> Vec2 {
 /// answered "outside is false, descend" for a `NaN` box — walking a
 /// subtree whose bounds are not a box. No reachable `NaN` was found
 /// on the way in (`serde_json` rejects the literals,
-/// `renderable_section` screens non-finite section geometry,
+/// the format's loader screens non-finite section geometry,
 /// mutation payloads are finiteness-screened, and
 /// `clamp_canvas_coord` maps `NaN` to 0.0), so this is not a bug
 /// fixed but an answer chosen: a box with a `NaN` bound contains
@@ -209,7 +205,7 @@ pub fn aabb_center(pos: Vec2, size: Vec2) -> Vec2 {
 /// `AGENTS.md` forbids an agent from running one, so omission is the
 /// only compliant outcome. There would be something to resolve —
 /// this is `pub` with a cross-crate caller (`mandala`'s
-/// `document::hit_test::point_in_node_aabb`) and the workspace
+/// `document::hit_test::point_in_node_aabb` (gone)) and the workspace
 /// release profile keeps `codegen-units = 16` with thin-local LTO,
 /// which by the root `Cargo.toml`'s own words leaves cross-crate
 /// inlining on the table. The stakes are small — the genuinely hot

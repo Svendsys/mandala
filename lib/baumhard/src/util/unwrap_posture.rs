@@ -15,8 +15,8 @@
 //! been deleted or moved by unrelated work and one had already been
 //! fixed, leaving sixteen — and a scan of that same tree found
 //! seventeen. The seventeenth was not something that had appeared in
-//! the meantime. `mindmap/connection/mod.rs:90` had been sitting at
-//! that exact line since 041ec40e (2026-04-15), eleven weeks before
+//! the meantime. One site had been sitting at its line since 041ec40e
+//! (2026-04-15), eleven weeks before
 //! the issue was filed; the hand count simply missed it, and the
 //! shipped record here said "one was new" until a review checked.
 //! So a hand list does not only drift — it can start incomplete,

@@ -4,17 +4,17 @@
 //! "which types can this deserializer actually be handed?" and get an
 //! answer that stays true as the model grows.
 //!
-//! The problem this exists to solve: a `.mindmap.json` key this build
-//! has no field for is captured at load and written back at save
-//! (`mindmap::unknown_keys`), and that only works while no type
-//! between the document root and the key can absorb it first.
-//! `#[serde(deny_unknown_fields)]` aborts the load; `#[serde(flatten)]`
-//! swallows the key before `deserialize_ignored_any` is ever reached.
-//! Neither produces a compile error, and the two even combine — with
-//! `deny` silently winning and the flattened map left empty. A
-//! hand-maintained list of "types that must not do that" is exactly
-//! the sort of twin surface that drifts the moment somebody adds a
-//! field — the same failure mode `lib/baumhard/CONVENTIONS.md` §B4
+//! The problem this exists to solve: the `.mandala.json` format is
+//! strict — every type the loader reads denies unknown keys, none can
+//! swallow one, none reads an index (`document::tests::format_strict_tests`)
+//! — and that only holds while every type between the document root and
+//! a key says so. `#[serde(flatten)]` swallows a key before
+//! `deny_unknown_fields` is ever consulted; `untagged` and internally
+//! tagged enums buffer their input and replay it through a deserializer
+//! of their own. None of them produces a compile error. A
+//! hand-maintained list of "types that must deny unknown fields" is
+//! exactly the sort of twin surface that drifts the moment somebody adds
+//! a field — the same failure mode `lib/baumhard/CONVENTIONS.md` §B4
 //! records for the field-tag enums.
 //!
 //! So nothing is listed. [`TypeGraph::build`] parses every non-test
@@ -40,17 +40,6 @@ use crate::util::source_scan::{is_test_gated, skip_unmodeled_option, test_gated_
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use syn::{Attribute, Fields, GenericArgument, Item, PathArguments, Type};
-
-/// Whether a walk follows `#[serde(into = "...")]` proxies. Read
-/// questions must not (a serialize-only proxy is never handed to a
-/// deserializer); write questions must.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FollowSerializeProxy {
-    /// Follow `into` proxies — the walk is about the save path.
-    Yes,
-    /// Ignore them — the walk is about the load path.
-    No,
-}
 
 /// Whether an indexed item is a struct, an enum, or a type alias.
 /// Aliases carry no attributes of their own; they exist in the index
@@ -118,7 +107,7 @@ pub struct SerdeField {
     ///
     /// Resolved the way serde resolves it: a field's own
     /// `rename`/`rename(deserialize = …)` first, then the container's
-    /// `rename_all`, then the identifier. A `.mindmap.json` route is
+    /// `rename_all`, then the identifier. A route through a map is
     /// recorded against the shape that was *read*, so a
     /// `rename(serialize = …)` deliberately does not count.
     pub member: Option<String>,
@@ -131,8 +120,6 @@ pub struct SerdeField {
     /// The declared type, kept verbatim: whether it is an array is a
     /// question only the whole index can answer.
     pub ty: DeclaredType,
-    /// `Owner.member`, for a message that names a place in the model.
-    pub site: String,
 }
 
 /// One indexed type: where it lives, what serde does with it, and
@@ -141,6 +128,15 @@ pub struct SerdeField {
 pub struct TypeInfo {
     /// The item's identifier, as written.
     pub name: String,
+    /// The item's path inside the crate, without the `crate::` prefix
+    /// — `document::values::Anchor` — which is what the index is keyed
+    /// by: two modules may declare one name, and only the path tells
+    /// them apart.
+    pub path: String,
+    /// The module the item is declared in (`document::values`, or the
+    /// empty string for the crate root), whose `use` declarations say
+    /// what a name its fields mention stands for.
+    pub module: String,
     /// Repo-relative-ish path of the file that defines it, for error
     /// messages that a reader can act on.
     pub file: PathBuf,
@@ -163,14 +159,6 @@ pub struct TypeInfo {
     /// deserializes its own shape — the proxy does — so the
     /// requirement moves to the proxy.
     pub deserialize_proxy: Option<String>,
-    /// The proxy named by `#[serde(into = "...")]`, if any. Such a
-    /// type never serializes its own shape — it converts first — so
-    /// the *write* path's contract lives on the proxy. Followed only
-    /// by [`TypeGraph::omit_predicates_from`], never by
-    /// [`TypeGraph::reachable_from`]: a serialize-only proxy is never
-    /// handed to a deserializer and has no business in the load-path
-    /// coverage set.
-    pub serialize_proxy: Option<String>,
     /// `true` when the item carries `#[serde(untagged)]`. An untagged
     /// enum decides its variant by trial deserialization, which means
     /// serde buffers the object into a `Content` value and replays it
@@ -194,17 +182,17 @@ pub struct TypeInfo {
     ///
     /// An externally tagged enum writes its variant as the single
     /// member of a wrapper object, which is a JSON level serde's
-    /// ignored-key path does not report — so
-    /// `mindmap::unknown_keys::expand_route` has to put it back. The
-    /// names are here so a test can drive that over **every** variant
-    /// the model can meet rather than the two somebody thought of.
+    /// ignored-key path does not report — so the old model's route
+    /// expansion (`expand_route` (gone)) had to put it back. The names
+    /// are here so a test can drive a variant question over **every**
+    /// variant a type can meet rather than the two somebody thought of.
     ///
     /// Because these are JSON member names, they are resolved the way
     /// serde resolves them — a variant's own `rename`, then the
     /// container's `rename_all` — and not read off the identifier.
     /// They were read off the identifier until #122, which would have
-    /// driven `expand_route` over a level no document contains the
-    /// moment anything renamed a variant.
+    /// driven the old model's `expand_route` (gone) over a level no
+    /// document contains the moment anything renamed a variant.
     ///
     /// A variant that carries `#[serde(alias = "…")]` contributes
     /// **every** spelling, sorted, in place of the one — which is
@@ -242,30 +230,9 @@ pub struct TypeInfo {
     /// element. And **what those arrays are called on disk**, which
     /// is not what they are called in Rust.
     ///
-    /// Deciding whether a field's type *is* an array needs the whole
-    /// index — `type Leaves = Vec<Leaf>` is one and says so nowhere
-    /// in the field — so the type is kept verbatim here and
-    /// [`TypeGraph::key_bearing_sequences_from`] resolves it.
+    /// The declared type is kept verbatim: what a field's type stands
+    /// for needs the whole index to answer.
     pub fields: Vec<SerdeField>,
-    /// The type this name is a pass-through to: the right-hand side
-    /// of a `type X = …;`, or the one unnamed field of a newtype
-    /// struct, which serde writes as its inner value with no wrapper
-    /// of its own.
-    ///
-    /// What makes `pub type Leaves = Vec<Leaf>;` resolvable as an
-    /// array rather than as the unknown name `Leaves`.
-    pub transparent_target: Option<DeclaredType>,
-    /// Every predicate named by a field's
-    /// `#[serde(skip_serializing_if = "...")]`, in source order.
-    ///
-    /// These are the only sanctioned reason a key present in an
-    /// authored file may be absent from the saved one, so a
-    /// round-trip test needs the set to tell "the saver dropped a
-    /// key" from "the key held its own default and serde left it
-    /// out". Collected from *every* field, including ones
-    /// `#[serde(skip)]` keeps out of [`Self::referenced`] — this is a
-    /// question about the write path, not the read path.
-    pub omit_predicates: Vec<String>,
     /// Every `#[serde(...)]` attribute on this item or one of its
     /// fields that the reader in this module could **not** consume to
     /// the end, rendered as written and paired with the parse error.
@@ -296,11 +263,11 @@ pub struct TypeInfo {
 }
 
 impl TypeInfo {
-    /// Why an unrecognized `.mindmap.json` key would not survive a
+    /// Why an unrecognized key in a map would not survive a
     /// load through this type, or empty when it would.
     ///
     /// The predicate behind
-    /// `mindmap::loader::tests::test_no_loadable_type_can_swallow_an_unknown_key`,
+    /// `format_strict_tests::test_every_type_the_format_reads_denies_unknown_fields`,
     /// which reads the policy narrative; this is the mechanism. It
     /// lives here rather than inline in that test for two reasons:
     /// the question is entirely about serde attributes, which is what
@@ -394,20 +361,78 @@ impl TypeInfo {
 /// per test that builds a graph.
 #[derive(Debug, Clone, Default)]
 pub struct TypeGraph {
+    /// Every indexed item, keyed by its path ([`TypeInfo::path`]).
     items: BTreeMap<String, TypeInfo>,
+    /// Bare name → the paths of every item declared under it, for the
+    /// names a scope does not settle (see [`TypeGraph::resolve`]).
+    by_name: BTreeMap<String, Vec<String>>,
+    /// Every module the indexed sources declare, by path — what tells
+    /// a path that starts in a child module from one that starts in
+    /// another crate.
+    modules: BTreeSet<String>,
+    /// Each module's `use` declarations, read so a name its items
+    /// mention is resolved the way the compiler resolves it.
+    scopes: BTreeMap<String, Scope>,
+    /// Paths declared more than once — the same name twice in one
+    /// module, which no scope can tell apart.
     duplicates: BTreeSet<String>,
     /// Every associated type an `impl` block declares, keyed by the
     /// implementing type's name and the associated type's name —
-    /// `("GfxElement", "Field") → GfxElementField`. What a projection
-    /// through a bound parameter (`E::Field`) resolves to. More than
-    /// one entry under a key is kept, so a disagreement is visible
-    /// rather than decided by declaration order.
-    associated: BTreeMap<(String, String), Vec<DeclaredType>>,
+    /// `("GfxElement", "Field") → GfxElementField` — with the module
+    /// the `impl` is written in, which is where the names on its
+    /// right-hand side are resolved. What a projection through a
+    /// bound parameter (`E::Field`) resolves to. More than one entry
+    /// under a key is kept, so a disagreement is visible rather than
+    /// decided by declaration order.
+    associated: BTreeMap<(String, String), Vec<(DeclaredType, String)>>,
 }
+
+/// One module's `use` declarations, as written: the paths are
+/// resolved when a name is looked up, once every module is known.
+#[derive(Debug, Clone, Default)]
+struct Scope {
+    /// Local name → the path it imports (`use a::B as C` records
+    /// `C → [a, B]`).
+    imports: BTreeMap<String, Vec<String>>,
+    /// The paths of every `use path::*`.
+    globs: Vec<Vec<String>>,
+}
+
+/// What a name written in one module stands for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Resolution {
+    /// The indexed item at this path.
+    Found(String),
+    /// Nothing in the index: a primitive, a parameter, or a type of
+    /// another crate.
+    NotIndexed,
+    /// More than one indexed item carries the name and the scope it
+    /// was written in does not say which: the paths of all of them.
+    Ambiguous(Vec<String>),
+}
+
+/// What a name looked up in one module's scope stands for, before the
+/// bare-name fallback ([`TypeGraph::resolve`]).
+enum Lookup {
+    /// The indexed item at this path.
+    Found(String),
+    /// The scope imports the name from another crate.
+    Foreign,
+    /// The scope does not say.
+    Missing,
+}
+
+/// How deep [`TypeGraph::lookup`] follows re-exports and glob
+/// imports before it gives up; a cycle of globs ends here.
+const LOOKUP_DEPTH: usize = 16;
 
 /// What a generic item's type parameters stand for at one place the
 /// walk reached it: parameter name → the argument written there, with
-/// any parameters of the *enclosing* item already substituted.
+/// any parameters of the *enclosing* item already substituted. The
+/// argument is **canonical**: every name in it that the index resolves
+/// is rewritten to its full `crate::` path where it was written, so it
+/// means the same thing in the module of the item it is substituted
+/// into ([`TypeGraph::canonical`]).
 type Bindings = BTreeMap<String, Type>;
 
 /// One instantiation of an indexed item the walk reached: the item,
@@ -419,17 +444,28 @@ struct Reached<'g> {
 }
 
 /// One name a type mentions in a position that holds data, together
-/// with the type arguments written on it there. Module qualifiers
-/// come along with no arguments, as they always have — a name only
-/// matters when the index holds a type by that name.
+/// with what it resolves to and the type arguments written on it
+/// there. The qualifiers of a path that does not start at a module
+/// (`E::Field`, `serde_json::Value`) come along with no arguments, as
+/// they always have — a name only matters when the index holds a type
+/// by that name; those of a `crate::` / `self::` / `super::` path are
+/// modules by the language's own rule and are not mentioned.
 struct Mention {
     name: String,
+    resolution: Resolution,
     arguments: Vec<Type>,
 }
 
-/// Files the index leaves out because they declare a bare type name
-/// another indexed file declares; see [`TypeGraph::build`].
-const UNINDEXED: &[&str] = &["document/element.rs", "document/values.rs"];
+impl Mention {
+    /// The path of the indexed item the name stands for, if exactly
+    /// one.
+    fn key(&self) -> Option<&str> {
+        match &self.resolution {
+            Resolution::Found(key) => Some(key.as_str()),
+            _ => None,
+        }
+    }
+}
 
 impl TypeGraph {
     /// Parse every `.rs` file under `src_root` and index the items it
@@ -456,20 +492,20 @@ impl TypeGraph {
     /// `#[cfg(test)]` modules were all excluded. Nothing had
     /// collided yet, which is the only reason it was quiet.
     ///
-    /// **Two document files are not indexed either:
-    /// `document/element.rs` and `document/values.rs`** ([`UNINDEXED`]).
-    /// The index is keyed by bare type name, and those two files
-    /// declare names other files declare too — `NodeStyle` and
-    /// `PaletteField` (the `.mindmap.json` model's), `Anchor`
-    /// (`core::primitives`) and `Rgba` (`util::color`'s alias) — which
-    /// one bare-name key cannot hold twice. Every other file under
-    /// `document/` is indexed, so a gate that walks a document type
-    /// declared elsewhere — B2's format types among them — sees it. No
-    /// walk from `MindMap` reaches either file
-    /// (`test_the_mindmap_model_is_walked_without_the_document` holds
-    /// that). The exclusion stays until the index is keyed by module
-    /// path: `Anchor` and `Rgba` outlive the model, so deleting the
-    /// model (V1-C3) does not remove the collision.
+    /// **Every other file is indexed, the document's included**, and
+    /// each item under its path ([`TypeInfo::path`]): the document
+    /// declares names other modules declare too — `Anchor`
+    /// (`document::values` and `core::primitives`), `Rgba` (a struct in
+    /// `document::values`, an alias in `util::color`), `Direction`,
+    /// `Edge` — and a name is resolved where it is written, through the
+    /// module's own declarations and `use`s ([`Self::resolve`]). Until
+    /// V1-C3 the index was keyed by bare name, and `document/element.rs`
+    /// and `document/values.rs` were left out of it to keep it so.
+    ///
+    /// The module of a file is read off its path under `src_root`
+    /// (`a/b.rs` and `a/b/mod.rs` are `a::b`; `lib.rs` is the root), so
+    /// a `#[path = "…"]` module would be filed under the wrong one —
+    /// [`test_gated_module_files`] refuses that attribute outright.
     ///
     /// Panics if a file cannot be read or parsed, or if a `mod x;`
     /// names no file on disk: this backs a test whose entire job is to
@@ -478,7 +514,6 @@ impl TypeGraph {
         let mut graph = TypeGraph::default();
         let mut files = Vec::new();
         collect_source_files(src_root, &mut files);
-        files.retain(|file| !UNINDEXED.iter().any(|unindexed| file.ends_with(unindexed)));
         files.sort();
         let test_only = test_gated_module_files(&files);
         files.retain(|file| !test_only.contains(file));
@@ -487,15 +522,31 @@ impl TypeGraph {
                 .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
             let parsed = syn::parse_file(&text)
                 .unwrap_or_else(|e| panic!("{} must parse as Rust: {e}", file.display()));
-            graph.index_items(&parsed.items, &file);
+            let module = module_of_file(src_root, &file);
+            graph.modules.insert(module.clone());
+            graph.index_items(&parsed.items, &file, &module);
         }
         graph
     }
 
-    /// The indexed entry for `name`, or `None` when the crate does
-    /// not declare a type by that name.
+    /// The indexed entry for `name` — a path (`document::values::Anchor`)
+    /// or a bare name — or `None` when the crate declares nothing by
+    /// it.
+    ///
+    /// Panics when a bare name is declared in more than one module: the
+    /// caller asked a question with two answers, and returning either
+    /// would check an arbitrary one. Ask by path instead.
     pub fn get(&self, name: &str) -> Option<&TypeInfo> {
-        self.items.get(name)
+        if let Some(info) = self.items.get(name) {
+            return Some(info);
+        }
+        match self.by_name.get(name).map(Vec::as_slice) {
+            None | Some([]) => None,
+            Some([only]) => self.items.get(only),
+            Some(several) => {
+                panic!("`{name}` is declared in more than one module ({several:?}); ask for one by path")
+            }
+        }
     }
 
     /// Every `#[serde(...)]` attribute anywhere in the indexed
@@ -506,7 +557,7 @@ impl TypeGraph {
     /// silence reads as "carries nothing" — which is precisely the
     /// answer that makes every guard built on this graph pass. This
     /// reports the blind spot instead, over **all** indexed types
-    /// rather than only the ones reachable from `MindMap`: a reader
+    /// rather than only the ones reachable from the format's roots: a reader
     /// gap is a property of the parser, and it should go red the run
     /// it appears rather than the later run where a type that has it
     /// happens to join the load graph.
@@ -523,108 +574,65 @@ impl TypeGraph {
             .collect()
     }
 
-    /// Type names declared more than once across the indexed sources.
-    /// The walk resolves by bare name, so a collision would make its
-    /// answer ambiguous; callers assert this is empty rather than
-    /// silently trusting whichever definition landed last.
+    /// Paths declared more than once across the indexed sources — one
+    /// name twice in one module, which is a compile error unless the
+    /// two are `cfg`-gated apart. No scope can tell such a pair apart,
+    /// so the index keeps the first and records the path here; callers
+    /// assert this is empty rather than silently trusting whichever
+    /// definition landed first.
     pub fn duplicate_names(&self) -> &BTreeSet<String> {
         &self.duplicates
     }
 
-    /// Every distinct `#[serde(skip_serializing_if = "...")]`
-    /// predicate named by a type reachable from `root`.
+    /// Every place an indexed type mentions a name that more than one
+    /// module declares **and the scope it is written in does not
+    /// settle**, as `"<name> in <path> (<file>): one of <paths>"`.
     ///
-    /// This is the complete set of reasons the saver is allowed to
-    /// write out fewer keys than it read in. A round-trip test pins
-    /// it against a hand-modeled allowlist, so a new predicate cannot
-    /// quietly widen what "no authored key is lost" tolerates.
+    /// Two modules declaring one name is fine — the index is keyed by
+    /// path. A mention the walk cannot pin to one of them is not: the
+    /// walk would have to guess, and the guard built on it would be
+    /// checking an arbitrary type. [`Self::resolve`] reads a module's
+    /// own declarations, its `use`s (renames, groups, re-exports and
+    /// globs among them) and explicit `crate::` / `self::` / `super::`
+    /// paths; what none of those settles lands here. Over **every**
+    /// indexed type, not only the reachable ones, for the reason
+    /// [`Self::unread_serde_attrs`] gives: a resolver gap is a property
+    /// of the resolver, and it should go red the run it appears.
     ///
-    /// Walks the **write** graph, which is not the read graph:
-    /// `#[serde(into = "...")]` proxies are followed here and nowhere
-    /// else. `CustomMutation` is the live case — its keys are written
-    /// by `CustomMutationOut`, and one of that type's fields is the
-    /// only `String::is_empty` omission a saved map can produce.
-    ///
-    /// Cost: one BFS over the reached types; no I/O.
-    pub fn omit_predicates_from(&self, root: &str) -> BTreeSet<String> {
-        distinct_items(self.walk(root, FollowSerializeProxy::Yes, &[]))
-            .iter()
-            .flat_map(|info| info.omit_predicates.iter().cloned())
-            .collect()
-    }
-
-    /// Every JSON member name reachable from `root` that holds an
-    /// array whose **elements can carry named keys** — the complete
-    /// set of places a captured key's route is positional and an edit
-    /// can therefore move it.
-    ///
-    /// `format/legacy-schema.md` §"Unknown keys are kept" publishes this set
-    /// for the reader, and
-    /// `loader::tests::test_the_published_positional_arrays_are_the_ones_the_model_has`
-    /// holds the two together in both directions. It was a
-    /// hand-written list before that, and it had already drifted —
-    /// `control_points` and a palette's `groups` were missing — which
-    /// is the twin-surface shape `lib/baumhard/CONVENTIONS.md` §B4 is
-    /// about.
-    ///
-    /// "Can carry named keys" is the discriminator, not "is an
-    /// array": `macros` and `inline_macros` are `Vec<Value>`, held
-    /// deliberately opaque, so nothing inside one is ever captured
-    /// and no route ever crosses their indexes.
-    ///
-    /// **Every alias a field accepts is published too.** A route is
-    /// recorded against the spelling the *file* used, and
-    /// `#[serde(alias = "…")]` makes more than one spelling reach the
-    /// same array.
-    ///
-    /// Cost: one walk from `root`, one structural classification per
-    /// field, and one index lookup per element type named; no I/O.
-    pub fn key_bearing_sequences_from(&self, root: &str) -> BTreeSet<String> {
-        let mut out = BTreeSet::new();
-        for (field, element) in self.sequence_fields_from(root) {
+    /// Cost: one pass over every indexed type's fields; no I/O.
+    pub fn ambiguous_mentions(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for info in self.items.values() {
             let mut mentioned = Vec::new();
-            self.mentions(&element, &mut mentioned);
-            if !mentioned
-                .iter()
-                .any(|mention| self.carries_named_keys(&mention.name))
-            {
-                continue;
+            for declared in &info.referenced {
+                self.mentions(&declared.0, &info.module, &mut mentioned);
             }
-            if let Some(member) = &field.member {
-                out.insert(member.clone());
+            if let Some(proxy) = info.deserialize_proxy.as_deref() {
+                mentioned.push(self.mention_of_proxy(proxy, &info.module));
             }
-            out.extend(field.aliases.iter().cloned());
+            // The arguments of a generic item are bindings rather than
+            // mentions, and a binding is resolved where it is written
+            // too ([`Self::canonical`]), so its names are asked here.
+            let mut at = 0;
+            while at < mentioned.len() {
+                let arguments = std::mem::take(&mut mentioned[at].arguments);
+                for argument in &arguments {
+                    self.mentions(argument, &info.module, &mut mentioned);
+                }
+                at += 1;
+            }
+            for mention in mentioned {
+                if let Resolution::Ambiguous(paths) = &mention.resolution {
+                    out.push(format!(
+                        "{} in {} ({}): one of {paths:?}",
+                        mention.name,
+                        info.path,
+                        info.file.display()
+                    ));
+                }
+            }
         }
         out
-    }
-
-    /// Growable arrays reachable from `root` that sit at a place with
-    /// **no JSON member name** — a position inside a fixed-arity
-    /// tuple, or a tuple variant's payload slot.
-    ///
-    /// Such an array is a positional route the published list cannot
-    /// express: there is no member name to write down. Empty for the
-    /// model today, and reported rather than dropped because the
-    /// alternative is a route nothing warns anybody about — the same
-    /// posture [`Self::unresolved_from`] takes toward a name it
-    /// cannot resolve. The first one to appear is a decision about
-    /// what `format/legacy-schema.md` should say, not a bug in this walk.
-    ///
-    /// **An empty answer here is not evidence that the model has
-    /// none.** This walk classifies *fields*, and a `Vec<Vec<T>>` is
-    /// one field: it sees the outer array, names it, and never asks
-    /// what the element is. Nesting is a third way to be unnamed and
-    /// only [`crate::util::serde_probe::DerivedShape::unnamed_sequences`]
-    /// can see it, which is why the test that consumes both requires
-    /// both to be empty rather than either.
-    ///
-    /// Cost: the same walk as [`Self::key_bearing_sequences_from`].
-    pub fn unnamed_sequences_from(&self, root: &str) -> BTreeSet<String> {
-        self.sequence_fields_from(root)
-            .into_iter()
-            .filter(|(field, _)| field.member.is_none())
-            .map(|(field, _)| field.site.clone())
-            .collect()
     }
 
     /// Every JSON member name a struct or struct variant reachable
@@ -639,9 +647,8 @@ impl TypeGraph {
     /// variant names, and comparing them against a `FIELDS` list
     /// would be comparing two different things.
     ///
-    /// **Every alias is here**, for the same reason
-    /// [`Self::key_bearing_sequences_from`] publishes them: a name a
-    /// file may write is a name this walk is answering about. The
+    /// **Every alias is here**: a name a file may write is a name this
+    /// walk is answering about. The
     /// derive agrees — `serde_derive` puts a field's aliases straight
     /// into the `FIELDS` list it hands `deserialize_struct` — so the
     /// two surfaces would otherwise disagree about `alias` in
@@ -663,108 +670,6 @@ impl TypeGraph {
         out
     }
 
-    /// Every field reachable from `root` whose type is a growable
-    /// array, paired with the element type a route crosses into —
-    /// with the parameters of the item that declares the field
-    /// substituted, so `Vec<M>` inside `MutationListSrc<M>` reached as
-    /// `MutationListSrc<GfxMutation>` is an array of `GfxMutation`.
-    fn sequence_fields_from(&self, root: &str) -> Vec<(&SerdeField, Type)> {
-        let mut out = Vec::new();
-        for reached in self.walk(root, FollowSerializeProxy::No, &[]) {
-            for field in &reached.info.fields {
-                let declared = self.substitute(&field.ty.0, &reached.bindings);
-                if let Some(element) = self.sequence_element(&declared) {
-                    out.push((field, element));
-                }
-            }
-        }
-        out
-    }
-
-    /// The element type of `ty` when `ty` is a growable JSON array,
-    /// `None` otherwise.
-    ///
-    /// **Resolved through the index rather than matched against the
-    /// token `Vec`.** That token match is what this replaces: it read
-    /// `BTreeSet<ColorFontRegion>` as a scalar and left `regions` off
-    /// a list `format/legacy-schema.md` publishes, and it would have done
-    /// the same to a `Vec` behind a `type` alias. A name the index
-    /// holds as an alias or as a newtype struct is followed to what
-    /// it stands for, which is the only way `type Leaves =
-    /// Vec<Leaf>;` can be seen for what it is.
-    ///
-    /// A name that is neither a known container nor something the
-    /// index holds answers `None`, and that is safe because it is not
-    /// the last word: every such name is a walk terminator, and
-    /// `tests::test_every_walk_terminator_is_an_expected_one` makes a
-    /// reader vet it. The independent check against the derived
-    /// `Deserialize` impls is the second net under the same case.
-    fn sequence_element(&self, ty: &Type) -> Option<Type> {
-        let mut seen: BTreeSet<String> = BTreeSet::new();
-        let mut current = ty;
-        loop {
-            match current {
-                Type::Paren(inner) => current = &inner.elem,
-                Type::Group(inner) => current = &inner.elem,
-                Type::Reference(inner) => current = &inner.elem,
-                // `[T]` is not a name, so no entry in
-                // [`SEQUENCE_CONTAINERS`] can catch it, and it is the
-                // shape every owning slice wrapper bottoms out on:
-                // `Cow<'a, [T]>`, `Box<[T]>`, `Rc<[T]>`, `Arc<[T]>`
-                // all deserialize by collecting a JSON array whose
-                // length the file decides. `[T; N]` is `Type::Array`
-                // and deliberately keeps falling through — its arity
-                // is the format's, not the document's.
-                Type::Slice(slice) => return Some((*slice.elem).clone()),
-                Type::Path(path) => {
-                    let segment = path.path.segments.last()?;
-                    let name = segment.ident.to_string();
-                    let argument = first_type_argument(&segment.arguments);
-                    if SEQUENCE_CONTAINERS.contains(&name.as_str()) {
-                        return Some(argument.unwrap_or(current).clone());
-                    }
-                    if TRANSPARENT_WRAPPERS.contains(&name.as_str()) {
-                        current = argument?;
-                        continue;
-                    }
-                    // A pass-through the index holds: `type Leaves =
-                    // Vec<Leaf>;`, or a newtype struct serde writes as
-                    // its inner value. Guarded against a cycle, which
-                    // rustc would reject but this walk would not
-                    // survive.
-                    if !seen.insert(name.clone()) {
-                        return None;
-                    }
-                    current = &self.items.get(&name)?.transparent_target.as_ref()?.0;
-                }
-                _ => return None,
-            }
-        }
-    }
-
-    /// Whether an unrecognized key can be captured *at or below* a
-    /// value of the type called `name` — the precondition for the
-    /// loader's capture to ever produce a route through it.
-    ///
-    /// Asked of the whole subgraph rather than of the type itself,
-    /// because an externally tagged enum with only newtype variants
-    /// has no named fields of its own and still carries a payload
-    /// that does: `{"Void": {"channel": 0, "zzz": 1}}` is a key
-    /// captured below a variant. Proxies come along for free — the
-    /// walk follows `#[serde(from = "…")]`, which is the shape the
-    /// file actually carries.
-    ///
-    /// `Vec<String>` and `Vec<Value>` come out `false`: no member of
-    /// theirs is ever "unrecognized", so no route crosses their
-    /// indexes.
-    fn carries_named_keys(&self, name: &str) -> bool {
-        self.items.contains_key(name)
-            && self
-                .reachable_from(name)
-                .iter()
-                .any(|info| info.derives_deserialize && info.has_named_fields)
-    }
-
     /// Every name a reachable type mentions that this index does not
     /// resolve — the walk's **terminators**.
     ///
@@ -783,24 +688,42 @@ impl TypeGraph {
     /// Names are read with the reached item's parameters substituted,
     /// so a parameter bound at the reference is never a terminator;
     /// one that was left unbound, or a projection no `impl` resolves,
-    /// is — and goes red the same way.
+    /// is — and goes red the same way. A name more than one module
+    /// declares that the scope it is written in does not settle is a
+    /// terminator too: the walk does not guess, and
+    /// [`ambiguous_mentions`](Self::ambiguous_mentions) names it.
     ///
     /// Cost: same walk as `reachable_from` plus one set insert per
     /// referenced name; no I/O.
     pub fn unresolved_from(&self, root: &str) -> BTreeSet<String> {
+        self.unresolved_from_excluding(root, &[])
+    }
+
+    /// [`unresolved_from`](Self::unresolved_from) **without passing
+    /// through** any type named in `blocked`, as
+    /// [`reachable_from_excluding`](Self::reachable_from_excluding) walks:
+    /// for a type whose `Deserialize` is written by hand, whose fields
+    /// are therefore not what a deserializer reads.
+    ///
+    /// Cost: same walk as `reachable_from`; no I/O.
+    pub fn unresolved_from_excluding(&self, root: &str, blocked: &[&str]) -> BTreeSet<String> {
         let mut out = BTreeSet::new();
-        for reached in self.walk(root, FollowSerializeProxy::No, &[]) {
+        for reached in self.walk(root, blocked) {
+            let module = reached.info.module.as_str();
             let mut mentioned = Vec::new();
             for declared in &reached.info.referenced {
-                self.mentions(&self.substitute(&declared.0, &reached.bindings), &mut mentioned);
+                self.mentions(
+                    &self.substitute(&declared.0, &reached.bindings),
+                    module,
+                    &mut mentioned,
+                );
             }
-            let names = mentioned
-                .into_iter()
-                .map(|mention| mention.name)
-                .chain(reached.info.deserialize_proxy.iter().cloned());
-            for name in names {
-                if !self.items.contains_key(name.as_str()) {
-                    out.insert(name);
+            if let Some(proxy) = reached.info.deserialize_proxy.as_deref() {
+                mentioned.push(self.mention_of_proxy(proxy, module));
+            }
+            for mention in mentioned {
+                if mention.key().is_none() {
+                    out.insert(mention.name);
                 }
             }
         }
@@ -819,7 +742,7 @@ impl TypeGraph {
     ///
     /// Cost: O(reached instantiations × their field count); no I/O.
     pub fn reachable_from(&self, root: &str) -> Vec<&TypeInfo> {
-        distinct_items(self.walk(root, FollowSerializeProxy::No, &[]))
+        distinct_items(self.walk(root, &[]))
     }
 
     /// Every indexed type reachable from `root` **without passing
@@ -837,15 +760,15 @@ impl TypeGraph {
     ///
     /// Cost: same walk as `reachable_from`; no I/O.
     pub fn reachable_from_excluding(&self, root: &str, blocked: &[&str]) -> Vec<&TypeInfo> {
-        distinct_items(self.walk(root, FollowSerializeProxy::No, blocked))
+        distinct_items(self.walk(root, blocked))
     }
 
     /// The BFS behind [`reachable_from`],
     /// [`reachable_from_excluding`](Self::reachable_from_excluding)
-    /// and [`omit_predicates_from`]. Field references and
-    /// `#[serde(from)]` proxies are always followed;
-    /// `#[serde(into)]` proxies only when the caller is asking a
-    /// question about the write path. A name in `blocked` is never
+    /// and [`unresolved_from_excluding`](Self::unresolved_from_excluding).
+    /// Field references and `#[serde(from)]` proxies are followed; a
+    /// `#[serde(into)]` proxy never is, since a serialize-only proxy is
+    /// never handed to a deserializer. A name in `blocked` is never
     /// entered, so nothing reachable only through it is reported.
     ///
     /// The unit of the walk is an *instantiation*: an item together
@@ -855,43 +778,58 @@ impl TypeGraph {
     /// what those two arguments make its fields mean. An item reached
     /// again with the same bindings is not re-entered, which is what
     /// ends the walk on a recursive type.
-    fn walk(&self, root: &str, serialize: FollowSerializeProxy, blocked: &[&str]) -> Vec<Reached<'_>> {
+    ///
+    /// `root` and the names in `blocked` are each a path or a bare
+    /// name, as [`get`](Self::get) takes them; a blocked bare name
+    /// blocks every item declared under it.
+    fn walk(&self, root: &str, blocked: &[&str]) -> Vec<Reached<'_>> {
         let mut seen: BTreeSet<String> = BTreeSet::new();
-        let mut queue: VecDeque<(&str, Bindings)> = VecDeque::new();
+        let mut queue: VecDeque<(&TypeInfo, Bindings)> = VecDeque::new();
         let mut out: Vec<Reached<'_>> = Vec::new();
+        let is_blocked = |info: &TypeInfo| {
+            blocked
+                .iter()
+                .any(|name| *name == info.name || *name == info.path)
+        };
 
-        if blocked.contains(&root) {
+        let Some(root) = self.get(root) else { return out };
+        if is_blocked(root) {
             return out;
         }
         queue.push_back((root, Bindings::new()));
-        seen.insert(instantiation_key(root, &Bindings::new()));
-        while let Some((name, bindings)) = queue.pop_front() {
-            let Some(info) = self.items.get(name) else { continue };
-            let write_proxy = match serialize {
-                FollowSerializeProxy::Yes => info.serialize_proxy.as_deref(),
-                FollowSerializeProxy::No => None,
-            };
-            let mut successors: Vec<(String, Bindings)> = Vec::new();
+        seen.insert(instantiation_key(&root.path, &Bindings::new()));
+        while let Some((info, bindings)) = queue.pop_front() {
+            let module = info.module.as_str();
+            let mut successors: Vec<(&TypeInfo, Bindings)> = Vec::new();
             for declared in &info.referenced {
                 let mut mentioned = Vec::new();
-                self.mentions(&self.substitute(&declared.0, &bindings), &mut mentioned);
+                self.mentions(&self.substitute(&declared.0, &bindings), module, &mut mentioned);
                 for mention in mentioned {
-                    let Some(next) = self.items.get(&mention.name) else { continue };
-                    let bound = next.generics.iter().cloned().zip(mention.arguments).collect();
-                    successors.push((mention.name, bound));
+                    let Some(next) = mention.key().and_then(|key| self.items.get(key)) else {
+                        continue;
+                    };
+                    // Canonical, so the argument means where the item
+                    // it binds is declared what it meant here.
+                    let arguments = mention
+                        .arguments
+                        .iter()
+                        .map(|argument| self.canonical(argument, module));
+                    let bound = next.generics.iter().cloned().zip(arguments).collect();
+                    successors.push((next, bound));
                 }
             }
-            for proxy in info.deserialize_proxy.as_deref().into_iter().chain(write_proxy) {
-                successors.push((proxy.to_string(), Bindings::new()));
+            if let Some(proxy) = info.deserialize_proxy.as_deref() {
+                let mention = self.mention_of_proxy(proxy, module);
+                if let Some(next) = mention.key().and_then(|key| self.items.get(key)) {
+                    successors.push((next, Bindings::new()));
+                }
             }
             for (next, bound) in successors {
-                if blocked.contains(&next.as_str()) {
+                if is_blocked(next) {
                     continue;
                 }
-                if let Some((key, _)) = self.items.get_key_value(&next) {
-                    if seen.insert(instantiation_key(key, &bound)) {
-                        queue.push_back((key.as_str(), bound));
-                    }
+                if seen.insert(instantiation_key(&next.path, &bound)) {
+                    queue.push_back((next, bound));
                 }
             }
             out.push(Reached { info, bindings });
@@ -971,36 +909,62 @@ impl TypeGraph {
     /// exactly one spelling of it is declared. `None` for an owner
     /// that is not a plain path, an associated type no `impl`
     /// declares, or one two `impl`s declare differently.
+    ///
+    /// The answer is canonical ([`Self::canonical`]) in the module of
+    /// the `impl` that declares it, since that is where its names were
+    /// written; two declarations agree when their canonical forms do.
     fn project(&self, owner: &Type, name: &str) -> Option<Type> {
         let Type::Path(owner) = owner else {
             return None;
         };
         let owner = owner.path.segments.last()?.ident.to_string();
         let candidates = self.associated.get(&(owner, name.to_string()))?;
-        let first = candidates.first()?;
-        let agreed = candidates
+        let mut canonical = candidates
             .iter()
-            .all(|other| render(&other.0) == render(&first.0));
-        agreed.then(|| first.0.clone())
+            .map(|(declared, module)| self.canonical(&declared.0, module));
+        let first = canonical.next()?;
+        let spelled = render(&first);
+        canonical.all(|other| render(&other) == spelled).then_some(first)
     }
 
     /// Every name `ty` mentions in a position that holds data, with
-    /// the arguments written on it — [`collect_type_names`]'s answer,
-    /// minus the arguments of an indexed generic item: those are
-    /// bindings for the item's parameters, followed through the item
-    /// when it uses them, and not data at the place they are written.
-    fn mentions(&self, ty: &Type, out: &mut Vec<Mention>) {
+    /// the arguments written on it and what it resolves to in `module`
+    /// — [`collect_type_names`]'s answer, minus the arguments of an
+    /// indexed generic item: those are bindings for the item's
+    /// parameters, followed through the item when it uses them, and
+    /// not data at the place they are written.
+    fn mentions(&self, ty: &Type, module: &str, out: &mut Vec<Mention>) {
         match ty {
             Type::Path(path) => {
                 if let Some(qself) = &path.qself {
-                    self.mentions(&qself.ty, out);
+                    self.mentions(&qself.ty, module, out);
                 }
-                for segment in &path.path.segments {
-                    let name = segment.ident.to_string();
-                    let binds = self
-                        .items
-                        .get(&name)
-                        .is_some_and(|info| !info.generics.is_empty());
+                let segments: Vec<String> = path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect();
+                let rooted = segments
+                    .first()
+                    .is_some_and(|first| matches!(first.as_str(), "crate" | "self" | "super"));
+                for (at, segment) in path.path.segments.iter().enumerate() {
+                    let last = at + 1 == segments.len();
+                    if rooted && !last {
+                        // A module, by the language's own rule.
+                        continue;
+                    }
+                    let resolution = if last {
+                        self.resolve(module, &segments)
+                    } else {
+                        self.resolve(module, &segments[at..=at])
+                    };
+                    let binds = match &resolution {
+                        Resolution::Found(key) => {
+                            self.items.get(key).is_some_and(|info| !info.generics.is_empty())
+                        }
+                        _ => false,
+                    };
                     let mut arguments = Vec::new();
                     match &segment.arguments {
                         PathArguments::AngleBracketed(args) => {
@@ -1009,46 +973,272 @@ impl TypeGraph {
                                     if binds {
                                         arguments.push(inner.clone());
                                     } else {
-                                        self.mentions(inner, out);
+                                        self.mentions(inner, module, out);
                                     }
                                 }
                             }
                         }
                         PathArguments::Parenthesized(args) => {
                             for inner in &args.inputs {
-                                self.mentions(&inner.ty, out);
+                                self.mentions(&inner.ty, module, out);
                             }
                         }
                         PathArguments::None => {}
                     }
-                    out.push(Mention { name, arguments });
+                    out.push(Mention {
+                        name: segments[at].clone(),
+                        resolution,
+                        arguments,
+                    });
                 }
             }
-            Type::Reference(inner) => self.mentions(&inner.elem, out),
-            Type::Slice(inner) => self.mentions(&inner.elem, out),
-            Type::Array(inner) => self.mentions(&inner.elem, out),
-            Type::Paren(inner) => self.mentions(&inner.elem, out),
-            Type::Group(inner) => self.mentions(&inner.elem, out),
-            Type::Ptr(inner) => self.mentions(&inner.elem, out),
+            Type::Reference(inner) => self.mentions(&inner.elem, module, out),
+            Type::Slice(inner) => self.mentions(&inner.elem, module, out),
+            Type::Array(inner) => self.mentions(&inner.elem, module, out),
+            Type::Paren(inner) => self.mentions(&inner.elem, module, out),
+            Type::Group(inner) => self.mentions(&inner.elem, module, out),
+            Type::Ptr(inner) => self.mentions(&inner.elem, module, out),
             Type::Tuple(tuple) => {
                 for inner in &tuple.elems {
-                    self.mentions(inner, out);
+                    self.mentions(inner, module, out);
                 }
             }
             // The unreadable forms keep their sentinels — see
-            // [`collect_type_names`], whose arm this mirrors.
+            // [`collect_type_names`], whose arm this mirrors. A
+            // sentinel is never an indexed name.
             other => {
                 let mut names = Vec::new();
                 collect_type_names(other, &mut names);
                 out.extend(names.into_iter().map(|name| Mention {
                     name,
+                    resolution: Resolution::NotIndexed,
                     arguments: Vec::new(),
                 }));
             }
         }
     }
 
-    fn index_items(&mut self, items: &[Item], file: &Path) {
+    /// The proxy a `#[serde(from = "…")]` names, written in `module`,
+    /// as a mention: the string is a path, resolved like one.
+    fn mention_of_proxy(&self, proxy: &str, module: &str) -> Mention {
+        let segments: Vec<String> = proxy
+            .split("::")
+            .map(|segment| segment.trim().to_string())
+            .collect();
+        Mention {
+            name: segments.last().cloned().unwrap_or_default(),
+            resolution: self.resolve(module, &segments),
+            arguments: Vec::new(),
+        }
+    }
+
+    /// What the path `segments`, written in `module`, names — the way
+    /// the compiler reads it, as far as the index can follow:
+    ///
+    /// - a `crate::` / `self::` / `super::` path, or one whose first
+    ///   segment is a child module or a module the scope imports, is
+    ///   looked up in the module it leads to;
+    /// - a single name is looked up in `module` itself: what it
+    ///   declares, then what it imports by name (renames, groups and
+    ///   re-exports followed to the item), then what its globs bring
+    ///   in;
+    /// - a path whose first segment is none of those, or a name the
+    ///   scope imports from another crate, is not ours.
+    ///
+    /// What the scope does not settle falls back to the bare name: the
+    /// one item declared under it, or [`Resolution::Ambiguous`] when
+    /// there are several. That fallback is what the bare-name index
+    /// always did, and it is what keeps a gap in this reader from
+    /// dropping a type out of the walk; the ambiguous case is reported
+    /// ([`Self::ambiguous_mentions`]) rather than guessed.
+    fn resolve(&self, module: &str, segments: &[String]) -> Resolution {
+        let Some((name, qualifiers)) = segments.split_last() else {
+            return Resolution::NotIndexed;
+        };
+        // The scope first, whatever the name: `use a::Anchor as Pin`
+        // makes `Pin` a name no item is declared under.
+        let scoped = if qualifiers.is_empty() {
+            self.lookup(module, name, 0)
+        } else {
+            match self.module_path(module, qualifiers) {
+                Some(base) => self.lookup(&base, name, 0),
+                None => Lookup::Foreign,
+            }
+        };
+        match scoped {
+            Lookup::Found(key) => Resolution::Found(key),
+            Lookup::Foreign => Resolution::NotIndexed,
+            Lookup::Missing => match self.by_name.get(name).map(Vec::as_slice) {
+                None | Some([]) => Resolution::NotIndexed,
+                Some([only]) => Resolution::Found(only.clone()),
+                Some(several) => Resolution::Ambiguous(several.to_vec()),
+            },
+        }
+    }
+
+    /// `name` as `module`'s scope sees it: an item `module` declares,
+    /// a name it imports (followed to the item, through re-exports),
+    /// or one exactly one of its globs brings in.
+    fn lookup(&self, module: &str, name: &str, depth: usize) -> Lookup {
+        if depth > LOOKUP_DEPTH {
+            return Lookup::Missing;
+        }
+        let key = join_path(module, name);
+        if self.items.contains_key(&key) {
+            return Lookup::Found(key);
+        }
+        let Some(scope) = self.scopes.get(module) else {
+            return Lookup::Missing;
+        };
+        if let Some(target) = scope.imports.get(name) {
+            let Some((imported, qualifiers)) = target.split_last() else {
+                return Lookup::Missing;
+            };
+            return match self.module_path(module, qualifiers) {
+                Some(base) => self.lookup(&base, imported, depth + 1),
+                None => Lookup::Foreign,
+            };
+        }
+        let mut found = BTreeSet::new();
+        for glob in &scope.globs {
+            if let Some(base) = self.module_path(module, glob) {
+                if let Lookup::Found(key) = self.lookup(&base, name, depth + 1) {
+                    found.insert(key);
+                }
+            }
+        }
+        let mut found = found.into_iter();
+        match (found.next(), found.next()) {
+            (Some(only), None) => Lookup::Found(only),
+            _ => Lookup::Missing,
+        }
+    }
+
+    /// The module the qualifiers of a path written in `module` lead to,
+    /// or `None` when they start outside this crate. An empty list
+    /// leads to `module` itself.
+    fn module_path(&self, module: &str, qualifiers: &[String]) -> Option<String> {
+        self.module_path_at(module, qualifiers, 0)
+    }
+
+    fn module_path_at(&self, module: &str, qualifiers: &[String], depth: usize) -> Option<String> {
+        if depth > LOOKUP_DEPTH {
+            return None;
+        }
+        let Some((first, rest)) = qualifiers.split_first() else {
+            return Some(module.to_string());
+        };
+        let mut base: Vec<&str> = if module.is_empty() {
+            Vec::new()
+        } else {
+            module.split("::").collect()
+        };
+        match first.as_str() {
+            "crate" => base.clear(),
+            "self" => {}
+            "super" => {
+                base.pop()?;
+            }
+            _ => {
+                let child = join_path(module, first);
+                if self.modules.contains(&child) {
+                    base.push(first.as_str());
+                } else {
+                    let imported = self
+                        .scopes
+                        .get(module)
+                        .and_then(|scope| scope.imports.get(first.as_str()))?;
+                    let resolved = self.module_path_at(module, imported, depth + 1)?;
+                    let relative: Vec<String> = std::iter::once("self".to_string())
+                        .chain(rest.iter().cloned())
+                        .collect();
+                    return self.module_path_at(&resolved, &relative, depth + 1);
+                }
+            }
+        }
+        for segment in rest {
+            match segment.as_str() {
+                "super" => {
+                    base.pop()?;
+                }
+                "self" => {}
+                other => base.push(other),
+            }
+        }
+        Some(base.join("::"))
+    }
+
+    /// `ty` with every name in it that `module`'s scope resolves to an
+    /// indexed item rewritten to that item's full `crate::` path, so it
+    /// means the same thing wherever it is substituted. The arguments
+    /// on the item's own segment are kept, canonical in turn; a name
+    /// that does not resolve is left as written.
+    fn canonical(&self, ty: &Type, module: &str) -> Type {
+        let mut out = ty.clone();
+        self.canonicalize_in_place(&mut out, module);
+        out
+    }
+
+    fn canonicalize_in_place(&self, ty: &mut Type, module: &str) {
+        match ty {
+            Type::Path(path) => {
+                if let Some(qself) = &mut path.qself {
+                    self.canonicalize_in_place(&mut qself.ty, module);
+                    return;
+                }
+                for segment in path.path.segments.iter_mut() {
+                    if let PathArguments::AngleBracketed(arguments) = &mut segment.arguments {
+                        for argument in arguments.args.iter_mut() {
+                            if let GenericArgument::Type(inner) = argument {
+                                self.canonicalize_in_place(inner, module);
+                            }
+                        }
+                    }
+                }
+                let segments: Vec<String> = path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect();
+                let Resolution::Found(key) = self.resolve(module, &segments) else {
+                    return;
+                };
+                let arguments = path
+                    .path
+                    .segments
+                    .last()
+                    .map(|segment| segment.arguments.clone())
+                    .unwrap_or(PathArguments::None);
+                let mut rewritten = syn::Path {
+                    leading_colon: None,
+                    segments: syn::punctuated::Punctuated::new(),
+                };
+                for segment in std::iter::once("crate").chain(key.split("::")) {
+                    let ident = syn::Ident::new(segment, proc_macro2::Span::call_site());
+                    rewritten.segments.push(syn::PathSegment::from(ident));
+                }
+                if let Some(last) = rewritten.segments.last_mut() {
+                    last.arguments = arguments;
+                }
+                path.path = rewritten;
+            }
+            Type::Reference(inner) => self.canonicalize_in_place(&mut inner.elem, module),
+            Type::Slice(inner) => self.canonicalize_in_place(&mut inner.elem, module),
+            Type::Array(inner) => self.canonicalize_in_place(&mut inner.elem, module),
+            Type::Paren(inner) => self.canonicalize_in_place(&mut inner.elem, module),
+            Type::Group(inner) => self.canonicalize_in_place(&mut inner.elem, module),
+            Type::Ptr(inner) => self.canonicalize_in_place(&mut inner.elem, module),
+            Type::Tuple(tuple) => {
+                for inner in tuple.elems.iter_mut() {
+                    self.canonicalize_in_place(inner, module);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn index_items(&mut self, items: &[Item], file: &Path, module: &str) {
         for item in items {
             match item {
                 Item::Struct(item) => {
@@ -1056,15 +1246,15 @@ impl TypeGraph {
                     let names = SerdeNames::read(&item.attrs);
                     let owner = item.ident.to_string();
                     self.insert(TypeInfo {
-                        transparent_target: newtype_target(&item.fields),
-                        fields: serde_fields(&owner, names.rule(&owner), None, &item.fields),
+                        fields: serde_fields(names.rule(&owner), None, &item.fields),
+                        path: join_path(module, &owner),
+                        module: module.to_string(),
                         name: owner.clone(),
                         file: file.to_path_buf(),
                         kind: TypeKind::Struct,
                         derives_deserialize: derives_deserialize(&item.attrs),
                         denies_unknown_fields: serde.deny_unknown_fields,
                         deserialize_proxy: serde.proxy,
-                        serialize_proxy: serde.into_proxy,
                         untagged: serde.untagged,
                         internally_tagged: serde.internally_tagged,
                         flattened_fields: flattened_fields(&item.fields),
@@ -1072,7 +1262,6 @@ impl TypeGraph {
                         variants: Vec::new(),
                         generics: type_parameters(&item.generics),
                         referenced: referenced_types(&item.fields),
-                        omit_predicates: omit_predicates(&item.fields),
                         unread_serde: unread_serde_attrs_with_fields(&item.attrs, &item.fields),
                         has_serde_container_attr: has_serde_container_attr(&item.attrs),
                     });
@@ -1082,7 +1271,6 @@ impl TypeGraph {
                     let names = SerdeNames::read(&item.attrs);
                     let owner = item.ident.to_string();
                     let mut referenced = Vec::new();
-                    let mut predicates = Vec::new();
                     let mut flattened = Vec::new();
                     let mut has_named_fields = false;
                     let mut variants = Vec::new();
@@ -1098,7 +1286,6 @@ impl TypeGraph {
                         }
                         has_named_fields |= matches!(variant.fields, Fields::Named(_));
                         referenced.extend(referenced_types(&variant.fields));
-                        predicates.extend(omit_predicates(&variant.fields));
                         flattened.extend(flattened_fields(&variant.fields));
                         unread.extend(unread_serde_attrs_with_fields(&variant.attrs, &variant.fields));
                         // A variant renames two separate things, under
@@ -1116,7 +1303,6 @@ impl TypeGraph {
                         });
                         let inner_rule = variant_names.rule(&owner).or_else(|| names.field_rule(&owner));
                         fields.extend(serde_fields(
-                            &format!("{owner}::{variant_member}"),
                             inner_rule,
                             Some((variant_member.as_str(), variant_names.aliases.as_slice())),
                             &variant.fields,
@@ -1132,15 +1318,15 @@ impl TypeGraph {
                         variants.extend(group);
                     }
                     self.insert(TypeInfo {
-                        transparent_target: None,
                         fields,
+                        path: join_path(module, &owner),
+                        module: module.to_string(),
                         name: owner,
                         file: file.to_path_buf(),
                         kind: TypeKind::Enum,
                         derives_deserialize: derives_deserialize(&item.attrs),
                         denies_unknown_fields: serde.deny_unknown_fields,
                         deserialize_proxy: serde.proxy,
-                        serialize_proxy: serde.into_proxy,
                         untagged: serde.untagged,
                         internally_tagged: serde.internally_tagged,
                         flattened_fields: flattened,
@@ -1148,7 +1334,6 @@ impl TypeGraph {
                         variants,
                         generics: type_parameters(&item.generics),
                         referenced,
-                        omit_predicates: predicates,
                         unread_serde: unread,
                         has_serde_container_attr: has_serde_container_attr(&item.attrs),
                     });
@@ -1156,15 +1341,15 @@ impl TypeGraph {
                 Item::Type(item) => {
                     let referenced = vec![DeclaredType((*item.ty).clone())];
                     self.insert(TypeInfo {
-                        transparent_target: Some(DeclaredType((*item.ty).clone())),
                         fields: Vec::new(),
+                        path: join_path(module, &item.ident.to_string()),
+                        module: module.to_string(),
                         name: item.ident.to_string(),
                         file: file.to_path_buf(),
                         kind: TypeKind::Alias,
                         derives_deserialize: false,
                         denies_unknown_fields: false,
                         deserialize_proxy: None,
-                        serialize_proxy: None,
                         untagged: false,
                         internally_tagged: false,
                         flattened_fields: Vec::new(),
@@ -1172,7 +1357,6 @@ impl TypeGraph {
                         variants: Vec::new(),
                         generics: type_parameters(&item.generics),
                         referenced,
-                        omit_predicates: Vec::new(),
                         unread_serde: unread_serde_attrs(&item.attrs),
                         has_serde_container_attr: has_serde_container_attr(&item.attrs),
                     });
@@ -1195,7 +1379,7 @@ impl TypeGraph {
                             self.associated
                                 .entry((owner.ident.to_string(), associated.ident.to_string()))
                                 .or_default()
-                                .push(DeclaredType(associated.ty.clone()));
+                                .push((DeclaredType(associated.ty.clone()), module.to_string()));
                         }
                     }
                 }
@@ -1204,8 +1388,17 @@ impl TypeGraph {
                         continue;
                     }
                     if let Some((_, inner)) = &item.content {
-                        self.index_items(inner, file);
+                        let inner_module = join_path(module, &item.ident.to_string());
+                        self.modules.insert(inner_module.clone());
+                        self.index_items(inner, file, &inner_module);
                     }
+                }
+                Item::Use(item) => {
+                    if is_test_gated(&item.attrs) {
+                        continue;
+                    }
+                    let scope = self.scopes.entry(module.to_string()).or_default();
+                    record_use(&item.tree, &mut Vec::new(), scope);
                 }
                 _ => {}
             }
@@ -1213,11 +1406,85 @@ impl TypeGraph {
     }
 
     fn insert(&mut self, info: TypeInfo) {
-        if self.items.contains_key(&info.name) {
-            self.duplicates.insert(info.name.clone());
+        if self.items.contains_key(&info.path) {
+            self.duplicates.insert(info.path.clone());
             return;
         }
-        self.items.insert(info.name.clone(), info);
+        self.by_name
+            .entry(info.name.clone())
+            .or_default()
+            .push(info.path.clone());
+        self.items.insert(info.path.clone(), info);
+    }
+}
+
+/// `module::name`, or `name` alone in the crate root.
+fn join_path(module: &str, name: &str) -> String {
+    if module.is_empty() {
+        name.to_string()
+    } else {
+        format!("{module}::{name}")
+    }
+}
+
+/// The module a source file is, read off its path under `src_root`:
+/// `a/b.rs` and `a/b/mod.rs` are `a::b`, and `lib.rs` / `main.rs` at
+/// the root are the crate root.
+fn module_of_file(src_root: &Path, file: &Path) -> String {
+    let relative = file.strip_prefix(src_root).unwrap_or(file);
+    let mut segments: Vec<String> = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    if let Some(last) = segments.pop() {
+        let stem = last.strip_suffix(".rs").unwrap_or(&last).to_string();
+        let root_file = segments.is_empty() && (stem == "lib" || stem == "main");
+        if stem != "mod" && !root_file {
+            segments.push(stem);
+        }
+    }
+    segments.join("::")
+}
+
+/// Record every name one `use` tree imports into `scope`, with
+/// `prefix` the segments above this subtree.
+fn record_use(tree: &syn::UseTree, prefix: &mut Vec<String>, scope: &mut Scope) {
+    match tree {
+        syn::UseTree::Path(path) => {
+            prefix.push(path.ident.to_string());
+            record_use(&path.tree, prefix, scope);
+            prefix.pop();
+        }
+        syn::UseTree::Name(name) => {
+            let ident = name.ident.to_string();
+            if ident == "self" {
+                // `use a::{self}` imports the module `a` under its name.
+                if let Some(module) = prefix.last().cloned() {
+                    scope.imports.insert(module, prefix.clone());
+                }
+            } else {
+                let mut target = prefix.clone();
+                target.push(ident.clone());
+                scope.imports.insert(ident, target);
+            }
+        }
+        syn::UseTree::Rename(rename) => {
+            let local = rename.rename.to_string();
+            if local == "_" {
+                return;
+            }
+            let mut target = prefix.clone();
+            if rename.ident != "self" {
+                target.push(rename.ident.to_string());
+            }
+            scope.imports.insert(local, target);
+        }
+        syn::UseTree::Glob(_) => scope.globs.push(prefix.clone()),
+        syn::UseTree::Group(group) => {
+            for inner in &group.items {
+                record_use(inner, prefix, scope);
+            }
+        }
     }
 }
 
@@ -1321,7 +1588,7 @@ impl SerdeAttrs {
 ///
 /// The fail-safe half of the parser, and the reason the polarity of
 /// the guard test above it is survivable. [`SerdeAttrs::read`],
-/// [`omit_predicates`], [`flattened_fields`] and [`is_skipped`] all
+/// [`flattened_fields`] and [`is_skipped`] all
 /// discard their parse errors, so a partially-read attribute yields
 /// the same `false`/empty answer as an absent one. Here the same
 /// attributes are walked a second time by a reader that claims
@@ -1444,73 +1711,6 @@ fn type_parameters(generics: &syn::Generics) -> Vec<String> {
         .type_params()
         .map(|param| param.ident.to_string())
         .collect()
-}
-
-/// Container spellings serde writes as a JSON array whose **length
-/// an edit can change** — the property that makes an index inside one
-/// unstable and a route through it positional.
-///
-/// A `BTreeSet` is on the list and is the reason the list exists:
-/// `ColorFontRegions::regions` is one, it holds objects that can
-/// carry an unrecognized key, and matching the token `Vec` read it as
-/// a scalar. A set is if anything *worse* than a `Vec` here, since the
-/// save re-sorts it.
-///
-/// Fixed-arity shapes — a tuple, `[T; N]` — are deliberately absent.
-/// They are arrays on disk and a route does cross their indexes, but
-/// no edit can move one without changing the format itself.
-///
-/// The list is *names*, so the one growable array spelled without one
-/// — the slice `[T]` that `Cow<'a, [T]>` and `Box<[T]>` bottom out on
-/// — cannot be a member of it; [`TypeGraph::sequence_element`] answers
-/// that shape structurally instead.
-const SEQUENCE_CONTAINERS: &[&str] = &[
-    "ArrayVec",
-    "BTreeSet",
-    "BinaryHeap",
-    "FxHashSet",
-    "HashSet",
-    "IndexSet",
-    "LinkedList",
-    "SmallVec",
-    "TinyVec",
-    "Vec",
-    "VecDeque",
-];
-
-/// Container spellings that serde writes as their inner value, so
-/// whatever is inside sits at the same JSON member.
-///
-/// `Option<Vec<T>>` is the live case: the member holds `null` or an
-/// array, and a route crosses the array's indexes either way.
-const TRANSPARENT_WRAPPERS: &[&str] = &["Arc", "Box", "Cow", "Option", "Rc"];
-
-/// The first type inside `<…>`, or `None` for a path segment with no
-/// type arguments.
-fn first_type_argument(arguments: &PathArguments) -> Option<&Type> {
-    let PathArguments::AngleBracketed(bracketed) = arguments else {
-        return None;
-    };
-    bracketed.args.iter().find_map(|argument| match argument {
-        GenericArgument::Type(inner) => Some(inner),
-        _ => None,
-    })
-}
-
-/// The inner type of a newtype struct — one unnamed field — which
-/// serde writes with no wrapper of its own. `None` for every other
-/// shape.
-fn newtype_target(fields: &Fields) -> Option<DeclaredType> {
-    let Fields::Unnamed(unnamed) = fields else {
-        return None;
-    };
-    match unnamed.unnamed.len() {
-        1 => unnamed
-            .unnamed
-            .first()
-            .map(|field| DeclaredType(field.ty.clone())),
-        _ => None,
-    }
 }
 
 /// The `#[serde(rename_all = "…")]` spellings, and what each does to
@@ -1764,13 +1964,11 @@ fn read_deserialize_arm(meta: &syn::meta::ParseNestedMeta) -> syn::Result<Option
 /// Every place a deserializer can put on-disk data into a struct's
 /// fields, or into one variant's.
 ///
-/// `owner` names the type for the site string; `rule` is the
-/// container's `rename_all` as it applies to *these* fields;
+/// `rule` is the container's `rename_all` as it applies to *these* fields;
 /// `payload` is the JSON name of the variant that wraps them together
 /// with every alias spelling that variant accepts, present only for
 /// an enum variant.
 fn serde_fields(
-    owner: &str,
     rule: Option<RenameRule>,
     payload: Option<(&str, &[String])>,
     fields: &Fields,
@@ -1820,44 +2018,12 @@ fn serde_fields(
         if member.is_none() && field.ident.is_none() && unnamed_arity == 1 {
             continue;
         }
-        let site = match &member {
-            Some(name) => format!("{owner}.{name}"),
-            None => format!("{owner} (a tuple position, which no member names)"),
-        };
         out.push(SerdeField {
             member,
             kind,
             aliases,
             ty: DeclaredType(field.ty.clone()),
-            site,
         });
-    }
-    out
-}
-
-/// The `#[serde(skip_serializing_if = "...")]` predicate of every
-/// field that carries one, as written (`"Option::is_none"`,
-/// `"is_default_position"`).
-///
-/// Unlike [`referenced_types`] this looks at every field, skipped or
-/// not: it answers a question about what the *saver* may leave out.
-fn omit_predicates(fields: &Fields) -> Vec<String> {
-    let mut out = Vec::new();
-    for field in fields {
-        for attr in &field.attrs {
-            if !attr.path().is_ident("serde") {
-                continue;
-            }
-            let _ = attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("skip_serializing_if") {
-                    let literal: syn::LitStr = meta.value()?.parse()?;
-                    out.push(literal.value());
-                } else {
-                    skip_unmodeled_option(&meta)?;
-                }
-                Ok(())
-            });
-        }
     }
     out
 }
@@ -1999,15 +2165,15 @@ fn distinct_items(reached: Vec<Reached<'_>>) -> Vec<&TypeInfo> {
     let mut seen: BTreeSet<&str> = BTreeSet::new();
     reached
         .into_iter()
-        .filter(|entry| seen.insert(entry.info.name.as_str()))
+        .filter(|entry| seen.insert(entry.info.path.as_str()))
         .map(|entry| entry.info)
         .collect()
 }
 
-/// The identity of one instantiation: the item's name and what each
+/// The identity of one instantiation: the item's path and what each
 /// parameter is bound to, in parameter-name order.
-fn instantiation_key(name: &str, bindings: &Bindings) -> String {
-    let mut key = name.to_string();
+fn instantiation_key(path: &str, bindings: &Bindings) -> String {
+    let mut key = path.to_string();
     for (parameter, bound) in bindings {
         key.push_str(&format!(" {parameter}={}", render(bound)));
     }
@@ -2107,87 +2273,110 @@ pub fn crate_src_root() -> PathBuf {
 mod tests {
     use super::*;
 
-    /// Every name the walk from `MindMap` is allowed to stop at.
+    /// The types the format's loader reads a file into: the header and
+    /// each node of the list (`document::tests::format_strict_tests`
+    /// names the same two). Everything a load can hand a deserializer is
+    /// reachable from one of them.
+    const FORMAT_ROOTS: [&str; 2] = ["MapHeaderDto", "NodeDto"];
+
+    /// The format's types whose `Deserialize` is written by hand, which
+    /// the terminator walk does not enter: `Source`, what a `Rows` holds
+    /// — its array's text, read item by item, or the saver's trait
+    /// object (`Source::Arena`), which no deserializer is handed. What a
+    /// row's items are is followed through `Rows`' `items` marker.
+    const HAND_READ: &[&str] = &["Source"];
+
+    /// Every name the walk from [`FORMAT_ROOTS`] stops at, gathered.
+    fn format_terminators(graph: &TypeGraph) -> BTreeSet<String> {
+        FORMAT_ROOTS
+            .iter()
+            .flat_map(|root| graph.unresolved_from_excluding(root, HAND_READ))
+            .collect()
+    }
+
+    /// The exclusion is the hand-read type and nothing wider: walked
+    /// into, `Source` stops at the trait object and the raw text the
+    /// loader holds, which no derived impl reads; walked around, the
+    /// row's items are still reached.
+    #[test]
+    fn test_the_hand_read_rows_are_walked_around_not_dropped() {
+        let graph = TypeGraph::build(&crate_src_root());
+        let through = graph.unresolved_from("NodeDto");
+        assert!(
+            through.contains("<dyn Trait>") && through.contains("RawValue"),
+            "control: walked into, the hand-read source stops at the saver's trait object              and the raw text: {through:?}"
+        );
+        let around = format_terminators(&graph);
+        assert!(
+            !around.contains("<dyn Trait>") && !around.contains("RawValue"),
+            "walked around, neither is a terminator: {around:?}"
+        );
+        let reached: Vec<&str> = graph
+            .reachable_from_excluding("NodeDto", HAND_READ)
+            .iter()
+            .map(|info| info.name.as_str())
+            .collect();
+        assert!(
+            reached.contains(&"SpanDto"),
+            "a row's items are reached around the source: {reached:?}"
+        );
+    }
+
+    /// Every name the walk from the format's roots is allowed to stop at.
     ///
-    /// Four kinds of entry, and the distinction is the whole point of
-    /// the list:
+    /// Two kinds of entry, and the distinction is the whole point of the
+    /// list:
     ///
-    /// 1. **Primitives and containers** — `String`, `f32`, `Option`,
-    ///    `Vec`, `HashMap`, `Value`. No fields of ours; stopping is
-    ///    correct and always will be.
-    /// 2. **Module path qualifiers.** `collect_type_names` pushes
-    ///    every segment of a path, so
-    ///    `crate::mindmap::animation::AnimationTiming` contributes
-    ///    three names that are not types alongside the one that is.
-    /// 3. **Foreign types and traits** — `Vec2` (glam), `OrderedFloat`
-    ///    (ordered-float), and the `Discriminated` trait named by a
-    ///    `<F as Discriminated>::Discriminant` qself. A generic
-    ///    parameter is not on the list: the walk follows it as what the
-    ///    reference bound it to (`TypeInfo::generics`), so one that
-    ///    reaches this list was left unbound. Their shape is not ours to annotate;
-    ///    if one ever grows named JSON keys a map can write, that is
-    ///    a review decision, not a silent one.
-    /// 4. **Types this walk genuinely cannot see** — `AppFont`, which
-    ///    `lib/baumhard/build.rs` emits into `$OUT_DIR`, and strum's
-    ///    generated tags — `Discriminant` and `GfxElementType`, the
-    ///    payload-free tag `GfxElementField::ElementType` names. Both
-    ///    kinds are unit enums today,
-    ///    so they carry no JSON keys and cost nothing. They are on
-    ///    the list because the module's promise — a new field of a
-    ///    new type extends the covered set on its own — is *false*
-    ///    for anything a build script emits, and a comment saying so
-    ///    drifts where a checked list does not.
+    /// 1. **Primitives and containers** — `String`, `str`, `f32`,
+    ///    `Option`, `Vec`, `Cow`, and the `PhantomData` a `Rows` names its
+    ///    items with. No fields of ours; stopping is correct and always
+    ///    will be.
+    /// 2. **Foreign types** — none today. A generic parameter is not on
+    ///    the list: the walk follows it as what the reference bound it to
+    ///    (`TypeInfo::generics`), so one that reaches this list was left
+    ///    unbound. A foreign type's shape is not ours to annotate; if one
+    ///    ever lands on the load path, adding it here is a review
+    ///    decision, not a silent one. The walk's sentinels for a form it
+    ///    cannot read (`<dyn Trait>` and the like) are never listed: see
+    ///    [`HAND_READ`] for the one the format holds, walked around.
+    ///
+    /// A type a build script emits into `$OUT_DIR` would be a third kind:
+    /// the module's promise — a new field of a new type extends the
+    /// covered set on its own — is *false* for it. The format names
+    /// fonts by family string, so none is reachable today, and the list
+    /// is what says so the day one is.
     const EXPECTED_TERMINATORS: &[&str] = &[
         // 1. primitives and containers
-        "BTreeSet",
-        "Box",
-        "FxHashMap",
-        "HashMap",
+        "Cow",
         "Option",
+        "PhantomData",
         "String",
-        "Value",
         "Vec",
         "bool",
         "f32",
-        "f64",
-        "i16",
-        "i32",
+        "str",
+        "u16",
         "u32",
+        "u64",
         "u8",
-        "usize",
-        // 2. module path qualifiers, not types
-        "animation",
-        "crate",
-        "mindmap",
-        "serde_json",
-        // 3. foreign types and traits
-        "Discriminated",
-        "OrderedFloat",
-        "Vec2",
-        // 4. real types this walk cannot see
-        "AppFont",
-        "Discriminant",
-        "GfxElementType",
     ];
 
     /// **The walker's blind spot, made visible.** The walk stops at
     /// any name it did not index, and it cannot tell "known-terminal
-    /// primitive" from "type I failed to resolve" — `AppFont` lives
-    /// in `$OUT_DIR` and is reachable from a real map, and nothing
-    /// about the walk announces that.
+    /// primitive" from "type I failed to resolve" — a type in `$OUT_DIR`
+    /// reachable from a real map would look exactly like `String`.
     ///
     /// So the list is here rather than in a comment: every terminator
-    /// must be one somebody looked at. When a field of a new
-    /// unindexed type lands, this fails naming it, and the reader
-    /// decides whether it belongs on the list or whether the walk has
-    /// to learn to reach it. That is the same drift discipline
-    /// `test_no_loadable_type_can_swallow_an_unknown_key` applies to the
-    /// types the walk *does* see.
+    /// must be one somebody looked at. When a field of a new unindexed
+    /// type lands, this fails naming it, and the reader decides whether
+    /// it belongs on the list or whether the walk has to learn to reach
+    /// it. That is the same drift discipline
+    /// `format_strict_tests::test_every_type_the_format_reads_denies_unknown_fields`
+    /// applies to the types the walk *does* see.
     #[test]
     fn test_every_walk_terminator_is_an_expected_one() {
         let graph = TypeGraph::build(&crate_src_root());
-        let unexpected: Vec<String> = graph
-            .unresolved_from("MindMap")
+        let unexpected: Vec<String> = format_terminators(&graph)
             .into_iter()
             .filter(|name| !EXPECTED_TERMINATORS.contains(&name.as_str()))
             .collect();
@@ -2196,141 +2385,379 @@ mod tests {
             "the reachability walk stops at {} name(s) nobody has vetted. Each is \
              either a primitive (add it to EXPECTED_TERMINATORS) or a type that is \
              part of the on-disk contract and is silently missing from the \
-             unknown-key coverage — the case `AppFont` is on the list for:\n  {}",
+             strictness coverage:\n  {}",
             unexpected.len(),
             unexpected.join("\n  ")
         );
     }
 
-    /// The allowlist itself must not rot: an entry for a name the
-    /// walk no longer reaches is a claim about the model that stopped
-    /// being true, and it would keep covering for a *different* name
-    /// that happened to reappear later.
+    /// The allowlist itself must not rot: an entry for a name the walk
+    /// no longer reaches is a claim about the format that stopped being
+    /// true, and it would keep covering for a *different* name that
+    /// happened to reappear later.
     #[test]
     fn test_no_expected_terminator_is_stale() {
         let graph = TypeGraph::build(&crate_src_root());
-        let actual = graph.unresolved_from("MindMap");
+        let actual = format_terminators(&graph);
         let stale: Vec<&&str> = EXPECTED_TERMINATORS
             .iter()
             .filter(|name| !actual.contains(**name))
             .collect();
         assert!(
             stale.is_empty(),
-            "EXPECTED_TERMINATORS lists name(s) the walk from MindMap no longer \
-             stops at — delete them: {stale:?}"
+            "EXPECTED_TERMINATORS lists name(s) the walk from the format's roots no \
+             longer stops at — delete them: {stale:?}"
         );
     }
 
-    /// The two unindexed document files cost the `MindMap` walk
-    /// nothing: nothing it reaches is declared under `src/document/`,
-    /// and where a name collides the index holds the model's — an index
-    /// that took the document's `NodeStyle` would walk the wrong type
-    /// silently. The exclusion is exactly those two files: `DocElement`
-    /// (in `element.rs`) is not indexed, and `Document` (in `ids.rs`)
-    /// and `ShapeError` (in `shape.rs`) are.
+    /// The format's types live in one module: every type a load can
+    /// reach is declared under `document/format/`, so a name another
+    /// module declares can never be the one the walk resolves — the
+    /// format's types carry a `Dto` suffix for exactly that reason.
     #[test]
-    fn test_the_mindmap_model_is_walked_without_the_document() {
+    fn test_the_format_is_walked_inside_its_own_module() {
         let graph = TypeGraph::build(&crate_src_root());
-        assert!(graph.get("MindMap").is_some(), "the model is indexed");
-        assert!(graph.get("DocElement").is_none(), "element.rs is not");
-        for indexed in ["Document", "ShapeError"] {
-            assert!(
-                graph
-                    .get(indexed)
-                    .is_some_and(|info| info.file.starts_with(crate_src_root().join("document"))),
-                "the rest of document/ is indexed: {indexed}"
-            );
+        let format = crate_src_root().join("document").join("format");
+        for root in FORMAT_ROOTS {
+            assert!(graph.get(root).is_some(), "{root} is indexed");
+            for reached in graph.reachable_from(root) {
+                assert!(
+                    reached.file.starts_with(&format),
+                    "{} is reached from {root} and declared outside the format: {}",
+                    reached.name,
+                    reached.file.display()
+                );
+            }
         }
-        let document = crate_src_root().join("document");
-        for reached in graph.reachable_from("MindMap") {
-            assert!(
-                !reached.file.starts_with(&document),
-                "{} is reached from MindMap and declared in the document",
-                reached.name
-            );
-        }
-        let node_style = graph.get("NodeStyle").expect("the model's NodeStyle is indexed");
-        assert!(
-            node_style.file.ends_with("mindmap/model/node.rs"),
-            "the index holds the model's NodeStyle, not the document's: {}",
-            node_style.file.display()
-        );
     }
 
-    /// The walk is only as good as its index: a name declared twice
-    /// would make "which `Position`?" unanswerable, and the coverage
-    /// assertion built on top would be checking an arbitrary one.
+    /// The walk is only as good as its index: a path declared twice
+    /// would make "which `Position`?" unanswerable, and so would a
+    /// mention of a name two modules declare that the scope it is
+    /// written in does not settle — the coverage assertion built on
+    /// top would be checking an arbitrary one.
     #[test]
     fn test_type_graph_has_no_ambiguous_names() {
         let graph = TypeGraph::build(&crate_src_root());
         assert!(
             graph.duplicate_names().is_empty(),
-            "type names declared more than once — the reachability walk \
-             resolves by bare name and cannot tell them apart: {:?}",
+            "paths declared more than once — no scope can tell them apart: {:?}",
             graph.duplicate_names()
+        );
+        let ambiguous = graph.ambiguous_mentions();
+        assert!(
+            ambiguous.is_empty(),
+            "names more than one module declares, mentioned where the scope does not \
+             say which — import the one meant, or write its path:\n  {}",
+            ambiguous.join("\n  ")
         );
     }
 
-    /// A spot check that the walk actually descends rather than
-    /// returning its root: `MindMap` must reach a type three field
-    /// hops away (`MindMap` → `MindNode` → `MindSection` →
-    /// `TextRun`).
+    /// **Every serialized document type is in the index, under its
+    /// path** — the two files the bare-name index had to leave out
+    /// (`document/element.rs` and `document/values.rs`) included, and
+    /// each name they share with another module (`Anchor`, `Rgba`,
+    /// `Direction`, `Edge`) held apart from its namesake.
+    ///
+    /// The list is read off the sources here, independently of the
+    /// index: every struct and enum under `document/` whose derive list
+    /// names `Serialize` or `Deserialize`.
     #[test]
-    fn test_reachable_from_follows_nested_fields() {
-        let graph = TypeGraph::build(&crate_src_root());
-        let reached: Vec<&str> = graph
-            .reachable_from("MindMap")
-            .iter()
-            .map(|info| info.name.as_str())
-            .collect();
-        for expected in ["MindMap", "MindNode", "MindSection", "TextRun"] {
+    fn test_every_serialized_document_type_is_indexed_under_its_path() {
+        let root = crate_src_root();
+        let graph = TypeGraph::build(&root);
+        let mut files = Vec::new();
+        collect_source_files(&root.join("document"), &mut files);
+        let test_only = test_gated_module_files(&files);
+        files.retain(|file| !test_only.contains(file));
+        let mut checked = Vec::new();
+        for file in &files {
+            let text = std::fs::read_to_string(file).expect("readable");
+            let parsed = syn::parse_file(&text).expect("parses");
+            let module = module_of_file(&root, file);
+            for item in &parsed.items {
+                let (ident, attrs) = match item {
+                    Item::Struct(item) => (&item.ident, &item.attrs),
+                    Item::Enum(item) => (&item.ident, &item.attrs),
+                    _ => continue,
+                };
+                let serialized = attrs
+                    .iter()
+                    .filter(|attr| attr.path().is_ident("derive"))
+                    .any(|attr| {
+                        let derives = attribute_source(attr);
+                        derives.contains("Serialize") || derives.contains("Deserialize")
+                    });
+                if !serialized {
+                    continue;
+                }
+                let path = join_path(&module, &ident.to_string());
+                let info = graph
+                    .get(&path)
+                    .unwrap_or_else(|| panic!("{path} ({}) is serialized and not indexed", file.display()));
+                assert_eq!(&info.file, file, "{path} is indexed from its own file");
+                checked.push(path);
+            }
+        }
+        for expected in [
+            "document::values::Anchor",
+            "document::values::Rgba",
+            "document::values::Direction",
+            "document::values::Edge",
+            "document::element::DocKind",
+            "document::inspect::DocField",
+            "document::format::dto::NodeDto",
+        ] {
             assert!(
-                reached.contains(&expected),
-                "{expected} must be reachable from MindMap"
+                checked.iter().any(|path| path == expected),
+                "control: {expected} is one of the serialized document types checked: {checked:?}"
+            );
+        }
+        for (document, namesake) in [
+            ("document::values::Anchor", "core::primitives::Anchor"),
+            ("document::values::Rgba", "util::color::Rgba"),
+        ] {
+            let ours = graph.get(document).expect("indexed");
+            let theirs = graph.get(namesake).expect("the namesake is indexed too");
+            assert_ne!(
+                ours.file, theirs.file,
+                "{document} and {namesake} are two entries"
             );
         }
     }
 
-    /// `#[serde(from = "...")]` moves the on-disk shape onto the
-    /// proxy, so the walk has to follow it — `CustomMutationIn` is
-    /// named only in that attribute, never as a field type.
+    /// A document type that mentions a shared name reaches **its own
+    /// module's** item: `PathData`'s anchors are the document's
+    /// `Anchor` and `ThemeVariant`'s values the document's `Rgba`,
+    /// imported by `document/element.rs`, never `core::primitives`'
+    /// `Anchor` or `util::color`'s alias.
     #[test]
-    fn test_reachable_from_follows_a_serde_proxy() {
+    fn test_a_shared_name_resolves_to_the_item_its_module_imports() {
         let graph = TypeGraph::build(&crate_src_root());
-        let reached: Vec<&str> = graph
-            .reachable_from("MindMap")
-            .iter()
-            .map(|info| info.name.as_str())
-            .collect();
+        for (root, meant, namesake) in [
+            (
+                "document::element::PathData",
+                "document::values::Anchor",
+                "core::primitives::Anchor",
+            ),
+            (
+                "document::element::ThemeVariant",
+                "document::values::Rgba",
+                "util::color::Rgba",
+            ),
+        ] {
+            let reached: Vec<&str> = graph
+                .reachable_from(root)
+                .iter()
+                .map(|info| info.path.as_str())
+                .collect();
+            assert!(reached.contains(&meant), "{root} reaches {meant}: {reached:?}");
+            assert!(
+                !reached.contains(&namesake),
+                "{root} does not reach {namesake}: {reached:?}"
+            );
+        }
+    }
+
+    /// The resolver over every shape a scope can settle a shared name
+    /// with — an import, an explicit path, a glob, a rename, a
+    /// re-export — and the one it cannot: a bare mention with neither
+    /// an import nor a path, which is reported, not guessed. And a
+    /// generic argument means what it meant **where it was written**:
+    /// `Holder<Anchor>` written under `a`'s import binds `T` to `a`'s
+    /// `Anchor`, though `Holder`'s own module imports `b`'s.
+    #[test]
+    fn test_a_shared_name_is_resolved_by_the_scope_it_is_written_in() {
+        let graph = graph_of(
+            r#"
+            mod a { pub struct Anchor { pub x: u8 } }
+            mod b { pub struct Anchor { pub y: u8 } }
+            mod reexport { pub use super::b::Anchor; }
+            mod c {
+                use super::a::Anchor;
+                pub struct Imported { pub anchor: Anchor }
+                pub struct Qualified { pub anchor: super::b::Anchor }
+                pub struct Rooted { pub anchor: crate::planted::b::Anchor }
+                pub struct Uses { pub held: super::h::Holder<Anchor> }
+            }
+            mod e {
+                use super::b::*;
+                pub struct Globbed { pub anchor: Anchor }
+            }
+            mod f {
+                use super::a::Anchor as Pin;
+                pub struct Renamed { pub anchor: Pin }
+            }
+            mod g {
+                use super::reexport::Anchor;
+                pub struct Reexported { pub anchor: Anchor }
+            }
+            mod h {
+                use super::b::Anchor;
+                pub struct Holder<T> { pub inner: T, pub own: Anchor }
+            }
+            mod d {
+                pub struct Unsettled { pub anchor: Anchor }
+                pub struct UnsettledArgument { pub held: super::h::Holder<Anchor> }
+            }
+            "#,
+        );
+        let reaches = |root: &str| -> Vec<String> {
+            graph
+                .reachable_from(root)
+                .iter()
+                .map(|info| info.path.clone())
+                .collect()
+        };
+        let a = "planted::a::Anchor".to_string();
+        let b = "planted::b::Anchor".to_string();
+        for (root, meant) in [
+            ("planted::c::Imported", &a),
+            ("planted::c::Qualified", &b),
+            ("planted::c::Rooted", &b),
+            ("planted::e::Globbed", &b),
+            ("planted::f::Renamed", &a),
+            ("planted::g::Reexported", &b),
+        ] {
+            let reached = reaches(root);
+            let other = if meant == &a { &b } else { &a };
+            assert!(reached.contains(meant), "{root} reaches {meant}: {reached:?}");
+            assert!(
+                !reached.contains(other),
+                "{root} does not reach {other}: {reached:?}"
+            );
+        }
+        let uses = reaches("planted::c::Uses");
         assert!(
-            reached.contains(&"CustomMutationIn"),
-            "the deserialize proxy behind CustomMutation must be reachable"
+            uses.contains(&a) && uses.contains(&b),
+            "`T` is bound to `a`'s Anchor where it was written, and the holder's own field \
+             is `b`'s: {uses:?}"
+        );
+        let mut ambiguous = graph.ambiguous_mentions();
+        ambiguous.sort();
+        assert_eq!(
+            ambiguous.len(),
+            2,
+            "control: only the two mentions no scope settles are reported — a field's, and a \
+             generic argument's: {ambiguous:?}"
+        );
+        assert!(
+            ambiguous[0].starts_with("Anchor in planted::d::Unsettled "),
+            "{ambiguous:?}"
+        );
+        assert!(
+            ambiguous[1].starts_with("Anchor in planted::d::UnsettledArgument "),
+            "{ambiguous:?}"
+        );
+        assert!(
+            graph.unresolved_from("planted::d::Unsettled").contains("Anchor"),
+            "an unsettled name is a terminator, not a guess"
+        );
+        let asked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            graph.get("Anchor").map(|info| info.path.clone())
+        }));
+        assert!(
+            asked.is_err(),
+            "a bare name two modules declare has no one answer"
         );
     }
 
-    /// The write graph is not the read graph. `CustomMutation`'s keys
-    /// are written by `CustomMutationOut` via
-    /// `#[serde(into = "...")]`, a type no deserializer ever sees —
-    /// so `reachable_from` must not reach it while
-    /// `omit_predicates_from` must. `String::is_empty` appears on
-    /// exactly one field in the whole crate, `CustomMutationOut`'s,
-    /// which makes it the witness.
+    /// A path the scope imports from another crate is not ours, though
+    /// an indexed item carries its last name: `serde_json::Value` is
+    /// not the planted `Value`.
     #[test]
-    fn test_omit_predicates_follow_the_serialize_proxy() {
+    fn test_a_foreign_import_never_resolves_to_a_namesake() {
+        let graph = graph_of(
+            r#"
+            pub struct Value { pub inner: u8 }
+            mod uses {
+                use serde_json::Value;
+                pub struct Imported { pub value: Value }
+                pub struct Qualified { pub value: serde_json::Value }
+                pub struct Local { pub value: super::Value }
+            }
+            "#,
+        );
+        for root in ["planted::uses::Imported", "planted::uses::Qualified"] {
+            let reached: Vec<&str> = graph
+                .reachable_from(root)
+                .iter()
+                .map(|info| info.path.as_str())
+                .collect();
+            assert!(!reached.contains(&"planted::Value"), "{root}: {reached:?}");
+            assert!(
+                graph.unresolved_from(root).contains("Value"),
+                "{root} stops at the foreign Value"
+            );
+        }
+        let local: Vec<&str> = graph
+            .reachable_from("planted::uses::Local")
+            .iter()
+            .map(|info| info.path.as_str())
+            .collect();
+        assert!(
+            local.contains(&"planted::Value"),
+            "control: the crate's own Value: {local:?}"
+        );
+    }
+
+    /// A spot check that the walk actually descends rather than
+    /// returning its root: `NodeDto` must reach a type two field hops
+    /// away (`NodeDto` → `SectionDto` → `SpanDto`), and the header its
+    /// theme.
+    #[test]
+    fn test_reachable_from_follows_nested_fields() {
         let graph = TypeGraph::build(&crate_src_root());
-        let read_side: Vec<&str> = graph
-            .reachable_from("MindMap")
+        for (root, expected) in [
+            ("NodeDto", ["NodeDto", "SectionDto", "SpanDto"]),
+            ("MapHeaderDto", ["MapHeaderDto", "ThemeDto", "DefaultsDto"]),
+        ] {
+            let reached: Vec<&str> = graph
+                .reachable_from(root)
+                .iter()
+                .map(|info| info.name.as_str())
+                .collect();
+            for name in expected {
+                assert!(reached.contains(&name), "{name} must be reachable from {root}");
+            }
+        }
+    }
+
+    /// `#[serde(from = "...")]` moves the on-disk shape onto the proxy,
+    /// so the walk has to follow it — the proxy is named only in that
+    /// attribute, never as a field type. Planted, because the format
+    /// reads through no proxy today; the control is the same root with
+    /// the attribute taken off, which reaches neither.
+    #[test]
+    fn test_reachable_from_follows_a_serde_proxy() {
+        let with_proxy = graph_of(
+            "#[derive(serde::Deserialize)]\n#[serde(from = \"WireIn\")]\npub struct Model { pub a: u8 }\n\
+             #[derive(serde::Deserialize)]\npub struct WireIn { pub inner: Inner }\n\
+             #[derive(serde::Deserialize)]\npub struct Inner { pub b: u8 }\n",
+        );
+        let reached: Vec<&str> = with_proxy
+            .reachable_from("Model")
             .iter()
             .map(|info| info.name.as_str())
             .collect();
         assert!(
-            !read_side.contains(&"CustomMutationOut"),
-            "a serialize-only proxy must stay out of the load-path coverage set"
+            reached.contains(&"WireIn") && reached.contains(&"Inner"),
+            "the deserialize proxy and what it holds must be reachable: {reached:?}"
         );
-        assert!(
-            graph.omit_predicates_from("MindMap").contains("String::is_empty"),
-            "the write walk must reach CustomMutationOut and see its \
-             skip_serializing_if predicates"
+        let without = graph_of(
+            "#[derive(serde::Deserialize)]\npub struct Model { pub a: u8 }\n\
+             #[derive(serde::Deserialize)]\npub struct WireIn { pub inner: Inner }\n\
+             #[derive(serde::Deserialize)]\npub struct Inner { pub b: u8 }\n",
+        );
+        let reached: Vec<&str> = without
+            .reachable_from("Model")
+            .iter()
+            .map(|info| info.name.as_str())
+            .collect();
+        assert_eq!(
+            reached,
+            vec!["Model"],
+            "control: with no proxy, nothing else is reached"
         );
     }
 
@@ -2403,8 +2830,8 @@ mod tests {
     /// none of them.
     ///
     /// That is not a cosmetic gap in a source walker. The guard this
-    /// feeds — `loader::tests::test_no_loadable_type_can_swallow_an_
-    /// unknown_key` — asks "does any loadable type carry
+    /// feeds — `format_strict_tests::test_every_type_the_format_reads_denies_unknown_fields`
+    /// — asks "does any loadable type carry
     /// `deny_unknown_fields`?", and an unread attribute answers *no*.
     /// A `#[serde(rename_all(deserialize = "camelCase"),
     /// deny_unknown_fields)]` on any model struct would therefore
@@ -2456,12 +2883,11 @@ mod tests {
         );
     }
 
-    /// The same shape on a *field* attribute, where all three of the
+    /// The same shape on a *field* attribute, where both of the
     /// remaining readers live. A field-level `bound(...)` hides a
-    /// later `flatten`, `skip`, or `skip_serializing_if` exactly the
-    /// way a container-level `rename_all(...)` hides a later
-    /// `deny_unknown_fields`, and each of those three silently
-    /// widens what the guards above believe is safe.
+    /// later `flatten` or `skip` exactly the way a container-level
+    /// `rename_all(...)` hides a later `deny_unknown_fields`, and each
+    /// of those silently widens what the guards above believe is safe.
     #[test]
     fn test_a_field_serde_flag_after_a_list_form_option_is_still_read() {
         let flattening =
@@ -2480,16 +2906,6 @@ mod tests {
             referenced_types(&skipping.fields).is_empty(),
             "a `skip` written after a list-form option must be read — missing it walks \
              into a type no deserializer can reach and holds it to the load-path rules"
-        );
-
-        let omitting = parse_struct(
-            r#"struct S { #[serde(bound(deserialize = "T: Sized"), skip_serializing_if = "Option::is_none")] a: Option<f64> }"#,
-        );
-        assert_eq!(
-            omit_predicates(&omitting.fields),
-            vec!["Option::is_none".to_string()],
-            "a `skip_serializing_if` written after a list-form option must be read — \
-             missing it lets a new omission reason bypass OMITTABLE_WHEN"
         );
     }
 
@@ -2530,7 +2946,7 @@ mod tests {
 
     /// And the report has to be *watched*, over the whole index
     /// rather than the part of it that happens to be reachable from
-    /// `MindMap` today — a reader gap should go red the run it
+    /// the format's roots today — a reader gap should go red the run it
     /// appears, not the later run where a type carrying it joins the
     /// load graph.
     #[test]
@@ -2611,114 +3027,6 @@ mod tests {
         );
     }
 
-    /// The derived array list is **published in a spec authors
-    /// read**, so the names in it have to be the names the file uses,
-    /// not the identifiers the model happens to spell them with —
-    /// `MindEdge::edge_type` is written `"type"`. And a field serde
-    /// never populates is not a place a route can cross, so it has no
-    /// business on the list either.
-    ///
-    /// Neither is exercised by the model today: nothing renames a
-    /// sequence field and nothing skips one. That is precisely why
-    /// they are planted here — an unexercised branch of a *published*
-    /// derivation is a wrong doc waiting for the first field that
-    /// uses it.
-    #[test]
-    fn test_the_published_member_name_is_the_one_the_file_uses() {
-        let graph = graph_of(
-            "#[derive(Deserialize)] pub struct Root { \
-               #[serde(rename = \"points\")] pub control: Vec<Leaf>, \
-               #[serde(skip)] pub hidden: Vec<Leaf> }\n\
-             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
-        );
-        let names = graph.key_bearing_sequences_from("Root");
-        assert!(
-            names.contains("points"),
-            "a renamed field must be published under the name the file carries: {names:?}"
-        );
-        assert!(
-            !names.contains("control"),
-            "and not under the identifier, which appears in no document: {names:?}"
-        );
-        assert!(
-            !names.contains("hidden"),
-            "a `#[serde(skip)]` field never receives on-disk data, so no captured \
-             route crosses it: {names:?}"
-        );
-    }
-
-    /// **`rename = "…"` is one of four spellings, and reading only
-    /// that one publishes the identifier for the other three.**
-    ///
-    /// Each case below is legal, compiling serde that the file
-    /// spells differently from the model:
-    ///
-    /// - the list form of `rename`, whose `deserialize` arm is the
-    ///   name a captured route is recorded against — a
-    ///   `serialize`-only arm deliberately changes nothing here,
-    ///   since it is not what the load reads;
-    /// - a container `rename_all`, which renames every field that did
-    ///   not rename itself;
-    /// - `alias`, which does not replace a name but *adds* one, so a
-    ///   route can cross either spelling and the list has to carry
-    ///   both.
-    #[test]
-    fn test_every_spelling_of_rename_reaches_the_published_member_name() {
-        let listed = graph_of(
-            "#[derive(Deserialize)] pub struct Root { \
-               #[serde(rename(serialize = \"pts\", deserialize = \"points\"))] \
-               pub control: Vec<Leaf> }\n\
-             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
-        );
-        let names = listed.key_bearing_sequences_from("Root");
-        assert!(
-            names.contains("points") && !names.contains("control"),
-            "the `deserialize` arm of a list-form rename is the name the load reads: \
-             {names:?}"
-        );
-
-        let serialize_only = graph_of(
-            "#[derive(Deserialize)] pub struct Root { \
-               #[serde(rename(serialize = \"pts\"))] pub control: Vec<Leaf> }\n\
-             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
-        );
-        let names = serialize_only.key_bearing_sequences_from("Root");
-        assert!(
-            names.contains("control") && !names.contains("pts"),
-            "a rename that only names the write side leaves the read name alone, and \
-             the read name is the one a captured route carries: {names:?}"
-        );
-
-        let all = graph_of(
-            "#[derive(Deserialize)] #[serde(rename_all = \"camelCase\")] \
-             pub struct Root { pub control_points: Vec<Leaf>, \
-               #[serde(rename = \"kept\")] pub own_name: Vec<Leaf> }\n\
-             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
-        );
-        let names = all.key_bearing_sequences_from("Root");
-        assert!(
-            names.contains("controlPoints"),
-            "a container `rename_all` renames every field that did not rename itself: \
-             {names:?}"
-        );
-        assert!(
-            names.contains("kept"),
-            "and a field's own rename wins over it: {names:?}"
-        );
-
-        let aliased = graph_of(
-            "#[derive(Deserialize)] pub struct Root { \
-               #[serde(alias = \"pts\")] pub control: Vec<Leaf> }\n\
-             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
-        );
-        let names = aliased.key_bearing_sequences_from("Root");
-        assert!(
-            names.contains("control") && names.contains("pts"),
-            "an alias adds a spelling rather than replacing one, so a file may write \
-             either and a route may cross either: {names:?}"
-        );
-    }
-
     /// A `rename_all` spelling the walk does not know stops the run
     /// rather than answering "no rename".
     ///
@@ -2735,99 +3043,6 @@ mod tests {
             "#[derive(Deserialize)] #[serde(rename_all = \"SpongeCase\")] \
              pub struct Planted { pub control_points: Vec<Leaf> }\n\
              #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
-        );
-    }
-
-    /// **The three shapes that were arrays and were not published,
-    /// and the two that look like arrays and are not.**
-    ///
-    /// A `Vec` behind a `type` alias and a `BTreeSet` are arrays a
-    /// token match for `Vec` cannot see; the second of those was live
-    /// in this crate (`ColorFontRegions::regions`) while
-    /// `format/legacy-schema.md` said the list was derived from the model.
-    /// A newtype variant's payload is the third: it has no field name,
-    /// so the walk skipped it, and its JSON member is the variant's
-    /// name.
-    ///
-    /// The controls matter as much. A tuple variant and a
-    /// fixed-arity array are arrays on disk too — a route does cross
-    /// their indexes — but no edit can change their length, so they
-    /// are not places a route can be *moved*, and publishing them
-    /// would tell a reader to worry about something that cannot
-    /// happen.
-    ///
-    /// `borrowed` is the one growable array that no *name* can catch.
-    /// `Cow` is a transparent wrapper, so the walk unwraps it and
-    /// lands on the slice `[Leaf]` — a `syn::Type::Slice`, not a path
-    /// with an identifier to match — and a list of container
-    /// spellings has nowhere to put it. It sits beside `fixed`
-    /// deliberately: the two look alike in source and only one of
-    /// them has a length the document decides.
-    #[test]
-    fn test_a_sequence_is_what_serde_writes_as_an_array_not_what_spells_vec() {
-        let graph = graph_of(
-            "pub type Leaves = Vec<Leaf>;\n\
-             #[derive(Deserialize)] pub struct Root<'a> { \
-               pub aliased: Leaves, \
-               pub ordered: BTreeSet<Leaf>, \
-               pub queued: VecDeque<Leaf>, \
-               pub optional: Option<Vec<Leaf>>, \
-               pub borrowed: Cow<'a, [Leaf]>, \
-               pub keyed: HashMap<String, Leaf>, \
-               pub fixed: [Leaf; 2], \
-               pub payload: Payload }\n\
-             #[derive(Deserialize)] pub enum Payload { \
-               Literal(Vec<Leaf>), Pair(f64, Leaf) }\n\
-             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
-        );
-        let names = graph.key_bearing_sequences_from("Root");
-        for array in ["aliased", "ordered", "queued", "optional", "borrowed", "Literal"] {
-            assert!(
-                names.contains(array),
-                "`{array}` is written as an array whose length an edit can change, so a \
-                 captured key's route through it is positional: {names:?}"
-            );
-        }
-        for not_an_array in ["keyed", "fixed", "Pair", "payload"] {
-            assert!(
-                !names.contains(not_an_array),
-                "`{not_an_array}` is not an array a route can be moved inside — a keyed \
-                 object, or a shape whose arity the format fixes: {names:?}"
-            );
-        }
-        assert!(
-            graph.unnamed_sequences_from("Root").is_empty(),
-            "and nothing here is an array with no member name: {:?}",
-            graph.unnamed_sequences_from("Root")
-        );
-    }
-
-    /// An array at a place with **no** JSON member name is reported,
-    /// not dropped.
-    ///
-    /// Position 0 of a tuple variant is an array a captured route
-    /// crosses and that `format/legacy-schema.md`'s one-name-per-line block
-    /// has no way to name. Reporting it hands a reader a decision
-    /// about what the document should say; dropping it would leave a
-    /// positional route nothing warns anybody about, which is the
-    /// same silence [`TypeGraph::unresolved_from`] exists to break.
-    #[test]
-    fn test_an_array_with_no_member_name_is_reported_rather_than_dropped() {
-        let graph = graph_of(
-            "#[derive(Deserialize)] pub struct Root { pub payload: Payload }\n\
-             #[derive(Deserialize)] pub enum Payload { Both(Vec<Leaf>, f64) }\n\
-             #[derive(Deserialize)] pub struct Leaf { pub x: f64 }\n",
-        );
-        let unnamed = graph.unnamed_sequences_from("Root");
-        assert_eq!(
-            unnamed.len(),
-            1,
-            "the tuple variant's first position is an array nothing names: {unnamed:?}"
-        );
-        assert!(
-            graph.key_bearing_sequences_from("Root").is_empty(),
-            "and it must not be published under a name it does not have: {:?}",
-            graph.key_bearing_sequences_from("Root")
         );
     }
 
@@ -2879,12 +3094,6 @@ mod tests {
                 "a bound parameter is not a terminator: {unresolved:?}"
             );
         }
-        let arrays = graph.key_bearing_sequences_from("Holder");
-        assert!(
-            arrays.contains("list") && arrays.contains("probe"),
-            "both arrays hold what their parameter was bound to: {arrays:?}"
-        );
-
         let unimplemented = graph_of(SOURCE).unresolved_from("Holder");
         assert!(
             unimplemented.contains("E") && unimplemented.contains("Field"),
@@ -2892,103 +3101,12 @@ mod tests {
         );
     }
 
-    /// **The scan and the compiler, over the same declarations.**
-    ///
-    /// Every other test here asserts the walk against a name written
-    /// by hand, which proves the walk does what its author believed
-    /// and nothing about whether the belief matches serde. Here the
-    /// planted source is a *copy* of types the test module really
-    /// declares, so the answer it is held to comes out of
-    /// `serde_derive`'s own expansion — the two derivations share no
-    /// code, and the shapes chosen are the ones each derivation gets
-    /// wrong differently.
-    ///
-    /// The copy is deliberate and is the point: if the text and the
-    /// types drift apart the two answers stop matching and this
-    /// fails, which is exactly the alarm a `format/legacy-schema.md` that
-    /// has drifted from the model should raise.
-    #[test]
-    fn test_the_scan_and_the_derived_impls_agree_on_a_planted_shape() {
-        use crate::util::serde_probe::derived_shape;
-
-        /// Kept identical to `SOURCE` below.
-        #[derive(serde::Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Planted {
-            #[allow(dead_code)]
-            control_points: PlantedLeaves,
-            #[serde(rename(deserialize = "points"))]
-            #[allow(dead_code)]
-            spare: std::collections::BTreeSet<PlantedLeaf>,
-            #[allow(dead_code)]
-            payload: PlantedPayload,
-            #[allow(dead_code)]
-            opaque: Vec<f64>,
-        }
-
-        /// Kept identical to `SOURCE` below.
-        type PlantedLeaves = Vec<PlantedLeaf>;
-
-        /// Kept identical to `SOURCE` below.
-        #[derive(serde::Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-        struct PlantedLeaf {
-            #[allow(dead_code)]
-            x: i64,
-        }
-
-        /// Kept identical to `SOURCE` below.
-        #[derive(serde::Deserialize)]
-        enum PlantedPayload {
-            #[allow(dead_code)]
-            Literal(Vec<PlantedLeaf>),
-            #[allow(dead_code)]
-            Bare,
-        }
-
-        /// The declarations above, as text for the source walk.
-        const SOURCE: &str = "\
-pub type PlantedLeaves = Vec<PlantedLeaf>;
-#[derive(Deserialize)]
-#[serde(rename_all = \"camelCase\")]
-pub struct Planted {
-    pub control_points: PlantedLeaves,
-    #[serde(rename(deserialize = \"points\"))]
-    pub spare: BTreeSet<PlantedLeaf>,
-    pub payload: PlantedPayload,
-    pub opaque: Vec<f64>,
-}
-#[derive(Deserialize)]
-pub enum PlantedPayload {
-    Literal(Vec<PlantedLeaf>),
-    Bare,
-}
-#[derive(Deserialize)]
-pub struct PlantedLeaf {
-    pub x: i64,
-}
-";
-
-        let scanned = graph_of(SOURCE).key_bearing_sequences_from("Planted");
-        let derived = derived_shape::<Planted>().key_bearing_sequences();
-        assert_eq!(
-            scanned, derived,
-            "the source walk and the generated `Deserialize` impls must name the same \
-             arrays. They are two readings of one declaration, and the whole reason the \
-             published list can be trusted is that they have to agree"
-        );
-        assert!(
-            scanned.contains("controlPoints") && scanned.contains("points") && scanned.contains("Literal"),
-            "and the agreement has to be about something — a renamed alias, a renamed \
-             set, and a variant payload are the three the old walk got wrong: {scanned:?}"
-        );
-    }
-
     /// **Sixteen rule × direction paths, none of which the model
     /// exercises.**
     ///
     /// `RenameRule` is a *published* derivation: what it says a field
-    /// or a variant is called is what `format/legacy-schema.md` prints and
-    /// what `expand_route` is driven over. Nothing in this crate
+    /// or a variant is called is what the strictness gates read, and
+    /// what the old model's `expand_route` (gone) was driven over. Nothing in this crate
     /// carries a `rename_all` today, so replacing
     /// `apply_to_variant`'s body with `format!("MUTANT_{ident}")`
     /// left all 1354 tests green, as did seven of the eight
@@ -3204,8 +3322,9 @@ pub struct PlantedLeaf {
     /// `FIELDS` list it hands `deserialize_struct` and a variant's
     /// into `VARIANTS`, so the compiler already publishes them; a
     /// file may write any of them, and a captured route is recorded
-    /// against whichever it wrote. `key_bearing_sequences_from` said
-    /// so from the start. `member_names_from` dropped them and the
+    /// against whichever it wrote. The array walk this module had
+    /// before V1-C3 said so from the start. `member_names_from` dropped
+    /// them and the
     /// variant reader discarded them, which made one walk answer
     /// "alias is a name" and two answer "alias is nothing" — and it
     /// put the variant surface in *direct* conflict with the probe,
@@ -3272,21 +3391,6 @@ pub struct AliasLeaf {
         let graph = graph_of(SOURCE);
         let derived = derived_shape::<AliasRoot>();
 
-        let arrays = graph.key_bearing_sequences_from("AliasRoot");
-        assert_eq!(
-            arrays,
-            derived.key_bearing_sequences(),
-            "both derivations publish every spelling an array can be reached under: \
-             {arrays:?}"
-        );
-        for spelling in ["control_points", "waypoints", "Literal", "lit"] {
-            assert!(
-                arrays.contains(spelling),
-                "and the agreement has to be about something — a field alias and a \
-                 variant alias are the two the surfaces disagreed on: {arrays:?}"
-            );
-        }
-
         let members = graph.member_names_from("AliasRoot");
         assert_eq!(
             members.get("AliasRoot"),
@@ -3294,6 +3398,14 @@ pub struct AliasLeaf {
             "the member-name surface carries the field's alias too, which is what the \
              derive's `FIELDS` list says"
         );
+        let names = members.get("AliasRoot").expect("the root is walked");
+        for spelling in ["control_points", "waypoints"] {
+            assert!(
+                names.contains(spelling),
+                "and the agreement has to be about something — the field and its alias are \
+                 the spellings the surfaces disagreed on: {names:?}"
+            );
+        }
 
         let variants = graph.get("AliasPayload").map(|info| info.variants.as_slice());
         assert_eq!(
@@ -3305,8 +3417,7 @@ pub struct AliasLeaf {
         assert_eq!(
             variants,
             Some(["Literal".to_string(), "lit".to_string(), "Bare".to_string()].as_slice()),
-            "which is not the same as sorting the whole list, and is what \
-             `mindmap::unknown_keys::expand_route` is driven over"
+            "which is not the same as sorting the whole list"
         );
     }
 
@@ -3384,9 +3495,9 @@ pub struct HiddenLeaf {
 
     /// **"Reachable from X" and "only reachable through X" are
     /// different questions, and only the second one is worth
-    /// asking.** `loader`'s
-    /// `test_every_variant_bearing_enum_sits_inside_a_skippable_construct`
-    /// asks whether every enum a load can meet sits inside something
+    /// asking.** The old loader's
+    /// `test_every_variant_bearing_enum_sits_inside_a_skippable_construct` (gone)
+    /// asked whether every enum a load can meet sits inside something
     /// the loader can excise; a type used in *both* a skippable and
     /// an unskippable position answers the weaker question yes and
     /// the real one no, and the unskippable use is the one that kills

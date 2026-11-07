@@ -96,14 +96,7 @@ fn test_default_config_resolves_every_documented_binding() {
     let cases: &[BindingCase] = &[
         // Document context (the bare-context resolver).
         (None, "z", true, false, false, Action::Undo),
-        (None, "p", true, false, false, Action::EnterReparentMode),
-        (None, "d", true, false, false, Action::EnterConnectMode),
-        (None, "delete", false, false, false, Action::DeleteSelection),
         (None, "escape", false, false, false, Action::ExitMode),
-        (None, "n", true, false, false, Action::CreateOrphanNode),
-        (None, "o", true, false, false, Action::OrphanSelection),
-        (None, "enter", false, false, false, Action::EditSelection),
-        (None, "backspace", false, false, false, Action::EditSelectionClean),
         (None, "undo", false, false, false, Action::Undo), // bare alias
         // Console.
         (
@@ -187,80 +180,8 @@ fn test_default_config_resolves_every_documented_binding() {
             Action::ConsoleInsertSpace,
         ),
         // ColorPicker.
-        (
-            Some(InputContext::ColorPicker),
-            "escape",
-            false,
-            false,
-            false,
-            Action::PickerCancel,
-        ),
-        (
-            Some(InputContext::ColorPicker),
-            "enter",
-            false,
-            false,
-            false,
-            Action::PickerCommit,
-        ),
-        (
-            Some(InputContext::ColorPicker),
-            "h",
-            false,
-            false,
-            false,
-            Action::PickerNudgeHueDown,
-        ),
-        (
-            Some(InputContext::ColorPicker),
-            "h",
-            false,
-            true,
-            false,
-            Action::PickerNudgeHueUp,
-        ),
-        (
-            Some(InputContext::ColorPicker),
-            "s",
-            false,
-            false,
-            false,
-            Action::PickerNudgeSatDown,
-        ),
-        (
-            Some(InputContext::ColorPicker),
-            "v",
-            false,
-            false,
-            false,
-            Action::PickerNudgeValDown,
-        ),
         // LabelEdit.
-        (
-            Some(InputContext::LabelEdit),
-            "escape",
-            false,
-            false,
-            false,
-            Action::LabelEditCancel,
-        ),
-        (
-            Some(InputContext::LabelEdit),
-            "enter",
-            false,
-            false,
-            false,
-            Action::LabelEditCommit,
-        ),
         // TextEdit.
-        (
-            Some(InputContext::TextEdit),
-            "escape",
-            false,
-            false,
-            false,
-            Action::TextEditCancel,
-        ),
     ];
 
     for &(ctx, key, ctrl, shift, alt, ref expected) in cases {
@@ -289,34 +210,28 @@ fn test_custom_mutation_binding_resolves_when_no_built_in_action() {
     let mut bindings = HashMap::new();
     bindings.insert("Ctrl+Shift+M".into(), "my-mutation".into());
     let cfg = KeybindConfig {
-        custom_mutation_bindings: bindings,
+        edit_bindings: bindings,
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
-    assert_eq!(
-        resolved.custom_mutation_for("m", true, true, false),
-        Some("my-mutation")
-    );
+    assert_eq!(resolved.edit_for("m", true, true, false), Some("my-mutation"));
 }
 
 #[test]
 fn test_custom_mutation_binding_loses_to_builtin_action_via_event_loop() {
-    // `custom_mutation_for` is only called after `action_for`
+    // `edit_for` is only called after `action_for`
     // returns None — a combo bound to both resolves to the
     // built-in. This test just locks the resolver shape: both
     // lookups are independent.
     let mut bindings = HashMap::new();
     bindings.insert("Ctrl+Z".into(), "collision".into());
     let cfg = KeybindConfig {
-        custom_mutation_bindings: bindings,
+        edit_bindings: bindings,
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
     assert_eq!(resolved.action_for("z", true, false, false), Some(Action::Undo));
-    assert_eq!(
-        resolved.custom_mutation_for("z", true, false, false),
-        Some("collision")
-    );
+    assert_eq!(resolved.edit_for("z", true, false, false), Some("collision"));
 }
 
 #[test]
@@ -325,46 +240,33 @@ fn test_custom_mutation_invalid_combo_is_skipped() {
     bindings.insert("Z+X".into(), "invalid".into()); // two non-modifier keys
     bindings.insert("Ctrl+M".into(), "valid".into());
     let cfg = KeybindConfig {
-        custom_mutation_bindings: bindings,
+        edit_bindings: bindings,
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
-    assert_eq!(
-        resolved.custom_mutation_for("m", true, false, false),
-        Some("valid")
-    );
+    assert_eq!(resolved.edit_for("m", true, false, false), Some("valid"));
 }
 
 #[test]
 fn test_set_custom_mutation_binding_adds_and_replaces() {
     let mut resolved = KeybindConfig::default().resolve();
-    let prev = resolved
-        .set_custom_mutation_binding("Ctrl+Shift+M", "first".into())
-        .unwrap();
+    let prev = resolved.set_edit_binding("Ctrl+Shift+M", "first".into()).unwrap();
     assert!(prev.is_none());
-    assert_eq!(
-        resolved.custom_mutation_for("m", true, true, false),
-        Some("first")
-    );
+    assert_eq!(resolved.edit_for("m", true, true, false), Some("first"));
     let prev = resolved
-        .set_custom_mutation_binding("Ctrl+Shift+M", "second".into())
+        .set_edit_binding("Ctrl+Shift+M", "second".into())
         .unwrap();
     assert_eq!(prev.as_deref(), Some("first"));
-    assert_eq!(
-        resolved.custom_mutation_for("m", true, true, false),
-        Some("second")
-    );
+    assert_eq!(resolved.edit_for("m", true, true, false), Some("second"));
 }
 
 #[test]
 fn test_remove_custom_mutation_binding_returns_removed_id() {
     let mut resolved = KeybindConfig::default().resolve();
-    resolved
-        .set_custom_mutation_binding("Ctrl+Shift+M", "id-1".into())
-        .unwrap();
-    let prev = resolved.remove_custom_mutation_binding("Ctrl+Shift+M").unwrap();
+    resolved.set_edit_binding("Ctrl+Shift+M", "id-1".into()).unwrap();
+    let prev = resolved.remove_edit_binding("Ctrl+Shift+M").unwrap();
     assert_eq!(prev.as_deref(), Some("id-1"));
-    assert_eq!(resolved.custom_mutation_for("m", true, true, false), None);
+    assert_eq!(resolved.edit_for("m", true, true, false), None);
 }
 
 #[test]
@@ -511,7 +413,7 @@ fn test_wasm_compatibility_section_aabb_actions_are_compatible() {
 #[test]
 fn test_wasm_compatibility_border_no_payload_actions_are_compatible() {
     use crate::application::keybinds::WasmCompatibility::Compatible;
-    for a in [Action::CycleBorderPreset, Action::ToggleBorderVisible] {
+    for a in [Action::CycleFrameContent, Action::ToggleFrameVisible] {
         assert_eq!(a.wasm_compatibility(), Compatible, "{:?} should be Compatible", a);
     }
 }
@@ -585,48 +487,6 @@ fn test_wasm_compatibility_modal_actions_are_native_only() {
     ] {
         assert_eq!(a.wasm_compatibility(), NativeOnly, "{:?} should be NativeOnly", a);
     }
-}
-
-/// Mixed-branch Actions (whose dispatch arm reads/writes
-/// different state per branch) classify per the "ANY NativeOnly
-/// branch ⇒ NativeOnly" rule. Locks the classification so a future
-/// contributor can't silently downgrade the rule to "the
-/// WASM-reachable branch is reachable in practice" — that's the
-/// looser semantic the reviewer flagged as a forward-compat trap.
-///
-/// The set is not written out here: it is
-/// [`MIXED_BRANCH_ACTIONS`](crate::application::keybinds::MIXED_BRANCH_ACTIONS),
-/// the same constant `lift_mixed_branch_for_wasm_macro` reads. Two
-/// hand-written copies drifted — this test named three members and
-/// the lift named four — so there is one list now and adding a member
-/// obliges both consumers.
-///
-/// The classification travels *with* each member because it is not
-/// uniform: `ExitMode` is mixed-branch and `Compatible` (its native
-/// leftover is a step, not a branch reaching native-only state).
-/// Asserting a blanket `NativeOnly` is what made a shared list look
-/// impossible.
-#[test]
-fn test_wasm_compatibility_mixed_branch_actions_are_native_only() {
-    use crate::application::keybinds::MIXED_BRANCH_ACTIONS;
-    for (a, expected) in MIXED_BRANCH_ACTIONS {
-        assert_eq!(
-            a.wasm_compatibility(),
-            expected,
-            "{:?} should classify {:?} under the 'ANY NativeOnly branch' rule",
-            a,
-            expected,
-        );
-    }
-    // The rule has to bite somewhere: at least one member must be
-    // NativeOnly, or the loop above would pass against a list that
-    // had quietly become all-Compatible.
-    assert!(
-        MIXED_BRANCH_ACTIONS
-            .iter()
-            .any(|(_, c)| *c == crate::application::keybinds::WasmCompatibility::NativeOnly),
-        "the mixed-branch set must contain at least one NativeOnly member",
-    );
 }
 
 /// Exhaustiveness pin: every variant kind classifies cleanly under
@@ -776,16 +636,7 @@ fn test_wasm_compatibility_label_edit_primitives_are_native_only() {
 // re-introducing the empty-canvas double-click that the user
 // asked us to remove) fails one of these tests.
 
-#[test]
-fn test_double_click_activate_default_resolves_to_action() {
-    let r = KeybindConfig::default().resolve();
-    assert_eq!(
-        r.action_for_context(InputContext::Document, "doubleclick", false, false, false),
-        Some(Action::DoubleClickActivate)
-    );
-}
-
-/// `Action::SetBorderPreview` round-trips through the JSON
+/// `Action::SetFramePreview` round-trips through the JSON
 /// config — pre-fix the Action variant existed and was
 /// dispatched but had no `KeybindConfig` field, so users could
 /// not bind a key to preview-set via JSON.
@@ -793,16 +644,16 @@ fn test_double_click_activate_default_resolves_to_action() {
 fn test_set_border_preview_keybind_round_trips_through_json() {
     use crate::application::keybinds::BorderPreviewTargetKind;
     let json = r#"{
-        "set_border_preview": [
+        "set_frame_preview": [
             { "combo": "Ctrl+H", "args": ["node", "preset", "heavy"] }
         ]
     }"#;
     let cfg = KeybindConfig::from_json(json).unwrap();
-    assert_eq!(cfg.set_border_preview.len(), 1);
+    assert_eq!(cfg.set_frame_preview.len(), 1);
     let r = cfg.resolve();
     assert_eq!(
         r.action_for_context(InputContext::Document, "h", true, false, false),
-        Some(Action::SetBorderPreview {
+        Some(Action::SetFramePreview {
             target_kind: BorderPreviewTargetKind::Node,
             field: "preset".into(),
             value: "heavy".into(),
@@ -834,7 +685,7 @@ fn test_border_preview_target_kind_strum_round_trip() {
     assert!(BorderPreviewTargetKind::from_str("nodes").is_err());
 }
 
-/// `cancel_border_preview` ships unbound by default — the
+/// `cancel_frame_preview` ships unbound by default — the
 /// keybind system has no per-action active-state guard, so
 /// defaulting Esc would conflict with the existing Esc-bound
 /// actions in the Document context (`exit_mode` etc.). Users
@@ -844,38 +695,38 @@ fn test_border_preview_target_kind_strum_round_trip() {
 fn test_cancel_border_preview_is_unbound_by_default() {
     let cfg = KeybindConfig::default();
     assert!(
-        cfg.cancel_border_preview.is_empty(),
-        "CancelBorderPreview must not have a default binding (would conflict with `exit_mode`)"
+        cfg.cancel_frame_preview.is_empty(),
+        "CancelFramePreview must not have a default binding (would conflict with `exit_mode`)"
     );
     let r = cfg.resolve();
-    // No key resolves to CancelBorderPreview in the Document
+    // No key resolves to CancelFramePreview in the Document
     // context with the default config.
     assert!(
-        !r.has_any_binding_for(Action::CancelBorderPreview),
-        "default-resolved keybinds must not include CancelBorderPreview"
+        !r.has_any_binding_for(Action::CancelFramePreview),
+        "default-resolved keybinds must not include CancelFramePreview"
     );
 }
 
 /// Users can opt in to a custom binding via the JSON config —
 /// pin the round-trip path that landing
-/// `cancel_border_preview` and `commit_border_preview` work.
+/// `cancel_frame_preview` and `commit_frame_preview` work.
 #[test]
 fn test_border_preview_keybinds_round_trip_through_json() {
     let json = r#"{
-        "cancel_border_preview": ["Ctrl+Escape"],
-        "commit_border_preview": ["Ctrl+Enter"]
+        "cancel_frame_preview": ["Ctrl+Escape"],
+        "commit_frame_preview": ["Ctrl+Enter"]
     }"#;
     let cfg = KeybindConfig::from_json(json).unwrap();
-    assert_eq!(cfg.cancel_border_preview, vec!["Ctrl+Escape"]);
-    assert_eq!(cfg.commit_border_preview, vec!["Ctrl+Enter"]);
+    assert_eq!(cfg.cancel_frame_preview, vec!["Ctrl+Escape"]);
+    assert_eq!(cfg.commit_frame_preview, vec!["Ctrl+Enter"]);
     let r = cfg.resolve();
     assert_eq!(
         r.action_for_context(InputContext::Document, "escape", true, false, false),
-        Some(Action::CancelBorderPreview)
+        Some(Action::CancelFramePreview)
     );
     assert_eq!(
         r.action_for_context(InputContext::Document, "enter", true, false, false),
-        Some(Action::CommitBorderPreview)
+        Some(Action::CommitFramePreview)
     );
 }
 
@@ -974,12 +825,17 @@ fn test_action_for_gesture_falls_back_to_unmodified_binding() {
     );
 }
 
-/// Default `Ctrl+RightDrag` resolves to `FastResizeStart`. Pins
-/// the gesture binding — without it, threshold-cross on
-/// PendingRight would no-op silently.
+/// A `Ctrl+RightDrag` binding resolves to its Action through the
+/// gesture lookup. The binding is the test's own: `FastResizeStart`
+/// ships unbound until V1-C7 (#248) rebuilds it, and a user's keybinds
+/// naming it still load.
 #[test]
-fn test_default_ctrl_right_drag_resolves_to_fast_resize_start() {
-    let r = KeybindConfig::default().resolve();
+fn test_a_ctrl_right_drag_binding_resolves_to_fast_resize_start() {
+    let r = KeybindConfig {
+        fast_resize_start: vec!["Ctrl+RightDrag".into()],
+        ..KeybindConfig::default()
+    }
+    .resolve();
     assert_eq!(
         r.action_for_gesture("rightdrag", true, false, false),
         Some(Action::FastResizeStart),
@@ -987,22 +843,33 @@ fn test_default_ctrl_right_drag_resolves_to_fast_resize_start() {
     );
 }
 
-/// Bare `RightDrag` (no Ctrl) returns `None` with the default
-/// config — only `Ctrl+RightDrag` is bound. The
-/// modifier-fallback mechanism flows the *other* way: a key
-/// pressed with modifiers can fall back to a bare binding, but
-/// a key pressed bare can't escalate to a modified binding.
-/// This pins the default posture so a user pressing right-drag
-/// without Ctrl doesn't accidentally trigger fast-resize.
+/// Bare `RightDrag` (no Ctrl) returns `None` when only
+/// `Ctrl+RightDrag` is bound. The modifier-fallback mechanism flows
+/// the *other* way: a key pressed with modifiers can fall back to a
+/// bare binding, but a key pressed bare can't escalate to a modified
+/// binding, so a user pressing right-drag without Ctrl doesn't
+/// trigger the modified binding by accident.
+///
+/// Control: the modified form resolves under the same binding, so the
+/// `None` is the escalation refused rather than a binding that never
+/// loaded.
 #[test]
-fn test_bare_right_drag_returns_none_with_default_config() {
-    let r = KeybindConfig::default().resolve();
+fn test_bare_right_drag_does_not_escalate_to_a_ctrl_binding() {
+    let r = KeybindConfig {
+        fast_resize_start: vec!["Ctrl+RightDrag".into()],
+        ..KeybindConfig::default()
+    }
+    .resolve();
+    assert_eq!(
+        r.action_for_gesture("rightdrag", true, false, false),
+        Some(Action::FastResizeStart),
+        "control: the bound form resolves"
+    );
     assert_eq!(
         r.action_for_gesture("rightdrag", false, false, false),
         None,
-        "bare RightDrag must not resolve to anything by default; \
-         the default binding is Ctrl+RightDrag and modifier-fallback \
-         doesn't escalate from bare to modified"
+        "bare RightDrag must not resolve to the Ctrl+RightDrag binding; \
+         modifier-fallback doesn't escalate from bare to modified"
     );
 }
 
@@ -1029,11 +896,17 @@ fn test_user_rebind_to_bare_right_drag_works() {
     );
 }
 
-/// `LongPress` resolves to `EnterResizeMode` by default — the
-/// touch peer of the keyboard's `r`.
+/// A `LongPress` binding resolves to its Action through the gesture
+/// lookup — the touch peer of the keyboard's `r`. The binding is the
+/// test's own: `EnterResizeMode` ships unbound until V1-C7 (#248)
+/// rebuilds it.
 #[test]
-fn test_default_long_press_resolves_to_enter_resize_mode() {
-    let r = KeybindConfig::default().resolve();
+fn test_a_long_press_binding_resolves_to_enter_resize_mode() {
+    let r = KeybindConfig {
+        enter_resize_mode: vec!["r".into(), "LongPress".into()],
+        ..KeybindConfig::default()
+    }
+    .resolve();
     assert_eq!(
         r.action_for_gesture("longpress", false, false, false),
         Some(Action::EnterResizeMode),
@@ -1061,7 +934,7 @@ fn test_default_long_press_resolves_to_enter_resize_mode() {
 ///    `EnterResizeMode`, then a finger on a handle — which until #160
 ///    panned the camera instead, so a touch-only user could not resize
 ///    at all. A finger that lands on a handle in Resize mode now drives
-///    the handle drag (`app::touch_handle`); native-only, as the drag
+///    the handle drag (`app::touch_handle` (gone)); native-only, as the drag
 ///    state is (CLAUDE.md's Dual-target registry).
 /// 2. An existing `keybinds.json` naming `"TwoFingerDrag"` used to
 ///    be **silently accepted and never match**: `KeyBind::parse`
@@ -1188,38 +1061,6 @@ fn test_every_retired_name_is_normalized_and_out_of_the_live_vocabulary() {
             retired.spelling
         );
     }
-}
-
-/// Default `enter_resize_mode` config carries both `r` (kbd)
-/// and `LongPress` (touch). Pins the JSON-default shape so a
-/// regression that drops the touch entry is caught at config-
-/// resolution time.
-#[test]
-fn test_default_enter_resize_mode_includes_long_press() {
-    let cfg = KeybindConfig::default();
-    assert!(
-        cfg.enter_resize_mode.iter().any(|s| s == "LongPress"),
-        "default enter_resize_mode must include LongPress; got: {:?}",
-        cfg.enter_resize_mode
-    );
-    assert!(
-        cfg.enter_resize_mode.iter().any(|s| s == "r"),
-        "default enter_resize_mode must still include `r`; got: {:?}",
-        cfg.enter_resize_mode
-    );
-}
-
-/// `fast_resize_start` keeps its mouse gesture and has no touch
-/// entry: the touch peer it used to carry, `TwoFingerDrag`, is gone
-/// (see `test_two_finger_drag_is_not_a_bindable_gesture`).
-#[test]
-fn test_default_fast_resize_start_is_the_right_drag_only() {
-    let cfg = KeybindConfig::default();
-    assert_eq!(
-        cfg.fast_resize_start,
-        vec!["Ctrl+RightDrag".to_string()],
-        "fast_resize_start ships bound to Ctrl+RightDrag and nothing else"
-    );
 }
 
 /// `RightClick` ships unbound by default. Pins the default
@@ -1455,22 +1296,11 @@ fn test_all_document_defaults_resolve_via_action_for_context() {
     let cases: &[(Action, &str, bool, bool, bool)] = &[
         (Action::Undo, "z", true, false, false),
         (Action::Undo, "undo", false, false, false),
-        (Action::EnterReparentMode, "p", true, false, false),
-        (Action::EnterConnectMode, "d", true, false, false),
-        (Action::DeleteSelection, "delete", false, false, false),
+        (Action::Redo, "z", true, true, false),
+        (Action::Redo, "y", true, false, false),
         (Action::ExitMode, "escape", false, false, false),
-        (Action::CreateOrphanNode, "n", true, false, false),
-        (Action::OrphanSelection, "o", true, false, false),
-        (Action::EditSelection, "enter", false, false, false),
-        (Action::EditSelectionClean, "backspace", false, false, false),
         (Action::OpenConsole, "/", false, false, false),
         (Action::SaveDocument, "s", true, false, false),
-        (Action::Copy, "c", true, false, false),
-        (Action::Copy, "copy", false, false, false),
-        (Action::Paste, "v", true, false, false),
-        (Action::Paste, "paste", false, false, false),
-        (Action::Cut, "x", true, false, false),
-        (Action::Cut, "cut", false, false, false),
     ];
     for (action, key, ctrl, shift, alt) in cases {
         assert_eq!(
@@ -1504,7 +1334,7 @@ fn test_partial_json_uses_defaults_for_missing_fields() {
     let cfg = KeybindConfig::from_json(json).unwrap();
     assert_eq!(cfg.undo, vec!["Ctrl+Y"]);
     // Other fields should still have defaults
-    assert_eq!(cfg.enter_reparent_mode, vec!["Ctrl+P"]);
+    assert_eq!(cfg.open_console, vec!["/"]);
     assert_eq!(cfg.exit_mode, vec!["Escape"]);
 }
 
@@ -1580,15 +1410,27 @@ fn test_picker_context_falls_through_to_document() {
     );
 }
 
+/// The picker's own binding outranks the Document's on the same key.
+/// The picker's keys are the test's own: they ship unbound until
+/// V1-C7 (#248) rebuilds the picker. Control: the Document context
+/// still answers `ExitMode` on that key.
 #[test]
 fn test_picker_context_prefers_picker_action_over_document() {
-    let resolved = KeybindConfig::default().resolve();
-    // Escape is ExitMode at Document level but PickerCancel at picker level
+    let resolved = KeybindConfig {
+        picker_cancel: vec!["Escape".into()],
+        picker_commit: vec!["Enter".into()],
+        ..KeybindConfig::default()
+    }
+    .resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "escape", false, false, false),
+        Some(Action::ExitMode),
+        "control: Escape is ExitMode at Document level"
+    );
     assert_eq!(
         resolved.action_for_context(InputContext::ColorPicker, "escape", false, false, false),
         Some(Action::PickerCancel),
     );
-    // Enter is EditSelection at Document level but PickerCommit at picker level
     assert_eq!(
         resolved.action_for_context(InputContext::ColorPicker, "enter", false, false, false),
         Some(Action::PickerCommit),
@@ -1693,11 +1535,18 @@ fn test_user_can_override_component_keybinds() {
     );
 }
 
+/// Copy/Paste/Cut are Document-level actions that fall through to the
+/// color picker context. The bindings are the test's own: the three
+/// ship unbound until V1-C4 (#245) rebuilds the clipboard.
 #[test]
 fn test_copy_paste_cut_fall_through_to_picker() {
-    let resolved = KeybindConfig::default().resolve();
-    // Copy/Paste/Cut are Document-level actions that fall through
-    // to the color picker context
+    let resolved = KeybindConfig {
+        copy: vec!["Ctrl+C".into()],
+        paste: vec!["Ctrl+V".into()],
+        cut: vec!["Ctrl+X".into()],
+        ..KeybindConfig::default()
+    }
+    .resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::ColorPicker, "c", true, false, false),
         Some(Action::Copy),
@@ -1719,8 +1568,7 @@ fn test_partial_json_preserves_component_defaults() {
     // Console defaults should still be present
     assert_eq!(cfg.console_close, vec!["Escape"]);
     assert_eq!(cfg.console_clear_line, vec!["Ctrl+C"]);
-    // Picker defaults should still be present
-    assert_eq!(cfg.picker_nudge_hue_down, vec!["h"]);
+    assert_eq!(cfg.console_scroll_page_up, vec!["PageUp"]);
 }
 
 #[test]
@@ -1763,9 +1611,17 @@ fn test_action_for_context_document_filters_component_actions() {
     );
 }
 
+/// A config survives a JSON round trip in every context. The picker,
+/// label and text editor keys are the test's own: they ship unbound
+/// until V1-C7 (#248) and V1-C8 (#249) rebuild them.
 #[test]
 fn test_json_roundtrip_all_contexts() {
-    let cfg = KeybindConfig::default();
+    let cfg = KeybindConfig {
+        picker_nudge_hue_down: vec!["h".into()],
+        label_edit_commit: vec!["Enter".into()],
+        text_edit_cancel: vec!["Escape".into()],
+        ..KeybindConfig::default()
+    };
     let json = serde_json::to_string(&cfg).unwrap();
     let parsed = KeybindConfig::from_json(&json).unwrap();
     let resolved = parsed.resolve();
@@ -1798,7 +1654,7 @@ fn test_json_roundtrip_all_contexts() {
 #[test]
 fn test_parametric_set_edge_anchor_resolves_with_two_args() {
     let cfg = KeybindConfig {
-        set_edge_anchor: vec![ParametricBinding {
+        set_path_anchor: vec![ParametricBinding {
             combo: "Ctrl+Shift+a".into(),
             args: vec!["top".into(), "auto".into()],
         }],
@@ -1807,7 +1663,7 @@ fn test_parametric_set_edge_anchor_resolves_with_two_args() {
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "a", true, true, false),
-        Some(Action::SetEdgeAnchor {
+        Some(Action::SetPathAnchor {
             from: "top".into(),
             to: "auto".into(),
         }),
@@ -1817,7 +1673,7 @@ fn test_parametric_set_edge_anchor_resolves_with_two_args() {
 #[test]
 fn test_parametric_set_edge_body_glyph_resolves_with_one_arg() {
     let cfg = KeybindConfig {
-        set_edge_body_glyph: vec![ParametricBinding {
+        set_path_content: vec![ParametricBinding {
             combo: "Ctrl+b".into(),
             args: vec!["dash".into()],
         }],
@@ -1826,7 +1682,7 @@ fn test_parametric_set_edge_body_glyph_resolves_with_one_arg() {
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "b", true, false, false),
-        Some(Action::SetEdgeBodyGlyph("dash".into())),
+        Some(Action::SetPathContent("dash".into())),
     );
 }
 
@@ -1841,7 +1697,7 @@ fn test_parametric_wrong_arg_count_is_skipped() {
     // chords so the assertion is about "no parametric Action got
     // built", not "the default got shadowed."
     let cfg = KeybindConfig {
-        set_edge_anchor: vec![ParametricBinding {
+        set_path_anchor: vec![ParametricBinding {
             combo: "Ctrl+F8".into(),
             args: vec!["top".into()], // missing the `to` arg
         }],
@@ -1857,11 +1713,11 @@ fn test_parametric_wrong_arg_count_is_skipped() {
 #[test]
 fn test_parametric_binding_round_trips_through_json() {
     let cfg = KeybindConfig {
-        set_edge_anchor: vec![ParametricBinding {
+        set_path_anchor: vec![ParametricBinding {
             combo: "Ctrl+Shift+a".into(),
             args: vec!["top".into(), "auto".into()],
         }],
-        set_edge_body_glyph: vec![ParametricBinding {
+        set_path_content: vec![ParametricBinding {
             combo: "Ctrl+b".into(),
             args: vec!["dash".into()],
         }],
@@ -1869,14 +1725,14 @@ fn test_parametric_binding_round_trips_through_json() {
     };
     let json = serde_json::to_string(&cfg).unwrap();
     let parsed = KeybindConfig::from_json(&json).unwrap();
-    assert_eq!(parsed.set_edge_anchor, cfg.set_edge_anchor);
-    assert_eq!(parsed.set_edge_body_glyph, cfg.set_edge_body_glyph);
+    assert_eq!(parsed.set_path_anchor, cfg.set_path_anchor);
+    assert_eq!(parsed.set_path_content, cfg.set_path_content);
 }
 
 #[test]
 fn test_parametric_set_border_field_resolves_with_two_args() {
     let cfg = KeybindConfig {
-        set_border_field: vec![ParametricBinding {
+        set_frame_field: vec![ParametricBinding {
             combo: "Ctrl+Shift+b".into(),
             args: vec!["preset".into(), "rounded".into()],
         }],
@@ -1885,7 +1741,7 @@ fn test_parametric_set_border_field_resolves_with_two_args() {
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "b", true, true, false),
-        Some(Action::SetBorderField {
+        Some(Action::SetFrameField {
             field: "preset".into(),
             value: "rounded".into(),
         }),
@@ -1942,11 +1798,11 @@ fn test_parametric_edge_structural_resolve() {
             combo: "F4".into(),
             args: vec!["cross_link".into()],
         }],
-        set_edge_display_mode: vec![ParametricBinding {
+        set_link_kind: vec![ParametricBinding {
             combo: "F5".into(),
             args: vec!["portal".into()],
         }],
-        reset_edge: vec![ParametricBinding {
+        reset_path: vec![ParametricBinding {
             combo: "F6".into(),
             args: vec!["style".into()],
         }],
@@ -1959,11 +1815,11 @@ fn test_parametric_edge_structural_resolve() {
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f5", false, false, false),
-        Some(Action::SetEdgeDisplayMode("portal".into())),
+        Some(Action::SetLinkKind("portal".into())),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f6", false, false, false),
-        Some(Action::ResetEdge("style".into())),
+        Some(Action::ResetPath("style".into())),
     );
 }
 
@@ -2021,15 +1877,15 @@ fn test_parametric_font_family_size_resolve() {
 #[test]
 fn test_parametric_label_text_position_resolve() {
     let cfg = KeybindConfig {
-        set_edge_label_text: vec![ParametricBinding {
+        set_label_text: vec![ParametricBinding {
             combo: "F9".into(),
             args: vec!["hello".into()],
         }],
-        set_edge_label_position: vec![ParametricBinding {
+        set_label_position: vec![ParametricBinding {
             combo: "F10".into(),
             args: vec!["middle".into()],
         }],
-        set_spacing: vec![ParametricBinding {
+        set_path_spacing: vec![ParametricBinding {
             combo: "F11".into(),
             args: vec!["wide".into()],
         }],
@@ -2038,15 +1894,15 @@ fn test_parametric_label_text_position_resolve() {
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f9", false, false, false),
-        Some(Action::SetEdgeLabelText("hello".into())),
+        Some(Action::SetLabelText("hello".into())),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f10", false, false, false),
-        Some(Action::SetEdgeLabelPosition("middle".into())),
+        Some(Action::SetLabelPosition("middle".into())),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f11", false, false, false),
-        Some(Action::SetSpacing("wide".into())),
+        Some(Action::SetPathSpacing("wide".into())),
     );
 }
 
@@ -2094,30 +1950,30 @@ fn test_parametric_filesystem_variants_resolve() {
     let cfg = KeybindConfig {
         open_document: vec![ParametricBinding {
             combo: "Ctrl+F1".into(),
-            args: vec!["/tmp/test.mindmap.json".into()],
+            args: vec!["/tmp/test.mandala.json".into()],
         }],
         save_document_as: vec![ParametricBinding {
             combo: "Ctrl+F2".into(),
-            args: vec!["/tmp/save.mindmap.json".into()],
+            args: vec!["/tmp/save.mandala.json".into()],
         }],
         new_document_at: vec![ParametricBinding {
             combo: "Ctrl+F3".into(),
-            args: vec!["/tmp/new.mindmap.json".into()],
+            args: vec!["/tmp/new.mandala.json".into()],
         }],
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f1", true, false, false),
-        Some(Action::OpenDocument("/tmp/test.mindmap.json".into())),
+        Some(Action::OpenDocument("/tmp/test.mandala.json".into())),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f2", true, false, false),
-        Some(Action::SaveDocumentAs("/tmp/save.mindmap.json".into())),
+        Some(Action::SaveDocumentAs("/tmp/save.mandala.json".into())),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f3", true, false, false),
-        Some(Action::NewDocumentAt("/tmp/new.mindmap.json".into())),
+        Some(Action::NewDocumentAt("/tmp/new.mandala.json".into())),
     );
 }
 
@@ -2284,7 +2140,7 @@ fn test_a_malformed_value_under_any_known_key_costs_only_that_key() {
 #[test]
 fn test_parametric_set_edge_cap_resolves_with_two_args() {
     let cfg = KeybindConfig {
-        set_edge_cap: vec![ParametricBinding {
+        set_path_cap: vec![ParametricBinding {
             combo: "Ctrl+Shift+c".into(),
             args: vec!["arrow".into(), "none".into()],
         }],
@@ -2293,7 +2149,7 @@ fn test_parametric_set_edge_cap_resolves_with_two_args() {
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "c", true, true, false),
-        Some(Action::SetEdgeCap {
+        Some(Action::SetPathCap {
             from: "arrow".into(),
             to: "none".into(),
         }),
@@ -2391,7 +2247,7 @@ fn test_parametric_binding_user_partial_config_only_overrides_listed_field() {
     // with only the parametric field set leaves every other binding
     // at its default.
     let json = r#"{
-        "set_edge_body_glyph": [
+        "set_path_content": [
             { "combo": "Ctrl+b", "args": ["dash"] }
         ]
     }"#;
@@ -2399,7 +2255,7 @@ fn test_parametric_binding_user_partial_config_only_overrides_listed_field() {
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "b", true, false, false),
-        Some(Action::SetEdgeBodyGlyph("dash".into())),
+        Some(Action::SetPathContent("dash".into())),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "z", true, false, false),
@@ -2416,7 +2272,7 @@ fn test_parametric_binding_user_partial_config_only_overrides_listed_field() {
 // These tests hold the *values* the compiler cannot: that the
 // unbindable set stays the two it is meant to be, that the struct and
 // the recognized-key set agree, and — the one that would have caught
-// the shipped `SetBorderPreview` bug — that every declared field
+// the shipped `SetFramePreview` bug — that every declared field
 // really does produce a binding.
 // ─────────────────────────────────────────────────────────────────
 
@@ -2468,30 +2324,30 @@ const SENTINEL_COMBO: &str = "Ctrl+Shift+Alt+F9";
 fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Action)> {
     vec![
         (
-            "set_edge_anchor",
+            "set_path_anchor",
             &["top", "auto"],
-            Action::SetEdgeAnchor {
+            Action::SetPathAnchor {
                 from: "top".into(),
                 to: "auto".into(),
             },
         ),
         (
-            "set_edge_body_glyph",
+            "set_path_content",
             &["dash"],
-            Action::SetEdgeBodyGlyph("dash".into()),
+            Action::SetPathContent("dash".into()),
         ),
         (
-            "set_border_field",
+            "set_frame_field",
             &["preset", "rounded"],
-            Action::SetBorderField {
+            Action::SetFrameField {
                 field: "preset".into(),
                 value: "rounded".into(),
             },
         ),
         (
-            "set_edge_cap",
+            "set_path_cap",
             &["arrow", "none"],
-            Action::SetEdgeCap {
+            Action::SetPathCap {
                 from: "arrow".into(),
                 to: "none".into(),
             },
@@ -2505,9 +2361,9 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
             },
         ),
         (
-            "set_border_preview",
+            "set_frame_preview",
             &["node", "preset", "rounded"],
-            Action::SetBorderPreview {
+            Action::SetFramePreview {
                 target_kind: BorderPreviewTargetKind::Node,
                 field: "preset".into(),
                 value: "rounded".into(),
@@ -2518,12 +2374,8 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
             &["cross_link"],
             Action::SetEdgeType("cross_link".into()),
         ),
-        (
-            "set_edge_display_mode",
-            &["portal"],
-            Action::SetEdgeDisplayMode("portal".into()),
-        ),
-        ("reset_edge", &["style"], Action::ResetEdge("style".into())),
+        ("set_link_kind", &["portal"], Action::SetLinkKind("portal".into())),
+        ("reset_path", &["style"], Action::ResetPath("style".into())),
         (
             "set_font_family",
             &["Norse"],
@@ -2537,17 +2389,17 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
                 value: "14".into(),
             },
         ),
+        ("set_label_text", &["hello"], Action::SetLabelText("hello".into())),
         (
-            "set_edge_label_text",
-            &["hello"],
-            Action::SetEdgeLabelText("hello".into()),
-        ),
-        (
-            "set_edge_label_position",
+            "set_label_position",
             &["middle"],
-            Action::SetEdgeLabelPosition("middle".into()),
+            Action::SetLabelPosition("middle".into()),
         ),
-        ("set_spacing", &["wide"], Action::SetSpacing("wide".into())),
+        (
+            "set_path_spacing",
+            &["wide"],
+            Action::SetPathSpacing("wide".into()),
+        ),
         (
             "set_zoom",
             &["min", "0.5"],
@@ -2605,18 +2457,18 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         ),
         (
             "open_document",
-            &["/tmp/open.mindmap.json"],
-            Action::OpenDocument("/tmp/open.mindmap.json".into()),
+            &["/tmp/open.mandala.json"],
+            Action::OpenDocument("/tmp/open.mandala.json".into()),
         ),
         (
             "save_document_as",
-            &["/tmp/save.mindmap.json"],
-            Action::SaveDocumentAs("/tmp/save.mindmap.json".into()),
+            &["/tmp/save.mandala.json"],
+            Action::SaveDocumentAs("/tmp/save.mandala.json".into()),
         ),
         (
             "new_document_at",
-            &["/tmp/new.mindmap.json"],
-            Action::NewDocumentAt("/tmp/new.mindmap.json".into()),
+            &["/tmp/new.mandala.json"],
+            Action::NewDocumentAt("/tmp/new.mandala.json".into()),
         ),
     ]
 }
@@ -2671,7 +2523,7 @@ fn test_every_declared_binding_resolves_to_its_action() {
     // they default to empty — then resolve and demand that every
     // Action with a key surface came back out.
     //
-    // Pre-fix, `set_border_preview` had a struct field and no row in
+    // Pre-fix, `set_frame_preview` had a struct field and no row in
     // `resolve()`: it deserialized, it round-tripped through JSON,
     // and it bound nothing. That shape fails here.
     use strum::IntoEnumIterator;
@@ -2849,16 +2701,16 @@ fn test_unit_variants_bind_through_the_simple_surface() {
         "clear_zoom": ["Shift+F12"],
         "set_section_size_fill_parent": ["Ctrl+F12"],
         "delete_section": ["Alt+F12"],
-        "cycle_border_preset": ["Ctrl+F5"],
-        "toggle_border_visible": ["Ctrl+F6"]
+        "cycle_frame_content": ["Ctrl+F5"],
+        "toggle_frame_visible": ["Ctrl+F6"]
     }"#;
     let resolved = KeybindConfig::from_json(json).unwrap().resolve();
     for (key, ctrl, shift, alt, expected) in [
         ("f12", false, true, false, Action::ClearZoom),
         ("f12", true, false, false, Action::SetSectionSizeFillParent),
         ("f12", false, false, true, Action::DeleteSection),
-        ("f5", true, false, false, Action::CycleBorderPreset),
-        ("f6", true, false, false, Action::ToggleBorderVisible),
+        ("f5", true, false, false, Action::CycleFrameContent),
+        ("f6", true, false, false, Action::ToggleFrameVisible),
     ] {
         assert_eq!(
             resolved.action_for_context(InputContext::Document, key, ctrl, shift, alt),
@@ -3027,7 +2879,7 @@ const SHIPPED_TEMPLATE: &str = include_str!(concat!(
 /// hand.
 ///
 /// **Nothing here is derivable.** The template is a curated subset —
-/// nine of the schema's ~139 action keys, chosen for what a
+/// five of the schema's ~139 action keys, chosen for what a
 /// first-time user needs to see — so a test that asks the template
 /// which keys it has is asking the thing under test. That was the
 /// defect this list replaces: the check below used to compare the
@@ -3041,17 +2893,7 @@ const SHIPPED_TEMPLATE: &str = include_str!(concat!(
 /// template fails because the loop never verifies it; a key that
 /// appears fails until it is added here, which is the deliberate act
 /// the template's contents deserve.
-const SHIPPED_TEMPLATE_ACTION_KEYS: &[&str] = &[
-    "create_orphan_node",
-    "delete_selection",
-    "enter_connect_mode",
-    "enter_reparent_mode",
-    "exit_mode",
-    "open_console",
-    "orphan_selection",
-    "save_document",
-    "undo",
-];
+const SHIPPED_TEMPLATE_ACTION_KEYS: &[&str] = &["exit_mode", "open_console", "redo", "save_document", "undo"];
 
 /// The rest of the template's top-level keys: the `_comment` the
 /// file carries its instructions in, and the non-Action schema keys
@@ -3059,12 +2901,8 @@ const SHIPPED_TEMPLATE_ACTION_KEYS: &[&str] = &[
 /// [`SHIPPED_TEMPLATE_ACTION_KEYS`] — losing the `_comment` would
 /// strip the file's entire explanation of itself, and no assertion
 /// about *bindings* can see that.
-const SHIPPED_TEMPLATE_OTHER_KEYS: &[&str] = &[
-    "_comment",
-    "console_font",
-    "console_font_size",
-    "custom_mutation_bindings",
-];
+const SHIPPED_TEMPLATE_OTHER_KEYS: &[&str] =
+    &["_comment", "console_font", "console_font_size", "edit_bindings"];
 
 #[test]
 fn test_the_shipped_template_ships_exactly_the_keys_it_is_pinned_to() {
@@ -3235,19 +3073,16 @@ fn test_shipped_keybinds_template_escape_exits_the_mode() {
     );
 }
 
-/// The space bar inserts a space in every editor whether or not Shift
+/// The space bar inserts a space in the console whether or not Shift
 /// is still held: bindings match modifiers exactly, and typing
 /// "New York" quickly presses Space with Shift down from the capital.
-/// Each editor's insert-space Action answers both forms, and nothing
-/// else in its context claims them.
+/// The console's insert-space Action answers both forms, and nothing
+/// else in its context claims them. (The text and label editors'
+/// insert-space keys ship unbound until V1-C8 (#249) rebuilds them.)
 #[test]
-fn test_space_inserts_a_space_with_or_without_shift_in_every_editor() {
+fn test_space_inserts_a_space_with_or_without_shift_in_the_console() {
     let resolved = KeybindConfig::default().resolve();
-    for (context, insert) in [
-        (InputContext::Console, Action::ConsoleInsertSpace),
-        (InputContext::TextEdit, Action::TextEditInsertSpace),
-        (InputContext::LabelEdit, Action::LabelEditInsertSpace),
-    ] {
+    for (context, insert) in [(InputContext::Console, Action::ConsoleInsertSpace)] {
         for shift in [false, true] {
             assert_eq!(
                 resolved.action_for_context(context, "space", false, shift, false),

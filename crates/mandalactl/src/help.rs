@@ -19,7 +19,7 @@ pub const WORKFLOW: &[&str] = &[
     "mandalactl describe input.drag",
     "mandalactl query.selection --json",
     "mandalactl scene.find_text Introduction",
-    "mandalactl input.click_node 1.2",
+    "mandalactl input.click_node 2",
     "mandalactl input.pending",
     "mandalactl capture.screenshot after.png fit=true width=1920 height=1080",
     "mandalactl capture.record_start zoom fps=20",
@@ -187,10 +187,10 @@ SOCKET
 /// How to start the app with IPC on, in this platform's spelling of the
 /// endpoint, as `client::LAUNCH_HINT` is.
 #[cfg(not(windows))]
-const START: &str = "  Start the app with IPC on:  mandala maps/testament.mindmap.json --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"
+const START: &str = "  Start the app with IPC on:  mandala maps/testament.mandala.json --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"
 ";
 #[cfg(windows)]
-const START: &str = "  Start the app with IPC on:  mandala maps/testament.mindmap.json --ipc mandala
+const START: &str = "  Start the app with IPC on:  mandala maps/testament.mandala.json --ipc mandala
 ";
 
 const SOCKET: &str = "  With no display (a container, CI), add --headless: no window, and a clock that moves only by
@@ -475,7 +475,7 @@ mod tests {
     fn test_the_overview_spells_the_launch_for_this_platform() {
         let start = crate::platform::native(
             "--ipc \"$XDG_RUNTIME_DIR/mandala.sock\"",
-            "testament.mindmap.json --ipc mandala\n",
+            "testament.mandala.json --ipc mandala\n",
         );
         assert!(overview().contains(start), "{start:?}");
     }

@@ -15,16 +15,15 @@
 //! differs is what the target does not have: no console runtime
 //! ([`CommandTarget::run_console_line`] answers `None`, and the
 //! registry refuses `act.console` before it is asked), no drag state
-//! (`query.mode` reports `drag_state.kind: "None"` and no animation
-//! pause), one modal (the node text editor), and no recorder or file
-//! destination — the capture is [`CommandTarget::capture_canvas`].
+//! (`query.mode` reports `drag_state.kind: "None"`), no modal, and no
+//! recorder or file destination — the capture is
+//! [`CommandTarget::capture_canvas`].
 
 #![cfg(target_arch = "wasm32")]
 
 use glam::Vec2;
 use serde_json::{json, Value};
 
-use crate::application::app::animation_drain;
 use crate::application::app::dispatch::{self, DispatchHit};
 use crate::application::app::ipc_scene::{self, action_outcome, resolve_point, surface_of};
 use crate::application::app::ipc_state;
@@ -81,14 +80,12 @@ impl<'t, 'a> IpcCommandTarget<'t, 'a> {
     /// of it).
     fn place_pointer(&mut self, point: Point) -> DispatchHit {
         let (surface, canvas) = self.resolve(point);
-        self.app.input.cursor_pos = (f64::from(surface.x), f64::from(surface.y));
-        let parts = crate::application::app::compute_click_hit(
-            canvas,
-            self.app.input.mindmap_tree.as_mut(),
-            &mut self.app.input.app_scene,
-        );
+        let input = &mut *self.app.input;
+        input.cursor_pos = (f64::from(surface.x), f64::from(surface.y));
+        let click_hit =
+            crate::application::app::compute_click_hit(Some(&input.document), input.view.as_mut(), canvas);
         DispatchHit {
-            click_hit: parts.click_hit,
+            click_hit,
             canvas_pos: canvas,
         }
     }
@@ -102,7 +99,6 @@ impl<'t, 'a> IpcCommandTarget<'t, 'a> {
         WasmMacroDispatchTarget {
             input: self.app.input,
             renderer: self.app.renderer,
-            keybinds: self.app.keybinds,
             after_step: Some(after_step),
         }
     }
@@ -110,21 +106,17 @@ impl<'t, 'a> IpcCommandTarget<'t, 'a> {
 
 impl Borrowed<'_> {
     /// Whether the loop must keep iterating without further input: the
-    /// browser's `needs_continuation`. No drag state and no picker
-    /// here, so the sources are the two time-driven ones native shares
-    /// with it — an animation ticking and injected input queued, each
-    /// in real time only, since under a virtual clock the heartbeats
-    /// that advance them are a step's.
+    /// browser's `needs_continuation`, the predicate native's reads —
+    /// injected input queued, in real time only, since under a virtual
+    /// clock the heartbeats that land it are a step's.
     pub(super) fn needs_continuation(&self) -> bool {
-        animation_drain::keeps_ticking(Some(&self.input.document), &self.input.clock)
-            || (!self.input.injected.is_empty() && !self.input.clock.is_virtual())
+        !self.input.injected.is_empty() && !self.input.clock.is_virtual()
     }
 
     /// What `clock.wait` reads ([`Settling`]), as native's
     /// `InitState::settling` reads it.
     pub(super) fn settling(&self) -> Settling {
         Settling {
-            animations_active: self.input.document.has_active_animations(),
             continuing: self.needs_continuation(),
             redraw_owed: self.input.redraw_owed,
             virtual_clock: self.input.clock.is_virtual(),
@@ -141,10 +133,7 @@ impl CommandTarget for IpcCommandTarget<'_, '_> {
         let real_cursor = self.app.input.cursor_pos;
         let hit = pointer.map(|point| self.place_pointer(point));
         let outcome = {
-            let mut core = self
-                .app
-                .input
-                .input_context_core(self.app.renderer, self.app.keybinds);
+            let mut core = self.app.input.input_context_core(self.app.renderer);
             dispatch::action_core::dispatch_compatible(&action, &mut core, hit.as_ref())
         };
         self.app.input.cursor_pos = real_cursor;
@@ -194,13 +183,6 @@ impl CommandTarget for IpcCommandTarget<'_, '_> {
         Some(&self.app.input.document)
     }
 
-    fn animation_pause(&self) -> Option<u64> {
-        // The pause is keyed to native's tree-mutating drags, which
-        // this target has none of (`CLAUDE.md` "Animation pause
-        // during a drag").
-        None
-    }
-
     fn shell_state(&self, which: ShellState) -> Value {
         let input = &*self.app.input;
         match which {
@@ -208,45 +190,30 @@ impl CommandTarget for IpcCommandTarget<'_, '_> {
             ShellState::Mode => ipc_state::mode_to_ipc_json(
                 &input.interaction_mode,
                 ipc_state::no_drag_state_json(),
-                ipc_state::OpenModals {
-                    text: input.text_edit_state.is_open(),
-                    ..ipc_state::OpenModals::default()
-                },
-                None,
+                ipc_state::OpenModals::default(),
                 input.cursor_pos,
             ),
-            ShellState::Status => json!({ "text": self.app.renderer.mode_status_text() }),
-            ShellState::Editors => ipc_state::editors_to_ipc_json(
-                Value::Null,
-                Value::Null,
-                Value::Null,
-                input.text_edit_state.to_ipc_json(),
-                Some(&input.document),
-            ),
+            ShellState::Status => json!({
+                "text": self.app.renderer.mode_status_text(),
+                "document": input.document.status(),
+            }),
+            ShellState::Editors => ipc_state::editors_to_ipc_json(Value::Null, Value::Null),
         }
     }
 
     fn scene(&self) -> Option<SceneView<'_>> {
         Some(SceneView {
             document: &self.app.input.document,
-            mindmap_tree: self.app.input.mindmap_tree.as_ref(),
-            app_scene: &self.app.input.app_scene,
+            view: self.app.input.view.as_ref()?,
             camera: self.app.renderer.camera(),
         })
     }
 
     fn hit_test(&mut self, point: Point) -> Option<Value> {
         let (surface, canvas) = self.resolve(point);
-        let canvas_per_pixel = dispatch::CanvasPerPixel::of(self.app.renderer);
         let input = &mut *self.app.input;
-        Some(ipc_scene::hit_report(
-            canvas,
-            surface,
-            input.mindmap_tree.as_mut(),
-            &mut input.app_scene,
-            &input.document.mindmap,
-            canvas_per_pixel,
-        ))
+        let view = input.view.as_mut()?;
+        Some(ipc_scene::hit_report(canvas, surface, &input.document, view))
     }
 
     fn surface_point(&self, point: Point) -> (f64, f64) {
@@ -287,6 +254,10 @@ impl CommandTarget for IpcCommandTarget<'_, '_> {
     }
 
     fn capture_canvas(&mut self, sidecar: bool) -> Option<Result<CanvasCapture, String>> {
+        // The view's sync the next frame owes, first: a change a command
+        // made a moment ago is in the picture, as native's capture syncs
+        // before it draws.
+        self.app.sync_view();
         let camera = *self.app.renderer.camera();
         // Draw now, into the canvas, and read it back before this task
         // ends. On WebGL (no `preserveDrawingBuffer`) that is what
@@ -311,15 +282,17 @@ impl CommandTarget for IpcCommandTarget<'_, '_> {
                     )));
                 };
                 let input = &*self.app.input;
-                let sidecar = sidecar.then(|| {
-                    geometry::sidecar(
-                        input.mindmap_tree.as_ref(),
-                        &input.document.mindmap,
+                let sidecar = match (sidecar, input.view.as_ref()) {
+                    (true, Some(view)) => Some(geometry::sidecar(
+                        input.document.doc(),
+                        view.projector(),
+                        view.layers(),
                         &camera,
                         PROTOCOL_VERSION,
-                        input.document.revision(),
-                    )
-                });
+                        input.document.revision().0,
+                    )),
+                    _ => None,
+                };
                 CanvasOutcome::Drawn {
                     camera,
                     png_base64: png_base64.to_string(),

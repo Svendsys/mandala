@@ -40,6 +40,8 @@
 //! - [`user_config`] — XDG / web-storage shared loader
 //!   plumbing for keybinds / mutations / macros.
 //! - [`frame_throttle`] — per-frame cap math.
+//! - [`view`] — the map's view: projector, glyph layers, chrome and
+//!   overlays, and the one pipeline that syncs them with the document.
 //! - [`common`] — small shared types: `RenderDecree` and
 //!   `FpsDisplayMode`.
 //! - [`clock`] — the app clock every behavior reads, its virtual
@@ -74,8 +76,17 @@ pub(crate) mod clipboard;
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) mod clock;
 // Picker layout math + state. Driver: `app::color_picker_flow`,
-// native-gated pending the browser modal shell.
+// native-gated pending the browser modal shell. Its target-bound mode
+// and its error flash have no producer until the picker is a
+// transaction (V1-C7, #248).
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    expect(
+        dead_code,
+        reason = "the picker's target-bound mode and error flash return with V1-C7 (#248)"
+    )
+)]
 pub(crate) mod color_picker;
 // Picker glyph-area builders. Same driver, same gate, as
 // [`color_picker`].
@@ -97,9 +108,13 @@ pub(crate) mod guarded_file;
 // toward `mandalactl bridge` in the browser (`format/ipc.md`
 // §Transport; CLAUDE.md "Dual-target status").
 pub(crate) mod ipc;
-// Adaptive drain-rate math. Driver: `app::throttled_interaction`,
-// native-gated with the drag state machine it paces.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+// Adaptive drain-rate math for the drags that edit the map, which
+// return as transactions with V1-C7 (#248): until then nothing paces a
+// drain with it.
+#[expect(
+    dead_code,
+    reason = "the throttled drags return on transactions with V1-C7 (#248)"
+)]
 pub(crate) mod frame_throttle;
 pub(crate) mod keybinds;
 pub(crate) mod macros;
@@ -112,6 +127,7 @@ pub mod renderer;
 pub(crate) mod scene_host;
 pub(crate) mod source_tier;
 pub(crate) mod user_config;
+pub(crate) mod view;
 // Widget spec data (today: the color picker's geometry spec).
 // Driver: [`color_picker`], native-gated.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]

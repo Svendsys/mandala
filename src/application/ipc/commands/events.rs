@@ -275,14 +275,14 @@ mod tests {
         let mut session = Session::default();
         // The first command's baseline.
         run(r#"{"id":1,"cmd":"ping"}"#, &mut app, &mut session);
-        app.doc.mark_dirty();
+        app.change();
         app.camera.zoom = 2.0;
         subscribe(&mut app, &mut session, r#"["document_changed"]"#);
         assert!(
             queued(&mut session).is_empty(),
             "the change before the command is history"
         );
-        app.doc.mark_dirty();
+        app.change();
         run(r#"{"id":2,"cmd":"ping"}"#, &mut app, &mut session);
         let events = queued(&mut session);
         assert_eq!(events.len(), 1);
@@ -294,7 +294,7 @@ mod tests {
         let mut app = EventsApp::new();
         let mut session = Session::default();
         subscribe(&mut app, &mut session, r#"["document_changed"]"#);
-        app.doc.mark_dirty();
+        app.change();
         app.camera.zoom = 2.0;
         subscribe(&mut app, &mut session, r#"["camera_changed"]"#);
         let events = queued(&mut session);
@@ -363,8 +363,8 @@ mod tests {
         let mut app = EventsApp::new();
         let mut session = Session::default();
         run(r#"{"id":1,"cmd":"ping"}"#, &mut app, &mut session);
-        app.doc.mark_dirty();
-        app.doc.mark_dirty();
+        app.change();
+        app.change();
         let (reply, _) = run(r#"{"id":2,"cmd":"events.revision"}"#, &mut app, &mut session);
         assert_eq!(reply["result"], json!({ "revision": 1, "document_revision": 2 }));
         assert!(!session.is_subscribed());
@@ -410,7 +410,7 @@ mod tests {
         let mut app = EventsApp::new();
         let mut session = Session::default();
         subscribe(&mut app, &mut session, r#"["document_changed","camera_changed"]"#);
-        app.doc.mark_dirty();
+        app.change();
         app.camera.zoom = 2.0;
         run(r#"{"id":2,"cmd":"ping"}"#, &mut app, &mut session);
         let (reply, _) = run(
@@ -446,8 +446,6 @@ mod tests {
         assert_eq!(
             events,
             [
-                "animation_completed",
-                "animation_started",
                 "camera_changed",
                 "connection_rejected",
                 "document_changed",

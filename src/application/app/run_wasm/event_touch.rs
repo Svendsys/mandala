@@ -75,7 +75,7 @@ impl super::Borrowed<'_> {
                 let Some(a) = d.action else {
                     return idle_redraw;
                 };
-                let mut core = input.input_context_core(renderer, self.keybinds);
+                let mut core = input.input_context_core(renderer);
                 let outcome = dispatch::action_core::dispatch_compatible(&a, &mut core, None);
                 // When the bound Action is `NativeOnly` — the
                 // shipped `LongPress` default, `EnterResizeMode`, is
@@ -90,23 +90,16 @@ impl super::Borrowed<'_> {
                         &WARNED_NATIVE_ONLY,
                         name,
                         &a,
-                        "Long-press is deliberately bound to a native-only Action: it is the \
-                         touch peer of the keyboard's `r`, and binding the browser's long-press \
-                         to something else would make one gesture mean two things. Its parity \
-                         rides on the InteractionMode::Resize chrome porting to the browser. Tap, \
-                         one-finger pan and pinch-zoom need no binding and work here today; \
-                         rebind `enter_resize_mode`'s LongPress entry to a Compatible action \
-                         (e.g. zoom_in / select_all / a custom macro) to opt out.",
+                        "Tap, one-finger pan and pinch-zoom need no binding and work here \
+                         today; bind LongPress to a Compatible action (e.g. zoom_in / select_all \
+                         / a custom macro) instead.",
                     );
                 }
                 true
             }
             TouchStep::Effect(effect) => {
-                {
-                    let mut core = input.input_context_core(renderer, self.keybinds);
-                    dispatch::apply_touch_effect(effect, &mut core);
-                }
-                input.reproject_after_camera_change(renderer);
+                let mut core = input.input_context_core(renderer);
+                dispatch::apply_touch_effect(effect, &mut core);
                 true
             }
         }

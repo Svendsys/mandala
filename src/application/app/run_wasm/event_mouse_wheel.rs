@@ -15,7 +15,6 @@
 
 use crate::application::platform::input::MouseScrollDelta;
 
-use super::PendingClick;
 use crate::application::app::dispatch::DispatchOutcome;
 use crate::application::app::{dispatch, wheel_gesture, wheel_lines};
 use std::sync::atomic::AtomicBool;
@@ -41,7 +40,7 @@ impl super::Borrowed<'_> {
         // release falls through to empty-click handling. Runs
         // regardless of what (if anything) the wheel is bound to: the
         // press-time coordinate is stale either way.
-        input.pending_click = PendingClick::None;
+        input.pending_click = None;
 
         // `action_for_gesture` falls back to the unmodified binding
         // when no exact-modifier match exists, so Ctrl+Wheel keeps
@@ -58,7 +57,7 @@ impl super::Borrowed<'_> {
             return true;
         };
         let outcome = {
-            let mut core = input.input_context_core(renderer, self.keybinds);
+            let mut core = input.input_context_core(renderer);
             dispatch::action_core::dispatch_compatible(&a, &mut core, None)
         };
         // The wheel has no sanctioned carve-out — every wheel
@@ -75,14 +74,10 @@ impl super::Borrowed<'_> {
                  to opt out.",
             );
         }
-        // Native picks the post-camera-change reprojection up in its
-        // per-frame input drain; the browser's frame runs the
-        // time-driven half alone (the animation tick,
-        // `event_redraw_requested`), so every camera mover on this
-        // target runs the same body at the mover. See
-        // `WasmInputState::reproject_after_camera_change` for the
-        // three ways it is *not* identical to native's drain.
-        input.reproject_after_camera_change(renderer);
+        // A camera move reprojects nothing: the glyph layers are in
+        // canvas space, and the frame draws them through the moved
+        // camera. Whatever else the Action changed, the frame's sync
+        // (`event_redraw_requested`) picks up.
         true
     }
 }

@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `WindowEvent::KeyboardInput` arm (Pressed only). Routes
-//! through the editor-steal pre-filter (`TextEditCommit` /
-//! `TextEditCancel` first, then the modal `handle_text_edit_key`
-//! body), then the document-context Action lookup, then the Macro
-//! fallback, then the custom-mutation tier. That is the same
-//! Action -> Macro -> CustomMutation chain native runs in
-//! `event_keyboard::handle_keyboard_input`; the WASM side has no
-//! console / color-picker / label / portal edit modals so only the
-//! pre-filter ladder is shorter.
+//! `WindowEvent::KeyboardInput` arm (Pressed only). Routes through
+//! the document-context Action lookup, then the macro fallback, then
+//! the edit-binding tier: the same Action → Macro → edit chain native
+//! runs in `event_keyboard::handle_keyboard_input`. The browser has no
+//! console or color picker to steal keys first, so the ladder starts at
+//! the keybind table.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -16,148 +13,61 @@ use crate::application::platform::input::{ElementState, Key};
 
 use super::WasmMacroDispatchTarget;
 use crate::application::app::dispatch;
-use crate::application::app::text_edit::handle_text_edit_key;
-use crate::application::keybinds::Action;
+use crate::application::app::dispatch::families::edits;
 
 impl super::Borrowed<'_> {
-    /// `WindowEvent::KeyboardInput`. Only a press reaches the handler;
-    /// a release changes nothing. Returns whether to request a redraw
-    /// — always, for a press, as native does.
+    /// `WindowEvent::KeyboardInput`. Returns whether to request a
+    /// redraw: a press always asks for one, as native's does; a release
+    /// does nothing here (the browser has no key-held pan to end).
     pub(super) fn on_keyboard_input(&mut self, logical_key: Key, state: ElementState) -> bool {
         if state != ElementState::Pressed {
             return false;
         }
-        let key_name = crate::application::keybinds::key_to_name(&logical_key);
+        let Some(k) = crate::application::keybinds::key_to_name(&logical_key) else {
+            return true;
+        };
         let input = &mut *self.input;
         let renderer = &mut *self.renderer;
         let keybinds = self.keybinds;
-
-        // Editor keyboard-steal: if open, route all keys
-        // to the editor so hotkeys don't collide with typed text.
-        //
-        // Commit/cancel pre-filter: dispatch through the funnel
-        // (`Action::TextEditCommit` / `TextEditCancel`) BEFORE
-        // calling the modal handler. Mirrors the native shape
-        // at `event_keyboard.rs`.
-        if input.text_edit_state.is_open() {
-            let action = key_name.as_deref().and_then(|n| {
-                keybinds.action_for_context(
-                    crate::application::keybinds::InputContext::TextEdit,
-                    n,
-                    input.modifiers.control_key(),
-                    input.modifiers.shift_key(),
-                    input.modifiers.alt_key(),
-                )
-            });
-            if let Some(modal_action @ (Action::TextEditCommit | Action::TextEditCancel)) = &action {
-                let mut core = input.input_context_core(renderer, keybinds);
-                let _ = dispatch::action_core::dispatch_compatible(modal_action, &mut core, None);
-                self.suppress_keys.set(input.text_edit_state.is_open());
-                return true;
-            }
-            handle_text_edit_key(
-                &key_name,
-                &logical_key,
-                &input.modifiers,
-                keybinds,
-                &mut input.text_edit_state,
-                &mut input.mindmap_tree,
-                renderer,
-            );
-            self.suppress_keys.set(input.text_edit_state.is_open());
+        let (ctrl, shift, alt) = (
+            input.modifiers.control_key(),
+            input.modifiers.shift_key(),
+            input.modifiers.alt_key(),
+        );
+        let action = keybinds.action_for_context(
+            crate::application::keybinds::InputContext::Document,
+            &k,
+            ctrl,
+            shift,
+            alt,
+        );
+        // The body lives in the unified `action_core::dispatch_compatible`,
+        // which native's `dispatch::dispatch_action` delegates to as well:
+        // one source of truth for every Compatible arm across both targets.
+        if let Some(a) = action {
+            let mut core = input.input_context_core(renderer);
+            let _ = dispatch::action_core::dispatch_compatible(&a, &mut core, None);
             return true;
         }
-
-        // Hotkey dispatch via keybinds.
-        let action = key_name.as_deref().and_then(|k| {
-            keybinds.action_for_context(
-                crate::application::keybinds::InputContext::Document,
-                k,
-                input.modifiers.control_key(),
-                input.modifiers.shift_key(),
-                input.modifiers.alt_key(),
-            )
-        });
-        // WASM dispatch ladder. Action body lives in the
-        // unified `dispatch_action_core::dispatch_compatible`
-        // (Track C) — both the keyboard path here and the
-        // `WasmMacroDispatchTarget::dispatch_action` impl
-        // reach the same body. Native's `dispatch::dispatch_action`
-        // delegates to it as well; one source of truth for
-        // every Compatible arm across both targets.
-        //
-        // After the action lookup completes, fall through to
-        // macro lookup — the same Action → Macro →
-        // CustomMutation chain native uses (`event_keyboard.rs`).
-        if let Some(a) = action.clone() {
-            // Pin "did the user just trigger an EditSelection?"
-            // before the dispatch — `self.suppress_keys` is
-            // ONLY updated for that pair (pre-Track-B, the
-            // suppress call lived inside the EditSelection
-            // pre-filter arm). Other Compatible Actions don't
-            // touch suppress.
-            let was_edit_selection = matches!(a, Action::EditSelection | Action::EditSelectionClean);
-            let _ = {
-                let mut core = input.input_context_core(renderer, keybinds);
-                dispatch::action_core::dispatch_compatible(&a, &mut core, None)
+        // No built-in Action bound to this combo — fall through the rest
+        // of native's chain: Action → Macro → edit (CONCEPTS §5).
+        // Privilege gating runs inside `dispatch::macro_core::dispatch_macro`
+        // so a hostile tier's macro can't slip destructive Actions or
+        // ConsoleLine past. A macro bound to an id that isn't in the
+        // registry (typo'd config, half-loaded macros file) returns false
+        // and falls through to the edit tier, exactly as native does.
+        if let Some(id) = keybinds.macro_for(&k, ctrl, shift, alt).map(str::to_string) {
+            let mut target = WasmMacroDispatchTarget {
+                input,
+                renderer,
+                after_step: None,
             };
-            if was_edit_selection {
-                // Mirror pre-Track-B `set(is_open())`: flip
-                // suppress to whatever the modal state ended
-                // up at — true if the editor opened, false if
-                // it didn't (e.g. selection wasn't Single).
-                // Always-set, NOT gated on dispatch outcome.
-                // Track-C-Commit-3 incorrectly gated on
-                // `Handled` which left suppress stuck-true on a
-                // non-Single EditSelection (Unhandled outcome);
-                // restored here per the design reviewer's flag.
-                self.suppress_keys.set(input.text_edit_state.is_open());
+            if dispatch::macro_core::dispatch_macro(&id, &mut target) {
+                return true;
             }
-        } else if let Some(k) = key_name.as_deref() {
-            // No built-in Action bound to this combo — fall through
-            // the rest of native's chain: Action → Macro →
-            // CustomMutation (CONCEPTS §5). Privilege gating runs
-            // inside `dispatch::macro_core::dispatch_macro` so a
-            // hostile Map / Inline tier macro can't slip destructive
-            // Actions or ConsoleLine past.
-            let (ctrl, shift, alt) = (
-                input.modifiers.control_key(),
-                input.modifiers.shift_key(),
-                input.modifiers.alt_key(),
-            );
-            let macro_id = keybinds.macro_for(k, ctrl, shift, alt).map(str::to_string);
-            // A macro bound to an id that isn't in the registry
-            // (typo'd config, half-loaded macros file) returns false
-            // from `dispatch_macro`; fall through to the
-            // custom-mutation tier so the keystroke still has a
-            // chance to do something, exactly as native does.
-            let macro_handled = if let Some(id) = macro_id {
-                let mut target = WasmMacroDispatchTarget {
-                    input,
-                    renderer,
-                    keybinds,
-                    after_step: None,
-                };
-                dispatch::macro_core::dispatch_macro(&id, &mut target)
-            } else {
-                false
-            };
-            if !macro_handled {
-                // Third tier. Pre-unification the browser's chain
-                // stopped at Macro, so a `custom_mutation_bindings`
-                // entry worked on the desktop and was silently dead
-                // on the web.
-                //
-                // Animated entries (`timing.duration_ms > 0`) start
-                // an instance here and are advanced by the frame:
-                // the redraw this arm asks for brings a
-                // `RedrawRequested`, and `event_redraw_requested`
-                // ticks the animation on every frame until it
-                // completes (#144 closed the stall where nothing on
-                // this target ticked it).
-                let mut core = input.input_context_core(renderer, keybinds);
-                let _ = dispatch::dispatch_custom_mutation_for_key(&mut core, k, ctrl, shift, alt);
-            }
+        }
+        if let Some(edit) = keybinds.edit_for(&k, ctrl, shift, alt) {
+            let _ = edits::fire(edit);
         }
         true
     }

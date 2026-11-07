@@ -58,12 +58,12 @@ pub const BUSY_RETRY: Duration = Duration::from_secs(2);
 /// What to do when the socket cannot be reached, appended to the
 /// errors that mean "the app is not there".
 #[cfg(not(windows))]
-pub const LAUNCH_HINT: &str = "launch the app with: mandala <map.mindmap.json> --ipc <socket-path>";
+pub const LAUNCH_HINT: &str = "launch the app with: mandala <map.mandala.json> --ipc <socket-path>";
 
 /// What to do when the pipe cannot be reached, appended to the errors
 /// that mean "the app is not there".
 #[cfg(windows)]
-pub const LAUNCH_HINT: &str = "launch the app with: mandala <map.mindmap.json> --ipc <name>";
+pub const LAUNCH_HINT: &str = "launch the app with: mandala <map.mandala.json> --ipc <name>";
 
 /// The Windows pipe an `--ipc` value names: `--ipc <name>` is
 /// `\\.\pipe\mandala-<name>` (`format/ipc.md` §Windows), the same value

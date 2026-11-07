@@ -8,7 +8,7 @@
 use baumhard::gfx_structs::camera::Camera2D;
 use serde_json::{json, Value};
 
-use crate::application::document::f32_json;
+use crate::application::view::inspect::f32_json;
 
 /// Where a coordinate pair lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +16,7 @@ pub(crate) enum Space {
     /// Physical pixels on the rendered surface, origin top-left,
     /// y-down: the space of screenshots and synthetic mouse input.
     Surface,
-    /// The document's world space, the space of `MindNode` offsets,
+    /// The document's world space, the space of node positions,
     /// as the camera sees it.
     Canvas,
 }

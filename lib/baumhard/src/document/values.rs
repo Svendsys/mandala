@@ -3,7 +3,7 @@
 //! Typed values: every color, size, shape, anchor and mode a document
 //! element stores, in the form it is stored in.
 //!
-//! A `.mindmap.json` used to carry these as strings (`"#30b082"`,
+//! A format could carry these as strings (`"#30b082"`,
 //! `"var(--accent)"`, `"rectangle"`, `"auto"`) that every projection
 //! pass parsed again. Here a value is parsed **once**, at load, into
 //! one of these types, and nothing after load parses a string

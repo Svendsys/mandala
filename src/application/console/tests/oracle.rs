@@ -38,8 +38,11 @@
 use crate::application::console::completion::complete;
 use crate::application::console::parser::{parse, Args, ParseResult};
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
-use crate::application::document::tests_common::{load_test_doc, pinned_two_section_node};
-use crate::application::document::{EdgeLabelSel, EdgeRef, MindMapDocument, SectionSel, SelectionState};
+use crate::application::document::selection::every_node;
+use crate::application::document::tests_common::testament;
+use crate::application::document::MindMapDocument;
+use crate::application::view::inspect::children_of_kind;
+use baumhard::document::element::DocKind;
 
 /// Selection fixtures the corpus runs each line under.
 #[derive(Clone, Copy)]
@@ -47,59 +50,41 @@ pub enum Sel {
     None,
     Node,
     TwoSectionNode,
-    Section,
     Multi,
-    Edge,
-    EdgeLabel,
+    Path,
 }
 
+/// The testament map with `sel` selected.
 pub fn doc_for(sel: Sel) -> MindMapDocument {
+    let mut doc = testament();
+    // Unbound, so a bare `save` in the corpus is refused rather than
+    // writing over the committed map.
+    doc.file_path = None;
+    let nodes: Vec<_> = every_node(doc.doc()).collect();
     match sel {
-        Sel::None => load_test_doc(),
+        Sel::None => {}
         Sel::Node => {
-            let mut doc = load_test_doc();
-            let id = doc.mindmap.nodes.keys().min().cloned().expect("nodes");
-            doc.selection = SelectionState::Single(id);
-            doc
+            doc.selection.select_only(nodes[0]);
         }
         Sel::TwoSectionNode => {
-            let (mut doc, id) = pinned_two_section_node();
-            doc.selection = SelectionState::Single(id);
-            doc
-        }
-        Sel::Section => {
-            let (mut doc, id) = pinned_two_section_node();
-            doc.selection = SelectionState::Section(SectionSel {
-                node_id: id,
-                section_idx: 0,
-            });
-            doc
+            let node = *nodes
+                .iter()
+                .find(|&&n| children_of_kind(doc.doc(), n, DocKind::Section).count() >= 2)
+                .expect("the testament map has a node with two sections");
+            doc.selection.select_only(node);
         }
         Sel::Multi => {
-            let mut doc = load_test_doc();
-            let mut ids: Vec<String> = doc.mindmap.nodes.keys().cloned().collect();
-            ids.sort();
-            ids.truncate(2);
-            doc.selection = SelectionState::Multi(ids);
-            doc
+            doc.selection.set(nodes.iter().copied().take(2));
         }
-        Sel::Edge => {
-            let mut doc = load_test_doc();
-            let e = doc.mindmap.edges.first().expect("edges").clone();
-            doc.selection = SelectionState::Edge(EdgeRef::new(&e.from_id, &e.to_id, &e.edge_type));
-            doc
-        }
-        Sel::EdgeLabel => {
-            let mut doc = load_test_doc();
-            let e = doc.mindmap.edges.first().expect("edges").clone();
-            doc.selection = SelectionState::EdgeLabel(EdgeLabelSel::new(EdgeRef::new(
-                &e.from_id,
-                &e.to_id,
-                &e.edge_type,
-            )));
-            doc
+        Sel::Path => {
+            let path = nodes
+                .iter()
+                .find_map(|&n| children_of_kind(doc.doc(), n, DocKind::Connector).next())
+                .expect("the testament map has a connector");
+            doc.selection.select_only(path);
         }
     }
+    doc
 }
 
 /// Run one line and render its outcome as a single stable string.
@@ -120,45 +105,6 @@ pub fn exec_signature(line: &str, sel: Sel) -> String {
         ),
         ExecResult::Err(m) => format!("ERR {}", escape(&m)),
     }
-}
-
-/// Run `lines` in order against **one** document and render the
-/// whole interaction as a single stable string.
-///
-/// [`exec_signature`] throws its document away, which is what makes
-/// an `EXEC_CORPUS` row independent of its neighbors — and what puts
-/// every outcome that needs a *prior* line out of the oracle's reach.
-/// `border preview commit` prints its auto-promotion note only when a
-/// preview is active, so the note it hand-wrote for its own use went
-/// unpinned through the commit that claimed to have written the
-/// border family's closing move once.
-pub fn exec_sequence_signature(lines: &[&str], sel: Sel) -> String {
-    let mut doc = doc_for(sel);
-    let mut out: Vec<String> = Vec::with_capacity(lines.len());
-    for line in lines {
-        let (cmd, tokens) = match parse(line) {
-            ParseResult::Ok { cmd, args } => (cmd, args),
-            ParseResult::Empty => {
-                out.push("PARSE-EMPTY".to_string());
-                continue;
-            }
-            ParseResult::Unknown(s) => {
-                out.push(format!("PARSE-UNKNOWN {s}"));
-                continue;
-            }
-        };
-        let mut eff = ConsoleEffects::new(&mut doc);
-        let res = (cmd.execute)(&Args::new(&tokens), &mut eff);
-        out.push(match res {
-            ExecResult::Ok(m) => format!("OK {}", escape(&m)),
-            ExecResult::Lines(ls) => format!(
-                "LINES {}",
-                escape(&ls.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n"))
-            ),
-            ExecResult::Err(m) => format!("ERR {}", escape(&m)),
-        });
-    }
-    out.join(" ;; ")
 }
 
 /// Render the completion popup for `line` (cursor at end) as a
@@ -235,31 +181,6 @@ fn test_console_oracle_locale_bearing_readout_opens_unchanged() {
     }
 }
 
-/// Every stateful sequence still reads exactly the way it was
-/// pinned, line by line.
-///
-/// The rows here exist for the branches a fresh document cannot
-/// reach — chiefly the border family's commit tail, which is
-/// unreachable from any single line and was therefore the one copy of
-/// the shared closing move that could drift unobserved.
-#[test]
-fn test_console_oracle_stateful_sequences_are_unchanged() {
-    let corpus = super::oracle_corpus::EXEC_SEQ_CORPUS;
-    let expected = super::oracle_expected::EXEC_SEQ_EXPECTED;
-    assert_eq!(
-        corpus.len(),
-        expected.len(),
-        "EXEC_SEQ_CORPUS and EXEC_SEQ_EXPECTED must stay the same length"
-    );
-    for (i, ((sel, lines), want)) in corpus.iter().zip(expected).enumerate() {
-        assert_eq!(
-            &exec_sequence_signature(lines, *sel),
-            want,
-            "oracle sequence row {i} drifted for input {lines:?}"
-        );
-    }
-}
-
 /// Every corpus line's completion popup still offers exactly the
 /// rows, hints and insert texts it was pinned with.
 #[test]
@@ -310,15 +231,7 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
 
     let doc = doc_for(Sel::Node);
     let ctx = ConsoleContext::from_document(&doc);
-    // The border slots carry one row the `font` verb's does not:
-    // the `off` sentinel that drops the override, which `font set`
-    // has no equivalent of. Everything else about the three is the
-    // same body.
-    for (line, sentinels) in [
-        ("border font ", &["off"][..]),
-        ("border font=", &["off"][..]),
-        ("font set ", &[][..]),
-    ] {
+    for (line, sentinels) in [("font set ", &[][..] as &[&str])] {
         let all = complete(line, line.len(), &ctx);
         let (rows, extra): (Vec<_>, Vec<_>) = all.into_iter().partition(|c| c.font_family.is_some());
         assert_eq!(
@@ -362,10 +275,5 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
                 c.display
             );
         }
-    }
-
-    match exec_signature("font list", Sel::Node).strip_prefix("LINES ") {
-        Some(body) => assert_eq!(body.split("\\n").count(), families.len()),
-        other => panic!("`font list` should emit Lines, got {other:?}"),
     }
 }

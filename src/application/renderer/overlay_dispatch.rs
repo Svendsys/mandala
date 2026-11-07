@@ -10,14 +10,14 @@
 //! buffers. The choice is dispatched by structural-signature
 //! equality — see [`crate::application::scene_host::OverlayDispatch`].
 //!
-//! There is a second, finer granularity underneath this one, and the
-//! two are independent. This module's dispatch decides whether the
-//! *arena* is rebuilt; [`super::scene_shape_cache`] decides, per
-//! element, whether its *shaped buffers* are rebuilt. A mutator apply
-//! reaches every slot by design, so without the second decision the
-//! §B2 win — mutate, don't rebuild — stopped at the arena and the
-//! shaping cost of a full rebuild was paid anyway on every hover
-//! frame and every keystroke.
+//! The shaped buffers are then brought up to date with the overlay
+//! trees ([`Renderer::rebuild_overlay_scene_buffers`]) **area by area**:
+//! each area keeps the buffers it was shaped into under a reuse key of
+//! everything shaping reads, so a console keystroke reshapes the prompt
+//! line and not the scrollback, and a picker hover the cells whose
+//! content changed. That is not a scan for change in the document's
+//! sense: it is one key comparison per area of an overlay that is
+//! being rebuilt anyway.
 
 use baumhard::font::fonts;
 
@@ -26,9 +26,33 @@ use super::console_geometry::{compute_console_frame_layout, ConsoleOverlayGeomet
 use super::console_pass::{
     build_console_overlay_mutator, build_console_overlay_tree, console_overlay_signature,
 };
-use super::Renderer;
+use super::{MindMapTextBuffer, Renderer};
+use baumhard::arena::NodeId;
+use baumhard::gfx_structs::area::GlyphArea;
+use baumhard::gfx_structs::scene::{Scene, SceneTreeId};
+use rustc_hash::FxHashMap;
+use std::hash::{Hash, Hasher};
+use std::ops::Range;
 
 impl Renderer {
+    /// Bring the chrome pass's buffers up to date with every visible
+    /// overlay tree — the console's, the color picker's — in layer order
+    /// and each tree in pre-order, so later areas draw over earlier ones
+    /// ([`reshape_overlays`]).
+    ///
+    /// # Costs
+    ///
+    /// One walk of the overlay trees and one reuse-key comparison per
+    /// area; a shaping only for an area whose key changed, under one
+    /// `FONT_SYSTEM` write guard taken at the first such area.
+    pub fn rebuild_overlay_scene_buffers(
+        &mut self,
+        app_scene: &mut crate::application::scene_host::AppScene,
+    ) {
+        let ids = app_scene.overlay_ids_in_layer_order();
+        reshape_overlays(&mut self.overlay_shapes, app_scene.overlay_scene(), &ids);
+    }
+
     /// Rebuild the console overlay buffers. When `geometry` is
     /// `None`, the console is closed — clear the buffer list and the
     /// backdrop, and return. When `Some`, lay out a bottom-anchored
@@ -36,7 +60,7 @@ impl Renderer {
     /// optional completion popup, and the prompt line with cursor.
     ///
     /// Everything is positioned in screen coordinates (the walk
-    /// lands in `overlay_scene_elements`, which the render pass
+    /// lands in `OverlayShapes::elements`, which the render pass
     /// draws with `scale = 1.0`), so the console stays a fixed size
     /// regardless of canvas zoom.
     pub fn rebuild_console_overlay_buffers(
@@ -99,7 +123,7 @@ impl Renderer {
     /// Build the picker's overlay tree from `geometry`, register
     /// it under [`OverlayRole::ColorPicker`](crate::application::scene_host::OverlayRole),
     /// and walk the overlay sub-scene into
-    /// `overlay_scene_elements`. `None` means the picker is closed
+    /// `OverlayShapes::elements`. `None` means the picker is closed
     /// — drops the backdrop, unregisters the tree, refreshes
     /// overlay buffers so it disappears.
     ///
@@ -107,13 +131,10 @@ impl Renderer {
     /// the hover / chip-focus / commit / cancel paths in
     /// `app::rebuild_color_picker_overlay`.
     ///
-    /// Open and close are the two events that genuinely rebuild the
-    /// arena, and so the two that shape every cell in it. The
-    /// per-frame hover / HSV / chip paths do not come through here
-    /// — they mutate the registered arena in place and re-shape
-    /// only the cells whose `GlyphArea` actually moved; see
-    /// [`Self::apply_color_picker_overlay_dynamic_mutator`] and
-    /// [`super::scene_shape_cache`].
+    /// Open and close are the two events that rebuild the arena. The
+    /// hover / HSV / chip paths do not come through here — they mutate
+    /// the registered arena in place; see
+    /// [`Self::apply_color_picker_overlay_dynamic_mutator`].
     pub fn rebuild_color_picker_overlay_buffers(
         &mut self,
         app_scene: &mut crate::application::scene_host::AppScene,
@@ -143,16 +164,8 @@ impl Renderer {
     /// instead — same arena, slimmer per-cell delta. Open / close
     /// still use [`Self::rebuild_color_picker_overlay_buffers`]
     /// because the arena needs to be created or torn down. Calls
-    /// `rebuild_overlay_scene_buffers` afterward, which re-shapes
-    /// only the cells whose glyphs this mutator actually changed,
-    /// moves the cells whose *position* alone it changed without
-    /// shaping them, and leaves the rest of the wheel's buffers as
-    /// they are — see [`super::scene_shape_cache`] for how it tells
-    /// the three apart. A drag-move repositions every cell and
-    /// changes nothing else, so it lands entirely on the move side:
-    /// each outlined cell's halo stamps are re-placed from their
-    /// recorded offsets rather than shaped again. A resize changes
-    /// the cells' scale and bounds too, so it re-shapes them.
+    /// `rebuild_overlay_scene_buffers` afterward, which shapes the
+    /// overlay again.
     pub fn apply_color_picker_overlay_mutator(
         &mut self,
         app_scene: &mut crate::application::scene_host::AppScene,
@@ -173,13 +186,7 @@ impl Renderer {
     /// This is the per-frame hot path for hover / HSV / chip-focus
     /// updates — the picker's element set, position, and bounds are
     /// unchanged. Calls `rebuild_overlay_scene_buffers` afterward,
-    /// which re-shapes the cells whose `GlyphArea` this mutator
-    /// actually changed. The mutator writes every slot's fields
-    /// whether or not the value moved, so "what changed" is decided
-    /// downstream, by comparison against what each cell was last
-    /// shaped from ([`super::scene_shape_cache`]) — including the
-    /// per-region colors that a hover moves and `GlyphArea`'s own
-    /// `==` cannot see.
+    /// which shapes the overlay again.
     pub fn apply_color_picker_overlay_dynamic_mutator(
         &mut self,
         app_scene: &mut crate::application::scene_host::AppScene,
@@ -189,4 +196,121 @@ impl Renderer {
         color_picker::apply_dynamic_mutator(app_scene, geometry, layout);
         self.rebuild_overlay_scene_buffers(app_scene);
     }
+}
+
+/// The chrome pass's shaped overlay buffers, and what each area was
+/// shaped from: the reuse that keeps a keystroke from reshaping the
+/// whole console ([`reshape_overlays`]).
+#[derive(Default)]
+pub(crate) struct OverlayShapes {
+    /// Every buffer, in draw order: what the chrome pass draws.
+    pub(crate) elements: Vec<MindMapTextBuffer>,
+    /// Per area — its overlay tree and its element — its reuse key and
+    /// the run of [`Self::elements`] its stamps are.
+    index: FxHashMap<(SceneTreeId, NodeId), (u64, Range<usize>)>,
+    /// How many areas have been shaped, over the life of the store.
+    /// Test builds only.
+    #[cfg(test)]
+    pub(crate) shaped: usize,
+}
+
+/// Bring `shapes` up to date with the overlay trees `ids` names in
+/// `scene`: an area whose reuse key ([`reuse_key`]) is the one it was
+/// shaped under keeps its buffers, moved into place with their
+/// positions written anew; every other area is shaped. An area that is
+/// gone drops its buffers. Pure over its inputs and the font system, so
+/// the tests drive it without a renderer.
+///
+/// Cost: O(the trees' elements) for the walk and the keys; one shaping
+/// per area whose key changed, under one font guard taken at the first.
+pub(crate) fn reshape_overlays(shapes: &mut OverlayShapes, scene: &Scene, ids: &[SceneTreeId]) {
+    let mut previous: Vec<Option<MindMapTextBuffer>> = std::mem::take(&mut shapes.elements)
+        .into_iter()
+        .map(Some)
+        .collect();
+    let old = std::mem::take(&mut shapes.index);
+    let mut font_system = None;
+    for &id in ids {
+        let Some(entry) = scene.get(id) else {
+            continue;
+        };
+        if !entry.visible() {
+            continue;
+        }
+        let (tree, offset) = (entry.tree(), entry.offset());
+        for element_id in tree.root().descendants(tree.arena()) {
+            let Some(node) = tree.arena().get(element_id) else {
+                continue;
+            };
+            let element = node.get();
+            let Some(area) = element.glyph_area() else {
+                continue;
+            };
+            if area.text.is_empty() {
+                continue;
+            }
+            let key = reuse_key(area);
+            let start = shapes.elements.len();
+            let kept = old.get(&(id, element_id)).filter(|(was, _)| *was == key);
+            match kept {
+                Some((_, range)) => {
+                    let anchor = (area.position.x.0, area.position.y.0);
+                    for (slot, stamp) in range.clone().zip(stamp_offsets(area)) {
+                        let Some(mut buffer) = previous[slot].take() else {
+                            continue;
+                        };
+                        buffer.pos = MindMapTextBuffer::stamp_pos(anchor, stamp, offset);
+                        shapes.elements.push(buffer);
+                    }
+                }
+                None => {
+                    #[cfg(test)]
+                    {
+                        shapes.shaped += 1;
+                    }
+                    let fs = font_system.get_or_insert_with(|| {
+                        fonts::acquire_font_system_write("overlay_dispatch::reshape_overlays")
+                    });
+                    let elements = &mut shapes.elements;
+                    super::tree_walker::shape_one_element_into_buffers(
+                        element,
+                        offset,
+                        fs,
+                        &mut |_, buffer| elements.push(buffer),
+                    );
+                }
+            }
+            shapes
+                .index
+                .insert((id, element_id), (key, start..shapes.elements.len()));
+        }
+    }
+}
+
+/// Where an area's stamps sit relative to its position, in the order
+/// [`super::tree_walker::shape_one_element_into_buffers`] yields them:
+/// each halo offset, then the text itself.
+fn stamp_offsets(area: &GlyphArea) -> Vec<(f32, f32)> {
+    let mut out: Vec<(f32, f32)> = area
+        .halo()
+        .map(|outline| outline.offsets().collect())
+        .unwrap_or_default();
+    out.push((0.0, 0.0));
+    out
+}
+
+/// Everything shaping an area reads, hashed: its text and regions, its
+/// scale, line height and bounds, its alignment and its halo. Its
+/// position is not in it — a moved area keeps its buffers.
+fn reuse_key(area: &GlyphArea) -> u64 {
+    let mut hasher = rustc_hash::FxHasher::default();
+    area.text.hash(&mut hasher);
+    area.regions.hash(&mut hasher);
+    area.scale.0.to_bits().hash(&mut hasher);
+    area.line_height.0.to_bits().hash(&mut hasher);
+    area.render_bounds.x.0.to_bits().hash(&mut hasher);
+    area.render_bounds.y.0.to_bits().hash(&mut hasher);
+    area.align_center.hash(&mut hasher);
+    format!("{:?}", area.halo()).hash(&mut hasher);
+    hasher.finish()
 }

@@ -40,13 +40,13 @@ pub enum ColorAxis {
     Border,
 }
 
-/// Which border-slot a [`Action::SetBorderPreview`] targets.
+/// Which border-slot a [`Action::SetFramePreview`] targets.
 /// Discriminator for the `<verb> preview <kv>=…` Action surface
 /// — five variants mirror the five committing setters
-/// (`set_node_border_config` /
-/// `set_section_frame_border_config` /
-/// `set_canvas_default_border` /
-/// `set_canvas_default_section_frame_border_config(focused=false|true)`).
+/// (`set_node_border_config` (gone) /
+/// `set_section_frame_border_config` (gone) /
+/// `set_canvas_default_border` (gone) /
+/// `set_canvas_default_section_frame_border_config(focused=false|true)` (gone)).
 ///
 /// Same strum-derive shape as [`ColorAxis`]: `Node.into() ==
 /// "node"`, `"node".parse::<BorderPreviewTargetKind>() ==
@@ -59,7 +59,7 @@ pub enum ColorAxis {
 pub enum BorderPreviewTargetKind {
     /// `border preview` — per-node `style.border` for selected nodes.
     Node,
-    /// `section frame preview` — per-section `frame_border` for
+    /// `section frame preview` — per-section `frame_border` (gone) for
     /// selected section pairs.
     Section,
     /// `canvas border preview` — `Canvas.default_border`.
@@ -131,7 +131,7 @@ pub enum ZoomBound {
 /// variants are cloned at lookup time in
 /// [`super::resolved::ResolvedKeybinds::action_for_context`]. Each
 /// keypress allocates one short string per `String`-payload variant
-/// (two for `SetEdgeAnchor` / `SetEdgeCap` / `SetBorderField`). For
+/// (two for `SetPathAnchor` / `SetPathCap` / `SetFrameField`). For
 /// the typical interactive cadence (≤10 keypresses/sec) the cost is
 /// inconsequential; for a synthetic load of macros firing thousands
 /// of `Action`s/sec, switch the lookup to return `&Action` and clone
@@ -163,9 +163,12 @@ pub enum ZoomBound {
 #[non_exhaustive]
 pub enum Action {
     // ── Document-level (global) ──────────────────────────────────
-    /// Undo the last action on the document.
+    /// Undo the newest history entry (`Document::undo`).
     #[action(context = Document, wasm = Compatible)]
     Undo,
+    /// Redo the history entry undone last (`Document::redo`).
+    #[action(context = Document, wasm = Compatible)]
+    Redo,
     /// Enter reparent mode for the currently selected nodes.
     #[action(context = Document, wasm = NativeOnly)]
     EnterReparentMode,
@@ -200,7 +203,7 @@ pub enum Action {
     /// Exit the active interaction mode (Reparent / Connect / Resize)
     /// back to `Default`. Cross-platform: the mode-clear + scene
     /// rebuild slice runs on both targets via `dispatch_compatible`;
-    /// the native-only residual (clearing `hovered_node` for the
+    /// the native-only residual (clearing `hovered_node` (gone) for the
     /// Reparent/Connect overlay rebuild) runs in the native arm.
     #[action(context = Document, wasm = Compatible)]
     ExitMode,
@@ -239,9 +242,9 @@ pub enum Action {
     ///
     /// **WASM: NativeOnly** — not for the text editor, which the
     /// browser already runs (`CreateOrphanNodeAndEdit` opens it
-    /// there through the same `open_text_edit`), but for the section
+    /// there through the same `open_text_edit` (gone)), but for the section
     /// half of NodeEdit the browser lacks: section click routing
-    /// (`InteractionMode::click_resolves_to_section`), the
+    /// (`InteractionMode::click_resolves_to_section` (gone)), the
     /// outside-click exit, and the section-edit entry
     /// ([`Action::EnterSectionEdit`]). #229 tracks porting them.
     ///
@@ -261,7 +264,7 @@ pub enum Action {
     /// - Selection determines the section: `Section(s)` /
     ///   `SectionRange { sel: s, .. }` use `s.section_idx`;
     ///   `Single(node_id)` defaults to section 0; anything else no-ops.
-    /// - The editor opens via `open_text_edit`. NodeEdit mode stays
+    /// - The editor opens via `open_text_edit` (gone). NodeEdit mode stays
     ///   active; closing the editor (commit or cancel) returns to
     ///   `NodeEdit` mode (not `Default` — `ExitMode` does that).
     ///
@@ -326,7 +329,7 @@ pub enum Action {
     ///
     /// **WASM: NativeOnly until the resize gesture is wired
     /// cross-platform.** The mode flip itself is target-agnostic
-    /// (the cross-platform `apply_enter_resize_mode` arm could
+    /// (the cross-platform `apply_enter_resize_mode` (gone) arm could
     /// run on WASM today), but WASM has no `DragState`, no
     /// throttled-drag pipeline, and no handle hit-test in
     /// `run_wasm/event_mouse_click.rs` — so a flip on WASM would
@@ -337,12 +340,12 @@ pub enum Action {
     ///
     /// **This is the touch route to a resize.** Default-bound to
     /// `LongPress` as well as `r`; on native a finger that then lands
-    /// on a handle drags it (`app::touch_handle`, #160), which is why
+    /// on a handle drags it (`app::touch_handle` (gone), #160), which is why
     /// [`Self::FastResizeStart`] needs no touch binding.
     ///
     /// Non-destructive — flips a mode bit and triggers a scene
     /// rebuild, no document mutation. The actual resize commit
-    /// happens later via `set_node_aabb` / `set_section_aabb` on
+    /// happens later via `set_node_aabb` (gone) / `set_section_aabb` (gone) on
     /// drag release; that path is gated separately.
     #[action(context = Document, wasm = NativeOnly)]
     EnterResizeMode,
@@ -352,10 +355,10 @@ pub enum Action {
     /// `DispatchHit` built from the press — the press-time body
     /// hit, the press-time canvas position and the button holding
     /// the gesture (#194). The arm infers the corner anchor from
-    /// that position via `infer_resize_anchor`, and arms
+    /// that position via `infer_resize_anchor` (gone), and arms
     /// `Throttled(NodeResize | SectionResize)` owned by that
-    /// button, whose release finalizes via `set_node_aabb` /
-    /// `set_section_aabb`. Default-bound to `Ctrl+RightDrag`, so
+    /// button, whose release finalizes via `set_node_aabb` (gone) /
+    /// `set_section_aabb` (gone). Default-bound to `Ctrl+RightDrag`, so
     /// the right button owns it. A hit no button holds (IPC
     /// `act.action` with a target) is refused, since no release
     /// could end the drag.
@@ -731,11 +734,11 @@ pub enum Action {
     /// Mirror `anchor from=<side> to=<side>` on the selected edge.
     /// Sides: `auto|top|right|bottom|left`. Single-edge selection.
     #[action(context = Document, wasm = Compatible)]
-    SetEdgeAnchor { from: String, to: String },
+    SetPathAnchor { from: String, to: String },
     /// Mirror `body glyph=<dot|dash|double|wave|chain>` on the
     /// selected edge.
     #[action(context = Document, wasm = Compatible)]
-    SetEdgeBodyGlyph(String),
+    SetPathContent(String),
     /// Mirror `border <field>=<value>` on the selected node(s).
     /// Single kv per binding (multi-kv border edits stay
     /// console-only). Field names: `preset|font|size|color|palette|
@@ -748,28 +751,28 @@ pub enum Action {
     /// would catch it at load do not exist yet; #227 tracks adding
     /// them and retiring this one.
     #[action(context = Document, wasm = Compatible)]
-    SetBorderField { field: String, value: String },
+    SetFrameField { field: String, value: String },
     /// Mirror `border preset cycle` — advance the selected
     /// node(s)' border preset to the next entry in
     /// `BORDER_PRESETS`, wrapping at the end. No payload, so
     /// bindable to a single key for one-press preset cycling, as
-    /// `cycle_border_preset`. This doc claimed that from the day
+    /// `cycle_border_preset` (gone). This doc claimed that from the day
     /// the variant landed and the config field did not exist until
     /// #32 — the drift class the `keybind_surface!` table closes.
     #[action(context = Document, wasm = Compatible)]
-    CycleBorderPreset,
+    CycleFrameContent,
     /// Mirror `border toggle` — flip `style.show_frame` per
     /// selected node. No payload (each node is toggled
     /// independently), so bindable to a single key for one-press
-    /// border-on/off cycling, as `toggle_border_visible`. Same
-    /// missing-field history as [`Action::CycleBorderPreset`].
+    /// border-on/off cycling, as `toggle_border_visible` (gone). Same
+    /// missing-field history as [`Action::CycleFrameContent`].
     #[action(context = Document, wasm = Compatible)]
-    ToggleBorderVisible,
+    ToggleFrameVisible,
     /// Stage a single-kv border preview against the live
     /// selection. `target_kind: BorderPreviewTargetKind` is a
     /// typed enum (kebab-case-serialized: `node` / `section` /
     /// `canvas-border` / `canvas-sf` / `canvas-sf-focused`)
-    /// that picks the committing setter `commit_border_preview`
+    /// that picks the committing setter `commit_border_preview` (gone)
     /// will route to; replaces the prior stringly-typed
     /// discriminator that could accept typos at runtime. Single
     /// kv per binding (preview-set keybinds; multi-kv preview
@@ -779,7 +782,7 @@ pub enum Action {
     /// **`Section` target requires a section-shaped selection**
     /// (`Section` / `SectionRange` / `MultiSection`). On
     /// `Single(node_id)` the resolver in
-    /// `apply_set_border_preview` falls through (no `section=K`
+    /// `apply_set_border_preview` (gone) falls through (no `section=K`
     /// payload exists on the Action variant) and the keybind
     /// becomes a no-op. The console verb path requires `section=K`
     /// to disambiguate; the keybind has no kv side-channel so
@@ -787,7 +790,7 @@ pub enum Action {
     /// to a navigation key that lands a section-shaped selection
     /// first, or use the console verb.
     #[action(context = Document, wasm = Compatible)]
-    SetBorderPreview {
+    SetFramePreview {
         target_kind: BorderPreviewTargetKind,
         field: String,
         value: String,
@@ -796,23 +799,23 @@ pub enum Action {
     /// committing setter and clear the preview slot. No-op when
     /// no preview is active.
     #[action(context = Document, wasm = Compatible)]
-    CommitBorderPreview,
+    CommitFramePreview,
     /// Discard the active border preview without writing the
     /// model. No-op when no preview is active. Default-bound to
     /// **nothing** in `KeybindConfig::default()` — Esc cancels
     /// previews through `Action::ExitMode`'s body (which calls
-    /// `cancel_border_preview()` first and short-circuits when a
+    /// `cancel_border_preview()` (gone) first and short-circuits when a
     /// preview was canceled). The chain lives inside ExitMode
     /// because the keybind resolver maps `(context, key) →
     /// Action` deterministically and can't fall through. Bind
     /// this entry to opt out of the chain (e.g. preview-cancel
     /// on a different key while leaving Esc on plain ExitMode).
     #[action(context = Document, wasm = Compatible)]
-    CancelBorderPreview,
+    CancelFramePreview,
     /// Mirror `cap from=<arrow|circle|diamond|none> to=<...>` on the
     /// selected edge.
     #[action(context = Document, wasm = Compatible)]
-    SetEdgeCap { from: String, to: String },
+    SetPathCap { from: String, to: String },
     /// Mirror `color <axis>=<color>` on the current selection.
     /// `axis` picks the field group (background, text, or border);
     /// `value` is the user-facing color string (`#rrggbb`,
@@ -825,11 +828,11 @@ pub enum Action {
     SetEdgeType(String),
     /// Mirror `edge display_mode=<line|portal>` on the selected edge.
     #[action(context = Document, wasm = Compatible)]
-    SetEdgeDisplayMode(String),
+    SetLinkKind(String),
     /// Mirror `edge reset=<straight|curve|style|position>` on the
     /// selected edge.
     #[action(context = Document, wasm = Compatible)]
-    ResetEdge(String),
+    ResetPath(String),
     /// Mirror `font set <family>` on the current selection. Unknown
     /// family names silently no-op (the verb path surfaces a typed
     /// error; the Action arm has no scrollback).
@@ -846,24 +849,24 @@ pub enum Action {
     /// Mirror `label text=<text>` on the selected edge / portal
     /// label. Empty payload clears the label.
     #[action(context = Document, wasm = Compatible)]
-    SetEdgeLabelText(String),
+    SetLabelText(String),
     /// Mirror `label position=<start|middle|end>` on the selected
     /// line-mode edge. Portal selections silently no-op (they use
     /// the `position_t=<f32>` shape, not named anchors).
     #[action(context = Document, wasm = Compatible)]
-    SetEdgeLabelPosition(String),
+    SetLabelPosition(String),
     /// Mirror `spacing value=<tight|normal|wide|<float>>` on the
     /// selected edge.
     #[action(context = Document, wasm = Compatible)]
-    SetSpacing(String),
+    SetPathSpacing(String),
     /// Mirror `zoom <bound>=<zoom|unset>` on the current selection.
     /// `bound` picks `min|max`; `value` is `"unset"`, `""`, or a
     /// positive finite float string. Inverted bounds (`min > max`)
     /// silently no-op.
     #[action(context = Document, wasm = Compatible)]
     SetZoom { bound: ZoomBound, value: String },
-    /// Mirror `zoom clear` — drop both `min_zoom_to_render` and
-    /// `max_zoom_to_render` on the current selection. Unit
+    /// Mirror `zoom clear` — drop both `min_zoom_to_render` (gone) and
+    /// `max_zoom_to_render` (gone) on the current selection. Unit
     /// variant — no payload.
     #[action(context = Document, wasm = Compatible)]
     ClearZoom,
@@ -989,49 +992,3 @@ pub enum WasmCompatibility {
     /// `Compatible`. Tracked in `work_plans/WASM_CONVERGENCE.md`.
     NativeOnly,
 }
-
-/// The **mixed-branch set**: Actions whose dispatch arm has both a
-/// cross-platform slice and a native-only leftover. One list, in one
-/// place, because two consumers have to agree on it and previously
-/// did not:
-///
-/// - `app::dispatch::action_core::lift_mixed_branch_for_wasm_macro`
-///   decides, per member, whether an `Unhandled` from the
-///   cross-platform dispatcher means "WASM did everything it can"
-///   (so a WASM macro's `any_ran` must bump) or "nothing ran".
-/// - `keybinds::tests::test_wasm_compatibility_mixed_branch_actions_are_native_only`
-///   pins each member's classification.
-///
-/// The second element is that classification, and it is **not** the
-/// same for every member — which is why two hand-written lists
-/// drifted. [`Action::ExitMode`] is mixed-branch and `Compatible`:
-/// its native leftover is a *step* (clearing `hovered_node` so the
-/// Reparent / Connect overlay rebuilds), not a branch that reaches
-/// native-only state. The other three each have a whole branch
-/// ending in a native-only editor, so the "ANY NativeOnly branch ⇒
-/// NativeOnly" rule classifies them `NativeOnly`. Carrying the
-/// expected classification per member keeps that difference stated
-/// rather than lost, and makes a re-classification fail a test
-/// instead of quietly widening the set.
-///
-/// Adding a member here obliges both consumers: the keybind test
-/// asserts its classification, and the lift's `debug_assert` fires in
-/// any test build if the member has no verdict arm.
-// Consumer is `run_wasm/`; the host build reaches this only from
-// `#[cfg(test)]`, so arm the lint on wasm32 and silence it here
-// rather than blanket-allowing on both targets — if the browser
-// caller goes away, wasm32 says so.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-pub(crate) const MIXED_BRANCH_ACTIONS: [(Action, WasmCompatibility); 4] = [
-    // Native leftover: the `hovered_node` clear for the target-picker
-    // overlay rebuild. Cross-platform slice: border-preview cancel,
-    // `last_click` clear, `InteractionMode` reset + rebuild.
-    (Action::ExitMode, WasmCompatibility::Compatible),
-    // EdgeLabel + Portal* selection branches reach native-only
-    // editors; the node-scoped branch is cross-platform.
-    (Action::EditSelection, WasmCompatibility::NativeOnly),
-    (Action::EditSelectionClean, WasmCompatibility::NativeOnly),
-    // The EdgeLabel route reaches `open_single_line_edit`; the node,
-    // portal and empty-canvas routes are cross-platform.
-    (Action::DoubleClickActivate, WasmCompatibility::NativeOnly),
-];

@@ -28,7 +28,7 @@ use log::info;
 
 mod application;
 
-const DEFAULT_MINDMAP: &str = "maps/testament.mindmap.json";
+const DEFAULT_MINDMAP: &str = "maps/testament.mandala.json";
 
 /// The native command line, parsed.
 #[cfg(not(target_arch = "wasm32"))]
@@ -231,15 +231,15 @@ mod tests {
     #[test]
     fn test_parse_cli_reads_both_spellings_of_each_path_flag() {
         let spaced = cli(&[
-            "m.mindmap.json",
+            "m.mandala.json",
             "--ipc",
             "/run/user/1/m.sock",
             "--keybinds",
             "k.json",
         ]);
-        let joined = cli(&["--ipc=/run/user/1/m.sock", "m.mindmap.json", "--keybinds=k.json"]);
+        let joined = cli(&["--ipc=/run/user/1/m.sock", "m.mandala.json", "--keybinds=k.json"]);
         for parsed in [spaced, joined] {
-            assert_eq!(parsed.mindmap_path, "m.mindmap.json");
+            assert_eq!(parsed.mindmap_path, "m.mandala.json");
             assert_eq!(parsed.keybinds_path, Some(PathBuf::from("k.json")));
             assert_eq!(parsed.ipc_socket, Some(PathBuf::from("/run/user/1/m.sock")));
         }
@@ -254,20 +254,20 @@ mod tests {
 
     #[test]
     fn test_parse_cli_does_not_take_a_flag_as_the_ipc_path() {
-        let parsed = cli(&["--ipc", "--keybinds", "k.json", "m.mindmap.json"]);
+        let parsed = cli(&["--ipc", "--keybinds", "k.json", "m.mandala.json"]);
         assert_eq!(parsed.ipc_socket, Some(PathBuf::new()), "refused by name at bind");
         assert_eq!(
             parsed.keybinds_path,
             Some(PathBuf::from("k.json")),
             "the flag still parses"
         );
-        assert_eq!(parsed.mindmap_path, "m.mindmap.json", "and so does the map");
+        assert_eq!(parsed.mindmap_path, "m.mandala.json", "and so does the map");
     }
 
     #[test]
     fn test_parse_cli_takes_the_first_positional_as_the_map() {
-        let parsed = cli(&["a.mindmap.json", "b.mindmap.json", "--unknown"]);
-        assert_eq!(parsed.mindmap_path, "a.mindmap.json");
+        let parsed = cli(&["a.mandala.json", "b.mandala.json", "--unknown"]);
+        assert_eq!(parsed.mindmap_path, "a.mandala.json");
     }
 
     /// Without the headless flags a launch is what it always was: a
@@ -275,7 +275,7 @@ mod tests {
     /// capture.
     #[test]
     fn test_parse_cli_defaults_to_a_window_with_no_capture() {
-        let parsed = cli(&["m.mindmap.json"]);
+        let parsed = cli(&["m.mandala.json"]);
         assert!(!parsed.headless);
         assert_eq!(parsed.surface_size, None);
         assert_eq!(parsed.adapter, super::AdapterPolicy::Auto);
@@ -293,7 +293,7 @@ mod tests {
             "1920x1080",
             "--adapter",
             "software",
-            "m.mindmap.json",
+            "m.mandala.json",
             "--screenshot",
             "out.png",
             "--overwrite",
@@ -301,14 +301,14 @@ mod tests {
         let joined = cli(&[
             "--screenshot=out.png",
             "--adapter=software",
-            "m.mindmap.json",
+            "m.mandala.json",
             "--size=1920x1080",
             "--overwrite",
             "--headless",
         ]);
         for parsed in [spaced, joined] {
             assert!(parsed.headless);
-            assert_eq!(parsed.mindmap_path, "m.mindmap.json");
+            assert_eq!(parsed.mindmap_path, "m.mandala.json");
             assert_eq!(parsed.surface_size, Some((1920, 1080)));
             assert_eq!(parsed.adapter, super::AdapterPolicy::Software);
             assert_eq!(parsed.screenshot, Some(PathBuf::from("out.png")));
@@ -366,7 +366,7 @@ mod tests {
     fn test_parse_cli_refuses_a_headless_app_nothing_can_reach() {
         assert!(refused(&["--overwrite"]).contains("--screenshot"));
         assert!(refused(&["--headless"]).contains("--ipc"));
-        assert!(refused(&["--headless", "m.mindmap.json", "--size", "10x10"]).contains("--screenshot"));
+        assert!(refused(&["--headless", "m.mandala.json", "--size", "10x10"]).contains("--screenshot"));
         assert!(cli(&["--headless", "--ipc", "s"]).headless);
         assert!(cli(&["--headless", "--screenshot", "s.png"]).headless);
         // A window needs neither: a person is there to drive it.
@@ -605,7 +605,7 @@ mod tests {
         );
     }
 
-    /// Every `.mindmap.json` in `maps/` is named by a `copy-file`
+    /// Every `.mandala.json` in `maps/` is named by a `copy-file`
     /// entry in the browser shell, and nothing else in that
     /// directory is.
     ///
@@ -618,7 +618,7 @@ mod tests {
     /// nothing at build time to say why. This is the check that
     /// closes both directions at once.
     ///
-    /// Fails when: a `.mindmap.json` is added to `maps/` and not to
+    /// Fails when: a `.mandala.json` is added to `maps/` and not to
     /// `web/index.html`; when an entry names a file that is not
     /// there; when an entry loses its `data-target-path="maps"`,
     /// which is the attribute that reproduces the `dist/maps/`
@@ -645,7 +645,7 @@ mod tests {
             .expect("maps/ must be readable")
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| name.ends_with(".mindmap.json"))
+            .filter(|name| name.ends_with(".mandala.json"))
             .collect();
         assert!(
             !on_disk.is_empty(),

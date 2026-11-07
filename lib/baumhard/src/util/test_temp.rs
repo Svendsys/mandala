@@ -3,7 +3,7 @@
 //! Collision-free scratch paths for tests that touch the filesystem.
 //!
 //! Tests that wrote to a *fixed* name under [`std::env::temp_dir`] —
-//! `/tmp/mandala_determinism_a.mindmap.json` and friends — share that
+//! `/tmp/mandala_determinism_a.mandala.json` and friends — share that
 //! path with every other process on the machine. Two `cargo test`
 //! runs in parallel (two checkouts, or a test run beside a CI job on
 //! the same host) race on the same file: one truncates it while the

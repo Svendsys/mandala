@@ -4,29 +4,25 @@
 //!
 //! Input is tokenized shell-style — whitespace splits, `"quoted
 //! strings"` preserve spaces, and `key=value` tokens are first-class.
-//! Generic commands (`color` / `font` / `label`) dispatch through
-//! the [`traits`] capability traits and fan out over the current
-//! selection via [`traits::TargetView`]; component-specific commands
-//! (`anchor` / `body` / `cap` / `spacing` / `edge` / `portal`) call
-//! their own `MindMapDocument` setters directly.
+//! A verb that changes the map hands an `EditRequest` to the document's
+//! one writer (`MindMapDocument::apply`); the view brings the canvas up
+//! to date from the change feed after the line, whatever the verb did.
+//! The verbs that edited the old model are rebuilt on the writer by the
+//! issues their refusals name (`commands::rebuilt_by`).
 //!
 //! Completion is contextual and prefix-matched. The popup recomputes
 //! on every keystroke; `↑`/`↓` move the highlight (falling back to
 //! command history when the popup is empty), `Tab` accepts the
 //! highlighted row, `Esc` dismisses the popup, then the console.
 
-use crate::application::color_picker::ColorTarget;
 use crate::application::common::FpsDisplayMode;
-use crate::application::document::{EdgeRef, MindMapDocument};
+use crate::application::document::MindMapDocument;
 
 pub mod commands;
 pub mod completion;
-pub mod constants;
-pub mod helpers;
 pub mod parser;
 pub mod predicates;
 pub mod spec;
-pub mod traits;
 pub mod visuals;
 
 #[cfg(test)]
@@ -58,62 +54,23 @@ impl<'a> ConsoleContext<'a> {
 /// `close_console` lives outside the enum because it's orthogonal
 /// (a transition can leave the console open or close it).
 pub enum ConsoleSideEffect {
-    /// Transition to the inline label editor on the given edge.
-    OpenLabelEdit(EdgeRef),
-    /// Transition to the inline portal-text editor on the given
-    /// `(edge_ref, endpoint_node_id)` pair. The dispatcher picks
-    /// this vs [`Self::OpenLabelEdit`] based on the source
-    /// command's selection variant.
-    OpenPortalTextEdit(EdgeRef, String),
-    /// Transition to the glyph-wheel color picker in
-    /// **contextual** mode on the given target. Commit writes to
-    /// that target and closes; Esc / outside-click cancel.
-    OpenColorPicker(ColorTarget),
-    /// Transition to the glyph-wheel color picker in
-    /// **standalone** mode — a persistent palette with no bound
-    /// target. Commit applies the current HSV to the document's
-    /// current selection; the palette stays open until
-    /// [`Self::CloseColorPicker`] is requested. Set by
-    /// `color picker on`.
-    OpenColorPickerStandalone,
-    /// Close any open color picker (contextual or standalone)
-    /// without committing. Set by `color picker off`.
-    CloseColorPicker,
     /// Forward `mode` to `Renderer::set_fps_display`. Set by
     /// `fps on` (Snapshot), `fps debug` (Debug), `fps off` (Off).
     SetFpsDisplay(FpsDisplayMode),
     /// Wholesale document swap. Set by `open` and `new`. The
-    /// dispatcher also drops the cached `mindmap_tree` and clears
-    /// any open modal-editor state so stale references into the
-    /// old document can't outlive the swap.
+    /// dispatcher installs the document and projects it whole
+    /// (`view::MapView::load`), so nothing of the old one's layers,
+    /// selection or overlay outlives the swap.
     ///
     /// **Boxed.** A whole document is by far the largest payload here,
-    /// and every effect — a one-field `OpenLabelEdit` included — is
-    /// returned by value, so the enum would otherwise be a document
-    /// wide for all of them.
+    /// and every effect is returned by value, so the enum would
+    /// otherwise be a document wide for all of them.
     ReplaceDocument(Box<MindMapDocument>),
-    /// Flip the high-level interaction mode and trigger a scene
-    /// rebuild. Mirrors the `SetFpsDisplay` precedent: a UI-state
-    /// transition that doesn't pass through `Action` because the
-    /// console verb already IS the user-named effect (no second
-    /// dispatch site needed). Used by the `mode` console verb's
-    /// `default` / `resize` subverbs. `default` carries
-    /// `InteractionMode::Default`; `resize` carries
-    /// `InteractionMode::Resize { ... }` resolved from the
-    /// selection inside the verb body.
+    /// Flip the high-level interaction mode. Mirrors the
+    /// `SetFpsDisplay` precedent: a UI-state transition that doesn't
+    /// pass through `Action` because the console verb already IS the
+    /// user-named effect. Set by `mode default`.
     SetInteractionMode(crate::application::app::InteractionMode),
-    /// Enter the section text editor on `(node_id, section_idx)`.
-    /// Set by the `section edit [section=<idx>]` console verb.
-    /// The dispatcher splits the work: pre-rebuild writes
-    /// `SelectionState::Section { node_id, section_idx }` +
-    /// `InteractionMode::NodeEdit { node_id }`; post-rebuild
-    /// delegates to `apply_enter_section_edit` (the canonical
-    /// Action-side path used by `Action::EnterSectionEdit` on
-    /// the keybind path), which validates `OwnerMismatch` and
-    /// opens the editor. Single source of truth for "open
-    /// section editor"; the verb is the only producer of this
-    /// variant.
-    OpenSectionEdit { node_id: String, section_idx: usize },
     /// Take a screenshot. Set by the `screenshot` verb, which only
     /// reads the line; the executor hands it to the screenshot engine
     /// and the engine's report becomes the line's output. Draws
@@ -128,9 +85,8 @@ pub enum ConsoleSideEffect {
     /// Read, switch or step the app clock. Set by the `clock` verb,
     /// which only reads the line; the executor hands it to the clock's
     /// switch or its step (`app::heartbeat`) and the report becomes the
-    /// line's output. A step runs frames — the animation tick among
-    /// them — and owes the window one; a read or a switch changes
-    /// nothing a frame shows.
+    /// line's output. A step runs frames and owes the window one; a
+    /// read or a switch changes nothing a frame shows.
     Clock(commands::clock::ClockLine),
 }
 
@@ -141,56 +97,28 @@ impl std::fmt::Debug for ConsoleSideEffect {
     /// the variant discrimination is what matters.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::OpenLabelEdit(er) => f.debug_tuple("OpenLabelEdit").field(er).finish(),
-            Self::OpenPortalTextEdit(er, n) => {
-                f.debug_tuple("OpenPortalTextEdit").field(er).field(n).finish()
-            }
-            Self::OpenColorPicker(t) => f.debug_tuple("OpenColorPicker").field(t).finish(),
-            Self::OpenColorPickerStandalone => write!(f, "OpenColorPickerStandalone"),
-            Self::CloseColorPicker => write!(f, "CloseColorPicker"),
             Self::SetFpsDisplay(m) => f.debug_tuple("SetFpsDisplay").field(m).finish(),
             Self::ReplaceDocument(_) => write!(f, "ReplaceDocument(<doc>)"),
             Self::SetInteractionMode(m) => f.debug_tuple("SetInteractionMode").field(m).finish(),
             Self::Screenshot(line) => f.debug_tuple("Screenshot").field(line).finish(),
             Self::Record(line) => f.debug_tuple("Record").field(line).finish(),
             Self::Clock(line) => f.debug_tuple("Clock").field(line).finish(),
-            Self::OpenSectionEdit { node_id, section_idx } => f
-                .debug_struct("OpenSectionEdit")
-                .field("node_id", node_id)
-                .field("section_idx", section_idx)
-                .finish(),
         }
     }
 }
 
 /// Mutable handles handed to `execute`. The dispatcher reads
 /// [`Self::side_effect`] and [`Self::close_console`] after the
-/// command returns; everything else is a direct
-/// `MindMapDocument` mutation through [`Self::document_mut`].
+/// command returns; a change to the map goes through
+/// [`Self::document_mut`] to the document's writer.
 ///
-/// **Reading and writing the document are different calls on
-/// purpose.** The document is reached through
-/// [`Self::document`] (shared) or [`Self::document_mut`]
-/// (exclusive), and taking the exclusive one raises a flag the
-/// dispatcher reads back through [`Self::document_mutated`]. That
-/// flag is what gates the post-command `scene_cache.clear()` +
-/// `rebuild_all`: `help`, `fps` and `mutation list` never take a
-/// `&mut`, so they no longer pay for a rebuild of a document they
-/// only read.
-///
-/// The signal is deliberately **the borrow, not the write**.
-/// Marking on `&mut` over-reports — a `border reset` that turns out
-/// to be a no-op still counts — and that is the safe direction: the
-/// cost of over-reporting is one rebuild the user would have paid
-/// for anyway, while the cost of under-reporting is a canvas that
-/// silently disagrees with the model. It is also the only version a
-/// new command cannot forget, because there is no way to write to
-/// the document without going through the call that raises it.
+/// There is no "did the verb change the map" flag: the change feed is
+/// that record. After every line the dispatcher syncs the view, which
+/// does nothing when the feed is empty (`view::MapView::sync`), so a
+/// verb that only reads — `help`, `fps` — costs no projection, and a
+/// verb cannot forget to ask for one.
 pub struct ConsoleEffects<'a> {
     document: &'a mut MindMapDocument,
-    /// Set by [`Self::document_mut`]. See the type's doc comment for
-    /// why the borrow rather than the write is the signal.
-    document_mutated: bool,
     /// Out-of-band transition / state write the dispatcher should
     /// perform after the command. Mutually exclusive — at most
     /// one effect per command.
@@ -205,27 +133,20 @@ impl<'a> ConsoleEffects<'a> {
     pub fn new(document: &'a mut MindMapDocument) -> Self {
         Self {
             document,
-            document_mutated: false,
             side_effect: None,
             close_console: false,
         }
     }
 
-    /// Read the document. Leaves [`Self::document_mutated`] alone.
+    /// Read the document.
     pub fn document(&self) -> &MindMapDocument {
         self.document
     }
 
-    /// Take the document exclusively, marking the command as one
-    /// that may have changed what is drawn.
+    /// Take the document exclusively: to apply an edit through its
+    /// writer, or to save it.
     pub fn document_mut(&mut self) -> &mut MindMapDocument {
-        self.document_mutated = true;
         self.document
-    }
-
-    /// Whether the command took [`Self::document_mut`].
-    pub fn document_mutated(&self) -> bool {
-        self.document_mutated
     }
 }
 
@@ -242,9 +163,9 @@ pub enum ExecResult {
     /// Failed execution with a diagnostic message.
     Err(String),
     /// Emit multiple output lines. Each line carries an optional
-    /// pinned font family — `font list` sets one per line so the
-    /// row shapes in its own face, while help text / mutate-list
-    /// tables leave it `None` and shape in the console default.
+    /// pinned font family — a line that names a face can shape in it,
+    /// while help text leaves it `None` and shapes in the console
+    /// default.
     Lines(Vec<OutputLine>),
 }
 
@@ -319,14 +240,6 @@ impl OutputLine {
         Self {
             text: text.into(),
             font_family: None,
-        }
-    }
-
-    /// Text shaped in `family`.
-    pub fn in_font(text: impl Into<String>, family: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            font_family: Some(family.into()),
         }
     }
 }

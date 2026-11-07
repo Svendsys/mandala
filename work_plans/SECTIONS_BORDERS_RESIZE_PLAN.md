@@ -2392,8 +2392,8 @@ Tasks (status):
       Still open: the unticked `RESIZE_HANDLE_INSET_PX` box below.
 - [x] `mode` console verb with `show | default | resize` subverbs
       via new `ConsoleSideEffect::SetInteractionMode`.
-- [x] Tests: 9 new (regression `test_default_mode_with_single_selection_emits_no_resize_handles`,
-      counterpart `test_resize_mode_node_target_emits_eight_node_handles`,
+- [x] Tests: 9 new (regression `test_default_mode_with_single_selection_emits_no_resize_handles` (gone),
+      counterpart `test_resize_mode_node_target_emits_eight_node_handles` (gone),
       6 `mode` console verb tests, 1 InteractionMode predicate test
       for resize_handle_overrides).
 
@@ -2420,7 +2420,7 @@ code in #51):
       bugfix). — shipped, not at that site: the gate is
       `InteractionModeOverrides` (`tree_builder/overrides.rs`), fed
       by `resize_handle_overrides()` from `app/scene_rebuild.rs`;
-      `test_default_mode_with_single_selection_emits_no_resize_handles`
+      `test_default_mode_with_single_selection_emits_no_resize_handles` (gone)
       in `document/tests_resize.rs`
 - [x] Change `event_mouse_click.rs:298-345` resize-handle hit
       gating to mode-driven (per §6.8). — shipped:
@@ -2449,11 +2449,11 @@ code in #51):
       subverbs in this batch — the rest are added in their respective
       batches). — shipped: `console/commands/mode.rs`
       (`test_mode_default_emits_set_default_side_effect`,
-      `test_mode_resize_with_single_node_selection_targets_node`)
+      `test_mode_resize_with_single_node_selection_targets_node` (gone))
 - [x] Tests per §7.1 (resize handle gating, EnterResizeMode resolution).
-      — shipped: `test_resize_mode_node_target_emits_eight_node_handles`
+      — shipped: `test_resize_mode_node_target_emits_eight_node_handles` (gone)
       (`document/tests_resize.rs`),
-      `test_resize_mode_lifecycle_default_to_resize_to_default`
+      `test_resize_mode_lifecycle_default_to_resize_to_default` (gone)
       (`console/tests/resize_mode_lifecycle.rs`)
 
 Verification: tests green; manual smoke — open testament, click a
@@ -3109,9 +3109,9 @@ The remainder are deferred here:
       doesn't, so repeated splits past the cap bypass the
       protection. — shipped (#208): both call
       `validate::room_for_another_section` (`model/validate.rs`), and
-      `test_every_section_growth_checks_the_cap` holds every shipped
+      `test_every_section_growth_checks_the_cap` (gone) holds every shipped
       growth of `node.sections` to it; regression
-      `test_split_section_refuses_a_node_at_the_cap`. The second
+      `test_split_section_refuses_a_node_at_the_cap` (gone). The second
       half is closed: `maptool verify` no longer hardcodes
       1024 — `verify/sections.rs` calls `validate::section_count`
       (`lib/baumhard/src/mindmap/model/validate.rs`), which reads the
@@ -3125,7 +3125,7 @@ The remainder are deferred here:
       prematurely. — shipped (#37): `resolve_release` in
       `app/throttled_interaction/release.rs` commits only on the
       button that owns the gesture and puts the drag back otherwise;
-      `test_resolve_release_covers_both_buttons_and_both_origins`.
+      `test_resolve_release_covers_both_buttons_and_both_origins` (gone).
 - [x] **`SectionRange::range` dual semantics** (correctness HIGH):
       resolved by #47 part C — the variant was split into two
       distinctly-typed fields (`section_span: SectionSpan`,
@@ -3183,7 +3183,7 @@ The remainder are deferred here:
       release arm is pinned (T2) but the left release arm's
       missing check (HI-1 above) has no negative test. — shipped:
       the `(Left, true)` row of
-      `test_resolve_release_covers_both_buttons_and_both_origins`
+      `test_resolve_release_covers_both_buttons_and_both_origins` (gone)
       (`app/throttled_interaction/release.rs`) asserts `PutBack`.
 - [ ] **Layering inversion is wider than T4 admits** (architecture
       CRITICAL): 22 reach-up sites across `app/dispatch/cross_dispatch/`
@@ -3278,9 +3278,9 @@ The remainder are deferred here:
       — shipped: #29's `dispatch::drive_touch_event` is the
       recognizer-to-keybind seam as one function, tested end to end
       in `app/dispatch/cross_dispatch/pointer.rs`
-      (`test_drive_touch_event_resolves_a_long_press_through_the_keybind_table`,
-      `test_drive_touch_event_honors_a_rebound_gesture`,
-      `test_drive_touch_event_routes_a_tap_to_the_selection_effect`).
+      (`test_drive_touch_event_resolves_a_long_press_through_the_keybind_table` (gone),
+      `test_drive_touch_event_honors_a_rebound_gesture` (gone),
+      `test_drive_touch_event_routes_a_tap_to_the_selection_effect` (gone)).
 - [ ] **`resize_mode_lifecycle.rs` is a flag round-trip** (test
       coverage HIGH): manually flips `mode` instead of dispatching
       the side effect — drops side-effect-consumer regressions.

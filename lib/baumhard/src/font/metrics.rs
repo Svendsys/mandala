@@ -44,7 +44,7 @@ pub const MONOSPACE_ADVANCE_RATIO: f32 = 0.6;
 /// this is a multiplicative shape, not a sanitiser. Every
 /// in-tree caller pre-clamps its `font_size_pt` to a finite
 /// positive value (via [`is_positive_finite`] at the parse
-/// boundary, or [`f32::clamp`] inside `effective_font_size_pt`).
+/// boundary, or [`f32::clamp`] inside the size resolution).
 /// New callers MUST do the same; threading NaN through layout
 /// math propagates into every downstream pixel.
 ///
