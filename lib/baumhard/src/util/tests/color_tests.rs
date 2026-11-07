@@ -741,7 +741,7 @@ fn test_rgba_to_hex_drops_alpha_only_when_saturated_opaque() {
 }
 
 /// `rgba_to_hex` round-trips opaque RGBA into the same
-/// `#RRGGBB` shape `MindEdge.color` and `TextRun.color`
+/// `#RRGGBB` shape `.mandala.json` writes colors in
 /// stash. Drops alpha at α=1.0; emits the eight-char form
 /// otherwise so transparent picks survive a round-trip.
 pub fn do_rgba_to_hex_drops_alpha_only_when_saturated_opaque() {
@@ -942,8 +942,8 @@ fn test_hex_to_color_parses_bytes_at_compile_time() {
 /// in `const` position. `CONST_PARSED` is the second half of that
 /// claim: initialising a `const` from the function stops compiling
 /// the day it stops being const-evaluable, which is how the
-/// compile-time palette constants that rest on it
-/// (`mindmap::SELECTION_HIGHLIGHT`) fail loudly rather than quietly.
+/// compile-time constant that rests on it fails loudly rather than
+/// quietly.
 ///
 /// The expectations are byte quads written out by hand, not a second
 /// call to [`hex_to_rgba`]: that function is now this one plus a

@@ -328,14 +328,13 @@ pub fn find_byte_index_of_grapheme(s: &str, index: usize) -> Option<usize> {
 /// font regions — one boundary at a time restarts the grapheme walk
 /// per boundary, so the conversion costs O(len × boundaries). That
 /// is quadratic whenever the run table scales with the text, which
-/// a `.mindmap.json` is free to make it do: a section carrying N
+/// a `.mandala.json` is free to make it do: a section carrying N
 /// clusters may legally carry N non-overlapping runs over them.
 /// This pays for the walk once instead.
 ///
-/// `ascending` is expected sorted non-decreasing, which is what the
-/// format's run ordering already guarantees
-/// (`format/text-runs.md`, enforced at load by
-/// `mindmap::model::validate`). An out-of-order index is still
+/// `ascending` is expected sorted non-decreasing, which is what a
+/// section's spans give, being written in text order. An
+/// out-of-order index is still
 /// answered correctly — it falls back to an independent walk for
 /// that entry — so a caller that breaks the expectation gets a slow
 /// answer rather than a wrong one.

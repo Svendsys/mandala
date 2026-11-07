@@ -330,10 +330,10 @@ pub fn init() {
 /// string. Half a point is already invisible at any zoom the camera
 /// reaches, so nothing authorable lives below it.
 ///
-/// Lives here, beside the shaper that enforces it, because both the
-/// document trust boundary (`mindmap::model::validate`, which
-/// re-exports this) and the mutation path (`GlyphArea`'s scale
-/// setters) have to agree on one number.
+/// Lives here, beside the shaper that enforces it, because every path
+/// to a shaped size — the projection's flows (`flow::shape`,
+/// `flow::place`) and the mutation path (`GlyphArea`'s scale setters)
+/// — has to agree on one number.
 pub const MIN_FONT_SIZE_PT: f32 = 0.5;
 
 /// Ceiling for any font metric handed to the text shaper, in points.

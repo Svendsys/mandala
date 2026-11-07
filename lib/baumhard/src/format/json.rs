@@ -22,8 +22,8 @@ use std::fmt;
 use serde::de::{DeserializeOwned, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 
 /// Re-export so callers don't need a `serde_json` import for the
-/// dynamic-JSON case (legacy migration scaffolding, the
-/// `Vec<serde_json::Value>` shape on `MindMap.macros`, etc).
+/// dynamic-JSON case (the IPC envelope, the macro files,
+/// `serde_json::Value` payloads).
 pub use serde_json::Value;
 
 /// Re-export of the map a JSON object parses into, for callers that

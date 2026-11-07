@@ -789,8 +789,8 @@ either take a `"space"` parameter:
 - **`surface`** — physical pixels on the rendered surface, origin
   top-left, y-down. The space of screenshots, sidecar rects, and
   synthetic mouse coordinates (default for `input.*`).
-- **`canvas`** — the document's world space (the space of
-  `MindNode` offsets), as used by the camera. Default for
+- **`canvas`** — the document's world space (the space of node
+  positions), as used by the camera. Default for
   `capture.screenshot region=`.
 
 Conversions go through the same camera math the renderer uses

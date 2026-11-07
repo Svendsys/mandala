@@ -9,8 +9,8 @@
 //! box-drawing chars; on every other glyph (`◆`, `━`, `┃`, `=`,
 //! `#`, etc.) and on every other face the approximation diverged
 //! from what cosmic-text actually shaped, producing the
-//! alignment + tiling defects users see in the Border Toolkit
-//! demo on `maps/testament.mindmap.json`.
+//! alignment + tiling defects a ring of glyphs shows when its
+//! measurements disagree.
 //!
 //! The fix is structural: a callsite that asks "how wide will this
 //! glyph end up?" or "how tall will this row of glyphs be?" with a

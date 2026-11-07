@@ -851,7 +851,7 @@ impl Range {
     ///
     /// The checked form is the only form. Every caller shifts a range
     /// whose bounds came from a document — grapheme offsets a
-    /// hand-authored `.mindmap.json` can set to anything — and the
+    /// hand-authored `.mandala.json` can set to anything — and the
     /// unchecked predecessor wrapped silently in release (the
     /// workspace sets no `overflow-checks` override), turning a
     /// far-right region into a far-left one. Since `start <= end` is

@@ -11,7 +11,7 @@ use crate::arena::{Arena, NodeId};
 /// matching root node first.
 ///
 /// Iterative rather than recursive: a scene tree's depth is set by
-/// the `.mindmap.json` it was built from, and a long `parent_id`
+/// the `.mandala.json` it was built from, and a long node
 /// chain is legal and acyclic, so the loader accepts it. A recursive
 /// copy inherits that depth and exhausts the stack — `SIGABRT`, not
 /// a panic, so nothing catches or logs it. Nothing outside the tests

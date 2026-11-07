@@ -2946,7 +2946,7 @@ mod tests {
 
     /// And the report has to be *watched*, over the whole index
     /// rather than the part of it that happens to be reachable from
-    /// `MindMap` today — a reader gap should go red the run it
+    /// the format's roots today — a reader gap should go red the run it
     /// appears, not the later run where a type carrying it joins the
     /// load graph.
     #[test]

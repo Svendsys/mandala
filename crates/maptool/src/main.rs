@@ -20,8 +20,7 @@
 
 //! `maptool` — the command-line tool for `.mandala.json` files.
 //!
-//! Its verbs read and wrote the old `.mindmap.json` model, which the
-//! cut-over to the document (V1-C3, #244) deleted. They are rebuilt as
+//! Its verbs are rebuilt as
 //! clients of `baumhard::document::ids::Document` by V1-E1 (#253):
 //! `show`, `grep`, `export` and `verify` read through it, and `apply`
 //! writes through `Document::apply`. Until then every invocation says
@@ -31,8 +30,8 @@
 use std::process::ExitCode;
 
 /// What every invocation prints, on stderr.
-const REBUILT: &str = "maptool: rebuilt in V1-E1 (#253): the verbs that read the old .mindmap.json \
-model were deleted with it, and return as clients of the .mandala.json document";
+const REBUILT: &str = "maptool: rebuilt in V1-E1 (#253): its verbs return as clients of the \
+.mandala.json document";
 
 fn main() -> ExitCode {
     baumhard::util::log::init();

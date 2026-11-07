@@ -443,11 +443,10 @@ impl GlyphArea {
     /// that is the point. The scale becomes a `cosmic_text::Metrics`
     /// term, where zero trips an `assert!` that aborts the process
     /// and a huge value asks the rasterizer for a glyph the atlas
-    /// cannot hold. The document loader screens the numbers it can
-    /// see (`mindmap::model::validate`), but it only sees *authored
-    /// geometry* — a `CustomMutation` payload carried by the same
-    /// file writes here later, on a click, and so do console verbs,
-    /// macros, and IPC. Clamping at the field rather than at each
+    /// cannot hold. The document's loader and writer screen the
+    /// numbers they can see (`document::bounds`), but a glyph mutation
+    /// writes here without passing either, and so may the chrome, the
+    /// overlays and anything later. Clamping at the field rather than at each
     /// caller is what makes the invariant hold for writers that do
     /// not exist yet.
     ///

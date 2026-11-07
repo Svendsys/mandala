@@ -977,8 +977,8 @@ fn discriminants_mirror(attrs: &[Attribute]) -> Option<DiscriminantsMirror> {
     name.map(|name| DiscriminantsMirror { name, derives })
 }
 
-/// The last segment of a type path — `SceneConnectionCache` for
-/// `impl<'a> crate::mindmap::scene_cache::SceneConnectionCache<'a>`.
+/// The last segment of a type path — `Projector` for
+/// `impl crate::projection::Projector`.
 /// `None` for a self type that is not a path (a reference, a tuple,
 /// a trait object), whose members no doc comment can qualify by name.
 fn last_path_segment(ty: &syn::Type) -> Option<String> {

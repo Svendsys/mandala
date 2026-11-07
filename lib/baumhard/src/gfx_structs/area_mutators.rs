@@ -181,11 +181,9 @@ impl DeltaGlyphArea {
     /// element's authored zoom window to `Default`), with
     /// `ApplyOperation::Assign` as the global mode.
     ///
-    /// Single source of truth for the per-leaf delta shape every
-    /// `tree_builder/*::build_*_mutator_tree` function needs; lifting
-    /// it to baumhard means any consumer (border, connection,
-    /// connection_label, edge_handle, portal — and any future
-    /// renderable element type) shares one definition of "what fields
+    /// Single source of truth for the per-leaf delta shape a mutator
+    /// tree that re-asserts an area needs; living in baumhard means any
+    /// consumer shares one definition of "what fields
     /// need to be re-asserted to keep the leaf in sync with its
     /// source area." Adding a new per-leaf field becomes a one-line
     /// change here, fanning out to every consumer.

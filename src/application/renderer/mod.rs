@@ -329,14 +329,11 @@ pub struct Renderer {
     /// last. Used to skip re-shaping when the integer value hasn't
     /// changed since the last rebuild.
     last_fps_shaped: Option<usize>,
-    /// Pending mode-status overlay text, set by the app's
-    /// scene-rebuild path on every mode-affecting action and consumed
-    /// by [`Self::rebuild_mode_status_overlay_if_needed`] at the next
-    /// frame. `None` clears the overlay (Default mode); `Some(text)`
-    /// shows it. Computing the string in `scene_rebuild.rs` (rather
-    /// than the renderer) keeps the renderer model-agnostic and lets
-    /// the source of truth — `(mode, selection, doc)` — stay on the
-    /// app side.
+    /// Pending status-line text, set by the view's sync with the
+    /// document's status (D28) and consumed by
+    /// [`Self::rebuild_mode_status_overlay_if_needed`] at the next
+    /// frame. `None` clears the line; `Some(text)` shows it. The string
+    /// is the document's, so the renderer stays model-agnostic.
     mode_status_text: Option<String>,
     /// Screen-space text buffer(s) carrying the mode-status line
     /// (e.g. `editing: <node-id> — section [N of M]`). Sibling of

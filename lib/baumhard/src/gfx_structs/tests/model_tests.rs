@@ -2149,7 +2149,7 @@ pub fn do_model_rotate_moves_position_around_pivot() {
 // `ModelDelta` carrying a `GlyphLine`/`GlyphMatrix` payload runs
 // `ApplyOperation::apply_ref` straight into these impls, and the
 // payload is deserialized from user-authored JSON — so
-// `ignore_initial_space` is reachable from a `.mindmap.json`
+// `ignore_initial_space` is reachable from authored JSON
 // without a single Rust caller setting it.
 /////////////////////////////////////////////////////////////////
 

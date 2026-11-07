@@ -13,8 +13,8 @@ of its own. The reference implementation is
 `lib/baumhard/src/document/format/fixtures/` is a set of maps that save
 back byte for byte.
 
-The app reads and writes this format since V1-C3 (#244), which deleted
-the older `.mindmap.json` with the model behind it.
+The app reads and writes this format, and no other, since V1-C3
+(#244).
 
 ## Principles
 

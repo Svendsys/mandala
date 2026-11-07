@@ -253,7 +253,7 @@ impl GfxMutation {
     /// The serialized form is **not** usable for this: `serde_json`
     /// writes every non-finite float as `null`, so it would make a
     /// `NaN` payload agree with an `inf` one — and `inf` *is*
-    /// reachable from a `.mindmap.json` (an out-of-range literal), so
+    /// reachable from authored JSON (an out-of-range literal), so
     /// that would be a silently-dropped payload rather than merely an
     /// over-strict decline.
     ///

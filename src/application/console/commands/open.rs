@@ -111,7 +111,7 @@ mod tests {
     fn test_open_refuses_another_extension_naming_the_one_it_wants() {
         let dir = TempDir::new("console-open-extension");
         let good = a_saved_map(&dir, "map.mandala.json");
-        let other = dir.join("map.mindmap.json");
+        let other = dir.join("map.json");
         std::fs::copy(&good, &other).expect("the same bytes under another name");
 
         let mut doc = MindMapDocument::new_blank(None, 50);

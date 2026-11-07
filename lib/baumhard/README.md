@@ -32,8 +32,10 @@ declarative `MutatorTree` rather than rebuilt each frame.
 
 ## Module layout
 
-- [`src/mindmap/`](src/mindmap/) — the data model, loader, scene
-  builders, and the tree bridge. Most interesting logic lives here.
+- [`src/document/`](src/document/) — the document: its elements,
+  the `.mandala.json` format, the mutations and the one writer.
+- [`src/projection/`](src/projection/) — the projector: the document
+  into the glyph layers, and hit testing.
 - [`src/gfx_structs/`](src/gfx_structs/) — `GfxElement` /
   `GlyphArea` / `GlyphModel`, the mutator vocabulary, walker, and
   predicate language.

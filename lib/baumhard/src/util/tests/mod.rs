@@ -13,6 +13,10 @@ pub mod color_tests;
 mod fuzz_seed_tests;
 pub mod geometry_tests;
 pub mod grapheme_chad_tests;
+/// No file names the deleted old model. Reads the repository off the
+/// filesystem, which wasm32 does not have.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod old_model_tests;
 pub mod ordered_vec2_tests;
 pub mod primes_test;
 pub mod shortest_float_tests;

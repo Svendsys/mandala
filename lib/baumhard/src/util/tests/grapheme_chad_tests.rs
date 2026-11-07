@@ -2085,7 +2085,7 @@ pub fn do_wrap_to_display_width() {
             "Failed to parse mindmap JSON: expected value at line 1 column 1",
             24,
         ),
-        ("/home/user/maps/a-very-long-file-name.mindmap.json", 12),
+        ("/home/user/maps/a-very-long-file-name.mandala.json", 12),
         ("👨‍👩‍👧 family 🇺🇸 flag 日本語 text", 6),
         ("   leading and trailing   ", 5),
         ("one\ntwo\n\nthree", 3),

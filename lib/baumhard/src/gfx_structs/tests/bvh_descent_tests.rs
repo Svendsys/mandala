@@ -226,8 +226,7 @@ fn test_bvh_far_edge_hit_survives_float_rounding() {
 /// which compares *greater* than `bounds.x`. The refinement then
 /// rejected a point the AABB test had just accepted, so a click on
 /// the right or bottom edge of a portal marker fell through to
-/// whatever sat beneath it. Found by the tree-builder's
-/// differential hit-test sweep (`tree_builder::tests::canvas_hit`).
+/// whatever sat beneath it. Found by a differential hit-test sweep.
 ///
 /// The coordinates are the real ones from that sweep, not invented:
 /// a 16 pt portal marker on a node at x = 900.

@@ -34,7 +34,7 @@
 //!
 //! Built on [`crate::util::source_scan`]'s walkers so "which files
 //! are a test-gated tree" is answered once, there — a
-//! `#[cfg(test)] mod tests;` tree like `mindmap/tree_builder`'s
+//! `#[cfg(test)] mod tests;` tree like `projection/tests`'s
 //! carries no bench obligation and is excluded by the same resolver
 //! every other repo-as-subject scan uses. Test-only and
 //! native-only, for the same reasons `source_scan` is.

@@ -13,9 +13,8 @@ the app's other file and wire formats.
   labels and portal ends. The projector is
   `lib/baumhard/src/projection/`.
 
-The older `.mindmap.json` format, its tooling and the documents that
-described only it were deleted with the old model (V1-C3, #244). The
-concept explainers for the new format are written by V1-E4 (#256).
+This is the only map format. The concept explainers for it are written
+by V1-E4 (#256).
 
 ## Concept explainers
 

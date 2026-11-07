@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn test_new_refuses_another_extension() {
         let dir = TempDir::new("console-new-extension");
-        let path = dir.join("fresh.mindmap.json");
+        let path = dir.join("fresh.map.json");
         let mut doc = MindMapDocument::new_blank(None, 50);
         let (result, side) = run_new(&[&path.to_string_lossy()], &mut doc);
         assert_exec_err_contains(result, ".mandala.json");

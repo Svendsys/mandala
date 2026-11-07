@@ -26,8 +26,8 @@ pub fn almost_equal(a: f32, b: f32) -> bool {
 }
 
 /// `|a - b| <= 1e-9`. The f64 counterpart of [`almost_equal`], for
-/// the model-space coordinates that are `f64` — `MindNode.position`,
-/// `MindNode.size`, `MindSection.offset` — where "did this land
+/// the coordinates that are `f64` — the touch gesture's pans and
+/// scales among them — where "did this land
 /// back where it started?" is the question and raw `==` answers it
 /// only by luck.
 ///
@@ -63,9 +63,8 @@ pub fn is_positive_finite(f: f32) -> bool {
 /// `±∞`, and negative numbers, but allows zero (a zero-width
 /// node or zero-coord position is a valid layout input).
 ///
-/// Used by `document::mutations::*` layout helpers that walk
-/// `MindNode.size` / `position` (both `f64`) before applying
-/// derived math; a non-finite or negative coord fed into
+/// A guard for `f64` geometry before derived math; a non-finite or
+/// negative coord fed into
 /// trigonometry produces NaN that propagates into every
 /// downstream row, so the safe-coord check stops the cascade
 /// at the source. Cost: O(1).
@@ -123,10 +122,7 @@ pub fn vec2_area(vec: Vec2) -> f32 {
 }
 
 /// AABB center from a top-left position + size pair. O(1), no
-/// heap. Equivalent to the old model's `MindNode::center_vec2` (gone)
-/// for the case where only the geometry is in scope (anchor
-/// resolution paths, scene-builder portal-pair midpoint compute);
-/// where a `MindNode` is in scope, prefer the method.
+/// heap.
 ///
 /// **Finding the ones that got away.** Every open-coded `pos + size *
 /// 0.5` in the workspace routes through this function, and the census

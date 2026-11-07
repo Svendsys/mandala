@@ -6,11 +6,9 @@
 //! CODE_CONVENTIONS §9 makes `warn!` the visible half of "degrade,
 //! log, keep running", which means the log line is part of the
 //! behavior rather than decoration — and until this existed nothing
-//! could tell a `warn!` that fires from one that was deleted. The old
-//! loader's unknown-key report was the case that forced it: the keys it
-//! preserved were observable through the model
-//! (`MindMap::unknown_keys` (gone)), but "and it told somebody" was
-//! untestable, and a mutation deleting the `warn!` left the whole suite
+//! could tell a `warn!` that fires from one that was deleted: a report
+//! whose effect is only "and it told somebody" is untestable without
+//! it, and a mutation deleting the `warn!` leaves the whole suite
 //! green.
 //!
 //! **This is not a mock** (TEST_CONVENTIONS §T10). It is an ordinary

@@ -16,7 +16,7 @@ pub(crate) enum Space {
     /// Physical pixels on the rendered surface, origin top-left,
     /// y-down: the space of screenshots and synthetic mouse input.
     Surface,
-    /// The document's world space, the space of `MindNode` offsets,
+    /// The document's world space, the space of node positions,
     /// as the camera sees it.
     Canvas,
 }

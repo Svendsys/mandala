@@ -143,7 +143,7 @@ impl Tree<GfxElement> {
     /// on every call after that. The AABB computation pass runs only
     /// while its cache is dirty, but `bvh_find` carries its descent
     /// frontier on the heap and so allocates per call — the price of
-    /// not recursing over a depth a `.mindmap.json` chooses. The
+    /// not recursing over a depth a `.mandala.json` chooses. The
     /// frontier holds the unprocessed sibling rows along its current
     /// path — one element for a linear chain, O(n) for a shallow
     /// wide tree, O(depth x branching) in general — rather than a
@@ -255,7 +255,7 @@ impl Tree<GfxElement> {
     /// children's already-computed subtree AABBs.
     ///
     /// **Iterative on purpose.** This arena is the projection of a
-    /// `.mindmap.json`, whose `parent_id` nesting is untrusted and
+    /// `.mandala.json`, whose node nesting is untrusted and
     /// effectively unbounded — a linear chain of N nodes is a legal
     /// acyclic tree the loader accepts. Recursing over that depth
     /// overflowed the thread stack and took the process down with
@@ -408,7 +408,7 @@ fn union_aabb(base: Option<(Vec2, Vec2)>, other: (Vec2, Vec2)) -> (Vec2, Vec2) {
 /// node's only child replaces it, O(n) for a shallow wide tree, and
 /// O(depth x branching) in general. That allocation is a deliberate trade against §B7:
 /// the previous shape did not avoid the storage, it kept the same
-/// data on the call stack, where a `.mindmap.json` deep enough to
+/// data on the call stack, where a `.mandala.json` deep enough to
 /// exhaust it aborted the process instead of merely costing memory.
 fn bvh_find(
     arena: &Arena<GfxElement>,
@@ -419,8 +419,8 @@ fn bvh_find(
     best: &mut Option<(NodeId, f32)>,
 ) {
     // Pre-order DFS over an explicit stack rather than the call
-    // stack. This arena is the projection of a `.mindmap.json`,
-    // whose `parent_id` depth is untrusted and unbounded — a linear
+    // stack. This arena is the projection of a `.mandala.json`,
+    // whose node depth is untrusted and unbounded — a linear
     // chain of N nodes is a legal acyclic tree — and every hit test
     // in the app funnels through here, so recursing over that depth
     // meant a hostile map aborted the process on a mouse move.
