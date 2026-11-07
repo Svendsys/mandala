@@ -222,11 +222,45 @@ impl Projector {
         let Some(body) = body_for(tree, id) else {
             return;
         };
+        let ring = matches!(body, UnitBody::Ring(_));
         self.units.insert(id, ProjectedUnit::new(node, body));
         if let Some(state) = self.nodes.get_mut(&node) {
             state.units.push(id);
         }
         self.queue(work, Dependent::new(id, Stage::Resolve));
+        // The ring it now lies just inside of clears it.
+        if ring {
+            if let Some(outer) = self.next_ring(tree, id) {
+                self.mark(work, ProjectionInput::Inner(outer));
+            }
+        }
+    }
+
+    /// The ring unit after the ring `id` in its frame: the ring just
+    /// outside it, which clears it. O(the siblings up to it).
+    fn next_ring(&self, tree: &Tree<DocElement>, id: NodeId) -> Option<NodeId> {
+        let mut after = tree.node(id).and_then(|n| n.next_sibling());
+        while let Some(next) = after {
+            if matches!(self.units.get(&next).map(|u| &u.body), Some(UnitBody::Ring(_))) {
+                return Some(next);
+            }
+            after = tree.node(next).and_then(|n| n.next_sibling());
+        }
+        None
+    }
+
+    /// A ring `id` moved within its frame: the ring that lay just outside
+    /// it read its geometry, and the ring now just outside it has another
+    /// ring inside it. The ring itself is placed by its own touch
+    /// ([`Self::touch_stage`]). O(the siblings up to the next ring).
+    fn ring_moved(&self, tree: &Tree<DocElement>, id: NodeId, work: &mut PhaseWork) {
+        if !matches!(self.units.get(&id).map(|u| &u.body), Some(UnitBody::Ring(_))) {
+            return;
+        }
+        self.mark(work, ProjectionInput::Geometry(id));
+        if let Some(outer) = self.next_ring(tree, id) {
+            self.mark(work, ProjectionInput::Inner(outer));
+        }
     }
 
     /// Drop the unit `id`: forget what it read, take its runs out of the
@@ -466,7 +500,10 @@ impl Projector {
                     InputKind::Style => Some(DocInput::Style(id)),
                     InputKind::Placement => Some(DocInput::Placement(id)),
                     InputKind::PaletteBinding => Some(DocInput::PaletteBinding(id)),
-                    InputKind::ParentRow => tree.node(id).and_then(|n| n.parent()).map(DocInput::Row),
+                    InputKind::ParentRow => {
+                        self.ring_moved(tree, id, work);
+                        tree.node(id).and_then(|n| n.parent()).map(DocInput::Row)
+                    }
                     InputKind::Theme => Some(DocInput::Theme),
                     InputKind::Palette => palette_id_of(tree, id).map(DocInput::Palette),
                     InputKind::Defaults => Some(DocInput::Defaults),

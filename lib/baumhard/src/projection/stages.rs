@@ -717,7 +717,7 @@ impl Projector {
             ProjectionInput::Geometry(node),
             ProjectionInput::Opacity(node),
             ProjectionInput::Visibility(node),
-            ProjectionInput::Doc(DocInput::Row(frame_id)),
+            ProjectionInput::Inner(id),
         ];
         let frame = resolve_frame(tree, frame_id, &mut Reads(&mut reads));
         let ring = resolve_ring_in(tree, id, Binding::Carried(binding), &mut Reads(&mut reads));

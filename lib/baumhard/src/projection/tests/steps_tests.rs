@@ -153,3 +153,88 @@ fn test_projection_an_inner_ring_grown_moves_every_ring_outside_it() {
     }
     p.check().unwrap();
 }
+
+/// A node framed by six rings with text, on channels 0, 1, 2, 4, 5 and 6:
+/// room for a ring on channel 3 between the third and the fourth.
+fn framed_with_room() -> crate::document::ids::Document {
+    let rings: Vec<_> = [0, 1, 2, 4, 5, 6]
+        .iter()
+        .map(|&channel| json!({"channel": channel, "fit": "repeat", "size": 0.06, "spans": [{"text": "·"}]}))
+        .collect();
+    load_map(json!({"nodes": [node(1, None, json!({
+        "min_size": [200.0, 100.0],
+        "sections": [{"spans": [{"text": "framed"}]}],
+        "frame": {"gap": 2.0, "rings": rings}
+    }))]}))
+}
+
+#[test]
+fn test_projection_a_ring_edit_re_places_only_the_rings_outside_it() {
+    use crate::document::element::{DocElement, DocKind, RingData};
+    use crate::document::mutation::ops::{DocMutation, DocMutatorTree, RingOp};
+    use crate::document::tests::writer_support::{request, single};
+    use crate::engine::key::BranchKey;
+    use crate::engine::mutator::Mutator;
+    use crate::engine::structure::{StructOp, Subtree};
+    use crate::engine::tree::Placement;
+    use crate::projection::tests::maps::{ident, kid, kids};
+    use crate::projection::Stage;
+
+    let doc = framed_with_room();
+    let frame = kid(&doc, ident(&doc, 1), DocKind::Frame);
+    let rings = kids(&doc, frame, DocKind::Ring);
+    let mut p = Projected::new(doc);
+    // Which of the six rings were placed, by their place in `rings`.
+    let placed = |p: &Projected| -> Vec<usize> {
+        let ran: Vec<_> = p
+            .projector
+            .ran
+            .iter()
+            .filter(|d| d.stage == Stage::Place)
+            .map(|d| d.unit)
+            .collect();
+        (0..rings.len()).filter(|&i| ran.contains(&rings[i])).collect()
+    };
+    let structure = |op, kind, at, what| {
+        request(
+            DocMutatorTree::new_with(Mutator::new_structure(op, BranchKey::new(kind, 0))),
+            vec![at],
+            what,
+        )
+    };
+
+    // A ring on channel 3, between the third and the fourth: the three
+    // inside it are not placed again, the three outside it are.
+    let ring = DocElement::Ring(RingData {
+        channel: 3,
+        style: Default::default(),
+    });
+    let insert = StructOp::Insert {
+        subtree: Subtree::leaf(ring),
+        at: Placement::Last,
+    };
+    p.apply(structure(insert, DocKind::Frame, frame, "insert a ring"))
+        .unwrap();
+    let new = kids(&p.doc, frame, DocKind::Ring)[3];
+    assert!(!rings.contains(&new), "the new ring is the fourth");
+    assert_eq!(placed(&p), vec![3, 4, 5], "an inserted ring re-places the rings outside it");
+    p.check().unwrap();
+
+    // Removed again: the same three.
+    p.apply(structure(StructOp::Remove, DocKind::Ring, new, "remove the ring"))
+        .unwrap();
+    assert_eq!(placed(&p), vec![3, 4, 5], "a removed ring re-places the rings outside it");
+    p.check().unwrap();
+
+    // The ring on channel 5 moved inward, to 3: it, and the rings outside
+    // where it lay and where it lies, are placed; the three inside not.
+    let to = |channel| single(DocKind::Ring, DocMutation::Ring(RingOp::SetChannel(channel)));
+    p.apply(request(to(3), vec![rings[4]], "move a ring inward")).unwrap();
+    assert_eq!(placed(&p), vec![3, 4, 5], "a ring moved inward re-places the rings outside it");
+    p.check().unwrap();
+
+    // The second ring moved outermost: every ring but the innermost.
+    p.apply(request(to(7), vec![rings[1]], "move a ring outward")).unwrap();
+    assert_eq!(placed(&p), vec![1, 2, 3, 4, 5], "a ring moved outward re-places all outside the first");
+    p.check().unwrap();
+}

@@ -37,6 +37,15 @@ pub enum ProjectionInput {
     /// somewhere (`reparent`, `create_subtree`), so a connector reads its own node's parent and
     /// never the parent's whole children row (ruling B7.5 on #241, D15).
     Parent(NodeId),
+    /// Which ring is just inside a ring in its frame, as the projection
+    /// holds its rings: the one ring whose extent its placement clears.
+    /// Marked for the ring a ring now lies just inside of when one comes
+    /// into a frame or moves within it; a ring that leaves or moves marks
+    /// its own [`Self::Geometry`], which the ring that lay outside it
+    /// read, and a moved ring is placed by its own touch. So a ring reads the one ring inside it,
+    /// never its frame's whole row, and an edit of one ring re-places the
+    /// rings outside it alone (the review of #317).
+    Inner(NodeId),
 }
 
 /// The stage of a unit's projection a dependency belongs to: what has to
