@@ -4,8 +4,9 @@
 //! `baumhard::document::tests::format_fuzz::check_load_bytes` — no panic,
 //! a well-formed refusal, and a valid, savable, round-tripping document
 //! for what loads, projected inside the projection's work bound
-//! (TEST_CONVENTIONS §T14). Every 4,096 inputs the target reports how many
-//! loaded maps it projected and how many it skipped (ruling B7.3 on #241).
+//! (TEST_CONVENTIONS §T14). At every power of two and every 256 inputs
+//! the target reports how many loaded maps it projected and how many it
+//! skipped (ruling B7.3 on #241).
 
 #![no_main]
 
@@ -19,7 +20,8 @@ fuzz_target!(|bytes: &[u8]| {
     if let Err(why) = baumhard::document::tests::format_fuzz::check_load_bytes(bytes) {
         panic!("{why}");
     }
-    if INPUTS.fetch_add(1, Ordering::Relaxed) % 4096 == 4095 {
+    let inputs = INPUTS.fetch_add(1, Ordering::Relaxed) + 1;
+    if inputs.is_power_of_two() || inputs % 256 == 0 {
         let (projected, skipped) = baumhard::projection::tests::projection_fuzz::projection_counts();
         eprintln!("projection: {projected} loaded maps projected, {skipped} outside the bound and skipped");
     }

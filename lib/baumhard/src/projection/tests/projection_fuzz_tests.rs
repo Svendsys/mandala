@@ -8,7 +8,7 @@
 use serde_json::json;
 
 use crate::projection::tests::maps::{load_map, node};
-use crate::projection::tests::projection_fuzz::{projection_counts, within_bound, EXTENT};
+use crate::projection::tests::projection_fuzz::{projection_counts, within_bound, EXTENT, MAX_UNITS};
 use crate::util::tests::choices::Choices;
 
 #[test]
@@ -26,9 +26,8 @@ fn test_most_structured_loader_maps_are_projected() {
             loaded += 1;
         }
     }
+    // The counts are this thread's: exactly what this sweep added.
     let (projected, skipped) = projection_counts();
-    // Other tests on other threads count too: the counts only grow, and
-    // this sweep's share is what it added at least.
     let (projected, skipped) = (projected - projected0, skipped - skipped0);
     assert!(loaded > 20, "the sweep loads maps: {loaded}");
     assert!(projected > 0, "some loaded maps are projected");
@@ -41,7 +40,7 @@ fn test_most_structured_loader_maps_are_projected() {
 }
 
 #[test]
-fn test_the_projection_bound_refuses_far_coordinates_and_a_second_text_ring() {
+fn test_the_projection_bound_refuses_far_coordinates_a_second_text_ring_and_too_many_units() {
     let ring = |id: u32, x: f32| {
         node(
             id,
@@ -61,4 +60,21 @@ fn test_the_projection_bound_refuses_far_coordinates_and_a_second_text_ring() {
         !within_bound(&load_map(json!({"nodes": [ring(1, 0.0), ring(2, 300.0)]}))),
         "a second ring of text is outside"
     );
+    let chain = |nodes: u32| {
+        let records: Vec<_> = (1..=nodes)
+            .map(|id| match id {
+                1 => node(id, None, json!({})),
+                _ => node(id, Some(id - 1), json!({"connector": {}})),
+            })
+            .collect();
+        load_map(json!({ "nodes": records }))
+    };
+    // A chain of n nodes draws n - 1 connectors.
+    let most = MAX_UNITS as u32 + 1;
+    assert!(
+        within_bound(&chain(most)),
+        "a chain of {} connectors is inside",
+        most - 1
+    );
+    assert!(!within_bound(&chain(most + 1)), "one connector more is outside");
 }

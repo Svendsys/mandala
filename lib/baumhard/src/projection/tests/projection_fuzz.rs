@@ -31,9 +31,15 @@
 //! flow harnesses' one frame an input — and every coordinate a path or an
 //! outline is drawn from is within
 //! [`EXTENT`](crate::projection::tests::projection_fuzz::EXTENT), so no path is long enough
-//! for a placement near the cap.
+//! for a placement near the cap; and it draws at most
+//! [`MAX_UNITS`](crate::projection::tests::projection_fuzz::MAX_UNITS)
+//! sections, rings, connectors and links. Each is shaped and placed in
+//! every full projection the check makes, so the work grows with their
+//! count: libFuzzer reported a 4,000-node chain with a link on every
+//! node, 8,000 paths, as a slow unit of 16 to 18 s against its 20 s
+//! timeout.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 
 use glam::Vec2;
 use rustc_hash::FxHashMap;
@@ -53,13 +59,21 @@ use crate::util::tests::choices::Choices;
 /// targets project may be: positions, sizes, offsets and control points.
 pub const EXTENT: f32 = 8192.0;
 
-static PROJECTED: AtomicUsize = AtomicUsize::new(0);
-static SKIPPED: AtomicUsize = AtomicUsize::new(0);
+/// The most sections, rings, connectors and links a map the loader
+/// targets project may draw (see the module docs).
+pub const MAX_UNITS: usize = 2048;
+
+thread_local! {
+    static PROJECTED: Cell<usize> = const { Cell::new(0) };
+    static SKIPPED: Cell<usize> = const { Cell::new(0) };
+}
 
 /// How many loaded maps [`check_projects`] has projected and how many it
-/// skipped, in this process: what a fuzz run reports (ruling B7.3).
+/// skipped, on this thread: what a fuzz run reports (ruling B7.3), and,
+/// since a test runs on a thread of its own, exactly what a test's own
+/// sweep made.
 pub fn projection_counts() -> (usize, usize) {
-    (PROJECTED.load(Ordering::Relaxed), SKIPPED.load(Ordering::Relaxed))
+    (PROJECTED.with(Cell::get), SKIPPED.with(Cell::get))
 }
 
 /// Whether `v` is within [`EXTENT`] on both axes.
@@ -73,7 +87,17 @@ pub fn within_bound(doc: &Document) -> bool {
     let tree = doc.tree();
     let arena = tree.arena();
     let mut rings_with_text = 0;
+    let mut units = 0;
     for id in tree.descendants() {
+        if matches!(
+            arena[id].get(),
+            DocElement::Section(_) | DocElement::Ring(_) | DocElement::Connector(_) | DocElement::Link(_)
+        ) {
+            units += 1;
+            if units > MAX_UNITS {
+                return false;
+            }
+        }
         let ok = match arena[id].get() {
             DocElement::Node(node) => near(node.position) && node.min_size.is_none_or(near),
             DocElement::Section(section) => near(section.offset) && section.min_size.is_none_or(near),
@@ -108,10 +132,10 @@ pub fn within_bound(doc: &Document) -> bool {
 /// skipped, and counted.
 pub fn check_projects(doc: &Document) -> Result<(), String> {
     if !within_bound(doc) {
-        SKIPPED.fetch_add(1, Ordering::Relaxed);
+        SKIPPED.with(|n| n.set(n.get() + 1));
         return Ok(());
     }
-    PROJECTED.fetch_add(1, Ordering::Relaxed);
+    PROJECTED.with(|n| n.set(n.get() + 1));
     // In the test build the loader suites' maps, up to a hundred thousand
     // nodes, are projected sharing the shapings of equal keys as the
     // oracle's full projections do (`stages::memo`): every property here
