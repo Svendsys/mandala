@@ -136,6 +136,10 @@ pub(crate) use scene_shape_cache::{compose_capture_canvas, CanvasSegment, Captur
 pub(crate) use capture::GPU_WAIT as CAPTURE_GPU_WAIT;
 // Both shells read a skipped frame's reason (`Renderer::process`).
 pub(crate) use render::FrameSkip;
+// For the GPU-backed tests that feed the layer renderer the projector's
+// journals, as the app's pipeline will (V1-C3).
+#[cfg(test)]
+pub(crate) use layers::LayerRenderer;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use render::ModalLayer;
 // The console overlay's geometry vocabulary, re-exported for the
