@@ -688,6 +688,14 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
             "test_acquire_font_system_write_panics_on_timeout",
             DrivesAPanic,
         ),
+        // Calls every bench body of its file over and over, as a bench
+        // does: the repetition is the subject, and each body it repeats
+        // has its own bench entry (#304).
+        (
+            "font/tests/shape_work_tests.rs",
+            "test_the_shape_work_bodies_repeat",
+            EnumerationIsTheRuntime,
+        ),
         (
             "font/tests/metric_cache_tests.rs",
             "test_glyph_advance_miss_under_held_guard_panics_not_hangs",
