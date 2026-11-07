@@ -63,7 +63,11 @@ fn route_middle_button(state: ElementState, drag_state: &DragState) -> MiddleBut
 }
 
 /// `WindowEvent::MouseInput`, after the cursor has been placed.
-pub(super) fn handle_mouse_input(state: ElementState, button: MouseButton, ctx: &mut InputHandlerContext<'_>) {
+pub(super) fn handle_mouse_input(
+    state: ElementState,
+    button: MouseButton,
+    ctx: &mut InputHandlerContext<'_>,
+) {
     if ctx.console_state.is_open() && state == ElementState::Pressed {
         save_console_history(ctx.console_history);
         *ctx.console_state = ConsoleState::Closed;
@@ -71,17 +75,24 @@ pub(super) fn handle_mouse_input(state: ElementState, button: MouseButton, ctx: 
         return;
     }
     match button {
-        MouseButton::Middle => match route_middle_button(state, ctx.drag_state) {
-            MiddleButtonRoute::Dispatch => {
-                if let Some(a) = gesture_action(MouseGesture::MiddleClick, ctx) {
-                    let _ = super::dispatch::dispatch_held_action(a, ctx, None, HeldInput::Button(MouseButton::Middle));
+        MouseButton::Middle => {
+            match route_middle_button(state, ctx.drag_state) {
+                MiddleButtonRoute::Dispatch => {
+                    if let Some(a) = gesture_action(MouseGesture::MiddleClick, ctx) {
+                        let _ = super::dispatch::dispatch_held_action(
+                            a,
+                            ctx,
+                            None,
+                            HeldInput::Button(MouseButton::Middle),
+                        );
+                    }
+                }
+                MiddleButtonRoute::Clear => *ctx.drag_state = DragState::None,
+                MiddleButtonRoute::Keep => {
+                    log::debug!("middle-button {state:?} ignored (another gesture owns the drag state); state stays put");
                 }
             }
-            MiddleButtonRoute::Clear => *ctx.drag_state = DragState::None,
-            MiddleButtonRoute::Keep => {
-                log::debug!("middle-button {state:?} ignored (another gesture owns the drag state); state stays put");
-            }
-        },
+        }
         MouseButton::Left => match state {
             ElementState::Pressed => handle_left_press(ctx),
             ElementState::Released => handle_left_release(ctx),
@@ -93,7 +104,10 @@ pub(super) fn handle_mouse_input(state: ElementState, button: MouseButton, ctx: 
 
 /// The Action `gesture` is bound to under the held modifiers, through the
 /// modifier-falling-back gesture lookup.
-fn gesture_action(gesture: MouseGesture, ctx: &InputHandlerContext<'_>) -> Option<crate::application::keybinds::Action> {
+fn gesture_action(
+    gesture: MouseGesture,
+    ctx: &InputHandlerContext<'_>,
+) -> Option<crate::application::keybinds::Action> {
     ctx.keybinds.action_for_gesture(
         gesture.key_name(),
         ctx.modifiers.control_key(),
@@ -162,7 +176,8 @@ fn handle_left_release(ctx: &mut InputHandlerContext<'_>) {
         } => super::drain_frame::end_rect_select_gesture(ctx, start_canvas, current_canvas),
         other => {
             *ctx.drag_state = other;
-            ctx.drag_state.end_pan_held_by(&HeldInput::Button(MouseButton::Left));
+            ctx.drag_state
+                .end_pan_held_by(&HeldInput::Button(MouseButton::Left));
         }
     }
 }
@@ -210,7 +225,8 @@ fn handle_right_button(state: ElementState, ctx: &mut InputHandlerContext<'_>) {
         }
         other => {
             *ctx.drag_state = other;
-            ctx.drag_state.end_pan_held_by(&HeldInput::Button(MouseButton::Right));
+            ctx.drag_state
+                .end_pan_held_by(&HeldInput::Button(MouseButton::Right));
         }
     }
 }
@@ -235,8 +251,14 @@ mod tests {
     #[test]
     fn test_middle_click_mid_gesture_leaves_the_gesture_intact() {
         let drag = pending_right();
-        assert_eq!(route_middle_button(ElementState::Pressed, &drag), MiddleButtonRoute::Keep);
-        assert_eq!(route_middle_button(ElementState::Released, &drag), MiddleButtonRoute::Keep);
+        assert_eq!(
+            route_middle_button(ElementState::Pressed, &drag),
+            MiddleButtonRoute::Keep
+        );
+        assert_eq!(
+            route_middle_button(ElementState::Released, &drag),
+            MiddleButtonRoute::Keep
+        );
     }
 
     /// The other half of the same guard — without these rows the fix
@@ -250,7 +272,10 @@ mod tests {
             "an idle drag state is what a middle press is for"
         );
         assert_eq!(
-            route_middle_button(ElementState::Released, &held_pan(HeldInput::Button(MouseButton::Middle))),
+            route_middle_button(
+                ElementState::Released,
+                &held_pan(HeldInput::Button(MouseButton::Middle))
+            ),
             MiddleButtonRoute::Clear,
             "the release must end the pan its own press armed"
         );
@@ -301,8 +326,14 @@ mod tests {
                 hit: ClickHit::Empty,
             },
         ] {
-            assert_eq!(route_middle_button(ElementState::Pressed, &drag), MiddleButtonRoute::Keep);
-            assert_eq!(route_middle_button(ElementState::Released, &drag), MiddleButtonRoute::Keep);
+            assert_eq!(
+                route_middle_button(ElementState::Pressed, &drag),
+                MiddleButtonRoute::Keep
+            );
+            assert_eq!(
+                route_middle_button(ElementState::Released, &drag),
+                MiddleButtonRoute::Keep
+            );
         }
     }
 }

@@ -245,7 +245,12 @@ fn key_routing(open: OpenModals) -> (Vec<&'static str>, &'static str) {
 /// where there is none), which modals are open and who receives an
 /// ordinary key ([`key_routing`]), and where the pointer is, in
 /// **surface** pixels.
-pub(super) fn mode_to_ipc_json(mode: &InteractionMode, drag: Value, open: OpenModals, cursor_pos: (f64, f64)) -> Value {
+pub(super) fn mode_to_ipc_json(
+    mode: &InteractionMode,
+    drag: Value,
+    open: OpenModals,
+    cursor_pos: (f64, f64),
+) -> Value {
     let (modals, key_owner) = key_routing(open);
     json!({
         "interaction_mode": mode.to_ipc_json(),
@@ -337,7 +342,10 @@ mod tests {
         assert_eq!(console_to_ipc_json(&ConsoleState::Closed), Value::Null);
         assert_eq!(picker_to_ipc_json(&ColorPickerState::Closed), Value::Null);
         let mut open = ConsoleState::open(vec!["fps on".into()]);
-        if let ConsoleState::Open { input, scrollback, .. } = &mut open {
+        if let ConsoleState::Open {
+            input, scrollback, ..
+        } = &mut open
+        {
             input.push_str("he");
             for i in 0..CONSOLE_SCROLLBACK_TAIL + 5 {
                 scrollback.push(ConsoleLine::Input(format!("line {i}")));
@@ -347,7 +355,10 @@ mod tests {
         assert_eq!(json["input"], json!("he"));
         assert_eq!(json["history_len"], json!(1));
         assert_eq!(json["scrollback_len"], json!(CONSOLE_SCROLLBACK_TAIL + 5));
-        assert_eq!(json["scrollback"].as_array().unwrap().len(), CONSOLE_SCROLLBACK_TAIL);
+        assert_eq!(
+            json["scrollback"].as_array().unwrap().len(),
+            CONSOLE_SCROLLBACK_TAIL
+        );
         assert_eq!(
             editors_to_ipc_json(json.clone(), Value::Null),
             json!({ "console": json, "color_picker": null })

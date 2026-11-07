@@ -147,11 +147,26 @@ mod tests {
     /// everything would answer `Undo`).
     #[test]
     fn test_a_familys_action_is_unhandled_and_the_apps_is_not_claimed() {
-        assert_eq!(dispatch(&Action::DeleteSelection), Some(DispatchOutcome::Unhandled));
-        assert_eq!(dispatch(&Action::CycleFrameContent), Some(DispatchOutcome::Unhandled));
-        assert_eq!(dispatch(&Action::ResetPath("style".into())), Some(DispatchOutcome::Unhandled));
-        assert_eq!(dispatch(&Action::EnterResizeMode), Some(DispatchOutcome::Unhandled));
-        assert_eq!(dispatch(&Action::TextEditCommit), Some(DispatchOutcome::Unhandled));
+        assert_eq!(
+            dispatch(&Action::DeleteSelection),
+            Some(DispatchOutcome::Unhandled)
+        );
+        assert_eq!(
+            dispatch(&Action::CycleFrameContent),
+            Some(DispatchOutcome::Unhandled)
+        );
+        assert_eq!(
+            dispatch(&Action::ResetPath("style".into())),
+            Some(DispatchOutcome::Unhandled)
+        );
+        assert_eq!(
+            dispatch(&Action::EnterResizeMode),
+            Some(DispatchOutcome::Unhandled)
+        );
+        assert_eq!(
+            dispatch(&Action::TextEditCommit),
+            Some(DispatchOutcome::Unhandled)
+        );
         assert_eq!(dispatch(&Action::Undo), None);
         assert_eq!(dispatch(&Action::SelectAll), None);
     }

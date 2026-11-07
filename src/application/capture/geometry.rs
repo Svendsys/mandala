@@ -23,7 +23,9 @@ use baumhard::util::shortest_float::serialize_shortest;
 use serde::Serialize;
 
 use crate::application::document::selection::every_node;
-use crate::application::view::inspect::{children_of_kind, element_bounds, element_visibility, ident_of, surface_rect};
+use crate::application::view::inspect::{
+    children_of_kind, element_bounds, element_visibility, ident_of, surface_rect,
+};
 
 /// The whole sidecar.
 #[derive(Debug, Serialize)]
@@ -151,7 +153,10 @@ pub(crate) fn sidecar(
     let nodes = every_node(doc)
         .filter(|&node| shown(node))
         .filter_map(|node| {
-            let rect = SceneRect::of(surface_rect(element_bounds(doc, projector, layers, node)?, camera));
+            let rect = SceneRect::of(surface_rect(
+                element_bounds(doc, projector, layers, node)?,
+                camera,
+            ));
             let sections = children_of_kind(doc, node, DocKind::Section)
                 .enumerate()
                 .filter(|&(_, section)| shown(section))
@@ -189,7 +194,8 @@ mod tests {
     /// The converted testament map, projected.
     fn testament() -> (MindMapDocument, Projector, GlyphLayers) {
         let path = baumhard::util::doc_fixtures::repo_path("maps/testament.mandala.json");
-        let doc = MindMapDocument::load(path.to_str().expect("a UTF-8 repo path"), 50).expect("the testament map loads");
+        let doc = MindMapDocument::load(path.to_str().expect("a UTF-8 repo path"), 50)
+            .expect("the testament map loads");
         baumhard::font::fonts::init();
         let mut layers = GlyphLayers::new();
         let mut fonts = baumhard::font::fonts::FontSystemLease::new("geometry tests");

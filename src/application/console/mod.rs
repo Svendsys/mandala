@@ -20,7 +20,6 @@ use crate::application::document::MindMapDocument;
 
 pub mod commands;
 pub mod completion;
-pub mod constants;
 pub mod parser;
 pub mod predicates;
 pub mod spec;
@@ -241,14 +240,6 @@ impl OutputLine {
         Self {
             text: text.into(),
             font_family: None,
-        }
-    }
-
-    /// Text shaped in `family`.
-    pub fn in_font(text: impl Into<String>, family: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            font_family: Some(family.into()),
         }
     }
 }

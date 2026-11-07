@@ -14,7 +14,6 @@ use crate::application::console::predicates::path_selected;
 use crate::application::console::spec::{bare_words, free_words, Bare, Form, Grammar, Key, Word};
 use crate::application::console::{ConsoleEffects, ExecResult};
 
-pub const PRESETS: &[(&str, f32)] = &[("tight", 0.0), ("normal", 2.0), ("wide", 6.0)];
 pub const VALUE_PRESETS: &[&str] = &["tight", "normal", "wide"];
 const PRESET_WORDS: &[Word] = &bare_words::<3>(VALUE_PRESETS);
 

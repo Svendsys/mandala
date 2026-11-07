@@ -19,9 +19,9 @@
 //! bodies; V1-C5 (#246) deletes this vocabulary with those keys and
 //! replaces it with the `range` verb.
 
+use baumhard::arena::NodeId;
 use baumhard::document::element::DocElement;
 use baumhard::document::ids::Document;
-use baumhard::arena::NodeId;
 
 use crate::application::console::completion::Completion;
 use crate::application::console::spec::{free, Key, Vocabulary};
@@ -124,7 +124,7 @@ mod tests {
     fn test_section_completion_lists_the_selected_nodes_sections() {
         let mut doc = MindMapDocument::new_blank(None, 50);
         doc.create_root_for_test();
-        let node= crate::application::document::selection::every_node(doc.doc())
+        let node = crate::application::document::selection::every_node(doc.doc())
             .next()
             .expect("the map has the node just created");
         let sections = doc

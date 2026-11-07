@@ -83,7 +83,6 @@ mod event_mouse_click;
 mod freeze_watchdog;
 #[cfg(not(target_arch = "wasm32"))]
 mod heartbeat;
-mod step;
 #[cfg(not(target_arch = "wasm32"))]
 mod input_context;
 mod interaction_mode;
@@ -95,6 +94,7 @@ mod ipc_target;
 mod pump;
 #[cfg(not(target_arch = "wasm32"))]
 mod record_flow;
+mod step;
 // Cross-platform context-bundles for the unified `dispatch_action`
 // funnel. Track C from `work_plans/WASM_CONVERGENCE.md` (final convergence step).
 mod input_context_core;
@@ -195,9 +195,9 @@ pub(crate) fn compute_click_hit(
     canvas_pos: glam::Vec2,
 ) -> ClickHit {
     match (doc, view) {
-        (Some(doc), Some(view)) => view
-            .hit(canvas_pos)
-            .map_or(ClickHit::Empty, |hit| ClickHit::Element(selectable(doc.doc(), &hit))),
+        (Some(doc), Some(view)) => view.hit(canvas_pos).map_or(ClickHit::Empty, |hit| {
+            ClickHit::Element(selectable(doc.doc(), &hit))
+        }),
         _ => ClickHit::Empty,
     }
 }
@@ -225,7 +225,12 @@ const DOUBLE_CLICK_DIST_SQ: f64 = 16.0 * 16.0;
 /// Returns `true` when a new click-down qualifies as a double-click
 /// given the previous click. Pure helper so cursor/time math can be
 /// unit-tested without a winit event loop.
-fn is_double_click(prev: &LastClick, new_time_ms: f64, new_screen_pos: (f64, f64), new_hit: &ClickHit) -> bool {
+fn is_double_click(
+    prev: &LastClick,
+    new_time_ms: f64,
+    new_screen_pos: (f64, f64),
+    new_hit: &ClickHit,
+) -> bool {
     let elapsed = new_time_ms - prev.time;
     if !(0.0..DOUBLE_CLICK_MS).contains(&elapsed) {
         return false;
@@ -472,7 +477,10 @@ impl DragState {
     /// canvas position, and the right button as the holder. `None` for
     /// every other state.
     fn right_drag_hit(&self) -> Option<dispatch::DispatchHit> {
-        let Self::PendingRight { start_canvas, hit, .. } = self else {
+        let Self::PendingRight {
+            start_canvas, hit, ..
+        } = self
+        else {
             return None;
         };
         Some(dispatch::DispatchHit {
@@ -480,17 +488,6 @@ impl DragState {
             canvas_pos: *start_canvas,
             held_by: Some(crate::application::platform::input::MouseButton::Right),
         })
-    }
-
-    /// Where the pending press began, in surface pixels: the state a
-    /// cursor move can promote to a drag. `None` for every state no
-    /// move promotes.
-    fn press_origin(&self) -> Option<(f64, f64)> {
-        match self {
-            Self::Pending { start_pos, .. } => Some(*start_pos),
-            Self::PendingRight { start_pos, .. } => Some(*start_pos),
-            _ => None,
-        }
     }
 }
 
@@ -637,7 +634,6 @@ pub struct OneShot {
     /// sidecar), which the write guard otherwise refuses.
     pub overwrite: bool,
 }
-
 
 // Unit tests for pure helpers (cursor math, double-click detection).
 // What needs the renderer is `tests_gpu`'s, below.

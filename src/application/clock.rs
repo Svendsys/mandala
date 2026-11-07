@@ -131,18 +131,6 @@ impl AppClock {
         self.reading_at(wall_ms())
     }
 
-    /// [`Self::now_ms`] as the whole milliseconds animation and
-    /// trigger stamps are kept in. Exact under virtual time, whose
-    /// readings are integral: it starts on a whole millisecond
-    /// ([`Self::set_mode`]), and a step stops it only on whole
-    /// milliseconds — its heartbeats are whole-millisecond offsets of
-    /// a whole-millisecond start, and a stepped recording's frame
-    /// boundaries are rounded up to whole milliseconds
-    /// (`capture::record::Timeline`).
-    pub(crate) fn now_whole_ms(&self) -> u64 {
-        self.now_ms() as u64
-    }
-
     /// The reading as an [`Instant`], for a reader typed in instants
     /// (the touch recognizer). It is the wall clock's instant in real
     /// mode until virtual time is first used, and the same axis as
@@ -390,7 +378,6 @@ mod tests {
             "the wall clock no longer moves it"
         );
         assert_eq!(clock.now_ms(), 1235.0);
-        assert_eq!(clock.now_whole_ms(), 1235);
     }
 
     /// **The axis is continuous across both switches.** Leaving virtual

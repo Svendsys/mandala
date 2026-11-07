@@ -54,7 +54,10 @@ fn test_writer_a_handle_from_before_an_undo_reads_not_open() {
         elsewhere.begin(ChangeSource::Input, Interactive).unwrap()
     };
     assert!(doc.is_open(&tx));
-    assert!(!doc.is_open(&other), "another document's handle names nothing here");
+    assert!(
+        !doc.is_open(&other),
+        "another document's handle names nothing here"
+    );
     doc.cancel(tx);
 }
 

@@ -28,7 +28,11 @@ use super::ViewContext;
 /// it alone, a Shift-click adds it or takes it out; a click on empty
 /// canvas selects nothing, and a Shift-click there changes nothing.
 /// Returns whether the selection changed.
-pub(in crate::application::app) fn click_selection(selection: &mut Selection, hit: ClickHit, shift: bool) -> bool {
+pub(in crate::application::app) fn click_selection(
+    selection: &mut Selection,
+    hit: ClickHit,
+    shift: bool,
+) -> bool {
     match (hit, shift) {
         (ClickHit::Element(id), false) => selection.select_only(id),
         (ClickHit::Element(id), true) => {
@@ -114,7 +118,10 @@ pub(in crate::application::app) enum SelectionMove {
 
 /// Run `step` and sync the view when the selection changed. Returns
 /// whether it did.
-pub(in crate::application::app) fn apply_selection_move(step: SelectionMove, vc: &mut ViewContext<'_>) -> bool {
+pub(in crate::application::app) fn apply_selection_move(
+    step: SelectionMove,
+    vc: &mut ViewContext<'_>,
+) -> bool {
     let changed = match step {
         SelectionMove::All => select_all_in(vc.document, vc.view),
         SelectionMove::None => deselect_all_in(vc.document),

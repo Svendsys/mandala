@@ -98,7 +98,11 @@ impl MindMapDocument {
     /// order they were selected. O(the selection, times each element's
     /// depth within its node).
     pub(crate) fn ipc_selection_json(&self) -> Value {
-        let elements: Vec<Value> = self.selection.iter().map(|id| element_ref(&self.doc, id)).collect();
+        let elements: Vec<Value> = self
+            .selection
+            .iter()
+            .map(|id| element_ref(&self.doc, id))
+            .collect();
         json!({ "count": elements.len(), "elements": elements })
     }
 
@@ -168,7 +172,9 @@ impl MindMapDocument {
     #[cfg(test)]
     pub(crate) fn ipc_field_json(&self, field: DocumentField) -> Value {
         let fields = [field];
-        let reply = self.ipc_document_reply(&fields, None).expect("no pointer to miss");
+        let reply = self
+            .ipc_document_reply(&fields, None)
+            .expect("no pointer to miss");
         serde_json::to_value(&reply).expect("serializes")[field.name()].clone()
     }
 }
@@ -206,21 +212,26 @@ mod tests {
     #[test]
     fn test_the_document_summary_follows_its_changes() {
         let mut doc = MindMapDocument::new_blank(None, 50);
-        let before = serde_json::to_value(doc.ipc_document_reply(&DocumentField::ALL[..6], None).unwrap()).unwrap();
+        let before =
+            serde_json::to_value(doc.ipc_document_reply(&DocumentField::ALL[..6], None).unwrap()).unwrap();
         assert_eq!(before["nodes"], json!(0));
         assert_eq!(before["dirty"], json!(false));
         assert_eq!(before["history"], json!({"undo": 0, "redo": 0}));
         assert_eq!(before["name"], json!("untitled"));
 
         doc.create_root_for_test();
-        let after = serde_json::to_value(doc.ipc_document_reply(&DocumentField::ALL[..6], None).unwrap()).unwrap();
+        let after =
+            serde_json::to_value(doc.ipc_document_reply(&DocumentField::ALL[..6], None).unwrap()).unwrap();
         assert_eq!(after["nodes"], json!(1));
         assert_eq!(after["dirty"], json!(true));
         assert_eq!(after["history"], json!({"undo": 1, "redo": 0}));
         assert!(after["revision"].as_u64() > before["revision"].as_u64());
 
         doc.undo();
-        assert_eq!(doc.ipc_field_json(DocumentField::History), json!({"undo": 0, "redo": 1}));
+        assert_eq!(
+            doc.ipc_field_json(DocumentField::History),
+            json!({"undo": 0, "redo": 1})
+        );
     }
 
     /// The model is the saved map, and a pointer selects a part of it; a
@@ -286,6 +297,9 @@ mod tests {
             .map(|e| e["node"].as_u64().expect("an integer id"))
             .collect();
         assert_ne!(ids[0], ids[1]);
-        assert_eq!(json!({"count": 0, "elements": []}), MindMapDocument::new_blank(None, 50).ipc_selection_json());
+        assert_eq!(
+            json!({"count": 0, "elements": []}),
+            MindMapDocument::new_blank(None, 50).ipc_selection_json()
+        );
     }
 }

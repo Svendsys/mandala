@@ -37,6 +37,7 @@
 use baumhard::arena::NodeId;
 use baumhard::document::element::DocKind;
 use baumhard::document::ids::Document;
+use baumhard::document::values::Rgba;
 use baumhard::engine::anchor::Anchors;
 use baumhard::engine::journal::{Journal, JournalBuilder, Touch};
 use baumhard::gfx_structs::element::GfxElement;
@@ -44,7 +45,6 @@ use baumhard::gfx_structs::mutator::{GfxMutation, GfxMutator};
 use baumhard::gfx_structs::run::RunOverrideOp;
 use baumhard::gfx_structs::tree::GfxMutatorTree;
 use baumhard::projection::{GlyphLayers, Layer, LayerChanges, Projector, RUN_CHANNEL};
-use baumhard::document::values::Rgba;
 use rustc_hash::FxHashMap;
 
 use crate::application::document::selection::kind_of;
@@ -79,11 +79,6 @@ impl OverlayJournals {
     /// projector's. No allocation.
     pub(crate) fn journals(&self) -> impl Iterator<Item = (Layer, &Journal<GfxElement>)> {
         Layer::ALL.into_iter().map(|l| (l, &self.per_layer[l.index()]))
-    }
-
-    /// Whether nothing was written. O(1).
-    pub(crate) fn is_empty(&self) -> bool {
-        self.per_layer.iter().all(Journal::is_empty)
     }
 
     /// Free what the journals hold, once the renderer has read them. A
@@ -209,7 +204,8 @@ fn write(
         return;
     }
     let mutator = GfxMutatorTree::new_with(GfxMutator::new(GfxMutation::RunOverrides(op), RUN_CHANNEL));
-    if let Err(error) = mutator.apply_at_journaled(tree, &Anchors::Nodes(glyphs.to_vec()), |_, _| (), journal) {
+    if let Err(error) = mutator.apply_at_journaled(tree, &Anchors::Nodes(glyphs.to_vec()), |_, _| (), journal)
+    {
         log::warn!("view::overlay: a stamp was refused: {error}");
     }
 }

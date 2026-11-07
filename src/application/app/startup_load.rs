@@ -93,7 +93,11 @@ enum StartupSurface {
 /// no `Result` crosses that boundary.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn native_startup_document(path: &str, history_limit: usize) -> MindMapDocument {
-    adopt(startup_surface(path, MindMapDocument::load(path, history_limit), history_limit))
+    adopt(startup_surface(
+        path,
+        MindMapDocument::load(path, history_limit),
+        history_limit,
+    ))
 }
 
 /// Browser entry point: fetch `url` over the page origin, parse it,
@@ -107,7 +111,11 @@ pub(crate) fn native_startup_document(path: &str, history_limit: usize) -> MindM
 #[cfg(target_arch = "wasm32")]
 pub(crate) async fn wasm_startup_document(url: &str, history_limit: usize) -> MindMapDocument {
     let fetched = fetch_map_json(url).await;
-    adopt(startup_surface(url, browser_load(url, fetched, history_limit), history_limit))
+    adopt(startup_surface(
+        url,
+        browser_load(url, fetched, history_limit),
+        history_limit,
+    ))
 }
 
 /// Collapse the browser's two-stage load — fetch, then parse — into
@@ -124,7 +132,11 @@ pub(crate) async fn wasm_startup_document(url: &str, history_limit: usize) -> Mi
 // rather than blanket-allowing on both targets — if the browser
 // caller goes away, wasm32 says so.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-fn browser_load(url: &str, fetched: Result<String, String>, history_limit: usize) -> Result<MindMapDocument, String> {
+fn browser_load(
+    url: &str,
+    fetched: Result<String, String>,
+    history_limit: usize,
+) -> Result<MindMapDocument, String> {
     fetched.and_then(|json| MindMapDocument::from_json_str(&json, Some(url.to_string()), history_limit))
 }
 
@@ -178,7 +190,11 @@ async fn fetch_map_json(url: &str) -> Result<String, String> {
 /// Pure: builds a document either way and reports nothing. The
 /// reporting lives in [`adopt`], which is what makes this function
 /// assertable line by line without a logger or a device.
-fn startup_surface(source: &str, load: Result<MindMapDocument, String>, history_limit: usize) -> StartupSurface {
+fn startup_surface(
+    source: &str,
+    load: Result<MindMapDocument, String>,
+    history_limit: usize,
+) -> StartupSurface {
     match load {
         Ok(document) => StartupSurface::Loaded(document),
         Err(message) => StartupSurface::Rejected {
@@ -690,10 +706,16 @@ mod tests {
 
         // A body that *did* parse keeps its origin, so the browser's
         // save-back knows where the document came from.
-        let good = MindMapDocument::new_blank(None, 50).save_json().expect("a blank map serializes");
+        let good = MindMapDocument::new_blank(None, 50)
+            .save_json()
+            .expect("a blank map serializes");
         let doc = browser_load(URL, Ok(good), 7).expect("a blank map parses");
         assert_eq!(doc.file_path.as_deref(), Some(URL));
-        assert_eq!(doc.history_limit(), 7, "the browser leg holds the document to the limit it is given");
+        assert_eq!(
+            doc.history_limit(),
+            7,
+            "the browser leg holds the document to the limit it is given"
+        );
     }
 
     /// **The fix, stated as a test.** A rejected load does not leave

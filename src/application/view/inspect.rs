@@ -36,7 +36,12 @@ use crate::application::renderer::content_bounds;
 /// The glyph runs `element` produced, each with its layer: a node's own
 /// runs in the sections and frames layers — its groups' children, not
 /// its child nodes' — or the runs of any other element. O(the runs).
-pub(crate) fn runs_of(doc: &Document, projector: &Projector, layers: &GlyphLayers, element: NodeId) -> Vec<(Layer, NodeId)> {
+pub(crate) fn runs_of(
+    doc: &Document,
+    projector: &Projector,
+    layers: &GlyphLayers,
+    element: NodeId,
+) -> Vec<(Layer, NodeId)> {
     let is_run = |layer: Layer, glyph: NodeId| {
         layers
             .tree(layer)
@@ -67,14 +72,22 @@ pub(crate) fn runs_of(doc: &Document, projector: &Projector, layers: &GlyphLayer
 }
 
 /// The run data of `runs`, in order. No allocation.
-fn run_data<'l>(layers: &'l GlyphLayers, runs: &'l [(Layer, NodeId)]) -> impl Iterator<Item = &'l GlyphRunData> + 'l {
+fn run_data<'l>(
+    layers: &'l GlyphLayers,
+    runs: &'l [(Layer, NodeId)],
+) -> impl Iterator<Item = &'l GlyphRunData> + 'l {
     runs.iter()
         .filter_map(|&(layer, glyph)| layers.tree(layer).get(glyph)?.get().glyph_run())
 }
 
 /// The canvas-space box `element` is drawn in: the union of its runs'
 /// bounds, or `None` when it draws nothing. O(its runs).
-pub(crate) fn element_bounds(doc: &Document, projector: &Projector, layers: &GlyphLayers, element: NodeId) -> Option<Rect> {
+pub(crate) fn element_bounds(
+    doc: &Document,
+    projector: &Projector,
+    layers: &GlyphLayers,
+    element: NodeId,
+) -> Option<Rect> {
     let runs = runs_of(doc, projector, layers, element);
     let (min, max) = content_bounds(run_data(layers, &runs))?;
     Some(Rect::new(min, max - min))
@@ -119,7 +132,10 @@ pub(crate) fn element_visibility(
 /// `rect` on the surface `camera` draws: its top-left corner moved and
 /// its size scaled by the camera. O(1).
 pub(crate) fn surface_rect(rect: Rect, camera: &Camera2D) -> Rect {
-    Rect::new(camera.canvas_to_screen(rect.origin), rect.size * camera.pixels_per_unit())
+    Rect::new(
+        camera.canvas_to_screen(rect.origin),
+        rect.size * camera.pixels_per_unit(),
+    )
 }
 
 /// The text `element` holds: every span below it, in document order,
@@ -136,7 +152,11 @@ pub(crate) fn element_text(doc: &Document, element: NodeId) -> String {
 }
 
 /// The elements of `kind` directly under `parent`, in document order.
-pub(crate) fn children_of_kind(doc: &Document, parent: NodeId, kind: DocKind) -> impl Iterator<Item = NodeId> + '_ {
+pub(crate) fn children_of_kind(
+    doc: &Document,
+    parent: NodeId,
+    kind: DocKind,
+) -> impl Iterator<Item = NodeId> + '_ {
     doc.children(parent)
         .filter(move |&child| doc.get(child).map(DocElement::kind) == Some(kind))
 }

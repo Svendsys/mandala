@@ -87,10 +87,16 @@ mod tests {
     /// appears as its own path component.
     #[test]
     fn test_message_names_source_bounds_the_occurrence() {
-        let read_error = "/home/user/maps/broken.mandala.json: could not read: No such file or directory (os error 2)";
+        let read_error =
+            "/home/user/maps/broken.mandala.json: could not read: No such file or directory (os error 2)";
         let cases: &[(&str, &str, bool, &str)] = &[
             (SOURCE, read_error, true, "the read error names the whole path"),
-            ("map", PARSE_MESSAGE, false, "a substring of a longer word is not a name"),
+            (
+                "map",
+                PARSE_MESSAGE,
+                false,
+                "a substring of a longer word is not a name",
+            ),
             (
                 "map",
                 "map: could not read: No such file or directory (os error 2)",
@@ -118,14 +124,24 @@ mod tests {
                 false,
                 "a prefix of a longer filename is not that filename",
             ),
-            ("./map", PARSE_MESSAGE, false, "the parse message names no file at all"),
+            (
+                "./map",
+                PARSE_MESSAGE,
+                false,
+                "the parse message names no file at all",
+            ),
             (
                 "./map",
                 "./map: could not read: No such file or directory (os error 2)",
                 true,
                 "the read error names the relative path as given",
             ),
-            ("broken.json", "cannot open broken.json", true, "the end of the message bounds"),
+            (
+                "broken.json",
+                "cannot open broken.json",
+                true,
+                "the end of the message bounds",
+            ),
             (
                 r"C:\maps\x.mandala.json",
                 r"C:\maps\x.mandala.json: could not read: No such file or directory",
@@ -142,7 +158,12 @@ mod tests {
                 "an overlapping occurrence is not a second mention, it is the same one",
             ),
             ("", PARSE_MESSAGE, false, "an empty source is never named"),
-            ("", "", false, "an empty source is never named, even by an empty message"),
+            (
+                "",
+                "",
+                false,
+                "an empty source is never named, even by an empty message",
+            ),
             // The residual, asserted rather than merely described.
             (
                 "mindmap",

@@ -293,10 +293,7 @@ fn test_custom_mutation_binding_resolves_when_no_built_in_action() {
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
-    assert_eq!(
-        resolved.edit_for("m", true, true, false),
-        Some("my-mutation")
-    );
+    assert_eq!(resolved.edit_for("m", true, true, false), Some("my-mutation"));
 }
 
 #[test]
@@ -313,10 +310,7 @@ fn test_custom_mutation_binding_loses_to_builtin_action_via_event_loop() {
     };
     let resolved = cfg.resolve();
     assert_eq!(resolved.action_for("z", true, false, false), Some(Action::Undo));
-    assert_eq!(
-        resolved.edit_for("z", true, false, false),
-        Some("collision")
-    );
+    assert_eq!(resolved.edit_for("z", true, false, false), Some("collision"));
 }
 
 #[test]
@@ -329,39 +323,26 @@ fn test_custom_mutation_invalid_combo_is_skipped() {
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
-    assert_eq!(
-        resolved.edit_for("m", true, false, false),
-        Some("valid")
-    );
+    assert_eq!(resolved.edit_for("m", true, false, false), Some("valid"));
 }
 
 #[test]
 fn test_set_custom_mutation_binding_adds_and_replaces() {
     let mut resolved = KeybindConfig::default().resolve();
-    let prev = resolved
-        .set_edit_binding("Ctrl+Shift+M", "first".into())
-        .unwrap();
+    let prev = resolved.set_edit_binding("Ctrl+Shift+M", "first".into()).unwrap();
     assert!(prev.is_none());
-    assert_eq!(
-        resolved.edit_for("m", true, true, false),
-        Some("first")
-    );
+    assert_eq!(resolved.edit_for("m", true, true, false), Some("first"));
     let prev = resolved
         .set_edit_binding("Ctrl+Shift+M", "second".into())
         .unwrap();
     assert_eq!(prev.as_deref(), Some("first"));
-    assert_eq!(
-        resolved.edit_for("m", true, true, false),
-        Some("second")
-    );
+    assert_eq!(resolved.edit_for("m", true, true, false), Some("second"));
 }
 
 #[test]
 fn test_remove_custom_mutation_binding_returns_removed_id() {
     let mut resolved = KeybindConfig::default().resolve();
-    resolved
-        .set_edit_binding("Ctrl+Shift+M", "id-1".into())
-        .unwrap();
+    resolved.set_edit_binding("Ctrl+Shift+M", "id-1".into()).unwrap();
     let prev = resolved.remove_edit_binding("Ctrl+Shift+M").unwrap();
     assert_eq!(prev.as_deref(), Some("id-1"));
     assert_eq!(resolved.edit_for("m", true, true, false), None);
@@ -3017,12 +2998,8 @@ const SHIPPED_TEMPLATE_ACTION_KEYS: &[&str] = &[
 /// [`SHIPPED_TEMPLATE_ACTION_KEYS`] — losing the `_comment` would
 /// strip the file's entire explanation of itself, and no assertion
 /// about *bindings* can see that.
-const SHIPPED_TEMPLATE_OTHER_KEYS: &[&str] = &[
-    "_comment",
-    "console_font",
-    "console_font_size",
-    "edit_bindings",
-];
+const SHIPPED_TEMPLATE_OTHER_KEYS: &[&str] =
+    &["_comment", "console_font", "console_font_size", "edit_bindings"];
 
 #[test]
 fn test_the_shipped_template_ships_exactly_the_keys_it_is_pinned_to() {

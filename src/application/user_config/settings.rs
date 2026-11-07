@@ -58,7 +58,11 @@ pub fn parse(json: &str) -> Result<Settings, String> {
     let settings = Settings {
         history_limit: take_field(LABEL, &mut object, "history_limit").unwrap_or(defaults.history_limit),
     };
-    let mut unknown: Vec<String> = object.into_iter().map(|(key, _)| key).filter(|key| !key.starts_with('_')).collect();
+    let mut unknown: Vec<String> = object
+        .into_iter()
+        .map(|(key, _)| key)
+        .filter(|key| !key.starts_with('_'))
+        .collect();
     unknown.sort();
     for key in unknown {
         log::warn!(
@@ -127,12 +131,17 @@ mod tests {
         let (settings, captured) = capture(|| parse(r#"{"history_limit": 3, "histroy_lmit-9c1f": 4}"#));
         assert_eq!(settings.unwrap().history_limit, 3);
         let named: Vec<String> = captured
-            .records.iter().map(|r| r.message.as_str())
+            .records
+            .iter()
+            .map(|r| r.message.as_str())
             .filter(|m| m.contains("histroy_lmit-9c1f"))
             .map(str::to_string)
             .collect();
         assert_eq!(named.len(), 1, "one report for the one unknown key: {named:?}");
-        assert!(named[0].starts_with("settings: unrecognized key 'histroy_lmit-9c1f' — ignored."), "{named:?}");
+        assert!(
+            named[0].starts_with("settings: unrecognized key 'histroy_lmit-9c1f' — ignored."),
+            "{named:?}"
+        );
     }
 
     /// A comment key is not reported: JSON has no comment syntax.
@@ -140,7 +149,11 @@ mod tests {
     fn test_settings_a_comment_key_is_not_reported() {
         baumhard::util::test_logger::install();
         let (_, captured) = capture(|| parse(r#"{"_comment-77aa": "hello"}"#));
-        assert!(!captured.records.iter().map(|r| r.message.as_str()).any(|m| m.contains("_comment-77aa")));
+        assert!(!captured
+            .records
+            .iter()
+            .map(|r| r.message.as_str())
+            .any(|m| m.contains("_comment-77aa")));
     }
 
     /// A malformed value keeps the default, says so naming the key, and
@@ -151,7 +164,9 @@ mod tests {
         let (settings, captured) = capture(|| parse(r#"{"history_limit": "many"}"#));
         assert_eq!(settings.unwrap().history_limit, DEFAULT_HISTORY_LIMIT);
         assert!(captured
-            .records.iter().map(|r| r.message.as_str())
+            .records
+            .iter()
+            .map(|r| r.message.as_str())
             .any(|m| m.contains("'history_limit' has a malformed value")));
     }
 

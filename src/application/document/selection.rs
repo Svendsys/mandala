@@ -33,16 +33,6 @@ impl Selection {
         Selection::default()
     }
 
-    /// Whether nothing is selected. O(1).
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
-
-    /// How many elements are selected. O(1).
-    pub fn len(&self) -> usize {
-        self.items.len()
-    }
-
     /// The selected elements, oldest first. No allocation.
     pub fn iter(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.items.iter().copied()

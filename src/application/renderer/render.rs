@@ -295,11 +295,7 @@ impl Renderer {
     /// would reject it across a method boundary, which is why the
     /// prepare call lives in this method rather than splitting into
     /// a separate collection helper.
-    fn prepare_text_for_pass(
-        &mut self,
-        camera: &Camera2D,
-        modal_layer: ModalLayer,
-    ) -> Result<(), FrameSkip> {
+    fn prepare_text_for_pass(&mut self, camera: &Camera2D, modal_layer: ModalLayer) -> Result<(), FrameSkip> {
         let vp_w = camera.viewport_size.0 as i32;
         let vp_h = camera.viewport_size.1 as i32;
         let ratio = camera.pixel_ratio;
@@ -317,24 +313,22 @@ impl Renderer {
         // that draws between the two (hence the split).
         let main_capacity = self.overlay_buffers.len();
         let mut main_text_areas: Vec<TextArea> = Vec::with_capacity(main_capacity);
-        main_text_areas.extend(
-            self.overlay_buffers.iter().filter_map(|tb| {
-                    if !tb.visible_at(camera) {
-                        return None;
-                    }
-                    let canvas_pos = Vec2::new(tb.pos.0, tb.pos.1);
-                    let screen_pos = camera.canvas_to_screen(canvas_pos);
-                Some(TextArea {
-                    buffer: &tb.buffer,
-                    left: screen_pos.x,
-                    top: screen_pos.y,
-                    scale: camera.pixels_per_unit(),
-                    bounds: vp_bounds,
-                    default_color,
-                    custom_glyphs: &[],
-                })
-            }),
-        );
+        main_text_areas.extend(self.overlay_buffers.iter().filter_map(|tb| {
+            if !tb.visible_at(camera) {
+                return None;
+            }
+            let canvas_pos = Vec2::new(tb.pos.0, tb.pos.1);
+            let screen_pos = camera.canvas_to_screen(canvas_pos);
+            Some(TextArea {
+                buffer: &tb.buffer,
+                left: screen_pos.x,
+                top: screen_pos.y,
+                scale: camera.pixels_per_unit(),
+                bounds: vp_bounds,
+                default_color,
+                custom_glyphs: &[],
+            })
+        }));
 
         // Chrome: screen-space text, drawn in its own glyphon pass over
         // the canvas's — first an open modal's backdrop cells, so they

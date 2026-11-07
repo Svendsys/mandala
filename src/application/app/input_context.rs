@@ -144,15 +144,12 @@ impl<'a> InputHandlerContext<'a> {
             super::input_context_core::InputContextCore {
                 document: self.document.as_mut(),
                 view: &mut *self.view,
-                app_scene: &mut *self.app_scene,
                 renderer: &mut *self.renderer,
                 last_click: &mut *self.last_click,
                 cursor_pos: &mut *self.cursor_pos,
                 modifiers: &*self.modifiers,
-                keybinds: self.keybinds,
                 macros: &mut *self.macros,
                 interaction_mode: &mut *self.interaction_mode,
-                clock: &*self.clock,
             },
             super::input_context_core::NativeContextExt {
                 drag_state: &mut *self.drag_state,

@@ -140,7 +140,11 @@ impl MapView {
         let Some(pass) = self.advance(doc) else {
             return false;
         };
-        let projected = pass.changes.as_ref().into_iter().flat_map(LayerRenderer::journals_of);
+        let projected = pass
+            .changes
+            .as_ref()
+            .into_iter()
+            .flat_map(LayerRenderer::journals_of);
         renderer.apply_layer_journals(&self.layers, projected.chain(pass.stamps.journals()));
         if pass.changes.is_some() {
             renderer.set_background(resolve_background(doc.doc().tree(), &mut ()).0);
@@ -167,9 +171,13 @@ impl MapView {
         if changes.is_none() && targets == self.highlight.targets() {
             return None;
         }
-        let stamps =
-            self.highlight
-                .update(&targets, changes.as_ref(), doc.doc(), &self.projector, &mut self.layers);
+        let stamps = self.highlight.update(
+            &targets,
+            changes.as_ref(),
+            doc.doc(),
+            &self.projector,
+            &mut self.layers,
+        );
         self.feed.extend(records);
         Some(Pass { changes, stamps })
     }
@@ -197,10 +205,11 @@ impl MapView {
     #[cfg(test)]
     pub(crate) fn sync_for_test(&mut self, doc: &mut MindMapDocument) -> Option<SyncReport> {
         let pass = self.advance(doc)?;
-        let projected = pass
-            .changes
-            .as_ref()
-            .map_or(0, |changes| LayerRenderer::journals_of(changes).map(|(_, j)| j.touched().count()).sum());
+        let projected = pass.changes.as_ref().map_or(0, |changes| {
+            LayerRenderer::journals_of(changes)
+                .map(|(_, j)| j.touched().count())
+                .sum()
+        });
         let stamped = pass
             .stamps
             .journals()

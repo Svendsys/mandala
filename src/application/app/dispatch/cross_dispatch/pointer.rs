@@ -24,6 +24,11 @@ use super::click_selection;
 
 /// What a pointer press landed on, carried into a dispatch.
 #[derive(Debug, Clone, Copy)]
+#[expect(
+    dead_code,
+    reason = "read by the Actions that act where the pointer is: FastResizeStart (V1-C7, #248) and \
+              DoubleClickActivate (V1-C8, #249)"
+)]
 pub struct DispatchHit {
     /// What the press hit (`compute_click_hit`).
     pub click_hit: ClickHit,
@@ -137,7 +142,11 @@ pub(in crate::application::app) fn apply_touch_effect(effect: TouchEffect, core:
 
 /// The decrees a camera step makes: the pan, then the zoom about the
 /// anchor when the step scales.
-fn camera_step_decrees(anchor: (f64, f64), pan: (f64, f64), scale: f64) -> (RenderDecree, Option<RenderDecree>) {
+fn camera_step_decrees(
+    anchor: (f64, f64),
+    pan: (f64, f64),
+    scale: f64,
+) -> (RenderDecree, Option<RenderDecree>) {
     let translate = RenderDecree::CameraPan(pan.0 as f32, pan.1 as f32);
     let zoom = (scale != 1.0).then_some(RenderDecree::CameraZoom {
         screen_x: anchor.0 as f32,

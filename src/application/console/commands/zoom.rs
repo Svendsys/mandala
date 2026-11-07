@@ -23,7 +23,6 @@
 //! grammar, help and completion stand, and running it refuses with
 //! that issue named ([`super::rebuilt_by`]).
 
-
 use super::Command;
 use crate::application::console::completion::{prefix_filter, Completion};
 use crate::application::console::parser::Args;

@@ -211,7 +211,12 @@ impl BodyIndex {
                 tried.retain(|&node| overlaps(node));
                 tried
             }
-            None => self.bodies.keys().copied().filter(|&node| overlaps(node)).collect(),
+            None => self
+                .bodies
+                .keys()
+                .copied()
+                .filter(|&node| overlaps(node))
+                .collect(),
         };
         found.sort_unstable();
         found

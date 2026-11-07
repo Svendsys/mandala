@@ -276,7 +276,9 @@ impl Tracker {
     ) -> (Revisions, Vec<Change>) {
         let generation = now.document.map_or(0, MindMapDocument::generation);
         let document_revision = now.document.map_or(0, |doc| doc.revision().0);
-        let selection: Vec<NodeId> = now.document.map_or_else(Vec::new, |doc| doc.selection.iter().collect());
+        let selection: Vec<NodeId> = now
+            .document
+            .map_or_else(Vec::new, |doc| doc.selection.iter().collect());
         let camera = CameraKey::of(now.camera);
 
         let Some(seen) = self.seen.as_mut() else {
@@ -518,8 +520,7 @@ impl Session {
     /// of everything that waited behind it — unless a newer event of
     /// its class has queued meanwhile, which supersedes it.
     pub(crate) fn requeue(&mut self, queued: Queued) {
-        if !self.subscriptions.verbose && self.pending.iter().any(|waiting| waiting.class == queued.class)
-        {
+        if !self.subscriptions.verbose && self.pending.iter().any(|waiting| waiting.class == queued.class) {
             return;
         }
         self.pending.push_front(queued);
@@ -704,8 +705,8 @@ mod tests {
         /// One committed change, made by `source`, its records drained
         /// as the view drains them.
         fn change(&mut self, source: ChangeSource) {
-            let steps =
-                baumhard::document::mutation::compose::create_root(self.doc.doc(), glam::Vec2::ZERO).expect("composes");
+            let steps = baumhard::document::mutation::compose::create_root(self.doc.doc(), glam::Vec2::ZERO)
+                .expect("composes");
             self.doc
                 .apply(
                     EditRequest {
@@ -881,7 +882,9 @@ mod tests {
         world.doc.selection.select_only(node);
         let (revisions, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
         assert_eq!(names(&changes), ["selection_changed"]);
-        let ident = crate::application::view::inspect::ident_of(world.doc.doc(), node).expect("a node").0;
+        let ident = crate::application::view::inspect::ident_of(world.doc.doc(), node)
+            .expect("a node")
+            .0;
         assert_eq!(
             find(&changes, Class::SelectionChanged)["selection"],
             json!({ "count": 1, "elements": [{ "node": ident }] })
@@ -944,7 +947,10 @@ mod tests {
                 "path": "maps/next.mandala.json",
             })
         );
-        assert_eq!(revisions.document_revision, 0, "the new document counts its own changes");
+        assert_eq!(
+            revisions.document_revision, 0,
+            "the new document counts its own changes"
+        );
         assert_eq!(revisions.revision, 1, "the stream's counter carries on");
     }
 

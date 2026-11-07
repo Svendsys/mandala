@@ -109,7 +109,6 @@ pub(super) fn create_text_buffer_lh(
         pos,
         // Chrome buffers are authored directly at their final
         // position rather than stamped around a `GlyphArea` anchor.
-        emission_offset: (0.0, 0.0),
         bounds,
         zoom_visibility: ZoomVisibility::unbounded(),
     }

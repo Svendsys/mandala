@@ -81,13 +81,13 @@ impl ViewContext<'_> {
 /// fields), or `None` before a view exists.
 macro_rules! view_ctx {
     ($ctx:expr, $doc:expr) => {
-        $ctx.view
-            .as_mut()
-            .map(|view| $crate::application::app::dispatch::cross_dispatch::ViewContext {
+        $ctx.view.as_mut().map(
+            |view| $crate::application::app::dispatch::cross_dispatch::ViewContext {
                 document: $doc,
                 view,
                 renderer: &mut *$ctx.renderer,
-            })
+            },
+        )
     };
 }
 pub(in crate::application::app) use view_ctx;

@@ -28,7 +28,6 @@
 use crate::application::console::commands::range_kv::SECTION_KEYS;
 use crate::application::console::spec::{free, Form, Grammar, Key, Slot, Subverb, Vocabulary, Word};
 
-
 /// The two run-handling modes `section text runs=` accepts.
 const RUNS_WORDS: &[Word] = &[
     Word::new(

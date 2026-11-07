@@ -208,7 +208,9 @@ pub(super) const TEXT_OWNER: &str = "V1-C8 (#249)";
 /// extends.
 pub(super) fn rebuilt_by(verb: &str, owner: &str) -> ExecResult {
     log::debug!("console: `{verb}` is rebuilt on the one writer by {owner}; refused until then");
-    ExecResult::err(format!("{verb}: rebuilt on the one writer by {owner}; not available yet"))
+    ExecResult::err(format!(
+        "{verb}: rebuilt on the one writer by {owner}; not available yet"
+    ))
 }
 
 #[cfg(test)]
@@ -230,8 +232,8 @@ mod tests {
         assert!(command_by_name("nope").is_none());
 
         for name in [
-            "help", "anchor", "body", "cap", "color", "font", "fps", "spacing", "label", "save", "open", "new",
-            "zoom",
+            "help", "anchor", "body", "cap", "color", "font", "fps", "spacing", "label", "save", "open",
+            "new", "zoom",
         ] {
             assert!(
                 command_by_name(name).is_some(),

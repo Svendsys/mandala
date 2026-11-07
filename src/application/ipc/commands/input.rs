@@ -244,7 +244,12 @@ pub(super) const FAMILY: Family = Family {
             summary: "Move the pointer to the center of a node's (or one section's) drawn box and click \
                       there: sugar for input.mouse_move plus input.mouse_button click.",
             params: &[
-                ParamSpec::new("node_id", ParamType::Integer, true, "The node to click, by its integer id."),
+                ParamSpec::new(
+                    "node_id",
+                    ParamType::Integer,
+                    true,
+                    "The node to click, by its integer id.",
+                ),
                 ParamSpec::new(
                     "section",
                     ParamType::Integer,
@@ -852,8 +857,14 @@ enum Aim {
 /// it (`view::inspect::element_bounds`), so a click lands where the
 /// pixels are. A node the view does not draw at the camera's zoom has
 /// nothing to click.
-fn node_target(scene: &crate::application::ipc::SceneView<'_>, node: &Value, section: Option<usize>) -> Result<glam::Vec2, Aim> {
-    use crate::application::view::inspect::{children_of_kind, element_bounds, element_visibility, node_named};
+fn node_target(
+    scene: &crate::application::ipc::SceneView<'_>,
+    node: &Value,
+    section: Option<usize>,
+) -> Result<glam::Vec2, Aim> {
+    use crate::application::view::inspect::{
+        children_of_kind, element_bounds, element_visibility, node_named,
+    };
     use baumhard::document::element::DocKind;
     let doc = scene.document.doc();
     let (projector, layers) = (scene.view.projector(), scene.view.layers());

@@ -23,24 +23,13 @@ pub enum InteractionMode {
     Default,
 }
 
-impl InteractionMode {
-    /// The mode's name, as `query.mode` reports it. O(1).
-    pub fn word(&self) -> &'static str {
-        match self {
-            InteractionMode::Default => "default",
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::InteractionMode;
 
-    /// The mode a fresh app starts in is the default one, and it says so
-    /// to `query.mode` in the word the protocol publishes.
+    /// The mode a fresh app starts in is the default one.
     #[test]
-    fn test_interaction_mode_starts_default_and_names_itself() {
+    fn test_interaction_mode_starts_default() {
         assert_eq!(InteractionMode::default(), InteractionMode::Default);
-        assert_eq!(InteractionMode::Default.word(), "default");
     }
 }

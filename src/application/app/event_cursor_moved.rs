@@ -23,7 +23,11 @@ use crate::application::platform::input::MouseButton;
 
 /// `WindowEvent::CursorMoved`: place the cursor, update its icon, and
 /// advance the drag state.
-pub(super) fn handle_cursor_moved(position: PhysicalPosition<f64>, shell: &Shell, ctx: &mut InputHandlerContext<'_>) {
+pub(super) fn handle_cursor_moved(
+    position: PhysicalPosition<f64>,
+    shell: &Shell,
+    ctx: &mut InputHandlerContext<'_>,
+) {
     let prev_pos = *ctx.cursor_pos;
     *ctx.cursor_pos = (position.x, position.y);
     let cursor = *ctx.cursor_pos;
@@ -73,8 +77,10 @@ fn past_threshold(start: (f64, f64), cursor: (f64, f64)) -> bool {
 fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev: (f64, f64), cursor: (f64, f64)) {
     match ctx.drag_state {
         DragState::Panning { .. } => {
-            ctx.renderer
-                .process_decree(RenderDecree::CameraPan((cursor.0 - prev.0) as f32, (cursor.1 - prev.1) as f32));
+            ctx.renderer.process_decree(RenderDecree::CameraPan(
+                (cursor.0 - prev.0) as f32,
+                (cursor.1 - prev.1) as f32,
+            ));
         }
         DragState::SelectingRect { current_canvas, .. } => {
             *current_canvas = ctx.renderer.screen_to_canvas(cursor.0 as f32, cursor.1 as f32);
@@ -100,7 +106,12 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev: (f64, f64), curso
                 ctx.modifiers.alt_key(),
             );
             if let Some(a) = action {
-                super::dispatch::dispatch_held_action(a, ctx, Some(&dispatch_hit), HeldInput::Button(MouseButton::Right));
+                super::dispatch::dispatch_held_action(
+                    a,
+                    ctx,
+                    Some(&dispatch_hit),
+                    HeldInput::Button(MouseButton::Right),
+                );
             }
         }
         DragState::None => {}
@@ -112,8 +123,15 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev: (f64, f64), curso
 /// default `Action::PanCanvas`) with the press's hit, and a pan it arms
 /// is held by the left button and moves the camera from the press
 /// already, so the first frame of the drag is not lost.
-fn promote_left_drag(ctx: &mut InputHandlerContext<'_>, start_pos: (f64, f64), hit: ClickHit, cursor: (f64, f64)) {
-    let start_canvas = ctx.renderer.screen_to_canvas(start_pos.0 as f32, start_pos.1 as f32);
+fn promote_left_drag(
+    ctx: &mut InputHandlerContext<'_>,
+    start_pos: (f64, f64),
+    hit: ClickHit,
+    cursor: (f64, f64),
+) {
+    let start_canvas = ctx
+        .renderer
+        .screen_to_canvas(start_pos.0 as f32, start_pos.1 as f32);
     if ctx.modifiers.shift_key() && hit == ClickHit::Empty {
         *ctx.drag_state = DragState::SelectingRect {
             start_canvas,

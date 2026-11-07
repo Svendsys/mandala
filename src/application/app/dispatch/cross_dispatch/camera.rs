@@ -24,7 +24,11 @@ pub(in crate::application::app) enum ZoomDir {
 }
 
 /// Zoom one step about the cursor: `ZoomIn` / `ZoomOut`.
-pub(in crate::application::app) fn apply_zoom_step(dir: ZoomDir, cursor_pos: (f64, f64), renderer: &mut Renderer) {
+pub(in crate::application::app) fn apply_zoom_step(
+    dir: ZoomDir,
+    cursor_pos: (f64, f64),
+    renderer: &mut Renderer,
+) {
     let factor = match dir {
         ZoomDir::In => 1.1f32,
         ZoomDir::Out => 1.0f32 / 1.1f32,
@@ -75,7 +79,10 @@ pub(in crate::application::app) fn apply_pan_camera(dir: PanDir, renderer: &mut 
 /// The canvas point the selection centers on: the mean of each selected
 /// node's drawn center and each selected path's midpoint, as the
 /// projector holds them. `None` when nothing selected is drawn.
-pub(in crate::application::app) fn selection_center(doc: &MindMapDocument, view: &MapView) -> Option<glam::Vec2> {
+pub(in crate::application::app) fn selection_center(
+    doc: &MindMapDocument,
+    view: &MapView,
+) -> Option<glam::Vec2> {
     let projector = view.projector();
     let mut sum = glam::Vec2::ZERO;
     let mut count = 0u32;
@@ -94,7 +101,11 @@ pub(in crate::application::app) fn selection_center(doc: &MindMapDocument, view:
 }
 
 /// Center the camera on the selection: `CenterOnSelection`.
-pub(in crate::application::app) fn apply_center_on_selection(doc: &MindMapDocument, view: &MapView, renderer: &mut Renderer) {
+pub(in crate::application::app) fn apply_center_on_selection(
+    doc: &MindMapDocument,
+    view: &MapView,
+    renderer: &mut Renderer,
+) {
     if let Some(center) = selection_center(doc, view) {
         renderer.set_camera_center(center);
     }

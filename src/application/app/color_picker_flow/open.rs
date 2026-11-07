@@ -20,12 +20,7 @@ pub(in crate::application::app) fn open_color_picker_standalone(
 ) {
     use crate::application::color_picker::PickerMode;
 
-    open_picker_inner(
-        PickerMode::Standalone,
-        state,
-        app_scene,
-        renderer,
-    );
+    open_picker_inner(PickerMode::Standalone, state, app_scene, renderer);
 }
 
 /// The color the standalone palette opens on: red, full saturation,

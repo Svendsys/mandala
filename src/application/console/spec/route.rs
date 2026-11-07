@@ -68,10 +68,24 @@ pub fn lookup<R: Copy>(routes: &Routes<R>, subverb: &Subverb) -> Option<R> {
 
 /// One dispatcher's hand-offs: each shared subverb set it composes,
 /// paired with the variant that runs the set's own dispatcher.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the verbs V1-C5 (#246) and V1-C6 (#247) rebuild route through it"
+    )
+)]
 pub type Delegates<R> = [(&'static [Subverb], R)];
 
 /// [`lookup`], then the first [`Delegates`] row whose set declares
 /// `subverb` (by name, see [`declares`]).
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the verbs V1-C5 (#246) and V1-C6 (#247) rebuild route through it"
+    )
+)]
 pub fn lookup_or_delegate<R: Copy>(
     routes: &Routes<R>,
     delegates: &Delegates<R>,
@@ -96,6 +110,13 @@ pub fn lookup_or_delegate<R: Copy>(
 /// enough because names are unique within a level
 /// (`test_names_are_unique_within_a_level`), so on a level that
 /// composes `set` a row spelled like one of `set`'s *is* that row.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the verbs V1-C5 (#246) and V1-C6 (#247) rebuild route through it"
+    )
+)]
 pub fn declares(set: &[Subverb], subverb: &Subverb) -> bool {
     set.iter().any(|s| s.name == subverb.name)
 }

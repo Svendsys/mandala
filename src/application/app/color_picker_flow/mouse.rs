@@ -6,8 +6,6 @@
 //! V1-C7 (#248), which stages it on the picker's transaction. The real `hue_deg`/`sat`/`val` only change on click or
 //! keyboard nudge — hover is purely visual.
 
-
-
 /// Mouse-move handler for the picker. Branches on active-drag vs
 /// hover:
 ///

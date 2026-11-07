@@ -32,7 +32,6 @@ use crate::application::ipc::injected::InjectedQueue;
 use crate::application::ipc::Settling;
 use crate::application::keybinds::ResolvedKeybinds;
 use crate::application::renderer::Renderer;
-use crate::application::user_config::settings::Settings;
 use crate::application::view::MapView;
 
 /// Wall-clock interval the loop holds the FPS overlay's numeric
@@ -80,9 +79,6 @@ pub(super) struct InitState {
     /// Initialized to `Default` to match the as-launched cursor.
     pub(super) cursor_icon_last: CursorIcon,
     pub(super) keybinds: ResolvedKeybinds,
-    /// The user's settings (`settings.json`): the history limit every
-    /// installed document is held to (D18).
-    pub(super) settings: Settings,
     /// User-defined macro registry. Loaded once at startup
     /// (`run_native_init::build`) from `~/.config/mandala/macros.json`;
     /// queried at dispatch time via `keybinds.macro_for(...)`.
@@ -358,7 +354,7 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
         // as-launched cursor.
         cursor_icon_last: CursorIcon::Default,
         keybinds,
-        settings,
+
         macros,
         // Touch gesture recognizer. State machine starts Idle;
         // first `WindowEvent::Touch` lands a finger.

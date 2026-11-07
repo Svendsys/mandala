@@ -203,14 +203,27 @@ mod tests {
         let mut scene = AppScene::new();
         let first = scene.register_overlay(OverlayRole::Console, GfxTree::new_non_indexed(), Vec2::ZERO);
         scene.set_overlay_signature(OverlayRole::Console, 7);
-        assert_eq!(scene.overlay_dispatch(OverlayRole::Console, 7), OverlayDispatch::InPlaceMutator);
-        assert_eq!(scene.overlay_dispatch(OverlayRole::Console, 8), OverlayDispatch::FullRebuild);
+        assert_eq!(
+            scene.overlay_dispatch(OverlayRole::Console, 7),
+            OverlayDispatch::InPlaceMutator
+        );
+        assert_eq!(
+            scene.overlay_dispatch(OverlayRole::Console, 8),
+            OverlayDispatch::FullRebuild
+        );
         let second = scene.register_overlay(OverlayRole::Console, GfxTree::new_non_indexed(), Vec2::ZERO);
         assert_ne!(first, second);
-        assert_eq!(scene.overlay_ids_in_layer_order(), vec![second], "the first tree was removed");
+        assert_eq!(
+            scene.overlay_ids_in_layer_order(),
+            vec![second],
+            "the first tree was removed"
+        );
         scene.unregister_overlay(OverlayRole::Console);
         assert_eq!(scene.overlay_id(OverlayRole::Console), None);
         assert_eq!(scene.overlay_signature(OverlayRole::Console), None);
-        assert_eq!(scene.overlay_dispatch(OverlayRole::Console, 7), OverlayDispatch::FullRebuild);
+        assert_eq!(
+            scene.overlay_dispatch(OverlayRole::Console, 7),
+            OverlayDispatch::FullRebuild
+        );
     }
 }

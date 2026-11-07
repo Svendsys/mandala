@@ -22,10 +22,9 @@
 //!   fall-through verdict for every other key.
 
 use crate::application::clipboard;
-use crate::application::color_picker::{ColorPickerState, OpenPicker};
 use crate::application::color_picker::{ClipboardContent, Outcome};
+use crate::application::color_picker::{ColorPickerState, OpenPicker};
 use crate::application::keybinds::Action;
-
 
 /// A picker-modal effect named by an `Action`. Produced by
 /// [`picker_op_for`]; consumed by the `dispatch_action` arm, which

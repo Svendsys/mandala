@@ -72,20 +72,6 @@ impl SourceTier {
             SourceTier::User => 1,
         }
     }
-
-    /// Lowercase one-word name, as the console prints it (`macro`
-    /// reports which tier won an id).
-    pub fn label(self) -> &'static str {
-        // `#[non_exhaustive]` forces a wildcard arm even though
-        // every variant is matched; it is the forward-compat seam
-        // for a future tier and is unreachable today.
-        #[allow(unreachable_patterns)]
-        match self {
-            SourceTier::App => "app",
-            SourceTier::User => "user",
-            _ => "(unknown source)",
-        }
-    }
 }
 
 #[cfg(test)]
@@ -136,18 +122,5 @@ mod tests {
     fn test_tier_count_matches_all() {
         assert_eq!(SourceTier::COUNT, 2);
         assert_eq!(SourceTier::COUNT, SourceTier::ALL.len());
-    }
-
-    /// Every tier prints a distinct, non-empty label — the console
-    /// readout must never show two tiers under one name.
-    #[test]
-    fn test_tier_labels_are_distinct_and_non_empty() {
-        let mut seen: Vec<&str> = Vec::new();
-        for tier in SourceTier::ALL {
-            let label = tier.label();
-            assert!(!label.is_empty(), "{:?} has no label", tier);
-            assert!(!seen.contains(&label), "label '{}' is used twice", label);
-            seen.push(label);
-        }
     }
 }

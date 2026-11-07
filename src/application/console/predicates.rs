@@ -54,9 +54,12 @@ mod tests {
         let mut doc = MindMapDocument::new_blank(None, 50);
         doc.create_root_for_test();
         let parent = every_node(doc.doc()).next().expect("the root just made");
-        let steps =
-            baumhard::document::mutation::compose::create_child(doc.doc(), parent, glam::Vec2::new(0.0, 80.0))
-                .expect("a child composes");
+        let steps = baumhard::document::mutation::compose::create_child(
+            doc.doc(),
+            parent,
+            glam::Vec2::new(0.0, 80.0),
+        )
+        .expect("a child composes");
         doc.apply_for_test(baumhard::document::writer::EditRequest {
             steps,
             label: "child".to_string(),
@@ -72,11 +75,17 @@ mod tests {
         let mut doc = two_nodes();
         let nodes: Vec<_> = every_node(doc.doc()).collect();
         assert_eq!(nodes.len(), 2);
-        assert!(!node_or_section_selected_single_node(&ConsoleContext::from_document(&doc)));
+        assert!(!node_or_section_selected_single_node(
+            &ConsoleContext::from_document(&doc)
+        ));
         doc.selection.select_only(nodes[0]);
-        assert!(node_or_section_selected_single_node(&ConsoleContext::from_document(&doc)));
+        assert!(node_or_section_selected_single_node(
+            &ConsoleContext::from_document(&doc)
+        ));
         doc.selection.set(nodes.iter().copied());
-        assert!(!node_or_section_selected_single_node(&ConsoleContext::from_document(&doc)));
+        assert!(!node_or_section_selected_single_node(
+            &ConsoleContext::from_document(&doc)
+        ));
     }
 
     /// The path verbs want a path: a node alone is not one, the child's

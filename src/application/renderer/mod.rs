@@ -66,8 +66,8 @@ mod backdrop;
 // native-gated (CLAUDE.md "Dual-target status"), so on wasm32 the
 // builders compile with no caller. Scoped to wasm32 so the host
 // lint, which can see the shell, stays armed.
-mod chrome_text;
 mod camera;
+mod chrome_text;
 // Offscreen capture and readback. Native-only at the module boundary:
 // a browser cannot block on a buffer map (CLAUDE.md "Dual-target
 // status", "Screenshot capture").
@@ -163,7 +163,6 @@ use log::{error, info, warn};
 // Also read by the GPU-backed test that checks what a renderer handed
 // its passes.
 pub(crate) use target_encoding::TargetEncoding;
-
 
 use wgpu::{Color, Device, Instance, MultisampleState, Queue, Surface, SurfaceConfiguration, TextureFormat};
 use winit::dpi::PhysicalSize;
@@ -1193,14 +1192,6 @@ impl Renderer {
 pub struct MindMapTextBuffer {
     pub buffer: Buffer,
     pub pos: (f32, f32),
-    /// The `(dx, dy)` this buffer was emitted at relative to its
-    /// authoring `GlyphArea`'s anchor — `(0, 0)` for a main glyph,
-    /// one of [`OutlineStyle::offsets`](baumhard::gfx_structs::area_fields::OutlineStyle::offsets)
-    /// for an outline-halo stamp. Kept so a position-only patch
-    /// (`Renderer::patch_drag_positions`) can re-derive
-    /// `pos = anchor + emission_offset` instead of collapsing every
-    /// halo of a dragged element onto its main glyph.
-    pub emission_offset: (f32, f32),
     pub bounds: (f32, f32),
     /// Per-`GlyphArea` zoom window copied in at buffer-build time.
     /// The main render loop skips this buffer whenever
@@ -1215,24 +1206,14 @@ impl MindMapTextBuffer {
     /// a tree registered at `offset`, is drawn: `anchor +
     /// emission_offset + offset`, summed in that order.
     ///
-    /// The one spelling of the stamp-placement sum. The walker places
-    /// every buffer it emits through it, and both position patches —
-    /// [`place_at`](Self::place_at) on the scene passes,
-    /// `Renderer::patch_drag_positions` on the mindmap — re-derive
-    /// through it, so a patched buffer lands bit-for-bit where shaping
-    /// would have put it, and an outlined element's halo stamps keep
-    /// their ring instead of collapsing onto the glyph.
+    /// The one spelling of the stamp-placement sum: the walker places
+    /// every buffer it emits through it, an outlined element's halo
+    /// stamps each at their own offset.
     pub(super) fn stamp_pos(anchor: (f32, f32), emission_offset: (f32, f32), offset: Vec2) -> (f32, f32) {
         (
             anchor.0 + emission_offset.0 + offset.x,
             anchor.1 + emission_offset.1 + offset.y,
         )
-    }
-
-    /// Re-place this buffer for a moved `anchor` / `offset`, keeping
-    /// the stamp offset it was emitted at. No shaping.
-    pub(super) fn place_at(&mut self, anchor: (f32, f32), offset: Vec2) {
-        self.pos = Self::stamp_pos(anchor, self.emission_offset, offset);
     }
 
     /// Should this text buffer render at the current camera

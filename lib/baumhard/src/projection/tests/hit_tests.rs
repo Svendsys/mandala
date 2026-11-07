@@ -365,7 +365,11 @@ fn test_projection_nodes_in_agrees_with_a_scan_of_every_body() {
     for _ in 0..12 {
         let (p, bodies) = random_bodies(&mut rng, 40);
         for &(id, body, _) in &bodies {
-            assert_eq!(p.projector.node_rect(id), Some(body), "the body is the generator's");
+            assert_eq!(
+                p.projector.node_rect(id),
+                Some(body),
+                "the body is the generator's"
+            );
         }
         let mut rects = Vec::new();
         for _ in 0..40 {
@@ -376,8 +380,14 @@ fn test_projection_nodes_in_agrees_with_a_scan_of_every_body() {
         for &(_, body, _) in bodies.iter().take(8) {
             // Ending exactly on the body's left edge, starting exactly on
             // its right, and the two zero-area points.
-            rects.push(Rect::new(body.origin - Vec2::new(50.0, 0.0), Vec2::new(50.0, 10.0)));
-            rects.push(Rect::new(Vec2::new(body.max().x, body.origin.y), Vec2::new(40.0, 40.0)));
+            rects.push(Rect::new(
+                body.origin - Vec2::new(50.0, 0.0),
+                Vec2::new(50.0, 10.0),
+            ));
+            rects.push(Rect::new(
+                Vec2::new(body.max().x, body.origin.y),
+                Vec2::new(40.0, 40.0),
+            ));
             rects.push(Rect::new(body.origin, Vec2::ZERO));
             rects.push(Rect::new(body.origin + body.size * 0.5, Vec2::ZERO));
         }

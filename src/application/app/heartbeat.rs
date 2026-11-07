@@ -232,7 +232,7 @@ mod tests {
             if let Step::Capture { t_ms, .. } = self.recording.step(now) {
                 // The frame shows the whole-millisecond reading, which
                 // `t_ms` names.
-                assert_eq!(now, self.clock.now_whole_ms() as f64, "a whole-ms reading");
+                assert_eq!(now, now.round(), "a whole-ms reading");
                 assert_eq!(t_ms, now - self.start, "stamped with the reading it shows");
                 let pixels = CapturedPixels {
                     width: 2,
@@ -381,7 +381,10 @@ mod tests {
         let real = AppClock::default();
         let frozen = virtual_clock();
         assert!(needs_continuation(&queued, &real), "queued input on a real clock");
-        assert!(!needs_continuation(&queued, &frozen), "queued input on a virtual clock");
+        assert!(
+            !needs_continuation(&queued, &frozen),
+            "queued input on a virtual clock"
+        );
         assert!(!needs_continuation(&empty, &real), "nothing on a real clock");
         assert!(!needs_continuation(&empty, &frozen), "nothing on a virtual clock");
     }

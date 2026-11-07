@@ -323,7 +323,12 @@ mod tests {
         assert_eq!(captured.records[0].code.as_deref(), Some(SAVE_UNBOUND_CODE));
 
         let dir = baumhard::util::test_temp::TempDir::new("save-codes");
-        doc.file_path = Some(dir.path().join("missing-dir/m.mandala.json").display().to_string());
+        doc.file_path = Some(
+            dir.path()
+                .join("missing-dir/m.mandala.json")
+                .display()
+                .to_string(),
+        );
         let (saved, captured) = capture(|| save_document_to_bound_path(&mut doc));
         assert!(!saved, "a parent that does not exist cannot be written into");
         assert_eq!(captured.records[0].code.as_deref(), Some(SAVE_FAILED_CODE));
@@ -331,7 +336,10 @@ mod tests {
 
         doc.file_path = Some(dir.path().join("m.mandala.json").display().to_string());
         let (saved, captured) = capture(|| save_document_to_bound_path(&mut doc));
-        assert!(saved && !doc.is_dirty(), "a written save leaves the document clean");
+        assert!(
+            saved && !doc.is_dirty(),
+            "a written save leaves the document clean"
+        );
         assert!(captured.records.is_empty(), "{captured:?}");
     }
 }

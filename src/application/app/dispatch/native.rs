@@ -12,7 +12,9 @@
 
 use crate::application::keybinds::Action;
 
-use super::super::console_input::{rebuild_console_overlay, save_console_history, save_document_to_bound_path};
+use super::super::console_input::{
+    rebuild_console_overlay, save_console_history, save_document_to_bound_path,
+};
 use super::super::input_context::InputHandlerContext;
 use super::super::{DragState, HeldInput, PanOwner};
 use crate::application::console::ConsoleState;
@@ -143,7 +145,13 @@ fn dispatch_native_arms(action: Action, ctx: &mut InputHandlerContext<'_>) -> Di
             } else {
                 *ctx.console_state = ConsoleState::open(ctx.console_history.clone());
                 if let Some(doc) = ctx.document.as_ref() {
-                    rebuild_console_overlay(ctx.console_state, doc, ctx.app_scene, ctx.renderer, ctx.keybinds);
+                    rebuild_console_overlay(
+                        ctx.console_state,
+                        doc,
+                        ctx.app_scene,
+                        ctx.renderer,
+                        ctx.keybinds,
+                    );
                 }
             }
             DispatchOutcome::Handled
@@ -201,11 +209,17 @@ fn dispatch_native_arms(action: Action, ctx: &mut InputHandlerContext<'_>) -> Di
             }
             PanCanvasRoute::Held => {
                 log::debug!("dispatch: PanCanvas ignored (a held input owns the pan); state stays put");
-                DispatchOutcome::Refused("a pan is already running, held by a button or key; its release ends it")
+                DispatchOutcome::Refused(
+                    "a pan is already running, held by a button or key; its release ends it",
+                )
             }
             PanCanvasRoute::Refuse => {
-                log::debug!("dispatch: PanCanvas ignored (a pending gesture owns the pointer); state stays put");
-                DispatchOutcome::Refused("a press is pending a gesture that has not fired; its release ends it")
+                log::debug!(
+                    "dispatch: PanCanvas ignored (a pending gesture owns the pointer); state stays put"
+                );
+                DispatchOutcome::Refused(
+                    "a press is pending a gesture that has not fired; its release ends it",
+                )
             }
         },
         // The file Actions run as the console line they mirror, so the
@@ -226,7 +240,11 @@ fn dispatch_native_arms(action: Action, ctx: &mut InputHandlerContext<'_>) -> Di
 /// applied only if its line did: a missing file or an unwritable path is
 /// `Unhandled`, so a caller that reads the outcome (a macro's `any_ran`,
 /// an IPC reply) is not told the map was opened or saved when it was not.
-fn run_console_line_for(verb: &str, path: Option<&String>, ctx: &mut InputHandlerContext<'_>) -> DispatchOutcome {
+fn run_console_line_for(
+    verb: &str,
+    path: Option<&String>,
+    ctx: &mut InputHandlerContext<'_>,
+) -> DispatchOutcome {
     let line = match path {
         Some(path) => format!("{verb} {}", quote_console_arg(path)),
         None => verb.to_string(),
@@ -362,7 +380,10 @@ mod tests {
             hit: crate::application::app::ClickHit::Empty,
         };
         assert_eq!(route_pan_canvas(&right), PanCanvasRoute::Refuse);
-        assert!(right.right_drag_hit().is_some(), "a pending right press builds its drag hit");
+        assert!(
+            right.right_drag_hit().is_some(),
+            "a pending right press builds its drag hit"
+        );
         assert!(DragState::None.right_drag_hit().is_none());
     }
 

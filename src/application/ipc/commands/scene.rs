@@ -314,9 +314,11 @@ fn included(entry: &Map<String, Value>, all: bool) -> bool {
 /// The document's elements of `kinds`, in document order.
 fn elements_of<'d>(view: &'d SceneView<'_>, kinds: &'d [DocKind]) -> impl Iterator<Item = NodeId> + 'd {
     let doc = view.document.doc();
-    doc.tree()
-        .descendants()
-        .filter(move |&id| doc.get(id).map(DocElement::kind).is_some_and(|kind| kinds.contains(&kind)))
+    doc.tree().descendants().filter(move |&id| {
+        doc.get(id)
+            .map(DocElement::kind)
+            .is_some_and(|kind| kinds.contains(&kind))
+    })
 }
 
 /// A node's entry, with its drawn sections.
@@ -450,8 +452,13 @@ fn visible_names(view: &SceneView<'_>, kinds: &[DocKind]) -> Value {
         elements_of(view, kinds)
             .filter(|&element| {
                 let doc = view.document.doc();
-                element_visibility(doc, view.view.projector(), view.view.layers(), element, view.camera)
-                    == Some("visible")
+                element_visibility(
+                    doc,
+                    view.view.projector(),
+                    view.view.layers(),
+                    element,
+                    view.camera,
+                ) == Some("visible")
             })
             .map(|element| element_ref(view.document.doc(), element))
             .collect(),
@@ -519,7 +526,10 @@ fn node_geometry(call: &mut Call<'_>) -> Reply {
         return call.invalid_params("node_id", "missing `node_id`");
     };
     if value.as_u64().is_none() {
-        return call.invalid_params("node_id", format!("`node_id` is a node's integer id, not {value}"));
+        return call.invalid_params(
+            "node_id",
+            format!("`node_id` is a node's integer id, not {value}"),
+        );
     }
     with_scene(call, |view| {
         let node = node_named(view.document.doc(), &value).map_err(Refusal::NotFound)?;
@@ -613,7 +623,9 @@ fn find_text(call: &mut Call<'_>) -> Reply {
     }
     let flag = |name: &str| call.param(name).and_then(Value::as_bool).unwrap_or(false);
     let matcher = TextMatch::new(text, flag("exact"), flag("case_sensitive"));
-    with_scene(call, |view| Ok(json!({ "matches": find_matches(view, &matcher) })))
+    with_scene(call, |view| {
+        Ok(json!({ "matches": find_matches(view, &matcher) }))
+    })
 }
 
 #[cfg(test)]
@@ -631,9 +643,11 @@ mod tests {
         let runs: Vec<_> = every_node(doc.doc())
             .filter_map(|n| element_bounds(doc.doc(), view.projector(), view.layers(), n))
             .collect();
-        let (min, max) = runs.iter().fold((runs[0].origin, runs[0].origin + runs[0].size), |(lo, hi), r| {
-            (lo.min(r.origin), hi.max(r.origin + r.size))
-        });
+        let (min, max) = runs
+            .iter()
+            .fold((runs[0].origin, runs[0].origin + runs[0].size), |(lo, hi), r| {
+                (lo.min(r.origin), hi.max(r.origin + r.size))
+            });
         let mut camera = Camera2D::new(1600, 1200);
         camera.fit_to_bounds(min, max, 0.05);
         (doc, view, camera)
@@ -685,7 +699,9 @@ mod tests {
         let found = find_matches(&view, &TextMatch::new(&word.to_uppercase(), false, false));
         let named = element_ref(doc.doc(), section);
         assert!(
-            found.iter().any(|m| m["element"] == named && m["kind"] == json!("section")),
+            found
+                .iter()
+                .any(|m| m["element"] == named && m["kind"] == json!("section")),
             "{word:?} in {found:?}"
         );
         assert!(named["node"].is_u64() && named["section"].is_u64(), "{named}");
@@ -717,7 +733,10 @@ mod tests {
         assert!(parse_include(Some("some")).is_err());
         assert_eq!(parse_kinds(Some(&json!(["paths"]))).unwrap().paths, true);
         assert!(parse_kinds(Some(&json!([]))).is_err());
-        assert!(parse_kinds(Some(&json!(["edges"]))).is_err(), "the old word is not a kind");
+        assert!(
+            parse_kinds(Some(&json!(["edges"]))).is_err(),
+            "the old word is not a kind"
+        );
         assert!(TextMatch::new("É", false, false).matches("café é"));
         assert!(!TextMatch::new("É", false, true).matches("é"));
     }

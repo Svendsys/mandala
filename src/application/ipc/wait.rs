@@ -260,9 +260,6 @@ mod tests {
             ..QUIET
         };
         let dragging_message = message(Until::Settled, dragging);
-        assert!(
-            !dragging_message.contains("queued input"),
-            "{dragging_message}"
-        );
+        assert!(!dragging_message.contains("queued input"), "{dragging_message}");
     }
 }

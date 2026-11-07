@@ -45,9 +45,7 @@ use super::Command;
 use crate::application::console::completion::{prefix_filter, Completion};
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
-use crate::application::console::spec::{
-    Bare, Form, Grammar, Key, Slot, Subverb, Vocabulary,
-};
+use crate::application::console::spec::{Bare, Form, Grammar, Key, Slot, Subverb, Vocabulary};
 use crate::application::console::{ConsoleContext, ConsoleEffects, ExecResult};
 
 /// Point sizes the popup suggests. Any positive float is legal, so

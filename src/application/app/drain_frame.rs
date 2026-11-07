@@ -85,7 +85,11 @@ fn band(a: Vec2, b: Vec2) -> Rect {
 /// The rubber band's release: it selects what it covers — replacing the
 /// selection — and the preview stands down. The rectangle goes at the
 /// next frame (`drain_rect_select`).
-pub(super) fn end_rect_select_gesture(ctx: &mut InputHandlerContext<'_>, start_canvas: Vec2, current_canvas: Vec2) {
+pub(super) fn end_rect_select_gesture(
+    ctx: &mut InputHandlerContext<'_>,
+    start_canvas: Vec2,
+    current_canvas: Vec2,
+) {
     let Some(doc) = ctx.document.as_mut() else {
         return;
     };

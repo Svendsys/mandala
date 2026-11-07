@@ -81,7 +81,9 @@ impl ClickHit {
     fn to_ipc_json(self, doc: &MindMapDocument) -> Value {
         match self {
             ClickHit::Empty => json!({ "kind": "Empty" }),
-            ClickHit::Element(element) => json!({ "kind": "Element", "element": element_ref(doc.doc(), element) }),
+            ClickHit::Element(element) => {
+                json!({ "kind": "Element", "element": element_ref(doc.doc(), element) })
+            }
         }
     }
 }

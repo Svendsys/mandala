@@ -89,7 +89,10 @@ mod tests {
         doc.create_root_for_test();
 
         assert_exec_err_contains(run_save(&[], &mut doc), "no file path bound");
-        assert!(doc.is_dirty(), "a save that never wrote must leave the document dirty");
+        assert!(
+            doc.is_dirty(),
+            "a save that never wrote must leave the document dirty"
+        );
 
         let dir = TempDir::new("console-save-unbound");
         let path = dir.join("bound.mandala.json");
@@ -98,7 +101,10 @@ mod tests {
             matches!(run_save(&[], &mut doc), ExecResult::Ok(_)),
             "control: a bound document must accept an argument-free save"
         );
-        assert!(!doc.is_dirty(), "control: a save that wrote leaves the document clean");
+        assert!(
+            !doc.is_dirty(),
+            "control: a save that wrote leaves the document clean"
+        );
         assert!(path.exists(), "control: the bound save must write the file");
     }
 
@@ -135,7 +141,11 @@ mod tests {
             "save <path> must not write through to the previously bound file"
         );
         let written = MindMapDocument::load(&target_str, 50).expect("the Save As target must reload");
-        assert_eq!(every_node(written.doc()).count(), 1, "the target holds the node made after the first save");
+        assert_eq!(
+            every_node(written.doc()).count(),
+            1,
+            "the target holds the node made after the first save"
+        );
     }
 
     /// A failed write is reported, and the document keeps both its

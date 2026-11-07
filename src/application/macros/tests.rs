@@ -383,7 +383,8 @@ fn macro_registry_user_overrides_app_by_id() {
     // even if an App macro had the same id first).
     assert!(src.allows_console_line());
     assert!(
-        reg.get_with_source("shared-id").is_some_and(|(_, tier)| tier == SourceTier::User),
+        reg.get_with_source("shared-id")
+            .is_some_and(|(_, tier)| tier == SourceTier::User),
         "the shadowed App slot does not surface while the User slot is filled"
     );
 }

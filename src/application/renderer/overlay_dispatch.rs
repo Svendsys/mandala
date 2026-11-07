@@ -35,13 +35,17 @@ impl Renderer {
     /// One walk of the overlay trees and one shaping of each area with
     /// text, under one `FONT_SYSTEM` write guard taken only when a tree
     /// is registered.
-    pub fn rebuild_overlay_scene_buffers(&mut self, app_scene: &mut crate::application::scene_host::AppScene) {
+    pub fn rebuild_overlay_scene_buffers(
+        &mut self,
+        app_scene: &mut crate::application::scene_host::AppScene,
+    ) {
         self.overlay_scene_elements.clear();
         let ids = app_scene.overlay_ids_in_layer_order();
         if ids.is_empty() {
             return;
         }
-        let mut font_system = fonts::acquire_font_system_write("overlay_dispatch::rebuild_overlay_scene_buffers");
+        let mut font_system =
+            fonts::acquire_font_system_write("overlay_dispatch::rebuild_overlay_scene_buffers");
         let scene = app_scene.overlay_scene();
         for id in ids {
             let Some(entry) = scene.get(id) else {
@@ -51,9 +55,12 @@ impl Renderer {
                 continue;
             }
             let buffers = &mut self.overlay_scene_elements;
-            super::tree_walker::walk_tree_into_buffers(entry.tree(), entry.offset(), &mut font_system, |_, buffer| {
-                buffers.push(buffer)
-            });
+            super::tree_walker::walk_tree_into_buffers(
+                entry.tree(),
+                entry.offset(),
+                &mut font_system,
+                |_, buffer| buffers.push(buffer),
+            );
         }
     }
 

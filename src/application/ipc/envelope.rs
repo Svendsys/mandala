@@ -303,12 +303,6 @@ impl Event {
         Event { event: class, data }
     }
 
-    /// The payload, to merge a delta event into a newer one of its
-    /// class (`events::Session::queue`).
-    pub(crate) fn data_mut(&mut self) -> &mut Value {
-        &mut self.data
-    }
-
     /// Best-effort notice that the app is exiting, so a client can
     /// tell "app exited" from "connection died". Native's transports
     /// send it; on the browser the relay does, when the page leaves.

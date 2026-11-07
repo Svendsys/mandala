@@ -344,6 +344,13 @@ pub fn no_arguments_message(grammar: &'static Grammar) -> String {
 /// A subverb with two forms prints both: `section move` takes
 /// `dx=`/`dy=` *or* `x=`/`y=`, and one bracketed line would document
 /// a command it refuses.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the verbs V1-C5 (#246) and V1-C6 (#247) rebuild route through it"
+    )
+)]
 pub fn subverb_usage(grammar: &'static Grammar, subverb: &'static Subverb) -> String {
     let lines = subverb_forms(grammar, subverb);
     if lines.is_empty() {

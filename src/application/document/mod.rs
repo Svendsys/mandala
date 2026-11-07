@@ -134,7 +134,11 @@ impl MindMapDocument {
 
     /// Load a map from its text; `file_path` is where it came from (a
     /// path or a URL), or `None`. Reports nothing, as [`Self::load`].
-    pub fn from_json_str(json: &str, file_path: Option<String>, history_limit: usize) -> Result<Self, String> {
+    pub fn from_json_str(
+        json: &str,
+        file_path: Option<String>,
+        history_limit: usize,
+    ) -> Result<Self, String> {
         let doc = format::load(json).map_err(|e| e.to_string())?;
         log_loaded(&doc);
         Ok(Self::new(doc, file_path, history_limit))
@@ -149,7 +153,11 @@ impl MindMapDocument {
             .map(|n| n.strip_suffix(MAP_EXTENSION).unwrap_or(n).to_string())
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| "untitled".to_string());
-        Self::new(document_of(serde_json::json!({ "format": 1, "name": name })), file_path, history_limit)
+        Self::new(
+            document_of(serde_json::json!({ "format": 1, "name": name })),
+            file_path,
+            history_limit,
+        )
     }
 
     /// The map a rejected load is drawn as: one node carrying `message` —
@@ -224,6 +232,13 @@ impl MindMapDocument {
     /// declared by `source`, as one history entry. A refusal is
     /// reported ([`Self::report_refusal`]) and returned; an accepted
     /// change clears the status line.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the editing families V1-C4..C8, D1 and D3 apply through it"
+        )
+    )]
     pub fn apply(&mut self, req: EditRequest, source: ChangeSource) -> Result<Revision, ApplyError> {
         let label = req.label.clone();
         match self.doc.apply(req, source) {
@@ -317,12 +332,6 @@ impl MindMapDocument {
         self.doc.history_limit()
     }
 
-    /// Hold the history to at most `limit` entries (D18): what
-    /// `settings.json`'s `history_limit` sets.
-    pub fn set_history_limit(&mut self, limit: usize) {
-        self.doc.set_history_limit(limit);
-    }
-
     /// The map as a `.mandala.json`: its committed state.
     pub fn save_json(&mut self) -> Result<String, String> {
         self.doc.save_json().map_err(|e| e.to_string())
@@ -340,7 +349,10 @@ impl MindMapDocument {
         write_atomically(Path::new(path), text.as_bytes())?;
         self.doc.mark_saved();
         self.file_path = Some(path.to_string());
-        info!("save: saved to {}", baumhard::util::log::tilde_path(Path::new(path)));
+        info!(
+            "save: saved to {}",
+            baumhard::util::log::tilde_path(Path::new(path))
+        );
         Ok(())
     }
 
@@ -348,11 +360,7 @@ impl MindMapDocument {
     /// named: a change that finished an animated one, an undo or a redo
     /// that settled either kind.
     fn forget_closed_transaction(&mut self) {
-        if self
-            .transaction
-            .as_ref()
-            .is_some_and(|tx| !self.doc.is_open(tx))
-        {
+        if self.transaction.as_ref().is_some_and(|tx| !self.doc.is_open(tx)) {
             self.transaction = None;
         }
     }
@@ -384,8 +392,9 @@ impl MindMapDocument {
     /// [`Self::apply_for_test`]. Returns the revision it made.
     #[cfg(test)]
     pub(crate) fn create_root_for_test(&mut self) -> Revision {
-        let steps = baumhard::document::mutation::compose::create_root(&self.doc, glam::Vec2::new(40.0, 40.0))
-            .expect("a root node composes");
+        let steps =
+            baumhard::document::mutation::compose::create_root(&self.doc, glam::Vec2::new(40.0, 40.0))
+                .expect("a root node composes");
         self.apply_for_test(EditRequest {
             steps,
             label: "test: create root".to_string(),
@@ -425,8 +434,13 @@ fn log_loaded(doc: &Document) {
 fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write;
     let shown = || baumhard::util::log::tilde_path(path);
-    let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let name = path.file_name().ok_or_else(|| format!("{}: not a file name", shown()))?;
+    let dir = path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("{}: not a file name", shown()))?;
     let mut temp = dir.join(name);
     temp.as_mut_os_string().push(".saving");
     let written = (|| {

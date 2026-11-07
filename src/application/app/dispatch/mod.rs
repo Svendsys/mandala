@@ -34,7 +34,9 @@ pub(in crate::application::app) mod native;
 // Re-exports so `super::dispatch::dispatch_action` etc. stay
 // callable without callers learning the sub-module split.
 #[cfg(not(target_arch = "wasm32"))]
-pub(in crate::application::app) use native::{dispatch_action, dispatch_held_action, dispatch_macro, run_macro_steps};
+pub(in crate::application::app) use native::{
+    dispatch_action, dispatch_held_action, dispatch_macro, run_macro_steps,
+};
 
 // Cross-platform re-exports — both dispatchers import via the
 // shorter `super::dispatch::*` form.

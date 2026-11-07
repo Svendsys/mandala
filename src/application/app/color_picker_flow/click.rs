@@ -7,8 +7,6 @@
 use crate::application::keybinds::Action;
 use crate::application::platform::input::MouseButton;
 
-
-
 /// What the caller should do with a press the picker was offered.
 ///
 /// The commit / cancel effects are user-named, so they are Actions

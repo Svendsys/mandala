@@ -6,9 +6,8 @@
 //!
 //! - [`InputContextCore`] holds the fields **both** native's
 //!   `InputHandlerContext` (`input_context.rs`) and WASM's
-//!   `WasmInputState` (`run_wasm/`) carry — document, view, app_scene,
-//!   renderer, last_click, cursor_pos, modifiers, keybinds, macros,
-//!   interaction_mode, clock. This
+//!   `WasmInputState` (`run_wasm/`) carry — document, view, renderer,
+//!   last_click, cursor_pos, modifiers, macros, interaction_mode. This
 //!   is the parameter `dispatch_action` takes post-Track-C; both
 //!   targets' keyboard handlers can construct one and call the same
 //!   dispatcher.
@@ -37,10 +36,8 @@
 use crate::application::platform::input::Modifiers as ModifiersState;
 
 use crate::application::document::MindMapDocument;
-use crate::application::keybinds::ResolvedKeybinds;
 use crate::application::macros::MacroRegistry;
 use crate::application::renderer::Renderer;
-use crate::application::scene_host::AppScene;
 
 use crate::application::view::MapView;
 
@@ -69,8 +66,6 @@ pub(in crate::application::app) struct InputContextCore<'a> {
     /// The document's view: the projector, the glyph layers and the
     /// overlays. `Some` exactly when `document` is.
     pub view: &'a mut Option<MapView>,
-    /// The screen-space overlays' trees (console, color picker).
-    pub app_scene: &'a mut AppScene,
     /// The active renderer.
     pub renderer: &'a mut Renderer,
     /// Previous click (time, position, hit) for double-click
@@ -93,9 +88,6 @@ pub(in crate::application::app) struct InputContextCore<'a> {
     /// has already landed.)
     #[allow(dead_code)]
     pub modifiers: &'a ModifiersState,
-    /// Resolved user keybinds. `&` (immutable) — dispatch arms
-    /// only call `&self` query methods (`has_any_binding_for` etc.).
-    pub keybinds: &'a ResolvedKeybinds,
     /// Macro registry: the App and User tiers, loaded at startup.
     /// Cross-platform per Track B.
     /// Carried, not yet read — see [`Self::modifiers`].
@@ -104,11 +96,6 @@ pub(in crate::application::app) struct InputContextCore<'a> {
     /// High-level interaction mode. Cross-platform; see
     /// `super::interaction_mode::InteractionMode`.
     pub interaction_mode: &'a mut super::InteractionMode,
-    /// The app clock (`crate::application::clock`): what a click's
-    /// double-click window, an `OnClick` trigger's animation start and
-    /// a keybound mutation's start read. Read-only — only the heartbeat
-    /// and the `clock` surfaces move it.
-    pub clock: &'a crate::application::clock::AppClock,
 }
 
 /// Native-only extension carrying the modal / console / picker /

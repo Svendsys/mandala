@@ -7,7 +7,6 @@
 //! formatting beside its plain text returns with the clipboard family
 //! on the one writer, V1-C4 (#245).
 
-
 /// Read text from the system clipboard, or `None` on failure.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_clipboard() -> Option<String> {

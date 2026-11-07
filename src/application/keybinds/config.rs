@@ -609,10 +609,7 @@ impl KeybindConfig {
         for (combo, edit_id) in &self.edit_bindings {
             match KeyBind::parse(combo) {
                 Ok(k) => edit_binds.push((k, edit_id.clone())),
-                Err(e) => warn!(
-                    "keybinds: skipping invalid edit_binding '{}': {}",
-                    combo, e
-                ),
+                Err(e) => warn!("keybinds: skipping invalid edit_binding '{}': {}", combo, e),
             }
         }
         let mut macro_binds: Vec<(KeyBind, String)> = Vec::new();

@@ -93,6 +93,7 @@ impl ResolvedKeybinds {
     /// gesture sub-actions: the empty-canvas branch of
     /// `DoubleClickActivate` only fires `CreateOrphanNodeAndEdit` when
     /// the user has enabled it via any binding.
+    #[cfg(test)]
     pub fn has_any_binding_for(&self, action: Action) -> bool {
         self.binds.iter().any(|(a, _)| *a == action)
     }
