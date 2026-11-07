@@ -60,6 +60,49 @@ fn test_generated_flows_the_r50_seed_sweep_found_hold_every_flow_property() {
     }
 }
 
+/// The frame's closed-form layer agrees with the pairwise rule's iterative
+/// solve (#309, ruling B16.1b; `check_pair_model`, which the
+/// flow_structured target holds every input to): over 20,000 seeded
+/// letters, nothing owed one time in eight, every root the model reads off
+/// a side, an arc or a sharp corner's sweep sets the letter at its gap,
+/// within bounds of the property's own scale, and is the first root along
+/// the band curve.
+///
+/// Precondition: both holds are reached, many times. Controls (run, not
+/// committed): an arc's curvature read with its sign turned
+/// (`ArcPath::bend`), red on the model's gap round an ellipse of 40 × 40 —
+/// a circle, built of arcs — at seed 2; `model_aim` aiming at a hundred
+/// of its resolution where nothing is owed (review 5810838863), red at
+/// seed 10 on a side ("its gap 0.012039185, outside [-0.00081357575,
+/// 0.0024407273]") and, off one, at seed 47 round a 2,000 × 2,000 circle
+/// and seed 50 round a sharp corner, where it was red on no form but a
+/// side; a circle's root set a lap on (`model_root`: the same point, the
+/// same gap), red at seed 2 on the first root ("past a root: at 75.577484
+/// the gap is 5.5134983 already"); and the side check this replaced, the
+/// two centers within twice the rule's window, red at seed 19466, where
+/// the gap rises 0.19 a unit of center.
+#[test]
+fn test_the_pair_model_agrees_with_the_iterative_rule() {
+    use crate::flow::tests::flow_fuzz::pair_model_held;
+    let mut held = [0usize; 2];
+    for seed in 0..20_000 {
+        match pair_model_held(&mut Choices::seeded(seed)) {
+            Ok(h) => {
+                for (n, h) in held.iter_mut().zip(h) {
+                    *n += usize::from(h);
+                }
+            }
+            Err(why) => panic!("seed {seed}: {why}"),
+        }
+    }
+    assert!(
+        held[0] > 5_000 && held[1] > 1_000,
+        "precondition: the model is held to its window {} times, to the rule {} times",
+        held[0],
+        held[1]
+    );
+}
+
 #[test]
 fn test_generated_flows_hold_every_flow_property() {
     for seed in 0..100 {
@@ -2478,5 +2521,37 @@ fn test_flow_structured_finding_a_ring_whose_inks_its_floats_cannot_part_replays
     );
     if let Err(why) = check_flow_structured_as_found(found) {
         panic!("as found: {why}");
+    }
+}
+
+/// The flow_structured finding of #318's CI fuzz run (job 128331247806):
+/// a letter owed no gap after an ink on the arc of a 120 × 120 rounded
+/// rectangle of corners half its side, the band curve 10.68 out. Where
+/// nothing is owed, the closed-form layer aims at the least gap its forms
+/// tell from none, 6.19e-5 there (`resolution_at`), and set the letter
+/// 8.68e-5 apart, 2.5e-5 from its aim; `check_pair_model` held that gap to
+/// none instead, to within 8.06e-5, and failed. The property now holds a
+/// gap owed nothing to touching, within two of its own resolution, to six
+/// of it past (review 5810838863): bounds from its own scale, which the
+/// model's aim lies inside, not the aim read from the layer. No placement
+/// changes. Found on the compiled faces alone (`FONTCONFIG_FILE` at an
+/// empty directory).
+///
+/// Control: with the property holding a gap owed nothing to none, as it
+/// first did, red ("the model sets it at 64.12113, its gap
+/// 0.00008678436").
+#[test]
+fn test_flow_structured_finding_a_letter_owed_nothing_is_held_touching_or_just_past() {
+    let found = include_bytes!("fuzz_findings/structured_letter_owed_nothing_past_its_aim");
+    for (what, checked) in [
+        (
+            "fuzzed",
+            crate::flow::tests::flow_fuzz::check_flow_structured(found),
+        ),
+        ("as found", check_flow_structured_as_found(found)),
+    ] {
+        if let Err(why) = checked {
+            panic!("{what}: {why}");
+        }
     }
 }

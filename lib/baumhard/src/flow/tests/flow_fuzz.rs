@@ -51,10 +51,11 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::{
     Align, Direction, Edge, FitMode, FontSize, LineSpan, Percent, Rgba, Shape, StartPoint, Weight,
 };
-use crate::flow::place::halves::{frame_budget, frame_work_steps, touch_looks};
+use crate::flow::place::halves::{frame_budget, frame_work_steps, touch_looks, NEARER};
 use crate::flow::place::ring::ring_work_steps;
 use crate::flow::place::{
-    frame_halves, place_on_closed_capped, setup_table_samples, size_factor, Trace, MIN_TABLE_SPACING,
+    frame_halves, place_on_closed_capped, setup_table_samples, size_factor, Trace, INK_TOLERANCE,
+    MIN_TABLE_SPACING,
 };
 use crate::flow::{
     offset, outline, place_at_point, place_on_open, shape_box, shape_run, Curve, FlowSpan, Outline,
@@ -663,7 +664,169 @@ pub fn check_flow_structured_as_found(bytes: &[u8]) -> Result<(), String> {
 
 /// [`check_flow_structured`] for choices from any source.
 pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
-    check_generated(choices, true, &faces())
+    check_generated(choices, true, &faces())?;
+    check_pair_model(choices)
+}
+
+/// The frame's closed-form layer held to the pairwise rule's iterative
+/// solve as its oracle (#309, ruling B16.1b): the tangent line's root
+/// ([`check_line_root`]), and a letter after two inks on an outline the
+/// choices draw — a sharp or rounded rectangle, an ellipse, at normal
+/// scale, the band curve on it, in it or off it — at a gap they draw,
+/// nothing one time in eight. Where the ink before it lies on one form the
+/// model reads, a side, an arc or a sharp corner's sweep, the model's root
+/// sets the letter at what is owed (ruling B16.2c), read back from the
+/// path, to within the float error of positions some thousands of points
+/// out, bounded from this property's own scale (review 5810838863); where
+/// nothing is owed, touching to that error or a few of it past. And it is
+/// the first root: set past the ink, with no letter before it already past
+/// that window along the band curve between.
+pub fn check_pair_model(choices: &mut Choices<'_>) -> Result<(), String> {
+    check_line_root(choices)?;
+    pair_model_held(choices).map(|_| ())
+}
+
+/// The tangent line's root in closed form held to the iterative rule's
+/// bisection of it as its oracle (#309, ruling B16.1b; `line_root`,
+/// `along`): two inks some way apart, their half sizes summing to a reach
+/// the choices draw, one stepped along a way they draw until the two are
+/// owed apart — on where they are nearer, back where they are further.
+/// The gap along a line is convex in the step, so each way has one root:
+/// where the bisection brackets one, the closed form finds it, to the
+/// bracket's width; and where only the closed form does, the boxes are
+/// owed apart there.
+pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
+    use crate::flow::place::halves::line_root_seam;
+    let unit = |choices: &mut Choices<'_>| choices.below(1001) as f32 / 1000.0;
+    let delta = Vec2::new(unit(choices) - 0.5, unit(choices) - 0.5) * 40.0;
+    let angle = unit(choices) * std::f32::consts::TAU;
+    let dir = Vec2::new(angle.cos(), angle.sin()) * (0.25 + 2.0 * unit(choices));
+    let reach = Vec2::new(unit(choices), unit(choices)) * 12.0;
+    let owed = if choices.below(8) == 0 {
+        0.0
+    } else {
+        unit(choices) * 12.0
+    };
+    let (closed, bisected) = line_root_seam(delta, dir, reach, owed);
+    let what = format!("inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}");
+    let gap = |d: f32| ((delta + dir * d).abs() - reach).max(Vec2::ZERO).length();
+    // The bisection's last bracket, and the floats of the step and the gap.
+    let width = (bisected.abs() + owed + reach.max_element()).max(INK_TOLERANCE) * 1e-5;
+    match (closed.is_finite(), bisected.is_finite()) {
+        (true, true) if (closed - bisected).abs() <= width => Ok(()),
+        (false, true) => Err(format!(
+            "{what}: the bisection steps {bisected}, the closed form finds none"
+        )),
+        (true, false) if owed > 0.0 && (gap(closed) - owed).abs() > 1e-4 * (owed + 1.0) => Err(format!(
+            "{what}: the closed form steps {closed}, where the gap is {}",
+            gap(closed)
+        )),
+        (true, true) => Err(format!(
+            "{what}: the closed form steps {closed}, the bisection {bisected}"
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// [`check_pair_model`], and which of its holds it reached: the model's
+/// window and first root, and those on a side, where the rule's gap is in
+/// its own window too.
+pub(crate) fn pair_model_held(choices: &mut Choices<'_>) -> Result<[bool; 2], String> {
+    use crate::flow::place::halves::pair_seam;
+    let sizes = [40.0_f32, 120.0, 600.0, 2_000.0];
+    let (w, h) = (sizes[choices.below(4) as usize], sizes[choices.below(4) as usize]);
+    let rect = crate::flow::Rect::new(Vec2::ZERO, Vec2::new(w, h));
+    let shape = match choices.below(3) {
+        0 => Shape::Ellipse,
+        k => Shape::Rectangle {
+            radius: crate::document::values::Percent::new(if k == 1 { 0 } else { 50 }),
+        },
+    };
+    let outline = crate::flow::outline(rect, shape);
+    let unit = |choices: &mut Choices<'_>| choices.below(1001) as f32 / 1000.0;
+    let offset = (unit(choices) - 0.3) * 0.2 * w.min(h);
+    let k = choices.below(2) as usize;
+    let length = 2.0 * (w + h);
+    let earlier = unit(choices) * 0.4 * length;
+    let last = earlier + 0.5 + unit(choices) * 20.0;
+    let size = |choices: &mut Choices<'_>| Vec2::new(0.5 + unit(choices) * 8.0, 0.5 + unit(choices) * 10.0);
+    let (before, half) = (size(choices), size(choices));
+    let rise = (unit(choices) - 0.5) * 8.0;
+    // Nothing owed one time in eight, as `check_line_root` draws it: a
+    // letter owed nothing is its own case (review 5810838863), which
+    // `unit` alone draws one time in 1,001.
+    let owed = if choices.below(8) == 0 {
+        0.0
+    } else {
+        unit(choices) * 12.0
+    };
+    let found = pair_seam(&outline, k, offset, (earlier, last), (before, half), rise, owed);
+    let what = format!(
+        "{w} × {h} {shape:?} half {k} offset {offset}: inks at {earlier} and {last} ({before}), a letter {half} rising {rise}, owed {owed}"
+    );
+    let window = |gap: f32| gap > 0.0 && gap >= owed - NEARER && gap <= owed + INK_TOLERANCE;
+    // A gap measured from inks set some thousands of points out carries the
+    // float error of their positions: a few units of the outline's last
+    // place, past the rule's own window.
+    let resolution = 4.0 * f32::EPSILON * (w.max(h) + last);
+    // The model's window, from this property's own scale, not from what
+    // the model aims at (review 5810838863; TEST_CONVENTIONS §T13.6). The
+    // model measures gaps to 4ε of its own scale — the last ink's
+    // coordinates, the reach and what is owed: at most 1.14 × max(w, h) + 27
+    // over these ranges, against this one's max(w, h) + 0.5 at least, so at
+    // most 1.8 of this resolution, worst at 40 — and accepts a gap within
+    // that of its aim; the gap read back from the path adds as much again.
+    // So where something is owed, within four of what is owed; where
+    // nothing is, it aims at its own resolution's worth past touching, and
+    // the gap lies from two short of touching (the seam's gaps are signed:
+    // a letter set into the ink reads how far) to six past it. Over 300,000
+    // seeds: from 1.01 short of what is owed to 1.02 past it, and from 0.13
+    // short of touching to 1.55 past.
+    let (low, top) = if owed > 0.0 {
+        (owed - 4.0 * resolution, owed + 4.0 * resolution)
+    } else {
+        (-2.0 * resolution, 6.0 * resolution)
+    };
+    let aimed = |gap: f32| gap >= low && gap <= top;
+    let mut held = [false; 2];
+    if let (true, Some((at, gap))) = (found.exact, found.model) {
+        held[0] = true;
+        if !found.told {
+            return Err(format!(
+                "{what}: the model sets it at {at}, its gap {gap}, where its forms tell no gap from none"
+            ));
+        }
+        if !aimed(gap) {
+            return Err(format!(
+                "{what}: the model sets it at {at}, its gap {gap}, outside [{low}, {top}]"
+            ));
+        }
+        // The first root (review 5810838863): set past the ink, and before
+        // its center the curve holds no letter already past the model's
+        // window, where an earlier root would lie — a root past one with the
+        // same gap, a step or a form's hop over the first crossing, does.
+        if at.partial_cmp(&last) != Some(std::cmp::Ordering::Greater) {
+            return Err(format!(
+                "{what}: the model sets it at {at}, not past the ink at {last}"
+            ));
+        }
+        if let Some((c, g)) = found.curve.iter().find(|&&(c, g)| c < at && g > top) {
+            return Err(format!(
+                "{what}: the model sets it at {at} (gap {gap}), past a root: at {c} the gap is {g} already"
+            ));
+        }
+        // A side, away from any corner, is where the gap along the band
+        // curve is convex in the center — the boxes' gap along a line — so
+        // it has one root on from the ink, which the first root's check
+        // holds: no comparison of the two centers adds to it (on a 40 × 40
+        // side the gap can rise at 0.19 a unit of center, so two gaps each
+        // in its window lie further apart than the windows; seed 19466 with
+        // nothing owed one time in eight). Counted where the rule's gap is
+        // in its own window there too.
+        let (_, its) = found.iterative;
+        held[1] = found.side && window(its);
+    }
+    Ok(held)
 }
 
 /// Every property of the flow `bytes` choose, its spans' faces drawn
