@@ -45,14 +45,6 @@ pub(in crate::application::app) trait MacroDispatchTarget {
     /// (mirrors `dispatch::dispatch_action`'s `DispatchOutcome`).
     fn dispatch_action(&mut self, action: Action) -> DispatchOutcome;
 
-    /// Apply the custom mutation identified by `id` to the node
-    /// `node_id`. Looks up the mutation in the impl's document,
-    /// fires it through `app::fire_custom_mutation` (the body the
-    /// keystroke tier and the click-trigger loop land through too),
-    /// and rebuilds the scene. Warn-logs unknown ids; returns `true`
-    /// only when a mutation was found and fired.
-    fn apply_custom_mutation(&mut self, id: &str, node_id: &str) -> bool;
-
     /// Execute a free-form console line. Reaches the loop ONLY
     /// after the privilege gate (`SourceTier::allows_console_line`)
     /// approved the step — non-User tiers fail-closed-abort the
@@ -67,17 +59,6 @@ pub(in crate::application::app) trait MacroDispatchTarget {
     /// macro fired before any document loads doesn't consume the
     /// keystroke event).
     fn execute_console_line(&mut self, line: &str) -> bool;
-
-    /// Resolve `MacroTarget::CurrentSelection` to a Single-node id.
-    /// Returns `None` when the selection is multi / edge / portal
-    /// / none — the step skips per `format/macros.md` § macro
-    /// targets.
-    fn current_selection_node_id(&self) -> Option<String>;
-
-    /// Whether the impl's document holds a node with this id.
-    /// Used to short-circuit `MacroTarget::NodeId` against typo'd
-    /// ids before hitting `apply_custom_mutation`'s own warn.
-    fn has_node(&self, node_id: &str) -> bool;
 
     /// A step has run to completion (a skipped or gate-rejected one
     /// has not). The seam an observer hangs between steps on: the IPC
@@ -133,7 +114,7 @@ pub(in crate::application::app) fn run_macro_steps<T: MacroDispatchTarget>(
     source: SourceTier,
     target: &mut T,
 ) -> bool {
-    use crate::application::macros::{MacroStep, MacroTarget};
+    use crate::application::macros::MacroStep;
 
     let mut any_ran = false;
     for step in steps {
@@ -162,39 +143,10 @@ pub(in crate::application::app) fn run_macro_steps<T: MacroDispatchTarget>(
                     any_ran = true;
                 }
             }
-            MacroStep::CustomMutation {
-                id,
-                target: macro_target,
-            } => {
-                let nid_opt: Option<String> = match macro_target {
-                    MacroTarget::CurrentSelection => target.current_selection_node_id(),
-                    MacroTarget::NodeId(s) => {
-                        // Guard against typo'd or stale node ids: if
-                        // the document doesn't have the named node we'd
-                        // silently no-op (`apply_custom_mutation`'s
-                        // snapshot loop filters missing). Surface the
-                        // problem with a warn instead.
-                        if target.has_node(s) {
-                            Some(s.clone())
-                        } else {
-                            log::warn!(
-                                "macros: macro '{}' step CustomMutation: node id '{}' not found",
-                                label,
-                                s
-                            );
-                            continue;
-                        }
-                    }
-                };
-                let Some(nid) = nid_opt else {
-                    log::debug!(
-                        "macros: macro '{}' step CustomMutation: no resolvable target; skipping id={}",
-                        label,
-                        id,
-                    );
-                    continue;
-                };
-                if target.apply_custom_mutation(id, &nid) {
+            MacroStep::CustomMutation { id, .. } => {
+                // The step fires an edit; edits are V1-D1's (#250),
+                // and until then it runs nothing and bumps nothing.
+                if super::families::edits::fire(id) == DispatchOutcome::Handled {
                     any_ran = true;
                 }
             }

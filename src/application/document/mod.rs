@@ -331,10 +331,17 @@ impl MindMapDocument {
         }
     }
 
+    /// Drop the selected elements the document no longer holds: what a
+    /// change that removed them leaves selected. Returns whether any was
+    /// dropped. O(the selection).
+    pub fn retain_live_selection(&mut self) -> bool {
+        self.selection.retain_live(&self.doc)
+    }
+
     /// What an undo or a redo leaves to tidy: selected elements it
     /// removed, and a status line it made stale.
     fn after_history_move(&mut self) {
-        self.selection.retain_live(&self.doc);
+        self.retain_live_selection();
         self.status = None;
     }
 

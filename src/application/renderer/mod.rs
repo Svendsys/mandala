@@ -202,7 +202,9 @@ const MODE_STATUS_OVERLAY_BOUNDS: (f32, f32) = (640.0, 24.0);
 /// `Color::rgba(0, 230, 255, 255)` would disagree with `#00E5FF`, whose
 /// green channel is 229.
 pub(crate) const MODE_STATUS_COLOR: baumhard::font::Color =
-    baumhard::font::color::cosmic_color_from_color(crate::application::view::overlay::SELECTION_HIGHLIGHT.0);
+    baumhard::font::color::cosmic_color_from_color(baumhard::util::color::Color {
+        rgba: crate::application::view::overlay::SELECTION_HIGHLIGHT.0,
+    });
 
 /// Fixed-size ring buffer of frame intervals (microseconds) with an
 /// O(1) running sum. Backs `FpsDisplayMode::Debug`'s rolling-average

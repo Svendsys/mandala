@@ -22,8 +22,9 @@
 //! goes through [`MapView::sync`], which drains the document's change
 //! feed **once**, hands the records to the projector, re-stamps the
 //! overlays on exactly the runs the projector wrote, applies both sets of
-//! journals to the renderer, discards them, and returns the records for
-//! the IPC event stream. There is no rebuild function. A camera change
+//! journals to the renderer, discards them, and keeps the records for
+//! the IPC event stream, which takes them at its next look at the app
+//! ([`MapView::take_feed`]). There is no rebuild function. A camera change
 //! calls none of this: the renderer applies the camera when it draws
 //! (§12.4).
 //!
@@ -72,6 +73,11 @@ pub(crate) struct MapView {
     /// it instead of the selection, whose highlight stands down until the
     /// band's release replaces the selection.
     preview: Option<Vec<NodeId>>,
+    /// The change records drained since the IPC event stream last took
+    /// them ([`Self::take_feed`]): the second consumer of the one drain
+    /// a sync makes (#244 amendment 3; V1-E2 builds events from them).
+    /// Taken every frame, so it holds at most a frame's changes.
+    feed: Vec<ChangeRecord>,
 }
 
 impl MapView {
@@ -96,6 +102,7 @@ impl MapView {
             chrome: chrome_layer(),
             highlight: Overlay::tint(SELECTION_HIGHLIGHT),
             preview: None,
+            feed: Vec::new(),
         };
         let targets: Vec<NodeId> = doc.selection.iter().collect();
         let stamps = view
@@ -109,8 +116,8 @@ impl MapView {
 
     /// **The pipeline** ([module docs](self)): bring the layers, the
     /// overlays and the renderer up to date with `doc` — its changes since
-    /// the last pass, and its selection — and return the change records,
-    /// drained once, for the IPC event stream.
+    /// the last pass, and its selection — and keep the change records,
+    /// drained once, for the IPC event stream ([`Self::take_feed`]).
     ///
     /// Does nothing to any tree, and calls the renderer not at all, when
     /// the document did not change and the highlight's targets did not
@@ -119,10 +126,10 @@ impl MapView {
     /// Cost: the projector's update (proportional to the changes and their
     /// readers), the overlay's re-stamp (the runs named), the renderer's
     /// apply (the elements the journals name).
-    pub(crate) fn sync(&mut self, doc: &mut MindMapDocument, renderer: &mut Renderer) -> Vec<ChangeRecord> {
+    pub(crate) fn sync(&mut self, doc: &mut MindMapDocument, renderer: &mut Renderer) {
         let records = doc.take_changes();
         let changes: Option<LayerChanges> = (!records.is_empty()).then(|| {
-            doc.selection.retain_live(doc.doc());
+            doc.retain_live_selection();
             let mut fonts = FontSystemLease::new("view::sync");
             self.projector
                 .update(doc.doc(), &records, &mut self.layers, &mut fonts)
@@ -132,7 +139,7 @@ impl MapView {
             None => doc.selection.iter().collect(),
         };
         if changes.is_none() && targets == self.highlight.targets() {
-            return records;
+            return;
         }
         let stamps: OverlayJournals =
             self.highlight
@@ -147,7 +154,14 @@ impl MapView {
             changes.discard(&mut self.layers);
         }
         stamps.discard(&mut self.layers);
-        records
+        self.feed.extend(records);
+    }
+
+    /// The change records synced since the last call, oldest first: what
+    /// the IPC event stream reads to report document changes and their
+    /// sources. O(1); the records are moved out.
+    pub(crate) fn take_feed(&mut self) -> Vec<ChangeRecord> {
+        std::mem::take(&mut self.feed)
     }
 
     /// What `point`, on the canvas, hits: the projector's hit test, top
