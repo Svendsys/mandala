@@ -19,6 +19,10 @@ pub mod grapheme_chad_tests;
 mod old_model_tests;
 pub mod ordered_vec2_tests;
 pub mod primes_test;
+/// No production code records the saved state but the save path.
+/// Reads the repository off the filesystem, which wasm32 does not have.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod saved_state_tests;
 pub mod shortest_float_tests;
 // Follows `util::rust_source`'s own gate: it reads files off the
 // filesystem, which wasm32 does not have.
