@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! A size-only reshape shapes nothing (V1-B14, #304): `Fit`'s rescale of
+//! A size-only reshape shapes nothing, and an outline is read once per
+//! glyph and size (V1-B14, #304). `Fit`'s rescale of
 //! a path flow, and R27's sizing of a frame's two lines, lay the run's
 //! own shaping out at the new size (`shape::resized_buffer`) instead of
 //! shaping its text again, and lay out exactly what shaping it again laid
@@ -20,7 +21,7 @@ use crate::flow::place::place_lines;
 use crate::flow::shape::{reshape, RESHAPE_BY_SHAPING};
 use crate::flow::tests::support::{style, with_fonts};
 use crate::flow::{outline, place_on_open, shape_run, Curve, FlowSpan, PlacedRun, Rect, ShapedRun};
-use crate::font::fonts::{AppFont, FontSystemLease};
+use crate::font::fonts::{outline_reads, AppFont, FontSystemLease};
 
 /// `f` with this thread's size-only reshapes shaping again when `by_shaping`.
 fn reshaping<R>(by_shaping: bool, f: impl FnOnce() -> R) -> R {
@@ -232,4 +233,42 @@ fn test_r27_sizes_a_frames_lines_without_shaping_them_again() {
         "the sized run differs from the one shaped again"
     );
     assert_eq!(resized.2, shaped.2, "the lines differ from the ones shaped again");
+}
+
+#[test]
+fn test_an_ornaments_outlines_are_read_once_per_glyph_and_size() {
+    // An ornament run's glyphs are inked (ruling R31): each outline is read
+    // off its face the first time it is measured at a size, and kept.
+    let ornament = in_face(16.0, AppFont::MandalaOrnaments);
+    let flow = [FlowSpan {
+        text: "\u{2726} \u{00b7} \u{2766} \u{2726}",
+        style: &ornament,
+        link: None,
+    }];
+    let reads = |f: &dyn Fn(&mut FontSystemLease) -> ShapedRun| {
+        with_fonts(|fs| {
+            let before = outline_reads();
+            let run = f(fs);
+            (run, outline_reads() - before)
+        })
+    };
+    let (first, cold) = reads(&|fs| shape_run(&flow, 1.0, fs));
+    let (second, warm) = reads(&|fs| shape_run(&flow, 1.0, fs));
+    assert!(
+        first.glyphs.iter().any(|glyph| glyph.ink.is_some()),
+        "precondition: the run is an ornament, and inked"
+    );
+    // Three distinct ornaments, the fourth a repeat of the first: three
+    // outlines read at most (a space is not inked).
+    assert!(
+        cold > 0 && cold <= 3,
+        "the first measure reads each outline once ({cold})"
+    );
+    assert_eq!(warm, 0, "the second measure reads no outline");
+    assert_eq!(first.glyphs, second.glyphs, "and measures the same inks");
+
+    let (_, resized) = reads(&|fs| reshape(&first, 0.5, None, fs.fonts()));
+    let (_, again) = reads(&|fs| reshape(&first, 0.5, None, fs.fonts()));
+    assert!(resized > 0, "a new size is a new outline");
+    assert_eq!(again, 0, "and is kept too");
 }

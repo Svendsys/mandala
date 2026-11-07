@@ -1352,9 +1352,9 @@ pub fn measure_glyph_ink_bounds(
 /// point off the curve does not widen it. The flow's ornaments are
 /// stepped by it (#291, ruling R31).
 ///
-/// Cost: one outline scale through `swash_cache`'s scaler, uncached (a
-/// `Fit` reshapes at many sizes, and every size would be an entry), and
-/// one pass over its commands; no allocation beyond the commands.
+/// Cost: one lookup in the outline cache ([`cached_outline_bounds`]);
+/// on a miss, one outline scale through `swash_cache`'s scaler and one
+/// pass over its commands.
 pub fn glyph_outline_ink(
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
@@ -1368,8 +1368,7 @@ pub fn glyph_outline_ink(
         glyph.font_weight,
         glyph.cache_key_flags | CacheKeyFlags::DISABLE_HINTING,
     );
-    let commands = swash_cache.get_outline_commands_uncached(font_system, key)?;
-    let (low, high) = outline_bounds(&commands)?;
+    let (low, high) = cached_outline_bounds(font_system, swash_cache, key)?;
     let offset = Vec2::new(
         glyph.font_size * glyph.x_offset,
         -glyph.font_size * glyph.y_offset,
@@ -1387,8 +1386,8 @@ pub fn glyph_outline_ink(
 /// where the face maps no glyph to `ch`, or draws nothing for it. What a
 /// frame's text reads its x-height from, the ink of an `x` (#308).
 ///
-/// Cost: one character-map lookup, and one outline scale through
-/// `swash_cache`'s scaler, uncached.
+/// Cost: one character-map lookup, and one lookup in the outline cache
+/// ([`cached_outline_bounds`]), an outline scale on a miss.
 pub fn face_char_ink(
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
@@ -1408,12 +1407,77 @@ pub fn face_char_ink(
         of.font_weight,
         CacheKeyFlags::DISABLE_HINTING,
     );
-    let commands = swash_cache.get_outline_commands_uncached(font_system, key)?;
-    let (low, high) = outline_bounds(&commands)?;
+    let (low, high) = cached_outline_bounds(font_system, swash_cache, key)?;
     // An outline's `y` points up, the canvas's down.
     let min = Vec2::new(low.x, -high.y);
     let max = Vec2::new(high.x, -low.y);
     (min.is_finite() && max.is_finite()).then_some((min, max))
+}
+
+/// How many outline bounds [`cached_outline_bounds`] keeps on a thread
+/// before it lets them all go and starts again: a bound on its memory,
+/// which a `Fit` that probes many sizes would otherwise grow without one.
+/// An entry is a key and two points, some 40 bytes.
+pub const OUTLINE_CACHE_ENTRIES: usize = 1 << 16;
+
+thread_local! {
+    /// The outline cache (#304): each glyph's outline bounds by its face,
+    /// glyph id, size, weight and flags (its scaler's [`CacheKey`]),
+    /// `None` for a glyph with no outline.
+    ///
+    /// Read and written only through [`cached_outline_bounds`], whose
+    /// `&mut FontSystem` argument is the guard of the font lock the
+    /// caller holds, so the cache is used under the font-lock discipline
+    /// (lib/baumhard/CONVENTIONS.md §B5) and needs no lock of its own. A
+    /// face's id names that face for as long as the font system lives
+    /// (`fontdb` ids are never reused), so an entry cannot go stale.
+    static OUTLINE_BOUNDS: std::cell::RefCell<rustc_hash::FxHashMap<CacheKey, Option<(Vec2, Vec2)>>> =
+        std::cell::RefCell::default();
+    /// Outlines read on this thread: the cache's misses.
+    static OUTLINE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many outlines have been read off their faces on this thread
+/// ([`cached_outline_bounds`]'s misses): a work counter, so a test reads
+/// what inking cost by difference, never by a clock.
+pub fn outline_reads() -> u64 {
+    OUTLINE_READS.with(std::cell::Cell::get)
+}
+
+/// The bounds of the outline `key` names, in its own coordinates
+/// ([`outline_bounds`]): kept per face, glyph id, size, weight and flags,
+/// so each is read off its face once, and the next measure of the same
+/// glyph at the same size reads nothing. `None` for a glyph with no
+/// outline.
+///
+/// The size is part of the key, rather than one outline kept per glyph
+/// and scaled, because the bounds are solved on the scaled outline, and
+/// scaling them afterwards would round differently: the cache answers
+/// exactly what a read would.
+///
+/// Cost: one hash lookup; on a miss, one outline scale through
+/// `swash_cache`'s scaler and one pass over its commands, and the whole
+/// cache let go first if it holds [`OUTLINE_CACHE_ENTRIES`].
+fn cached_outline_bounds(
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    key: CacheKey,
+) -> Option<(Vec2, Vec2)> {
+    if let Some(bounds) = OUTLINE_BOUNDS.with(|cache| cache.borrow().get(&key).copied()) {
+        return bounds;
+    }
+    OUTLINE_READS.with(|reads| reads.set(reads.get() + 1));
+    let bounds = swash_cache
+        .get_outline_commands_uncached(font_system, key)
+        .and_then(|commands| outline_bounds(&commands));
+    OUTLINE_BOUNDS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= OUTLINE_CACHE_ENTRIES {
+            cache.clear();
+        }
+        cache.insert(key, bounds);
+    });
+    bounds
 }
 
 /// The bounding box of an outline's commands, `(min, max)` in its own
