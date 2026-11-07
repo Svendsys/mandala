@@ -60,6 +60,39 @@ fn test_generated_flows_the_r50_seed_sweep_found_hold_every_flow_property() {
     }
 }
 
+/// The frame's closed-form layer agrees with the pairwise rule's iterative
+/// solve (#309, ruling B16.1b; `check_pair_model`, which the
+/// flow_structured target holds every input to): over 20,000 seeded
+/// letters, every root the model reads off a side, an arc or a sharp
+/// corner's sweep sets the letter at its gap within the rule's window, and
+/// on a side the model and the rule set it at one center.
+///
+/// Precondition: both holds are reached, many times. Control (run, not
+/// committed): an arc's curvature read with its sign turned
+/// (`ArcPath::bend`), red on the model's gap round an ellipse of 40 × 40 —
+/// a circle, built of arcs — at seed 2.
+#[test]
+fn test_the_pair_model_agrees_with_the_iterative_rule() {
+    use crate::flow::tests::flow_fuzz::pair_model_held;
+    let mut held = [0usize; 2];
+    for seed in 0..20_000 {
+        match pair_model_held(&mut Choices::seeded(seed)) {
+            Ok(h) => {
+                for (n, h) in held.iter_mut().zip(h) {
+                    *n += usize::from(h);
+                }
+            }
+            Err(why) => panic!("seed {seed}: {why}"),
+        }
+    }
+    assert!(
+        held[0] > 5_000 && held[1] > 1_000,
+        "precondition: the model is held to its window {} times, to the rule {} times",
+        held[0],
+        held[1]
+    );
+}
+
 #[test]
 fn test_generated_flows_hold_every_flow_property() {
     for seed in 0..100 {

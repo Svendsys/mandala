@@ -64,14 +64,18 @@ pub(crate) struct Counters {
     pub(crate) track_hits: usize,
     pub(crate) outline_reads: usize,
     pub(crate) table_samples: usize,
+    /// The letters set at their root on the band curve's form, and the
+    /// sum of their gaps' misses of what is owed and of their squares
+    /// (`MODEL_GAPS`).
+    pub(crate) model_gaps: (usize, f64, f64),
 }
 
 impl Counters {
     pub(crate) fn now() -> Counters {
         use crate::flow::path::{PATH_LOOKUPS, PATH_SEARCHES, TABLE_SAMPLES};
         use crate::flow::place::halves::{
-            BOXES_WEIGHED, INKINGS, OUTLINE_READS, RESHAPES, SIDE_STEP_LOOKUPS, STEP_LOOKUPS, TRACKS,
-            TRACK_HITS,
+            BOXES_WEIGHED, INKINGS, MODEL_GAPS, OUTLINE_READS, RESHAPES, SIDE_STEP_LOOKUPS, STEP_LOOKUPS,
+            TRACKS, TRACK_HITS,
         };
         let get = |c: &'static std::thread::LocalKey<std::cell::Cell<usize>>| c.with(std::cell::Cell::get);
         Counters {
@@ -86,6 +90,7 @@ impl Counters {
             track_hits: get(&TRACK_HITS),
             outline_reads: get(&OUTLINE_READS),
             table_samples: get(&TABLE_SAMPLES),
+            model_gaps: MODEL_GAPS.with(std::cell::Cell::get),
         }
     }
 
@@ -105,6 +110,11 @@ impl Counters {
             track_hits: self.track_hits - before.track_hits,
             outline_reads: self.outline_reads - before.outline_reads,
             table_samples: self.table_samples - before.table_samples,
+            model_gaps: (
+                self.model_gaps.0 - before.model_gaps.0,
+                self.model_gaps.1 - before.model_gaps.1,
+                self.model_gaps.2 - before.model_gaps.2,
+            ),
         }
     }
 }
@@ -142,6 +152,9 @@ impl Tally {
         w.track_hits += work.track_hits;
         w.outline_reads += work.outline_reads;
         w.table_samples += work.table_samples;
+        w.model_gaps.0 += work.model_gaps.0;
+        w.model_gaps.1 += work.model_gaps.1;
+        w.model_gaps.2 += work.model_gaps.2;
     }
 
     /// The glyph steps the text's lines took, and their path lookups.
@@ -150,6 +163,21 @@ impl Tally {
             self.work.steps.0 - self.work.side_steps.0,
             self.work.steps.1 - self.work.side_steps.1,
         )
+    }
+
+    /// The path lookups a glyph step of the text's lines took.
+    pub(crate) fn line_lookups_a_step(&self) -> f64 {
+        let (steps, lookups) = self.line_steps();
+        lookups as f64 / steps.max(1) as f64
+    }
+
+    /// How far the gaps of the letters set at their root on the band
+    /// curve's form miss what is owed, on the mean, and its spread.
+    pub(crate) fn model_bias(&self) -> (f64, f64) {
+        let (n, sum, squares) = self.work.model_gaps;
+        let n = n.max(1) as f64;
+        let mean = sum / n;
+        (mean, (squares / n - mean * mean).max(0.0).sqrt())
     }
 
     /// The path lookups the side ornaments' lays took a side glyph placed.
@@ -169,7 +197,8 @@ impl fmt::Display for Tally {
              line steps {} ({:.2} lookups a step, {:.1} steps a text glyph); \
              side steps {} ({} lookups, {:.1} a side glyph); tracks {} ({:.1} a frame); \
              reshapes {}, inkings {} ({} outlines read), pairs weighed {}; tracks remembered {}; \
-             table samples {}; spent {} ({:.1} a glyph)",
+             table samples {}; spent {} ({:.1} a glyph); \
+             letters at their form's root {} (gap past owed {:+.2e} on the mean, spread {:.2e})",
             self.frames,
             self.text + self.sides,
             self.sides,
@@ -192,6 +221,9 @@ impl fmt::Display for Tally {
             w.table_samples,
             self.spent,
             self.spent as f64 / placed,
+            w.model_gaps.0,
+            self.model_bias().0,
+            self.model_bias().1,
         )
     }
 }
@@ -267,4 +299,110 @@ fn test_flow_work_census_reports_each_kind_of_frame() {
             eprintln!("{kind:?} sides {sides}: {tally}");
         }
     }
+}
+
+/// The most path lookups a glyph step of a line may take round straight
+/// sides and circular arcs (#309's acceptance).
+const LINE_STEP_LOOKUPS: f64 = 2.0;
+
+/// The most path lookups a side ornament's lays may take a side glyph
+/// placed (#309's acceptance).
+const SIDE_LOOKUPS: f64 = 12.0;
+
+/// #309's targets, met by the closed-form layer (rulings B16.1b, B16.2d):
+/// over the aspect sweep's frames ([`census`]), a glyph step of a line
+/// round straight sides (`Lines`) and circular arcs (`Arcs`) takes at most
+/// [`LINE_STEP_LOOKUPS`] path lookups, with sides and without — 1.04 and
+/// 1.03, 1.01 and 1.01 — and a side ornament's lays at most
+/// [`SIDE_LOOKUPS`] a side glyph placed round every kind of outline: 7.2
+/// round the sharp rectangles, 2.9 the circles, 10.3 the ellipses and 7.8
+/// the rounded rectangles. Each ratio is printed. Round the ellipses and
+/// the rounded rectangles a line's step takes 1.03 and 1.07.
+///
+/// Control (run, not committed): the layer off (`NO_CLOSED_FORM` for the
+/// census) — 2.29 and 2.55 lookups a step round the circles, and 20.9,
+/// 14.7, 53.0 and 18.5 a side glyph — red. (No `do_*` twin: it reads test
+/// counters.)
+#[test]
+fn test_flow_work_the_closed_form_layer_meets_309s_lookup_targets() {
+    let census = census();
+    let mut met = Vec::new();
+    for ((kind, sides), tally) in census {
+        let step = tally.line_lookups_a_step();
+        let side = tally.side_lookups_a_glyph();
+        eprintln!("{kind:?} sides {sides}: {step:.2} lookups a line step, {side:.1} a side glyph");
+        if matches!(kind, Kind::Lines | Kind::Arcs) {
+            met.push((
+                step <= LINE_STEP_LOOKUPS,
+                format!("{kind:?} sides {sides}: {step:.2} lookups a line step, at most {LINE_STEP_LOOKUPS}"),
+            ));
+        }
+        if *sides {
+            assert!(
+                tally.sides > 0,
+                "precondition, {kind:?}: its frames place side glyphs"
+            );
+            met.push((
+                side <= SIDE_LOOKUPS,
+                format!("{kind:?}: {side:.1} lookups a side glyph, at most {SIDE_LOOKUPS}"),
+            ));
+        }
+    }
+    assert!(
+        met.len() == 8,
+        "precondition: every target is measured ({})",
+        met.len()
+    );
+    let missed: Vec<_> = met
+        .iter()
+        .filter(|(ok, _)| !ok)
+        .map(|(_, why)| why.as_str())
+        .collect();
+    assert!(missed.is_empty(), "#309's targets missed:\n{}", missed.join("\n"));
+}
+
+/// The bound on how far, on the mean, the gaps of the letters set at
+/// their root on the band curve's form may miss what is owed, in points: a
+/// tenth of the rule's window below it ([`NEARER`]).
+///
+/// [`NEARER`]: crate::flow::place::halves::NEARER
+const MODEL_BIAS: f64 = 2.5e-5;
+
+/// Ruling B16.2c: the closed-form layer is unbiased. Over the aspect
+/// sweep's frames ([`census`]), the gaps of the letters set at their root
+/// on the band curve's form, as the rule took them, miss what is owed by
+/// at most [`MODEL_BIAS`] on the mean round every kind of outline —
+/// +2.3e-6 round the sharp rectangles, +2.6e-6 the circles, −5.3e-7 the
+/// ellipses and +9.5e-6 the rounded rectangles, spread 5e-5 to 9e-5 —
+/// where the iterative rule alone sets its letters +3.7e-5, +9.0e-5,
+/// +1.2e-4 and +5.8e-5 past it (`NO_CLOSED_FORM`, spread 1.5e-4 to
+/// 2.6e-4).
+///
+/// Control (run, not committed): each letter aimed [`NEARER`] past what is
+/// owed, as the layer first did, +2.4e-4 to +2.8e-4 — red. (No `do_*`
+/// twin: it reads test counters.)
+///
+/// [`NEARER`]: crate::flow::place::halves::NEARER
+#[test]
+fn test_flow_work_the_closed_form_layer_sets_its_gaps_at_what_is_owed() {
+    let mut kinds = Vec::new();
+    for ((kind, sides), tally) in census() {
+        let (mean, spread) = tally.model_bias();
+        eprintln!("{kind:?} sides {sides}: {} letters at their form's root, gap past owed {mean:+.2e} on the mean, spread {spread:.2e}", tally.work.model_gaps.0);
+        assert!(
+            tally.work.model_gaps.0 > 100,
+            "precondition, {kind:?} sides {sides}: letters are set at their form's root ({})",
+            tally.work.model_gaps.0
+        );
+        kinds.push(*kind);
+        assert!(
+            mean.abs() <= MODEL_BIAS,
+            "{kind:?} sides {sides}: the gaps of the letters set at their form's root miss what is owed by {mean:+.2e} on the mean, at most {MODEL_BIAS:.2e}"
+        );
+    }
+    kinds.dedup();
+    assert!(
+        kinds.len() == 4,
+        "precondition: every kind of outline ({kinds:?})"
+    );
 }

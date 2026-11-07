@@ -141,15 +141,25 @@ pub(crate) fn at_or_below_seam(sorted: &[f32], s: f32, hint: usize) -> (usize, u
 ///
 /// Cost: O(log d) for an answer `d` from `hint`.
 fn gallop(sorted: &[f32], s: f32, hint: usize) -> usize {
-    let n = sorted.len();
+    gallop_by(sorted.len(), |i| sorted[i] <= s, hint)
+}
+
+/// [`gallop`] over any predicate `holds` that is true and then false
+/// along `0..n`: the last index it holds at, saturating — the bracket
+/// round it doubled from `hint` the way it lies, then bisected. What an
+/// ellipse's form searches its table's parameters with, which fall along
+/// it where the path runs against the ellipse's turn
+/// ([`EllipseForm::walked`], #309).
+///
+/// Cost: O(log d) for an answer `d` from `hint`.
+fn gallop_by(n: usize, holds: impl Fn(usize) -> bool, hint: usize) -> usize {
     if n == 0 {
         return 0;
     }
-    let holds = |i: usize| sorted[i] <= s;
     let hint = hint.min(n - 1);
     // `low` holds (or is the slice's start) and `high` does not (or is
     // its end): the answer's partition point lies in `low..=high`.
-    let (low, high) = if holds(hint) {
+    let (mut low, mut high) = if holds(hint) {
         let (mut low, mut step) = (hint, 1usize);
         loop {
             let probe = low.saturating_add(step);
@@ -176,7 +186,16 @@ fn gallop(sorted: &[f32], s: f32, hint: usize) -> usize {
             step = step.saturating_mul(2);
         }
     };
-    (low + sorted[low..high].partition_point(|&d| d <= s)).saturating_sub(1)
+    // The partition point of `low..high`, as `partition_point` finds it.
+    while low < high {
+        let mid = low + (high - low) / 2;
+        if holds(mid) {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+    low.saturating_sub(1)
 }
 
 impl Stretch {
@@ -334,6 +353,262 @@ pub(crate) struct OffsetPoint {
     /// The path's outward normal the point is offset along: at a sharp
     /// corner, the one the sweep has reached.
     pub(crate) normal: Vec2,
+}
+
+/// How the offset curve bends on from a point of it (#309,
+/// [`ArcPath::offset_bend_at`]): its curvature along the path, the turn of
+/// its direction of travel a unit of arc length, signed as a turn from the
+/// x axis toward the y axis — none on a side, an arc's turn over its
+/// radius, `None` on an ellipse's or a Bézier's table, whose curvature
+/// changes along it — and how far on along the path its stretch holds, to
+/// its end or a corner's stretch — or, within a sharp corner's stretch
+/// outward, to the end of the side's offset or the sweep it walks.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct Bend {
+    pub(crate) curvature: Option<f32>,
+    /// How far the point moves a unit of arc length along the path: one
+    /// but within a sharp corner's stretch outward, which walks its sides'
+    /// offsets and the sweep round the corner faster ([`ArcPath::offset_at`]).
+    pub(crate) speed: f32,
+    pub(crate) holds: f32,
+    /// Near a sharp corner outward, the curve's form over half of each
+    /// side beside it, its sweep round the corner between: what a model
+    /// of it past [`holds`](Self::holds) reads ([`CornerForm`]).
+    pub(crate) corner: Option<CornerForm>,
+    /// On an ellipse's table, the ellipse itself ([`EllipseForm`]).
+    pub(crate) ellipse: Option<EllipseForm>,
+}
+
+/// The offset curve along an ellipse's table (#309): the ellipse's own
+/// form, its parameter where the point lies and which way it runs with
+/// the path, and where on its table the point lies — so a point on along
+/// it is the ellipse's arithmetic, and how far along the path it is the
+/// table's own map from parameter to distance, inverted ([`walked`]), no
+/// lookup. A lookup at the distance that gives reads the point back.
+///
+/// [`walked`]: EllipseForm::walked
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct EllipseForm {
+    center: Vec2,
+    radii: Vec2,
+    /// The parameter at the point, and `1` or `-1` as it grows or falls
+    /// along the path.
+    t: f32,
+    forward: f32,
+    offset: f32,
+    winding: f32,
+    /// The table's stretch, the sample at or below the point, and how far
+    /// into the stretch the point lies.
+    stretch: usize,
+    sample: usize,
+    local: f32,
+}
+
+impl EllipseForm {
+    /// The offset curve `u` on from the point the form was taken at, by
+    /// the ellipse's parameter in the way the path runs: its point, its
+    /// outward normal, the way it moves and how fast, a unit of `u`.
+    ///
+    /// Cost: O(1), no path lookup.
+    pub(crate) fn on(&self, u: f32) -> FormPoint {
+        let t = self.t + self.forward * u;
+        // As the table's own lookup reads it (`Param::point_and_derivative`).
+        let (sin, cos) = (t.sin(), t.cos());
+        let point = self.center + Vec2::new(self.radii.x * cos, self.radii.y * sin);
+        // The ellipse's first and second derivatives by `u`.
+        let d1 = Vec2::new(-self.radii.x * sin, self.radii.y * cos) * self.forward;
+        let d2 = Vec2::new(-self.radii.x * cos, -self.radii.y * sin);
+        let speed = length_of(d1);
+        let moves = direction_of(d1).unwrap_or(Vec2::X);
+        let normal = Vec2::new(moves.y, -moves.x) * self.winding;
+        // How the direction of travel turns a unit of `u`, and with it the
+        // normal the offset rides on.
+        let turns = if speed > 0.0 {
+            (d2 * (speed * speed) - d1 * d1.dot(d2)) / (speed * speed * speed)
+        } else {
+            Vec2::ZERO
+        };
+        let normal_turns = Vec2::new(turns.y, -turns.x) * self.winding;
+        FormPoint {
+            point: point + normal * self.offset,
+            normal,
+            moves,
+            velocity: d1 + normal_turns * self.offset,
+        }
+    }
+
+    /// The form `u` on along the table `(params, distances)` of its
+    /// stretch ([`ArcPath::table`]): the parameter there, the sample at or
+    /// below it, walked to from the form's own, and how far into the
+    /// stretch it lies by the table's map from distance to parameter,
+    /// inverted — so `walked.local() - self.local()` is how far along the
+    /// path. `None` past either end of the table.
+    ///
+    /// Cost: O(samples walked), no path lookup.
+    pub(crate) fn walked(&self, u: f32, (params, distances): (&[f32], &[f32])) -> Option<EllipseForm> {
+        let t = self.t + self.forward * u;
+        let last = params.len().checked_sub(2)?;
+        // The parameters rise along the table, or fall: the sample at or
+        // below `t` the way they run, found from the form's own.
+        let rising = params[last + 1] >= params[0];
+        let holds = |i: usize| if rising { params[i] <= t } else { params[i] >= t };
+        let (first, end) = (params[0], params[last + 1]);
+        let within = if rising {
+            first <= t && t <= end
+        } else {
+            first >= t && t >= end
+        };
+        if !within {
+            return None;
+        }
+        let hint = self.sample.min(last);
+        let i = if holds(hint) && !holds(hint + 1) {
+            hint
+        } else {
+            #[cfg(test)]
+            PATH_SEARCHES.with(|count| count.set(count.get() + 1));
+            gallop_by(params.len(), holds, hint)
+        }
+        .min(last);
+        let (t0, t1) = (params[i], params[i + 1]);
+        let (d0, d1) = (distances[i], distances[i + 1]);
+        let local = if t1 != t0 {
+            d0 + (t - t0) / (t1 - t0) * (d1 - d0)
+        } else {
+            d0
+        };
+        local.is_finite().then_some(EllipseForm {
+            t,
+            sample: i,
+            local,
+            ..*self
+        })
+    }
+
+    /// The parameter at the point, its sign turned where it falls along
+    /// the path: what a step along the form is taken from.
+    pub(crate) fn parameter(&self) -> f32 {
+        self.t * self.forward
+    }
+
+    /// How far on, by the parameter in the way the path runs, the table
+    /// `(params, _)` of its stretch ends.
+    pub(crate) fn to_end(self, (params, _): (&[f32], &[f32])) -> f32 {
+        params
+            .last()
+            .map_or(0.0, |end| ((end - self.t) * self.forward).max(0.0))
+    }
+
+    /// How far into its stretch the point lies.
+    pub(crate) fn local(&self) -> f32 {
+        self.local
+    }
+
+    /// The stretch whose table it reads.
+    pub(crate) fn stretch(&self) -> usize {
+        self.stretch
+    }
+}
+
+/// A point of the offset curve as a form of it answers it (#309,
+/// [`EllipseForm::on`], [`CornerForm::at`]): the point, the outward
+/// normal there, the way the point moves along the path and its velocity,
+/// a unit of the form's own measure along it.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct FormPoint {
+    pub(crate) point: Vec2,
+    pub(crate) normal: Vec2,
+    pub(crate) moves: Vec2,
+    pub(crate) velocity: Vec2,
+}
+
+/// The offset curve round a sharp corner outward, as
+/// [`ArcPath::offset_at`] walks it (#309): the side before's offset, the
+/// sweep round the corner's point at the offset, and the side after's,
+/// over half of each side — so a point anywhere in that stretch is its
+/// arithmetic, no lookup.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct CornerForm {
+    corner: Corner,
+    offset: f32,
+    /// The half width of the corner's stretch, and its sweep's length.
+    w: f32,
+    sweep: f32,
+    /// The path's length and winding, what a point is unwrapped by.
+    length: f32,
+    winding: f32,
+}
+
+impl CornerForm {
+    /// The curve's point at `s` along the path, its outward normal, the
+    /// way it moves and its velocity a unit of arc length along the path
+    /// ([`FormPoint`]): `None` past half of either side, where it no
+    /// longer holds.
+    ///
+    /// Cost: O(1), no path lookup.
+    pub(crate) fn at(&self, s: f32) -> Option<FormPoint> {
+        let s = s.rem_euclid(self.length);
+        let mut from = s - self.corner.at;
+        if from > 0.5 * self.length {
+            from -= self.length;
+        } else if from < -0.5 * self.length {
+            from += self.length;
+        }
+        if !(from >= -0.5 * self.corner.sides.0 && from <= 0.5 * self.corner.sides.1) {
+            return None;
+        }
+        let outward = |tangent: Vec2| Vec2::new(tangent.y, -tangent.x) * self.winding;
+        if from.abs() < self.w {
+            // The stretch round the corner walks its sides' offsets and the
+            // sweep at one speed: the sweep is `offset` round the corner's
+            // point, so its point moves along it as fast as along a side.
+            let on = swept_point(&self.corner, self.offset, self.w, self.sweep, from, outward);
+            let speed = (2.0 * self.w + self.sweep) / (2.0 * self.w);
+            return Some(FormPoint {
+                point: on.point,
+                normal: on.normal,
+                moves: on.moves,
+                velocity: on.moves * speed,
+            });
+        }
+        let dir = if from < 0.0 {
+            self.corner.before
+        } else {
+            self.corner.after
+        };
+        let normal = outward(dir);
+        Some(FormPoint {
+            point: self.corner.point + dir * from + normal * self.offset,
+            normal,
+            moves: dir,
+            velocity: dir,
+        })
+    }
+
+    /// Whether `s` lies within the corner's stretch, where its sides'
+    /// offsets and its sweep are walked: not on a side's offset.
+    pub(crate) fn swept(&self, s: f32) -> bool {
+        let s = s.rem_euclid(self.length);
+        let mut from = s - self.corner.at;
+        if from > 0.5 * self.length {
+            from -= self.length;
+        } else if from < -0.5 * self.length {
+            from += self.length;
+        }
+        from.abs() < self.w
+    }
+
+    /// How far past `s` along the path the form holds.
+    pub(crate) fn reach(&self, s: f32) -> f32 {
+        let s = s.rem_euclid(self.length);
+        let mut from = s - self.corner.at;
+        if from > 0.5 * self.length {
+            from -= self.length;
+        } else if from < -0.5 * self.length {
+            from += self.length;
+        }
+        (0.5 * self.corner.sides.1 - from).max(0.0)
+    }
 }
 
 impl ArcPath {
@@ -695,11 +970,20 @@ impl ArcPath {
     ///
     /// Cost: two binary searches (the stretch, then a table's sample).
     pub(crate) fn at(&self, s: f32) -> (Vec2, Vec2) {
+        let (point, tangent, _) = self.at_in(s);
+        (point, tangent)
+    }
+
+    /// [`at`](Self::at), and the stretch the point lies in with how far
+    /// into it, by arc length: `None` for an empty path.
+    ///
+    /// Cost: [`at`](Self::at)'s.
+    fn at_in(&self, s: f32) -> (Vec2, Vec2, Option<(usize, f32)>) {
         #[cfg(test)]
         PATH_LOOKUPS.with(|count| count.set(count.get() + 1));
         self.read();
         if self.stretches.is_empty() {
-            return (self.origin, Vec2::X);
+            return (self.origin, Vec2::X, None);
         }
         let s = if self.winding != 0.0 {
             s.rem_euclid(self.length)
@@ -707,7 +991,9 @@ impl ArcPath {
             s.clamp(0.0, self.length)
         };
         let index = at_or_below(&self.starts, s, &self.cursor);
-        self.stretches[index].at(s - self.starts[index])
+        let local = s - self.starts[index];
+        let (point, tangent) = self.stretches[index].at(local);
+        (point, tangent, Some((index, local)))
     }
 
     /// Where along the path the point nearest `p` lies: a sampling every
@@ -903,6 +1189,16 @@ impl ArcPath {
     /// Cost: one path lookup; within a corner's stretch none, but its
     /// arithmetic, counted as one.
     pub(crate) fn offset_at(&self, s: f32, offset: f32) -> OffsetPoint {
+        self.offset_bend_at(s, offset).0
+    }
+
+    /// [`offset_at`](Self::offset_at), and the bend of the offset curve
+    /// there ([`Bend`], #309): `None` inside a bend inward, whose curve is
+    /// one point there, or on an empty path.
+    ///
+    /// Cost: [`offset_at`](Self::offset_at)'s, and O(corners) for the
+    /// bend's reach.
+    pub(crate) fn offset_bend_at(&self, s: f32, offset: f32) -> (OffsetPoint, Option<Bend>) {
         if self.winding != 0.0 && offset != 0.0 && self.length > 0.0 {
             let s = s.rem_euclid(self.length);
             // Signed, across the seam, from `at`.
@@ -928,7 +1224,10 @@ impl ArcPath {
                     if reach > 0.0 && from.abs() < reach && reach.is_finite() {
                         #[cfg(test)]
                         PATH_LOOKUPS.with(|count| count.set(count.get() + 1));
-                        return self.inside(corner, inside, half_turn, (from + reach) / (2.0 * reach));
+                        return (
+                            self.inside(corner, inside, half_turn, (from + reach) / (2.0 * reach)),
+                            None,
+                        );
                     }
                     continue;
                 }
@@ -946,16 +1245,150 @@ impl ArcPath {
                 }
                 #[cfg(test)]
                 PATH_LOOKUPS.with(|count| count.set(count.get() + 1));
-                return self.swept(corner, offset, w, sweep, from);
+                let bend = swept_bend(corner, w, sweep, from).map(|bend| Bend {
+                    corner: self.corner_form(s, offset),
+                    ..bend
+                });
+                return (self.swept(corner, offset, w, sweep, from), bend);
             }
         }
-        let (point, tangent) = self.at(s);
+        let (point, tangent, inside) = self.at_in(s);
         let normal = self.outward(tangent);
-        OffsetPoint {
+        let on = OffsetPoint {
             point: point + normal * offset,
             moves: tangent,
             normal,
+        };
+        (
+            on,
+            inside.and_then(|(index, local)| self.bend(index, local, offset)),
+        )
+    }
+
+    /// The table of stretch `index`, its samples' parameters and
+    /// distances: `None` for a side or an arc (#309, [`EllipseForm::walked`]).
+    pub(crate) fn table(&self, index: usize) -> Option<(&[f32], &[f32])> {
+        match self.stretches.get(index)? {
+            Stretch::Table {
+                params, distances, ..
+            } => Some((params, distances)),
+            _ => None,
         }
+    }
+
+    /// The bend of the offset curve at `offset` from `local` into stretch
+    /// `index` ([`Bend`]): a side's none, an arc's its turn over its
+    /// radius; held to the stretch's end and to where the curve next comes
+    /// within a corner's stretch ([`offset_at`](Self::offset_at)), which
+    /// has a form of its own.
+    fn bend(&self, index: usize, local: f32, offset: f32) -> Option<Bend> {
+        let stretch = &self.stretches[index];
+        let curvature = match stretch {
+            Stretch::Line { .. } => Some(0.0),
+            Stretch::Arc { radius, turn, .. } => Some(turn / radius),
+            Stretch::Table { .. } => None,
+        };
+        let mut holds = stretch.len() - local;
+        if self.winding != 0.0 && offset != 0.0 && self.length > 0.0 {
+            let s = self.starts[index] + local;
+            for corner in &self.corners {
+                let half_turn = 0.5 * corner.turn.abs();
+                let inside = corner.radius + offset;
+                let (middle, reach) = if offset < 0.0 && inside < 0.0 && half_turn < INSIDE_TURN {
+                    let t = (-inside * half_turn.tan())
+                        .min(0.5 * corner.sides.0)
+                        .min(0.5 * corner.sides.1);
+                    (corner.at + 0.5 * corner.bend, 0.5 * corner.bend + t)
+                } else if corner.radius > 0.0 || offset < 0.0 {
+                    continue;
+                } else {
+                    let sweep = offset * corner.turn.abs();
+                    (
+                        corner.at,
+                        (0.5 * sweep).min(0.5 * corner.sides.0).min(0.5 * corner.sides.1),
+                    )
+                };
+                // How far on, round the seam, the corner's stretch begins.
+                let ahead = (middle - reach - s).rem_euclid(self.length);
+                holds = holds.min(ahead);
+            }
+        }
+        let corner = match stretch {
+            Stretch::Line { .. } => self.corner_form(self.starts[index] + local, offset),
+            _ => None,
+        };
+        let ellipse = match stretch {
+            Stretch::Table {
+                param: Param::Ellipse { center, radii },
+                params,
+                distances,
+                cursor,
+            } => {
+                // The parameter the lookup just read, from the sample its
+                // cursor holds.
+                let last = distances.len().saturating_sub(2);
+                let i = at_or_below(distances, local, cursor).min(last);
+                let (d0, d1) = (distances[i], distances[i + 1]);
+                let (t0, t1) = (params[i], params[i + 1]);
+                let frac = if d1 > d0 {
+                    ((local - d0) / (d1 - d0)).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                Some(EllipseForm {
+                    center: *center,
+                    radii: *radii,
+                    t: t0 + (t1 - t0) * frac,
+                    forward: if t1 >= t0 { 1.0 } else { -1.0 },
+                    offset,
+                    winding: self.winding,
+                    stretch: index,
+                    sample: i,
+                    local,
+                })
+            }
+            _ => None,
+        };
+        (curvature.is_none_or(f32::is_finite) && holds.is_finite()).then_some(Bend {
+            curvature,
+            speed: 1.0,
+            holds,
+            corner,
+            ellipse,
+        })
+    }
+
+    /// The form of the offset curve at `offset` round the sharp corner
+    /// outward whose stretch `s` lies within half a side of ([`CornerForm`],
+    /// #309) — of two, at a side's middle, the one that holds further on:
+    /// the corner ahead's — `None` on an open path, inward, or away from
+    /// every such corner.
+    ///
+    /// Cost: O(corners).
+    fn corner_form(&self, s: f32, offset: f32) -> Option<CornerForm> {
+        if self.winding == 0.0 || !offset.gt(&0.0) || !self.length.gt(&0.0) {
+            return None;
+        }
+        let forms = self.corners.iter().filter_map(|corner| {
+            if corner.radius > 0.0 {
+                return None;
+            }
+            let sweep = offset * corner.turn.abs();
+            let w = (0.5 * sweep).min(0.5 * corner.sides.0).min(0.5 * corner.sides.1);
+            if !(w > 0.0 && sweep.is_finite()) {
+                return None;
+            }
+            let form = CornerForm {
+                corner: *corner,
+                offset,
+                w,
+                sweep,
+                length: self.length,
+                winding: self.winding,
+            };
+            form.at(s).map(|_| form)
+        });
+        forms.max_by(|a, b| a.reach(s).total_cmp(&b.reach(s)))
     }
 
     /// [`offset_at`](Self::offset_at) inside `corner`, its offset past the
@@ -976,34 +1409,75 @@ impl ArcPath {
     /// outward, `from` past it (negative before it), its sweep `sweep`
     /// long.
     fn swept(&self, corner: &Corner, offset: f32, w: f32, sweep: f32, from: f32) -> OffsetPoint {
-        // How far along the offset curve's stretch round the corner.
-        let along = (from + w) / (2.0 * w) * (2.0 * w + sweep);
-        let side = |dir: Vec2, by: f32| {
-            let normal = self.outward(dir);
-            OffsetPoint {
-                point: corner.point + dir * by + normal * offset,
-                moves: dir,
-                normal,
-            }
-        };
-        if along <= w {
-            side(corner.before, along - w)
-        } else if along >= w + sweep {
-            side(corner.after, along - w - sweep)
-        } else {
-            let (sin, cos) = (corner.turn * (along - w) / sweep).sin_cos();
-            let turned = Vec2::new(
-                corner.before.x * cos - corner.before.y * sin,
-                corner.before.x * sin + corner.before.y * cos,
-            );
-            let normal = self.outward(turned);
-            OffsetPoint {
-                point: corner.point + normal * offset,
-                moves: turned,
-                normal,
-            }
+        swept_point(corner, offset, w, sweep, from, |tangent| self.outward(tangent))
+    }
+}
+
+/// [`ArcPath::swept`]'s point, its outward normal by `outward`.
+fn swept_point(
+    corner: &Corner,
+    offset: f32,
+    w: f32,
+    sweep: f32,
+    from: f32,
+    outward: impl Fn(Vec2) -> Vec2,
+) -> OffsetPoint {
+    // How far along the offset curve's stretch round the corner.
+    let along = (from + w) / (2.0 * w) * (2.0 * w + sweep);
+    let side = |dir: Vec2, by: f32| {
+        let normal = outward(dir);
+        OffsetPoint {
+            point: corner.point + dir * by + normal * offset,
+            moves: dir,
+            normal,
+        }
+    };
+    if along <= w {
+        side(corner.before, along - w)
+    } else if along >= w + sweep {
+        side(corner.after, along - w - sweep)
+    } else {
+        let (sin, cos) = (corner.turn * (along - w) / sweep).sin_cos();
+        let turned = Vec2::new(
+            corner.before.x * cos - corner.before.y * sin,
+            corner.before.x * sin + corner.before.y * cos,
+        );
+        let normal = outward(turned);
+        OffsetPoint {
+            point: corner.point + normal * offset,
+            moves: turned,
+            normal,
         }
     }
+}
+
+/// The bend of the offset curve within `w` of the sharp `corner` outward,
+/// `from` past it, its sweep `sweep` long ([`ArcPath::offset_bend_at`],
+/// #309): the stretch walks the side before's offset, the sweep round the
+/// corner and the side after's at one speed ([`ArcPath::offset_at`]), so
+/// a side's is no curvature and the sweep's its turn over its length, each
+/// at that speed, held to where the one walked ends.
+fn swept_bend(corner: &Corner, w: f32, sweep: f32, from: f32) -> Option<Bend> {
+    let speed = (2.0 * w + sweep) / (2.0 * w);
+    let along = (from + w) / (2.0 * w) * (2.0 * w + sweep);
+    // Where, from the corner, the walk leaves the side before and reaches
+    // the side after, and where the stretch ends.
+    let ends = [w / speed - w, (w + sweep) / speed - w, w];
+    let (curvature, end) = if along <= w {
+        (0.0, ends[0])
+    } else if along >= w + sweep {
+        (0.0, ends[2])
+    } else {
+        (corner.turn / sweep * speed, ends[1])
+    };
+    let holds = end - from;
+    (speed.is_finite() && curvature.is_finite() && holds > 0.0).then_some(Bend {
+        curvature: Some(curvature),
+        speed,
+        holds,
+        corner: None,
+        ellipse: None,
+    })
 }
 
 /// How far, in radians, the direction of travel must turn where two
