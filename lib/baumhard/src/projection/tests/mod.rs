@@ -2,3 +2,11 @@
 
 //! The projection's tests: the oracle, the dependency kinds, reshaping
 //! against re-placing, hit testing, depth, and the bench bodies.
+
+/// The oracle's corpus: generated documents and edits.
+pub mod corpus;
+/// The oracle's sweeps over the corpus.
+#[cfg(test)]
+mod oracle_tests;
+/// The projected document and the oracle's check.
+pub mod support;

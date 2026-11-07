@@ -141,7 +141,7 @@ fn shaped_run(cache: &mut Option<RunFlow>, key: RunKey, fonts: &mut FontSystemLe
             return flow.shaped.clone();
         }
     }
-    let shaped = Arc::new(shape_run(&flow_spans(&key.spans), 1.0, fonts));
+    let shaped = memo::run(&key, || Arc::new(shape_run(&flow_spans(&key.spans), 1.0, fonts)));
     *cache = Some(RunFlow {
         key,
         shaped: shaped.clone(),
@@ -154,7 +154,7 @@ fn shaped_box(cache: &mut Option<BoxFlow>, key: BoxKey, fonts: &mut FontSystemLe
     if cache.as_ref().is_some_and(|flow| flow.key == key) {
         return false;
     }
-    let shaped = Arc::new(shape_box(&flow_spans(&key.spans), key.min, key.align, fonts));
+    let shaped = memo::boxed(&key, || Arc::new(shape_box(&flow_spans(&key.spans), key.min, key.align, fonts)));
     *cache = Some(BoxFlow { key, shaped });
     true
 }
@@ -641,7 +641,8 @@ impl Projector {
                     sides: ring.sides.as_ref().map(|s| (s.content.clone(), s.color)),
                     spacing: ring.spacing,
                 };
-                let (replaced, placed) = place_on_closed(
+                let params = (&path, frame.start, frame.direction, &ring.fit, &layout, &text);
+                let (replaced, placed) = memo::placed(&input, &params, || place_on_closed(
                     &input,
                     &path,
                     frame.start,
@@ -651,7 +652,7 @@ impl Projector {
                     true,
                     &text,
                     fonts,
-                );
+                ));
                 Some(settle(prev.as_ref(), &input, replaced, placed))
             }
             _ => None,
@@ -703,8 +704,18 @@ impl Projector {
         };
         let visible = el.as_path().is_some_and(|p| p.visible);
         let mut reads = Vec::new();
-        if let (DocElement::Link(_), Some((_, to))) = (el, ends) {
-            reads.push(Input::Visibility(to));
+        match (el, ends) {
+            // A link reads whether the node it leads to is drawn.
+            (DocElement::Link(_), Some((_, to))) => reads.push(Input::Visibility(to)),
+            // A connector reads that its node hangs from this parent: the
+            // parent's row, which a move out of it rearranges.
+            (DocElement::Connector(_), Some((from, _))) => reads.push(Input::Doc(DocInput::Row(from))),
+            _ => {}
+        }
+        if let (DocElement::Connector(_), None) = (el, ends) {
+            if let Some(parent) = tree.node(owner).and_then(|n| n.parent()) {
+                reads.push(Input::Doc(DocInput::Row(parent)));
+            }
         }
         let drawn = ends.is_some_and(|(from, to)| self.nodes.contains_key(&from) && self.nodes.contains_key(&to))
             && (portal || visible);
@@ -1003,7 +1014,8 @@ impl Projector {
         let mut placed: [Option<Placed>; 3] = [None, None, None];
         if let Some(curve) = curve {
             if let Some(input) = flows[0].flow.as_ref().map(|f| f.shaped.clone()) {
-                let (replaced, p) = place_on_open(&input, &curve, &resolved.fit, resolved.spacing, &text, fonts);
+                let params = (&curve, &resolved.fit, resolved.spacing, &text);
+                let (replaced, p) = memo::placed(&input, &params, || place_on_open(&input, &curve, &resolved.fit, resolved.spacing, &text, fonts));
                 placed[0] = Some(settle(flows[0].placed.as_ref(), &input, replaced, p));
             }
             for (k, end) in [(1, 0.0), (2, 1.0)] {
@@ -1132,5 +1144,110 @@ impl Projector {
             portal.end[k].center = centers[k].0;
             portal.end[k].label.center = centers[k].1;
         }
+    }
+}
+
+/// The oracle's shaping memo (#241, Tests). A test's check compares the
+/// layers an update kept with a full projection of the same document,
+/// after every change, and a full projection shapes every flow: in a
+/// debug build that shaping is most of the suite's time. Shaping is a
+/// pure function of the shape key, and the oracle compares shapes by
+/// value, so the full projection a check makes may share the shaping of
+/// an equal key it shaped before ([`memo::sharing`]). Nothing else ever
+/// shares: the projector's own reuse is its state's, by key, and the
+/// tests of that reuse (pointer-equal `Arc`s) never run inside
+/// `sharing`. Outside the test build the memo is not there: each
+/// function calls its shaper.
+pub(crate) mod memo {
+    use std::sync::Arc;
+
+    use crate::flow::{ShapedBox, ShapedRun};
+    use crate::projection::state::{BoxKey, RunKey};
+
+    #[cfg(test)]
+    mod shared {
+        use std::cell::{Cell, RefCell};
+        use std::sync::Arc;
+
+        use rustc_hash::FxHashMap;
+
+        use crate::flow::{ShapedBox, ShapedRun};
+
+        thread_local! {
+            pub(super) static ON: Cell<bool> = const { Cell::new(false) };
+            pub(super) static RUNS: RefCell<FxHashMap<String, Arc<ShapedRun>>> = RefCell::default();
+            pub(super) static BOXES: RefCell<FxHashMap<String, Arc<ShapedBox>>> = RefCell::default();
+            #[allow(clippy::type_complexity)]
+            pub(super) static PLACED: RefCell<FxHashMap<String, (Arc<ShapedRun>, Option<ShapedRun>, crate::flow::PlacedRun)>> = RefCell::default();
+        }
+    }
+
+    /// Run `f` with equal keys sharing their shaping on this thread.
+    #[cfg(test)]
+    pub(crate) fn sharing<R>(f: impl FnOnce() -> R) -> R {
+        shared::ON.with(|on| on.set(true));
+        let out = f();
+        shared::ON.with(|on| on.set(false));
+        out
+    }
+
+    /// The shaping of `key`: `shape`'s, or inside [`sharing`] an equal
+    /// key's.
+    pub(crate) fn run(key: &RunKey, shape: impl FnOnce() -> Arc<ShapedRun>) -> Arc<ShapedRun> {
+        #[cfg(test)]
+        if shared::ON.with(|on| on.get()) {
+            let name = format!("{key:?}");
+            if let Some(hit) = shared::RUNS.with(|m| m.borrow().get(&name).cloned()) {
+                return hit;
+            }
+            let shaped = shape();
+            shared::RUNS.with(|m| m.borrow_mut().insert(name, shaped.clone()));
+            return shaped;
+        }
+        let _ = key;
+        shape()
+    }
+
+    /// A placement of `input` with `params`: `place`'s, or inside
+    /// [`sharing`] that of an equal placement of the very same input.
+    pub(crate) fn placed<P: std::fmt::Debug>(
+        input: &Arc<ShapedRun>,
+        params: &P,
+        place: impl FnOnce() -> (Option<ShapedRun>, crate::flow::PlacedRun),
+    ) -> (Option<ShapedRun>, crate::flow::PlacedRun) {
+        #[cfg(test)]
+        if shared::ON.with(|on| on.get()) {
+            let name = format!("{:p} {params:?}", Arc::as_ptr(input));
+            let hit = shared::PLACED.with(|m| {
+                m.borrow()
+                    .get(&name)
+                    .filter(|(kept, _, _)| Arc::ptr_eq(kept, input))
+                    .map(|(_, run, placed)| (run.clone(), placed.clone()))
+            });
+            if let Some(hit) = hit {
+                return hit;
+            }
+            let out = place();
+            shared::PLACED.with(|m| m.borrow_mut().insert(name, (input.clone(), out.0.clone(), out.1.clone())));
+            return out;
+        }
+        let _ = (input, params);
+        place()
+    }
+
+    /// [`run`] for a box.
+    pub(crate) fn boxed(key: &BoxKey, shape: impl FnOnce() -> Arc<ShapedBox>) -> Arc<ShapedBox> {
+        #[cfg(test)]
+        if shared::ON.with(|on| on.get()) {
+            let name = format!("{key:?}");
+            if let Some(hit) = shared::BOXES.with(|m| m.borrow().get(&name).cloned()) {
+                return hit;
+            }
+            let shaped = shape();
+            shared::BOXES.with(|m| m.borrow_mut().insert(name, shaped.clone()));
+            return shaped;
+        }
+        let _ = key;
+        shape()
     }
 }

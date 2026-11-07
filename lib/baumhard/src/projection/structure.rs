@@ -185,6 +185,9 @@ impl Projector {
             work.created.insert(id);
             self.queue(work, Dependent::new(id, Stage::Carry));
             self.queue(work, Dependent::new(id, Stage::Geometry));
+            // Whatever waited for it to be drawn — a link into it — now
+            // draws.
+            self.mark(work, Input::Visibility(id));
             let units: Vec<NodeId> = units_in_order(tree, id).collect();
             for unit in units {
                 self.create_unit(tree, unit, id, work);

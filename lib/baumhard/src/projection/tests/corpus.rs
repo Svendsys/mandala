@@ -1,0 +1,702 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! The oracle's corpus (#241, Tests): seeded documents of fifty nodes or
+//! more using everything the projection draws, and seeded edits drawing
+//! on every op of the mutation vocabulary and every composite builder.
+//! Built from [`Choices`], so a sweep's case replays from its seed.
+
+use glam::Vec2;
+
+use crate::arena::NodeId;
+use crate::document::element::{
+    CapData, DefaultsData, DocElement, DocKind, FrameData, FrameStyle, LabelData, LabelStyle, PaletteData,
+    PaletteGroup, RingData, RingStyle, TextStyle, ThemeData, ThemeVariant,
+};
+use crate::document::ids::Document;
+use crate::document::mutation::compose;
+use crate::document::mutation::ops::{
+    DefaultsOp, DocMutation, DocMutatorTree, FrameOp, LabelOp, LayoutOp, MapOp, NodeOp, PaletteOp, PathOp,
+    PortalEndOp, RingOp, SectionOp, SpanOp, TextOp, ThemeOp,
+};
+use crate::document::mutation::step::{DocStep, DocWalk};
+use crate::document::tests::test_support::DocumentBuilder;
+use crate::document::values::{
+    Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteField,
+    PaletteId, Percent, PlainColor, Rgba, Shape, Sides, StartPoint, VarId, Weight, ZoomWindow,
+};
+use crate::document::writer::EditRequest;
+use crate::engine::anchor::Anchors;
+use crate::engine::key::BranchKey;
+use crate::engine::mutator::Mutator;
+use crate::font::fonts::AppFont;
+use crate::util::tests::choices::Choices;
+
+/// The words texts are made of: short, so frames lay quickly, with a
+/// mark and a wide character among them.
+const WORDS: &[&str] = &[
+    "the", "earth", "was", "without", "form", "and", "void", "light", "café", "東京", "—", "x",
+];
+
+/// Some words, one to `max`.
+fn words(c: &mut Choices, max: u32) -> String {
+    let n = 1 + c.below(max);
+    let mut out = String::new();
+    for i in 0..n {
+        if i > 0 {
+            out.push(' ');
+        }
+        out.push_str(c.pick(WORDS));
+    }
+    out
+}
+
+/// A color: a literal, a theme variable or a palette field.
+fn color(c: &mut Choices) -> ColorRef {
+    match c.below(4) {
+        0 => ColorRef::Rgba(Rgba::opaque(c.below(256) as u8, c.below(256) as u8, 200)),
+        1 => ColorRef::Var(VarId(c.below(3) as u16)),
+        2 => ColorRef::Palette(*c.pick(&[PaletteField::Frame, PaletteField::Text, PaletteField::Title])),
+        _ => ColorRef::Rgba(Rgba::opaque(40, 200, 90)),
+    }
+}
+
+/// A text style setting some fields, its size in `rel` or in points.
+fn text_style(c: &mut Choices, rel: bool) -> TextStyle {
+    TextStyle {
+        font: c.one_in(5).then_some(AppFont::Novem),
+        size: c.one_in(3).then(|| {
+            if rel {
+                FontSize::Rel(0.04 + c.below(8) as f32 * 0.01)
+            } else {
+                FontSize::Pt(10.0 + c.below(20) as f32)
+            }
+        }),
+        color: c.one_in(2).then(|| color(c)),
+        weight: c.one_in(4).then_some(Weight::BOLD),
+        italic: c.one_in(5).then_some(true),
+    }
+}
+
+/// A fit mode for a frame: mostly the cheap ones.
+fn fit(c: &mut Choices) -> FitMode {
+    match c.below(5) {
+        0 => FitMode::Repeat,
+        1 => FitMode::Once { filler: None },
+        2 => FitMode::Spread,
+        3 => FitMode::Once {
+            filler: Some("·".into()),
+        },
+        _ => FitMode::Fit { min: 0.5, max: 2.0 },
+    }
+}
+
+/// The theme every generated map has: three variables, two variants.
+fn theme() -> ThemeData {
+    ThemeData {
+        variables: vec!["accent".into(), "fg".into(), "dim".into()],
+        variants: vec![
+            ThemeVariant {
+                name: "dark".into(),
+                values: vec![Rgba::opaque(212, 162, 76), Rgba::opaque(224, 224, 224), Rgba::opaque(90, 90, 90)],
+            },
+            ThemeVariant {
+                name: "light".into(),
+                values: vec![Rgba::opaque(138, 90, 0), Rgba::opaque(32, 32, 36), Rgba::opaque(160, 160, 160)],
+            },
+        ],
+        active: 0,
+    }
+}
+
+/// A palette of three groups, one color a theme variable.
+fn palette(n: u8) -> PaletteData {
+    let group = |k: u8| PaletteGroup {
+        frame: PlainColor::Rgba(Rgba::opaque(n, k, 10)),
+        text: if k == 1 {
+            PlainColor::Var(VarId(1))
+        } else {
+            PlainColor::Rgba(Rgba::opaque(n, k, 20))
+        },
+        title: (k == 0).then_some(PlainColor::Rgba(Rgba::opaque(n, k, 30))),
+    };
+    PaletteData {
+        name: format!("p{n}"),
+        groups: vec![group(0), group(1), group(2)],
+    }
+}
+
+/// A generated map of fifty nodes or more: a random forest of nodes with
+/// sections of spans, frames of relative rings, connectors with caps and
+/// labels, line and portal links, two palettes bound here and there,
+/// theme variables, hidden, folded and faded nodes.
+pub fn generated(c: &mut Choices) -> Document {
+    let mut b = DocumentBuilder::new();
+    b.theme(theme());
+    let palettes = [b.palette(palette(10)), b.palette(palette(20))];
+    if c.one_in(2) {
+        b.defaults(DefaultsData {
+            connector: crate::document::element::FlowStyle {
+                content: Some("─".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    }
+    let root = b.root();
+    let count = 50 + c.below(15) as usize;
+    let mut nodes: Vec<NodeId> = Vec::with_capacity(count);
+    for i in 0..count {
+        let parent = if nodes.is_empty() || c.one_in(8) {
+            root
+        } else {
+            nodes[c.index(nodes.len())]
+        };
+        let node = b.node(parent);
+        nodes.push(node);
+        let position = Vec2::new((i % 8) as f32 * 220.0, (i / 8) as f32 * 160.0);
+        let shape = if c.one_in(4) {
+            Shape::Ellipse
+        } else {
+            Shape::Rectangle {
+                radius: Percent::new((c.below(5) * 25) as u8),
+            }
+        };
+        let palette = c.one_in(7).then(|| *c.pick(&palettes));
+        let hidden = c.one_in(15);
+        let folded = c.one_in(12);
+        let opacity = if c.one_in(6) { 0.5 } else { 1.0 };
+        let min_size = c.one_in(3).then(|| Vec2::new(80.0 + c.below(80) as f32, 40.0 + c.below(40) as f32));
+        let text = c.one_in(4).then(|| text_style(c, false));
+        b.edit_node(node, |n| {
+            n.position = position;
+            n.style.shape = Some(shape);
+            n.palette = palette;
+            n.hidden = hidden;
+            n.folded = folded;
+            n.opacity = opacity;
+            n.min_size = min_size;
+            if let Some(text) = text {
+                n.style.text = text;
+            }
+        });
+        for channel in 0..1 + c.below(2) as usize {
+            let section = b.section(node, channel);
+            if c.one_in(4) {
+                let offset = Vec2::new(c.below(20) as f32, 10.0 + c.below(30) as f32);
+                b.edit(section, |e| {
+                    if let DocElement::Section(s) = e {
+                        s.offset = offset;
+                        s.align = Some(Align::Center);
+                    }
+                });
+            }
+            for _ in 0..1 + c.below(3) {
+                let text = words(c, 3);
+                let span = b.span(section, &text);
+                let style = text_style(c, false);
+                b.edit(span, |e| {
+                    if let DocElement::Span(s) = e {
+                        s.style = style;
+                    }
+                });
+            }
+        }
+        if c.one_in(3) {
+            let frame_fit = fit(c);
+            let frame = b.add(
+                node,
+                DocElement::Frame(FrameData {
+                    style: FrameStyle {
+                        fit: Some(frame_fit),
+                        gap: c.one_in(3).then_some(4.0),
+                        ..Default::default()
+                    },
+                }),
+            );
+            for channel in 0..1 + c.below(2) as usize {
+                let size = FontSize::Rel(0.05 + c.below(10) as f32 * 0.01);
+                let ring_fit = c.one_in(3).then(|| fit(c));
+                let ring = b.add(
+                    frame,
+                    DocElement::Ring(RingData {
+                        channel,
+                        style: RingStyle {
+                            fit: ring_fit,
+                            text: TextStyle {
+                                size: Some(size),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                    }),
+                );
+                let text = if c.one_in(2) { "·".to_string() } else { words(c, 4) };
+                b.span(ring, &text);
+            }
+        }
+        if parent != root {
+            let connector = crate::document::tests::test_support::connector_of(&b, node);
+            if c.one_in(3) {
+                b.span(connector, "─");
+            }
+            if c.one_in(4) {
+                let cap = b.add(connector, DocElement::CapEnd(CapData::default()));
+                b.span(cap, "▶");
+            }
+            if c.one_in(5) {
+                let label = b.add(
+                    connector,
+                    DocElement::Label(LabelData {
+                        style: LabelStyle {
+                            t: Some(0.25 + c.below(3) as f32 * 0.25),
+                            ..Default::default()
+                        },
+                    }),
+                );
+                let text = words(c, 2);
+                b.span(label, &text);
+            }
+            if c.one_in(4) {
+                let cp = Vec2::new(c.below(100) as f32 - 50.0, c.below(100) as f32 - 50.0);
+                b.edit(connector, |e| {
+                    if let DocElement::Connector(conn) = e {
+                        conn.path.control_points = vec![cp];
+                    }
+                });
+            }
+        }
+    }
+    // Links, once every node exists.
+    for i in 0..count {
+        if !c.one_in(5) {
+            continue;
+        }
+        let from = nodes[i];
+        let to = nodes[c.index(count)];
+        if to == from {
+            continue;
+        }
+        let kind = if c.one_in(3) { LinkKind::Portal } else { LinkKind::Line };
+        let link = b.link(from, to, kind);
+        match kind {
+            LinkKind::Line => {
+                if c.one_in(2) {
+                    b.span(link, "~");
+                }
+                if c.one_in(3) {
+                    let cap = b.add(link, DocElement::CapStart(CapData::default()));
+                    b.span(cap, "◆");
+                }
+                if c.one_in(3) {
+                    let label = b.add(link, DocElement::Label(LabelData::default()));
+                    b.span(label, "see");
+                }
+            }
+            LinkKind::Portal => {
+                let first = link.children(b.tree().arena()).next();
+                if let (Some(end), true) = (first, c.one_in(2)) {
+                    let label = b.add(end, DocElement::Label(LabelData::default()));
+                    b.span(label, "to");
+                }
+            }
+        }
+    }
+    b.build().expect("a generated map is a valid document")
+}
+
+/// The elements of `doc` of `kind`, in tree order. O(the document): a
+/// test's choice of target, not projection work.
+pub fn of_kind(doc: &Document, kind: DocKind) -> Vec<NodeId> {
+    doc.tree()
+        .descendants()
+        .filter(|&id| doc.tree().arena()[id].get().kind() == kind)
+        .collect()
+}
+
+/// A single-op request: `mutation` at `anchors`, a mutator of `kind`.
+fn single(kind: DocKind, mutation: DocMutation, anchors: Vec<NodeId>) -> EditRequest {
+    let mutator = DocMutatorTree::new_with(Mutator::new(mutation, BranchKey::new(kind, 0)));
+    EditRequest::new(
+        vec![DocStep::fixed(DocWalk::new(mutator, Anchors::Nodes(anchors)))],
+        "generated",
+    )
+}
+
+/// A text op, its sizes in the unit of `rel`.
+fn text_op(c: &mut Choices, rel: bool) -> (&'static str, TextOp) {
+    match c.below(7) {
+        0 => ("Text::SetFont", TextOp::SetFont(c.one_in(2).then_some(AppFont::Novem))),
+        1 => (
+            "Text::SetSize",
+            TextOp::SetSize(Some(if rel {
+                FontSize::Rel(0.04 + c.below(8) as f32 * 0.01)
+            } else {
+                FontSize::Pt(8.0 + c.below(30) as f32)
+            })),
+        ),
+        2 => ("Text::GrowSize", TextOp::GrowSize(if rel { 0.01 } else { 2.0 })),
+        3 => ("Text::ScaleSize", TextOp::ScaleSize(if c.one_in(2) { 1.5 } else { 0.5 })),
+        4 => ("Text::SetColor", TextOp::SetColor(Some(color(c)))),
+        5 => ("Text::SetWeight", TextOp::SetWeight(Some(Weight::BOLD))),
+        _ => ("Text::SetItalic", TextOp::SetItalic(Some(c.one_in(2)))),
+    }
+}
+
+/// One random element of `kind`, if `doc` has one.
+fn pick(c: &mut Choices, doc: &Document, kind: DocKind) -> Option<NodeId> {
+    let all = of_kind(doc, kind);
+    (!all.is_empty()).then(|| all[c.index(all.len())])
+}
+
+/// A generated edit of `doc`: its name — the op, or the composite
+/// builder — and its request; `None` when the document has nothing the
+/// edit could target. Every op of the vocabulary and every composite is
+/// drawn ([`EDITS`] names them all).
+pub fn edit(c: &mut Choices, doc: &Document) -> Option<(&'static str, EditRequest)> {
+    use DocKind as K;
+    let choice = c.below(EDITS.len() as u32) as usize;
+    let name = EDITS[choice];
+    let req = match name {
+        "Map::SetName" => single(K::Map, DocMutation::Map(MapOp::SetName("renamed".into())), vec![doc.root()]),
+        "Map::SetBackground" => single(
+            K::Map,
+            DocMutation::Map(MapOp::SetBackground(PlainColor::Var(VarId(2)))),
+            vec![doc.root()],
+        ),
+        "Theme::SetActive" => single(
+            K::Theme,
+            DocMutation::Theme(ThemeOp::SetActive(c.below(2) as u16)),
+            vec![pick(c, doc, K::Theme)?],
+        ),
+        "Theme::SetValue" => single(
+            K::Theme,
+            DocMutation::Theme(ThemeOp::SetValue {
+                variant: 0,
+                var: VarId(c.below(3) as u16),
+                value: Rgba::opaque(c.below(256) as u8, 30, 30),
+            }),
+            vec![pick(c, doc, K::Theme)?],
+        ),
+        "Palette::SetGroup" => single(
+            K::Palette,
+            DocMutation::Palette(PaletteOp::SetGroup {
+                index: c.below(3) as usize,
+                group: PaletteGroup {
+                    frame: PlainColor::Rgba(Rgba::opaque(1, 2, 3)),
+                    text: PlainColor::Var(VarId(0)),
+                    title: None,
+                },
+            }),
+            vec![pick(c, doc, K::Palette)?],
+        ),
+        "Defaults::Replace" => {
+            let mut defaults = doc.defaults().clone();
+            defaults.label.t = Some(0.75);
+            defaults.section.color = Some(ColorRef::Var(VarId(0)));
+            defaults.frame.fit = Some(FitMode::Repeat);
+            single(
+                K::Defaults,
+                DocMutation::Defaults(DefaultsOp::Replace(Box::new(defaults))),
+                vec![pick(c, doc, K::Defaults)?],
+            )
+        }
+        n if n.starts_with("Node::") => {
+            let node = pick(c, doc, K::Node)?;
+            let op = match n {
+                "Node::SetPosition" => NodeOp::SetPosition(Vec2::new(c.below(1500) as f32, c.below(1200) as f32)),
+                "Node::Nudge" => NodeOp::Nudge(Vec2::new(c.below(60) as f32 - 30.0, 7.0)),
+                "Node::SetMinSize" => {
+                    NodeOp::SetMinSize(c.one_in(3).then(|| Vec2::new(60.0 + c.below(200) as f32, 50.0 + c.below(90) as f32)))
+                }
+                "Node::SetShape" => NodeOp::SetShape(Some(if c.one_in(2) {
+                    Shape::Ellipse
+                } else {
+                    Shape::Rectangle {
+                        radius: Percent::new(50),
+                    }
+                })),
+                "Node::SetPalette" => NodeOp::SetPalette(c.one_in(3).then(|| PaletteId(c.below(2) as u16))),
+                "Node::SetZoom" => NodeOp::SetZoom(c.one_in(2).then_some(ZoomWindow {
+                    min: Some(0.5),
+                    max: None,
+                })),
+                "Node::SetFolded" => NodeOp::SetFolded(c.one_in(2)),
+                "Node::ToggleFolded" => NodeOp::ToggleFolded,
+                "Node::SetHidden" => NodeOp::SetHidden(c.one_in(2)),
+                "Node::SetOpacity" => NodeOp::SetOpacity(*c.pick(&[0.0, 0.25, 0.5, 1.0])),
+                "Node::SetClick" => NodeOp::SetClick(None),
+                "Node::SetHover" => NodeOp::SetHover(None),
+                "Node::SetChannel" => NodeOp::SetChannel(c.below(4) as usize),
+                _ => NodeOp::Text(text_op(c, false).1),
+            };
+            single(K::Node, DocMutation::Node(op), vec![node])
+        }
+        n if n.starts_with("Section::") => {
+            let section = pick(c, doc, K::Section)?;
+            let op = match n {
+                "Section::SetOffset" => SectionOp::SetOffset(Vec2::new(c.below(30) as f32, c.below(40) as f32)),
+                "Section::Nudge" => SectionOp::Nudge(Vec2::new(3.0, 4.0)),
+                "Section::SetMinSize" => SectionOp::SetMinSize(c.one_in(2).then_some(Vec2::new(150.0, 60.0))),
+                "Section::SetAlign" => SectionOp::SetAlign(Some(*c.pick(&[Align::Left, Align::Center, Align::Right]))),
+                "Section::SetChannel" => SectionOp::SetChannel(c.below(3) as usize),
+                _ => SectionOp::Text(text_op(c, false).1),
+            };
+            single(K::Section, DocMutation::Section(op), vec![section])
+        }
+        n if n.starts_with("Span::") => {
+            let span = pick(c, doc, K::Span)?;
+            // A span inside a frame takes no size of its own.
+            let in_frame = doc
+                .parent(span)
+                .and_then(|p| doc.get(p))
+                .is_some_and(|e| e.kind() == K::Ring);
+            let op = match n {
+                "Span::SetText" => SpanOp::SetText(words(c, 3)),
+                "Span::InsertText" => SpanOp::InsertText {
+                    at: c.below(4) as usize,
+                    text: "ab".into(),
+                },
+                "Span::DeleteText" => SpanOp::DeleteText { start: 0, end: 1 },
+                "Span::SetLink" => SpanOp::SetLink(Some(LinkTarget::Url("https://example.com".into()))),
+                _ => {
+                    let (_, op) = text_op(c, false);
+                    if in_frame && matches!(op, TextOp::SetSize(_) | TextOp::GrowSize(_) | TextOp::ScaleSize(_)) {
+                        SpanOp::Text(TextOp::SetItalic(Some(true)))
+                    } else {
+                        SpanOp::Text(op)
+                    }
+                }
+            };
+            single(K::Span, DocMutation::Span(op), vec![span])
+        }
+        n if n.starts_with("Frame::") => {
+            let frame = pick(c, doc, K::Frame)?;
+            let op = match n {
+                "Frame::SetVisible" => FrameOp::SetVisible(Some(c.one_in(2))),
+                "Frame::SetStart" => FrameOp::SetStart(Some(StartPoint {
+                    edge: *c.pick(&[Edge::Top, Edge::Right, Edge::Bottom, Edge::Left]),
+                    at: 0.5,
+                })),
+                "Frame::SetDirection" => FrameOp::SetDirection(Some(Direction::CounterClockwise)),
+                "Frame::SetFit" => FrameOp::SetFit(Some(fit(c))),
+                "Frame::SetGap" => FrameOp::SetGap(Some(c.below(10) as f32)),
+                "Frame::SetInset" => FrameOp::SetInset(Some(c.below(10) as f32)),
+                "Frame::Layout" => FrameOp::Layout(layout_op(c)),
+                _ => FrameOp::Text(match text_op(c, true).1 {
+                    TextOp::GrowSize(_) | TextOp::ScaleSize(_) => TextOp::SetItalic(Some(true)),
+                    op => op,
+                }),
+            };
+            single(K::Frame, DocMutation::Frame(op), vec![frame])
+        }
+        n if n.starts_with("Ring::") => {
+            let ring = pick(c, doc, K::Ring)?;
+            let op = match n {
+                "Ring::SetFit" => RingOp::SetFit(c.one_in(2).then(|| fit(c))),
+                "Ring::Layout" => RingOp::Layout(layout_op(c)),
+                "Ring::SetChannel" => RingOp::SetChannel(c.below(3) as usize),
+                _ => RingOp::Text(text_op(c, true).1),
+            };
+            single(K::Ring, DocMutation::Ring(op), vec![ring])
+        }
+        n if n.starts_with("Path::") => {
+            let kind = if c.one_in(2) { K::Connector } else { K::Link };
+            let path = pick(c, doc, kind)?;
+            let op = match n {
+                "Path::SetFit" => PathOp::SetFit(Some(c.pick(&[FitMode::Repeat, FitMode::Spread, FitMode::Once { filler: None }]).clone())),
+                "Path::SetSpacing" => PathOp::SetSpacing(Some(c.below(5) as f32)),
+                "Path::SetSize" => PathOp::SetSize(Some(8.0 + c.below(20) as f32)),
+                "Path::SetColor" => PathOp::SetColor(Some(color(c))),
+                "Path::SetContent" => PathOp::SetContent(Some("=".into())),
+                "Path::SetAnchors" => PathOp::SetAnchors(
+                    *c.pick(&[Anchor::Auto, Anchor::Top, Anchor::Right]),
+                    *c.pick(&[Anchor::Auto, Anchor::Bottom, Anchor::Left]),
+                ),
+                "Path::SetControlPoints" => PathOp::SetControlPoints(match c.below(3) {
+                    0 => Vec::new(),
+                    1 => vec![Vec2::new(40.0, -60.0)],
+                    _ => vec![Vec2::new(40.0, -60.0), Vec2::new(-30.0, 50.0)],
+                }),
+                "Path::MoveControlPoint" => PathOp::MoveControlPoint {
+                    index: 0,
+                    to: Vec2::new(c.below(80) as f32, 20.0),
+                },
+                "Path::SetVisible" => PathOp::SetVisible(c.one_in(2)),
+                _ => PathOp::SetZoom(Some(ZoomWindow {
+                    min: None,
+                    max: Some(4.0),
+                })),
+            };
+            single(kind, DocMutation::Path(op), vec![path])
+        }
+        "Cap::Text" => {
+            let kind = if c.one_in(2) { K::CapStart } else { K::CapEnd };
+            let cap = pick(c, doc, kind)?;
+            single(kind, DocMutation::Cap(text_op(c, false).1), vec![cap])
+        }
+        n if n.starts_with("Label::") => {
+            let label = pick(c, doc, K::Label)?;
+            let op = match n {
+                "Label::SetT" => LabelOp::SetT(Some(c.below(5) as f32 * 0.25)),
+                "Label::SetOffset" => LabelOp::SetOffset(Some(c.below(20) as f32 - 10.0)),
+                _ => LabelOp::Text(text_op(c, false).1),
+            };
+            single(K::Label, DocMutation::Label(op), vec![label])
+        }
+        n if n.starts_with("PortalEnd::") => {
+            let end = pick(c, doc, K::PortalEnd)?;
+            let op = match n {
+                "PortalEnd::SetBorderT" => PortalEndOp::SetBorderT(c.one_in(3).then(|| c.below(4) as f32 * 0.25)),
+                "PortalEnd::SetOffset" => PortalEndOp::SetOffset(Some(c.below(10) as f32)),
+                "PortalEnd::SetColor" => PortalEndOp::SetColor(Some(color(c))),
+                "PortalEnd::SetSize" => PortalEndOp::SetSize(Some(10.0 + c.below(10) as f32)),
+                _ => PortalEndOp::SetContent(Some("◉".into())),
+            };
+            single(K::PortalEnd, DocMutation::PortalEnd(op), vec![end])
+        }
+        "compose::create_child" => {
+            let parent = pick(c, doc, K::Node)?;
+            EditRequest::new(compose::create_child(doc, parent, Vec2::new(30.0, 40.0)).ok()?, name)
+        }
+        "compose::create_root" => EditRequest::new(compose::create_root(doc, Vec2::new(900.0, 60.0)).ok()?, name),
+        "compose::delete" => {
+            let node = pick(c, doc, K::Node)?;
+            EditRequest::new(compose::delete(doc, &[node]).ok()?, name)
+        }
+        "compose::remove_links" => EditRequest::new(vec![compose::remove_links(vec![pick(c, doc, K::Link)?])], name),
+        "compose::reparent" => {
+            let node = pick(c, doc, K::Node)?;
+            let to = pick(c, doc, K::Node)?;
+            EditRequest::new(compose::reparent(doc, &[node], to).ok()?, name)
+        }
+        "compose::set_link_kind" => {
+            let link = pick(c, doc, K::Link)?;
+            let kind = match doc.get(link) {
+                Some(DocElement::Link(l)) if l.kind == LinkKind::Line => LinkKind::Portal,
+                _ => LinkKind::Line,
+            };
+            EditRequest::new(compose::set_link_kind(doc, link, kind).ok()?, name)
+        }
+        "compose::style_range" => {
+            let section = pick(c, doc, K::Section)?;
+            EditRequest::new(
+                compose::style_range(doc, section, 0, 3, TextOp::SetColor(Some(ColorRef::Var(VarId(0))))).ok()?,
+                name,
+            )
+        }
+        "compose::insert_text" => {
+            let section = pick(c, doc, K::Section)?;
+            EditRequest::new(compose::insert_text(doc, section, 2, " new".into()).ok()?, name)
+        }
+        "compose::delete_text" => {
+            let section = pick(c, doc, K::Section)?;
+            EditRequest::new(compose::delete_text(doc, section, 1, 4).ok()?, name)
+        }
+        "compose::split_section" => {
+            let section = pick(c, doc, K::Section)?;
+            EditRequest::new(compose::split_section(doc, section, 2).ok()?, name)
+        }
+        "compose::add_section" => {
+            let node = pick(c, doc, K::Node)?;
+            EditRequest::new(compose::add_section(doc, node, None).ok()?, name)
+        }
+        _ => return None,
+    };
+    Some((name, req))
+}
+
+/// A layout op.
+fn layout_op(c: &mut Choices) -> LayoutOp {
+    match c.below(3) {
+        0 => LayoutOp::SetSpan(LineSpan::new(c.below(3) as f32 * 0.5)),
+        1 => LayoutOp::SetSides(Some(if c.one_in(2) {
+            Sides::Off
+        } else {
+            Sides::On {
+                content: "✦".into(),
+                color: None,
+            }
+        })),
+        _ => LayoutOp::SetSpacing(Some(c.below(4) as f32)),
+    }
+}
+
+/// Every edit [`edit`] draws: each op of the vocabulary — a `Text` op
+/// named per owner, its seven text ops drawn within it — and each
+/// composite builder. `LinkOp::SetKind` is drawn as
+/// `compose::set_link_kind`, the one shape the validator lets it take.
+pub const EDITS: &[&str] = &[
+    "Map::SetName",
+    "Map::SetBackground",
+    "Theme::SetActive",
+    "Theme::SetValue",
+    "Palette::SetGroup",
+    "Defaults::Replace",
+    "Node::SetPosition",
+    "Node::Nudge",
+    "Node::SetMinSize",
+    "Node::SetShape",
+    "Node::SetPalette",
+    "Node::SetZoom",
+    "Node::SetFolded",
+    "Node::ToggleFolded",
+    "Node::SetHidden",
+    "Node::SetOpacity",
+    "Node::SetClick",
+    "Node::SetHover",
+    "Node::SetChannel",
+    "Node::Text",
+    "Section::SetOffset",
+    "Section::Nudge",
+    "Section::SetMinSize",
+    "Section::SetAlign",
+    "Section::SetChannel",
+    "Section::Text",
+    "Span::SetText",
+    "Span::InsertText",
+    "Span::DeleteText",
+    "Span::SetLink",
+    "Span::Text",
+    "Frame::SetVisible",
+    "Frame::SetStart",
+    "Frame::SetDirection",
+    "Frame::SetFit",
+    "Frame::SetGap",
+    "Frame::SetInset",
+    "Frame::Layout",
+    "Frame::Text",
+    "Ring::SetFit",
+    "Ring::Layout",
+    "Ring::SetChannel",
+    "Ring::Text",
+    "Path::SetFit",
+    "Path::SetSpacing",
+    "Path::SetSize",
+    "Path::SetColor",
+    "Path::SetContent",
+    "Path::SetAnchors",
+    "Path::SetControlPoints",
+    "Path::MoveControlPoint",
+    "Path::SetVisible",
+    "Path::SetZoom",
+    "Cap::Text",
+    "Label::SetT",
+    "Label::SetOffset",
+    "Label::Text",
+    "PortalEnd::SetBorderT",
+    "PortalEnd::SetOffset",
+    "PortalEnd::SetColor",
+    "PortalEnd::SetSize",
+    "PortalEnd::SetContent",
+    "compose::create_child",
+    "compose::create_root",
+    "compose::delete",
+    "compose::remove_links",
+    "compose::reparent",
+    "compose::set_link_kind",
+    "compose::style_range",
+    "compose::insert_text",
+    "compose::delete_text",
+    "compose::split_section",
+    "compose::add_section",
+];
