@@ -21,14 +21,13 @@
 use serde_json::Value;
 
 use baumhard::gfx_structs::camera::Camera2D;
-use baumhard::mindmap::tree_builder::MindMapTree;
 
 use crate::application::clock::{AppClock, ClockMode, ClockRefusal, StepRequest, Stepped};
 use crate::application::console::LineOutcome;
 use crate::application::document::MindMapDocument;
 use crate::application::keybinds::Action;
 use crate::application::macros::MacroStep;
-use crate::application::scene_host::AppScene;
+use crate::application::view::MapView;
 
 #[cfg(target_arch = "wasm32")]
 use crate::application::capture::geometry::Sidecar;
@@ -64,24 +63,21 @@ pub(crate) enum ShellState {
     Mode,
     /// The mode-status line the renderer shows (`query.status`).
     Status,
-    /// Every modal editor's live state and the document's previews
+    /// The open modals' live state: the console and the color picker
     /// (`query.editors`).
     Editors,
 }
 
 /// What the canvas draws right now, read-only: the inputs the `scene`
 /// family walks (`format/ipc.md` §`scene`). Every part is plain data
-/// with no GPU handle in it — the trees the renderer shapes, the
-/// identity indices their hit tests resolve through, and the camera
-/// that culls them — so a test stands one up without a renderer.
+/// with no GPU handle in it — the document, its view (the projector and
+/// the glyph layers it wrote) and the camera that culls them — so a test
+/// stands one up without a renderer.
 pub(crate) struct SceneView<'a> {
-    /// The loaded document: its model answers what the trees do not
-    /// carry (a node's `folded` flag, the fold that hides a node).
+    /// The loaded document: its elements are what the scene names.
     pub(crate) document: &'a MindMapDocument,
-    /// The node tree, or `None` before the first scene build.
-    pub(crate) mindmap_tree: Option<&'a MindMapTree>,
-    /// The canvas role trees and their identity indices.
-    pub(crate) app_scene: &'a AppScene,
+    /// The document's view: what the projector drew for each element.
+    pub(crate) view: &'a MapView,
     /// The camera the renderer culls and projects with.
     pub(crate) camera: &'a Camera2D,
 }
@@ -174,13 +170,6 @@ pub(crate) trait CommandTarget {
     /// an undo entry or rebuilds a scene.
     fn document(&self) -> Option<&MindMapDocument>;
 
-    /// The app-clock ms at which a tree-mutating drag suspended the
-    /// animation tick, or `None` while ticks run. `query.animations`
-    /// reads it: during the pause the animations are frozen, and a
-    /// reply that kept advancing their clocks would promise a commit
-    /// the next tick does not make.
-    fn animation_pause(&self) -> Option<u64>;
-
     /// One part of the app shell's state, projected to JSON.
     /// Read-only, and it reports no view change
     /// ([`Self::changed_view`] is untouched), so a query polled in a
@@ -190,21 +179,21 @@ pub(crate) trait CommandTarget {
     /// The drawn scene, read-only. `None` when the app has no
     /// document (the initial load failed). Like
     /// [`Self::document`], what it reaches is what `&` allows: the
-    /// `scene` family cannot rebuild a tree or move the camera.
+    /// `scene` family cannot project anything or move the camera.
     fn scene(&self) -> Option<SceneView<'_>>;
 
     /// What a click at `point` would target, through the canonical
     /// click hit test (`compute_click_hit`, the one mouse presses and
-    /// touch taps run, never a fork of it) and its last rung, the
-    /// connection path under the pointer: the whole ladder, as JSON
-    /// (`format/ipc.md` §`scene.hit_test`). `None` when the app has no
-    /// document.
+    /// touch taps run, never a fork of it): the glyph under the point,
+    /// the element it was drawn for and the element a click selects, as
+    /// JSON (`format/ipc.md` §`scene.hit_test`). `None` when the app has
+    /// no document.
     ///
-    /// `&mut` only because the hit tests memoize subtree AABBs in the
-    /// trees they descend. Nothing else is written: the document, the
-    /// selection, the cursor and the camera are untouched, and
-    /// [`Self::changed_view`] stays as it was, so a probe costs no
-    /// frame.
+    /// `&mut` only because the projector's hit test memoizes subtree
+    /// bounds in the layers it descends. Nothing else is written: the
+    /// document, the selection, the cursor and the camera are
+    /// untouched, and [`Self::changed_view`] stays as it was, so a probe
+    /// costs no frame.
     fn hit_test(&mut self, point: Point) -> Option<Value>;
 
     /// `point` in surface pixels, through the renderer's camera as it

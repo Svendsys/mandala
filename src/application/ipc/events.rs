@@ -3,25 +3,26 @@
 //! The event stream and the revision counters (`format/ipc.md`
 //! §`events`).
 //!
-//! **Observation, not instrumentation.** The app has no
-//! change-notification machinery and this module adds none to it: no
-//! setter reports, no walker emits. A [`Tracker`] is handed a
-//! read-only [`Observed`] view of the app at the points the event loop
-//! already passes through, remembers what it saw last, and reports the
-//! difference. A document setter, a keystroke, a drag, an animation
-//! tick and an IPC command are therefore all seen the same way, and a
-//! 200-step macro is one difference. The document's own
-//! `revision()` (`document/revision.rs`) is what makes "the model
-//! changed" a comparison of two integers rather than a walk.
+//! **Observation.** A [`Tracker`] is handed a read-only [`Observed`]
+//! view of the app at the points the event loop already passes through,
+//! remembers what it saw last, and reports the difference. A keystroke,
+//! a console line and an IPC command are therefore all seen the same
+//! way, and a 200-step macro is one difference. The document's own
+//! revision (`Document::revision`) is what makes "the model changed" a
+//! comparison of two integers rather than a walk, and the change records
+//! the view drained since the last iteration ([`Observed::changes`],
+//! `view::MapView::pending_feed`) say who made it. Events built from the
+//! records themselves — what changed, element by element — are V1-E2's.
 //!
 //! **Two counters.** `document_revision` is the document's: committed
-//! model changes, carried across `open` and `new`, untouched by a
-//! preview, a selection or the camera. `revision` is this module's: it
-//! advances once per observation in which *any* event class had
-//! something to report, so a view-only change (a zoom, a selection)
-//! moves it while the document's stays put. Both are monotonic per
-//! process. An observation is the unit: two changes between two
-//! observations advance `revision` once.
+//! model changes, untouched by a selection or the camera; a replaced
+//! document starts its own, which `document_replaced` announces with the
+//! new document's generation. `revision` is this module's: it advances
+//! once per observation in which *any* event class had something to
+//! report, so a view-only change (a zoom, a selection) moves it while the
+//! document's stays put, and it is monotonic per process. An observation
+//! is the unit: two changes between two observations advance `revision`
+//! once.
 //!
 //! **Delivery** is the main thread's: observations queue
 //! [`Event`]s in a [`Session`], and the transport offers them to the
@@ -34,10 +35,12 @@ use std::collections::VecDeque;
 
 use serde_json::{json, Value};
 
+use baumhard::arena::NodeId;
+use baumhard::document::writer::feed::ChangeRecord;
 use baumhard::gfx_structs::camera::Camera2D;
 
 use crate::application::app::InteractionMode;
-use crate::application::document::{MindMapDocument, SelectionState};
+use crate::application::document::MindMapDocument;
 
 use super::envelope::{Event, Reply};
 use super::space::camera_json;
@@ -80,15 +83,11 @@ pub(crate) enum Class {
     SelectionChanged,
     CameraChanged,
     ModeChanged,
-    AnimationStarted,
-    AnimationCompleted,
 }
 
 impl Class {
     /// Every class, in `describe` order (by name).
-    pub(crate) const ALL: [Class; 7] = [
-        Class::AnimationCompleted,
-        Class::AnimationStarted,
+    pub(crate) const ALL: [Class; 5] = [
         Class::CameraChanged,
         Class::DocumentChanged,
         Class::DocumentReplaced,
@@ -104,8 +103,6 @@ impl Class {
             Class::SelectionChanged => "selection_changed",
             Class::CameraChanged => "camera_changed",
             Class::ModeChanged => "mode_changed",
-            Class::AnimationStarted => "animation_started",
-            Class::AnimationCompleted => "animation_completed",
         }
     }
 
@@ -113,7 +110,7 @@ impl Class {
     pub(crate) const fn doc(self) -> &'static str {
         match self {
             Class::DocumentChanged => {
-                "A committed document change: data carries revision, document_revision and the source (action, console, mutation, undo, input or ipc)."
+                "A committed document change: data carries revision, document_revision and the source (action, console, ipc, input, edit, verb, undo or redo)."
             }
             Class::DocumentReplaced => {
                 "An open or new replaced the document: data carries revision, document_revision, generation and the new path."
@@ -121,22 +118,12 @@ impl Class {
             Class::SelectionChanged => "The selection changed: data carries revision and the selection, as query.selection reports it.",
             Class::CameraChanged => "The camera moved or the surface resized: data carries revision and the camera, as query.camera reports it.",
             Class::ModeChanged => "The interaction mode changed: data carries revision and the mode, as query.mode reports its kind.",
-            Class::AnimationStarted => "Animations began: data carries revision and the animations (target_id, section_idx, mutation_id).",
-            Class::AnimationCompleted => "Animations committed or were canceled: data carries revision and the animations (target_id, section_idx, mutation_id).",
         }
     }
 
     /// The class named `word`, if any.
     pub(crate) fn parse(word: &str) -> Option<Class> {
         Class::ALL.into_iter().find(|class| class.name() == word)
-    }
-
-    /// Whether the class's payload is a *delta*: only what is new
-    /// since the last look, so an event cannot be replaced by a newer
-    /// one without losing what it said. The others carry the state
-    /// as of the observation, which a newer one supersedes.
-    const fn is_delta(self) -> bool {
-        matches!(self, Class::AnimationStarted | Class::AnimationCompleted)
     }
 
     const fn bit(self) -> u8 {
@@ -188,6 +175,10 @@ impl FromIterator<Class> for Classes {
 pub(crate) struct Observed<'a> {
     /// `None` before a document exists.
     pub(crate) document: Option<&'a MindMapDocument>,
+    /// The document's change records the view has drained since the
+    /// event loop last cleared them (`view::MapView::pending_feed`),
+    /// oldest first: who made the changes an observation sees.
+    pub(crate) changes: &'a [ChangeRecord],
     pub(crate) camera: &'a Camera2D,
     pub(crate) mode: &'a InteractionMode,
 }
@@ -206,8 +197,7 @@ pub(crate) struct Revisions {
 /// `document_changed` reports when the change was an agent's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Driver {
-    /// The app's own input handlers, which declare their funnel on the
-    /// document.
+    /// The app's own input handlers, whose changes carry their source.
     App,
     /// An IPC command.
     Ipc,
@@ -231,51 +221,13 @@ impl CameraKey {
     }
 }
 
-/// A running animation, as the tracker names it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AnimationKey {
-    /// The animation's identity (`AnimationInstance::seq`): constant
-    /// while it runs, new when the same `(target_id, section_idx,
-    /// mutation_id)` is triggered again after it ended. Compared
-    /// alone; the rest is for the payload.
-    seq: u64,
-    target_id: String,
-    section_idx: Option<usize>,
-    mutation_id: String,
-}
-
-impl AnimationKey {
-    fn of(animation: &crate::application::document::AnimationInstance) -> Self {
-        AnimationKey {
-            seq: animation.seq,
-            target_id: animation.target_id.clone(),
-            section_idx: animation.section_idx,
-            mutation_id: animation.mutation_id().to_string(),
-        }
-    }
-
-    fn is(&self, animation: &crate::application::document::AnimationInstance) -> bool {
-        self.seq == animation.seq
-    }
-
-    fn to_json(&self) -> Value {
-        json!({
-            "id": self.seq,
-            "target_id": self.target_id,
-            "section_idx": self.section_idx,
-            "mutation_id": self.mutation_id,
-        })
-    }
-}
-
 /// What the last observation saw.
 struct Seen {
     generation: u64,
     document_revision: u64,
-    selection: SelectionState,
+    selection: Vec<NodeId>,
     camera: CameraKey,
     mode: InteractionMode,
-    animations: Vec<AnimationKey>,
 }
 
 /// One event an observation produced, before it is queued.
@@ -299,7 +251,7 @@ impl Tracker {
     pub(crate) fn revisions(&self, now: &Observed<'_>) -> Revisions {
         Revisions {
             revision: self.revision,
-            document_revision: now.document.map_or(0, MindMapDocument::revision),
+            document_revision: now.document.map_or(0, |doc| doc.revision().0),
         }
     }
 
@@ -314,9 +266,8 @@ impl Tracker {
     /// later subscription reports changes from then on, not the
     /// history.
     ///
-    /// Cost: integer, selection, camera and mode comparisons, and one
-    /// pass over the running animations. Allocates only for a class
-    /// that differs.
+    /// Cost: integer, selection, camera and mode comparisons. Allocates
+    /// only for a class that differs.
     pub(crate) fn observe(
         &mut self,
         now: &Observed<'_>,
@@ -324,37 +275,27 @@ impl Tracker {
         driver: Driver,
     ) -> (Revisions, Vec<Change>) {
         let generation = now.document.map_or(0, MindMapDocument::generation);
-        let document_revision = now.document.map_or(0, MindMapDocument::revision);
-        let none = SelectionState::None;
-        let selection = now.document.map_or(&none, |doc| &doc.selection);
+        let document_revision = now.document.map_or(0, |doc| doc.revision().0);
+        let selection: Vec<NodeId> = now.document.map_or_else(Vec::new, |doc| doc.selection.iter().collect());
         let camera = CameraKey::of(now.camera);
-        let animations: &[crate::application::document::AnimationInstance] =
-            now.document.map_or(&[], |doc| &doc.active_animations);
 
         let Some(seen) = self.seen.as_mut() else {
             self.seen = Some(Seen {
                 generation,
                 document_revision,
-                selection: selection.clone(),
+                selection,
                 camera,
                 mode: now.mode.clone(),
-                animations: animations.iter().map(AnimationKey::of).collect(),
             });
             return (self.revisions(now), Vec::new());
         };
 
         let replaced = seen.generation != generation;
-        let document = seen.document_revision != document_revision;
-        let selected = seen.selection != *selection;
+        let document = !replaced && seen.document_revision != document_revision;
+        let selected = replaced || seen.selection != selection;
         let moved = seen.camera != camera;
         let moded = seen.mode != *now.mode;
-        // As sets, not by position: a tick removes with `swap_remove`,
-        // which reorders what survives.
-        let animations_differ = seen.animations.len() != animations.len()
-            || !animations
-                .iter()
-                .all(|anim| seen.animations.iter().any(|key| key.is(anim)));
-        let any = replaced || document || selected || moved || moded || animations_differ;
+        let any = replaced || document || selected || moved || moded;
         if !any {
             return (self.revisions(now), Vec::new());
         }
@@ -381,9 +322,7 @@ impl Tracker {
         if document {
             let source = match driver {
                 Driver::Ipc => "ipc",
-                Driver::App => now
-                    .document
-                    .map_or("input", |doc| doc.last_change_source().word()),
+                Driver::App => now.changes.last().map_or("input", |record| record.source.name()),
             };
             push(
                 Class::DocumentChanged,
@@ -403,7 +342,12 @@ impl Tracker {
         if selected {
             push(
                 Class::SelectionChanged,
-                object(json!({ "selection": selection.to_ipc_json() })),
+                object(json!({
+                    "selection": now.document.map_or_else(
+                        || json!({"count": 0, "elements": []}),
+                        MindMapDocument::ipc_selection_json,
+                    )
+                })),
             );
         }
         if moved {
@@ -418,43 +362,14 @@ impl Tracker {
                 object(json!({ "mode": now.mode.to_ipc_json() })),
             );
         }
-        if animations_differ {
-            let started: Vec<Value> = animations
-                .iter()
-                .filter(|anim| !seen.animations.iter().any(|key| key.is(anim)))
-                .map(|anim| AnimationKey::of(anim).to_json())
-                .collect();
-            let completed: Vec<Value> = seen
-                .animations
-                .iter()
-                .filter(|key| !animations.iter().any(|anim| key.is(anim)))
-                .map(AnimationKey::to_json)
-                .collect();
-            // Completed first: an animation that ended and was triggered
-            // again since the last look must read as the old one ending
-            // and the new one beginning, in that order.
-            if !completed.is_empty() {
-                push(
-                    Class::AnimationCompleted,
-                    object(json!({ "animations": completed })),
-                );
-            }
-            if !started.is_empty() {
-                push(Class::AnimationStarted, object(json!({ "animations": started })));
-            }
-        }
-
         seen.generation = generation;
         seen.document_revision = document_revision;
         if selected {
-            seen.selection = selection.clone();
+            seen.selection = selection;
         }
         seen.camera = camera;
         if moded {
             seen.mode = now.mode.clone();
-        }
-        if animations_differ {
-            seen.animations = animations.iter().map(AnimationKey::of).collect();
         }
         (
             Revisions {
@@ -464,18 +379,6 @@ impl Tracker {
             changes,
         )
     }
-}
-
-/// Fold `older`'s animations ahead of `newer`'s: the two deltas as
-/// one, in the order the animations began or ended.
-fn fold_animations(older: &mut Event, newer: &mut Event) {
-    let Some(Value::Array(mut merged)) = older.data_mut().get_mut("animations").map(Value::take) else {
-        return;
-    };
-    if let Some(Value::Array(newer_animations)) = newer.data_mut().get_mut("animations").map(Value::take) {
-        merged.extend(newer_animations);
-    }
-    newer.data_mut()["animations"] = Value::Array(merged);
 }
 
 /// What a controller asked to hear.
@@ -594,33 +497,7 @@ impl Session {
     fn queue(&mut self, changes: Vec<Change>) {
         for Change { class, data } in changes {
             if !self.subscriptions.verbose {
-                if class.is_delta() {
-                    // A delta event is folded into the newest one of its
-                    // class that is waiting, in its place, so what it
-                    // says survives. Only when no delta of the *other*
-                    // class was queued after that one: folding across it
-                    // would announce a restart ahead of the completion
-                    // it follows, so the new delta goes to the back.
-                    let waiting = self
-                        .pending
-                        .iter()
-                        .rposition(|queued| queued.class == class)
-                        .filter(|at| {
-                            !self
-                                .pending
-                                .iter()
-                                .skip(at + 1)
-                                .any(|queued| queued.class.is_delta())
-                        });
-                    if let Some(at) = waiting {
-                        let mut newer = Event::change(class.name(), data);
-                        fold_animations(&mut self.pending[at].event, &mut newer);
-                        self.pending[at].event = newer;
-                        continue;
-                    }
-                } else {
-                    self.pending.retain(|queued| queued.class != class);
-                }
+                self.pending.retain(|queued| queued.class != class);
             }
             if self.pending.len() == PENDING_CAP {
                 self.pending.pop_front();
@@ -668,7 +545,6 @@ pub(crate) mod fixture {
     use super::Observed;
     use crate::application::app::InteractionMode;
     use crate::application::console::{ExecResult, LineOutcome};
-    use crate::application::document::tests_common::load_test_doc;
     use crate::application::document::MindMapDocument;
     use crate::application::ipc::injected::{Overloaded, Pacing, Sample};
     use crate::application::ipc::space::Point;
@@ -689,7 +565,7 @@ pub(crate) mod fixture {
     impl EventsApp {
         pub(crate) fn new() -> Self {
             EventsApp {
-                doc: load_test_doc(),
+                doc: MindMapDocument::new_blank(None, 50),
                 camera: Camera2D::new(800, 600),
                 mode: InteractionMode::Default,
                 changed: false,
@@ -705,7 +581,7 @@ pub(crate) mod fixture {
         /// Every console line stands for one committed document
         /// change, whatever it says.
         fn run_console_line(&mut self, _: &str) -> Option<LineOutcome> {
-            self.doc.mark_dirty();
+            self.doc.create_root_for_test();
             self.changed = true;
             Some(LineOutcome::Ran(ExecResult::Ok(String::new())))
         }
@@ -719,9 +595,10 @@ pub(crate) mod fixture {
         /// real step loop does.
         fn run_macro_steps(&mut self, steps: &[MacroStep], after_step: &mut dyn FnMut(Observed<'_>)) -> bool {
             for _ in steps {
-                self.doc.mark_dirty();
+                self.doc.create_root_for_test();
                 after_step(Observed {
                     document: Some(&self.doc),
+                    changes: &[],
                     camera: &self.camera,
                     mode: &self.mode,
                 });
@@ -732,6 +609,7 @@ pub(crate) mod fixture {
         fn observed(&self) -> Option<Observed<'_>> {
             Some(Observed {
                 document: Some(&self.doc),
+                changes: &[],
                 camera: &self.camera,
                 mode: &self.mode,
             })
@@ -741,9 +619,6 @@ pub(crate) mod fixture {
         }
         fn document(&self) -> Option<&MindMapDocument> {
             Some(&self.doc)
-        }
-        fn animation_pause(&self) -> Option<u64> {
-            None
         }
         fn shell_state(&self, which: ShellState) -> Value {
             json!({ "shell_state": format!("{which:?}") })
@@ -809,17 +684,13 @@ pub(crate) mod fixture {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::document::tests_common::{
-        first_testament_node_id, load_test_doc, two_testament_node_ids, TestNudgeMutation,
-    };
-    use crate::application::document::{ChangeSource, SelectionState};
-    use baumhard::mindmap::animation::{AnimationTiming, Easing};
-    use baumhard::mindmap::custom_mutation::TargetScope;
+    use baumhard::document::writer::{ChangeSource, EditRequest};
 
-    /// A world to observe: a document, a camera and a mode, that a
-    /// test edits between observations.
+    /// A world to observe: a document, the change records drained from
+    /// it, a camera and a mode, that a test edits between observations.
     struct World {
         doc: MindMapDocument,
+        changes: Vec<ChangeRecord>,
         camera: Camera2D,
         mode: InteractionMode,
     }
@@ -827,15 +698,34 @@ mod tests {
     impl World {
         fn new() -> Self {
             World {
-                doc: load_test_doc(),
+                doc: MindMapDocument::new_blank(None, 50),
+                changes: Vec::new(),
                 camera: Camera2D::new(800, 600),
                 mode: InteractionMode::Default,
             }
         }
 
+        /// One committed change, made by `source`, its records drained
+        /// as the view drains them.
+        fn change(&mut self, source: ChangeSource) {
+            let steps =
+                baumhard::document::mutation::compose::create_root(self.doc.doc(), glam::Vec2::ZERO).expect("composes");
+            self.doc
+                .apply(
+                    EditRequest {
+                        steps,
+                        label: "test".into(),
+                    },
+                    source,
+                )
+                .expect("applies");
+            self.changes.extend(self.doc.take_changes());
+        }
+
         fn now(&self) -> Observed<'_> {
             Observed {
                 document: Some(&self.doc),
+                changes: &self.changes,
                 camera: &self.camera,
                 mode: &self.mode,
             }
@@ -922,9 +812,7 @@ mod tests {
     fn test_a_document_change_reports_both_counters_and_the_source() {
         let mut world = World::new();
         let mut tracker = baselined(&world);
-        world
-            .doc
-            .with_source(ChangeSource::Console, |doc| doc.mark_dirty());
+        world.change(ChangeSource::Console);
         let (revisions, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
         assert_eq!(names(&changes), ["document_changed"]);
         assert_eq!(
@@ -944,7 +832,7 @@ mod tests {
     fn test_an_agents_command_is_the_source_whatever_funnel_it_went_through() {
         let mut world = World::new();
         let mut tracker = baselined(&world);
-        world.doc.with_source(ChangeSource::Undo, |doc| doc.mark_dirty());
+        world.change(ChangeSource::Console);
         let (_, changes) = tracker.observe(&world.now(), ALL(), Driver::Ipc);
         assert_eq!(find(&changes, Class::DocumentChanged)["source"], json!("ipc"));
     }
@@ -953,7 +841,7 @@ mod tests {
     fn test_a_class_nobody_asked_for_still_moves_the_revision_but_reports_nothing() {
         let mut world = World::new();
         let mut tracker = baselined(&world);
-        world.doc.mark_dirty();
+        world.change(ChangeSource::Action);
         let (revisions, changes) = tracker.observe(&world.now(), Classes::default(), Driver::App);
         assert!(changes.is_empty());
         assert_eq!(
@@ -971,8 +859,8 @@ mod tests {
     fn test_two_changes_between_observations_advance_the_revision_once() {
         let mut world = World::new();
         let mut tracker = baselined(&world);
-        world.doc.mark_dirty();
-        world.doc.mark_dirty();
+        world.change(ChangeSource::Action);
+        world.change(ChangeSource::Action);
         world.camera.zoom = 2.0;
         let (revisions, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
         assert_eq!(names(&changes), ["document_changed", "camera_changed"]);
@@ -989,40 +877,39 @@ mod tests {
     #[test]
     fn test_a_view_change_moves_the_revision_and_leaves_the_document_revision() {
         let mut world = World::new();
+        world.change(ChangeSource::Action);
         let mut tracker = baselined(&world);
-        let node = first_testament_node_id(&world.doc);
-        world.doc.selection = SelectionState::Single(node.clone());
+        let node = crate::application::document::selection::every_node(world.doc.doc())
+            .next()
+            .expect("the node just made");
+        world.doc.selection.select_only(node);
         let (revisions, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
         assert_eq!(names(&changes), ["selection_changed"]);
+        let ident = crate::application::view::inspect::ident_of(world.doc.doc(), node).expect("a node").0;
         assert_eq!(
             find(&changes, Class::SelectionChanged)["selection"],
-            json!({ "kind": "Single", "node_id": node })
+            json!({ "count": 1, "elements": [{ "node": ident }] })
         );
         assert_eq!(
             revisions,
             Revisions {
                 revision: 1,
-                document_revision: 0
+                document_revision: 1
             }
         );
     }
 
     #[test]
-    fn test_camera_and_mode_changes_carry_their_projections() {
+    fn test_a_camera_change_carries_its_projection() {
         let mut world = World::new();
         let mut tracker = baselined(&world);
         world.camera.zoom = 2.0;
         world.camera.position = glam::Vec2::new(5.0, -7.0);
-        world.mode = InteractionMode::Connect { source: "n".into() };
         let (_, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
-        assert_eq!(names(&changes), ["camera_changed", "mode_changed"]);
+        assert_eq!(names(&changes), ["camera_changed"]);
         assert_eq!(
             find(&changes, Class::CameraChanged)["camera"],
             camera_json(&world.camera)
-        );
-        assert_eq!(
-            find(&changes, Class::ModeChanged)["mode"],
-            json!({ "kind": "Connect", "source": "n" })
         );
     }
 
@@ -1036,264 +923,33 @@ mod tests {
     }
 
     #[test]
-    fn test_an_animation_starting_and_committing_are_two_events() {
+    fn test_a_replaced_document_reports_its_path_and_generation() {
         let mut world = World::new();
+        world.change(ChangeSource::Action);
+        world.change(ChangeSource::Action);
         let mut tracker = baselined(&world);
-        let node = first_testament_node_id(&world.doc);
-        let cm = TestNudgeMutation::new("slide", TargetScope::SelfOnly)
-            .magnitude(100.0)
-            .timing(AnimationTiming {
-                duration_ms: 500,
-                delay_ms: 0,
-                easing: Easing::Linear,
-                then: None,
-            })
-            .build();
-        world.doc.start_animation(&cm, &node, 0);
-        let (_, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
-        assert_eq!(names(&changes), ["animation_started"]);
-        let entry = json!({ "id": 1, "target_id": node, "section_idx": null, "mutation_id": "slide" });
-        assert_eq!(
-            find(&changes, Class::AnimationStarted)["animations"],
-            json!([entry.clone()])
-        );
-
-        let (_, quiet) = tracker.observe(&world.now(), ALL(), Driver::App);
-        assert!(quiet.is_empty(), "a running animation is not a change");
-
-        world.doc.tick_animations(1_000, None);
-        let (_, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
-        assert_eq!(names(&changes), ["document_changed", "animation_completed"]);
-        assert_eq!(
-            find(&changes, Class::AnimationCompleted)["animations"],
-            json!([entry])
-        );
-        assert_eq!(
-            find(&changes, Class::DocumentChanged)["source"],
-            json!("mutation")
-        );
-    }
-
-    fn slide(id: &str) -> baumhard::mindmap::custom_mutation::CustomMutation {
-        TestNudgeMutation::new(id, TargetScope::SelfOnly)
-            .magnitude(100.0)
-            .timing(AnimationTiming {
-                duration_ms: 500,
-                delay_ms: 0,
-                easing: Easing::Linear,
-                then: None,
-            })
-            .build()
-    }
-
-    fn animation_targets(data: &Value) -> Vec<String> {
-        data["animations"]
-            .as_array()
-            .expect("animations")
-            .iter()
-            .map(|entry| entry["target_id"].as_str().expect("target").to_string())
-            .collect()
-    }
-
-    /// The animation events a session holds, in delivery order, as
-    /// `(class, targets)`.
-    fn animation_events(session: &mut Session) -> Vec<(&'static str, Vec<String>)> {
-        drain(session)
-            .into_iter()
-            .filter(|(name, _)| name.starts_with("animation"))
-            .map(|(name, data)| (name, animation_targets(&data)))
-            .collect()
-    }
-
-    #[test]
-    fn test_animations_that_start_in_one_drain_are_one_event_carrying_all_of_them() {
-        let mut world = World::new();
-        let (a, b) = two_testament_node_ids(&world.doc);
-        let mut session = Session::default();
-        session.subscribe(ALL(), false);
-        session.baseline(&world.now());
-        world.doc.start_animation(&slide("slide"), &a, 0);
-        session.observe(&world.now(), Driver::Ipc);
-        world.doc.start_animation(&slide("slide"), &b, 0);
-        session.observe(&world.now(), Driver::Ipc);
-        let events = drain(&mut session);
-        assert_eq!(events.len(), 1, "coalesced");
-        assert_eq!(events[0].0, "animation_started");
-        assert_eq!(animation_targets(&events[0].1), [a, b], "neither start is lost");
-        assert_eq!(
-            events[0].1["revision"],
-            json!(2),
-            "stamped with the newest revision"
-        );
-    }
-
-    #[test]
-    fn test_animations_in_one_burst_fold_into_one_event_per_class_in_order() {
-        let mut world = World::new();
-        let (a, b) = two_testament_node_ids(&world.doc);
-        let mut session = Session::default();
-        session.subscribe(ALL(), false);
-        session.baseline(&world.now());
-        world.doc.start_animation(&slide("slide"), &a, 0);
-        session.observe(&world.now(), Driver::App);
-        world.doc.start_animation(&slide("slide"), &b, 0);
-        session.observe(&world.now(), Driver::App);
-        world.doc.tick_animations(1_000, None);
-        session.observe(&world.now(), Driver::App);
-        assert_eq!(
-            animation_events(&mut session),
-            [
-                ("animation_started", vec![a.clone(), b.clone()]),
-                ("animation_completed", vec![a, b]),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_a_new_delta_is_not_folded_across_the_other_class_queued_after_its_sibling() {
-        let mut world = World::new();
-        let (a, x) = two_testament_node_ids(&world.doc);
-        let mut session = Session::default();
-        session.subscribe(ALL(), false);
-        world.doc.start_animation(&slide("slide"), &a, 0);
-        session.baseline(&world.now());
-        // started{x} and completed{a} wait, in that order. `x` starts
-        // late enough to still be running when `a` ends.
-        world.doc.start_animation(&slide("slide"), &x, 900);
-        session.observe(&world.now(), Driver::App);
-        world.doc.tick_animations(1_000, None);
-        session.observe(&world.now(), Driver::App);
-        // `a` is triggered again.
-        world.doc.start_animation(&slide("slide"), &a, 2_000);
-        session.observe(&world.now(), Driver::App);
-        assert_eq!(
-            animation_events(&mut session),
-            [
-                ("animation_started", vec![x]),
-                ("animation_completed", vec![a.clone()]),
-                ("animation_started", vec![a]),
-            ],
-            "the restart arrives after the completion it follows, and on its own"
-        );
-    }
-
-    #[test]
-    fn test_a_held_back_delta_is_never_superseded() {
-        let mut world = World::new();
-        let (a, b) = two_testament_node_ids(&world.doc);
-        let mut session = Session::default();
-        session.subscribe(ALL(), false);
-        session.baseline(&world.now());
-        world.doc.start_animation(&slide("slide"), &a, 0);
-        session.observe(&world.now(), Driver::App);
-        let held = session.pop_pending().expect("queued");
-        world.doc.start_animation(&slide("slide"), &b, 0);
-        session.observe(&world.now(), Driver::App);
-        session.requeue(held);
-        assert_eq!(
-            animation_events(&mut session),
-            [("animation_started", vec![a]), ("animation_started", vec![b])],
-            "both delivered, the held one first"
-        );
-    }
-
-    #[test]
-    fn test_an_animation_restarted_between_observations_is_a_completion_then_a_start_with_a_new_id() {
-        let mut world = World::new();
-        let node = first_testament_node_id(&world.doc);
-        world.doc.start_animation(&slide("slide"), &node, 0);
-        let mut tracker = baselined(&world);
-        world.doc.tick_animations(1_000, None);
-        world.doc.start_animation(&slide("slide"), &node, 2_000);
+        let next = MindMapDocument::new_blank(Some("maps/next.mandala.json".into()), 50);
+        let generation = next.generation();
+        assert_ne!(generation, world.doc.generation());
+        world.doc = next;
+        world.changes.clear();
         let (revisions, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
-        assert!(revisions.revision > 0);
         assert_eq!(
             names(&changes),
-            ["document_changed", "animation_completed", "animation_started"],
-            "the old one ends before the new one begins"
+            ["document_replaced", "selection_changed"],
+            "a replaced document is not a change of the one before it"
         );
-        let ended = &find(&changes, Class::AnimationCompleted)["animations"][0];
-        let began = &find(&changes, Class::AnimationStarted)["animations"][0];
-        assert_eq!(ended["target_id"], began["target_id"]);
-        assert_eq!(ended["mutation_id"], began["mutation_id"]);
-        assert_ne!(ended["id"], began["id"], "the payload says which one is new");
-    }
-
-    #[test]
-    fn test_an_animations_id_is_the_same_in_the_query_and_in_its_events() {
-        let mut world = World::new();
-        let node = first_testament_node_id(&world.doc);
-        let mut tracker = baselined(&world);
-        world.doc.start_animation(&slide("slide"), &node, 0);
-        let (_, started) = tracker.observe(&world.now(), ALL(), Driver::App);
-        let queried = world.doc.active_animations[0].to_ipc_json(100, false)["id"].clone();
-        assert_eq!(
-            find(&started, Class::AnimationStarted)["animations"][0]["id"],
-            queried
-        );
-
-        world.doc.tick_animations(1_000, None);
-        let (_, completed) = tracker.observe(&world.now(), ALL(), Driver::App);
-        assert_eq!(
-            find(&completed, Class::AnimationCompleted)["animations"][0]["id"],
-            queried,
-            "the completion names the animation the query listed"
-        );
-    }
-
-    #[test]
-    fn test_shifting_the_start_of_running_animations_is_not_a_change() {
-        // A tree-mutating drag released after a pause moves every
-        // running animation's start forward so none snaps to its end.
-        let mut world = World::new();
-        let (a, b) = two_testament_node_ids(&world.doc);
-        world.doc.start_animation(&slide("slide"), &a, 0);
-        world.doc.start_animation(&slide("slide"), &b, 100);
-        let mut tracker = baselined(&world);
-        world.doc.shift_active_animations_start_ms(750);
-        let (revisions, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
-        assert!(changes.is_empty(), "{:?}", names(&changes));
-        assert_eq!(revisions.revision, 0);
-    }
-
-    #[test]
-    fn test_reordering_the_running_animations_is_not_a_change() {
-        let mut world = World::new();
-        let (a, b) = two_testament_node_ids(&world.doc);
-        world.doc.start_animation(&slide("slide"), &a, 0);
-        world.doc.start_animation(&slide("slide"), &b, 0);
-        let mut tracker = baselined(&world);
-        world.doc.active_animations.reverse();
-        let (revisions, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
-        assert!(changes.is_empty());
-        assert_eq!(
-            revisions.revision, 0,
-            "the same animations in another order: nothing happened"
-        );
-    }
-
-    #[test]
-    fn test_a_replaced_document_reports_its_path_and_never_lowers_the_counters() {
-        let mut world = World::new();
-        world.doc.mark_dirty();
-        world.doc.mark_dirty();
-        let mut tracker = baselined(&world);
-        let mut next = load_test_doc();
-        next.file_path = Some("maps/next.mindmap.json".into());
-        next.succeed(&world.doc);
-        world.doc = next;
-        let (revisions, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
-        assert_eq!(names(&changes), ["document_changed", "document_replaced"]);
         assert_eq!(
             find(&changes, Class::DocumentReplaced),
             &json!({
                 "revision": 1,
-                "document_revision": 3,
-                "generation": 1,
-                "path": "maps/next.mindmap.json",
+                "document_revision": 0,
+                "generation": generation,
+                "path": "maps/next.mandala.json",
             })
         );
-        assert_eq!(revisions.document_revision, 3);
+        assert_eq!(revisions.document_revision, 0, "the new document counts its own changes");
+        assert_eq!(revisions.revision, 1, "the stream's counter carries on");
     }
 
     #[test]
@@ -1339,7 +995,7 @@ mod tests {
         session.subscribe(ALL(), false);
         session.baseline(&world.now());
         for _ in 0..3 {
-            world.doc.mark_dirty();
+            world.change(ChangeSource::Action);
             session.observe(&world.now(), Driver::App);
         }
         world.camera.zoom = 3.0;
@@ -1361,7 +1017,7 @@ mod tests {
         session.subscribe([Class::DocumentChanged].into_iter().collect(), true);
         session.baseline(&world.now());
         for _ in 0..3 {
-            world.doc.mark_dirty();
+            world.change(ChangeSource::Action);
             session.observe_step(&world.now());
         }
         let revisions: Vec<Value> = drain(&mut session)
@@ -1377,7 +1033,7 @@ mod tests {
         let mut session = Session::default();
         session.subscribe([Class::DocumentChanged].into_iter().collect(), false);
         session.baseline(&world.now());
-        world.doc.mark_dirty();
+        world.change(ChangeSource::Action);
         session.observe_step(&world.now());
         assert!(drain(&mut session).is_empty());
     }
@@ -1388,7 +1044,7 @@ mod tests {
         let mut session = Session::default();
         session.subscribe(ALL(), false);
         session.baseline(&world.now());
-        world.doc.mark_dirty();
+        world.change(ChangeSource::Action);
         world.camera.zoom = 3.0;
         session.observe(&world.now(), Driver::App);
         session.unsubscribe(Some([Class::CameraChanged].into_iter().collect()));
@@ -1402,7 +1058,7 @@ mod tests {
         let mut session = Session::default();
         session.subscribe(ALL(), false);
         session.baseline(&world.now());
-        world.doc.mark_dirty();
+        world.change(ChangeSource::Action);
         session.observe(&world.now(), Driver::App);
         let held = session.pop_pending().expect("queued");
         world.camera.zoom = 3.0;
@@ -1411,10 +1067,10 @@ mod tests {
         let order: Vec<&str> = drain(&mut session).iter().map(|(name, _)| *name).collect();
         assert_eq!(order, ["document_changed", "camera_changed"]);
 
-        world.doc.mark_dirty();
+        world.change(ChangeSource::Action);
         session.observe(&world.now(), Driver::App);
         let held = session.pop_pending().expect("queued");
-        world.doc.mark_dirty();
+        world.change(ChangeSource::Action);
         session.observe(&world.now(), Driver::App);
         session.requeue(held);
         let events = drain(&mut session);
@@ -1432,12 +1088,12 @@ mod tests {
         let mut session = Session::default();
         session.subscribe(ALL(), true);
         session.baseline(&world.now());
-        world.doc.mark_dirty();
+        world.change(ChangeSource::Action);
         let before = session.observe(&world.now(), Driver::App);
         session.reset_controller();
         assert!(!session.is_subscribed());
         assert!(drain(&mut session).is_empty());
-        world.doc.mark_dirty();
+        world.change(ChangeSource::Action);
         let after = session.observe(&world.now(), Driver::App);
         assert_eq!(
             after.revision,
@@ -1453,7 +1109,7 @@ mod tests {
         session.subscribe([Class::DocumentChanged].into_iter().collect(), true);
         session.baseline(&world.now());
         for _ in 0..PENDING_CAP + 10 {
-            world.doc.mark_dirty();
+            world.change(ChangeSource::Action);
             session.observe_step(&world.now());
         }
         let events = drain(&mut session);

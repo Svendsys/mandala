@@ -1,0 +1,2394 @@
+{
+  "format": 1,
+  "name": "testament",
+  "palettes": {
+    "My Palette": [
+      {
+        "frame": "#f0f0f0",
+        "text": "#000000"
+      }
+    ],
+    "autumn": [
+      {
+        "frame": "#e5a4a0",
+        "text": "#000000"
+      },
+      {
+        "frame": "#cc9d44",
+        "text": "#000000"
+      },
+      {
+        "frame": "#d07021",
+        "text": "#000000"
+      },
+      {
+        "frame": "#cd3e24",
+        "text": "#000000"
+      },
+      {
+        "frame": "#c4752d",
+        "text": "#000000"
+      },
+      {
+        "frame": "#d89580",
+        "text": "#000000"
+      },
+      {
+        "frame": "#e3454b",
+        "text": "#000000"
+      }
+    ],
+    "coral": [
+      {
+        "frame": "#30b082",
+        "text": "#000000"
+      },
+      {
+        "frame": "#e24271",
+        "text": "#000000"
+      },
+      {
+        "frame": "#858088",
+        "text": "#000000"
+      },
+      {
+        "frame": "#6b4737",
+        "text": "#000000"
+      },
+      {
+        "frame": "#c67f94",
+        "text": "#000000"
+      },
+      {
+        "frame": "#7f99d0",
+        "text": "#000000"
+      },
+      {
+        "frame": "#8ce398",
+        "text": "#000000"
+      }
+    ],
+    "coral-v3": [
+      {
+        "frame": "#30b082",
+        "text": "#000000"
+      },
+      {
+        "frame": "#e24271",
+        "text": "#000000"
+      },
+      {
+        "frame": "#858088",
+        "text": "#000000"
+      },
+      {
+        "frame": "#6b4737",
+        "text": "#000000"
+      },
+      {
+        "frame": "#c67f94",
+        "text": "#000000"
+      },
+      {
+        "frame": "#7f99d0",
+        "text": "#000000"
+      },
+      {
+        "frame": "#8ce398",
+        "text": "#000000"
+      }
+    ],
+    "mountain": [
+      {
+        "frame": "#35e1c8",
+        "text": "#000000"
+      },
+      {
+        "frame": "#8f6a3d",
+        "text": "#000000"
+      },
+      {
+        "frame": "#63c860",
+        "text": "#000000"
+      },
+      {
+        "frame": "#34ae9c",
+        "text": "#000000"
+      },
+      {
+        "frame": "#c92fc9",
+        "text": "#000000"
+      },
+      {
+        "frame": "#2871b6",
+        "text": "#000000"
+      },
+      {
+        "frame": "#bb853b",
+        "text": "#000000"
+      }
+    ],
+    "navy-v3": [
+      {
+        "frame": "#2175b1",
+        "text": "#000000"
+      },
+      {
+        "frame": "#595be4",
+        "text": "#000000"
+      },
+      {
+        "frame": "#56a6b5",
+        "text": "#000000"
+      },
+      {
+        "frame": "#2f77da",
+        "text": "#000000"
+      },
+      {
+        "frame": "#255bdb",
+        "text": "#000000"
+      },
+      {
+        "frame": "#44abe6",
+        "text": "#000000"
+      },
+      {
+        "frame": "#96c3e1",
+        "text": "#000000"
+      }
+    ],
+    "rainbow": [
+      {
+        "frame": "#cf2341",
+        "text": "#000000"
+      },
+      {
+        "frame": "#d07021",
+        "text": "#000000"
+      },
+      {
+        "frame": "#d9bb25",
+        "text": "#000000"
+      },
+      {
+        "frame": "#78d14c",
+        "text": "#000000"
+      },
+      {
+        "frame": "#2f77da",
+        "text": "#000000"
+      },
+      {
+        "frame": "#4b0082",
+        "text": "#000000"
+      },
+      {
+        "frame": "#5b20b3",
+        "text": "#000000"
+      }
+    ],
+    "rocky": [
+      {
+        "frame": "#7c9a1f",
+        "text": "#000000"
+      },
+      {
+        "frame": "#ab8d31",
+        "text": "#000000"
+      },
+      {
+        "frame": "#2fd8a7",
+        "text": "#000000"
+      },
+      {
+        "frame": "#a6a07b",
+        "text": "#000000"
+      },
+      {
+        "frame": "#304dda",
+        "text": "#000000"
+      },
+      {
+        "frame": "#82d6b5",
+        "text": "#000000"
+      },
+      {
+        "frame": "#ac64b9",
+        "text": "#000000"
+      }
+    ],
+    "sandy": [
+      {
+        "frame": "#e68447",
+        "text": "#000000"
+      },
+      {
+        "frame": "#39ac69",
+        "text": "#000000"
+      },
+      {
+        "frame": "#20562a",
+        "text": "#000000"
+      },
+      {
+        "frame": "#8c2189",
+        "text": "#000000"
+      },
+      {
+        "frame": "#e2bc9a",
+        "text": "#000000"
+      },
+      {
+        "frame": "#58254c",
+        "text": "#000000"
+      },
+      {
+        "frame": "#be4781",
+        "text": "#000000"
+      }
+    ],
+    "stars-v3": [
+      {
+        "frame": "#26cc20",
+        "text": "#000000"
+      },
+      {
+        "frame": "#735330",
+        "text": "#000000"
+      },
+      {
+        "frame": "#e2475a",
+        "text": "#000000"
+      },
+      {
+        "frame": "#7760d1",
+        "text": "#000000"
+      },
+      {
+        "frame": "#c7b19a",
+        "text": "#000000"
+      },
+      {
+        "frame": "#d8d05e",
+        "text": "#000000"
+      },
+      {
+        "frame": "#e53db7",
+        "text": "#000000"
+      }
+    ],
+    "summer": [
+      {
+        "frame": "#6b1588",
+        "text": "#000000"
+      },
+      {
+        "frame": "#d18200",
+        "text": "#000000"
+      },
+      {
+        "frame": "#73d101",
+        "text": "#000000"
+      },
+      {
+        "frame": "#cbb60c",
+        "text": "#000000"
+      },
+      {
+        "frame": "#76ced1",
+        "text": "#000000"
+      },
+      {
+        "frame": "#2e8aaa",
+        "text": "#000000"
+      },
+      {
+        "frame": "#ada691",
+        "text": "#000000"
+      }
+    ],
+    "sweet": [
+      {
+        "frame": "#cecf4d",
+        "text": "#000000"
+      },
+      {
+        "frame": "#1e5d73",
+        "text": "#000000"
+      },
+      {
+        "frame": "#a3dd8a",
+        "text": "#000000"
+      },
+      {
+        "frame": "#8798e3",
+        "text": "#000000"
+      },
+      {
+        "frame": "#e0ab64",
+        "text": "#000000"
+      },
+      {
+        "frame": "#ae5077",
+        "text": "#000000"
+      },
+      {
+        "frame": "#4e615c",
+        "text": "#000000"
+      }
+    ]
+  },
+  "defaults": {
+    "section": {
+      "size": 14.0
+    }
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "position": [-179.43239, -2413.8032],
+      "min_size": [373.51562, 109.0],
+      "palette": "coral-v3",
+      "sections": [{"spans": [{"text": "Lord God", "size": 74.0, "color": "#ffffff", "weight": "bold"}]}]
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "position": [699.10815, -2005.8618],
+      "min_size": [664.79834, 179.48926],
+      "sections": [{"spans": [{"text": "commanded the man", "size": 59.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 59.0, "color": "#ffffff"}, {"text": "Genesis 2:16", "size": 59.0, "color": "#ffffff", "weight": "bold", "italic": true}]}],
+      "connector": {"color": "#30b082", "anchors": ["auto", "bottom"]}
+    },
+    {
+      "id": 3,
+      "parent": 2,
+      "position": [796.5163, -1673.4907],
+      "min_size": [790.5091, 245.44214],
+      "sections": [{"spans": [{"text": "“You are free to eat from any tree in the garden; but you must not eat from\"", "size": 55.0, "color": "#ffffff", "weight": "bold", "italic": true}]}],
+      "connector": {"color": "#e24271", "anchors": ["auto", "bottom"]},
+      "links": [{"to": 234, "kind": "line", "color": "#858088", "anchors": ["auto", "bottom"]}]
+    },
+    {
+      "id": 4,
+      "parent": 3,
+      "position": [1542.8787, -1352.1552],
+      "min_size": [445.28662, 190.50964],
+      "sections": [{"spans": [{"text": "Because \n", "size": 63.0, "color": "#ffffff", "weight": "bold"}, {"text": "Genesis 2:17", "size": 63.0, "color": "#ffffff", "weight": "bold", "italic": true}]}],
+      "connector": {"color": "#858088"}
+    },
+    {
+      "id": 5,
+      "parent": 4,
+      "position": [2153.1812, -1714.5548],
+      "min_size": [941.1277, 928.42114],
+      "sections": [{"spans": [{"text": "in the day of your eating from it,\n dying you shall die\n", "size": 33.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 33.0, "color": "#ffffff"}, {"text": "of your eating", "size": 33.0, "color": "#ffffff", "weight": "bold"}, {"text": " → אֲכָלְךָ (akhalka) — infinitive construct of אכל (akhal, \"to eat, consume\") with second person masculine singular suffix. Temporal, not conditional: \n\"when you eat.\"\n\n", "size": 33.0, "color": "#ffffff"}, {"text": "dying", "size": 33.0, "color": "#ffffff", "weight": "bold"}, {"text": " → מוֹת (mot) — infinitive absolute of מות (mut, \"to die\"). The intensifying construction — opens dying as a state entered, processual, not a single event.\n\n", "size": 33.0, "color": "#ffffff"}, {"text": "you shall die", "size": 33.0, "color": "#ffffff", "weight": "bold"}, {"text": " → תָּמוּת (tamut) — second person masculine singular imperfect of מות. \nThe finite verb completing the construction.\n\nThe infinitive absolute (mot) initiates a condition. The finite verb (tamut) completes it. \nBetween them is the entire span of mortal life.", "size": 33.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#6b4737", "anchors": ["auto", "bottom"]}
+    },
+    {
+      "id": 6,
+      "position": [-9.891418, -285.262],
+      "min_size": [416.61185, 476.8306],
+      "palette": "sweet",
+      "sections": [{"spans": [{"text": "Adam & Eve", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nMan and Woman\n\nAdam: Of the Earth / grounded\nEve: Mother of the living / Life giver\n\nAfter Adam and Eve eats the fruit of\n\nThe tree of knowing good and evil\n \nBanished from paradise\nTo mortality\n\nThen they have children ", "size": 22.0, "color": "#ffffff"}]}],
+      "links": [{"to": 235, "kind": "line", "color": "#cecf4d"}]
+    },
+    {
+      "id": 7,
+      "parent": 6,
+      "position": [635.562, -319.1351],
+      "min_size": [470.1283, 446.3158],
+      "palette": "autumn",
+      "sections": [{"spans": [{"text": "Cain", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Given by God\"\n(to acquire)\n\nThe firstborn \nMurdered Abel\nEnvious / deceptive\n\nRepresents maybe something\nlike our potential to mimic God\n\nTaking life and death into our own hands\nLike Cain did. Forgetting our place.", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#cecf4d"}
+    },
+    {
+      "id": 8,
+      "parent": 7,
+      "position": [1266.9832, -278.389],
+      "min_size": [455.2328, 345.26324],
+      "sections": [{"spans": [{"text": "Enoch", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(To initiate / dedicate)\n\nCivilization arises from\nthe Cain impulse\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "\"And he became a builder of a city, \nand he called the name of the city after \nthe name of his son, Enoch.\"\n", "size": 22.0, "color": "#ffffff"}, {"text": "Genesis 4:17", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": " ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#e5a4a0"}
+    },
+    {
+      "id": 9,
+      "parent": 8,
+      "position": [1845.9207, -303.21283],
+      "min_size": [417.58447, 412.6316],
+      "sections": [{"spans": [{"text": "Irad", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\n (Irad) — most likely from עִיר (ir), \n\"city\" or \"watcher/guardian.\" \n\nThe עִירִין (irin) are the Watchers in \nDaniel 4 and the Enochic literature. \nBut in the civic reading: \n\nEnoch founds the city (Gen 4:17 — \nCain names a city after him), \nand Irad is what the city produces", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#cc9d44"}
+    },
+    {
+      "id": 10,
+      "parent": 9,
+      "position": [2447.2156, 1.749207],
+      "min_size": [599.7368, 921.98596],
+      "sections": [{"spans": [{"text": "Mehuja'el (מְחוּיָאֵל)", "size": 24.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nP", "size": 24.0, "color": "#ffffff"}, {"text": "ossible decompositions:\n\n\"Struck by Yah-God\" — מְחוּ + יָ + אֵל — \ntwo divine names compounded with violence\n\n\"Blotted out by God\" — מחה + אֵל — \nerasure, not impact \n(same root as God erasing humanity in Gen 6:7)\n\n\"God reveals/declares\" — חוה + אֵל — \nsame root as Chavvah/Eve\n\n\"God gives life\" — חיה + אֵל — \nroot of mechayeh hametim, \"reviver of the dead\"\n\nThe tension: the name is genuinely undecidable \nbetween erasure, revelation, and life-giving. \n\nIn the Cainite civilizational sequence, \nthis is the generation where \ndivine authority gets captured by human power  \nand the ambiguity is the meaning. \n\nThe sac", "size": 24.0, "color": "#ffffff", "italic": true}, {"text": "red now means whatever \nthe structure needs it to mean.", "size": 24.0, "color": "#ffffff", "weight": "bold", "italic": true}]}],
+      "connector": {"color": "#d07021"}
+    },
+    {
+      "id": 11,
+      "parent": 10,
+      "position": [2461.7957, 975.4788],
+      "min_size": [1034.759, 387.36786],
+      "sections": [{"spans": [{"text": "Methushael (מְתוּשָׁאֵל)", "size": 26.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nP", "size": 26.0, "color": "#ffffff"}, {"text": "ossible decompositions:\n\n\"Man of God\" — מְתוּ (man, cognate with Akkadian mutu) + אֵל\n\"\nMan of Sheol\" — מְתוּ + שְׁאוֹל, the divine and the grave compressed into one name\n\n\"Death of God\" — מוּת (death) + אֵל, same consonants rearranged\n\n\"Demanded of God\" — שָׁאַל (to ask/demand) + אֵל, compare Samuel/Shemu'el", "size": 26.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#cd3e24"}
+    },
+    {
+      "id": 12,
+      "parent": 11,
+      "position": [1409.3246, 978.0968],
+      "min_size": [989.8541, 402.31287],
+      "sections": [{"spans": [{"text": "Lamech (לֶמֶךְ)", "size": 24.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nP", "size": 24.0, "color": "#ffffff"}, {"text": "ossible decompositions:\n\n\"Br", "size": 24.0, "color": "#ffffff", "italic": true}, {"text": "ought low\" — ", "size": 24.0, "color": "#ffffff", "weight": "bold", "italic": true}, {"text": "from מוך (mukh), to be poor or diminished, with a ל- prefix\n\n\"Powerful one\" — cognate with Arabic lamaka, to be strong\n\n\"To w", "size": 24.0, "color": "#ffffff", "italic": true}, {"text": "hat purpose?\" — fr", "size": 24.0, "color": "#ffffff", "weight": "bold", "italic": true}, {"text": "om למה (lamah), \"why?", "size": 24.0, "color": "#ffffff", "italic": true}, {"text": "\", the", "size": 24.0, "color": "#ffffff", "weight": "bold", "italic": true}, {"text": " q", "size": 24.0, "color": "#ffffff", "italic": true}, {"text": "uestioning/despairing one\n\n\"Pr", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": "iestly servant\" — possibly from Sumerian/Akkadian lumakku, a cultic office", "size": 24.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#c4752d"},
+      "links": [{"to": 237, "kind": "line", "color": "#d89580", "anchors": ["auto", "bottom"], "label": {"color": "#d07021", "spans": [{"text": "Father of"}]}}, {"to": 239, "kind": "line", "color": "#d89580", "anchors": ["auto", "bottom"], "label": {"color": "#d07021", "spans": [{"text": "Father of"}]}}]
+    },
+    {
+      "id": 13,
+      "parent": 6,
+      "position": [-729.8502, -369.39203],
+      "min_size": [332.7303, 376.63654],
+      "palette": "My Palette",
+      "sections": [{"spans": [{"text": "Abel", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(A whif of air /\nTransient)\nThe after-thought\n\nFavored by God\nMurdered by Cain\n\nRepresents something\nlike our potential to live\nin perfect harmony with God", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#cecf4d"}
+    },
+    {
+      "id": 14,
+      "parent": 6,
+      "position": [-1211.4767, 256.81036],
+      "min_size": [219.49017, 338.97437],
+      "sections": [{"spans": [{"text": "Seth", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(Put in place of /\nPlant firm)\n\nThe replacement \nfor Abel, since we \nruled Abel out by \nkilling him\n\nLived 912 years ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#cecf4d", "control_points": [[-597.61224, 112.67389], [276.8315, -49.54779]], "label": {"color": "#cecf4d", "spans": [{"text": "Adam was 130 years old"}]}}
+    },
+    {
+      "id": 15,
+      "parent": 14,
+      "position": [-1500.4484, 848.86676],
+      "min_size": [797.1556, 570.6811],
+      "sections": [{"spans": [{"text": "Enosh (אֱנוֹשׁ)", "size": 30.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nP", "size": 25.0, "color": "#ffffff", "weight": "bold"}, {"text": "ossible decompositions:\n\n\"Mo", "size": 25.0, "color": "#ffffff"}, {"text": "rtal man\" — ", "size": 25.0, "color": "#ffffff", "weight": "bold"}, {"text": "enosh as frail, perishable man, \ndistinct from adam (earthling) and ish (individual)\n\n\"Sic", "size": 25.0, "color": "#ffffff"}, {"text": "k/incurable\" — f", "size": 25.0, "color": "#ffffff", "weight": "bold"}, {"text": "rom אנש, to be weak, desperate, terminal \n(Jeremiah 17:9, the heart \"desperately wicked\")\n\n\"Companionable\" — minority etymology, \ncognate with Arabic ins (humankind) and uns (intimacy)\n\n\"Seth", "size": 25.0, "color": "#ffffff"}, {"text": " also had a son, and he named him Enosh.\nAt tha", "size": 25.0, "color": "#ffffff", "italic": true}, {"text": "t time people began to call on the name of the Lord.\"\nGene", "size": 25.0, "color": "#ffffff", "weight": "bold", "italic": true}, {"text": "sis 4:26", "size": 25.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#1e5d73", "label": {"color": "#789dab", "spans": [{"text": "At 105 years old"}]}}
+    },
+    {
+      "id": 16,
+      "parent": 15,
+      "position": [-1202.3811, 1497.6691],
+      "min_size": [199.25989, 273.963],
+      "sections": [{"spans": [{"text": "Kenan", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Nester\"\n(nest)\n\nSomeone who\nbuilds a nest\n\nLived 910 years ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#a3dd8a", "label": {"color": "#a3dd8a", "spans": [{"text": "At 90 years of"}]}}
+    },
+    {
+      "id": 17,
+      "parent": 16,
+      "position": [-1197.8511, 1973.8782],
+      "min_size": [208.92023, 176.84204],
+      "sections": [{"spans": [{"text": "Mahalal'el", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Shining of God\"\n(Shine, luminous)\n\nLived 895", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8798e3", "label": {"color": "#8798e3", "spans": [{"text": "At 70 years old"}]}}
+    },
+    {
+      "id": 18,
+      "parent": 17,
+      "position": [-1182.3956, 2335.9028],
+      "min_size": [191.3421, 176.84204],
+      "sections": [{"spans": [{"text": "Jared", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Descent\"\n(To descend)\n\nLived 962 years", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#e0ab64", "label": {"color": "#e0ab64", "spans": [{"text": "At 65 years old"}]}}
+    },
+    {
+      "id": 19,
+      "parent": 18,
+      "position": [-1229.8138, 2670.6582],
+      "min_size": [279.36353, 277.89478],
+      "sections": [{"spans": [{"text": "Enoch", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(To initiate / dedicate)\n\nLived 365 years\n\nEnoch walked with God\nhe was no more, for\nGod took him", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#ae5077", "label": {"color": "#ae5077", "spans": [{"text": "At 162 years old"}]}}
+    },
+    {
+      "id": 20,
+      "parent": 19,
+      "position": [-1264.184, 3174.9614],
+      "min_size": [338.0008, 311.5791],
+      "sections": [{"spans": [{"text": "Methuselah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(his death sends a projectile)\n\nWhen this one dies, \nsomething is launched. \n\nLived 969 years\n\nHe dies the year of the flood ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#4e615c", "control_points": [[0.0, 221.27795], [-6.224854, -346.20648]], "label": {"color": "#4e615c", "spans": [{"text": "At 65 years old"}]}}
+    },
+    {
+      "id": 21,
+      "parent": 20,
+      "position": [-1334.4391, 3636.5635],
+      "min_size": [485.04114, 378.94727],
+      "sections": [{"spans": [{"text": "Lamech", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 22.0, "color": "#ffffff"}, {"text": "see etymology above\n\nHe names his son Noah and says: \n\"This one will comfort us from our work \nand the toil of our hands, from the ground \nwhich the LORD has cursed.\"\n\nLived 777 years \n\nHe dies 5 years before the flood", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#4e615c", "label": {"color": "#cecf4d", "spans": [{"text": "At 187 years old"}]}}
+    },
+    {
+      "id": 22,
+      "parent": 21,
+      "position": [-1364.3213, 4224.532],
+      "min_size": [589.9414, 1278.7578],
+      "sections": [{"spans": [{"text": "Noah\n\"Rest\" or \n\"Settle\"", "size": 40.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\n", "size": 36.0, "color": "#ffffff"}, {"text": "Builds the Ark and\nsurvives the cataclysm", "size": 23.0, "color": "#ffffff"}, {"text": "\n", "size": 32.0, "color": "#ffffff"}, {"text": "\n", "size": 36.0, "color": "#ffffff"}, {"text": "Bridge between \nthe old world and\nthe new", "size": 23.0, "color": "#ffffff"}, {"text": "\n", "size": 36.0, "color": "#ffffff"}, {"text": "\nThe people who survived \nthe Cataclysm split into three \ncultures\n\n", "size": 26.0, "color": "#ffffff"}, {"text": "The Bible tells the story from a Shem perspective\nSo Japheth and Ham are secondary", "size": 23.0, "color": "#ffffff", "italic": true}, {"text": "\n\n", "size": 36.0, "color": "#ffffff"}, {"text": "Lived 950 years", "size": 26.0, "color": "#ffffff"}, {"text": "\n\n", "size": 36.0, "color": "#ffffff"}, {"text": "This is the first splitting / division\nWhen one becomes many\n\nThe symbolism of Jesus (God's son)\n\"dying on the cross\" suddenly seems apt.\n\n\"The Crux of the matter\"\nGod is the Word\nHe sends his son, the Word in flesh\n\nIt is perfect, but upon contact with humanity\nit is killed on the cross. The cross is a universal \nsymbol for division.", "size": 20.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#4e615c", "control_points": [[-1.673828, 224.75241], [-16.533295, -738.7159]], "label": {"color": "#789dab", "spans": [{"text": "At 182 years old"}]}}
+    },
+    {
+      "id": 23,
+      "parent": 22,
+      "position": [-536.51996, 4462.3633],
+      "min_size": [485.93753, 804.2969],
+      "palette": "mountain",
+      "sections": [{"spans": [{"text": "Shem", "size": 38.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Name\"\n(Name / \nessence /\nsubstance", "size": 38.0, "color": "#ffffff"}, {"text": "\n\nCovers up father's \nnakedness \n\n", "size": 22.0, "color": "#ffffff"}, {"text": "\"Blessed be the LORD, \nthe God of Shem.\"\nGenesis 9:26\n\nThey chose to cover up but preserve \nold world knowledge. The Abrahamic line.\n\nShem also intermixed culture and \nmost likely religion with Japheth and Ham\non various occasions\n\nLived 600 years", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 24,
+      "parent": 23,
+      "position": [-310.4072, 4168.928],
+      "min_size": [77.02713, 42.10547],
+      "sections": [{"spans": [{"text": "Elam", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": " ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#35e1c8"}
+    },
+    {
+      "id": 25,
+      "parent": 23,
+      "position": [-568.663, 4236.4053],
+      "min_size": [100.40692, 42.10547],
+      "sections": [{"spans": [{"text": "Asshur", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#35e1c8"}
+    },
+    {
+      "id": 26,
+      "parent": 23,
+      "position": [182.21123, 5413.8633],
+      "min_size": [243.24312, 75.78955],
+      "sections": [{"spans": [{"text": "Arpachshad", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nUncertain etymology ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#35e1c8"}
+    },
+    {
+      "id": 27,
+      "parent": 26,
+      "position": [593.60406, 5412.8574],
+      "min_size": [172.46124, 75.78955],
+      "sections": [{"spans": [{"text": "Shelah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"To send forth\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8f6a3d"}
+    },
+    {
+      "id": 28,
+      "parent": 27,
+      "position": [974.58325, 5434.4634],
+      "min_size": [66.24634, 42.10547],
+      "sections": [{"spans": [{"text": "Eber", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#63c860"}
+    },
+    {
+      "id": 29,
+      "parent": 28,
+      "position": [964.04126, 5320.2173],
+      "min_size": [84.05835, 42.10547],
+      "sections": [{"spans": [{"text": "Joktan", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#34ae9c"}
+    },
+    {
+      "id": 30,
+      "parent": 29,
+      "position": [80.94104, 5178.112],
+      "min_size": [116.636505, 42.10547],
+      "sections": [{"spans": [{"text": "Almodad", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#c92fc9"}
+    },
+    {
+      "id": 31,
+      "parent": 29,
+      "position": [247.57751, 5178.112],
+      "min_size": [107.261505, 42.10547],
+      "sections": [{"spans": [{"text": "Sheleph", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#c92fc9"}
+    },
+    {
+      "id": 32,
+      "parent": 29,
+      "position": [404.83905, 5178.112],
+      "min_size": [163.98029, 42.10547],
+      "sections": [{"spans": [{"text": "Hazarmaveth", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#c92fc9"}
+    },
+    {
+      "id": 33,
+      "parent": 29,
+      "position": [618.81934, 5178.112],
+      "min_size": [77.261536, 42.10547],
+      "sections": [{"spans": [{"text": "Jerah", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#c92fc9"}
+    },
+    {
+      "id": 34,
+      "parent": 29,
+      "position": [746.0809, 5178.112],
+      "min_size": [117.80841, 42.10547],
+      "sections": [{"spans": [{"text": "Hadoram", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#c92fc9"}
+    },
+    {
+      "id": 35,
+      "parent": 29,
+      "position": [913.8893, 5178.112],
+      "min_size": [62.261597, 42.10547],
+      "sections": [{"spans": [{"text": "Uzal", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#c92fc9"}
+    },
+    {
+      "id": 36,
+      "parent": 29,
+      "position": [1026.1509, 5178.112],
+      "min_size": [85.46509, 42.10547],
+      "sections": [{"spans": [{"text": "Diklah", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#c92fc9"}
+    },
+    {
+      "id": 37,
+      "parent": 29,
+      "position": [1161.6165, 5178.112],
+      "min_size": [66.47949, 42.10547],
+      "sections": [{"spans": [{"text": "Obal", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#c92fc9"}
+    },
+    {
+      "id": 38,
+      "parent": 29,
+      "position": [1278.096, 5178.112],
+      "min_size": [107.0271, 42.10547],
+      "sections": [{"spans": [{"text": "Abimael", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#c92fc9"}
+    },
+    {
+      "id": 39,
+      "parent": 29,
+      "position": [1435.123, 5178.112],
+      "min_size": [85.46472, 42.10547],
+      "sections": [{"spans": [{"text": "Sheba", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#c92fc9"}
+    },
+    {
+      "id": 40,
+      "parent": 29,
+      "position": [1570.5876, 5178.112],
+      "min_size": [77.2616, 42.10547],
+      "sections": [{"spans": [{"text": "Ophir", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#c92fc9"}
+    },
+    {
+      "id": 41,
+      "parent": 29,
+      "position": [1697.8491, 5178.112],
+      "min_size": [99.05835, 42.10547],
+      "sections": [{"spans": [{"text": "Havilah", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#c92fc9"}
+    },
+    {
+      "id": 42,
+      "parent": 29,
+      "position": [1846.9075, 5178.112],
+      "min_size": [84.29285, 42.10547],
+      "sections": [{"spans": [{"text": "Jobab", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#c92fc9"}
+    },
+    {
+      "id": 43,
+      "parent": 28,
+      "position": [1215.7058, 5436.693],
+      "min_size": [77.26099, 42.10547],
+      "palette": "sweet",
+      "sections": [{"spans": [{"text": "Peleg", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#34ae9c"}
+    },
+    {
+      "id": 44,
+      "parent": 43,
+      "position": [1410.2034, 5434.703],
+      "min_size": [62.105225, 42.10498],
+      "sections": [{"spans": [{"text": "Reu", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#cecf4d"}
+    },
+    {
+      "id": 45,
+      "parent": 44,
+      "position": [1572.3081, 5434.703],
+      "min_size": [81.24609, 42.10547],
+      "sections": [{"spans": [{"text": "Serug", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#1e5d73"}
+    },
+    {
+      "id": 46,
+      "parent": 45,
+      "position": [1749.5688, 5434.703],
+      "min_size": [82.6521, 42.10547],
+      "sections": [{"spans": [{"text": "Nahor", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#a3dd8a"}
+    },
+    {
+      "id": 47,
+      "parent": 46,
+      "position": [1928.2347, 5432.401],
+      "min_size": [76.79224, 42.10547],
+      "sections": [{"spans": [{"text": "Terah", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#8798e3"}
+    },
+    {
+      "id": 48,
+      "parent": 47,
+      "position": [2748.5762, 5183.1284],
+      "min_size": [501.42773, 548.4541],
+      "palette": "rocky",
+      "sections": [{"spans": [{"text": "Abram", "size": 37.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Exalted father\"\n\nBecomes Abraham \nthe added \"ha\" represents\na piece of God added to\nhis name / essence after\ntheir covenant was made \n\nLives 175 years", "size": 37.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#e0ab64"}
+    },
+    {
+      "id": 49,
+      "parent": 48,
+      "position": [3388.9548, 5390.593],
+      "min_size": [183.79834, 143.15771],
+      "sections": [{"spans": [{"text": "Sarah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Princess\"\n\nAbraham's wife", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#7c9a1f"}
+    },
+    {
+      "id": 50,
+      "parent": 49,
+      "position": [3765.3286, 5269.9697],
+      "min_size": [475.9004, 378.94727],
+      "sections": [{"spans": [{"text": "Isaac", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"He laughs\"\n\nAbram and Sarah laughs when God \ntells them to have another child, due to \ntheir old age. God tells them to name him\n\nYitzhak — \"he laughs.\"\n\n\"God has made laughter for me. \nEveryone who hears will laugh with me.\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#ab8d31", "anchors": ["auto", "bottom"], "control_points": [[81.99107, 2.602203]], "label": {"color": "#ab8d31", "spans": [{"text": "Abram is 100\nSarah is 90"}]}},
+      "links": [{"to": 85, "kind": "line", "color": "#2fd8a7"}]
+    },
+    {
+      "id": 51,
+      "parent": 48,
+      "position": [2054.0244, 4868.698],
+      "min_size": [259.2107, 340.95996],
+      "sections": [{"spans": [{"text": "Hagar", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Foreigner\"\nuncertain etymology \n\nSarah's egyptian\nhandmaid\n\nSarah exiles her, and \nGod hears her crying \nin the wilderness ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#7c9a1f"}
+    },
+    {
+      "id": 52,
+      "parent": 51,
+      "position": [2109.8672, 4693.8643],
+      "min_size": [145.27441, 75.79004],
+      "sections": [{"spans": [{"text": "Ishmael", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"God hears\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#ab8d31"}
+    },
+    {
+      "id": 53,
+      "parent": 52,
+      "position": [1364.3652, 4551.759],
+      "min_size": [116.87085, 42.10547],
+      "sections": [{"spans": [{"text": "Nebaioth", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#2fd8a7"}
+    },
+    {
+      "id": 54,
+      "parent": 52,
+      "position": [1524.2041, 4551.759],
+      "min_size": [81.24585, 42.10547],
+      "sections": [{"spans": [{"text": "Kedar", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#2fd8a7"}
+    },
+    {
+      "id": 55,
+      "parent": 52,
+      "position": [1651.4658, 4551.76],
+      "min_size": [93.667725, 42.10547],
+      "sections": [{"spans": [{"text": "Adbeel", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#2fd8a7"}
+    },
+    {
+      "id": 56,
+      "parent": 52,
+      "position": [1789.7434, 4551.759],
+      "min_size": [103.042725, 42.10547],
+      "sections": [{"spans": [{"text": "Mibsam", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#2fd8a7"}
+    },
+    {
+      "id": 57,
+      "parent": 52,
+      "position": [1937.395, 4551.7593],
+      "min_size": [103.042725, 42.10498],
+      "sections": [{"spans": [{"text": "Mishma", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#2fd8a7"}
+    },
+    {
+      "id": 58,
+      "parent": 52,
+      "position": [2085.0464, 4551.7593],
+      "min_size": [94.8396, 42.10498],
+      "sections": [{"spans": [{"text": "Dumah", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#2fd8a7"}
+    },
+    {
+      "id": 59,
+      "parent": 52,
+      "position": [2225.9023, 4551.759],
+      "min_size": [86.87085, 42.10547],
+      "sections": [{"spans": [{"text": "Massa", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#2fd8a7"}
+    },
+    {
+      "id": 60,
+      "parent": 52,
+      "position": [2359.9607, 4551.7593],
+      "min_size": [86.87158, 42.10498],
+      "sections": [{"spans": [{"text": "Hadad", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#2fd8a7"}
+    },
+    {
+      "id": 61,
+      "parent": 52,
+      "position": [2494.0203, 4551.759],
+      "min_size": [73.980225, 42.10547],
+      "sections": [{"spans": [{"text": "Tema", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#2fd8a7"}
+    },
+    {
+      "id": 62,
+      "parent": 52,
+      "position": [2615.8918, 4551.759],
+      "min_size": [71.87085, 42.10547],
+      "sections": [{"spans": [{"text": "Jetur", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#2fd8a7"}
+    },
+    {
+      "id": 63,
+      "parent": 52,
+      "position": [2732.3713, 4551.759],
+      "min_size": [108.667725, 42.10547],
+      "sections": [{"spans": [{"text": "Naphish", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#2fd8a7"}
+    },
+    {
+      "id": 64,
+      "parent": 52,
+      "position": [2884.008, 4551.759],
+      "min_size": [122.0271, 42.10547],
+      "sections": [{"spans": [{"text": "Kedemah", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#2fd8a7"}
+    },
+    {
+      "id": 65,
+      "parent": 48,
+      "position": [3292.1704, 4886.543],
+      "min_size": [388.7295, 210.52637],
+      "palette": "coral",
+      "sections": [{"spans": [{"text": "Keturah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Incense\" or\n\"perfumed one\"\n\nAfter Sarah dies, Abraham fathers\nseveral sons with Keturah", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#7c9a1f", "control_points": [[0.0, -296.22144], [-121.7486, 240.55954]]}
+    },
+    {
+      "id": 66,
+      "parent": 65,
+      "position": [3012.615, 4744.4375],
+      "min_size": [93.43335, 42.10547],
+      "sections": [{"spans": [{"text": "Zimran", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#30b082"}
+    },
+    {
+      "id": 67,
+      "parent": 65,
+      "position": [3156.0483, 4744.4375],
+      "min_size": [111.480225, 42.10547],
+      "sections": [{"spans": [{"text": "Jokshan", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#30b082"}
+    },
+    {
+      "id": 68,
+      "parent": 65,
+      "position": [3317.5286, 4744.4375],
+      "min_size": [89.68335, 42.10547],
+      "sections": [{"spans": [{"text": "Medan", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#30b082"}
+    },
+    {
+      "id": 69,
+      "parent": 65,
+      "position": [3457.212, 4643.3853],
+      "min_size": [226.68921, 143.15771],
+      "sections": [{"spans": [{"text": "Midian\n", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nWhere Moses flees\nand meets his wife", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#30b082"}
+    },
+    {
+      "id": 70,
+      "parent": 65,
+      "position": [3733.9011, 4744.4375],
+      "min_size": [89.68335, 42.10547],
+      "sections": [{"spans": [{"text": "Ishbak", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#30b082"}
+    },
+    {
+      "id": 71,
+      "parent": 65,
+      "position": [3873.5845, 4744.4375],
+      "min_size": [86.87085, 42.10547],
+      "sections": [{"spans": [{"text": "Shuah", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#30b082"}
+    },
+    {
+      "id": 72,
+      "parent": 47,
+      "position": [1597.8866, 5652.337],
+      "min_size": [82.65173, 42.10547],
+      "sections": [{"spans": [{"text": "Nahor", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#e0ab64"},
+      "links": [{"to": 74, "kind": "line", "color": "#ae5077", "label": {"color": "#e0ab64", "spans": [{"text": "Fathers her\nSons"}]}}]
+    },
+    {
+      "id": 73,
+      "parent": 47,
+      "position": [1924.5258, 5645.851],
+      "min_size": [81.24536, 42.10547],
+      "palette": "sandy",
+      "sections": [{"spans": [{"text": "Haran", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#e0ab64"}
+    },
+    {
+      "id": 74,
+      "parent": 73,
+      "position": [1801.7737, 5787.9565],
+      "min_size": [89.961426, 75.78955],
+      "sections": [{"spans": [{"text": "Milcah\nF", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#e68447"}
+    },
+    {
+      "id": 75,
+      "parent": 74,
+      "position": [-3179.6697, 5963.746],
+      "min_size": [62.105225, 42.10547],
+      "sections": [{"spans": [{"text": "Uz", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#39ac69"}
+    },
+    {
+      "id": 76,
+      "parent": 74,
+      "position": [-3067.5645, 5963.746],
+      "min_size": [62.10498, 42.10547],
+      "sections": [{"spans": [{"text": "Buz", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#39ac69"}
+    },
+    {
+      "id": 77,
+      "parent": 74,
+      "position": [-2955.4595, 5963.746],
+      "min_size": [100.230225, 42.10547],
+      "sections": [{"spans": [{"text": "Kemuel", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#39ac69"}
+    },
+    {
+      "id": 78,
+      "parent": 74,
+      "position": [-2805.229, 5963.746],
+      "min_size": [100.46484, 42.10547],
+      "sections": [{"spans": [{"text": "Chesed", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#39ac69"}
+    },
+    {
+      "id": 79,
+      "parent": 74,
+      "position": [-2654.7642, 5963.746],
+      "min_size": [70.464355, 42.10547],
+      "sections": [{"spans": [{"text": "Hazo", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#39ac69"}
+    },
+    {
+      "id": 80,
+      "parent": 74,
+      "position": [-2534.2998, 5963.746],
+      "min_size": [99.05835, 42.10547],
+      "sections": [{"spans": [{"text": "Pildash", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#39ac69"}
+    },
+    {
+      "id": 81,
+      "parent": 74,
+      "position": [-2385.2415, 5963.746],
+      "min_size": [97.886475, 42.10547],
+      "sections": [{"spans": [{"text": "Jidlaph", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#39ac69"}
+    },
+    {
+      "id": 82,
+      "parent": 74,
+      "position": [-2237.355, 5963.746],
+      "min_size": [97.886475, 42.10547],
+      "sections": [{"spans": [{"text": "Jidlaph", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#39ac69"}
+    },
+    {
+      "id": 83,
+      "parent": 74,
+      "position": [-2089.4685, 9514.662],
+      "min_size": [101.87085, 42.10547],
+      "palette": "sandy",
+      "sections": [{"spans": [{"text": "Bethuel", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#39ac69"}
+    },
+    {
+      "id": 84,
+      "parent": 83,
+      "position": [-2083.1218, 9654.651],
+      "min_size": [84.292725, 42.10547],
+      "sections": [{"spans": [{"text": "Laban", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#e68447"}
+    },
+    {
+      "id": 85,
+      "parent": 83,
+      "position": [-500.04834, 9317.53],
+      "min_size": [391.20044, 411.56055],
+      "sections": [{"spans": [{"text": "Rebekah\n", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 22.0, "color": "#ffffff", "weight": "bold", "italic": true}, {"text": "Isaac's wife\nand mother\nof his sons", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": "\n\n", "size": 22.0, "color": "#ffffff", "weight": "bold", "italic": true}, {"text": "\"Two nations are in your womb,\nand two peoples from within you \nshall be divided; the one shall be \nstronger than the other, the \nelder shall serve the younger.\" \n", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": "(Genesis 25:23)", "size": 22.0, "color": "#ffffff", "weight": "bold", "italic": true}]}],
+      "connector": {"color": "#e68447"}
+    },
+    {
+      "id": 86,
+      "parent": 85,
+      "position": [-604.09204, 9841.291],
+      "min_size": [70.4646, 42.10547],
+      "sections": [{"spans": [{"text": "Esau", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#39ac69", "control_points": [[-223.36737, 0.0], [-0.191807, -76.69937]]},
+      "links": [{"to": 92, "kind": "line", "color": "#20562a", "label": {"color": "#858088", "spans": [{"text": "Twins"}]}}]
+    },
+    {
+      "id": 87,
+      "parent": 86,
+      "position": [-870.09985, 9983.396],
+      "min_size": [97.6521, 42.10547],
+      "sections": [{"spans": [{"text": "Eliphaz", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#20562a"}
+    },
+    {
+      "id": 88,
+      "parent": 86,
+      "position": [-728.0725, 9983.396],
+      "min_size": [82.886475, 42.10547],
+      "sections": [{"spans": [{"text": "Jeush", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#20562a"}
+    },
+    {
+      "id": 89,
+      "parent": 86,
+      "position": [-600.81177, 9983.396],
+      "min_size": [81.24585, 42.10547],
+      "sections": [{"spans": [{"text": "Jalam", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#20562a"}
+    },
+    {
+      "id": 90,
+      "parent": 86,
+      "position": [-473.54785, 9983.396],
+      "min_size": [82.6521, 42.10547],
+      "sections": [{"spans": [{"text": "Korah", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#20562a"}
+    },
+    {
+      "id": 91,
+      "parent": 86,
+      "position": [-346.28418, 9983.396],
+      "min_size": [78.6687, 42.10547],
+      "sections": [{"spans": [{"text": "Reuel", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#20562a"}
+    },
+    {
+      "id": 92,
+      "parent": 85,
+      "position": [32.0896, 9392.439],
+      "min_size": [585.1151, 645.25586],
+      "sections": [{"spans": [{"text": "Jacob / Israel\nN", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "ame: יַעֲקֹב (Ya'aqov) — from עקב ('aqev), \"heel.\" \n\nNamed because he was born grasping his \ntwin Esau's heel (Genesis 25:26). \n\nThe root also carries \"to follow at the heel,\" \n\"to supplant,\" \"to deceive.\"\n\nRenamed: יִשְׂרָאֵל (Yisra'el) — \ngiven after wrestling the unnamed figure at \nthe Jabbok ford (Genesis 32:28). \n\nThe text glosses it as \"you have striven (sarita) \nwith God and with men, and have prevailed.\" \n\nOften translated \"He Who Wrestles With God\"\n\nWalks away with a permanent limp.", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#39ac69"}
+    },
+    {
+      "id": 93,
+      "parent": 92,
+      "position": [2188.512, 10150.637],
+      "min_size": [158.86816, 75.79004],
+      "sections": [{"spans": [{"text": "Leah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": " \nUnloved Wife", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#20562a"}
+    },
+    {
+      "id": 94,
+      "parent": 93,
+      "position": [1768.6721, 10146.018],
+      "min_size": [147.85132, 75.79004],
+      "sections": [{"spans": [{"text": "Reuben", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"See, a son\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8c2189"}
+    },
+    {
+      "id": 95,
+      "parent": 93,
+      "position": [2052.0427, 10330.899],
+      "min_size": [101.91431, 75.78906],
+      "sections": [{"spans": [{"text": "Simeon", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Heard\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8c2189"}
+    },
+    {
+      "id": 96,
+      "parent": 93,
+      "position": [2202.9402, 9784.693],
+      "min_size": [127.6958, 75.79004],
+      "sections": [{"spans": [{"text": "Levi", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Attached\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8c2189"}
+    },
+    {
+      "id": 97,
+      "parent": 96,
+      "position": [2039.304, 9745.441],
+      "min_size": [96.458984, 42.10547],
+      "sections": [{"spans": [{"text": "Kohath", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#e2bc9a"}
+    },
+    {
+      "id": 98,
+      "parent": 97,
+      "position": [1780.8665, 9634.897],
+      "min_size": [112.46069, 75.78906],
+      "sections": [{"spans": [{"text": "Amram", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Exalted\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#58254c"},
+      "links": [{"to": 101, "kind": "line", "color": "#be4781", "label": {"color": "#ac64b9", "spans": [{"text": "Fathers her \nchildren"}]}}]
+    },
+    {
+      "id": 99,
+      "parent": 96,
+      "position": [2471.9539, 9761.282],
+      "min_size": [112.65259, 42.10547],
+      "sections": [{"spans": [{"text": "Gershon", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#e2bc9a"}
+    },
+    {
+      "id": 100,
+      "parent": 96,
+      "position": [2346.4412, 9629.565],
+      "min_size": [135.66406, 75.79004],
+      "sections": [{"spans": [{"text": "Merari", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Bitter one\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#e2bc9a"}
+    },
+    {
+      "id": 101,
+      "parent": 96,
+      "position": [2096.8396, 9521.016],
+      "min_size": [168.52075, 109.47363],
+      "sections": [{"spans": [{"text": "Jochebed", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"God is Glory\"\nF", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#e2bc9a"}
+    },
+    {
+      "id": 102,
+      "parent": 101,
+      "position": [2282.1746, 8284.361],
+      "min_size": [523.1907, 776.1592],
+      "sections": [{"spans": [{"text": "Moses\n\"The born one\"", "size": 49.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "Raised as Egyptian royalty.\n\nAfter he kills an Egyptian taskmaster \nfor beating a Hebrew slave he\nflees to ", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": "Midian", "size": 22.0, "color": "#ffffff", "weight": "bold", "italic": true}, {"text": ", and meets his wife\n\n called by God to liberate the Hebrews\n\nHe acts as a mediator between God\nand humanity.\n\nHe attains his connection with God\nwhile working near mount Sinai\n\nHe remains relatively poor materialistically \nhis whole life, and is not allowed to enter\nthe promised land, because he disrespected \nthe Lord in front of his people ", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#58254c", "control_points": [[0.0, -311.39954], [10.554535, 516.551]]}
+    },
+    {
+      "id": 103,
+      "parent": 102,
+      "position": [2428.0413, 8007.5205],
+      "min_size": [231.55444, 184.21045],
+      "sections": [{"spans": [{"text": "Zipporah", "size": 28.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Bird\"\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "daughter of Jethro\n the Midianite priest", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#be4781", "label": {"color": "#be4781", "spans": [{"text": "With his wife"}]}}
+    },
+    {
+      "id": 104,
+      "parent": 103,
+      "position": [2044.8704, 7607.2275],
+      "min_size": [557.34546, 287.6953],
+      "sections": [{"spans": [{"text": "Gershom", "size": 38.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Stranger there\"\n\n", "size": 38.0, "color": "#ffffff"}, {"text": "\"I have been a stranger (ger)\n in a foreign land.\"", "size": 38.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 105,
+      "parent": 103,
+      "position": [2635.8918, 7777.162],
+      "min_size": [311.21826, 115.88574],
+      "sections": [{"spans": [{"text": "Eliezer", "size": 37.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 37.0, "color": "#ffffff"}, {"text": "\"My God is help\"", "size": 37.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 106,
+      "parent": 101,
+      "position": [1631.2424, 8622.266],
+      "min_size": [578.1941, 432.63184],
+      "sections": [{"spans": [{"text": "Aaron\nThe High Priest", "size": 33.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\n", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "After God consumes his first\nand second son, Moses tells him\n\n\"This is what the LORD meant when He said,\n 'through those near to me I will be sanctified, \nand before all the people I will be glorified.'\"\n\nAaron's response was silence ", "size": 25.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#58254c"}
+    },
+    {
+      "id": 107,
+      "parent": 106,
+      "position": [1534.7156, 8171.1807],
+      "min_size": [299.91772, 310.9961],
+      "sections": [{"spans": [{"text": "Nadab\n", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\"generous\" or \n\"willing\"\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "Sees God and lives\nBut then disrespects God\nsomehow and is ", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": "\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "consumed by God", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 108,
+      "parent": 106,
+      "position": [1233.1472, 8507.324],
+      "min_size": [298.1449, 176.84375],
+      "sections": [{"spans": [{"text": "Abihu", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"He is my father\"\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "Same story as Nadab", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": "\n", "size": 22.0, "color": "#ffffff"}, {"text": "Also consumed by God", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 109,
+      "parent": 106,
+      "position": [1151.6033, 8824.303],
+      "min_size": [416.5326, 143.1582],
+      "sections": [{"spans": [{"text": "Eleazar", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"God has helped\"\n\nBecomes high priest after Aaron dies", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 110,
+      "parent": 106,
+      "position": [1175.5754, 9097.4],
+      "min_size": [353.61707, 244.21094],
+      "sections": [{"spans": [{"text": "Ithamar", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nPossibly \"island/land of palms\"\nEtymology uncertain \n\nOversees the Gershonites and\n Merarites in the tabernacle\n construction.", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 111,
+      "parent": 101,
+      "position": [1668.6223, 9172.247],
+      "min_size": [219.22046, 203.15723],
+      "sections": [{"spans": [{"text": "Miriam\n", "size": 26.0, "color": "#ffffff", "weight": "bold"}, {"text": "\"Bitterness\" or\n\"Bitter Sea\"\n\nThe prophetess", "size": 26.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#58254c"}
+    },
+    {
+      "id": 112,
+      "parent": 93,
+      "position": [3270.7043, 9712.064],
+      "min_size": [100.274414, 75.78906],
+      "sections": [{"spans": [{"text": "Judah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Praise\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8c2189", "label": {"color": "#8c2189", "spans": [{"text": "Leah's 4th son"}]}}
+    },
+    {
+      "id": 113,
+      "parent": 112,
+      "position": [2843.8054, 9198.002],
+      "min_size": [229.3584, 275.46777],
+      "sections": [{"spans": [{"text": "Onan", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Vigor, strength\"\n\nSpills his seed\non the ground\ninstead of in Tamar\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "God destroys him", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#e2bc9a"}
+    },
+    {
+      "id": 114,
+      "parent": 112,
+      "position": [3116.3333, 9196.559],
+      "min_size": [231.26953, 176.8418],
+      "sections": [{"spans": [{"text": "Er\n", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 22.0, "color": "#ffffff"}, {"text": "Destroyed by God", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nFor being \nwicked\n", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#e2bc9a"}
+    },
+    {
+      "id": 115,
+      "parent": 112,
+      "position": [3382.6755, 9192.137],
+      "min_size": [194.38818, 176.8418],
+      "sections": [{"spans": [{"text": "Shelah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\nPromised to\nTamar, but \nJudah withholds", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#e2bc9a"}
+    },
+    {
+      "id": 116,
+      "parent": 112,
+      "position": [3622.2668, 9375.574],
+      "min_size": [298.6848, 310.93457],
+      "sections": [{"spans": [{"text": "Tamar", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "Judah's daughter-in-law \nShe seduces Judah \nand gets twins\n", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": "\n", "size": 22.0, "color": "#ffffff"}, {"text": "She becomes the mother\nof the entire royal path\nto Jesus Christ", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#e2bc9a"}
+    },
+    {
+      "id": 117,
+      "parent": 116,
+      "position": [3708.9578, 9246.498],
+      "min_size": [108.47632, 75.78906],
+      "sections": [{"spans": [{"text": "Perez", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Breach\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#58254c"}
+    },
+    {
+      "id": 118,
+      "parent": 117,
+      "position": [4063.6882, 8727.266],
+      "min_size": [226.89136, 339.34473],
+      "sections": [{"spans": [{"text": "Hezron", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 22.0, "color": "#ffffff"}, {"text": "\"Enclosed\" or \n\"of the settlement\"", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": "\n\nHas a wife ", "size": 22.0, "color": "#ffffff"}, {"text": "Abijah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 22.0, "color": "#ffffff"}, {"text": "\"My Father is Jah\"\n\"God is my Father\"\n\nThis appears to \nsymbolize ", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 119,
+      "parent": 118,
+      "position": [3598.911, 8680.594],
+      "min_size": [315.1963, 75.78906],
+      "sections": [{"spans": [{"text": "Jerahmeel", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"God will have compassion\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 120,
+      "parent": 119,
+      "position": [3704.5447, 8449.0],
+      "min_size": [112.03589, 109.47363],
+      "sections": [{"spans": [{"text": "Atarah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"crown\" /\n\"wreath\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781", "label": {"color": "#39ac69", "spans": [{"text": "2nd wife"}]}}
+    },
+    {
+      "id": 121,
+      "parent": 120,
+      "position": [3475.926, 8234.621],
+      "min_size": [307.1233, 176.8418],
+      "sections": [{"spans": [{"text": "Onam", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"my potency/vigor\"\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "Same root as Ben-Oni\nthis translation is reductive", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 122,
+      "parent": 119,
+      "position": [3447.8591, 8513.604],
+      "min_size": [210.1958, 75.78906],
+      "palette": "summer",
+      "sections": [{"spans": [{"text": "Mother unknown\nunspecified", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#be4781", "control_points": [[-105.642944, 0.0], [125.84123, 6.115635]]}
+    },
+    {
+      "id": 123,
+      "parent": 122,
+      "position": [3160.1204, 8223.867],
+      "min_size": [187.73877, 109.47461],
+      "sections": [{"spans": [{"text": "Bunah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"understanding\"\n\"discernment\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#6b1588"}
+    },
+    {
+      "id": 124,
+      "parent": 122,
+      "position": [3202.307, 8383.341],
+      "min_size": [145.55176, 109.47363],
+      "sections": [{"spans": [{"text": "Ram", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"To be high\"\n\"Exalted\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#6b1588"}
+    },
+    {
+      "id": 125,
+      "parent": 122,
+      "position": [3188.714, 8542.814],
+      "min_size": [159.14502, 109.47461],
+      "sections": [{"spans": [{"text": "Oren", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Pine tree\" or\n\"Ash tree\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#6b1588"}
+    },
+    {
+      "id": 126,
+      "parent": 122,
+      "position": [3100.971, 8702.289],
+      "min_size": [246.88916, 176.8418],
+      "sections": [{"spans": [{"text": "Ozem", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\npossibly from עצם (\natsam) \"to be strong\"\nor \"to be numerous\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#6b1588"}
+    },
+    {
+      "id": 127,
+      "parent": 118,
+      "position": [4033.535, 8464.754],
+      "min_size": [152.1145, 109.47363],
+      "sections": [{"spans": [{"text": "Ram", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"To Be High\"\n\"Exalted\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 128,
+      "parent": 127,
+      "position": [3833.9128, 8151.528],
+      "min_size": [333.052, 109.47412],
+      "sections": [{"spans": [{"text": "Amminadab", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(ammi, \"my people/kinsman\")\n(nadav, \"willing, noble\")", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 129,
+      "parent": 128,
+      "position": [3489.7722, 7571.6895],
+      "min_size": [548.21924, 480.0],
+      "sections": [{"spans": [{"text": "Nahshon", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 22.0, "color": "#ffffff"}, {"text": "\nNahshon (נַחְשׁוֹן) —\n from נָחָשׁ (nachash, \"serpent\") \nwith an intensive suffix.\n \"The great serpent\" or \"the diviner.\"\n\n This is a loaded name\nnachash is the Eden serpent word, \nbut also carries connotations of bronze/copper\n (נְחֹשֶׁת, nechoshet) and divination/observation. \n\nNahshon is prince of Judah in the wilderness \n(Numbers 2:3)", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 130,
+      "parent": 129,
+      "position": [3757.0437, 7216.4604],
+      "min_size": [335.76074, 210.52637],
+      "sections": [{"spans": [{"text": "Salmon/Salma", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"garment, covering\"\n\nor possibly \n\n(shalom, \"peace/wholeness\")", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 131,
+      "parent": 130,
+      "position": [3433.013, 6882.2754],
+      "min_size": [307.1228, 176.84229],
+      "sections": [{"spans": [{"text": "Boaz", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\nPossibly בּוֹ (bo, \"in him\") +\n עַז (az, \"strength\"): \n\"in him is strength.\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 132,
+      "parent": 131,
+      "position": [3044.9963, 6773.826],
+      "min_size": [251.95801, 109.47363],
+      "sections": [{"spans": [{"text": "Obed", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"servant, worshipper.\"\n\"the one who serves\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 133,
+      "parent": 132,
+      "position": [3457.8904, 6480.42],
+      "min_size": [501.46387, 210.52637],
+      "sections": [{"spans": [{"text": "Jesse", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\nYishai — \nuncertain and disputed. \nPossibly from יֵשׁ (yesh, \"there is/exists\") + \na divine suffix: \"God exists\" or \"man of God.\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 134,
+      "parent": 133,
+      "position": [2844.9402, 5963.746],
+      "min_size": [755.70166, 372.63184],
+      "sections": [{"spans": [{"text": "David", "size": 48.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Beloved\"\n\n", "size": 48.0, "color": "#ffffff"}, {"text": "From דוד (dod, \"beloved, uncle, friend\").\n The word also carries erotic connotations \nSong of Songs uses דוֹדִי (dodi, \"my beloved\") throughout.\n The king is the beloved one.", "size": 26.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 135,
+      "parent": 118,
+      "position": [4656.161, 8399.228],
+      "min_size": [192.30615, 107.83984],
+      "sections": [{"spans": [{"text": "Chelubai/Caleb", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Dog\" or\n\"Wholehearted\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 136,
+      "parent": 135,
+      "position": [4609.302, 7972.6665],
+      "min_size": [267.8452, 277.3921],
+      "palette": "rainbow",
+      "sections": [{"spans": [{"text": "Azubah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Forsaken\"\n\nI think the testament is\nmaking a point about\nquality over quantity\n\nFirst wife", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 137,
+      "parent": 136,
+      "position": [4432.549, 7763.193],
+      "min_size": [116.958984, 109.47363],
+      "sections": [{"spans": [{"text": "Jesher", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Upright\"\n\"Straight\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#cf2341"}
+    },
+    {
+      "id": 138,
+      "parent": 136,
+      "position": [4599.507, 7763.193],
+      "min_size": [156.09863, 109.47363],
+      "sections": [{"spans": [{"text": "Shobab", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Rebellious\"\n\"Backsliding\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#cf2341"}
+    },
+    {
+      "id": 139,
+      "parent": 136,
+      "position": [4805.6064, 7695.8247],
+      "min_size": [248.29492, 176.8418],
+      "sections": [{"spans": [{"text": "Ardon", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\nUncertain etymology \nPossibly \"Fugitive\"\nor \"Descender\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#cf2341"}
+    },
+    {
+      "id": 140,
+      "parent": 135,
+      "position": [5004.9414, 7988.905],
+      "min_size": [370.85693, 345.26318],
+      "sections": [{"spans": [{"text": "Ephrath", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Fruitful\"\n\nNote that she only has one son\nyet she is the one called Fruitful\n\nAnd her legacy explains why\n\nSecond wife\nafter Azubah's death ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 141,
+      "parent": 140,
+      "position": [5525.5684, 7976.2793],
+      "min_size": [306.8247, 311.3418],
+      "palette": "sweet",
+      "sections": [{"spans": [{"text": "Hur", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": " \n\"Free/noble\" or\n\"White/pale\"\n\nHe was close and trusted \nby Moses and Aaron\n\nBorn a slave, then freed\nin Exodus by God", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781", "control_points": [[284.5244, 0.0], [-277.65097, 31.088745]]}
+    },
+    {
+      "id": 142,
+      "parent": 141,
+      "position": [5932.3936, 7692.809],
+      "min_size": [123.94531, 75.78955],
+      "sections": [{"spans": [{"text": "Uri", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 22.0, "color": "#ffffff"}, {"text": "\"My Light\"", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#cecf4d"}
+    },
+    {
+      "id": 143,
+      "parent": 142,
+      "position": [6156.339, 7591.7563],
+      "min_size": [320.14404, 277.89453],
+      "sections": [{"spans": [{"text": "Bezalel", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"In the shadow of God\"\n\"In God's Image\"\n", "size": 22.0, "color": "#ffffff"}, {"text": "\nA slave's great-grandson,\n filled with divine spirit,\n building the house of ", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": "God", "size": 22.0, "color": "#ffffff", "weight": "bold", "italic": true}, {"text": " \nin the wilderness.", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#1e5d73"}
+    },
+    {
+      "id": 144,
+      "parent": 141,
+      "position": [5932.3936, 7955.634],
+      "min_size": [358.31396, 210.52637],
+      "sections": [{"spans": [{"text": "Salma\n", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\"garment, covering\"\n\nor possibly \n\n(shalom, \"peace/wholeness\")", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#cecf4d"}
+    },
+    {
+      "id": 145,
+      "parent": 144,
+      "position": [6390.707, 7969.651],
+      "min_size": [326.8125, 182.49219],
+      "sections": [{"spans": [{"text": "Bethlehem\n", "size": 37.0, "color": "#ffffff", "weight": "bold"}, {"text": "\"House of Bread/Food\" \n\n", "size": 27.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#1e5d73"}
+    },
+    {
+      "id": 146,
+      "parent": 141,
+      "position": [5932.3936, 8235.301],
+      "min_size": [352.6792, 244.21094],
+      "sections": [{"spans": [{"text": "Shobal\n", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\"flowing/extending/path\"", "size": 22.0, "color": "#ffffff"}, {"text": "\n\n", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "Flowing, covering, harvesting. \nOr: the path that extends, \nthe garment that covers, \nthe season that gathers", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#cecf4d"}
+    },
+    {
+      "id": 147,
+      "parent": 146,
+      "position": [6385.073, 8252.143],
+      "min_size": [488.1045, 210.52637],
+      "sections": [{"spans": [{"text": "Kiriath-Jaerim", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"City of Forests\"\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "the city where the Ark of the Covenant \nrested for twenty years after the Philistines \nreturned it (1 Samuel 7:1-2)", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#1e5d73"}
+    },
+    {
+      "id": 148,
+      "parent": 141,
+      "position": [5932.3936, 8562.67],
+      "min_size": [295.0835, 109.47363],
+      "sections": [{"spans": [{"text": "Hareph\n", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\"reproach, defy\"\n maybe \"autumn/harvest\" ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#cecf4d"}
+    },
+    {
+      "id": 149,
+      "parent": 148,
+      "position": [6327.4766, 8562.67],
+      "min_size": [284.06836, 109.47363],
+      "sections": [{"spans": [{"text": "Beth-Gader", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"House of the Wall\"\n\"House of the enclosure\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#1e5d73"}
+    },
+    {
+      "id": 150,
+      "parent": 135,
+      "position": [5347.494, 8555.445],
+      "min_size": [140.54297, 175.02734],
+      "sections": [{"spans": [{"text": "Ephah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Darkness\"\n\"Gloom\"\n\nConcubine ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 151,
+      "parent": 150,
+      "position": [5588.037, 8428.748],
+      "min_size": [193.1294, 109.47363],
+      "sections": [{"spans": [{"text": "Haran", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Parched/dry\" or\n\"Mountaineer\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 152,
+      "parent": 150,
+      "position": [5588.037, 8588.222],
+      "min_size": [155.43994, 143.1582],
+      "sections": [{"spans": [{"text": "Moza", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Going forth\"\n\"Source\"\n\"Spring\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 153,
+      "parent": 150,
+      "position": [5588.037, 8781.379],
+      "min_size": [118.086426, 75.78906],
+      "sections": [{"spans": [{"text": "Gazez", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Shearer\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 154,
+      "parent": 135,
+      "position": [4849.371, 8597.759],
+      "min_size": [191.3418, 176.84277],
+      "sections": [{"spans": [{"text": "Maacah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Oppression\"\n\"Pressed down\"\n\nConcubine ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781", "control_points": [[0.0, 122.033875], [-91.84543, -138.43484]]}
+    },
+    {
+      "id": 155,
+      "parent": 154,
+      "position": [4499.6465, 8874.602],
+      "min_size": [129.14551, 109.47363],
+      "sections": [{"spans": [{"text": "Sheber", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Breaking\"\n\"Fracture\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 156,
+      "parent": 154,
+      "position": [4678.793, 8874.602],
+      "min_size": [239.25781, 75.78906],
+      "sections": [{"spans": [{"text": "Tirhanah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nuncertain etymology ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 157,
+      "parent": 154,
+      "position": [4968.051, 8874.602],
+      "min_size": [129.14551, 109.47461],
+      "sections": [{"spans": [{"text": "Shaaph", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"To divide\"\n\"Cleave\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 158,
+      "parent": 154,
+      "position": [5147.1963, 8874.602],
+      "min_size": [243.24219, 75.78906],
+      "sections": [{"spans": [{"text": "Sheva", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nUncertain etymology ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 159,
+      "parent": 135,
+      "position": [4430.1562, 8299.848],
+      "min_size": [209.96094, 75.79004],
+      "sections": [{"spans": [{"text": "Mother unknown\nunspecified", "size": 22.0, "color": "#ffffff", "weight": "bold", "italic": true}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 160,
+      "parent": 159,
+      "position": [4255.866, 8114.44],
+      "min_size": [184.92627, 109.47412],
+      "sections": [{"spans": [{"text": "Achsah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"ankle bracelet\"\n\"ankle\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 161,
+      "parent": 118,
+      "position": [4331.499, 9061.995],
+      "min_size": [244.20605, 174.12207],
+      "sections": [{"spans": [{"text": "Ashur", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Black\" or \n\"Assyria\"\n\nUncertain etymology ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 162,
+      "parent": 117,
+      "position": [3580.799, 9049.781],
+      "min_size": [220.97778, 75.78906],
+      "sections": [{"spans": [{"text": "Hamul", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Spared\" or \"pitied\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 163,
+      "parent": 116,
+      "position": [4229.4033, 9490.951],
+      "min_size": [216.28955, 75.78906],
+      "sections": [{"spans": [{"text": "Zerah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"dawn, brightness\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#58254c"}
+    },
+    {
+      "id": 164,
+      "parent": 163,
+      "position": [3992.8308, 9348.846],
+      "min_size": [164.2146, 42.10547],
+      "sections": [{"spans": [{"text": "Zimri /  Zabdi", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 165,
+      "parent": 163,
+      "position": [4207.046, 9348.846],
+      "min_size": [80.07422, 42.10547],
+      "sections": [{"spans": [{"text": "Ethan", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 166,
+      "parent": 163,
+      "position": [4337.12, 9348.846],
+      "min_size": [93.43359, 42.10547],
+      "sections": [{"spans": [{"text": "Heman", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 167,
+      "parent": 163,
+      "position": [4480.5537, 9348.846],
+      "min_size": [85.46484, 42.10547],
+      "sections": [{"spans": [{"text": "Calcol", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 168,
+      "parent": 163,
+      "position": [4616.0195, 9348.846],
+      "min_size": [66.24609, 42.10547],
+      "sections": [{"spans": [{"text": "Dara", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#be4781"}
+    },
+    {
+      "id": 169,
+      "parent": 93,
+      "position": [2750.4119, 10153.432],
+      "min_size": [176.91455, 75.78906],
+      "sections": [{"spans": [{"text": "Issachar", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Reward/hired\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8c2189"}
+    },
+    {
+      "id": 170,
+      "parent": 93,
+      "position": [2400.8625, 10308.459],
+      "min_size": [201.2898, 75.79004],
+      "sections": [{"spans": [{"text": "Zebulun", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"dwelling, honor.\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8c2189"}
+    },
+    {
+      "id": 171,
+      "parent": 93,
+      "position": [2367.931, 9916.787],
+      "min_size": [153.75488, 109.47363],
+      "sections": [{"spans": [{"text": "Dinah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Judgement\"\nF", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8c2189"}
+    },
+    {
+      "id": 172,
+      "parent": 92,
+      "position": [-128.76196, 10124.953],
+      "min_size": [130.97705, 75.78906],
+      "sections": [{"spans": [{"text": "Rachel", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nLoved wife", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#20562a"}
+    },
+    {
+      "id": 173,
+      "parent": 172,
+      "position": [-264.8098, 10254.455],
+      "min_size": [104.68266, 42.10547],
+      "sections": [{"spans": [{"text": "Joseph", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": " ", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8c2189"}
+    },
+    {
+      "id": 174,
+      "parent": 172,
+      "position": [-421.3994, 10417.758],
+      "min_size": [722.5325, 748.12695],
+      "sections": [{"spans": [{"text": "Ben-Oni", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": " ", "size": 22.0, "color": "#ffffff"}, {"text": "Benjamin", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"son of the right hand\"\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "Ben-Oni", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": " (בֶּן־אוֹנִי) \n\n", "size": 22.0, "color": "#ffffff"}, {"text": "Rachel's name for her second son, \nspoken as she dies in childbirth (Genesis 35:18). \n\nThe root און (on) carries simultaneous meanings \nthat cannot be separated without losing the name's force: \nsexual/procreative potency, vital strength, sorrow, and trouble. \n\nRachel's naming collapses all of these into a single\n utterance — this child is the son of her husband's\n virility, the son of her own life-force spent, and the son\n of her death-agony, all at once. The act that created him is\n the act that destroyed her. \n\nJacob immediately renames him \nBenjamin (\"son of the right hand\"),\n replacing the raw embodied truth with\n something politically auspicious", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#8c2189"}
+    },
+    {
+      "id": 175,
+      "parent": 92,
+      "position": [883.8718, 10157.9],
+      "min_size": [193.5553, 75.78906],
+      "sections": [{"spans": [{"text": "Bilhah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nRachel's servant", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#20562a"}
+    },
+    {
+      "id": 176,
+      "parent": 175,
+      "position": [1177.425, 10095.006],
+      "min_size": [97.69641, 75.78906],
+      "sections": [{"spans": [{"text": "Dan", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Judge\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8c2189"}
+    },
+    {
+      "id": 177,
+      "parent": 175,
+      "position": [1177.425, 10220.795],
+      "min_size": [167.3053, 75.78906],
+      "sections": [{"spans": [{"text": "Naphtali", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"My wrestling\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8c2189"}
+    },
+    {
+      "id": 178,
+      "parent": 92,
+      "position": [267.6228, 10246.57],
+      "min_size": [171.99258, 75.79004],
+      "sections": [{"spans": [{"text": "Zilpah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nLeah's servant", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#20562a"}
+    },
+    {
+      "id": 179,
+      "parent": 178,
+      "position": [539.61743, 10183.676],
+      "min_size": [224.02374, 75.78906],
+      "sections": [{"spans": [{"text": "Gad", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Fortune\" or \"troop\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8c2189"}
+    },
+    {
+      "id": 180,
+      "parent": 178,
+      "position": [539.61743, 10309.465],
+      "min_size": [197.5393, 75.79004],
+      "sections": [{"spans": [{"text": "Asher", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Happy, blessed\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8c2189"}
+    },
+    {
+      "id": 181,
+      "parent": 73,
+      "position": [1994.5548, 5790.8857],
+      "min_size": [74.682495, 42.10547],
+      "sections": [{"spans": [{"text": "Iscah", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#e68447"}
+    },
+    {
+      "id": 182,
+      "parent": 73,
+      "position": [2147.875, 5800.1743],
+      "min_size": [62.105225, 42.10547],
+      "sections": [{"spans": [{"text": "Lot", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#e68447"}
+    },
+    {
+      "id": 183,
+      "parent": 23,
+      "position": [-133.46161, 5416.794],
+      "min_size": [62.10565, 42.10547],
+      "sections": [{"spans": [{"text": "Lud", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#35e1c8"}
+    },
+    {
+      "id": 184,
+      "parent": 23,
+      "position": [-537.244, 5420.066],
+      "min_size": [74.21466, 42.10547],
+      "sections": [{"spans": [{"text": "Aram", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#35e1c8"}
+    },
+    {
+      "id": 185,
+      "parent": 184,
+      "position": [-720.011, 5562.1714],
+      "min_size": [62.105408, 42.10547],
+      "sections": [{"spans": [{"text": "Uz", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#8f6a3d"}
+    },
+    {
+      "id": 186,
+      "parent": 184,
+      "position": [-607.90564, 5562.1714],
+      "min_size": [62.10498, 42.10547],
+      "sections": [{"spans": [{"text": "Hul", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#8f6a3d"}
+    },
+    {
+      "id": 187,
+      "parent": 184,
+      "position": [-495.80084, 5562.1714],
+      "min_size": [90.855255, 42.10547],
+      "sections": [{"spans": [{"text": "Gether", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#8f6a3d"}
+    },
+    {
+      "id": 188,
+      "parent": 184,
+      "position": [-354.9456, 5562.1714],
+      "min_size": [74.68338, 42.10547],
+      "sections": [{"spans": [{"text": "Mash", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#8f6a3d"}
+    },
+    {
+      "id": 189,
+      "parent": 22,
+      "position": [-1333.5632, 6139.5435],
+      "min_size": [551.3158, 747.5659],
+      "sections": [{"spans": [{"text": "Ham", "size": 38.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"The Hot One\"", "size": 38.0, "color": "#ffffff"}, {"text": "\n\nsaw his father's nakedness,\nbut his brothers refused\nto look. \n\nThis culture decided to openly \nexpose and take advantage of\nold world knowledge. \n\nThey build powerful empires that\nthey can't sustain long term\n", "size": 22.0, "color": "#ffffff"}, {"text": "\nFor insight into Ham cultures, \nlook at the earliest known powerful empires, \nlike ancient Egypt, Mesopotamia,\nand many others. \n\nHam culture intermixed with Shem and Japheth\non many occasions along the march of time", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 190,
+      "parent": 189,
+      "position": [-2724.7217, 6987.1094],
+      "min_size": [177.61768, 75.78955],
+      "sections": [{"spans": [{"text": "Cush", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Dark or Black\"", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 191,
+      "parent": 190,
+      "position": [-3498.2617, 7162.899],
+      "min_size": [70.4646, 42.10547],
+      "sections": [{"spans": [{"text": "Seba", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 192,
+      "parent": 190,
+      "position": [-3377.797, 7162.899],
+      "min_size": [99.05835, 42.10547],
+      "sections": [{"spans": [{"text": "Havilah", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 193,
+      "parent": 190,
+      "position": [-3228.7388, 7162.899],
+      "min_size": [93.667725, 42.10547],
+      "sections": [{"spans": [{"text": "Sabtah", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 194,
+      "parent": 190,
+      "position": [-3085.071, 7162.899],
+      "min_size": [105.855225, 42.10547],
+      "sections": [{"spans": [{"text": "Sabteca", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 195,
+      "parent": 190,
+      "position": [-2846.5615, 7162.899],
+      "min_size": [107.0271, 42.10547],
+      "sections": [{"spans": [{"text": "Raamah", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 196,
+      "parent": 195,
+      "position": [-2904.2158, 7305.0044],
+      "min_size": [85.4646, 42.10547],
+      "sections": [{"spans": [{"text": "Sheba", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 197,
+      "parent": 195,
+      "position": [-2768.7512, 7305.0044],
+      "min_size": [86.87085, 42.10547],
+      "sections": [{"spans": [{"text": "Dedan", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 198,
+      "parent": 190,
+      "position": [-2606.8804, 7162.899],
+      "min_size": [833.3157, 446.31592],
+      "sections": [{"spans": [{"text": "Nimrod", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Rebel\"\n\n\"Mighty hunter before the Lord\"\n\nHe is the founder of Babylon and\nother powerful civilizations \n\n\"And the beginning of his kingdom was Babel, and Erech, and Akkad, and Calneh, in the land of Shinar. From that land he went out to Assyria, and built Nineveh, and Rehoboth-Ir, and Calah, and Resen between Nineveh and Calah — that is the great city.\"\n", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 199,
+      "parent": 189,
+      "position": [-1188.902, 6987.1094],
+      "min_size": [164.47375, 176.22363],
+      "sections": [{"spans": [{"text": "Mizraim", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Constriction\"\nEgypt\n\n", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 200,
+      "parent": 199,
+      "position": [-1673.5647, 7263.333],
+      "min_size": [85.4646, 42.10547],
+      "sections": [{"spans": [{"text": "Ludim", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 201,
+      "parent": 199,
+      "position": [-1538.1001, 7263.333],
+      "min_size": [108.198975, 42.10547],
+      "sections": [{"spans": [{"text": "Anamim", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 202,
+      "parent": 199,
+      "position": [-1379.9011, 7263.333],
+      "min_size": [112.6521, 42.10547],
+      "sections": [{"spans": [{"text": "Lehabim", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 203,
+      "parent": 199,
+      "position": [-1217.249, 7263.333],
+      "min_size": [139.8396, 42.10547],
+      "sections": [{"spans": [{"text": "Naphtuhim", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 204,
+      "parent": 199,
+      "position": [-1027.4094, 7263.333],
+      "min_size": [131.4021, 42.10547],
+      "sections": [{"spans": [{"text": "Pathrusim", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 205,
+      "parent": 199,
+      "position": [-846.0073, 7263.333],
+      "min_size": [122.02716, 42.10547],
+      "sections": [{"spans": [{"text": "Casluhim", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 206,
+      "parent": 199,
+      "position": [-673.98016, 7263.333],
+      "min_size": [134.2146, 42.10547],
+      "sections": [{"spans": [{"text": "Caphtorim", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 207,
+      "parent": 189,
+      "position": [-464.76562, 6987.1094],
+      "min_size": [62.10547, 42.10547],
+      "sections": [{"spans": [{"text": "Put", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 208,
+      "parent": 189,
+      "position": [477.16278, 6987.1094],
+      "min_size": [100.46521, 42.10547],
+      "sections": [{"spans": [{"text": "Canaan", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 209,
+      "parent": 208,
+      "position": [-327.66016, 7129.215],
+      "min_size": [80.074005, 42.10547],
+      "sections": [{"spans": [{"text": "Sidon", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 210,
+      "parent": 208,
+      "position": [-197.58615, 7129.215],
+      "min_size": [66.480255, 42.10547],
+      "sections": [{"spans": [{"text": "Heth", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 211,
+      "parent": 208,
+      "position": [-81.105896, 7129.215],
+      "min_size": [125.07401, 42.10547],
+      "sections": [{"spans": [{"text": "Jebusites", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 212,
+      "parent": 208,
+      "position": [93.96811, 7129.215],
+      "min_size": [117.80841, 42.10547],
+      "sections": [{"spans": [{"text": "Amorites", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 213,
+      "parent": 208,
+      "position": [261.77652, 7129.215],
+      "min_size": [146.63663, 42.10547],
+      "sections": [{"spans": [{"text": "Girgashites", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 214,
+      "parent": 208,
+      "position": [458.41315, 7129.215],
+      "min_size": [92.2616, 42.10547],
+      "sections": [{"spans": [{"text": "Hivites", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 215,
+      "parent": 208,
+      "position": [600.67474, 7129.215],
+      "min_size": [94.83966, 42.10547],
+      "sections": [{"spans": [{"text": "Arkites", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 216,
+      "parent": 208,
+      "position": [745.5144, 7129.215],
+      "min_size": [92.261536, 42.10547],
+      "sections": [{"spans": [{"text": "Sinites", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 217,
+      "parent": 208,
+      "position": [887.77594, 7129.215],
+      "min_size": [123.43341, 42.10547],
+      "sections": [{"spans": [{"text": "Arvadites", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 218,
+      "parent": 208,
+      "position": [1061.2094, 7129.215],
+      "min_size": [127.417725, 42.10547],
+      "sections": [{"spans": [{"text": "Zemarites", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 219,
+      "parent": 208,
+      "position": [1238.6271, 7129.215],
+      "min_size": [143.82397, 42.10547],
+      "sections": [{"spans": [{"text": "Hamathites", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 220,
+      "parent": 22,
+      "position": [-2231.5662, 4331.533],
+      "min_size": [588.65137, 907.80615],
+      "palette": "mountain",
+      "sections": [{"spans": [{"text": "Japheth", "size": 38.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"The Expanded One\"\n\"The One Who Spreads Wide\"", "size": 38.0, "color": "#ffffff"}, {"text": "\n", "size": 35.0, "color": "#ffffff"}, {"text": "\n", "size": 25.0, "color": "#ffffff"}, {"text": "Covers up father's nakedness\n", "size": 22.0, "color": "#ffffff"}, {"text": "\n\"May God enlarge Japheth, \nand let him dwell in the tents of Shem. \nand let Canaan be his servant.\"", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": "\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "It seems clear that Shem and Japheth part\non good terms, \"Let them dwell in our tents\".\nThe Canaan-servant comment seems important:", "size": 17.0, "color": "#ffffff"}, {"text": "\n\n", "size": 18.0, "color": "#ffffff"}, {"text": "They understand that Ham will be strong initially,\nbut that they can't sustain it. \nSo it is Canaan (and his sons), not\nHam that will one day have to serve Japheth.", "color": "#ffffff"}, {"text": "\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "This culture refuses to exploit old world\nknowledge, and branches off into various \ncultures with their own mythologies", "size": 15.0, "color": "#ffffff", "italic": true}, {"text": "\n", "size": 15.0, "color": "#ffffff"}, {"text": "\nFor more insight into Japheth cultures,\nlook into the older world religions\nthat did not branch out of Shem. ", "size": 15.0, "color": "#ffffff", "italic": true}, {"text": "\n\n", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": "The Hindu religions, Greek/Norse mythology,\nand many others. Likely intermixed with\nShem and Ham cultures on many occasions", "size": 15.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#4e615c"}
+    },
+    {
+      "id": 221,
+      "parent": 220,
+      "position": [-3546.923, 3905.1416],
+      "min_size": [546.69824, 210.52686],
+      "sections": [{"spans": [{"text": "Gomer", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "traditionally identified with the Cimmerians \n(Akkadian Gimirrāya), an Indo-European people \nwho appeared north of the Black Sea and later \nswept into Anatolia", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#35e1c8"}
+    },
+    {
+      "id": 222,
+      "parent": 221,
+      "position": [-4401.0195, 3669.5598],
+      "min_size": [558.3135, 311.57935],
+      "sections": [{"spans": [{"text": "Ashkenaz", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "Scythians (Pontic steppe)\n\nJeremiah 51:27 calls up \"the kingdoms of Ararat, \nMinni, and Ashkenaz\" against Babylon\n\nLater appropriated, this is not the same as the\nAshkenazi Jews", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#8f6a3d"}
+    },
+    {
+      "id": 223,
+      "parent": 221,
+      "position": [-3583.0571, 3574.9463],
+      "min_size": [170.39551, 109.47363],
+      "sections": [{"spans": [{"text": "Riphath", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 22.0, "color": "#ffffff"}, {"text": "\nNo one knows", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#8f6a3d"}
+    },
+    {
+      "id": 224,
+      "parent": 221,
+      "position": [-4580.716, 4081.769],
+      "min_size": [638.07153, 547.36865],
+      "sections": [{"spans": [{"text": "Togarmah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\nTegarama in Hittite records, Til-garimmu in \nAssyrian, a city and region in eastern Anatolia \n(probably near modern Gürün in Turkey, \nin the upper Euphrates area). \n\nIt was a significant Late Bronze Age center, \ndestroyed by Sennacherib in 695 BCE. \n\nEzekiel 27:14 says \"Beth-togarmah exchanged horses, \nwar horses, and mules for your wares\" — \n\nEastern Anatolia was indeed prime horse-breeding \ncountry, and this fits the Cappadocian/Armenian \nhighland economy precisely.", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8f6a3d"}
+    },
+    {
+      "id": 225,
+      "parent": 220,
+      "position": [-2050.6802, 4013.5532],
+      "min_size": [228.5061, 161.14355],
+      "sections": [{"spans": [{"text": "Magog\n", "size": 26.0, "color": "#ffffff", "weight": "bold"}, {"text": "\"the far north\"\n\n", "size": 26.0, "color": "#ffffff"}, {"text": "Gog from Magog", "size": 26.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#35e1c8"}
+    },
+    {
+      "id": 226,
+      "parent": 220,
+      "position": [-3158.8528, 4701.1255],
+      "min_size": [779.53613, 109.47363],
+      "sections": [{"spans": [{"text": "Madai\n", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "Iranian people of the Zagros, capital Ecbatana, later absorbed into the Achaemenid empire", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#35e1c8"}
+    },
+    {
+      "id": 227,
+      "parent": 220,
+      "position": [-2953.1213, 5110.3184],
+      "min_size": [500.58643, 75.78955],
+      "sections": [{"spans": [{"text": "Javan", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 22.0, "color": "#ffffff"}, {"text": "the Ionians (Greek Iáwones, Hebrew Yāwān)", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#35e1c8"}
+    },
+    {
+      "id": 228,
+      "parent": 227,
+      "position": [-3706.1375, 4665.175],
+      "min_size": [370.083, 109.47363],
+      "sections": [{"spans": [{"text": "Elishah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nalmost certainly Alashiya, \nthe Bronze Age name for Cyprus", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#8f6a3d"}
+    },
+    {
+      "id": 229,
+      "parent": 227,
+      "position": [-4576.117, 4823.2515],
+      "min_size": [773.3552, 849.66797],
+      "sections": [{"spans": [{"text": "Tarshish", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\nthe famously contested one. Candidates:\n\nTartessos in southwestern Spain (Guadalquivir region) — \na ", "size": 22.0, "color": "#ffffff"}, {"text": "wealthy Phoenician trading partner known for silver, tin, lead. \n\nThis is the dominant scholarly identification and fits \nEzekiel 27:12 (\"Tarshish did business with you because of \nyour great wealth of every kind; silver, iron, tin, \nand lead they exchanged for your wares\").\n\n", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": "T", "size": 22.0, "color": "#ffffff"}, {"text": "arsus in Cilicia (southern Anatolia) — phonetically tempting, geographically much closer.\n\nSardinia — there's a 9th c. BCE Phoenician inscription from Nora, \nSardinia, that contains the word tršš, which some read as Tarshish.\n\n  A generic \"far west\" — \nby the time of Jonah, \n\"ships of Tarshish\" had \nbecome an idiom for large oceangoing vessels, \n  and \"fleeing to Tarshish\" meant fleeing to the end \nof the known world \n(which is the whole point of Jonah \ngoing there to escape Nineveh —\nopposite direction, edge of the map).", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#8f6a3d"}
+    },
+    {
+      "id": 230,
+      "parent": 227,
+      "position": [-3957.267, 5730.685],
+      "min_size": [574.5066, 740.7256],
+      "sections": [{"spans": [{"text": "Kittim\n", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 22.0, "color": "#ffffff", "weight": "bold", "italic": true}, {"text": "Kition, the major Phoenician city-state \non Cyprus (modern Larnaca). Originally just \n\"people of Kition,\" then broadened to mean \nCypriots generally, then broadened again to \nmean \"westerners across the sea.\" \n\nBy the Hellenistic period it covers \nMacedonians and Greeks (1 Maccabees calls \nAlexander a king \"from the land of Kittim\"), \n\nand by the Roman period the Qumran sectarians \nuse Kittim as their code-word for the Romans — \nthe War Scroll's eschatological enemy is \n\"the Kittim of Asshur\" and \"the Kittim in Egypt.\" \nSo Kittim has this fascinating semantic drift: \nCypriot city → Cyprus → Greeks → Romans → \neschatological western oppressor. \n\nIt tracks the Levantine experience of \n\"who is currently invading us from the sea.\"", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#8f6a3d"}
+    },
+    {
+      "id": 231,
+      "parent": 227,
+      "position": [-3193.02, 6356.8926],
+      "min_size": [187.6958, 75.78955],
+      "sections": [{"spans": [{"text": "Dodanim", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 22.0, "color": "#ffffff"}, {"text": "May be Rhodes", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#8f6a3d"}
+    },
+    {
+      "id": 232,
+      "parent": 220,
+      "position": [-2746.1309, 5806.0005],
+      "min_size": [724.8611, 178.99756],
+      "sections": [{"spans": [{"text": "Tubal & Meshech", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "The Tabal and Mushki of Assyrian records, Anatolian kingdoms in eastern/central Asia Minor, post-Hittite. Herodotus' Tibarenoi and Moschoi.", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#35e1c8"}
+    },
+    {
+      "id": 233,
+      "parent": 220,
+      "position": [-1956.5796, 5803.031],
+      "min_size": [459.46704, 176.84229],
+      "sections": [{"spans": [{"text": "Tiras\n", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nmost likely the Tyrsenoi/Tyrrhenians, \ni.e., the sea peoples that Greek tradition \nlinks to the Etruscans' origin. ", "size": 22.0, "color": "#ffffff", "italic": true}]}],
+      "connector": {"color": "#35e1c8"}
+    },
+    {
+      "id": 234,
+      "parent": 6,
+      "position": [-345.99542, -1660.3315],
+      "min_size": [1054.5695, 1054.5695],
+      "sections": [{"spans": [{"text": "The tree of knowing good and evil", "size": 43.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\nThe → הַ (ha) — definite article. Specific, singular, set apart.\n\ntree → עֵץ (ets) — tree, wood, timber. \n\nPossibly rooted in עצה/עצם suggesting firmness, substance, structure. The thing that holds and transmits.\n\nof the knowing → דַּעַת (da'at) — verbal noun from ידע (yada). Not information but transformative participatory contact.\n The verb for sexual union, covenant intimacy, craft mastery. \nYou don't yada something and remain what you were.\n\nof good → טוֹב (tov) — functional, ripe, beautiful, beneficial, \nfit-for-purpose, complete. \n\nand → וָ (va) — conjunction, but in paired constructions can signal spectrum, tension, or totality. The hinge between poles.\n\nevil → רָע (ra) — harmful, broken, spoiled, ugly, calamitous, dysfunctional. Not abstract metaphysical evil but the experienced quality of things that damage and diminish. Bad fruit, bad road, bad outcome.", "size": 29.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#cecf4d", "anchors": ["auto", "bottom"], "control_points": [[12.367218, -198.75568], [13.014099, 278.64227]], "label": {"color": "#cecf4d", "spans": [{"text": "Eats the fruit of"}]}}
+    },
+    {
+      "id": 235,
+      "position": [700.7855, 280.42413],
+      "min_size": [229.92682, 109.4736],
+      "palette": "coral-v3",
+      "sections": [{"spans": [{"text": "Unspecified relation\nI.e. irrelevant  / \nbesides the point", "size": 22.0, "color": "#ffffff"}]}]
+    },
+    {
+      "id": 236,
+      "parent": 235,
+      "position": [-126.35641, 329.94113],
+      "min_size": [618.2969, 479.99954],
+      "palette": "rainbow",
+      "sections": [{"spans": [{"text": "Adah (עָדָה)", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nPossible decompositions:\n\n\"Ornament/adornment\" — \nfrom עדה (  adah), to adorn, to ", "size": 22.0, "color": "#ffffff"}, {"text": "deck oneself\n\n\"", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "Witness/testimony\" — \nfrom עֵד (  ed), witness, with a feminine suffix\n\n\"To advance/pass by\" — \nfrom עדה (adah), to pass, to move forward\n\n\"Pleasure/delight\" — \nfrom עדן (eden), same consonantal field as Eden itself", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#30b082"}
+    },
+    {
+      "id": 237,
+      "parent": 236,
+      "position": [-76.075615, 1378.5521],
+      "min_size": [192.42682, 109.47363],
+      "sections": [{"spans": [{"text": "Jabal", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(Stream, flowing\nTo carry forth)", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#cf2341"}
+    },
+    {
+      "id": 238,
+      "parent": 237,
+      "position": [-92.46277, 1659.5801],
+      "min_size": [227.96466, 42.105225],
+      "sections": [{"spans": [{"text": "Nomadic Herdsmen", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#d07021", "anchors": ["auto", "bottom"], "label": {"color": "#d07021", "spans": [{"text": "Father of"}]}}
+    },
+    {
+      "id": 239,
+      "parent": 236,
+      "position": [275.64328, 1363.2189],
+      "min_size": [192.4266, 109.473755],
+      "sections": [{"spans": [{"text": "Jubal", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(Stream, flowing\nTo carry forth)", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#cf2341"}
+    },
+    {
+      "id": 240,
+      "parent": 239,
+      "position": [304.47662, 1623.9509],
+      "min_size": [145.50787, 75.78943],
+      "sections": [{"spans": [{"text": "Musicians /\nEntertainers", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#d07021", "anchors": ["auto", "bottom"], "label": {"color": "#d07021", "spans": [{"text": "Father of"}]}}
+    },
+    {
+      "id": 241,
+      "parent": 235,
+      "position": [572.1395, 461.04266],
+      "min_size": [762.96545, 345.263],
+      "sections": [{"spans": [{"text": "Zillah (צִלָּה)", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nPossible decompositions:\n\n\"Shadow\" — from צֵל (tzel), shadow, shade\n\n\"Ringing/clanging\" — from צלל (tzalal), to ring, to vibrate, to resound\n\n\"Protection\" — צֵל as shelter, \"in t", "size": 22.0, "color": "#ffffff"}, {"text": "he shadow of,\" as i", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "n Psalm 91:1\n\n\"Dark one\" — shadow as absenc", "size": 22.0, "color": "#ffffff"}, {"text": "e of light, the h", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "i", "size": 22.0, "color": "#ffffff"}, {"text": "dden", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
+      "connector": {"color": "#30b082"}
+    },
+    {
+      "id": 242,
+      "parent": 241,
+      "position": [803.1375, 1544.6348],
+      "min_size": [223.36346, 109.47363],
+      "palette": "navy-v3",
+      "sections": [{"spans": [{"text": "Tubal-cain", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nCraftsman\nTeacher of Artisans", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#e24271", "anchors": ["auto", "bottom"], "label": {"color": "#2f77da", "spans": [{"text": "Mother of"}]}},
+      "links": [{"to": 12, "kind": "line", "color": "#2175b1", "anchors": ["bottom", "auto"], "label": {"color": "#2f77da", "spans": [{"text": "Father of"}]}}]
+    },
+    {
+      "id": 243,
+      "parent": 241,
+      "position": [1427.1716, 1693.024],
+      "min_size": [329.11096, 143.15796],
+      "palette": "stars-v3",
+      "sections": [{"spans": [{"text": "Naamah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(Pleasant / To be agreeable /\nShe who is pleasant)\nF", "size": 22.0, "color": "#ffffff"}]}],
+      "connector": {"color": "#e24271", "anchors": ["auto", "bottom"], "control_points": [[90.58154, 378.13147], [-471.24634, -655.297]], "label": {"color": "#30b082", "spans": [{"text": "Mother of"}]}},
+      "links": [{"to": 12, "kind": "line", "color": "#26cc20", "anchors": ["bottom", "auto"], "label": {"color": "#30b082", "spans": [{"text": "Father of"}]}}]
+    },
+    {
+      "id": 244,
+      "position": [0.0, 11500.0],
+      "min_size": [540.0, 110.0],
+      "palette": "rainbow",
+      "sections": [{"spans": [{"text": "Border Toolkit", "size": 28.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(creative-toolkit demo: every glyph is authorable)", "size": 28.0, "color": "#ffffff"}]}],
+      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "━"}]}]}
+    },
+    {
+      "id": 245,
+      "parent": 244,
+      "position": [-780.0, 11700.0],
+      "min_size": [360.0, 110.0],
+      "sections": [{"spans": [{"text": "Atomic-repeat", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\ntop = \"+=##=+\"", "size": 20.0, "color": "#ffffff"}]}],
+      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "+=##=+"}]}]},
+      "connector": {"color": "#cf2341"}
+    },
+    {
+      "id": 246,
+      "parent": 244,
+      "position": [-400.0, 11700.0],
+      "min_size": [360.0, 110.0],
+      "sections": [{"spans": [{"text": "Prefix-Fill-Suffix", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\ntop = \"###(*)###\"", "size": 20.0, "color": "#ffffff"}]}],
+      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "###(*)###"}]}]},
+      "connector": {"color": "#cf2341"}
+    },
+    {
+      "id": 247,
+      "parent": 244,
+      "position": [-20.0, 11700.0],
+      "min_size": [360.0, 110.0],
+      "sections": [{"spans": [{"text": "Multi-cluster", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nrepeat \"◆·\" on all sides", "size": 20.0, "color": "#ffffff"}]}],
+      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "◆·"}]}]},
+      "connector": {"color": "#cf2341"}
+    },
+    {
+      "id": 248,
+      "parent": 244,
+      "position": [360.0, 11700.0],
+      "min_size": [360.0, 110.0],
+      "sections": [{"spans": [{"text": "Custom corners", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n◆ ◇ ◇ ◆", "size": 20.0, "color": "#ffffff"}]}],
+      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "─"}]}]},
+      "connector": {"color": "#cf2341"}
+    },
+    {
+      "id": 249,
+      "parent": 244,
+      "position": [-780.0, 11830.0],
+      "min_size": [360.0, 110.0],
+      "sections": [{"spans": [{"text": "Palette-cycled", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nrainbow per glyph", "size": 20.0, "color": "#ffffff"}]}],
+      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "─"}]}]},
+      "connector": {"color": "#cf2341"}
+    },
+    {
+      "id": 250,
+      "parent": 244,
+      "position": [-400.0, 11830.0],
+      "min_size": [360.0, 110.0],
+      "sections": [{"spans": [{"text": "Escape grammar", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\ntop = \"+=#(\\(\\))#=+\"", "size": 20.0, "color": "#ffffff"}]}],
+      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "+=#(\\(\\))#=+"}]}]},
+      "connector": {"color": "#cf2341"}
+    },
+    {
+      "id": 251,
+      "parent": 244,
+      "position": [-20.0, 11830.0],
+      "min_size": [360.0, 110.0],
+      "sections": [{"spans": [{"text": "Heavy chars + diamonds", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\npreset=custom, sides=━┃, corners=◆", "size": 20.0, "color": "#ffffff"}]}],
+      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "━"}]}]},
+      "connector": {"color": "#cf2341"}
+    },
+    {
+      "id": 252,
+      "parent": 244,
+      "position": [360.0, 11830.0],
+      "min_size": [420.0, 270.0],
+      "sections": [{"min_size": [420.0, 90.0], "spans": [{"text": "Per-section frame: atomic", "size": 18.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(enter NodeEdit to see frames)", "size": 18.0, "color": "#ffffff"}]}, {"offset": [0.0, 90.0], "min_size": [420.0, 90.0], "spans": [{"text": "Per-section frame: double", "size": 18.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(enter NodeEdit to see frame)", "size": 18.0, "color": "#ffffff"}]}, {"offset": [0.0, 180.0], "min_size": [420.0, 90.0], "spans": [{"text": "Per-section frame: rounded + summer palette", "size": 18.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(enter NodeEdit to see frame)", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"rings": [{"fit": "repeat", "size": 0.05925926, "spans": [{"text": "─"}]}]},
+      "connector": {"color": "#cf2341"}
+    }
+  ]
+}

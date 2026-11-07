@@ -25,6 +25,8 @@
 
 pub mod placard;
 pub mod selection;
+#[cfg(test)]
+pub(crate) mod tests_common;
 
 // Both targets': the IPC module reads it on native over the socket
 // and in the browser over its WebSocket (`format/ipc.md` §Transport).
