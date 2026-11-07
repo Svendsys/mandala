@@ -72,7 +72,7 @@ use baumhard::gfx_structs::tree::GfxTree;
 use baumhard::projection::{GlyphLayers, Layer, LayerChanges};
 use glam::Vec2;
 use log::warn;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use self::mirror::{Mirror, SlotId};
 use super::glyph_runs::GlyphRunFrame;
@@ -109,6 +109,11 @@ struct Scratch {
     /// The walk of a removed subtree, and the chain of rows a splice
     /// waits on.
     stack: Vec<SlotId>,
+    /// Slots a splice could not put in a row: under a parent or after a
+    /// sibling the renderer holds no slot for, or after one that is
+    /// itself here. Empty unless the journals were not all of the
+    /// changes made (see [`LayerRenderer::apply`]).
+    given_up: FxHashSet<SlotId>,
 }
 
 /// What one [`LayerRenderer::apply`] did: the counts the tests that hold
@@ -138,6 +143,8 @@ pub(crate) struct ApplyLog {
     pub(crate) moved: usize,
     /// Runs whose opacity, overrides or zoom window changed.
     pub(crate) restyled: usize,
+    /// Slots that could not be put in their row (`Scratch::given_up`).
+    pub(crate) given_up: usize,
 }
 
 impl LayerRenderer {
@@ -164,7 +171,10 @@ impl LayerRenderer {
     /// The journals must be those of every change made to `layers` since
     /// the last `load` or `apply`, read before they are discarded
     /// (`LayerChanges::discard`): an element a journal does not name is
-    /// not looked at, so a change no journal records is not drawn.
+    /// not looked at, so a change no journal records is not drawn. An
+    /// element entering after one the renderer holds no slot for — what
+    /// journals missing a change leave — is given up with a warning and
+    /// not drawn until the next `load`; the apply still ends.
     ///
     /// Cost: O(the elements the journals name, and the slots under the
     /// removed ones); no walk of a layer and no comparison of an element
@@ -294,8 +304,13 @@ impl LayerRenderer {
         let mut order = std::mem::take(&mut self.scratch.order[i]);
         let mut touches = std::mem::take(&mut self.scratch.touches[i]);
         let mirror = &mut self.mirrors[i];
-        let (pending, stack) = (&mut self.scratch.pending, &mut self.scratch.stack);
+        let (pending, stack, given_up) = (
+            &mut self.scratch.pending,
+            &mut self.scratch.stack,
+            &mut self.scratch.given_up,
+        );
         pending.clear();
+        given_up.clear();
         #[cfg(test)]
         let log = &mut self.log;
 
@@ -362,7 +377,11 @@ impl LayerRenderer {
             }
         }
         for &slot in pending.iter() {
-            splice(mirror, arena, slot, stack);
+            splice(mirror, arena, slot, stack, given_up);
+        }
+        #[cfg(test)]
+        {
+            log.given_up += given_up.len();
         }
         order.clear();
         touches.clear();
@@ -418,12 +437,26 @@ fn in_place(
 /// of entering siblings goes in in one pass whatever order they were
 /// named in. `stack` is the caller's scratch.
 ///
-/// Cost: O(1) per slot put in, each once.
-fn splice(mirror: &mut Mirror, arena: &Arena<GfxElement>, slot: SlotId, stack: &mut Vec<SlotId>) {
+/// A slot whose parent or previous sibling the renderer holds no slot
+/// for — which only journals missing a change can leave — is given up:
+/// it is added to `given_up` with a warning, once, and left out of every
+/// row, and so is a slot that would follow a given-up one. Every slot is
+/// put in a row or given up at most once, so a splice ends however
+/// incomplete the journals are. A given-up slot keeps its element's
+/// state and is not drawn; the next `load` draws the layer whole.
+///
+/// Cost: O(1) per slot put in or given up, each once.
+fn splice(
+    mirror: &mut Mirror,
+    arena: &Arena<GfxElement>,
+    slot: SlotId,
+    stack: &mut Vec<SlotId>,
+    given_up: &mut FxHashSet<SlotId>,
+) {
     stack.clear();
     stack.push(slot);
     while let Some(&top) = stack.last() {
-        if mirror.is_attached(top) {
+        if mirror.is_attached(top) || given_up.contains(&top) {
             stack.pop();
             continue;
         }
@@ -431,21 +464,26 @@ fn splice(mirror: &mut Mirror, arena: &Arena<GfxElement>, slot: SlotId, stack: &
             stack.pop();
             continue;
         };
-        let Some(parent) = id.parent(arena).and_then(|p| mirror.slot_of(p)) else {
-            warn!("renderer::layers: {id:?} enters under a parent the renderer does not hold");
-            stack.pop();
-            continue;
+        let parent = id.parent(arena).and_then(|p| mirror.slot_of(p));
+        let prev = id.previous_sibling(arena).map(|p| mirror.slot_of(p));
+        let placed = match (parent, prev) {
+            (None, _) => Err("under a parent the renderer does not hold"),
+            (_, Some(None)) => Err("after a sibling the renderer does not hold"),
+            (_, Some(Some(p))) if given_up.contains(&p) => {
+                Err("after a sibling the renderer could not place")
+            }
+            (Some(parent), prev) => Ok((parent, prev.flatten())),
         };
-        let prev = match id.previous_sibling(arena) {
-            None => None,
-            Some(p) => match mirror.slot_of(p) {
-                Some(p) => Some(p),
-                None => {
-                    warn!("renderer::layers: {id:?} enters after a sibling the renderer does not hold");
-                    stack.pop();
-                    continue;
-                }
-            },
+        let (parent, prev) = match placed {
+            Ok(placed) => placed,
+            Err(why) => {
+                warn!(
+                    "renderer::layers: {id:?} enters {why}: the journals miss a change, and it is not drawn"
+                );
+                given_up.insert(top);
+                stack.pop();
+                continue;
+            }
         };
         if let Some(p) = prev.filter(|&p| !mirror.is_attached(p)) {
             stack.push(p);

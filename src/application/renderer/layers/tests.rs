@@ -699,3 +699,55 @@ fn test_layers_a_node_moved_out_of_a_subtree_removed_in_the_same_apply_keeps_its
         );
     }
 }
+
+#[test]
+fn test_layers_apply_returns_on_an_incomplete_journal_set() {
+    // One update the renderer never sees — a child node created — and
+    // then one it does, creating two more after it: the second's journals
+    // name a row whose first new member follows an element the renderer
+    // holds no slot for. The apply must give those up, warn and return,
+    // not wait on them. On a thread of its own, so a splice that never
+    // ends fails this test with its own message instead of hanging the
+    // suite (the layers are not `Send`, so the whole case runs there).
+    let (done, wait) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut p = demo("ecclesiastes");
+        let mut renderer = loaded(&p.layers);
+        let parent = node(&p.doc, 2);
+        let child =
+            |doc: &Document| compose::create_child(doc, parent, Vec2::new(30.0, 40.0)).expect("a node");
+        p.doc
+            .apply(
+                EditRequest::new(child(&p.doc), "renderer::layers::tests"),
+                ChangeSource::Action,
+            )
+            .expect("the first child is created");
+        let unseen = p.sync();
+        unseen.discard(&mut p.layers);
+        let mut steps = child(&p.doc);
+        steps.extend(child(&p.doc));
+        p.doc
+            .apply(
+                EditRequest::new(steps, "renderer::layers::tests"),
+                ChangeSource::Action,
+            )
+            .expect("two more children are created");
+        let seen = p.sync();
+        renderer.apply(&p.layers, LayerRenderer::journals_of(&seen));
+        let _ = done.send(renderer.log().clone());
+        seen.discard(&mut p.layers);
+    });
+    let log = match wait.recv_timeout(std::time::Duration::from_secs(60)) {
+        Ok(log) => log,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            panic!("apply did not return within 60 s on an incomplete journal set")
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("the case panicked before the apply returned (its message is above)")
+        }
+    };
+    assert!(
+        log.given_up > 0,
+        "precondition: the apply met a row it could not complete: {log:?}"
+    );
+}
