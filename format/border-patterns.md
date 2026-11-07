@@ -336,9 +336,9 @@ call). Implicit cancel: a non-preview committing edit
 clears the preview before applying its own write — the
 committing edit always wins.
 
-Programmatic surface: `Action::SetBorderPreview { target_kind:
-BorderPreviewTargetKind, field, value }`, `Action::CommitBorderPreview`,
-`Action::CancelBorderPreview`. `BorderPreviewTargetKind` is a
+Programmatic surface: `Action::SetFramePreview { target_kind:
+BorderPreviewTargetKind, field, value }`, `Action::CommitFramePreview`,
+`Action::CancelFramePreview`. `BorderPreviewTargetKind` is a
 typed enum (`node` | `section` | `canvas-border` | `canvas-sf` |
 `canvas-sf-focused`) registered in `KeybindConfig` as
 `set_border_preview` parametric bindings. Default `Esc` already

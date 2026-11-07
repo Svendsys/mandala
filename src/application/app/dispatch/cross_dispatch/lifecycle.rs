@@ -29,7 +29,7 @@ const MULTI_TARGET_SEPARATOR: &str = "\n\n";
 /// [`InputContextCore`](crate::application::app::input_context_core::InputContextCore)
 /// rather than the native context because both
 /// targets' keyboard handlers run the same chain: a
-/// `custom_mutation_bindings` entry that fires on the desktop has to
+/// `edit_bindings` entry that fires on the desktop has to
 /// fire in the browser too, and before this lift the browser's chain
 /// stopped one tier short.
 ///
@@ -46,7 +46,7 @@ pub(in crate::application::app) fn dispatch_custom_mutation_for_key(
     shift: bool,
     alt: bool,
 ) -> bool {
-    let id = match core.keybinds.custom_mutation_for(key_name, ctrl, shift, alt) {
+    let id = match core.keybinds.edit_for(key_name, ctrl, shift, alt) {
         Some(s) => s.to_string(),
         None => return false,
     };

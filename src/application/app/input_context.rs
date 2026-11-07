@@ -98,7 +98,7 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     pub picker_hover: &'a mut ColorPickerHoverInteraction,
     /// Resolved user keybinds. `&` (immutable) — no dispatch path
     /// mutates keybinds; query methods (`action_for_*`, `macro_for`,
-    /// `custom_mutation_for`, `has_*`) are all `&self`. Track-C
+    /// `edit_for`, `has_*`) are all `&self`. Track-C
     /// review reflagged the original `&mut` as dead.
     pub keybinds: &'a ResolvedKeybinds,
     /// Macro registry (App + User tiers loaded at startup; Map tier

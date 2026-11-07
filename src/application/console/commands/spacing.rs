@@ -57,7 +57,7 @@ fn execute_spacing(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         return ExecResult::err(format!("'{}' must be a preset (tight|normal|wide) or a float", v));
     }
     // Route through the mutation core — same setter, single
-    // source of truth with the parametric `Action::SetSpacing` arm.
+    // source of truth with the parametric `Action::SetPathSpacing` arm.
     let changed = apply_spacing_to_selection(eff.document_mut(), v);
 
     // Report what was *stored*, not what was typed. `set_edge_spacing`

@@ -23,7 +23,7 @@ pub(in crate::application::app) fn apply_set_border_field(
     });
 }
 
-/// `Action::CycleBorderPreset` — advance the selected node(s)'
+/// `Action::CycleFrameContent` — advance the selected node(s)'
 /// border preset to the next entry in `BORDER_PRESETS`. Thin
 /// wrapper over the `border preset cycle` mutation core, so the
 /// keybind and the verb can never disagree about what "next"
@@ -35,7 +35,7 @@ pub(in crate::application::app) fn apply_cycle_border_preset(rc: &mut RebuildCon
     );
 }
 
-/// `Action::ToggleBorderVisible` — flip `style.show_frame` per
+/// `Action::ToggleFrameVisible` — flip `style.show_frame` per
 /// selected node, each toggled independently. Thin wrapper over
 /// the `border toggle` mutation core; the verb formats the same
 /// report as scrollback, this arm only needs "did anything
@@ -45,7 +45,7 @@ pub(in crate::application::app) fn apply_toggle_border_visible(rc: &mut RebuildC
         match crate::application::console::commands::border::toggle_border_visible_on_selection(doc) {
             Ok(report) => report.toggled > 0,
             Err(_) => {
-                log::warn!("dispatch: ToggleBorderVisible: no border-applicable selection");
+                log::warn!("dispatch: ToggleFrameVisible: no border-applicable selection");
                 false
             }
         }
@@ -88,7 +88,7 @@ fn stage_border_preview_binding(
 
     let mut edits = BorderConfigEdits::default();
     if let Err(msg) = stage_kv(&mut edits, field, value) {
-        log::warn!("border: SetBorderPreview stage_kv error: {msg}");
+        log::warn!("border: SetFramePreview stage_kv error: {msg}");
         return false;
     }
 
@@ -514,9 +514,9 @@ mod tests {
             })
     }
 
-    /// The `SetBorderPreview` binding refuses a palette the map does
+    /// The `SetFramePreview` binding refuses a palette the map does
     /// not define, as every console surface and the
-    /// `SetBorderField` binding do (#136), and stages nothing.
+    /// `SetFrameField` binding do (#136), and stages nothing.
     #[test]
     fn test_set_border_preview_binding_refuses_a_palette_the_map_does_not_define() {
         let mut doc = load_test_doc();

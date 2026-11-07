@@ -454,33 +454,33 @@ pub(in crate::application::app) fn dispatch_compatible(
             ),
         }),
         // ── Parametric mutators ────────────────────────────────
-        Action::SetEdgeAnchor { from, to } => with_doc_rebuild(core, |rc| {
+        Action::SetPathAnchor { from, to } => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_edge_anchor(from, to, rc)
         }),
-        Action::SetEdgeBodyGlyph(preset) => with_doc_rebuild(core, |rc| {
+        Action::SetPathContent(preset) => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_edge_body_glyph(preset, rc)
         }),
-        Action::SetBorderField { field, value } => with_doc_rebuild(core, |rc| {
+        Action::SetFrameField { field, value } => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_border_field(field, value, rc)
         }),
-        Action::CycleBorderPreset => with_doc_rebuild(core, super::cross_dispatch::apply_cycle_border_preset),
-        Action::ToggleBorderVisible => {
+        Action::CycleFrameContent => with_doc_rebuild(core, super::cross_dispatch::apply_cycle_border_preset),
+        Action::ToggleFrameVisible => {
             with_doc_rebuild(core, super::cross_dispatch::apply_toggle_border_visible)
         }
-        Action::SetBorderPreview {
+        Action::SetFramePreview {
             target_kind,
             field,
             value,
         } => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_border_preview(*target_kind, field, value, rc)
         }),
-        Action::CommitBorderPreview => {
+        Action::CommitFramePreview => {
             with_doc_rebuild(core, super::cross_dispatch::apply_commit_border_preview)
         }
-        Action::CancelBorderPreview => {
+        Action::CancelFramePreview => {
             with_doc_rebuild(core, super::cross_dispatch::apply_cancel_border_preview)
         }
-        Action::SetEdgeCap { from, to } => {
+        Action::SetPathCap { from, to } => {
             with_doc_rebuild(core, |rc| super::cross_dispatch::apply_set_edge_cap(from, to, rc))
         }
         Action::SetColor { axis, value } => with_doc_rebuild(core, |rc| {
@@ -489,10 +489,10 @@ pub(in crate::application::app) fn dispatch_compatible(
         Action::SetEdgeType(value) => {
             with_doc_rebuild(core, |rc| super::cross_dispatch::apply_set_edge_type(value, rc))
         }
-        Action::SetEdgeDisplayMode(value) => with_doc_rebuild(core, |rc| {
+        Action::SetLinkKind(value) => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_edge_display_mode(value, rc)
         }),
-        Action::ResetEdge(kind) => {
+        Action::ResetPath(kind) => {
             with_doc_rebuild(core, |rc| super::cross_dispatch::apply_reset_edge(kind, rc))
         }
         Action::SetFontFamily(family) => with_doc_rebuild(core, |rc| {
@@ -510,13 +510,13 @@ pub(in crate::application::app) fn dispatch_compatible(
                 super::cross_dispatch::apply_set_font_kv(*slot, parsed, rc)
             });
         }
-        Action::SetEdgeLabelText(text) => with_doc_rebuild(core, |rc| {
+        Action::SetLabelText(text) => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_edge_label_text(text, rc)
         }),
-        Action::SetEdgeLabelPosition(pos) => with_doc_rebuild(core, |rc| {
+        Action::SetLabelPosition(pos) => with_doc_rebuild(core, |rc| {
             super::cross_dispatch::apply_set_edge_label_position(pos, rc)
         }),
-        Action::SetSpacing(i) => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_set_spacing(i, rc)),
+        Action::SetPathSpacing(i) => with_doc_rebuild(core, |rc| super::cross_dispatch::apply_set_spacing(i, rc)),
         Action::SetZoom { bound, value } => {
             let parsed = match crate::application::console::commands::zoom::parse_zoom_payload(value) {
                 Some(e) => e,

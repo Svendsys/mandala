@@ -170,7 +170,7 @@ fn apply_reset(eff: &mut ConsoleEffects) -> ExecResult {
 /// else the canvas default's, else `"light"` (the model floor).
 /// The single cascade behind `border preset cycle`, the
 /// `side|corner … reset` glyph source, the `preset custom` gate,
-/// and `Action::CycleBorderPreset` — four places that each used to
+/// and `Action::CycleFrameContent` — four places that each used to
 /// re-derive it inline.
 fn resolved_node_preset(doc: &MindMapDocument, node_id: Option<&str>) -> String {
     node_id
@@ -210,7 +210,7 @@ pub(super) fn first_non_custom_preset(doc: &MindMapDocument) -> Option<String> {
         .find(|preset| !preset.eq_ignore_ascii_case("custom"))
 }
 
-/// Mutation core behind `Action::CycleBorderPreset`: advance the
+/// Mutation core behind `Action::CycleFrameContent`: advance the
 /// selection's border preset one step through `BORDER_PRESETS`,
 /// wrapping.
 ///
@@ -250,7 +250,7 @@ pub(crate) struct BorderToggleReport {
 
 /// Mutation core: flip `style.show_frame` on every node in the
 /// selection, each independently. Shared by `border toggle` and
-/// `Action::ToggleBorderVisible` so the read-flip-write loop
+/// `Action::ToggleFrameVisible` so the read-flip-write loop
 /// exists once.
 pub(crate) fn toggle_border_visible_on_selection(
     doc: &mut MindMapDocument,
@@ -395,7 +395,7 @@ fn apply_edits(eff: &mut ConsoleEffects, edits: BorderConfigEdits) -> ExecResult
 /// Mutation core: apply a single `field=value` edit to every node
 /// in the current selection. Both the kv-form `border` console verb
 /// (which stages multiple kvs at once) and the parametric
-/// `Action::SetBorderField` (single kv per binding) route through
+/// `Action::SetFrameField` (single kv per binding) route through
 /// the underlying `set_node_border_config` setter — this helper is
 /// the single-kv wrapper the Action arm calls.
 ///

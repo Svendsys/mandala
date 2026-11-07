@@ -67,7 +67,7 @@ pub(crate) fn glyph_for_preset(name: &str) -> Option<&'static str> {
 
 /// Mutation core: apply a body-glyph change to the currently-
 /// selected edge. Both the `body` console verb and the parametric
-/// `Action::SetEdgeBodyGlyph` route through this helper. Returns
+/// `Action::SetPathContent` route through this helper. Returns
 /// `true` when the glyph actually changed; `false` when no edge is
 /// selected, the preset name is invalid, or the glyph already
 /// matches.
@@ -106,7 +106,7 @@ fn execute_body(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         ));
     }
     // Route through the mutation core — same setter, single
-    // source of truth with the parametric `Action::SetEdgeBodyGlyph`
+    // source of truth with the parametric `Action::SetPathContent`
     // arm. The verb keeps the typed pre-validation (so a bad
     // preset surfaces as `Err`, not a silent no-op the way the
     // Action arm intentionally does).

@@ -439,7 +439,7 @@ fn border_reset_clears_per_node_override() {
 // ─────────────────────────────────────────────────────────────────
 // Mutation core: `apply_border_field_to_selection`. Same setter path
 // the verb uses — these tests pin the single-kv shape the parametric
-// `Action::SetBorderField` Action arm calls.
+// `Action::SetFrameField` Action arm calls.
 // ─────────────────────────────────────────────────────────────────
 
 #[test]
@@ -1330,7 +1330,7 @@ fn border_preset_cycle_falls_through_to_canvas_default() {
 /// **Verb-strict vs Action-permissive contract**: the verb
 /// path (`border side`/`corner`) errors with the explicit
 /// "preset custom first" hint when the resolved preset isn't
-/// custom. The keybind / macro path (`Action::SetBorderField {
+/// custom. The keybind / macro path (`Action::SetFrameField {
 /// field: "top", value: "..." }` → `apply_border_field_to_selection`
 /// → `set_node_border_config` → data-layer auto-promote) still
 /// silently promotes the preset to "custom" — by design, for
@@ -1338,7 +1338,7 @@ fn border_preset_cycle_falls_through_to_canvas_default() {
 /// who tightens one without the other trips this test.
 ///
 /// "Macro path" alone is the wrong name for the second leg and
-/// was the name used here: `SetBorderField` is a parametric
+/// was the name used here: `SetFrameField` is a parametric
 /// `Action`, reachable from a `keybinds.json` binding exactly as
 /// from a `MacroStep::Action`, and it is not on
 /// `SourceTier::allows_action`'s gated list, so no tier is
@@ -1389,7 +1389,7 @@ fn apply_border_field_to_selection_auto_promotes_preset_to_custom() {
 
 // ─── P1-28 verb ↔ Action single-core pins ────────────────────────
 //
-// `Action::CycleBorderPreset` and `Action::ToggleBorderVisible`
+// `Action::CycleFrameContent` and `Action::ToggleFrameVisible`
 // used to re-derive the verb's body in
 // `dispatch/cross_dispatch/style.rs`. Both now call the mutation
 // cores below; these tests pin that the Action lands exactly where

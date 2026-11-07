@@ -289,32 +289,32 @@ fn test_custom_mutation_binding_resolves_when_no_built_in_action() {
     let mut bindings = HashMap::new();
     bindings.insert("Ctrl+Shift+M".into(), "my-mutation".into());
     let cfg = KeybindConfig {
-        custom_mutation_bindings: bindings,
+        edit_bindings: bindings,
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
     assert_eq!(
-        resolved.custom_mutation_for("m", true, true, false),
+        resolved.edit_for("m", true, true, false),
         Some("my-mutation")
     );
 }
 
 #[test]
 fn test_custom_mutation_binding_loses_to_builtin_action_via_event_loop() {
-    // `custom_mutation_for` is only called after `action_for`
+    // `edit_for` is only called after `action_for`
     // returns None — a combo bound to both resolves to the
     // built-in. This test just locks the resolver shape: both
     // lookups are independent.
     let mut bindings = HashMap::new();
     bindings.insert("Ctrl+Z".into(), "collision".into());
     let cfg = KeybindConfig {
-        custom_mutation_bindings: bindings,
+        edit_bindings: bindings,
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
     assert_eq!(resolved.action_for("z", true, false, false), Some(Action::Undo));
     assert_eq!(
-        resolved.custom_mutation_for("z", true, false, false),
+        resolved.edit_for("z", true, false, false),
         Some("collision")
     );
 }
@@ -325,12 +325,12 @@ fn test_custom_mutation_invalid_combo_is_skipped() {
     bindings.insert("Z+X".into(), "invalid".into()); // two non-modifier keys
     bindings.insert("Ctrl+M".into(), "valid".into());
     let cfg = KeybindConfig {
-        custom_mutation_bindings: bindings,
+        edit_bindings: bindings,
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
     assert_eq!(
-        resolved.custom_mutation_for("m", true, false, false),
+        resolved.edit_for("m", true, false, false),
         Some("valid")
     );
 }
@@ -339,19 +339,19 @@ fn test_custom_mutation_invalid_combo_is_skipped() {
 fn test_set_custom_mutation_binding_adds_and_replaces() {
     let mut resolved = KeybindConfig::default().resolve();
     let prev = resolved
-        .set_custom_mutation_binding("Ctrl+Shift+M", "first".into())
+        .set_edit_binding("Ctrl+Shift+M", "first".into())
         .unwrap();
     assert!(prev.is_none());
     assert_eq!(
-        resolved.custom_mutation_for("m", true, true, false),
+        resolved.edit_for("m", true, true, false),
         Some("first")
     );
     let prev = resolved
-        .set_custom_mutation_binding("Ctrl+Shift+M", "second".into())
+        .set_edit_binding("Ctrl+Shift+M", "second".into())
         .unwrap();
     assert_eq!(prev.as_deref(), Some("first"));
     assert_eq!(
-        resolved.custom_mutation_for("m", true, true, false),
+        resolved.edit_for("m", true, true, false),
         Some("second")
     );
 }
@@ -360,11 +360,11 @@ fn test_set_custom_mutation_binding_adds_and_replaces() {
 fn test_remove_custom_mutation_binding_returns_removed_id() {
     let mut resolved = KeybindConfig::default().resolve();
     resolved
-        .set_custom_mutation_binding("Ctrl+Shift+M", "id-1".into())
+        .set_edit_binding("Ctrl+Shift+M", "id-1".into())
         .unwrap();
-    let prev = resolved.remove_custom_mutation_binding("Ctrl+Shift+M").unwrap();
+    let prev = resolved.remove_edit_binding("Ctrl+Shift+M").unwrap();
     assert_eq!(prev.as_deref(), Some("id-1"));
-    assert_eq!(resolved.custom_mutation_for("m", true, true, false), None);
+    assert_eq!(resolved.edit_for("m", true, true, false), None);
 }
 
 #[test]
@@ -511,7 +511,7 @@ fn test_wasm_compatibility_section_aabb_actions_are_compatible() {
 #[test]
 fn test_wasm_compatibility_border_no_payload_actions_are_compatible() {
     use crate::application::keybinds::WasmCompatibility::Compatible;
-    for a in [Action::CycleBorderPreset, Action::ToggleBorderVisible] {
+    for a in [Action::CycleFrameContent, Action::ToggleFrameVisible] {
         assert_eq!(a.wasm_compatibility(), Compatible, "{:?} should be Compatible", a);
     }
 }
@@ -785,7 +785,7 @@ fn test_double_click_activate_default_resolves_to_action() {
     );
 }
 
-/// `Action::SetBorderPreview` round-trips through the JSON
+/// `Action::SetFramePreview` round-trips through the JSON
 /// config — pre-fix the Action variant existed and was
 /// dispatched but had no `KeybindConfig` field, so users could
 /// not bind a key to preview-set via JSON.
@@ -802,7 +802,7 @@ fn test_set_border_preview_keybind_round_trips_through_json() {
     let r = cfg.resolve();
     assert_eq!(
         r.action_for_context(InputContext::Document, "h", true, false, false),
-        Some(Action::SetBorderPreview {
+        Some(Action::SetFramePreview {
             target_kind: BorderPreviewTargetKind::Node,
             field: "preset".into(),
             value: "heavy".into(),
@@ -845,14 +845,14 @@ fn test_cancel_border_preview_is_unbound_by_default() {
     let cfg = KeybindConfig::default();
     assert!(
         cfg.cancel_border_preview.is_empty(),
-        "CancelBorderPreview must not have a default binding (would conflict with `exit_mode`)"
+        "CancelFramePreview must not have a default binding (would conflict with `exit_mode`)"
     );
     let r = cfg.resolve();
-    // No key resolves to CancelBorderPreview in the Document
+    // No key resolves to CancelFramePreview in the Document
     // context with the default config.
     assert!(
-        !r.has_any_binding_for(Action::CancelBorderPreview),
-        "default-resolved keybinds must not include CancelBorderPreview"
+        !r.has_any_binding_for(Action::CancelFramePreview),
+        "default-resolved keybinds must not include CancelFramePreview"
     );
 }
 
@@ -871,11 +871,11 @@ fn test_border_preview_keybinds_round_trip_through_json() {
     let r = cfg.resolve();
     assert_eq!(
         r.action_for_context(InputContext::Document, "escape", true, false, false),
-        Some(Action::CancelBorderPreview)
+        Some(Action::CancelFramePreview)
     );
     assert_eq!(
         r.action_for_context(InputContext::Document, "enter", true, false, false),
-        Some(Action::CommitBorderPreview)
+        Some(Action::CommitFramePreview)
     );
 }
 
@@ -1807,7 +1807,7 @@ fn test_parametric_set_edge_anchor_resolves_with_two_args() {
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "a", true, true, false),
-        Some(Action::SetEdgeAnchor {
+        Some(Action::SetPathAnchor {
             from: "top".into(),
             to: "auto".into(),
         }),
@@ -1826,7 +1826,7 @@ fn test_parametric_set_edge_body_glyph_resolves_with_one_arg() {
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "b", true, false, false),
-        Some(Action::SetEdgeBodyGlyph("dash".into())),
+        Some(Action::SetPathContent("dash".into())),
     );
 }
 
@@ -1885,7 +1885,7 @@ fn test_parametric_set_border_field_resolves_with_two_args() {
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "b", true, true, false),
-        Some(Action::SetBorderField {
+        Some(Action::SetFrameField {
             field: "preset".into(),
             value: "rounded".into(),
         }),
@@ -1959,11 +1959,11 @@ fn test_parametric_edge_structural_resolve() {
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f5", false, false, false),
-        Some(Action::SetEdgeDisplayMode("portal".into())),
+        Some(Action::SetLinkKind("portal".into())),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f6", false, false, false),
-        Some(Action::ResetEdge("style".into())),
+        Some(Action::ResetPath("style".into())),
     );
 }
 
@@ -2038,15 +2038,15 @@ fn test_parametric_label_text_position_resolve() {
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f9", false, false, false),
-        Some(Action::SetEdgeLabelText("hello".into())),
+        Some(Action::SetLabelText("hello".into())),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f10", false, false, false),
-        Some(Action::SetEdgeLabelPosition("middle".into())),
+        Some(Action::SetLabelPosition("middle".into())),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f11", false, false, false),
-        Some(Action::SetSpacing("wide".into())),
+        Some(Action::SetPathSpacing("wide".into())),
     );
 }
 
@@ -2293,7 +2293,7 @@ fn test_parametric_set_edge_cap_resolves_with_two_args() {
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "c", true, true, false),
-        Some(Action::SetEdgeCap {
+        Some(Action::SetPathCap {
             from: "arrow".into(),
             to: "none".into(),
         }),
@@ -2399,7 +2399,7 @@ fn test_parametric_binding_user_partial_config_only_overrides_listed_field() {
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "b", true, false, false),
-        Some(Action::SetEdgeBodyGlyph("dash".into())),
+        Some(Action::SetPathContent("dash".into())),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "z", true, false, false),
@@ -2416,7 +2416,7 @@ fn test_parametric_binding_user_partial_config_only_overrides_listed_field() {
 // These tests hold the *values* the compiler cannot: that the
 // unbindable set stays the two it is meant to be, that the struct and
 // the recognized-key set agree, and — the one that would have caught
-// the shipped `SetBorderPreview` bug — that every declared field
+// the shipped `SetFramePreview` bug — that every declared field
 // really does produce a binding.
 // ─────────────────────────────────────────────────────────────────
 
@@ -2470,7 +2470,7 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         (
             "set_edge_anchor",
             &["top", "auto"],
-            Action::SetEdgeAnchor {
+            Action::SetPathAnchor {
                 from: "top".into(),
                 to: "auto".into(),
             },
@@ -2478,12 +2478,12 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         (
             "set_edge_body_glyph",
             &["dash"],
-            Action::SetEdgeBodyGlyph("dash".into()),
+            Action::SetPathContent("dash".into()),
         ),
         (
             "set_border_field",
             &["preset", "rounded"],
-            Action::SetBorderField {
+            Action::SetFrameField {
                 field: "preset".into(),
                 value: "rounded".into(),
             },
@@ -2491,7 +2491,7 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         (
             "set_edge_cap",
             &["arrow", "none"],
-            Action::SetEdgeCap {
+            Action::SetPathCap {
                 from: "arrow".into(),
                 to: "none".into(),
             },
@@ -2507,7 +2507,7 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         (
             "set_border_preview",
             &["node", "preset", "rounded"],
-            Action::SetBorderPreview {
+            Action::SetFramePreview {
                 target_kind: BorderPreviewTargetKind::Node,
                 field: "preset".into(),
                 value: "rounded".into(),
@@ -2521,9 +2521,9 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         (
             "set_edge_display_mode",
             &["portal"],
-            Action::SetEdgeDisplayMode("portal".into()),
+            Action::SetLinkKind("portal".into()),
         ),
-        ("reset_edge", &["style"], Action::ResetEdge("style".into())),
+        ("reset_edge", &["style"], Action::ResetPath("style".into())),
         (
             "set_font_family",
             &["Norse"],
@@ -2540,14 +2540,14 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         (
             "set_edge_label_text",
             &["hello"],
-            Action::SetEdgeLabelText("hello".into()),
+            Action::SetLabelText("hello".into()),
         ),
         (
             "set_edge_label_position",
             &["middle"],
-            Action::SetEdgeLabelPosition("middle".into()),
+            Action::SetLabelPosition("middle".into()),
         ),
-        ("set_spacing", &["wide"], Action::SetSpacing("wide".into())),
+        ("set_spacing", &["wide"], Action::SetPathSpacing("wide".into())),
         (
             "set_zoom",
             &["min", "0.5"],
@@ -2857,8 +2857,8 @@ fn test_unit_variants_bind_through_the_simple_surface() {
         ("f12", false, true, false, Action::ClearZoom),
         ("f12", true, false, false, Action::SetSectionSizeFillParent),
         ("f12", false, false, true, Action::DeleteSection),
-        ("f5", true, false, false, Action::CycleBorderPreset),
-        ("f6", true, false, false, Action::ToggleBorderVisible),
+        ("f5", true, false, false, Action::CycleFrameContent),
+        ("f6", true, false, false, Action::ToggleFrameVisible),
     ] {
         assert_eq!(
             resolved.action_for_context(InputContext::Document, key, ctrl, shift, alt),
@@ -3063,7 +3063,7 @@ const SHIPPED_TEMPLATE_OTHER_KEYS: &[&str] = &[
     "_comment",
     "console_font",
     "console_font_size",
-    "custom_mutation_bindings",
+    "edit_bindings",
 ];
 
 #[test]

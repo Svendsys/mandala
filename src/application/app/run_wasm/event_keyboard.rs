@@ -144,7 +144,7 @@ impl super::Borrowed<'_> {
             };
             if !macro_handled {
                 // Third tier. Pre-unification the browser's chain
-                // stopped at Macro, so a `custom_mutation_bindings`
+                // stopped at Macro, so a `edit_bindings`
                 // entry worked on the desktop and was silently dead
                 // on the web.
                 //

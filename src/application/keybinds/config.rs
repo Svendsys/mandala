@@ -38,8 +38,10 @@ keybind_surface! {
     // ─────────────────────────────────────────────────────────────
     simple {
         // ── Document-level (global) ──────────────────────────────
-        /// Undo the last document mutation.
+        /// Undo the newest history entry.
         Undo => undo = ["Ctrl+Z", "Undo"],
+        /// Redo the history entry undone last.
+        Redo => redo = ["Ctrl+Shift+Z", "Ctrl+Y"],
         /// Enter reparent mode on the current selection.
         EnterReparentMode => enter_reparent_mode = ["Ctrl+P"],
         /// Enter connect mode on the current selection.
@@ -191,21 +193,21 @@ keybind_surface! {
         /// preview-cancel on a different key while leaving `Escape`
         /// bound to plain `ExitMode`. The verb path `border preview
         /// cancel` is the primary surface and works regardless.
-        CancelBorderPreview => cancel_border_preview = [],
+        CancelFramePreview => cancel_frame_preview = [],
         /// Commit the active border preview through the matching
         /// committing setter. No default binding — users opt in.
         /// Unlike `cancel_border_preview`, commit isn't part of any
         /// implicit chain — the `border preview commit` verb is the
         /// primary surface and a binding here is purely opt-in
         /// muscle-memory.
-        CommitBorderPreview => commit_border_preview = [],
+        CommitFramePreview => commit_frame_preview = [],
         /// Advance the selected node(s)' border preset to the next
         /// entry in `BORDER_PRESETS`, wrapping at the end. Mirrors
         /// `border preset cycle`; default unbound.
-        CycleBorderPreset => cycle_border_preset = [],
+        CycleFrameContent => cycle_frame_content = [],
         /// Flip `style.show_frame` per selected node. Mirrors
         /// `border toggle`; default unbound.
-        ToggleBorderVisible => toggle_border_visible = [],
+        ToggleFrameVisible => toggle_frame_visible = [],
 
         // ── Mouse-gesture Actions ────────────────────────────────
         /// Activate whatever the double-click hit — see
@@ -381,14 +383,14 @@ keybind_surface! {
     parametric {
         /// `anchor from=<side> to=<side>` on the selected edge.
         /// Sides: `auto|top|right|bottom|left`.
-        SetEdgeAnchor { from, to } => set_edge_anchor,
+        SetPathAnchor { from, to } => set_path_anchor,
         /// `body glyph=<dot|dash|double|wave|chain>`.
-        SetEdgeBodyGlyph(glyph) => set_edge_body_glyph,
+        SetPathContent(glyph) => set_path_content,
         /// `border <field>=<value>` on the selected node(s). One kv
         /// per binding; multi-kv border edits stay console-only.
-        SetBorderField { field, value } => set_border_field,
+        SetFrameField { field, value } => set_frame_field,
         /// `cap from=<arrow|circle|diamond|none> to=<…>`.
-        SetEdgeCap { from, to } => set_edge_cap,
+        SetPathCap { from, to } => set_path_cap,
         /// `args = [axis, value]` where `axis` is `bg|text|border`
         /// and `value` is a color string (`#rrggbb`, `var(--name)`,
         /// palette key). Maps to [`Action::SetColor`].
@@ -401,14 +403,14 @@ keybind_surface! {
         /// `palette`, `field`, `padding`, `top`, `bottom`, `left`,
         /// `right`, `tl`, `tr`, `bl`, `br`); `value` is the same
         /// kv-form string the verb accepts. Maps to
-        /// [`Action::SetBorderPreview`].
-        SetBorderPreview { target_kind, field, value } => set_border_preview,
+        /// [`Action::SetFramePreview`].
+        SetFramePreview { target_kind, field, value } => set_frame_preview,
         /// `edge type=<cross_link|parent_child>`.
         SetEdgeType(edge_type) => set_edge_type,
         /// `edge display_mode=<line|portal>`.
-        SetEdgeDisplayMode(display_mode) => set_edge_display_mode,
+        SetLinkKind(display_mode) => set_link_kind,
         /// `edge reset=<straight|curve|style|position>`.
-        ResetEdge(reset_kind) => reset_edge,
+        ResetPath(reset_kind) => reset_path,
         /// `font set <family>` on the current selection.
         SetFontFamily(family) => set_font_family,
         /// `args = [slot, pt]` where `slot` is `size|min|max` and
@@ -416,11 +418,11 @@ keybind_surface! {
         /// [`Action::SetFont`].
         SetFont { slot, value } => set_font,
         /// `label text=<text>`; an empty payload clears the label.
-        SetEdgeLabelText(text) => set_edge_label_text,
+        SetLabelText(text) => set_label_text,
         /// `label position=<start|middle|end>`.
-        SetEdgeLabelPosition(position) => set_edge_label_position,
+        SetLabelPosition(position) => set_label_position,
         /// `spacing value=<tight|normal|wide|<float>>`.
-        SetSpacing(value) => set_spacing,
+        SetPathSpacing(value) => set_path_spacing,
         /// `args = [bound, value]` where `bound` is `min|max` and
         /// `value` is `"unset"`, `""`, or a positive finite float
         /// string. Maps to [`Action::SetZoom`].
@@ -489,12 +491,14 @@ keybind_surface! {
         /// Font size in pixels for the console overlay. Clamped to a
         /// 4.0 floor at resolve time.
         pub console_font_size: f32 = 16.0,
-        /// Map of key combo → custom mutation id.
-        pub custom_mutation_bindings: HashMap<String, String> = HashMap::new(),
+        /// Map of key combo → edit id (design §14: what was
+        /// `custom_mutation_bindings`). Resolved and kept; firing an
+        /// edit is V1-D1's (#250), so a key bound here is unhandled
+        /// until then.
+        pub edit_bindings: HashMap<String, String> = HashMap::new(),
         /// Map of key combo → macro id. Macros resolve AFTER
-        /// built-in `Action`s and BEFORE custom mutations, so a key
-        /// bound to both a macro and a custom mutation fires the
-        /// macro.
+        /// built-in `Action`s and BEFORE edits, so a key bound to
+        /// both a macro and an edit fires the macro.
         pub macro_bindings: HashMap<String, String> = HashMap::new(),
     }
 }
@@ -601,12 +605,12 @@ impl KeybindConfig {
         let mut binds: Vec<(Action, KeyBind)> = Vec::new();
         self.push_action_binds(&mut binds);
 
-        let mut custom_binds: Vec<(KeyBind, String)> = Vec::new();
-        for (combo, mutation_id) in &self.custom_mutation_bindings {
+        let mut edit_binds: Vec<(KeyBind, String)> = Vec::new();
+        for (combo, edit_id) in &self.edit_bindings {
             match KeyBind::parse(combo) {
-                Ok(k) => custom_binds.push((k, mutation_id.clone())),
+                Ok(k) => edit_binds.push((k, edit_id.clone())),
                 Err(e) => warn!(
-                    "keybinds: skipping invalid custom_mutation_binding '{}': {}",
+                    "keybinds: skipping invalid edit_binding '{}': {}",
                     combo, e
                 ),
             }
@@ -621,7 +625,7 @@ impl KeybindConfig {
 
         ResolvedKeybinds::new(
             binds,
-            custom_binds,
+            edit_binds,
             macro_binds,
             resolve_console_font(&self.console_font),
             self.console_font_size.max(4.0),

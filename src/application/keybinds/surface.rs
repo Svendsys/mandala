@@ -10,9 +10,9 @@
 //! — a [`super::KeybindConfig`] struct field, a `Default` entry, and a
 //! row in `resolve()`. A field missing from `resolve()` compiled
 //! cleanly and the binding was silently dead, which is a bug that had
-//! already shipped more than once (`Action::SetBorderPreview` had a
-//! field and no row; `Action::CycleBorderPreset` and
-//! `Action::ToggleBorderVisible` documented themselves as bindable
+//! already shipped more than once (`Action::SetFramePreview` had a
+//! field and no row; `Action::CycleFrameContent` and
+//! `Action::ToggleFrameVisible` documented themselves as bindable
 //! and had neither).
 //!
 //! [`keybind_surface!`] collapses the three into one row per Action
@@ -313,7 +313,7 @@ pub const fn field_names_eq(a: &[&str], b: &[&str]) -> bool {
 /// ## Why tuple variants expand to nothing
 ///
 /// The second rule is deliberately empty. A tuple row's names
-/// (`SetEdgeBodyGlyph(glyph)`) are local bindings invented by the
+/// (`SetPathContent(glyph)`) are local bindings invented by the
 /// table, not declared anywhere, and the pattern that binds them and
 /// the constructor that consumes them are the *same* macro
 /// repetition — so there is no second order for them to disagree
@@ -364,8 +364,8 @@ macro_rules! keybind_field_order_check {
 ///         JumpToRoot => jump_to_root = [],       // default unbound
 ///     }
 ///     parametric {
-///         SetEdgeAnchor { from, to } => set_edge_anchor,
-///         SetEdgeBodyGlyph(glyph) => set_edge_body_glyph,
+///         SetPathAnchor { from, to } => set_edge_anchor,
+///         SetPathContent(glyph) => set_edge_body_glyph,
 ///     }
 ///     unbindable {
 ///         // Variant => the reason it has no key surface. The reason

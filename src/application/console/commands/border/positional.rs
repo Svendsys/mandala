@@ -82,7 +82,7 @@ impl BorderSurface {
     /// whole codebase. The positional `… preset cycle` subverb
     /// stages the answer into its atomic edit bundle;
     /// [`super::execute::cycle_border_preset_on_selection`] —
-    /// which `Action::CycleBorderPreset` calls — writes it straight
+    /// which `Action::CycleFrameContent` calls — writes it straight
     /// through with `BorderSurface::Selection`. Two delivery
     /// mechanisms, one answer, so the keybind and the verb cannot
     /// disagree about what "next" means.

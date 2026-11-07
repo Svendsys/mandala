@@ -54,7 +54,7 @@ pub(crate) fn resolve_cap(endpoint_from: bool, name: &str) -> Option<Option<&'st
 
 /// Mutation core: apply cap-glyph changes to the currently-selected
 /// edge. Both the `cap` console verb and the parametric
-/// `Action::SetEdgeCap` route through this helper. Invalid preset
+/// `Action::SetPathCap` route through this helper. Invalid preset
 /// names silently no-op the corresponding slot — the verb path
 /// surfaces typed errors via `ApplyTally`; the Action path warns
 /// upstream and returns `Handled` (no scrollback surface).

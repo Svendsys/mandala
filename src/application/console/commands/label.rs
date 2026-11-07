@@ -233,7 +233,7 @@ fn execute_label(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                     return ExecResult::err(format!("position '{}' must be start|middle|end", value));
                 }
                 // Route through the mutation core — same setter
-                // path the parametric `Action::SetEdgeLabelPosition`
+                // path the parametric `Action::SetLabelPosition`
                 // arm uses.
                 let changed = apply_label_position_to_selection(eff.document_mut(), &value);
                 any_applied |= changed;

@@ -40,7 +40,7 @@ pub enum ColorAxis {
     Border,
 }
 
-/// Which border-slot a [`Action::SetBorderPreview`] targets.
+/// Which border-slot a [`Action::SetFramePreview`] targets.
 /// Discriminator for the `<verb> preview <kv>=…` Action surface
 /// — five variants mirror the five committing setters
 /// (`set_node_border_config` /
@@ -131,7 +131,7 @@ pub enum ZoomBound {
 /// variants are cloned at lookup time in
 /// [`super::resolved::ResolvedKeybinds::action_for_context`]. Each
 /// keypress allocates one short string per `String`-payload variant
-/// (two for `SetEdgeAnchor` / `SetEdgeCap` / `SetBorderField`). For
+/// (two for `SetPathAnchor` / `SetPathCap` / `SetFrameField`). For
 /// the typical interactive cadence (≤10 keypresses/sec) the cost is
 /// inconsequential; for a synthetic load of macros firing thousands
 /// of `Action`s/sec, switch the lookup to return `&Action` and clone
@@ -163,9 +163,12 @@ pub enum ZoomBound {
 #[non_exhaustive]
 pub enum Action {
     // ── Document-level (global) ──────────────────────────────────
-    /// Undo the last action on the document.
+    /// Undo the newest history entry (`Document::undo`).
     #[action(context = Document, wasm = Compatible)]
     Undo,
+    /// Redo the history entry undone last (`Document::redo`).
+    #[action(context = Document, wasm = Compatible)]
+    Redo,
     /// Enter reparent mode for the currently selected nodes.
     #[action(context = Document, wasm = NativeOnly)]
     EnterReparentMode,
@@ -731,11 +734,11 @@ pub enum Action {
     /// Mirror `anchor from=<side> to=<side>` on the selected edge.
     /// Sides: `auto|top|right|bottom|left`. Single-edge selection.
     #[action(context = Document, wasm = Compatible)]
-    SetEdgeAnchor { from: String, to: String },
+    SetPathAnchor { from: String, to: String },
     /// Mirror `body glyph=<dot|dash|double|wave|chain>` on the
     /// selected edge.
     #[action(context = Document, wasm = Compatible)]
-    SetEdgeBodyGlyph(String),
+    SetPathContent(String),
     /// Mirror `border <field>=<value>` on the selected node(s).
     /// Single kv per binding (multi-kv border edits stay
     /// console-only). Field names: `preset|font|size|color|palette|
@@ -748,7 +751,7 @@ pub enum Action {
     /// would catch it at load do not exist yet; #227 tracks adding
     /// them and retiring this one.
     #[action(context = Document, wasm = Compatible)]
-    SetBorderField { field: String, value: String },
+    SetFrameField { field: String, value: String },
     /// Mirror `border preset cycle` — advance the selected
     /// node(s)' border preset to the next entry in
     /// `BORDER_PRESETS`, wrapping at the end. No payload, so
@@ -757,14 +760,14 @@ pub enum Action {
     /// the variant landed and the config field did not exist until
     /// #32 — the drift class the `keybind_surface!` table closes.
     #[action(context = Document, wasm = Compatible)]
-    CycleBorderPreset,
+    CycleFrameContent,
     /// Mirror `border toggle` — flip `style.show_frame` per
     /// selected node. No payload (each node is toggled
     /// independently), so bindable to a single key for one-press
     /// border-on/off cycling, as `toggle_border_visible`. Same
-    /// missing-field history as [`Action::CycleBorderPreset`].
+    /// missing-field history as [`Action::CycleFrameContent`].
     #[action(context = Document, wasm = Compatible)]
-    ToggleBorderVisible,
+    ToggleFrameVisible,
     /// Stage a single-kv border preview against the live
     /// selection. `target_kind: BorderPreviewTargetKind` is a
     /// typed enum (kebab-case-serialized: `node` / `section` /
@@ -787,7 +790,7 @@ pub enum Action {
     /// to a navigation key that lands a section-shaped selection
     /// first, or use the console verb.
     #[action(context = Document, wasm = Compatible)]
-    SetBorderPreview {
+    SetFramePreview {
         target_kind: BorderPreviewTargetKind,
         field: String,
         value: String,
@@ -796,7 +799,7 @@ pub enum Action {
     /// committing setter and clear the preview slot. No-op when
     /// no preview is active.
     #[action(context = Document, wasm = Compatible)]
-    CommitBorderPreview,
+    CommitFramePreview,
     /// Discard the active border preview without writing the
     /// model. No-op when no preview is active. Default-bound to
     /// **nothing** in `KeybindConfig::default()` — Esc cancels
@@ -808,11 +811,11 @@ pub enum Action {
     /// this entry to opt out of the chain (e.g. preview-cancel
     /// on a different key while leaving Esc on plain ExitMode).
     #[action(context = Document, wasm = Compatible)]
-    CancelBorderPreview,
+    CancelFramePreview,
     /// Mirror `cap from=<arrow|circle|diamond|none> to=<...>` on the
     /// selected edge.
     #[action(context = Document, wasm = Compatible)]
-    SetEdgeCap { from: String, to: String },
+    SetPathCap { from: String, to: String },
     /// Mirror `color <axis>=<color>` on the current selection.
     /// `axis` picks the field group (background, text, or border);
     /// `value` is the user-facing color string (`#rrggbb`,
@@ -825,11 +828,11 @@ pub enum Action {
     SetEdgeType(String),
     /// Mirror `edge display_mode=<line|portal>` on the selected edge.
     #[action(context = Document, wasm = Compatible)]
-    SetEdgeDisplayMode(String),
+    SetLinkKind(String),
     /// Mirror `edge reset=<straight|curve|style|position>` on the
     /// selected edge.
     #[action(context = Document, wasm = Compatible)]
-    ResetEdge(String),
+    ResetPath(String),
     /// Mirror `font set <family>` on the current selection. Unknown
     /// family names silently no-op (the verb path surfaces a typed
     /// error; the Action arm has no scrollback).
@@ -846,16 +849,16 @@ pub enum Action {
     /// Mirror `label text=<text>` on the selected edge / portal
     /// label. Empty payload clears the label.
     #[action(context = Document, wasm = Compatible)]
-    SetEdgeLabelText(String),
+    SetLabelText(String),
     /// Mirror `label position=<start|middle|end>` on the selected
     /// line-mode edge. Portal selections silently no-op (they use
     /// the `position_t=<f32>` shape, not named anchors).
     #[action(context = Document, wasm = Compatible)]
-    SetEdgeLabelPosition(String),
+    SetLabelPosition(String),
     /// Mirror `spacing value=<tight|normal|wide|<float>>` on the
     /// selected edge.
     #[action(context = Document, wasm = Compatible)]
-    SetSpacing(String),
+    SetPathSpacing(String),
     /// Mirror `zoom <bound>=<zoom|unset>` on the current selection.
     /// `bound` picks `min|max`; `value` is `"unset"`, `""`, or a
     /// positive finite float string. Inverted bounds (`min > max`)

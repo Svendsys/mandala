@@ -3312,8 +3312,8 @@ fn test_border_preview_commit_fans_out_to_section_range() {
     );
 }
 
-/// **C19 regression** — `Action::SetBorderPreview` /
-/// `CommitBorderPreview` / `CancelBorderPreview` arms route to
+/// **C19 regression** — `Action::SetFramePreview` /
+/// `CommitFramePreview` / `CancelFramePreview` arms route to
 /// the corresponding document setters with the typed
 /// `BorderPreviewTargetKind` discriminator. The dispatch arms
 /// can't be exercised without a `Renderer`

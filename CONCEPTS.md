@@ -4870,9 +4870,9 @@ selection no longer covers the target, and the actual slot
 clear happens at the next `set_*` / `commit_*` / `cancel_*`
 call. Implicit cancel: any of the four committing setters
 clears the preview as their first line, so a non-preview edit
-always wins. `Action::SetBorderPreview { target_kind:
+always wins. `Action::SetFramePreview { target_kind:
 BorderPreviewTargetKind, field, value }`,
-`Action::CommitBorderPreview`, `Action::CancelBorderPreview`
+`Action::CommitFramePreview`, `Action::CancelFramePreview`
 expose the keybind / dispatch surface; `Esc` cancels through
 `Action::ExitMode`'s body before mode-clear.
 
@@ -5160,7 +5160,7 @@ costs the layer. `user_config::salvage` holds the primitives, and
 **Parametric Actions.** A subset of variants carries payload
 (`String` paths, `(field, value)` tuples, etc.) — these wrap
 parameterized console verbs so a user can bind e.g. `Ctrl+B` →
-`SetBorderField { field: "preset", value: "rounded" }` directly
+`SetFrameField { field: "preset", value: "rounded" }` directly
 in `keybinds.json` without authoring a macro. Bindings use a
 sibling `ParametricBinding` shape:
 
@@ -5221,7 +5221,7 @@ conversion and `resolve()` — which is where "`set_color`'s first
 arg has to be a real `ColorAxis`" lives, and which the const
 check, reading two lists of identifiers, cannot see.
 
-Tuple rows (`SetEdgeBodyGlyph(glyph)`) sit outside the const
+Tuple rows (`SetPathContent(glyph)`) sit outside the const
 check by construction rather than by omission: their names are
 local bindings the table invents, and the pattern that binds
 them and the constructor that consumes them are the same macro
@@ -5233,7 +5233,7 @@ of args, and an arg that is not a valid value for its field.
 The dispatch arms call `pub(crate)` mutation cores extracted
 from each console verb, so the same setter path runs whether
 the user types the verb or fires the bound key — including
-`CycleBorderPreset` / `ToggleBorderVisible` (cores in
+`CycleFrameContent` / `ToggleFrameVisible` (cores in
 `console/commands/border/execute.rs`) and the font-size slots
 (one selection dispatcher in `console/commands/font.rs`).
 Section-targeted Action variants resolve their `(node_id,
