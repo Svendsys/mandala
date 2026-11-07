@@ -265,3 +265,27 @@ pub(crate) fn f32_json(value: f32) -> Value {
         .and_then(serde_json::Number::from_f64)
         .map_or(Value::Null, Value::Number)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::f32_json;
+    use serde_json::{json, Value};
+
+    /// An `f32` reads as the shortest decimal that names it, and a value
+    /// JSON cannot carry is `null`. Control: `0.1` would print as
+    /// `0.10000000149011612` through a plain widening, which is what the
+    /// first assertion rules out.
+    #[test]
+    fn test_f32_json_names_the_shortest_decimal() {
+        assert_ne!(
+            json!(f64::from(0.1_f32)),
+            json!(0.1),
+            "control: the plain widening is long"
+        );
+        assert_eq!(f32_json(0.1), json!(0.1));
+        assert_eq!(f32_json(0.75), json!(0.75));
+        assert_eq!(f32_json(-3.0), json!(-3.0));
+        assert_eq!(f32_json(f32::NAN), Value::Null);
+        assert_eq!(f32_json(f32::INFINITY), Value::Null);
+    }
+}

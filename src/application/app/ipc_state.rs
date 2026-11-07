@@ -364,4 +364,52 @@ mod tests {
             json!({ "console": json, "color_picker": null })
         );
     }
+
+    fn open_picker(mode: PickerMode) -> ColorPickerState {
+        use crate::application::color_picker::CROSSHAIR_CENTER_CELL;
+        ColorPickerState::Open(Box::new(OpenPicker {
+            mode,
+            hue_deg: 120.0,
+            sat: 0.5,
+            val: 0.25,
+            last_cursor_pos: None,
+            max_cell_advance: 16.0,
+            max_ring_advance: 24.0,
+            measurement_font_size: 16.0,
+            arm_top_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
+            arm_bottom_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
+            arm_left_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
+            arm_right_ink_offsets: [(0.0, 0.0); CROSSHAIR_CENTER_CELL],
+            preview_ink_offset: (0.0, 0.0),
+            layout: None,
+            center_override: None,
+            size_scale: 1.0,
+            gesture: None,
+            hovered_hit: None,
+            hover_preview: None,
+            pending_error_flash: false,
+            last_dynamic_apply: None,
+        }))
+    }
+
+    /// An open picker reports its mode, the HSV it would commit and its
+    /// gesture; a contextual one carries the seed it opened on. Control:
+    /// the closed picker is `null`, so the open reply is the open state's.
+    #[test]
+    fn test_an_open_picker_reports_its_mode_and_hsv() {
+        let json = picker_to_ipc_json(&open_picker(PickerMode::Standalone));
+        assert_eq!(json["mode"], json!({ "kind": "Standalone" }));
+        assert_eq!(json["hue_deg"], json!(120.0));
+        assert_eq!(json["sat"], json!(0.5));
+        assert_eq!(json["val"], json!(0.25));
+        assert_eq!(json["gesture"], Value::Null);
+        let seeded = picker_to_ipc_json(&open_picker(PickerMode::Contextual {
+            seed_hsv: (10.0, 0.5, 0.75),
+        }));
+        assert_eq!(
+            seeded["mode"],
+            json!({ "kind": "Contextual", "seed_hsv": { "h": 10.0, "s": 0.5, "v": 0.75 } })
+        );
+        assert_eq!(picker_to_ipc_json(&ColorPickerState::Closed), Value::Null);
+    }
 }

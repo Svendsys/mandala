@@ -162,4 +162,32 @@ mod tests {
         assert!(matches!(result, ExecResult::Ok(_)));
         assert_eq!(replacement(side).file_path, None);
     }
+
+    /// A write that fails is reported and the current document
+    /// survives — the user is left with the map they had, not with a
+    /// blank one bound to a file that does not exist. The path is inside
+    /// a directory that was never created, so the write cannot stage.
+    /// Control: the same name in the directory that exists is written
+    /// and replaces the document.
+    #[test]
+    fn test_new_reports_a_failed_write_and_keeps_the_current_document() {
+        let dir = TempDir::new("console-new-unwritable");
+        let path = dir.join("no-such-dir").join("fresh.mandala.json");
+        let mut doc = MindMapDocument::new_blank(None, 50);
+        let (result, side) = run_new(&[&path.to_string_lossy()], &mut doc);
+        assert_exec_err_contains(result, "new:");
+        assert!(
+            side.is_none(),
+            "a new whose write failed must not replace the document"
+        );
+        assert!(!path.exists());
+
+        let good = dir.join("fresh.mandala.json");
+        let (result, side) = run_new(&[&good.to_string_lossy()], &mut doc);
+        assert!(matches!(result, ExecResult::Ok(_)), "{result:?}");
+        assert!(
+            side.is_some() && good.exists(),
+            "control: a writable path is written"
+        );
+    }
 }

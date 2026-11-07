@@ -631,8 +631,15 @@ fn find_text(call: &mut Call<'_>) -> Reply {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::console::LineOutcome;
     use crate::application::document::tests_common::testament;
     use crate::application::document::MindMapDocument;
+    use crate::application::ipc::events::Observed;
+    use crate::application::ipc::registry::tests::{run_attached, run_detached};
+    use crate::application::ipc::space::Point;
+    use crate::application::ipc::{CommandTarget, ShellState};
+    use crate::application::keybinds::Action;
+    use crate::application::macros::MacroStep;
     use crate::application::view::MapView;
     use baumhard::gfx_structs::camera::Camera2D;
 
@@ -671,8 +678,29 @@ mod tests {
     /// Control: the same document at another camera dumps differently,
     /// so the comparison is of a reading that depends on its input, not
     /// of two empty replies.
+    ///
+    /// **The process's font state is settled first**: every shipped map
+    /// is projected once before either load. Shaping is not yet a
+    /// function of the document alone — projecting a map that names
+    /// other families (any of `maps/demos/`) changes how a later
+    /// testament load measures a bold span ("Lord God": 377.77 against
+    /// 375.53 canvas units), in one thread and across threads. That is a
+    /// defect of the font state, reported on the cut-over (#244) for the
+    /// font work's owner, and this test does not claim it away: it pins
+    /// what holds once the faces in use stop changing.
     #[test]
     fn test_the_same_document_twice_dumps_byte_identical_scenes() {
+        for dir in ["maps", "maps/demos"] {
+            let root = baumhard::util::doc_fixtures::repo_path(dir);
+            for entry in std::fs::read_dir(&root).expect("the maps list") {
+                let path = entry.expect("an entry").path();
+                if path.to_string_lossy().ends_with(".mandala.json") {
+                    let doc = MindMapDocument::load(path.to_str().expect("UTF-8"), 50)
+                        .expect("a shipped map loads");
+                    let _settled = MapView::for_test(&doc);
+                }
+            }
+        }
         let all = Kinds {
             nodes: true,
             paths: true,
@@ -742,8 +770,7 @@ mod tests {
             "{word:?} in {found:?}"
         );
         assert!(named["node"].is_u64() && named["section"].is_u64(), "{named}");
-        // Control: case-sensitive upper-case misses a mixed-case text,
-        // and text nobody shows finds nothing.
+        // Control: text nobody shows finds nothing.
         assert!(find_matches(&view, &TextMatch::new("zz-no-such-text-0e1a", false, false)).is_empty());
     }
 
@@ -776,5 +803,302 @@ mod tests {
         );
         assert!(TextMatch::new("É", false, false).matches("café é"));
         assert!(!TextMatch::new("É", false, true).matches("é"));
+    }
+
+    /// The testament map behind the `CommandTarget` seam, for driving the
+    /// scene commands through the registry. Every act and input method
+    /// panics: a scene command is a read. `hit_test` records the probe it
+    /// was handed and answers with it, since the hit report itself is
+    /// `app::ipc_scene`'s and tested there.
+    struct SceneApp {
+        doc: Option<MindMapDocument>,
+        view: MapView,
+        camera: Camera2D,
+        probes: Vec<Point>,
+    }
+
+    impl SceneApp {
+        fn loaded() -> Self {
+            let (doc, view, camera) = fixture();
+            SceneApp {
+                doc: Some(doc),
+                view,
+                camera,
+                probes: Vec::new(),
+            }
+        }
+
+        fn without_a_document() -> Self {
+            SceneApp {
+                doc: None,
+                ..SceneApp::loaded()
+            }
+        }
+    }
+
+    impl CommandTarget for SceneApp {
+        fn dispatch_action(&mut self, _: Action, _: Option<Point>) -> crate::application::ipc::ActionOutcome {
+            panic!("a scene command must not dispatch an Action");
+        }
+        fn run_console_line(&mut self, _: &str) -> Option<LineOutcome> {
+            panic!("a scene command must not run a console line");
+        }
+        fn has_macro(&self, _: &str) -> bool {
+            panic!("a scene command must not look up a macro");
+        }
+        fn run_macro(&mut self, _: &str, _: &mut dyn FnMut(Observed<'_>)) -> bool {
+            panic!("a scene command must not run a macro");
+        }
+        fn run_macro_steps(&mut self, _: &[MacroStep], _: &mut dyn FnMut(Observed<'_>)) -> bool {
+            panic!("a scene command must not run macro steps");
+        }
+        fn changed_view(&self) -> bool {
+            false
+        }
+        fn document(&self) -> Option<&MindMapDocument> {
+            self.doc.as_ref()
+        }
+        fn shell_state(&self, _: ShellState) -> Value {
+            panic!("a scene command must not read the shell state");
+        }
+        fn scene(&self) -> Option<SceneView<'_>> {
+            Some(SceneView {
+                document: self.doc.as_ref()?,
+                view: &self.view,
+                camera: &self.camera,
+            })
+        }
+        fn hit_test(&mut self, point: Point) -> Option<Value> {
+            self.doc.as_ref()?;
+            self.probes.push(point);
+            Some(json!({ "probed": [point.x, point.y] }))
+        }
+        fn surface_point(&self, _: Point) -> (f64, f64) {
+            panic!("a scene command must not place a pointer");
+        }
+        fn inject(
+            &mut self,
+            _: Vec<crate::application::ipc::injected::Sample>,
+            _: crate::application::ipc::injected::Pacing,
+        ) -> Result<crate::application::ipc::Injected, crate::application::ipc::injected::Overloaded>
+        {
+            panic!("a scene command must not inject input");
+        }
+        fn injected_pending(&self) -> usize {
+            panic!("a scene command must not read the injected-input queue");
+        }
+        fn capture(
+            &mut self,
+            _: &crate::application::capture::plan::CaptureRequest,
+            _: crate::application::capture::Destination,
+            _: bool,
+        ) -> Option<Result<crate::application::ipc::Screenshot, crate::application::capture::CaptureError>>
+        {
+            panic!("a scene command must not take a screenshot");
+        }
+        fn record_start(
+            &mut self,
+            _: &crate::application::capture::plan::CaptureRequest,
+            _: u32,
+            _: u32,
+            _: crate::application::capture::record::RecordDestination,
+        ) -> Option<
+            Result<crate::application::capture::record::Started, crate::application::capture::CaptureError>,
+        > {
+            panic!("a scene command must not start a recording");
+        }
+        fn record_stop(
+            &mut self,
+        ) -> Result<crate::application::capture::record::Summary, crate::application::capture::CaptureError>
+        {
+            panic!("a scene command must not stop a recording");
+        }
+        fn clock(&self) -> &crate::application::clock::AppClock {
+            panic!("a scene command must not read the clock");
+        }
+        fn set_clock_mode(
+            &mut self,
+            _: crate::application::clock::ClockMode,
+        ) -> Result<bool, crate::application::clock::ClockRefusal> {
+            panic!("a scene command must not switch the clock");
+        }
+        fn step_clock(
+            &mut self,
+            _: crate::application::clock::StepRequest,
+        ) -> Result<crate::application::clock::Stepped, crate::application::clock::ClockRefusal> {
+            panic!("a scene command must not step the clock");
+        }
+    }
+
+    /// One well-formed request per scene command, naming a real node.
+    fn every_scene_command(app: &SceneApp) -> Vec<String> {
+        let doc = app.doc.as_ref().expect("loaded");
+        let node = every_node(doc.doc())
+            .find(|&n| element_bounds(doc.doc(), app.view.projector(), app.view.layers(), n).is_some())
+            .expect("a drawn node");
+        let id = crate::application::view::inspect::ident_of(doc.doc(), node)
+            .expect("a node")
+            .0;
+        vec![
+            r#"{"id":1,"cmd":"scene.dump"}"#.to_string(),
+            r#"{"id":1,"cmd":"scene.dump","include":"all","kinds":["nodes","paths"]}"#.to_string(),
+            r#"{"id":1,"cmd":"scene.visible_set"}"#.to_string(),
+            format!(r#"{{"id":1,"cmd":"scene.node_geometry","node_id":{id}}}"#),
+            r#"{"id":1,"cmd":"scene.hit_test","x":10,"y":20}"#.to_string(),
+            r#"{"id":1,"cmd":"scene.find_text","text":"the"}"#.to_string(),
+        ]
+    }
+
+    /// **Every scene command answers `no_document` without one** —
+    /// detached (no app yet) and attached to an app with no map — and
+    /// changes nothing on the way.
+    #[test]
+    fn test_every_scene_command_answers_no_document_without_one() {
+        let frames = every_scene_command(&SceneApp::loaded());
+        let mut empty = SceneApp::without_a_document();
+        for frame in &frames {
+            let (reply, repaint) = run_detached(frame);
+            assert_eq!(
+                reply["error"]["code"],
+                json!("no_document"),
+                "detached {frame}: {reply}"
+            );
+            assert!(!repaint, "{frame}");
+            let (reply, repaint) = run_attached(frame, &mut empty);
+            assert_eq!(
+                reply["error"]["code"],
+                json!("no_document"),
+                "attached {frame}: {reply}"
+            );
+            assert!(!repaint, "{frame}");
+        }
+        assert!(empty.probes.is_empty(), "no probe reached an app with no map");
+    }
+
+    /// **Every scene command is a read**: through the registry, each one
+    /// answers, asks for no frame, and leaves the document's revision,
+    /// dirty state and saved bytes where they were. The stand-in's act
+    /// methods panic, so a command that reached one fails here too.
+    ///
+    /// Control: every reply is `ok`, so the loop is of commands that ran,
+    /// and the hit test's probe arrived at the app as sent.
+    #[test]
+    fn test_every_scene_command_leaves_the_document_untouched() {
+        let mut app = SceneApp::loaded();
+        let frames = every_scene_command(&app);
+        let doc = app.doc.as_mut().expect("loaded");
+        let (revision, dirty, saved) = (doc.revision(), doc.is_dirty(), doc.save_json().expect("saves"));
+        for frame in &frames {
+            let (reply, repaint) = run_attached(frame, &mut app);
+            assert_eq!(reply["ok"], json!(true), "{frame}: {reply}");
+            assert!(!repaint, "{frame}: a read asks for no frame");
+        }
+        assert_eq!(app.probes.len(), 1, "the hit test reached the app once");
+        assert_eq!(
+            (app.probes[0].x, app.probes[0].y),
+            (10.0, 20.0),
+            "with the point sent"
+        );
+        let doc = app.doc.as_mut().expect("loaded");
+        assert_eq!(doc.revision(), revision);
+        assert_eq!(doc.is_dirty(), dirty);
+        assert_eq!(doc.save_json().expect("saves"), saved, "the model is untouched");
+    }
+
+    /// `scene.visible_set` names exactly the elements the default dump
+    /// reports as visible, kind by kind — two views of one verdict.
+    /// Control: the fit camera shows nodes, so the comparison is not of
+    /// two empty lists.
+    #[test]
+    fn test_the_visible_set_is_the_visible_dump() {
+        let mut app = SceneApp::loaded();
+        let (dump, _) = run_attached(r#"{"id":1,"cmd":"scene.dump"}"#, &mut app);
+        let (set, _) = run_attached(r#"{"id":1,"cmd":"scene.visible_set"}"#, &mut app);
+        let names = |entries: &Value| -> Vec<Value> {
+            entries
+                .as_array()
+                .expect("a list")
+                .iter()
+                .map(|entry| entry["element"].clone())
+                .collect()
+        };
+        let nodes = names(&dump["result"]["nodes"]);
+        assert!(!nodes.is_empty(), "control: the fit camera shows nodes");
+        assert_eq!(set["result"]["nodes"].as_array().expect("nodes"), &nodes);
+        for kind in ["paths", "labels", "portals"] {
+            assert_eq!(
+                set["result"][kind].as_array().expect(kind),
+                &names(&dump["result"][kind]),
+                "{kind}"
+            );
+        }
+    }
+
+    /// `scene.dump` with `to_file` writes the dump it would have answered
+    /// inline, and answers with the path and the byte count; a second
+    /// write to the same path is refused without `overwrite`.
+    #[test]
+    fn test_dump_to_file_writes_the_inline_dump() {
+        let mut app = SceneApp::loaded();
+        let (inline, _) = run_attached(r#"{"id":1,"cmd":"scene.dump"}"#, &mut app);
+        let dir = super::super::sidecar::tests::scratch_dir("scene-dump");
+        let path = dir.join("scene.json");
+        let frame =
+            json!({ "id": 1, "cmd": "scene.dump", "to_file": path.to_str().expect("utf-8") }).to_string();
+        let (written, _) = run_attached(&frame, &mut app);
+        assert_eq!(written["ok"], json!(true), "{written}");
+        let text = std::fs::read_to_string(&path).expect("the dump was written");
+        assert_eq!(written["result"]["bytes"], json!(text.len()));
+        let on_disk: Value = serde_json::from_str(&text).expect("JSON");
+        assert_eq!(on_disk, inline["result"], "the file holds the inline dump");
+        let (again, _) = run_attached(&frame, &mut app);
+        assert_eq!(
+            again["error"]["code"],
+            json!("invalid_params"),
+            "control: {again}"
+        );
+    }
+
+    /// `find_text`'s two switches: `exact` matches the whole displayed
+    /// text and not a part of it, and `case_sensitive` stops a differently
+    /// cased needle from matching.
+    #[test]
+    fn test_find_text_exact_and_case_sensitive_narrow_the_match() {
+        let (doc, view, camera) = fixture();
+        let view = scene(&doc, &view, &camera);
+        let section = elements_of(&view, &[DocKind::Section])
+            .find(|&s| {
+                let text = element_text(doc.doc(), s);
+                text.chars().count() > 6 && text.to_uppercase() != text
+            })
+            .expect("a section with lower-case text");
+        let text = element_text(doc.doc(), section);
+        let part: String = text.chars().take(5).collect();
+        let named = element_ref(doc.doc(), section);
+        let found = |matcher: TextMatch| {
+            find_matches(&view, &matcher)
+                .iter()
+                .any(|m| m["element"] == named)
+        };
+        assert!(
+            found(TextMatch::new(&text, true, true)),
+            "the whole text, exactly"
+        );
+        assert!(
+            found(TextMatch::new(&part, false, true)),
+            "control: a part, as a substring"
+        );
+        assert!(
+            !found(TextMatch::new(&part, true, false)),
+            "a part is not the whole text"
+        );
+        assert!(
+            found(TextMatch::new(&text.to_uppercase(), false, false)),
+            "case folds by default"
+        );
+        assert!(
+            !found(TextMatch::new(&text.to_uppercase(), false, true)),
+            "and not when case-sensitive"
+        );
     }
 }

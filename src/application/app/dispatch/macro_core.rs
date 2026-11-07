@@ -372,11 +372,20 @@ mod tests {
         assert_eq!(t.calls.len(), 2, "both steps were offered");
     }
 
-    /// An unknown id runs nothing.
+    /// An unknown id runs nothing, and neither does a known macro with
+    /// no steps. Control: the same registry runs a macro that has one.
     #[test]
     fn test_an_unknown_macro_runs_nothing() {
-        let mut t = MockTarget::new(MacroRegistry::new());
+        let empty = macro_with_steps("empty", Vec::new());
+        let one = macro_with_steps("one", vec![MacroStep::Action { action: Action::Undo }]);
+        let mut t = MockTarget::new(registry_with(vec![
+            (empty, SourceTier::User),
+            (one, SourceTier::User),
+        ]));
         assert!(!dispatch_macro("no-such-macro", &mut t));
+        assert!(!dispatch_macro("empty", &mut t), "an empty macro ran nothing");
         assert!(t.calls.is_empty());
+        assert!(dispatch_macro("one", &mut t), "control");
+        assert_eq!(t.calls, vec!["action:Undo".to_string()]);
     }
 }
