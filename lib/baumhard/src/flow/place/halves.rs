@@ -1650,14 +1650,9 @@ thread_local! {
     pub(crate) static SIDE_STEP_LOOKUPS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
     /// Test counter (#309): the runs a frame's placement has shaped or
     /// reshaped on this thread — R27's fit, a build at a size, a side
-    /// ornament's runs — and the runs it has inked.
+    /// ornament's runs.
     #[cfg(test)]
     pub(crate) static RESHAPES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Test counter (#309, the B9 final review 5757429244): the one-gap
-    /// lines frames laid on this thread at normal scale, their parts' ends
-    /// within 10¹⁵ of the origin, and of them the ones ending past their
-    /// tolerance of their part's end — what the secondary rule brings home
-    /// ([`Layout::reach_its_end`]).
     /// Test control (#309): with it set, no line's secondary rule runs
     /// ([`Layout::reach_its_end`]) — what the rule's pins are shown red
     /// without.
@@ -1669,6 +1664,11 @@ thread_local! {
     /// step stretched, or shrunk.
     #[cfg(test)]
     pub(crate) static RULE_KEPT: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
+    /// Test counter (#309, the B9 final review 5757429244): the one-gap
+    /// lines frames laid on this thread at normal scale, their parts' ends
+    /// within 10¹⁵ of the origin, and of them the ones ending past their
+    /// tolerance of their part's end — what the secondary rule brings home
+    /// ([`Layout::reach_its_end`]).
     #[cfg(test)]
     pub(crate) static ONE_GAP_LINES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
     /// Test counter (#309): the lines a frame's [`TrackMemo`] answered on
@@ -1679,6 +1679,8 @@ thread_local! {
     /// thread, each distinct glyph of a run once.
     #[cfg(test)]
     pub(crate) static OUTLINE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#309): the runs a frame's placement has inked on this
+    /// thread ([`inked`]).
     #[cfg(test)]
     pub(crate) static INKINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
