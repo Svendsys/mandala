@@ -128,6 +128,15 @@ pub struct SerdeField {
 pub struct TypeInfo {
     /// The item's identifier, as written.
     pub name: String,
+    /// The item's path inside the crate, without the `crate::` prefix
+    /// — `document::values::Anchor` — which is what the index is keyed
+    /// by: two modules may declare one name, and only the path tells
+    /// them apart.
+    pub path: String,
+    /// The module the item is declared in (`document::values`, or the
+    /// empty string for the crate root), whose `use` declarations say
+    /// what a name its fields mention stands for.
+    pub module: String,
     /// Repo-relative-ish path of the file that defines it, for error
     /// messages that a reader can act on.
     pub file: PathBuf,
@@ -352,20 +361,78 @@ impl TypeInfo {
 /// per test that builds a graph.
 #[derive(Debug, Clone, Default)]
 pub struct TypeGraph {
+    /// Every indexed item, keyed by its path ([`TypeInfo::path`]).
     items: BTreeMap<String, TypeInfo>,
+    /// Bare name → the paths of every item declared under it, for the
+    /// names a scope does not settle (see [`TypeGraph::resolve`]).
+    by_name: BTreeMap<String, Vec<String>>,
+    /// Every module the indexed sources declare, by path — what tells
+    /// a path that starts in a child module from one that starts in
+    /// another crate.
+    modules: BTreeSet<String>,
+    /// Each module's `use` declarations, read so a name its items
+    /// mention is resolved the way the compiler resolves it.
+    scopes: BTreeMap<String, Scope>,
+    /// Paths declared more than once — the same name twice in one
+    /// module, which no scope can tell apart.
     duplicates: BTreeSet<String>,
     /// Every associated type an `impl` block declares, keyed by the
     /// implementing type's name and the associated type's name —
-    /// `("GfxElement", "Field") → GfxElementField`. What a projection
-    /// through a bound parameter (`E::Field`) resolves to. More than
-    /// one entry under a key is kept, so a disagreement is visible
-    /// rather than decided by declaration order.
-    associated: BTreeMap<(String, String), Vec<DeclaredType>>,
+    /// `("GfxElement", "Field") → GfxElementField` — with the module
+    /// the `impl` is written in, which is where the names on its
+    /// right-hand side are resolved. What a projection through a
+    /// bound parameter (`E::Field`) resolves to. More than one entry
+    /// under a key is kept, so a disagreement is visible rather than
+    /// decided by declaration order.
+    associated: BTreeMap<(String, String), Vec<(DeclaredType, String)>>,
 }
+
+/// One module's `use` declarations, as written: the paths are
+/// resolved when a name is looked up, once every module is known.
+#[derive(Debug, Clone, Default)]
+struct Scope {
+    /// Local name → the path it imports (`use a::B as C` records
+    /// `C → [a, B]`).
+    imports: BTreeMap<String, Vec<String>>,
+    /// The paths of every `use path::*`.
+    globs: Vec<Vec<String>>,
+}
+
+/// What a name written in one module stands for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Resolution {
+    /// The indexed item at this path.
+    Found(String),
+    /// Nothing in the index: a primitive, a parameter, or a type of
+    /// another crate.
+    NotIndexed,
+    /// More than one indexed item carries the name and the scope it
+    /// was written in does not say which: the paths of all of them.
+    Ambiguous(Vec<String>),
+}
+
+/// What a name looked up in one module's scope stands for, before the
+/// bare-name fallback ([`TypeGraph::resolve`]).
+enum Lookup {
+    /// The indexed item at this path.
+    Found(String),
+    /// The scope imports the name from another crate.
+    Foreign,
+    /// The scope does not say.
+    Missing,
+}
+
+/// How deep [`TypeGraph::lookup`] follows re-exports and glob
+/// imports before it gives up; a cycle of globs ends here.
+const LOOKUP_DEPTH: usize = 16;
 
 /// What a generic item's type parameters stand for at one place the
 /// walk reached it: parameter name → the argument written there, with
-/// any parameters of the *enclosing* item already substituted.
+/// any parameters of the *enclosing* item already substituted. The
+/// argument is **canonical**: every name in it that the index resolves
+/// is rewritten to its full `crate::` path where it was written, so it
+/// means the same thing in the module of the item it is substituted
+/// into ([`TypeGraph::canonical`]).
 type Bindings = BTreeMap<String, Type>;
 
 /// One instantiation of an indexed item the walk reached: the item,
@@ -377,17 +444,28 @@ struct Reached<'g> {
 }
 
 /// One name a type mentions in a position that holds data, together
-/// with the type arguments written on it there. Module qualifiers
-/// come along with no arguments, as they always have — a name only
-/// matters when the index holds a type by that name.
+/// with what it resolves to and the type arguments written on it
+/// there. The qualifiers of a path that does not start at a module
+/// (`E::Field`, `serde_json::Value`) come along with no arguments, as
+/// they always have — a name only matters when the index holds a type
+/// by that name; those of a `crate::` / `self::` / `super::` path are
+/// modules by the language's own rule and are not mentioned.
 struct Mention {
     name: String,
+    resolution: Resolution,
     arguments: Vec<Type>,
 }
 
-/// Files the index leaves out because they declare a bare type name
-/// another indexed file declares; see [`TypeGraph::build`].
-const UNINDEXED: &[&str] = &["document/element.rs", "document/values.rs"];
+impl Mention {
+    /// The path of the indexed item the name stands for, if exactly
+    /// one.
+    fn key(&self) -> Option<&str> {
+        match &self.resolution {
+            Resolution::Found(key) => Some(key.as_str()),
+            _ => None,
+        }
+    }
+}
 
 impl TypeGraph {
     /// Parse every `.rs` file under `src_root` and index the items it
@@ -414,19 +492,20 @@ impl TypeGraph {
     /// `#[cfg(test)]` modules were all excluded. Nothing had
     /// collided yet, which is the only reason it was quiet.
     ///
-    /// **Two document files are not indexed either:
-    /// `document/element.rs` and `document/values.rs`** ([`UNINDEXED`]).
-    /// The index is keyed by bare type name, and those two files
-    /// declare names other files declare too — `Anchor`
-    /// (`core::primitives`) and `Rgba` (`util::color`'s alias) — which
-    /// one bare-name key cannot hold twice. Every other file under
-    /// `document/` is indexed, so a gate that walks a document type
-    /// declared elsewhere — the format's types among them — sees it. No
-    /// walk from the format's roots reaches either file
-    /// (`test_the_format_is_walked_inside_its_own_module` holds that).
-    /// The exclusion stays until the index is keyed by module path:
-    /// `Anchor` and `Rgba` outlived the old model, so deleting it
-    /// (V1-C3) did not remove the collision.
+    /// **Every other file is indexed, the document's included**, and
+    /// each item under its path ([`TypeInfo::path`]): the document
+    /// declares names other modules declare too — `Anchor`
+    /// (`document::values` and `core::primitives`), `Rgba` (a struct in
+    /// `document::values`, an alias in `util::color`), `Direction`,
+    /// `Edge` — and a name is resolved where it is written, through the
+    /// module's own declarations and `use`s ([`Self::resolve`]). Until
+    /// V1-C3 the index was keyed by bare name, and `document/element.rs`
+    /// and `document/values.rs` were left out of it to keep it so.
+    ///
+    /// The module of a file is read off its path under `src_root`
+    /// (`a/b.rs` and `a/b/mod.rs` are `a::b`; `lib.rs` is the root), so
+    /// a `#[path = "…"]` module would be filed under the wrong one —
+    /// [`test_gated_module_files`] refuses that attribute outright.
     ///
     /// Panics if a file cannot be read or parsed, or if a `mod x;`
     /// names no file on disk: this backs a test whose entire job is to
@@ -435,7 +514,6 @@ impl TypeGraph {
         let mut graph = TypeGraph::default();
         let mut files = Vec::new();
         collect_source_files(src_root, &mut files);
-        files.retain(|file| !UNINDEXED.iter().any(|unindexed| file.ends_with(unindexed)));
         files.sort();
         let test_only = test_gated_module_files(&files);
         files.retain(|file| !test_only.contains(file));
@@ -444,15 +522,31 @@ impl TypeGraph {
                 .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
             let parsed = syn::parse_file(&text)
                 .unwrap_or_else(|e| panic!("{} must parse as Rust: {e}", file.display()));
-            graph.index_items(&parsed.items, &file);
+            let module = module_of_file(src_root, &file);
+            graph.modules.insert(module.clone());
+            graph.index_items(&parsed.items, &file, &module);
         }
         graph
     }
 
-    /// The indexed entry for `name`, or `None` when the crate does
-    /// not declare a type by that name.
+    /// The indexed entry for `name` — a path (`document::values::Anchor`)
+    /// or a bare name — or `None` when the crate declares nothing by
+    /// it.
+    ///
+    /// Panics when a bare name is declared in more than one module: the
+    /// caller asked a question with two answers, and returning either
+    /// would check an arbitrary one. Ask by path instead.
     pub fn get(&self, name: &str) -> Option<&TypeInfo> {
-        self.items.get(name)
+        if let Some(info) = self.items.get(name) {
+            return Some(info);
+        }
+        match self.by_name.get(name).map(Vec::as_slice) {
+            None | Some([]) => None,
+            Some([only]) => self.items.get(only),
+            Some(several) => {
+                panic!("`{name}` is declared in more than one module ({several:?}); ask for one by path")
+            }
+        }
     }
 
     /// Every `#[serde(...)]` attribute anywhere in the indexed
@@ -463,7 +557,7 @@ impl TypeGraph {
     /// silence reads as "carries nothing" — which is precisely the
     /// answer that makes every guard built on this graph pass. This
     /// reports the blind spot instead, over **all** indexed types
-    /// rather than only the ones reachable from `MindMap`: a reader
+    /// rather than only the ones reachable from the format's roots: a reader
     /// gap is a property of the parser, and it should go red the run
     /// it appears rather than the later run where a type that has it
     /// happens to join the load graph.
@@ -480,12 +574,65 @@ impl TypeGraph {
             .collect()
     }
 
-    /// Type names declared more than once across the indexed sources.
-    /// The walk resolves by bare name, so a collision would make its
-    /// answer ambiguous; callers assert this is empty rather than
-    /// silently trusting whichever definition landed last.
+    /// Paths declared more than once across the indexed sources — one
+    /// name twice in one module, which is a compile error unless the
+    /// two are `cfg`-gated apart. No scope can tell such a pair apart,
+    /// so the index keeps the first and records the path here; callers
+    /// assert this is empty rather than silently trusting whichever
+    /// definition landed first.
     pub fn duplicate_names(&self) -> &BTreeSet<String> {
         &self.duplicates
+    }
+
+    /// Every place an indexed type mentions a name that more than one
+    /// module declares **and the scope it is written in does not
+    /// settle**, as `"<name> in <path> (<file>): one of <paths>"`.
+    ///
+    /// Two modules declaring one name is fine — the index is keyed by
+    /// path. A mention the walk cannot pin to one of them is not: the
+    /// walk would have to guess, and the guard built on it would be
+    /// checking an arbitrary type. [`Self::resolve`] reads a module's
+    /// own declarations, its `use`s (renames, groups, re-exports and
+    /// globs among them) and explicit `crate::` / `self::` / `super::`
+    /// paths; what none of those settles lands here. Over **every**
+    /// indexed type, not only the reachable ones, for the reason
+    /// [`Self::unread_serde_attrs`] gives: a resolver gap is a property
+    /// of the resolver, and it should go red the run it appears.
+    ///
+    /// Cost: one pass over every indexed type's fields; no I/O.
+    pub fn ambiguous_mentions(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for info in self.items.values() {
+            let mut mentioned = Vec::new();
+            for declared in &info.referenced {
+                self.mentions(&declared.0, &info.module, &mut mentioned);
+            }
+            if let Some(proxy) = info.deserialize_proxy.as_deref() {
+                mentioned.push(self.mention_of_proxy(proxy, &info.module));
+            }
+            // The arguments of a generic item are bindings rather than
+            // mentions, and a binding is resolved where it is written
+            // too ([`Self::canonical`]), so its names are asked here.
+            let mut at = 0;
+            while at < mentioned.len() {
+                let arguments = std::mem::take(&mut mentioned[at].arguments);
+                for argument in &arguments {
+                    self.mentions(argument, &info.module, &mut mentioned);
+                }
+                at += 1;
+            }
+            for mention in mentioned {
+                if let Resolution::Ambiguous(paths) = &mention.resolution {
+                    out.push(format!(
+                        "{} in {} ({}): one of {paths:?}",
+                        mention.name,
+                        info.path,
+                        info.file.display()
+                    ));
+                }
+            }
+        }
+        out
     }
 
     /// Every JSON member name a struct or struct variant reachable
@@ -541,7 +688,10 @@ impl TypeGraph {
     /// Names are read with the reached item's parameters substituted,
     /// so a parameter bound at the reference is never a terminator;
     /// one that was left unbound, or a projection no `impl` resolves,
-    /// is — and goes red the same way.
+    /// is — and goes red the same way. A name more than one module
+    /// declares that the scope it is written in does not settle is a
+    /// terminator too: the walk does not guess, and
+    /// [`ambiguous_mentions`](Self::ambiguous_mentions) names it.
     ///
     /// Cost: same walk as `reachable_from` plus one set insert per
     /// referenced name; no I/O.
@@ -559,17 +709,21 @@ impl TypeGraph {
     pub fn unresolved_from_excluding(&self, root: &str, blocked: &[&str]) -> BTreeSet<String> {
         let mut out = BTreeSet::new();
         for reached in self.walk(root, blocked) {
+            let module = reached.info.module.as_str();
             let mut mentioned = Vec::new();
             for declared in &reached.info.referenced {
-                self.mentions(&self.substitute(&declared.0, &reached.bindings), &mut mentioned);
+                self.mentions(
+                    &self.substitute(&declared.0, &reached.bindings),
+                    module,
+                    &mut mentioned,
+                );
             }
-            let names = mentioned
-                .into_iter()
-                .map(|mention| mention.name)
-                .chain(reached.info.deserialize_proxy.iter().cloned());
-            for name in names {
-                if !self.items.contains_key(name.as_str()) {
-                    out.insert(name);
+            if let Some(proxy) = reached.info.deserialize_proxy.as_deref() {
+                mentioned.push(self.mention_of_proxy(proxy, module));
+            }
+            for mention in mentioned {
+                if mention.key().is_none() {
+                    out.insert(mention.name);
                 }
             }
         }
@@ -624,39 +778,58 @@ impl TypeGraph {
     /// what those two arguments make its fields mean. An item reached
     /// again with the same bindings is not re-entered, which is what
     /// ends the walk on a recursive type.
+    ///
+    /// `root` and the names in `blocked` are each a path or a bare
+    /// name, as [`get`](Self::get) takes them; a blocked bare name
+    /// blocks every item declared under it.
     fn walk(&self, root: &str, blocked: &[&str]) -> Vec<Reached<'_>> {
         let mut seen: BTreeSet<String> = BTreeSet::new();
-        let mut queue: VecDeque<(&str, Bindings)> = VecDeque::new();
+        let mut queue: VecDeque<(&TypeInfo, Bindings)> = VecDeque::new();
         let mut out: Vec<Reached<'_>> = Vec::new();
+        let is_blocked = |info: &TypeInfo| {
+            blocked
+                .iter()
+                .any(|name| *name == info.name || *name == info.path)
+        };
 
-        if blocked.contains(&root) {
+        let Some(root) = self.get(root) else { return out };
+        if is_blocked(root) {
             return out;
         }
         queue.push_back((root, Bindings::new()));
-        seen.insert(instantiation_key(root, &Bindings::new()));
-        while let Some((name, bindings)) = queue.pop_front() {
-            let Some(info) = self.items.get(name) else { continue };
-            let mut successors: Vec<(String, Bindings)> = Vec::new();
+        seen.insert(instantiation_key(&root.path, &Bindings::new()));
+        while let Some((info, bindings)) = queue.pop_front() {
+            let module = info.module.as_str();
+            let mut successors: Vec<(&TypeInfo, Bindings)> = Vec::new();
             for declared in &info.referenced {
                 let mut mentioned = Vec::new();
-                self.mentions(&self.substitute(&declared.0, &bindings), &mut mentioned);
+                self.mentions(&self.substitute(&declared.0, &bindings), module, &mut mentioned);
                 for mention in mentioned {
-                    let Some(next) = self.items.get(&mention.name) else { continue };
-                    let bound = next.generics.iter().cloned().zip(mention.arguments).collect();
-                    successors.push((mention.name, bound));
+                    let Some(next) = mention.key().and_then(|key| self.items.get(key)) else {
+                        continue;
+                    };
+                    // Canonical, so the argument means where the item
+                    // it binds is declared what it meant here.
+                    let arguments = mention
+                        .arguments
+                        .iter()
+                        .map(|argument| self.canonical(argument, module));
+                    let bound = next.generics.iter().cloned().zip(arguments).collect();
+                    successors.push((next, bound));
                 }
             }
             if let Some(proxy) = info.deserialize_proxy.as_deref() {
-                successors.push((proxy.to_string(), Bindings::new()));
+                let mention = self.mention_of_proxy(proxy, module);
+                if let Some(next) = mention.key().and_then(|key| self.items.get(key)) {
+                    successors.push((next, Bindings::new()));
+                }
             }
             for (next, bound) in successors {
-                if blocked.contains(&next.as_str()) {
+                if is_blocked(next) {
                     continue;
                 }
-                if let Some((key, _)) = self.items.get_key_value(&next) {
-                    if seen.insert(instantiation_key(key, &bound)) {
-                        queue.push_back((key.as_str(), bound));
-                    }
+                if seen.insert(instantiation_key(&next.path, &bound)) {
+                    queue.push_back((next, bound));
                 }
             }
             out.push(Reached { info, bindings });
@@ -736,36 +909,62 @@ impl TypeGraph {
     /// exactly one spelling of it is declared. `None` for an owner
     /// that is not a plain path, an associated type no `impl`
     /// declares, or one two `impl`s declare differently.
+    ///
+    /// The answer is canonical ([`Self::canonical`]) in the module of
+    /// the `impl` that declares it, since that is where its names were
+    /// written; two declarations agree when their canonical forms do.
     fn project(&self, owner: &Type, name: &str) -> Option<Type> {
         let Type::Path(owner) = owner else {
             return None;
         };
         let owner = owner.path.segments.last()?.ident.to_string();
         let candidates = self.associated.get(&(owner, name.to_string()))?;
-        let first = candidates.first()?;
-        let agreed = candidates
+        let mut canonical = candidates
             .iter()
-            .all(|other| render(&other.0) == render(&first.0));
-        agreed.then(|| first.0.clone())
+            .map(|(declared, module)| self.canonical(&declared.0, module));
+        let first = canonical.next()?;
+        let spelled = render(&first);
+        canonical.all(|other| render(&other) == spelled).then_some(first)
     }
 
     /// Every name `ty` mentions in a position that holds data, with
-    /// the arguments written on it — [`collect_type_names`]'s answer,
-    /// minus the arguments of an indexed generic item: those are
-    /// bindings for the item's parameters, followed through the item
-    /// when it uses them, and not data at the place they are written.
-    fn mentions(&self, ty: &Type, out: &mut Vec<Mention>) {
+    /// the arguments written on it and what it resolves to in `module`
+    /// — [`collect_type_names`]'s answer, minus the arguments of an
+    /// indexed generic item: those are bindings for the item's
+    /// parameters, followed through the item when it uses them, and
+    /// not data at the place they are written.
+    fn mentions(&self, ty: &Type, module: &str, out: &mut Vec<Mention>) {
         match ty {
             Type::Path(path) => {
                 if let Some(qself) = &path.qself {
-                    self.mentions(&qself.ty, out);
+                    self.mentions(&qself.ty, module, out);
                 }
-                for segment in &path.path.segments {
-                    let name = segment.ident.to_string();
-                    let binds = self
-                        .items
-                        .get(&name)
-                        .is_some_and(|info| !info.generics.is_empty());
+                let segments: Vec<String> = path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect();
+                let rooted = segments
+                    .first()
+                    .is_some_and(|first| matches!(first.as_str(), "crate" | "self" | "super"));
+                for (at, segment) in path.path.segments.iter().enumerate() {
+                    let last = at + 1 == segments.len();
+                    if rooted && !last {
+                        // A module, by the language's own rule.
+                        continue;
+                    }
+                    let resolution = if last {
+                        self.resolve(module, &segments)
+                    } else {
+                        self.resolve(module, &segments[at..=at])
+                    };
+                    let binds = match &resolution {
+                        Resolution::Found(key) => {
+                            self.items.get(key).is_some_and(|info| !info.generics.is_empty())
+                        }
+                        _ => false,
+                    };
                     let mut arguments = Vec::new();
                     match &segment.arguments {
                         PathArguments::AngleBracketed(args) => {
@@ -774,46 +973,272 @@ impl TypeGraph {
                                     if binds {
                                         arguments.push(inner.clone());
                                     } else {
-                                        self.mentions(inner, out);
+                                        self.mentions(inner, module, out);
                                     }
                                 }
                             }
                         }
                         PathArguments::Parenthesized(args) => {
                             for inner in &args.inputs {
-                                self.mentions(&inner.ty, out);
+                                self.mentions(&inner.ty, module, out);
                             }
                         }
                         PathArguments::None => {}
                     }
-                    out.push(Mention { name, arguments });
+                    out.push(Mention {
+                        name: segments[at].clone(),
+                        resolution,
+                        arguments,
+                    });
                 }
             }
-            Type::Reference(inner) => self.mentions(&inner.elem, out),
-            Type::Slice(inner) => self.mentions(&inner.elem, out),
-            Type::Array(inner) => self.mentions(&inner.elem, out),
-            Type::Paren(inner) => self.mentions(&inner.elem, out),
-            Type::Group(inner) => self.mentions(&inner.elem, out),
-            Type::Ptr(inner) => self.mentions(&inner.elem, out),
+            Type::Reference(inner) => self.mentions(&inner.elem, module, out),
+            Type::Slice(inner) => self.mentions(&inner.elem, module, out),
+            Type::Array(inner) => self.mentions(&inner.elem, module, out),
+            Type::Paren(inner) => self.mentions(&inner.elem, module, out),
+            Type::Group(inner) => self.mentions(&inner.elem, module, out),
+            Type::Ptr(inner) => self.mentions(&inner.elem, module, out),
             Type::Tuple(tuple) => {
                 for inner in &tuple.elems {
-                    self.mentions(inner, out);
+                    self.mentions(inner, module, out);
                 }
             }
             // The unreadable forms keep their sentinels — see
-            // [`collect_type_names`], whose arm this mirrors.
+            // [`collect_type_names`], whose arm this mirrors. A
+            // sentinel is never an indexed name.
             other => {
                 let mut names = Vec::new();
                 collect_type_names(other, &mut names);
                 out.extend(names.into_iter().map(|name| Mention {
                     name,
+                    resolution: Resolution::NotIndexed,
                     arguments: Vec::new(),
                 }));
             }
         }
     }
 
-    fn index_items(&mut self, items: &[Item], file: &Path) {
+    /// The proxy a `#[serde(from = "…")]` names, written in `module`,
+    /// as a mention: the string is a path, resolved like one.
+    fn mention_of_proxy(&self, proxy: &str, module: &str) -> Mention {
+        let segments: Vec<String> = proxy
+            .split("::")
+            .map(|segment| segment.trim().to_string())
+            .collect();
+        Mention {
+            name: segments.last().cloned().unwrap_or_default(),
+            resolution: self.resolve(module, &segments),
+            arguments: Vec::new(),
+        }
+    }
+
+    /// What the path `segments`, written in `module`, names — the way
+    /// the compiler reads it, as far as the index can follow:
+    ///
+    /// - a `crate::` / `self::` / `super::` path, or one whose first
+    ///   segment is a child module or a module the scope imports, is
+    ///   looked up in the module it leads to;
+    /// - a single name is looked up in `module` itself: what it
+    ///   declares, then what it imports by name (renames, groups and
+    ///   re-exports followed to the item), then what its globs bring
+    ///   in;
+    /// - a path whose first segment is none of those, or a name the
+    ///   scope imports from another crate, is not ours.
+    ///
+    /// What the scope does not settle falls back to the bare name: the
+    /// one item declared under it, or [`Resolution::Ambiguous`] when
+    /// there are several. That fallback is what the bare-name index
+    /// always did, and it is what keeps a gap in this reader from
+    /// dropping a type out of the walk; the ambiguous case is reported
+    /// ([`Self::ambiguous_mentions`]) rather than guessed.
+    fn resolve(&self, module: &str, segments: &[String]) -> Resolution {
+        let Some((name, qualifiers)) = segments.split_last() else {
+            return Resolution::NotIndexed;
+        };
+        // The scope first, whatever the name: `use a::Anchor as Pin`
+        // makes `Pin` a name no item is declared under.
+        let scoped = if qualifiers.is_empty() {
+            self.lookup(module, name, 0)
+        } else {
+            match self.module_path(module, qualifiers) {
+                Some(base) => self.lookup(&base, name, 0),
+                None => Lookup::Foreign,
+            }
+        };
+        match scoped {
+            Lookup::Found(key) => Resolution::Found(key),
+            Lookup::Foreign => Resolution::NotIndexed,
+            Lookup::Missing => match self.by_name.get(name).map(Vec::as_slice) {
+                None | Some([]) => Resolution::NotIndexed,
+                Some([only]) => Resolution::Found(only.clone()),
+                Some(several) => Resolution::Ambiguous(several.to_vec()),
+            },
+        }
+    }
+
+    /// `name` as `module`'s scope sees it: an item `module` declares,
+    /// a name it imports (followed to the item, through re-exports),
+    /// or one exactly one of its globs brings in.
+    fn lookup(&self, module: &str, name: &str, depth: usize) -> Lookup {
+        if depth > LOOKUP_DEPTH {
+            return Lookup::Missing;
+        }
+        let key = join_path(module, name);
+        if self.items.contains_key(&key) {
+            return Lookup::Found(key);
+        }
+        let Some(scope) = self.scopes.get(module) else {
+            return Lookup::Missing;
+        };
+        if let Some(target) = scope.imports.get(name) {
+            let Some((imported, qualifiers)) = target.split_last() else {
+                return Lookup::Missing;
+            };
+            return match self.module_path(module, qualifiers) {
+                Some(base) => self.lookup(&base, imported, depth + 1),
+                None => Lookup::Foreign,
+            };
+        }
+        let mut found = BTreeSet::new();
+        for glob in &scope.globs {
+            if let Some(base) = self.module_path(module, glob) {
+                if let Lookup::Found(key) = self.lookup(&base, name, depth + 1) {
+                    found.insert(key);
+                }
+            }
+        }
+        let mut found = found.into_iter();
+        match (found.next(), found.next()) {
+            (Some(only), None) => Lookup::Found(only),
+            _ => Lookup::Missing,
+        }
+    }
+
+    /// The module the qualifiers of a path written in `module` lead to,
+    /// or `None` when they start outside this crate. An empty list
+    /// leads to `module` itself.
+    fn module_path(&self, module: &str, qualifiers: &[String]) -> Option<String> {
+        self.module_path_at(module, qualifiers, 0)
+    }
+
+    fn module_path_at(&self, module: &str, qualifiers: &[String], depth: usize) -> Option<String> {
+        if depth > LOOKUP_DEPTH {
+            return None;
+        }
+        let Some((first, rest)) = qualifiers.split_first() else {
+            return Some(module.to_string());
+        };
+        let mut base: Vec<&str> = if module.is_empty() {
+            Vec::new()
+        } else {
+            module.split("::").collect()
+        };
+        match first.as_str() {
+            "crate" => base.clear(),
+            "self" => {}
+            "super" => {
+                base.pop()?;
+            }
+            _ => {
+                let child = join_path(module, first);
+                if self.modules.contains(&child) {
+                    base.push(first.as_str());
+                } else {
+                    let imported = self
+                        .scopes
+                        .get(module)
+                        .and_then(|scope| scope.imports.get(first.as_str()))?;
+                    let resolved = self.module_path_at(module, imported, depth + 1)?;
+                    let relative: Vec<String> = std::iter::once("self".to_string())
+                        .chain(rest.iter().cloned())
+                        .collect();
+                    return self.module_path_at(&resolved, &relative, depth + 1);
+                }
+            }
+        }
+        for segment in rest {
+            match segment.as_str() {
+                "super" => {
+                    base.pop()?;
+                }
+                "self" => {}
+                other => base.push(other),
+            }
+        }
+        Some(base.join("::"))
+    }
+
+    /// `ty` with every name in it that `module`'s scope resolves to an
+    /// indexed item rewritten to that item's full `crate::` path, so it
+    /// means the same thing wherever it is substituted. The arguments
+    /// on the item's own segment are kept, canonical in turn; a name
+    /// that does not resolve is left as written.
+    fn canonical(&self, ty: &Type, module: &str) -> Type {
+        let mut out = ty.clone();
+        self.canonicalize_in_place(&mut out, module);
+        out
+    }
+
+    fn canonicalize_in_place(&self, ty: &mut Type, module: &str) {
+        match ty {
+            Type::Path(path) => {
+                if let Some(qself) = &mut path.qself {
+                    self.canonicalize_in_place(&mut qself.ty, module);
+                    return;
+                }
+                for segment in path.path.segments.iter_mut() {
+                    if let PathArguments::AngleBracketed(arguments) = &mut segment.arguments {
+                        for argument in arguments.args.iter_mut() {
+                            if let GenericArgument::Type(inner) = argument {
+                                self.canonicalize_in_place(inner, module);
+                            }
+                        }
+                    }
+                }
+                let segments: Vec<String> = path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.to_string())
+                    .collect();
+                let Resolution::Found(key) = self.resolve(module, &segments) else {
+                    return;
+                };
+                let arguments = path
+                    .path
+                    .segments
+                    .last()
+                    .map(|segment| segment.arguments.clone())
+                    .unwrap_or(PathArguments::None);
+                let mut rewritten = syn::Path {
+                    leading_colon: None,
+                    segments: syn::punctuated::Punctuated::new(),
+                };
+                for segment in std::iter::once("crate").chain(key.split("::")) {
+                    let ident = syn::Ident::new(segment, proc_macro2::Span::call_site());
+                    rewritten.segments.push(syn::PathSegment::from(ident));
+                }
+                if let Some(last) = rewritten.segments.last_mut() {
+                    last.arguments = arguments;
+                }
+                path.path = rewritten;
+            }
+            Type::Reference(inner) => self.canonicalize_in_place(&mut inner.elem, module),
+            Type::Slice(inner) => self.canonicalize_in_place(&mut inner.elem, module),
+            Type::Array(inner) => self.canonicalize_in_place(&mut inner.elem, module),
+            Type::Paren(inner) => self.canonicalize_in_place(&mut inner.elem, module),
+            Type::Group(inner) => self.canonicalize_in_place(&mut inner.elem, module),
+            Type::Ptr(inner) => self.canonicalize_in_place(&mut inner.elem, module),
+            Type::Tuple(tuple) => {
+                for inner in tuple.elems.iter_mut() {
+                    self.canonicalize_in_place(inner, module);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn index_items(&mut self, items: &[Item], file: &Path, module: &str) {
         for item in items {
             match item {
                 Item::Struct(item) => {
@@ -822,6 +1247,8 @@ impl TypeGraph {
                     let owner = item.ident.to_string();
                     self.insert(TypeInfo {
                         fields: serde_fields(names.rule(&owner), None, &item.fields),
+                        path: join_path(module, &owner),
+                        module: module.to_string(),
                         name: owner.clone(),
                         file: file.to_path_buf(),
                         kind: TypeKind::Struct,
@@ -892,6 +1319,8 @@ impl TypeGraph {
                     }
                     self.insert(TypeInfo {
                         fields,
+                        path: join_path(module, &owner),
+                        module: module.to_string(),
                         name: owner,
                         file: file.to_path_buf(),
                         kind: TypeKind::Enum,
@@ -913,6 +1342,8 @@ impl TypeGraph {
                     let referenced = vec![DeclaredType((*item.ty).clone())];
                     self.insert(TypeInfo {
                         fields: Vec::new(),
+                        path: join_path(module, &item.ident.to_string()),
+                        module: module.to_string(),
                         name: item.ident.to_string(),
                         file: file.to_path_buf(),
                         kind: TypeKind::Alias,
@@ -948,7 +1379,7 @@ impl TypeGraph {
                             self.associated
                                 .entry((owner.ident.to_string(), associated.ident.to_string()))
                                 .or_default()
-                                .push(DeclaredType(associated.ty.clone()));
+                                .push((DeclaredType(associated.ty.clone()), module.to_string()));
                         }
                     }
                 }
@@ -957,8 +1388,17 @@ impl TypeGraph {
                         continue;
                     }
                     if let Some((_, inner)) = &item.content {
-                        self.index_items(inner, file);
+                        let inner_module = join_path(module, &item.ident.to_string());
+                        self.modules.insert(inner_module.clone());
+                        self.index_items(inner, file, &inner_module);
                     }
+                }
+                Item::Use(item) => {
+                    if is_test_gated(&item.attrs) {
+                        continue;
+                    }
+                    let scope = self.scopes.entry(module.to_string()).or_default();
+                    record_use(&item.tree, &mut Vec::new(), scope);
                 }
                 _ => {}
             }
@@ -966,11 +1406,85 @@ impl TypeGraph {
     }
 
     fn insert(&mut self, info: TypeInfo) {
-        if self.items.contains_key(&info.name) {
-            self.duplicates.insert(info.name.clone());
+        if self.items.contains_key(&info.path) {
+            self.duplicates.insert(info.path.clone());
             return;
         }
-        self.items.insert(info.name.clone(), info);
+        self.by_name
+            .entry(info.name.clone())
+            .or_default()
+            .push(info.path.clone());
+        self.items.insert(info.path.clone(), info);
+    }
+}
+
+/// `module::name`, or `name` alone in the crate root.
+fn join_path(module: &str, name: &str) -> String {
+    if module.is_empty() {
+        name.to_string()
+    } else {
+        format!("{module}::{name}")
+    }
+}
+
+/// The module a source file is, read off its path under `src_root`:
+/// `a/b.rs` and `a/b/mod.rs` are `a::b`, and `lib.rs` / `main.rs` at
+/// the root are the crate root.
+fn module_of_file(src_root: &Path, file: &Path) -> String {
+    let relative = file.strip_prefix(src_root).unwrap_or(file);
+    let mut segments: Vec<String> = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    if let Some(last) = segments.pop() {
+        let stem = last.strip_suffix(".rs").unwrap_or(&last).to_string();
+        let root_file = segments.is_empty() && (stem == "lib" || stem == "main");
+        if stem != "mod" && !root_file {
+            segments.push(stem);
+        }
+    }
+    segments.join("::")
+}
+
+/// Record every name one `use` tree imports into `scope`, with
+/// `prefix` the segments above this subtree.
+fn record_use(tree: &syn::UseTree, prefix: &mut Vec<String>, scope: &mut Scope) {
+    match tree {
+        syn::UseTree::Path(path) => {
+            prefix.push(path.ident.to_string());
+            record_use(&path.tree, prefix, scope);
+            prefix.pop();
+        }
+        syn::UseTree::Name(name) => {
+            let ident = name.ident.to_string();
+            if ident == "self" {
+                // `use a::{self}` imports the module `a` under its name.
+                if let Some(module) = prefix.last().cloned() {
+                    scope.imports.insert(module, prefix.clone());
+                }
+            } else {
+                let mut target = prefix.clone();
+                target.push(ident.clone());
+                scope.imports.insert(ident, target);
+            }
+        }
+        syn::UseTree::Rename(rename) => {
+            let local = rename.rename.to_string();
+            if local == "_" {
+                return;
+            }
+            let mut target = prefix.clone();
+            if rename.ident != "self" {
+                target.push(rename.ident.to_string());
+            }
+            scope.imports.insert(local, target);
+        }
+        syn::UseTree::Glob(_) => scope.globs.push(prefix.clone()),
+        syn::UseTree::Group(group) => {
+            for inner in &group.items {
+                record_use(inner, prefix, scope);
+            }
+        }
     }
 }
 
@@ -1651,15 +2165,15 @@ fn distinct_items(reached: Vec<Reached<'_>>) -> Vec<&TypeInfo> {
     let mut seen: BTreeSet<&str> = BTreeSet::new();
     reached
         .into_iter()
-        .filter(|entry| seen.insert(entry.info.name.as_str()))
+        .filter(|entry| seen.insert(entry.info.path.as_str()))
         .map(|entry| entry.info)
         .collect()
 }
 
-/// The identity of one instantiation: the item's name and what each
+/// The identity of one instantiation: the item's path and what each
 /// parameter is bound to, in parameter-name order.
-fn instantiation_key(name: &str, bindings: &Bindings) -> String {
-    let mut key = name.to_string();
+fn instantiation_key(path: &str, bindings: &Bindings) -> String {
+    let mut key = path.to_string();
     for (parameter, bound) in bindings {
         key.push_str(&format!(" {parameter}={}", render(bound)));
     }
@@ -1917,17 +2431,273 @@ mod tests {
         }
     }
 
-    /// The walk is only as good as its index: a name declared twice
-    /// would make "which `Position`?" unanswerable, and the coverage
-    /// assertion built on top would be checking an arbitrary one.
+    /// The walk is only as good as its index: a path declared twice
+    /// would make "which `Position`?" unanswerable, and so would a
+    /// mention of a name two modules declare that the scope it is
+    /// written in does not settle — the coverage assertion built on
+    /// top would be checking an arbitrary one.
     #[test]
     fn test_type_graph_has_no_ambiguous_names() {
         let graph = TypeGraph::build(&crate_src_root());
         assert!(
             graph.duplicate_names().is_empty(),
-            "type names declared more than once — the reachability walk \
-             resolves by bare name and cannot tell them apart: {:?}",
+            "paths declared more than once — no scope can tell them apart: {:?}",
             graph.duplicate_names()
+        );
+        let ambiguous = graph.ambiguous_mentions();
+        assert!(
+            ambiguous.is_empty(),
+            "names more than one module declares, mentioned where the scope does not \
+             say which — import the one meant, or write its path:\n  {}",
+            ambiguous.join("\n  ")
+        );
+    }
+
+    /// **Every serialized document type is in the index, under its
+    /// path** — the two files the bare-name index had to leave out
+    /// (`document/element.rs` and `document/values.rs`) included, and
+    /// each name they share with another module (`Anchor`, `Rgba`,
+    /// `Direction`, `Edge`) held apart from its namesake.
+    ///
+    /// The list is read off the sources here, independently of the
+    /// index: every struct and enum under `document/` whose derive list
+    /// names `Serialize` or `Deserialize`.
+    #[test]
+    fn test_every_serialized_document_type_is_indexed_under_its_path() {
+        let root = crate_src_root();
+        let graph = TypeGraph::build(&root);
+        let mut files = Vec::new();
+        collect_source_files(&root.join("document"), &mut files);
+        let test_only = test_gated_module_files(&files);
+        files.retain(|file| !test_only.contains(file));
+        let mut checked = Vec::new();
+        for file in &files {
+            let text = std::fs::read_to_string(file).expect("readable");
+            let parsed = syn::parse_file(&text).expect("parses");
+            let module = module_of_file(&root, file);
+            for item in &parsed.items {
+                let (ident, attrs) = match item {
+                    Item::Struct(item) => (&item.ident, &item.attrs),
+                    Item::Enum(item) => (&item.ident, &item.attrs),
+                    _ => continue,
+                };
+                let serialized = attrs
+                    .iter()
+                    .filter(|attr| attr.path().is_ident("derive"))
+                    .any(|attr| {
+                        let derives = attribute_source(attr);
+                        derives.contains("Serialize") || derives.contains("Deserialize")
+                    });
+                if !serialized {
+                    continue;
+                }
+                let path = join_path(&module, &ident.to_string());
+                let info = graph
+                    .get(&path)
+                    .unwrap_or_else(|| panic!("{path} ({}) is serialized and not indexed", file.display()));
+                assert_eq!(&info.file, file, "{path} is indexed from its own file");
+                checked.push(path);
+            }
+        }
+        for expected in [
+            "document::values::Anchor",
+            "document::values::Rgba",
+            "document::values::Direction",
+            "document::values::Edge",
+            "document::element::DocKind",
+            "document::inspect::DocField",
+            "document::format::dto::NodeDto",
+        ] {
+            assert!(
+                checked.iter().any(|path| path == expected),
+                "control: {expected} is one of the serialized document types checked: {checked:?}"
+            );
+        }
+        for (document, namesake) in [
+            ("document::values::Anchor", "core::primitives::Anchor"),
+            ("document::values::Rgba", "util::color::Rgba"),
+        ] {
+            let ours = graph.get(document).expect("indexed");
+            let theirs = graph.get(namesake).expect("the namesake is indexed too");
+            assert_ne!(
+                ours.file, theirs.file,
+                "{document} and {namesake} are two entries"
+            );
+        }
+    }
+
+    /// A document type that mentions a shared name reaches **its own
+    /// module's** item: `PathData`'s anchors are the document's
+    /// `Anchor` and `ThemeVariant`'s values the document's `Rgba`,
+    /// imported by `document/element.rs`, never `core::primitives`'
+    /// `Anchor` or `util::color`'s alias.
+    #[test]
+    fn test_a_shared_name_resolves_to_the_item_its_module_imports() {
+        let graph = TypeGraph::build(&crate_src_root());
+        for (root, meant, namesake) in [
+            (
+                "document::element::PathData",
+                "document::values::Anchor",
+                "core::primitives::Anchor",
+            ),
+            (
+                "document::element::ThemeVariant",
+                "document::values::Rgba",
+                "util::color::Rgba",
+            ),
+        ] {
+            let reached: Vec<&str> = graph
+                .reachable_from(root)
+                .iter()
+                .map(|info| info.path.as_str())
+                .collect();
+            assert!(reached.contains(&meant), "{root} reaches {meant}: {reached:?}");
+            assert!(
+                !reached.contains(&namesake),
+                "{root} does not reach {namesake}: {reached:?}"
+            );
+        }
+    }
+
+    /// The resolver over every shape a scope can settle a shared name
+    /// with — an import, an explicit path, a glob, a rename, a
+    /// re-export — and the one it cannot: a bare mention with neither
+    /// an import nor a path, which is reported, not guessed. And a
+    /// generic argument means what it meant **where it was written**:
+    /// `Holder<Anchor>` written under `a`'s import binds `T` to `a`'s
+    /// `Anchor`, though `Holder`'s own module imports `b`'s.
+    #[test]
+    fn test_a_shared_name_is_resolved_by_the_scope_it_is_written_in() {
+        let graph = graph_of(
+            r#"
+            mod a { pub struct Anchor { pub x: u8 } }
+            mod b { pub struct Anchor { pub y: u8 } }
+            mod reexport { pub use super::b::Anchor; }
+            mod c {
+                use super::a::Anchor;
+                pub struct Imported { pub anchor: Anchor }
+                pub struct Qualified { pub anchor: super::b::Anchor }
+                pub struct Rooted { pub anchor: crate::planted::b::Anchor }
+                pub struct Uses { pub held: super::h::Holder<Anchor> }
+            }
+            mod e {
+                use super::b::*;
+                pub struct Globbed { pub anchor: Anchor }
+            }
+            mod f {
+                use super::a::Anchor as Pin;
+                pub struct Renamed { pub anchor: Pin }
+            }
+            mod g {
+                use super::reexport::Anchor;
+                pub struct Reexported { pub anchor: Anchor }
+            }
+            mod h {
+                use super::b::Anchor;
+                pub struct Holder<T> { pub inner: T, pub own: Anchor }
+            }
+            mod d {
+                pub struct Unsettled { pub anchor: Anchor }
+                pub struct UnsettledArgument { pub held: super::h::Holder<Anchor> }
+            }
+            "#,
+        );
+        let reaches = |root: &str| -> Vec<String> {
+            graph
+                .reachable_from(root)
+                .iter()
+                .map(|info| info.path.clone())
+                .collect()
+        };
+        let a = "planted::a::Anchor".to_string();
+        let b = "planted::b::Anchor".to_string();
+        for (root, meant) in [
+            ("planted::c::Imported", &a),
+            ("planted::c::Qualified", &b),
+            ("planted::c::Rooted", &b),
+            ("planted::e::Globbed", &b),
+            ("planted::f::Renamed", &a),
+            ("planted::g::Reexported", &b),
+        ] {
+            let reached = reaches(root);
+            let other = if meant == &a { &b } else { &a };
+            assert!(reached.contains(meant), "{root} reaches {meant}: {reached:?}");
+            assert!(
+                !reached.contains(other),
+                "{root} does not reach {other}: {reached:?}"
+            );
+        }
+        let uses = reaches("planted::c::Uses");
+        assert!(
+            uses.contains(&a) && uses.contains(&b),
+            "`T` is bound to `a`'s Anchor where it was written, and the holder's own field \
+             is `b`'s: {uses:?}"
+        );
+        let mut ambiguous = graph.ambiguous_mentions();
+        ambiguous.sort();
+        assert_eq!(
+            ambiguous.len(),
+            2,
+            "control: only the two mentions no scope settles are reported — a field's, and a \
+             generic argument's: {ambiguous:?}"
+        );
+        assert!(
+            ambiguous[0].starts_with("Anchor in planted::d::Unsettled "),
+            "{ambiguous:?}"
+        );
+        assert!(
+            ambiguous[1].starts_with("Anchor in planted::d::UnsettledArgument "),
+            "{ambiguous:?}"
+        );
+        assert!(
+            graph.unresolved_from("planted::d::Unsettled").contains("Anchor"),
+            "an unsettled name is a terminator, not a guess"
+        );
+        let asked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            graph.get("Anchor").map(|info| info.path.clone())
+        }));
+        assert!(
+            asked.is_err(),
+            "a bare name two modules declare has no one answer"
+        );
+    }
+
+    /// A path the scope imports from another crate is not ours, though
+    /// an indexed item carries its last name: `serde_json::Value` is
+    /// not the planted `Value`.
+    #[test]
+    fn test_a_foreign_import_never_resolves_to_a_namesake() {
+        let graph = graph_of(
+            r#"
+            pub struct Value { pub inner: u8 }
+            mod uses {
+                use serde_json::Value;
+                pub struct Imported { pub value: Value }
+                pub struct Qualified { pub value: serde_json::Value }
+                pub struct Local { pub value: super::Value }
+            }
+            "#,
+        );
+        for root in ["planted::uses::Imported", "planted::uses::Qualified"] {
+            let reached: Vec<&str> = graph
+                .reachable_from(root)
+                .iter()
+                .map(|info| info.path.as_str())
+                .collect();
+            assert!(!reached.contains(&"planted::Value"), "{root}: {reached:?}");
+            assert!(
+                graph.unresolved_from(root).contains("Value"),
+                "{root} stops at the foreign Value"
+            );
+        }
+        let local: Vec<&str> = graph
+            .reachable_from("planted::uses::Local")
+            .iter()
+            .map(|info| info.path.as_str())
+            .collect();
+        assert!(
+            local.contains(&"planted::Value"),
+            "control: the crate's own Value: {local:?}"
         );
     }
 
