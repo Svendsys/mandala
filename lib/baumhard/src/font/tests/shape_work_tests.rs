@@ -793,11 +793,14 @@ pub fn do_a_seeded_random_differential_finds_no_merge_divergence() {
 #[test]
 fn test_the_shape_work_bodies_repeat() {
     // Every `do_*` body here is a bench body too (TEST_CONVENTIONS §T6),
-    // which a bench calls over and over in one process: each must hold
-    // on its hundredth call as on its first. The asked-once body held for
-    // 1,920 calls before it ran out of fresh code points (#304 review);
-    // it builds its own font system now, and this calls it well past any
-    // pool a body could be drawing from in a run this long.
+    // which a bench calls over and over in one process, so each must hold
+    // on a later call as on its first. What this loop shows is that a
+    // body whose first call leaves an answer kept, or any other state its
+    // assertions read, fails on its second call here. (The asked-once
+    // body once drew fresh code points from a pool that ran out at call
+    // 1,920, #304 review; it builds its own font system now. A few calls
+    // cannot show a pool that size is not being drawn from: keeping no
+    // state between calls is what makes it so.)
     for _ in 0..50 {
         do_a_code_point_no_face_draws_is_asked_of_the_faces_once();
     }
