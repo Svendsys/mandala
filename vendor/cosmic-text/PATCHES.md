@@ -57,6 +57,7 @@ docs list the changes too.
 | `src/buffer_line.rs` | **`BufferLine::adopt_shape`**: take another line's shaping, sizes rewritten, when the text and shaping strategy match. | `Fit` and R27 rescale whole runs at each probe size. Shaping is in units of the em, so only layout needs to run again. |
 | `src/font/fallback/mod.rs` | `FontFallbackIter::font_system`. | `drawn_by_no_face` asks the font system between two steps of the iterator. |
 | `src/font/system.rs` | `db_mut` also clears the shape buffer's `undrawn`. | Which faces draw a code point can change with the database. |
+| `src/font/system.rs` | **`FontSystem::instance`**: a number no other font system made in the process has, given with its database. | A face id means a face only within one database; baumhard's outline cache keys by this beside the id, so no entry answers another font system, or a value assigned in one's place. |
 
 ## What Mandala relies on
 
@@ -72,6 +73,8 @@ only deleting this directory:
 - **`BufferLine::adopt_shape`** (and the crate-internal
   `ShapeLine::with_sizes_of` behind it): `flow::shape::resized_buffer`,
   a rescale with no shaping.
+- **`FontSystem::instance`**: the outline cache's key
+  (`fonts::cached_outline_bounds`).
 - **`mandala_test_hooks::{fallback_round, stops_early}`**
   (`#[doc(hidden)]`), and `ShapeGlyph`'s public fields that build their
   fixtures: the tests of the merge's and the early stop's guards.

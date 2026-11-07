@@ -128,8 +128,14 @@ impl FontCachedCodepointSupportInfo {
     }
 }
 
+// MANDALA PATCH: the next `FontSystem::instance`.
+static NEXT_INSTANCE: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+
 /// Access to the system fonts.
 pub struct FontSystem {
+    /// MANDALA PATCH: this value's own number ([`FontSystem::instance`]).
+    instance: u64,
+
     /// The locale of the system.
     locale: String,
 
@@ -256,6 +262,7 @@ impl FontSystem {
         let fallbacks = Fallbacks::new(&impl_fallback, &[], &locale);
 
         Self {
+            instance: NEXT_INSTANCE.fetch_add(1, core::sync::atomic::Ordering::Relaxed),
             locale,
             db,
             monospace_font_ids,
@@ -275,6 +282,17 @@ impl FontSystem {
     /// Create a new [`FontSystem`] with a pre-specified locale and font database.
     pub fn new_with_locale_and_db(locale: String, db: fontdb::Database) -> Self {
         Self::new_with_locale_and_db_and_fallback(locale, db, PlatformFallback)
+    }
+
+    /// MANDALA PATCH (V1-B14, #304): a number no other `FontSystem` made
+    /// in this process has, given when this one is made. A face id means a
+    /// face only within one database, and every `FontSystem` is made with
+    /// its database, so a cache keyed by face ids keys by this too: a
+    /// value put in another's place, by assignment or `mem::swap`, brings
+    /// its own number, and no entry kept for the other can answer it. (A
+    /// database's ids are never reused, so `db_mut` keeps the number.)
+    pub fn instance(&self) -> u64 {
+        self.instance
     }
 
     /// Get the locale.

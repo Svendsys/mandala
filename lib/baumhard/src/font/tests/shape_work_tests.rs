@@ -576,61 +576,73 @@ pub fn do_the_early_stop_leaves_a_cluster_of_several_code_points_to_the_faces() 
 }
 
 #[test]
-fn test_another_font_system_never_reads_the_outline_cache() {
-    do_another_font_system_never_reads_the_outline_cache();
+fn test_two_font_systems_never_answer_each_others_outlines() {
+    do_two_font_systems_never_answer_each_others_outlines();
 }
 
-/// The outline cache serves the locked font system alone (#304 review,
-/// fonts.rs:1447): a face id means a face only within its own database, so
-/// a font system of its own, whose ids start again from the first, could
-/// otherwise be answered with another face's outline. Measured twice in
-/// such a font system, an ornament's outline is read twice, and its ink is
-/// the same both times. The precondition: in the locked font system, the
-/// second measure reads nothing.
-pub fn do_another_font_system_never_reads_the_outline_cache() {
+/// The outline cache keeps each entry for its font system (#304 reviews,
+/// fonts.rs:1447 and :1054): a face id means a face only within its own
+/// database, and two font systems of their own, each holding one face,
+/// give their faces the same id. An ornament measured in the first is
+/// read and kept; the same glyph id of the same face id, measured in the
+/// second, is read off the second's face, not answered from the first's
+/// entry; each is answered from its own entry the next time; and a font
+/// system assigned in the first's place, at its very address, is not
+/// answered from the first's entries either. The precondition: the two
+/// faces have the same id.
+pub fn do_two_font_systems_never_answer_each_others_outlines() {
     use crate::font::fonts::{glyph_outline_ink, outline_reads};
     use cosmic_text::SwashCache;
-    let mut fs = private_font_system(&[AppFont::MandalaOrnaments]);
-    let family = family_in(&fs, AppFont::MandalaOrnaments);
-    let (buffer, _) = shaped_in_family(&mut fs, &family, "\u{2726}");
+    let mut ornaments = private_font_system(&[AppFont::MandalaOrnaments]);
+    let mut latin = private_font_system(&[AppFont::GalatiaSIL]);
+    let first_face = |fs: &FontSystem| fs.db().faces().next().map(|face| face.id);
+    assert_eq!(
+        first_face(&ornaments),
+        first_face(&latin),
+        "precondition: the two font systems give their faces one id"
+    );
+    let family = family_in(&ornaments, AppFont::MandalaOrnaments);
+    let (buffer, _) = shaped_in_family(&mut ornaments, &family, "\u{2726}");
     let laid = buffer
         .layout_runs()
         .flat_map(|run| run.glyphs.iter().cloned())
         .next()
         .expect("precondition: the ornament is laid out");
     let mut cache = SwashCache::new();
-    let measure = |fs: &mut FontSystem, cache: &mut SwashCache| {
+    let mut measure = |fs: &mut FontSystem| {
         let before = outline_reads();
-        let ink = glyph_outline_ink(fs, cache, &laid);
+        let ink = glyph_outline_ink(fs, &mut cache, &laid);
         (ink, outline_reads() - before)
     };
-    let first = measure(&mut fs, &mut cache);
-    let second = measure(&mut fs, &mut cache);
+    let first = measure(&mut ornaments);
+    let other = measure(&mut latin);
+    let first_again = measure(&mut ornaments);
+    let other_again = measure(&mut latin);
     assert!(first.0.is_some(), "precondition: the ornament has ink");
+    assert_eq!(first.1, 1, "the first font system reads its outline");
     assert_eq!(
-        (first.1, second.1),
-        (1, 1),
-        "a font system of its own reads its outline at every measure"
+        other.1, 1,
+        "the second font system reads its own face's outline, not the first's entry"
     );
-    assert_eq!(first.0, second.0, "and measures the same ink");
-
-    let (locked, locked_buffer) = under_lock(|fs| {
-        let (buffer, _) = shaped_in(fs, AppFont::MandalaOrnaments, "\u{2726}");
-        let glyph = buffer
-            .layout_runs()
-            .flat_map(|run| run.glyphs.iter().cloned())
-            .next()
-            .expect("precondition: the ornament is laid out");
-        let mut cache = SwashCache::new();
-        glyph_outline_ink(fs, &mut cache, &glyph);
-        let before = outline_reads();
-        glyph_outline_ink(fs, &mut cache, &glyph);
-        (outline_reads() - before, buffer)
-    });
-    drop(locked_buffer);
     assert_eq!(
-        locked, 0,
-        "precondition: the locked font system's second measure reads nothing"
+        (first_again, other_again),
+        ((first.0, 0), (other.0, 0)),
+        "each is answered from its own entry the next time"
+    );
+    // A value put in the first's place, at its very address, as an
+    // assignment through a guard would: its faces' ids start again too,
+    // and it is not answered from the entry kept at that address.
+    let address = std::ptr::from_ref(&ornaments) as usize;
+    ornaments = private_font_system(&[AppFont::GalatiaSIL]);
+    assert_eq!(
+        std::ptr::from_ref(&ornaments) as usize,
+        address,
+        "precondition: the replacement is at the same address"
+    );
+    let replaced = measure(&mut ornaments);
+    assert_eq!(
+        replaced.1, 1,
+        "a font system put in another's place reads its own face's outline"
     );
 }
 
@@ -765,7 +777,7 @@ fn test_the_shape_work_bodies_repeat() {
         do_a_seeded_random_differential_finds_no_merge_divergence();
     }
     for _ in 0..20 {
-        do_another_font_system_never_reads_the_outline_cache();
+        do_two_font_systems_never_answer_each_others_outlines();
         do_a_run_the_merge_cannot_reason_about_is_merged_as_published();
         do_the_early_stop_needs_every_missing_entry_matched();
         do_the_early_stop_leaves_a_cluster_of_several_code_points_to_the_faces();
