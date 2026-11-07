@@ -397,6 +397,114 @@ pub fn do_flow_table_spacing_has_a_floor() {
     assert!((4189..=4191).contains(&samples), "ellipse: {samples} samples");
 }
 
+/// Outlines from the small to the largest `f32`, round and not, centered
+/// at the origin and far from it, with radii and sizes that are not
+/// numbers: what [`do_flow_a_closed_paths_table_samples_are_known_before_it_is_built`]
+/// and [`do_flow_a_closed_paths_length_is_finite_as_its_build_says`] walk.
+fn closed_outlines() -> Vec<Outline> {
+    let sizes = [0.5, 200.0, 1e5, 1e30, 1.5e38, f32::MAX, f32::NAN];
+    let mut outlines = Vec::new();
+    for (i, &w) in sizes.iter().enumerate() {
+        for (j, &h) in sizes.iter().enumerate() {
+            for (k, &at) in [0.0, 1e30, 3e38].iter().enumerate() {
+                let r = rect(at - w * 0.5, at - h * 0.5, w, h);
+                outlines.push(outline(r, Shape::Ellipse));
+                outlines.push(outline(r, rounded([0, 30, 100][(i + j + k) % 3])));
+            }
+        }
+    }
+    outlines
+}
+
+#[test]
+fn test_flow_a_closed_paths_table_samples_are_known_before_it_is_built() {
+    do_flow_a_closed_paths_table_samples_are_known_before_it_is_built();
+}
+
+/// `ArcPath::closed_table_samples` answers, without building it, the
+/// samples `ArcPath::closed`'s path is built with
+/// (`ArcPath::table_samples`) — what a frame's setup charges its tables
+/// at (#309, ruling B16.3a) and its bound is computed from — to the
+/// sample, over [`closed_outlines`] at the finest spacing, a font's and
+/// a spacing past every perimeter, from every edge both ways. Among them
+/// are tables at their cap, tables between it and their floor, circles
+/// and rounded rectangles of none, and ellipses that are not numbers.
+///
+/// Control: `closed_table_samples` without the `+ 1` for a table's
+/// closing sample, red on every tabled outline.
+pub fn do_flow_a_closed_paths_table_samples_are_known_before_it_is_built() {
+    use crate::flow::place::MIN_TABLE_SPACING;
+    use crate::flow::MAX_TABLE_SAMPLES;
+    let (mut capped, mut between, mut none) = (0, 0, 0);
+    let edges = [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left];
+    for (n, path) in closed_outlines().iter().enumerate() {
+        for (m, spacing) in [MIN_TABLE_SPACING, 4.8, 1e30].into_iter().enumerate() {
+            let known = ArcPath::closed_table_samples(path, spacing);
+            let direction = if (n + m) % 2 == 0 {
+                Direction::Clockwise
+            } else {
+                Direction::CounterClockwise
+            };
+            let built =
+                ArcPath::closed(path, start(edges[(n + m) % 4], 0.3), direction, spacing).table_samples();
+            assert_eq!(known, built, "{path:?} at {spacing}");
+            match known {
+                0 => none += 1,
+                k if k == MAX_TABLE_SAMPLES + 1 => capped += 1,
+                _ => between += 1,
+            }
+        }
+    }
+    assert!(
+        capped > 0 && between > 0 && none > 0,
+        "capped {capped}, between {between}, none {none}"
+    );
+}
+
+#[test]
+fn test_flow_a_closed_paths_length_is_finite_as_its_build_says() {
+    do_flow_a_closed_paths_length_is_finite_as_its_build_says();
+}
+
+/// `ArcPath::closed_length_is_finite` answers whether `ArcPath::closed`'s
+/// path has a finite length as the path built says, from every edge both
+/// ways, over [`closed_outlines`]: an ellipse's always is, so none is
+/// built for it (#309) — the frame's probe that asked was the largest
+/// table of its setup, at the finest spacing, and the answer always yes.
+/// Rounded rectangles answer both ways (sides of 1.5 × 10³⁸ sum past
+/// `f32::MAX`), and ellipses so far out that their table is built and
+/// dropped, its points not finite, leave paths of no length.
+///
+/// Control: `closed_length_is_finite` answering `true` for a rounded
+/// rectangle too, red on the overflowing ones.
+pub fn do_flow_a_closed_paths_length_is_finite_as_its_build_says() {
+    let (mut infinite, mut dropped) = (0, 0);
+    let edges = [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left];
+    for (n, path) in closed_outlines().iter().enumerate() {
+        let direction = if n % 2 == 0 {
+            Direction::Clockwise
+        } else {
+            Direction::CounterClockwise
+        };
+        let from = start(edges[n % 4], 0.7);
+        let built = ArcPath::closed(path, from, direction, 1e30);
+        assert_eq!(
+            ArcPath::closed_length_is_finite(path, from, direction),
+            built.length().is_finite(),
+            "{path:?}"
+        );
+        infinite += usize::from(!built.length().is_finite());
+        if matches!(path, Outline::Ellipse { .. }) {
+            assert!(built.length().is_finite(), "{path:?}: {}", built.length());
+            dropped += usize::from(built.table_samples() > 0 && built.length() == 0.0);
+        }
+    }
+    assert!(
+        infinite > 0 && dropped > 0,
+        "infinite {infinite}, dropped {dropped}"
+    );
+}
+
 #[test]
 fn test_flow_a_curve_faster_than_the_largest_f32_is_tabled() {
     do_flow_a_curve_faster_than_the_largest_f32_is_tabled();
