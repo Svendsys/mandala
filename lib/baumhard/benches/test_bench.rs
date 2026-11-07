@@ -1328,9 +1328,11 @@ fn criterion_benchmark(c: &mut Criterion) {
         "each_ornament_fallback_names_its_faces_family_at_every_weight",
         |b| b.iter(do_each_ornament_fallback_names_its_faces_family_at_every_weight),
     );
-    // The patched font fallback (#304): every oracle text shaped in
-    // every face with both merges, and one word every face before the
-    // fourth lacks, shaped at three lengths with each merge.
+    // The patched font fallback (#304): every oracle text, and a long
+    // word of each, shaped in five faces with both merges; and one word
+    // of letters pinned to a face that holds none of them, shaped with
+    // the published merge at two lengths and with the linear one at
+    // three, after a warm-up.
     c.bench_function("the_fallback_merge_lays_out_what_the_published_merge_did", |b| {
         b.iter(do_the_fallback_merge_lays_out_what_the_published_merge_did)
     });
@@ -1338,11 +1340,15 @@ fn criterion_benchmark(c: &mut Criterion) {
         "a_word_its_face_lacks_costs_fallback_work_linear_in_its_length",
         |b| b.iter(do_a_word_its_face_lacks_costs_fallback_work_linear_in_its_length),
     );
-    // A code point no face draws: the font system's answer let go and
-    // asked again of every face, then kept; and a hundred of them in a
-    // run, shaped with their answer kept.
+    // A code point no face draws, in a font system of its own built for
+    // each call: asked of its faces once, then kept; a face loaded into
+    // such a font system draws what none drew; and a hundred of them in a
+    // run of the global font system, shaped with their answer kept.
     c.bench_function("a_code_point_no_face_draws_is_asked_of_the_faces_once", |b| {
         b.iter(do_a_code_point_no_face_draws_is_asked_of_the_faces_once)
+    });
+    c.bench_function("a_face_added_to_the_database_draws_what_no_face_drew", |b| {
+        b.iter(do_a_face_added_to_the_database_draws_what_no_face_drew)
     });
     c.bench_function("a_hundred_contiguous_undrawn_code_points_cost_one_shaping", |b| {
         b.iter(do_a_hundred_contiguous_undrawn_code_points_cost_one_shaping)

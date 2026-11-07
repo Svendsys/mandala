@@ -240,19 +240,68 @@ pub fn do_a_word_its_face_lacks_costs_fallback_work_linear_in_its_length() {
     );
 }
 
-/// A code point no face draws, for the hundred-in-a-row test below: a
-/// private-use code point of plane 16 that no other test shapes.
+/// A code point no face draws, for the tests below: a private-use code
+/// point of plane 16.
 pub const UNDRAWN: char = '\u{10fff5}';
 
-/// The next of the private-use code points U+10F000 to U+10FEFF, which no
-/// other test shapes and no face draws: a code point whose answer the
-/// font system has not kept, on every call, so a test that needs one cold
-/// gets one however often it runs in the process (a bench repeats it).
-/// Nothing is cleared to get it, so no other test's kept answers move.
-fn fresh_undrawn() -> char {
-    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let k = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 0xf00;
-    char::from_u32(0x10_f000 + k).unwrap_or('\u{10f000}')
+/// A font system of its own, not the locked global one, holding only
+/// `fonts`' compiled faces: what it keeps — whether a face draws a code
+/// point, among the rest — starts empty, so a body that builds one repeats
+/// however often it runs in a process (a bench repeats it), and nothing it
+/// does moves another test's kept answers.
+fn private_font_system(fonts: &[AppFont]) -> FontSystem {
+    crate::font::fonts::init();
+    let mut db = cosmic_text::fontdb::Database::new();
+    for font in fonts {
+        let source = crate::font::fonts::FONT_SOURCES
+            .get(font)
+            .unwrap_or_else(|| panic!("precondition: {font:?} is a compiled face"));
+        db.load_font_source(source.clone());
+    }
+    FontSystem::new_with_locale_and_db_and_fallback("en-US".to_string(), db, cosmic_text::PlatformFallback)
+}
+
+/// The family name `font`'s compiled face stores, in `fs` (any font
+/// system holding that face).
+fn family_in(fs: &FontSystem, font: AppFont) -> String {
+    let probe = private_font_system(&[font]);
+    let name = probe
+        .db()
+        .faces()
+        .next()
+        .and_then(|face| face.families.first())
+        .map(|(name, _)| name.clone())
+        .unwrap_or_else(|| panic!("precondition: {font:?}'s face names a family"));
+    assert!(
+        fs.db()
+            .faces()
+            .any(|face| face.families.iter().any(|(n, _)| *n == name)),
+        "precondition: the font system holds {font:?}'s family"
+    );
+    name
+}
+
+/// `text` in the family `family`, shaped in the private font system `fs`;
+/// and the shaper's work for it.
+fn shaped_in_family(fs: &mut FontSystem, family: &str, text: &str) -> (Buffer, ShapeWork) {
+    let attrs = Attrs::new()
+        .metrics(Metrics::new(20.0, 24.0))
+        .family(Family::Name(family));
+    let mut buffer = Buffer::new_empty(Metrics::new(20.0, 24.0));
+    buffer.set_wrap(Wrap::None);
+    buffer.set_size(None, None);
+    let before = shape_work();
+    buffer.set_rich_text([(text, attrs.clone())], &attrs, SHAPING_ADVANCED, None);
+    buffer.shape_until_scroll(fs, false);
+    (buffer, shape_work().since(before))
+}
+
+/// The glyph ids `buffer` lays out, in order.
+fn glyph_ids(buffer: &Buffer) -> Vec<u16> {
+    buffer
+        .layout_runs()
+        .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.glyph_id))
+        .collect()
 }
 
 #[test]
@@ -261,33 +310,33 @@ fn test_a_code_point_no_face_draws_is_asked_of_the_faces_once() {
 }
 
 /// Text in a face that draws its letters, with one code point no face
-/// draws, which the font system has not been asked about
-/// (`fresh_undrawn`): the first shaping asks the font system's faces
-/// about it, once each at most, and tries no fallback face; every later
-/// shaping, of that text or of any other holding the code point, asks
-/// nothing and tries no fallback face either, and costs what the same
-/// text without it costs. The published loop, the precondition, tried
-/// the run in fallback faces every time.
+/// draws ([`UNDRAWN`]), in a font system of its own
+/// ([`private_font_system`], so it repeats): the first shaping asks the
+/// font system's faces about it, once each at most, and tries no fallback
+/// face; every later shaping, of that text or of any other holding the
+/// code point, asks nothing and tries no fallback face either, and costs
+/// what the same text without it costs. The published loop, the
+/// precondition, tried the run in fallback faces every time.
 pub fn do_a_code_point_no_face_draws_is_asked_of_the_faces_once() {
-    crate::font::fonts::init();
-    let face = AppFont::GalatiaSIL;
-    let undrawn = fresh_undrawn();
-    let reference_text = format!("ab{}cd", fresh_undrawn());
+    let mut fs = private_font_system(&[AppFont::GalatiaSIL, AppFont::MandalaOrnaments]);
+    let family = family_in(&fs, AppFont::GalatiaSIL);
+    let undrawn = UNDRAWN;
     let text = format!("ab{undrawn}cd");
-    let faces = under_lock(|fs| fs.db().faces().count() as u64);
+    let faces = fs.db().faces().count() as u64;
+    let mut shaped = |text: &str| shaped_in_family(&mut fs, &family, text).1;
 
-    let reference = merging(true, || shaped(face, &reference_text)).1;
+    let reference = merging(true, || shaped(&text));
     assert!(
         reference.fallback_rounds > 0,
         "precondition: the published loop tries fallback faces for a code point no face draws"
     );
-    let plain = shaped(face, "abcd").1;
+    let plain = shaped("abcd");
     assert_eq!(
         plain.fallback_rounds, 0,
-        "precondition: {face:?} draws the letters"
+        "precondition: {family} draws the letters"
     );
 
-    let first = shaped(face, &text).1;
+    let first = shaped(&text);
     assert!(
         first.coverage_probes > 0 && first.coverage_probes <= faces,
         "the first shaping asks the faces about {undrawn:?}, each once at most: {} of {faces}",
@@ -296,7 +345,7 @@ pub fn do_a_code_point_no_face_draws_is_asked_of_the_faces_once() {
     assert_eq!(first.fallback_rounds, 0, "and tries no fallback face");
 
     for again in [text.clone(), format!("x{undrawn}y{undrawn}")] {
-        let work = shaped(face, &again).1;
+        let work = shaped(&again);
         assert_eq!(
             (work.coverage_probes, work.fallback_rounds),
             (0, 0),
@@ -307,6 +356,42 @@ pub fn do_a_code_point_no_face_draws_is_asked_of_the_faces_once() {
             "{again:?}: shaped as often as the text without the code point"
         );
     }
+}
+
+#[test]
+fn test_a_face_added_to_the_database_draws_what_no_face_drew() {
+    do_a_face_added_to_the_database_draws_what_no_face_drew();
+}
+
+/// The kept answer that no face draws a code point is let go when the
+/// font system's database changes (#304 review: `db_mut` clears it). In a
+/// font system of its own holding one Latin face, an alef is drawn by no
+/// face, and asked about; once the Hebrew face is loaded into that
+/// database, the same text draws it.
+pub fn do_a_face_added_to_the_database_draws_what_no_face_drew() {
+    let mut fs = private_font_system(&[AppFont::GalatiaSIL]);
+    let family = family_in(&fs, AppFont::GalatiaSIL);
+    let text = "a\u{05d0}b";
+    let (before, work) = shaped_in_family(&mut fs, &family, text);
+    let before = glyph_ids(&before);
+    assert!(
+        before.len() == 3 && before[1] == 0 && before[0] != 0 && before[2] != 0,
+        "precondition: the Latin face draws the letters and no face the alef: {before:?}"
+    );
+    assert!(
+        work.coverage_probes > 0,
+        "precondition: the alef is asked about, and its answer kept"
+    );
+    let hebrew = crate::font::fonts::FONT_SOURCES
+        .get(&AppFont::NotoSansHebrewRegular)
+        .expect("precondition: the Hebrew face is compiled")
+        .clone();
+    fs.db_mut().load_font_source(hebrew);
+    let after = glyph_ids(&shaped_in_family(&mut fs, &family, text).0);
+    assert!(
+        after.len() == 3 && after[1] != 0,
+        "a face added to the database draws the alef no face drew: {after:?}"
+    );
 }
 
 #[test]
@@ -339,4 +424,29 @@ pub fn do_a_hundred_contiguous_undrawn_code_points_cost_one_shaping() {
         "a hundred undrawn code points try no fallback face and ask nothing"
     );
     assert_eq!(hundred.shapes, two.shapes, "a hundred cost the shapings two cost");
+}
+
+#[test]
+fn test_the_shape_work_bodies_repeat() {
+    // Every `do_*` body here is a bench body too (TEST_CONVENTIONS §T6),
+    // which a bench calls over and over in one process: each must hold
+    // on its hundredth call as on its first. The asked-once body held for
+    // 1,920 calls before it ran out of fresh code points (#304 review);
+    // it builds its own font system now, and this calls it well past any
+    // pool a body could be drawing from in a run this long.
+    for _ in 0..50 {
+        do_a_code_point_no_face_draws_is_asked_of_the_faces_once();
+    }
+    for _ in 0..20 {
+        do_a_face_added_to_the_database_draws_what_no_face_drew();
+    }
+    for _ in 0..5 {
+        do_a_hundred_contiguous_undrawn_code_points_cost_one_shaping();
+    }
+    for _ in 0..3 {
+        do_a_word_its_face_lacks_costs_fallback_work_linear_in_its_length();
+    }
+    for _ in 0..2 {
+        do_the_fallback_merge_lays_out_what_the_published_merge_did();
+    }
 }
