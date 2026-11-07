@@ -1,27 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `zoom min=<pt|unset> max=<pt|unset>` / `zoom clear` — set or
-//! clear the zoom-visibility window on the current selection.
+//! `zoom` — refused until V1-C5 (#246) rebuilds it on the one writer.
 //!
-//! Orthogonal to `font min=/max=` (which writes screen-space font
-//! clamps): this command writes `min_zoom_to_render` (gone) /
-//! `max_zoom_to_render` (gone) — the presence gate controlling whether
-//! an element is rendered at all at the current camera zoom.
-//!
-//! Routing against the active selection:
-//! - `Node`: writes `MindNode.{min,max}_zoom_to_render`.
-//! - `Edge`: writes `MindEdge.{min,max}_zoom_to_render`.
-//! - `EdgeLabel`: writes `label_config.{min,max}_zoom_to_render`
-//!   (replace-not-intersect cascade vs. edge).
-//! - `PortalLabel`: writes the owning edge's top-level pair —
-//!   the icon inherits edge bounds, same posture as `font`.
-//! - `PortalText`: writes `PortalEndpointState.{min,max}_zoom_to_render`
-//!   (replace-not-intersect cascade vs. edge).
-//! - `Multi`: fans out over each node id.
-//!
-//! **Rebuilt on the one writer by V1-C5 (#246).** Until then the verb's
-//! grammar, help and completion stand, and running it refuses with
-//! that issue named ([`super::rebuilt_by`]).
+//! The verb's grammar parses, and help and tab completion read it;
+//! running it changes nothing and answers with that issue named
+//! ([`super::rebuilt_by`]). What the verb will do is its owner's to
+//! specify.
 
 use super::Command;
 use crate::application::console::completion::{prefix_filter, Completion};

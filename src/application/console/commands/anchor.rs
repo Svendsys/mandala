@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `anchor from=top to=auto` — edge anchor side setter.
+//! `anchor` — refused until V1-C6 (#247) rebuilds it on the one writer.
 //!
-//! Component-specific (edge only); the anchor concept doesn't
-//! generalize to nodes or portals, so this bypasses the trait layer
-//! and calls `set_edge_anchor` (gone) directly.
-//!
-//! **Rebuilt on the one writer by V1-C6 (#247).** Until then the verb's
-//! grammar, help and completion stand, and running it refuses with
-//! that issue named ([`super::rebuilt_by`]).
+//! The verb's grammar parses, and help and tab completion read it;
+//! running it changes nothing and answers with that issue named
+//! ([`super::rebuilt_by`]). What the verb will do is its owner's to
+//! specify.
 
 use super::Command;
 use crate::application::console::parser::Args;

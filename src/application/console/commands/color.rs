@@ -1,20 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `color bg=#009c15 text=accent border=reset` — kv-form color
-//! setter dispatched through the capability traits. Each key maps to
-//! a trait (`bg` → HasBgColor, `text` → HasTextColor, `border` →
-//! HasBorderColor). Fans out over the selection; reports per-pair
-//! outcome so a pair that's not applicable to one target doesn't
-//! sink the whole command.
+//! `color` — refused until V1-C5 (#246) rebuilds it on the one writer.
 //!
-//! Axis-only positionals (`color bg`, `color text`, `color border`)
-//! and the legacy `color pick` both hand off to the glyph-wheel
-//! picker modal — `color bg` picks a color for that axis on the
-//! current selection.
-//!
-//! **Rebuilt on the one writer by V1-C5 (#246).** Until then the verb's
-//! grammar, help and completion stand, and running it refuses with
-//! that issue named ([`super::rebuilt_by`]).
+//! The verb's grammar parses, and help and tab completion read it;
+//! running it changes nothing and answers with that issue named
+//! ([`super::rebuilt_by`]). What the verb will do is its owner's to
+//! specify.
 
 use super::range_kv::TARGET_KEYS;
 use super::Command;

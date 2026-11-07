@@ -1,18 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `node resize <w> <h>` and `node fit` — node-size verbs.
+//! `node` — refused until V1-C5 (#246) rebuilds it on the one writer.
 //!
-//! Validation messages mirror the document-side `set_node_size` (gone)
-//! and `fit_node_to_content` (gone) setters: finite + strictly positive
-//! components and an absolute astronomical-typo ceiling
-//! (`MAX_NODE_AXIS = 1_000_000`). Position stays unchanged for
-//! `resize`; the drag gesture's release path uses `set_node_aabb` (gone)
-//! for the atomic `(position, size)` write. `fit` reaches a
-//! state the ambient `grow_*` passes can't (shrink to text floor).
-//!
-//! **Rebuilt on the one writer by V1-C5 (#246).** Until then the verb's
-//! grammar, help and completion stand, and running it refuses with
-//! that issue named ([`super::rebuilt_by`]).
+//! The verb's grammar parses, and help and tab completion read it;
+//! running it changes nothing and answers with that issue named
+//! ([`super::rebuilt_by`]). What the verb will do is its owner's to
+//! specify.
 
 use super::Command;
 use crate::application::console::parser::Args;

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `cap from=arrow to=none` — set the start/end cap glyph on the
-//! selected edge. Edge-specific.
+//! `cap` — refused until V1-C6 (#247) rebuilds it on the one writer.
 //!
-//! **Rebuilt on the one writer by V1-C6 (#247).** Until then the verb's
-//! grammar, help and completion stand, and running it refuses with
-//! that issue named ([`super::rebuilt_by`]).
+//! The verb's grammar parses, and help and tab completion read it;
+//! running it changes nothing and answers with that issue named
+//! ([`super::rebuilt_by`]). What the verb will do is its owner's to
+//! specify.
 
 use super::Command;
 use crate::application::console::parser::Args;

@@ -1,44 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `font size=14 [min=8] [max=128]` — atomic font + clamp setter
-//! dispatched against the current selection.
+//! `font` — refused until V1-C5 (#246) rebuilds it on the one writer.
 //!
-//! Parses all three optional kvs up front, then applies them in a
-//! single atomic document call so that order-sensitive cases like
-//! `font size=14 max=10` land as `size=10, max=10` (min/max write
-//! first, then size clamps against the new bounds) instead of the
-//! wrong `size=14, max=10`.
-//!
-//! Routing against the active selection (kv form):
-//! - `Node`: `size` sets the node font size; `min`/`max` are
-//!   NotApplicable (nodes have no screen-space clamps).
-//! - `Edge`: writes `glyph_connection.{font_size_pt, min_font_size_pt,
-//!   max_font_size_pt}`.
-//! - `EdgeLabel`: writes `label_config.{font_size_pt, min_font_size_pt,
-//!   max_font_size_pt}` so the label can be sized independently of
-//!   the edge body.
-//! - `PortalLabel`: writes the owning edge's `glyph_connection` (gone) —
-//!   the icon inherits edge-body clamps and splitting icon clamps
-//!   off from the edge is outside the user-level spec.
-//! - `PortalText`: writes `PortalEndpointState.{text_font_size_pt,
-//!   text_min_font_size_pt, text_max_font_size_pt}` — sibling of
-//!   `EdgeLabel` for portal-mode edges.
-//!
-//! Two positional subverbs sit alongside the kv form:
-//! - `font set <family>` — pin the font family on the current
-//!   selection via the `AcceptsFontFamily` trait
-//!   (`AcceptsFontFamily::set_font_family` on `TargetView`). Each
-//!   selection variant decides which channel the family lands on
-//!   (nodes → every `TextRun.font`, edges + portal icons →
-//!   `glyph_connection.font`); edge labels and portal text return
-//!   `NotApplicable` and surface a clear "not applicable to
-//!   `<kind>`" message.
-//! - `font list` — emit one scrollback line per loaded family,
-//!   each rendered in its own face. Sorted alphabetically.
-//!
-//! **Rebuilt on the one writer by V1-C5 (#246).** Until then the verb's
-//! grammar, help and completion stand, and running it refuses with
-//! that issue named ([`super::rebuilt_by`]).
+//! The verb's grammar parses, and help and tab completion read it;
+//! running it changes nothing and answers with that issue named
+//! ([`super::rebuilt_by`]). What the verb will do is its owner's to
+//! specify.
 
 use super::range_kv::TARGET_KEYS;
 use super::Command;

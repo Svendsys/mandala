@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `spacing value=4.0` or `spacing value=tight` — glyph-spacing
-//! setter for the selected edge. Accepts named presets
-//! (tight / normal / wide) or a raw float in the preset's unit.
+//! `spacing` — refused until V1-C6 (#247) rebuilds it on the one writer.
 //!
-//! **Rebuilt on the one writer by V1-C6 (#247).** Until then the verb's
-//! grammar, help and completion stand, and running it refuses with
-//! that issue named ([`super::rebuilt_by`]).
+//! The verb's grammar parses, and help and tab completion read it;
+//! running it changes nothing and answers with that issue named
+//! ([`super::rebuilt_by`]). What the verb will do is its owner's to
+//! specify.
 
 use super::Command;
 use crate::application::console::parser::Args;

@@ -1,18 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `label text="hi"` / `label clear` / `label position=middle` —
-//! edge label operations.
+//! `label` — refused until V1-C6 (#247) rebuilds it on the one writer.
 //!
-//! `text=` routes through the `HasLabel` trait (edge-only today).
-//! `position=` is edge-specific and therefore handled outside the
-//! trait layer — if the selection isn't an edge the pair reports
-//! not-applicable. `clear` is the positional form of `text=<empty>`.
-//! `edit` is a positional verb that hands off to the inline label
-//! editor modal.
-//!
-//! **Rebuilt on the one writer by V1-C6 (#247).** Until then the verb's
-//! grammar, help and completion stand, and running it refuses with
-//! that issue named ([`super::rebuilt_by`]).
+//! The verb's grammar parses, and help and tab completion read it;
+//! running it changes nothing and answers with that issue named
+//! ([`super::rebuilt_by`]). What the verb will do is its owner's to
+//! specify.
 
 use super::Command;
 use crate::application::console::parser::Args;

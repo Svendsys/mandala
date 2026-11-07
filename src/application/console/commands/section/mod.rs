@@ -1,35 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `section …` — kv-form per-section verbs targeting either the
-//! selection's section (when the selection is
-//! `SelectionState::Section` / `SectionRange`) or an explicit
-//! `section=K` kv (when the selection is a single node). Subverbs
-//! (per `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §4.5):
+//! `section` — refused until V1-C5 (#246) rebuilds it on the one writer.
 //!
-//! - `section show [section=<idx>]` — multi-line resolved-property
-//!   readout (text preview / runs / offset / size / channel /
-//!   bindings / frame override).
-//! - `section move dx=<f64> dy=<f64>` (delta) or
-//!   `section move x=<f64> y=<f64>` (absolute) — delta and
-//!   absolute forms are mutually exclusive; mixing rejects.
-//! - `section resize w=<f64> h=<f64>` or `section resize fill` —
-//!   the `fill` literal renames the prior `none` (which read as
-//!   "remove the section"); `fill` clears `size = None` so the
-//!   tree builder fills the parent's AABB.
-//! - `section text "<text>" [runs=preserve|clear]` — replace
-//!   text with optional run handling.
-//! - `section add [at=<idx>] [text="<text>"]` — insert.
-//! - `section delete [section=<idx>]` — remove.
-//! - `section split [section=<idx>] at=<grapheme>` — split in
-//!   two at a grapheme boundary.
-//!
-//! The `section frame …` level is gone with the old per-section
-//! border: a frame is the node's, and V1-C5 (#246) gives it its own
-//! verb, `frame`.
-//!
-//! **Rebuilt on the one writer by V1-C5 (#246).** Until then the verb's
-//! grammar, help and completion stand, and running it refuses with
-//! that issue named ([`super::rebuilt_by`]).
+//! The verb's grammar parses, and help and tab completion read it;
+//! running it changes nothing and answers with that issue named
+//! ([`super::rebuilt_by`]). What the verb will do is its owner's to
+//! specify.
 
 pub(crate) mod grammar;
 
