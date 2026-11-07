@@ -628,9 +628,9 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
 /// ellipse, at normal scale, the band curve on it, in it or off it — at a
 /// gap they draw. Where the ink before it lies on one form the model
 /// reads, a side, an arc or a sharp corner's sweep, the model's root sets
-/// the letter at the gap it aims at — [`NEARER`] past what is owed — to
-/// within `NEARER` and the float error of positions some thousands of
-/// points out. Where it lies on a side, away from any corner — the gap
+/// the letter at what is owed (ruling B16.2c), read back from the path, to
+/// within the float error of positions some thousands of points out — and
+/// past touching where nothing is owed. Where it lies on a side, away from any corner — the gap
 /// rising from none with the center, one root — the model and the
 /// iterative rule set it at one center, to the rule's window's width.
 pub fn check_pair_model(choices: &mut Choices<'_>) -> Result<(), String> {
@@ -670,7 +670,9 @@ pub(crate) fn pair_model_held(choices: &mut Choices<'_>) -> Result<[bool; 2], St
     // float error of their positions: a few units of the outline's last
     // place, past the rule's own window.
     let resolution = 4.0 * f32::EPSILON * (w.max(h) + last);
-    let aimed = |gap: f32| gap > 0.0 && (gap - (owed + NEARER)).abs() <= NEARER + resolution;
+    // Past touching where nothing is owed: a point a float past it may read
+    // back as touching.
+    let aimed = |gap: f32| (gap > 0.0 || owed <= 0.0) && (gap - owed).abs() <= resolution;
     let mut held = [false; 2];
     if let (true, Some((at, gap))) = (found.exact, found.model) {
         held[0] = true;
