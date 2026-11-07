@@ -86,6 +86,7 @@ jobs:
           - flow_structured_every_face
           - glyph_mutation_raw
           - glyph_mutation_structured
+          - projection_edits
     steps:
       - uses: actions/checkout@v7
 

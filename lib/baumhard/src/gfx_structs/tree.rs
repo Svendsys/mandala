@@ -386,10 +386,14 @@ fn union_aabb(base: Option<(Vec2, Vec2)>, other: (Vec2, Vec2)) -> (Vec2, Vec2) {
 /// For each child of `node_id`:
 /// 1. Prune: if the child's subtree AABB doesn't contain `point`
 ///    inflated by `slack`, skip the entire subtree.
-/// 2. Test the child's own `GlyphArea` AABB (slack-inflated). On
-///    hit, refine via `area.shape.contains_local` so an ellipse
-///    hit-tests against its actual shape rather than its bounding
-///    rectangle.
+/// 2. Test the child's own box (slack-inflated): a `GlyphArea`'s or a
+///    `GlyphRun`'s. On hit, refine: an area via
+///    `area.shape.contains_local`, so an ellipse hit-tests against its
+///    actual shape rather than its bounding rectangle; a path run via
+///    its placed glyphs' boxes (`GlyphRunData::hit_by`, O(its placed
+///    glyphs) for this one candidate), so a ring's interior and a
+///    diagonal connection's empty corner are not the run's. A box run
+///    is hit by its box.
 /// 3. Descend into the child's children.
 ///
 /// Smallest-area wins on tie (so a smaller element stacked over a
@@ -485,13 +489,22 @@ fn bvh_find(
                     // ellipse the frame shifts by at most an ULP and
                     // stays inside the unchanged AABB.
                     //
-                    // Only a `GlyphArea` carries a shape to refine
-                    // with. A run is hit by its box.
+                    // A `GlyphArea` refines by its shape. A path run
+                    // (a frame ring, a connection) refines to its placed
+                    // glyphs' boxes, at O(its placed glyphs) for this one
+                    // candidate: its bounds hold a ring's whole interior
+                    // and the empty rectangle a diagonal connection spans,
+                    // where nothing is drawn (#287's review). A box run is
+                    // hit by its box.
                     let local = point - min;
                     let inflated = max - min;
-                    element
-                        .glyph_area()
-                        .is_none_or(|area| area.shape.contains_local(local, inflated))
+                    match element {
+                        GfxElement::GlyphArea { glyph_area, .. } => {
+                            glyph_area.shape.contains_local(local, inflated)
+                        }
+                        GfxElement::GlyphRun { run, .. } => run.hit_by(point, slack),
+                        GfxElement::GlyphModel { .. } | GfxElement::Void { .. } => true,
+                    }
                 };
                 if hit {
                     // Tie-break by *original* (un-slacked) area so a

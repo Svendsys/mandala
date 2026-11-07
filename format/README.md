@@ -7,6 +7,10 @@ This directory documents the on-disk representation of a Mandala map.
 - [`schema.md`](./schema.md) — the `.mandala.json` format (V1): strict,
   nested, typed JSON, with one table per object. The loader and saver are
   `lib/baumhard/src/document/format/`.
+- [`projection.md`](./projection.md) — where a V1 map is drawn: its five
+  glyph layers, what is drawn, and the geometry of rectangles, paths,
+  labels and portal ends. The projector is
+  `lib/baumhard/src/projection/`.
 
 Everything below describes the older `.mindmap.json` format and its tooling,
 which the app reads until V1-C3 replaces it; the documents specific to it

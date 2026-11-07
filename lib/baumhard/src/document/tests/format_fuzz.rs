@@ -74,7 +74,9 @@ pub fn check_load_bytes(bytes: &[u8]) -> Result<(), String> {
 }
 
 /// The properties of a document a load accepted: it is valid, savable
-/// by both checks, and round-trips byte for byte through clean text.
+/// by both checks, round-trips byte for byte through clean text, and —
+/// inside the projection's work bound — projects into glyph layers
+/// (V1-B7; [`check_projects`](crate::projection::tests::projection_fuzz::check_projects)).
 pub fn check_loaded(doc: &Document) -> Result<(), String> {
     for id in doc.tree().descendants() {
         doc.validate_shape(id)
@@ -83,7 +85,8 @@ pub fn check_loaded(doc: &Document) -> Result<(), String> {
     bounds_hold(doc)?;
     derived_holds(doc)?;
     savable_checks_agree(doc, LIMITS)?;
-    round_trips(doc)
+    round_trips(doc)?;
+    crate::projection::tests::projection_fuzz::check_projects(doc)
 }
 
 /// What the loader derived as it built `doc` — the links into each

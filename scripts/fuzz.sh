@@ -37,7 +37,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGETS=(load_raw load_structured flow_raw flow_structured flow_structured_every_face glyph_mutation_raw glyph_mutation_structured)
+TARGETS=(load_raw load_structured flow_raw flow_structured flow_structured_every_face glyph_mutation_raw glyph_mutation_structured projection_edits)
 
 usage() {
   sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -89,6 +89,7 @@ case "$TARGET" in
   flow_structured_every_face) MAX_LEN=8192 ;;
   glyph_mutation_raw) MAX_LEN=16384 ;;
   glyph_mutation_structured) MAX_LEN=8192 ;;
+  projection_edits) MAX_LEN=4096 ;;
 esac
 
 EXTRA=()

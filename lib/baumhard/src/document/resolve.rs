@@ -78,16 +78,27 @@
 //! inherited-state seed can call them with the tree it is applying to.
 //! They cache nothing: caching is the projection's.
 //!
-//! # One-off questions
+//! # One-off questions, and walks
 //!
-//! Each resolver answers for one element, and the palette tier finds
-//! its binding by climbing from the owning node to the nearest node
-//! with a palette — O(distance to that binding), the whole depth of the
-//! node when no node above it binds one. That is the cost of one
-//! question, not of a walk: a pass that resolves every node of a map
-//! carries the binding down the walk instead of asking per node, or it
-//! is quadratic in depth (design §20 rule 11; ruling R16 on #282 notes
-//! this for V1-B7 and V1-C2).
+//! Each resolver answers for one element. Asked as a one-off
+//! ([`Binding::Climb`](crate::document::resolve::Binding::Climb)), the palette tier finds its binding by climbing
+//! from the owning node to the nearest node with a palette — O(distance
+//! to that binding), the whole depth of the node when no node above it
+//! binds one — and records the `palette` field of every node it passes.
+//! That is the cost of one question, not of a walk: a pass that resolved
+//! every node of a map that way would be quadratic in depth, in time and
+//! in what it records (design §20 rule 11; ruling R16 on #282).
+//!
+//! A walk carries the binding down instead
+//! ([`Binding::Carried`](crate::document::resolve::Binding::Carried)): it
+//! works out each node's binding from its parent's once, with
+//! [`carry_binding`](crate::document::resolve::carry_binding), and hands each resolution the owning node's. The
+//! palette tier then reads that one value —
+//! [`Input::Binding`](crate::document::resolve::Input::Binding) of the
+//! owning node — in place of the climb, and records nothing above it;
+//! the climb's reads are recorded where they belong, once each, by the
+//! `carry_binding` of each node (ruling B7.2 on #241). Both ways resolve
+//! the same values.
 
 use crate::arena::NodeId;
 use crate::document::defaults::{BuiltInPath, BUILT_IN, DEFAULT_BACKGROUND};
@@ -135,6 +146,76 @@ pub enum Input {
     Defaults,
     /// A node's depth: the nodes above it.
     Depth(NodeId),
+    /// The palette binding a walk carried down to a node
+    /// ([`carry_binding`]): which palette colors it, and how many
+    /// levels below the node that binds it. A resolution given a carried
+    /// binding ([`Binding::Carried`]) reads this of its owning node in
+    /// place of the climb, and a node's own `carry_binding` reads it of
+    /// its parent. Derived, so no field change maps onto it
+    /// ([`inputs_changed`](crate::document::deps::inputs_changed)): whoever
+    /// carries it says when it changed (ruling B7.2 on #241).
+    Binding(NodeId),
+}
+
+/// The palette binding that colors a node, as a walk carries it down:
+/// the palette, and how many levels below the node bound to it the node
+/// sits — the group it takes before the clamp to the palette's last
+/// (design §5.4).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CarriedBinding {
+    /// The palette.
+    pub palette: PaletteId,
+    /// `depth(node) − depth(binding node)`.
+    pub steps: usize,
+}
+
+/// How a resolution finds the owning node's palette binding.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Binding {
+    /// Climb from the owning node to the nearest binding: a one-off
+    /// question (see the module docs).
+    Climb,
+    /// The owning node's binding, as a walk carried it down
+    /// ([`carry_binding`]); `None` when nothing at or above the node binds
+    /// a palette.
+    Carried(Option<CarriedBinding>),
+}
+
+/// The binding a walk carries to `node`, given `parent` — what it carried
+/// to `node`'s parent, `None` for a root node or a parent nothing binds:
+/// the node's own palette, `0` levels below itself, when it binds one;
+/// otherwise its parent's, one level further down. Reads the node's
+/// `palette` field ([`Input::PaletteBinding`]) and, when it binds
+/// nothing and its parent is a node, that parent's carried binding
+/// ([`Input::Binding`]). A `node` that is not a node carries nothing.
+///
+/// A palette the document does not have still binds — the node's palette
+/// tier then gives nothing — as the climb stops at it too. Cost: O(1).
+pub fn carry_binding(
+    tree: &Tree<DocElement>,
+    node: NodeId,
+    parent: Option<CarriedBinding>,
+    rec: &mut impl ReadRecorder,
+) -> Option<CarriedBinding> {
+    rec.read(Input::PaletteBinding(node));
+    let DocElement::Node(data) = element(tree, node)? else {
+        return None;
+    };
+    if let Some(palette) = data.palette {
+        return Some(CarriedBinding { palette, steps: 0 });
+    }
+    let up = parent_node(tree, node)?;
+    rec.read(Input::Binding(up));
+    parent.map(|binding| CarriedBinding {
+        palette: binding.palette,
+        steps: binding.steps.saturating_add(1),
+    })
+}
+
+/// The parent of `node`, when it is a node. O(1).
+fn parent_node(tree: &Tree<DocElement>, node: NodeId) -> Option<NodeId> {
+    let up = parent(tree, node)?;
+    (element(tree, up)?.kind() == DocKind::Node).then_some(up)
 }
 
 /// Where a resolver reports what it read.
@@ -292,6 +373,8 @@ struct Inputs<'t, R: ReadRecorder> {
     tree: &'t Tree<DocElement>,
     rec: &'t mut R,
     owning_node: Option<NodeId>,
+    /// How the palette tier finds the owning node's binding.
+    source: Binding,
     theme: Option<Option<&'t ThemeData>>,
     defaults: Option<Option<&'t DefaultsData>>,
     binding: Option<Option<&'t PaletteGroup>>,
@@ -299,10 +382,20 @@ struct Inputs<'t, R: ReadRecorder> {
 
 impl<'t, R: ReadRecorder> Inputs<'t, R> {
     fn new(tree: &'t Tree<DocElement>, rec: &'t mut R, owning_node: Option<NodeId>) -> Self {
+        Self::with_binding(tree, rec, owning_node, Binding::Climb)
+    }
+
+    fn with_binding(
+        tree: &'t Tree<DocElement>,
+        rec: &'t mut R,
+        owning_node: Option<NodeId>,
+        source: Binding,
+    ) -> Self {
         Inputs {
             tree,
             rec,
             owning_node,
+            source,
             theme: None,
             defaults: None,
             binding: None,
@@ -367,6 +460,14 @@ impl<'t, R: ReadRecorder> Inputs<'t, R> {
     fn find_binding(&mut self) -> Option<&'t PaletteGroup> {
         let tree = self.tree;
         let start = self.owning_node?;
+        if let Binding::Carried(carried) = self.source {
+            // The walk worked the binding out above: one read, no climb.
+            self.rec.read(Input::Binding(start));
+            let carried = carried?;
+            self.rec.read(Input::Palette(carried.palette));
+            let groups = &palette(tree, carried.palette)?.groups;
+            return groups.get(carried.steps.min(groups.len().checked_sub(1)?));
+        }
         self.rec.read(Input::Depth(start));
         let mut steps = 0usize;
         let mut at = start;
@@ -386,6 +487,8 @@ impl<'t, R: ReadRecorder> Inputs<'t, R> {
                 return None;
             }
             steps += 1;
+            #[cfg(test)]
+            climb_steps::count();
         }
     }
 
@@ -625,6 +728,24 @@ impl Partial {
 /// distance; the depth when there is none). A one-off question: see the
 /// module docs. No allocation.
 pub fn resolve_text(tree: &Tree<DocElement>, owner: NodeId, rec: &mut impl ReadRecorder) -> ResolvedText {
+    resolve_text_in(tree, owner, Binding::Climb, rec)
+}
+
+/// [`resolve_text`], the palette tier finding the owning node's binding
+/// as `binding` says: a walk passes the binding it carried to the owning
+/// node ([`Binding::Carried`]), which costs no climb and records
+/// [`Input::Binding`] of the owning node in place of the climb's reads.
+/// The value resolved is the same either way.
+///
+/// Cost: the owner chain, at most four elements, and with a carried
+/// binding O(1) more; with [`Binding::Climb`], as [`resolve_text`]. No
+/// allocation.
+pub fn resolve_text_in(
+    tree: &Tree<DocElement>,
+    owner: NodeId,
+    binding: Binding,
+    rec: &mut impl ReadRecorder,
+) -> ResolvedText {
     let Some(owner_element) = element(tree, owner) else {
         return BUILT_IN.section;
     };
@@ -651,7 +772,7 @@ pub fn resolve_text(tree: &Tree<DocElement>, owner: NodeId, rec: &mut impl ReadR
         Fields::ALL
     };
     let owning = container.and_then(|c| crate::document::ids::owning_node(tree, c));
-    let mut inputs = Inputs::new(tree, rec, owning);
+    let mut inputs = Inputs::with_binding(tree, rec, owning, binding);
     let mut got = Partial::default();
 
     // 1. The span's own style.
@@ -908,7 +1029,21 @@ pub fn resolve_frame(tree: &Tree<DocElement>, frame: NodeId, rec: &mut impl Read
 /// allocation beyond cloning a `FitMode::Once` filler and a sides
 /// ornament.
 pub fn resolve_ring(tree: &Tree<DocElement>, ring: NodeId, rec: &mut impl ReadRecorder) -> ResolvedRing {
-    let mut inputs = Inputs::new(tree, rec, owning_node(tree, ring));
+    resolve_ring_in(tree, ring, Binding::Climb, rec)
+}
+
+/// [`resolve_ring`], a sides ornament's palette color — and the ring's
+/// text color it falls back to — finding the owning node's binding as
+/// `binding` says ([`resolve_text_in`]).
+///
+/// Cost: as [`resolve_ring`], with no climb for a carried binding.
+pub fn resolve_ring_in(
+    tree: &Tree<DocElement>,
+    ring: NodeId,
+    binding: Binding,
+    rec: &mut impl ReadRecorder,
+) -> ResolvedRing {
+    let mut inputs = Inputs::with_binding(tree, rec, owning_node(tree, ring), binding);
     let own = match inputs.style(ring) {
         Some(DocElement::Ring(ring)) => Some(&ring.style),
         _ => None,
@@ -966,7 +1101,7 @@ pub fn resolve_ring(tree: &Tree<DocElement>, ring: NodeId, rec: &mut impl ReadRe
         .filter(|(content, _)| crate::document::bounds::check_ornament(content).is_ok())
         .map(|(content, own)| ResolvedSides {
             content,
-            color: own.unwrap_or_else(|| resolve_text(tree, ring, rec).color),
+            color: own.unwrap_or_else(|| resolve_text_in(tree, ring, binding, rec).color),
         });
     ResolvedRing {
         fit,
@@ -1114,5 +1249,27 @@ pub fn resolve_portal_end(
         } else {
             content_text([own_content, default_content], built_in.content)
         },
+    }
+}
+
+/// How many levels the palette tier's climb has gone up on this thread:
+/// what the tests that hold a walk to carrying its bindings read (ruling
+/// R16 on #282). Compiled for tests only.
+#[cfg(test)]
+pub(crate) mod climb_steps {
+    use std::cell::Cell;
+
+    thread_local! {
+        static STEPS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// One more level climbed.
+    pub(super) fn count() {
+        STEPS.with(|cell| cell.set(cell.get() + 1));
+    }
+
+    /// The levels climbed on this thread so far.
+    pub(crate) fn taken() -> usize {
+        STEPS.with(Cell::get)
     }
 }
