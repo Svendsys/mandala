@@ -22,6 +22,7 @@ use baumhard::arena::NodeId;
 use baumhard::document::element::DocKind;
 use baumhard::document::format::load;
 use baumhard::document::ids::{Document, NodeIdent};
+use baumhard::document::mutation::compose;
 use baumhard::document::mutation::ops::{DocMutation, DocMutatorTree, NodeOp, SpanOp};
 use baumhard::document::mutation::step::{DocStep, DocWalk};
 use baumhard::document::writer::{ChangeSource, EditRequest};
@@ -85,20 +86,45 @@ fn loaded(layers: &GlyphLayers) -> LayerRenderer {
     renderer
 }
 
-/// Every element the journals of `changes` name, each once, in the order
-/// a layer-by-layer reading of them first names it: what an apply of
-/// them alone must visit, read from the journals directly.
-fn touched(changes: &LayerChanges) -> Vec<(Layer, NodeId)> {
+/// Every element the journals of `batch` — one or more projector
+/// updates, oldest first — name, each once, in the order a
+/// layer-by-layer reading of them first names it: what one apply of them
+/// all must visit, read from the journals directly.
+fn touched(batch: &[LayerChanges]) -> Vec<(Layer, NodeId)> {
     let mut seen = FxHashSet::default();
     let mut out = Vec::new();
     for layer in Layer::ALL {
-        for (id, _) in changes.journal(layer).touched() {
-            if seen.insert((layer, id)) {
-                out.push((layer, id));
+        for changes in batch {
+            for (id, _) in changes.journal(layer).touched() {
+                if seen.insert((layer, id)) {
+                    out.push((layer, id));
+                }
             }
         }
     }
     out
+}
+
+/// The journals of every update of `batch`, oldest first, each with its
+/// layer: what one [`LayerRenderer::apply`] takes for several projector
+/// updates made since the last one.
+fn merged(
+    batch: &[LayerChanges],
+) -> impl Iterator<
+    Item = (
+        Layer,
+        &baumhard::engine::journal::Journal<baumhard::gfx_structs::element::GfxElement>,
+    ),
+> {
+    batch.iter().flat_map(LayerRenderer::journals_of)
+}
+
+/// Discard the journals of `batch`, newest first: the order a history
+/// lets go of the updates it holds.
+fn discard(batch: Vec<LayerChanges>, layers: &mut GlyphLayers) {
+    for changes in batch.into_iter().rev() {
+        changes.discard(layers);
+    }
 }
 
 /// Every run of every layer, by layer and glyph id, read from the trees.
@@ -159,16 +185,17 @@ fn node(doc: &Document, ident: u32) -> NodeId {
         .expect("the fixture has the node")
 }
 
-/// Apply the projector's update to `renderer` and check it: the render
-/// state is a fresh load's, and the visit was exactly the journals'.
+/// Apply the projector's updates `batch`, oldest first, to `renderer` in
+/// one call, and check it: the render state is a fresh load's, and the
+/// visit was exactly the journals'.
 fn apply_and_check(
     renderer: &mut LayerRenderer,
     p: &Projected,
-    changes: &LayerChanges,
+    batch: &[LayerChanges],
 ) -> Result<(), String> {
-    renderer.apply(&p.layers, LayerRenderer::journals_of(changes));
+    renderer.apply(&p.layers, merged(batch));
     renderer.matches(&p.layers)?;
-    let (want, have) = (touched(changes), &renderer.log().visited);
+    let (want, have) = (touched(batch), &renderer.log().visited);
     if &want != have {
         return Err(format!("the journals name {want:?}, the apply visited {have:?}"));
     }
@@ -219,13 +246,17 @@ fn test_layers_load_holds_every_layer_in_its_pre_order() {
     );
 }
 
-/// How many generated documents the sweep takes, and how many edits each.
+/// How many generated documents the sweep takes, how many applies each,
+/// and at most how many projector updates one apply takes.
 const DOCUMENTS: u64 = 12;
 const STEPS: usize = 24;
+const MERGED: u32 = 4;
 
 #[test]
 fn test_layers_apply_keeps_the_render_state_a_fresh_load_through_the_corpus() {
     let mut total = ApplyLog::default();
+    let mut most = 0;
+    let mut composites = [0usize; 2];
     for seed in 0..DOCUMENTS {
         let mut c = Choices::seeded(0xC2_0000 + seed);
         let doc = generated(&mut c);
@@ -235,23 +266,58 @@ fn test_layers_apply_keeps_the_render_state_a_fresh_load_through_the_corpus() {
         );
         let mut p = Projected::new(doc);
         let mut renderer = loaded(&p.layers);
+        let mut edits = 0usize;
         for step in 0..STEPS {
-            let what = if step % 7 == 6 {
-                if step % 2 == 0 {
-                    p.doc.undo().map(|_| "undo")
-                } else {
-                    p.doc.redo().map(|_| "redo")
-                }
+            // One to `MERGED` projector updates, each its own `sync`, all
+            // handed to one apply: what a frame that saw several changes
+            // gives it, and the only way journals of different updates
+            // meet in one apply — an element moved in one and its old
+            // parent removed in the next, a row reordered twice.
+            // One step in four is one of the composites the corpus's
+            // single edits never make (see `composite`).
+            let planned = if c.one_in(4) {
+                composite(&mut c, &p.doc)
             } else {
-                edit(&mut c, &p.doc)
-                    .and_then(|(name, req)| p.doc.apply(req, ChangeSource::Action).ok().map(|_| name))
+                None
             };
-            let Some(what) = what else {
+            let count = match &planned {
+                Some((_, steps)) => steps.len(),
+                None => c.below(MERGED) as usize + 1,
+            };
+            let mut batch = Vec::new();
+            let mut names = Vec::new();
+            for k in 0..count {
+                edits += 1;
+                let what = if let Some((name, steps)) = &planned {
+                    let req = steps[k](&p.doc);
+                    p.doc.apply(req, ChangeSource::Action).ok().map(|_| *name)
+                } else if edits % 7 == 6 {
+                    if edits.is_multiple_of(2) {
+                        p.doc.undo().map(|_| "undo")
+                    } else {
+                        p.doc.redo().map(|_| "redo")
+                    }
+                } else {
+                    edit(&mut c, &p.doc)
+                        .and_then(|(name, req)| p.doc.apply(req, ChangeSource::Action).ok().map(|_| name))
+                };
+                let Some(what) = what else {
+                    continue;
+                };
+                names.push(what);
+                batch.push(p.sync());
+            }
+            if batch.is_empty() {
                 continue;
-            };
-            let changes = p.sync();
-            apply_and_check(&mut renderer, &p, &changes)
-                .unwrap_or_else(|e| panic!("seed {seed} step {step} ({what}): {e}"));
+            }
+            most = most.max(batch.len());
+            if let Some((name, steps)) = &planned {
+                if batch.len() == steps.len() {
+                    composites[usize::from(*name == MOVED_OUT)] += 1;
+                }
+            }
+            apply_and_check(&mut renderer, &p, &batch)
+                .unwrap_or_else(|e| panic!("seed {seed} step {step} ({names:?}): {e}"));
             let log = renderer.log();
             total.inserted += log.inserted;
             total.freed += log.freed;
@@ -260,9 +326,17 @@ fn test_layers_apply_keeps_the_render_state_a_fresh_load_through_the_corpus() {
             total.replaced += log.replaced;
             total.moved += log.moved;
             total.restyled += log.restyled;
-            changes.discard(&mut p.layers);
+            discard(batch, &mut p.layers);
         }
     }
+    assert_eq!(
+        most, MERGED as usize,
+        "precondition: some apply took {MERGED} updates at once"
+    );
+    assert!(
+        composites.iter().all(|&n| n > 0),
+        "precondition: the sweep made both composites: {composites:?}"
+    );
     // Every way an apply writes the state was taken, so no path of it
     // went unchecked against a fresh load.
     for (what, count) in [
@@ -303,7 +377,7 @@ fn test_layers_one_edit_rewrites_exactly_the_runs_it_changed() {
         )
         .expect("the edit applies");
     let changes = p.sync();
-    apply_and_check(&mut renderer, &p, &changes).unwrap();
+    apply_and_check(&mut renderer, &p, std::slice::from_ref(&changes)).unwrap();
     let after = runs_of(&p.layers);
     let (mut kept, mut written) = (0, 0);
     for (&(layer, id), run) in &after {
@@ -351,7 +425,7 @@ fn test_layers_a_drag_re_places_every_run_and_reshapes_none() {
         )
         .expect("the drag applies");
     let changes = p.sync();
-    apply_and_check(&mut renderer, &p, &changes).unwrap();
+    apply_and_check(&mut renderer, &p, std::slice::from_ref(&changes)).unwrap();
     let log = renderer.log().clone();
     assert!(
         log.moved + log.replaced > 0,
@@ -379,7 +453,7 @@ fn test_layers_a_drag_re_places_every_run_and_reshapes_none() {
         .apply(retext(&p.doc, target, "x"), ChangeSource::Action)
         .expect("the text change applies");
     let changes = p.sync();
-    apply_and_check(&mut renderer, &p, &changes).unwrap();
+    apply_and_check(&mut renderer, &p, std::slice::from_ref(&changes)).unwrap();
     assert!(
         renderer.log().reshaped > 0,
         "a text change reshaped nothing: {:?}",
@@ -397,7 +471,8 @@ fn test_layers_a_merged_journal_set_visits_each_element_once() {
         .apply(retext(&p.doc, target, "another line"), ChangeSource::Action)
         .expect("the edit applies");
     let changes = p.sync();
-    let projected_touches: FxHashSet<(Layer, NodeId)> = touched(&changes).into_iter().collect();
+    let projected_touches: FxHashSet<(Layer, NodeId)> =
+        touched(std::slice::from_ref(&changes)).into_iter().collect();
     // A view-only glyph mutator over the update, as the selection tint
     // will be: one section run the projector rewrote, and one it did not.
     let tree = &p.layers.sections;
@@ -453,4 +528,174 @@ fn test_layers_a_merged_journal_set_visits_each_element_once() {
     );
     overlay.discard(&mut p.layers.sections);
     changes.discard(&mut p.layers);
+}
+
+/// Run `edits` on `p`, one projector update each, and hand all the
+/// updates to `renderer` in one apply; then the same for undoing them
+/// all, newest first, and for redoing them all. Each apply is checked
+/// against a fresh load and against the journals' visit.
+///
+/// What `edits` builds is read from the document as it stands when the
+/// edit runs, so an edit may name what an earlier one moved.
+fn merged_round_trip(renderer: &mut LayerRenderer, p: &mut Projected, edits: &[Step]) -> Result<(), String> {
+    let mut batch = Vec::new();
+    for (i, edit) in edits.iter().enumerate() {
+        let req = edit(&p.doc);
+        p.doc
+            .apply(req, ChangeSource::Action)
+            .map_err(|e| format!("edit {i} applies: {e:?}"))?;
+        batch.push(p.sync());
+    }
+    apply_and_check(renderer, p, &batch).map_err(|e| format!("the edits, merged: {e}"))?;
+    discard(batch, &mut p.layers);
+    for (pass, undo) in [("undo", true), ("redo", false)] {
+        let mut batch = Vec::new();
+        for i in 0..edits.len() {
+            let done = if undo { p.doc.undo() } else { p.doc.redo() };
+            done.ok_or_else(|| format!("{pass} {i} has an entry"))?;
+            batch.push(p.sync());
+        }
+        apply_and_check(renderer, p, &batch).map_err(|e| format!("every {pass}, merged: {e}"))?;
+        discard(batch, &mut p.layers);
+    }
+    Ok(())
+}
+
+/// A request moving `node` under `to`, after its other child nodes.
+fn reparent(doc: &Document, node: NodeId, to: NodeId) -> EditRequest {
+    EditRequest::new(
+        compose::reparent(doc, &[node], to).expect("a node, moved under a node"),
+        "compose::reparent",
+    )
+}
+
+/// One edit of a composite, built against the document as it stands
+/// when it runs.
+type Step = Box<dyn Fn(&Document) -> EditRequest>;
+
+/// The names of the two composites.
+const REORDERED: &str = "row reordered twice";
+const MOVED_OUT: &str = "moved out, then its parent removed";
+
+/// Three edits of the row of `parent`'s child nodes in which `p` is
+/// right before `x`: `x` to the end of its own row, then `p`, then `x`
+/// again. The row ends `[…, p, x]`: `x` follows `p` before and after,
+/// while `p` itself moves — past the siblings after `x`, when it has
+/// any.
+fn row_reordered_twice(parent: NodeId, p: NodeId, x: NodeId) -> Vec<Step> {
+    vec![
+        Box::new(move |doc: &Document| reparent(doc, x, parent)),
+        Box::new(move |doc: &Document| reparent(doc, p, parent)),
+        Box::new(move |doc: &Document| reparent(doc, x, parent)),
+    ]
+}
+
+/// Two edits of `child`, under `parent` under `grand`: `child` moved under
+/// `grand`, then `parent` deleted. The second edit's journal names
+/// `parent`'s subtree as it then stands, without `child`.
+fn moved_out_then_removed(grand: NodeId, parent: NodeId, child: NodeId) -> Vec<Step> {
+    vec![
+        Box::new(move |doc: &Document| reparent(doc, child, grand)),
+        Box::new(move |doc: &Document| {
+            EditRequest::new(
+                compose::delete(doc, &[parent]).expect("a node"),
+                "compose::delete",
+            )
+        }),
+    ]
+}
+
+/// Every node of `doc` with a parent node and a child node, as
+/// `(grand, parent, child)`: what [`moved_out_then_removed`] takes.
+fn three_deep(doc: &Document) -> Vec<(NodeId, NodeId, NodeId)> {
+    of_kind(doc, DocKind::Node)
+        .into_iter()
+        .filter_map(|n| {
+            let grand = doc.parent(n)?;
+            let child = *kids(doc, n, DocKind::Node).first()?;
+            (doc.get(grand)?.kind() == DocKind::Node).then_some((grand, n, child))
+        })
+        .collect()
+}
+
+/// One of the two composites, its nodes drawn from `c`, or `None` when
+/// `doc` has nowhere to make it: the edit sequences whose journals, met
+/// in one apply, the single edits of the corpus never produce — a single
+/// update reprojects from its final state — and which a renderer must
+/// hold to (#319's review).
+fn composite(c: &mut Choices, doc: &Document) -> Option<(&'static str, Vec<Step>)> {
+    if c.one_in(2) {
+        let rows: Vec<NodeId> = of_kind(doc, DocKind::Node)
+            .into_iter()
+            .filter(|&n| kids(doc, n, DocKind::Node).len() >= 3)
+            .collect();
+        let parent = *rows.get(c.below(rows.len().max(1) as u32) as usize)?;
+        let row = kids(doc, parent, DocKind::Node);
+        // A sibling after `x`, so the row's order changes.
+        let at = c.below(row.len() as u32 - 2) as usize;
+        Some((REORDERED, row_reordered_twice(parent, row[at], row[at + 1])))
+    } else {
+        let found = three_deep(doc);
+        let &(grand, parent, child) = found.get(c.below(found.len().max(1) as u32) as usize)?;
+        Some((MOVED_OUT, moved_out_then_removed(grand, parent, child)))
+    }
+}
+
+#[test]
+fn test_layers_a_row_reordered_twice_in_one_apply_is_drawn_in_its_final_order() {
+    // A row `[A, P, X, B, …]` of one parent's child nodes, and three
+    // updates merged: X to the end of its own row, then P, then X again.
+    // The row ends `[A, B, …, P, X]`: X's previous sibling is P before the
+    // apply and after it, while P itself moves — a slot judged against a
+    // neighbor that moves in the same apply.
+    for seed in 0..DOCUMENTS {
+        let mut c = Choices::seeded(0xC2_0000 + seed);
+        let mut p = Projected::new(generated(&mut c));
+        let parent = *of_kind(&p.doc, DocKind::Node)
+            .iter()
+            .find(|&&n| kids(&p.doc, n, DocKind::Node).len() >= 4)
+            .unwrap_or_else(|| panic!("precondition: seed {seed} has a node with four child nodes"));
+        let row = kids(&p.doc, parent, DocKind::Node);
+        let (moved_p, moved_x) = (row[1], row[2]);
+        let mut renderer = loaded(&p.layers);
+        merged_round_trip(
+            &mut renderer,
+            &mut p,
+            &row_reordered_twice(parent, moved_p, moved_x),
+        )
+        .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        let row = kids(&p.doc, parent, DocKind::Node);
+        assert_eq!(
+            &row[row.len() - 2..],
+            &[moved_p, moved_x],
+            "precondition: seed {seed}'s row ends with P, then X"
+        );
+    }
+}
+
+#[test]
+fn test_layers_a_node_moved_out_of_a_subtree_removed_in_the_same_apply_keeps_its_own() {
+    // A node C under P under G, and two updates merged: C moved under G,
+    // then P deleted. The second update's journal names P's subtree as it
+    // then stood, without C; the renderer's state of P, from before both,
+    // still holds C and everything under it.
+    for seed in 0..DOCUMENTS {
+        let mut c = Choices::seeded(0xC2_0000 + seed);
+        let mut p = Projected::new(generated(&mut c));
+        let (grand, parent, child) = *three_deep(&p.doc)
+            .first()
+            .unwrap_or_else(|| panic!("precondition: seed {seed} has a node three deep"));
+        let mut renderer = loaded(&p.layers);
+        merged_round_trip(
+            &mut renderer,
+            &mut p,
+            &moved_out_then_removed(grand, parent, child),
+        )
+        .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        assert_eq!(
+            p.doc.parent(child),
+            Some(grand),
+            "precondition: seed {seed}'s C ends under G"
+        );
+    }
 }

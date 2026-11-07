@@ -145,14 +145,25 @@ impl Mirror {
         slot
     }
 
-    /// Free `top` and every slot under it: the elements a removal took
-    /// out of the layer. Each is unlinked from nothing — the subtree goes
-    /// whole — and `top` is first unlinked from its parent, so the rows
-    /// that stay are spliced shut. Returns how many slots were freed.
+    /// Free `top` and every slot under it — the elements a removal took
+    /// out of the layer — except the slots under it whose element `keep`
+    /// says is still in the layer: one moved out of the subtree before
+    /// the removal, which the slots still hold under `top`. A kept slot
+    /// is unlinked, its own subtree left under it, and hangs under no
+    /// parent until it is spliced into its row; nothing under it is
+    /// looked at. Each freed slot is unlinked from nothing — what is
+    /// freed goes whole — and `top` is first unlinked from its parent, so
+    /// the rows that stay are spliced shut. Returns how many slots were
+    /// freed.
     ///
-    /// Cost: O(the slots under `top`); `stack` is the caller's scratch,
-    /// left empty.
-    pub(super) fn free_subtree(&mut self, top: SlotId, stack: &mut Vec<SlotId>) -> usize {
+    /// Cost: O(the slots freed, and the kept slots' siblings); `stack` is
+    /// the caller's scratch, left empty.
+    pub(super) fn free_subtree(
+        &mut self,
+        top: SlotId,
+        stack: &mut Vec<SlotId>,
+        keep: impl Fn(NodeId) -> bool,
+    ) -> usize {
         self.unlink(top);
         let mut freed = 0;
         stack.clear();
@@ -160,8 +171,12 @@ impl Mirror {
         while let Some(slot) = stack.pop() {
             let mut child = self.slots[slot as usize].first;
             while let Some(c) = child {
-                stack.push(c);
                 child = self.slots[c as usize].next;
+                if self.slots[c as usize].id.is_some_and(&keep) {
+                    self.unlink(c);
+                } else {
+                    stack.push(c);
+                }
             }
             if let Some(id) = self.slots[slot as usize].id.take() {
                 self.index.remove(&id);

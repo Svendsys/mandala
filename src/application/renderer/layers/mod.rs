@@ -25,7 +25,10 @@
 //!   amendment 3) — and nothing else. Each element a journal names is
 //!   visited once however many name it, the last touch deciding whether
 //!   it is still in its layer:
-//!   - an element that left is dropped, with every slot under it;
+//!   - an element that left is dropped, with every slot under it but
+//!     those a journal took out of it first — an element moved out of a
+//!     subtree that a later update removes keeps its slot, and what
+//!     hangs under it, and is spliced into its new row;
 //!   - an element that entered gets a slot, read from the layer;
 //!   - an element that changed is compared with what the slot holds, and
 //!     only a difference is written: a new placement or origin is the
@@ -34,7 +37,9 @@
 //!     and its stamp;
 //!   - an element whose place changed — moved, or a sibling reordered
 //!     into it — is spliced back in after its previous sibling, under its
-//!     parent, as the layer now holds it.
+//!     parent, as the layer now holds it. An element counts as in place
+//!     only after a previous sibling no journal names: one that is named
+//!     may itself move later in the same apply.
 //!
 //!   No element outside the journals and their subtrees is visited, and
 //!   no layer is walked: the cost is the touches, the subtrees removals
@@ -299,7 +304,12 @@ impl LayerRenderer {
             log.visited.push((layer, *id));
             if touches.get(id) == Some(&Touch::Removed) {
                 if let Some(slot) = mirror.slot_of(*id) {
-                    let _freed = mirror.free_subtree(slot, stack);
+                    // A slot under it that a later journal took out of
+                    // its subtree first — its last touch is not a
+                    // removal — is kept, with what hangs under it, and
+                    // is spliced into its new row below.
+                    let kept = |id: NodeId| touches.get(&id).is_some_and(|t| *t != Touch::Removed);
+                    let _freed = mirror.free_subtree(slot, stack, kept);
                     #[cfg(test)]
                     {
                         log.freed += _freed;
@@ -342,7 +352,7 @@ impl LayerRenderer {
                 }
                 (state, run) => *state = run.map(|run| new_state(run, &mut self.stamp)),
             }
-            if !in_place(mirror, arena, id, slot) {
+            if !in_place(mirror, arena, &touches, id, slot) {
                 mirror.unlink(slot);
                 pending.push(slot);
                 #[cfg(test)]
@@ -362,18 +372,37 @@ impl LayerRenderer {
 }
 
 /// Whether `slot`, the slot of `id`, stands where `arena` — its layer as
-/// it now stands — has `id`: under the slot of its parent, right after
-/// the slot of its previous sibling (first in the row when it has none).
-/// A previous sibling the renderer holds no slot for yet is one that
-/// entered, so `id` is not where it was. The root stands in place while
-/// it is the mirror's root. O(1).
-fn in_place(mirror: &Mirror, arena: &Arena<GfxElement>, id: NodeId, slot: SlotId) -> bool {
+/// it now stands — has `id`, and will still stand there once the apply
+/// is done: under the slot of its parent, right after the slot of its
+/// previous sibling (first in the row when it has none), where that
+/// sibling is one no journal of the apply names (`touches`). The root
+/// stands in place while it is the mirror's root. O(1).
+///
+/// A previous sibling the journals name may itself be taken out of the
+/// row later in the same apply, and `id` would be left behind at its
+/// old place, so `id` is judged out of place and spliced after it — the
+/// one verdict that holds whatever order the touches come in. (A row
+/// `[A, P, X, B]` whose X, then P, then X again go to its end, in three
+/// updates merged into one apply: X follows P before and after, and P
+/// moves.) An untouched sibling is never taken out, and nothing is
+/// spliced between it and `id`: a slot spliced after it would be the one
+/// whose previous sibling it is, which is `id`. A previous sibling the
+/// renderer holds no slot for yet is one that entered, so `id` is not
+/// where it was.
+fn in_place(
+    mirror: &Mirror,
+    arena: &Arena<GfxElement>,
+    touches: &FxHashMap<NodeId, Touch>,
+    id: NodeId,
+    slot: SlotId,
+) -> bool {
     let s = mirror.slot(slot);
     let Some(parent) = id.parent(arena) else {
         return s.parent.is_none() && mirror.is_attached(slot);
     };
     let prev = match id.previous_sibling(arena) {
         None => None,
+        Some(prev) if touches.contains_key(&prev) => return false,
         Some(prev) => match mirror.slot_of(prev) {
             Some(prev) => Some(prev),
             None => return false,
