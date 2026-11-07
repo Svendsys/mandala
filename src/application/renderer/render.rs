@@ -446,7 +446,9 @@ impl Renderer {
                     .sum::<usize>()
             };
             let runs: usize = super::scene_shape_cache::glyph_runs(canvas_elements())
-                .map(|(run, _)| fill.in_run(run))
+                .map(|(run, _)| run)
+                .chain(self.layer_renderer.runs())
+                .map(|run| fill.in_run(run))
                 .sum();
             self.fill_census = backdrop::FillCensus {
                 canvas: areas(&main_text_areas) + runs,
@@ -504,15 +506,21 @@ impl Renderer {
             return Err(FrameSkip::PrepareFailed);
         }
         // The positioned glyph runs, under the same guard: they shape
-        // nothing, but a glyph the atlas has not seen is rasterized.
-        self.glyph_runs.prepare(
+        // nothing, but a glyph the atlas has not seen is rasterized. The
+        // canvas trees' runs first, then the glyph layers', in their draw
+        // order (`layers`): one instance list, one draw.
+        let mut runs = self.glyph_runs.begin(
             &self.device,
             &self.queue,
             &mut font_system,
             &mut self.swash_cache,
             camera,
-            super::scene_shape_cache::glyph_runs(canvas_elements()),
         );
+        for (run, offset) in super::scene_shape_cache::glyph_runs(canvas_elements()) {
+            runs.draw(run, offset);
+        }
+        self.layer_renderer.encode(&mut runs);
+        runs.finish();
         drop(font_system);
         self.prepare_fault_logged = false;
         Ok(())

@@ -177,6 +177,9 @@ pub(crate) struct GlyphRunCounts {
     /// Of those, runs inside their zoom window, on screen and not
     /// transparent.
     pub(crate) runs_drawn: usize,
+    /// Of those not drawn, runs left out because the camera's zoom is
+    /// outside their zoom window.
+    pub(crate) runs_outside_zoom: usize,
     /// Glyph instances the last frame draws.
     pub(crate) instances: usize,
     /// Glyphs the last frame skipped: off screen, hostile values, or
@@ -205,6 +208,11 @@ pub(crate) struct GlyphRunPass {
     instances: Vec<GlyphInstance>,
     instance_buffer: wgpu::Buffer,
     instance_capacity: usize,
+    /// How many instances the instance buffer holds for the last
+    /// finished frame: what [`Self::render`] draws. Zeroed when a frame
+    /// begins, so a frame begun and never finished draws nothing rather
+    /// than the last frame's buffer under this one's count.
+    uploaded: usize,
     counts: GlyphRunCounts,
 }
 
@@ -299,6 +307,7 @@ impl GlyphRunPass {
             instances: Vec::with_capacity(INITIAL_INSTANCE_CAPACITY),
             instance_buffer,
             instance_capacity: INITIAL_INSTANCE_CAPACITY,
+            uploaded: 0,
             counts: GlyphRunCounts::default(),
         }
     }
@@ -333,90 +342,141 @@ impl GlyphRunPass {
         self.counts
     }
 
-    /// The CPU half of a frame: flatten every glyph of `runs` — each
-    /// with its tree's registered offset — that `camera` shows into one
-    /// instance list, rasterizing glyphs the atlas has not seen, and
-    /// upload it.
+    /// Begin the CPU half of a frame drawn through `camera`: the atlas
+    /// starts a frame and the instance list is emptied. Every run the
+    /// frame draws is then handed to [`GlyphRunFrame::draw`], in draw
+    /// order — the canvas trees' runs, then the glyph layers'
+    /// (`renderer::layers`) — and [`GlyphRunFrame::finish`] uploads the
+    /// list.
     ///
     /// `font_system` is the guard the frame already holds for glyphon's
     /// prepare; nothing here takes the font lock or shapes text.
     ///
-    /// Cost: O(glyphs of the runs handed in) — one placement read, one
-    /// [`glyphon::CacheKey`] and one atlas lookup per glyph — plus one
-    /// rasterization and texture write per glyph the atlas has not
-    /// seen. One upload of the instance list. A run outside its zoom
-    /// window or off screen costs one bounds test.
-    pub(crate) fn prepare<'r>(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        font_system: &mut FontSystem,
-        swash: &mut SwashCache,
-        camera: &Camera2D,
-        runs: impl Iterator<Item = (&'r GlyphRunData, Vec2)>,
-    ) {
+    /// Cost: O(1) here; see [`GlyphRunFrame::draw`] and
+    /// [`GlyphRunFrame::finish`].
+    pub(crate) fn begin<'f, 'r>(
+        &'f mut self,
+        device: &'f wgpu::Device,
+        queue: &'f wgpu::Queue,
+        font_system: &'f mut FontSystem,
+        swash: &'f mut SwashCache,
+        camera: &'f Camera2D,
+    ) -> GlyphRunFrame<'f, 'r> {
         self.atlas.begin_frame();
         self.instances.clear();
-        let mut frame = GlyphRunCounts {
+        self.uploaded = 0;
+        let counts = GlyphRunCounts {
             prepares: self.counts.prepares + 1,
             ..GlyphRunCounts::default()
         };
-        // Scratch for each path run's laid-out glyphs, kept across the
-        // frame's runs so it grows once rather than once per run.
-        let mut layout: Vec<&'r LayoutGlyph> = Vec::new();
-        let atlas = &mut self.atlas;
-        let instances = &mut self.instances;
-        let encoding = self.encoding;
-        for (run, offset) in runs {
-            frame.runs += 1;
-            let mut nothing_to_draw = 0;
-            let emitted = emit_run(
-                run,
-                offset,
-                camera,
-                &mut layout,
-                &mut |sprite: GlyphSprite| match atlas.slot(device, queue, font_system, swash, sprite.key) {
-                    Some(slot) => instances.push(instance(&sprite, slot, encoding)),
-                    None => nothing_to_draw += 1,
-                },
-            );
-            if emitted.drawn {
-                frame.runs_drawn += 1;
-            }
-            frame.skipped += emitted.skipped + nothing_to_draw;
+        GlyphRunFrame {
+            pass: self,
+            device,
+            queue,
+            font_system,
+            swash,
+            camera,
+            layout: Vec::new(),
+            counts,
         }
-
-        let surface = [camera.viewport_size.0 as f32, camera.viewport_size.1 as f32];
-        if self.params.surface != surface {
-            self.params.surface = surface;
-            queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&self.params));
-        }
-        if self.instances.len() > self.instance_capacity {
-            self.instance_capacity = self.instances.len().next_power_of_two();
-            self.instance_buffer = Self::instance_buffer(device, self.instance_capacity);
-        }
-        if !self.instances.is_empty() {
-            queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&self.instances));
-        }
-        frame.instances = self.instances.len();
-        frame.draws = u32::from(!self.instances.is_empty());
-        frame.atlas = self.atlas.counts();
-        frame.atlas_entries = self.atlas.entry_count();
-        self.counts = frame;
     }
 
-    /// The GPU half: draw what [`Self::prepare`] uploaded, as one
-    /// instanced draw, into `pass`. Nothing when it held no glyph.
+    /// The GPU half: draw what the last finished frame
+    /// ([`GlyphRunFrame::finish`]) uploaded, as one instanced draw, into
+    /// `pass`. Nothing when it held no glyph, or when no frame was
+    /// finished since the last one began.
     pub(crate) fn render(&self, pass: &mut wgpu::RenderPass<'_>) {
-        if self.instances.is_empty() {
+        if self.uploaded == 0 {
             return;
         }
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, self.atlas.bind_group(), &[]);
         pass.set_bind_group(1, &self.params_bind_group, &[]);
-        let bytes = (self.instances.len() * std::mem::size_of::<GlyphInstance>()) as u64;
+        let bytes = (self.uploaded * std::mem::size_of::<GlyphInstance>()) as u64;
         pass.set_vertex_buffer(0, self.instance_buffer.slice(..bytes));
-        pass.draw(0..4, 0..self.instances.len() as u32);
+        pass.draw(0..4, 0..self.uploaded as u32);
+    }
+}
+
+/// One frame of the positioned-glyph pass while its runs are handed in
+/// ([`GlyphRunPass::begin`]): the pass, the device, the font guard and
+/// the camera the frame is drawn through, and the frame's counts so far.
+///
+/// `'r` is how long the runs handed to [`Self::draw`] are borrowed for:
+/// a path run's laid-out glyphs are collected into scratch that lives as
+/// long as the frame, so it grows once per frame rather than once per
+/// run.
+pub(crate) struct GlyphRunFrame<'f, 'r> {
+    pass: &'f mut GlyphRunPass,
+    device: &'f wgpu::Device,
+    queue: &'f wgpu::Queue,
+    font_system: &'f mut FontSystem,
+    swash: &'f mut SwashCache,
+    camera: &'f Camera2D,
+    layout: Vec<&'r LayoutGlyph>,
+    counts: GlyphRunCounts,
+}
+
+impl<'r> GlyphRunFrame<'_, 'r> {
+    /// Draw `run`, with `offset` — the registered offset of the tree it
+    /// is in — added to its origin: every glyph the camera shows becomes
+    /// an instance after the ones already drawn, rasterized first if the
+    /// atlas has not seen it. A run outside its zoom window, off screen
+    /// or transparent draws nothing ([`emit_run`]).
+    ///
+    /// Cost: O(glyphs of the run) — one placement read, one
+    /// [`glyphon::CacheKey`] and one atlas lookup per glyph — plus one
+    /// rasterization and texture write per glyph the atlas has not seen.
+    /// A run outside its zoom window or off screen costs one bounds test.
+    pub(crate) fn draw(&mut self, run: &'r GlyphRunData, offset: Vec2) {
+        let pass = &mut *self.pass;
+        let (atlas, instances, encoding) = (&mut pass.atlas, &mut pass.instances, pass.encoding);
+        let (device, queue) = (self.device, self.queue);
+        let (font_system, swash) = (&mut *self.font_system, &mut *self.swash);
+        let mut nothing_to_draw = 0;
+        let emitted = emit_run(
+            run,
+            offset,
+            self.camera,
+            &mut self.layout,
+            &mut |sprite: GlyphSprite| match atlas.slot(device, queue, font_system, swash, sprite.key) {
+                Some(slot) => instances.push(instance(&sprite, slot, encoding)),
+                None => nothing_to_draw += 1,
+            },
+        );
+        self.counts.runs += 1;
+        self.counts.runs_drawn += usize::from(emitted.drawn);
+        self.counts.runs_outside_zoom += usize::from(emitted.outside_zoom);
+        self.counts.skipped += emitted.skipped + nothing_to_draw;
+    }
+
+    /// End the CPU half: upload the instance list the frame's runs made,
+    /// growing the instance buffer if it no longer fits, and record the
+    /// frame's counts. One upload; nothing when no glyph was drawn.
+    pub(crate) fn finish(self) {
+        let pass = self.pass;
+        let camera = self.camera;
+        let surface = [camera.viewport_size.0 as f32, camera.viewport_size.1 as f32];
+        if pass.params.surface != surface {
+            pass.params.surface = surface;
+            self.queue
+                .write_buffer(&pass.params_buffer, 0, bytemuck::bytes_of(&pass.params));
+        }
+        if pass.instances.len() > pass.instance_capacity {
+            pass.instance_capacity = pass.instances.len().next_power_of_two();
+            pass.instance_buffer = GlyphRunPass::instance_buffer(self.device, pass.instance_capacity);
+        }
+        if !pass.instances.is_empty() {
+            self.queue
+                .write_buffer(&pass.instance_buffer, 0, bytemuck::cast_slice(&pass.instances));
+        }
+        pass.uploaded = pass.instances.len();
+        let mut counts = self.counts;
+        counts.instances = pass.instances.len();
+        counts.draws = u32::from(!pass.instances.is_empty());
+        counts.atlas = pass.atlas.counts();
+        counts.atlas_entries = pass.atlas.entry_count();
+        pass.counts = counts;
     }
 }
 

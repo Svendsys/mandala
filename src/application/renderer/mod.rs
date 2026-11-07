@@ -84,6 +84,7 @@ mod console_geometry;
 mod console_pass;
 mod decree;
 mod glyph_runs;
+mod layers;
 // Renderer entry points for the two overlay rebuilds. Same shells
 // as `console_pass` and `color_picker`.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -167,7 +168,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use web_time::Instant;
 
+use baumhard::engine::journal::Journal;
 use baumhard::font::{Attrs, Buffer};
+use baumhard::gfx_structs::element::GfxElement;
+use baumhard::projection::{GlyphLayers, Layer};
 use glyphon::{Cache, SwashCache, TextAtlas, TextRenderer, Viewport};
 use log::{error, info, warn};
 // Also read by the GPU-backed test that checks what a renderer handed
@@ -307,6 +311,11 @@ pub struct Renderer {
     /// the swash cache and the render pass with glyphon; holds its own
     /// atlas, because glyphon's cannot be reached from outside it.
     glyph_runs: glyph_runs::GlyphRunPass,
+    /// The render state of the projection's glyph layers (design §13.1):
+    /// kept per glyph element, written by [`Self::load_layers`] and
+    /// [`Self::apply_layer_journals`] only, and drawn every frame through
+    /// `glyph_runs`, after the canvas trees' runs.
+    layer_renderer: layers::LayerRenderer,
     /// Whether the current glyphon-`prepare` fault episode has already
     /// been reported. Set when either `prepare()` fails, cleared on
     /// the next fully successful prepare, so a *persistent* fault —
@@ -739,6 +748,7 @@ impl Renderer {
             text_renderer,
             console_text_renderer,
             glyph_runs,
+            layer_renderer: layers::LayerRenderer::default(),
             prepare_fault_logged: false,
             should_render: false,
             fps: None,
@@ -805,6 +815,13 @@ impl Renderer {
         self.glyph_runs.freeze_atlas_growth();
     }
 
+    /// The render state of the glyph layers, for the GPU-backed tests
+    /// that hold what a frame drew to what was applied.
+    #[cfg(test)]
+    pub(crate) fn layer_renderer(&self) -> &layers::LayerRenderer {
+        &self.layer_renderer
+    }
+
     /// How many glyphon text areas the canvas scene hands the main
     /// pass: one per shaped buffer. A `GlyphRun` adds none — that is
     /// the per-glyph buffer the positioned-glyph pass does away with.
@@ -865,6 +882,44 @@ impl Renderer {
     /// how the color is written to a target of this renderer's format.
     pub fn set_background(&mut self, background: [u8; 4]) {
         self.clear_color = clear_color_for(background, self.format);
+    }
+
+    /// Take the projection's glyph layers as a whole: what loading a
+    /// document does ([`layers::LayerRenderer::load`]). Every frame after
+    /// draws them, on both targets, the window's and every capture's.
+    ///
+    /// Cost: one walk of each layer.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the app's projector is wired to the layer renderer by V1-C3 (#244)"
+        )
+    )]
+    pub(crate) fn load_layers(&mut self, layers: &GlyphLayers) {
+        self.layer_renderer.load(layers);
+    }
+
+    /// Bring the drawn layers up to date after a projector update, from
+    /// the journals of what changed — the projector's, and those of the
+    /// glyph mutators applied over them, in order
+    /// ([`layers::LayerRenderer::apply`]). A pan or a zoom has nothing to
+    /// apply: the camera reaches the layers at draw time.
+    ///
+    /// Cost: O(the elements the journals name).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the app's projector is wired to the layer renderer by V1-C3 (#244)"
+        )
+    )]
+    pub(crate) fn apply_layer_journals<'j>(
+        &mut self,
+        layers: &GlyphLayers,
+        journals: impl IntoIterator<Item = (Layer, &'j Journal<GfxElement>)>,
+    ) {
+        self.layer_renderer.apply(layers, journals);
     }
 
     /// The color every frame is cleared to, as the render pass is
