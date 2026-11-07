@@ -139,11 +139,13 @@ fn first_difference(a: &[String], b: &[String]) -> String {
 const ABA: &str = "a, b, a";
 
 /// Run this binary again for the test `test`, with the child variable set
-/// to `what`; its standard output, which must report success.
+/// to `what`; its standard output, which must report success. The child
+/// runs on one thread whatever `RUST_TEST_THREADS` says, so its report is
+/// in the order it printed it.
 fn in_a_child(test: &str, what: &str) -> String {
     let exe = std::env::current_exe().expect("the test binary");
     let out = std::process::Command::new(&exe)
-        .args(["--exact", test, "--nocapture"])
+        .args(["--exact", test, "--nocapture", "--test-threads=1"])
         .env(CHILD, what)
         .output()
         .expect("the test binary runs");
@@ -205,11 +207,12 @@ fn fresh_digest(name: &str) -> String {
         "test_a_fresh_process_lays_out_each_shipped_map_as_a_primed_one",
         name,
     );
+    // On one thread libtest prints the test's name on the line the
+    // child's report starts, so the marker is found within a line.
     stdout
         .lines()
-        .find_map(|line| line.strip_prefix("DIGEST "))
+        .find_map(|line| line.split_once("DIGEST ").map(|(_, digest)| digest.to_string()))
         .unwrap_or_else(|| panic!("{name} reported nothing:\n{stdout}"))
-        .to_string()
 }
 
 #[test]
