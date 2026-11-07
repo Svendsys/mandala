@@ -262,7 +262,7 @@ fn test_a_code_point_no_face_draws_is_asked_of_the_faces_once() {
 
 /// Text in a face that draws its letters, with one code point no face
 /// draws, which the font system has not been asked about
-/// ([`fresh_undrawn`]): the first shaping asks the font system's faces
+/// (`fresh_undrawn`): the first shaping asks the font system's faces
 /// about it, once each at most, and tries no fallback face; every later
 /// shaping, of that text or of any other holding the code point, asks
 /// nothing and tries no fallback face either, and costs what the same

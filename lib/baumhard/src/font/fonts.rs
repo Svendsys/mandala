@@ -97,7 +97,7 @@ fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
 /// installed as well as on its text and style.
 static FACE_SET_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// The font system's face-set generation ([`FACE_SET_GENERATION`]). Reads
+/// The font system's face-set generation (`FACE_SET_GENERATION`). Reads
 /// no lock. Cost: one atomic load.
 pub fn face_set_generation() -> u64 {
     FACE_SET_GENERATION.load(Ordering::Acquire)

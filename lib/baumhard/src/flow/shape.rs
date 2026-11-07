@@ -566,7 +566,7 @@ fn hooked_tab(line: &str, glyph: &LayoutGlyph) -> bool {
 
 /// A buffer at `metrics` holding `rich`, shaped and laid out unwrapped.
 ///
-/// The buffer starts empty (`Buffer::new_empty`), not as `Buffer::new`
+/// The buffer starts empty (cosmic-text's `new_empty`), not as its `new`
 /// makes one: that shapes an empty line, and its ellipsis in the default
 /// family, for `set_rich_text` to throw away (#304).
 fn filled_buffer(

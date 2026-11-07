@@ -23,7 +23,8 @@
 //! The font system registers them once, at `fonts::init`, before anything
 //! is shaped (the precondition of every shaping call), and never changes
 //! them after; the cache records the faces' generation
-//! ([`face_set_generation`]) and lets everything go if it ever moves.
+//! ([`face_set_generation`](crate::font::fonts::face_set_generation))
+//! and lets everything go if it ever moves.
 //!
 //! **The font lock.** A hit reads no font, so an update whose every key
 //! is cached takes no lock; a miss shapes through the lease the caller
@@ -88,10 +89,13 @@ impl KeyHash for BoxKey {
     }
 }
 
+/// The keys of one hash, and the shapings some unit holds for them.
+type Bucket<K, V> = Vec<(Arc<K>, Weak<V>)>;
+
 /// The shapings of one kind of flow, by key.
 struct Shared<K, V> {
     /// By the key's hash: the keys with that hash and their shapings.
-    entries: FxHashMap<u64, Vec<(Arc<K>, Weak<V>)>>,
+    entries: FxHashMap<u64, Bucket<K, V>>,
     /// Entries in all.
     len: usize,
     /// The entry count the next sweep waits for.
