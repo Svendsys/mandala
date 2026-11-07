@@ -1508,6 +1508,103 @@ fn test_flow_halves_a_frames_secondary_rule_keeps_only_what_holds_what_it_held()
     );
 }
 
+/// Review 5812145623 (#309, ruling B16.1d): in a frame whose lines touch
+/// already, the secondary rule keeps no line it brings home that makes a
+/// touch they did not — held through `Layout::reach_ends` itself, the
+/// lines it hands `holds_what_it_held` included, where the test above
+/// holds only the function. No frame of the suite both overlaps and brings
+/// a line home, so frames of the aspect sweep whose rule brings one home
+/// are laid with a touch planted in their lines (`PLANT_TOUCH`): two of
+/// another line's inks laid one on the other far from every ink, so the
+/// lines touch, and a third between them laid on an ink of the line
+/// brought home where it is brought, apart from where it lay — a touch
+/// the lines did not make — or, as the precondition, far from every ink.
+/// Only boxes are planted, so each frame's breaks and offset are as they
+/// were; and taken out again once the rule has chosen. Over the sweep the
+/// plant lands in 2 frames, one of which keeps its line brought home with
+/// the plant apart: the precondition.
+///
+/// Controls (run, not committed): `reach_ends` handing the lines brought
+/// home as the lines before (`(&boxes_of(&laid), || boxes_of(&laid))`,
+/// the waiver one argument away: review 5812145623 found every other
+/// `flow::` test green with it), red
+/// on "1 of 2 frames whose lines touched already kept with a touch its
+/// lines did not make"; the overlapping frame's touch check in
+/// `holds_what_it_held` made `true` (the waiver review 5810838863 found),
+/// red on the same.
+#[test]
+fn test_flow_halves_a_frame_that_touches_keeps_no_line_brought_home_to_a_new_touch() {
+    use crate::flow::place::halves::PLANT_TOUCH;
+    struct Unset;
+    impl Drop for Unset {
+        fn drop(&mut self) {
+            PLANT_TOUCH.with(|p| p.set((None, [0; 2])));
+        }
+    }
+    let _unset = Unset;
+    // Each frame laid with the plant `near` or apart: the frames it was
+    // planted in, and of them those that kept the line brought home.
+    let planted = |near: bool,
+                   text: &str,
+                   points: f32,
+                   shape: &Outline,
+                   fit: &FitMode,
+                   layout: &RingLayout,
+                   outward: bool| {
+        PLANT_TOUCH.with(|p| p.set((Some(near), [0; 2])));
+        frame_with(text, points, shape, fit, layout, outward);
+        PLANT_TOUCH.with(|p| p.get().1)
+    };
+    let (mut frames, mut apart, mut near) = (0, [0; 2], [0; 2]);
+    for (_, shape, _, points) in sweep_outlines() {
+        for text in [ECCLESIASTES, QUATRAIN] {
+            for outward in [true, false] {
+                for fit in [FIT, FitMode::Once { filler: None }] {
+                    let sides_tried = if outward { 2 } else { 1 };
+                    for sides in [None, Some(("·".to_owned(), Rgba::opaque(9, 9, 9)))]
+                        .into_iter()
+                        .take(sides_tried)
+                    {
+                        for span in [
+                            LineSpan::WHOLE,
+                            LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
+                            LineSpan::NATURAL,
+                        ] {
+                            let layout = RingLayout {
+                                span,
+                                sides: sides.clone(),
+                                ..RingLayout::whole()
+                            };
+                            let a = planted(false, text, points, &shape, &fit, &layout, outward);
+                            if a[0] == 0 {
+                                continue;
+                            }
+                            let n = planted(true, text, points, &shape, &fit, &layout, outward);
+                            frames += 1;
+                            for k in 0..2 {
+                                apart[k] += a[k];
+                                near[k] += n[k];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        frames > 0 && apart[1] > 0,
+        "precondition: frames whose lines touch keep a line brought home that makes no touch they did not: {} kept of {} planted, in {frames} frames",
+        apart[1],
+        apart[0]
+    );
+    assert!(
+        near[0] > 0 && near[1] == 0,
+        "{} of {} frames whose lines touched already kept with a touch its lines did not make",
+        near[1],
+        near[0]
+    );
+}
+
 #[test]
 fn test_flow_halves_hold_on_every_aspect() {
     the_sweep();

@@ -1890,6 +1890,16 @@ thread_local! {
     /// step stretched, or shrunk.
     #[cfg(test)]
     pub(crate) static RULE_KEPT: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
+    /// Test seam (#309, review 5812145623): with it set, each frame on
+    /// this thread whose secondary rule brings a line home has a touch
+    /// planted in its lines before it chooses ([`plant_touch`]) — a touch
+    /// they hold already, and a box beside the line brought home that
+    /// touches it where it is brought (`Some(true)`) or lies far from
+    /// every ink (`Some(false)`) — and counts, beside it, the frames it was
+    /// planted in and those of them that kept that line brought home.
+    #[cfg(test)]
+    pub(crate) static PLANT_TOUCH: std::cell::Cell<(Option<bool>, [usize; 2])> =
+        const { std::cell::Cell::new((None, [0; 2])) };
     /// Test counter (#309, the B9 final review 5757429244): the one-gap
     /// lines frames laid on this thread at normal scale, their parts' ends
     /// within 10¹⁵ of the origin, and of them the ones ending past their
@@ -3901,8 +3911,14 @@ impl Layout<'_> {
                 Some((i, line, words))
             })
             .collect();
+        #[cfg(test)]
+        let mut home = home;
+        #[cfg(test)]
+        let (lines, overlap, plant) = plant_touch(lines, &mut home, overlap);
         let offset = self.offset.get();
         let tolerance = resolved(OFFSET_TOLERANCE, self.halves.length);
+        // The frame's inks, the same for every choice.
+        let before = boxes_of(&lines);
         // Every line brought home, else each alone: the first that holds
         // what the frame held — each break, inks apart, its band curve.
         let all = std::iter::once(home.iter().collect::<Vec<_>>());
@@ -3920,7 +3936,7 @@ impl Layout<'_> {
                 (met, now),
                 || (self.wants(&laid) - offset).abs(),
                 tolerance,
-                (&boxes_of(&lines), &boxes_of(&laid)),
+                (&before, || boxes_of(&laid)),
                 overlap,
                 &self.work,
             ) {
@@ -3932,9 +3948,13 @@ impl Layout<'_> {
                     }
                     kept.set(by);
                 });
+                #[cfg(test)]
+                let laid = unplant(laid, plant, Some(&chosen));
                 return (laid, now);
             }
         }
+        #[cfg(test)]
+        let lines = unplant(lines, plant, None);
         (lines, met)
     }
 
@@ -5252,25 +5272,129 @@ fn boxes_of(lines: &[Line]) -> Vec<&[InkBox]> {
 /// none touching at all ([`overlapping_in`]). The rule's acceptance, one
 /// body for it and for its pin (review 5811563882), so that the pin holds
 /// the choice where the rule makes it and not only the touch check it
-/// asks.
+/// asks. `before` is the same for every choice a frame tries, so its
+/// caller builds it once; `after` is built only once the offset holds.
 ///
-/// Cost: `off`'s, once the breaks hold; then a touch check, once the
-/// offset holds too.
-fn holds_what_it_held(
+/// Cost: `off`'s, once the breaks hold; then `after`'s and a touch check,
+/// once the offset holds too.
+fn holds_what_it_held<'a>(
     (met, now): ([bool; 2], [bool; 2]),
     off: impl FnOnce() -> f32,
     tolerance: f32,
-    (before, after): (&[&[InkBox]], &[&[InkBox]]),
+    (before, after): (&[&[InkBox]], impl FnOnce() -> Vec<&'a [InkBox]>),
     overlap: bool,
     work: &Work,
 ) -> bool {
-    (0..2).all(|j| !met[j] || now[j])
-        && off() <= tolerance
-        && if overlap {
-            !touching_anew(before, after, work)
+    (0..2).all(|j| !met[j] || now[j]) && off() <= tolerance && {
+        let after = after();
+        if overlap {
+            !touching_anew(before, &after, work)
         } else {
-            !overlapping_in(after, work)
+            !overlapping_in(&after, work)
         }
+    }
+}
+
+/// Where a test's touch is planted in a frame's lines
+/// ([`PLANT_TOUCH`]): the line brought home it is planted beside, the
+/// line it is planted in, and that line's boxes as they were, laid and,
+/// where the rule brings it home too, brought home.
+#[cfg(test)]
+struct Plant {
+    home: usize,
+    at: usize,
+    boxes: Vec<InkBox>,
+    brought: Option<Vec<InkBox>>,
+}
+
+/// With [`PLANT_TOUCH`] set, `lines` and the lines the rule brings home
+/// (`home`) with a touch planted in them for [`Layout::reach_ends`] to
+/// choose round, and whether the lines touch: in a line other than the
+/// first line brought home, of four inks or more, its second and fourth
+/// inks' boxes laid one on the other far from every ink — a touch the
+/// lines hold already — and its third's box, between them, laid on the
+/// box of an ink of the line brought home that lies apart from where it
+/// lay, or far from every ink; the same in that line as laid and, where
+/// the rule brings it home too, as brought home. Only the boxes are
+/// planted, not where the line ends ([`Tracked::ends`]) nor how far its
+/// inks reach ([`Tracked::reaches`]), so the frame's breaks and offset
+/// are as they were. Unset, or where no such lines are, all as they are.
+#[cfg(test)]
+fn plant_touch(
+    mut lines: Vec<Line>,
+    home: &mut [(usize, Line, Words)],
+    overlap: bool,
+) -> (Vec<Line>, bool, Option<Plant>) {
+    let (Some(near), mut count) = PLANT_TOUCH.with(std::cell::Cell::get) else {
+        return (lines, overlap, None);
+    };
+    let Some((i, brought, _)) = home.first() else {
+        return (lines, overlap, None);
+    };
+    let i = *i;
+    let (was, now) = (&lines[i].tracked.boxes, &brought.tracked.boxes);
+    let moved = (was.len() == now.len())
+        .then(|| {
+            (0..was.len()).find(|&m| has_ink(was[m]) && has_ink(now[m]) && box_gap(was[m], now[m]) > TOUCH)
+        })
+        .flatten();
+    let long = |line: &Line| line.tracked.boxes.len() >= 4;
+    let at = (0..lines.len())
+        .find(|&j| j != i && long(&lines[j]) && home.iter().all(|(k, line, _)| *k != j || long(line)));
+    let (Some(m), Some(at)) = (moved, at) else {
+        return (lines, overlap, None);
+    };
+    let far = Vec2::splat(1e4);
+    let ink = now[m];
+    let touch = (ink.0 + far, ink.1 + far);
+    let third = if near { ink } else { (ink.0 - far, ink.1 - far) };
+    let plant = |boxes: &mut Vec<InkBox>| {
+        let was = boxes.clone();
+        boxes[1] = touch;
+        boxes[2] = third;
+        boxes[3] = touch;
+        was
+    };
+    let boxes = plant(&mut lines[at].tracked.boxes);
+    let brought = home
+        .iter_mut()
+        .find(|(k, _, _)| *k == at)
+        .map(|(_, line, _)| plant(&mut line.tracked.boxes));
+    count[0] += 1;
+    PLANT_TOUCH.with(|p| p.set((Some(near), count)));
+    let overlap = overlapping(&lines, &Work::new(0));
+    (
+        lines,
+        overlap,
+        Some(Plant {
+            home: i,
+            at,
+            boxes,
+            brought,
+        }),
+    )
+}
+
+/// `lines` with [`plant_touch`]'s plant taken out again, `kept` the lines
+/// the rule brought home in them, counting in [`PLANT_TOUCH`] whether
+/// those hold the line brought home it was planted beside.
+#[cfg(test)]
+fn unplant(mut lines: Vec<Line>, plant: Option<Plant>, kept: Option<&[&(usize, Line, Words)]>) -> Vec<Line> {
+    if let Some(plant) = plant {
+        let chosen = |k: usize| kept.is_some_and(|chosen| chosen.iter().any(|(i, _, _)| *i == k));
+        lines[plant.at].tracked.boxes = match plant.brought {
+            Some(brought) if chosen(plant.at) => brought,
+            _ => plant.boxes,
+        };
+        if chosen(plant.home) {
+            PLANT_TOUCH.with(|p| {
+                let (near, mut count) = p.get();
+                count[1] += 1;
+                p.set((near, count));
+            });
+        }
+    }
+    lines
 }
 
 /// Whether two of the inks `after` holds, line by line, touch that did not
@@ -7581,7 +7705,7 @@ pub(crate) fn holds_what_it_held_seam(
         breaks,
         off,
         tolerance,
-        (&slices(before), &slices(after)),
+        (&slices(before), || slices(after)),
         overlap,
         &Work::new(0),
     )
