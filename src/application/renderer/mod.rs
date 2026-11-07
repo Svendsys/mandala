@@ -3,11 +3,11 @@
 //! GPU-side presentation: every wgpu device, every cosmic-text
 //! rasterization, every text and border buffer Mandala paints
 //! lives under [`Renderer`]. A frame is its clear — the map's one
-//! background — and glyphs, and nothing else (V1-B12). `Renderer` reads two intermediate
-//! representation the document layer hands it
-//! (`GfxTree`, one per canvas role — nodes,
-//! borders, connections, labels, portals, handles); it never
-//! reaches into the document directly, and the document never
+//! background — and glyphs, and nothing else (V1-B12). `Renderer` reads the
+//! intermediate representations it is handed — a `GfxTree` per canvas
+//! role (nodes, borders, connections, labels, portals, handles), and the
+//! projection's glyph layers with the journals of what changed in them;
+//! it never reaches into the document directly, and the document never
 //! holds GPU resources (CODE_CONVENTIONS §3 "Model / view
 //! separation").
 //!
@@ -27,6 +27,10 @@
 //!   `GlyphRun` at its own canvas position, from the run's one
 //!   shaped buffer, through an atlas and a pipeline of its own, in
 //!   one draw call per frame (design §13.2).
+//! - [`layers`] — the layer renderer: the projection's glyph layers
+//!   kept per glyph element, written only where a journal says they
+//!   changed, and handed to the positioned-glyph pass every frame in
+//!   their draw order (design §13.1).
 //! - [`target_encoding`] — how an authored color is written to a
 //!   target of a given format: the one answer the clear, glyphon's
 //!   text and the glyph-run pass share, so a glyph colored like the

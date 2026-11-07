@@ -25,9 +25,13 @@
 //! integer vertex attribute — wgpu's WebGL2 backend does not support
 //! one on every browser — and no storage buffer (none on WebGL2).
 //!
-//! This is the V1-C1 prototype. It draws whatever `GlyphRun` elements
-//! the canvas trees hold; no projection emits them yet (V1-B7, C3), so
-//! the app draws exactly what it drew before.
+//! A frame hands it runs from two places, in this order, into one
+//! instance list ([`GlyphRunPass::begin`]): the `GlyphRun` elements of the
+//! canvas trees, and the runs of the projection's glyph layers, which
+//! the layer renderer keeps per glyph element and hands over in their
+//! draw order (`renderer::layers`, V1-C2). Until the app's projector is
+//! wired to the layer renderer (V1-C3) the layers are empty in the app,
+//! and it draws exactly what it drew before.
 
 pub(crate) mod atlas;
 pub(crate) mod emit;
