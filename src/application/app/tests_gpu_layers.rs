@@ -86,15 +86,16 @@ fn far(text: &str) -> Document {
     load(&value.to_string()).unwrap_or_else(|e| panic!("the map loads: {e}"))
 }
 
-/// A map with something in every layer: three framed nodes — two rings
-/// of two lines each, laid on the level parts of their outlines, and a
-/// repeated ornament all round — the child's connector a line of verse
-/// with a label and an end cap, and a portal from the root to the third
-/// node, each end a marker and a label. The screenshot the issue asks
-/// for, composed so that nothing in it overlaps: the connector and the
-/// portal ends attach where the rings leave the outline bare (the sides
-/// of a ring laid at its natural span), and each label stands clear of
-/// what it labels.
+/// A map with something in every layer: two framed nodes, each ring
+/// going round its node — two lines of text on all its sides, an
+/// ornament in each break where they meet, and on the root a repeated
+/// ornament ring outside it — joined by a portal, each end a marker and
+/// a label pushed off the outline past the rings; and an unframed parent
+/// and child, the child's connector a line of verse with a label and an
+/// end cap. The screenshot the issue asks for, composed so that nothing
+/// in it overlaps: a connector attaches at the middle of a side, which a
+/// ring going round its node covers (#296), so the connector joins the
+/// two unframed nodes, and each label stands clear of what it labels.
 fn every_layer() -> Value {
     json!({
         "format": 1,
@@ -102,52 +103,58 @@ fn every_layer() -> Value {
         "nodes": [
             {
                 "id": 1,
-                "position": [-330.0, -110.0],
-                "min_size": [250.0, 150.0],
-                "shape": {"rectangle": {"radius": 25}},
-                "sections": [{"offset": [0.0, 55.0], "min_size": [250.0, 0.0], "align": "center",
+                "position": [-360.0, -230.0],
+                "min_size": [260.0, 150.0],
+                "shape": {"rectangle": {"radius": 40}},
+                "sections": [{"offset": [0.0, 58.0], "min_size": [260.0, 0.0], "align": "center",
                               "font": "Galatia SIL", "size": 22.0, "color": "#e8e0c8",
                               "spans": [{"text": "glyph layers"}]}],
-                "frame": {"fit": {"fit": {"min": 0.5, "max": 1.4}}, "span": "natural", "gap": 4.0,
-                          "rings": [{"font": "Galatia SIL", "size": 0.12, "color": "#f0c878",
-                                     "spans": [{"text": "every glyph a run's,\ndrawn as journaled"}]}]},
+                "frame": {"fit": "fit", "gap": 6.0, "sides": {"content": "✦", "color": "#f0c87896"},
+                          "rings": [{"font": "Galatia SIL", "size": 0.1, "color": "#f0c878",
+                                     "spans": [{"text": "every glyph a run, drawn where the journal says "}]},
+                                    {"fit": "repeat", "font": "Galatia SIL", "size": 0.08, "color": "#78a0dc",
+                                     "spans": [{"text": "·:·"}]}]},
                 "links": [{"to": 3, "kind": "portal",
-                           "ends": [{"content": "◈", "color": "#cc88ff", "size": 26.0, "border_t": 0.9, "offset": 10.0,
+                           "ends": [{"content": "◈", "color": "#cc88ff", "size": 26.0, "offset": 46.0,
                                      "label": {"offset": 6.0, "size": 14.0, "color": "#cc88ff",
                                                "spans": [{"text": "to the far one"}]}},
-                                    {"content": "◈", "color": "#cc88ff", "size": 26.0, "offset": 14.0,
+                                    {"content": "◈", "color": "#cc88ff", "size": 26.0, "offset": 44.0,
                                      "label": {"offset": 6.0, "size": 14.0, "color": "#cc88ff",
                                                "spans": [{"text": "back"}]}}]}]
             },
             {
-                "id": 2,
-                "parent": 1,
-                "position": [260.0, 200.0],
+                "id": 3,
+                "position": [230.0, -220.0],
                 "min_size": [230.0, 130.0],
                 "shape": "ellipse",
-                "sections": [{"offset": [0.0, 50.0], "min_size": [230.0, 0.0], "align": "center",
+                "sections": [{"offset": [0.0, 52.0], "min_size": [230.0, 0.0], "align": "center",
+                              "font": "Galatia SIL", "size": 20.0, "color": "#c8c8c8",
+                              "spans": [{"text": "the far one"}]}],
+                "frame": {"fit": "fit", "sides": {"content": "·", "color": "#eb8caa96"},
+                          "rings": [{"font": "Galatia SIL", "size": 0.11, "color": "#eb8caa",
+                                     "spans": [{"text": "and an ellipse, never rotated "}]}]}
+            },
+            {
+                "id": 2,
+                "position": [-340.0, 50.0],
+                "min_size": [170.0, 70.0],
+                "sections": [{"offset": [0.0, 22.0], "min_size": [170.0, 0.0], "align": "center",
+                              "font": "Galatia SIL", "size": 20.0, "color": "#c8c8c8",
+                              "spans": [{"text": "a parent"}]}]
+            },
+            {
+                "id": 4,
+                "parent": 2,
+                "position": [230.0, 120.0],
+                "min_size": [170.0, 70.0],
+                "sections": [{"offset": [0.0, 22.0], "min_size": [170.0, 0.0], "align": "center",
                               "font": "Galatia SIL", "size": 20.0, "color": "#c8c8c8",
                               "spans": [{"text": "a child"}]}],
-                "frame": {"fit": "fit", "span": "natural",
-                          "rings": [{"font": "Galatia SIL", "size": 0.11, "color": "#eb8caa",
-                                     "spans": [{"text": "and an ellipse,\nnever rotated"}]}]},
                 "connector": {"fit": "once", "size": 16.0, "color": "#a0d090",
                               "spans": [{"text": "the line to its parent"}],
                               "cap_end": {"color": "#a0d090", "spans": [{"text": "›"}]},
-                              "label": {"t": 0.5, "offset": 40.0, "size": 14.0, "color": "#d0e8c0",
+                              "label": {"t": 0.78, "offset": 16.0, "size": 14.0, "color": "#d0e8c0",
                                         "spans": [{"text": "a label"}]}}
-            },
-            {
-                "id": 3,
-                "position": [-300.0, 260.0],
-                "min_size": [160.0, 70.0],
-                "shape": {"rectangle": {"radius": 30}},
-                "sections": [{"offset": [0.0, 22.0], "min_size": [160.0, 0.0], "align": "center",
-                              "font": "Galatia SIL", "size": 20.0, "color": "#c8c8c8",
-                              "spans": [{"text": "the far one"}]}],
-                "frame": {"fit": "repeat", "gap": 4.0,
-                          "rings": [{"font": "Galatia SIL", "size": 0.2, "color": "#78a0dc",
-                                     "spans": [{"text": "·:·"}]}]}
             }
         ]
     })
