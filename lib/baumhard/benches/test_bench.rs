@@ -1350,6 +1350,19 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("a_face_added_to_the_database_draws_what_no_face_drew", |b| {
         b.iter(do_a_face_added_to_the_database_draws_what_no_face_drew)
     });
+    // The patched merge's and early stop's guards, on fixtures built of
+    // shaped glyphs (and a font system with no faces).
+    c.bench_function(
+        "a_run_the_merge_cannot_reason_about_is_merged_as_published",
+        |b| b.iter(do_a_run_the_merge_cannot_reason_about_is_merged_as_published),
+    );
+    c.bench_function("the_early_stop_needs_every_missing_entry_matched", |b| {
+        b.iter(do_the_early_stop_needs_every_missing_entry_matched)
+    });
+    c.bench_function(
+        "the_early_stop_leaves_a_cluster_of_several_code_points_to_the_faces",
+        |b| b.iter(do_the_early_stop_leaves_a_cluster_of_several_code_points_to_the_faces),
+    );
     c.bench_function("a_hundred_contiguous_undrawn_code_points_cost_one_shaping", |b| {
         b.iter(do_a_hundred_contiguous_undrawn_code_points_cost_one_shaping)
     });

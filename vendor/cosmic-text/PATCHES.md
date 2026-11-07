@@ -49,10 +49,11 @@ docs list the changes too.
 | File | Change | Why |
 |---|---|---|
 | `Cargo.toml` | The test and bench targets, their dev-dependencies and `[profile.test]` are removed, and this header is added. | Their files are not vendored. A profile in a non-root package is ignored with a warning. |
-| `src/shape.rs` | **Linear fallback merge** (`FallbackMerge`). It makes the published merge's choices in one walk of the fallback's glyphs and one of the run's. A fallback whose cluster starts are not monotone is merged by the published algorithm (`reference_round`). | The published merge scans the missing list for each fallback glyph and calls `Vec::remove`/`insert` for each cluster. That is O(run × missing) per fallback face, quadratic in a word the first face lacks. |
+| `src/shape.rs` | **Linear fallback merge** (`FallbackMerge`, chosen per round by `merge_round`). It makes the published merge's choices in one walk of the fallback's glyphs and one of the run's. A round whose fallback glyphs are not monotone, or whose run glyphs are not monotone and forward (`well_formed`), is merged by the published algorithm (`reference_round`). | The published merge scans the missing list for each fallback glyph and calls `Vec::remove`/`insert` for each cluster. That is O(run × missing) per fallback face, quadratic in a word the first face lacks. |
 | `src/shape.rs` | **A code point no face draws is found once** (`only_undrawn`, `drawn_by_no_face`, the shape buffer's `undrawn`). The loop stops when every missing glyph is a one-code-point cluster that no face draws, asked once per code point, direction and weight. | The published loop shapes the whole run in every face of the font system at every shaping of a run holding such a code point (the 35 ms per `.notdef` of #304). |
 | `src/shape.rs` | **`ShapeLine::with_sizes_of`**: a shaping with each glyph's metrics read from other attributes. | So that a rescale lays out without shaping (`BufferLine::adopt_shape`). |
 | `src/shape.rs` | **Work counters, per thread** (`ShapeWork`, `shape_work`), and **`set_reference_merge`**, which selects the published merge on a thread. | Tests show cost by counting, never by timing, and hold the patch to the published merge glyph for glyph. |
+| `src/shape.rs` | **`mandala_test_hooks`** (`#[doc(hidden)]`): one merge round, and the early stop's question, on glyphs a test builds. | Some guards decide cases no shaping makes, so only a built fixture can show a test needs them. |
 | `src/buffer_line.rs` | **`BufferLine::adopt_shape`**: take another line's shaping, sizes rewritten, when the text and shaping strategy match. | `Fit` and R27 rescale whole runs at each probe size. Shaping is in units of the em, so only layout needs to run again. |
 | `src/font/fallback/mod.rs` | `FontFallbackIter::font_system`. | `drawn_by_no_face` asks the font system between two steps of the iterator. |
 | `src/font/system.rs` | `db_mut` also clears the shape buffer's `undrawn`. | Which faces draw a code point can change with the database. |
@@ -71,6 +72,9 @@ only deleting this directory:
 - **`BufferLine::adopt_shape`** (and the crate-internal
   `ShapeLine::with_sizes_of` behind it): `flow::shape::resized_buffer`,
   a rescale with no shaping.
+- **`mandala_test_hooks::{fallback_round, stops_early}`**
+  (`#[doc(hidden)]`), and `ShapeGlyph`'s public fields that build their
+  fixtures: the tests of the merge's and the early stop's guards.
 
 ## Upgrading cosmic-text
 

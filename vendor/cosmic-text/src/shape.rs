@@ -638,6 +638,96 @@ impl FallbackMerge {
     }
 }
 
+/// MANDALA PATCH: whether a run's glyphs, as the merge holds them, each
+/// lie forward (`start < end`) and are listed in visual order
+/// ([`monotone`]): what [`FallbackMerge::round`] reads the run's glyphs as,
+/// finding the cluster a glyph lies within by its first byte. Shaping
+/// makes no other; a run that is not so is merged by the published
+/// algorithm.
+fn well_formed(glyphs: &[ShapeGlyph], rtl: bool) -> bool {
+    monotone(glyphs, rtl) && glyphs.iter().all(|glyph| glyph.start < glyph.end)
+}
+
+/// MANDALA PATCH: one round of the merge: the linear one
+/// ([`FallbackMerge::round`]) when both the fallback's glyphs and the
+/// run's are as it reasons about them ([`monotone`], [`well_formed`]), so
+/// that no case rests on its reasoning alone; the published one
+/// ([`reference_round`]) otherwise, on the missing list as it holds it.
+fn merge_round(
+    merge: &mut FallbackMerge,
+    glyphs: &mut Vec<ShapeGlyph>,
+    glyph_start: usize,
+    fb: Vec<ShapeGlyph>,
+    fb_missing: &[usize],
+    rtl: bool,
+    work: &mut ShapeWork,
+) {
+    work.merge_steps += (glyphs.len() - glyph_start + fb.len()) as u64;
+    if monotone(&fb, rtl) && well_formed(&glyphs[glyph_start..], rtl) {
+        merge.round(glyphs, glyph_start, fb, fb_missing, work);
+    } else {
+        let (start, end) = (merge.start, merge.start + merge.counts.len());
+        let mut list = merge.list();
+        reference_round(glyphs, glyph_start, fb, fb_missing, &mut list, work);
+        *merge = FallbackMerge::new(start, end, &list);
+    }
+}
+
+/// MANDALA PATCH: entry points to the patched fallback's decisions, for
+/// the tests that need each of its guards (baumhard's
+/// `font::tests::shape_work_tests`): one merge round, and the early stop's
+/// question, on glyphs a test builds. Not API.
+#[doc(hidden)]
+pub mod mandala_test_hooks {
+    use super::*;
+
+    /// One round of the fallback merge on a run of bytes `start..end`,
+    /// whose glyphs so far are `glyphs` and whose missing glyphs start at
+    /// `missing`, of a fallback face's glyphs `fb` missing at
+    /// `fb_missing`: as the patched loop merges it ([`merge_round`]), or
+    /// with `published`, as cosmic-text 0.19.0 did. `glyphs` and
+    /// `missing` are updated.
+    pub fn fallback_round(
+        glyphs: &mut Vec<ShapeGlyph>,
+        missing: &mut Vec<usize>,
+        fb: Vec<ShapeGlyph>,
+        fb_missing: &[usize],
+        start: usize,
+        end: usize,
+        rtl: bool,
+        published: bool,
+    ) {
+        let mut work = ShapeWork::default();
+        if published {
+            reference_round(glyphs, 0, fb, fb_missing, missing, &mut work);
+            return;
+        }
+        let mut merge = FallbackMerge::new(start, end, missing);
+        merge_round(&mut merge, glyphs, 0, fb, fb_missing, rtl, &mut work);
+        *missing = merge.list();
+    }
+
+    /// Whether the patched loop stops before another fallback face
+    /// ([`only_undrawn`]), for a run of `line`'s bytes `start..end` whose
+    /// glyphs are `glyphs` and whose missing glyphs start at `missing`,
+    /// with `font_system`'s faces.
+    pub fn stops_early(
+        font_system: &mut FontSystem,
+        glyphs: &[ShapeGlyph],
+        missing: &[usize],
+        line: &str,
+        start: usize,
+        end: usize,
+        rtl: bool,
+        weight: fontdb::Weight,
+    ) -> bool {
+        let merge = FallbackMerge::new(start, end, missing);
+        let mut work = ShapeWork::default();
+        let mut font_iter = FontFallbackIter::new(font_system, &[], &[], &[], line, weight);
+        only_undrawn(&mut font_iter, &merge, glyphs, line, rtl, weight, &mut work)
+    }
+}
+
 /// MANDALA PATCH: one round of the fallback merge cosmic-text 0.19.0
 /// published, unchanged but for counting its work: the fallback face's
 /// glyphs `fb_glyphs`, missing at `fb_missing`, merged into
@@ -765,8 +855,17 @@ fn only_undrawn(
 ///
 /// Shaping the code point, rather than reading each face's character map,
 /// is what makes the answer the shaper's: a face can draw a code point its
-/// map lacks (a decomposition it holds the parts of, a space it widens), and
-/// a run's fallback asks the same shaping of each face.
+/// map lacks (a decomposition it holds the parts of, a space it widens).
+/// It is the same shaping of the code point, in each face, that a run's
+/// fallback makes, but alone: with no font features, and its script and
+/// language guessed from the code point, not the run's. Neither is part of
+/// the key, and neither decides whether a face maps a code point at all:
+/// a character-map miss is the missing glyph whatever the features, and
+/// normalization decomposes a code point the same alone or in a run.
+///
+/// The kept answers are never let go but by [`FontSystem::db_mut`]: they
+/// grow with the distinct code points, directions and weights a process
+/// asks about, one small entry each.
 fn drawn_by_no_face(
     font_system: &mut FontSystem,
     ch: char,
@@ -906,14 +1005,7 @@ fn shape_run(
         let work = &mut work;
         work.fallback_rounds += 1;
         match &mut merge {
-            Some(merge) if monotone(&fb_glyphs, span_rtl) => {
-                merge.round(glyphs, glyph_start, fb_glyphs, &fb_missing, work);
-            }
-            Some(merge) => {
-                let mut list = merge.list();
-                reference_round(glyphs, glyph_start, fb_glyphs, &fb_missing, &mut list, work);
-                *merge = FallbackMerge::new(start_run, end_run, &list);
-            }
+            Some(merge) => merge_round(merge, glyphs, glyph_start, fb_glyphs, &fb_missing, span_rtl, work),
             None => {
                 reference_round(glyphs, glyph_start, fb_glyphs, &fb_missing, &mut missing, work);
             }

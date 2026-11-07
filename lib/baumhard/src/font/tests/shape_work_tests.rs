@@ -426,6 +426,155 @@ pub fn do_a_hundred_contiguous_undrawn_code_points_cost_one_shaping() {
     assert_eq!(hundred.shapes, two.shapes, "a hundred cost the shapings two cost");
 }
 
+/// A shaped glyph of bytes `start..end` with glyph id `id`, for the
+/// merge's and the early stop's fixtures: every other field a plain value
+/// the decisions under test do not read.
+fn glyph(start: usize, end: usize, id: u16) -> cosmic_text::ShapeGlyph {
+    cosmic_text::ShapeGlyph {
+        start,
+        end,
+        x_advance: 1.0,
+        y_advance: 0.0,
+        x_offset: 0.0,
+        y_offset: 0.0,
+        ascent: 0.8,
+        descent: 0.2,
+        font_monospace_em_width: None,
+        font_id: cosmic_text::fontdb::ID::dummy(),
+        font_weight: cosmic_text::fontdb::Weight::NORMAL,
+        glyph_id: id,
+        color_opt: None,
+        metadata: 0,
+        cache_key_flags: cosmic_text::CacheKeyFlags::empty(),
+        metrics_opt: None,
+    }
+}
+
+/// `glyphs`' every field, for comparing two merges' results.
+fn fields(glyphs: &[cosmic_text::ShapeGlyph]) -> Vec<String> {
+    glyphs.iter().map(|glyph| format!("{glyph:?}")).collect()
+}
+
+#[test]
+fn test_a_run_the_merge_cannot_reason_about_is_merged_as_published() {
+    do_a_run_the_merge_cannot_reason_about_is_merged_as_published();
+}
+
+/// The linear merge reasons from the run's glyphs lying forward and in
+/// visual order (#304 review, shape.rs:909): it finds the cluster a glyph
+/// lies within by the glyph's first byte. A run glyph that ends before it
+/// starts, which no shaping at harfrust's default cluster level makes,
+/// would be judged otherwise by the published merge, so such a run is
+/// merged by the published algorithm, and gives its result. A well-formed
+/// run, the precondition, is merged the linear way to the same result.
+pub fn do_a_run_the_merge_cannot_reason_about_is_merged_as_published() {
+    use cosmic_text::mandala_test_hooks::fallback_round;
+    // Nine bytes. The fallback draws bytes 3..6, which the run is missing.
+    let fb = vec![glyph(0, 3, 0), glyph(3, 6, 7), glyph(6, 9, 0)];
+    let fb_missing = [0, 6];
+    let well = vec![glyph(0, 3, 5), glyph(3, 6, 0), glyph(6, 9, 5)];
+    // Byte 7 to byte 4: lies within 3..6 by the published test (starts at
+    // or after 3, ends by 6), and not by its first byte.
+    let ill = vec![glyph(0, 3, 5), glyph(3, 6, 0), glyph(7, 4, 9), glyph(6, 9, 5)];
+    for (what, run) in [("a well-formed run", well), ("a run with a backward glyph", ill)] {
+        let merged = |published: bool| {
+            let mut glyphs = run.clone();
+            let mut missing = vec![3];
+            fallback_round(
+                &mut glyphs,
+                &mut missing,
+                fb.clone(),
+                &fb_missing,
+                0,
+                9,
+                false,
+                published,
+            );
+            (fields(&glyphs), missing)
+        };
+        let (published, patched) = (merged(true), merged(false));
+        assert!(
+            published.0.len() < run.len() + 1 && published.1.is_empty(),
+            "precondition: {what}: the published merge drew the missing cluster: {published:?}"
+        );
+        assert_eq!(
+            patched, published,
+            "{what}: the patched merge differs from the published one"
+        );
+    }
+}
+
+/// A font system with no faces at all: every code point is one no face
+/// draws, so the early stop's question turns on its guards alone.
+fn faceless_font_system() -> FontSystem {
+    FontSystem::new_with_locale_and_db_and_fallback(
+        "en-US".to_string(),
+        cosmic_text::fontdb::Database::new(),
+        cosmic_text::PlatformFallback,
+    )
+}
+
+#[test]
+fn test_the_early_stop_needs_every_missing_entry_matched() {
+    do_the_early_stop_needs_every_missing_entry_matched();
+}
+
+/// The early stop (#304 review, shape.rs:757) stops only when the missing
+/// list and the run's missing glyphs match one to one. A missing entry
+/// with no missing glyph at its byte, a case shaping does not make, is left
+/// to the published loop, which keeps trying faces for it: no stop, though
+/// the one missing glyph is a code point no face draws. The precondition:
+/// with the entries matched, it stops.
+pub fn do_the_early_stop_needs_every_missing_entry_matched() {
+    use cosmic_text::mandala_test_hooks::stops_early;
+    let mut fs = faceless_font_system();
+    let weight = cosmic_text::fontdb::Weight::NORMAL;
+    let glyphs = [glyph(0, 1, 0), glyph(1, 2, 3)];
+    assert!(
+        stops_early(&mut fs, &glyphs, &[0], "xy", 0, 2, false, weight),
+        "precondition: one missing glyph, no face to draw it, its entry matched: the loop stops"
+    );
+    assert!(
+        !stops_early(&mut fs, &glyphs, &[0, 1], "xy", 0, 2, false, weight),
+        "an entry at byte 1, where no glyph is missing, must keep the loop going"
+    );
+}
+
+#[test]
+fn test_the_early_stop_leaves_a_cluster_of_several_code_points_to_the_faces() {
+    do_the_early_stop_leaves_a_cluster_of_several_code_points_to_the_faces();
+}
+
+/// The early stop judges only clusters of one code point (#304 review,
+/// shape.rs:757): a face may draw the composition of several (`e` and a
+/// combining acute as `é`) though it draws none of them alone, so a
+/// missing cluster of several is left to the faces, however undrawn its
+/// first code point is. The precondition: the same code point alone stops
+/// the loop.
+pub fn do_the_early_stop_leaves_a_cluster_of_several_code_points_to_the_faces() {
+    use cosmic_text::mandala_test_hooks::stops_early;
+    let mut fs = faceless_font_system();
+    let weight = cosmic_text::fontdb::Weight::NORMAL;
+    assert!(
+        stops_early(&mut fs, &[glyph(0, 1, 0)], &[0], "e", 0, 1, false, weight),
+        "precondition: `e` alone, which no face here draws, stops the loop"
+    );
+    let composed = "e\u{0301}";
+    assert!(
+        !stops_early(
+            &mut fs,
+            &[glyph(0, composed.len(), 0)],
+            &[0],
+            composed,
+            0,
+            composed.len(),
+            false,
+            weight
+        ),
+        "a missing cluster of `e` and a combining acute must be left to the faces"
+    );
+}
+
 #[test]
 fn test_the_shape_work_bodies_repeat() {
     // Every `do_*` body here is a bench body too (TEST_CONVENTIONS §T6),
@@ -448,5 +597,10 @@ fn test_the_shape_work_bodies_repeat() {
     }
     for _ in 0..2 {
         do_the_fallback_merge_lays_out_what_the_published_merge_did();
+    }
+    for _ in 0..20 {
+        do_a_run_the_merge_cannot_reason_about_is_merged_as_published();
+        do_the_early_stop_needs_every_missing_entry_matched();
+        do_the_early_stop_leaves_a_cluster_of_several_code_points_to_the_faces();
     }
 }
