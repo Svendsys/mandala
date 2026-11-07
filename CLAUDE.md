@@ -231,9 +231,9 @@ the parity trajectory (or why none is owed):
 - **Clipboard OS layer** (`src/application/clipboard.rs`) — native
   is backed by `arboard`; WASM is stubbed pending async-clipboard
   integration (CONCEPTS §6 "Clipboard"). The clipboard Actions are
-  rebuilt on the document's writer by V1-C4 (#245); until then the
-  color picker's keys are the layer's one native caller, and the WASM
-  stubs have none.
+  rebuilt on the document's writer by V1-C4 (#245); until then its
+  one native caller, the color picker's keys, is unreachable (V1-C7,
+  #248), and the WASM stubs have none.
 - **`fps` console verb** — native because the console shell is; the
   render-side FPS plumbing compiles on both targets and browsers
   expose frame timing via DevTools (CONCEPTS §5 "FPS overlay").
