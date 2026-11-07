@@ -75,7 +75,7 @@ pub(crate) struct MapView {
     layers: GlyphLayers,
     /// The chrome layer (design §12.1): view-only glyphs built from app
     /// state rather than the document — the rubber band
-    /// ([`band`]), and V1-C7's handles and V1-C8's section frames to
+    /// (`view::band`, native), and V1-C7's handles and V1-C8's section frames to
     /// come. Drawn above the five layers; written only through
     /// [`Self::apply_chrome`], whose journal the renderer applies.
     chrome: GfxTree,
