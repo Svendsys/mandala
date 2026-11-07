@@ -351,8 +351,8 @@ impl LayerRenderer {
                 }
             }
         }
-        for k in 0..pending.len() {
-            splice(mirror, arena, pending[k], stack);
+        for &slot in pending.iter() {
+            splice(mirror, arena, slot, stack);
         }
         order.clear();
         touches.clear();
