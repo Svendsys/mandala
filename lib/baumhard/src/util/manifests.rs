@@ -1569,9 +1569,11 @@ name = "test_bench"
     /// The patched cosmic-text (#304): `mandala.patch` is what the
     /// vendored directory differs by, every change it makes is marked
     /// `MANDALA PATCH` and listed in PATCHES.md, and nothing marked is
-    /// left out of it. (That the patch applies to the published 0.19.0
-    /// and reproduces the directory was checked when it was generated;
-    /// the published crate is not in the repository to check it here.)
+    /// left out of it. That the patch applies to the published 0.19.0
+    /// and reproduces the directory exactly, nothing else edited, is
+    /// `scripts/check_vendored_cosmic_text.sh`'s to hold, in CI: it needs
+    /// the published crate, which is not in the repository, and so the
+    /// network, which `./test.sh` does not use.
     #[test]
     fn test_the_vendored_patch_is_the_one_listed() {
         const CRATE: &str = "vendor/cosmic-text";
