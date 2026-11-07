@@ -2668,16 +2668,14 @@ fn lay_on_closed(
         // `f32` is laid on the outline shrunk about its center until its
         // length is one, and its positions grown back: every position
         // finite, the lines where they would lie, spread to the outline.
-        let probe = ArcPath::closed(path, start, direction, MIN_TABLE_SPACING).length();
-        if !probe.is_finite() {
+        // Only a rounded rectangle's can be, which builds no table to say
+        // so (`closed_length_is_finite`, #309).
+        if !ArcPath::closed_length_is_finite(path, start, direction) {
             let center = path.rect().center();
             let mut factor = 1.0_f32;
             let mut small = *path;
             for _ in 0..MAX_SHRINKS {
-                if ArcPath::closed(&small, start, direction, MIN_TABLE_SPACING)
-                    .length()
-                    .is_finite()
-                {
+                if ArcPath::closed_length_is_finite(&small, start, direction) {
                     break;
                 }
                 factor *= 0.5;

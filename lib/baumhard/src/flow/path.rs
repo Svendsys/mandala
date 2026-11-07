@@ -573,23 +573,65 @@ impl ArcPath {
                 let param = Param::Ellipse { center, radii };
                 let origin = param.point(phi);
                 let tau = std::f32::consts::TAU;
-                let largest = radii.x.max(radii.y);
-                let stretch = if !(center.is_finite() && radii.is_finite()) {
-                    // No table of points that are not finite is built.
-                    None
-                } else if (radii.x - radii.y).abs() <= largest * 1e-6 {
-                    Some(Stretch::Arc {
+                let stretch = match ellipse_walk(center, radii) {
+                    EllipseWalk::Nothing => None,
+                    EllipseWalk::Circle { radius } => Some(Stretch::Arc {
                         center,
-                        radius: largest,
+                        radius,
                         angle: phi,
                         turn,
-                        len: largest * tau,
-                    })
-                } else {
-                    table(param, phi, phi + turn * tau, largest * tau, spacing)
+                        len: radius * tau,
+                    }),
+                    EllipseWalk::Table { speed } => table(param, phi, phi + turn * tau, speed, spacing),
                 };
                 ArcPath::from_stretches(stretch, origin, turn)
             }
+        }
+    }
+
+    /// The samples [`ArcPath::closed`] builds `outline`'s tables with at
+    /// `spacing`, wherever it starts and whichever way it runs, without
+    /// building them: what [`table_samples`](Self::table_samples) of that
+    /// path answers, to the sample. None for a rounded rectangle or a
+    /// circle, whose stretches are lines and arcs; for any other ellipse
+    /// with a finite center and radii, its one table's.
+    ///
+    /// Cost: O(1).
+    pub(crate) fn closed_table_samples(outline: &Outline, spacing: f32) -> usize {
+        let Outline::Ellipse { rect } = *outline else {
+            return 0;
+        };
+        match ellipse_walk(rect.center(), rect.size * 0.5) {
+            // `closed` walks from an angle in `0..=405°` through one
+            // turn: from and to are finite, as `table_count` asks.
+            EllipseWalk::Table { speed } => {
+                table_count(speed, 0.0, std::f32::consts::TAU, spacing).map_or(0, |count| count + 1)
+            }
+            EllipseWalk::Nothing | EllipseWalk::Circle { .. } => 0,
+        }
+    }
+
+    /// Whether the length of `outline` walked from `start` in `direction`
+    /// ([`ArcPath::closed`]) is finite: what [`ArcPath::length`] of that
+    /// path answers, at any spacing.
+    ///
+    /// An ellipse's always is, so none is built for it. Its path is one
+    /// stretch, kept only where its length is finite and else dropped,
+    /// leaving a path of no length ([`ArcPath::from_stretches`]). Only a
+    /// rounded rectangle's nine stretches, each of finite length, can sum
+    /// past `f32::MAX`, and its path is built (no table) to find out.
+    ///
+    /// Cost: O(1).
+    pub(crate) fn closed_length_is_finite(
+        outline: &Outline,
+        start: StartPoint,
+        direction: Direction,
+    ) -> bool {
+        match outline {
+            Outline::Ellipse { .. } => true,
+            Outline::RoundedRect { .. } => ArcPath::closed(outline, start, direction, 1.0)
+                .length()
+                .is_finite(),
         }
     }
 
@@ -1020,6 +1062,53 @@ pub(crate) const NEAREST_SAMPLES: usize = 2048;
 /// about 10⁷.
 pub(crate) const NEAREST_ROUNDS: usize = 34;
 
+/// How [`ArcPath::closed`] walks an ellipse of `radii` about `center`.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum EllipseWalk {
+    /// Not at all: its center or radii are not finite, and no table of
+    /// points that are not finite is built.
+    Nothing,
+    /// As one arc of `radius`, the larger radius: a circle, its radii
+    /// equal to a millionth of it.
+    Circle { radius: f32 },
+    /// Through a table, the curve moving at most `speed` over the turn.
+    Table { speed: f32 },
+}
+
+/// How [`ArcPath::closed`] walks an ellipse of `radii` about `center`
+/// ([`EllipseWalk`]): the one answer the path's build and its count of
+/// table samples ([`ArcPath::closed_table_samples`]) both read.
+fn ellipse_walk(center: Vec2, radii: Vec2) -> EllipseWalk {
+    let largest = radii.x.max(radii.y);
+    if !(center.is_finite() && radii.is_finite()) {
+        EllipseWalk::Nothing
+    } else if (radii.x - radii.y).abs() <= largest * 1e-6 {
+        EllipseWalk::Circle { radius: largest }
+    } else {
+        EllipseWalk::Table {
+            speed: largest * std::f32::consts::TAU,
+        }
+    }
+}
+
+/// The steps a table walking from `from` to `to` is cut into, its
+/// samples one more ([`table`]): no neighbors more than `spacing` apart,
+/// given that the curve moves at most `speed` over the range, and from
+/// [`MIN_TABLE_SAMPLES`] to [`MAX_TABLE_SAMPLES`]. `None` when `speed`
+/// or the range is not finite, for which no table is built.
+fn table_count(speed: f32, from: f32, to: f32, spacing: f32) -> Option<usize> {
+    if !(speed.is_finite() && from.is_finite() && to.is_finite()) {
+        return None;
+    }
+    let spacing = if spacing > 0.0 { spacing } else { 1.0 };
+    let wanted = (speed / spacing).ceil();
+    Some(if wanted.is_finite() {
+        (wanted as usize).clamp(MIN_TABLE_SAMPLES, MAX_TABLE_SAMPLES)
+    } else {
+        MIN_TABLE_SAMPLES
+    })
+}
+
 /// A table walking `param` from `from` to `to`, its samples close
 /// enough that no neighbors are more than `spacing` apart, given that the
 /// curve moves at most `speed` per unit of the full parameter range.
@@ -1028,16 +1117,7 @@ pub(crate) const NEAREST_ROUNDS: usize = 34;
 /// finite: a curve with no finite speed bound has a control point that is
 /// not finite, so every sample would be too.
 fn table(param: Param, from: f32, to: f32, speed: f32, spacing: f32) -> Option<Stretch> {
-    if !(speed.is_finite() && from.is_finite() && to.is_finite()) {
-        return None;
-    }
-    let spacing = if spacing > 0.0 { spacing } else { 1.0 };
-    let wanted = (speed / spacing).ceil();
-    let count = if wanted.is_finite() {
-        (wanted as usize).clamp(MIN_TABLE_SAMPLES, MAX_TABLE_SAMPLES)
-    } else {
-        MIN_TABLE_SAMPLES
-    };
+    let count = table_count(speed, from, to, spacing)?;
     #[cfg(test)]
     TABLE_SAMPLES.with(|samples| samples.set(samples.get() + count + 1));
     let mut params = Vec::with_capacity(count + 1);
