@@ -47,11 +47,21 @@ use crate::projection::state::{BoxKey, RunKey};
 /// more than the dead entries it frees.
 const SWEEP_FLOOR: usize = 64;
 
-/// A key's hash: of every field equality compares, sizes by their bits.
-/// Two equal keys hash equal; a `NaN` size, which equals nothing, only
-/// ever misses.
+/// A key's hash: of every field equality compares, sizes by their bits
+/// ([`bits`], `-0.0` taken as `0.0`, which it equals). Two equal keys
+/// hash equal; a `NaN` size, which equals nothing, only ever misses.
 trait KeyHash {
     fn key_hash(&self) -> u64;
+}
+
+/// `value`'s bits, for hashing: `-0.0`'s are `0.0`'s, since the two compare
+/// equal and equal keys must hash equal.
+fn bits(value: f32) -> u32 {
+    if value == 0.0 {
+        0.0_f32.to_bits()
+    } else {
+        value.to_bits()
+    }
 }
 
 /// Feed one span to `state`.
@@ -59,8 +69,8 @@ fn hash_span(text: &str, style: &ResolvedText, state: &mut FxHasher) {
     text.hash(state);
     style.font.hash(state);
     match style.size {
-        FontSize::Pt(points) => (0u8, points.to_bits()).hash(state),
-        FontSize::Rel(fraction) => (1u8, fraction.to_bits()).hash(state),
+        FontSize::Pt(points) => (0u8, bits(points)).hash(state),
+        FontSize::Rel(fraction) => (1u8, bits(fraction)).hash(state),
     }
     style.color.hash(state);
     style.weight.hash(state);
@@ -83,9 +93,7 @@ impl KeyHash for BoxKey {
         for (text, style) in &self.spans {
             hash_span(text, style, &mut state);
         }
-        self.min
-            .map(|min| (min.x.to_bits(), min.y.to_bits()))
-            .hash(&mut state);
+        self.min.map(|min| (bits(min.x), bits(min.y))).hash(&mut state);
         self.align.hash(&mut state);
         state.finish()
     }

@@ -182,3 +182,38 @@ fn test_the_shaping_cache_keeps_no_key_alive() {
     );
     assert_eq!(cache.hits, hits + 1, "and found");
 }
+
+#[test]
+fn test_keys_equal_but_for_the_sign_of_a_zero_share_one_shaping() {
+    // `-0.0` and `0.0` compare equal, so two keys that differ only there
+    // are equal, and must hash equal to share (#304 review, shapes.rs:49).
+    use crate::document::values::Align;
+    use crate::flow::shape_box;
+    use crate::projection::state::BoxKey;
+    let mut cache = ShapeCache::default();
+    let style = BUILT_IN.section;
+    let boxed = |min: glam::Vec2, cache: &mut ShapeCache| {
+        let key = Arc::new(BoxKey {
+            spans: vec![("zero".to_string(), style)],
+            min: Some(min),
+            align: Align::Left,
+        });
+        let mut fonts = fonts();
+        let shaped = cache.boxed(&key, || {
+            let span = FlowSpan {
+                text: "zero",
+                style: &style,
+                link: None,
+            };
+            Arc::new(shape_box(&[span], key.min, key.align, &mut fonts))
+        });
+        (key, shaped)
+    };
+    let positive = boxed(glam::Vec2::new(0.0, 10.0), &mut cache);
+    let negative = boxed(glam::Vec2::new(-0.0, 10.0), &mut cache);
+    assert_eq!(*positive.0, *negative.0, "precondition: the two keys are equal");
+    assert!(
+        Arc::ptr_eq(&positive.1, &negative.1),
+        "keys equal but for the sign of a zero share one shaping"
+    );
+}
