@@ -187,10 +187,13 @@ impl Clone for GlyphOverrides {
         }
     }
 
+    /// Destructured, so a field added to the struct is a compile error
+    /// here rather than a field this copy leaves behind.
     fn clone_from(&mut self, source: &Self) {
-        self.offset.clone_from(&source.offset);
-        self.color.clone_from(&source.color);
-        self.scale.clone_from(&source.scale);
+        let GlyphOverrides { offset, color, scale } = self;
+        offset.clone_from(&source.offset);
+        color.clone_from(&source.color);
+        scale.clone_from(&source.scale);
     }
 }
 
@@ -376,13 +379,23 @@ impl Clone for GlyphRunData {
         }
     }
 
+    /// Destructured, so a field added to the struct is a compile error
+    /// here rather than a field this copy leaves behind.
     fn clone_from(&mut self, source: &Self) {
-        self.shaped.clone_from(&source.shaped);
-        self.origin = source.origin;
-        self.overrides.clone_from(&source.overrides);
-        self.opacity = source.opacity;
-        self.zoom = source.zoom;
-        self.extent = source.extent;
+        let GlyphRunData {
+            shaped,
+            origin,
+            overrides,
+            opacity,
+            zoom,
+            extent,
+        } = self;
+        shaped.clone_from(&source.shaped);
+        *origin = source.origin;
+        overrides.clone_from(&source.overrides);
+        *opacity = source.opacity;
+        *zoom = source.zoom;
+        *extent = source.extent;
     }
 }
 
