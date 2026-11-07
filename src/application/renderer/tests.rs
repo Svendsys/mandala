@@ -1571,8 +1571,9 @@ fn test_console_keystroke_reshapes_only_the_prompt_line() {
 /// time, and touches only its own area.** Two haloed areas in one
 /// overlay tree; each row changes one thing
 /// `tree_walker::shape_one_element_into_buffers` reads — the text, a
-/// region's color alone, the scale, the line height, either bound, the
-/// alignment, the halo's color, its width, or the halo itself — on the
+/// region's color alone, a region's font pin alone, the scale, the
+/// line height, either bound, the alignment, the halo's color, its
+/// width, or the halo itself — on the
 /// first area, and the rebuild must shape exactly that area again. The
 /// second area is untouched in every row, so it stays reused: the count
 /// moves by one, not two.
@@ -1604,10 +1605,14 @@ fn test_every_input_shaping_reads_reshapes_its_area_and_only_it() {
         area
     };
     type Change = fn(&mut GlyphArea);
-    let rows: [(&str, Change); 10] = [
+    let rows: [(&str, Change); 11] = [
         ("text", |a| a.text = "alphz".into()),
         ("a region's color alone", |a| {
             a.regions = ColorFontRegions::single_span(5, Some([1.0, 0.0, 0.0, 1.0]), None)
+        }),
+        ("a region's font pin alone", |a| {
+            a.regions =
+                ColorFontRegions::single_span(5, Some([1.0, 1.0, 1.0, 1.0]), Some(AppFont::PublicPixel))
         }),
         ("scale", |a| a.scale.0 = 17.0),
         ("line height", |a| a.line_height.0 = 19.0),
