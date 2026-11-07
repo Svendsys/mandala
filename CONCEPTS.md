@@ -4029,12 +4029,15 @@ and placement by `Arc`, so keeping it never shapes.
   of a layer.
 - **`apply`** takes the journals of what changed — the projector's
   `LayerChanges`, merged with those of the glyph mutators applied over
-  them — and visits exactly the elements they name, each once. One that
-  left is dropped with its subtree; one that entered gets a slot; one
-  that changed is compared with its slot and only a difference is
-  written (a drag re-places the same shaping; an unchanged run keeps
-  its state); one whose place changed is spliced in after its previous
-  sibling. No other element is looked at.
+  them, from one or more projector updates — and visits exactly the
+  elements they name, each once, the last touch deciding. One that left
+  is dropped with its subtree, except what an earlier journal moved out
+  of it; one that entered gets a slot; one that changed is compared with
+  its slot and only a difference is written, into the buffers the slot
+  already has (a drag re-places the same shaping; an unchanged run
+  keeps its state); one whose place changed is spliced in after its
+  previous sibling, and an element counts as in place only after a
+  sibling no journal names. No other element is looked at.
 - **`encode`** hands every run to the frame's
   [positioned-glyph pass](#glyphrun), in draw order: sections, frames,
   connections, labels, portals, each in tree order, after the canvas
