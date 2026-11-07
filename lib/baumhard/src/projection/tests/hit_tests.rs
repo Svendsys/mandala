@@ -171,3 +171,84 @@ fn test_projection_a_moved_nodes_body_rewrites_only_its_own_cells() {
         "the body moved with it"
     );
 }
+
+/// Whether a glyph of `layer` is drawn at `point`: the layer's BVH finds
+/// one, as [`Projector::hit`](crate::projection::Projector::hit) asks it.
+fn drawn_at(p: &mut Projected, layer: Layer, point: Vec2) -> bool {
+    p.layers.tree_mut(layer).descendant_at(point).is_some()
+}
+
+#[test]
+fn test_projection_a_label_over_its_connection_is_hit_before_it() {
+    // Node 2 under node 1, far to its right, so its connector runs level
+    // between them and its label sits on it, half-way.
+    let doc = load_map(json!({"nodes": [
+        node(1, None, json!({"sections": [{"spans": [{"text": "from"}]}]})),
+        node(2, Some(1), json!({
+            "position": [600.0, 0.0],
+            "sections": [{"spans": [{"text": "to"}]}],
+            "connector": {"label": {"t": 0.5, "spans": [{"text": "WWWW"}]}}
+        })),
+    ]}));
+    let two = ident(&doc, 2);
+    let connector = kid(&doc, two, DocKind::Connector);
+    let label = kid(&doc, connector, DocKind::Label);
+    let mut p = Projected::new(doc);
+    let center = p.projector.label_pos(label).expect("the label is placed");
+    // A point both layers draw a glyph at: the label's glyphs lie on the
+    // connection's.
+    let mut both = None;
+    'scan: for dy in -8..=8 {
+        for dx in -24..=24 {
+            let point = center + Vec2::new(dx as f32, dy as f32);
+            if drawn_at(&mut p, Layer::Labels, point) && drawn_at(&mut p, Layer::Connections, point) {
+                both = Some(point);
+                break 'scan;
+            }
+        }
+    }
+    let point = both.expect("a glyph of each layer is under one point near the label");
+    let hit = p.projector.hit(&mut p.layers, point).expect("glyphs are there");
+    assert_eq!(hit.element, label, "the labels layer is above the connections layer");
+    assert_eq!(hit.node, two, "the label is its connector's node's");
+    // The control: asked in draw order — bottom-up — the same point is
+    // the connection's, so the order decides the answer.
+    let bottom_up = Layer::ALL
+        .iter()
+        .find(|&&layer| drawn_at(&mut p, layer, point))
+        .copied();
+    assert_eq!(bottom_up, Some(Layer::Connections), "bottom-up, the connection is found first");
+}
+
+#[test]
+fn test_projection_a_click_inside_a_nested_body_hits_the_innermost_node() {
+    // Node 2, node 1's child, has its body wholly inside its parent's.
+    let doc = load_map(json!({"nodes": [
+        node(1, None, json!({
+            "position": [0.0, 0.0],
+            "min_size": [600.0, 400.0],
+            "sections": [{"spans": [{"text": "outer"}]}]
+        })),
+        node(2, Some(1), json!({
+            "position": [200.0, 150.0],
+            "min_size": [200.0, 150.0],
+            "sections": [{"spans": [{"text": "inner"}]}]
+        })),
+    ]}));
+    let (outer, inner) = (ident(&doc, 1), ident(&doc, 2));
+    let mut p = Projected::new(doc);
+    let point = Vec2::new(380.0, 280.0);
+    for layer in Layer::ALL {
+        assert!(!drawn_at(&mut p, layer, point), "no glyph of the {layer:?} layer is under the point");
+    }
+    let hit = p.projector.hit(&mut p.layers, point).expect("two bodies hold it");
+    assert_eq!(
+        (hit.node, hit.element),
+        (inner, inner),
+        "the innermost body, the smaller"
+    );
+    // The control: a point inside the outer body only is the outer node's,
+    // so both bodies are in the index and the inner one wins by size.
+    let hit = p.projector.hit(&mut p.layers, Vec2::new(580.0, 380.0)).expect("the outer body holds it");
+    assert_eq!(hit.node, outer, "outside the inner body, the outer node");
+}

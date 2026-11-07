@@ -1002,7 +1002,8 @@ impl Projector {
 
     /// [`Self::path_resolve`] for a portal link: each end's marker text and
     /// label. A portal end's placement fields are read when it is placed,
-    /// so a marker drag resolves no text.
+    /// never here, and a touch of an end seeds its link's placement alone
+    /// (`touch_stage`), so a marker drag resolves no text.
     fn portal_resolve(
         &mut self,
         tree: &Tree<DocElement>,

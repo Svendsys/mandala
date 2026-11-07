@@ -1731,10 +1731,16 @@ the layers to learn what the document is, and nothing flows back.
 - **Captured dependencies.** Every read of another element's state goes
   through a recorder into the dependency index (`projection::Input`:
   the resolvers' `document::resolve::Input`s, and the projection's own
-  `Geometry`, `Visibility` and `Opacity` of an element), keyed by the
-  stage that read it, so a drag — geometry only — reaches placement and
-  resolves and shapes nothing. The change records' `inputs` and `rows`
-  (ruling B7.2) seed it. Nothing is listed by hand; the oracle test
+  `Geometry`, `Size`, `Visibility`, `Opacity`, `Parent` and `Inner` of
+  an element), keyed by the stage that read it. The change records'
+  `inputs` and `rows` (ruling B7.2) seed it, and a touched element
+  seeds only the stage its unclassified fields feed: a label, a portal
+  end or a cap its unit's placement, a section's offset its box, a
+  path's anchors, control points and zoom window its placement — its
+  resolution only when a field that resolution read changed. So a drag
+  — of a node, a section, a label, a portal marker or a control point,
+  geometry only — reaches geometry and placement and resolves and
+  shapes nothing. Nothing is listed by hand; the oracle test
   holds the index to it, comparing the incremental layers with a full
   projection after every edit of a corpus of generated maps and the
   format's fixtures.
