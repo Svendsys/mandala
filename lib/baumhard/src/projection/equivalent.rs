@@ -170,9 +170,24 @@ fn shaped_differs(a: &ShapedRun, b: &ShapedRun) -> Option<String> {
     if a.glyphs != b.glyphs {
         return Some("glyph metrics".into());
     }
-    let ga = a.layout_glyphs().map(|g| (g.glyph_id, g.font_id, g.color_opt));
-    let gb = b.layout_glyphs().map(|g| (g.glyph_id, g.font_id, g.color_opt));
-    (!ga.eq(gb)).then(|| "laid-out glyphs".into())
+    (!same_layout(a, b)).then(|| "laid-out glyphs".into())
+}
+
+/// Whether two shaped runs lay out the very same glyphs: every field of
+/// every laid-out glyph equal — its face, glyph, size, weight, position,
+/// offsets, color and flags — floats by their bits. What a run drawn
+/// from each would show alike.
+pub(crate) fn same_layout(a: &ShapedRun, b: &ShapedRun) -> bool {
+    let key = |g: &crate::font::LayoutGlyph| {
+        (
+            (g.start, g.end, g.glyph_id, g.font_id, g.font_weight, g.level, g.metadata),
+            (g.font_size.to_bits(), g.line_height_opt.map(f32::to_bits)),
+            (g.x.to_bits(), g.y.to_bits(), g.w.to_bits()),
+            (g.x_offset.to_bits(), g.y_offset.to_bits()),
+            (g.color_opt, g.cache_key_flags),
+        )
+    };
+    a.layout_glyphs().map(key).eq(b.layout_glyphs().map(key))
 }
 
 /// What differs between two shaped boxes: their size, their glyphs' spans

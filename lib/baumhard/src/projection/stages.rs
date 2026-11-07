@@ -160,13 +160,11 @@ fn shaped_box(cache: &mut Option<BoxFlow>, key: BoxKey, fonts: &mut FontSystemLe
 }
 
 /// Whether two runs placement returned for the same input hold the same
-/// glyphs: their metrics, line height and glyph ids.
+/// glyphs: their metrics, line height and every laid-out glyph.
 fn same_run(a: &ShapedRun, b: &ShapedRun) -> bool {
     a.glyphs == b.glyphs
         && a.line_height == b.line_height
-        && a.layout_glyphs()
-            .map(|g| (g.glyph_id, g.font_id))
-            .eq(b.layout_glyphs().map(|g| (g.glyph_id, g.font_id)))
+        && crate::projection::equivalent::same_layout(a, b)
 }
 
 /// A placement, its `Arc`s reused where nothing changed: the run placement

@@ -16,3 +16,11 @@ mod dependency_tests;
 /// Hit testing.
 #[cfg(test)]
 mod hit_tests;
+/// A chain as deep as memory allows.
+pub mod deep_tests;
+/// The binding carried down, counted.
+#[cfg(test)]
+mod steps_tests;
+/// The oracle's comparison, and its controls.
+#[cfg(test)]
+mod equivalent_tests;

@@ -353,9 +353,15 @@ fn pick(c: &mut Choices, doc: &Document, kind: DocKind) -> Option<NodeId> {
 /// edit could target. Every op of the vocabulary and every composite is
 /// drawn ([`EDITS`] names them all).
 pub fn edit(c: &mut Choices, doc: &Document) -> Option<(&'static str, EditRequest)> {
-    use DocKind as K;
     let choice = c.below(EDITS.len() as u32) as usize;
-    let name = EDITS[choice];
+    edit_named(c, doc, EDITS[choice])
+}
+
+/// The edit [`EDITS`] calls `name`, its targets and values drawn from
+/// `c`: what a sweep that walks the vocabulary in turn asks for. `None`
+/// when the document has nothing it could target.
+pub fn edit_named(c: &mut Choices, doc: &Document, name: &'static str) -> Option<(&'static str, EditRequest)> {
+    use DocKind as K;
     let req = match name {
         "Map::SetName" => single(K::Map, DocMutation::Map(MapOp::SetName("renamed".into())), vec![doc.root()]),
         "Map::SetBackground" => single(
