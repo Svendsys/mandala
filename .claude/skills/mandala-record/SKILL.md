@@ -38,7 +38,7 @@ repo's cloud container.
   looks: layout, color, glyphs, overlap. A recording of a still scene is a
   screenshot with extra bytes.
 - **Neither — use text** (`query.*`, `scene.*`) when the claim is about state:
-  "the selection is node 3.2" is one line of `query.selection`, not a GIF.
+  "the selection is node 247" is one line of `query.selection`, not a GIF.
   Put that line in the caption as well; the GIF shows it, the line proves it.
 
 ## One command
@@ -123,8 +123,8 @@ behavior, not you finding it. In the setup section:
   picture's — confirm the direction with `query.camera` and repeat the
   line until the node is in). To click one *section* of a multi-section
   node, `input.click_node <id> section=<n>`; which nodes have several is
-  `mandalactl --json scene.dump include=all | jq -r '.result.nodes[] |
-  select(.sections|length>1) | .node_id'` (testament has one: `3.7`).
+  `mandalactl --json scene.dump include=all | jq -c '.result.nodes[] |
+  select(.sections|length>1) | .element'` (testament has one: `{"node":252}`).
 
   Or hand `@record` a `region:='{"x":…,"y":…,"w":…,"h":…}'` with
   `width=`/`height=` of the same aspect (canvas units, from
@@ -325,7 +325,7 @@ whole script, `examples/zoom-in.demo`:
 # Map: maps/testament.mandala.json, 800x600 (the default size).
 #
 # --- setup (never in the picture) ---------------------------------------
-# Frame the node "Arpachshad" (1.2.0.0.0.0.0.0.0.0.0.2) dead center at
+# Frame the node "Arpachshad" (node 26) dead center at
 # zoom 1.0: ZoomFit puts it on screen, a click selects it, CenterOnSelection
 # centers the camera on it, ZoomReset zooms to 1.0 about the screen center
 # (where it now is), and DeselectAll takes the selection highlight out of
@@ -334,7 +334,7 @@ whole script, `examples/zoom-in.demo`:
 # virtual) and in a window (which starts real); setting it again is a no-op.
 clock.set_mode virtual
 act.action ZoomFit --wait-settled
-input.click_node 12 --wait-settled
+input.click_node 26 --wait-settled
 act.action CenterOnSelection --wait-settled
 act.action ZoomReset --wait-settled
 act.action DeselectAll --wait-settled
@@ -394,45 +394,9 @@ neighbor Shelah pushed off the right edge. The caption posted with it:
 
 ## Worked example 2: double-click opens the section editor
 
-The claim from the issue that defined this skill: *"double-click opens the
-section editor."* Read literally, that needs a node with **more than one
-section** — on a one-section node `text_edit.section_idx` is `0` whether the
-editor is per-section or per-node, so the demo cannot tell them apart. (This
-example first used a one-section node and showed only "double-click opens a
-text editor"; a cold run by a fresh agent caught it.) Testament has one
-multi-section node, `3.7`, three sections. The recording half of
-`examples/double-click-section-editor.demo`:
-
-```text
-@record region:='{"x":330,"y":11800,"w":512,"h":320}' width=640 height=400
-input.click_node 7 section=2 --wait-settled
-query.selection        # kind: "Single", node 3.7 — the first click selects the node
-query.mode
-clock.step ms=150
-input.click_node 7 section=2 --wait-settled
-clock.step ms=1000
-@stop
-query.mode             # key_owner: "text_edit"   (was "none")
-query.editors          # text_edit.node_id: "3.7", text_edit.section_idx: 2, the buffer is section 2's text
-query.selection        # kind: "Section", section_idx: 2
-```
-
-The setup (the framing recipe, with two `PanCameraNorth` first because `3.7`
-is below the screen at fit) is in the file. Three things carry it: the
-**region** crops to the node at 640×400 so its text is drawn 1.25× instead
-of shrunk and its neighbor's frame is cropped away; the **second section**
-is clicked, so a wrong target (section 0, or the whole node) shows; and the
-clicks are **150 ms of virtual time apart** — a frozen clock would make any
-two clicks one double-click, so the gap is stated, not implied.
-
-Watched (44 frames, 2.2 s, 0.8 MB, in three runs of identical frames): the
-node, nothing selected, for the beat; after the first click all three
-sections cyan (the node is selected); after the second only section 2 stays
-cyan and a caret `|` appears after its text, held to the end. The caption
-says the part the picture cannot: the selection tint and the editor tint are
-the same cyan, the caret is the only on-screen sign of the editor, and the
-`query.*` lines above are the proof. It also says what is *not* shown — the
-editor opens in one frame, with no animation to judge.
+Deleted with the section editor itself (V1-C3, #244), which V1-C8 (#249)
+rebuilds on the document's writer; the example and its demo file return
+with it. Worked example 1 is the shape to copy until then.
 
 ## Troubleshooting
 
