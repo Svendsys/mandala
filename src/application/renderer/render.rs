@@ -153,7 +153,7 @@ impl Renderer {
     ///
     /// **Everything the frame draws is projected through `camera`, and
     /// nothing else.** Canvas content goes through its transform and
-    /// its cull ([`Camera2D::visibility`], via `visible_at`); the
+    /// its cull ([`Camera2D::visibility`], in the glyph-run pass); the
     /// screen-space layer — console, color picker, FPS readout, mode
     /// status — is laid out in window pixels and drawn at
     /// `camera.pixel_ratio` of them, so a supersampled capture scales
@@ -317,7 +317,7 @@ impl Renderer {
         // the canvas's — first an open modal's backdrop cells, so they
         // are under everything else here. Both the
         // console and the glyph-wheel color picker put their glyph
-        // buffers in `overlay_scene_elements` (populated by
+        // buffers in `OverlayShapes::elements` (populated by
         // `rebuild_overlay_scene_buffers` from the respective
         // overlay tree in `AppScene`) — they are mutually exclusive
         // screen-space modals sharing this one pass — which is also

@@ -423,8 +423,8 @@ fn test_visibility_agrees_with_the_conjunction_it_replaced() {
 }
 
 /// `visibility(..).is_visible()` is exactly `is_visible && contains`
-/// — the expression the renderer's two `visible_at` culls used to
-/// spell out — across a sweep of positions straddling every viewport
+/// — the expression the renderer's text-buffer culls used to spell
+/// out — across a sweep of positions straddling every viewport
 /// edge, at zooms below, inside and above a bounded window.
 pub fn do_visibility_agrees_with_the_conjunction_it_replaced() {
     let windows = [

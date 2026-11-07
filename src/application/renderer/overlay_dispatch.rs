@@ -60,7 +60,7 @@ impl Renderer {
     /// optional completion popup, and the prompt line with cursor.
     ///
     /// Everything is positioned in screen coordinates (the walk
-    /// lands in `overlay_scene_elements`, which the render pass
+    /// lands in `OverlayShapes::elements`, which the render pass
     /// draws with `scale = 1.0`), so the console stays a fixed size
     /// regardless of canvas zoom.
     pub fn rebuild_console_overlay_buffers(
@@ -123,7 +123,7 @@ impl Renderer {
     /// Build the picker's overlay tree from `geometry`, register
     /// it under [`OverlayRole::ColorPicker`](crate::application::scene_host::OverlayRole),
     /// and walk the overlay sub-scene into
-    /// `overlay_scene_elements`. `None` means the picker is closed
+    /// `OverlayShapes::elements`. `None` means the picker is closed
     /// — drops the backdrop, unregisters the tree, refreshes
     /// overlay buffers so it disappears.
     ///

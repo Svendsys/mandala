@@ -46,7 +46,7 @@ impl Renderer {
     /// on the viewport at the current zoom. Used by the portal
     /// double-click handler to jump to the other side of a portal
     /// edge. Pure pan — no dirty flag raised; the shader transform
-    /// plus render-time `visible_at` handle the new view.
+    /// and the glyph-run pass's per-run cull handle the new view.
     pub fn set_camera_center(&mut self, target: Vec2) {
         self.camera
             .apply_mutation(&baumhard::gfx_structs::camera::CameraMutation::SetPosition {

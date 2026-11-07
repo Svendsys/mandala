@@ -1186,8 +1186,8 @@ impl Renderer {
         // `prepare_frame` sizes it to the target it draws.
         self.camera.set_viewport_size(width, height);
         // Canvas-space glyph positions and shaped buffers survive a
-        // viewport resize; the per-frame `visible_at` cull handles
-        // whether each buffer falls inside the new bounds.
+        // viewport resize; the glyph-run pass culls each run against
+        // the new bounds every frame.
     }
 }
 
