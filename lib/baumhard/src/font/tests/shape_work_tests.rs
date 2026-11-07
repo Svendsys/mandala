@@ -634,6 +634,112 @@ pub fn do_another_font_system_never_reads_the_outline_cache() {
     );
 }
 
+/// The random differential's fragments, by kind: Latin and its
+/// ligatures, combining marks, Hebrew and Arabic with their marks,
+/// Devanagari, Tamil, Malayalam, Khmer, Myanmar, Tibetan, Thai, Hangul
+/// jamo and syllables, emoji sequences (ZWJ, VS16, a skin tone, a flag, a
+/// tag sequence), private-use code points and noncharacters, a tab, bidi
+/// controls, box drawing and ornaments.
+pub const FRAGMENTS: [&str; 24] = [
+    "Sand",
+    "office ffl fi",
+    "e\u{0301}x\u{0308}\u{0323}",
+    "\u{05e9}\u{05b8}\u{05dc}\u{05d5}\u{05b9}\u{05dd}",
+    "\u{0645}\u{064e}\u{0631}\u{0652}\u{062d}\u{064e}\u{0628}\u{064b}\u{0627}",
+    "\u{0915}\u{094d}\u{0937}\u{093f}",
+    "\u{0ba4}\u{0bae}\u{0bbf}\u{0bb4}\u{0bcd}",
+    "\u{0d2e}\u{0d32}\u{0d2f}\u{0d3e}\u{0d33}\u{0d02}",
+    "\u{1781}\u{17d2}\u{1798}\u{17c2}\u{179a}",
+    "\u{1019}\u{103c}\u{1014}\u{103a}\u{1019}\u{102c}",
+    "\u{0f56}\u{0f7c}\u{0f51}\u{0f0b}",
+    "\u{0e20}\u{0e32}\u{0e29}\u{0e32}\u{0e44}\u{0e17}\u{0e22}",
+    "\u{1100}\u{1161}\u{11a8}\u{ac00}\u{d7a3}",
+    "\u{1f469}\u{200d}\u{1f4bb}",
+    "\u{2764}\u{fe0f}\u{1f44d}\u{1f3fd}",
+    "\u{1f1e9}\u{1f1ea}",
+    "\u{1f3f4}\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f}",
+    "\u{e000}\u{f8ff}\u{10fffd}",
+    "\u{ffff}\u{fdd0}",
+    "a\tb",
+    "\u{202e}abc\u{202c}\u{2067}\u{05d0}\u{2069}",
+    "\u{2500}\u{2550}\u{2501}\u{253c}",
+    "\u{2726} \u{00b7} \u{2766}",
+    " ",
+];
+
+#[test]
+fn test_a_seeded_random_differential_finds_no_merge_divergence() {
+    do_a_seeded_random_differential_finds_no_merge_divergence();
+}
+
+/// A seeded random differential of the patched fallback (#304 review,
+/// shape.rs:909): `CASES` texts of one to four [`FRAGMENTS`], each
+/// sometimes repeated up to 30 times, each shaped in a face drawn from
+/// every compiled face and the default family, at a weight from 100 to
+/// 900, sometimes italic, are laid out glyph for glyph alike by the linear
+/// merge with the early stop and by the published merge
+/// (`set_reference_merge`). The corpus is held to have fallen back and to
+/// have stopped early. The seed is fixed, so a red run replays.
+pub fn do_a_seeded_random_differential_finds_no_merge_divergence() {
+    const CASES: usize = 300;
+    crate::font::fonts::init();
+    let mut faces = crate::flow::tests::flow_fuzz::every_face();
+    faces.push(AppFont::Any);
+    let mut choices = crate::util::tests::choices::Choices::seeded(304);
+    let (mut fell_back, mut stopped) = (0, 0);
+    for case in 0..CASES {
+        let mut text = String::new();
+        for _ in 0..=choices.below(4) {
+            let fragment = *choices.pick(&FRAGMENTS);
+            let times = if choices.one_in(4) {
+                1 + choices.below(30) as usize
+            } else {
+                1
+            };
+            text.push_str(&fragment.repeat(times));
+        }
+        let face = *choices.pick(&faces);
+        let weight = 100 * (1 + choices.below(9) as u16);
+        let italic = choices.one_in(4);
+        let shaped = |reference: bool| {
+            merging(reference, || {
+                under_lock(|fs| {
+                    let mut name = String::new();
+                    let attrs = attrs_of(fs, face, &mut name)
+                        .weight(cosmic_text::Weight(weight))
+                        .style(if italic {
+                            cosmic_text::Style::Italic
+                        } else {
+                            cosmic_text::Style::Normal
+                        });
+                    let mut buffer = Buffer::new_empty(Metrics::new(20.0, 24.0));
+                    buffer.set_wrap(Wrap::None);
+                    buffer.set_size(None, None);
+                    let before = shape_work();
+                    buffer.set_rich_text([(text.as_str(), attrs.clone())], &attrs, SHAPING_ADVANCED, None);
+                    buffer.shape_until_scroll(fs, false);
+                    (layout_of(&buffer), shape_work().since(before))
+                })
+            })
+        };
+        let (linear, work) = shaped(false);
+        let (published, published_work) = shaped(true);
+        assert_eq!(
+            linear,
+            published,
+            "case {case} (seed 304): {face:?} at {weight}{} {text:?}: the patched merge laid out \
+             glyphs the published merge did not",
+            if italic { " italic" } else { "" }
+        );
+        fell_back += usize::from(published_work.fallback_rounds > 0);
+        stopped += usize::from(work.fallback_rounds < published_work.fallback_rounds);
+    }
+    assert!(
+        fell_back > CASES / 2 && stopped > 0,
+        "precondition: the corpus falls back ({fell_back} of {CASES}) and stops early ({stopped})"
+    );
+}
+
 #[test]
 fn test_the_shape_work_bodies_repeat() {
     // Every `do_*` body here is a bench body too (TEST_CONVENTIONS §T6),
@@ -656,6 +762,7 @@ fn test_the_shape_work_bodies_repeat() {
     }
     for _ in 0..2 {
         do_the_fallback_merge_lays_out_what_the_published_merge_did();
+        do_a_seeded_random_differential_finds_no_merge_divergence();
     }
     for _ in 0..20 {
         do_another_font_system_never_reads_the_outline_cache();

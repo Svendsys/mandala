@@ -1350,6 +1350,11 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("a_face_added_to_the_database_draws_what_no_face_drew", |b| {
         b.iter(do_a_face_added_to_the_database_draws_what_no_face_drew)
     });
+    // The seeded random differential: 300 random texts, faces, weights
+    // and slants, each shaped with both merges.
+    c.bench_function("a_seeded_random_differential_finds_no_merge_divergence", |b| {
+        b.iter(do_a_seeded_random_differential_finds_no_merge_divergence)
+    });
     // The outline cache serves the locked font system alone: an ornament
     // measured twice in a font system of its own, and twice in the
     // locked one.
