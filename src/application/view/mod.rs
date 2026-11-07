@@ -83,6 +83,10 @@ pub(crate) struct MapView {
     /// Cleared every iteration, so it holds at most an iteration's
     /// changes.
     feed: Vec<ChangeRecord>,
+    /// The document's status line ([`MindMapDocument::status`]) as the
+    /// renderer was last told it, so a sync hands it over only when it
+    /// changed.
+    shown_status: Option<&'static str>,
 }
 
 impl MapView {
@@ -118,6 +122,7 @@ impl MapView {
             highlight: Overlay::tint(SELECTION_HIGHLIGHT),
             band_targets: None,
             feed: Vec::new(),
+            shown_status: None,
         };
         let targets: Vec<NodeId> = doc.selection.iter().collect();
         let stamps = view
@@ -132,16 +137,23 @@ impl MapView {
     /// drained once, for the IPC event stream ([`Self::pending_feed`]).
     ///
     /// Does nothing to any tree, and calls the renderer not at all, when
-    /// the document did not change and the highlight's targets did not
-    /// either: what a frame with nothing to do, a pan and a zoom cost.
-    /// Returns whether it did anything — whether the frame owes a redraw.
+    /// the document did not change, the highlight's targets did not
+    /// either, and neither did its status line: what a frame with nothing
+    /// to do, a pan and a zoom cost. Returns whether it did anything —
+    /// whether the frame owes a redraw.
+    ///
+    /// The status line is the document's ([`MindMapDocument::status`],
+    /// D28): what a refused change says, handed to the renderer's status
+    /// line when it changes — the one place every family's refusal is
+    /// drawn, on both targets.
     ///
     /// Cost: the projector's update (proportional to the changes and their
     /// readers), the overlay's re-stamp (the runs named), the renderer's
-    /// apply (the elements the journals name).
+    /// apply (the elements the journals name); O(1) for the status line.
     pub(crate) fn sync(&mut self, doc: &mut MindMapDocument, renderer: &mut Renderer) -> bool {
+        let status_changed = self.show_status(doc, renderer);
         let Some(pass) = self.advance(doc) else {
-            return false;
+            return status_changed;
         };
         let projected = pass
             .changes
@@ -153,6 +165,18 @@ impl MapView {
             renderer.set_background(resolve_background(doc.doc().tree(), &mut ()).0);
         }
         self.finish(pass);
+        true
+    }
+
+    /// Hand the document's status line to the renderer when it is not the
+    /// one last shown. Returns whether it changed.
+    fn show_status(&mut self, doc: &MindMapDocument, renderer: &mut Renderer) -> bool {
+        let status = doc.status();
+        if status == self.shown_status {
+            return false;
+        }
+        self.shown_status = status;
+        renderer.set_mode_status_text(status.map(str::to_string));
         true
     }
 

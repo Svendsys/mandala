@@ -764,8 +764,9 @@ impl Renderer {
 
     /// The text of the cyan mode-status line, or `None` when none is
     /// showing. Read-only: `set_mode_status_text` is the writer, called
-    /// by native's console when it switches the mode; `query.status`
-    /// reads it on both targets.
+    /// by the view's sync with the document's status, and by native's
+    /// console when it switches the mode; `query.status` reads it on both
+    /// targets.
     pub fn mode_status_text(&self) -> Option<&str> {
         self.mode_status_text.as_deref()
     }
@@ -947,14 +948,11 @@ impl Renderer {
         self.render()
     }
 
-    /// Set the mode-status overlay text. `None` clears the overlay
-    /// (Default mode); `Some(text)` shows the line on the next
-    /// frame. Called from the app's scene-rebuild paths on every
-    /// mode-affecting action — the renderer trusts the app to
-    /// recompute the string when (mode, selection, doc) changes.
-    /// Native: the console's mode switches are what set it, and the
-    /// console shell is native.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Set the status line's text. `None` clears it; `Some(text)` shows
+    /// the line on the next frame. The writer is the view's sync
+    /// (`MapView::sync`), which hands over the document's status — what
+    /// a refused change says (D28) — whenever it changes, on both
+    /// targets; native's console clears it when it switches the mode.
     pub fn set_mode_status_text(&mut self, text: Option<String>) {
         self.mode_status_text = text;
     }

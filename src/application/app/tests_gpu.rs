@@ -636,3 +636,61 @@ fn test_input_click_node_aims_by_integer_id_and_selects_the_node() {
         "the click selected exactly the node it aimed at"
     );
 }
+
+/// **A refused change says so on the screen** (D28): with an
+/// interactive transaction open, an `apply` is refused, and the next
+/// frame's sync hands the document's status to the renderer's status
+/// line — what the user sees, read from the renderer
+/// (`mode_status_text`), not from the document. An undo cancels the
+/// transaction and clears the status, and the next frame clears the
+/// line.
+///
+/// Controls: before the refusal the line is empty; the refusal alone
+/// draws nothing until a frame syncs (so the line is the sync's work,
+/// not the document's); and after the undo the frame clears it, so a
+/// line that stuck once shown fails.
+#[test]
+fn test_a_refused_change_is_drawn_on_the_status_line() {
+    use crate::application::document::TRANSACTION_OPEN_STATUS;
+    use baumhard::document::mutation::compose;
+    use baumhard::document::writer::error::ApplyError;
+    use baumhard::document::writer::transaction::TransactionKind;
+    use baumhard::document::writer::{ChangeSource, EditRequest};
+
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    frame(init);
+    assert_eq!(
+        init.renderer.mode_status_text(),
+        None,
+        "control: nothing refused, nothing shown"
+    );
+
+    let doc = init.document.as_mut().expect("document");
+    assert!(doc.begin(ChangeSource::Input, TransactionKind::Interactive));
+    let req = EditRequest {
+        steps: compose::create_root(doc.doc(), glam::Vec2::new(10.0, 10.0)).expect("a root composes"),
+        label: "test: create root".to_string(),
+    };
+    assert_eq!(
+        doc.apply(req, ChangeSource::Action),
+        Err(ApplyError::TransactionOpen)
+    );
+    assert_eq!(
+        init.renderer.mode_status_text(),
+        None,
+        "control: the refusal alone draws nothing until a frame syncs"
+    );
+    assert!(frame(init), "the status line owes a redraw");
+    assert_eq!(init.renderer.mode_status_text(), Some(TRANSACTION_OPEN_STATUS));
+
+    init.document.as_mut().expect("document").undo();
+    frame(init);
+    assert_eq!(
+        init.renderer.mode_status_text(),
+        None,
+        "the undo closed the transaction and the frame cleared the line"
+    );
+}
