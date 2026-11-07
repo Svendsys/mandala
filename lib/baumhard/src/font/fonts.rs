@@ -331,7 +331,7 @@ lazy_static! {
 }
 
 /// Warm up the font state now rather than at its first use: build the
-/// font system, with every compiled face ([`complete_font_system`]), and
+/// font system, with every compiled face (`complete_font_system`), and
 /// the `FAMILY_INDEX` that [`loaded_families_iter`] /
 /// [`app_font_by_family`] read. **Warm-up only** (#323): what anything is
 /// shaped with does not depend on whether, or when, this ran, since the
