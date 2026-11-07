@@ -319,12 +319,14 @@ impl GfxMutation {
     /// variants write one; an area or model payload is ignored as at a
     /// `Void`.
     ///
-    /// Cost: O(1), except `RunSet` (a payload clone) and `RunOverrides`
-    /// (O(glyphs in range)). See [`Self::apply_to_area`] for the
-    /// `pub(crate)` rationale.
+    /// Cost: O(1), except `RunSet` (a payload copy, written into the
+    /// run's own override vectors by `clone_from`, so a payload with
+    /// overrides no longer than the run's allocates nothing) and
+    /// `RunOverrides` (O(glyphs in range)). See [`Self::apply_to_area`]
+    /// for the `pub(crate)` rationale.
     pub(crate) fn apply_to_run(&self, run: &mut GlyphRunData) {
         match self {
-            RunSet(data) => *run = (**data).clone(),
+            RunSet(data) => run.clone_from(data),
             RunOrigin(origin) => run.set_origin(*origin),
             RunOpacity(opacity) => run.set_opacity(*opacity),
             RunOverrides(op) => run.apply_override(op),
