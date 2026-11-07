@@ -1505,14 +1505,10 @@ pub fn do_document_resolve_carried_binding_resolves_what_the_climb_does() {
     assert!(compared > 20, "every text of the example compared: {compared}");
 
     // The reads: the carried value of the owning node, and nothing above.
+    // (That it climbs nothing is counted by the projection's deep-chain
+    // test, which reads the climb's test-only step counter.)
     let mut carried_reads: Vec<Input> = Vec::new();
-    let before = crate::document::resolve::climb_steps::taken();
     resolve_text_in(tree, ids.b_span, Binding::Carried(carried[&ids.b]), &mut carried_reads);
-    assert_eq!(
-        crate::document::resolve::climb_steps::taken(),
-        before,
-        "a carried binding climbs nothing"
-    );
     assert!(carried_reads.contains(&Input::Binding(ids.b)));
     assert!(
         !carried_reads.contains(&Input::PaletteBinding(ids.a)),
@@ -1520,10 +1516,6 @@ pub fn do_document_resolve_carried_binding_resolves_what_the_climb_does() {
     );
     let mut climbed_reads: Vec<Input> = Vec::new();
     resolve_text(tree, ids.b_span, &mut climbed_reads);
-    assert!(
-        crate::document::resolve::climb_steps::taken() > before,
-        "the one-off climbs"
-    );
     assert!(
         climbed_reads.contains(&Input::PaletteBinding(ids.a)),
         "and reads the binding node's palette field: {climbed_reads:?}"

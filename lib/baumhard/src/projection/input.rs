@@ -1,0 +1,158 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! The dependency index (design §12.3): which projection work read
+//! which input, captured as it read it — never listed by hand.
+
+use crate::arena::NodeId;
+use crate::document::resolve::{Input as DocInput, ReadRecorder};
+use rustc_hash::{FxHashMap, FxHashSet};
+
+/// Something a piece of projection work read: one of the document's
+/// resolution inputs ([`DocInput`], what the resolvers report), or a
+/// fact the projection derived about another element and read through
+/// its own state.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Input {
+    /// A resolution input of the document.
+    Doc(DocInput),
+    /// Where an element is drawn, as projection state holds it: a node's
+    /// drawn rectangle and outline, a section's box within its node, a
+    /// ring's placed line height (what the rings outside it clear), a
+    /// path's curve, a portal end's marker.
+    Geometry(NodeId),
+    /// Whether a node is drawn, and the zoom window everything it draws
+    /// renders in.
+    Visibility(NodeId),
+    /// A node's effective opacity: its own times every ancestor's.
+    Opacity(NodeId),
+}
+
+/// The stage of a unit's projection a dependency belongs to: what has to
+/// run again when the input changes. A node has two stages, a flow
+/// three; a drag, which changes geometry only, reaches only the
+/// `Geometry` and `Place` stages, and nothing is resolved again (#241,
+/// the B1 granularity note).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Stage {
+    /// A node's inherited facts: its palette binding, effective opacity,
+    /// zoom window and depth.
+    Carry,
+    /// A node's drawn rectangle and outline.
+    Geometry,
+    /// A flow's resolution: its styles, its text, its shape key.
+    Resolve,
+    /// A flow's shaping, where its shape key reads geometry (a ring's
+    /// relative size).
+    Shape,
+    /// A flow's placement.
+    Place,
+}
+
+/// One piece of projection work: a stage of one unit's projection.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Dependent {
+    /// The document element whose projection it is: a node, a section,
+    /// a ring, a connector or a link.
+    pub unit: NodeId,
+    /// The stage.
+    pub stage: Stage,
+}
+
+impl Dependent {
+    /// `stage` of `unit`. O(1).
+    pub const fn new(unit: NodeId, stage: Stage) -> Self {
+        Dependent { unit, stage }
+    }
+}
+
+/// The dependency index: for each input, the work that read it
+/// (forward), and for each piece of work, what it read (reverse), so its
+/// old reads are cleared when it runs again.
+///
+/// Each forward list holds a piece of work at most once, and each reverse
+/// entry names its place in that list, so clearing one piece of work is
+/// O(what it read) however many others read the same input — the theme,
+/// the defaults, which most of a map reads.
+#[derive(Debug, Default)]
+pub(crate) struct DepIndex {
+    forward: FxHashMap<Input, Vec<Dependent>>,
+    reverse: FxHashMap<Dependent, Vec<(Input, u32)>>,
+    /// Scratch for [`Self::record`]'s dedup, kept to reuse its storage.
+    seen: FxHashSet<Input>,
+}
+
+impl DepIndex {
+    /// Forget everything `dep` read. O(what it read).
+    pub(crate) fn clear(&mut self, dep: Dependent) {
+        let Some(reads) = self.reverse.remove(&dep) else {
+            return;
+        };
+        for (input, at) in reads {
+            let Some(list) = self.forward.get_mut(&input) else {
+                continue;
+            };
+            let at = at as usize;
+            list.swap_remove(at);
+            if let Some(&moved) = list.get(at) {
+                // The last entry took the hole: point its reverse entry at
+                // its new place.
+                if let Some(entries) = self.reverse.get_mut(&moved) {
+                    if let Some(entry) = entries.iter_mut().find(|(i, _)| *i == input) {
+                        entry.1 = at as u32;
+                    }
+                }
+            }
+            if list.is_empty() {
+                self.forward.remove(&input);
+            }
+        }
+    }
+
+    /// Replace what `dep` read with `reads`, each once however often it
+    /// was read. O(reads).
+    pub(crate) fn record(&mut self, dep: Dependent, reads: &[Input]) {
+        self.clear(dep);
+        if reads.is_empty() {
+            return;
+        }
+        self.seen.clear();
+        let mut entries: Vec<(Input, u32)> = Vec::with_capacity(reads.len());
+        for &input in reads {
+            if !self.seen.insert(input) {
+                continue;
+            }
+            let list = self.forward.entry(input).or_default();
+            entries.push((input, list.len() as u32));
+            list.push(dep);
+        }
+        self.reverse.insert(dep, entries);
+    }
+
+    /// The work that read `input`. O(1).
+    pub(crate) fn dependents(&self, input: &Input) -> &[Dependent] {
+        self.forward.get(input).map_or(&[], Vec::as_slice)
+    }
+
+    /// What `dep` read, each once. O(1).
+    pub(crate) fn reads(&self, dep: Dependent) -> impl Iterator<Item = Input> + '_ {
+        self.reverse
+            .get(&dep)
+            .into_iter()
+            .flat_map(|entries| entries.iter().map(|(input, _)| *input))
+    }
+
+    /// How many (input, work) pairs the index holds. O(inputs).
+    pub(crate) fn len(&self) -> usize {
+        self.forward.values().map(Vec::len).sum()
+    }
+}
+
+/// A [`ReadRecorder`] that collects what a resolution read, as projection
+/// inputs, into a buffer the caller then records against its work.
+pub(crate) struct Reads<'a>(pub(crate) &'a mut Vec<Input>);
+
+impl ReadRecorder for Reads<'_> {
+    fn read(&mut self, input: DocInput) {
+        self.0.push(Input::Doc(input));
+    }
+}
