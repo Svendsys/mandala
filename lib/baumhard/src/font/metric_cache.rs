@@ -2,25 +2,24 @@
 
 //! Per-`(face, font_size_pt, grapheme)` measured glyph metrics.
 //!
-//! Replaces the static `MONOSPACE_ADVANCE_RATIO = 0.6` /
-//! `BORDER_APPROX_CHAR_WIDTH_FRAC = 0.6` approximations that the
-//! border-rail math used for "how wide is one cluster". Those
-//! approximations were calibrated against LiberationSans light
-//! box-drawing chars; on every other glyph (`◆`, `━`, `┃`, `=`,
-//! `#`, etc.) and on every other face the approximation diverged
-//! from what cosmic-text actually shaped, producing the
-//! alignment + tiling defects users see in the Border Toolkit
-//! demo on `maps/testament.mindmap.json`.
+//! Replaces the static 0.6-of-the-font-size approximations
+//! (`MONOSPACE_ADVANCE_RATIO`, and the old border model's char-width
+//! fraction) that the border-rail math used for "how wide is one
+//! cluster". Those approximations were calibrated against
+//! LiberationSans light box-drawing chars; on every other glyph
+//! (`◆`, `━`, `┃`, `=`, `#`, etc.) and on every other face the
+//! approximation diverged from what cosmic-text actually shaped,
+//! producing the alignment and tiling defects users saw in
+//! testament's Border Toolkit demo.
 //!
 //! The fix is structural: a callsite that asks "how wide will this
 //! glyph end up?" or "how tall will this row of glyphs be?" with a
 //! face in scope routes through this cache, which returns the
 //! value cosmic-text actually uses when shaping. Callers with no
-//! face, and the border-extent estimates that skip the face by
-//! choice (background padding, the clip AABB), still use the
-//! face-independent estimates — `metrics::monospace_advance` and
-//! the border's `BORDER_APPROX_CHAR_WIDTH_FRAC` — so this is the
-//! measured answer where a face is asked for, not every answer.
+//! face, and estimates that skip the face by choice, use a
+//! face-independent estimate such as `metrics::monospace_advance`
+//! instead, so this is the measured answer where a face is asked
+//! for, not every answer.
 //!
 //! ## Cache discipline
 //!

@@ -525,10 +525,10 @@ fn build_family_index() -> Vec<(String, AppFont)> {
 }
 
 /// All compiled-in font families, sorted ascending, as the
-/// family-name strings the data model stores in `TextRun.font` and
-/// `GlyphConnectionConfig.font`. Borrowing iterator — the per-call
-/// allocation `list_loaded_families` did is gone, which matters on
-/// the keystroke-hot completion path. The returned `&'static str`s
+/// family-name strings a map stores where it pins a family.
+/// Borrowing iterator — the per-call allocation
+/// `list_loaded_families` did is gone, which matters on the
+/// keystroke-hot completion path. The returned `&'static str`s
 /// borrow from the `OnceLock`-cached index built by
 /// `build_family_index`.
 ///
@@ -572,12 +572,10 @@ pub fn app_font_by_family(name: &str) -> Option<AppFont> {
 /// surfaces multiple aliases (localized names, postscript names),
 /// only the first is returned.
 ///
-/// Used by the post-mutation reverse converter in
-/// `document/custom.rs::region_to_text_run` — a tree-side
-/// `ColorFontRegion.font: Option<AppFont>` rolls back into the
-/// model's `TextRun.font: String` shape. `None` falls through to
-/// the empty string at that site, matching the pre-section
-/// behavior for runs without a family pin.
+/// Used wherever a resolved `AppFont` goes back to the family name a
+/// map stores, such as the format's writer. `None` means the font
+/// names no compiled family; the writer refuses to save one rather
+/// than store a name that is not there.
 ///
 /// Costs: O(n) over `FAMILY_INDEX`, but `n` is the small set of
 /// compiled-in families (~30 today), so the scan is cheaper than
