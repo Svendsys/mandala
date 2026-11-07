@@ -357,6 +357,63 @@ pub fn do_run_set_replaces_the_run_and_recomputes_its_bounds() {
     assert_eq!(element.unique_id(), 5);
 }
 
+#[test]
+fn test_run_set_reuses_the_override_buffers() {
+    do_run_set_reuses_the_override_buffers();
+}
+
+/// `RunSet` writes its payload into the run it replaces
+/// ([`Clone::clone_from`]): a second payload with overrides as long as
+/// the first's leaves the run's three override vectors where the first
+/// put them — no allocation, which assigning a fresh clone cannot avoid
+/// (it allocates while the old vectors still live).
+pub fn do_run_set_reuses_the_override_buffers() {
+    let payload = |origin: Vec2, op: RunOverrideOp| {
+        let mut run = GlyphRunData::new(four_glyph_shape(), origin, GlyphOverrides::new(4), 1.0, None)
+            .expect("one override per placed glyph");
+        run.apply_override(&op);
+        run
+    };
+    let buffers = |element: &GfxElement| {
+        let o = element.glyph_run().expect("a run").overrides();
+        (
+            o.offset().as_ptr() as usize,
+            o.color().as_ptr() as usize,
+            o.scale().as_ptr() as usize,
+        )
+    };
+    let mut element = four_glyph_element();
+    let first = payload(
+        Vec2::ZERO,
+        RunOverrideOp::Scale {
+            range: 0..2,
+            value: 2.0,
+        },
+    );
+    apply(&mut element, GfxMutation::RunSet(Box::new(first.clone())));
+    assert!(
+        element.glyph_run().expect("a run").same_state(&first),
+        "the first payload is the run"
+    );
+    let before = buffers(&element);
+    let second = payload(
+        Vec2::new(5.0, 7.0),
+        RunOverrideOp::Color {
+            range: 1..3,
+            value: Some(RED),
+        },
+    );
+    assert!(!second.same_state(&first), "precondition: the payloads differ");
+    apply(&mut element, GfxMutation::RunSet(Box::new(second.clone())));
+    let after = element.glyph_run().expect("a run");
+    assert!(after == &second, "the whole payload is the replacement");
+    assert_eq!(
+        buffers(&element),
+        before,
+        "a second RunSet of overrides as long reallocated the run's buffers"
+    );
+}
+
 // ── overrides ─────────────────────────────────────────────────────
 
 /// The run of `shape`, with `ops` applied through the mutation.
