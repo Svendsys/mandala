@@ -11,13 +11,15 @@
 //! live unit's takes that unit's shaping, the same `Arc`, and shapes
 //! nothing.
 //!
-//! **What it holds.** Each entry is a key and a weak reference to the
-//! shaping some unit holds: the cache keeps no shaping alive. A shaping
-//! no unit holds any longer is gone, and its entry is dropped at the next
-//! sweep, which runs when the entries have doubled since the last one, so
-//! the cache holds at most twice as many entries as there are live
-//! shapings, plus a floor. The key is the unit's own, shared (`Arc`), so
-//! an entry copies no text.
+//! **What it holds.** Each entry is a weak reference to a unit's key and
+//! one to the shaping it holds, so the cache keeps nothing alive: neither
+//! a shaping nor a key, nor the key's text. The key is the unit's own
+//! (`RunFlow::key`, `BoxFlow::key`, an `Arc`), so an entry copies no text
+//! either. An entry whose key or shaping is gone is dead: a lookup skips
+//! it, and the next sweep drops it, which runs when the entries have
+//! doubled since the last one, so the cache holds at most about twice as
+//! many entries as there are live shapings, plus a floor, and each dead
+//! one is two weak pointers.
 //!
 //! **The face set.** A shaping is also a function of the faces installed.
 //! The font system registers them once, at `fonts::init`, before anything
@@ -89,8 +91,14 @@ impl KeyHash for BoxKey {
     }
 }
 
-/// The keys of one hash, and the shapings some unit holds for them.
-type Bucket<K, V> = Vec<(Arc<K>, Weak<V>)>;
+/// The keys of one hash and their shapings, each held by some unit, and
+/// neither kept alive here.
+type Bucket<K, V> = Vec<(Weak<K>, Weak<V>)>;
+
+/// Whether an entry's key and shaping are both still held by a unit.
+fn live<K, V>((key, shaped): &(Weak<K>, Weak<V>)) -> bool {
+    key.strong_count() > 0 && shaped.strong_count() > 0
+}
 
 /// The shapings of one kind of flow, by key.
 struct Shared<K, V> {
@@ -130,19 +138,20 @@ impl<K: KeyHash + PartialEq, V> Shared<K, V> {
             };
         }
         let hash = key.key_hash();
-        let hit = self
-            .entries
-            .get(&hash)
-            .and_then(|bucket| bucket.iter().find(|(kept, _)| **kept == **key))
-            .and_then(|(_, shaped)| shaped.upgrade());
+        let hit = self.entries.get(&hash).and_then(|bucket| {
+            bucket.iter().find_map(|(kept, shaped)| {
+                let kept = kept.upgrade()?;
+                (*kept == **key).then(|| shaped.upgrade()).flatten()
+            })
+        });
         if let Some(shaped) = hit {
             return (shaped, true);
         }
         let shaped = shape();
         let bucket = self.entries.entry(hash).or_default();
         let before = bucket.len();
-        bucket.retain(|(kept, shaped)| shaped.strong_count() > 0 && **kept != **key);
-        bucket.push((key.clone(), Arc::downgrade(&shaped)));
+        bucket.retain(|entry| live(entry) && entry.0.upgrade().is_some_and(|kept| *kept != **key));
+        bucket.push((Arc::downgrade(key), Arc::downgrade(&shaped)));
         self.len = self.len + bucket.len() - before;
         if self.len >= self.sweep_at {
             self.sweep();
@@ -150,10 +159,10 @@ impl<K: KeyHash + PartialEq, V> Shared<K, V> {
         (shaped, false)
     }
 
-    /// Drop every entry whose shaping no unit holds.
+    /// Drop every entry whose key or shaping no unit holds.
     fn sweep(&mut self) {
         self.entries.retain(|_, bucket| {
-            bucket.retain(|(_, shaped)| shaped.strong_count() > 0);
+            bucket.retain(live);
             !bucket.is_empty()
         });
         self.len = self.entries.values().map(Vec::len).sum();

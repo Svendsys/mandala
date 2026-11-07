@@ -1773,11 +1773,12 @@ the layers to learn what the document is, and nothing flows back.
 - **One shaping per key** (`projection::shapes`, #304, ruling B7.4).
   The projector's shaping cache holds, by full shape key (texts, styles
   with sizes in points, and a box's minimum size and alignment, over the
-  font system's face set), a weak reference to the shaping some unit
-  holds: N units with one key make one shaping and share its `Arc`, and
-  the cache keeps nothing alive and holds at most about twice as many
-  entries as there are live shapings. A hit reads no font, so it takes
-  no lock.
+  font system's face set), weak references to the key and the shaping
+  some unit holds: N units with one key make one shaping and share its
+  `Arc`. The cache keeps nothing alive, neither a shaping nor a key and
+  its text, and holds at most about twice as many entries as there are
+  live shapings, a dead one two weak pointers. A hit reads no font, so
+  it takes no lock.
 - **`Hit`** (`Projector::hit`): the layers top-down through each one's
   glyph BVH — a path run only where one of its glyphs is drawn — to the
   element and, through the run's glyph-to-span mapping, the span; then

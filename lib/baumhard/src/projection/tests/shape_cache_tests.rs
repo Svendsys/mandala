@@ -102,31 +102,35 @@ fn key(text: &str) -> Arc<RunKey> {
     })
 }
 
+/// `text`'s key, and its shaping through `cache`: what a unit holds, the
+/// key as a unit's `RunFlow` does. A lease per shaping, let go before any
+/// assertion, so a failing one does not poison the font lock for every
+/// other font test.
+fn held(text: &str, cache: &mut ShapeCache) -> (Arc<RunKey>, Arc<ShapedRun>) {
+    let key = key(text);
+    let mut fonts = fonts();
+    let shaped = cache.run(&key, || {
+        let style = BUILT_IN.section;
+        Arc::new(shape_run(
+            &[FlowSpan {
+                text: &key.spans[0].0,
+                style: &style,
+                link: None,
+            }],
+            1.0,
+            &mut fonts,
+        ))
+    });
+    (key, shaped)
+}
+
 #[test]
 fn test_the_shaping_cache_keeps_no_shaping_alive_and_stays_bounded() {
     let mut cache = ShapeCache::default();
-    // A lease per shaping, let go before any assertion, so a failing one
-    // does not poison the font lock for every other font test.
-    let shape = |text: &str, cache: &mut ShapeCache| -> Arc<ShapedRun> {
-        let key = key(text);
-        let mut fonts = fonts();
-        cache.run(&key, || {
-            let style = BUILT_IN.section;
-            Arc::new(shape_run(
-                &[FlowSpan {
-                    text: &key.spans[0].0,
-                    style: &style,
-                    link: None,
-                }],
-                1.0,
-                &mut fonts,
-            ))
-        })
-    };
     // Shapings no unit keeps: their entries are swept, so the cache does
     // not grow with them.
     for i in 0..1000 {
-        drop(shape(&format!("gone {i}"), &mut cache));
+        drop(held(&format!("gone {i}"), &mut cache));
     }
     assert!(
         cache.len() <= 64,
@@ -134,16 +138,47 @@ fn test_the_shaping_cache_keeps_no_shaping_alive_and_stays_bounded() {
         cache.len()
     );
     // A shaping a unit keeps is found again, and is not shaped twice.
-    let kept = shape("kept", &mut cache);
+    let kept = held("kept", &mut cache);
     let hits = cache.hits;
-    let again = shape("kept", &mut cache);
-    assert!(Arc::ptr_eq(&kept, &again), "a kept shaping is shared");
+    let again = held("kept", &mut cache);
+    assert!(Arc::ptr_eq(&kept.1, &again.1), "a kept shaping is shared");
     assert_eq!(cache.hits, hits + 1, "and found, not shaped again");
     // Dropped, it is not kept alive by the cache: an equal key shapes anew.
-    let weak = Arc::downgrade(&kept);
+    let weak = Arc::downgrade(&kept.1);
     drop((kept, again));
     assert!(weak.upgrade().is_none(), "the cache holds no shaping alive");
     let hits = cache.hits;
-    drop(shape("kept", &mut cache));
+    drop(held("kept", &mut cache));
     assert_eq!(cache.hits, hits, "a key no unit holds is shaped again");
+}
+
+#[test]
+fn test_the_shaping_cache_keeps_no_key_alive() {
+    // Keys of any size, each dropped by its unit, while one unit stays: a
+    // dropped key, and its text, is freed at once, not at the next sweep
+    // (#304 review). Fewer than the sweep's floor, so no sweep runs.
+    let mut cache = ShapeCache::default();
+    let live = held("stays", &mut cache);
+    let gone: Vec<std::sync::Weak<RunKey>> = (0..63)
+        .map(|i| {
+            let (key, shaped) = held(&format!("{i} {}", "x".repeat(4096)), &mut cache);
+            let weak = Arc::downgrade(&key);
+            drop((key, shaped));
+            weak
+        })
+        .collect();
+    assert!(
+        cache.len() > 1,
+        "precondition: the dropped units' entries are still in the cache ({})",
+        cache.len()
+    );
+    let alive = gone.iter().filter(|weak| weak.strong_count() > 0).count();
+    assert_eq!(alive, 0, "{alive} dropped keys are kept alive by the cache");
+    let hits = cache.hits;
+    let again = held("stays", &mut cache);
+    assert!(
+        Arc::ptr_eq(&live.1, &again.1),
+        "the live unit's shaping is still shared"
+    );
+    assert_eq!(cache.hits, hits + 1, "and found");
 }
