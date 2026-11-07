@@ -765,3 +765,79 @@ fn test_projection_a_sides_color_change_rewrites_the_reused_shaping() {
     );
     p.check().unwrap();
 }
+
+/// How many children the wide row holds: enough that a connector reading
+/// its parent's row is two hundred resolutions an edit.
+const WIDE: u32 = 200;
+
+/// Node 1 with [`WIDE`] children, each with a labeled connector, and a
+/// second root, node 2, to move one of them to.
+fn wide_row() -> Document {
+    let mut nodes = vec![node(1, None, json!({}))];
+    for i in 0..WIDE {
+        nodes.push(node(
+            10 + i,
+            Some(1),
+            json!({
+                "position": [i as f32 * 60.0, 300.0],
+                "connector": {"label": {"spans": [{"text": "c"}]}}
+            }),
+        ));
+    }
+    // The flat list is in pre-order: the second root after the first's
+    // subtree.
+    nodes.push(node(2, None, json!({"position": [0.0, 900.0]})));
+    load_map(json!({ "nodes": nodes }))
+}
+
+/// How many connectors a stage of which ran in the last call.
+fn connectors_ran(p: &Projected, stage: Stage) -> usize {
+    ran(p, stage)
+        .into_iter()
+        .filter(|&u| p.doc.get(u).is_some_and(|e| e.kind() == DocKind::Connector))
+        .count()
+}
+
+#[test]
+fn test_projection_an_insert_into_a_wide_row_runs_one_connector() {
+    use crate::document::mutation::compose;
+    let doc = wide_row();
+    let parent = ident(&doc, 1);
+    let mut p = Projected::new(doc);
+    let steps = compose::create_child(&p.doc, parent, Vec2::new(30.0, 600.0)).unwrap();
+    p.apply(EditRequest::new(steps, "one more child")).unwrap();
+    // The new child's connector, and none of its siblings'.
+    for stage in [Stage::Resolve, Stage::Place] {
+        let n = connectors_ran(&p, stage);
+        assert!(
+            n <= 1,
+            "{n} connectors ran {stage:?} for one child added to a row of {WIDE}"
+        );
+    }
+    p.check().unwrap();
+}
+
+#[test]
+fn test_projection_a_move_out_of_a_wide_row_runs_one_connector() {
+    use crate::document::mutation::compose;
+    let doc = wide_row();
+    let (moved, to) = (ident(&doc, 10 + WIDE / 2), ident(&doc, 2));
+    let mut p = Projected::new(doc);
+    let steps = compose::reparent(&p.doc, &[moved], to).unwrap();
+    p.apply(EditRequest::new(steps, "move one out")).unwrap();
+    // The moved child's connector, drawn from its new parent, and none
+    // of the siblings it left.
+    for stage in [Stage::Resolve, Stage::Place] {
+        let n = connectors_ran(&p, stage);
+        assert!(
+            n <= 1,
+            "{n} connectors ran {stage:?} for one child moved out of a row of {WIDE}"
+        );
+    }
+    assert_eq!(
+        connectors_ran(&p, Stage::Resolve),
+        1,
+        "the moved child's connector resolves again"
+    );
+    p.check().unwrap();
+}

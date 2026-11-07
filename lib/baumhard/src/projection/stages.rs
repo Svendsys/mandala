@@ -78,7 +78,9 @@ pub(crate) struct PhaseWork {
     pub(crate) unit_reorders: Vec<NodeId>,
     /// Every unit some stage of which ran: the write compares their slots.
     pub(crate) units_run: FxHashSet<NodeId>,
-    /// Every piece of work run, in order.
+    /// Every piece of work run, in order: what the tests of the
+    /// dependency index read. Test builds only.
+    #[cfg(test)]
     pub(crate) ran: Vec<Dependent>,
 }
 
@@ -87,6 +89,7 @@ impl PhaseWork {
     /// taken is logged as run.
     fn take(&mut self, dep: Dependent) -> bool {
         if self.queued.remove(&dep) {
+            #[cfg(test)]
             self.ran.push(dep);
             if dep.stage != Stage::Carry && dep.stage != Stage::Geometry {
                 self.units_run.insert(dep.unit);
@@ -762,17 +765,10 @@ impl Projector {
         match (el, ends) {
             // A link reads whether the node it leads to is drawn.
             (DocElement::Link(_), Some((_, to))) => reads.push(ProjectionInput::Visibility(to)),
-            // A connector reads that its node hangs from this parent: the
-            // parent's row, which a move out of it rearranges.
-            (DocElement::Connector(_), Some((from, _))) => {
-                reads.push(ProjectionInput::Doc(DocInput::Row(from)))
-            }
+            // A connector reads which node its own node hangs from, root
+            // or not: its own node's parent, never that parent's row.
+            (DocElement::Connector(_), _) => reads.push(ProjectionInput::Parent(owner)),
             _ => {}
-        }
-        if let (DocElement::Connector(_), None) = (el, ends) {
-            if let Some(parent) = tree.node(owner).and_then(|n| n.parent()) {
-                reads.push(ProjectionInput::Doc(DocInput::Row(parent)));
-            }
         }
         let drawn = ends
             .is_some_and(|(from, to)| self.nodes.contains_key(&from) && self.nodes.contains_key(&to))

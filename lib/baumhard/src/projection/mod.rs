@@ -132,7 +132,9 @@ pub struct Projector {
     /// [`Projector::label_pos`] reads.
     pub(crate) label_hosts: FxHashMap<NodeId, NodeId>,
     /// Every piece of work the last call ran, in order: what the tests of
-    /// the dependency index read.
+    /// the dependency index read. Test builds only: the product keeps no
+    /// log of its work.
+    #[cfg(test)]
     pub(crate) ran: Vec<Dependent>,
 }
 
@@ -152,7 +154,10 @@ impl Projector {
         projector.project_roots(doc.tree(), &mut work);
         projector.run_phases(doc, &mut work, fonts);
         projector.write_full(doc.tree(), layers);
-        projector.ran = work.ran;
+        #[cfg(test)]
+        {
+            projector.ran = work.ran;
+        }
         projector
     }
 
@@ -182,7 +187,10 @@ impl Projector {
         self.seed(tree, changes, &touched, &mut work);
         self.run_phases(doc, &mut work, fonts);
         self.write_update(tree, &mut work, layers, &mut out);
-        self.ran = work.ran;
+        #[cfg(test)]
+        {
+            self.ran = work.ran;
+        }
         out.close(layers)
     }
 
@@ -255,8 +263,9 @@ impl Projector {
     }
 
     /// How many (input, work) pairs the dependency index holds: what the
-    /// test that holds it linear in a deep chain reads.
-    pub fn dependency_count(&self) -> usize {
+    /// test that holds it linear in a deep chain reads. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn dependency_count(&self) -> usize {
         self.deps.len()
     }
 }

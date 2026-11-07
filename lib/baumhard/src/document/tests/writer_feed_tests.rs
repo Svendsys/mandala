@@ -248,8 +248,11 @@ pub fn do_writer_feed_a_move_and_a_restyle_in_one_request_report_the_style() {
         )
         .steps,
     );
-    doc.apply(EditRequest::new(steps, "move and restyle c"), ChangeSource::Action)
-        .unwrap();
+    doc.apply(
+        EditRequest::new(steps, "move and restyle c"),
+        ChangeSource::Action,
+    )
+    .unwrap();
     let records = doc.take_changes();
     assert!(
         records[0].touched.contains(&(ids.c, Touch::Moved)),
@@ -262,10 +265,16 @@ pub fn do_writer_feed_a_move_and_a_restyle_in_one_request_report_the_style() {
     );
     doc.undo().unwrap();
     let records = doc.take_changes();
-    assert!(kinds(&records[0]).contains(&(ids.c, InputKind::Style)), "and by its undo");
+    assert!(
+        kinds(&records[0]).contains(&(ids.c, InputKind::Style)),
+        "and by its undo"
+    );
     doc.redo().unwrap();
     let records = doc.take_changes();
-    assert!(kinds(&records[0]).contains(&(ids.c, InputKind::Style)), "and by its redo");
+    assert!(
+        kinds(&records[0]).contains(&(ids.c, InputKind::Style)),
+        "and by its redo"
+    );
 
     // The control: the move alone.
     let (mut doc, ids) = built();

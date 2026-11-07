@@ -187,8 +187,9 @@ impl Projector {
             self.queue(work, Dependent::new(id, Stage::Carry));
             self.queue(work, Dependent::new(id, Stage::Geometry));
             // Whatever waited for it to be drawn — a link into it — now
-            // draws.
+            // draws, and what reads where it hangs reads it again.
             self.mark(work, ProjectionInput::Visibility(id));
+            self.mark(work, ProjectionInput::Parent(id));
             let units: Vec<NodeId> = units_in_order(tree, id).collect();
             for unit in units {
                 self.create_unit(tree, unit, id, work);
@@ -415,7 +416,8 @@ impl Projector {
 
     /// Hang the projected node `id` under `parent` (`None`: the map): its
     /// depth and its projected descendants' follow, each marked to carry
-    /// again — what a re-parent changes for a subtree (#241 §5.1). O(the
+    /// again — what a re-parent changes for a subtree (#241 §5.1) — and
+    /// what reads where it hangs, its connector, is marked. O(the
     /// projected subtree).
     fn reparent(
         &mut self,
@@ -428,6 +430,8 @@ impl Projector {
         if let Some(state) = self.nodes.get_mut(&id) {
             state.parent = parent;
         }
+        // Its connector, drawn from where it hangs.
+        self.mark(work, ProjectionInput::Parent(id));
         let arena = tree.arena();
         let mut stack = vec![(id, depth)];
         while let Some((at, depth)) = stack.pop() {

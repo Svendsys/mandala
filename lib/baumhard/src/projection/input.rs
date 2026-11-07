@@ -19,12 +19,19 @@ pub enum ProjectionInput {
     /// drawn rectangle and outline, a section's box within its node, a
     /// ring's placed line height (what the rings outside it clear), a
     /// path's curve, a portal end's marker.
+    ///
+    /// A ring's is its extent, what the ring just outside it clears.
     Geometry(NodeId),
     /// Whether a node is drawn, and the zoom window everything it draws
     /// renders in.
     Visibility(NodeId),
     /// A node's effective opacity: its own times every ancestor's.
     Opacity(NodeId),
+    /// Which node a node hangs from, as projection state holds it: what
+    /// its connector is drawn from. Marked when the projector hangs it
+    /// somewhere (`reparent`, `create_subtree`), so a connector reads its own node's parent and
+    /// never the parent's whole children row (ruling B7.5 on #241, D15).
+    Parent(NodeId),
 }
 
 /// The stage of a unit's projection a dependency belongs to: what has to
@@ -133,7 +140,9 @@ impl DepIndex {
         self.forward.get(input).map_or(&[], Vec::as_slice)
     }
 
-    /// How many (input, work) pairs the index holds. O(inputs).
+    /// How many (input, work) pairs the index holds. O(inputs). Test
+    /// builds only.
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.forward.values().map(Vec::len).sum()
     }

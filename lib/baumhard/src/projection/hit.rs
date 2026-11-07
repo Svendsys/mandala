@@ -55,7 +55,8 @@ pub(crate) struct BodyIndex {
     /// The bodies too large for the cells.
     large: Vec<NodeId>,
     /// How many cell entries the index has added and removed: what the
-    /// test that holds a move to its own cells reads.
+    /// test that holds a move to its own cells reads. Test builds only.
+    #[cfg(test)]
     pub(crate) cell_writes: usize,
 }
 
@@ -90,7 +91,10 @@ impl BodyIndex {
                 for x in x0..=x1 {
                     for y in y0..=y1 {
                         self.cells.entry((x, y)).or_default().push(node);
-                        self.cell_writes += 1;
+                        #[cfg(test)]
+                        {
+                            self.cell_writes += 1;
+                        }
                     }
                 }
                 false
@@ -117,7 +121,10 @@ impl BodyIndex {
                 for y in y0..=y1 {
                     if let Some(list) = self.cells.get_mut(&(x, y)) {
                         list.retain(|&n| n != node);
-                        self.cell_writes += 1;
+                        #[cfg(test)]
+                        {
+                            self.cell_writes += 1;
+                        }
                         if list.is_empty() {
                             self.cells.remove(&(x, y));
                         }
