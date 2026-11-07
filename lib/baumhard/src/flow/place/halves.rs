@@ -532,8 +532,14 @@ pub(crate) fn height_classes(sizes: impl IntoIterator<Item = Vec2>) -> usize {
 pub(crate) const CLUSTERS_A_STEP: usize = 8;
 
 /// Clusters one glyph step walks in a side arc's model lays
-/// ([`InkLay::modeled`], #309): PROVISIONAL, one, until measured under ASan.
-pub(crate) const MODEL_CLUSTERS_A_STEP: usize = 1;
+/// ([`InkLay::modeled`], #309, ruling B16.2a): at most 6.03 µs a cluster
+/// over the calls of 32 clusters or more (4.28 over those of 256 or
+/// more), so 16 µs ÷ 6.03 µs = 2.65, rounded down to 2. Measured as
+/// [`CLUSTERS_A_STEP`]'s ruling R47.3 asks — each model lay timed by a
+/// temporary instrumentation of the engine, never committed, on the flow
+/// targets' ASan build over their seeds, every committed flow finding and
+/// the heavy seeds, three runs each, at a load average of about 2.
+pub(crate) const MODEL_CLUSTERS_A_STEP: usize = 2;
 
 /// A frame's own setup, past what it counts — its halves' tables, its
 /// partition, its runs cloned — some 1 ms ÷ 16 µs, rounded up.
