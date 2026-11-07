@@ -1775,7 +1775,8 @@ the layers to learn what the document is, and nothing flows back.
   with sizes in points, and a box's minimum size and alignment, over the
   font system's face set), weak references to the key and the shaping
   some unit holds: N units with one key make one shaping and share its
-  `Arc`. The cache keeps nothing alive, neither a shaping nor a key and
+  `Arc`, and hold one key `Arc` (a unit whose key is found takes the
+  entry's), so a share lasts as long as any sharer. The cache keeps nothing alive, neither a shaping nor a key and
   its text, and holds at most about twice as many entries as there are
   live shapings, a dead one two weak pointers. A hit reads no font, so
   it takes no lock.

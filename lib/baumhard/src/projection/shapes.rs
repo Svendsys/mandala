@@ -11,15 +11,24 @@
 //! live unit's takes that unit's shaping, the same `Arc`, and shapes
 //! nothing.
 //!
-//! **What it holds.** Each entry is a weak reference to a unit's key and
-//! one to the shaping it holds, so the cache keeps nothing alive: neither
-//! a shaping nor a key, nor the key's text. The key is the unit's own
-//! (`RunFlow::key`, `BoxFlow::key`, an `Arc`), so an entry copies no text
-//! either. An entry whose key or shaping is gone is dead: a lookup skips
-//! it, and the next sweep drops it, which runs when the entries have
-//! doubled since the last one, so the cache holds at most about twice as
-//! many entries as there are live shapings, plus a floor, and each dead
-//! one is two weak pointers.
+//! **What it holds.** Each entry is a weak reference to a key and one to
+//! its shaping, so the cache keeps nothing alive: neither a shaping nor a
+//! key, nor the key's text. **Every unit that shares a shaping holds the
+//! one key `Arc` too**: a unit whose key is found takes the entry's key in
+//! place of its own (`ShapeCache::run`, `ShapeCache::boxed` hand it back),
+//! so the entry lives as long as any sharer does, however many come and
+//! go, and N units with one key hold one copy of its text. An entry whose
+//! key or shaping is gone is dead: a lookup skips it, and the next sweep
+//! drops it, which runs when the entries have doubled since the last one,
+//! so the cache holds at most about twice as many entries as there are
+//! live shapings, plus a floor, and each dead one is two weak pointers.
+//!
+//! An entry is dead when its key is gone even if its shaping lives on (a
+//! placement may hold a shaping a moment longer than its unit holds the
+//! key): with the key gone there is nothing left to compare a key with,
+//! so such an entry can never be found again, and dropping it is only
+//! freeing two weak pointers sooner. Sharers cannot cause it, since they
+//! all hold the one key.
 //!
 //! **The face set.** A shaping is also a function of the faces installed.
 //! The font system registers them once, at `fonts::init`, before anything
@@ -132,12 +141,13 @@ impl<K, V> Default for Shared<K, V> {
 }
 
 impl<K: KeyHash + PartialEq, V> Shared<K, V> {
-    /// The live shaping of a key equal to `key`, or `shape()`'s, kept.
+    /// The live shaping of a key equal to `key`, with `key` replaced by
+    /// the entry's own; or `shape(key)`'s, kept, `key` the entry's.
     ///
     /// Cost: one hash of the key (O(its text)), and one comparison per
     /// key of that hash; on a miss, `shape`; and now and then a sweep,
     /// O(entries), amortized O(1) a call.
-    fn get_or_shape(&mut self, key: &Arc<K>, shape: impl FnOnce() -> Arc<V>) -> (Arc<V>, bool) {
+    fn get_or_shape(&mut self, key: &mut Arc<K>, shape: impl FnOnce(&K) -> Arc<V>) -> (Arc<V>, bool) {
         let faces = face_set_generation();
         if faces != self.faces {
             *self = Shared {
@@ -149,13 +159,17 @@ impl<K: KeyHash + PartialEq, V> Shared<K, V> {
         let hit = self.entries.get(&hash).and_then(|bucket| {
             bucket.iter().find_map(|(kept, shaped)| {
                 let kept = kept.upgrade()?;
-                (*kept == **key).then(|| shaped.upgrade()).flatten()
+                let shaped = shaped.upgrade()?;
+                (*kept == **key).then_some((kept, shaped))
             })
         });
-        if let Some(shaped) = hit {
+        if let Some((kept, shaped)) = hit {
+            // The sharer holds the entry's key from now on: see the
+            // module docs.
+            *key = kept;
             return (shaped, true);
         }
-        let shaped = shape();
+        let shaped = shape(key);
         let bucket = self.entries.entry(hash).or_default();
         let before = bucket.len();
         bucket.retain(|entry| live(entry) && entry.0.upgrade().is_some_and(|kept| *kept != **key));
@@ -195,8 +209,8 @@ impl ShapeCache {
     /// `shape()`'s.
     pub(crate) fn run(
         &mut self,
-        key: &Arc<RunKey>,
-        shape: impl FnOnce() -> Arc<ShapedRun>,
+        key: &mut Arc<RunKey>,
+        shape: impl FnOnce(&RunKey) -> Arc<ShapedRun>,
     ) -> Arc<ShapedRun> {
         let (shaped, _hit) = self.runs.get_or_shape(key, shape);
         #[cfg(test)]
@@ -209,8 +223,8 @@ impl ShapeCache {
     /// [`Self::run`] for a box key.
     pub(crate) fn boxed(
         &mut self,
-        key: &Arc<BoxKey>,
-        shape: impl FnOnce() -> Arc<ShapedBox>,
+        key: &mut Arc<BoxKey>,
+        shape: impl FnOnce(&BoxKey) -> Arc<ShapedBox>,
     ) -> Arc<ShapedBox> {
         let (shaped, _hit) = self.boxes.get_or_shape(key, shape);
         #[cfg(test)]

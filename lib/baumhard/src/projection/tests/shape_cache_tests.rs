@@ -107,9 +107,9 @@ fn key(text: &str) -> Arc<RunKey> {
 /// assertion, so a failing one does not poison the font lock for every
 /// other font test.
 fn held(text: &str, cache: &mut ShapeCache) -> (Arc<RunKey>, Arc<ShapedRun>) {
-    let key = key(text);
+    let mut key = key(text);
     let mut fonts = fonts();
-    let shaped = cache.run(&key, || {
+    let shaped = cache.run(&mut key, |key| {
         let style = BUILT_IN.section;
         Arc::new(shape_run(
             &[FlowSpan {
@@ -193,13 +193,13 @@ fn test_keys_equal_but_for_the_sign_of_a_zero_share_one_shaping() {
     let mut cache = ShapeCache::default();
     let style = BUILT_IN.section;
     let boxed = |min: glam::Vec2, cache: &mut ShapeCache| {
-        let key = Arc::new(BoxKey {
+        let mut key = Arc::new(BoxKey {
             spans: vec![("zero".to_string(), style)],
             min: Some(min),
             align: Align::Left,
         });
         let mut fonts = fonts();
-        let shaped = cache.boxed(&key, || {
+        let shaped = cache.boxed(&mut key, |key| {
             let span = FlowSpan {
                 text: "zero",
                 style: &style,
@@ -216,4 +216,31 @@ fn test_keys_equal_but_for_the_sign_of_a_zero_share_one_shaping() {
         Arc::ptr_eq(&positive.1, &negative.1),
         "keys equal but for the sign of a zero share one shaping"
     );
+}
+
+#[test]
+fn test_a_share_outlives_the_unit_that_shaped_it() {
+    // Review 5813361973 (shapes.rs:149): two units share a shaping; the one
+    // that shaped it lets its key go; a third unit with the same key still
+    // takes the shaping the second holds, rather than shaping again. Every
+    // sharer holds the one key, so the entry lives as long as any of them.
+    let mut cache = ShapeCache::default();
+    let first = held("dup words", &mut cache);
+    let second = held("dup words", &mut cache);
+    assert!(
+        Arc::ptr_eq(&first.1, &second.1),
+        "precondition: the second unit shares the first's shaping"
+    );
+    assert!(
+        Arc::ptr_eq(&first.0, &second.0),
+        "and holds the first's key, not a key of its own"
+    );
+    drop(first);
+    let hits = cache.hits;
+    let third = held("dup words", &mut cache);
+    assert!(
+        Arc::ptr_eq(&second.1, &third.1),
+        "the shaping the second unit holds is shared with the third once the first lets go"
+    );
+    assert_eq!(cache.hits, hits + 1, "found, not shaped again");
 }

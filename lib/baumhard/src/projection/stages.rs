@@ -158,9 +158,11 @@ fn shaped_run(
             return flow.shaped.clone();
         }
     }
-    let key = Arc::new(key);
-    let shaped = shapes.run(&key, || {
-        memo::run(&key, || Arc::new(shape_run(&flow_spans(&key.spans), 1.0, fonts)))
+    // On a hit the cache hands back the key the sharers hold, and this
+    // unit keeps that one (`projection::shapes`).
+    let mut key = Arc::new(key);
+    let shaped = shapes.run(&mut key, |key| {
+        memo::run(key, || Arc::new(shape_run(&flow_spans(&key.spans), 1.0, fonts)))
     });
     *cache = Some(RunFlow {
         key,
@@ -179,9 +181,9 @@ fn shaped_box(
     if cache.as_ref().is_some_and(|flow| *flow.key == key) {
         return false;
     }
-    let key = Arc::new(key);
-    let shaped = shapes.boxed(&key, || {
-        memo::boxed(&key, || {
+    let mut key = Arc::new(key);
+    let shaped = shapes.boxed(&mut key, |key| {
+        memo::boxed(key, || {
             Arc::new(shape_box(&flow_spans(&key.spans), key.min, key.align, fonts))
         })
     });
