@@ -1367,6 +1367,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         "a_run_the_merge_cannot_reason_about_is_merged_as_published",
         |b| b.iter(do_a_run_the_merge_cannot_reason_about_is_merged_as_published),
     );
+    c.bench_function(
+        "a_fallback_the_merge_cannot_reason_about_is_merged_as_published",
+        |b| b.iter(do_a_fallback_the_merge_cannot_reason_about_is_merged_as_published),
+    );
     c.bench_function("the_early_stop_needs_every_missing_entry_matched", |b| {
         b.iter(do_the_early_stop_needs_every_missing_entry_matched)
     });

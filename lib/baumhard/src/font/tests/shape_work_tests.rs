@@ -504,6 +504,44 @@ pub fn do_a_run_the_merge_cannot_reason_about_is_merged_as_published() {
     }
 }
 
+#[test]
+fn test_a_fallback_the_merge_cannot_reason_about_is_merged_as_published() {
+    do_a_fallback_the_merge_cannot_reason_about_is_merged_as_published();
+}
+
+/// The linear merge reasons from the fallback's cluster starts being
+/// monotone in visual order, which makes the clusters it chooses disjoint
+/// (#304 review 5813361973, shape.rs:656). A fallback listed out of order,
+/// one cluster at bytes 6..9 and then one at 3..9 that covers it, both
+/// over bytes the run is missing, would have the linear merge keep the
+/// first cluster's glyph, where the published merge removes it when the
+/// second is put in. So such a fallback is merged by the published
+/// algorithm, and gives its result.
+pub fn do_a_fallback_the_merge_cannot_reason_about_is_merged_as_published() {
+    use cosmic_text::mandala_test_hooks::fallback_round;
+    let run = vec![glyph(0, 3, 5), glyph(3, 6, 0), glyph(6, 9, 0)];
+    let fb = vec![glyph(6, 9, 8), glyph(3, 9, 7)];
+    assert!(
+        fb[1].start < fb[0].start,
+        "precondition: left to right, the fallback's cluster starts fall"
+    );
+    let merged = |published: bool| {
+        let mut glyphs = run.clone();
+        let mut missing = vec![3, 6];
+        fallback_round(&mut glyphs, &mut missing, fb.clone(), &[], 0, 9, false, published);
+        (fields(&glyphs), missing)
+    };
+    let (published, patched) = (merged(true), merged(false));
+    assert!(
+        published.0.len() == 2 && published.1.is_empty(),
+        "precondition: the published merge leaves the run's first glyph and the covering cluster: {published:?}"
+    );
+    assert_eq!(
+        patched, published,
+        "a fallback out of order: the patched merge differs from the published one"
+    );
+}
+
 /// A font system with no faces at all: every code point is one no face
 /// draws, so the early stop's question turns on its guards alone.
 fn faceless_font_system() -> FontSystem {
@@ -779,6 +817,7 @@ fn test_the_shape_work_bodies_repeat() {
     for _ in 0..20 {
         do_two_font_systems_never_answer_each_others_outlines();
         do_a_run_the_merge_cannot_reason_about_is_merged_as_published();
+        do_a_fallback_the_merge_cannot_reason_about_is_merged_as_published();
         do_the_early_stop_needs_every_missing_entry_matched();
         do_the_early_stop_leaves_a_cluster_of_several_code_points_to_the_faces();
     }
