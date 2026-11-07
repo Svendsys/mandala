@@ -168,11 +168,30 @@ impl RunShape {
 ///
 /// Neutral means "draw the glyph as shaped": a zero offset, no color
 /// (`None`: the glyph's own color) and scale `1.0`.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq)]
 pub struct GlyphOverrides {
     offset: Vec<Vec2>,
     color: Vec<Option<Rgba>>,
     scale: Vec<f32>,
+}
+
+/// Field-wise, so [`clone_from`](Clone::clone_from) writes into the
+/// three vectors it already has (`Vec::clone_from`): overrides copied
+/// over others at least as long allocate nothing.
+impl Clone for GlyphOverrides {
+    fn clone(&self) -> Self {
+        GlyphOverrides {
+            offset: self.offset.clone(),
+            color: self.color.clone(),
+            scale: self.scale.clone(),
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.offset.clone_from(&source.offset);
+        self.color.clone_from(&source.color);
+        self.scale.clone_from(&source.scale);
+    }
 }
 
 impl GlyphOverrides {
@@ -328,8 +347,12 @@ pub enum RunError {
 /// docs](crate::gfx_structs::run).
 ///
 /// Cloning copies the two `Arc`s and the override vectors (if any), and
-/// shares the shaping.
-#[derive(Clone, Debug, PartialEq)]
+/// shares the shaping. [`clone_from`](Clone::clone_from) writes the
+/// override vectors into the ones the run already has, so copying a run
+/// over one with overrides at least as long allocates nothing: what a
+/// consumer that keeps a copy of each run and rewrites it on every change
+/// (the app's layer renderer) relies on.
+#[derive(Debug, PartialEq)]
 pub struct GlyphRunData {
     shaped: RunShape,
     origin: Vec2,
@@ -339,6 +362,28 @@ pub struct GlyphRunData {
     /// The shape's box relative to `origin`: `(top_left, size)`.
     /// Derived from `shaped` when it is set, so moving the run is O(1).
     extent: (Vec2, Vec2),
+}
+
+impl Clone for GlyphRunData {
+    fn clone(&self) -> Self {
+        GlyphRunData {
+            shaped: self.shaped.clone(),
+            origin: self.origin,
+            overrides: self.overrides.clone(),
+            opacity: self.opacity,
+            zoom: self.zoom,
+            extent: self.extent,
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.shaped.clone_from(&source.shaped);
+        self.origin = source.origin;
+        self.overrides.clone_from(&source.overrides);
+        self.opacity = source.opacity;
+        self.zoom = source.zoom;
+        self.extent = source.extent;
+    }
 }
 
 impl GlyphRunData {

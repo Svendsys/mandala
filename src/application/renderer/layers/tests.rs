@@ -25,6 +25,7 @@ use baumhard::document::ids::{Document, NodeIdent};
 use baumhard::document::mutation::compose;
 use baumhard::document::mutation::ops::{DocMutation, DocMutatorTree, NodeOp, SpanOp};
 use baumhard::document::mutation::step::{DocStep, DocWalk};
+use baumhard::document::values::Rgba;
 use baumhard::document::writer::{ChangeSource, EditRequest};
 use baumhard::engine::anchor::Anchors;
 use baumhard::engine::journal::JournalBuilder;
@@ -32,7 +33,7 @@ use baumhard::engine::key::BranchKey;
 use baumhard::engine::mutation::Mutation;
 use baumhard::engine::mutator::Mutator;
 use baumhard::gfx_structs::mutator::GfxMutation;
-use baumhard::gfx_structs::run::{GlyphRunData, RunShape};
+use baumhard::gfx_structs::run::{GlyphRunData, RunOverrideOp, RunShape};
 use baumhard::projection::tests::corpus::{edit, generated, of_kind};
 use baumhard::projection::tests::maps::kids;
 use baumhard::projection::tests::support::Projected;
@@ -749,5 +750,72 @@ fn test_layers_apply_returns_on_an_incomplete_journal_set() {
     assert!(
         log.given_up > 0,
         "precondition: the apply met a row it could not complete: {log:?}"
+    );
+}
+
+/// The addresses of `run`'s three override vectors.
+fn override_buffers(run: &GlyphRunData) -> [usize; 3] {
+    let o = run.overrides();
+    [
+        o.offset().as_ptr() as usize,
+        o.color().as_ptr() as usize,
+        o.scale().as_ptr() as usize,
+    ]
+}
+
+#[test]
+fn test_layers_a_run_restyled_again_keeps_its_override_buffers() {
+    // A per-glyph overlay over one section run, twice: the first gives
+    // the run overrides, and the state takes vectors of its own; the
+    // second rewrites them at the same length, and the state's write is
+    // into those vectors, not into new ones — an overlay or an animation
+    // that touches a run every frame allocates nothing for it.
+    let mut p = demo("ecclesiastes");
+    let mut renderer = loaded(&p.layers);
+    let tree = &p.layers.sections;
+    let run = tree
+        .root()
+        .descendants(tree.arena())
+        .find(|&id| {
+            tree.get(id)
+                .and_then(|node| node.get().glyph_run())
+                .is_some_and(|run| run.shaped().glyph_count() >= 2 && run.overrides().is_empty())
+        })
+        .expect("precondition: a section run of two glyphs or more, with no overrides");
+    let mut buffers = Vec::new();
+    for op in [
+        RunOverrideOp::Offset {
+            range: 0..1,
+            value: Vec2::new(0.0, -3.0),
+        },
+        RunOverrideOp::Color {
+            range: 1..2,
+            value: Some(Rgba::new(200, 40, 40, 255)),
+        },
+    ] {
+        let mut overlay = JournalBuilder::new();
+        p.layers
+            .sections
+            .update_journaled(run, &mut overlay, |element| {
+                GfxMutation::RunOverrides(op.clone()).apply_to(element, &());
+            })
+            .expect("the run is in the layer");
+        let overlay = overlay.close(&p.layers.sections);
+        renderer.apply(&p.layers, [(Layer::Sections, &overlay)]);
+        renderer.matches(&p.layers).unwrap();
+        let kept = renderer.state(Layer::Sections, run).expect("a run").run();
+        assert!(!kept.overrides().is_empty(), "precondition: {op:?} set overrides");
+        buffers.push(override_buffers(kept));
+        overlay.discard(&mut p.layers.sections);
+    }
+    assert_eq!(
+        renderer.log().restyled,
+        1,
+        "precondition: the second overlay restyled the run: {:?}",
+        renderer.log()
+    );
+    assert_eq!(
+        buffers[1], buffers[0],
+        "a second write of overrides as long reallocated the state's buffers"
     );
 }

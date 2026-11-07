@@ -2754,6 +2754,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("run_override_ops_skip_filler_glyphs", |b| {
         b.iter(do_run_override_ops_skip_filler_glyphs)
     });
+    c.bench_function("run_clone_from_reuses_the_override_buffers", |b| {
+        b.iter(do_run_clone_from_reuses_the_override_buffers)
+    });
     c.bench_function("run_element_answers_position_and_flags_like_any_element", |b| {
         b.iter(do_run_element_answers_position_and_flags_like_any_element)
     });

@@ -362,7 +362,9 @@ impl LayerRenderer {
                 (Some(state), Some(run)) => {
                     #[cfg(test)]
                     log.classify(&state.run, run);
-                    state.run = run.clone();
+                    // Into the buffers the state already has: a run
+                    // whose overrides change keeps its vectors.
+                    state.run.clone_from(run);
                     state.stamp = next_stamp(&mut self.stamp);
                 }
                 (state, run) => *state = run.map(|run| new_state(run, &mut self.stamp)),

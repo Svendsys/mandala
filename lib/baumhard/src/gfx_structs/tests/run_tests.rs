@@ -636,6 +636,88 @@ pub fn do_run_override_ops_skip_filler_glyphs() {
     assert!(element.same_state(&untouched), "the run is exactly as it was");
 }
 
+// ── clone_from ────────────────────────────────────────────────────
+
+#[test]
+fn test_run_clone_from_reuses_the_override_buffers() {
+    do_run_clone_from_reuses_the_override_buffers();
+}
+
+/// `clone_from` copies a run over another field by field: the result
+/// equals the source, and the override vectors are written into the
+/// target's own, so a run copied over one with overrides as long keeps
+/// its buffers — no allocation, which a fresh clone assigned in its place
+/// cannot avoid (it allocates while the old vectors still live). A
+/// source without overrides empties them, and the capacity stays.
+pub fn do_run_clone_from_reuses_the_override_buffers() {
+    let run = |origin: Vec2, op: RunOverrideOp| {
+        let mut run = GlyphRunData::new(four_glyph_shape(), origin, GlyphOverrides::new(4), 1.0, None)
+            .expect("one override per placed glyph");
+        run.apply_override(&op);
+        run
+    };
+    let buffers = |run: &GlyphRunData| {
+        let o = run.overrides();
+        (
+            o.offset().as_ptr() as usize,
+            o.color().as_ptr() as usize,
+            o.scale().as_ptr() as usize,
+        )
+    };
+    let mut kept = run(
+        Vec2::ZERO,
+        RunOverrideOp::Scale {
+            range: 0..2,
+            value: 2.0,
+        },
+    );
+    let source = run(
+        Vec2::new(5.0, 7.0),
+        RunOverrideOp::Color {
+            range: 1..3,
+            value: Some(RED),
+        },
+    );
+    assert!(!kept.same_state(&source), "precondition: the two runs differ");
+    let before = buffers(&kept);
+    kept.clone_from(&source);
+    assert!(kept.same_state(&source), "clone_from copies every field");
+    assert_eq!(kept, source, "and the derived ones");
+    assert_eq!(
+        buffers(&kept),
+        before,
+        "clone_from over overrides as long reallocated a buffer"
+    );
+
+    // The same through the overrides alone.
+    let mut overrides = kept.overrides().clone();
+    let neutral = GlyphOverrides::new(4);
+    assert_ne!(overrides, neutral, "precondition: the overrides are set");
+    let before = (
+        overrides.offset().as_ptr(),
+        overrides.color().as_ptr(),
+        overrides.scale().as_ptr(),
+    );
+    overrides.clone_from(&neutral);
+    assert_eq!(overrides, neutral, "clone_from copies the overrides");
+    assert_eq!(
+        (
+            overrides.offset().as_ptr(),
+            overrides.color().as_ptr(),
+            overrides.scale().as_ptr()
+        ),
+        before,
+        "GlyphOverrides::clone_from reallocated a buffer"
+    );
+
+    // No overrides: the target's are emptied.
+    let plain = GlyphRunData::new(four_glyph_shape(), Vec2::ZERO, GlyphOverrides::none(), 1.0, None)
+        .expect("no overrides");
+    kept.clone_from(&plain);
+    assert!(kept.same_state(&plain), "clone_from of a run with no overrides");
+    assert!(kept.overrides().is_empty(), "the overrides are emptied");
+}
+
 // ── element metadata ──────────────────────────────────────────────
 
 #[test]
