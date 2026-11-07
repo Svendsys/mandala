@@ -51,9 +51,12 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::{
     Align, Direction, Edge, FitMode, FontSize, LineSpan, Percent, Rgba, Shape, StartPoint, Weight,
 };
-use crate::flow::place::halves::{frame_budget, frame_work_steps, touch_looks};
+use crate::flow::place::halves::{frame_budget, frame_work_steps, touch_looks, NEARER};
 use crate::flow::place::ring::ring_work_steps;
-use crate::flow::place::{frame_halves, place_on_closed_capped, size_factor, Trace, MIN_TABLE_SPACING};
+use crate::flow::place::{
+    frame_halves, place_on_closed_capped, setup_table_samples, size_factor, Trace, INK_TOLERANCE,
+    MIN_TABLE_SPACING,
+};
 use crate::flow::{
     offset, outline, place_at_point, place_on_open, shape_box, shape_run, Curve, FlowSpan, Outline,
     PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
@@ -96,17 +99,27 @@ pub const MAX_FRAME_GLYPHS: usize = 150;
 /// copy. Its copy is a frame's text, cut to fit as a frame's
 /// ([`framed`]), so one copy always fits the cap.
 /// `test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout`
-/// holds it to that: the most, and no more.
+/// holds it to that: the most, and no more. That is for a path of no
+/// table, a rounded rectangle's or a circle's; a ring's table is counted
+/// in its setup (ruling B16.3a), and `ring_cap` lowers the cap by it.
 pub const MAX_RING_GLYPHS: usize = 154;
 
-/// The cap a harness lays a `Repeat` ring of `copy` glyphs a copy with:
-/// [`MAX_RING_GLYPHS`] held to the timeout (`bounded`); replaying a
-/// finding, as many glyphs as one copy at least, as a finding's frame
-/// text is laid as found ([`FOUND_FRAME_GLYPHS`]), so that its ring is
-/// laid once whole.
-pub(crate) fn ring_cap(copy: usize, bounded: bool) -> usize {
+/// The cap a harness lays a `Repeat` ring of `copy` glyphs a copy with,
+/// its path's table of `tables` samples (`setup_table_samples`): held to
+/// the timeout (`bounded`), the most glyphs, [`MAX_RING_GLYPHS`] at most,
+/// whose ring of a copy of [`MAX_FRAME_GLYPHS`] glyphs fits
+/// [`INPUT_STEPS`] (`ring_work_steps`) — no fewer than the glyphs of the
+/// longest copy a frame's cut leaves beside a table of as many samples
+/// ([`fits_in_time`]), so one copy always fits the cap still
+/// (`test_a_rings_cap_holds_the_copy_its_tables_leave`); replaying a finding, as many glyphs as one copy at least, as a
+/// finding's frame text is laid as found ([`FOUND_FRAME_GLYPHS`]), so
+/// that its ring is laid once whole.
+pub(crate) fn ring_cap(copy: usize, bounded: bool, tables: usize) -> usize {
     if bounded {
-        MAX_RING_GLYPHS
+        (0..=MAX_RING_GLYPHS)
+            .rev()
+            .find(|&cap| ring_work_steps(cap, MAX_FRAME_GLYPHS, tables) <= INPUT_STEPS)
+            .unwrap_or(0)
     } else {
         MAX_RING_GLYPHS.max(copy)
     }
@@ -185,14 +198,15 @@ pub const fn frame_steps(frames: usize) -> usize {
     INPUT_STEPS / frames
 }
 
-/// Whether a frame's text shaped as `run`, its sides as `ornament`, is
-/// one the harnesses lay (rulings R45.1, R46.3): at most
+/// Whether a frame's text shaped as `run`, its sides as `ornament`, its
+/// paths' tables of `tables` samples (`setup_table_samples`, ruling
+/// B16.3a), is one the harnesses lay (rulings R45.1, R46.3): at most
 /// [`MAX_FRAME_GLYPHS`] glyphs, and laid to the whole of its budget and
 /// past it (`frame_work_steps`, a `Fit` frame's as the most) within its
 /// share of [`INPUT_STEPS`] among `frames` frames.
-pub fn fits_in_time(run: &ShapedRun, ornament: Option<&ShapedRun>, frames: usize) -> bool {
+pub fn fits_in_time(run: &ShapedRun, ornament: Option<&ShapedRun>, frames: usize, tables: usize) -> bool {
     run.glyphs.len() <= MAX_FRAME_GLYPHS
-        && frame_work_steps(run, ornament, true) <= frame_steps(frames.max(1))
+        && frame_work_steps(run, ornament, true, tables) <= frame_steps(frames.max(1))
 }
 
 /// The work an input's frames may take, counted as they are laid
@@ -206,10 +220,12 @@ pub(crate) struct InputWork {
 
 impl InputWork {
     /// Count a frame of `run` (sides shaped as `ornament`, a `Fit` frame
-    /// `sized`), laid with `trace`: the most it may take,
-    /// `frame_work_steps`. The engine scales a frame's budget by its
-    /// text's glyphs once cut, never more than the run has, spends no
-    /// more than its budget and its overshoot, and no touch check of it
+    /// `sized`, its paths' tables of `tables` samples), laid with `trace`:
+    /// the most it may take, `frame_work_steps`. The engine counts the
+    /// tables its setup builds, as many samples as `setup_table_samples`
+    /// said before it was laid (ruling B16.3a), scales a frame's budget
+    /// by its text's glyphs once cut, never more than the run has, spends
+    /// no more than its budget and its overshoot, and no touch check of it
     /// looks at more than `touch_looks` pairs a box of the classes of
     /// height it holds, nor a side arc's check holds more classes than its
     /// arc held back for — the two that overshoot rests on (rulings R48.2,
@@ -219,11 +235,18 @@ impl InputWork {
         run: &ShapedRun,
         ornament: Option<&ShapedRun>,
         sized: bool,
+        tables: usize,
         trace: &Trace,
         what: &str,
     ) -> Result<(), String> {
         let budget = frame_budget(run.glyphs.len());
-        let most = frame_work_steps(run, ornament, sized);
+        let most = frame_work_steps(run, ornament, sized, tables);
+        if trace.tables != tables {
+            return Err(format!(
+                "{what}: a frame's setup counted tables of {} samples, not the {tables} its outline gives (ruling B16.3a)",
+                trace.tables
+            ));
+        }
         if !trace.looks.within() {
             let (looks, boxes, classes) = trace.looks.worst;
             return Err(format!(
@@ -272,13 +295,20 @@ impl InputWork {
         &mut self,
         run: &ShapedRun,
         cap: usize,
+        tables: usize,
         placed: &PlacedRun,
         trace: &Trace,
         what: &str,
     ) -> Result<(), String> {
         let copy = run.glyphs.len();
         let budget = frame_budget(cap);
-        let most = ring_work_steps(cap, copy);
+        let most = ring_work_steps(cap, copy, tables);
+        if trace.tables != tables {
+            return Err(format!(
+                "{what}: a ring's setup counted a table of {} samples, not the {tables} its outline gives (ruling B16.3a)",
+                trace.tables
+            ));
+        }
         if trace.glyphs > cap || trace.budget > budget {
             return Err(format!(
                 "{what}: a ring budgeted {} glyph steps for {} glyphs, past the {budget} its cap of {cap} gives",
@@ -519,19 +549,42 @@ fn frames_round_a_rectangle(
     fs: &mut FontSystemLease,
 ) -> Result<(), String> {
     let rect = Rect::new(Vec2::ZERO, Vec2::new(120.0, 40.0));
+    let path = outline(
+        rect,
+        Shape::Rectangle {
+            radius: Percent::new(50),
+        },
+    );
     let start = StartPoint {
         edge: Edge::Top,
         at: 0.0,
     };
+    // Held to the timeout, the frames drawn, a `Repeat` ring among them
+    // (#310); replaying a finding, a ring and every frame, as found.
+    let laid: Vec<&FitMode> = if bounded {
+        fits.iter().collect()
+    } else {
+        std::iter::once(&FitMode::Repeat).chain(fits).collect()
+    };
+    // The tables its frames' setups build, the most of any it lays
+    // (ruling B16.3a): none, round a rounded rectangle, so they are not
+    // held to them here — that is the structured target's, whose
+    // outlines are ellipses too.
+    let tables = |run: &ShapedRun| {
+        laid.iter()
+            .map(|fit| setup_table_samples(run, &path, fit, style))
+            .max()
+            .unwrap_or(0)
+    };
     // Its sides, then its text, held to what its frames lay inside the
     // timeout (rulings R45.1, R50.3).
     let (layout, ornament) = if bounded {
-        sides_in_time(layout, style, 1.0, fits.len(), fs)
+        sides_in_time(layout, style, 1.0, fits.len(), &tables, fs)
     } else {
         (layout.clone(), ornament_run(layout, style, 1.0, fs))
     };
     let layout = &layout;
-    let fits_in_time = |run: &ShapedRun| fits_in_time(run, ornament.as_ref(), fits.len());
+    let fits_in_time = |run: &ShapedRun| fits_in_time(run, ornament.as_ref(), fits.len(), tables(run));
     let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
     let framed = framed(
         &[text.to_string()],
@@ -547,23 +600,11 @@ fn frames_round_a_rectangle(
     }];
     let frame_run = shape_run(&frame_spans, 1.0, fs);
     let mut work = InputWork::default();
-    // Held to the timeout, the frames drawn, a `Repeat` ring among them
-    // (#310); replaying a finding, a ring and every frame, as found.
-    let laid: Vec<&FitMode> = if bounded {
-        fits.iter().collect()
-    } else {
-        std::iter::once(&FitMode::Repeat).chain(fits).collect()
-    };
-    // A ring's cap (rulings B17.2a, B17.2b): what fits the timeout, or
-    // replaying a finding, a copy at least.
-    let cap = ring_cap(frame_run.glyphs.len(), bounded);
     for fit in laid {
-        let path = outline(
-            rect,
-            Shape::Rectangle {
-                radius: Percent::new(50),
-            },
-        );
+        let tables = setup_table_samples(&frame_run, &path, fit, style);
+        // A ring's cap (rulings B17.2a, B17.2b): what fits the timeout, or
+        // replaying a finding, a copy at least.
+        let cap = ring_cap(frame_run.glyphs.len(), bounded, tables);
         let mut trace = Trace::default();
         let placed = place_on_closed_capped(
             &frame_run,
@@ -579,10 +620,17 @@ fn frames_round_a_rectangle(
             Some(&mut trace),
         );
         if matches!(fit, FitMode::Repeat) {
-            work.ring(&frame_run, cap, &placed.1, &trace, "around a rectangle")?;
+            work.ring(&frame_run, cap, tables, &placed.1, &trace, "around a rectangle")?;
         } else {
             let sized = matches!(fit, FitMode::Fit { .. });
-            work.frame(&frame_run, ornament.as_ref(), sized, &trace, "around a rectangle")?;
+            work.frame(
+                &frame_run,
+                ornament.as_ref(),
+                sized,
+                tables,
+                &trace,
+                "around a rectangle",
+            )?;
         }
         // A line cut so that no two inks touch, and reported so, is owed
         // no longer (ruling R38.1); a frame its sides leave unheld is
@@ -616,7 +664,198 @@ pub fn check_flow_structured_as_found(bytes: &[u8]) -> Result<(), String> {
 
 /// [`check_flow_structured`] for choices from any source.
 pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
-    check_generated(choices, true, &faces())
+    check_generated(choices, true, &faces())?;
+    check_pair_model(choices)
+}
+
+/// The frame's closed-form layer held to its oracles (#309, ruling
+/// B16.1b): the tangent line's root to the iterative rule's bisection of
+/// it ([`check_line_root`]); and a letter after two inks on an outline the
+/// choices draw — a sharp or rounded rectangle, an ellipse, at normal
+/// scale, the band curve on it, in it or off it — at a gap they draw,
+/// nothing one time in eight, to the path's own gap function (the seam's
+/// `PairSeam::curve`: the letter set on the path at a center, its gap to
+/// the ink read back) and to bounds about what is owed taken from this
+/// property's own scale (review 5810838863). Where the ink before it lies
+/// on one form the model reads, a side, an arc or a sharp corner's sweep,
+/// the model's root sets the letter at what is owed (ruling B16.2c), read
+/// back from the path, to within the float error of positions some
+/// thousands of points out; where nothing is owed, touching to that error
+/// or a few of it past. And it is the first root: set past the ink, with
+/// no sample of the band curve before it already past that window.
+///
+/// The letter is not held to the iterative rule's answer (review
+/// 5811563882): the center `pair` sets it at from its straight path's warm
+/// start, the first probe inside its window. That answer cannot be the
+/// oracle:
+/// - Its window, from `NEARER` short of what is owed to `INK_TOLERANCE`
+///   past, holds a stretch of centers, not one. Where the gap rises slowly
+///   with the center, two right answers lie further apart than the
+///   window: on a 40 × 40 rounded rectangle's side at seed 19466 the gap
+///   rises 0.19 a unit of center, and the model, at 60.17368 (gap
+///   7.9679947, owed 7.968), and the rule, at 60.178894 (gap 7.968998),
+///   are 5.2e-3 apart.
+/// - It need not take the first root. Round a 40 × 40 circle at seed
+///   90637 the model sets the letter at 28.46 (gap 2.2079992, owed
+///   2.208), the first crossing, and the rule at 36.72 (gap 2.2077866),
+///   the third: between them the gap falls to 1.9965, 0.21 below what is
+///   owed, where a letter would stand nearer its ink than it is owed.
+///   Held to the rule there, the model would be held to the wrong root.
+///
+/// The rule's answer is read only to count the holds on a side, where its
+/// gap lies in its own window too: the precondition of the sweep over this
+/// (`test_the_pair_model_sets_the_first_root_at_what_is_owed`).
+///
+/// The first root is held at the curve's samples, 63 evenly between the
+/// last ink and the further of the two centers: a crossing before the
+/// model's narrower than their spacing, a 64th of that span — some 0.3 pt
+/// on a 20 pt span — can lie between two samples unseen.
+pub fn check_pair_model(choices: &mut Choices<'_>) -> Result<(), String> {
+    check_line_root(choices)?;
+    pair_model_held(choices).map(|_| ())
+}
+
+/// The tangent line's root in closed form held to the iterative rule's
+/// bisection of it as its oracle (#309, ruling B16.1b; `line_root`,
+/// `along`): two inks some way apart, their half sizes summing to a reach
+/// the choices draw, one stepped along a way they draw until the two are
+/// owed apart — on where they are nearer, back where they are further.
+/// The gap along a line is convex in the step, so each way has one root:
+/// where the bisection brackets one, the closed form finds it, to the
+/// bracket's width; and where only the closed form does, the boxes are
+/// owed apart there.
+pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
+    use crate::flow::place::halves::line_root_seam;
+    let unit = |choices: &mut Choices<'_>| choices.below(1001) as f32 / 1000.0;
+    let delta = Vec2::new(unit(choices) - 0.5, unit(choices) - 0.5) * 40.0;
+    let angle = unit(choices) * std::f32::consts::TAU;
+    let dir = Vec2::new(angle.cos(), angle.sin()) * (0.25 + 2.0 * unit(choices));
+    let reach = Vec2::new(unit(choices), unit(choices)) * 12.0;
+    let owed = if choices.below(8) == 0 {
+        0.0
+    } else {
+        unit(choices) * 12.0
+    };
+    let (closed, bisected) = line_root_seam(delta, dir, reach, owed);
+    let what = format!("inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}");
+    let gap = |d: f32| ((delta + dir * d).abs() - reach).max(Vec2::ZERO).length();
+    // The bisection's last bracket, and the floats of the step and the gap.
+    let width = (bisected.abs() + owed + reach.max_element()).max(INK_TOLERANCE) * 1e-5;
+    match (closed.is_finite(), bisected.is_finite()) {
+        (true, true) if (closed - bisected).abs() <= width => Ok(()),
+        (false, true) => Err(format!(
+            "{what}: the bisection steps {bisected}, the closed form finds none"
+        )),
+        (true, false) if owed > 0.0 && (gap(closed) - owed).abs() > 1e-4 * (owed + 1.0) => Err(format!(
+            "{what}: the closed form steps {closed}, where the gap is {}",
+            gap(closed)
+        )),
+        (true, true) => Err(format!(
+            "{what}: the closed form steps {closed}, the bisection {bisected}"
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// [`check_pair_model`], and which of its holds it reached: the model's
+/// window and first root, and those on a side, where the rule's gap is in
+/// its own window too (read for that count alone).
+pub(crate) fn pair_model_held(choices: &mut Choices<'_>) -> Result<[bool; 2], String> {
+    use crate::flow::place::halves::pair_seam;
+    let sizes = [40.0_f32, 120.0, 600.0, 2_000.0];
+    let (w, h) = (sizes[choices.below(4) as usize], sizes[choices.below(4) as usize]);
+    let rect = crate::flow::Rect::new(Vec2::ZERO, Vec2::new(w, h));
+    let shape = match choices.below(3) {
+        0 => Shape::Ellipse,
+        k => Shape::Rectangle {
+            radius: crate::document::values::Percent::new(if k == 1 { 0 } else { 50 }),
+        },
+    };
+    let outline = crate::flow::outline(rect, shape);
+    let unit = |choices: &mut Choices<'_>| choices.below(1001) as f32 / 1000.0;
+    let offset = (unit(choices) - 0.3) * 0.2 * w.min(h);
+    let k = choices.below(2) as usize;
+    let length = 2.0 * (w + h);
+    let earlier = unit(choices) * 0.4 * length;
+    let last = earlier + 0.5 + unit(choices) * 20.0;
+    let size = |choices: &mut Choices<'_>| Vec2::new(0.5 + unit(choices) * 8.0, 0.5 + unit(choices) * 10.0);
+    let (before, half) = (size(choices), size(choices));
+    let rise = (unit(choices) - 0.5) * 8.0;
+    // Nothing owed one time in eight, as `check_line_root` draws it: a
+    // letter owed nothing is its own case (review 5810838863), which
+    // `unit` alone draws one time in 1,001.
+    let owed = if choices.below(8) == 0 {
+        0.0
+    } else {
+        unit(choices) * 12.0
+    };
+    let found = pair_seam(&outline, k, offset, (earlier, last), (before, half), rise, owed);
+    let what = format!(
+        "{w} × {h} {shape:?} half {k} offset {offset}: inks at {earlier} and {last} ({before}), a letter {half} rising {rise}, owed {owed}"
+    );
+    let window = |gap: f32| gap > 0.0 && gap >= owed - NEARER && gap <= owed + INK_TOLERANCE;
+    // A gap measured from inks set some thousands of points out carries the
+    // float error of their positions: a few units of the outline's last
+    // place, past the rule's own window.
+    let resolution = 4.0 * f32::EPSILON * (w.max(h) + last);
+    // The model's window, from this property's own scale, not from what
+    // the model aims at (review 5810838863; TEST_CONVENTIONS §T13.6). The
+    // model measures gaps to 4ε of its own scale — the last ink's
+    // coordinates, the reach and what is owed: at most 1.14 × max(w, h) + 27
+    // over these ranges, against this one's max(w, h) + 0.5 at least, so at
+    // most 1.8 of this resolution, worst at 40 — and accepts a gap within
+    // that of its aim; the gap read back from the path adds as much again.
+    // So where something is owed, within four of what is owed; where
+    // nothing is, it aims at its own resolution's worth past touching, and
+    // the gap lies from two short of touching (the seam's gaps are signed:
+    // a letter set into the ink reads how far) to six past it. Over 300,000
+    // seeds: from 1.01 short of what is owed to 1.02 past it, and from 0.13
+    // short of touching to 1.55 past.
+    let (low, top) = if owed > 0.0 {
+        (owed - 4.0 * resolution, owed + 4.0 * resolution)
+    } else {
+        (-2.0 * resolution, 6.0 * resolution)
+    };
+    let aimed = |gap: f32| gap >= low && gap <= top;
+    let mut held = [false; 2];
+    if let (true, Some((at, gap))) = (found.exact, found.model) {
+        held[0] = true;
+        if !found.told {
+            return Err(format!(
+                "{what}: the model sets it at {at}, its gap {gap}, where its forms tell no gap from none"
+            ));
+        }
+        if !aimed(gap) {
+            return Err(format!(
+                "{what}: the model sets it at {at}, its gap {gap}, outside [{low}, {top}]"
+            ));
+        }
+        // The first root (review 5810838863): set past the ink, and before
+        // its center the curve holds no letter already past the model's
+        // window, where an earlier root would lie — a root past one with the
+        // same gap, a step or a form's hop over the first crossing, does.
+        if at.partial_cmp(&last) != Some(std::cmp::Ordering::Greater) {
+            return Err(format!(
+                "{what}: the model sets it at {at}, not past the ink at {last}"
+            ));
+        }
+        if let Some((c, g)) = found.curve.iter().find(|&&(c, g)| c < at && g > top) {
+            return Err(format!(
+                "{what}: the model sets it at {at} (gap {gap}), past a root: at {c} the gap is {g} already"
+            ));
+        }
+        // A side, away from any corner, is where the gap along the band
+        // curve is convex in the center — the boxes' gap along a line — so
+        // it has one root on from the ink, which the first root's check
+        // holds: no comparison of the two centers adds to it (on a 40 × 40
+        // side the gap can rise at 0.19 a unit of center, so two gaps each
+        // in its window lie further apart than the windows; seed 19466 with
+        // nothing owed one time in eight). Counted where the rule's gap is
+        // in its own window there too.
+        let (_, its) = found.iterative;
+        held[1] = found.side && window(its);
+    }
+    Ok(held)
 }
 
 /// Every property of the flow `bytes` choose, its spans' faces drawn
@@ -767,14 +1006,18 @@ fn check_generated_pinning(
                         // its frame lays inside the timeout (rulings R45.1,
                         // R46.3, R50.3) — or, replaying a finding, its text
                         // to what a frame laid when it was found.
+                        // Its paths' tables, counted in its setup (ruling
+                        // B16.3a), for the text it is laid with.
+                        let tables = |run: &ShapedRun| setup_table_samples(run, &path, &fit, &flow);
                         let (layout, ornament) = if bounded {
-                            sides_in_time(layout, &flow, scale, STRUCTURED_FRAMES, &mut fs)
+                            sides_in_time(layout, &flow, scale, STRUCTURED_FRAMES, &tables, &mut fs)
                         } else {
                             (layout.clone(), ornament_run(layout, &flow, scale, &mut fs))
                         };
                         let layout = &layout;
-                        let fits_in_time =
-                            |run: &ShapedRun| fits_in_time(run, ornament.as_ref(), STRUCTURED_FRAMES);
+                        let fits_in_time = |run: &ShapedRun| {
+                            fits_in_time(run, ornament.as_ref(), STRUCTURED_FRAMES, tables(run))
+                        };
                         let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
                         let framed = framed(
                             frame_texts,
@@ -799,7 +1042,8 @@ fn check_generated_pinning(
                         };
                         let mut trace = Trace::default();
                         // A ring's cap (rulings B17.2a, B17.2b).
-                        let cap = ring_cap(run.glyphs.len(), bounded);
+                        let laid_tables = tables(&run);
+                        let cap = ring_cap(run.glyphs.len(), bounded, laid_tables);
                         let placed = place_on_closed_capped(
                             &run,
                             &path,
@@ -823,9 +1067,16 @@ fn check_generated_pinning(
                         let mut work = InputWork::default();
                         let sized = matches!(fit, FitMode::Fit { .. });
                         let counted = if matches!(fit, FitMode::Repeat) {
-                            work.ring(&run, cap, &placed.1, &trace, "around an outline")
+                            work.ring(&run, cap, laid_tables, &placed.1, &trace, "around an outline")
                         } else {
-                            work.frame(&run, ornament.as_ref(), sized, &trace, "around an outline")
+                            work.frame(
+                                &run,
+                                ornament.as_ref(),
+                                sized,
+                                laid_tables,
+                                &trace,
+                                "around an outline",
+                            )
                         };
                         let checked = counted
                             .and_then(|()| {
@@ -1018,6 +1269,7 @@ pub fn sides_in_time(
     style: &ResolvedText,
     scale: f32,
     frames: usize,
+    tables: &dyn Fn(&ShapedRun) -> usize,
     fs: &mut FontSystemLease,
 ) -> (RingLayout, Option<ShapedRun>) {
     let empty = shape_run(
@@ -1035,7 +1287,7 @@ pub fn sides_in_time(
         let Some(shaped) = &ornament else {
             return (layout, None);
         };
-        if fits_in_time(&empty, Some(shaped), frames) {
+        if fits_in_time(&empty, Some(shaped), frames, tables(&empty)) {
             return (layout, ornament);
         }
         let cut = layout.sides.as_ref().and_then(|(text, color)| {

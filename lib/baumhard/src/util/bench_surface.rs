@@ -455,6 +455,26 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "flow/tests/halves_tests.rs",
+            "test_flow_halves_the_secondary_rule_brings_short_lines_home_and_moves_nothing_else",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_line_brought_home_makes_no_touch_its_lines_did_not",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_frames_secondary_rule_keeps_only_what_holds_what_it_held",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_frame_that_touches_keeps_no_line_brought_home_to_a_new_touch",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
             "test_flow_halves_a_box_with_no_ink_touches_nothing",
             CannotCompileIntoTheLibrary,
         ),
@@ -506,6 +526,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         (
             "flow/tests/halves_tests.rs",
             "test_flow_halves_a_long_side_ornament_is_filled_in_few_lays",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/halves_tests.rs",
+            "test_flow_halves_a_side_arc_is_filled_from_its_model_lays",
             CannotCompileIntoTheLibrary,
         ),
         (

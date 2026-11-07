@@ -186,7 +186,7 @@ pub(crate) const INK_TOLERANCE: f32 = 1e-3;
 const MAX_SHRINKS: usize = 8;
 
 /// The rounds of Newton's method [`PathWalk::level_len`] takes.
-const LEVEL_ROUNDS: usize = 4;
+pub(crate) const LEVEL_ROUNDS: usize = 4;
 
 /// The most glyphs one placement — one path's flow — places (ruling R6,
 /// reading 9; ruling R41: 65,536, chosen by the owner). Text, repeat
@@ -609,6 +609,12 @@ pub(crate) struct Trace {
     /// because its outline is too thin to hold its two lines apart
     /// (ruling R38.1): never overlap wins over never cut.
     pub(crate) cut_apart: Vec<usize>,
+    /// For a text frame, its lines that end short of their part's end by
+    /// more than their tolerance even by their secondary rule
+    /// (`halves::Layout::reach_its_end`, #309): each line's half and how
+    /// far short, by arc length. A line its half cannot hold, pressed, is
+    /// [`Unheld::pressed`]'s, not this.
+    pub(crate) short: Vec<(usize, f32)>,
     /// For a text frame, the clearance each half's line keeps at each
     /// junction, `[half][junction]`, as its last clearance search left
     /// it: never `NaN`.
@@ -616,6 +622,10 @@ pub(crate) struct Trace {
     /// For a text frame, the glyph steps its tracking took in all, what
     /// its budget bounds (`halves::frame_budget`).
     pub(crate) spent: usize,
+    /// For a text frame or a `Repeat` ring, the samples its paths' tables
+    /// were built with, counted in `spent` (ruling B16.3a): what
+    /// [`setup_table_samples`] says they are.
+    pub(crate) tables: usize,
     /// For a text frame, its budget, and the glyphs of its text it was
     /// scaled by (ruling R44.2).
     pub(crate) budget: usize,
@@ -732,6 +742,11 @@ thread_local! {
     /// [`StepMemo`] not counted.
     #[cfg(test)]
     pub(crate) static STEPS_TAKEN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test switch (#309, review 5810838863): R27's fit walks every cluster
+    /// of a line, past its span's end too — what a test lays a frame with
+    /// to hold the stop there to the walk it cuts short.
+    #[cfg(test)]
+    pub(crate) static NO_FIT_STOP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Test counter (#294): the glyphs [`place`] has placed on this
     /// thread, what the work above is weighed against.
     #[cfg(test)]
@@ -775,6 +790,8 @@ pub(crate) struct LastRing {
     pub(crate) placed: usize,
     pub(crate) spent: usize,
     pub(crate) budget: usize,
+    /// The samples its path's table was built with (ruling B16.3a).
+    pub(crate) tables: usize,
     pub(crate) loss: Option<RingLoss>,
     /// What was held back for phase 2 when it began, and whether the ring
     /// had closed then (`RingWork::held_again`).
@@ -957,6 +974,23 @@ impl PathWalk<'_> {
             memo.put(s, w, h, step);
         }
         step
+    }
+
+    /// How long the step a `w × h` cluster takes from `s` is: its
+    /// [`step`](Self::step)'s length, for a caller that reads no more of
+    /// it. On a level walk that is [`level_len`](Self::level_len) alone,
+    /// without the chord the step's direction is read from — two path
+    /// lookups a step that R27's measures would only discard (#309).
+    ///
+    /// Cost: [`LEVEL_ROUNDS`] `+ 1` path lookups on a level walk;
+    /// [`step`](Self::step)'s on any other.
+    fn step_len(&self, s: f32, w: f32, h: f32) -> f32 {
+        if self.level {
+            #[cfg(test)]
+            STEPS_TAKEN.with(|count| count.set(count.get() + 1));
+            return self.level_len(s, w);
+        }
+        self.step(s, w, h).0
     }
 
     /// [`step`](Self::step), taken.
@@ -1231,7 +1265,8 @@ impl PathWalk<'_> {
     /// held at no less than a tenth so a step run past the span stays
     /// bounded. Never negative.
     ///
-    /// Cost: [`LEVEL_ROUNDS`] path lookups.
+    /// Cost: [`LEVEL_ROUNDS`] `+ 1` path lookups at most: fewer where a
+    /// round leaves the length where it was, which ends the rounds.
     fn level_len(&self, s: f32, d: f32) -> f32 {
         if d.is_nan() || d <= 0.0 {
             return 0.0;
@@ -1241,7 +1276,13 @@ impl PathWalk<'_> {
         for _ in 0..LEVEL_ROUNDS {
             let (at, tangent) = self.path.at(s + len);
             let miss = at.x - from.x - d;
-            len = (len - miss / tangent.x.max(0.1)).max(0.0);
+            let next = (len - miss / tangent.x.max(0.1)).max(0.0);
+            // A round is a function of `len` alone: one that leaves it
+            // where it was leaves it there every round after (#309).
+            if next.to_bits() == len.to_bits() {
+                break;
+            }
+            len = next;
         }
         len
     }
@@ -2615,21 +2656,43 @@ pub(crate) fn place_on_closed_capped(
     ring_cap: usize,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
+    let laid = lay_on_closed(
+        run, path, start, direction, fit, layout, outward, flow, fs, ring_cap, trace,
+    );
+    #[cfg(test)]
+    identity::note(&laid);
+    laid
+}
+
+/// [`place_on_closed_capped`]'s placement, which a test notes for the
+/// identity dump (`identity::note`) as it returns.
+#[allow(clippy::too_many_arguments)] // `place_on_closed_capped`'s.
+fn lay_on_closed(
+    run: &ShapedRun,
+    path: &Outline,
+    start: StartPoint,
+    direction: Direction,
+    fit: &FitMode,
+    layout: &RingLayout,
+    outward: bool,
+    flow: &ResolvedText,
+    fs: &mut FontSystemLease,
+    ring_cap: usize,
+    trace: Option<&mut Trace>,
+) -> (Option<ShapedRun>, PlacedRun) {
     if !matches!(fit, FitMode::Repeat) {
         // A frame whose outline is too large for its length to be an
         // `f32` is laid on the outline shrunk about its center until its
         // length is one, and its positions grown back: every position
         // finite, the lines where they would lie, spread to the outline.
-        let probe = ArcPath::closed(path, start, direction, MIN_TABLE_SPACING).length();
-        if !probe.is_finite() {
+        // Only a rounded rectangle's can be, which builds no table to say
+        // so (`closed_length_is_finite`, #309).
+        if !ArcPath::closed_length_is_finite(path, start, direction) {
             let center = path.rect().center();
             let mut factor = 1.0_f32;
             let mut small = *path;
             for _ in 0..MAX_SHRINKS {
-                if ArcPath::closed(&small, start, direction, MIN_TABLE_SPACING)
-                    .length()
-                    .is_finite()
-                {
+                if ArcPath::closed_length_is_finite(&small, start, direction) {
                     break;
                 }
                 factor *= 0.5;
@@ -2698,7 +2761,7 @@ pub(crate) fn place_on_open_traced(
     } else {
         0.0
     };
-    place(
+    let laid = place(
         run,
         &arc,
         false,
@@ -2709,7 +2772,93 @@ pub(crate) fn place_on_open_traced(
         fs,
         MAX_PLACED_GLYPHS,
         trace,
-    )
+    );
+    #[cfg(test)]
+    identity::note(&laid);
+    laid
+}
+
+/// Test seam (#309, review 5810838863): a `w`-wide cluster's step from `s`
+/// along `path` on a level walk (ruling R28), `h` tall — the length R27's
+/// measures read of it ([`PathWalk::step_len`]), the length of the step
+/// itself ([`PathWalk::step`]), and the path lookups the measure took.
+#[cfg(test)]
+pub(crate) fn level_step_seam(path: &ArcPath, s: f32, w: f32, h: f32) -> (f32, f32, usize) {
+    use crate::flow::path::PATH_LOOKUPS;
+    let walk = PathWalk {
+        path,
+        memo: None,
+        work: None,
+        line_height: h,
+        outward: true,
+        limit: f32::INFINITY,
+        level: true,
+        ornament: false,
+        baseline: 0.0,
+    };
+    let before = PATH_LOOKUPS.with(std::cell::Cell::get);
+    let len = walk.step_len(s, w, h);
+    let lookups = PATH_LOOKUPS.with(std::cell::Cell::get) - before;
+    (len, walk.step(s, w, h).0, lookups)
+}
+
+/// Test seam (#309): every placement a test makes, hashed bit for bit
+/// into `$MANDALA_FLOW_DUMP/<test>.txt` when that is set, so that two
+/// trees' placements can be held to one another over the whole suite.
+#[cfg(test)]
+pub(crate) mod identity {
+    use super::{PlacedRun, ShapedRun};
+    use std::io::Write;
+
+    /// FNV-1a over `words`, from `seed`.
+    fn fnv(seed: u64, words: impl IntoIterator<Item = u32>) -> u64 {
+        let mut h = seed;
+        for w in words {
+            for b in w.to_le_bytes() {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        h
+    }
+
+    pub(crate) fn note((run, placed): &(Option<ShapedRun>, PlacedRun)) {
+        let Some(dir) = std::env::var_os("MANDALA_FLOW_DUMP") else {
+            return;
+        };
+        let thread = std::thread::current();
+        let name = thread.name().unwrap_or("unnamed").replace("::", ".");
+        let mut h = fnv(
+            0xcbf2_9ce4_8422_2325,
+            [placed.glyphs.len() as u32, u32::from(placed.truncated)],
+        );
+        h = fnv(
+            h,
+            placed
+                .glyphs
+                .iter()
+                .flat_map(|g| [g.glyph, g.pos.x.to_bits(), g.pos.y.to_bits()]),
+        );
+        if let Some(run) = run {
+            h = fnv(
+                h,
+                run.glyphs
+                    .iter()
+                    .flat_map(|g| [g.size.to_bits(), g.advance.to_bits(), g.x.to_bits()]),
+            );
+        }
+        let path = std::path::Path::new(&dir).join(format!("{name}.txt"));
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{} {} {h:016x}", placed.glyphs.len(), placed.truncated);
+            // With `MANDALA_FLOW_DUMP_POSITIONS`, every position too, so two
+            // dumps' placements can be measured against one another.
+            if std::env::var_os("MANDALA_FLOW_DUMP_POSITIONS").is_some() {
+                for g in &placed.glyphs {
+                    let _ = writeln!(file, "  {} {} {}", g.glyph, g.pos.x, g.pos.y);
+                }
+            }
+        }
+    }
 }
 
 /// Place `run` as one line centered on `center`: a portal marker.
@@ -2767,6 +2916,28 @@ pub(crate) fn table_spacing(run: &ShapedRun, fit: &FitMode, flow: &ResolvedText)
         spacing
     } else {
         MIN_TABLE_SPACING
+    }
+}
+
+/// The samples the paths of a placement of `run` round `outline` in
+/// `fit` build their tables with ([`ArcPath::table_samples`]), counted
+/// in its setup (ruling B16.3a): a `Repeat` ring's one path, or a frame's
+/// two halves ([`frame_halves`]), at [`table_spacing`]. What the flow
+/// fuzzers bound a frame's setup by, before it is laid; a frame that
+/// builds other tables than these fails their property.
+///
+/// Cost: O(1), no table built ([`ArcPath::closed_table_samples`]).
+pub(crate) fn setup_table_samples(
+    run: &ShapedRun,
+    outline: &Outline,
+    fit: &FitMode,
+    flow: &ResolvedText,
+) -> usize {
+    let path = ArcPath::closed_table_samples(outline, table_spacing(run, fit, flow));
+    if matches!(fit, FitMode::Repeat) {
+        path
+    } else {
+        path.saturating_mul(2)
     }
 }
 
@@ -2912,6 +3083,7 @@ fn place(
         let (budget, glyphs, _) = ring.budget();
         if let Some(trace) = trace {
             trace.spent = spent;
+            trace.tables = ring.tables();
             trace.budget = budget;
             trace.glyphs = glyphs;
             trace.ring = ring.loss();
@@ -2930,6 +3102,7 @@ fn place(
                     placed: placed.1.glyphs.len(),
                     spent,
                     budget,
+                    tables: ring.tables(),
                     loss: ring.loss(),
                     held: ring.held_again(),
                 }))

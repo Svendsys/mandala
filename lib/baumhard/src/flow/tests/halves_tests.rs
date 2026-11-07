@@ -811,6 +811,97 @@ pub fn do_flow_halves_tracking_grows_with_the_gap() {
 }
 
 #[test]
+fn test_flow_halves_closed_form_roots_are_the_first_at_what_is_owed() {
+    do_flow_halves_closed_form_roots_are_the_first_at_what_is_owed();
+}
+
+/// The closed-form layer's roots held to their oracles (#309, ruling
+/// B16.1b; `check_pair_model`): over 2,000 seeded cases each, the tangent
+/// line's root in closed form is the one the iterative rule brackets and
+/// bisects; and a letter set at its root on the band curve's form — a
+/// side, an arc, a sharp corner's sweep — is set at what is owed, read back
+/// from the path, and at the first root along the band curve, read from
+/// the path's own gap function, not from the iterative rule's answer
+/// (review 5811563882). The flow_structured target holds every input to
+/// the same; the 20,000-seed sweep is
+/// `test_the_pair_model_sets_the_first_root_at_what_is_owed`.
+pub fn do_flow_halves_closed_form_roots_are_the_first_at_what_is_owed() {
+    use crate::flow::tests::flow_fuzz::check_pair_model;
+    use crate::util::tests::choices::Choices;
+    for seed in 0..2_000 {
+        if let Err(why) = check_pair_model(&mut Choices::seeded(seed)) {
+            panic!("seed {seed}: {why}");
+        }
+    }
+}
+
+/// Ruling B16.2d: [`do_flow_halves_a_side_arc_is_filled_from_its_model_lays`]
+/// fills both arcs, its letters set from the band curve's form on its
+/// model lays, in at most 12 path lookups a side glyph placed (#309's
+/// target).
+///
+/// Control (run, not committed): the layer off (`NO_CLOSED_FORM`), no
+/// letter set from a form, and past the bound.
+#[test]
+fn test_flow_halves_a_side_arc_is_filled_from_its_model_lays() {
+    use crate::flow::place::halves::{MODEL_LETTERS, SIDE_STEP_LOOKUPS};
+    let models = MODEL_LETTERS.with(std::cell::Cell::get);
+    let (_, lookups) = SIDE_STEP_LOOKUPS.with(std::cell::Cell::get);
+    let sides = do_flow_halves_a_side_arc_is_filled_from_its_model_lays();
+    let models = MODEL_LETTERS.with(std::cell::Cell::get) - models;
+    let lookups = SIDE_STEP_LOOKUPS.with(std::cell::Cell::get).1 - lookups;
+    assert!(
+        models > 0,
+        "precondition: model lays set letters from the band curve's form"
+    );
+    assert!(
+        lookups <= 12 * sides,
+        "{lookups} path lookups for {sides} side glyphs, {:.1} a glyph, at most 12",
+        lookups as f64 / sides as f64
+    );
+}
+
+/// A side ornament round a rounded rectangle, its sides and arcs (#309,
+/// ruling B16.2d): the quatrain outward round a 300 × 200 rectangle of
+/// corners half its short side, `Fit` at span whole, `·` beside it. Both
+/// arcs are filled, each copy's gap solved on model lays first. Returns
+/// the side glyphs placed.
+pub fn do_flow_halves_a_side_arc_is_filled_from_its_model_lays() -> usize {
+    let shape = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(300.0, 200.0)),
+        Shape::Rectangle {
+            radius: Percent::new(50),
+        },
+    );
+    let layout = RingLayout {
+        span: LineSpan::WHOLE,
+        sides: Some(("·".to_owned(), Rgba::opaque(9, 9, 9))),
+        ..RingLayout::whole()
+    };
+    let (run, placed, trace) = frame_with(
+        QUATRAIN,
+        16.0,
+        &shape,
+        &FitMode::Fit { min: 0.5, max: 2.0 },
+        &layout,
+        true,
+    );
+    assert!(
+        trace.unheld.sides.is_empty(),
+        "both arcs are filled ({:?})",
+        trace.unheld
+    );
+    let text = placed
+        .glyphs
+        .iter()
+        .filter(|g| run.glyphs[g.glyph as usize].span != FILLER_SPAN)
+        .count();
+    let sides = placed.glyphs.len() - text;
+    assert!(sides > 0, "the arcs hold copies ({} glyphs)", placed.glyphs.len());
+    sides
+}
+
+#[test]
 fn test_flow_halves_sides_hold_the_junctions() {
     do_flow_halves_sides_hold_the_junctions();
 }
@@ -1166,6 +1257,352 @@ pub fn do_flow_halves_a_resolved_ring_lays_as_it_says() {
     );
     let bare = ResolvedRing { sides: None, ..ring };
     assert_eq!(RingLayout::of(&bare).sides, None);
+}
+
+/// Issue #309's first comment (the B9 final review, 5757429244; ruling
+/// B16.1d): a line no tracking gap brings to its part's end — its length
+/// steps past the end as a letter crosses a bend — is brought there by its
+/// secondary rule where it lies, and nothing else moves. Over every frame
+/// of the aspect sweep, laid with the rule and without it
+/// (`NO_SECONDARY_RULE`): a frame the rule changes had a line short of its
+/// end without it; no line is short with it that was not without it; and
+/// the rule brings lines home, by its last letter or its word gaps, so
+/// fewer are short with it — those left are each the frame's to report
+/// (`Trace::short`): their step lies in their last word, past every word
+/// gap, where no even line ends at its end. `MANDALA_FLOW_SWEEP_REPORT=1`
+/// prints the counts.
+///
+/// Controls (run, not committed): the rule off (`NO_SECONDARY_RULE` for
+/// the whole suite), red on "brings no line home"; its word gaps changed
+/// from the line's first cluster, not past its step, red on "too few
+/// lines" (the stepping letter moves with them: 15 lines stay short, and
+/// none is brought home by shrinking); every line, not only one of one gap,
+/// brought home as it is laid, red on "changed with no line short".
+#[test]
+fn test_flow_halves_the_secondary_rule_brings_short_lines_home_and_moves_nothing_else() {
+    use crate::flow::place::halves::{NO_SECONDARY_RULE, RULE_KEPT};
+    struct Off;
+    impl Drop for Off {
+        fn drop(&mut self) {
+            NO_SECONDARY_RULE.with(|off| off.set(false));
+        }
+    }
+    let lay = |off: bool,
+               text: &str,
+               points: f32,
+               shape: &Outline,
+               fit: &FitMode,
+               layout: &RingLayout,
+               out: bool| {
+        let _reset = Off;
+        NO_SECONDARY_RULE.with(|o| o.set(off));
+        frame_with(text, points, shape, fit, layout, out)
+    };
+    let bits = |placed: &PlacedRun| -> Vec<(u32, u32, u32)> {
+        placed
+            .glyphs
+            .iter()
+            .map(|g| (g.glyph, g.pos.x.to_bits(), g.pos.y.to_bits()))
+            .collect()
+    };
+    let kept_before = RULE_KEPT.with(std::cell::Cell::get);
+    let (mut frames, mut changed, mut short_without, mut short_with) = (0, 0, 0, 0);
+    let mut faults: Vec<String> = Vec::new();
+    for (name, shape, _, points) in sweep_outlines() {
+        for text in [ECCLESIASTES, QUATRAIN] {
+            for outward in [true, false] {
+                for fit in [FIT, FitMode::Once { filler: None }] {
+                    let sides_tried = if outward { 2 } else { 1 };
+                    for sides in [None, Some(("·".to_owned(), Rgba::opaque(9, 9, 9)))]
+                        .into_iter()
+                        .take(sides_tried)
+                    {
+                        for span in [
+                            LineSpan::WHOLE,
+                            LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
+                            LineSpan::NATURAL,
+                        ] {
+                            let layout = RingLayout {
+                                span,
+                                sides: sides.clone(),
+                                ..RingLayout::whole()
+                            };
+                            let what = format!(
+                                "{name} {:.10}… {} {fit:?} span {} sides {}",
+                                text,
+                                if outward { "outward" } else { "inward" },
+                                span.get(),
+                                sides.is_some()
+                            );
+                            let (_, without, t0) = lay(true, text, points, &shape, &fit, &layout, outward);
+                            let (_, with, t1) = lay(false, text, points, &shape, &fit, &layout, outward);
+                            frames += 1;
+                            short_without += t0.short.len();
+                            short_with += t1.short.len();
+                            if bits(&without) != bits(&with) {
+                                changed += 1;
+                                if t0.short.is_empty() {
+                                    faults.push(format!("{what}: changed with no line short of its end"));
+                                }
+                            }
+                            for (half, by) in &t1.short {
+                                if !t0.short.iter().any(|(k, _)| k == half) {
+                                    faults.push(format!(
+                                        "{what}: line {half} short by {by} only with the rule"
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let kept_after = RULE_KEPT.with(std::cell::Cell::get);
+    let kept: Vec<usize> = (0..3).map(|i| kept_after[i] - kept_before[i]).collect();
+    if std::env::var_os("MANDALA_FLOW_SWEEP_REPORT").is_some() {
+        eprintln!(
+            "the secondary rule over the sweep's {frames} frames: {changed} changed; lines short of their ends {short_without} without it, {short_with} with it; kept by last letter {}, words stretched {}, words shrunk {}",
+            kept[0], kept[1], kept[2]
+        );
+    }
+    assert!(
+        faults.is_empty(),
+        "{} faults:\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
+    assert!(
+        short_without > 0,
+        "precondition: the sweep lays lines no tracking gap brings to their ends"
+    );
+    assert!(
+        short_with < short_without && changed > 0,
+        "the secondary rule brings no line home: {short_with} short with it, {short_without} without, {changed} frames changed"
+    );
+    // Both of its word gaps' changes bring lines home here: those past the
+    // step stretched where the line laid short of the step is nearer its
+    // end, shrunk where the line laid past it is.
+    assert!(
+        kept[1] > 0 && kept[2] > 0,
+        "the word gaps past the step bring home too few lines: {} stretched, {} shrunk",
+        kept[1],
+        kept[2]
+    );
+}
+
+/// Review 5810838863 (#309, ruling B16.1d): in a frame whose lines touch
+/// already, a line its secondary rule brings home may make no touch they
+/// did not — the pairs that touch after are a subset of those before —
+/// where once any touch at all waived the check. On two lines' boxes: the
+/// first line's first ink touching the second line's one ink before, and
+/// after either as it was, or with that ink widened onto the first line's
+/// second as well, or with the touch gone; and a line's neighbors excused,
+/// before and after, as the frame's touch check excuses them.
+///
+/// Control (run, not committed): `touching_anew` excusing every pair once
+/// two touched before — the waiver it replaced — red on "a touch they did
+/// not make".
+#[test]
+fn test_flow_halves_a_line_brought_home_makes_no_touch_its_lines_did_not() {
+    use crate::flow::place::halves::touching_anew_seam;
+    let ink = |x0: f32, x1: f32| (Vec2::new(x0, 0.0), Vec2::new(x1, 10.0));
+    let before = vec![
+        vec![ink(0.0, 5.0), ink(10.0, 15.0), ink(20.0, 25.0)],
+        vec![ink(4.0, 8.0)],
+    ];
+    assert!(
+        touching_anew_seam(&[vec![], vec![]], &before),
+        "precondition: the first line's first ink and the second line's touch"
+    );
+    assert!(
+        !touching_anew_seam(&before, &before),
+        "lines as they were make no touch they did not"
+    );
+    let wider = vec![before[0].clone(), vec![ink(4.0, 11.0)]];
+    assert!(
+        touching_anew_seam(&before, &wider),
+        "the second line's ink widened onto the first line's second: a touch they did not make"
+    );
+    let apart = vec![before[0].clone(), vec![ink(6.0, 8.0)]];
+    assert!(!touching_anew_seam(&before, &apart), "the touch gone: none new");
+    let neighbors = vec![
+        vec![ink(0.0, 11.0), ink(10.0, 15.0), ink(20.0, 25.0)],
+        vec![ink(4.0, 8.0)],
+    ];
+    assert!(
+        !touching_anew_seam(&before, &neighbors),
+        "a line's neighboring inks are excused, as the frame's touch check excuses them"
+    );
+}
+
+/// Review 5811563882 (#309, ruling B16.1d): a frame's secondary rule keeps
+/// lines it brings home only where they hold what the frame held — each
+/// break, the offset its inks want, and no touch its lines did not make —
+/// held at the one body that decides it for `Layout::reach_ends`
+/// (`holds_what_it_held`), not only at the touch check it asks. On the
+/// two lines' boxes of
+/// `test_flow_halves_a_line_brought_home_makes_no_touch_its_lines_did_not`:
+/// in a frame whose lines touched already a touch kept is kept, and a new
+/// touch beside the old one refused; in a frame whose lines did not touch,
+/// any touch refused and lines apart kept; a break lost, or the offset
+/// past its tolerance, refused; and the offset, which costs the frame a
+/// weighing, read only once the breaks hold.
+///
+/// Controls (run, not committed): the overlapping frame's touch check in
+/// `holds_what_it_held` replaced by `true` — the waiver review 5810838863
+/// found, at the rule's acceptance, where all 232 `flow::` tests stayed
+/// green with it — red on "a touch its lines did not make"; the breaks'
+/// check dropped, red on "a break lost"; the offset read first, red on
+/// "the offset read".
+#[test]
+fn test_flow_halves_a_frames_secondary_rule_keeps_only_what_holds_what_it_held() {
+    use crate::flow::place::halves::holds_what_it_held_seam;
+    let ink = |x0: f32, x1: f32| (Vec2::new(x0, 0.0), Vec2::new(x1, 10.0));
+    let first = vec![ink(0.0, 5.0), ink(10.0, 15.0), ink(20.0, 25.0)];
+    let before = vec![first.clone(), vec![ink(4.0, 8.0)]];
+    let wider = vec![first.clone(), vec![ink(4.0, 11.0)]];
+    let apart = vec![first.clone(), vec![ink(6.0, 8.0)]];
+    let breaks = ([true, false], [true, false]);
+    let holds = |breaks, off: f32, (before, after): (&[_], &[_]), overlap| {
+        holds_what_it_held_seam(breaks, || off, 1.0, before, after, overlap)
+    };
+    assert!(
+        holds(breaks, 0.5, (&before, &before), true),
+        "precondition: lines that touched already, as they were, hold what they held"
+    );
+    assert!(
+        !holds(breaks, 0.5, (&before, &wider), true),
+        "lines that touched already kept with a touch its lines did not make"
+    );
+    assert!(
+        !holds(breaks, 0.5, (&apart, &before), false),
+        "lines that did not touch kept with a touch"
+    );
+    assert!(
+        holds(breaks, 0.5, (&apart, &apart), false),
+        "lines that did not touch, apart still, refused"
+    );
+    assert!(
+        holds(([false, false], [false, true]), 0.5, (&apart, &apart), false),
+        "a junction that was no break may be one: refused"
+    );
+    assert!(
+        !holds(([true, true], [true, false]), 0.5, (&apart, &apart), false),
+        "lines kept with a break lost"
+    );
+    assert!(
+        !holds_what_it_held_seam(
+            ([true, true], [false, true]),
+            || panic!("the offset read where a break was lost"),
+            1.0,
+            &apart,
+            &apart,
+            false,
+        ),
+        "lines kept with a break lost, the offset unread"
+    );
+    assert!(
+        !holds(breaks, 1.5, (&apart, &apart), false),
+        "lines kept with the offset their inks want past its tolerance"
+    );
+}
+
+/// Review 5812145623 (#309, ruling B16.1d): in a frame whose lines touch
+/// already, the secondary rule keeps no line it brings home that makes a
+/// touch they did not — held through `Layout::reach_ends` itself, the
+/// lines it hands `holds_what_it_held` included, where the test above
+/// holds only the function. No frame of the suite both overlaps and brings
+/// a line home, so frames of the aspect sweep whose rule brings one home
+/// are laid with a touch planted in their lines (`PLANT_TOUCH`): two of
+/// another line's inks laid one on the other far from every ink, so the
+/// lines touch, and a third between them laid on an ink of the line
+/// brought home where it is brought, apart from where it lay — a touch
+/// the lines did not make — or, as the precondition, far from every ink.
+/// Only boxes are planted, so each frame's breaks and offset are as they
+/// were; and taken out again once the rule has chosen. Over the sweep the
+/// plant lands in 2 frames, one of which keeps its line brought home with
+/// the plant apart: the precondition.
+///
+/// Controls (run, not committed): `reach_ends` handing the lines brought
+/// home as the lines before (`(&boxes_of(&laid), || boxes_of(&laid))`,
+/// the waiver one argument away: review 5812145623 found every other
+/// `flow::` test green with it), red
+/// on "1 of 2 frames whose lines touched already kept with a touch its
+/// lines did not make"; the overlapping frame's touch check in
+/// `holds_what_it_held` made `true` (the waiver review 5810838863 found),
+/// red on the same.
+#[test]
+fn test_flow_halves_a_frame_that_touches_keeps_no_line_brought_home_to_a_new_touch() {
+    use crate::flow::place::halves::PLANT_TOUCH;
+    struct Unset;
+    impl Drop for Unset {
+        fn drop(&mut self) {
+            PLANT_TOUCH.with(|p| p.set((None, [0; 2])));
+        }
+    }
+    let _unset = Unset;
+    // Each frame laid with the plant `near` or apart: the frames it was
+    // planted in, and of them those that kept the line brought home.
+    let planted = |near: bool,
+                   text: &str,
+                   points: f32,
+                   shape: &Outline,
+                   fit: &FitMode,
+                   layout: &RingLayout,
+                   outward: bool| {
+        PLANT_TOUCH.with(|p| p.set((Some(near), [0; 2])));
+        frame_with(text, points, shape, fit, layout, outward);
+        PLANT_TOUCH.with(|p| p.get().1)
+    };
+    let (mut frames, mut apart, mut near) = (0, [0; 2], [0; 2]);
+    for (_, shape, _, points) in sweep_outlines() {
+        for text in [ECCLESIASTES, QUATRAIN] {
+            for outward in [true, false] {
+                for fit in [FIT, FitMode::Once { filler: None }] {
+                    let sides_tried = if outward { 2 } else { 1 };
+                    for sides in [None, Some(("·".to_owned(), Rgba::opaque(9, 9, 9)))]
+                        .into_iter()
+                        .take(sides_tried)
+                    {
+                        for span in [
+                            LineSpan::WHOLE,
+                            LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
+                            LineSpan::NATURAL,
+                        ] {
+                            let layout = RingLayout {
+                                span,
+                                sides: sides.clone(),
+                                ..RingLayout::whole()
+                            };
+                            let a = planted(false, text, points, &shape, &fit, &layout, outward);
+                            if a[0] == 0 {
+                                continue;
+                            }
+                            let n = planted(true, text, points, &shape, &fit, &layout, outward);
+                            frames += 1;
+                            for k in 0..2 {
+                                apart[k] += a[k];
+                                near[k] += n[k];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        frames > 0 && apart[1] > 0,
+        "precondition: frames whose lines touch keep a line brought home that makes no touch they did not: {} kept of {} planted, in {frames} frames",
+        apart[1],
+        apart[0]
+    );
+    assert!(
+        near[0] > 0 && near[1] == 0,
+        "{} of {} frames whose lines touched already kept with a touch its lines did not make",
+        near[1],
+        near[0]
+    );
 }
 
 #[test]
@@ -3421,7 +3858,8 @@ fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
         let past =
             FRAME_STEPS + inking_steps(&run) + OVERSHOOT_TRACKS * (run.glyphs.len() + TRACK_CALL_STEPS);
         assert!(
-            past <= overshoot_steps(&run, None, false),
+            // A sharp rectangle's halves build no table (ruling B16.3a).
+            past <= overshoot_steps(&run, None, false, 0),
             "precondition: the frame's overshoot is within the general bound"
         );
         let held = budget.max(trace.reserve);
@@ -3834,7 +4272,10 @@ fn a_long_side_ornament(shape: Shape, what: &str, own: &[(usize, crate::flow::pl
     let flow = style(16.0);
     let allowed = with_fonts(|fs| {
         let ornament = ornament_run(&layout, &flow, 1.0, fs);
-        overshoot_steps(&real_run(text, &flow, fs), ornament.as_ref(), false)
+        let run = real_run(text, &flow, fs);
+        let tables =
+            crate::flow::place::setup_table_samples(&run, &shape, &FitMode::Once { filler: None }, &flow);
+        overshoot_steps(&run, ornament.as_ref(), false, tables)
     });
     let letters = text.chars().filter(|c| !c.is_whitespace()).count();
     for (budget, sides, why) in [
