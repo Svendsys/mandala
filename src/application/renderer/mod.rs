@@ -280,20 +280,15 @@ pub struct Renderer {
     #[allow(dead_code)]
     glyphon_cache: Cache,
     atlas: TextAtlas,
-    text_renderer: TextRenderer,
-    /// Second glyphon TextRenderer, for the screen-space chrome: the
-    /// console or the color picker over its backdrop, the FPS readout
-    /// and the mode-status line. Shares `self.atlas` with
-    /// `text_renderer` so glyph caching is unified, but keeps its own
-    /// vertex/index buffers — which is what lets the glyph-run pass
-    /// draw BETWEEN the two text renders inside one render pass, so the
-    /// chrome covers every canvas glyph (re-preparing the single text
-    /// renderer would race with the pass's already-recorded draw
-    /// commands).
+    /// The glyphon TextRenderer for the screen-space chrome, the one
+    /// glyphon pass: the console or the color picker over its backdrop,
+    /// the FPS readout and the mode-status line. It draws after the
+    /// glyph-run pass inside one render pass, so the chrome covers
+    /// every canvas glyph.
     console_text_renderer: TextRenderer,
     /// The positioned-glyph pass: draws the `GlyphRun` elements the
-    /// canvas trees hold, each glyph at its own position, between the
-    /// main text pass and the chrome pass. Shares the font system,
+    /// canvas trees hold, each glyph at its own position, under the
+    /// chrome pass. Shares the font system,
     /// the swash cache and the render pass with glyphon; holds its own
     /// atlas, because glyphon's cannot be reached from outside it.
     glyph_runs: glyph_runs::GlyphRunPass,
@@ -632,7 +627,6 @@ impl Renderer {
             surface_format,
             glyphon_color_mode,
         );
-        let text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let console_text_renderer = TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let viewport = Viewport::new(&device, &glyphon_cache);
         let glyph_runs = glyph_runs::GlyphRunPass::new(&device, surface_format, encoding);
@@ -646,7 +640,6 @@ impl Renderer {
             queue,
             atlas,
             swash_cache: SwashCache::new(),
-            text_renderer,
             console_text_renderer,
             glyph_runs,
             layer_renderer: layers::LayerRenderer::default(),

@@ -22,7 +22,8 @@ use glyphon::Resolution;
 
 /// Proof that [`Renderer::prepare_frame`] ran for the frame
 /// [`Renderer::encode_frame`] is about to draw: everything the frame
-/// draws — both glyphon prepares and the glyph-run instances — was
+/// draws — the chrome pass's glyphon prepare and the glyph-run
+/// instances — was
 /// staged by that call, and lives in the passes themselves, so there is
 /// nothing else to hand over.
 pub(super) struct PreparedFrame {
@@ -148,7 +149,7 @@ impl Renderer {
 
     /// The CPU half of a frame, for a target `camera.viewport_size`
     /// pixels large: size the glyphon viewport to the target, and run
-    /// both glyphon prepares and the positioned-glyph pass's
+    /// the chrome pass's glyphon prepare and the positioned-glyph pass's
     /// ([`Self::prepare_text_for_pass`]).
     ///
     /// **Everything the frame draws is projected through `camera`, and
@@ -182,8 +183,8 @@ impl Renderer {
         let (width, height) = camera.viewport_size;
         self.viewport.update(&self.queue, Resolution { width, height });
 
-        // Collect text areas + run both glyphon prepares against
-        // the atlas. Shared with `prewarm()` (through `render`) so the
+        // Collect the chrome's text areas, run its glyphon prepare
+        // against the atlas and the glyph-run pass's. Shared with `prewarm()` (through `render`) so the
         // warm-up sees exactly the same glyph set that the next real
         // frame will draw — no risk of warming a different set than
         // gets rasterized.
@@ -226,9 +227,22 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            // 1. Main text pass — the rubber band's edges, camera-
-            //    transformed, straight onto the cleared background: a
-            //    map draws no fill (V1-B12).
+            // 1. Positioned glyph runs — every glyph of every
+            //    `GlyphRun` at its own canvas position, one instanced
+            //    draw, straight onto the cleared background (a map
+            //    draws no fill, V1-B12): the glyph layers' — sections,
+            //    frames, connections, labels, portals, then the chrome
+            //    layer — each over the ones before it. Canvas content,
+            //    so under the screen-space chrome below.
+            self.glyph_runs.render(&mut pass);
+
+            // 2. Chrome pass — an open modal's backdrop (full-block
+            //    cells, `backdrop`), then its glyphs: the console's
+            //    cyan border, query line and rows, or the picker's
+            //    wheel; then the FPS readout and the mode-status line.
+            //    Glyphon draws a pass's glyphs in the order they were
+            //    prepared, so the backdrop covers every canvas glyph
+            //    and every chrome glyph sits on it.
             //    Interactive path: log and continue on render failure
             //    so a single bad atlas frame doesn't crash the editor.
             //    Unreachable as of glyphon 0.12.0 — `TextRenderer::
@@ -238,28 +252,6 @@ impl Renderer {
             //    carries no frame-rate spam risk today. Kept because
             //    the signature is fallible and a future glyphon may
             //    start using it.
-            if let Err(e) = self.text_renderer.render(&self.atlas, &self.viewport, &mut pass) {
-                log::warn!("renderer: text_renderer.render failed: {e}");
-            }
-
-            // 2. Positioned glyph runs — every glyph of every
-            //    `GlyphRun` at its own canvas position, one instanced
-            //    draw: the glyph layers' — sections, frames,
-            //    connections, labels, portals, then the chrome layer —
-            //    each over the ones before it. Canvas content, so under
-            //    the screen-space chrome below.
-            self.glyph_runs.render(&mut pass);
-
-            // 3. Chrome pass — an open modal's backdrop (full-block
-            //    cells, `backdrop`), then its glyphs: the console's
-            //    cyan border, query line and rows, or the picker's
-            //    wheel; then the FPS readout and the mode-status line.
-            //    Glyphon draws a pass's glyphs in the order they were
-            //    prepared, so the backdrop covers every canvas glyph
-            //    and every chrome glyph sits on it.
-            //    Interactive path: log and continue on render failure.
-            //    Unreachable in glyphon 0.12.0 for the same reason as
-            //    the main pass above; kept as forward-compat cover.
             if let Err(e) = self
                 .console_text_renderer
                 .render(&self.atlas, &self.viewport, &mut pass)
@@ -270,16 +262,15 @@ impl Renderer {
         encoder
     }
 
-    /// Collect every text-area `camera` shows from the renderer's
-    /// buffers (the rubber band's edges on the canvas; the console, the
-    /// color picker, the FPS readout and the mode line on screen) and
-    /// run both `text_renderer.prepare()` and
+    /// Collect every screen-space text area `camera` shows from the
+    /// renderer's buffers (the console, the color picker, the FPS
+    /// readout and the mode line) and run
     /// `console_text_renderer.prepare()` against the atlas; then, under
     /// the same font guard, prepare the positioned-glyph pass over the
     /// glyph layers' runs, in their draw order ([`super::glyph_runs`],
     /// [`super::layers`]). Returns the [`FrameSkip`] (and the
     /// caller skips the rest of its frame) on font-system lock
-    /// contention or on either glyphon prepare failing; the glyph-run
+    /// contention or on the glyphon prepare failing; the glyph-run
     /// pass cannot fail the frame — a glyph it has no room for is left
     /// out and warned of once.
     ///
@@ -288,7 +279,7 @@ impl Renderer {
     /// capture, so every frame the app draws sees one glyph set rule.
     ///
     /// Note: this performs disjoint mutable borrows of
-    /// `text_renderer`, `atlas`, `glyph_runs` and `swash_cache` while holding
+    /// `console_text_renderer`, `atlas`, `glyph_runs` and `swash_cache` while holding
     /// immutable borrows of the buffer-map fields; the borrow
     /// checker permits this within a single `&mut self` body but
     /// would reject it across a method boundary, which is why the
@@ -306,15 +297,12 @@ impl Renderer {
         };
         let default_color = COLOR_WHITE;
 
-        // The main glyphon pass holds no text areas of its own: every
-        // canvas visual, the rubber band included (the chrome layer),
-        // reaches the GPU as a glyph run of the layer renderer. Chrome
-        // buffers go into a separate list so they render in a second
-        // glyphon pass, over the glyph-run pass that draws between the two.
-        let main_text_areas: Vec<TextArea> = Vec::new();
-
-        // Chrome: screen-space text, drawn in its own glyphon pass over
-        // the canvas's — first an open modal's backdrop cells, so they
+        // Every canvas visual, the rubber band included (the chrome
+        // layer), reaches the GPU as a glyph run of the layer renderer;
+        // glyphon draws only the screen-space chrome.
+        //
+        // Chrome: screen-space text, drawn in its glyphon pass over the
+        // glyph-run pass — first an open modal's backdrop cells, so they
         // are under everything else here. Both the
         // console and the glyph-wheel color picker put their glyph
         // buffers in `OverlayShapes::elements` (populated by
@@ -379,8 +367,8 @@ impl Renderer {
         };
 
         // The test build's census of the fill blocks each pass is handed
-        // (`backdrop::FillCensus`), counted from the very lists the two
-        // prepares below draw and the very runs the glyph-run pass does.
+        // (`backdrop::FillCensus`), counted from the very list the
+        // prepare below draws and the very runs the glyph-run pass does.
         // The fill glyph is read off the backdrop cell, shaped here if no
         // backdrop has needed it yet, so a frame with no modal counts too.
         #[cfg(test)]
@@ -402,7 +390,7 @@ impl Renderer {
             };
             let runs: usize = self.layer_renderer.runs().map(|run| fill.in_run(run)).sum();
             self.fill_census = backdrop::FillCensus {
-                canvas: areas(&main_text_areas) + runs,
+                canvas: runs,
                 chrome: areas(&palette_text_areas),
             };
         }
@@ -426,21 +414,6 @@ impl Renderer {
         // unguarded `warn!` would write a line per spin. The flag
         // clears on the next successful prepare, so a transient fault
         // logs again if it returns.
-        if let Err(e) = self.text_renderer.prepare(
-            &self.device,
-            &self.queue,
-            &mut font_system,
-            &mut self.atlas,
-            &self.viewport,
-            main_text_areas,
-            &mut self.swash_cache,
-        ) {
-            if !self.prepare_fault_logged {
-                self.prepare_fault_logged = true;
-                log::warn!("renderer: text_renderer.prepare failed, skipping frame: {e}");
-            }
-            return Err(FrameSkip::PrepareFailed);
-        }
         if let Err(e) = self.console_text_renderer.prepare(
             &self.device,
             &self.queue,
@@ -493,7 +466,7 @@ impl Renderer {
     /// are `self.glyphs_in_use.clear()`). The glyph cache itself
     /// only evicts under packer pressure inside `InnerAtlas::try_allocate`,
     /// and the `InnerAtlas::glyphs_in_use` set is populated by
-    /// `text_renderer.prepare()` — not `render()`. So warmed
+    /// `TextRenderer::prepare()` — not `render()`. So warmed
     /// glyphs sit in the LRU cache regardless of whether a draw
     /// happened, and the prior atlas-only path was already safe;
     /// what the full render adds is shader compile and the

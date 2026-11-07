@@ -199,7 +199,7 @@ pub(super) fn text_areas(cell: &BackdropCell, rect: PixelRect) -> impl Iterator<
 }
 
 /// How many fill blocks the last prepared frame handed each half of
-/// the frame: the canvas (the main glyphon pass and the glyph-run pass)
+/// the frame: the canvas (the glyph-run pass)
 /// and the screen-space chrome (the console's pass: the modal, the FPS
 /// readout, the mode-status line, and the backdrops at the bottom of
 /// it). A fill block is the backdrop's own glyph, Public Pixel's `█`
@@ -212,7 +212,7 @@ pub(super) fn text_areas(cell: &BackdropCell, rect: PixelRect) -> impl Iterator<
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FillCensus {
-    /// Fill blocks the canvas passes were handed to draw.
+    /// Fill blocks the canvas pass was handed to draw.
     pub(crate) canvas: usize,
     /// Fill blocks the chrome pass was handed to draw.
     pub(crate) chrome: usize,
