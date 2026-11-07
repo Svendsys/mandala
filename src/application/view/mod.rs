@@ -70,12 +70,13 @@ pub(crate) struct MapView {
     /// in it.
     chrome: GfxTree,
     /// The selection tint, stamped on the selection — or, while a rubber
-    /// band is out, on what it covers (`preview`).
+    /// band is out, on what it covers (`band_targets`).
     highlight: Overlay,
-    /// What a rubber band covers while one is out: the highlight follows
-    /// it instead of the selection, whose highlight stands down until the
-    /// band's release replaces the selection.
-    preview: Option<Vec<NodeId>>,
+    /// What a rubber band covers while one is out — the highlight's
+    /// targets, not a preview of any document change: the highlight
+    /// follows them instead of the selection, whose highlight stands down
+    /// until the band's release replaces the selection.
+    band_targets: Option<Vec<NodeId>>,
     /// The change records drained since the event loop last cleared
     /// them ([`Self::clear_feed`]): the second consumer of the one drain
     /// a sync makes (#244 amendment 3; V1-E2 builds events from them).
@@ -115,7 +116,7 @@ impl MapView {
             layers,
             chrome: chrome_layer(),
             highlight: Overlay::tint(SELECTION_HIGHLIGHT),
-            preview: None,
+            band_targets: None,
             feed: Vec::new(),
         };
         let targets: Vec<NodeId> = doc.selection.iter().collect();
@@ -166,7 +167,7 @@ impl MapView {
             self.projector
                 .update(doc.doc(), &records, &mut self.layers, &mut fonts)
         });
-        let targets: Vec<NodeId> = match &self.preview {
+        let targets: Vec<NodeId> = match &self.band_targets {
             Some(covered) => covered.clone(),
             None => doc.selection.iter().collect(),
         };
@@ -244,7 +245,7 @@ impl MapView {
     /// The visible nodes `rect`, on the canvas, covers: what a rubber band
     /// over it selects (`Projector::nodes_in`). Native with the rubber
     /// band's gesture (`CLAUDE.md` "Dual-target status"); the highlight
-    /// that reads the preview is both targets'.
+    /// that reads the band targets is both targets'.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn nodes_in(&self, rect: Rect) -> Vec<NodeId> {
         self.projector.nodes_in(rect)
@@ -255,19 +256,19 @@ impl MapView {
     /// [`Self::sync`]. Returns whether it changed. Native, with the
     /// rubber band.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn set_preview(&mut self, covered: Option<Vec<NodeId>>) -> bool {
-        if self.preview == covered {
+    pub(crate) fn set_band_targets(&mut self, covered: Option<Vec<NodeId>>) -> bool {
+        if self.band_targets == covered {
             return false;
         }
-        self.preview = covered;
+        self.band_targets = covered;
         true
     }
 
     /// The rubber band's covered set, while one is out. Native, with the
     /// rubber band.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn preview(&self) -> Option<&[NodeId]> {
-        self.preview.as_deref()
+    pub(crate) fn band_targets(&self) -> Option<&[NodeId]> {
+        self.band_targets.as_deref()
     }
 
     /// The projection state, to read geometry from (`Projector`'s

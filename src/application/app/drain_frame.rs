@@ -7,7 +7,7 @@
 //! **The rubber band's authority is the drag state**
 //! (`DragState::SelectingRect`). Each frame re-derives its two artifacts
 //! from it — the rectangle drawn on the canvas and the covered set the
-//! selection highlight previews (`MapView::set_preview`) — so no exit
+//! selection highlight tints (`MapView::set_band_targets`) — so no exit
 //! from the gesture has to remember to clean either up. The covered set
 //! is the projector's answer (`MapView::nodes_in`, through its body
 //! index), and the highlight is re-stamped only when that set changes.
@@ -26,7 +26,7 @@ use crate::application::view::MapView;
 
 /// Bring the rubber band's two artifacts up to date with the drag state:
 /// while it is out, the rectangle follows the pointer and the highlight
-/// previews what it covers; once it is not, both are gone.
+/// tints what it covers; once it is not, both are gone.
 pub(super) fn drain_rect_select(
     drag_state: &DragState,
     document: &mut Option<MindMapDocument>,
@@ -39,14 +39,14 @@ pub(super) fn drain_rect_select(
     match rect_select_frame(drag_state) {
         RectSelectFrame::Track { rect } => {
             renderer.rebuild_selection_rect_overlay(rect.origin, rect.max());
-            if view.set_preview(Some(view.nodes_in(rect))) {
+            if view.set_band_targets(Some(view.nodes_in(rect))) {
                 view.sync(doc, renderer);
             }
         }
         RectSelectFrame::End => {
-            if view.preview().is_some() {
+            if view.band_targets().is_some() {
                 renderer.clear_selection_rect_overlay();
-                view.set_preview(None);
+                view.set_band_targets(None);
                 view.sync(doc, renderer);
             }
         }
@@ -83,7 +83,7 @@ fn band(a: Vec2, b: Vec2) -> Rect {
 }
 
 /// The rubber band's release: it selects what it covers — replacing the
-/// selection — and the preview stands down. The rectangle goes at the
+/// selection — and the band's tint stands down. The rectangle goes at the
 /// next frame (`drain_rect_select`).
 pub(super) fn end_rect_select_gesture(
     ctx: &mut InputHandlerContext<'_>,
@@ -97,7 +97,7 @@ pub(super) fn end_rect_select_gesture(
         return;
     };
     let covered = view.nodes_in(band(start_canvas, current_canvas));
-    view.set_preview(None);
+    view.set_band_targets(None);
     doc.selection.set(covered);
     ctx.renderer.clear_selection_rect_overlay();
     if let Some(mut vc) = view_ctx!(ctx, doc) {
@@ -130,7 +130,7 @@ mod tests {
     }
 
     /// Every state that is not a band ends whatever a band left behind:
-    /// the preview is derived from the drag state, so no exit has to
+    /// the band targets are derived from the drag state, so no exit has to
     /// clean it up.
     #[test]
     fn test_every_exit_from_a_rubber_band_ends_it() {

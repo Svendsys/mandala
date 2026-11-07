@@ -404,8 +404,8 @@ enum DragState {
     /// Shift+drag on empty space: rubber-band selection rectangle.
     ///
     /// **This variant is the authority** for the rectangle drawn and for
-    /// the covered set the selection highlight previews
-    /// (`MapView::set_preview`): `drain_frame::drain_rect_select`
+    /// the covered set the selection highlight tints
+    /// (`MapView::set_band_targets`): `drain_frame::drain_rect_select`
     /// re-derives both from it every frame, so no exit from this state
     /// has to remember to clean up.
     SelectingRect {
