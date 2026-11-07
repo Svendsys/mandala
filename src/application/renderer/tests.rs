@@ -1566,3 +1566,153 @@ fn test_console_keystroke_reshapes_only_the_prompt_line() {
         "control: without the keys every area is shaped"
     );
 }
+
+/// **Every input shaping reads defeats the overlay reuse, one at a
+/// time, and touches only its own area.** Two haloed areas in one
+/// overlay tree; each row changes one thing
+/// `tree_walker::shape_one_element_into_buffers` reads — the text, a
+/// region's color alone, the scale, the line height, either bound, the
+/// alignment, the halo's color, its width, or the halo itself — on the
+/// first area, and the rebuild must shape exactly that area again. The
+/// second area is untouched in every row, so it stays reused: the count
+/// moves by one, not two.
+///
+/// So a field dropped from `overlay_dispatch::reuse_key` fails its row:
+/// the area keeps buffers shaped from what it no longer holds.
+///
+/// Controls: the first rebuild shapes both areas; a rebuild of an
+/// unchanged tree shapes none; and a moved area — position is not
+/// shaped, it is where the stamps go — keeps its buffers and has them
+/// written at the new place.
+#[test]
+fn test_every_input_shaping_reads_reshapes_its_area_and_only_it() {
+    use super::overlay_dispatch::{reshape_overlays, OverlayShapes};
+    use baumhard::core::primitives::ColorFontRegions;
+    use baumhard::engine::tree::Placement;
+    use baumhard::gfx_structs::scene::Scene;
+    use baumhard::gfx_structs::tree::GfxTree;
+
+    baumhard::font::fonts::init();
+    let halo = OutlineStyle {
+        color: [0, 0, 0, 255],
+        px: 2.0,
+    };
+    let area = |text: &str, y: f32| {
+        let mut area = GlyphArea::new_with_str(text, 16.0, 18.0, Vec2::new(10.0, y), Vec2::new(120.0, 24.0));
+        area.regions = ColorFontRegions::single_span(text.chars().count(), Some([1.0, 1.0, 1.0, 1.0]), None);
+        area.outline = Some(halo);
+        area
+    };
+    type Change = fn(&mut GlyphArea);
+    let rows: [(&str, Change); 10] = [
+        ("text", |a| a.text = "alphz".into()),
+        ("a region's color alone", |a| {
+            a.regions = ColorFontRegions::single_span(5, Some([1.0, 0.0, 0.0, 1.0]), None)
+        }),
+        ("scale", |a| a.scale.0 = 17.0),
+        ("line height", |a| a.line_height.0 = 19.0),
+        ("the width bound", |a| a.render_bounds.x.0 = 121.0),
+        ("the height bound", |a| a.render_bounds.y.0 = 25.0),
+        ("alignment", |a| a.align_center = true),
+        ("the halo's color", |a| {
+            a.outline = Some(OutlineStyle {
+                color: [0, 0, 255, 255],
+                px: 2.0,
+            })
+        }),
+        ("the halo's width", |a| {
+            a.outline = Some(OutlineStyle {
+                color: [0, 0, 0, 255],
+                px: 3.0,
+            })
+        }),
+        ("the halo itself", |a| a.outline = None),
+    ];
+
+    let build = || {
+        let mut tree = GfxTree::new_non_indexed();
+        let first = tree
+            .insert_child(
+                tree.root(),
+                GfxElement::new_area_non_indexed_with_id(area("alpha", 0.0), 1, 1),
+                Placement::Last,
+            )
+            .expect("under the root");
+        tree.insert_child(
+            tree.root(),
+            GfxElement::new_area_non_indexed_with_id(area("bravo", 40.0), 2, 2),
+            Placement::Last,
+        )
+        .expect("under the root");
+        let mut scene = Scene::new();
+        let id = scene.insert(tree, 0, Vec2::ZERO);
+        (scene, id, first)
+    };
+
+    for (what, change) in rows {
+        let (mut scene, id, first) = build();
+        let mut shapes = OverlayShapes::default();
+        reshape_overlays(&mut shapes, &scene, &[id]);
+        assert_eq!(
+            shapes.shaped, 2,
+            "{what}: control: the first rebuild shapes both areas"
+        );
+        let drawn = shapes.elements.len();
+        reshape_overlays(&mut shapes, &scene, &[id]);
+        assert_eq!(
+            shapes.shaped, 2,
+            "{what}: control: an unchanged tree shapes nothing"
+        );
+
+        scene
+            .tree_mut(id)
+            .expect("the tree is in the scene")
+            .update(first, |element| {
+                change(element.glyph_area_mut().expect("an area"))
+            })
+            .expect("the area is in the tree");
+        reshape_overlays(&mut shapes, &scene, &[id]);
+        assert_eq!(
+            shapes.shaped, 3,
+            "{what}: a change to it reshapes its area and only it (the other stays reused)"
+        );
+        if what != "the halo itself" {
+            assert_eq!(
+                shapes.elements.len(),
+                drawn,
+                "{what}: the stamps are the same in number"
+            );
+        }
+    }
+
+    let (mut scene, id, first) = build();
+    let mut shapes = OverlayShapes::default();
+    reshape_overlays(&mut shapes, &scene, &[id]);
+    let before: Vec<(f32, f32)> = shapes.elements.iter().map(|b| b.pos).collect();
+    scene
+        .tree_mut(id)
+        .expect("the tree is in the scene")
+        .update(first, |element| {
+            element
+                .glyph_area_mut()
+                .expect("an area")
+                .set_position((15.0, 7.0));
+        })
+        .expect("the area is in the tree");
+    reshape_overlays(&mut shapes, &scene, &[id]);
+    assert_eq!(shapes.shaped, 2, "control: a moved area keeps its buffers");
+    let after: Vec<(f32, f32)> = shapes.elements.iter().map(|b| b.pos).collect();
+    assert_eq!(before.len(), after.len(), "control: the same stamps are drawn");
+    for (slot, (was, now)) in before.iter().zip(&after).enumerate().take(9) {
+        let moved = (now.0 - was.0, now.1 - was.1);
+        assert!(
+            (moved.0 - 5.0).abs() < 1e-4 && (moved.1 - 7.0).abs() < 1e-4,
+            "control: stamp {slot} moved with its area: {moved:?}"
+        );
+    }
+    assert_eq!(
+        before[9..],
+        after[9..],
+        "control: the other area's stamps stayed put"
+    );
+}

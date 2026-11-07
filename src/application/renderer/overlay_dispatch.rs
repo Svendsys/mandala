@@ -255,7 +255,7 @@ pub(crate) fn reshape_overlays(shapes: &mut OverlayShapes, scene: &Scene, ids: &
             match kept {
                 Some((_, range)) => {
                     let anchor = (area.position.x.0, area.position.y.0);
-                    for (slot, stamp) in range.clone().zip(stamp_offsets(area)) {
+                    for (slot, stamp) in range.clone().zip(area.text_stamp_offsets()) {
                         let Some(mut buffer) = previous[slot].take() else {
                             continue;
                         };
@@ -287,30 +287,25 @@ pub(crate) fn reshape_overlays(shapes: &mut OverlayShapes, scene: &Scene, ids: &
     }
 }
 
-/// Where an area's stamps sit relative to its position, in the order
-/// [`super::tree_walker::shape_one_element_into_buffers`] yields them:
-/// each halo offset, then the text itself.
-fn stamp_offsets(area: &GlyphArea) -> Vec<(f32, f32)> {
-    let mut out: Vec<(f32, f32)> = area
-        .halo()
-        .map(|outline| outline.offsets().collect())
-        .unwrap_or_default();
-    out.push((0.0, 0.0));
-    out
-}
-
 /// Everything shaping an area reads, hashed: its text and regions, its
-/// scale, line height and bounds, its alignment and its halo. Its
-/// position is not in it — a moved area keeps its buffers.
+/// scale, line height and bounds, its alignment and its halo (its
+/// color and width, through `OutlineStyle`'s own `Hash`). Its
+/// position is not in it — a moved area keeps its buffers, placed at
+/// [`GlyphArea::text_stamp_offsets`], the order
+/// [`super::tree_walker::shape_one_element_into_buffers`] yields them
+/// in. `test_every_input_shaping_reads_reshapes_its_area_and_only_it`
+/// holds the key to every input, one row each. No allocation.
 fn reuse_key(area: &GlyphArea) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     area.text.hash(&mut hasher);
-    area.regions.hash(&mut hasher);
+    // Every range, font pin and color: the derived `Hash` is range
+    // identity alone, so a color-only change would keep stale buffers.
+    area.regions.hash_content(&mut hasher);
     area.scale.0.to_bits().hash(&mut hasher);
     area.line_height.0.to_bits().hash(&mut hasher);
     area.render_bounds.x.0.to_bits().hash(&mut hasher);
     area.render_bounds.y.0.to_bits().hash(&mut hasher);
     area.align_center.hash(&mut hasher);
-    format!("{:?}", area.halo()).hash(&mut hasher);
+    area.halo().hash(&mut hasher);
     hasher.finish()
 }
