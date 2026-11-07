@@ -12,7 +12,6 @@
 use cosmic_text::ShapeWork;
 
 use crate::document::format::load;
-use crate::font::fonts::FontSystemLease;
 use crate::projection::tests::support::fonts;
 use crate::projection::{GlyphLayers, Projector};
 
@@ -26,13 +25,16 @@ fn one_span(n: usize, font: Option<&str>) -> String {
     )
 }
 
-/// The shaping work of projecting `text` in full, read under the lease.
-fn projected(text: &str, fonts: &mut FontSystemLease) -> ShapeWork {
+/// The shaping work of projecting `text` in full. The lease is let go
+/// before the assertion, so a failing one does not poison the font lock.
+fn projected(text: &str) -> ShapeWork {
     let doc = load(text).unwrap_or_else(|error| panic!("precondition: the map loads: {error}"));
     let mut layers = GlyphLayers::new();
+    let mut fonts = fonts();
     let before = cosmic_text::shape_work();
-    let projector = Projector::project_full(&doc, &mut layers, fonts);
+    let projector = Projector::project_full(&doc, &mut layers, &mut fonts);
     let after = cosmic_text::shape_work();
+    drop(fonts);
     assert_eq!(projector.nodes.len(), 1, "precondition: the node is projected");
     after.since(before)
 }
@@ -40,14 +42,13 @@ fn projected(text: &str, fonts: &mut FontSystemLease) -> ShapeWork {
 /// The work of one span of `n`, `2n` and `4n` letters, in `font`.
 fn at_three_lengths(n: usize, font: Option<&str>) -> [ShapeWork; 3] {
     // The counters are this thread's, so another test's shaping is not
-    // counted between two readings, whether or not the lease lets the
-    // lock go between them.
-    let mut fonts = fonts();
+    // counted between two readings, though each projection takes the font
+    // lock afresh.
     // Once first: the font system answers once whether some face draws a
     // letter (`cosmic_text::ShapeWork::coverage_probes`), and that answer
     // is no part of what one more letter costs.
-    projected(&one_span(n, font), &mut fonts);
-    [n, 2 * n, 4 * n].map(|n| projected(&one_span(n, font), &mut fonts))
+    projected(&one_span(n, font));
+    [n, 2 * n, 4 * n].map(|n| projected(&one_span(n, font)))
 }
 
 /// Whether `count` is affine in the length over `works` (at `n`, `2n`,
