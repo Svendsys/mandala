@@ -9,7 +9,7 @@
 use std::cell::Cell;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
@@ -80,6 +80,7 @@ fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
         }
     }
     let removed = remove_shadowing_faces(&mut font_system, &compiled_font_id_map);
+    FACE_SET_GENERATION.fetch_add(1, Ordering::Release);
     #[cfg(test)]
     let _ = SHADOWING_FACES_REMOVED.set(removed);
     #[cfg(not(test))]
@@ -87,6 +88,19 @@ fn load_fonts() -> FxHashMap<AppFont, TinyVec<[ID; 8]>> {
     drop(font_system);
     debug!("Released font-system lock.");
     compiled_font_id_map
+}
+
+/// How many times the font system's set of faces has been changed: once,
+/// when [`init`] registers the compiled faces (`load_fonts`). A cache of
+/// shapings records it and lets its entries go when it moves
+/// (`projection::shapes`, #304), since a shaping depends on the faces
+/// installed as well as on its text and style.
+static FACE_SET_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// The font system's face-set generation ([`FACE_SET_GENERATION`]). Reads
+/// no lock. Cost: one atomic load.
+pub fn face_set_generation() -> u64 {
+    FACE_SET_GENERATION.load(Ordering::Acquire)
 }
 
 /// Remove from the database every face that is not compiled in and bears

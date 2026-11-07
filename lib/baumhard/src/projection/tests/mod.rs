@@ -29,6 +29,9 @@ pub mod projection_fuzz;
 mod projection_fuzz_tests;
 /// The bench bodies: a full projection, and an update.
 pub mod projection_tests;
+/// The shaping cache: one shaping per key (#304, ruling B7.4).
+#[cfg(test)]
+mod shape_cache_tests;
 /// A long span's shaping work, counted (#304).
 #[cfg(test)]
 mod shaping_work_tests;
