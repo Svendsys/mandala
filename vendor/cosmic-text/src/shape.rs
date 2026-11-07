@@ -1,5 +1,28 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+//! MANDALA PATCH (V1-B14, #304). Shaping as published in cosmic-text
+//! 0.19.0, with these changes, each marked `MANDALA PATCH` where it is:
+//!
+//! - **The fallback merge is linear in the run** ([`FallbackMerge`]).
+//!   When a run's first face lacks some of its glyphs, each fallback
+//!   face shapes the whole run and its glyphs replace the missing
+//!   clusters. The published merge found and moved them with a scan of
+//!   the missing list per fallback glyph and a `Vec::remove` /
+//!   `Vec::insert` per cluster, so a run whose first face lacked all of
+//!   its `n` glyphs cost O(n²) per fallback face: one 262 KB word took
+//!   596 s to lay out. The merge here makes the same choices, in one
+//!   pass over the run's glyphs and one over the fallback's. A fallback
+//!   shaping whose cluster starts are not monotone in visual order, the
+//!   one case its reasoning does not cover, is merged by the published
+//!   algorithm ([`reference_round`]).
+//! - **The shaper counts its work** ([`ShapeWork`], [`shape_work`]):
+//!   shapings, bytes shaped, fallback rounds and merge steps, per
+//!   thread, so a caller can show cost growing with its input without
+//!   timing anything.
+//! - **The published merge stays selectable per thread**
+//!   ([`set_reference_merge`]), so a test can hold the linear merge to
+//!   the same glyphs and to see the counted work it removed.
+
 #![allow(clippy::too_many_arguments)]
 
 use crate::fallback::FontFallbackIter;
@@ -83,6 +106,82 @@ impl Shaping {
 
 const NUM_SHAPE_PLANS: usize = 6;
 
+/// MANDALA PATCH: the shaping work done on one thread, counted, never
+/// timed ([`shape_work`]).
+///
+/// Every count is of an operation whose cost does not depend on the
+/// input's size, or is said to be proportional to it, so a caller can
+/// read the cost of an input off the difference of two readings. The
+/// counts are the thread's, not the font system's, so a reading is not
+/// moved by another thread shaping between the two.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShapeWork {
+    /// Text shaped by harfrust: one per run shaped in one face,
+    /// fallback faces and probes included.
+    pub shapes: u64,
+    /// The bytes of text those shapings were handed.
+    pub bytes_shaped: u64,
+    /// Fallback faces a run was shaped in after its first face, because
+    /// the faces before them left some of its glyphs missing.
+    pub fallback_rounds: u64,
+    /// Steps of the fallback merge: each glyph it visits or moves and
+    /// each byte of a cluster it clears. A merge round over a run of
+    /// `n` bytes and `g` glyphs costs O(n + g) of them here; the
+    /// published merge ([`set_reference_merge`]) counts each comparison
+    /// of its scans and each element its removes and inserts shift.
+    pub merge_steps: u64,
+}
+
+impl ShapeWork {
+    /// `self` with `other`'s counts added.
+    fn add(&mut self, other: &Self) {
+        self.shapes += other.shapes;
+        self.bytes_shaped += other.bytes_shaped;
+        self.fallback_rounds += other.fallback_rounds;
+        self.merge_steps += other.merge_steps;
+    }
+}
+
+// MANDALA PATCH: this thread's shaping work.
+#[cfg(feature = "std")]
+std::thread_local! {
+    static WORK: core::cell::Cell<ShapeWork> = const {
+        core::cell::Cell::new(ShapeWork {
+            shapes: 0,
+            bytes_shaped: 0,
+            fallback_rounds: 0,
+            merge_steps: 0,
+        })
+    };
+}
+
+/// MANDALA PATCH: the shaping work done on this thread since it started
+/// ([`ShapeWork`]). Read it before and after a shaping; the difference
+/// is that shaping's cost, counted. Without `std` nothing is counted,
+/// and it reads zero.
+pub fn shape_work() -> ShapeWork {
+    #[cfg(feature = "std")]
+    {
+        WORK.with(core::cell::Cell::get)
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        ShapeWork::default()
+    }
+}
+
+/// Add `work` to this thread's counts.
+fn count(work: &ShapeWork) {
+    #[cfg(feature = "std")]
+    WORK.with(|cell| {
+        let mut counts = cell.get();
+        counts.add(work);
+        cell.set(counts);
+    });
+    #[cfg(not(feature = "std"))]
+    let _ = work;
+}
+
 /// A set of buffers containing allocations for shaped text.
 #[derive(Default)]
 pub struct ShapeBuffer {
@@ -127,6 +226,12 @@ fn shape_fallback(
     span_rtl: bool,
 ) -> Vec<usize> {
     let run = &line[start_run..end_run];
+    // MANDALA PATCH: count the shaping (`ShapeWork`).
+    count(&ShapeWork {
+        shapes: 1,
+        bytes_shaped: run.len() as u64,
+        ..ShapeWork::default()
+    });
 
     let font_scale = font.metrics().units_per_em as f32;
     let ascent = font.metrics().ascent / font_scale;
@@ -271,6 +376,303 @@ fn shape_fallback(
     missing
 }
 
+// MANDALA PATCH: the per-thread switch to the published merge.
+#[cfg(feature = "std")]
+std::thread_local! {
+    static REFERENCE_MERGE: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+/// MANDALA PATCH: merge font fallback on this thread with the algorithm
+/// cosmic-text 0.19.0 published ([`reference_round`]) when `on`, and with
+/// the linear one ([`FallbackMerge`]) otherwise, the default. The two
+/// make the same glyphs; the switch exists so a test can show that, and
+/// count the work the linear merge removed. Returns the previous value.
+#[cfg(feature = "std")]
+pub fn set_reference_merge(on: bool) -> bool {
+    REFERENCE_MERGE.with(|cell| cell.replace(on))
+}
+
+/// Whether this thread merges with the published algorithm.
+fn reference_merge() -> bool {
+    #[cfg(feature = "std")]
+    {
+        REFERENCE_MERGE.with(core::cell::Cell::get)
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
+/// Whether a run's glyphs, shaped in one face, list their cluster
+/// starts monotonically in visual order: rising left to right, falling
+/// right to left. What [`FallbackMerge::round`] reasons from; harfrust
+/// lists them so at its default cluster level.
+fn monotone(glyphs: &[ShapeGlyph], rtl: bool) -> bool {
+    glyphs.windows(2).all(|pair| {
+        if rtl {
+            pair[1].start <= pair[0].start
+        } else {
+            pair[1].start >= pair[0].start
+        }
+    })
+}
+
+/// MANDALA PATCH: the state of a run's font fallback — which of its
+/// bytes still start a missing glyph — and the merge of each fallback
+/// face's glyphs into the run, in time linear in the run.
+///
+/// It makes exactly the choices of the published merge
+/// ([`reference_round`]), which is O(run × missing) per face. That one
+/// walks the fallback face's glyphs in visual order; at each whose
+/// cluster still starts a missing glyph and is not missing in the
+/// fallback face, it clears the cluster's bytes from the missing list,
+/// finds the first of the run's glyphs that lies within the cluster,
+/// removes the contiguous glyphs from there that lie within it, and
+/// inserts the fallback's contiguous glyphs that do — at the end of the
+/// run when none of the run's glyphs lay within it.
+///
+/// When the fallback's cluster starts are monotone ([`monotone`]), the
+/// clusters it chooses are disjoint byte ranges: shaping gives glyphs
+/// of one cluster one end, the next cluster's start. So no glyph lies
+/// within two of them, a glyph inserted for one never lies within
+/// another, and every one of those searches and removals gives on the
+/// run as it stands what it would on the run as it was before the
+/// round. The round therefore chooses its clusters in one walk of the
+/// fallback's glyphs, and rebuilds the run in one walk of its glyphs.
+struct FallbackMerge {
+    /// The run's first byte in its line.
+    start: usize,
+    /// For each byte of the run, how many missing glyphs start there.
+    counts: Vec<u32>,
+    /// Missing glyphs that start outside the run. Shaping makes none;
+    /// the published merge would keep one forever, so this does too.
+    outside: Vec<usize>,
+    /// Missing glyphs in all.
+    count: usize,
+}
+
+impl FallbackMerge {
+    /// The state of a run of bytes `start..end` whose glyphs `missing`
+    /// start missing (one entry per glyph, as `shape_fallback` lists them).
+    fn new(start: usize, end: usize, missing: &[usize]) -> Self {
+        let mut counts = vec![0; end.saturating_sub(start)];
+        let mut outside = Vec::new();
+        for &at in missing {
+            match at.checked_sub(start).and_then(|i| counts.get_mut(i)) {
+                Some(count) => *count += 1,
+                None => outside.push(at),
+            }
+        }
+        Self {
+            start,
+            counts,
+            outside,
+            count: missing.len(),
+        }
+    }
+
+    /// The missing list as the published merge holds it.
+    fn list(&self) -> Vec<usize> {
+        let mut list = self.outside.clone();
+        for (i, &count) in self.counts.iter().enumerate() {
+            list.extend(core::iter::repeat_n(self.start + i, count as usize));
+        }
+        list
+    }
+
+    /// The run's byte `at` as an index into `counts`.
+    fn index(&self, at: usize) -> Option<usize> {
+        at.checked_sub(self.start).filter(|&i| i < self.counts.len())
+    }
+
+    /// Whether a missing glyph starts at `at`.
+    fn has(&self, at: usize) -> bool {
+        self.index(at).is_some_and(|i| self.counts[i] > 0)
+    }
+
+    /// Forget the missing glyphs that start in `start..end`.
+    fn clear(&mut self, start: usize, end: usize, work: &mut ShapeWork) {
+        let from = start.max(self.start) - self.start;
+        let to = end
+            .min(self.start + self.counts.len())
+            .saturating_sub(self.start);
+        for count in self.counts.iter_mut().take(to).skip(from) {
+            self.count -= *count as usize;
+            *count = 0;
+        }
+        work.merge_steps += to.saturating_sub(from) as u64;
+    }
+
+    /// Merge one fallback face's glyphs `fb` of the run, whose missing
+    /// glyphs start at `fb_missing`, into `glyphs[glyph_start..]`, the
+    /// run's glyphs so far. `fb`'s cluster starts are monotone in visual
+    /// order ([`monotone`]).
+    fn round(
+        &mut self,
+        glyphs: &mut Vec<ShapeGlyph>,
+        glyph_start: usize,
+        fb: Vec<ShapeGlyph>,
+        fb_missing: &[usize],
+        work: &mut ShapeWork,
+    ) {
+        let bytes = self.counts.len();
+        let mut fb_lacks = vec![false; bytes];
+        for &at in fb_missing {
+            if let Some(i) = self.index(at) {
+                fb_lacks[i] = true;
+            }
+        }
+        work.merge_steps += (bytes + fb_missing.len()) as u64;
+
+        // The clusters chosen, in the order the published merge takes
+        // them: each one's byte range and its fallback glyphs.
+        let mut chosen: Vec<(usize, usize, Range<usize>)> = Vec::new();
+        let mut j = 0;
+        while j < fb.len() {
+            work.merge_steps += 1;
+            let (start, end) = (fb[j].start, fb[j].end);
+            let lacks = self.index(start).is_some_and(|i| fb_lacks[i]);
+            if !self.has(start) || lacks {
+                j += 1;
+                continue;
+            }
+            self.clear(start, end, work);
+            let within = fb[j..]
+                .iter()
+                .take_while(|glyph| glyph.start >= start && glyph.end <= end)
+                .count();
+            work.merge_steps += within as u64;
+            chosen.push((start, end, j..j + within));
+            j += within;
+        }
+        if chosen.is_empty() {
+            return;
+        }
+
+        // Which chosen cluster each byte of the run belongs to.
+        let mut owner = vec![usize::MAX; bytes];
+        for (cluster, (start, end, _)) in chosen.iter().enumerate() {
+            let from = start.saturating_sub(self.start);
+            let to = end.saturating_sub(self.start).min(bytes);
+            for slot in owner.iter_mut().take(to).skip(from) {
+                *slot = cluster;
+            }
+            work.merge_steps += to.saturating_sub(from) as u64;
+        }
+        work.merge_steps += bytes as u64;
+
+        let mut fb: Vec<Option<ShapeGlyph>> = fb.into_iter().map(Some).collect();
+        let mut take = |range: Range<usize>, into: &mut Vec<ShapeGlyph>| {
+            into.extend(fb[range].iter_mut().filter_map(Option::take));
+        };
+        let old = glyphs.split_off(glyph_start);
+        work.merge_steps += old.len() as u64;
+        let mut placed = vec![false; chosen.len()];
+        // The cluster whose glyphs are being removed: the run's glyphs
+        // within it, contiguous from the first.
+        let mut removing: Option<usize> = None;
+        for glyph in old {
+            let within = self
+                .index(glyph.start)
+                .map(|i| owner[i])
+                .filter(|&cluster| cluster != usize::MAX && glyph.end <= chosen[cluster].1);
+            match within {
+                Some(cluster) if !placed[cluster] => {
+                    placed[cluster] = true;
+                    removing = Some(cluster);
+                    take(chosen[cluster].2.clone(), glyphs);
+                }
+                Some(cluster) if removing == Some(cluster) => {}
+                _ => {
+                    removing = None;
+                    glyphs.push(glyph);
+                }
+            }
+        }
+        // A cluster none of the run's glyphs lay within goes at its end.
+        for (cluster, (_, _, range)) in chosen.into_iter().enumerate() {
+            if !placed[cluster] {
+                take(range, glyphs);
+            }
+        }
+    }
+}
+
+/// MANDALA PATCH: one round of the fallback merge cosmic-text 0.19.0
+/// published, unchanged but for counting its work: the fallback face's
+/// glyphs `fb_glyphs`, missing at `fb_missing`, merged into
+/// `glyphs[glyph_start..]`, and `missing` updated. O(run × missing).
+fn reference_round(
+    glyphs: &mut Vec<ShapeGlyph>,
+    glyph_start: usize,
+    mut fb_glyphs: Vec<ShapeGlyph>,
+    fb_missing: &[usize],
+    missing: &mut Vec<usize>,
+    work: &mut ShapeWork,
+) {
+    // A scan of `list` for `at`, counted.
+    let contains = |list: &[usize], at: usize, work: &mut ShapeWork| {
+        let found = list.iter().position(|&m| m == at);
+        work.merge_steps += found.map_or(list.len(), |i| i + 1) as u64;
+        found.is_some()
+    };
+    // Insert all matching glyphs
+    let mut fb_i = 0;
+    while fb_i < fb_glyphs.len() {
+        let start = fb_glyphs[fb_i].start;
+        let end = fb_glyphs[fb_i].end;
+
+        // Skip clusters that are not missing, or where the fallback font is missing
+        if !contains(missing, start, work) || contains(fb_missing, start, work) {
+            fb_i += 1;
+            continue;
+        }
+
+        let mut missing_i = 0;
+        while missing_i < missing.len() {
+            work.merge_steps += 1;
+            if missing[missing_i] >= start && missing[missing_i] < end {
+                work.merge_steps += (missing.len() - missing_i) as u64;
+                missing.remove(missing_i);
+            } else {
+                missing_i += 1;
+            }
+        }
+
+        // Find prior glyphs
+        let mut i = glyph_start;
+        while i < glyphs.len() {
+            work.merge_steps += 1;
+            if glyphs[i].start >= start && glyphs[i].end <= end {
+                break;
+            }
+            i += 1;
+        }
+
+        // Remove prior glyphs
+        while i < glyphs.len() {
+            if glyphs[i].start >= start && glyphs[i].end <= end {
+                work.merge_steps += (glyphs.len() - i) as u64;
+                let _glyph = glyphs.remove(i);
+            } else {
+                break;
+            }
+        }
+
+        while fb_i < fb_glyphs.len() {
+            if fb_glyphs[fb_i].start >= start && fb_glyphs[fb_i].end <= end {
+                work.merge_steps += (fb_glyphs.len() - fb_i + glyphs.len() - i) as u64;
+                let fb_glyph = fb_glyphs.remove(fb_i);
+                glyphs.insert(i, fb_glyph);
+                i += 1;
+            } else {
+                break;
+            }
+        }
+    }
+}
+
 fn shape_run(
     glyphs: &mut Vec<ShapeGlyph>,
     font_system: &mut FontSystem,
@@ -323,8 +725,21 @@ fn shape_run(
         )
     };
 
-    //TODO: improve performance!
-    while !missing.is_empty() {
+    // MANDALA PATCH: the merge of each fallback face's glyphs is
+    // `FallbackMerge`'s, linear in the run. The published loop is
+    // `reference_round`, kept for a fallback shaping it cannot reason
+    // about and, through `set_reference_merge`, for tests.
+    let mut work = ShapeWork::default();
+    let mut merge = (!missing.is_empty() && !reference_merge())
+        .then(|| FallbackMerge::new(start_run, end_run, &missing));
+    loop {
+        let left = match &merge {
+            Some(merge) => merge.count > 0,
+            None => !missing.is_empty(),
+        };
+        if !left {
+            break;
+        }
         let Some(font) = font_iter.next() else {
             break;
         };
@@ -345,60 +760,24 @@ fn shape_run(
             end_run,
             span_rtl,
         );
-
-        // Insert all matching glyphs
-        let mut fb_i = 0;
-        while fb_i < fb_glyphs.len() {
-            let start = fb_glyphs[fb_i].start;
-            let end = fb_glyphs[fb_i].end;
-
-            // Skip clusters that are not missing, or where the fallback font is missing
-            if !missing.contains(&start) || fb_missing.contains(&start) {
-                fb_i += 1;
-                continue;
+        let work = &mut work;
+        work.fallback_rounds += 1;
+        match &mut merge {
+            Some(merge) if monotone(&fb_glyphs, span_rtl) => {
+                merge.round(glyphs, glyph_start, fb_glyphs, &fb_missing, work);
             }
-
-            let mut missing_i = 0;
-            while missing_i < missing.len() {
-                if missing[missing_i] >= start && missing[missing_i] < end {
-                    // println!("No longer missing {}", missing[missing_i]);
-                    missing.remove(missing_i);
-                } else {
-                    missing_i += 1;
-                }
+            Some(merge) => {
+                let mut list = merge.list();
+                reference_round(glyphs, glyph_start, fb_glyphs, &fb_missing, &mut list, work);
+                *merge = FallbackMerge::new(start_run, end_run, &list);
             }
-
-            // Find prior glyphs
-            let mut i = glyph_start;
-            while i < glyphs.len() {
-                if glyphs[i].start >= start && glyphs[i].end <= end {
-                    break;
-                }
-                i += 1;
-            }
-
-            // Remove prior glyphs
-            while i < glyphs.len() {
-                if glyphs[i].start >= start && glyphs[i].end <= end {
-                    let _glyph = glyphs.remove(i);
-                    // log::trace!("Removed {},{} from {}", _glyph.start, _glyph.end, i);
-                } else {
-                    break;
-                }
-            }
-
-            while fb_i < fb_glyphs.len() {
-                if fb_glyphs[fb_i].start >= start && fb_glyphs[fb_i].end <= end {
-                    let fb_glyph = fb_glyphs.remove(fb_i);
-                    // log::trace!("Insert {},{} from font {} at {}", fb_glyph.start, fb_glyph.end, font_i, i);
-                    glyphs.insert(i, fb_glyph);
-                    i += 1;
-                } else {
-                    break;
-                }
+            None => {
+                reference_round(glyphs, glyph_start, fb_glyphs, &fb_missing, &mut missing, work);
             }
         }
     }
+
+    count(&work);
 
     // Debug missing font fallbacks
     font_iter.check_missing(&line[start_run..end_run]);

@@ -49,6 +49,7 @@ use baumhard::font::tests::metric_cache_tests::*;
 use baumhard::font::tests::metrics_tests::*;
 use baumhard::font::tests::name_rules_tests::*;
 use baumhard::font::tests::ornament_tests::*;
+use baumhard::font::tests::shape_work_tests::*;
 use baumhard::gfx_structs::tests::area_tests::*;
 use baumhard::gfx_structs::tests::builder_tests::*;
 use baumhard::gfx_structs::tests::bvh_descent_tests::*;
@@ -1326,6 +1327,16 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function(
         "each_ornament_fallback_names_its_faces_family_at_every_weight",
         |b| b.iter(do_each_ornament_fallback_names_its_faces_family_at_every_weight),
+    );
+    // The patched font fallback (#304): every oracle text shaped in
+    // every face with both merges, and one word every face before the
+    // fourth lacks, shaped at three lengths with each merge.
+    c.bench_function("the_fallback_merge_lays_out_what_the_published_merge_did", |b| {
+        b.iter(do_the_fallback_merge_lays_out_what_the_published_merge_did)
+    });
+    c.bench_function(
+        "a_word_its_face_lacks_costs_fallback_work_linear_in_its_length",
+        |b| b.iter(do_a_word_its_face_lacks_costs_fallback_work_linear_in_its_length),
     );
     c.bench_function("measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing", |b| {
         b.iter(do_measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing)
