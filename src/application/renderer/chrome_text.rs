@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Border-buffer creators and glyph-advance measurement. Every
-//! helper returns a [`MindMapTextBuffer`] with
-//! [`ZoomVisibility::unbounded`]; scene-builder routes overwrite it
-//! to gate on zoom, overlay routes leave it at default.
+//! Text buffers for the screen-space chrome — the FPS readout, the
+//! mode-status line, the rubber band's edges — and the glyph-advance
+//! measurement the console and the color picker lay their frames out
+//! with. Every buffer is a [`MindMapTextBuffer`] with
+//! [`ZoomVisibility::unbounded`]: chrome is drawn at every zoom.
 //!
 //! Per CODE_CONVENTIONS §1, styled-region → cosmic-text spans go
 //! through `baumhard::font::attrs` — never inlined here. Hex-colour
@@ -71,7 +72,9 @@ pub fn measure_max_glyph_advance(
     }
 }
 
-pub(super) fn create_border_buffer(
+/// A buffer of `text` in `attrs` at `font_size`, laid out in `bounds`
+/// and drawn at `pos`. Shapes once, under the caller's font guard.
+pub(super) fn create_text_buffer(
     font_system: &mut FontSystem,
     text: &str,
     attrs: &Attrs,
@@ -79,16 +82,16 @@ pub(super) fn create_border_buffer(
     pos: (f32, f32),
     bounds: (f32, f32),
 ) -> MindMapTextBuffer {
-    create_border_buffer_lh(font_system, text, attrs, font_size, font_size, pos, bounds)
+    create_text_buffer_lh(font_system, text, attrs, font_size, font_size, pos, bounds)
 }
 
-/// Like [`create_border_buffer`] but sets an explicit line-height on
+/// Like [`create_text_buffer`] but sets an explicit line-height on
 /// the buffer metrics. Needed for multi-line console side columns,
 /// where the vertical stack of `│` glyphs has to advance at the
 /// content's `row_height` (font_size + 2px breathing room) — not the
 /// default `font_size`, which would drift the side column short by
 /// 2px per row.
-pub(super) fn create_border_buffer_lh(
+pub(super) fn create_text_buffer_lh(
     font_system: &mut FontSystem,
     text: &str,
     attrs: &Attrs,
@@ -104,9 +107,8 @@ pub(super) fn create_border_buffer_lh(
     MindMapTextBuffer {
         buffer: buf,
         pos,
-        // Border buffers are authored directly at their final
-        // position rather than stamped around a `GlyphArea` anchor,
-        // and none of them reaches `patch_drag_positions`.
+        // Chrome buffers are authored directly at their final
+        // position rather than stamped around a `GlyphArea` anchor.
         emission_offset: (0.0, 0.0),
         bounds,
         zoom_visibility: ZoomVisibility::unbounded(),

@@ -56,7 +56,8 @@
 //! frame from the state kept here, as the decision record says (design
 //! §13.2), into the one instanced draw the pass makes.
 //!
-//! The layers are drawn after the canvas trees' runs and under the
+//! The five layers are drawn in order, then the chrome layer (design
+//! §12.1: view-only glyphs built from app state), all under the
 //! screen-space chrome (the console or the color picker over its
 //! backdrop, the FPS readout, the mode line).
 
@@ -85,6 +86,8 @@ pub(crate) use self::mirror::RunState;
 pub(crate) struct LayerRenderer {
     /// One mirror per layer, indexed by `Layer::index`.
     mirrors: [Mirror; 5],
+    /// The chrome layer's mirror ([`Self::load_chrome`]), drawn last.
+    chrome: Mirror,
     /// The count every write of a run's state takes the next value of:
     /// its [`RunState`] stamp.
     stamp: u64,
@@ -162,6 +165,17 @@ impl LayerRenderer {
         }
     }
 
+    /// The render state of the chrome layer as a whole (design §12.1: the
+    /// view-only glyphs built from app state — V1-C7's handles, V1-C8's
+    /// section frames), drawn above the five glyph layers. Replaces what
+    /// was kept, as [`Self::load`] does for those.
+    ///
+    /// Cost: one walk of the layer.
+    pub(crate) fn load_chrome(&mut self, chrome: &GfxTree) {
+        let stamp = &mut self.stamp;
+        self.chrome = Mirror::of(chrome, |id| run_state(chrome, id, stamp));
+    }
+
     /// Bring the render state up to date with `layers` after the changes
     /// `journals` record, each naming the layer it is of: the projector's
     /// ([`Self::journals_of`]), and those of the glyph mutators applied
@@ -206,14 +220,8 @@ impl LayerRenderer {
     }
 
     /// The projector's journals, each with its layer: what
-    /// [`Self::apply`] takes for an update with nothing applied over it.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the app's projector is wired to the layer renderer by V1-C3 (#244)"
-        )
-    )]
+    /// [`Self::apply`] takes, before the overlays' journals
+    /// (`view::MapView::sync`).
     pub(crate) fn journals_of(changes: &LayerChanges) -> impl Iterator<Item = (Layer, &Journal<GfxElement>)> {
         Layer::ALL
             .into_iter()
@@ -235,7 +243,11 @@ impl LayerRenderer {
 
     /// Every run kept, in draw order ([`Self::encode`]'s).
     pub(crate) fn runs(&self) -> impl Iterator<Item = &GlyphRunData> {
-        self.mirrors.iter().flat_map(Mirror::runs).map(RunState::run)
+        self.mirrors
+            .iter()
+            .chain(std::iter::once(&self.chrome))
+            .flat_map(Mirror::runs)
+            .map(RunState::run)
     }
 
     /// What the last [`Self::apply`] did. Test builds only.

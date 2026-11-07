@@ -13,7 +13,7 @@ use baumhard::font::metrics::monospace_advance;
 use baumhard::font::{Attrs, Color, Metrics};
 use glam::Vec2;
 
-use super::borders::create_border_buffer;
+use super::chrome_text::create_text_buffer;
 use super::Renderer;
 
 /// Alpha the rubber band's cyan is drawn at. Reduced from opaque so
@@ -91,7 +91,7 @@ impl Renderer {
             (side_text.as_str(), positions[2], bounds[2]),
             (side_text.as_str(), positions[3], bounds[3]),
         ] {
-            self.overlay_buffers.push(create_border_buffer(
+            self.overlay_buffers.push(create_text_buffer(
                 &mut font_system,
                 text,
                 &attrs,

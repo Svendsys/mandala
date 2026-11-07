@@ -1,0 +1,207 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! The map's view: the projector, the glyph layers it keeps, the chrome
+//! layer and the view-only overlays — and the **one pipeline** that
+//! keeps them and the renderer in step with the document (design §3,
+//! §12, §13; V1-C3 #244).
+//!
+//! ```text
+//! MindMapDocument ──take_changes()──▶ Projector::update ──▶ GlyphLayers
+//!        │ (once per change)                │ LayerChanges
+//!        └──▶ the IPC event stream          ▼
+//!                               overlays re-stamped on what changed
+//!                                           │ their journals
+//!                                           ▼
+//!                       LayerRenderer::apply(projector's ++ overlays')
+//!                                           │
+//!                                           ▼ discard every journal
+//! ```
+//!
+//! [`MapView::load`] is the only full pass: one projection of the whole
+//! document, one load of the renderer's state. After it, every change
+//! goes through [`MapView::sync`], which drains the document's change
+//! feed **once**, hands the records to the projector, re-stamps the
+//! overlays on exactly the runs the projector wrote, applies both sets of
+//! journals to the renderer, discards them, and returns the records for
+//! the IPC event stream. There is no rebuild function. A camera change
+//! calls none of this: the renderer applies the camera when it draws
+//! (§12.4).
+//!
+//! **One font lease per pass** (#241, B7's note): a load and a sync each
+//! hold one `FontSystemLease`, taken at the first font read and released
+//! when the pass ends, never across frames.
+//!
+//! **What is read here, and what is not.** Selection and hit testing ask
+//! the projector — [`MapView::hit`], [`MapView::nodes_in`] — which keeps
+//! the projection map; nothing reads a glyph layer to learn what the
+//! document is.
+
+pub(crate) mod overlay;
+#[cfg(test)]
+mod tests;
+
+use baumhard::arena::NodeId;
+use baumhard::document::resolve::resolve_background;
+use baumhard::document::writer::feed::ChangeRecord;
+use baumhard::flow::Rect;
+use baumhard::font::fonts::FontSystemLease;
+use baumhard::gfx_structs::tree::GfxTree;
+use baumhard::projection::{GlyphLayers, Hit, LayerChanges, Projector};
+use glam::Vec2;
+
+use crate::application::document::MindMapDocument;
+use crate::application::renderer::{LayerRenderer, Renderer};
+
+use self::overlay::{Overlay, OverlayJournals, SELECTION_HIGHLIGHT};
+
+/// The view of one open map. See the [module docs](self).
+pub(crate) struct MapView {
+    /// The projection state: what every glyph element was projected from.
+    projector: Projector,
+    /// The five glyph layers the projector writes.
+    layers: GlyphLayers,
+    /// The chrome layer (design §12.1): view-only glyphs built from app
+    /// state rather than the document — V1-C7's handles, V1-C8's section
+    /// frames. Drawn above the five layers; nothing in V1-C3 puts a run
+    /// in it.
+    chrome: GfxTree,
+    /// The selection tint, stamped on the selection — or, while a rubber
+    /// band is out, on what it covers (`preview`).
+    highlight: Overlay,
+    /// What a rubber band covers while one is out: the highlight follows
+    /// it instead of the selection, whose highlight stands down until the
+    /// band's release replaces the selection.
+    preview: Option<Vec<NodeId>>,
+}
+
+impl MapView {
+    /// Project `doc` whole and load the renderer with it: what installing
+    /// a document does, and the only full pass in its life (§3 "Load").
+    /// Any change records the document holds are dropped: the projection
+    /// is of the document as it now stands.
+    ///
+    /// Cost: one walk of the visible document, every flow shaped and
+    /// placed once, under one font lease; one walk of each layer by the
+    /// renderer.
+    pub(crate) fn load(doc: &mut MindMapDocument, renderer: &mut Renderer) -> MapView {
+        doc.take_changes();
+        let mut layers = GlyphLayers::new();
+        let projector = {
+            let mut fonts = FontSystemLease::new("view::load");
+            Projector::project_full(doc.doc(), &mut layers, &mut fonts)
+        };
+        let mut view = MapView {
+            projector,
+            layers,
+            chrome: chrome_layer(),
+            highlight: Overlay::tint(SELECTION_HIGHLIGHT),
+            preview: None,
+        };
+        let targets: Vec<NodeId> = doc.selection.iter().collect();
+        let stamps = view
+            .highlight
+            .update(&targets, None, doc.doc(), &view.projector, &mut view.layers);
+        renderer.load_view(&view.layers, &view.chrome);
+        renderer.set_background(resolve_background(doc.doc().tree(), &mut ()).0);
+        stamps.discard(&mut view.layers);
+        view
+    }
+
+    /// **The pipeline** ([module docs](self)): bring the layers, the
+    /// overlays and the renderer up to date with `doc` — its changes since
+    /// the last pass, and its selection — and return the change records,
+    /// drained once, for the IPC event stream.
+    ///
+    /// Does nothing to any tree, and calls the renderer not at all, when
+    /// the document did not change and the highlight's targets did not
+    /// either: what a frame with nothing to do, a pan and a zoom cost.
+    ///
+    /// Cost: the projector's update (proportional to the changes and their
+    /// readers), the overlay's re-stamp (the runs named), the renderer's
+    /// apply (the elements the journals name).
+    pub(crate) fn sync(&mut self, doc: &mut MindMapDocument, renderer: &mut Renderer) -> Vec<ChangeRecord> {
+        let records = doc.take_changes();
+        let changes: Option<LayerChanges> = (!records.is_empty()).then(|| {
+            doc.selection.retain_live(doc.doc());
+            let mut fonts = FontSystemLease::new("view::sync");
+            self.projector
+                .update(doc.doc(), &records, &mut self.layers, &mut fonts)
+        });
+        let targets: Vec<NodeId> = match &self.preview {
+            Some(covered) => covered.clone(),
+            None => doc.selection.iter().collect(),
+        };
+        if changes.is_none() && targets == self.highlight.targets() {
+            return records;
+        }
+        let stamps: OverlayJournals =
+            self.highlight
+                .update(&targets, changes.as_ref(), doc.doc(), &self.projector, &mut self.layers);
+        let projected = changes.as_ref().into_iter().flat_map(LayerRenderer::journals_of);
+        let journals = projected.chain(stamps.journals());
+        renderer.apply_layer_journals(&self.layers, journals);
+        if changes.is_some() {
+            renderer.set_background(resolve_background(doc.doc().tree(), &mut ()).0);
+        }
+        if let Some(changes) = changes {
+            changes.discard(&mut self.layers);
+        }
+        stamps.discard(&mut self.layers);
+        records
+    }
+
+    /// What `point`, on the canvas, hits: the projector's hit test, top
+    /// layer down, then the nodes' bodies. `&mut` for the layers' hit
+    /// memo, which the first query after a change fills.
+    pub(crate) fn hit(&mut self, point: Vec2) -> Option<Hit> {
+        self.projector.hit(&mut self.layers, point)
+    }
+
+    /// The visible nodes `rect`, on the canvas, covers: what a rubber band
+    /// over it selects (`Projector::nodes_in`).
+    pub(crate) fn nodes_in(&self, rect: Rect) -> Vec<NodeId> {
+        self.projector.nodes_in(rect)
+    }
+
+    /// Point the highlight at `covered` while a rubber band is out, or
+    /// back at the selection with `None`. Takes effect at the next
+    /// [`Self::sync`]. Returns whether it changed.
+    pub(crate) fn set_preview(&mut self, covered: Option<Vec<NodeId>>) -> bool {
+        if self.preview == covered {
+            return false;
+        }
+        self.preview = covered;
+        true
+    }
+
+    /// The rubber band's covered set, while one is out.
+    pub(crate) fn preview(&self) -> Option<&[NodeId]> {
+        self.preview.as_deref()
+    }
+
+    /// The projection state, to read geometry from (`Projector`'s
+    /// `Geometry`: node rectangles, section boxes, curves, label places).
+    pub(crate) fn projector(&self) -> &Projector {
+        &self.projector
+    }
+
+    /// The glyph layers, for the tests and the IPC scene dump, which
+    /// report what is drawn — never to learn what the document is.
+    pub(crate) fn layers(&self) -> &GlyphLayers {
+        &self.layers
+    }
+
+    /// The elements the highlight is stamped on now.
+    #[cfg(test)]
+    pub(crate) fn highlighted(&self) -> &[NodeId] {
+        self.highlight.targets()
+    }
+}
+
+/// An empty chrome layer: a `Void` root, drawn after the five glyph
+/// layers.
+fn chrome_layer() -> GfxTree {
+    let mut tree = GfxTree::new_non_indexed();
+    tree.layer = baumhard::projection::Layer::ALL.len();
+    tree
+}
