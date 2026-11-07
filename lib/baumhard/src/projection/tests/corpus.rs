@@ -8,10 +8,7 @@
 use glam::Vec2;
 
 use crate::arena::NodeId;
-use crate::document::element::{
-    CapData, DefaultsData, DocElement, DocKind, FrameData, FrameStyle, LabelData, LabelStyle, PaletteData,
-    PaletteGroup, RingData, RingStyle, TextStyle, ThemeData, ThemeVariant,
-};
+use crate::document::element::{DocElement, DocKind, PaletteGroup};
 use crate::document::ids::Document;
 use crate::document::mutation::compose;
 use crate::document::mutation::ops::{
@@ -19,17 +16,18 @@ use crate::document::mutation::ops::{
     PortalEndOp, RingOp, SectionOp, SpanOp, TextOp, ThemeOp,
 };
 use crate::document::mutation::step::{DocStep, DocWalk};
-use crate::document::tests::test_support::DocumentBuilder;
 use crate::document::values::{
-    Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteField,
-    PaletteId, Percent, PlainColor, Rgba, Shape, Sides, StartPoint, VarId, Weight, ZoomWindow,
+    Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LineSpan, LinkKind, LinkTarget,
+    PaletteField, PaletteId, Percent, PlainColor, Rgba, Shape, Sides, StartPoint, VarId, Weight, ZoomWindow,
 };
 use crate::document::writer::EditRequest;
 use crate::engine::anchor::Anchors;
 use crate::engine::key::BranchKey;
 use crate::engine::mutator::Mutator;
 use crate::font::fonts::AppFont;
+use crate::projection::tests::maps::load_map;
 use crate::util::tests::choices::Choices;
+use serde_json::{json, Value};
 
 /// The words texts are made of: short, so frames lay quickly, with a
 /// mark and a wide character among them.
@@ -60,23 +58,6 @@ fn color(c: &mut Choices) -> ColorRef {
     }
 }
 
-/// A text style setting some fields, its size in `rel` or in points.
-fn text_style(c: &mut Choices, rel: bool) -> TextStyle {
-    TextStyle {
-        font: c.one_in(5).then_some(AppFont::Novem),
-        size: c.one_in(3).then(|| {
-            if rel {
-                FontSize::Rel(0.04 + c.below(8) as f32 * 0.01)
-            } else {
-                FontSize::Pt(10.0 + c.below(20) as f32)
-            }
-        }),
-        color: c.one_in(2).then(|| color(c)),
-        weight: c.one_in(4).then_some(Weight::BOLD),
-        italic: c.one_in(5).then_some(true),
-    }
-}
-
 /// A fit mode for a frame: mostly the cheap ones.
 fn fit(c: &mut Choices) -> FitMode {
     match c.below(5) {
@@ -90,218 +71,230 @@ fn fit(c: &mut Choices) -> FitMode {
     }
 }
 
-/// The theme every generated map has: three variables, two variants.
-fn theme() -> ThemeData {
-    ThemeData {
-        variables: vec!["accent".into(), "fg".into(), "dim".into()],
-        variants: vec![
-            ThemeVariant {
-                name: "dark".into(),
-                values: vec![Rgba::opaque(212, 162, 76), Rgba::opaque(224, 224, 224), Rgba::opaque(90, 90, 90)],
-            },
-            ThemeVariant {
-                name: "light".into(),
-                values: vec![Rgba::opaque(138, 90, 0), Rgba::opaque(32, 32, 36), Rgba::opaque(160, 160, 160)],
-            },
-        ],
-        active: 0,
+/// A color's spelling: a literal, a theme variable or a palette field.
+fn color_text(c: &mut Choices) -> Value {
+    match c.below(4) {
+        0 => json!(format!("#{:02x}{:02x}c8", c.below(256), c.below(256))),
+        1 => json!(*c.pick(&["var(accent)", "var(fg)", "var(dim)"])),
+        2 => json!(*c.pick(&["palette(frame)", "palette(text)", "palette(title)"])),
+        _ => json!("#28c85a"),
+    }
+}
+
+/// Text style keys, some set, merged into `out`: a size in points.
+fn text_keys(c: &mut Choices, out: &mut Value) {
+    if c.one_in(5) {
+        out["font"] = json!("Novem");
+    }
+    if c.one_in(3) {
+        out["size"] = json!(10.0 + c.below(20) as f32);
+    }
+    if c.one_in(2) {
+        out["color"] = color_text(c);
+    }
+    if c.one_in(4) {
+        out["weight"] = json!("bold");
+    }
+    if c.one_in(5) {
+        out["italic"] = json!(true);
+    }
+}
+
+/// A fit mode's spelling, for a frame: mostly the cheap ones.
+fn fit_text(c: &mut Choices) -> Value {
+    match c.below(5) {
+        0 => json!("repeat"),
+        1 => json!("once"),
+        2 => json!("spread"),
+        3 => json!({"once": {"filler": "·"}}),
+        _ => json!("fit"),
     }
 }
 
 /// A palette of three groups, one color a theme variable.
-fn palette(n: u8) -> PaletteData {
-    let group = |k: u8| PaletteGroup {
-        frame: PlainColor::Rgba(Rgba::opaque(n, k, 10)),
-        text: if k == 1 {
-            PlainColor::Var(VarId(1))
+fn palette_text(n: u8) -> Value {
+    let group = |k: u8| {
+        let mut g = json!({"frame": format!("#{n:02x}{k:02x}0a")});
+        g["text"] = if k == 1 {
+            json!("var(fg)")
         } else {
-            PlainColor::Rgba(Rgba::opaque(n, k, 20))
-        },
-        title: (k == 0).then_some(PlainColor::Rgba(Rgba::opaque(n, k, 30))),
+            json!(format!("#{n:02x}{k:02x}14"))
+        };
+        if k == 0 {
+            g["title"] = json!(format!("#{n:02x}{k:02x}1e"));
+        }
+        g
     };
-    PaletteData {
-        name: format!("p{n}"),
-        groups: vec![group(0), group(1), group(2)],
+    json!([group(0), group(1), group(2)])
+}
+
+/// The record of generated node `i`, `id` `i + 1`, under `parent`.
+fn node_record(c: &mut Choices, i: usize, parent: Option<usize>) -> Value {
+    let mut n = json!({"id": i + 1, "position": [(i % 8) as f32 * 220.0, (i / 8) as f32 * 160.0]});
+    if let Some(p) = parent {
+        n["parent"] = json!(p + 1);
     }
+    n["shape"] = if c.one_in(4) {
+        json!("ellipse")
+    } else {
+        json!({"rectangle": {"radius": c.below(5) * 25}})
+    };
+    if c.one_in(7) {
+        n["palette"] = json!(*c.pick(&["p10", "p20"]));
+    }
+    if c.one_in(15) {
+        n["hidden"] = json!(true);
+    }
+    if c.one_in(12) {
+        n["folded"] = json!(true);
+    }
+    if c.one_in(6) {
+        n["opacity"] = json!(0.5);
+    }
+    if c.one_in(3) {
+        n["min_size"] = json!([80.0 + c.below(80) as f32, 40.0 + c.below(40) as f32]);
+    }
+    if c.one_in(4) {
+        text_keys(c, &mut n);
+    }
+    let mut section_list = Vec::new();
+    for channel in 0..1 + c.below(2) {
+        let mut s = json!({});
+        if channel > 0 {
+            s["channel"] = json!(channel);
+        }
+        if c.one_in(4) {
+            s["offset"] = json!([c.below(20) as f32, 10.0 + c.below(30) as f32]);
+            s["align"] = json!("center");
+        }
+        let mut spans = Vec::new();
+        for _ in 0..1 + c.below(3) {
+            let mut span = json!({"text": words(c, 3)});
+            text_keys(c, &mut span);
+            spans.push(span);
+        }
+        s["spans"] = json!(spans);
+        section_list.push(s);
+    }
+    n["sections"] = json!(section_list);
+    if c.one_in(3) {
+        let mut frame = json!({"fit": fit_text(c)});
+        if c.one_in(3) {
+            frame["gap"] = json!(4.0);
+        }
+        let mut rings = Vec::new();
+        for channel in 0..1 + c.below(2) {
+            let mut ring = json!({"size": 0.05 + c.below(10) as f32 * 0.01});
+            if channel > 0 {
+                ring["channel"] = json!(channel);
+            }
+            if c.one_in(3) {
+                ring["fit"] = fit_text(c);
+            }
+            let text = if c.one_in(2) {
+                "·".to_string()
+            } else {
+                words(c, 4)
+            };
+            ring["spans"] = json!([{"text": text}]);
+            rings.push(ring);
+        }
+        frame["rings"] = json!(rings);
+        n["frame"] = frame;
+    }
+    if parent.is_some() {
+        let mut connector = json!({});
+        if c.one_in(3) {
+            connector["spans"] = json!([{"text": "─"}]);
+        }
+        if c.one_in(4) {
+            connector["cap_end"] = json!({"spans": [{"text": "▶"}]});
+        }
+        if c.one_in(5) {
+            connector["label"] =
+                json!({"t": 0.25 + c.below(3) as f32 * 0.25, "spans": [{"text": words(c, 2)}]});
+        }
+        if c.one_in(4) {
+            connector["control_points"] = json!([[c.below(100) as f32 - 50.0, c.below(100) as f32 - 50.0]]);
+        }
+        n["connector"] = connector;
+    }
+    n
 }
 
 /// A generated map of fifty nodes or more: a random forest of nodes with
 /// sections of spans, frames of relative rings, connectors with caps and
 /// labels, line and portal links, two palettes bound here and there,
-/// theme variables, hidden, folded and faded nodes.
+/// theme variables, hidden, folded and faded nodes. Written as a
+/// `.mandala.json` — its nodes in the depth-first pre-order the flat list
+/// takes (D30) — and loaded.
 pub fn generated(c: &mut Choices) -> Document {
-    let mut b = DocumentBuilder::new();
-    b.theme(theme());
-    let palettes = [b.palette(palette(10)), b.palette(palette(20))];
-    if c.one_in(2) {
-        b.defaults(DefaultsData {
-            connector: crate::document::element::FlowStyle {
-                content: Some("─".into()),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-    }
-    let root = b.root();
     let count = 50 + c.below(15) as usize;
-    let mut nodes: Vec<NodeId> = Vec::with_capacity(count);
-    for i in 0..count {
-        let parent = if nodes.is_empty() || c.one_in(8) {
-            root
-        } else {
-            nodes[c.index(nodes.len())]
-        };
-        let node = b.node(parent);
-        nodes.push(node);
-        let position = Vec2::new((i % 8) as f32 * 220.0, (i / 8) as f32 * 160.0);
-        let shape = if c.one_in(4) {
-            Shape::Ellipse
-        } else {
-            Shape::Rectangle {
-                radius: Percent::new((c.below(5) * 25) as u8),
-            }
-        };
-        let palette = c.one_in(7).then(|| *c.pick(&palettes));
-        let hidden = c.one_in(15);
-        let folded = c.one_in(12);
-        let opacity = if c.one_in(6) { 0.5 } else { 1.0 };
-        let min_size = c.one_in(3).then(|| Vec2::new(80.0 + c.below(80) as f32, 40.0 + c.below(40) as f32));
-        let text = c.one_in(4).then(|| text_style(c, false));
-        b.edit_node(node, |n| {
-            n.position = position;
-            n.style.shape = Some(shape);
-            n.palette = palette;
-            n.hidden = hidden;
-            n.folded = folded;
-            n.opacity = opacity;
-            n.min_size = min_size;
-            if let Some(text) = text {
-                n.style.text = text;
-            }
-        });
-        for channel in 0..1 + c.below(2) as usize {
-            let section = b.section(node, channel);
-            if c.one_in(4) {
-                let offset = Vec2::new(c.below(20) as f32, 10.0 + c.below(30) as f32);
-                b.edit(section, |e| {
-                    if let DocElement::Section(s) = e {
-                        s.offset = offset;
-                        s.align = Some(Align::Center);
-                    }
-                });
-            }
-            for _ in 0..1 + c.below(3) {
-                let text = words(c, 3);
-                let span = b.span(section, &text);
-                let style = text_style(c, false);
-                b.edit(span, |e| {
-                    if let DocElement::Span(s) = e {
-                        s.style = style;
-                    }
-                });
-            }
-        }
-        if c.one_in(3) {
-            let frame_fit = fit(c);
-            let frame = b.add(
-                node,
-                DocElement::Frame(FrameData {
-                    style: FrameStyle {
-                        fit: Some(frame_fit),
-                        gap: c.one_in(3).then_some(4.0),
-                        ..Default::default()
-                    },
-                }),
-            );
-            for channel in 0..1 + c.below(2) as usize {
-                let size = FontSize::Rel(0.05 + c.below(10) as f32 * 0.01);
-                let ring_fit = c.one_in(3).then(|| fit(c));
-                let ring = b.add(
-                    frame,
-                    DocElement::Ring(RingData {
-                        channel,
-                        style: RingStyle {
-                            fit: ring_fit,
-                            text: TextStyle {
-                                size: Some(size),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        },
-                    }),
-                );
-                let text = if c.one_in(2) { "·".to_string() } else { words(c, 4) };
-                b.span(ring, &text);
-            }
-        }
-        if parent != root {
-            let connector = crate::document::tests::test_support::connector_of(&b, node);
-            if c.one_in(3) {
-                b.span(connector, "─");
-            }
-            if c.one_in(4) {
-                let cap = b.add(connector, DocElement::CapEnd(CapData::default()));
-                b.span(cap, "▶");
-            }
-            if c.one_in(5) {
-                let label = b.add(
-                    connector,
-                    DocElement::Label(LabelData {
-                        style: LabelStyle {
-                            t: Some(0.25 + c.below(3) as f32 * 0.25),
-                            ..Default::default()
-                        },
-                    }),
-                );
-                let text = words(c, 2);
-                b.span(label, &text);
-            }
-            if c.one_in(4) {
-                let cp = Vec2::new(c.below(100) as f32 - 50.0, c.below(100) as f32 - 50.0);
-                b.edit(connector, |e| {
-                    if let DocElement::Connector(conn) = e {
-                        conn.path.control_points = vec![cp];
-                    }
-                });
-            }
-        }
-    }
-    // Links, once every node exists.
+    let parents: Vec<Option<usize>> = (0..count)
+        .map(|i| (i > 0 && !c.one_in(8)).then(|| c.index(i)))
+        .collect();
+    let mut records: Vec<Value> = (0..count).map(|i| node_record(c, i, parents[i])).collect();
     for i in 0..count {
         if !c.one_in(5) {
             continue;
         }
-        let from = nodes[i];
-        let to = nodes[c.index(count)];
-        if to == from {
+        let to = c.index(count);
+        if to == i {
             continue;
         }
-        let kind = if c.one_in(3) { LinkKind::Portal } else { LinkKind::Line };
-        let link = b.link(from, to, kind);
-        match kind {
-            LinkKind::Line => {
-                if c.one_in(2) {
-                    b.span(link, "~");
-                }
-                if c.one_in(3) {
-                    let cap = b.add(link, DocElement::CapStart(CapData::default()));
-                    b.span(cap, "◆");
-                }
-                if c.one_in(3) {
-                    let label = b.add(link, DocElement::Label(LabelData::default()));
-                    b.span(label, "see");
-                }
+        let link = if c.one_in(3) {
+            let mut end = json!({});
+            if c.one_in(2) {
+                end["label"] = json!({"spans": [{"text": "to"}]});
             }
-            LinkKind::Portal => {
-                let first = link.children(b.tree().arena()).next();
-                if let (Some(end), true) = (first, c.one_in(2)) {
-                    let label = b.add(end, DocElement::Label(LabelData::default()));
-                    b.span(label, "to");
-                }
+            json!({"to": to + 1, "kind": "portal", "ends": [end, {}]})
+        } else {
+            let mut link = json!({"to": to + 1, "kind": "line"});
+            if c.one_in(2) {
+                link["spans"] = json!([{"text": "~"}]);
             }
+            if c.one_in(3) {
+                link["cap_start"] = json!({"spans": [{"text": "◆"}]});
+            }
+            if c.one_in(3) {
+                link["label"] = json!({"spans": [{"text": "see"}]});
+            }
+            link
+        };
+        match records[i].get_mut("links").and_then(Value::as_array_mut) {
+            Some(links) => links.push(link),
+            None => records[i]["links"] = json!([link]),
         }
     }
-    b.build().expect("a generated map is a valid document")
+    // The flat list's order: depth-first pre-order, children in order.
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); count];
+    let mut stack: Vec<usize> = Vec::new();
+    for (i, parent) in parents.iter().enumerate().rev() {
+        match parent {
+            Some(p) => children[*p].insert(0, i),
+            None => stack.push(i),
+        }
+    }
+    let mut nodes = Vec::with_capacity(count);
+    while let Some(i) = stack.pop() {
+        nodes.push(records[i].take());
+        stack.extend(children[i].iter().rev());
+    }
+    let mut map = json!({
+        "theme": {
+            "active": "dark",
+            "variants": {
+                "dark": {"accent": "#d4a24c", "dim": "#5a5a5a", "fg": "#e0e0e0"},
+                "light": {"accent": "#8a5a00", "dim": "#a0a0a0", "fg": "#202024"}
+            }
+        },
+        "palettes": {"p10": palette_text(10), "p20": palette_text(20)},
+        "nodes": nodes
+    });
+    if c.one_in(2) {
+        map["defaults"] = json!({"connector": {"content": "─"}});
+    }
+    load_map(map)
 }
 
 /// The elements of `doc` of `kind`, in tree order. O(the document): a
@@ -325,7 +318,10 @@ fn single(kind: DocKind, mutation: DocMutation, anchors: Vec<NodeId>) -> EditReq
 /// A text op, its sizes in the unit of `rel`.
 fn text_op(c: &mut Choices, rel: bool) -> (&'static str, TextOp) {
     match c.below(7) {
-        0 => ("Text::SetFont", TextOp::SetFont(c.one_in(2).then_some(AppFont::Novem))),
+        0 => (
+            "Text::SetFont",
+            TextOp::SetFont(c.one_in(2).then_some(AppFont::Novem)),
+        ),
         1 => (
             "Text::SetSize",
             TextOp::SetSize(Some(if rel {
@@ -335,7 +331,10 @@ fn text_op(c: &mut Choices, rel: bool) -> (&'static str, TextOp) {
             })),
         ),
         2 => ("Text::GrowSize", TextOp::GrowSize(if rel { 0.01 } else { 2.0 })),
-        3 => ("Text::ScaleSize", TextOp::ScaleSize(if c.one_in(2) { 1.5 } else { 0.5 })),
+        3 => (
+            "Text::ScaleSize",
+            TextOp::ScaleSize(if c.one_in(2) { 1.5 } else { 0.5 }),
+        ),
         4 => ("Text::SetColor", TextOp::SetColor(Some(color(c)))),
         5 => ("Text::SetWeight", TextOp::SetWeight(Some(Weight::BOLD))),
         _ => ("Text::SetItalic", TextOp::SetItalic(Some(c.one_in(2)))),
@@ -360,10 +359,18 @@ pub fn edit(c: &mut Choices, doc: &Document) -> Option<(&'static str, EditReques
 /// The edit [`EDITS`] calls `name`, its targets and values drawn from
 /// `c`: what a sweep that walks the vocabulary in turn asks for. `None`
 /// when the document has nothing it could target.
-pub fn edit_named(c: &mut Choices, doc: &Document, name: &'static str) -> Option<(&'static str, EditRequest)> {
+pub fn edit_named(
+    c: &mut Choices,
+    doc: &Document,
+    name: &'static str,
+) -> Option<(&'static str, EditRequest)> {
     use DocKind as K;
     let req = match name {
-        "Map::SetName" => single(K::Map, DocMutation::Map(MapOp::SetName("renamed".into())), vec![doc.root()]),
+        "Map::SetName" => single(
+            K::Map,
+            DocMutation::Map(MapOp::SetName("renamed".into())),
+            vec![doc.root()],
+        ),
         "Map::SetBackground" => single(
             K::Map,
             DocMutation::Map(MapOp::SetBackground(PlainColor::Var(VarId(2)))),
@@ -406,14 +413,17 @@ pub fn edit_named(c: &mut Choices, doc: &Document, name: &'static str) -> Option
                 vec![pick(c, doc, K::Defaults)?],
             )
         }
-        n if n.starts_with("Node::") => {
+        n if n.starts_with("Node::") && n != "Node::SetPalette near the root" => {
             let node = pick(c, doc, K::Node)?;
             let op = match n {
-                "Node::SetPosition" => NodeOp::SetPosition(Vec2::new(c.below(1500) as f32, c.below(1200) as f32)),
-                "Node::Nudge" => NodeOp::Nudge(Vec2::new(c.below(60) as f32 - 30.0, 7.0)),
-                "Node::SetMinSize" => {
-                    NodeOp::SetMinSize(c.one_in(3).then(|| Vec2::new(60.0 + c.below(200) as f32, 50.0 + c.below(90) as f32)))
+                "Node::SetPosition" => {
+                    NodeOp::SetPosition(Vec2::new(c.below(1500) as f32, c.below(1200) as f32))
                 }
+                "Node::Nudge" => NodeOp::Nudge(Vec2::new(c.below(60) as f32 - 30.0, 7.0)),
+                "Node::SetMinSize" => NodeOp::SetMinSize(
+                    c.one_in(3)
+                        .then(|| Vec2::new(60.0 + c.below(200) as f32, 50.0 + c.below(90) as f32)),
+                ),
                 "Node::SetShape" => NodeOp::SetShape(Some(if c.one_in(2) {
                     Shape::Ellipse
                 } else {
@@ -440,10 +450,14 @@ pub fn edit_named(c: &mut Choices, doc: &Document, name: &'static str) -> Option
         n if n.starts_with("Section::") => {
             let section = pick(c, doc, K::Section)?;
             let op = match n {
-                "Section::SetOffset" => SectionOp::SetOffset(Vec2::new(c.below(30) as f32, c.below(40) as f32)),
+                "Section::SetOffset" => {
+                    SectionOp::SetOffset(Vec2::new(c.below(30) as f32, c.below(40) as f32))
+                }
                 "Section::Nudge" => SectionOp::Nudge(Vec2::new(3.0, 4.0)),
                 "Section::SetMinSize" => SectionOp::SetMinSize(c.one_in(2).then_some(Vec2::new(150.0, 60.0))),
-                "Section::SetAlign" => SectionOp::SetAlign(Some(*c.pick(&[Align::Left, Align::Center, Align::Right]))),
+                "Section::SetAlign" => {
+                    SectionOp::SetAlign(Some(*c.pick(&[Align::Left, Align::Center, Align::Right])))
+                }
                 "Section::SetChannel" => SectionOp::SetChannel(c.below(3) as usize),
                 _ => SectionOp::Text(text_op(c, false).1),
             };
@@ -466,7 +480,12 @@ pub fn edit_named(c: &mut Choices, doc: &Document, name: &'static str) -> Option
                 "Span::SetLink" => SpanOp::SetLink(Some(LinkTarget::Url("https://example.com".into()))),
                 _ => {
                     let (_, op) = text_op(c, false);
-                    if in_frame && matches!(op, TextOp::SetSize(_) | TextOp::GrowSize(_) | TextOp::ScaleSize(_)) {
+                    if in_frame
+                        && matches!(
+                            op,
+                            TextOp::SetSize(_) | TextOp::GrowSize(_) | TextOp::ScaleSize(_)
+                        )
+                    {
                         SpanOp::Text(TextOp::SetItalic(Some(true)))
                     } else {
                         SpanOp::Text(op)
@@ -509,7 +528,10 @@ pub fn edit_named(c: &mut Choices, doc: &Document, name: &'static str) -> Option
             let kind = if c.one_in(2) { K::Connector } else { K::Link };
             let path = pick(c, doc, kind)?;
             let op = match n {
-                "Path::SetFit" => PathOp::SetFit(Some(c.pick(&[FitMode::Repeat, FitMode::Spread, FitMode::Once { filler: None }]).clone())),
+                "Path::SetFit" => PathOp::SetFit(Some(
+                    c.pick(&[FitMode::Repeat, FitMode::Spread, FitMode::Once { filler: None }])
+                        .clone(),
+                )),
                 "Path::SetSpacing" => PathOp::SetSpacing(Some(c.below(5) as f32)),
                 "Path::SetSize" => PathOp::SetSize(Some(8.0 + c.below(20) as f32)),
                 "Path::SetColor" => PathOp::SetColor(Some(color(c))),
@@ -552,7 +574,9 @@ pub fn edit_named(c: &mut Choices, doc: &Document, name: &'static str) -> Option
         n if n.starts_with("PortalEnd::") => {
             let end = pick(c, doc, K::PortalEnd)?;
             let op = match n {
-                "PortalEnd::SetBorderT" => PortalEndOp::SetBorderT(c.one_in(3).then(|| c.below(4) as f32 * 0.25)),
+                "PortalEnd::SetBorderT" => {
+                    PortalEndOp::SetBorderT(c.one_in(3).then(|| c.below(4) as f32 * 0.25))
+                }
                 "PortalEnd::SetOffset" => PortalEndOp::SetOffset(Some(c.below(10) as f32)),
                 "PortalEnd::SetColor" => PortalEndOp::SetColor(Some(color(c))),
                 "PortalEnd::SetSize" => PortalEndOp::SetSize(Some(10.0 + c.below(10) as f32)),
@@ -560,16 +584,50 @@ pub fn edit_named(c: &mut Choices, doc: &Document, name: &'static str) -> Option
             };
             single(K::PortalEnd, DocMutation::PortalEnd(op), vec![end])
         }
+        "Node::SetPalette near the root" => {
+            // A root node, or a child of one: a rebinding whose carried
+            // binding changes for a whole subtree (ruling B7.2).
+            let roots: Vec<NodeId> = doc
+                .children(doc.root())
+                .filter(|&c| doc.get(c).is_some_and(|e| e.kind() == K::Node))
+                .collect();
+            if roots.is_empty() {
+                return None;
+            }
+            let mut node = roots[c.index(roots.len())];
+            if c.one_in(2) {
+                let children: Vec<NodeId> = doc
+                    .children(node)
+                    .filter(|&n| doc.get(n).is_some_and(|e| e.kind() == K::Node))
+                    .collect();
+                if !children.is_empty() {
+                    node = children[c.index(children.len())];
+                }
+            }
+            let palette = (!c.one_in(4)).then(|| PaletteId(c.below(2) as u16));
+            single(
+                K::Node,
+                DocMutation::Node(NodeOp::SetPalette(palette)),
+                vec![node],
+            )
+        }
         "compose::create_child" => {
             let parent = pick(c, doc, K::Node)?;
-            EditRequest::new(compose::create_child(doc, parent, Vec2::new(30.0, 40.0)).ok()?, name)
+            EditRequest::new(
+                compose::create_child(doc, parent, Vec2::new(30.0, 40.0)).ok()?,
+                name,
+            )
         }
-        "compose::create_root" => EditRequest::new(compose::create_root(doc, Vec2::new(900.0, 60.0)).ok()?, name),
+        "compose::create_root" => {
+            EditRequest::new(compose::create_root(doc, Vec2::new(900.0, 60.0)).ok()?, name)
+        }
         "compose::delete" => {
             let node = pick(c, doc, K::Node)?;
             EditRequest::new(compose::delete(doc, &[node]).ok()?, name)
         }
-        "compose::remove_links" => EditRequest::new(vec![compose::remove_links(vec![pick(c, doc, K::Link)?])], name),
+        "compose::remove_links" => {
+            EditRequest::new(vec![compose::remove_links(vec![pick(c, doc, K::Link)?])], name)
+        }
         "compose::reparent" => {
             let node = pick(c, doc, K::Node)?;
             let to = pick(c, doc, K::Node)?;
@@ -586,7 +644,14 @@ pub fn edit_named(c: &mut Choices, doc: &Document, name: &'static str) -> Option
         "compose::style_range" => {
             let section = pick(c, doc, K::Section)?;
             EditRequest::new(
-                compose::style_range(doc, section, 0, 3, TextOp::SetColor(Some(ColorRef::Var(VarId(0))))).ok()?,
+                compose::style_range(
+                    doc,
+                    section,
+                    0,
+                    3,
+                    TextOp::SetColor(Some(ColorRef::Var(VarId(0)))),
+                )
+                .ok()?,
                 name,
             )
         }
@@ -643,6 +708,7 @@ pub const EDITS: &[&str] = &[
     "Node::SetMinSize",
     "Node::SetShape",
     "Node::SetPalette",
+    "Node::SetPalette near the root",
     "Node::SetZoom",
     "Node::SetFolded",
     "Node::ToggleFolded",

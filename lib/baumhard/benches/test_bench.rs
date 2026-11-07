@@ -73,6 +73,8 @@ use baumhard::gfx_structs::tests::tree_tests::*;
 use baumhard::gfx_structs::tests::tree_walker_tests::*;
 use baumhard::gfx_structs::tests::zoom_visibility_tests::*;
 use baumhard::mindmap::scene_dump::tests::scene_dump_tests::*;
+use baumhard::projection::tests::deep_tests::*;
+use baumhard::projection::tests::projection_tests::*;
 use baumhard::util::tests::arena_utils_tests::*;
 use baumhard::util::tests::color_tests::*;
 use baumhard::util::tests::geometry_tests::*;
@@ -1837,9 +1839,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_resolve_node_chain", |b| {
         b.iter(do_document_resolve_node_chain)
     });
-    c.bench_function("document_resolve_carried_binding_resolves_what_the_climb_does", |b| {
-        b.iter(do_document_resolve_carried_binding_resolves_what_the_climb_does)
-    });
+    c.bench_function(
+        "document_resolve_carried_binding_resolves_what_the_climb_does",
+        |b| b.iter(do_document_resolve_carried_binding_resolves_what_the_climb_does),
+    );
     c.bench_function("document_resolve_background", |b| {
         b.iter(do_document_resolve_background)
     });
@@ -1962,6 +1965,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_validate_walks_a_deep_insert", |b| {
         b.iter(do_document_validate_walks_a_deep_insert)
     });
+    c.bench_function("projection_full_projection_of_a_generated_map", |b| {
+        b.iter(do_projection_full_projection_of_a_generated_map)
+    });
+    c.bench_function("projection_update_after_a_single_node_edit", |b| {
+        b.iter(do_projection_update_after_a_single_node_edit)
+    });
+    c.bench_function("projection_deep_chain_projects_edits_hides_moves_and_hits", |b| {
+        b.iter(do_projection_deep_chain_projects_edits_hides_moves_and_hits)
+    });
     c.bench_function("document_deep_chain_full_walk", |b| {
         b.iter(do_document_deep_chain_full_walk)
     });
@@ -2017,12 +2029,14 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("writer_feed_reports_input_kinds_and_undo_reverses_them", |b| {
         b.iter(do_writer_feed_reports_input_kinds_and_undo_reverses_them)
     });
-    c.bench_function("writer_feed_a_stage_replacing_a_stage_reports_both_journals", |b| {
-        b.iter(do_writer_feed_a_stage_replacing_a_stage_reports_both_journals)
-    });
-    c.bench_function("writer_feed_removing_a_first_section_reports_its_nodes_row", |b| {
-        b.iter(do_writer_feed_removing_a_first_section_reports_its_nodes_row)
-    });
+    c.bench_function(
+        "writer_feed_a_stage_replacing_a_stage_reports_both_journals",
+        |b| b.iter(do_writer_feed_a_stage_replacing_a_stage_reports_both_journals),
+    );
+    c.bench_function(
+        "writer_feed_removing_a_first_section_reports_its_nodes_row",
+        |b| b.iter(do_writer_feed_removing_a_first_section_reports_its_nodes_row),
+    );
     c.bench_function("writer_feed_a_move_reports_both_parents", |b| {
         b.iter(do_writer_feed_a_move_reports_both_parents)
     });

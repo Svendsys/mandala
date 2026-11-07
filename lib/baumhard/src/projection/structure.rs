@@ -15,24 +15,24 @@ use crate::document::values::{LinkKind, PaletteId};
 use crate::document::writer::feed::ChangeRecord;
 use crate::engine::journal::Touch;
 use crate::engine::tree::Tree;
-use crate::projection::input::{Dependent, Input, Stage};
+use crate::projection::input::{Dependent, ProjectionInput, Stage};
 use crate::projection::layers::{GlyphLayers, Layer, LayerBuilders};
-use crate::projection::stages::Work;
+use crate::projection::stages::PhaseWork;
 use crate::projection::state::{
-    LineState, NodeState, Owner, PortalState, RingState, SectionState, Unit, UnitBody,
+    LineState, NodeState, Owner, PortalState, ProjectedUnit, RingState, SectionState, UnitBody,
 };
 use crate::projection::Projector;
 
 /// Every element a batch of records touched, each once, in the order
 /// first named, and which of them a record moved under another parent.
-pub(crate) struct Touched {
+pub(crate) struct TouchedElements {
     /// The elements.
     pub(crate) ids: Vec<NodeId>,
     /// The elements some record re-parented.
     pub(crate) moved: FxHashSet<NodeId>,
 }
 
-impl Touched {
+impl TouchedElements {
     /// The touches of `changes`. O(their touches).
     pub(crate) fn of(changes: &[ChangeRecord]) -> Self {
         let mut seen = FxHashSet::default();
@@ -48,7 +48,7 @@ impl Touched {
                 }
             }
         }
-        Touched { ids, moved }
+        TouchedElements { ids, moved }
     }
 }
 
@@ -77,7 +77,10 @@ pub(crate) fn units_in_order(tree: &Tree<DocElement>, node: NodeId) -> impl Iter
         .take_while(move |&c| arena[c].get().kind() != DocKind::Node)
         .flat_map(move |c| {
             let rings = (arena[c].get().kind() == DocKind::Frame)
-                .then(|| c.children(arena).filter(move |&r| arena[r].get().kind() == DocKind::Ring))
+                .then(|| {
+                    c.children(arena)
+                        .filter(move |&r| arena[r].get().kind() == DocKind::Ring)
+                })
                 .into_iter()
                 .flatten();
             let own = matches!(
@@ -146,7 +149,7 @@ impl Projector {
 
     /// Project every visible root node and its subtree: what a full
     /// projection starts from. O(visible document).
-    pub(crate) fn project_roots(&mut self, tree: &Tree<DocElement>, work: &mut Work) {
+    pub(crate) fn project_roots(&mut self, tree: &Tree<DocElement>, work: &mut PhaseWork) {
         let arena = tree.arena();
         let roots: Vec<NodeId> = tree
             .root()
@@ -166,11 +169,9 @@ impl Projector {
     /// for all their units, and mark all their work. Iterates with a heap
     /// stack (§20 rule 11); the parent's depth is carried down. O(the
     /// subtree).
-    pub(crate) fn create_subtree(&mut self, tree: &Tree<DocElement>, top: NodeId, work: &mut Work) {
+    pub(crate) fn create_subtree(&mut self, tree: &Tree<DocElement>, top: NodeId, work: &mut PhaseWork) {
         let parent = parent_node(tree, top);
-        let depth = parent
-            .and_then(|p| self.nodes.get(&p))
-            .map_or(0, |p| p.depth + 1);
+        let depth = parent.and_then(|p| self.nodes.get(&p)).map_or(0, |p| p.depth + 1);
         let arena = tree.arena();
         let mut stack = vec![(top, parent, depth)];
         work.pending_roots.push(top);
@@ -187,7 +188,7 @@ impl Projector {
             self.queue(work, Dependent::new(id, Stage::Geometry));
             // Whatever waited for it to be drawn — a link into it — now
             // draws.
-            self.mark(work, Input::Visibility(id));
+            self.mark(work, ProjectionInput::Visibility(id));
             let units: Vec<NodeId> = units_in_order(tree, id).collect();
             for unit in units {
                 self.create_unit(tree, unit, id, work);
@@ -207,14 +208,20 @@ impl Projector {
 
     /// Create the unit `id` of `node`, if it is one and has no state, and
     /// mark its resolution. O(1).
-    pub(crate) fn create_unit(&mut self, tree: &Tree<DocElement>, id: NodeId, node: NodeId, work: &mut Work) {
+    pub(crate) fn create_unit(
+        &mut self,
+        tree: &Tree<DocElement>,
+        id: NodeId,
+        node: NodeId,
+        work: &mut PhaseWork,
+    ) {
         if self.units.contains_key(&id) {
             return;
         }
         let Some(body) = body_for(tree, id) else {
             return;
         };
-        self.units.insert(id, Unit::new(node, body));
+        self.units.insert(id, ProjectedUnit::new(node, body));
         if let Some(state) = self.nodes.get_mut(&node) {
             state.units.push(id);
         }
@@ -231,7 +238,7 @@ impl Projector {
         remove: bool,
         layers: &mut GlyphLayers,
         out: &mut LayerBuilders,
-        work: &mut Work,
+        work: &mut PhaseWork,
     ) {
         let Some(unit) = self.units.remove(&id) else {
             return;
@@ -247,13 +254,23 @@ impl Projector {
         for stage in [Stage::Resolve, Stage::Shape, Stage::Place] {
             self.deps.clear(Dependent::new(id, stage));
         }
-        self.label_hosts.retain(|_, host| *host != id);
+        // The labels it projected, and no others: O(its labels).
+        let labels: [Option<NodeId>; 2] = match &unit.body {
+            UnitBody::Line(line) => [line.label.id, None],
+            UnitBody::Portal(portal) => [portal.end[0].label.id, portal.end[1].label.id],
+            _ => [None, None],
+        };
+        for label in labels.into_iter().flatten() {
+            if self.label_hosts.get(&label) == Some(&id) {
+                self.label_hosts.remove(&label);
+            }
+        }
         if let Some(node) = self.nodes.get_mut(&unit.node) {
             if let Some(at) = node.units.iter().position(|&u| u == id) {
                 node.units.swap_remove(at);
             }
         }
-        self.mark(work, Input::Geometry(id));
+        self.mark(work, ProjectionInput::Geometry(id));
     }
 
     /// Take the node `top` and every projected node below it out of the
@@ -269,7 +286,7 @@ impl Projector {
         top: NodeId,
         layers: &mut GlyphLayers,
         out: &mut LayerBuilders,
-        work: &mut Work,
+        work: &mut PhaseWork,
     ) {
         let Some(state) = self.nodes.get(&top) else {
             return;
@@ -305,8 +322,8 @@ impl Projector {
             self.deps.clear(Dependent::new(node, Stage::Carry));
             self.deps.clear(Dependent::new(node, Stage::Geometry));
             self.bodies.remove(node);
-            self.mark(work, Input::Visibility(node));
-            self.mark(work, Input::Geometry(node));
+            self.mark(work, ProjectionInput::Visibility(node));
+            self.mark(work, ProjectionInput::Geometry(node));
         }
     }
 
@@ -317,8 +334,8 @@ impl Projector {
     pub(crate) fn restructure(
         &mut self,
         tree: &Tree<DocElement>,
-        touched: &Touched,
-        work: &mut Work,
+        touched: &TouchedElements,
+        work: &mut PhaseWork,
         layers: &mut GlyphLayers,
         out: &mut LayerBuilders,
     ) {
@@ -400,7 +417,13 @@ impl Projector {
     /// depth and its projected descendants' follow, each marked to carry
     /// again — what a re-parent changes for a subtree (#241 §5.1). O(the
     /// projected subtree).
-    fn reparent(&mut self, tree: &Tree<DocElement>, id: NodeId, parent: Option<NodeId>, work: &mut Work) {
+    fn reparent(
+        &mut self,
+        tree: &Tree<DocElement>,
+        id: NodeId,
+        parent: Option<NodeId>,
+        work: &mut PhaseWork,
+    ) {
         let depth = parent.and_then(|p| self.nodes.get(&p)).map_or(0, |p| p.depth + 1);
         if let Some(state) = self.nodes.get_mut(&id) {
             state.parent = parent;
@@ -430,8 +453,8 @@ impl Projector {
         &mut self,
         tree: &Tree<DocElement>,
         changes: &[ChangeRecord],
-        touched: &Touched,
-        work: &mut Work,
+        touched: &TouchedElements,
+        work: &mut PhaseWork,
     ) {
         for record in changes {
             for &(id, kind) in &record.inputs {
@@ -445,11 +468,11 @@ impl Projector {
                     InputKind::Defaults => Some(DocInput::Defaults),
                 };
                 if let Some(input) = input {
-                    self.mark(work, Input::Doc(input));
+                    self.mark(work, ProjectionInput::Doc(input));
                 }
             }
             for &row in &record.rows {
-                self.mark(work, Input::Doc(DocInput::Row(row)));
+                self.mark(work, ProjectionInput::Doc(DocInput::Row(row)));
             }
         }
         for &id in &touched.ids {

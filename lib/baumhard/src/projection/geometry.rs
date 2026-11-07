@@ -40,7 +40,11 @@ pub(crate) fn usable_point(point: Vec2) -> Vec2 {
 /// measured from its position — each section's `offset + size` — and at
 /// least `(0, 0)`. `extents` are those far corners, relative to the
 /// position. O(sections).
-pub(crate) fn drawn_rect(position: Vec2, min_size: Option<Vec2>, extents: impl Iterator<Item = Vec2>) -> Rect {
+pub(crate) fn drawn_rect(
+    position: Vec2,
+    min_size: Option<Vec2>,
+    extents: impl Iterator<Item = Vec2>,
+) -> Rect {
     let mut size = usable_size(min_size);
     for far in extents {
         if far.is_finite() {
@@ -162,7 +166,12 @@ pub(crate) fn label_center(curve: &Curve, t: f32, offset: f32) -> Vec2 {
 /// `offset` along the normal. Cost: one arc-length walk of the outline (a
 /// table for an ellipse) and a lookup, and for `Auto` a nearest-point
 /// search.
-pub(crate) fn portal_point(outline: &Outline, border: BorderPoint, toward: Vec2, offset: f32) -> (Vec2, Vec2) {
+pub(crate) fn portal_point(
+    outline: &Outline,
+    border: BorderPoint,
+    toward: Vec2,
+    offset: f32,
+) -> (Vec2, Vec2) {
     let start = StartPoint {
         edge: Edge::Top,
         at: 0.0,

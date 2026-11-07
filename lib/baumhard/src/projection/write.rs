@@ -19,20 +19,29 @@ use crate::gfx_structs::mutator::{GfxMutation, GfxMutator};
 use crate::gfx_structs::run::GlyphRunData;
 use crate::gfx_structs::tree::GfxMutatorTree;
 use crate::projection::layers::{GlyphLayers, Layer, LayerBuilders, CHILD_GROUP_CHANNEL, RUN_CHANNEL};
-use crate::projection::stages::Work;
+use crate::projection::stages::PhaseWork;
 use crate::projection::state::Owner;
-use crate::projection::structure::{element, parent_node, units_in_order};
+use crate::projection::structure::{parent_node, units_in_order};
 use crate::projection::Projector;
 
 /// Apply `mutator` at `target` in `layer`, journaled. Logs and reports a
 /// refusal, which nothing the projector builds should meet.
-fn apply(layers: &mut GlyphLayers, out: &mut LayerBuilders, layer: Layer, target: NodeId, mutator: GfxMutatorTree) -> bool {
+fn apply(
+    layers: &mut GlyphLayers,
+    out: &mut LayerBuilders,
+    layer: Layer,
+    target: NodeId,
+    mutator: GfxMutatorTree,
+) -> bool {
     let tree = layers.tree_mut(layer);
     match mutator.apply_at_journaled(tree, &Anchors::Nodes(vec![target]), |_, _| (), out.of(layer)) {
         Ok(()) => true,
         Err(error) => {
             log::error!("projection: a write to the {layer:?} layer was refused: {error}");
-            debug_assert!(false, "projection: a write to the {layer:?} layer was refused: {error}");
+            debug_assert!(
+                false,
+                "projection: a write to the {layer:?} layer was refused: {error}"
+            );
             false
         }
     }
@@ -59,19 +68,38 @@ fn insert(
     subtree: Subtree<GfxElement>,
     at: Placement,
 ) -> Option<NodeId> {
-    if !apply(layers, out, layer, parent, command(StructOp::Insert { subtree, at })) {
+    if !apply(
+        layers,
+        out,
+        layer,
+        parent,
+        command(StructOp::Insert { subtree, at }),
+    ) {
         return None;
     }
     out.of(layer).created_nodes().last()
 }
 
 /// Move `glyph` under `to` in `layer` at `at`, journaled.
-fn move_to(layers: &mut GlyphLayers, out: &mut LayerBuilders, layer: Layer, glyph: NodeId, to: NodeId, at: Placement) {
+fn move_to(
+    layers: &mut GlyphLayers,
+    out: &mut LayerBuilders,
+    layer: Layer,
+    glyph: NodeId,
+    to: NodeId,
+    at: Placement,
+) {
     apply(layers, out, layer, glyph, command(StructOp::Move { to, at }));
 }
 
 /// Set the run `glyph` of `layer` to `data`, journaled.
-fn set_run(layers: &mut GlyphLayers, out: &mut LayerBuilders, layer: Layer, glyph: NodeId, data: GlyphRunData) {
+fn set_run(
+    layers: &mut GlyphLayers,
+    out: &mut LayerBuilders,
+    layer: Layer,
+    glyph: NodeId,
+    data: GlyphRunData,
+) {
     let mutator = GfxMutatorTree::new_with(GfxMutator::new(GfxMutation::RunSet(Box::new(data)), RUN_CHANNEL));
     apply(layers, out, layer, glyph, mutator);
 }
@@ -106,9 +134,9 @@ impl Projector {
         let mut out = Vec::new();
         let mut stack = vec![(top, 0usize)];
         while let Some((node, depth)) = stack.pop() {
-            let Some(state) = self.nodes.get(&node) else {
+            if !self.nodes.contains_key(&node) {
                 continue;
-            };
+            }
             out.push((depth, group(), Owner::Group(node)));
             for unit_id in units_in_order(tree, node) {
                 let Some(unit) = self.units.get(&unit_id) else {
@@ -122,7 +150,6 @@ impl Projector {
                     }
                 }
             }
-            let _ = state;
             let first = stack.len();
             for child in node.children(arena) {
                 if arena[child].get().kind() != DocKind::Node {
@@ -176,8 +203,14 @@ impl Projector {
                 let mut parents: Vec<NodeId> = Vec::new();
                 for (depth, element, owner) in planned {
                     parents.truncate(depth);
-                    let parent = parents.last().copied().unwrap_or_else(|| layers.tree(layer).root());
-                    let Ok(glyph) = layers.tree_mut(layer).insert_child(parent, element, Placement::Last) else {
+                    let parent = parents
+                        .last()
+                        .copied()
+                        .unwrap_or_else(|| layers.tree(layer).root());
+                    let Ok(glyph) = layers
+                        .tree_mut(layer)
+                        .insert_child(parent, element, Placement::Last)
+                    else {
                         continue;
                     };
                     if matches!(owner, Owner::Group(_)) {
@@ -192,7 +225,14 @@ impl Projector {
     /// The group in `layer` the node `node` goes right after: its nearest
     /// earlier sibling node whose group is already under `under`. O(the
     /// siblings walked back over).
-    fn group_pred(&self, tree: &Tree<DocElement>, node: NodeId, layer: Layer, under: NodeId, layers: &GlyphLayers) -> Option<NodeId> {
+    fn group_pred(
+        &self,
+        tree: &Tree<DocElement>,
+        node: NodeId,
+        layer: Layer,
+        under: NodeId,
+        layers: &GlyphLayers,
+    ) -> Option<NodeId> {
         let arena = tree.arena();
         let glyphs = layers.tree(layer).arena();
         let mut at = arena.node(node)?.previous_sibling();
@@ -212,7 +252,13 @@ impl Projector {
 
     /// The group `node`'s groups hang under in `layer`: its parent's, or
     /// the layer's root.
-    fn group_parent(&self, tree: &Tree<DocElement>, node: NodeId, layer: Layer, layers: &GlyphLayers) -> Option<NodeId> {
+    fn group_parent(
+        &self,
+        tree: &Tree<DocElement>,
+        node: NodeId,
+        layer: Layer,
+        layers: &GlyphLayers,
+    ) -> Option<NodeId> {
         match parent_node(tree, node) {
             Some(parent) => self.nodes.get(&parent)?.groups[layer.index()],
             None => Some(layers.tree(layer).root()),
@@ -282,7 +328,7 @@ impl Projector {
     pub(crate) fn write_update(
         &mut self,
         tree: &Tree<DocElement>,
-        work: &mut Work,
+        work: &mut PhaseWork,
         layers: &mut GlyphLayers,
         out: &mut LayerBuilders,
     ) {
@@ -304,7 +350,11 @@ impl Projector {
         let roots = std::mem::take(&mut work.pending_roots);
         for root in roots {
             for layer in Layer::ALL {
-                if self.nodes.get(&root).is_none_or(|s| s.groups[layer.index()].is_some()) {
+                if self
+                    .nodes
+                    .get(&root)
+                    .is_none_or(|s| s.groups[layer.index()].is_some())
+                {
                     continue;
                 }
                 let Some(under) = self.group_parent(tree, root, layer, layers) else {
@@ -440,7 +490,13 @@ impl Projector {
     }
 
     /// [`Self::settle_unit`]'s write of one unit's slots.
-    fn write_slots(&mut self, tree: &Tree<DocElement>, unit_id: NodeId, layers: &mut GlyphLayers, out: &mut LayerBuilders) {
+    fn write_slots(
+        &mut self,
+        tree: &Tree<DocElement>,
+        unit_id: NodeId,
+        layers: &mut GlyphLayers,
+        out: &mut LayerBuilders,
+    ) {
         let Some(unit) = self.units.get(&unit_id) else {
             return;
         };
@@ -464,7 +520,9 @@ impl Projector {
                 }
                 (None, Some(want)) => {
                     let pred = self.slot_pred(tree, unit_id, slot, under, layers);
-                    let Some(glyph) = insert(layers, out, layer, under, Subtree::leaf(run(want)), after(pred)) else {
+                    let Some(glyph) =
+                        insert(layers, out, layer, under, Subtree::leaf(run(want)), after(pred))
+                    else {
                         continue;
                     };
                     self.adopt(layer, glyph, Owner::Run { unit: unit_id, slot });
@@ -485,7 +543,6 @@ impl Projector {
                 (None, None) => {}
             }
         }
-        let _ = element(tree, unit_id);
     }
 }
 

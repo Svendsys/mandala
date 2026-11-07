@@ -48,11 +48,23 @@ fn mutate(layers: &mut GlyphLayers, layer: Layer, glyph: NodeId, mutation: GfxMu
 #[test]
 fn test_layers_equivalent_finds_two_projections_of_one_document_equal() {
     let (a, b, _) = twice();
-    assert!(layers_equivalent(&a, &b).is_ok(), "{:?}", layers_equivalent(&a, &b));
+    assert!(
+        layers_equivalent(&a, &b).is_ok(),
+        "{:?}",
+        layers_equivalent(&a, &b)
+    );
     // Precondition: the two shapings are distinct `Arc`s, so equality is
     // by value — what the comparison is for.
-    let ra = a.sections.arena()[first_run(&a, Layer::Sections)].get().glyph_run().unwrap().clone();
-    let rb = b.sections.arena()[first_run(&b, Layer::Sections)].get().glyph_run().unwrap().clone();
+    let ra = a.sections.arena()[first_run(&a, Layer::Sections)]
+        .get()
+        .glyph_run()
+        .unwrap()
+        .clone();
+    let rb = b.sections.arena()[first_run(&b, Layer::Sections)]
+        .get()
+        .glyph_run()
+        .unwrap()
+        .clone();
     assert!(!ra.same_state(&rb), "the shapings are not the same Arcs");
 }
 
@@ -61,9 +73,22 @@ fn test_layers_equivalent_tells_a_moved_run_within_and_past_the_tolerance() {
     let (a, mut b, _) = twice();
     let run = first_run(&b, Layer::Sections);
     let origin = b.sections.arena()[run].get().glyph_run().unwrap().origin();
-    mutate(&mut b, Layer::Sections, run, GfxMutation::RunOrigin(origin + Vec2::splat(TOLERANCE * 0.1)));
-    assert!(layers_equivalent(&a, &b).is_ok(), "a shift well inside the tolerance is the same placement");
-    mutate(&mut b, Layer::Sections, run, GfxMutation::RunOrigin(origin + Vec2::new(0.01, 0.0)));
+    mutate(
+        &mut b,
+        Layer::Sections,
+        run,
+        GfxMutation::RunOrigin(origin + Vec2::splat(TOLERANCE * 0.1)),
+    );
+    assert!(
+        layers_equivalent(&a, &b).is_ok(),
+        "a shift well inside the tolerance is the same placement"
+    );
+    mutate(
+        &mut b,
+        Layer::Sections,
+        run,
+        GfxMutation::RunOrigin(origin + Vec2::new(0.01, 0.0)),
+    );
     let difference = layers_equivalent(&a, &b).unwrap_err();
     assert_eq!(difference.layer, Layer::Sections);
     assert!(difference.what.starts_with("origin"), "{difference}");
@@ -82,7 +107,10 @@ fn test_layers_equivalent_tells_opacity_and_overrides_apart() {
         &mut b,
         Layer::Frames,
         run,
-        GfxMutation::RunOverrides(crate::gfx_structs::run::RunOverrideOp::Scale { range: 0..1, value: 2.0 }),
+        GfxMutation::RunOverrides(crate::gfx_structs::run::RunOverrideOp::Scale {
+            range: 0..1,
+            value: 2.0,
+        }),
     );
     assert_eq!(layers_equivalent(&a, &b).unwrap_err().what, "overrides");
 }
@@ -95,9 +123,9 @@ fn test_layers_equivalent_tells_another_text_apart() {
         crate::document::tests::writer_support::request(
             crate::document::tests::writer_support::single(
                 crate::document::element::DocKind::Span,
-                crate::document::mutation::ops::DocMutation::Span(crate::document::mutation::ops::SpanOp::SetText(
-                    "titles".into(),
-                )),
+                crate::document::mutation::ops::DocMutation::Span(
+                    crate::document::mutation::ops::SpanOp::SetText("titles".into()),
+                ),
             ),
             vec![ids.a_title_span],
             "text",
@@ -116,7 +144,11 @@ fn test_layers_equivalent_tells_another_tree_shape_apart() {
     let (a, mut b, _) = twice();
     let root = b.labels.root();
     b.labels
-        .insert_child(root, GfxElement::new_void(crate::projection::CHILD_GROUP_CHANNEL), crate::engine::tree::Placement::Last)
+        .insert_child(
+            root,
+            GfxElement::new_void(crate::projection::CHILD_GROUP_CHANNEL),
+            crate::engine::tree::Placement::Last,
+        )
         .unwrap();
     let difference = layers_equivalent(&a, &b).unwrap_err();
     assert_eq!(difference.layer, Layer::Labels, "{difference}");

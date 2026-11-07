@@ -67,7 +67,10 @@ pub fn do_writer_feed_reports_input_kinds_and_undo_reverses_them() {
                 "unbind",
             ),
             request(
-                single(DocKind::Node, DocMutation::Node(NodeOp::Nudge(Vec2::new(5.0, 0.0)))),
+                single(
+                    DocKind::Node,
+                    DocMutation::Node(NodeOp::Nudge(Vec2::new(5.0, 0.0))),
+                ),
                 vec![ids.d],
                 "nudge",
             ),

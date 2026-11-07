@@ -1508,7 +1508,12 @@ pub fn do_document_resolve_carried_binding_resolves_what_the_climb_does() {
     // (That it climbs nothing is counted by the projection's deep-chain
     // test, which reads the climb's test-only step counter.)
     let mut carried_reads: Vec<Input> = Vec::new();
-    resolve_text_in(tree, ids.b_span, Binding::Carried(carried[&ids.b]), &mut carried_reads);
+    resolve_text_in(
+        tree,
+        ids.b_span,
+        Binding::Carried(carried[&ids.b]),
+        &mut carried_reads,
+    );
     assert!(carried_reads.contains(&Input::Binding(ids.b)));
     assert!(
         !carried_reads.contains(&Input::PaletteBinding(ids.a)),

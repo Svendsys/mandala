@@ -492,7 +492,8 @@ buffer at its own placed position — upright, with its shaper offsets
 kept, its overrides applied and the run's opacity in its alpha — from
 an atlas the pass holds, in one instanced draw call per frame for
 every run there is. Nothing is shaped to draw it, and a pan or a zoom
-touches no run. No projection emits runs yet (V1-B7, C3).
+touches no run. The [projector](#projection--projector-glyphlayers-layerchanges-hit)
+emits them (V1-B7); the app draws them once C3 cuts over.
 
 `lib/baumhard/src/gfx_structs/run.rs`; the mutations are
 `GfxMutation::Run*` in `mutator.rs`; the pass is
@@ -1695,6 +1696,61 @@ element.
 `lib/baumhard/src/flow/`. It caches nothing, builds no glyph tree and
 never takes the font lock: every shaping function takes the guard its
 caller holds, which it takes after `fonts::init` has run.
+
+### Projection — `Projector`, `GlyphLayers`, `LayerChanges`, `Hit`
+
+The document turned into glyph layers, **forward only, with work
+proportional to what changed** (design §12, V1-B7 #241). Nothing reads
+the layers to learn what the document is, and nothing flows back.
+
+- **`GlyphLayers`** are five glyph trees — sections, frames,
+  connections, labels, portals; there is no fill layer (D12) — each
+  mirroring the visible nodes as nested `Void` groups (child groups on
+  `CHILD_GROUP_CHANNEL`), a group's own `GlyphRun`s under it in
+  document order. `format/projection.md` says what is drawn where.
+- **`Projector::project_full`** projects a whole document: what load
+  does, and what the oracle compares against. **`Projector::update`**
+  takes the document's `ChangeRecord`s since the last call and
+  re-projects exactly what they touched and what read it, writing the
+  layers through journaled glyph mutations — a `RunSet` only where a
+  run's data differs from what the projector last wrote (never compared
+  with the live element, which overlays may have written), and
+  structural commands for groups and runs that appear, leave or move.
+  Its **`LayerChanges`** are the five journals, which the renderer
+  discards once it has read them.
+- **Units and stages.** A unit is an element that draws runs of its own
+  — a section, a ring, a connector or line link (body, caps, label), a
+  portal link (each end's marker and label). A node carries its facts
+  down (`Stage::Carry`: its palette binding, effective opacity and zoom
+  window, from its parent's — never climbed for, ruling R16) and
+  measures itself (`Stage::Geometry`: its drawn rectangle from its
+  sections, D5, and its outline); a unit resolves (`Resolve`), shapes
+  (`Shape`, only when its shape key — the texts and styles shaped from —
+  changed) and places (`Place`). Phases order them: carry top-down,
+  sections, measure, then sections' and rings' placement, then paths.
+- **Captured dependencies.** Every read of another element's state goes
+  through a recorder into the dependency index (`projection::Input`:
+  the resolvers' `document::resolve::Input`s, and the projection's own
+  `Geometry`, `Visibility` and `Opacity` of an element), keyed by the
+  stage that read it, so a drag — geometry only — reaches placement and
+  resolves and shapes nothing. The change records' `inputs` and `rows`
+  (ruling B7.2) seed it. Nothing is listed by hand; the oracle test
+  holds the index to it, comparing the incremental layers with a full
+  projection after every edit of a corpus of generated maps and the
+  format's fixtures.
+- **`Hit`** (`Projector::hit`): the layers top-down through each one's
+  glyph BVH — a path run only where one of its glyphs is drawn — to the
+  element and, through the run's glyph-to-span mapping, the span; then
+  the smallest visible node whose body holds the point by its shape
+  (ruling B7.1); else nothing.
+- **Read API** (`Projector::node_rect`, `section_box`, `curve`,
+  `label_pos`, and the `Geometry` trait): derived geometry for the
+  consumers that act on where things are drawn, served from projection
+  state.
+
+`lib/baumhard/src/projection/`. The font lock is reached only through
+the caller's `FontSystemLease` — the lazy guard the spec names
+`LazyFontGuard` — and only when something is shaped or placed again.
 
 ---
 

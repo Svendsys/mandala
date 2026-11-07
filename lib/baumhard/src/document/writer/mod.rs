@@ -55,7 +55,9 @@ use crate::document::format::{self, Limits, SaveError};
 use crate::document::ids::Document;
 use crate::document::mutation::step::DocStep;
 use crate::document::writer::error::ApplyError;
-use crate::document::writer::feed::{addresses, effects, reversed, Arrangement, ChangeRecord, RemovedAddress};
+use crate::document::writer::feed::{
+    addresses, effects, reversed, Arrangement, ChangeRecord, RemovedAddress,
+};
 use crate::document::writer::history::History;
 use crate::document::writer::transaction::{inserted_by, removed_by, Open, TransactionKind};
 use crate::document::writer::upkeep::Direction;

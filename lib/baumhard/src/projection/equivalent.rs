@@ -94,7 +94,14 @@ fn element_differs(a: &GfxElement, b: &GfxElement) -> Option<String> {
         (GfxElement::Void { flags: fa, .. }, GfxElement::Void { flags: fb, .. }) => {
             (fa != fb).then(|| "flags".to_string())
         }
-        (GfxElement::GlyphRun { run: ra, flags: fa, .. }, GfxElement::GlyphRun { run: rb, flags: fb, .. }) => {
+        (
+            GfxElement::GlyphRun {
+                run: ra, flags: fa, ..
+            },
+            GfxElement::GlyphRun {
+                run: rb, flags: fb, ..
+            },
+        ) => {
             if fa != fb {
                 return Some("flags".into());
             }
@@ -145,11 +152,18 @@ fn run_differs(a: &GlyphRunData, b: &GlyphRunData) -> Option<String> {
                 return Some("truncation".into());
             }
             if px.glyphs.len() != py.glyphs.len() {
-                return Some(format!("{} placed glyphs against {}", px.glyphs.len(), py.glyphs.len()));
+                return Some(format!(
+                    "{} placed glyphs against {}",
+                    px.glyphs.len(),
+                    py.glyphs.len()
+                ));
             }
             for (i, (g, h)) in px.glyphs.iter().zip(&py.glyphs).enumerate() {
                 if g.glyph != h.glyph {
-                    return Some(format!("placed glyph {i} is glyph {} against {}", g.glyph, h.glyph));
+                    return Some(format!(
+                        "placed glyph {i} is glyph {} against {}",
+                        g.glyph, h.glyph
+                    ));
                 }
                 if !near(g.pos, h.pos) {
                     return Some(format!("placed glyph {i} at {} against {}", g.pos, h.pos));
@@ -180,7 +194,15 @@ fn shaped_differs(a: &ShapedRun, b: &ShapedRun) -> Option<String> {
 pub(crate) fn same_layout(a: &ShapedRun, b: &ShapedRun) -> bool {
     let key = |g: &crate::font::LayoutGlyph| {
         (
-            (g.start, g.end, g.glyph_id, g.font_id, g.font_weight, g.level, g.metadata),
+            (
+                g.start,
+                g.end,
+                g.glyph_id,
+                g.font_id,
+                g.font_weight,
+                g.level,
+                g.metadata,
+            ),
             (g.font_size.to_bits(), g.line_height_opt.map(f32::to_bits)),
             (g.x.to_bits(), g.y.to_bits(), g.w.to_bits()),
             (g.x_offset.to_bits(), g.y_offset.to_bits()),

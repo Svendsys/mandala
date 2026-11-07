@@ -30,7 +30,9 @@ use crate::gfx_structs::element::{GfxElement, GfxElementField, GfxElementType};
 use crate::gfx_structs::model::GlyphModel;
 use crate::gfx_structs::mutator::{GfxMutation, GfxMutator, GlyphTreeEvent, GlyphTreeEventInstance};
 use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunOverrideOp, RunShape};
-use crate::gfx_structs::tests::run_tests::{apply, box_shape, four_glyph_element, four_glyph_shape, path_shape, run_of};
+use crate::gfx_structs::tests::run_tests::{
+    apply, box_shape, four_glyph_element, four_glyph_shape, path_shape, run_of,
+};
 use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::util::doc_fixtures::{documented_json_block, format_doc_path};
@@ -789,7 +791,11 @@ pub fn do_descendant_at_misses_a_diagonal_connections_empty_bounds() {
     let mut tree = GfxTree::new_non_indexed();
     let root = tree.root();
     let run = tree
-        .insert_child(root, GfxElement::new_run(run_of(line, Vec2::ZERO), 0, 1), Placement::Last)
+        .insert_child(
+            root,
+            GfxElement::new_run(run_of(line, Vec2::ZERO), 0, 1),
+            Placement::Last,
+        )
         .unwrap();
     assert_eq!(
         tree.arena()[run].get().spatial_bounds(),

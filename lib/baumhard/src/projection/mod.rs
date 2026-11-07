@@ -34,7 +34,7 @@
 //! resolvers report what they read ([`crate::document::resolve`]), and
 //! the projector reports what it read of its own derived state —
 //! another node's geometry, visibility or opacity, an inner ring's line
-//! height ([`Input`](crate::projection::Input)). Those records are the
+//! height ([`ProjectionInput`](crate::projection::ProjectionInput)). Those records are the
 //! dependency index; nothing is listed by hand. A record says which
 //! stage of which unit read the input
 //! ([`Stage`](crate::projection::Stage)), so a change that touches only
@@ -75,10 +75,10 @@ mod hit;
 mod input;
 /// The five layers, and one update's journals of them.
 mod layers;
-/// What the projector keeps per projected element.
-mod state;
 /// The stages of a node's and a unit's projection.
 mod stages;
+/// What the projector keeps per projected element.
+mod state;
 /// The structural step: what is visible, and what is a unit.
 mod structure;
 /// Writing the layers.
@@ -95,7 +95,7 @@ pub mod equivalent;
 pub mod tests;
 
 pub use hit::Hit;
-pub use input::{Dependent, Input, Stage};
+pub use input::{Dependent, ProjectionInput, Stage};
 pub use layers::{GlyphLayers, Layer, LayerChanges, CHILD_GROUP_CHANNEL, RUN_CHANNEL};
 
 use std::sync::Arc;
@@ -111,8 +111,8 @@ use crate::font::fonts::FontSystemLease;
 use crate::projection::hit::BodyIndex;
 use crate::projection::input::DepIndex;
 use crate::projection::layers::LayerBuilders;
-use crate::projection::stages::Work;
-use crate::projection::state::{NodeState, Owner, Unit, UnitBody};
+use crate::projection::stages::PhaseWork;
+use crate::projection::state::{NodeState, Owner, ProjectedUnit, UnitBody};
 
 /// The projector: the projection state of one document and its glyph
 /// layers. See the [module docs](crate::projection).
@@ -121,7 +121,7 @@ pub struct Projector {
     /// Every visible node's state.
     pub(crate) nodes: FxHashMap<NodeId, NodeState>,
     /// Every unit of a visible node.
-    pub(crate) units: FxHashMap<NodeId, Unit>,
+    pub(crate) units: FxHashMap<NodeId, ProjectedUnit>,
     /// The reverse map: each glyph element of each layer, and whose it is.
     pub(crate) owners: FxHashMap<(Layer, NodeId), Owner>,
     /// The dependency index.
@@ -148,7 +148,7 @@ impl Projector {
     pub fn project_full(doc: &Document, layers: &mut GlyphLayers, fonts: &mut FontSystemLease) -> Projector {
         *layers = GlyphLayers::new();
         let mut projector = Projector::default();
-        let mut work = Work::default();
+        let mut work = PhaseWork::default();
         projector.project_roots(doc.tree(), &mut work);
         projector.run_phases(doc, &mut work, fonts);
         projector.write_full(doc.tree(), layers);
@@ -174,10 +174,10 @@ impl Projector {
         layers: &mut GlyphLayers,
         fonts: &mut FontSystemLease,
     ) -> LayerChanges {
-        let mut work = Work::default();
+        let mut work = PhaseWork::default();
         let mut out = LayerBuilders::new();
         let tree = doc.tree();
-        let touched = structure::Touched::of(changes);
+        let touched = structure::TouchedElements::of(changes);
         self.restructure(tree, &touched, &mut work, layers, &mut out);
         self.seed(tree, changes, &touched, &mut work);
         self.run_phases(doc, &mut work, fonts);

@@ -39,7 +39,9 @@ use crate::arena::NodeId;
 use crate::document::element::DocElement;
 use crate::document::ids::Document;
 use crate::document::writer::error::ApplyError;
-use crate::document::writer::feed::{addresses, effects, field_inputs, reversed, Arrangement, RemovedAddress};
+use crate::document::writer::feed::{
+    addresses, effects, field_inputs, reversed, Arrangement, RemovedAddress,
+};
 use crate::document::writer::upkeep::Direction;
 use crate::document::writer::{Change, ChangeSource, EditRequest, Revision};
 use crate::engine::interpolate::Snap;

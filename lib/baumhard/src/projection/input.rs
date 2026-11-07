@@ -12,7 +12,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 /// fact the projection derived about another element and read through
 /// its own state.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Input {
+pub enum ProjectionInput {
     /// A resolution input of the document.
     Doc(DocInput),
     /// Where an element is drawn, as projection state holds it: a node's
@@ -75,10 +75,10 @@ impl Dependent {
 /// the defaults, which most of a map reads.
 #[derive(Debug, Default)]
 pub(crate) struct DepIndex {
-    forward: FxHashMap<Input, Vec<Dependent>>,
-    reverse: FxHashMap<Dependent, Vec<(Input, u32)>>,
+    forward: FxHashMap<ProjectionInput, Vec<Dependent>>,
+    reverse: FxHashMap<Dependent, Vec<(ProjectionInput, u32)>>,
     /// Scratch for [`Self::record`]'s dedup, kept to reuse its storage.
-    seen: FxHashSet<Input>,
+    seen: FxHashSet<ProjectionInput>,
 }
 
 impl DepIndex {
@@ -110,13 +110,13 @@ impl DepIndex {
 
     /// Replace what `dep` read with `reads`, each once however often it
     /// was read. O(reads).
-    pub(crate) fn record(&mut self, dep: Dependent, reads: &[Input]) {
+    pub(crate) fn record(&mut self, dep: Dependent, reads: &[ProjectionInput]) {
         self.clear(dep);
         if reads.is_empty() {
             return;
         }
         self.seen.clear();
-        let mut entries: Vec<(Input, u32)> = Vec::with_capacity(reads.len());
+        let mut entries: Vec<(ProjectionInput, u32)> = Vec::with_capacity(reads.len());
         for &input in reads {
             if !self.seen.insert(input) {
                 continue;
@@ -129,16 +129,8 @@ impl DepIndex {
     }
 
     /// The work that read `input`. O(1).
-    pub(crate) fn dependents(&self, input: &Input) -> &[Dependent] {
+    pub(crate) fn dependents(&self, input: &ProjectionInput) -> &[Dependent] {
         self.forward.get(input).map_or(&[], Vec::as_slice)
-    }
-
-    /// What `dep` read, each once. O(1).
-    pub(crate) fn reads(&self, dep: Dependent) -> impl Iterator<Item = Input> + '_ {
-        self.reverse
-            .get(&dep)
-            .into_iter()
-            .flat_map(|entries| entries.iter().map(|(input, _)| *input))
     }
 
     /// How many (input, work) pairs the index holds. O(inputs).
@@ -149,10 +141,10 @@ impl DepIndex {
 
 /// A [`ReadRecorder`] that collects what a resolution read, as projection
 /// inputs, into a buffer the caller then records against its work.
-pub(crate) struct Reads<'a>(pub(crate) &'a mut Vec<Input>);
+pub(crate) struct Reads<'a>(pub(crate) &'a mut Vec<ProjectionInput>);
 
 impl ReadRecorder for Reads<'_> {
     fn read(&mut self, input: DocInput) {
-        self.0.push(Input::Doc(input));
+        self.0.push(ProjectionInput::Doc(input));
     }
 }

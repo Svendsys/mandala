@@ -133,7 +133,12 @@ impl BodyIndex {
     /// bodies of the point's cell, and the large ones).
     pub(crate) fn at(&self, point: Vec2) -> Option<NodeId> {
         let cell = (cell_of(point.x), cell_of(point.y));
-        let candidates = self.cells.get(&cell).into_iter().flatten().chain(self.large.iter());
+        let candidates = self
+            .cells
+            .get(&cell)
+            .into_iter()
+            .flatten()
+            .chain(self.large.iter());
         let mut best: Option<(f32, NodeId)> = None;
         for &node in candidates {
             let Some(&(rect, shape, _)) = self.bodies.get(&node) else {
@@ -209,7 +214,10 @@ impl Projector {
 /// The glyph of `run` under `point`, and the index of its span in the
 /// run's flow: a path run's placed glyph whose box holds it, a box run's
 /// laid-out glyph whose cell of its line holds it. A filler names no span.
-fn glyph_and_span(run: &crate::gfx_structs::run::GlyphRunData, point: Vec2) -> (Option<usize>, Option<usize>) {
+fn glyph_and_span(
+    run: &crate::gfx_structs::run::GlyphRunData,
+    point: Vec2,
+) -> (Option<usize>, Option<usize>) {
     match run.shaped() {
         RunShape::Path { run: shaped, placed } => {
             let Some(index) = run.placed_glyph_at(point, 0.0) else {

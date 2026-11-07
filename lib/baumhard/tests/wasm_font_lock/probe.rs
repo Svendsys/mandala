@@ -304,6 +304,7 @@ deep_scenario!(deep_document_deep_subtree_validates_and_inserts, baumhard::docum
 deep_scenario!(deep_document_deep_chain_resolves_at_the_leaf, baumhard::document::tests::deep_tests::do_document_deep_chain_resolves_at_the_leaf);
 deep_scenario!(deep_document_deep_chain_through_the_writer, baumhard::document::tests::deep_tests::do_document_deep_chain_through_the_writer);
 deep_scenario!(deep_document_validate_walks_a_deep_insert, baumhard::document::tests::mutation_validate_tests::do_document_validate_walks_a_deep_insert);
+deep_scenario!(deep_projection_deep_chain, baumhard::projection::tests::deep_tests::do_projection_deep_chain_projects_edits_hides_moves_and_hits);
 
 /// The arena's id, link and slot sizes, pinned for wasm32 (V1-A7,
 /// #301): the native test body, run where `usize` is 32 bits, so the

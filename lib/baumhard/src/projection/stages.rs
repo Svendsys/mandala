@@ -21,13 +21,15 @@ use crate::document::resolve::{
 use crate::document::values::{Align, FontSize};
 use crate::engine::tree::Tree;
 use crate::flow::{
-    offset as offset_outline, outline, place_at_point, place_on_closed, place_on_open, ring_offset, shape_box,
-    shape_run, FlowSpan, PlacedRun, Rect, RingLayout, ShapedRun,
+    offset as offset_outline, outline, place_at_point, place_on_closed, place_on_open, shape_box, shape_run,
+    FlowSpan, PlacedRun, Rect, RingLayout, ShapedRun,
 };
 use crate::font::fonts::FontSystemLease;
 use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
-use crate::projection::geometry::{self, curve_between, drawn_rect, label_center, points, portal_point, reach};
-use crate::projection::input::{Dependent, Input, Reads, Stage};
+use crate::projection::geometry::{
+    self, curve_between, drawn_rect, label_center, points, portal_point, reach,
+};
+use crate::projection::input::{Dependent, ProjectionInput, Reads, Stage};
 use crate::projection::state::{
     BoxFlow, BoxKey, EndState, LabelState, PathFlow, Placed, RingResolved, RunFlow, RunKey, UnitBody,
 };
@@ -45,17 +47,17 @@ const DONE: u8 = 5;
 /// One update's worklists, and what its structural step left for the
 /// write.
 #[derive(Default)]
-pub(crate) struct Work {
+pub(crate) struct PhaseWork {
     /// Every piece of work marked and not yet run.
     queued: FxHashSet<Dependent>,
     /// Phase A0: nodes to carry, shallowest first.
     carry: BinaryHeap<Reverse<(usize, NodeId)>>,
     /// Phase A1: sections to resolve and shape.
-    sections: Vec<NodeId>,
+    to_resolve: Vec<NodeId>,
     /// Phase A2: nodes to measure.
     measure: Vec<NodeId>,
     /// Phase B: sections to place.
-    place_sections: Vec<NodeId>,
+    to_place: Vec<NodeId>,
     /// Phase B: frames with rings to project, each once.
     frames: Vec<NodeId>,
     frames_seen: FxHashSet<NodeId>,
@@ -80,7 +82,7 @@ pub(crate) struct Work {
     pub(crate) ran: Vec<Dependent>,
 }
 
-impl Work {
+impl PhaseWork {
     /// Take `dep` off the queue: whether it was on it. A piece of work
     /// taken is logged as run.
     fn take(&mut self, dep: Dependent) -> bool {
@@ -99,14 +101,14 @@ impl Work {
 /// Records every read but those `drop` refuses: for a resolver whose one
 /// call answers two stages, each stage keeping the reads of what it uses.
 struct Filtered<'a> {
-    reads: &'a mut Vec<Input>,
+    reads: &'a mut Vec<ProjectionInput>,
     drop: fn(&DocInput) -> bool,
 }
 
 impl ReadRecorder for Filtered<'_> {
     fn read(&mut self, input: DocInput) {
         if !(self.drop)(&input) {
-            self.reads.push(Input::Doc(input));
+            self.reads.push(ProjectionInput::Doc(input));
         }
     }
 }
@@ -154,7 +156,9 @@ fn shaped_box(cache: &mut Option<BoxFlow>, key: BoxKey, fonts: &mut FontSystemLe
     if cache.as_ref().is_some_and(|flow| flow.key == key) {
         return false;
     }
-    let shaped = memo::boxed(&key, || Arc::new(shape_box(&flow_spans(&key.spans), key.min, key.align, fonts)));
+    let shaped = memo::boxed(&key, || {
+        Arc::new(shape_box(&flow_spans(&key.spans), key.min, key.align, fonts))
+    });
     *cache = Some(BoxFlow { key, shaped });
     true
 }
@@ -162,20 +166,27 @@ fn shaped_box(cache: &mut Option<BoxFlow>, key: BoxKey, fonts: &mut FontSystemLe
 /// Whether two runs placement returned for the same input hold the same
 /// glyphs: their metrics, line height and every laid-out glyph.
 fn same_run(a: &ShapedRun, b: &ShapedRun) -> bool {
-    a.glyphs == b.glyphs
-        && a.line_height == b.line_height
-        && crate::projection::equivalent::same_layout(a, b)
+    a.glyphs == b.glyphs && a.line_height == b.line_height && crate::projection::equivalent::same_layout(a, b)
 }
 
 /// A placement, its `Arc`s reused where nothing changed: the run placement
 /// returned is the last one when it was returned for the same input and
 /// holds the same glyphs, and the placement is the last one when its
 /// positions are equal. So an unchanged flow writes nothing.
-fn settle(prev: Option<&Placed>, input: &Arc<ShapedRun>, replaced: Option<ShapedRun>, placed: PlacedRun) -> Placed {
+fn settle(
+    prev: Option<&Placed>,
+    input: &Arc<ShapedRun>,
+    replaced: Option<ShapedRun>,
+    placed: PlacedRun,
+) -> Placed {
     let run = match replaced {
         None => input.clone(),
         Some(run) => match prev {
-            Some(p) if Arc::ptr_eq(&p.input, input) && !Arc::ptr_eq(&p.run, &p.input) && same_run(&p.run, &run) => {
+            Some(p)
+                if Arc::ptr_eq(&p.input, input)
+                    && !Arc::ptr_eq(&p.run, &p.input)
+                    && same_run(&p.run, &run) =>
+            {
                 p.run.clone()
             }
             _ => Arc::new(run),
@@ -226,9 +237,9 @@ fn resolve_spans(
     owner: NodeId,
     binding: Binding,
     rect: Rect,
-    reads: &mut Vec<Input>,
+    reads: &mut Vec<ProjectionInput>,
 ) -> (Vec<NodeId>, Vec<(String, ResolvedText)>) {
-    reads.push(Input::Doc(DocInput::Row(owner)));
+    reads.push(ProjectionInput::Doc(DocInput::Row(owner)));
     let ids = spans_of(tree, owner);
     let spans = ids
         .iter()
@@ -247,7 +258,7 @@ const NO_RECT: Rect = Rect::new(Vec2::ZERO, Vec2::ZERO);
 impl Projector {
     /// Mark `dep` to run, in the phase its stage and unit belong to.
     /// O(1).
-    pub(crate) fn queue(&self, work: &mut Work, dep: Dependent) {
+    pub(crate) fn queue(&self, work: &mut PhaseWork, dep: Dependent) {
         let phase = match dep.stage {
             Stage::Carry => CARRY,
             Stage::Geometry => MEASURE,
@@ -273,7 +284,7 @@ impl Projector {
                 let depth = self.nodes.get(&dep.unit).map_or(0, |n| n.depth);
                 work.carry.push(Reverse((depth, dep.unit)));
             }
-            SECTIONS => work.sections.push(dep.unit),
+            SECTIONS => work.to_resolve.push(dep.unit),
             MEASURE => work.measure.push(dep.unit),
             PLACE => match self.units.get(&dep.unit).map(|u| &u.body) {
                 Some(UnitBody::Ring(ring)) => {
@@ -283,21 +294,21 @@ impl Projector {
                         }
                     }
                 }
-                _ => work.place_sections.push(dep.unit),
+                _ => work.to_place.push(dep.unit),
             },
             _ => work.paths.push(dep.unit),
         }
     }
 
     /// Mark every piece of work that read `input`. O(those).
-    pub(crate) fn mark(&self, work: &mut Work, input: Input) {
+    pub(crate) fn mark(&self, work: &mut PhaseWork, input: ProjectionInput) {
         for &dep in self.deps.dependents(&input) {
             self.queue(work, dep);
         }
     }
 
     /// Run every phase over what `work` holds marked.
-    pub(crate) fn run_phases(&mut self, doc: &Document, work: &mut Work, fonts: &mut FontSystemLease) {
+    pub(crate) fn run_phases(&mut self, doc: &Document, work: &mut PhaseWork, fonts: &mut FontSystemLease) {
         let tree = doc.tree();
         work.phase = CARRY;
         while let Some(Reverse((_, id))) = work.carry.pop() {
@@ -306,7 +317,7 @@ impl Projector {
             }
         }
         work.phase = SECTIONS;
-        while let Some(id) = work.sections.pop() {
+        while let Some(id) = work.to_resolve.pop() {
             if work.take(Dependent::new(id, Stage::Resolve)) {
                 self.section_resolve(tree, id, work, fonts);
             }
@@ -318,7 +329,7 @@ impl Projector {
             }
         }
         work.phase = PLACE;
-        while let Some(id) = work.place_sections.pop() {
+        while let Some(id) = work.to_place.pop() {
             if work.take(Dependent::new(id, Stage::Place)) {
                 self.section_place(id, work);
             }
@@ -345,7 +356,7 @@ impl Projector {
     /// zoom window, from its own fields and its parent's carried facts
     /// (ruling R16 on #282: carried down, never climbed for). Marks the
     /// readers of each that changed. O(1).
-    fn carry(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut Work) {
+    fn carry(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut PhaseWork) {
         let Some(DocElement::Node(data)) = element(tree, id) else {
             return;
         };
@@ -354,7 +365,12 @@ impl Projector {
         };
         let parent = state.parent.and_then(|p| self.nodes.get(&p).map(|s| (p, s)));
         let mut reads = Vec::new();
-        let binding = carry_binding(tree, id, parent.and_then(|(_, s)| s.binding), &mut Reads(&mut reads));
+        let binding = carry_binding(
+            tree,
+            id,
+            parent.and_then(|(_, s)| s.binding),
+            &mut Reads(&mut reads),
+        );
         let own = if data.opacity.is_finite() {
             data.opacity.clamp(0.0, 1.0)
         } else {
@@ -362,7 +378,7 @@ impl Projector {
         };
         let opacity = own * parent.map_or(1.0, |(_, s)| s.opacity);
         if let Some((p, _)) = parent {
-            reads.push(Input::Opacity(p));
+            reads.push(ProjectionInput::Opacity(p));
         }
         let zoom = data.zoom;
         self.deps.record(Dependent::new(id, Stage::Carry), &reads);
@@ -376,13 +392,13 @@ impl Projector {
         state.opacity = opacity;
         state.zoom = zoom;
         if changed_binding {
-            self.mark(work, Input::Doc(DocInput::Binding(id)));
+            self.mark(work, ProjectionInput::Doc(DocInput::Binding(id)));
         }
         if changed_opacity {
-            self.mark(work, Input::Opacity(id));
+            self.mark(work, ProjectionInput::Opacity(id));
         }
         if changed_zoom {
-            self.mark(work, Input::Visibility(id));
+            self.mark(work, ProjectionInput::Visibility(id));
         }
     }
 
@@ -390,7 +406,13 @@ impl Projector {
     /// binding, shaped again only when its shape key changed, and its box
     /// within its node. Marks what read its box when it changed, and its
     /// own placement.
-    fn section_resolve(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut Work, fonts: &mut FontSystemLease) {
+    fn section_resolve(
+        &mut self,
+        tree: &Tree<DocElement>,
+        id: NodeId,
+        work: &mut PhaseWork,
+        fonts: &mut FontSystemLease,
+    ) {
         let Some(DocElement::Section(data)) = element(tree, id) else {
             return;
         };
@@ -421,7 +443,7 @@ impl Projector {
         unit.slots[0].element = Some(id);
         unit.slots[0].spans = ids;
         if changed {
-            self.mark(work, Input::Geometry(id));
+            self.mark(work, ProjectionInput::Geometry(id));
         }
         self.queue(work, Dependent::new(id, Stage::Place));
     }
@@ -429,14 +451,14 @@ impl Projector {
     /// Phase A2 for a node: its shape, and its drawn rectangle from its
     /// minimum size and its sections' boxes (D5), and its outline. Marks
     /// what read its geometry when either changed. O(its sections).
-    fn measure(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut Work) {
+    fn measure(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut PhaseWork) {
         let Some(DocElement::Node(data)) = element(tree, id) else {
             return;
         };
         if !self.nodes.contains_key(&id) {
             return;
         }
-        let mut reads = vec![Input::Doc(DocInput::Row(id))];
+        let mut reads = vec![ProjectionInput::Doc(DocInput::Row(id))];
         let shape = resolve_node(tree, id, &mut Reads(&mut reads)).shape;
         let arena = tree.arena();
         let sections: Vec<NodeId> = id
@@ -446,7 +468,7 @@ impl Projector {
         let extents: Vec<Vec2> = sections
             .iter()
             .filter_map(|&s| {
-                reads.push(Input::Geometry(s));
+                reads.push(ProjectionInput::Geometry(s));
                 match &self.units.get(&s)?.body {
                     UnitBody::Section(section) => section.local.map(|r| r.max()),
                     _ => None,
@@ -465,17 +487,21 @@ impl Projector {
         state.shape = shape;
         state.outline = outline(rect, shape);
         self.bodies.set(id, rect, geometry::node_shape(shape));
-        self.mark(work, Input::Geometry(id));
+        self.mark(work, ProjectionInput::Geometry(id));
     }
 
     /// Phase B for a section: its run at its node's position plus its
     /// offset, in its node's opacity and zoom window.
-    fn section_place(&mut self, id: NodeId, _work: &mut Work) {
+    fn section_place(&mut self, id: NodeId, _work: &mut PhaseWork) {
         let Some(unit) = self.units.get(&id) else {
             return;
         };
         let node = unit.node;
-        let reads = [Input::Geometry(node), Input::Opacity(node), Input::Visibility(node)];
+        let reads = [
+            ProjectionInput::Geometry(node),
+            ProjectionInput::Opacity(node),
+            ProjectionInput::Visibility(node),
+        ];
         self.deps.record(Dependent::new(id, Stage::Place), &reads);
         let Some(n) = self.nodes.get(&node) else {
             return;
@@ -501,7 +527,13 @@ impl Projector {
 
     /// Phase B for a frame: each of its rings that is marked, in order, so
     /// a ring is placed after every ring inside it.
-    fn frame_rings(&mut self, tree: &Tree<DocElement>, frame: NodeId, work: &mut Work, fonts: &mut FontSystemLease) {
+    fn frame_rings(
+        &mut self,
+        tree: &Tree<DocElement>,
+        frame: NodeId,
+        work: &mut PhaseWork,
+        fonts: &mut FontSystemLease,
+    ) {
         if element(tree, frame).is_none() {
             return;
         }
@@ -511,7 +543,7 @@ impl Projector {
                 self.ring_resolve(tree, ring, work);
             }
             if work.take(Dependent::new(ring, Stage::Shape)) {
-                self.ring_shape(tree, ring, work, fonts);
+                self.ring_shape(ring, work, fonts);
             }
             if work.take(Dependent::new(ring, Stage::Place)) {
                 self.ring_place(tree, ring, work, fonts);
@@ -521,12 +553,12 @@ impl Projector {
 
     /// A ring's resolution: its spans' styles and its own text style, with
     /// its node's carried binding; sizes stay relative.
-    fn ring_resolve(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut Work) {
+    fn ring_resolve(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut PhaseWork) {
         let Some(node) = self.units.get(&id).map(|u| u.node) else {
             return;
         };
         let binding = Binding::Carried(self.nodes.get(&node).and_then(|n| n.binding));
-        let mut reads = vec![Input::Doc(DocInput::Row(id))];
+        let mut reads = vec![ProjectionInput::Doc(DocInput::Row(id))];
         let ids = spans_of(tree, id);
         let spans: Vec<(String, ResolvedText)> = ids
             .iter()
@@ -553,8 +585,7 @@ impl Projector {
     /// A ring's shaping: its relative sizes in points of its node's drawn
     /// rectangle (#241 amendment 1), shaped again only when that key
     /// changed — a node resized reshapes its rings, a node moved does not.
-    fn ring_shape(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut Work, fonts: &mut FontSystemLease) {
-        let _ = tree;
+    fn ring_shape(&mut self, id: NodeId, work: &mut PhaseWork, fonts: &mut FontSystemLease) {
         let Some(unit) = self.units.get(&id) else {
             return;
         };
@@ -565,12 +596,19 @@ impl Projector {
         let UnitBody::Ring(state) = &unit.body else {
             return;
         };
-        let relative = state.spans.iter().any(|(_, s)| matches!(s.size, FontSize::Rel(_)));
+        let relative = state
+            .spans
+            .iter()
+            .any(|(_, s)| matches!(s.size, FontSize::Rel(_)));
         let key = RunKey {
-            spans: state.spans.iter().map(|(t, s)| (t.clone(), in_points(*s, rect))).collect(),
+            spans: state
+                .spans
+                .iter()
+                .map(|(t, s)| (t.clone(), in_points(*s, rect)))
+                .collect(),
         };
-        let reads: Vec<Input> = if relative {
-            vec![Input::Geometry(node)]
+        let reads: Vec<ProjectionInput> = if relative {
+            vec![ProjectionInput::Geometry(node)]
         } else {
             Vec::new()
         };
@@ -588,9 +626,16 @@ impl Projector {
     /// A ring's placement: around its node's outline, grown past the rings
     /// inside it as they were placed, by its frame's and its own layout,
     /// in its node's opacity and zoom window. A ring of a frame that is
-    /// not drawn draws nothing. Marks the rings outside it when the line
-    /// height it was placed at changed.
-    fn ring_place(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut Work, fonts: &mut FontSystemLease) {
+    /// not drawn draws nothing. Marks the ring just outside it when its
+    /// extent (its line height and those inside it) changed. O(its run),
+    /// reading one ring inside it, never all of them.
+    fn ring_place(
+        &mut self,
+        tree: &Tree<DocElement>,
+        id: NodeId,
+        work: &mut PhaseWork,
+        fonts: &mut FontSystemLease,
+    ) {
         let Some(unit) = self.units.get(&id) else {
             return;
         };
@@ -606,23 +651,25 @@ impl Projector {
         };
         let (rect, node_outline, opacity, zoom, binding) = (n.rect, n.outline, n.opacity, n.zoom, n.binding);
         let mut reads = vec![
-            Input::Geometry(node),
-            Input::Opacity(node),
-            Input::Visibility(node),
-            Input::Doc(DocInput::Row(frame_id)),
+            ProjectionInput::Geometry(node),
+            ProjectionInput::Opacity(node),
+            ProjectionInput::Visibility(node),
+            ProjectionInput::Doc(DocInput::Row(frame_id)),
         ];
         let frame = resolve_frame(tree, frame_id, &mut Reads(&mut reads));
         let ring = resolve_ring_in(tree, id, Binding::Carried(binding), &mut Reads(&mut reads));
-        let mut inner = Vec::new();
+        // What the rings inside it take: the extent of the nearest ring
+        // before it, which carries every ring inside that one.
+        let mut inner = (0.0f32, 0u32);
         let mut before = tree.node(id).and_then(|n| n.previous_sibling());
         while let Some(prev) = before {
             if let Some(UnitBody::Ring(r)) = self.units.get(&prev).map(|u| &u.body) {
-                reads.push(Input::Geometry(prev));
-                inner.push(r.line_height.unwrap_or(0.0));
+                reads.push(ProjectionInput::Geometry(prev));
+                inner = r.extent.unwrap_or(inner);
+                break;
             }
             before = tree.node(prev).and_then(|n| n.previous_sibling());
         }
-        inner.reverse();
         let text = state.text.map(|t| in_points(t, rect));
         let resolved = RingResolved {
             frame: frame.clone(),
@@ -633,37 +680,40 @@ impl Projector {
         self.deps.record(Dependent::new(id, Stage::Place), &reads);
         let placed = match (frame.visible, input, text) {
             (true, Some(input), Some(text)) => {
-                let path = offset_outline(&node_outline, ring_offset(frame.inset, frame.gap, &inner));
+                let path = offset_outline(&node_outline, clearance(frame.inset, frame.gap, inner));
                 let layout = RingLayout {
                     span: ring.span,
                     sides: ring.sides.as_ref().map(|s| (s.content.clone(), s.color)),
                     spacing: ring.spacing,
                 };
                 let params = (&path, frame.start, frame.direction, &ring.fit, &layout, &text);
-                let (replaced, placed) = memo::placed(&input, &params, || place_on_closed(
-                    &input,
-                    &path,
-                    frame.start,
-                    frame.direction,
-                    &ring.fit,
-                    &layout,
-                    true,
-                    &text,
-                    fonts,
-                ));
+                let (replaced, placed) = memo::placed(&input, &params, || {
+                    place_on_closed(
+                        &input,
+                        &path,
+                        frame.start,
+                        frame.direction,
+                        &ring.fit,
+                        &layout,
+                        true,
+                        &text,
+                        fonts,
+                    )
+                });
                 Some(settle(prev.as_ref(), &input, replaced, placed))
             }
             _ => None,
         };
-        let line_height = placed.as_ref().map(|p| p.run.line_height);
+        let line_height = placed.as_ref().map_or(0.0, |p| p.run.line_height);
+        let extent = (inner.0 + line_height, inner.1 + 1);
         let Some(unit) = self.units.get_mut(&id) else {
             return;
         };
         let UnitBody::Ring(state) = &mut unit.body else {
             return;
         };
-        let changed = state.line_height != line_height;
-        state.line_height = line_height;
+        let changed = state.extent != Some(extent);
+        state.extent = Some(extent);
         state.visible = frame.visible;
         state.resolved = Some(resolved);
         unit.slots[0].want = placed.as_ref().and_then(|p| {
@@ -679,7 +729,7 @@ impl Projector {
         });
         state.flow.placed = placed;
         if changed {
-            self.mark(work, Input::Geometry(id));
+            self.mark(work, ProjectionInput::Geometry(id));
         }
     }
 
@@ -687,14 +737,21 @@ impl Projector {
     /// drawn — its `visible`, both its ends drawn — and its flows'
     /// texts, shaped again where their keys changed. A link that switched
     /// kind retires the slots of its old kind.
-    fn path_resolve(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut Work, fonts: &mut FontSystemLease) {
+    fn path_resolve(
+        &mut self,
+        tree: &Tree<DocElement>,
+        id: NodeId,
+        work: &mut PhaseWork,
+        fonts: &mut FontSystemLease,
+    ) {
         let Some(owner) = self.units.get(&id).map(|u| u.node) else {
             return;
         };
         let Some(el) = element(tree, id) else {
             return;
         };
-        let portal = matches!(el, DocElement::Link(link) if link.kind == crate::document::values::LinkKind::Portal);
+        let portal =
+            matches!(el, DocElement::Link(link) if link.kind == crate::document::values::LinkKind::Portal);
         let ends = match el {
             DocElement::Connector(_) => self.nodes.get(&owner).and_then(|n| n.parent).map(|p| (p, owner)),
             DocElement::Link(link) => Some((owner, link.to)),
@@ -704,30 +761,45 @@ impl Projector {
         let mut reads = Vec::new();
         match (el, ends) {
             // A link reads whether the node it leads to is drawn.
-            (DocElement::Link(_), Some((_, to))) => reads.push(Input::Visibility(to)),
+            (DocElement::Link(_), Some((_, to))) => reads.push(ProjectionInput::Visibility(to)),
             // A connector reads that its node hangs from this parent: the
             // parent's row, which a move out of it rearranges.
-            (DocElement::Connector(_), Some((from, _))) => reads.push(Input::Doc(DocInput::Row(from))),
+            (DocElement::Connector(_), Some((from, _))) => {
+                reads.push(ProjectionInput::Doc(DocInput::Row(from)))
+            }
             _ => {}
         }
         if let (DocElement::Connector(_), None) = (el, ends) {
             if let Some(parent) = tree.node(owner).and_then(|n| n.parent()) {
-                reads.push(Input::Doc(DocInput::Row(parent)));
+                reads.push(ProjectionInput::Doc(DocInput::Row(parent)));
             }
         }
-        let drawn = ends.is_some_and(|(from, to)| self.nodes.contains_key(&from) && self.nodes.contains_key(&to))
+        let drawn = ends
+            .is_some_and(|(from, to)| self.nodes.contains_key(&from) && self.nodes.contains_key(&to))
             && (portal || visible);
         let binding = Binding::Carried(self.nodes.get(&owner).and_then(|n| n.binding));
-        // A link that switched kind takes on the other kind's slots.
+        // A link that switched kind takes on the other kind's slots, and
+        // its old kind's labels leave the label index.
+        let mut old_labels: [Option<NodeId>; 2] = [None, None];
         if let Some(unit) = self.units.get_mut(&id) {
             let is_portal = matches!(unit.body, UnitBody::Portal(_));
             if is_portal != portal {
+                old_labels = match &unit.body {
+                    UnitBody::Line(line) => [line.label.id, None],
+                    UnitBody::Portal(p) => [p.end[0].label.id, p.end[1].label.id],
+                    _ => [None, None],
+                };
                 let body = if portal {
                     UnitBody::Portal(Box::default())
                 } else {
                     UnitBody::Line(Box::default())
                 };
                 unit.rebody(body);
+            }
+        }
+        for label in old_labels.into_iter().flatten() {
+            if self.label_hosts.get(&label) == Some(&id) {
+                self.label_hosts.remove(&label);
             }
         }
         if !drawn {
@@ -766,7 +838,7 @@ impl Projector {
         id: NodeId,
         ends: Option<(NodeId, NodeId)>,
         binding: Binding,
-        mut reads: Vec<Input>,
+        mut reads: Vec<ProjectionInput>,
         fonts: &mut FontSystemLease,
     ) {
         let resolved = resolve_path(tree, id, &mut Reads(&mut reads));
@@ -877,16 +949,21 @@ impl Projector {
         id: NodeId,
         ends: Option<(NodeId, NodeId)>,
         binding: Binding,
-        mut reads: Vec<Input>,
+        mut reads: Vec<ProjectionInput>,
         fonts: &mut FontSystemLease,
     ) {
-        reads.push(Input::Doc(DocInput::Row(id)));
+        reads.push(ProjectionInput::Doc(DocInput::Row(id)));
         let arena = tree.arena();
         let end_ids: Vec<NodeId> = id
             .children(arena)
             .filter(|&c| arena[c].get().kind() == DocKind::PortalEnd)
             .collect();
-        type Resolved = (NodeId, Vec<NodeId>, Vec<(String, ResolvedText)>, Option<(NodeId, Vec<NodeId>, Vec<(String, ResolvedText)>)>);
+        type Resolved = (
+            NodeId,
+            Vec<NodeId>,
+            Vec<(String, ResolvedText)>,
+            Option<(NodeId, Vec<NodeId>, Vec<(String, ResolvedText)>)>,
+        );
         let mut resolved_ends: [Option<Resolved>; 2] = [None, None];
         for &end in &end_ids {
             let k = usize::from(arena[end].get().channel() == 1);
@@ -993,11 +1070,17 @@ impl Projector {
         let Some((from, to)) = line.ends else {
             return;
         };
-        let (Some(a), Some(b), Some(o)) = (self.nodes.get(&from), self.nodes.get(&to), self.nodes.get(&owner)) else {
+        let (Some(a), Some(b), Some(o)) =
+            (self.nodes.get(&from), self.nodes.get(&to), self.nodes.get(&owner))
+        else {
             return;
         };
         let opacity = o.opacity;
-        let mut reads = vec![Input::Geometry(from), Input::Geometry(to), Input::Opacity(owner)];
+        let mut reads = vec![
+            ProjectionInput::Geometry(from),
+            ProjectionInput::Geometry(to),
+            ProjectionInput::Opacity(owner),
+        ];
         let curve = curve_between(a.rect, b.rect, path.anchors, &path.control_points);
         let label_at = line
             .label
@@ -1008,12 +1091,18 @@ impl Projector {
             return;
         };
         let flows = line.flows.clone();
-        let label_size = line.label.flow.as_ref().map(|f| (f.shaped.clone(), f.shaped.size));
+        let label_size = line
+            .label
+            .flow
+            .as_ref()
+            .map(|f| (f.shaped.clone(), f.shaped.size));
         let mut placed: [Option<Placed>; 3] = [None, None, None];
         if let Some(curve) = curve {
             if let Some(input) = flows[0].flow.as_ref().map(|f| f.shaped.clone()) {
                 let params = (&curve, &resolved.fit, resolved.spacing, &text);
-                let (replaced, p) = memo::placed(&input, &params, || place_on_open(&input, &curve, &resolved.fit, resolved.spacing, &text, fonts));
+                let (replaced, p) = memo::placed(&input, &params, || {
+                    place_on_open(&input, &curve, &resolved.fit, resolved.spacing, &text, fonts)
+                });
                 placed[0] = Some(settle(flows[0].placed.as_ref(), &input, replaced, p));
             }
             for (k, end) in [(1, 0.0), (2, 1.0)] {
@@ -1057,7 +1146,9 @@ impl Projector {
         }
         line.label.center = label_center_at;
         unit.slots[3].want = match (label_center_at, label_size) {
-            (Some(center), Some((shaped, size))) => run_data(RunShape::Box(shaped), center - size * 0.5, opacity, path.zoom),
+            (Some(center), Some((shaped, size))) => {
+                run_data(RunShape::Box(shaped), center - size * 0.5, opacity, path.zoom)
+            }
             _ => None,
         };
     }
@@ -1076,11 +1167,18 @@ impl Projector {
         let Some((from, to)) = portal.ends else {
             return;
         };
-        let (Some(a), Some(b), Some(o)) = (self.nodes.get(&from), self.nodes.get(&to), self.nodes.get(&owner)) else {
+        let (Some(a), Some(b), Some(o)) =
+            (self.nodes.get(&from), self.nodes.get(&to), self.nodes.get(&owner))
+        else {
             return;
         };
         let (opacity, zoom) = (o.opacity, o.zoom);
-        let mut reads = vec![Input::Geometry(from), Input::Geometry(to), Input::Opacity(owner), Input::Visibility(owner)];
+        let mut reads = vec![
+            ProjectionInput::Geometry(from),
+            ProjectionInput::Geometry(to),
+            ProjectionInput::Opacity(owner),
+            ProjectionInput::Visibility(owner),
+        ];
         let sides = [(a.outline, b.rect.center()), (b.outline, a.rect.center())];
         let mut wants: [Option<GlyphRunData>; 4] = [None, None, None, None];
         let mut placed_markers: [Option<Placed>; 2] = [None, None];
@@ -1106,7 +1204,12 @@ impl Projector {
             let marker_size = Vec2::new(input.glyphs.iter().map(|g| g.advance).sum(), input.line_height);
             let marker_reach = reach(normal, marker_size);
             let center = point + normal * marker_reach;
-            let p = settle(end.marker.placed.as_ref(), &input, None, place_at_point(&input, center));
+            let p = settle(
+                end.marker.placed.as_ref(),
+                &input,
+                None,
+                place_at_point(&input, center),
+            );
             wants[2 * k] = run_data(
                 RunShape::Path {
                     run: p.run.clone(),
@@ -1120,10 +1223,15 @@ impl Projector {
             centers[k].0 = Some(center);
             if let (Some(label), Some(flow)) = (end.label.id, end.label.flow.as_ref()) {
                 let label_offset = resolve_label(tree, label, &mut Reads(&mut reads)).offset;
-                let label_offset = if label_offset.is_finite() { label_offset } else { 0.0 };
+                let label_offset = if label_offset.is_finite() {
+                    label_offset
+                } else {
+                    0.0
+                };
                 let size = flow.shaped.size;
                 let at = center + normal * (marker_reach + label_offset + reach(normal, size));
-                wants[2 * k + 1] = run_data(RunShape::Box(flow.shaped.clone()), at - size * 0.5, opacity, zoom);
+                wants[2 * k + 1] =
+                    run_data(RunShape::Box(flow.shaped.clone()), at - size * 0.5, opacity, zoom);
                 centers[k].1 = Some(at);
             }
         }
@@ -1143,6 +1251,15 @@ impl Projector {
             portal.end[k].label.center = centers[k].1;
         }
     }
+}
+
+/// `flow::ring_offset` over a ring's inner extent: `inset`, the summed line
+/// heights of the rings inside it, and a `gap` after each of them. The
+/// same arithmetic in the same order — the sum is a prefix kept ring by
+/// ring from the innermost — so the offset is the one the slice form
+/// gives.
+fn clearance(inset: f32, gap: f32, (heights, rings): (f32, u32)) -> f32 {
+    inset + heights + rings as f32 * gap
 }
 
 /// The oracle's shaping memo (#241, Tests). A test's check compares the
@@ -1180,12 +1297,13 @@ pub(crate) mod memo {
         }
     }
 
-    /// Run `f` with equal keys sharing their shaping on this thread.
+    /// Run `f` with equal keys sharing their shaping on this thread; a
+    /// `sharing` inside another leaves it on when it returns.
     #[cfg(test)]
     pub(crate) fn sharing<R>(f: impl FnOnce() -> R) -> R {
-        shared::ON.with(|on| on.set(true));
+        let was = shared::ON.with(|on| on.replace(true));
         let out = f();
-        shared::ON.with(|on| on.set(false));
+        shared::ON.with(|on| on.set(was));
         out
     }
 
@@ -1226,7 +1344,10 @@ pub(crate) mod memo {
                 return hit;
             }
             let out = place();
-            shared::PLACED.with(|m| m.borrow_mut().insert(name, (input.clone(), out.0.clone(), out.1.clone())));
+            shared::PLACED.with(|m| {
+                m.borrow_mut()
+                    .insert(name, (input.clone(), out.0.clone(), out.1.clone()))
+            });
             return out;
         }
         let _ = (input, params);

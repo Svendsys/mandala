@@ -82,7 +82,7 @@ pub(crate) enum Owner {
 
 /// One glyph element a unit may draw.
 #[derive(Clone, Debug)]
-pub(crate) struct Slot {
+pub(crate) struct RunSlot {
     /// The layer it is drawn in.
     pub(crate) layer: Layer,
     /// The document element it draws: the section, ring, path, cap,
@@ -100,10 +100,10 @@ pub(crate) struct Slot {
     pub(crate) want: Option<GlyphRunData>,
 }
 
-impl Slot {
+impl RunSlot {
     /// An empty slot in `layer`.
     pub(crate) fn new(layer: Layer) -> Self {
-        Slot {
+        RunSlot {
             layer,
             element: None,
             spans: Vec::new(),
@@ -214,8 +214,11 @@ pub(crate) struct RingState {
     pub(crate) text: Option<ResolvedText>,
     /// The flow.
     pub(crate) flow: PathFlow,
-    /// The line height it was placed at: what the rings outside it clear.
-    pub(crate) line_height: Option<f32>,
+    /// The sum of the line heights it and the rings inside it were placed
+    /// at, and how many rings that is: what the ring just outside it
+    /// clears (`flow::ring_offset` over this prefix). Each ring reads only
+    /// the one just inside it, so a frame's rings place in O(rings).
+    pub(crate) extent: Option<(f32, u32)>,
 }
 
 /// A ring's resolution, besides its spans.
@@ -295,32 +298,32 @@ pub(crate) const PORTAL_SLOTS: [Layer; 4] = [Layer::Portals; 4];
 /// A unit: a document element the projector projects into glyph
 /// elements of its own — a section, a ring, a connector or a link.
 #[derive(Clone, Debug)]
-pub(crate) struct Unit {
+pub(crate) struct ProjectedUnit {
     /// The node whose group holds its glyph elements.
     pub(crate) node: NodeId,
     /// Its glyph elements.
-    pub(crate) slots: Vec<Slot>,
+    pub(crate) slots: Vec<RunSlot>,
     /// Slots of the kind it was before — a link switched between line and
     /// portal — whose elements the next write removes.
-    pub(crate) retired: Vec<Slot>,
+    pub(crate) retired: Vec<RunSlot>,
     /// What it keeps.
     pub(crate) body: UnitBody,
 }
 
 /// The slots a unit of `body`'s kind has.
-fn slots_for(body: &UnitBody) -> Vec<Slot> {
+fn slots_for(body: &UnitBody) -> Vec<RunSlot> {
     match body {
-        UnitBody::Section(_) => vec![Slot::new(Layer::Sections)],
-        UnitBody::Ring(_) => vec![Slot::new(Layer::Frames)],
-        UnitBody::Line(_) => LINE_SLOTS.iter().map(|&l| Slot::new(l)).collect(),
-        UnitBody::Portal(_) => PORTAL_SLOTS.iter().map(|&l| Slot::new(l)).collect(),
+        UnitBody::Section(_) => vec![RunSlot::new(Layer::Sections)],
+        UnitBody::Ring(_) => vec![RunSlot::new(Layer::Frames)],
+        UnitBody::Line(_) => LINE_SLOTS.iter().map(|&l| RunSlot::new(l)).collect(),
+        UnitBody::Portal(_) => PORTAL_SLOTS.iter().map(|&l| RunSlot::new(l)).collect(),
     }
 }
 
-impl Unit {
+impl ProjectedUnit {
     /// A unit of `body` owned by `node`, with the slots its kind has.
     pub(crate) fn new(node: NodeId, body: UnitBody) -> Self {
-        Unit {
+        ProjectedUnit {
             node,
             slots: slots_for(&body),
             retired: Vec::new(),
@@ -333,7 +336,8 @@ impl Unit {
     /// start empty.
     pub(crate) fn rebody(&mut self, body: UnitBody) {
         let old = std::mem::replace(&mut self.slots, slots_for(&body));
-        self.retired.extend(old.into_iter().filter(|slot| slot.glyph.is_some()));
+        self.retired
+            .extend(old.into_iter().filter(|slot| slot.glyph.is_some()));
         self.body = body;
     }
 }
