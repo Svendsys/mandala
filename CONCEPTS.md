@@ -1291,6 +1291,25 @@ holds the glyph still draws it; an unpinned span's default family is a
 host face where the host has it (#228). See `format/fonts.md`
 "Ornament fallback".
 
+**The shaper is patched** (#304, `vendor/cosmic-text`). cosmic-text
+0.19.0 is vendored and every crate's `cosmic-text` is pointed at it by
+the root manifest's `[patch.crates-io]` (and the fuzz crate's, and the
+wasm32 probe's), so the app, glyphon and baumhard share one copy. The
+patch, marked `MANDALA PATCH` in its `src/shape.rs`: the font
+fallback's merge of a fallback face's glyphs is linear in the run (the
+published one was quadratic in a run the first face lacks: one 262 KB
+span took 596 s to project, #243); a code point no face draws is asked
+of the faces once per font system, and a run holding it then tries no
+fallback face for it; a line can take another's shaping at other sizes
+(`BufferLine::adopt_shape`), so a rescale lays out without shaping; and
+the shaper counts its work per thread (`cosmic_text::shape_work`:
+shapings, bytes shaped, fallback rounds, merge steps, coverage probes),
+which is how tests show cost without a clock. `set_reference_merge`
+selects the published merge on a thread, for the tests that hold the
+patch to it glyph for glyph. `util::manifests` holds the patch table to
+its rule: the members' version, a path in the repository, the same in
+every workspace that builds baumhard.
+
 `lib/baumhard/src/font/`. Two bridges, one
 shared private resolver, both live in `attrs.rs`:
 
@@ -1671,7 +1690,14 @@ element.
   its `span` then lays along its halves.
   Text too long is cut to the longest prefix, in reading order, that
   fits — a right-to-left run keeps its beginning — and never
-  overlaps.
+  overlaps. A rescale — `Fit`'s probes, R27's sizing of a frame's
+  lines — shapes nothing (#304): the rescaled buffer takes the run's
+  shaping and is only laid out at the new size, glyph for glyph what
+  shaping it again lays out (`flow::shape::resized_buffer`); only a
+  filler, or text holding a tab, is shaped again. An ornament's inks
+  are read off its outlines once per glyph and size, and kept
+  (`fonts::cached_outline_bounds`, per thread, used under the font
+  lock's guard).
 - **Hit mapping.** Every glyph names its span and its bytes of that
   span's text (`GlyphMetrics`, `ShapedBox::glyph_spans`); a filler
   glyph names `FILLER_SPAN`. No paragraph separator is drawn. A box
@@ -1744,6 +1770,14 @@ the layers to learn what the document is, and nothing flows back.
   holds the index to it, comparing the incremental layers with a full
   projection after every edit of a corpus of generated maps and the
   format's fixtures.
+- **One shaping per key** (`projection::shapes`, #304, ruling B7.4).
+  The projector's shaping cache holds, by full shape key (texts, styles
+  with sizes in points, and a box's minimum size and alignment, over the
+  font system's face set), a weak reference to the shaping some unit
+  holds: N units with one key make one shaping and share its `Arc`, and
+  the cache keeps nothing alive and holds at most about twice as many
+  entries as there are live shapings. A hit reads no font, so it takes
+  no lock.
 - **`Hit`** (`Projector::hit`): the layers top-down through each one's
   glyph BVH — a path run only where one of its glyphs is drawn — to the
   element and, through the run's glyph-to-span mapping, the span; then
