@@ -1950,30 +1950,30 @@ fn test_parametric_filesystem_variants_resolve() {
     let cfg = KeybindConfig {
         open_document: vec![ParametricBinding {
             combo: "Ctrl+F1".into(),
-            args: vec!["/tmp/test.mindmap.json".into()],
+            args: vec!["/tmp/test.mandala.json".into()],
         }],
         save_document_as: vec![ParametricBinding {
             combo: "Ctrl+F2".into(),
-            args: vec!["/tmp/save.mindmap.json".into()],
+            args: vec!["/tmp/save.mandala.json".into()],
         }],
         new_document_at: vec![ParametricBinding {
             combo: "Ctrl+F3".into(),
-            args: vec!["/tmp/new.mindmap.json".into()],
+            args: vec!["/tmp/new.mandala.json".into()],
         }],
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f1", true, false, false),
-        Some(Action::OpenDocument("/tmp/test.mindmap.json".into())),
+        Some(Action::OpenDocument("/tmp/test.mandala.json".into())),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f2", true, false, false),
-        Some(Action::SaveDocumentAs("/tmp/save.mindmap.json".into())),
+        Some(Action::SaveDocumentAs("/tmp/save.mandala.json".into())),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f3", true, false, false),
-        Some(Action::NewDocumentAt("/tmp/new.mindmap.json".into())),
+        Some(Action::NewDocumentAt("/tmp/new.mandala.json".into())),
     );
 }
 
@@ -2457,18 +2457,18 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         ),
         (
             "open_document",
-            &["/tmp/open.mindmap.json"],
-            Action::OpenDocument("/tmp/open.mindmap.json".into()),
+            &["/tmp/open.mandala.json"],
+            Action::OpenDocument("/tmp/open.mandala.json".into()),
         ),
         (
             "save_document_as",
-            &["/tmp/save.mindmap.json"],
-            Action::SaveDocumentAs("/tmp/save.mindmap.json".into()),
+            &["/tmp/save.mandala.json"],
+            Action::SaveDocumentAs("/tmp/save.mandala.json".into()),
         ),
         (
             "new_document_at",
-            &["/tmp/new.mindmap.json"],
-            Action::NewDocumentAt("/tmp/new.mindmap.json".into()),
+            &["/tmp/new.mandala.json"],
+            Action::NewDocumentAt("/tmp/new.mandala.json".into()),
         ),
     ]
 }

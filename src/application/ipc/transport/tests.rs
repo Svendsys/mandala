@@ -45,7 +45,7 @@ fn execute_detached(
     execute(request, None, session)
 }
 
-const MAP: &str = "maps/fixture.mindmap.json";
+const MAP: &str = "maps/fixture.mandala.json";
 
 /// How long any single expected frame may take. Generous: a loaded CI
 /// runner is slow, and a timeout here only ever means a failure.
@@ -629,11 +629,11 @@ fn test_ipc_loopback_hello_reports_the_published_map() {
     assert_eq!(hello["data"]["map"], Value::Null, "null when no file is bound");
     drop(second);
 
-    harness.server().publish_map(Some("other.mindmap.json"));
+    harness.server().publish_map(Some("other.mandala.json"));
     let (_third, hello) = Client::attach(&harness.path);
     assert_eq!(
         hello["data"]["map"],
-        json!("other.mindmap.json"),
+        json!("other.mandala.json"),
         "a load reaches the next greeting"
     );
 }

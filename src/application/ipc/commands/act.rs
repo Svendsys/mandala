@@ -428,7 +428,7 @@ mod tests {
     fn test_both_action_shapes_parse() {
         for frame in [
             r#"{"id":1,"cmd":"act.action","action":"ZoomIn"}"#,
-            r#"{"id":1,"cmd":"act.action","action":{"OpenDocument":"/tmp/m.mindmap.json"}}"#,
+            r#"{"id":1,"cmd":"act.action","action":{"OpenDocument":"/tmp/m.mandala.json"}}"#,
             r#"{"id":1,"cmd":"act.action","action":"DoubleClickActivate","x":1,"y":2.5,"space":"surface"}"#,
         ] {
             let (reply, _) = run_detached(frame);
