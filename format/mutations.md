@@ -1,116 +1,18 @@
-# Custom Mutations
+# Glyph mutations
 
-> **Status (V1-C3, #244).** The custom-mutation *carrier* this document
-> describes — the `CustomMutation` object a `.mindmap.json` map, a user
-> file or the app bundle held, its four-source loader, the `mutation`
-> console verb and the `OnClick` triggers that fired it — was deleted
-> with the old model. Edits replace it (V1-D1, #250), and V1-E4 (#256)
-> rewrites this document for them. What is **live** is the glyph
-> mutation vocabulary the carrier wrapped: `GfxMutation`, its delta and
-> glyph-run forms ([Mutation vocabulary](#mutation-vocabulary),
-> [Glyph run mutations](#glyph-run-mutations)) and the `MutatorNode`
-> AST ([`mutator`](#mutator--the-mutatornode-ast)), which baumhard's
-> `GlyphModel` family keeps (design decision D24) and whose published
-> examples the tests read from here. Read every other section as the
-> record of the format that was.
+The glyph mutation vocabulary: `GfxMutation`, its command, delta and
+glyph-run forms, and the `MutatorNode` AST that carries them, which
+baumhard's `GlyphModel` family keeps (design decision D24). Their
+published examples are read from this file by the tests, so an example
+here is one the code parses.
 
-Custom mutations were named, reusable bundles of operations a mindmap
-could attach to nodes or expose through the `mutation` console verb.
-They covered everything from "grow every descendant's font by 2pt" to
-size-aware layouts like `flower-layout` and `tree-cascade`.
+The custom-mutation *carrier* that used to wrap this vocabulary — the
+`CustomMutation` object, its loader and console verb, and the triggers
+that fired it — was deleted with the old model in V1-C3 (#244). Edits
+replace it (V1-D1, #250), and V1-E4 (#256) documents them. Nothing in
+`.mandala.json` holds a glyph mutation today.
 
-## Where mutations come from
-
-Four sources contribute to a document's active registry, in
-ascending precedence (later writers override earlier ones with the
-same `id`):
-
-<!-- SOURCE-OF-TRUTH: the precedence order below is encoded once in
-     code, as the SourceTier enum variant order in
-     src/application/source_tier.rs, and pinned by that module's
-     tests. The macro registry shares the same enum. When the order
-     or set of sources changes, update this list and
-     build_mutation_registry_with_app_and_user in the same commit. -->
-
-1. **Application bundle** — `assets/mutations/application.json`,
-   compiled into the binary via `include_str!`. Lowest precedence so
-   users can customize anything shipped by the app.
-2. **User file** — `$XDG_CONFIG_HOME/mandala/mutations.json` on
-   native (falls back to `$HOME/.config/mandala/mutations.json`);
-   `localStorage["mandala_mutations"]` on WASM. There is no
-   `?mutations=` URL parameter: a link is composed by whoever sent
-   it, not by the user, and this tier is trusted as the user's own.
-   The file is read **entry by entry**: a mutation that does not
-   parse logs a `warn!` naming its index and `id` and is skipped,
-   and the others load. A key written twice uses its last occurrence,
-   and a top-level key other than `mutations` is ignored; both log a
-   `warn!` naming the key. Only a file that is not a JSON object, or
-   whose `mutations` is not an array, is dropped whole.
-3. **Map-level** — the `custom_mutations: [...]` array in the
-   `.mindmap.json` file itself.
-4. **Inline** — the `inline_mutations: [...]` array on a specific
-   `MindNode`.
-
-`mutation help <id>` and `mutation inspect <id>` both report which
-layer won the registry slot for that id.
-
-Override-safety note: if a user file redeclares the id of a
-bundled mutation that has a registered Rust handler (e.g.
-`flower-layout`, `tree-cascade`), the dispatcher **honors the
-user's declarative mutator** rather than silently running the
-bundled handler's algorithm against the user's scope. See
-`MindMapDocument::will_dispatch_to_handler` for the guard.
-
-## JSON shape — start here
-
-Most mutations are pure data: a flat `Vec<Mutation>` applied over a
-declared scope. Use this shape:
-
-```json
-{
-  "mutations": [
-    {
-      "id": "grow-font-2pt",
-      "name": "Grow Font 2pt",
-      "description": "Increase font size by 2 points on the selected node and all descendants.",
-      "contexts": ["map.node"],
-      "mutations": [{ "AreaCommand": { "GrowFont": 2.0 } }],
-      "target_scope": "SelfAndDescendants"
-    }
-  ]
-}
-```
-
-Drop that at `~/.config/mandala/mutations.json`, restart the app,
-and `/` → `mutation list` will show it. `mutation apply grow-font-2pt`
-on a node's selection grows the fonts. Three lines of change to
-author a new mutation.
-
-Fields the shape above uses:
-
-- `id` — unique key, typed at the console prompt.
-- `name` — human-readable name in `mutation list`.
-- `description` — first line shown in `mutation list`, expanded by
-  `mutation help <id>`.
-- `contexts` — dotted tags describing what the mutation touches
-  (`map.node`, `map.tree`, `internal`, …). See [contexts](#contexts)
-  below.
-- `mutations` — a flat `Vec<Mutation>` applied to every node
-  covered by `target_scope`. See the [Mutation vocabulary](#mutation-vocabulary)
-  section for the variants.
-- `predicate` — optional `Predicate` filter gate; defaults to none.
-  See [predicate](#predicate--top-level-filter-gate) below.
-- `target_scope` — one of `SelfOnly` / `Children` / `Descendants` /
-  `SelfAndDescendants` / `Parent` / `Siblings` / `SectionsOnly`.
-  Governs both what nodes the mutations apply to *and* the
-  undo-snapshot window.
-
-When the legacy shape isn't enough — a mutation that needs
-per-child positioning, runtime-computed values, or the
-`MapChildren` walker primitive — use the richer [MutatorNode
-AST](#mutator--the-mutatornode-ast) form instead of or in addition
-to `mutations`. The backward-compat deserializer accepts both
-shapes on load; save always emits the canonical `mutator` form.
+## Vocabulary
 
 ### Mutation vocabulary
 
@@ -137,16 +39,12 @@ The most common variants for authoring:
   serialized by `glam` as a sequence, and its deserializer accepts
   nothing else. The object form fails with
   `invalid type: map, expected a sequence of 2 f32 values`, and
-  because `custom_mutations` is a required-shape field, that error
-  takes the **whole `.mindmap.json` down**. In
-  `~/.config/mandala/mutations.json` the cost is smaller — the user
-  loader parses entry by entry, so it warns and skips that one
-  mutation — but the mutation is still gone. The same applies to
-  every future `Vec2` payload on either command enum.
+  whatever file carries the mutation fails to read it. The same
+  applies to every future `Vec2` payload on either command enum.
   `do_area_rotate_command_json_wire_shape` **reads the example on the
   line above out of this file** and parses it, so editing it back to
-  the object form fails the suite rather than shipping a doc that
-  breaks every document that copies it.
+  the object form fails the suite rather than shipping a doc whose
+  example cannot be read.
 
 The full vocabulary lives in
 `lib/baumhard/src/gfx_structs/area_mutators.rs` under
@@ -219,29 +117,17 @@ extend it, padding any gap with whitespace.
 > hand-authored file that relied on the old blanking behavior needs
 > `ignore_initial_space: false` to keep it.
 
-> **Breaking change (pre-V1, per `CODE_CONVENTIONS.md` §10).** The
-> area-side operation key was previously spelled `ApplyOperation`;
-> it is now `Operation`, matching the field variant it tags and the
-> model-side key of the same meaning. The write-only keys `Flags`
-> (both sides) and the `SetFlag` command tag have been removed —
-> they named no field or command and were never applicable. A
-> hand-authored `.mindmap.json`, `~/.config/mandala/mutations.json`,
-> or `assets/mutations/*.json` still using `ApplyOperation` or
-> `Flags` as a map key will fail to deserialize with
-> `unknown variant`, and because mutations are parsed as part of the
-> enclosing document, **the whole file fails to load** — not just
-> the offending mutation. Rename the key to `Operation`; drop any
-> `Flags` entry. No alias or migration shim is provided (§10:
-> rename rather than alias). No in-repo fixture, bundled asset, or
-> `maptool` path used these keys, so there was nothing to migrate in
-> the same commit.
+The area-side operation key is `Operation`, matching the field
+variant it tags and the model-side key of the same meaning; there is
+no `ApplyOperation` spelling and no `Flags` key, and either is refused
+as an unknown variant.
 
 ### Glyph run mutations
 
 The glyph layers (design §12.1) are made of one element type besides
 areas and models: a **`GlyphRun`**, one whole TextFlow — a shaped box
 or a shaped run placed along a path. Three run mutations are
-*authored*: a presentation or a custom mutation can name them. The one
+*authored*: a presentation (V1-D2) or an edit (V1-D1) will name them. The one
 that replaces a whole payload, `RunSet`, belongs to projection and is
 never authored; it has **no JSON spelling**, and `{"RunSet": …}` in a
 file is refused as an unknown variant.
@@ -313,196 +199,6 @@ nothing and is logged, in every build. A scope such as
 `{"RunOpacity": 0.5}` meets areas, models and voids and leaves them as
 they were.
 
-### Document-actions-only mutation
-
-A mutation can carry only canvas-level work (e.g. a theme switch)
-with no tree effect at all. Omit `mutator` and `mutations`, keep
-`target_scope` as a formal placeholder:
-
-```json
-{
-  "id": "switch-dark",
-  "name": "Switch to dark theme",
-  "description": "Copy the 'dark' theme variant into live variables.",
-  "contexts": ["map.node"],
-  "target_scope": "SelfOnly",
-  "document_actions": [{ "SetThemeVariant": "dark" }]
-}
-```
-
-`UndoAction::CanvasSnapshot` captures the pre-action canvas state
-so `Ctrl+Z` reverses it.
-
-## Fields
-
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `id` | string | — | Unique key in the registry. `mutation apply <id>` and trigger bindings reference it. |
-| `name` | string | — | Human-readable name shown in `mutation list`. |
-| `description` | string | `""` | One- or multi-line explanation shown in `mutation list` (first line) and expanded by `mutation help <id>`. |
-| `contexts` | string[] | `[]` | Dotted-namespace tags describing where and what the mutation operates on. See `contexts` below. Empty is treated as `["internal"]`. |
-| `mutator` | MutatorNode \| null | `null` | The mutation payload. `null` is valid for mutations that only ship `document_actions`. |
-| `target_scope` | enum | — | Which nodes the undo path snapshots. See `target_scope` below. |
-| `behavior` | `Persistent` \| `Toggle` | `Persistent` | Whether the mutation commits to the model (`Persistent`) or only updates the tree visually and reverses on re-trigger (`Toggle`). |
-| `predicate` | Predicate \| null | `null` | Optional filter — elements not matching the predicate are skipped. |
-| `document_actions` | DocumentAction[] | `[]` | Canvas-level actions (theme switches, etc.) that fire alongside the tree mutation. |
-| `timing` | AnimationTiming \| null | `null` | When present with `duration_ms > 0`, the mutation interpolates over time instead of landing instantly. |
-
-## `contexts`
-
-Tags describing where and on what the mutation is meant to run.
-Follows the named-string convention from `enums.md`: unknown tags
-are preserved on round-trip but don't match any well-known
-predicate.
-
-Well-known tags (defined in
-`lib/baumhard/src/mindmap/custom_mutation/contexts.rs`):
-
-- `internal` — an implementation-detail mutation registered by the
-  host application for its own use. Not listed by `mutation list`
-  and refused by `mutation apply`. An empty `contexts` array is
-  equivalent to `["internal"]`.
-- `map` — operates on a mindmap. Root of the `map.*` sub-namespace.
-- `map.node` — touches the content of a single node (text, style,
-  color, regions).
-- `map.tree` — touches tree structure / layout descending from a
-  node (positions, children arrangement).
-
-Plugins reserve the `plugin.<name>.<kind>` namespace. `mutation list`
-filters to entries whose contexts include anything starting with
-`map`; `mutation list --all` drops that filter. `--all` is matched
-case-insensitively (`--ALL` works) and may sit before or after the
-substring filter; any other word starting with `--` is refused by name
-rather than taken as a filter, so a filter cannot begin with `--`.
-There is one filter: two unquoted words are refused by name, and a
-filter with a space is quoted.
-
-## `target_scope`
-
-Scopes the **undo snapshot and model-sync** windows, **not** the
-mutator payload's reach. The mutator AST is free to walk wherever its
-control-flow dictates; `target_scope` tells the framework which model
-nodes to clone into the `UndoAction::CustomMutation` snapshot before
-the mutation runs and (for non-handler mutations) which nodes to sync
-from the tree back to the model afterward. A mutation author's job is
-to keep the declared scope a superset of the nodes the mutator
-actually touches — if the mutator writes outside this scope, those
-writes won't be reverted by `Ctrl+Z` and won't reach the saved model.
-
-| Value | Nodes snapshotted / synced |
-|---|---|
-| `SelfOnly` | The anchor node. |
-| `Children` | Direct children of the anchor. |
-| `Descendants` | All descendants recursively (not the anchor). |
-| `SelfAndDescendants` | Anchor + all descendants. |
-| `Parent` | The anchor's parent node. Empty on a root — the mutation is a no-op. |
-| `Siblings` | The anchor's siblings (excluding itself). **Empty on a root**: "sibling" means "shares my parent", and a root shares none, so the other roots of a multi-root map are *not* siblings. A `Siblings` mutation on a root snapshots nothing, mutates nothing, and pushes no undo entry. |
-| `SectionsOnly` | Every section of the anchor — bypasses the chrome-only container fan-out so text / font / region mutations land on the section-areas only. The anchor `MindNode` is still the snapshot window (whole-node clone covers per-section state). Use this when a mutation must avoid colliding with a sibling mind-node sharing the section's channel. |
-
-`baumhard::mindmap::custom_mutation::scope` ships four helpers that
-bake a flat mutation list into a MutatorNode, and only three of them
-are named for a `target_scope` value: `self_only` pairs with
-`SelfOnly`, `descendants` with `Descendants`, `self_and_descendants`
-with `SelfAndDescendants`. The fourth, `at_anchor`, is the same
-anchor-only shape as `self_only` under a name that says the
-application, not the AST, picks the targets — which is how the
-remaining scopes work: `Children`, `Parent`, `Siblings` and
-`SectionsOnly` have no helper of their own, because the application
-resolves their target set and anchors the mutator at each target in
-turn (next section). For hand-authored MutatorNodes, pick the
-smallest scope that covers every node the AST will touch.
-
-### Which scopes admit a tree-walking mutator
-
-The application resolves a scope to a target set and then **anchors
-the mutator at each target in turn**. So the pairing has complete
-undo coverage only when the target set is *closed* under whatever
-the mutator walks: everything a mutator anchored at a target can
-reach must itself be a target, or the undo snapshot ends up narrower
-than the write set.
-
-Only `Descendants` and `SelfAndDescendants` are closed — a
-descendant's children are still descendants. Every other scope,
-including `Children` and `Siblings`, requires a mutator that touches
-**only its anchor**: anchoring a `MapChildren`-reach mutator at each
-child reaches the *grandchildren*, and at each sibling reaches that
-sibling's children, neither of which the snapshot captured.
-
-Closure is a statement about **undo coverage, and nothing else**. It
-does not say the mutation applies once per node. Per-target
-anchoring means a mutator with a reach wider than `SelfOnly` runs
-once for *every* target that reaches a given node, so under a
-`SelfAndDescendants` scope a `Descendants`-reach mutator is anchored
-at each node of the subtree and a node at depth *k* below the anchor
-is written *k + 1* times. The snapshot still covers all of it —
-closure holds, `covers_reach` is right to approve — but a
-non-idempotent payload (a relative nudge, say) compounds. Today's
-flat-apply path collapses the AST to one list and applies it once
-per target, so nothing compounds yet; the announced walker path is
-where this becomes real.
-
-`baumhard::mindmap::custom_mutation::mutator_reach` computes the
-widest set an AST can reach and `TargetScope::covers_reach` checks
-the pairing; a mismatch is a `warn!` at apply time, not a rejection —
-the mutation still runs, but its undo coverage is incomplete. The
-`mutation inspect <id>` console verb prints the computed reach.
-
-One caveat on "still runs", because it bites precisely the pairings
-this gate rejects. The pairings that trip it — a `Children` or
-`Siblings` scope against a `MapChildren`-reach mutator, say — are by
-construction *not* flat-extractable, and the flat-apply path is the
-only path wired today. So such a mutation collects its second warning
-from `apply_to_tree` and is **skipped**: the `covers_reach` warning
-is advisory, but the non-flat decline behind it is not. "Still runs"
-is accurate for a flat-extractable AST whose declared scope is merely
-too narrow, and for those only.
-
-## `predicate` — top-level filter gate
-
-Optional `Predicate` that narrows the candidate elements
-*before* the mutator's `Macro` payload lands on each target.
-When present, every element in the `target_scope`-collected
-fan-out (the chrome-only container plus each section-area) is
-tested against `predicate.test(element)`; mutations only land on
-elements that match.
-
-The shape mirrors the predicates used inside
-`Instruction::RepeatWhile` — same struct, same field language —
-so authors don't learn two filtering grammars. Per-grapheme /
-per-region targeting still happens inside the mutator AST; the
-top-level `predicate` is the *element-level* filter ("does this
-GlyphArea / GlyphModel even count?").
-
-The predicate field language exposes `GfxElementField::Flag(Flag)`
-for the most common authoring shape — "match elements with this
-flag set / clear". The `Flag` variants are:
-
-| Variant | Set on |
-|---|---|
-| `Focused` | Element holds keyboard / interaction focus. |
-| `Mutable` | Element accepts user-driven mutation. |
-| `Anchored(AnchorBox)` | Element is layout-pinned. |
-| `MutationEvents` | Element generates events on mutation. |
-| `SectionRoot` | Element is part of a section subtree (section-area or section-model). |
-
-Common idioms:
-
-- `Predicate { fields: [(Flag(SectionRoot), Equals(false))], always_match: false }`
-  — "land on sections only" (filters the container out).
-  Same end-state as `target_scope: SectionsOnly` for a
-  `SelfOnly`-style mutator; the structural scope is preferred
-  when authoring intent is "sections, never the chrome".
-- `Predicate { fields: [(Flag(SectionRoot), Equals(true))], … }`
-  — the inverse: "land on the container only, skip every
-  section." Useful for container-only mutations that shouldn't
-  touch the section glyphs. The container is chrome only: it
-  draws nothing (V1-B12 removed the node background it held).
-
-`predicate` is `null` (or absent) by default — every candidate
-element passes through unfiltered. The field round-trips through
-serde with `skip_serializing_if = "Option::is_none"`, so
-mutations that don't filter stay byte-identical on disk.
-
 ## `mutator` — the MutatorNode AST
 
 The mutator AST mirrors the variants of the engine's `Mutator` plus a
@@ -512,8 +208,8 @@ split, merge), has no AST node and no JSON spelling. Structure is never
 authored as JSON; the engine's serde skips the variant, so a
 `"Structure"` object is refused as an unknown variant. See
 `lib/baumhard/src/engine/builder/ast.rs` for the type definitions. The
-AST is generic over the element type and the mutation payload; in a
-custom mutation it is the glyph instantiation,
+AST is generic over the element type and the mutation payload; for the
+glyph trees it is the glyph instantiation,
 `MutatorNode<GfxElement, GfxMutation>`, so its predicates name
 `GfxElementField`s and its literal mutations and templates are glyph
 mutations.
@@ -680,7 +376,7 @@ content and the build runs on an interactive path:
 
 By default, the walker pairs a mutator's direct children with a
 target's direct children **by matching keys** — the `kind` and
-`channel` of each — see `format/channels.md`. This is broadcast
+`channel` of each — see [Routing keys](#routing-keys-kind-and-channel). This is broadcast
 semantics: one mutator on channel N hits every target child that
 happens to share its key. It's the right default for groups. A
 mutator's children are kept in key order whatever order the JSON
@@ -734,78 +430,6 @@ lists, runtime counts, and `Template`s resolved per iteration). At
 build time the builder consults a `BuildContext` registered by the
 host application for the mutation's `id`. Pure-data mutations (no
 runtime holes) use a context that supplies nothing.
-
-### Imperative handlers vs. declarative mutators
-
-Two apply paths coexist:
-
-- **Declarative (`mutator: Some(MutatorNode)`)** — the walker
-  compiles the AST to a `GfxMutatorTree` and walks it over
-  the Baumhard tree. The framework syncs mutated nodes back from the
-  tree to the model for undo. Runtime holes are resolved via a
-  `BuildContext` keyed on the mutation `id`. Preferred for
-  mutations expressible in the AST (pure-data field changes,
-  MapChildren-shaped per-index layouts, predicate-gated recursion).
-- **Imperative (`DynamicMutationHandler`)** — a Rust function
-  pointer registered on the document under the mutation `id`. When
-  present, the dispatcher calls the handler directly and it mutates
-  the `MindMap` model in place, bypassing the tree walk. Chosen for
-  mutations too structural for the AST (arbitrary BFS layouts,
-  anything that needs per-node custom computation spanning multiple
-  passes). The mutator field in the JSON is conventionally empty
-  (`"mutations": []` in the legacy shape, or `mutator: null`).
-
-Decision rule: reach for the declarative path first. Move to a
-handler when the AST gets contorted — typically when you find
-yourself wanting per-target state that `BuildContext` can't
-cleanly express, or multiple tree passes. `flower_layout.rs` and
-`tree_cascade.rs` under `src/application/document/mutations/` are
-the canonical handler examples; both are registered by
-`register_builtin_handlers` at startup.
-
-## Firing mutations from interaction
-
-The `mutation` console verb is one way to fire a mutation. The
-other is a trigger binding: a mutation id attached to a node's
-`trigger_bindings` array, fired when the user clicks, hovers, or
-presses a bound key on that node. The binding JSON shape lives on
-the node, not on the mutation:
-
-```json
-{
-  "id": "0",
-  "parent_id": null,
-  "text": "Root",
-  "trigger_bindings": [
-    { "trigger": "OnClick", "mutation_id": "switch-dark" },
-    { "trigger": "OnHover", "mutation_id": "highlight-red",
-      "contexts": ["Desktop"] }
-  ]
-}
-```
-
-Valid triggers: `OnClick`, `OnHover`, `{"OnKey": "<key>"}`,
-`{"OnLink": "<href>"}`. The optional `contexts` field limits the
-binding to particular runtime platforms (`Desktop` / `Web` /
-`Touch`); omit it to fire on all platforms.
-
-Trigger bindings respect `MutationBehavior::Toggle` semantics —
-click the same node twice on a Toggle-flavoured mutation to
-reverse it. See `format/legacy-schema.md` for the full node field
-reference.
-
-## Authoring a user file
-
-Drop a JSON file at `~/.config/mandala/mutations.json` with the
-envelope shape above. The file is read at startup; `log::info!`
-reports the count on success, `log::warn!` on parse failure.
-Malformed files don't crash the app — the layer is skipped and the
-app bundle below continues to load.
-
-A user mutation whose `id` matches an app-bundled mutation overrides
-the bundle — useful for tweaking constants without rebuilding. A
-map-level mutation in turn overrides the user's, and an inline
-mutation on a specific node overrides the map's.
 
 ## The document's kinds and predicate fields
 
@@ -887,14 +511,8 @@ negated or not, as they do on an unset field.
 
 ## Related
 
-- `format/legacy-schema.md` — the full `.mindmap.json` shape including the
-  `custom_mutations` and `trigger_bindings` arrays on maps and nodes.
-- `format/channels.md` — the `channel` field on MindNodes and what
-  it means for mutator targeting.
-- `format/enums.md` — the named-string convention used for
-  `contexts`, `target_scope`, `behavior`.
-- `format/zoom-bounds.md` — `GlyphAreaField::ZoomVisibility` mutator
-  target for authoring zoom-triggered LOD transitions on any
-  renderable.
+- `lib/baumhard/src/gfx_structs/area_mutators.rs` (`GlyphAreaCommand`),
+  `lib/baumhard/src/gfx_structs/mutator.rs` (`GfxMutation`) and
+  `lib/baumhard/src/engine/builder/ast.rs` (the AST) — the types.
 - `CODE_CONVENTIONS.md §1` and `§7` — why the mutation framework lives
   in Baumhard and why its seams are preserved.
