@@ -715,3 +715,53 @@ fn test_projection_compares_against_what_it_wrote_not_what_an_overlay_wrote() {
     assert_eq!(live, 0.2, "the overlay stays where it is");
     changes.discard(&mut p.layers);
 }
+
+#[test]
+fn test_projection_a_sides_color_change_rewrites_the_reused_shaping() {
+    use crate::document::mutation::ops::LayoutOp;
+    use crate::document::values::Sides;
+    // A ring's sides are laid by its placement, in a run that replaces
+    // the shaping (`settle`): a new color keeps the shaping key and every
+    // glyph id, and must still reach the run that is drawn.
+    let doc = load_map(
+        json!({"nodes": [text_node(1, None, 0.0, json!({"text": "node"}), json!({
+            "min_size": [320.0, 200.0],
+            "frame": {"rings": [{"size": 0.08, "sides": {"content": "✦", "color": "#102030"},
+                                 "spans": [{"text": "ring"}]}]}
+        }))]}),
+    );
+    let ring = kid(&doc, kid(&doc, ident(&doc, 1), DocKind::Frame), DocKind::Ring);
+    let placed = |p: &Projected| match &p.projector.units[&ring].body {
+        UnitBody::Ring(state) => state.flow.placed.clone().expect("the ring is placed"),
+        _ => unreachable!("a ring's unit"),
+    };
+    let mut p = Projected::new(doc);
+    let before = placed(&p);
+    // Precondition: the run drawn is the placement's own, not the shaping.
+    assert!(
+        !Arc::ptr_eq(&before.run, &before.input),
+        "the sides replace the shaped run"
+    );
+    p.apply(request(
+        single(
+            DocKind::Ring,
+            DocMutation::Ring(RingOp::Layout(LayoutOp::SetSides(Some(Sides::On {
+                content: "✦".into(),
+                color: Some(ColorRef::Rgba(Rgba::opaque(200, 10, 10))),
+            })))),
+        ),
+        vec![ring],
+        "recolor the sides",
+    ))
+    .unwrap();
+    let after = placed(&p);
+    assert!(
+        Arc::ptr_eq(&after.input, &before.input),
+        "the shaping is kept: its key did not change"
+    );
+    assert!(
+        !Arc::ptr_eq(&after.run, &before.run),
+        "the recolored run is a new one"
+    );
+    p.check().unwrap();
+}
