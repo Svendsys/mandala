@@ -33,7 +33,8 @@ const CHILD: &str = "BAUMHARD_FONT_STATE_CHILD";
 /// a bold heading at 74 points, and body text in regular and italic. It
 /// pins no compiled family, so projecting it reads nothing of the compiled
 /// font table: the text #323's lazy registration shaped with the host's
-/// faces alone.
+/// faces alone. It stands in for testament, the map #323 was reported on,
+/// which is a `.mindmap.json` this loader does not read.
 const DEFAULT_FAMILY: &str = r#"{"format":1,"name":"default family","nodes":[
   {"id":1,"position":[0,0],"sections":[
     {"spans":[{"text":"Lord God","size":74,"weight":"bold"}]},
@@ -47,25 +48,46 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// The shipped maps (`maps/demos/*.mandala.json`, `maps/*.mandala.json`),
-/// by name, and the default-family fixture.
+/// The maps compared, by name: the default-family fixture, then the demo
+/// maps (`maps/demos/*.mandala.json`), the shipped maps this loader reads.
 fn maps() -> Vec<(String, String)> {
     let mut maps = vec![("default family".to_string(), DEFAULT_FAMILY.to_string())];
-    for dir in ["maps/demos", "maps"] {
-        let mut found: Vec<PathBuf> = std::fs::read_dir(root().join(dir))
-            .unwrap_or_else(|e| panic!("{dir}: {e}"))
-            .map(|entry| entry.expect("a directory entry").path())
-            .filter(|path| path.to_string_lossy().ends_with(".mandala.json"))
-            .collect();
-        found.sort();
-        for path in found {
-            let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-            maps.push((
-                format!("{dir}/{}", path.file_name().unwrap_or_default().to_string_lossy()),
-                text,
-            ));
-        }
+    let dir = "maps/demos";
+    let mut found: Vec<PathBuf> = std::fs::read_dir(root().join(dir))
+        .unwrap_or_else(|e| panic!("{dir}: {e}"))
+        .map(|entry| entry.expect("a directory entry").path())
+        .filter(|path| path.to_string_lossy().ends_with(".mandala.json"))
+        .collect();
+    found.sort();
+    for path in found {
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        maps.push((
+            format!("{dir}/{}", path.file_name().unwrap_or_default().to_string_lossy()),
+            text,
+        ));
     }
+    maps
+}
+
+/// What `maps` reads, by name: the fixture and every demo map. A
+/// precondition holds the two to each other, so a demo added, removed or
+/// renamed is named in the failure rather than counted past.
+const MAPS: [&str; 5] = [
+    "default family",
+    "maps/demos/blake.mandala.json",
+    "maps/demos/dickinson.mandala.json",
+    "maps/demos/ecclesiastes.mandala.json",
+    "maps/demos/frames.mandala.json",
+];
+
+/// `maps`, once its names are `MAPS`.
+fn the_maps() -> Vec<(String, String)> {
+    let maps = maps();
+    let names: Vec<&str> = maps.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(
+        names, MAPS,
+        "precondition: the maps compared are the fixture and the demo maps"
+    );
     maps
 }
 
@@ -181,15 +203,10 @@ fn test_a_map_lays_out_alike_before_and_after_another() {
             .any(|line| line.contains("\"Lord God\"") || line.contains("Some(\"L\")")),
         "precondition: the fixture's heading is laid out"
     );
-    let demos: Vec<(String, String)> = maps()
+    let demos: Vec<(String, String)> = the_maps()
         .into_iter()
         .filter(|(name, _)| name.starts_with("maps/demos/"))
         .collect();
-    assert!(
-        demos.len() >= 4,
-        "precondition: the demo maps are read ({})",
-        demos.len()
-    );
     for (_, text) in &demos {
         layout(text);
     }
@@ -217,7 +234,7 @@ fn fresh_digest(name: &str) -> String {
 
 #[test]
 fn test_a_fresh_process_lays_out_each_shipped_map_as_a_primed_one() {
-    let maps = maps();
+    let maps = the_maps();
     if let Ok(name) = std::env::var(CHILD) {
         // The child: this map, first thing in its process.
         let (_, text) = maps
@@ -227,11 +244,6 @@ fn test_a_fresh_process_lays_out_each_shipped_map_as_a_primed_one() {
         println!("DIGEST {}", digest(&layout(text)));
         return;
     }
-    assert!(
-        maps.len() >= 5,
-        "precondition: the fixture and the demo maps ({})",
-        maps.len()
-    );
     // The parent: every map once, so every face any of them uses has
     // been used, then each again, primed, against the same map first in a
     // process of its own.
