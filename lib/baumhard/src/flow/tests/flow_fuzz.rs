@@ -668,19 +668,48 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
     check_pair_model(choices)
 }
 
-/// The frame's closed-form layer held to the pairwise rule's iterative
-/// solve as its oracle (#309, ruling B16.1b): the tangent line's root
-/// ([`check_line_root`]), and a letter after two inks on an outline the
+/// The frame's closed-form layer held to its oracles (#309, ruling
+/// B16.1b): the tangent line's root to the iterative rule's bisection of
+/// it ([`check_line_root`]); and a letter after two inks on an outline the
 /// choices draw — a sharp or rounded rectangle, an ellipse, at normal
 /// scale, the band curve on it, in it or off it — at a gap they draw,
-/// nothing one time in eight. Where the ink before it lies on one form the
-/// model reads, a side, an arc or a sharp corner's sweep, the model's root
-/// sets the letter at what is owed (ruling B16.2c), read back from the
-/// path, to within the float error of positions some thousands of points
-/// out, bounded from this property's own scale (review 5810838863); where
-/// nothing is owed, touching to that error or a few of it past. And it is
-/// the first root: set past the ink, with no letter before it already past
-/// that window along the band curve between.
+/// nothing one time in eight, to the path's own gap function (the seam's
+/// `PairSeam::curve`: the letter set on the path at a center, its gap to
+/// the ink read back) and to bounds about what is owed taken from this
+/// property's own scale (review 5810838863). Where the ink before it lies
+/// on one form the model reads, a side, an arc or a sharp corner's sweep,
+/// the model's root sets the letter at what is owed (ruling B16.2c), read
+/// back from the path, to within the float error of positions some
+/// thousands of points out; where nothing is owed, touching to that error
+/// or a few of it past. And it is the first root: set past the ink, with
+/// no sample of the band curve before it already past that window.
+///
+/// The letter is not held to the iterative rule's answer (review
+/// 5811563882): the center `pair` sets it at from its straight path's warm
+/// start, the first probe inside its window. That answer cannot be the
+/// oracle:
+/// - Its window, from `NEARER` short of what is owed to `INK_TOLERANCE`
+///   past, holds a stretch of centers, not one. Where the gap rises slowly
+///   with the center, two right answers lie further apart than the
+///   window: on a 40 × 40 rounded rectangle's side at seed 19466 the gap
+///   rises 0.19 a unit of center, and the model, at 60.17368 (gap
+///   7.9679947, owed 7.968), and the rule, at 60.178894 (gap 7.968998),
+///   are 5.2e-3 apart.
+/// - It need not take the first root. Round a 40 × 40 circle at seed
+///   90637 the model sets the letter at 28.46 (gap 2.2079992, owed
+///   2.208), the first crossing, and the rule at 36.72 (gap 2.2077866),
+///   the third: between them the gap falls to 1.9965, 0.21 below what is
+///   owed, where a letter would stand nearer its ink than it is owed.
+///   Held to the rule there, the model would be held to the wrong root.
+///
+/// The rule's answer is read only to count the holds on a side, where its
+/// gap lies in its own window too: the precondition of the sweep over this
+/// (`test_the_pair_model_sets_the_first_root_at_what_is_owed`).
+///
+/// The first root is held at the curve's samples, 63 evenly between the
+/// last ink and the further of the two centers: a crossing before the
+/// model's narrower than their spacing, a 64th of that span — some 0.3 pt
+/// on a 20 pt span — can lie between two samples unseen.
 pub fn check_pair_model(choices: &mut Choices<'_>) -> Result<(), String> {
     check_line_root(choices)?;
     pair_model_held(choices).map(|_| ())
@@ -730,7 +759,7 @@ pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
 
 /// [`check_pair_model`], and which of its holds it reached: the model's
 /// window and first root, and those on a side, where the rule's gap is in
-/// its own window too.
+/// its own window too (read for that count alone).
 pub(crate) fn pair_model_held(choices: &mut Choices<'_>) -> Result<[bool; 2], String> {
     use crate::flow::place::halves::pair_seam;
     let sizes = [40.0_f32, 120.0, 600.0, 2_000.0];

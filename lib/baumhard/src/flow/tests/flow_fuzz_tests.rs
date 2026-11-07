@@ -60,13 +60,16 @@ fn test_generated_flows_the_r50_seed_sweep_found_hold_every_flow_property() {
     }
 }
 
-/// The frame's closed-form layer agrees with the pairwise rule's iterative
-/// solve (#309, ruling B16.1b; `check_pair_model`, which the
+/// The frame's closed-form layer sets each letter at the first root of
+/// what is owed (#309, ruling B16.1b; `check_pair_model`, which the
 /// flow_structured target holds every input to): over 20,000 seeded
 /// letters, nothing owed one time in eight, every root the model reads off
 /// a side, an arc or a sharp corner's sweep sets the letter at its gap,
 /// within bounds of the property's own scale, and is the first root along
-/// the band curve.
+/// the band curve, read from the path's own gap function. Its oracle is
+/// that function, not the iterative rule's answer, which can be another
+/// right center in its window (seed 19466) or a later root (seed 90637):
+/// `check_pair_model` says how (review 5811563882).
 ///
 /// Precondition: both holds are reached, many times. Controls (run, not
 /// committed): an arc's curvature read with its sign turned
@@ -82,7 +85,7 @@ fn test_generated_flows_the_r50_seed_sweep_found_hold_every_flow_property() {
 /// two centers within twice the rule's window, red at seed 19466, where
 /// the gap rises 0.19 a unit of center.
 #[test]
-fn test_the_pair_model_agrees_with_the_iterative_rule() {
+fn test_the_pair_model_sets_the_first_root_at_what_is_owed() {
     use crate::flow::tests::flow_fuzz::pair_model_held;
     let mut held = [0usize; 2];
     for seed in 0..20_000 {
@@ -97,7 +100,7 @@ fn test_the_pair_model_agrees_with_the_iterative_rule() {
     }
     assert!(
         held[0] > 5_000 && held[1] > 1_000,
-        "precondition: the model is held to its window {} times, to the rule {} times",
+        "precondition: the model is held to its window {} times, on a side with the rule's gap in its window {} times",
         held[0],
         held[1]
     );

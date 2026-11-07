@@ -7377,10 +7377,12 @@ pub(super) fn place_halves(
 pub(crate) struct PairSeam {
     /// Whether the ink it is set after lies where the band curve has one
     /// form the model reads — a side, an arc, a sharp corner's sweep — so
-    /// that the model's root is the rule's, to float error.
+    /// that the model's root is exact, to float error: the letter set at
+    /// what is owed, read back from the path.
     pub(crate) exact: bool,
     /// Whether that form is a side's, away from any corner: where the gap
-    /// rises with the center from none, so the rule has one root.
+    /// along the band curve is convex in the center, so it has one root on
+    /// from the ink.
     pub(crate) side: bool,
     /// The model's center, and the gap the letter set there is at
     /// ([`osculating`]): `None` where it has none. Every gap here is
@@ -7388,7 +7390,10 @@ pub(crate) struct PairSeam {
     /// negative.
     pub(crate) model: Option<(f32, f32)>,
     /// The center [`pair`] sets it at from the straight path's warm start,
-    /// the iterative rule the model is held to, and its gap.
+    /// the iterative rule's answer, and its gap: not the model's oracle,
+    /// since it can be another right center in its window or a later root
+    /// (review 5811563882; `check_pair_model` says how), and read only to
+    /// count a property's holds on a side.
     pub(crate) iterative: (f32, f32),
     /// Whether the model's forms tell a gap from none there
     /// ([`resolution_at`]): where they do not, it sets nothing. What it
@@ -7397,24 +7402,27 @@ pub(crate) struct PairSeam {
     pub(crate) told: bool,
     /// The band curve between the last ink and the further of the model's
     /// center and the rule's: [`CURVE_SAMPLES`] `- 1` centers evenly
-    /// between, each with the gap a letter set there is at — so a property
-    /// can hold that no root lies before the model's, and that the two set
-    /// it at one crossing (review 5810838863). Empty where neither center
-    /// lies past the last ink's.
+    /// between, each with the gap a letter set there is at: the path's own
+    /// gap function, which a property holds the model to, that no root
+    /// lies before the model's (review 5810838863), to the samples'
+    /// spacing. Empty where neither center lies past the last ink's.
     pub(crate) curve: Vec<(f32, f32)>,
 }
 
 /// How finely [`PairSeam::curve`] samples the band curve: a letter's
 /// gap at [`CURVE_SAMPLES`] `- 1` centers between the last ink's and the
-/// further root.
+/// further root. A crossing narrower than their spacing, a 64th of that
+/// span — some 0.3 pt on a 20 pt span — can lie between two samples
+/// unseen (review 5811563882).
 const CURVE_SAMPLES: usize = 64;
 
-/// Test seam (#309, ruling B16.1b): the closed-form layer held to the
-/// pairwise rule's iterative solve as its oracle — a letter of half size
-/// `half`, its center `rise` below its anchor, owed `owed` from an ink of
-/// half size `before` set at `last` along half `k` of `outline`, an ink
-/// of that size set at `earlier` before it, every ink on the band curve
-/// at `offset`.
+/// Test seam (#309, ruling B16.1b): the closed-form layer's root, beside
+/// the path's own gap function round it, its oracle ([`PairSeam::curve`]),
+/// and the iterative rule's answer ([`PairSeam::iterative`]), for a letter
+/// of half size `half`, its center `rise` below its anchor, owed `owed`
+/// from an ink of half size `before` set at `last` along half `k` of
+/// `outline`, an ink of that size set at `earlier` before it, every ink on
+/// the band curve at `offset`.
 #[allow(clippy::too_many_arguments)] // The outline, the curve, two inks and the letter.
 pub(crate) fn pair_seam(
     outline: &Outline,

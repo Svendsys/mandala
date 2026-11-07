@@ -811,19 +811,21 @@ pub fn do_flow_halves_tracking_grows_with_the_gap() {
 }
 
 #[test]
-fn test_flow_halves_closed_form_roots_are_the_rules() {
-    do_flow_halves_closed_form_roots_are_the_rules();
+fn test_flow_halves_closed_form_roots_are_the_first_at_what_is_owed() {
+    do_flow_halves_closed_form_roots_are_the_first_at_what_is_owed();
 }
 
-/// The closed-form layer's roots held to the iterative rule as their
-/// oracle (#309, ruling B16.1b; `check_pair_model`): over 2,000 seeded
-/// cases each, the tangent line's root in closed form is the one the rule
-/// brackets and bisects; and a letter set at its root on the band curve's
-/// form — a side, an arc, a sharp corner's sweep — is set at what is owed,
-/// and on a side at the center the rule sets it at. The flow_structured
-/// target holds every input to the same; the 20,000-seed sweep is
-/// `test_the_pair_model_agrees_with_the_iterative_rule`.
-pub fn do_flow_halves_closed_form_roots_are_the_rules() {
+/// The closed-form layer's roots held to their oracles (#309, ruling
+/// B16.1b; `check_pair_model`): over 2,000 seeded cases each, the tangent
+/// line's root in closed form is the one the iterative rule brackets and
+/// bisects; and a letter set at its root on the band curve's form — a
+/// side, an arc, a sharp corner's sweep — is set at what is owed, read back
+/// from the path, and at the first root along the band curve, read from
+/// the path's own gap function, not from the iterative rule's answer
+/// (review 5811563882). The flow_structured target holds every input to
+/// the same; the 20,000-seed sweep is
+/// `test_the_pair_model_sets_the_first_root_at_what_is_owed`.
+pub fn do_flow_halves_closed_form_roots_are_the_first_at_what_is_owed() {
     use crate::flow::tests::flow_fuzz::check_pair_model;
     use crate::util::tests::choices::Choices;
     for seed in 0..2_000 {
