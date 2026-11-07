@@ -650,21 +650,39 @@ impl Projector {
         } else {
             Vec::new()
         };
-        let key = RunKey {
-            spans: state
-                .spans
-                .iter()
-                .map(|(t, s)| (t.clone(), in_points(*s, rect)))
-                .collect(),
-        };
+        // The key it was shaped from, when it holds these texts at these
+        // sizes in points: a resize that keeps `min(w, h)` changes no
+        // size, and is found so without cloning a span's text.
+        let same_key = state.flow.flow.as_ref().is_some_and(|flow| {
+            flow.key.spans.len() == state.spans.len()
+                && flow
+                    .key
+                    .spans
+                    .iter()
+                    .zip(&state.spans)
+                    .all(|((kt, ks), (t, s))| kt == t && *ks == in_points(*s, rect))
+        });
         self.deps.record(Dependent::new(id, Stage::Shape), &reads);
-        let Some(unit) = self.units.get_mut(&id) else {
-            return;
-        };
-        let UnitBody::Ring(state) = &mut unit.body else {
-            return;
-        };
-        shaped_run(&mut state.flow.flow, key, fonts);
+        if !same_key {
+            #[cfg(test)]
+            self.key_builds.push(id);
+            let key = RunKey {
+                spans: state
+                    .spans
+                    .iter()
+                    .map(|(t, s)| (t.clone(), in_points(*s, rect)))
+                    .collect(),
+            };
+            let Some(unit) = self.units.get_mut(&id) else {
+                return;
+            };
+            let UnitBody::Ring(state) = &mut unit.body else {
+                return;
+            };
+            shaped_run(&mut state.flow.flow, key, fonts);
+        }
+        // Its placement reads its own text style, which its resolution
+        // may have changed with the key unchanged.
         self.queue(work, Dependent::new(id, Stage::Place));
     }
 

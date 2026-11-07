@@ -881,12 +881,25 @@ fn test_projection_a_geometry_only_drag_of_a_unit_part_resolves_nothing() {
     let mut p = Projected::new(doc);
 
     // A label dragged along its connector.
-    let r = resolved_by(&mut p, DocKind::Label, DocMutation::Label(LabelOp::SetT(Some(0.8))), label);
+    let r = resolved_by(
+        &mut p,
+        DocKind::Label,
+        DocMutation::Label(LabelOp::SetT(Some(0.8))),
+        label,
+    );
     assert!(r.is_empty(), "a label drag resolves nothing: {r:?}");
     p.check().unwrap();
     // The control: the label's text.
-    let r = resolved_by(&mut p, DocKind::Span, DocMutation::Span(SpanOp::SetText("moved".into())), label_span);
-    assert!(r.contains(&connector), "the label's text resolves its connector: {r:?}");
+    let r = resolved_by(
+        &mut p,
+        DocKind::Span,
+        DocMutation::Span(SpanOp::SetText("moved".into())),
+        label_span,
+    );
+    assert!(
+        r.contains(&connector),
+        "the label's text resolves its connector: {r:?}"
+    );
     p.check().unwrap();
 
     // A portal marker dragged round its node.
@@ -918,7 +931,12 @@ fn test_projection_a_geometry_only_drag_of_a_unit_part_resolves_nothing() {
     assert!(r.is_empty(), "a section nudge resolves nothing: {r:?}");
     p.check().unwrap();
     // The control: the section's text.
-    let r = resolved_by(&mut p, DocKind::Span, DocMutation::Span(SpanOp::SetText("too".into())), section_span);
+    let r = resolved_by(
+        &mut p,
+        DocKind::Span,
+        DocMutation::Span(SpanOp::SetText("too".into())),
+        section_span,
+    );
     assert!(r.contains(&section), "the section's text resolves it: {r:?}");
     p.check().unwrap();
 
@@ -949,14 +967,25 @@ fn test_projection_a_drag_carries_and_shapes_nothing_a_resize_and_a_fade_do() {
     apply(
         &mut p,
         request(
-            single(DocKind::Node, DocMutation::Node(NodeOp::Nudge(Vec2::new(40.0, 0.0)))),
+            single(
+                DocKind::Node,
+                DocMutation::Node(NodeOp::Nudge(Vec2::new(40.0, 0.0))),
+            ),
             vec![top],
             "drag",
         ),
     )
     .discard(&mut p.layers);
-    assert!(ran(&p, Stage::Carry).is_empty(), "a drag carries nothing: {:?}", p.projector.ran);
-    assert!(ran(&p, Stage::Shape).is_empty(), "nor shapes anything: {:?}", p.projector.ran);
+    assert!(
+        ran(&p, Stage::Carry).is_empty(),
+        "a drag carries nothing: {:?}",
+        p.projector.ran
+    );
+    assert!(
+        ran(&p, Stage::Shape).is_empty(),
+        "nor shapes anything: {:?}",
+        p.projector.ran
+    );
     p.check().unwrap();
 
     // The controls: a resize reshapes the relative ring, and a fade
@@ -964,13 +993,19 @@ fn test_projection_a_drag_carries_and_shapes_nothing_a_resize_and_a_fade_do() {
     apply(
         &mut p,
         request(
-            single(DocKind::Node, DocMutation::Node(NodeOp::SetMinSize(Some(Vec2::new(500.0, 300.0))))),
+            single(
+                DocKind::Node,
+                DocMutation::Node(NodeOp::SetMinSize(Some(Vec2::new(500.0, 300.0)))),
+            ),
             vec![top],
             "resize",
         ),
     )
     .discard(&mut p.layers);
-    assert!(ran(&p, Stage::Shape).contains(&ring), "a resize reshapes the relative ring");
+    assert!(
+        ran(&p, Stage::Shape).contains(&ring),
+        "a resize reshapes the relative ring"
+    );
     p.check().unwrap();
     apply(
         &mut p,
@@ -981,6 +1016,52 @@ fn test_projection_a_drag_carries_and_shapes_nothing_a_resize_and_a_fade_do() {
         ),
     )
     .discard(&mut p.layers);
-    assert!(ran(&p, Stage::Carry).contains(&top), "a fade carries the node again");
+    assert!(
+        ran(&p, Stage::Carry).contains(&top),
+        "a fade carries the node again"
+    );
+    p.check().unwrap();
+}
+
+#[test]
+fn test_projection_a_resize_that_keeps_the_least_side_builds_no_ring_key() {
+    let (doc, top, _, _, ring) = palette_subtree();
+    let mut p = Projected::new(doc);
+    let resize = |p: &mut Projected, size: Vec2| {
+        apply(
+            p,
+            request(
+                single(DocKind::Node, DocMutation::Node(NodeOp::SetMinSize(Some(size)))),
+                vec![top],
+                "resize",
+            ),
+        )
+        .discard(&mut p.layers);
+    };
+    resize(&mut p, Vec2::new(500.0, 300.0));
+    assert!(
+        p.projector.key_builds.contains(&ring),
+        "the first resize builds the key"
+    );
+    p.check().unwrap();
+    // Wider, as tall: `min(w, h)` is the height either way, so the ring
+    // is shaped, its sizes are compared in place and no key is built.
+    resize(&mut p, Vec2::new(600.0, 300.0));
+    assert!(
+        ran(&p, Stage::Shape).contains(&ring),
+        "the resize reaches the ring's shaping"
+    );
+    assert!(
+        p.projector.key_builds.is_empty(),
+        "and builds no key: {:?}",
+        p.projector.key_builds
+    );
+    p.check().unwrap();
+    // The control: taller changes the least side, so the key is built.
+    resize(&mut p, Vec2::new(600.0, 400.0));
+    assert!(
+        p.projector.key_builds.contains(&ring),
+        "a new least side builds the key"
+    );
     p.check().unwrap();
 }

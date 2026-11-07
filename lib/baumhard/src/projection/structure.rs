@@ -19,8 +19,7 @@ use crate::projection::input::{Dependent, ProjectionInput, Stage};
 use crate::projection::layers::{GlyphLayers, Layer, LayerBuilders};
 use crate::projection::stages::PhaseWork;
 use crate::projection::state::{
-    LineState, NodeState, Owner, OwnFields, PortalState, ProjectedUnit, RingState, SectionState,
-    UnitBody,
+    LineState, NodeState, OwnFields, Owner, PortalState, ProjectedUnit, RingState, SectionState, UnitBody,
 };
 use crate::projection::Projector;
 

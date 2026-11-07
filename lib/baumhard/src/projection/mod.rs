@@ -136,6 +136,10 @@ pub struct Projector {
     /// log of its work.
     #[cfg(test)]
     pub(crate) ran: Vec<Dependent>,
+    /// Each ring whose shaping key the last call built: a ring shaped
+    /// again with its key unchanged builds none. Test builds only.
+    #[cfg(test)]
+    pub(crate) key_builds: Vec<NodeId>,
 }
 
 impl Projector {
@@ -182,6 +186,8 @@ impl Projector {
         let mut work = PhaseWork::default();
         let mut out = LayerBuilders::new();
         let tree = doc.tree();
+        #[cfg(test)]
+        self.key_builds.clear();
         let touched = structure::TouchedElements::of(changes);
         self.restructure(tree, &touched, &mut work, layers, &mut out);
         self.seed(tree, changes, &touched, &mut work);
