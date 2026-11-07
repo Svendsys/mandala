@@ -1118,10 +1118,10 @@ impl Renderer {
     /// rendered yet, or when the grace period has already elapsed
     /// (transition can fire immediately).
     ///
-    /// Without this, an active throttled drag whose `should_drain`
-    /// gates produce momentary `needs_continuation == false` gaps
-    /// between drain frames would flash "FPS: -" between every
-    /// drain — making the readout unusable as a diagnostic.
+    /// Without this, a loop whose continuation lapses for a moment
+    /// between two frames (`needs_continuation == false` for one
+    /// iteration of a run of frames) would flash "FPS: -" in each
+    /// gap, making the readout unusable as a diagnostic.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn fps_idle_defer_deadline(&self, grace: Duration) -> Option<Instant> {
         if !self.has_live_fps() {

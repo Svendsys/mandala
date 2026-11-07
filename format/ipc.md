@@ -2140,8 +2140,8 @@ Everything the app *does* by time reads the app clock: double-click
 and long-press timing, a recording's frame times, `ping` (and, when
 V1-D1 (#250) and V1-D2 (#251) bring them back, the animation tick of an
 edit or a presentation). Everything that
-*measures* — the FPS overlay, the `FreezeWatchdog`, the drag
-throttle's frame budget, an encode's cost, a `clock.wait` deadline —
+*measures* — the FPS overlay, the `FreezeWatchdog`, an encode's
+cost, a `clock.wait` deadline —
 reads the wall clock in both modes, because a stepped or frozen clock
 would hide a stall rather than time it.
 

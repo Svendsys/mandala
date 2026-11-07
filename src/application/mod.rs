@@ -39,7 +39,6 @@
 //!   resolve and gate against.
 //! - [`user_config`] — XDG / web-storage shared loader
 //!   plumbing for keybinds / mutations / macros.
-//! - [`frame_throttle`] — per-frame cap math.
 //! - [`view`] — the map's view: projector, glyph layers, chrome and
 //!   overlays, and the one pipeline that syncs them with the document.
 //! - [`common`] — small shared types: `RenderDecree` and
@@ -108,14 +107,6 @@ pub(crate) mod guarded_file;
 // toward `mandalactl bridge` in the browser (`format/ipc.md`
 // §Transport; CLAUDE.md "Dual-target status").
 pub(crate) mod ipc;
-// Adaptive drain-rate math for the drags that edit the map, which
-// return as transactions with V1-C7 (#248): until then nothing paces a
-// drain with it.
-#[expect(
-    dead_code,
-    reason = "the throttled drags return on transactions with V1-C7 (#248)"
-)]
-pub(crate) mod frame_throttle;
 pub(crate) mod keybinds;
 pub(crate) mod macros;
 /// Platform-input value types — the inward seam over winit's
