@@ -751,6 +751,7 @@ decoders and every regression test compile and run on stable, in every
 | `flow_structured_every_face` | the same, its faces from `every_face()`: `faces()` and the ornament fallback's (#297) | `flow::tests::flow_fuzz::check_flow_structured_every_face` |
 | `glyph_mutation_raw` | authored run mutations (B6; there is no fill since B12), any bytes as JSON | `gfx_structs::tests::glyph_layer_fuzz::check_glyph_mutations_json` |
 | `glyph_mutation_structured` | the same, built from choices | `gfx_structs::tests::glyph_layer_fuzz::check_glyph_mutations_structured` |
+| `projection_edits` | the projection (B7): a generated map and edit sequences from choices | `projection::tests::projection_fuzz::check_projection_edits` |
 
 What they hold, in short (each module's docs are the full list):
 
@@ -783,6 +784,24 @@ What they hold, in short (each module's docs are the full list):
   tampered-document check, run on the inputs a choice selects (one in
   four each), so that the fuzzer gets through more inputs; the suite's
   sweep requires each step to be both taken and skipped.
+- **The projection** (V1-B7, ruling B7.3). Both loader targets project
+  every map they load that is inside the projection's work bound
+  (`projection_fuzz::within_bound`: at most one ring of text, of at most
+  `MAX_FRAME_GLYPHS` characters, every coordinate within
+  `projection_fuzz::EXTENT`, and at most `projection_fuzz::MAX_UNITS`
+  sections, rings, connectors and links): no panic, a group per visible
+  node in every layer, every run's box finite, the same layers projected
+  twice, hits that do not panic, and one generated edit kept equal to a
+  full projection. A map outside the bound is skipped and counted, and
+  the targets print the counts at every power of two and every 256
+  inputs, so even a slow run reports its skipped fraction; the suite
+  holds the structured maps to fewer than half skipped. The engine
+  bounds a placement and a frame, never a whole map (#316), which is why
+  the bound is the harness's. `projection_edits` runs the oracle — the
+  updated layers equal a full projection — after every step of a
+  generated edit sequence: field and structural edits, a rebinding near
+  the root, theme and palette changes, transaction stages, undos and
+  redos.
 - **TextFlow.** No panic; every glyph names its span (or the filler) and
   whole characters of its text; every metric, placed position and box
   size is finite; no placement exceeds `MAX_PLACED_GLYPHS`; a span
@@ -972,4 +991,4 @@ and placement of arbitrary strings (V1-B8), authored glyph-layer
 mutations (V1-B8, for B6), edits and presentations in a map (V1-D1,
 V1-D2), verbs, triggers and links in a map (V1-D3), IPC frames of
 protocol 2 (V1-E2), and the projection of any loaded document, which
-V1-B7 adds to the loader's targets.
+V1-B7 added to the loader's targets, with `projection_edits` beside them.

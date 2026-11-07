@@ -52,6 +52,10 @@ mod span;
 
 pub use curve::Curve;
 pub use outline::{offset, outline, ring_offset, Outline, Rect};
+/// The arc-length walk, for the projection's single-point questions — a
+/// label at a fraction of its curve, a portal end at a fraction of its
+/// outline (V1-B7) — answered by the walk placement itself uses.
+pub(crate) use path::ArcPath;
 pub use path::MAX_TABLE_SAMPLES;
 pub use place::{
     place_at_point, place_on_closed, place_on_open, PlacedGlyph, PlacedRun, RingLayout, MAX_PLACED_GLYPHS,

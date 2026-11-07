@@ -73,6 +73,7 @@ pub mod structure_tests;
 pub(crate) mod test_support;
 #[cfg(test)]
 mod writer_cost_tests;
+pub mod writer_feed_tests;
 /// What the writer's tests share.
 pub(crate) mod writer_support;
 pub mod writer_tests;

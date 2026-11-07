@@ -30,7 +30,9 @@ use crate::gfx_structs::element::{GfxElement, GfxElementField, GfxElementType};
 use crate::gfx_structs::model::GlyphModel;
 use crate::gfx_structs::mutator::{GfxMutation, GfxMutator, GlyphTreeEvent, GlyphTreeEventInstance};
 use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunOverrideOp, RunShape};
-use crate::gfx_structs::tests::run_tests::{apply, box_shape, four_glyph_element, four_glyph_shape, run_of};
+use crate::gfx_structs::tests::run_tests::{
+    apply, box_shape, four_glyph_element, four_glyph_shape, path_shape, run_of,
+};
 use crate::gfx_structs::tree::{GfxMutatorTree, GfxTree};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::util::doc_fixtures::{documented_json_block, format_doc_path};
@@ -632,13 +634,13 @@ fn test_descendant_at_finds_runs_by_their_boxes() {
     do_descendant_at_finds_runs_by_their_boxes();
 }
 
-/// The BVH hit test finds a `GlyphRun` by its bounds, beside an area
-/// found by its own — at their edges (closed boxes), not outside them —
-/// and the smallest box wins where they overlap. A run's bounds are the
-/// union of its glyph boxes, so a point in the union that no glyph box
-/// covers still hits. After a mutation moves the run, the hit follows
-/// it. Negative: a point outside both finds nothing, and neither does a
-/// point where the run was.
+/// The BVH hit test finds a `GlyphRun` by its glyphs, beside an area
+/// found by its box — at their edges (closed boxes), not outside them —
+/// and the smallest box wins where they overlap. A path run's bounds are
+/// the union of its glyph boxes, and a point in the union that no glyph
+/// box covers does not hit it (#287's review). After a mutation moves
+/// the run, the hit follows it. Negative: a point outside both finds
+/// nothing, and neither does a point where the run was.
 pub fn do_descendant_at_finds_runs_by_their_boxes() {
     let (mut tree, area, run) = hit_tree();
     assert_eq!(
@@ -663,7 +665,7 @@ pub fn do_descendant_at_finds_runs_by_their_boxes() {
     );
     assert_eq!(
         tree.descendant_at(Vec2::new(126.0, 55.0)),
-        Some(run),
+        None,
         "inside the union of the glyph boxes, where no glyph box is"
     );
     assert_eq!(
@@ -722,6 +724,93 @@ pub fn do_descendant_at_finds_runs_by_their_boxes() {
         tree.descendant_at(Vec2::new(110.0, 60.0)),
         Some(big),
         "or the place it was"
+    );
+}
+
+#[test]
+fn test_descendant_at_misses_a_rings_empty_interior() {
+    do_descendant_at_misses_a_rings_empty_interior();
+}
+
+/// A frame ring is a path run whose glyphs go round a node: its bounds
+/// hold the node's whole interior, where it draws nothing. A click there
+/// misses the ring and finds what lies under it — here an area standing
+/// for the node's body — and a click on one of the ring's glyphs still
+/// finds the ring, which is smaller than the body.
+pub fn do_descendant_at_misses_a_rings_empty_interior() {
+    // Sixteen 10 × 10 glyph boxes round the square (0, 0)–(40, 40), four
+    // along each side.
+    let mut placed = Vec::new();
+    for i in 0..4 {
+        let step = i as f32 * 10.0;
+        placed.push((0, Vec2::new(step, 0.0)));
+        placed.push((0, Vec2::new(30.0, step)));
+        placed.push((0, Vec2::new(30.0 - step, 30.0)));
+        placed.push((0, Vec2::new(0.0, 30.0 - step)));
+    }
+    let ring_shape = path_shape(&[10.0], 10.0, &placed);
+    let mut tree = GfxTree::new_non_indexed();
+    let root = tree.root();
+    let body = an_area(Vec2::new(-5.0, -5.0), Vec2::new(50.0, 50.0), 0, 1);
+    let body = tree.insert_child(root, body, Placement::Last).unwrap();
+    let ring = GfxElement::new_run(run_of(ring_shape, Vec2::ZERO), 1, 2);
+    let ring = tree.insert_child(root, ring, Placement::Last).unwrap();
+    assert_eq!(
+        tree.arena()[ring].get().spatial_bounds(),
+        Some((Vec2::ZERO, Vec2::new(40.0, 40.0))),
+        "the ring's bounds hold its interior: what the refinement is for"
+    );
+    assert_eq!(
+        tree.descendant_at(Vec2::new(20.0, 20.0)),
+        Some(body),
+        "the interior is the body's, not the ring's"
+    );
+    assert_eq!(
+        tree.descendant_at(Vec2::new(5.0, 5.0)),
+        Some(ring),
+        "a glyph of the ring"
+    );
+    assert_eq!(
+        tree.descendant_at(Vec2::new(35.0, 25.0)),
+        Some(ring),
+        "and another"
+    );
+}
+
+#[test]
+fn test_descendant_at_misses_a_diagonal_connections_empty_bounds() {
+    do_descendant_at_misses_a_diagonal_connections_empty_bounds();
+}
+
+/// A diagonal connection's bounds are the rectangle it spans, most of it
+/// empty: a click in its empty corner finds nothing, and a click on a
+/// glyph along the diagonal finds the connection.
+pub fn do_descendant_at_misses_a_diagonal_connections_empty_bounds() {
+    let placed: Vec<(u32, Vec2)> = (0..10).map(|i| (0, Vec2::splat(i as f32 * 10.0))).collect();
+    let line = path_shape(&[10.0], 10.0, &placed);
+    let mut tree = GfxTree::new_non_indexed();
+    let root = tree.root();
+    let run = tree
+        .insert_child(
+            root,
+            GfxElement::new_run(run_of(line, Vec2::ZERO), 0, 1),
+            Placement::Last,
+        )
+        .unwrap();
+    assert_eq!(
+        tree.arena()[run].get().spatial_bounds(),
+        Some((Vec2::ZERO, Vec2::new(100.0, 100.0))),
+        "the connection's bounds are the square it spans"
+    );
+    assert_eq!(
+        tree.descendant_at(Vec2::new(85.0, 15.0)),
+        None,
+        "the empty corner of its bounds"
+    );
+    assert_eq!(
+        tree.descendant_at(Vec2::new(55.0, 55.0)),
+        Some(run),
+        "a glyph on the diagonal"
     );
 }
 

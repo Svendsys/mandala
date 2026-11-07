@@ -22,7 +22,10 @@
 //! section's offset, a path's anchors and control points, a span's
 //! text. Moving or resizing a node therefore touches no input, and a
 //! label or portal-marker drag touches only `Placement`, which no text
-//! resolution reads: a drag re-places geometry and reshapes nothing.
+//! resolution reads: a drag re-places geometry and reshapes nothing. The
+//! projection keeps to that on its side: a touch of an element seeds the
+//! stage its no-input fields feed, never its unit's resolution for a
+//! field no resolution reads (`projection::structure`'s `touch_stage`).
 
 use crate::document::element::{
     CapData, ConnectorData, DocElement, FrameData, FrameStyle, LabelData, LabelStyle, LinkData, MapData,

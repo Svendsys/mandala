@@ -91,3 +91,10 @@ path = "fuzz_targets/glyph_mutation_structured.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "projection_edits"
+path = "fuzz_targets/projection_edits.rs"
+test = false
+doc = false
+bench = false

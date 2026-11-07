@@ -39,9 +39,11 @@ use crate::arena::NodeId;
 use crate::document::element::DocElement;
 use crate::document::ids::Document;
 use crate::document::writer::error::ApplyError;
-use crate::document::writer::feed::{addresses, reversed, Arrangement, RemovedAddress};
+use crate::document::writer::feed::{
+    addresses, effects, field_inputs, reversed, Arrangement, RemovedAddress,
+};
 use crate::document::writer::upkeep::Direction;
-use crate::document::writer::{ChangeSource, EditRequest, Revision};
+use crate::document::writer::{Change, ChangeSource, EditRequest, Revision};
 use crate::engine::interpolate::Snap;
 use crate::engine::journal::{Journal, Touch};
 use log::error;
@@ -125,20 +127,18 @@ struct Staged {
 }
 
 /// What a change has done so far, for its record.
-#[derive(Default)]
-struct Done {
-    touched: Vec<(NodeId, Touch)>,
-    removed: Vec<(NodeId, RemovedAddress)>,
-}
+type Done = Change;
 
 impl Done {
-    /// `journal` written forward, or backward when `back`.
+    /// `journal` written forward, or backward when `back`: its touches,
+    /// and what they changed for the readers ([`effects`]).
     fn wrote(&mut self, journal: &Journal<DocElement>, back: bool) {
         self.touched.extend(
             journal
                 .touched()
                 .map(|(id, touch)| (id, if back { reversed(touch) } else { touch })),
         );
+        effects(journal, back, &mut self.inputs, &mut self.rows);
     }
 }
 
@@ -384,18 +384,20 @@ impl Document {
             done.wrote(&stage.journal, !after);
         } else {
             // Only values moved: every element the stage holds in the
-            // tree on this side was rewritten.
-            done.touched.extend(
-                stage
-                    .journal
-                    .touched()
-                    .filter(|&(_, touch)| match touch {
-                        Touch::Inserted => after,
-                        Touch::Removed => !after,
-                        Touch::Field | Touch::Moved => true,
-                    })
-                    .map(|(id, _)| (id, Touch::Field)),
-            );
+            // tree on this side was rewritten, within what its journal's
+            // two images differ in — which is what each reports as its
+            // inputs, whichever way between them the write went.
+            for (id, touch) in stage.journal.touched() {
+                let held = match touch {
+                    Touch::Inserted => after,
+                    Touch::Removed => !after,
+                    Touch::Field | Touch::Moved => true,
+                };
+                if held {
+                    done.touched.push((id, Touch::Field));
+                    field_inputs(&stage.journal, id, false, &mut done.inputs);
+                }
+            }
         }
         stage.t = t;
         stage.snap = snap;
@@ -509,7 +511,7 @@ impl Document {
     /// Append `done` to the change feed under `source`, at the current
     /// revision, unless it touched nothing.
     fn record(&mut self, source: ChangeSource, done: Done) {
-        self.push_change(source, done.touched, done.removed);
+        self.push_change(source, done);
     }
 }
 
