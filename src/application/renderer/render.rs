@@ -249,7 +249,10 @@ impl Renderer {
 
             // 2. Positioned glyph runs — every glyph of every
             //    `GlyphRun` at its own canvas position, one instanced
-            //    draw. Canvas content, so under the chrome below.
+            //    draw: the canvas trees' runs, then the glyph layers' —
+            //    sections, frames, connections, labels, portals — each
+            //    over the ones before it. Canvas content, so under the
+            //    chrome below.
             self.glyph_runs.render(&mut pass);
 
             // 3. Chrome pass — an open modal's backdrop (full-block
@@ -278,8 +281,9 @@ impl Renderer {
     /// tree pipeline — console, color picker, FPS overlay) and run both
     /// `text_renderer.prepare()` and `console_text_renderer.prepare()`
     /// against the atlas; then, under the same font guard, prepare the
-    /// positioned-glyph pass over the canvas set's `GlyphRun`s
-    /// ([`super::glyph_runs`]). Returns the [`FrameSkip`] (and the
+    /// positioned-glyph pass over the canvas set's `GlyphRun`s and then
+    /// the glyph layers' runs, in their draw order ([`super::glyph_runs`],
+    /// [`super::layers`]). Returns the [`FrameSkip`] (and the
     /// caller skips the rest of its frame) on font-system lock
     /// contention or on either glyphon prepare failing; the glyph-run
     /// pass cannot fail the frame — a glyph it has no room for is left
@@ -446,7 +450,9 @@ impl Renderer {
                     .sum::<usize>()
             };
             let runs: usize = super::scene_shape_cache::glyph_runs(canvas_elements())
-                .map(|(run, _)| fill.in_run(run))
+                .map(|(run, _)| run)
+                .chain(self.layer_renderer.runs())
+                .map(|run| fill.in_run(run))
                 .sum();
             self.fill_census = backdrop::FillCensus {
                 canvas: areas(&main_text_areas) + runs,
@@ -504,15 +510,21 @@ impl Renderer {
             return Err(FrameSkip::PrepareFailed);
         }
         // The positioned glyph runs, under the same guard: they shape
-        // nothing, but a glyph the atlas has not seen is rasterized.
-        self.glyph_runs.prepare(
+        // nothing, but a glyph the atlas has not seen is rasterized. The
+        // canvas trees' runs first, then the glyph layers', in their draw
+        // order (`layers`): one instance list, one draw.
+        let mut runs = self.glyph_runs.begin(
             &self.device,
             &self.queue,
             &mut font_system,
             &mut self.swash_cache,
             camera,
-            super::scene_shape_cache::glyph_runs(canvas_elements()),
         );
+        for (run, offset) in super::scene_shape_cache::glyph_runs(canvas_elements()) {
+            runs.draw(run, offset);
+        }
+        self.layer_renderer.encode(&mut runs);
+        runs.finish();
         drop(font_system);
         self.prepare_fault_logged = false;
         Ok(())

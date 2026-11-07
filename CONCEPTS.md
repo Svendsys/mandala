@@ -486,14 +486,16 @@ blends `origin`, `opacity` and the override vectors and snaps the
 shaping. State comparison (`same_state`) compares the shaping by
 `Arc` identity. Introduced in V1-B6 (#240).
 
-A run in a canvas tree is drawn by the renderer's positioned-glyph
-pass (V1-C1, #242; design §13.2): every glyph of the run's one shaped
-buffer at its own placed position — upright, with its shaper offsets
-kept, its overrides applied and the run's opacity in its alpha — from
-an atlas the pass holds, in one instanced draw call per frame for
-every run there is. Nothing is shaped to draw it, and a pan or a zoom
-touches no run. The [projector](#projection--projector-glyphlayers-layerchanges-hit)
-emits them (V1-B7); the app draws them once C3 cuts over.
+A run in a canvas tree or a glyph layer is drawn by the renderer's
+positioned-glyph pass (V1-C1, #242; design §13.2): every glyph of the
+run's one shaped buffer at its own placed position — upright, with its
+shaper offsets kept, its overrides applied and the run's opacity in its
+alpha — from an atlas the pass holds, in one instanced draw call per
+frame for every run there is. Nothing is shaped to draw it, and a pan
+or a zoom touches no run. The [projector](#projection--projector-glyphlayers-layerchanges-hit)
+emits them into the glyph layers (V1-B7), which the
+[layer renderer](#layer-renderer) keeps and draws (V1-C2); the app draws
+them once C3 wires its projector to it.
 
 `lib/baumhard/src/gfx_structs/run.rs`; the mutations are
 `GfxMutation::Run*` in `mutator.rs`; the pass is
@@ -4000,7 +4002,8 @@ pipelines:
   [`GlyphRun`](#glyphrun) at its own canvas position, rasterized by
   cosmic-text into an atlas of its own (glyphon's cannot be reached
   from outside it) and drawn as one instanced quad per glyph, in one
-  draw call per frame.
+  draw call per frame: the canvas trees' runs, then the glyph layers'
+  ([layer renderer](#layer-renderer)).
 
 Sub-passes sit in `borders.rs`, `console_pass.rs`,
 `color_picker.rs` and `selection_overlay.rs`; connection glyphs
@@ -4008,6 +4011,45 @@ have no pass of their own — they are a canvas-role tree walked by
 `tree_walker.rs` like every other role. Visibility culling is
 `Camera2D::visibility`, which answers the spatial cull and the
 [`ZoomVisibility`](#zoomvisibility) window in one verdict.
+
+### Layer renderer
+
+The projection's [glyph layers](#projection--projector-glyphlayers-layerchanges-hit)
+as the renderer keeps them: render state **per glyph element**, written
+only where a journal says a layer changed (design §13.1, V1-C2 #243).
+
+For each of the five layers it keeps a mirror of the layer's tree — a
+slot per element, linked to its parent and its siblings — so the
+layer's pre-order, which is the order its runs are drawn in, is a walk
+of links, and an element entering, leaving or moving is a splice of a
+few of them. A run's slot holds the run as the layer does: its shaping
+and placement by `Arc`, so keeping it never shapes.
+
+- **`load`** takes the layers whole, once per document: the only walk
+  of a layer.
+- **`apply`** takes the journals of what changed — the projector's
+  `LayerChanges`, merged with those of the glyph mutators applied over
+  them, from one or more projector updates — and visits exactly the
+  elements they name, each once, the last touch deciding. One that left
+  is dropped with its subtree, except what an earlier journal moved out
+  of it; one that entered gets a slot; one that changed is compared with
+  its slot and only a difference is written, into the buffers the slot
+  already has (a drag re-places the same shaping; an unchanged run
+  keeps its state); one whose place changed is spliced in after its
+  previous sibling, and an element counts as in place only after a
+  sibling no journal names. No other element is looked at.
+- **`encode`** hands every run to the frame's
+  [positioned-glyph pass](#glyphrun), in draw order: sections, frames,
+  connections, labels, portals, each in tree order, after the canvas
+  trees' runs and under the screen-space chrome. The pass applies the
+  camera and each run's zoom window at draw time; `encode` takes
+  `&self`, so a pan or a zoom applies nothing and writes no render
+  state. The instances are built per frame from the kept runs, as the
+  C1 decision record says: a glyph's rasterization depends on the zoom
+  and on its pen's subpixel position.
+
+`src/application/renderer/layers/`. The app's projector is wired to it
+by V1-C3; until then the window and every capture draw it empty.
 
 ### `AppScene` and scene host
 

@@ -59,7 +59,7 @@
 use baumhard::document::values::Rgba;
 use baumhard::flow::{GlyphMetrics, PlacedGlyph};
 use baumhard::font::{Color, LayoutGlyph, COLOR_WHITE};
-use baumhard::gfx_structs::camera::Camera2D;
+use baumhard::gfx_structs::camera::{Camera2D, Visibility};
 use baumhard::gfx_structs::run::{GlyphRunData, RunShape};
 use baumhard::gfx_structs::zoom_visibility::ZoomVisibility;
 use glam::Vec2;
@@ -102,6 +102,9 @@ pub(crate) struct EmitCounts {
     /// Whether the run was drawn at all: inside its zoom window, on
     /// screen and not fully transparent.
     pub(crate) drawn: bool,
+    /// Whether the run was left out because the camera's zoom is outside
+    /// its zoom window: the one verdict no pan can change.
+    pub(crate) outside_zoom: bool,
     /// Glyphs emitted.
     pub(crate) sprites: usize,
     /// Glyphs skipped: off screen, or a hostile position or scale.
@@ -139,14 +142,21 @@ pub(crate) fn emit_run<'a>(
     // The run's box is its hit-test box, which overrides do not move:
     // with overrides, only the zoom window is decided here and each
     // glyph is culled where its overrides put it.
-    let visible = if overrides.is_empty() {
+    let visibility = if overrides.is_empty() {
         let (top_left, size) = run.bounds();
-        camera.visibility(top_left + offset, size, window).is_visible()
+        camera.visibility(top_left + offset, size, window)
+    } else if window.contains(camera.zoom) {
+        Visibility::Visible
     } else {
-        window.contains(camera.zoom)
+        Visibility::OutsideZoomWindow
     };
-    if !visible {
-        return counts;
+    match visibility {
+        Visibility::Visible => {}
+        Visibility::OutsideZoomWindow => {
+            counts.outside_zoom = true;
+            return counts;
+        }
+        Visibility::Offscreen => return counts,
     }
     counts.drawn = true;
     let style = GlyphStyle {
