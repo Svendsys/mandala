@@ -3854,8 +3854,8 @@ impl Layout<'_> {
     /// no junction that was a break is left short of one, no two inks touch
     /// that did not, and the frame's band curve is still where its inks
     /// want it ([`Layout::wants`]): every line so brought home, else each
-    /// alone; otherwise the lines as kept ([`holds_what_it_held`]). Those
-    /// short of their ends are reported ([`Trace::short`]).
+    /// alone; otherwise the lines as kept. Those short of their ends are
+    /// reported ([`Trace::short`]).
     ///
     /// A clearance is never grown for the rule: a line laid at a narrower
     /// span lies within where it lies at whole (ruling R35.1), and the two
@@ -3916,14 +3916,16 @@ impl Layout<'_> {
                 laid[*i] = line.clone();
             }
             let now = [0, 1].map(|j| self.met(&laid, side, j).0);
-            if holds_what_it_held(
-                (met, now),
-                || (self.wants(&laid) - offset).abs(),
-                tolerance,
-                (&boxes_of(&lines), &boxes_of(&laid)),
-                overlap,
-                &self.work,
-            ) {
+            if (0..2).all(|j| !met[j] || now[j])
+                && (self.wants(&laid) - offset).abs() <= tolerance
+                && if overlap {
+                    // Lines that touched already: no two inks touch that
+                    // did not (review 5810838863), not none at all.
+                    !touching_anew(&boxes_of(&lines), &boxes_of(&laid), &self.work)
+                } else {
+                    !overlapping(&laid, &self.work)
+                }
+            {
                 #[cfg(test)]
                 RULE_KEPT.with(|kept| {
                     let mut by = kept.get();
@@ -5241,38 +5243,6 @@ fn boxes_of(lines: &[Line]) -> Vec<&[InkBox]> {
     lines.iter().map(|l| l.tracked.boxes.as_slice()).collect()
 }
 
-/// Whether lines a frame's secondary rule brings home, laid in place of
-/// its lines, hold what the frame held ([`Layout::reach_ends`]), `before`
-/// the frame's lines' inks and `after` theirs, line by line: each junction
-/// that was a break (`met`) one still (`now`); the offset their inks want
-/// within `tolerance` of the frame's, `off` how far it lies, read only once
-/// the breaks hold; and no two inks touching that did not — where the
-/// frame's lines touched already (`overlap`), the pairs touching after a
-/// subset of those before ([`touching_anew`], review 5810838863), else
-/// none touching at all ([`overlapping_in`]). The rule's acceptance, one
-/// body for it and for its pin (review 5811563882), so that the pin holds
-/// the choice where the rule makes it and not only the touch check it
-/// asks.
-///
-/// Cost: `off`'s, once the breaks hold; then a touch check, once the
-/// offset holds too.
-fn holds_what_it_held(
-    (met, now): ([bool; 2], [bool; 2]),
-    off: impl FnOnce() -> f32,
-    tolerance: f32,
-    (before, after): (&[&[InkBox]], &[&[InkBox]]),
-    overlap: bool,
-    work: &Work,
-) -> bool {
-    (0..2).all(|j| !met[j] || now[j])
-        && off() <= tolerance
-        && if overlap {
-            !touching_anew(before, after, work)
-        } else {
-            !overlapping_in(after, work)
-        }
-}
-
 /// Whether two of the inks `after` holds, line by line, touch that did not
 /// in `before` — the same lines, each with as many inks, some laid again
 /// ([`Layout::reach_ends`]) — but for a line's neighboring inks, which
@@ -5315,18 +5285,10 @@ fn touching_anew(before: &[&[InkBox]], after: &[&[InkBox]], work: &Work) -> bool
 /// Cost: O(n log n) in the lines' inks, and a pair per two that share
 /// some of their width.
 fn overlapping(lines: &[Line], work: &Work) -> bool {
-    overlapping_in(&boxes_of(lines), work)
-}
-
-/// Whether two of the inks `lines` holds, line by line, touch, as
-/// [`overlapping`] asks it of lines: each line's ink boxes.
-///
-/// Cost: [`overlapping`]'s.
-fn overlapping_in(lines: &[&[InkBox]], work: &Work) -> bool {
     let boxes = lines
         .iter()
         .enumerate()
-        .flat_map(|(k, l)| l.iter().enumerate().map(move |(i, b)| ((k, i), *b)))
+        .flat_map(|(k, l)| l.tracked.boxes.iter().enumerate().map(move |(i, b)| ((k, i), *b)))
         .collect();
     touching(boxes, |(k, i), (l, j)| k == l && i.abs_diff(j) <= 1, work)
 }
@@ -7556,35 +7518,6 @@ pub(crate) fn touching_anew_seam(before: &[Vec<(Vec2, Vec2)>], after: &[Vec<(Vec
         lines.iter().map(Vec::as_slice).collect()
     }
     touching_anew(&slices(before), &slices(after), &Work::new(0))
-}
-
-/// Test seam (#309, review 5811563882): whether lines brought home hold
-/// what their frame held ([`holds_what_it_held`]), as
-/// [`Layout::reach_ends`] asks it of each choice of lines it tries: its
-/// junctions' breaks before (`met`) and after (`now`), how far the offset
-/// their inks want lies from the frame's (`off`, read only once the breaks
-/// hold) against `tolerance`, the inks before and after, line by line, and
-/// whether the frame's lines touched already.
-#[cfg(test)]
-pub(crate) fn holds_what_it_held_seam(
-    breaks: ([bool; 2], [bool; 2]),
-    off: impl FnOnce() -> f32,
-    tolerance: f32,
-    before: &[Vec<(Vec2, Vec2)>],
-    after: &[Vec<(Vec2, Vec2)>],
-    overlap: bool,
-) -> bool {
-    fn slices(lines: &[Vec<(Vec2, Vec2)>]) -> Vec<&[(Vec2, Vec2)]> {
-        lines.iter().map(Vec::as_slice).collect()
-    }
-    holds_what_it_held(
-        breaks,
-        off,
-        tolerance,
-        (&slices(before), &slices(after)),
-        overlap,
-        &Work::new(0),
-    )
 }
 
 /// Test seam (#294, ruling R51.4): whether two of `boxes` touch, but for
