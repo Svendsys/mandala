@@ -29,7 +29,7 @@
     {
       "id": 1,
       "position": [-200.0, -220.0],
-      "min_size": [400.0, 80.0],
+      "min_size": [429.17, 80.0],
       "color": "var(fg)",
       "sections": [{"spans": [{"text": "theme variable demo", "size": 36.0, "color": "var(fg)", "weight": "bold"}]}],
       "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.175, "color": "var(accent)", "spans": [{"text": "·"}]}]}
@@ -38,7 +38,7 @@
       "id": 2,
       "parent": 1,
       "position": [-280.0, -80.0],
-      "min_size": [240.0, 56.0],
+      "min_size": [258.67, 56.0],
       "color": "var(fg)",
       "sections": [{"spans": [{"text": "colors follow the theme", "size": 22.0, "color": "var(fg)"}]}],
       "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.25, "color": "var(accent)", "spans": [{"text": "·"}]}]},
@@ -48,7 +48,7 @@
       "id": 3,
       "parent": 1,
       "position": [40.0, -80.0],
-      "min_size": [240.0, 56.0],
+      "min_size": [259.5, 56.0],
       "color": "var(fg)",
       "sections": [{"spans": [{"text": "edges follow the theme", "size": 22.0, "color": "var(fg)"}]}],
       "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.25, "color": "var(accent)", "spans": [{"text": "·"}]}]},
