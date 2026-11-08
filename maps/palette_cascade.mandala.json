@@ -31,7 +31,7 @@
       "min_size": [220.0, 70.0],
       "palette": "cascade",
       "sections": [{"spans": [{"text": "Themed root\nsecond line"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.2, "spans": [{"text": "·"}]}]}
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.2, "spans": [{"text": "·"}]}]}
     },
     {
       "id": 2,
@@ -39,7 +39,7 @@
       "position": [400.0, 0.0],
       "min_size": [220.0, 70.0],
       "sections": [{"spans": [{"text": "Run keeps its color", "size": 24.0, "color": "#abcdef"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.2, "spans": [{"text": "·"}]}]},
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.2, "spans": [{"text": "·"}]}]},
       "connector": {"color": "#a20000"}
     },
     {
@@ -49,7 +49,7 @@
       "min_size": [220.0, 70.0],
       "palette": "cascade",
       "sections": [{"spans": [{"text": "Clamped to the last group"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.2, "spans": [{"text": "·"}]}]},
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.2, "spans": [{"text": "·"}]}]},
       "connector": {"color": "#b20000"}
     },
     {
@@ -58,7 +58,7 @@
       "min_size": [220.0, 70.0],
       "palette": "cascade",
       "sections": [{"spans": [{"text": "Transparent schema root"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.2, "color": "#222222", "spans": [{"text": "·"}]}]}
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.2, "color": "#222222", "spans": [{"text": "·"}]}]}
     },
     {
       "id": 5,
@@ -66,7 +66,7 @@
       "position": [400.0, 200.0],
       "min_size": [220.0, 70.0],
       "sections": [{"spans": [{"text": "Child takes groups[0]"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.2, "spans": [{"text": "·"}]}]},
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.2, "spans": [{"text": "·"}]}]},
       "connector": {"color": "#909090"}
     },
     {
@@ -75,7 +75,7 @@
       "min_size": [220.0, 70.0],
       "color": "#333333",
       "sections": [{"spans": [{"text": "Unthemed"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.2, "color": "#222222", "spans": [{"text": "·"}]}]},
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.2, "color": "#222222", "spans": [{"text": "·"}]}]},
       "links": [{"to": 1, "kind": "line", "color": "#909090"}]
     }
   ]

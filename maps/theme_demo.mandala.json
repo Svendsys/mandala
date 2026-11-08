@@ -32,7 +32,7 @@
       "min_size": [400.0, 80.0],
       "color": "var(fg)",
       "sections": [{"spans": [{"text": "theme variable demo", "size": 36.0, "color": "var(fg)", "weight": "bold"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.175, "color": "var(accent)", "spans": [{"text": "·"}]}]}
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.175, "color": "var(accent)", "spans": [{"text": "·"}]}]}
     },
     {
       "id": 2,
@@ -41,7 +41,7 @@
       "min_size": [240.0, 56.0],
       "color": "var(fg)",
       "sections": [{"spans": [{"text": "colors follow the theme", "size": 22.0, "color": "var(fg)"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.25, "color": "var(accent)", "spans": [{"text": "·"}]}]},
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.25, "color": "var(accent)", "spans": [{"text": "·"}]}]},
       "connector": {"color": "var(edge)", "anchors": ["auto", "right"]}
     },
     {
@@ -51,7 +51,7 @@
       "min_size": [240.0, 56.0],
       "color": "var(fg)",
       "sections": [{"spans": [{"text": "edges follow the theme", "size": 22.0, "color": "var(fg)"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.25, "color": "var(accent)", "spans": [{"text": "·"}]}]},
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.25, "color": "var(accent)", "spans": [{"text": "·"}]}]},
       "connector": {"color": "var(edge)", "anchors": ["auto", "left"]}
     },
     {
@@ -60,7 +60,7 @@
       "min_size": [160.0, 48.0],
       "color": "var(fg)",
       "sections": [{"spans": [{"text": "[ dark ]", "size": 22.0, "color": "var(fg)", "weight": "bold"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.29166666, "color": "var(accent)", "spans": [{"text": "·"}]}]}
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.29166666, "color": "var(accent)", "spans": [{"text": "·"}]}]}
     },
     {
       "id": 5,
@@ -68,7 +68,7 @@
       "min_size": [160.0, 48.0],
       "color": "var(fg)",
       "sections": [{"spans": [{"text": "[ light ]", "size": 22.0, "color": "var(fg)", "weight": "bold"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.29166666, "color": "var(accent)", "spans": [{"text": "·"}]}]}
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.29166666, "color": "var(accent)", "spans": [{"text": "·"}]}]}
     },
     {
       "id": 6,
@@ -76,7 +76,7 @@
       "min_size": [160.0, 48.0],
       "color": "var(fg)",
       "sections": [{"spans": [{"text": "[ forest ]", "size": 22.0, "color": "var(fg)", "weight": "bold"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.29166666, "color": "var(accent)", "spans": [{"text": "·"}]}]}
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.29166666, "color": "var(accent)", "spans": [{"text": "·"}]}]}
     }
   ]
 }

@@ -2316,7 +2316,7 @@
       "min_size": [540.0, 110.0],
       "palette": "rainbow",
       "sections": [{"spans": [{"text": "Border Toolkit", "size": 28.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(creative-toolkit demo: every glyph is authorable)", "size": 28.0, "color": "#ffffff"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "•"}]}]}
+      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "•"}]}]}
     },
     {
       "id": 245,
@@ -2324,7 +2324,7 @@
       "position": [-780.0, 11700.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Atomic-repeat", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\ntop = \"+=##=+\"", "size": 20.0, "color": "#ffffff"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "+=##=+"}]}]},
+      "frame": {"inset": 3.85, "rings": [{"fit": "repeat", "size": 0.06993007, "spans": [{"text": "+=##=+"}]}]},
       "connector": {"color": "#cf2341"}
     },
     {
@@ -2333,7 +2333,7 @@
       "position": [-400.0, 11700.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Prefix-Fill-Suffix", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\ntop = \"###(*)###\"", "size": 20.0, "color": "#ffffff"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "###(*)###"}]}]},
+      "frame": {"inset": 3.85, "rings": [{"fit": "repeat", "size": 0.06993007, "spans": [{"text": "###(*)###"}]}]},
       "connector": {"color": "#cf2341"}
     },
     {
@@ -2342,7 +2342,7 @@
       "position": [-20.0, 11700.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Multi-cluster", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nrepeat \"◆·\" on all sides", "size": 20.0, "color": "#ffffff"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "◆·"}]}]},
+      "frame": {"inset": 3.85, "rings": [{"fit": "repeat", "size": 0.06993007, "spans": [{"text": "◆·"}]}]},
       "connector": {"color": "#cf2341"}
     },
     {
@@ -2351,7 +2351,7 @@
       "position": [360.0, 11700.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Custom corners", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n◆ ◇ ◇ ◆", "size": 20.0, "color": "#ffffff"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "·"}]}]},
+      "frame": {"inset": 6.67, "rings": [{"fit": "repeat", "size": 0.121212125, "spans": [{"text": "·"}]}]},
       "connector": {"color": "#cf2341"}
     },
     {
@@ -2360,7 +2360,7 @@
       "position": [-780.0, 11830.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Palette-cycled", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nrainbow per glyph", "size": 20.0, "color": "#ffffff"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "·"}]}]},
+      "frame": {"inset": 6.67, "rings": [{"fit": "repeat", "size": 0.121212125, "spans": [{"text": "·"}]}]},
       "connector": {"color": "#cf2341"}
     },
     {
@@ -2369,7 +2369,7 @@
       "position": [-400.0, 11830.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Escape grammar", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\ntop = \"+=#(\\(\\))#=+\"", "size": 20.0, "color": "#ffffff"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "+=#(\\(\\))#=+"}]}]},
+      "frame": {"inset": 3.85, "rings": [{"fit": "repeat", "size": 0.06993007, "spans": [{"text": "+=#(\\(\\))#=+"}]}]},
       "connector": {"color": "#cf2341"}
     },
     {
@@ -2378,16 +2378,16 @@
       "position": [-20.0, 11830.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Heavy chars + diamonds", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\npreset=custom, sides=━┃, corners=◆", "size": 20.0, "color": "#ffffff"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "•"}]}]},
+      "frame": {"inset": 5.26, "rings": [{"fit": "repeat", "size": 0.09569378, "spans": [{"text": "•"}]}]},
       "connector": {"color": "#cf2341"}
     },
     {
       "id": 252,
       "parent": 244,
-      "position": [360.0, 11830.0],
+      "position": [380.0, 11830.0],
       "min_size": [420.0, 270.0],
       "sections": [{"min_size": [420.0, 90.0], "spans": [{"text": "Per-section frame: atomic", "size": 18.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(enter NodeEdit to see frames)", "size": 18.0, "color": "#ffffff"}]}, {"offset": [0.0, 90.0], "min_size": [420.0, 90.0], "spans": [{"text": "Per-section frame: double", "size": 18.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(enter NodeEdit to see frame)", "size": 18.0, "color": "#ffffff"}]}, {"offset": [0.0, 180.0], "min_size": [420.0, 90.0], "spans": [{"text": "Per-section frame: rounded + summer palette", "size": 18.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(enter NodeEdit to see frame)", "size": 18.0, "color": "#ffffff"}]}],
-      "frame": {"rings": [{"fit": "repeat", "size": 0.05925926, "spans": [{"text": "·"}]}]},
+      "frame": {"inset": 6.67, "rings": [{"fit": "repeat", "size": 0.049382716, "spans": [{"text": "·"}]}]},
       "connector": {"color": "#cf2341"}
     }
   ]
