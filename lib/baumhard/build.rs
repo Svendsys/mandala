@@ -334,7 +334,7 @@ fn generate_font_file(out_file: &Path, fonts: &[FontCandidate]) -> Result<(), Bo
     )?;
     writeln!(
         file,
-        "/// *name*, and `.mindmap.json` stores fonts as family-name strings"
+        "/// *name*, and `.mandala.json` stores fonts as family-name strings"
     )?;
     writeln!(file, "/// resolved through `app_font_by_family`.")?;
     writeln!(file, "///")?;

@@ -140,8 +140,9 @@ impl Comparator {
 /// [`Predicate::test`] walks the list and returns the verdict of the
 /// first pair the element answers ([`Inspect::test_field`] returns
 /// `Some`), or `false` when no pair applies. The `always_match` flag
-/// short-circuits the walk and unconditionally returns `true` — used
-/// by `TargetScope::Descendants` to blanket-apply mutations.
+/// short-circuits the walk and unconditionally returns `true`, for a
+/// mutator that applies to every element it reaches
+/// ([`Predicate::always_true`]).
 ///
 /// Costs: `test()` is O(n) in `fields.len()`, but typical predicates
 /// carry one or two fields so the cost is effectively O(1). No
@@ -154,8 +155,8 @@ pub struct Predicate<E: Inspect> {
     /// answers — remaining pairs are not consulted.
     pub fields: Vec<(E::Field, Comparator)>,
     /// When true, this predicate matches any element regardless of
-    /// fields. Used by `TargetScope::Descendants` to apply mutations to
-    /// all descendants.
+    /// fields: a mutator gated on it applies to every element it
+    /// reaches.
     #[serde(default)]
     pub always_match: bool,
 }

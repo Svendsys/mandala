@@ -475,34 +475,70 @@ fn lock_closure(
 }
 
 /// How `fuzz/Cargo.lock` fails to lock baumhard's build as the
-/// workspace's lockfile `root` does, each named: baumhard's direct
-/// (non-dev) dependencies are not the same packages in both; an entry of
-/// baumhard's dependency closure in `fuzz` names no table (a package
-/// deleted, or never added); or a package of that closure is not locked
-/// by `root` at the same version and source.
+/// workspace's lockfile `root` does, each named: a **path package** of
+/// baumhard's build (baumhard itself, and every workspace member its
+/// closure reaches — `workspace-hack`, `mandala_derive`) does not depend
+/// on the same packages in both; an entry of baumhard's dependency
+/// closure in `fuzz` names no table (a package deleted, or never added);
+/// or a package of that closure is not locked by `root` at the same
+/// version and source.
 ///
 /// The closure is walked in `fuzz`'s own edges, not the workspace's: a
 /// lockfile records the dependencies the features its own workspace
 /// enables, so the root lock's `js-sys` lists `futures-util` (a feature
 /// the app turns on) where the fuzz lock's does not, and the root's
-/// closure of baumhard holds packages a fuzz build never compiles.
-fn fuzz_lock_problems(root: &str, fuzz: &str, dev_only: &BTreeSet<String>) -> Vec<String> {
+/// closure of baumhard holds packages a fuzz build never compiles. A
+/// path package's list is the exception, and is compared: it is read
+/// off a manifest in this repository, so a change to that manifest
+/// changes both lockfiles' lists or leaves one stale — which is how
+/// V1-C3's regenerated `workspace-hack` (it dropped `regex`) passed
+/// this check, built every crate offline, and failed every
+/// `cargo fuzz --locked` build in CI.
+///
+/// `dev_only` maps each path package to the names its manifest lists
+/// only as dev-dependencies, which a workspace lockfile locks for a
+/// member and `fuzz/Cargo.lock`, where none is a member, does not; a
+/// path package of the closure without an entry is itself a problem.
+fn fuzz_lock_problems(root: &str, fuzz: &str, dev_only: &BTreeMap<String, BTreeSet<String>>) -> Vec<String> {
     let mut problems = Vec::new();
-    let (workspace_direct, _) = match lock_closure(root, "baumhard", dev_only) {
-        Ok(found) => found,
-        Err(why) => return vec![format!("Cargo.lock: {why}")],
-    };
-    let (fuzz_direct, closure) = match lock_closure(fuzz, "baumhard", dev_only) {
+    let none = BTreeSet::new();
+    let (_, closure) = match lock_closure(fuzz, "baumhard", dev_only.get("baumhard").unwrap_or(&none)) {
         Ok(found) => found,
         Err(why) => return vec![format!("fuzz/Cargo.lock: {why}")],
     };
-    for (name, version, _) in workspace_direct.symmetric_difference(&fuzz_direct) {
-        let side = if fuzz_direct.iter().any(|(n, v, _)| n == name && v == version) {
-            "fuzz/Cargo.lock alone"
-        } else {
-            "Cargo.lock alone"
+    let path_packages = std::iter::once("baumhard".to_string()).chain(
+        closure
+            .iter()
+            .filter(|(_, _, source)| source.is_none())
+            .map(|(name, _, _)| name.clone()),
+    );
+    for package in path_packages {
+        let Some(skip) = dev_only.get(&package) else {
+            problems.push(format!("{package} is a path package with no manifest read"));
+            continue;
         };
-        problems.push(format!("baumhard depends on {name} {version} in {side}"));
+        let workspace_direct = match lock_closure(root, &package, skip) {
+            Ok((direct, _)) => direct,
+            Err(why) => {
+                problems.push(format!("Cargo.lock: {why}"));
+                continue;
+            }
+        };
+        let fuzz_direct = match lock_closure(fuzz, &package, skip) {
+            Ok((direct, _)) => direct,
+            Err(why) => {
+                problems.push(format!("fuzz/Cargo.lock: {why}"));
+                continue;
+            }
+        };
+        for (name, version, _) in workspace_direct.symmetric_difference(&fuzz_direct) {
+            let side = if fuzz_direct.iter().any(|(n, v, _)| n == name && v == version) {
+                "fuzz/Cargo.lock alone"
+            } else {
+                "Cargo.lock alone"
+            };
+            problems.push(format!("{package} depends on {name} {version} in {side}"));
+        }
     }
     let workspace = locked(root);
     for (name, version, source) in closure {
@@ -519,16 +555,24 @@ fn fuzz_lock_problems(root: &str, fuzz: &str, dev_only: &BTreeSet<String>) -> Ve
 /// `fuzz/Cargo.lock` builds baumhard with the dependencies the
 /// workspace's `Cargo.lock` does: a fuzz run on other versions would
 /// hold other code to the properties (review of #293, blocking item 3,
-/// and round 3). Two ways it can drift, both held here: a package both
-/// lock at another version or source, and a package of baumhard's
+/// and round 3). Three ways it can drift, all held here: a package both
+/// lock at another version or source; a package of baumhard's
 /// dependency closure that `fuzz/Cargo.lock` lacks — which `cargo fuzz`,
 /// having no `--locked`, would resolve afresh at the newest compatible
-/// version. (`scripts/fuzz.sh` also refuses to run when the fuzz
-/// lockfile would have to change.) `fuzz/` is outside the workspace, so
-/// nothing else keeps the two in step; after the root lockfile changes,
-/// copy it over `fuzz/Cargo.lock` and run `cargo update -p mandala-fuzz`
-/// in `fuzz/` on its nightly, which adds the fuzz-only packages and
-/// keeps every shared version.
+/// version; and a workspace member of that closure whose dependency list
+/// differs, as a regenerated `workspace-hack` leaves it. (`scripts/fuzz.sh`
+/// also refuses to run when the fuzz lockfile would have to change.)
+/// `fuzz/` is outside the workspace, so nothing else keeps the two in
+/// step. **To refresh it** after the root lockfile or a member's
+/// manifest changes: copy `Cargo.lock` over `fuzz/Cargo.lock`, then run
+/// `cargo metadata --offline --format-version 1 > /dev/null` in `fuzz/`
+/// (on its nightly, which `fuzz/rust-toolchain.toml` selects). Cargo
+/// adds the fuzz-only packages (`arbitrary`, `libfuzzer-sys`, the fuzz
+/// package itself), drops what a fuzz build never compiles, and keeps
+/// every shared version; check the fuzz-only versions in the diff.
+/// (`cargo update -p mandala-fuzz`, the recipe this said before, fails
+/// on the copied lockfile: the root lockfile has no `mandala-fuzz` for
+/// `-p` to name.)
 #[test]
 fn test_the_fuzz_lockfile_locks_what_the_workspace_locks() {
     let root = std::fs::read_to_string(repo_path("Cargo.lock")).unwrap();
@@ -564,11 +608,16 @@ fn test_the_fuzz_lockfile_locks_what_the_workspace_locks() {
 
     // The closure: every package baumhard's build reaches is locked, as
     // the workspace locks it.
-    let manifest = std::fs::read_to_string(repo_path("lib/baumhard/Cargo.toml")).unwrap();
-    let dev_only = dev_only_dependencies(&manifest);
+    let dev_only = path_package_dev_only();
+    let baumhard = &dev_only["baumhard"];
     assert!(
-        dev_only.contains("criterion") && !dev_only.contains("serde"),
-        "precondition: the dev-only dependencies are read ({dev_only:?})"
+        baumhard.contains("criterion") && !baumhard.contains("serde"),
+        "precondition: the dev-only dependencies are read ({baumhard:?})"
+    );
+    assert!(
+        dev_only.contains_key("workspace-hack"),
+        "precondition: every member's manifest is read ({:?})",
+        dev_only.keys().collect::<Vec<_>>()
     );
     let problems = fuzz_lock_problems(&root, &fuzz, &dev_only);
     assert!(
@@ -576,7 +625,7 @@ fn test_the_fuzz_lockfile_locks_what_the_workspace_locks() {
         "fuzz/Cargo.lock does not lock baumhard's build as Cargo.lock does:\n{}",
         problems.join("\n")
     );
-    let (direct, closure) = lock_closure(&fuzz, "baumhard", &dev_only).unwrap();
+    let (direct, closure) = lock_closure(&fuzz, "baumhard", baumhard).unwrap();
     assert!(
         direct.iter().any(|(name, _, _)| name == "path-slash") && closure.len() >= 50,
         "precondition: baumhard's closure is walked ({} direct, {} in all)",
@@ -627,6 +676,62 @@ fn test_the_fuzz_lockfile_locks_what_the_workspace_locks() {
                 && problem.ends_with("in Cargo.lock alone")),
         "a dependency never added is found: {found:?}"
     );
+    // A member of baumhard's build whose manifest dropped a dependency
+    // the fuzz lockfile still lists — V1-C3's `workspace-hack`, which
+    // lost `regex`: every package stays locked at its version, so both
+    // checks above pass, and `cargo fuzz --locked` refuses to build.
+    let (start, end) = table(&fuzz, "workspace-hack");
+    let hack = &fuzz[start..end];
+    let first = hack
+        .split_once("dependencies = [\n")
+        .map(|(head, _)| head.len() + "dependencies = [\n".len())
+        .expect("precondition: workspace-hack lists dependencies");
+    let stale = format!(
+        "{}{} \"path-slash\",\n{}{}",
+        &fuzz[..start],
+        &hack[..first],
+        &hack[first..],
+        &fuzz[end..]
+    );
+    assert!(
+        lock_drift(&root, &stale).is_empty(),
+        "precondition: the shared check misses it"
+    );
+    let found = fuzz_lock_problems(&root, &stale, &dev_only);
+    assert!(
+        found.len() == 1
+            && found[0].starts_with("workspace-hack depends on path-slash")
+            && found[0].ends_with("in fuzz/Cargo.lock alone"),
+        "a stale edge of a member is found: {found:?}"
+    );
+}
+
+/// Every workspace member's dev-only dependency names, by package name:
+/// each `Cargo.toml` under `lib/` and `crates/`, read for its
+/// `[package]` name and [`dev_only_dependencies`].
+fn path_package_dev_only() -> BTreeMap<String, BTreeSet<String>> {
+    let mut out = BTreeMap::new();
+    for dir in ["lib", "crates"] {
+        let root = repo_path(dir);
+        for entry in std::fs::read_dir(&root).expect("the member directories list") {
+            let manifest = entry.expect("an entry").path().join("Cargo.toml");
+            let Ok(text) = std::fs::read_to_string(&manifest) else { continue };
+            let name = text
+                .split("[package]")
+                .nth(1)
+                .and_then(|package| {
+                    package.lines().find_map(|line| {
+                        line.trim()
+                            .strip_prefix("name = \"")
+                            .and_then(|rest| rest.strip_suffix('"'))
+                    })
+                })
+                .unwrap_or_else(|| panic!("{} names its package", manifest.display()))
+                .to_string();
+            out.insert(name, dev_only_dependencies(&text));
+        }
+    }
+    out
 }
 
 /// `scripts/fuzz.sh`'s `-max_len` for each target, from its

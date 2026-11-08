@@ -27,7 +27,8 @@ pub mod projection_fuzz;
 /// The fuzz properties' own tests.
 #[cfg(test)]
 mod projection_fuzz_tests;
-/// The bench bodies: a full projection, and an update.
+/// The bench bodies: a full projection, an update, and a rubber band's
+/// query.
 pub mod projection_tests;
 /// The binding carried down, counted.
 #[cfg(test)]

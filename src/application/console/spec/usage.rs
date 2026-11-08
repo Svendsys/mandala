@@ -344,6 +344,10 @@ pub fn no_arguments_message(grammar: &'static Grammar) -> String {
 /// A subverb with two forms prints both: `section move` takes
 /// `dx=`/`dy=` *or* `x=`/`y=`, and one bracketed line would document
 /// a command it refuses.
+#[expect(
+    dead_code,
+    reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
+)]
 pub fn subverb_usage(grammar: &'static Grammar, subverb: &'static Subverb) -> String {
     let lines = subverb_forms(grammar, subverb);
     if lines.is_empty() {

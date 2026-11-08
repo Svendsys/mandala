@@ -105,11 +105,11 @@ const WAIT_DEFAULT_MS: u64 = 10_000;
 /// `client::LAUNCH_HINT` is.
 #[cfg(not(windows))]
 const NO_SOCKET: &str = "no app named. Pass --ipc <path> or set MANDALA_IPC for a native \
-                         app (start it with: mandala <map.mindmap.json> --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"), or \
+                         app (start it with: mandala <map.mandala.json> --ipc \"$XDG_RUNTIME_DIR/mandala.sock\"), or \
                          --ws <url> or MANDALA_WS for a browser app behind `mandalactl bridge`";
 #[cfg(windows)]
 const NO_SOCKET: &str = "no app named. Pass --ipc <name> (a pipe name) or set MANDALA_IPC for a native \
-                         app (start it with: mandala <map.mindmap.json> --ipc mandala), or \
+                         app (start it with: mandala <map.mandala.json> --ipc mandala), or \
                          --ws <url> or MANDALA_WS for a browser app behind `mandalactl bridge`";
 
 /// The command the client writes the browser's inline screenshot for
@@ -792,7 +792,7 @@ fn unsettled(io: &mut Io<'_>, why: &str) -> Exit {
         io.err,
         &format!(
             "mandalactl: {why}\nThe command itself succeeded (its result is above); do not repeat it. \
-             Poll a read-only command (query.animations, say) until the app looks settled.\n"
+             Poll a read-only command (query.status, say) until the app looks settled.\n"
         ),
     );
     Exit::Unconfirmed

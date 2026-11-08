@@ -22,9 +22,10 @@
 //! **A DTO holds names, not indices**: a theme variable, a palette, a
 //! font and a verb are the strings the file spells; the loader resolves
 //! them (design §7.2) and the saver spells them again. The DTO names
-//! carry a `Dto` suffix because the serde type graph indexes types by
-//! bare name, and the document's own types, the model's and the
-//! primitives' already hold the plain ones.
+//! carry a `Dto` suffix so that none reuses a name the document's own
+//! types or the primitives hold: the format's strictness tests ask the
+//! serde type graph for these types by bare name, and it answers a bare
+//! name only when one module declares it.
 //!
 //! These are plain data. Nothing here checks a bound or a reference:
 //! that is [`load`](crate::document::format::load)'s, which can name

@@ -49,7 +49,7 @@ use std::path::{Path, PathBuf};
 const TEST_MODULE_HEADERS: &[(&str, bool)] = &[
     // The plain form: 111 inline occurrences.
     (concat!("#[cfg(", "test)]"), true),
-    // `src/application/app/text_edit/editor.rs` and six others.
+    // `src/application/app/color_picker_flow/click.rs`, among others.
     (
         concat!("#[cfg(", "test)]\n#[cfg(not(target_arch = \"wasm32\"))]"),
         true,
@@ -813,7 +813,7 @@ fn test_above_test_modules_knows_every_shape_in_this_tree() {
             concat!("#[cfg(", "test)] mod tests {"),
         ),
         (
-            "src/application/app/text_edit/editor.rs",
+            "src/application/app/color_picker_flow/click.rs",
             concat!(
                 "#[cfg(",
                 "test)] #[cfg(not(target_arch = \"wasm32\"))] mod tests {"

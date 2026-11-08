@@ -841,7 +841,7 @@ pub fn do_spatial_descend_builds_only_for_a_spatial_element() {
 
 // =============================================================
 // JSON roundtrip — the AST's load-bearing purpose is deserializing
-// from JSON (widgets, custom mutations, future user scripts). Drift
+// from JSON (widgets, a map's edits, future user scripts). Drift
 // in serde renames / variant shapes must surface here rather than
 // silently at picker-open time.
 // =============================================================
@@ -993,8 +993,7 @@ fn test_json_instruction_spec_map_children_materializes_correctly() {
 /// `InstructionSpec::MapChildren` round-trips through JSON and
 /// materializes to `Instruction::MapChildren` via
 /// `into_instruction`. Guards the seam authors rely on when
-/// declaring MapChildren-shaped mutators in a custom_mutations
-/// bundle.
+/// declaring MapChildren-shaped mutators in JSON.
 pub fn do_json_instruction_spec_map_children_materializes_correctly() {
     let src = r#"{
         "Instruction": {

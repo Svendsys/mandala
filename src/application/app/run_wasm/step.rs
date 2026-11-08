@@ -8,7 +8,7 @@
 //! runs; what this module supplies is the frame it stops the clock to
 //! run at each heartbeat — the time-driven half the browser's loop
 //! frame runs in real time (`event_redraw_requested`): one injected
-//! sample, then the animation tick. There is no recorder on this
+//! sample, then the view's sync. There is no recorder on this
 //! target, so no step here ever sees a [`Beat::Boundary`]; the arm is
 //! written for it anyway, so the day a recorder lands the schedule
 //! needs nothing.
@@ -37,9 +37,7 @@ impl Steps for Borrowed<'_> {
         if beat.lands_injected(&self.input.clock) {
             self.land_injected();
         }
-        if beat.moves_time(&self.input.clock) {
-            self.tick_animations();
-        }
+        self.sync_view();
     }
 }
 

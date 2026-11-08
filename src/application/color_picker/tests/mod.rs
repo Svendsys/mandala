@@ -27,4 +27,3 @@ mod hit;
 mod layout;
 mod sizing;
 mod state;
-mod targets;

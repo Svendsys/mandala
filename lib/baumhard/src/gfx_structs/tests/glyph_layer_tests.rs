@@ -1042,8 +1042,8 @@ pub fn do_authored_glyph_layer_mutations_have_the_wire_shape() {
             refused.contains(&unknown),
             "{fill} is refused as an unknown variant, not for its value: {refused}"
         );
-        // The authored mutator a map carries — a custom mutation's
-        // `mutator`, `MutatorNode<GfxElement, GfxMutation>` — naming one
+        // The authored mutator a map carries —
+        // `MutatorNode<GfxElement, GfxMutation>` — naming one
         // is refused whole, for the variant; the same node with a run
         // mutation in its place reads (the negative control).
         let node = |mutation: &str| {

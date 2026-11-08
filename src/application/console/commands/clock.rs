@@ -144,11 +144,13 @@ mod tests {
 
     fn run(args: &[&str]) -> (ExecResult, Option<ConsoleSideEffect>, bool) {
         let tokens: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
-        let mut doc = MindMapDocument::new_blank(None);
+        let mut doc = MindMapDocument::new_blank(None, 50);
+        let revision = doc.revision();
         let mut eff = ConsoleEffects::new(&mut doc);
         let result = execute_clock(&Args::new(&tokens), &mut eff);
-        let mutated = eff.document_mutated();
-        (result, eff.side_effect.take(), mutated)
+        let side = eff.side_effect.take();
+        drop(eff);
+        (result, side, doc.revision() != revision)
     }
 
     fn line(args: &[&str]) -> ClockLine {

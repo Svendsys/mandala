@@ -7,11 +7,6 @@
 use crate::application::keybinds::Action;
 use crate::application::platform::input::MouseButton;
 
-use crate::application::document::MindMapDocument;
-
-use super::super::throttled_interaction::ColorPickerHoverInteraction;
-use super::commit::apply_picker_preview;
-
 /// What the caller should do with a press the picker was offered.
 ///
 /// The commit / cancel effects are user-named, so they are Actions
@@ -126,8 +121,6 @@ pub(in crate::application::app) fn handle_color_picker_click(
     cursor_pos: (f64, f64),
     button: MouseButton,
     state: &mut crate::application::color_picker::ColorPickerState,
-    doc: &mut MindMapDocument,
-    picker_hover: &mut ColorPickerHoverInteraction,
 ) -> PickerClick {
     use crate::application::color_picker::{
         hit_test_picker, hue_slot_to_degrees, sat_cell_to_value, val_cell_to_value, OpenPicker,
@@ -161,7 +154,8 @@ pub(in crate::application::app) fn handle_color_picker_click(
                 *hue_deg = hue_slot_to_degrees(slot);
                 *hover_preview = None;
             }
-            apply_picker_preview(state, doc, picker_hover);
+            // V1-C7 (#248) stages the previewed color on the picker's
+            // transaction here.
         }
         PickerHit::SatCell(i) => {
             if let Some(OpenPicker {
@@ -171,7 +165,8 @@ pub(in crate::application::app) fn handle_color_picker_click(
                 *sat = sat_cell_to_value(i);
                 *hover_preview = None;
             }
-            apply_picker_preview(state, doc, picker_hover);
+            // V1-C7 (#248) stages the previewed color on the picker's
+            // transaction here.
         }
         PickerHit::ValCell(i) => {
             if let Some(OpenPicker {
@@ -181,7 +176,8 @@ pub(in crate::application::app) fn handle_color_picker_click(
                 *val = val_cell_to_value(i);
                 *hover_preview = None;
             }
-            apply_picker_preview(state, doc, picker_hover);
+            // V1-C7 (#248) stages the previewed color on the picker's
+            // transaction here.
         }
         // `terminal_route_for_hit` already returned for these two.
         PickerHit::Outside | PickerHit::Commit => {}
@@ -280,7 +276,7 @@ mod tests {
     }
 
     /// Contextual outside-click is a cancel, and it goes out as an
-    /// Action rather than calling `cancel_color_picker` here.
+    /// Action rather than cancelling here.
     #[test]
     fn test_outside_click_dispatches_picker_cancel_in_contextual_mode() {
         assert_eq!(

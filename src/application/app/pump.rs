@@ -68,8 +68,9 @@ pub(super) trait Iteration {
     /// (`heartbeat::needs_continuation`).
     fn needs_continuation(&self) -> bool;
     /// The frame up to the recorder: one injected sample when it lands
-    /// one, then the drains (`Beat::Loop`).
-    fn drain_frame(&mut self);
+    /// one, then the drains (`Beat::Loop`). Returns whether the view
+    /// changed, so the frame owes a redraw.
+    fn drain_frame(&mut self) -> bool;
     /// Execute the queued IPC requests.
     fn drain_ipc(&mut self) -> DrainOutcome;
     /// The recording's frame, if one is due.
@@ -96,6 +97,9 @@ pub(super) trait Iteration {
     fn evaluate_wait(&mut self);
     /// Tell the IPC server which map is open, for the next `hello`.
     fn publish_map(&mut self);
+    /// Drop the change records every observation of the iteration has
+    /// seen (`view::MapView::clear_feed`).
+    fn clear_feed(&mut self);
     /// Whether the loop ends here, and with what code: when
     /// `Action::Quit` was dispatched, or when the one-shot launch has its
     /// capture (or has failed it). `None` while neither.
@@ -112,45 +116,48 @@ pub(super) trait Iteration {
 ///    drains do work that must land on screen.
 /// 2. The frame up to the recorder ([`Iteration::drain_frame`]): in
 ///    real time one injected-input sample ahead of the input drain —
-///    where a winit event lands — then the drains and the animation
-///    tick; under a virtual clock the input-driven drains alone.
+///    where a winit event lands — then the drains, the view's sync
+///    among them; under a virtual clock the input-driven drains alone.
 /// 3. The IPC drain, after the input drain, so a command observes every
 ///    input sent before it and its effects are ordered after them.
 /// 4. The recorder, after the IPC drain, so a frame shows what this
 ///    iteration's commands did.
-/// 5. The continuation predicate again, which the frame's
-///    camera-geometry rebuild can have changed.
+/// 5. The continuation predicate again, which the drains can have
+///    changed.
 /// 6. Encoding a recording's backlog — only when nothing else wants
 ///    the iteration: no frame owed, no IPC left queued.
-/// 7. The redraw: if work happened (continuing on entry), is pending
-///    (continuing now — the OR catches an animation's last frame), or a
-///    command changed pixels.
-/// 8. The FPS overlay's idle flip, deferred by its grace so a drag's
-///    between-drain gaps do not flicker it.
+/// 7. The redraw: if work happened (continuing on entry, or the view
+///    synced a change), is pending (continuing now), or a command
+///    changed pixels.
+/// 8. The FPS overlay's idle flip, deferred by its grace so the gaps
+///    between bursts of input do not flicker it.
 /// 9. The clock wait, after the redraw this iteration owes has been
 ///    asked for, so a pixels-affecting command of the iteration counts
 ///    as a frame still owed.
 /// 10. The map the next client's `hello` names, after every handler of
 ///     the iteration has run.
-/// 11. The exit check, last — a dispatched `Action::Quit`, or the
+/// 11. The change records cleared, once every observation of the
+///     iteration has read them (`view::MapView::pending_feed`).
+/// 12. The exit check, last — a dispatched `Action::Quit`, or the
 ///     one-shot's capture — so it sees the iteration's whole effect,
 ///     at the same point the clock wait is evaluated.
 pub(super) fn iterate(app: &mut impl Iteration) -> Next {
     let was_continuing = app.needs_continuation();
-    app.drain_frame();
+    let synced = app.drain_frame();
     let ipc = app.drain_ipc();
     app.record_tick();
     let still_continuing = app.needs_continuation();
     if !still_continuing && !was_continuing && !ipc.repaint && !ipc.backlog {
         app.record_idle();
     }
-    if was_continuing || still_continuing || ipc.repaint {
+    if was_continuing || synced || still_continuing || ipc.repaint {
         app.request_redraw();
     }
     let fps_deadline = app.fps_idle(still_continuing);
     let wake_by = [fps_deadline, app.deadline()].into_iter().flatten().min();
     app.evaluate_wait();
     app.publish_map();
+    app.clear_feed();
     if let Some(code) = app.exit() {
         return Next::Exit(code);
     }
@@ -178,8 +185,8 @@ impl Iteration for Running<'_> {
         self.init.needs_continuation()
     }
 
-    fn drain_frame(&mut self) {
-        self.init.input_context().drain_frame(Beat::Loop);
+    fn drain_frame(&mut self) -> bool {
+        self.init.input_context().drain_frame(Beat::Loop)
     }
 
     fn drain_ipc(&mut self) -> DrainOutcome {
@@ -224,6 +231,12 @@ impl Iteration for Running<'_> {
                     .as_ref()
                     .and_then(|doc| doc.file_path.as_deref()),
             );
+        }
+    }
+
+    fn clear_feed(&mut self) {
+        if let Some(view) = self.init.view.as_mut() {
+            view.clear_feed();
         }
     }
 
@@ -330,6 +343,7 @@ mod tests {
         FpsIdle { continuing: bool },
         EvaluateWait,
         PublishMap,
+        ClearFeed,
         Exit,
     }
 
@@ -378,8 +392,9 @@ mod tests {
             self.note(Step::Continuation);
             self.continuing.get(asked).copied().unwrap_or(false)
         }
-        fn drain_frame(&mut self) {
+        fn drain_frame(&mut self) -> bool {
             self.note(Step::DrainFrame);
+            false
         }
         fn drain_ipc(&mut self) -> DrainOutcome {
             self.note(Step::DrainIpc);
@@ -406,6 +421,9 @@ mod tests {
         }
         fn publish_map(&mut self) {
             self.note(Step::PublishMap);
+        }
+        fn clear_feed(&mut self) {
+            self.note(Step::ClearFeed);
         }
         fn exit(&mut self) -> Option<ExitCode> {
             self.note(Step::Exit);
@@ -434,6 +452,7 @@ mod tests {
                 Step::FpsIdle { continuing: false },
                 Step::EvaluateWait,
                 Step::PublishMap,
+                Step::ClearFeed,
                 Step::Exit,
             ]
         );

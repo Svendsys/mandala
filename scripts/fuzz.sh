@@ -64,9 +64,10 @@ if ! [[ "$SECONDS_BUDGET" =~ ^[0-9]+$ ]] || [ "$SECONDS_BUDGET" -eq 0 ]; then
   exit 2
 fi
 
-# The longest input each surface is fed. The raw loader's must hold the
-# largest committed seed (a deep chain with a link on every node); a
-# structured input is choices, four bytes each. A flow target's length
+# The longest input each surface is fed. A loader's must hold the
+# largest committed seed, which since V1-C3 is a repository map read in
+# place (`maps/testament.mandala.json`, 113 KiB); a structured input is
+# otherwise choices, four bytes each. A flow target's length
 # does not bound its work (flow_fuzz.rs; rulings R44.2, R45-R47): a
 # frame's budget is max(400,000, 3,000 × glyphs) steps of all its work,
 # overshot by one build's shaping and inking and a lay of each line, at
@@ -82,8 +83,8 @@ fi
 # fits its ceiling, which `test_every_fuzz_input_fits_its_targets_max_len`
 # holds.
 case "$TARGET" in
-  load_raw) MAX_LEN=65536 ;;
-  load_structured) MAX_LEN=65536 ;;
+  load_raw) MAX_LEN=131072 ;;
+  load_structured) MAX_LEN=131072 ;;
   flow_raw) MAX_LEN=4096 ;;
   flow_structured) MAX_LEN=8192 ;;
   flow_structured_every_face) MAX_LEN=8192 ;;

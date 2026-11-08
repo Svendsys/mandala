@@ -255,7 +255,7 @@ pub fn section_text(path: &Path, heading: &str) -> String {
 /// passing, so deleting a variant from the construct that actually
 /// *publishes* it leaves the section still naming it and the pin
 /// still green. Deleting the `Descendants` row from the
-/// `target_scope` table in `format/mutations.md` is the concrete
+/// `target_scope` (gone) table in `format/mutations.md` is the concrete
 /// case — two later
 /// paragraphs discuss `Descendants` by name. Narrowing to the
 /// publishing block is what makes the deletion fail the suite.
@@ -303,8 +303,8 @@ pub fn documented_paragraph(path: &Path, heading: &str, marker: &str) -> String 
 /// of `SelfAndDescendants`, so a `contains` pin calls the narrow
 /// variant published the moment a section names the wide one. That
 /// is not hypothetical: with `contains`, `Descendants` could be
-/// deleted from all three normative `target_scope` surfaces —
-/// `format/legacy-schema.md`, `format/mutations.md`, `CONCEPTS.md` — and
+/// deleted from all three normative `target_scope` (gone) surfaces —
+/// the old format's schema, `format/mutations.md`, `CONCEPTS.md` — and
 /// the suite stayed green.
 ///
 /// An identifier character is `[A-Za-z0-9_]`, so every delimiter the
@@ -638,10 +638,10 @@ Trailing prose about Descendants again.
     /// from wherever the suite runs.
     #[test]
     fn test_format_doc_path_resolves_to_the_repo_specs() {
-        let path = format_doc_path("legacy-schema.md");
+        let path = format_doc_path("schema.md");
         assert!(
             path.is_file(),
-            "format/legacy-schema.md must be readable at {}",
+            "format/schema.md must be readable at {}",
             path.display()
         );
     }

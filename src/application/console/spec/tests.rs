@@ -236,7 +236,7 @@ fn test_every_usage_form_leads_with_its_verb() {
 /// union.
 #[test]
 fn test_every_form_key_reaches_the_popup_and_help() {
-    let doc = crate::application::document::tests_common::load_test_doc();
+    let doc = crate::application::document::tests_common::testament();
     let ctx = crate::application::console::ConsoleContext::from_document(&doc);
     let mut probes = 0usize;
     let mut keys_seen = 0usize;
@@ -289,12 +289,13 @@ fn test_every_form_key_reaches_the_popup_and_help() {
             }
         }
     }
-    // The registry is 29 levels and 20 key-bearing subverbs; the
-    // floors are below both so a declaration change does not fail the
-    // run, and far enough above the 14 bare forms this walk used to
-    // see that shrinking back to them would.
+    // The walk reaches 28 forms and 61 keys since V1-C3 deleted the
+    // `border` and `canvas` levels; the floors are below both so a
+    // declaration change does not fail the run, and far enough above
+    // the 14 bare forms this walk used to see that shrinking back to
+    // them would.
     assert!(
-        probes >= 40 && keys_seen >= 150,
+        probes >= 24 && keys_seen >= 50,
         "the form walk reached {probes} forms and {keys_seen} keys — the walk, not the \
          registry, is what broke"
     );
@@ -389,19 +390,19 @@ fn test_a_gated_subverb_sits_at_a_level_that_has_keys() {
 /// no-suggestion row then ends `'x'..` (which is what `open` really
 /// printed) and the preview-only row opens on `or`.
 ///
-/// Three of the four arms are reachable from the real registry, and
-/// `EXEC_CORPUS` pins one line through each: `border padding 12 50`
-/// and `canvas border padding 12 50` through `(composed, staged)`,
-/// `anchor sideways` through `(composed, bare)`, and
-/// `open a.mindmap.json b.mindmap.json` through `(neither)`. The
-/// levels differ, so the bytes do — what those rows hold is the arm,
-/// which is why a reword that satisfied this test by editing one
-/// `match` arm would still move a pinned row.
+/// Two of the four arms are reachable from the real registry, and
+/// `EXEC_CORPUS` pins one line through each: `screenshot a.png b.png`
+/// through `(composed, bare)` and `open a.mandala.json b.mandala.json`
+/// through `(neither)`. The levels differ, so the bytes do — what those
+/// rows hold is the arm, which is why a reword that satisfied this test
+/// by editing one `match` arm would still move a pinned row.
 ///
-/// The fourth arm — `preview` beside a bare form that reads no keys
-/// — is declared by no level today, so the synthetic `PREVIEW_ONLY`
-/// grammar below is the only thing that pins its wording. That is
-/// the arm this test exists for; the other three it merely seconds.
+/// The other two — `preview` beside a bare form, with keys or without
+/// — are declared by no level since V1-C3 deleted the `border` and
+/// `canvas` verbs that staged previews, so the synthetic `BOTH` and
+/// `PREVIEW_ONLY` grammars below are the only thing that pins their
+/// wording. Those are the arms this test exists for; the other two it
+/// merely seconds.
 #[test]
 fn test_the_extra_positional_sentence_is_built_from_what_the_level_has() {
     use super::usage::extra_positional_message;
@@ -457,12 +458,12 @@ fn test_the_extra_positional_sentence_is_built_from_what_the_level_has() {
     );
 
     // Hold the doc comment's division of labor against the real
-    // registry rather than trusting it. Three arms are seconded by a
-    // pinned corpus row *because* a level reaches them; the fourth
-    // is pinned here alone *because* none does. A level that grows a
-    // `preview` subverb beside a bare form reading no keys flips
-    // that, and this is what says so — at which point the arm wants
-    // a corpus row and this comment wants a rewrite.
+    // registry rather than trusting it. Two arms are seconded by a
+    // pinned corpus row *because* a level reaches them; the other two
+    // are pinned here alone *because* none does. A level that grows a
+    // `preview` subverb flips that, and this is what says so — at
+    // which point the arm wants a corpus row and this comment wants a
+    // rewrite.
     let mut reached = [false; 4];
     for (_, grammar) in all_levels() {
         let composed = grammar
@@ -473,27 +474,36 @@ fn test_the_extra_positional_sentence_is_built_from_what_the_level_has() {
         reached[usize::from(composed) * 2 + usize::from(staged)] = true;
     }
     assert!(
-        reached[3] && reached[2] && reached[0],
-        "the three arms `EXEC_CORPUS` seconds must each be reachable: {reached:?}"
+        reached[2] && reached[0],
+        "the two arms `EXEC_CORPUS` seconds must each be reachable: {reached:?}"
     );
     assert!(
-        !reached[1],
-        "a level now declares `preview` beside a bare form that reads no keys, so the \
-         `(false, true)` arm is reachable and owes a pinned corpus row of its own"
+        !reached[1] && !reached[3],
+        "a level now declares `preview` beside a bare form, so a staged arm is reachable \
+         and owes a pinned corpus row of its own: {reached:?}"
     );
 }
 
 /// Every `.rs` file under `commands/` that a shipped build
 /// compiles: the tree minus the modules a parent declares as
 /// `#[cfg(test)] mod <name>;`, which are whole files of test code
-/// (`border/tests.rs` is the one in this tree).
+/// (none in this tree since V1-C3 deleted `border/tests.rs` with its
+/// verb; [`test_the_console_source_scan_reads_what_it_claims_to`]
+/// holds the exclusion to a fixture tree that has one).
 ///
 /// The same distinction `baumhard::util::unwrap_posture` draws for
 /// the same reason: a scan that reads test files reports their
 /// assertions as if they were shipped code, and a scan that skips
 /// live code reports nothing at all.
 fn command_sources() -> Vec<std::path::PathBuf> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/application/console/commands");
+    command_sources_in(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/application/console/commands"),
+    )
+}
+
+/// [`command_sources`] for the tree at `root`.
+fn command_sources_in(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let root = root.to_path_buf();
     let mut files: Vec<std::path::PathBuf> = Vec::new();
     let mut stack = vec![root.clone()];
     while let Some(dir) = stack.pop() {
@@ -734,10 +744,13 @@ fn string_literals(lines: &[(usize, &str)]) -> Vec<(usize, String)> {
 /// scan; a raw string would make [`string_literals`] read past its
 /// own end; and a whole-file test module the parent gates with
 /// `#[cfg(test)] mod x;` is invisible from inside the file itself —
-/// `border/tests.rs` is that file, and the first draft of this scan
-/// reported its five `assert_exec_err_contains(…, "usage: border …")`
-/// lines as verbs hand-writing their usage. None of the three would
-/// announce itself.
+/// `border/tests.rs` was that file until V1-C3 deleted it, and the
+/// first draft of this scan reported its five
+/// `assert_exec_err_contains(…, "usage: border …")` lines as verbs
+/// hand-writing their usage. None of the three would announce itself.
+/// The tree holds no whole-file test module now, so the exclusion is
+/// held to a fixture tree that has one, beside a live file it must
+/// keep.
 #[test]
 fn test_the_console_source_scan_reads_what_it_claims_to() {
     let files = command_sources();
@@ -746,9 +759,22 @@ fn test_the_console_source_scan_reads_what_it_claims_to() {
         "the walk found only {} command sources",
         files.len()
     );
-    assert!(
-        !files.iter().any(|p| p.ends_with("border/tests.rs")),
-        "`border/tests.rs` is a whole-file test module and must not be scanned as verb source"
+    let fixture = std::env::temp_dir().join(format!("mandala-console-scan-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&fixture);
+    std::fs::create_dir_all(fixture.join("verb")).expect("the fixture tree is made");
+    for (file, text) in [
+        ("verb/mod.rs", "pub fn run() {}\n#[cfg(test)]\nmod tests;\n"),
+        ("verb/tests.rs", "#[test]\nfn t() {}\n"),
+        ("verb/live.rs", "pub fn live() {}\n"),
+    ] {
+        std::fs::write(fixture.join(file), text).expect("a fixture file is written");
+    }
+    let scanned = command_sources_in(&fixture);
+    let _ = std::fs::remove_dir_all(&fixture);
+    assert_eq!(
+        scanned,
+        vec![fixture.join("verb/live.rs"), fixture.join("verb/mod.rs")],
+        "a whole-file test module its parent gates is excluded, and every live file is kept"
     );
     let mut declared = 0usize;
     let mut excised = 0usize;
@@ -796,8 +822,10 @@ fn test_the_console_source_scan_reads_what_it_claims_to() {
         }
         excised += usize::from(live_lines(&src).len() < src.lines().count());
     }
+    // Eleven command sources carry an inline test module since V1-C3
+    // deleted the editing verbs and their tests.
     assert!(
-        declared > 20 && excised > 20,
+        declared > 8 && excised > 8,
         "expected an inline test module in most command sources; declared {declared}, \
          excised from {excised} files"
     );
@@ -808,16 +836,17 @@ fn test_the_console_source_scan_reads_what_it_claims_to() {
 ///
 /// `Word::hint` and `Key::hint` are free text sitting one line above
 /// the [`super::Vocabulary`] they describe, and nothing held the two
-/// together. `border color` was declared as
+/// together. The `border` verb (gone with the old model) declared its
+/// `color` subverb as
 ///
 /// ```text
 /// Subverb::bare("color", "per-field", "set border color (#hex|var|preset|reset)")
 ///     .taking(&[Form::slots(&[Slot::req(free_words("#hex|var(--name)", COLOR_PRESET_WORDS))])])
 /// ```
 ///
-/// with `COLOR_PRESETS = ["accent", "edge", "fg", "reset"]` beside
-/// it. `border color preset` answers `ERR color: unknown color
-/// 'preset'`; `border color accent` succeeds. Both hints named the
+/// with `COLOR_PRESETS` (gone) `= ["accent", "edge", "fg", "reset"]`
+/// beside it. `border color preset` answered `ERR color: unknown color
+/// 'preset'`; `border color accent` succeeded. Both hints named the
 /// value the slot refuses and omitted the three it accepts, and the
 /// engine then *pinned* them — into `border <TAB>`, `canvas border
 /// <TAB>`, `border preview <TAB>` and `help BORDER`.
@@ -877,10 +906,11 @@ fn test_every_hinted_alternation_names_values_its_vocabulary_accepts() {
         }
     }
     // A hint scan that found no alternations would pass by reading
-    // nothing. The border and section families alone declare more
-    // than a dozen, counted across every level that composes them.
+    // nothing. The live registry declares two since V1-C3 deleted the
+    // `border` family that declared most of them; any at all proves
+    // the parse reads hints.
     assert!(
-        checked >= 12,
+        checked > 0,
         "the hint scan found only {checked} alternations — the parse, not the registry, is what broke"
     );
     assert!(
@@ -1065,129 +1095,13 @@ fn test_a_repeated_key_resolves_to_its_last_occurrence() {
 /// with all of them, because one table answers for every level it
 /// serves.
 fn dispatchers() -> Vec<(&'static str, Vec<&'static Grammar>, Vec<&'static str>)> {
-    use crate::application::console::commands::{
-        border, canvas, clock, color, font, fps, label, mode, mutation, node, record, section, zoom,
-    };
+    use crate::application::console::commands::{clock, fps, mode, record};
     vec![
         ("fps", vec![&fps::GRAMMAR], fps::routed_names()),
-        ("mutation", vec![&mutation::GRAMMAR], mutation::routed_names()),
-        ("node", vec![&node::GRAMMAR], node::routed_names()),
         ("mode", vec![&mode::GRAMMAR], mode::routed_names()),
         ("clock", vec![&clock::GRAMMAR], clock::routed_names()),
         ("record", vec![&record::GRAMMAR], record::routed_names()),
-        ("font", vec![&font::GRAMMAR], font::routed_names()),
-        ("label", vec![&label::GRAMMAR], label::routed_names()),
-        ("color", vec![&color::GRAMMAR], color::routed_names()),
-        ("zoom", vec![&zoom::GRAMMAR], zoom::routed_names()),
-        (
-            "section",
-            vec![&section::grammar::SECTION],
-            section::routed_names(),
-        ),
-        (
-            "section frame",
-            vec![&section::SECTION_FRAME],
-            section::frame_routed_names(),
-        ),
-        ("border", vec![&border::grammar::BORDER], border::routed_names()),
-        (
-            "canvas subjects",
-            vec![
-                &canvas::grammar::CANVAS_BORDER,
-                &canvas::grammar::CANVAS_SECTION_FRAME,
-                &canvas::grammar::CANVAS_SECTION_FRAME_FOCUSED,
-            ],
-            canvas::routed_names(),
-        ),
-        (
-            "border preview",
-            vec![
-                &border::grammar::BORDER_PREVIEW,
-                &canvas::grammar::CANVAS_BORDER_PREVIEW,
-                &canvas::grammar::CANVAS_SECTION_FRAME_PREVIEW,
-                &canvas::grammar::CANVAS_FOCUSED_PREVIEW,
-                &section::SECTION_FRAME_PREVIEW,
-            ],
-            border::preview_routed_names(),
-        ),
     ]
-}
-
-/// Every shared subverb set a dispatcher hands on through a
-/// `route::Delegates` row, with the names the set's own table routes.
-/// A dispatcher reports a delegated set's names as routed, so the set's
-/// table has to be held against the set here.
-/// [`test_every_delegated_set_is_a_listed_shared_set`] refuses a
-/// delegated set missing from this list.
-fn shared_sets() -> Vec<(&'static str, &'static [Subverb], Vec<&'static str>)> {
-    use crate::application::console::commands::border;
-    vec![(
-        "border per-field",
-        border::grammar::POSITIONAL_SUBVERBS,
-        border::positional_routed_names(),
-    )]
-}
-
-/// Every dispatcher that hands a shared set on, with the sets it hands
-/// on (each exports them beside its `routed_names()`).
-fn delegating_dispatchers() -> Vec<(&'static str, Vec<&'static [Subverb]>)> {
-    use crate::application::console::commands::{border, canvas};
-    vec![
-        ("border", border::delegated_sets()),
-        ("canvas subjects", canvas::delegated_sets()),
-    ]
-}
-
-/// Every set a dispatcher delegates is listed in [`shared_sets`].
-///
-/// The failing input is a second shared set handed on through a new
-/// `Delegates` row with no `shared_sets()` entry. The delegating
-/// dispatcher reports all of that set's names as routed, so the level
-/// test stays green, and nothing holds the set against its own table:
-/// a row added to the set with no table row would reach `route::miss`,
-/// #155's failure one level down. Sets are compared by their names
-/// rather than by address, for the reason `route::declares` gives.
-#[test]
-fn test_every_delegated_set_is_a_listed_shared_set() {
-    let names = |set: &[Subverb]| set.iter().map(|s| s.name).collect::<Vec<_>>();
-    let listed: Vec<Vec<&'static str>> = shared_sets().into_iter().map(|(_, set, _)| names(set)).collect();
-    for (site, sets) in delegating_dispatchers() {
-        for set in sets {
-            assert!(
-                listed.contains(&names(set)),
-                "{site}: delegates the shared set {:?}, which `shared_sets()` does not list, so \
-                 nothing holds it against its own table",
-                names(set)
-            );
-        }
-    }
-}
-
-/// A shared set's own table routes exactly the set.
-///
-/// The failing input is a row added to a shared set — `border`'s
-/// per-field subverbs, composed by four levels — with no row in the
-/// set's table. Every composing dispatcher reports the name as routed,
-/// because it hands the whole set on, so the exactness test over the
-/// levels stays green and the subverb reaches `route::miss` on all
-/// four. This holds the set's table instead.
-#[test]
-fn test_every_shared_set_table_routes_exactly_its_set() {
-    for (site, set, routed) in shared_sets() {
-        let declared: Vec<&'static str> = set.iter().map(|s| s.name).collect();
-        for name in &declared {
-            assert!(
-                routed.contains(name),
-                "{site}: the shared set declares subverb '{name}' but its table does not route it"
-            );
-        }
-        for name in &routed {
-            assert!(
-                declared.contains(name),
-                "{site}: routes subverb '{name}', which the shared set does not declare"
-            );
-        }
-    }
 }
 
 /// A route table handles exactly the subverbs its levels declare.
@@ -1255,6 +1169,14 @@ fn test_every_level_with_subverbs_has_a_listed_dispatcher() {
         .collect();
     for (verb, grammar) in all_levels() {
         if grammar.subverbs().all(|s| s.child.is_some()) {
+            continue;
+        }
+        // A verb its owner rebuilds refuses whole and routes nothing
+        // until then (`commands::rebuilt_by`).
+        if crate::application::console::commands::REBUILT_VERBS
+            .iter()
+            .any(|(rebuilt, _)| *rebuilt == verb)
+        {
             continue;
         }
         assert!(

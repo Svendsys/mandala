@@ -42,18 +42,11 @@
 //!   (Baumhard tree path). Uses the
 //!   [`crate::font::attrs::RegionFamilies`] +
 //!   [`crate::font::attrs::rich_text_spans_into`] pair.
-//! - `lib/baumhard/src/mindmap/scene_dump/mod.rs` — the scene
-//!   introspection's displayed text for every section, label and
-//!   portal caption. Uses [`crate::font::attrs::displayed_text`].
 //!
 //! [`crate::font::attrs::attrs_list_from_regions`] has no in-tree
 //! consumer today: it is the `Editor::insert_string` half of the
 //! bridge, kept as the named seam for the inline text editor
-//! (§B10). The list above
-//! used to claim `lib/baumhard/src/mindmap/tree_builder/border.rs`
-//! as a consumer of this module; that file imports nothing from
-//! `font::attrs`, so the claim is removed rather than carried
-//! forward (§B9 — a doc comment that lies is worse than none).
+//! (§B10).
 
 use cosmic_text::{Attrs, AttrsList, Color, Family, FontSystem, Metrics, Style};
 use log::warn;
@@ -140,7 +133,7 @@ pub fn attrs_list_from_regions(
 /// conversion has to count clusters rather than bytes. Doing that
 /// per boundary restarts the walk each time, which is O(text ×
 /// regions) — quadratic on a section whose run table scales with
-/// its text, and reachable from any `.mindmap.json`. Both cosmic-text
+/// its text, and reachable from any `.mandala.json`. Both cosmic-text
 /// bridges route through here so neither can regress to the
 /// per-boundary form.
 ///
@@ -380,7 +373,7 @@ fn covered_slices<'t>(
 /// The text a styled run actually puts on screen: the concatenation
 /// of the slices its regions cover, in region order.
 ///
-/// A section with `text_runs` renders **only its covered graphemes**
+/// A section with text runs renders **only its covered graphemes**
 /// (`CONCEPTS.md`, "TextRun"): an uncovered cluster drops silently, so
 /// the model's `text` and what a user reads diverge. This answers the
 /// second, through the same coverage rule the renderer shapes by

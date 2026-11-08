@@ -60,8 +60,8 @@ pub(super) fn parse_to_file(
 /// payloads.
 ///
 /// **Streamed.** `value` is serialized straight into the file; for the
-/// document that means the model goes from `&MindMap` to bytes with no
-/// value tree held beside it, which is the case the sidecar exists for.
+/// document that means the model goes from the saved map to bytes with
+/// no value tree held beside it, which is the case the sidecar exists for.
 /// Atomic and symlink-proof as [`guarded_file::publish`] is.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn write_sidecar(target: &ToFile, value: &impl Serialize) -> Result<Value, Refusal> {

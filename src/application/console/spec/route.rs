@@ -39,14 +39,6 @@
 //!
 //! A subverb that opens a child level is never routed: the descent
 //! steps through it, so it never arrives as `Stop::Matched`.
-//!
-//! A level that composes a shared subverb set routes the whole set
-//! to that set's own dispatcher through a [`Delegates`] row rather
-//! than through a hand-written arm, so the hand-off is data too: the
-//! names a dispatcher reports to the registry test are read off the
-//! same rows [`lookup_or_delegate`] reads, and deleting the row both
-//! drops those names from the report and leaves its variant
-//! unconstructed.
 
 use super::{Grammar, Subverb};
 
@@ -66,40 +58,6 @@ pub fn lookup<R: Copy>(routes: &Routes<R>, subverb: &Subverb) -> Option<R> {
         .map(|(_, r)| *r)
 }
 
-/// One dispatcher's hand-offs: each shared subverb set it composes,
-/// paired with the variant that runs the set's own dispatcher.
-pub type Delegates<R> = [(&'static [Subverb], R)];
-
-/// [`lookup`], then the first [`Delegates`] row whose set declares
-/// `subverb` (by name, see [`declares`]).
-pub fn lookup_or_delegate<R: Copy>(
-    routes: &Routes<R>,
-    delegates: &Delegates<R>,
-    subverb: &Subverb,
-) -> Option<R> {
-    lookup(routes, subverb).or_else(|| {
-        delegates
-            .iter()
-            .find(|(set, _)| declares(set, subverb))
-            .map(|(_, r)| *r)
-    })
-}
-
-/// Whether `set` declares `subverb`'s name. For a level that
-/// composes a shared subverb set and hands the whole set to the
-/// set's own dispatcher — `border`'s seven per-field subverbs, which
-/// `canvas border` and `canvas section-frame [focused]` compose too.
-///
-/// By name rather than by address: the shared sets are `const`s, and
-/// a `const` is copied at each use, so the row a descent hands back
-/// need not sit at the address the dispatcher's copy does. A name is
-/// enough because names are unique within a level
-/// (`test_names_are_unique_within_a_level`), so on a level that
-/// composes `set` a row spelled like one of `set`'s *is* that row.
-pub fn declares(set: &[Subverb], subverb: &Subverb) -> bool {
-    set.iter().any(|s| s.name == subverb.name)
-}
-
 /// The rejection for a matched subverb no table routes. Unreachable
 /// while every dispatcher's table covers its levels; logged at
 /// `error!` because reaching it means that test was not run.
@@ -117,20 +75,4 @@ pub fn miss(level: &Grammar, subverb: &Subverb) -> String {
 #[cfg(test)]
 pub fn names<R>(routes: &Routes<R>) -> Vec<&'static str> {
     routes.iter().map(|(name, _)| *name).collect()
-}
-
-/// The shared sets a [`Delegates`] table hands on, for the registry
-/// test to check each is held against its own table.
-#[cfg(test)]
-pub fn sets<R>(delegates: &Delegates<R>) -> Vec<&'static [Subverb]> {
-    delegates.iter().map(|(set, _)| *set).collect()
-}
-
-/// [`names`], plus every name a [`Delegates`] row hands on. The
-/// delegated set's own table is held against the set separately.
-#[cfg(test)]
-pub fn names_with<R>(routes: &Routes<R>, delegates: &Delegates<R>) -> Vec<&'static str> {
-    let mut out = names(routes);
-    out.extend(delegates.iter().flat_map(|(set, _)| set.iter().map(|s| s.name)));
-    out
 }

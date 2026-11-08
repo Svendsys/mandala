@@ -9,16 +9,15 @@
 use super::glyph_tables::CROSSHAIR_CENTER_CELL;
 use super::hit::PickerHit;
 use super::layout::ColorPickerLayout;
-use super::targets::PickerHandle;
 
 /// Which of the two picker modes is active.
 ///
-/// - **Contextual**: summoned with a specific target (e.g.
-///   `color pick edge`, `color bg` on a node). Clicking the center ࿕
-///   glyph commits the current HSV to that bound target and closes
+/// - **Contextual**: summoned for a specific target. Clicking the
+///   center ࿕ glyph commits the current HSV to that target and closes
 ///   the wheel. Esc cancels (restores the original color) and closes.
-///   A click outside the backdrop also cancels. The pre-existing
-///   single-target picker flow lives here.
+///   A click outside the backdrop also cancels. The target itself —
+///   and the transaction the picker holds on it — returns with V1-C7
+///   (#248); until then nothing opens this mode.
 /// - **Standalone**: summoned as a persistent palette
 ///   (`color picker on`). No target bound at open time. Clicking ࿕
 ///   applies the current HSV to every colorable item in the
@@ -28,20 +27,9 @@ use super::targets::PickerHandle;
 ///   dragged around the screen like a floating node.
 #[derive(Debug, Clone)]
 pub enum PickerMode {
-    /// Target-bound picker. Commit writes to this handle and closes.
-    /// `seed_var_ref` is `Some(raw)` when the target's pre-open
-    /// color was a `var(--name)` reference, `None` for plain hex
-    /// seeds; `seed_hsv` is the HSV the picker opened at. Together
-    /// they let the commit preserve the variable reference when the
-    /// user didn't move the wheel — without these, every contextual
-    /// commit silently collapsed any prior `var(--accent)` to its
-    /// resolved hex (`format/sections.md`'s round-trip caveat
-    /// extended to the picker too).
-    Contextual {
-        handle: PickerHandle,
-        seed_var_ref: Option<String>,
-        seed_hsv: (f32, f32, f32),
-    },
+    /// Target-bound picker. `seed_hsv` is the HSV the picker opened
+    /// at. Commit writes to the target and closes.
+    Contextual { seed_hsv: (f32, f32, f32) },
     /// Persistent palette. Commit writes to the document's current
     /// selection (zero, one, or many items); the wheel stays open.
     Standalone,
@@ -92,20 +80,9 @@ pub enum PickerGesture {
     },
 }
 
-/// Modal state for the glyph-wheel color picker.
-///
-/// No pre-picker snapshot is stored on the struct: preview is a
-/// purely visual substitution via
-/// `MindMapDocument::color_picker_preview`, so cancel just clears
-/// the preview and commit calls `set_edge_color` once on the final
-/// HSV — the committed model is untouched during hover and the
-/// fork-on-first-edit semantics of `ensure_glyph_connection_inline` only
-/// fire on commit.
-///
-/// Hot path design: the target handle (when present) is captured at
-/// open time inside [`PickerMode::Contextual`] so the hover handler
-/// can push `(target_index, hex)` into the document preview without
-/// re-resolving any `EdgeRef`.
+/// Modal state for the glyph-wheel color picker. Holds no snapshot of
+/// the document: V1-C7 (#248) previews by staging on a transaction,
+/// whose cancel is the restore.
 #[derive(Debug, Clone)]
 pub enum ColorPickerState {
     Closed,
@@ -121,8 +98,7 @@ pub enum ColorPickerState {
 /// for how it is held, and for the lifecycle of the picker as a whole.
 #[derive(Debug, Clone)]
 pub struct OpenPicker {
-    /// Which of the two picker modes is active. Contextual carries
-    /// the bound target; Standalone has none.
+    /// Which of the two picker modes is active.
     pub mode: PickerMode,
     /// Current preview hue in degrees, `[0, 360)`.
     pub hue_deg: f32,

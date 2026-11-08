@@ -295,7 +295,7 @@ mod tests {
     fn test_the_relay_url_is_read_from_the_query_among_other_keys() {
         let url = "ws://127.0.0.1:41816/app/t0k3n";
         assert_eq!(
-            ipc_url_from_query(&format!("?map=maps/a.mindmap.json&ipc={url}")),
+            ipc_url_from_query(&format!("?map=maps/a.mandala.json&ipc={url}")),
             Ok(Some(url.to_string()))
         );
         assert_eq!(
@@ -303,7 +303,7 @@ mod tests {
             Ok(Some(url.to_string()))
         );
         assert_eq!(
-            ipc_url_from_query("?map=maps/a.mindmap.json"),
+            ipc_url_from_query("?map=maps/a.mandala.json"),
             Ok(None),
             "absent: IPC is off"
         );

@@ -30,15 +30,17 @@ smaller pieces first, and then finally combined into the full file.
 
 Mandala is a Rust mindmap application built on wgpu and cosmic-text, using
 the Baumhard glyph-animation library under `lib/baumhard`. It runs on both
-native desktop and as a WebAssembly build. `.mindmap.json` files are loaded
-and rendered as interactive canvases where every visual element — text,
-borders, connection paths — is laid out as positioned font glyphs.
+native desktop and as a WebAssembly build. `.mandala.json` files are loaded
+into a document and drawn as interactive canvases where every visual
+element — text, frames, paths — is laid out as positioned font glyphs: the
+projector turns the document into glyph layers, and the layer renderer
+draws them.
 
 ## Important references
 
 - **`CONCEPTS.md`** — the conceptual building-blocks reference: what
-  each named concept (`GlyphArea`, `MutatorTree`, `Channel`, `Portal`,
-  `ZoomVisibility`, `CustomMutation`, ...) is, what problem it solves,
+  each named concept (`GlyphArea`, `MutatorTree`, `Document`, `Projector`,
+  `GlyphLayers`, `LayerRenderer`, ...) is, what problem it solves,
   and where it lives. Start here when a term is unfamiliar or for a
   top-down orientation across both crates.
 - **`CODE_CONVENTIONS.md`** — the workspace-wide coding conventions and
@@ -55,16 +57,13 @@ borders, connection paths — is laid out as positioned font glyphs.
   every passing assertion owes.
 - **`format/`** — the file format specifications. `format/schema.md` is
   the `.mandala.json` format (V1) and its primary reference;
-  `format/legacy-schema.md` is the `.mindmap.json` format the app still
-  reads until V1-C3 deletes it. Per-concept docs cover
-  Dewey-decimal IDs, named enums, palettes, channels, text runs,
-  validation invariants, portal labels, mutations, and migration from
-  legacy. Read this before changing the data model.
-- **`crates/maptool/`** — CLI tool for working with `.mindmap.json`
-  files: `show`, `grep`, `apply`, `export`, `convert` (`--legacy`
-  migrates the miMind-derived format; `--portals` and `--sections`
-  migrate pre-refactor maps that are otherwise current), and `verify`
-  (structural and numeric validation).
+  `format/projection.md` is where a map is drawn, `format/ipc.md` the
+  control protocol, `format/macros.md` and `format/fonts.md` their
+  concepts. Read this before changing the data model.
+- **`crates/maptool/`** — CLI tool for `.mandala.json` files. Its verbs
+  read the old model and were deleted with it (V1-C3); they return as
+  clients of the document in V1-E1 (#253), and until then every
+  invocation says so and exits `2`.
 - **`crates/mandalactl/`** — CLI client for a *running* app's `--ipc`
   socket: one invocation, one command, JSON or `path: value` lines on
   stdout, exit code `0` / `1` (the app said no) / `2` (could not reach
@@ -79,8 +78,11 @@ borders, connection paths — is laid out as positioned font glyphs.
   agent-facing reference; `verbs::VERBS` is its command table, and the
   app crate's tests hold it to the IPC registry in both directions, so
   **a new IPC command ships its `mandalactl` verb in the same PR**.
-- **`lib/baumhard/src/mindmap/`** — the data model, loaders, scene
-  builders, and the tree bridge. Most interesting logic lives here.
+- **`lib/baumhard/src/document/`** — the document: its elements, the
+  one writer every change goes through, its history and change feed,
+  and the `.mandala.json` loader and saver (`format/`).
+  **`lib/baumhard/src/projection/`** — the projector: the document
+  drawn as glyph layers, and the hit test over them.
 - **`src/application/`** — the app shell: event loop, document state,
   rendering pipeline, and input handling.
 
@@ -109,7 +111,7 @@ the parity trajectory (or why none is owed):
   (`src/application/ipc/`, `app/ipc_target.rs` on native,
   `app/run_wasm/ipc_target.rs` on the browser) compile and run on
   both targets — as does the document revision the event stream
-  observes (`document/revision.rs`), a counter on the model — and the
+  observes (`Document::revision`, the writer's counter) — and the
   browser has a transport of its own: a WebSocket *toward* a loopback
   relay, `mandalactl bridge`, opened when the page is loaded with
   `?ipc=<the relay's app URL>` (`ipc/browser/`, `run_wasm/ipc.rs`;
@@ -126,8 +128,7 @@ the parity trajectory (or why none is owed):
   `work_plans/LLM_IPC.md` §D6 (as amended by IPC-15).
 - **The screenshot engine, and recording** (`src/application/capture/`
   minus `geometry.rs`, `src/application/renderer/capture.rs`,
-  `src/application/app/capture_flow.rs`,
-  `src/application/app/capture_scene.rs`; IPC-07/#67, #178) — the offscreen
+  `src/application/app/capture_flow.rs`; IPC-07/#67, #178) — the offscreen
   engine behind native's `capture.screenshot` and the `screenshot`
   console verb (its own camera, its own size, a file on disk), and
   with it frame-sequence recording (`capture/record.rs`,
@@ -138,10 +139,10 @@ the parity trajectory (or why none is owed):
   and the map resolves only when the event loop yields), and a
   recording is files. The frame it draws is not gated:
   `Renderer::prepare_frame` / `encode_frame` are the browser's render
-  path too — including the composed canvas a capture at another zoom
-  reads (`CanvasSource::Composed`, `renderer/scene_shape_cache.rs`),
-  which compiles for both targets and is simply never asked for by
-  the window. **`capture.screenshot` itself is served on both
+  path too, and a capture at another camera is the layer renderer
+  drawing the same canvas-space glyph layers through that camera
+  (`LayerRenderer::encode`), which nothing about either target
+  gates. **`capture.screenshot` itself is served on both
   targets since IPC-15 (#75)**: the browser draws the live view into
   its canvas and reads it back in the same task (`to_data_url`,
   `run_wasm/ipc_target.rs::capture_canvas`) — whether that read holds
@@ -220,135 +221,66 @@ the parity trajectory (or why none is owed):
   edit that grows a document past the element limit (its save is
   refused, the edit is not), and what the app builds from the
   document (the scene), which the 1 GiB left of the 4 GiB address
-  space is for. The old `.mindmap.json` loader keeps
-  its own 3 GiB `MAX_MAP_BYTES` (`mindmap/loader.rs`) until C3
-  retires it. Divergent by platform physics rather than policy:
+  space is for. Divergent by platform physics rather than policy:
   wasm32's `usize` is 32 bits and its address space is 4 GiB,
   shared with the runtime, the GPU buffers and the browser. Native
   opens maps as large as the machine can hold, which is the product
   intent; the browser cannot, and says so with a message instead of
   trapping. No parity is owed — the trajectory is the reverse, a
   64-bit wasm target, which is not this project's to schedule.
-- **`MAX_UNKNOWN_KEYS`**
-  (`lib/baumhard/src/mindmap/unknown_keys.rs`) — `None` on
-  native, `Some(2_000_000)` on wasm32, for the same reason and
-  with the same trajectory as the old loader's `MAX_MAP_BYTES`
-  (`mindmap/loader.rs`, 3 GiB on wasm32). It began as
-  a resource ceiling standing in for a cost defect; once the
-  capture and the write-back were both made linear there was
-  nothing on native left for it to bound.
 - **Clipboard OS layer** (`src/application/clipboard.rs`) — native
   is backed by `arboard`; WASM is stubbed pending async-clipboard
-  integration (CONCEPTS §6 "Clipboard").
+  integration (CONCEPTS §6 "Clipboard"). The clipboard Actions are
+  rebuilt on the document's writer by V1-C4 (#245); until then its
+  one native caller, the color picker's keys, is unreachable (V1-C7,
+  #248), and the WASM stubs have none.
 - **`fps` console verb** — native because the console shell is; the
   render-side FPS plumbing compiles on both targets and browsers
   expose frame timing via DevTools (CONCEPTS §5 "FPS overlay").
-- **Single-line editor** (`src/application/app/single_line_edit/`)
-  — edge-label and portal-caption inline editing is native-only;
-  the browser has no single-line editor yet. Consequence for
-  input: an edge-label double-click commits the selection on both
-  targets and opens the editor only on native, surfaced as
-  `DoubleClickResidual::OpenEdgeLabelEditor` rather than a `cfg`,
-  and logged at `debug!` on the browser side so the stop is
-  observable. Parity unblocks `Action::DoubleClickActivate` and
-  `Action::EditSelection*` flipping to `Compatible`; tracked in
-  `work_plans/WASM_CONVERGENCE.md`.
-- **`LongPress` → `EnterResizeMode`, and a finger on a resize
-  handle** (`src/application/keybinds/config.rs`,
-  `src/application/app/run_wasm/event_touch.rs`,
-  `src/application/app/touch_handle.rs`) — the touch route to a
-  resize, and native-only end to end. **On native** a long-press
-  enters `InteractionMode::Resize` on the selection, and a finger
-  that then starts a gesture on one of its handles drives the
-  handle drag as the left button would (`touch_handle`, #160) —
-  captured, promoted to the `Throttled` resize and committed with
-  its undo entry on lift — without reaching the gesture recognizer,
-  so it cannot also pan. Before #160 this entry implied that route
-  existed while every finger drag panned the camera; a touch-only
-  user could not resize at all. `FastResizeStart`
-  (`Ctrl+RightDrag`) is the mouse's accelerator for the same resize,
-  by design: it has no touch binding, because this is its touch
-  route. **On the browser** neither half exists. `LongPress` is the
-  one touch gesture that resolves through the keybind table, and the
-  one that is native-only. Its default `Action` is `NativeOnly`, so on the
-  browser the dispatch returns `Unhandled` and a one-shot `warn!`
-  names the remedy; the gesture is *recognized* identically on both
-  targets, and only the `Action` it reaches is not. Deliberate rather
-  than pending: long-press is the touch peer of the keyboard's `r`,
-  so rebinding the browser's long-press to some unrelated
-  `Compatible` Action would make one gesture mean two different
-  things on two targets — a worse CODE_CONVENTIONS §4 outcome than
-  a gesture that is honestly unavailable and says so. **The rest of the touch
-  vocabulary is not affected**: tap, one-finger pan and pinch-zoom
-  resolve to no `Action` at all and run on both targets through
-  `dispatch::apply_touch_effect`, which is what makes the browser
-  usable by finger without this entry being closed. Parity is the
-  `InteractionMode::Resize` chrome plus its handle drag reaching the
-  browser — the same drag-state machine **Rubber-band select** below
-  is parked on, with `touch_handle`'s routing ported beside it so a
-  finger can hold a handle there too — and flips this `Action` to
-  `Compatible` when it lands.
+- **Editing modes and their gestures** — resize (`EnterResizeMode`,
+  `FastResizeStart`, a finger on a handle), the node and section text
+  editors and the edge-label and portal-caption single-line editor
+  were deleted with the old model (V1-C3, #244), on both targets, and
+  are rebuilt on the document's writer by V1-C7 (#248) and V1-C8 (#249).
+  Their Actions stay, answered unhandled with a `debug!` naming the
+  owner, and ship unbound; each owner decides its targets when it lands.
+  The touch vocabulary that reaches no `Action` — tap, one-finger pan and
+  pinch-zoom — runs on both targets through `dispatch::apply_touch_effect`.
 - **Rubber-band select** (`DragState::SelectingRect`,
-  `src/application/app/drain_frame.rs`,
-  `scene_rebuild::rebuild_selection_highlight`,
-  `MindMapDocument::{set,take}_rect_select_preview`) —
+  `src/application/app/drain_frame.rs`, `src/application/view/band.rs`,
+  `MapView::{nodes_in, set_band_targets, band_targets, set_band}`) —
   native-only because `DragState` and the per-frame drain are:
   the browser has no drag-state machine and no `AboutToWait` to
   hang a per-frame hit-test off, so there is nothing for a
   Shift+drag to enter. **The read is deliberately not gated.**
-  `MindMapDocument::rect_select_preview` (the method) and
-  `scene_rebuild::highlight_entries_for` are cross-platform,
-  because both targets' node-tree rebuilds go through the one
-  mapping that answers "which nodes are tinted"; only the
-  gesture that fills it is native. On wasm32 the field is
-  therefore always `None`, and the tier
-  `rebuild_selection_highlight` is not native *by nature* —
-  whichever browser-side gesture first needs a highlight-only
-  repaint takes the `cfg` off it. Parity for the gesture itself
+  The view's overlay (`view::overlay`) tints what a band covers while
+  one is out and the selection otherwise, on both targets; only the
+  gesture, the band drawn on the chrome layer (`view::band`) and the
+  four `MapView` methods they use are native. On wasm32 the band's
+  targets are therefore always `None`. The chrome layer's write path
+  (`MapView::apply_chrome`, a sync pass's chrome builders) is both
+  targets'. Parity for the gesture itself
   rides on the browser gaining a drag-state machine — a press
   needs somewhere to be pending before it can promote — and is
   not yet scheduled. What the browser lacks for it is the
   *input-driven* half of a frame — native's `heartbeat::drain_inputs`
   draining a drag state — not a frame: the browser's frame exists
-  (`run_wasm/event_redraw_requested.rs`) and runs the time-driven
-  half, the animation tick, since #144. (Until then a per-frame
-  animation drain was listed beside this entry as a second
-  per-frame mechanism the browser lacked, and this sentence
-  claimed the two shared a prerequisite until #35's registry work
-  read them side by side.)
-- **Animation pause during a drag** (`heartbeat::drain_inputs`'s
-  `anim_pause_start_ms`; `MindMapDocument::shift_active_animations_start_ms`)
-  — native-only because the tree-mutating drags it is keyed to
-  (`MovingNode`, `MovingSection`, `SectionResize`, `NodeResize`)
-  are: the tick is skipped while one runs and every instance's
-  `start_ms` is shifted past the pause on release, so an animation
-  resumes where it froze instead of snapping to its end. **The
-  tick itself is not gated, since #144.**
-  `animation_drain::drain_animation_tick`
-  (`src/application/app/animation_drain.rs`) is one body both
-  targets' frames run — native's heartbeat from `about_to_wait`
-  and from a clock step, the browser's from
-  `WindowEvent::RedrawRequested`, which asks for the next frame
-  while `animation_drain::keeps_ticking` says an animation owes
-  one — so an animated `CustomMutation` (`timing.duration_ms > 0`)
-  started on the browser, from the `custom_mutation_bindings`
-  keystroke tier or a node's `OnClick` trigger, lerps, completes
-  and pushes its undo entry as on native. The two routes land
-  through one body, `app::fire_custom_mutation`, whose no-tree
-  semantics are decided on #144. Parity for the pause rides with
-  the browser's drag-state machine (**Rubber-band select** above):
-  there is no drag to pause for until there is a drag.
+  (`run_wasm/event_redraw_requested.rs`) and runs an injected sample
+  and the view's sync.
+- **Animations** — none run, on either target, since V1-C3 (#244).
+  Animated edits return with V1-D1 (#250) and presentations with
+  V1-D2 (#251), each as a transaction on the document's writer.
 - **Virtual-clock stepping: the native frame it steps**
   (`src/application/app/heartbeat.rs`; IPC-09/#69) — what a step
   runs at each heartbeat on native is native's whole frame: the
-  throttled drag and picker drains, the recorder's frame, the freeze
+  rubber band and the view's sync, the recorder's frame, the freeze
   watchdog's tick. **The step itself is not gated, since IPC-15
   (#75)**: the schedule (`app/step.rs`: `run_step`, the `Steps`
   trait, `Beat`) is one body both targets run, the browser
   implements it over its own frame (`run_wasm/step.rs`: one injected
-  sample, then the animation tick, at each virtual instant), and
+  sample, then the view's sync, at each virtual instant), and
   `clock.set_mode` / `clock.step` / `clock.wait` are served over the
-  browser transport. Neither the clock nor the tick was ever gated:
+  browser transport. The clock was never gated:
   `AppClock` (`src/application/clock.rs`) compiles for both targets,
   the browser holds one (`WasmInputState.clock`), every browser
   reader of app time reads it, and since #144 the browser's frame
@@ -436,13 +368,13 @@ the parity trajectory (or why none is owed):
   `--no-keep` deletes the prior output up front instead, for when the
   disk matters more than the safety net. Requires `trunk` on `PATH`
   and the `wasm32-unknown-unknown` target installed.
-- **Run the app**: `./run.sh [map.mindmap.json]` launches the release
+- **Run the app**: `./run.sh [map.mandala.json]` launches the release
   binary and `trunk serve --release` in parallel; Ctrl+C stops both.
   It launches rather than builds, so it refuses up front — naming
   which one — when `target/release/mandala` is absent or not
   executable, when the map file does not exist, or when `trunk` is
   not on `PATH`; produce the binary with `./build.sh` first. For
-  one-off iteration use `cargo run -- maps/testament.mindmap.json`
+  one-off iteration use `cargo run -- maps/testament.mandala.json`
   (native) or `trunk serve` (WASM) directly; `cargo run` builds what
   it needs, which makes it the form that works from a fresh clone.
 - **Dev-profile build**: `./debug_build.sh [flags]` is `./build.sh
@@ -525,8 +457,8 @@ the parity trajectory (or why none is owed):
   is stale. A `cargo update` that puts a crate on the lockfile at a
   second version fails `baumhard::util::lock_duplicates` until the
   duplicate is undone or listed there with its reason.
-- **Load a different mindmap**: the first positional CLI arg is the path
-  to a `.mindmap.json` file; WASM reads it from the `?map=` query param.
+- **Load a different map**: the first positional CLI arg is the path
+  to a `.mandala.json` file; WASM reads it from the `?map=` query param.
 - **Drive the running app over IPC** (native): launch with
   `--ipc <socket-path>` — `$XDG_RUNTIME_DIR/mandala.sock` is the
   recommended place; on Windows the value is a pipe name instead,

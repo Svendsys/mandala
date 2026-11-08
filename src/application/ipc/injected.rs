@@ -20,10 +20,10 @@
 //! not the one it found when it was sent.
 //!
 //! **Pacing.** A drag's fidelity depends on its moves landing in
-//! different frames: `drain_inputs` drives the throttled drag between
-//! them, and a press, a dozen moves and a release run back to back in
-//! one drain would skip `ThrottledInteraction` entirely and test a
-//! path no human hits. So a [`Pacing::PerFrame`] command enqueues its
+//! different frames: `drain_inputs` drives the drag state between
+//! them (the rubber band's frame, a pan's camera), and a press, a
+//! dozen moves and a release run back to back in one drain would skip
+//! those frames entirely and test a path no human hits. So a [`Pacing::PerFrame`] command enqueues its
 //! samples into the [`InjectedQueue`], and the heartbeat applies one
 //! per frame, ahead of `drain_inputs`, the place a winit event lands.
 //! A [`Pacing::Burst`] command — a move, a click, a key tap, a typed
@@ -402,19 +402,16 @@ mod tests {
             "event_mouse_click.rs",
             "event_cursor_moved.rs",
             "event_keyboard.rs",
-            "click.rs",
             "touch_gesture.rs",
-            "modal_editor.rs",
+            "drain_frame.rs",
         ]
         .iter()
         .map(|f| repo_path(&format!("src/application/app/{f}")))
         .collect();
         for dir in [
-            "throttled_interaction",
             "dispatch",
             "dispatch/cross_dispatch",
-            "text_edit",
-            "single_line_edit",
+            "dispatch/families",
             "console_input",
             "color_picker_flow",
         ] {

@@ -24,9 +24,8 @@ use crate::application::scene_host::AppScene;
 use crate::application::platform::input::{ElementState, Key, MouseButton, MouseScrollDelta, TouchPhase};
 use crate::application::platform::window::PhysicalPosition;
 
-use super::single_line_edit::SingleLineEditor;
-use super::text_edit::TextEditState;
-use super::throttled_interaction::{ColorPickerHoverInteraction, DrainContext, ReleaseCommit};
+use crate::application::view::MapView;
+
 use super::{event_cursor_moved, event_keyboard, event_mouse_click, DragState, InteractionMode, LastClick};
 
 /// Borrowed view of the persistent state every interactive-path
@@ -39,42 +38,27 @@ use super::{event_cursor_moved, event_keyboard, event_mouse_click, DragState, In
 /// InitState` — the struct is a re-packaging of existing borrows,
 /// not a new owner of state.
 pub(in crate::application::app) struct InputHandlerContext<'a> {
-    /// The loaded mindmap document, or `None` before the first
-    /// successful `loader::load_from_file`.
+    /// The open map, or `None` before the first one is installed.
     pub document: &'a mut Option<MindMapDocument>,
-    /// Baumhard tree projection of the document. Rebuilt / mutated
-    /// in lockstep with `document`.
-    pub mindmap_tree: &'a mut Option<baumhard::mindmap::tree_builder::MindMapTree>,
-    /// App-layer scene host owning every tree-rendered component.
+    /// The map's view — the projector, the glyph layers, the overlays.
+    /// `Some` exactly when `document` is.
+    pub view: &'a mut Option<MapView>,
+    /// The screen-space overlays' trees (console, color picker).
     pub app_scene: &'a mut AppScene,
     /// The active renderer.
     pub renderer: &'a mut Renderer,
-    /// Per-edge connection glyph cache.
-    pub scene_cache: &'a mut baumhard::mindmap::scene_cache::SceneConnectionCache,
     /// Current pointer / drag state machine.
     pub drag_state: &'a mut DragState,
-    /// High-level interaction mode (`Default`, `Reparent`, `Connect`,
-    /// `NodeEdit`, `Resize`). Drives click routing, mode-gated chrome
-    /// (resize anchors, target highlights), and selection resolution.
-    /// Mutated by mode-transition Action arms (`EnterReparentMode`,
-    /// `EnterConnectMode`, `EnterResizeMode`, `ExitMode`,
-    /// `ReparentToTarget`, `ConnectToTarget`).
+    /// High-level interaction mode.
     pub interaction_mode: &'a mut InteractionMode,
     /// Console (slash-command overlay) state.
     pub console_state: &'a mut ConsoleState,
     /// Console command-history ring.
     pub console_history: &'a mut Vec<String>,
-    /// Inline single-line editor state (edge label / portal
-    /// caption).
-    pub single_line_edit_state: &'a mut SingleLineEditor,
-    /// Inline node text editor state.
-    pub text_edit_state: &'a mut TextEditState,
     /// Glyph-wheel color-picker state.
     pub color_picker_state: &'a mut ColorPickerState,
     /// Previous click (time, position, hit) for double-click detection.
     pub last_click: &'a mut Option<LastClick>,
-    /// The node the cursor is currently over, if any.
-    pub hovered_node: &'a mut Option<String>,
     /// Last-known cursor position in screen space.
     pub cursor_pos: &'a mut (f64, f64),
     /// Modifier snapshot maintained by `ModifiersChanged` events.
@@ -82,8 +66,8 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// for the one event it is (`Self::apply_injected`); no handler
     /// writes it.
     pub modifiers: &'a mut ModifiersState,
-    /// Per-frame cursor-icon flag — flipped to "hand" over a button
-    /// node by the cursor-move handler.
+    /// Per-frame cursor-icon flag — flipped to "hand" over a node
+    /// with an `on.click` verb by the cursor-move handler.
     pub cursor_is_hand: &'a mut bool,
     /// Last cursor icon written via `Window::set_cursor`. The
     /// cursor_moved handler skips the per-frame `set_cursor`
@@ -91,21 +75,12 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// dedupes `set_cursor` only on macOS / X11; Windows + Wayland
     /// re-issue the underlying OS call every time.
     pub cursor_icon_last: &'a mut winit::window::CursorIcon,
-    /// Throttled color-picker hover interaction. The picker's
-    /// input paths set `.dirty` when HSV state changes; the
-    /// per-frame drain rebuilds the scene + overlay through the
-    /// unified adaptive-throttle shell.
-    pub picker_hover: &'a mut ColorPickerHoverInteraction,
     /// Resolved user keybinds. `&` (immutable) — no dispatch path
     /// mutates keybinds; query methods (`action_for_*`, `macro_for`,
-    /// `custom_mutation_for`, `has_*`) are all `&self`. Track-C
+    /// `edit_for`, `has_*`) are all `&self`. Track-C
     /// review reflagged the original `&mut` as dead.
     pub keybinds: &'a ResolvedKeybinds,
-    /// Macro registry (App + User tiers loaded at startup; Map tier
-    /// re-loaded whenever a document is replaced via `open` / `new`).
-    /// Mutable so the document-replace path in
-    /// `execute_console_line` can rebuild the Map tier without
-    /// taking a separate ad-hoc borrow.
+    /// Macro registry: the App and User tiers, loaded at startup.
     pub macros: &'a mut MacroRegistry,
     /// Where a server-chosen screenshot lands, and the dir a
     /// caller-chosen path may overwrite into.
@@ -113,10 +88,6 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// The frame-sequence recording in progress, for the console's
     /// `record` verb to start and stop.
     pub recorder: &'a mut crate::application::capture::record::Recorder,
-    /// The capture engine's scratch scene (`app::capture_scene`), for
-    /// the console's `screenshot` and `record` verbs and the
-    /// recording heartbeat.
-    pub scratch_canvas: &'a mut super::capture_scene::ScratchCanvas,
     /// The freeze watchdog, for a screenshot to tick as it progresses
     /// and for a clock step to tick once per heartbeat.
     pub watchdog: &'a super::freeze_watchdog::FreezeWatchdog,
@@ -125,13 +96,6 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     pub shell: &'a super::shell::Shell,
     /// Touch gesture state machine (`super::touch_gesture`).
     pub touch_recognizer: &'a mut super::touch_gesture::TouchGestureRecognizer,
-    /// The finger holding a resize handle, if one does
-    /// (`super::touch_handle`).
-    pub touch_handle: &'a mut super::touch_handle::HandleTouch,
-    /// The app-clock ms at which a tree-mutating drag suspended the
-    /// animation tick, or `None` while ticks run. Read and written by
-    /// the frame drain ([`Self::drain_frame`]).
-    pub anim_pause_start_ms: &'a mut Option<u64>,
     /// Raw input the IPC `input` family queued for the heartbeat
     /// (`format/ipc.md` §`input`). Always empty without `--ipc`.
     pub injected: &'a mut crate::application::ipc::injected::InjectedQueue,
@@ -151,40 +115,9 @@ impl<'a> InputHandlerContext<'a> {
     pub(in crate::application::app) fn observed(&self) -> crate::application::ipc::events::Observed<'_> {
         crate::application::ipc::events::Observed {
             document: self.document.as_ref(),
+            changes: &[],
             camera: self.renderer.camera(),
             mode: &*self.interaction_mode,
-        }
-    }
-
-    /// Renderer-free slice for a throttled drag's release commit —
-    /// see
-    /// [`super::throttled_interaction::release`]. The commit body
-    /// mutates the model and the scene cache, then hands back a
-    /// [`super::throttled_interaction::ReleaseRefresh`] the caller
-    /// runs against [`Self::drain_context`].
-    pub(in crate::application::app) fn release_commit(&mut self) -> ReleaseCommit<'_> {
-        ReleaseCommit {
-            document: &mut *self.document,
-            mindmap_tree: &mut *self.mindmap_tree,
-            scene_cache: &mut *self.scene_cache,
-        }
-    }
-
-    /// The per-frame drain bundle, rebuilt from the event-loop
-    /// context. `drain_inputs` builds the same struct from
-    /// `InitState` directly; the release path reaches it from here
-    /// so a drag's release-commit and its per-frame drains share
-    /// one context type.
-    pub(in crate::application::app) fn drain_context(&mut self) -> DrainContext<'_> {
-        DrainContext {
-            document: &mut *self.document,
-            mindmap_tree: &mut *self.mindmap_tree,
-            app_scene: &mut *self.app_scene,
-            renderer: &mut *self.renderer,
-            scene_cache: &mut *self.scene_cache,
-            color_picker_state: &mut *self.color_picker_state,
-            interaction_mode: &*self.interaction_mode,
-            throttled: !self.clock.is_virtual(),
         }
     }
 
@@ -210,29 +143,21 @@ impl<'a> InputHandlerContext<'a> {
         (
             super::input_context_core::InputContextCore {
                 document: self.document.as_mut(),
-                mindmap_tree: &mut *self.mindmap_tree,
-                app_scene: &mut *self.app_scene,
+                view: &mut *self.view,
                 renderer: &mut *self.renderer,
-                scene_cache: &mut *self.scene_cache,
-                text_edit_state: &mut *self.text_edit_state,
                 last_click: &mut *self.last_click,
                 cursor_pos: &mut *self.cursor_pos,
                 modifiers: &*self.modifiers,
-                keybinds: self.keybinds,
                 macros: &mut *self.macros,
                 interaction_mode: &mut *self.interaction_mode,
-                clock: &*self.clock,
             },
             super::input_context_core::NativeContextExt {
                 drag_state: &mut *self.drag_state,
                 console_state: &mut *self.console_state,
                 console_history: &mut *self.console_history,
-                single_line_edit_state: &mut *self.single_line_edit_state,
                 color_picker_state: &mut *self.color_picker_state,
-                hovered_node: &mut *self.hovered_node,
                 cursor_is_hand: &mut *self.cursor_is_hand,
                 cursor_icon_last: &mut *self.cursor_icon_last,
-                picker_hover: &mut *self.picker_hover,
             },
         )
     }
@@ -279,17 +204,6 @@ impl InputHandlerContext<'_> {
         // reaches its arm.
         let phase = super::dispatch::touch_phase(phase);
         let pos = (location.x, location.y);
-        // A finger that starts a gesture on a resize handle is the
-        // left button instead (#160, `touch_handle`), and never reaches
-        // the recognizer. The handle question is asked only for the
-        // one event that can claim a handle.
-        let recognizer_idle = self.touch_recognizer.is_idle();
-        let on_handle = phase == Phase::Started && recognizer_idle && self.finger_lands_on_resize_handle(pos);
-        match self.touch_handle.route(phase, id, recognizer_idle, on_handle) {
-            super::touch_handle::TouchRoute::Recognizer => {}
-            super::touch_handle::TouchRoute::Ignore => return false,
-            super::touch_handle::TouchRoute::Handle(step) => return self.drive_handle_finger(step, location),
-        }
         // No gesture recognized — but the recognizer may have moved
         // its internal state (e.g. Started → OneFinger). The caller
         // still wants a redraw on Started/Moved so any
@@ -319,47 +233,8 @@ impl InputHandlerContext<'_> {
             super::dispatch::TouchStep::Effect(effect) => {
                 let (mut core, _native) = self.split_borrow();
                 super::dispatch::apply_touch_effect(effect, &mut core);
-                // The camera-geometry reprojection a pinch owes is
-                // picked up by `drain_camera_geometry_rebuild` in the
-                // frame this redraw requests, under the same
-                // renderer-side dirty flag the wheel path uses.
                 true
             }
-        }
-    }
-
-    /// True when a finger at `pos` (surface pixels) lands on a resize
-    /// handle the left press would capture — the same question, through
-    /// the same `event_mouse_click::resize_handle_press`, so a finger and
-    /// a mouse cannot disagree about what is a handle. Nothing outside
-    /// `InteractionMode::Resize`.
-    fn finger_lands_on_resize_handle(&self, pos: (f64, f64)) -> bool {
-        let canvas_pos = self.renderer.screen_to_canvas(pos.0 as f32, pos.1 as f32);
-        event_mouse_click::resize_handle_press(
-            self.document.as_ref(),
-            self.interaction_mode,
-            canvas_pos,
-            super::HANDLE_HIT_TOLERANCE_PX * self.renderer.canvas_per_pixel(),
-        )
-        .any()
-    }
-
-    /// Run a handle finger's step as the left-button events it stands
-    /// for, through the same `on_*` entry points a mouse reaches: the
-    /// press captures the handle, the moves promote and drive the
-    /// `Throttled` resize, and the release commits it with its undo
-    /// entry. Returns whether to request a redraw.
-    fn drive_handle_finger(
-        &mut self,
-        step: super::touch_handle::HandleStep,
-        location: PhysicalPosition<f64>,
-    ) -> bool {
-        use super::touch_handle::HandleStep;
-        let moved = self.on_cursor_moved(location);
-        match step {
-            HandleStep::Press => self.on_mouse_input(ElementState::Pressed, MouseButton::Left),
-            HandleStep::Move => moved,
-            HandleStep::Release => self.on_mouse_input(ElementState::Released, MouseButton::Left),
         }
     }
 
@@ -442,12 +317,10 @@ impl InputHandlerContext<'_> {
     pub(super) fn on_cursor_moved(&mut self, position: PhysicalPosition<f64>) -> bool {
         let shell = self.shell;
         event_cursor_moved::handle_cursor_moved(position, shell, self);
-        // Hover that doesn't drag and doesn't open the
-        // picker doesn't change visuals — no redraw needed.
-        // Any active drag (Pending → Throttled etc.) or an
-        // open picker requires a fresh frame so the drag
-        // preview / hover marker tracks the cursor.
-        !matches!(*self.drag_state, DragState::None) || self.color_picker_state.is_open()
+        // Hover that doesn't drag changes no pixels — no redraw
+        // needed. An active drag (a pan, a rubber band) requires a
+        // fresh frame so the camera or the band tracks the cursor.
+        !matches!(*self.drag_state, DragState::None)
     }
 
     /// `WindowEvent::KeyboardInput`. A press reaches the full
@@ -464,28 +337,12 @@ impl InputHandlerContext<'_> {
 
     /// `WindowEvent::Focused(false)`: the window may never deliver the
     /// release any in-flight gesture is waiting for, so resolve them
-    /// all now (#153) rather than leave one unreachable.
-    ///
-    /// The drag state ends at `None` (`DragState::end_on_focus_loss`
-    /// says what each variant owes); a throttled drag is committed
-    /// through the same release gate a button release uses, with
-    /// `Release::FocusLost`, so it lands with its undo entry exactly
-    /// as the owning release would have landed it. A color-picker
-    /// wheel gesture ends the way its release ends it. Returns whether
+    /// all now (#153) rather than leave one unreachable: the drag state
+    /// ends at `None` (`DragState::end_on_focus_loss`). Returns whether
     /// to request a redraw.
     pub(super) fn on_focus_lost(&mut self) -> bool {
-        // A finger holding a resize handle loses its claim with the
-        // drag it was driving, which the commit below resolves.
-        self.touch_handle.forget();
-        let picker_gesture_ended =
-            super::color_picker_flow::end_color_picker_gesture(self.color_picker_state);
         let was_idle = matches!(*self.drag_state, DragState::None);
-        if let Some(mut drag) = self.drag_state.end_on_focus_loss() {
-            use super::throttled_interaction::release::{commit_if_resolved, Release};
-            if let Some(refresh) = commit_if_resolved(Release::FocusLost, &mut drag, self.release_commit()) {
-                refresh.execute(self.drain_context());
-            }
-        }
-        picker_gesture_ended || !was_idle
+        self.drag_state.end_on_focus_loss();
+        !was_idle
     }
 }

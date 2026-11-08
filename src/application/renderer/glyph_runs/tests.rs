@@ -27,13 +27,21 @@ use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::GfxMutation;
 use baumhard::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunOverrideOp, RunShape};
-use baumhard::mindmap::custom_mutation::apply_mutations_to_element;
 use glam::Vec2;
 
 use super::atlas::{Page, Slot};
 use super::emit::{emit_run, EmitCounts, GlyphSprite, MAX_RASTER_FONT_PX};
 use super::instance;
 use crate::application::renderer::target_encoding::TargetEncoding;
+
+/// Apply `mutations` to `target` in order, through the glyph mutation
+/// path a mutator walk takes for one element.
+fn apply_mutations_to_element(mutations: &[GfxMutation], target: &mut GfxElement) {
+    use baumhard::engine::mutation::Mutation;
+    for mutation in mutations {
+        mutation.apply_to(target, &());
+    }
+}
 
 /// The face every run here is shaped in: compiled into the binary, so
 /// the glyphs do not depend on the machine's fonts.
@@ -920,89 +928,4 @@ fn test_glyph_run_emit_skips_hostile_values_and_draws_the_rest() {
         emit(&nan_opacity, &camera).0.is_empty(),
         "a NaN opacity draws nothing"
     );
-}
-
-/// **The canvas pass holds a run without shaping it, and hands it to the
-/// glyph pass with its tree's offset.** A tree holding one run under its
-/// (`Void`) root. The first pass holds the run (`recaptured`) and shapes
-/// nothing for it — its one `reshaped` is the root, which yields no
-/// buffer. Every later pass runs with this thread holding the font
-/// guard, so a pass that took the lock would panic on the re-entrant
-/// acquire: an untouched pass does nothing, a moved tree is patched (the
-/// run's offset follows), and a run whose opacity changed is held again,
-/// all without the lock.
-#[test]
-fn test_glyph_run_canvas_pass_holds_runs_without_the_font_lock() {
-    use crate::application::renderer::{refresh, ScenePassKind};
-    use baumhard::engine::tree::Placement;
-    use baumhard::gfx_structs::scene::Scene;
-    use baumhard::gfx_structs::tree::GfxTree;
-
-    use super::super::scene_shape_cache::glyph_runs;
-
-    let run = path_run(
-        shaped("AB"),
-        vec![at(0, 10.0, 10.0), at(1, 30.0, 10.0)],
-        Vec2::ZERO,
-    );
-    let mut tree: GfxTree = GfxTree::new_non_indexed();
-    let node = tree
-        .insert_child(
-            tree.root(),
-            GfxElement::new_run(run.clone(), 0, 5),
-            Placement::Last,
-        )
-        .expect("a child of the root");
-    let mut scene = Scene::new();
-    let id = scene.insert(tree, 0, Vec2::new(3.0, 4.0));
-    let mut held = Vec::new();
-    let pass = |scene: &Scene, held: &mut Vec<_>| {
-        // Held across the pass: a lock taken inside it would panic.
-        with_fonts(|_guard| refresh(scene, &[id], held, ScenePassKind::Canvas))
-    };
-
-    let cold = refresh(&scene, &[id], &mut held, ScenePassKind::Canvas);
-    assert_eq!(
-        (cold.walked, cold.reshaped, cold.patched, cold.recaptured),
-        (2, 1, 0, 1),
-        "the root and the run walked; the run held, not shaped"
-    );
-    let runs: Vec<_> = glyph_runs(&held).collect();
-    assert_eq!(runs.len(), 1);
-    assert!(runs[0].0.same_state(&run), "the run held is the run in the tree");
-    assert_eq!(runs[0].1, Vec2::new(3.0, 4.0), "with its tree's offset");
-
-    let warm = pass(&scene, &mut held);
-    assert_eq!(
-        (warm.reshaped, warm.patched, warm.recaptured),
-        (0, 0, 0),
-        "nothing changed"
-    );
-
-    scene.set_offset(id, Vec2::new(8.0, 4.0));
-    let moved = pass(&scene, &mut held);
-    assert_eq!(
-        (moved.patched, moved.recaptured),
-        (2, 0),
-        "a moved tree moves the root and the run, and holds nothing again"
-    );
-    assert_eq!(
-        glyph_runs(&held).next().map(|(_, offset)| offset),
-        Some(Vec2::new(8.0, 4.0))
-    );
-
-    scene
-        .tree_mut(id)
-        .expect("registered")
-        .update(node, |element| {
-            apply_mutations_to_element(&[GfxMutation::RunOpacity(0.25)], element)
-        })
-        .expect("the node exists");
-    let faded = pass(&scene, &mut held);
-    assert_eq!(
-        (faded.reshaped, faded.recaptured),
-        (0, 1),
-        "a changed run is held again"
-    );
-    assert_eq!(glyph_runs(&held).next().map(|(run, _)| run.opacity()), Some(0.25));
 }

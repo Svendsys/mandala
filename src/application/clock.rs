@@ -11,7 +11,7 @@
 //! process's monotonic wall clock. [`AppClock::now_ms`] is the app
 //! clock: the wall clock in real mode, a stored reading in virtual
 //! mode. Whatever *measures cost* — the FPS overlay, the freeze
-//! watchdog, the drag throttle's budget, an encode's timing, a
+//! watchdog, an encode's timing, a
 //! deadline that guards a client's liveness — reads the wall clock (or
 //! a `web_time::Instant`, which is the same clock), because a stepped
 //! or frozen clock would make a stall invisible. Whatever *behaves*
@@ -33,10 +33,9 @@
 //! axis from the animations'.
 //!
 //! **Cross-platform.** The type and its modes compile for both
-//! targets and the browser holds one, in real mode. The tick that
-//! reads it runs on both targets' frames (`app::animation_drain`), and
-//! the browser's frame already stands still under a virtual clock as
-//! native's loop frame does. What advances virtual time is the step
+//! targets and the browser holds one, in real mode. Both targets'
+//! frames read it (`app::step::Beat`), and the browser's frame stands
+//! still under a virtual clock as native's loop frame does. What advances virtual time is the step
 //! driver (`heartbeat::step` / `run_step`), which lives on native's
 //! handler context and is commanded over IPC and the console, both
 //! native — so `clock.step` is native for the driver's reason, not
@@ -129,18 +128,6 @@ impl AppClock {
     /// The app clock's reading, in milliseconds.
     pub(crate) fn now_ms(&self) -> f64 {
         self.reading_at(wall_ms())
-    }
-
-    /// [`Self::now_ms`] as the whole milliseconds animation and
-    /// trigger stamps are kept in. Exact under virtual time, whose
-    /// readings are integral: it starts on a whole millisecond
-    /// ([`Self::set_mode`]), and a step stops it only on whole
-    /// milliseconds — its heartbeats are whole-millisecond offsets of
-    /// a whole-millisecond start, and a stepped recording's frame
-    /// boundaries are rounded up to whole milliseconds
-    /// (`capture::record::Timeline`).
-    pub(crate) fn now_whole_ms(&self) -> u64 {
-        self.now_ms() as u64
     }
 
     /// The reading as an [`Instant`], for a reader typed in instants
@@ -390,7 +377,6 @@ mod tests {
             "the wall clock no longer moves it"
         );
         assert_eq!(clock.now_ms(), 1235.0);
-        assert_eq!(clock.now_whole_ms(), 1235);
     }
 
     /// **The axis is continuous across both switches.** Leaving virtual

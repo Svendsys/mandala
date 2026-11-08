@@ -1,0 +1,82 @@
+{
+  "format": 1,
+  "name": "theme_demo",
+  "theme": {
+    "active": "dark",
+    "variants": {
+      "dark": {
+        "accent": "#30b082",
+        "bg": "#141414",
+        "edge": "#888888",
+        "fg": "#eeeeee"
+      },
+      "forest": {
+        "accent": "#6bbf59",
+        "bg": "#0e2018",
+        "edge": "#3a5a3a",
+        "fg": "#c6e8c0"
+      },
+      "light": {
+        "accent": "#b84a62",
+        "bg": "#f5f1e8",
+        "edge": "#5c5c5c",
+        "fg": "#1b1b1b"
+      }
+    }
+  },
+  "background": "var(bg)",
+  "nodes": [
+    {
+      "id": 1,
+      "position": [-200.0, -220.0],
+      "min_size": [429.17, 80.0],
+      "color": "var(fg)",
+      "sections": [{"spans": [{"text": "theme variable demo", "size": 36.0, "color": "var(fg)", "weight": "bold"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.175, "color": "var(accent)", "spans": [{"text": "·"}]}]}
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "position": [-280.0, -80.0],
+      "min_size": [258.67, 56.0],
+      "color": "var(fg)",
+      "sections": [{"spans": [{"text": "colors follow the theme", "size": 22.0, "color": "var(fg)"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.25, "color": "var(accent)", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "var(edge)", "anchors": ["auto", "right"]}
+    },
+    {
+      "id": 3,
+      "parent": 1,
+      "position": [40.0, -80.0],
+      "min_size": [259.5, 56.0],
+      "color": "var(fg)",
+      "sections": [{"spans": [{"text": "edges follow the theme", "size": 22.0, "color": "var(fg)"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.25, "color": "var(accent)", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "var(edge)", "anchors": ["auto", "left"]}
+    },
+    {
+      "id": 4,
+      "position": [-280.0, 80.0],
+      "min_size": [160.0, 48.0],
+      "color": "var(fg)",
+      "sections": [{"spans": [{"text": "[ dark ]", "size": 22.0, "color": "var(fg)", "weight": "bold"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.29166666, "color": "var(accent)", "spans": [{"text": "·"}]}]}
+    },
+    {
+      "id": 5,
+      "position": [-80.0, 80.0],
+      "min_size": [160.0, 48.0],
+      "color": "var(fg)",
+      "sections": [{"spans": [{"text": "[ light ]", "size": 22.0, "color": "var(fg)", "weight": "bold"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.29166666, "color": "var(accent)", "spans": [{"text": "·"}]}]}
+    },
+    {
+      "id": 6,
+      "position": [120.0, 80.0],
+      "min_size": [160.0, 48.0],
+      "color": "var(fg)",
+      "sections": [{"spans": [{"text": "[ forest ]", "size": 22.0, "color": "var(fg)", "weight": "bold"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.29166666, "color": "var(accent)", "spans": [{"text": "·"}]}]}
+    }
+  ]
+}
