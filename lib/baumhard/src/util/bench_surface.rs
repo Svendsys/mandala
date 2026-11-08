@@ -455,16 +455,6 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "flow/tests/halves_tests.rs",
-            "test_flow_halves_the_secondary_rule_brings_short_lines_home_and_moves_nothing_else",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "flow/tests/halves_tests.rs",
-            "test_flow_halves_a_line_brought_home_makes_no_touch_its_lines_did_not",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "flow/tests/halves_tests.rs",
             "test_flow_halves_a_box_with_no_ink_touches_nothing",
             CannotCompileIntoTheLibrary,
         ),

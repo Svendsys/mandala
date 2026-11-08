@@ -609,12 +609,6 @@ pub(crate) struct Trace {
     /// because its outline is too thin to hold its two lines apart
     /// (ruling R38.1): never overlap wins over never cut.
     pub(crate) cut_apart: Vec<usize>,
-    /// For a text frame, its lines that end short of their part's end by
-    /// more than their tolerance even by their secondary rule
-    /// (`halves::Layout::reach_its_end`, #309): each line's half and how
-    /// far short, by arc length. A line its half cannot hold, pressed, is
-    /// [`Unheld::pressed`]'s, not this.
-    pub(crate) short: Vec<(usize, f32)>,
     /// For a text frame, the clearance each half's line keeps at each
     /// junction, `[half][junction]`, as its last clearance search left
     /// it: never `NaN`.

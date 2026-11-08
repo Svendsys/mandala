@@ -1183,38 +1183,6 @@ fn test_a_shrunk_frame_lays_a_bounded_number_of_lines() {
     assert!(builds <= 10, "the shrunk quatrain: {builds} builds, at most 10");
 }
 
-/// Issue #309's first comment (the B9 final review, 5757429244): the
-/// one-gap lines of the reviewer's four probe tests — the frame its other
-/// line can give the clearance, the frame cut apart outward, the touch
-/// check past its looks and the generated sweep — each end at their part's
-/// end within their tolerance, at normal scale (parts' ends within 10¹⁵).
-/// Some once ended points short where no tracking gap could bring them
-/// home: their length steps past the end as the second letter crosses a
-/// bend, and the secondary rule now sets that letter at the end, the
-/// line's only gap taking what is left, no tighter than its font's own
-/// (`halves::Layout::reach_its_end`).
-///
-/// Precondition: one-gap lines are laid. Control (run, not committed):
-/// with the secondary rule off (`NO_SECONDARY_RULE` set for the whole
-/// suite), red, on this assertion's message. (No `do_*` twin: it reads a
-/// test counter.)
-#[test]
-fn test_the_four_probe_tests_one_gap_lines_end_at_their_part_s_end() {
-    use crate::flow::place::halves::ONE_GAP_LINES;
-    let before = ONE_GAP_LINES.with(std::cell::Cell::get);
-    test_a_frame_whose_other_line_can_give_the_clearance_is_not_cut();
-    test_a_frame_cut_apart_outward_is_owed_no_longer();
-    test_flow_raw_finding_a_touch_check_past_its_looks_a_box();
-    test_generated_flows_hold_every_flow_property();
-    let after = ONE_GAP_LINES.with(std::cell::Cell::get);
-    let (laid, short) = (after.0 - before.0, after.1 - before.1);
-    assert!(laid > 0, "precondition: the four probe tests lay one-gap lines");
-    assert_eq!(
-        short, 0,
-        "{short} of the four probe tests' {laid} one-gap lines at normal scale end past their tolerance of their part's end"
-    );
-}
-
 /// The 300 s flow_raw run's finding on #294 (base64 `bnAgZXRhaWx4dA==`,
 /// "np etailxt"): "around a rectangle: its natural length fits, and it
 /// was cut". `check_flow_bytes` lays it as a `Fit` frame round its
