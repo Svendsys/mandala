@@ -26,7 +26,7 @@
 //!
 //! An edit is read from a file with its names — theme variables,
 //! palettes, fonts, verbs — and those names are resolved against the
-//! open map when it runs ([`format::edits`](crate::document::format::edits));
+//! open map when it runs (`document::format::edits`);
 //! one that names something the map lacks refuses that run, naming the
 //! edit, the field and the name, and nothing is applied.
 

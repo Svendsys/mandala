@@ -243,9 +243,7 @@ fn test_grow_font_grows_every_span_by_two_points_set_or_inherited() {
     assert_eq!(node(&doc, 1).1.style.text.size, Some(FontSize::Pt(20.0)));
     for ident in [1, 2, 4, 3] {
         for (_, section) in kids(&doc, n(&doc, ident), DocKind::Section) {
-            let DocElement::Section(data) = section else {
-                panic!("a section")
-            };
+            let DocElement::Section(data) = section else { panic!("a section") };
             assert_eq!(data.text.size, None, "node {ident}'s section sets no size");
         }
     }
