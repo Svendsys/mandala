@@ -102,12 +102,6 @@ pub(crate) fn selected(doc: &MindMapDocument, kind: DocKind) -> Vec<NodeId> {
         .collect()
 }
 
-/// The children of `parent` of `kind`, in order.
-pub(crate) fn children(doc: &Document, parent: NodeId, kind: DocKind) -> impl Iterator<Item = NodeId> + '_ {
-    doc.children(parent)
-        .filter(move |&id| kind_of(doc, id) == Some(kind))
-}
-
 /// Elements, each with the mutations it receives, grouped by kind and
 /// mutations in the order each group was first met.
 #[derive(Default)]

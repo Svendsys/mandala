@@ -178,7 +178,7 @@ fn show(eff: &ConsoleEffects, index: Option<usize>) -> ExecResult {
             s.offset.y,
             s.align
                 .map_or("inherited".to_string(), |a| format!("{a:?}").to_lowercase()),
-            grammar::section_text(d, id)
+            crate::application::view::inspect::element_text(d, id)
         ))
     });
     ExecResult::lines(lines.collect::<Vec<_>>())

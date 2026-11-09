@@ -27,8 +27,9 @@ use baumhard::engine::structure::Subtree;
 
 use super::section::plain;
 use super::style::frame_of;
-use super::{children, selected, values, Groups, Steps};
+use super::{selected, values, Groups, Steps};
 use crate::application::document::{Interaction, MindMapDocument};
+use crate::application::view::inspect::children_of_kind;
 
 /// The glyphs [`cycle`] steps a frame's first ring through, in order,
 /// wrapping: light, heavy, double.
@@ -211,16 +212,6 @@ pub(crate) fn toggle(doc: &MindMapDocument) -> Steps {
     Ok(steps)
 }
 
-/// The text of `owner`'s spans, in order.
-fn text_of(doc: &Document, owner: NodeId) -> String {
-    children(doc, owner, DocKind::Span)
-        .filter_map(|span| match doc.get(span) {
-            Some(DocElement::Span(span)) => Some(span.text.as_str()),
-            _ => None,
-        })
-        .collect()
-}
-
 /// The steps that replace the spans of each selected frame's first ring
 /// with one span of the next of [`CYCLE`] after its text — the first
 /// when its text is none of them — and give a frame with no ring, and a
@@ -231,9 +222,9 @@ pub(crate) fn cycle(doc: &MindMapDocument) -> Steps {
     let mut by_glyph: Vec<(&str, Vec<NodeId>)> = CYCLE.iter().map(|&glyph| (glyph, Vec::new())).collect();
     let mut ringless = Vec::new();
     for frame in framed {
-        match children(d, frame, DocKind::Ring).next() {
+        match children_of_kind(d, frame, DocKind::Ring).next() {
             Some(first) => {
-                let text = text_of(d, first);
+                let text = crate::application::view::inspect::element_text(d, first);
                 let next = CYCLE
                     .iter()
                     .position(|&glyph| glyph == text)
@@ -264,7 +255,7 @@ pub(crate) fn add_ring(doc: &MindMapDocument, text: Option<&str>, size: Option<f
     let spans = text.map(plain).unwrap_or_default();
     let channel = framed
         .iter()
-        .flat_map(|&frame| children(d, frame, DocKind::Ring))
+        .flat_map(|&frame| children_of_kind(d, frame, DocKind::Ring))
         .filter_map(|ring| match d.get(ring) {
             Some(DocElement::Ring(ring)) => Some(ring.channel),
             _ => None,
@@ -284,7 +275,7 @@ fn rings_at(doc: &MindMapDocument, index: usize) -> Result<Vec<NodeId>, String> 
     frames(doc)?
         .into_iter()
         .map(|frame| {
-            children(d, frame, DocKind::Ring)
+            children_of_kind(d, frame, DocKind::Ring)
                 .nth(index)
                 .ok_or_else(|| format!("frame ring {index}: a selected node's frame has no ring {index}"))
         })

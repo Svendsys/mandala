@@ -30,10 +30,11 @@ use baumhard::document::mutation::ops::{
 use baumhard::document::values::{ColorRef, FontSize, Weight, ZoomWindow};
 use baumhard::font::fonts::AppFont;
 
-use super::{children, Groups, Steps};
+use super::{Groups, Steps};
 use crate::application::document::selection::kind_of;
 use crate::application::document::MindMapDocument;
 use crate::application::keybinds::{ColorAxis, ZoomBound};
+use crate::application::view::inspect::children_of_kind;
 
 /// `op` as the mutation of an element of `kind` that holds a text
 /// style, or `None` for a kind that holds none of its own.
@@ -59,7 +60,7 @@ fn range(doc: &MindMapDocument) -> Option<(NodeId, usize, usize)> {
 
 /// The frame of `node`, if it has one.
 pub(crate) fn frame_of(doc: &Document, node: NodeId) -> Option<NodeId> {
-    children(doc, node, DocKind::Frame).next()
+    children_of_kind(doc, node, DocKind::Frame).next()
 }
 
 /// The steps that set color `axis` to `color` (`None` inherits) on
@@ -99,7 +100,7 @@ pub(crate) fn color(doc: &MindMapDocument, axis: ColorAxis, color: Option<ColorR
                 };
                 for ring in frame
                     .into_iter()
-                    .flat_map(|frame| children(d, frame, DocKind::Ring))
+                    .flat_map(|frame| children_of_kind(d, frame, DocKind::Ring))
                 {
                     groups.add(d, ring, text(DocKind::Ring).into_iter().collect());
                 }
@@ -164,7 +165,7 @@ pub(crate) fn font(doc: &MindMapDocument, font: Font) -> Steps {
                     .into_iter()
                     .filter_map(|op| text_op(DocKind::Span, op))
                     .collect();
-                for span in children(d, id, DocKind::Span) {
+                for span in children_of_kind(d, id, DocKind::Span) {
                     groups.add(d, span, spans.clone());
                 }
             }

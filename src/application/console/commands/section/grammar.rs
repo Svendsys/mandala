@@ -25,9 +25,7 @@
 //! the compiler could not hold against it. There is one vocabulary
 //! now, and the unknown-subverb listing is derived from it.
 
-use baumhard::arena::NodeId;
 use baumhard::document::element::DocElement;
-use baumhard::document::ids::Document;
 
 use crate::application::console::completion::Completion;
 use crate::application::console::spec::{free, Form, Grammar, Key, Slot, Subverb, Vocabulary, Word};
@@ -150,16 +148,6 @@ pub static SECTION: Grammar = Grammar {
     bare: None,
 };
 
-/// The text of `section`: its spans' text, in order.
-pub(crate) fn section_text(doc: &Document, section: NodeId) -> String {
-    doc.children(section)
-        .filter_map(|child| match doc.get(child) {
-            Some(DocElement::Span(span)) => Some(span.text.as_str()),
-            _ => None,
-        })
-        .collect()
-}
-
 /// The popup for `section=<TAB>`: one row per section of the first
 /// selected node, each hinted with a short preview of that section's
 /// text so the user can tell which is which.
@@ -179,7 +167,7 @@ pub(crate) fn section_idx_completions(ctx: &ConsoleContext, partial: &str) -> Ve
         .map(|(idx, section)| {
             // Empty sections render `(empty)` so the row isn't a bare
             // bullet.
-            let text = section_text(doc, section);
+            let text = crate::application::view::inspect::element_text(doc, section);
             let (preview, overflow) = take_graphemes(&text, 20);
             let hint = if preview.is_empty() {
                 "(empty)".to_string()

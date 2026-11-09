@@ -17,8 +17,9 @@ use baumhard::document::mutation::ops::{DocMutation, SectionOp};
 use baumhard::document::values::Align;
 use glam::Vec2;
 
-use super::{children, selected, Steps};
+use super::{selected, Steps};
 use crate::application::document::MindMapDocument;
+use crate::application::view::inspect::children_of_kind;
 
 /// The sections a section edit reaches. See the module docs.
 pub(crate) fn targets(doc: &MindMapDocument, index: Option<usize>) -> Result<Vec<NodeId>, String> {
@@ -33,7 +34,7 @@ pub(crate) fn targets(doc: &MindMapDocument, index: Option<usize>) -> Result<Vec
     }
     let mut out = Vec::with_capacity(nodes.len());
     for node in nodes {
-        let mut of_node = children(d, node, DocKind::Section);
+        let mut of_node = children_of_kind(d, node, DocKind::Section);
         let section = match index {
             Some(index) => of_node.nth(index),
             None => match (of_node.next(), of_node.next()) {
@@ -124,7 +125,7 @@ pub(crate) fn add(doc: &MindMapDocument, at: Option<usize>, text: &str) -> Steps
         ([], [section]) => d.parent(*section).ok_or("section add: the section has no node")?,
         _ => return Err("section add: select one node".to_string()),
     };
-    let sections: Vec<NodeId> = children(d, node, DocKind::Section).collect();
+    let sections: Vec<NodeId> = children_of_kind(d, node, DocKind::Section).collect();
     let after = match at {
         Some(0) => None,
         Some(at) if at <= sections.len() => Some(sections[at - 1]),
