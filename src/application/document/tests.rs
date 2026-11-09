@@ -103,6 +103,78 @@ fn test_an_undo_closes_the_transaction_and_the_helper_forgets_its_handle() {
     );
 }
 
+/// **An interaction that begins while an edit animates is the
+/// interaction's, and the edit's tick never touches it** (D28; review of
+/// #331). The `begin` fast-forwards and commits the edit — its entry —
+/// and the edit's old end time then passes without committing the
+/// interaction: it is still open, its stage still lands, and its own
+/// commit is the entry after the edit's.
+///
+/// Control: when the edit's tick reached the shared slot, the tick at
+/// the old end time committed the drag mid-gesture — the stage after it
+/// was refused and a second `begin` was let in.
+#[test]
+fn test_an_interaction_begun_mid_animation_outlives_the_edits_end() {
+    let mut doc = MindMapDocument::new_blank(None, 50);
+    let created = create_root(&doc);
+    doc.apply(created, ChangeSource::Action).expect("a node to move");
+    let node = doc.doc().children(doc.doc().root()).last().expect("the node");
+    let nudge = |by: f32| {
+        EditRequest::new(
+            vec![baumhard::document::mutation::step::DocStep::fixed(
+                baumhard::document::mutation::step::DocWalk::new(
+                    baumhard::engine::tree::MutatorTree::new_with(baumhard::engine::mutator::Mutator::new(
+                        baumhard::document::mutation::ops::DocMutation::Node(
+                            baumhard::document::mutation::ops::NodeOp::Nudge(glam::Vec2::new(by, 0.0)),
+                        ),
+                        baumhard::engine::key::BranchKey::new(baumhard::document::element::DocKind::Node, 0),
+                    )),
+                    baumhard::engine::anchor::Anchors::Nodes(vec![node]),
+                ),
+            )],
+            "nudge",
+        )
+    };
+    let animate = baumhard::document::edit::Animate {
+        ms: 400,
+        delay_ms: 0,
+        easing: baumhard::document::edit::Easing::Linear,
+        snap: baumhard::engine::interpolate::Snap::End,
+    };
+    doc.run_edit(nudge(50.0), Some(animate), ChangeSource::Edit, 0.0)
+        .expect("the edit starts");
+    doc.tick_animation(100.0);
+    assert!(doc.is_animating());
+
+    // A drag begins: the edit is finished and committed first (D28).
+    assert!(doc.begin(ChangeSource::Input, TransactionKind::Interactive));
+    assert!(!doc.is_animating(), "the begin finished the edit");
+    assert_eq!(
+        doc.doc().history().count(),
+        2,
+        "the node's entry, then the edit's"
+    );
+
+    // The edit's old end time passes: nothing of the drag is touched.
+    assert!(!doc.tick_animation(1000.0), "no animation is left to write");
+    let drag = doc.transaction.as_ref().expect("the drag's handle");
+    assert!(doc.doc.is_open(drag), "the drag is still open");
+    doc.doc.stage(drag, nudge(10.0)).expect("its stage still lands");
+    assert!(
+        !doc.begin(ChangeSource::Input, TransactionKind::Interactive),
+        "the drag still holds the document"
+    );
+
+    // Its own commit is the second entry.
+    let drag = doc.transaction.take().expect("the drag's handle");
+    assert!(doc.doc.commit(drag).is_some());
+    assert_eq!(
+        doc.doc().history().count(),
+        3,
+        "the drag's entry after the edit's"
+    );
+}
+
 /// Every map directly under `maps/` — the maps the cut-over converted
 /// and committed in the saver's spelling — read off the disk so a new
 /// one is covered the day it lands. `maps/demos/` is hand-written and
