@@ -201,10 +201,13 @@ fn test_console_oracle_completions_are_unchanged() {
     }
 }
 
-/// The three vocabularies the pinned tables deliberately leave
-/// out — they enumerate the *host's* installed fonts, so a
-/// byte-pin would assert something about the machine rather than
-/// about the console. Pinned structurally instead.
+/// The font-family vocabulary, held to the loaded families row for row.
+/// Since #228 it is the compiled set, the same on every machine, so it
+/// is byte-pinned in `COMPLETION_CORPUS` too (`font set <TAB>`, and
+/// narrowed); until then it enumerated the *host's* installed fonts, and
+/// this structural test was its only pin. It stays for what a byte-pin
+/// cannot say: that each row is a loaded family, shaped in its own face,
+/// and inserts a token the verb parses.
 ///
 /// There are three slots — `font set <TAB>`, `border font <TAB>`
 /// and `border font=<TAB>` — and this loop drives all three. It
@@ -219,7 +222,7 @@ fn test_console_oracle_completions_are_unchanged() {
 /// There is now one body behind all three (`font.rs`'s
 /// [`crate::application::console::commands::font::font_family_completions`]);
 /// there were two, and the quoting assertion below is what the
-/// second one lacked, so 43 of this host's 77 families tab-accepted
+/// second one lacked, so 43 of the then host's 77 families tab-accepted
 /// into a line `border font` refused.
 #[test]
 fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
@@ -245,15 +248,14 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
             "`{line}<TAB>` offers one row per loaded family"
         );
         // The shaped face is the fourth channel
-        // `completion_signature` renders, and the only one no
-        // pinned row exercises — every corpus line whose popup
-        // carries a family is a font vocabulary, and those are
-        // excluded from the byte-pins for the host-dependence
-        // reason above. `is_some()` alone left the channel
-        // effectively unchecked: replacing every family tag with
-        // one constant sentinel kept all four oracle tests green.
-        // The row must name *its own* family, not merely some
-        // family.
+        // `completion_signature` renders. Until #228 no pinned row
+        // exercised it — every corpus line whose popup carries a
+        // family is a font vocabulary, and those were left out of the
+        // byte-pins while they listed the host's fonts — and
+        // `is_some()` alone left the channel effectively unchecked:
+        // replacing every family tag with one constant sentinel kept
+        // all four oracle tests green. The row must name *its own*
+        // family, not merely some family.
         for c in &rows {
             assert_eq!(
                 c.font_family.as_deref(),
