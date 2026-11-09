@@ -86,7 +86,7 @@ fn execute_range(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         if ops.is_empty() {
             return Err("range: give a style: color=, font=, size=, weight= or italic=".to_string());
         }
-        section::style_range(doc, values::index(start)?, values::index(end)?, &ops)
+        section::style_range(doc, values::index(start)?, values::index(end)?, ops)
     });
     super::edit(eff, steps, "range")
 }

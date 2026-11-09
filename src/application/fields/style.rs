@@ -69,7 +69,7 @@ pub(crate) fn color(doc: &MindMapDocument, axis: ColorAxis, color: Option<ColorR
     let d = doc.doc();
     let key: &'static str = axis.into();
     if let (ColorAxis::Text, Some((section, start, end))) = (axis, range(doc)) {
-        return compose::style_range(d, section, start, end, TextOp::SetColor(color))
+        return compose::style_range(d, section, start, end, vec![TextOp::SetColor(color)])
             .map_err(|e| e.to_string());
     }
     let mut groups = Groups::default();
@@ -144,11 +144,7 @@ impl Font {
 pub(crate) fn font(doc: &MindMapDocument, font: Font) -> Steps {
     let d = doc.doc();
     if let Some((section, start, end)) = range(doc) {
-        let mut steps = Vec::new();
-        for op in font.ops(true) {
-            steps.extend(compose::style_range(d, section, start, end, op).map_err(|e| e.to_string())?);
-        }
-        return Ok(steps);
+        return compose::style_range(d, section, start, end, font.ops(true)).map_err(|e| e.to_string());
     }
     let mut groups = Groups::default();
     for id in doc.selection.iter() {

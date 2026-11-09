@@ -616,33 +616,37 @@ fn normalize(section: NodeId, spans: usize) -> impl Iterator<Item = DocStep> {
     (0..merge_steps(spans)).map(move |_| merge_step(section))
 }
 
-/// Apply `op` to the text of `section` between grapheme clusters
-/// `start` and `end`: split the spans at both boundaries (skipping a
-/// boundary already on a span edge), apply `op` to every span now
-/// inside the range, then normalize.
+/// Apply `ops`, in order, to the text of `section` between grapheme
+/// clusters `start` and `end`: split the spans at both boundaries
+/// (skipping a boundary already on a span edge), apply every op to every
+/// span now inside the range in one walk, then normalize.
 ///
 /// Errors: [`MutationError::NotA`] when `section` is not a section. No
-/// step for an empty range; otherwise two splits, the styling, and
-/// [`merge_steps`] of the span count the section can then hold.
+/// step for an empty range or no ops; otherwise two splits, the styling,
+/// and [`merge_steps`] of the span count the section can then hold.
 pub fn style_range(
     doc: &Document,
     section: NodeId,
     start: usize,
     end: usize,
-    op: TextOp,
+    ops: Vec<TextOp>,
 ) -> Result<Vec<DocStep>, MutationError> {
     require(doc, section, DocKind::Section, "a section")?;
-    if start >= end {
+    if start >= end || ops.is_empty() {
         return Ok(Vec::new());
     }
+    let mutations: Vec<DocMutation> = ops
+        .into_iter()
+        .map(|op| DocMutation::Span(SpanOp::Text(op)))
+        .collect();
     let style = DocStep::new(move |doc| {
         let inside: Vec<NodeId> = span_ranges(doc, section)
             .into_iter()
             .filter(|&(_, s, e)| start <= s && e <= end && s < e)
             .map(|(span, _, _)| span)
             .collect();
-        Ok((!inside.is_empty())
-            .then(|| walk_at(single(DocMutation::Span(SpanOp::Text(op)), DocKind::Span), inside)))
+        let mutator = Mutator::new_macro(mutations, BranchKey::new(DocKind::Span, 0));
+        Ok((!inside.is_empty()).then(|| walk_at(DocMutatorTree::new_with(mutator), inside)))
     });
     let mut steps = vec![split_at(section, start), split_at(section, end), style];
     steps.extend(normalize(section, span_count(doc, section) + 2));

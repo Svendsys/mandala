@@ -174,7 +174,7 @@ fn builders() -> Vec<(&'static str, Builder)> {
             set_link_kind(doc, ids.portal, LinkKind::Line).unwrap()
         }),
         ("style_range", |doc, ids| {
-            style_range(doc, ids.a_title, 1, 3, TextOp::SetItalic(Some(true))).unwrap()
+            style_range(doc, ids.a_title, 1, 3, vec![TextOp::SetItalic(Some(true))]).unwrap()
         }),
         ("insert_text", |doc, ids| {
             insert_text(doc, ids.a_title, 2, "xy".to_string()).unwrap()

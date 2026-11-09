@@ -488,7 +488,7 @@ pub fn do_document_compose_styles_a_range() {
         span_of(&format!("ab{FAMILY}"), plain.clone(), None),
         span_of("cd", plain.clone(), None),
     ]);
-    let steps = style_range(&doc, section, 1, 4, TextOp::SetItalic(Some(true))).unwrap();
+    let steps = style_range(&doc, section, 1, 4, vec![TextOp::SetItalic(Some(true))]).unwrap();
     apply(&mut doc, steps);
     assert_eq!(
         spans(&doc, section),
@@ -505,7 +505,7 @@ pub fn do_document_compose_styles_a_range() {
         span_of("cd", italic(Some(true)), None),
     ]);
     let ids_before: Vec<NodeId> = doc.children(section).collect();
-    let steps = style_range(&doc, section, 0, 2, TextOp::SetItalic(Some(true))).unwrap();
+    let steps = style_range(&doc, section, 0, 2, vec![TextOp::SetItalic(Some(true))]).unwrap();
     apply(&mut doc, steps);
     assert_eq!(spans(&doc, section), vec![("abcd".to_string(), Some(true))]);
     assert_eq!(
@@ -514,9 +514,32 @@ pub fn do_document_compose_styles_a_range() {
         "the first span absorbed the second"
     );
 
-    assert!(style_range(&doc, section, 3, 3, TextOp::SetItalic(None))
+    assert!(style_range(&doc, section, 3, 3, vec![TextOp::SetItalic(None)])
         .unwrap()
         .is_empty());
+    assert!(style_range(&doc, section, 0, 3, Vec::new()).unwrap().is_empty());
+
+    // Several ops are one call: the same two splits, one styling walk
+    // and one normalization as a single op, every op on every span.
+    let (mut doc, _, section) = section_of(vec![span_of("abcd", plain.clone(), None)]);
+    let one = style_range(&doc, section, 1, 3, vec![TextOp::SetItalic(Some(true))]).unwrap();
+    let both = vec![
+        TextOp::SetItalic(Some(true)),
+        TextOp::SetSize(None),
+        TextOp::SetItalic(Some(false)),
+    ];
+    let steps = style_range(&doc, section, 1, 3, both).unwrap();
+    assert_eq!(steps.len(), one.len(), "the steps of one op");
+    apply(&mut doc, steps);
+    assert_eq!(
+        spans(&doc, section),
+        vec![
+            ("a".to_string(), None),
+            ("bc".to_string(), Some(false)),
+            ("d".to_string(), None),
+        ],
+        "every op, in order"
+    );
 }
 
 #[test]
@@ -537,7 +560,7 @@ pub fn do_document_compose_normalizes_spans() {
             Some(LinkTarget::Url("x".to_string())),
         ),
     ]);
-    let steps = style_range(&doc, section, 0, 3, TextOp::SetItalic(Some(true))).unwrap();
+    let steps = style_range(&doc, section, 0, 3, vec![TextOp::SetItalic(Some(true))]).unwrap();
     apply(&mut doc, steps);
     assert_eq!(
         spans(&doc, section),
@@ -549,7 +572,7 @@ pub fn do_document_compose_normalizes_spans() {
         span_of("a", TextStyle::default(), url("one")),
         span_of("b", TextStyle::default(), url("two")),
     ]);
-    let steps = style_range(&doc, section, 0, 2, TextOp::SetItalic(Some(true))).unwrap();
+    let steps = style_range(&doc, section, 0, 2, vec![TextOp::SetItalic(Some(true))]).unwrap();
     apply(&mut doc, steps);
     assert_eq!(
         spans(&doc, section),
@@ -820,7 +843,7 @@ pub fn do_document_compose_normalizes_in_log_steps() {
         .map(|t| span_of(t, plain.clone(), None))
         .collect();
     let (doc, _, section) = section_of(four);
-    let steps = style_range(&doc, section, 1, 3, TextOp::SetItalic(Some(true))).unwrap();
+    let steps = style_range(&doc, section, 1, 3, vec![TextOp::SetItalic(Some(true))]).unwrap();
     assert_eq!(steps.len(), 3 + 4, "two splits, the styling, four merges");
 
     // Eight spans that differ only in slant, all made italic: one run of
@@ -829,7 +852,7 @@ pub fn do_document_compose_normalizes_in_log_steps() {
         .map(|n| span_of(&n.to_string(), italic((n % 2 == 0).then_some(false)), None))
         .collect();
     let (mut doc, _, section) = section_of(eight);
-    let steps = style_range(&doc, section, 0, 8, TextOp::SetItalic(Some(true))).unwrap();
+    let steps = style_range(&doc, section, 0, 8, vec![TextOp::SetItalic(Some(true))]).unwrap();
     apply(&mut doc, steps);
     assert_eq!(spans(&doc, section), vec![("01234567".to_string(), Some(true))]);
 

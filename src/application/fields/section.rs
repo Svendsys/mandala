@@ -148,12 +148,12 @@ pub(crate) fn delete(doc: &MindMapDocument, index: Option<usize>) -> Steps {
 
 /// The steps that apply `ops` to grapheme clusters `start..end` of every
 /// reached section's text: its spans split at both ends, the ones inside
-/// styled, then normalized (`compose::style_range`), once per op.
+/// given every op in one walk, then normalized (`compose::style_range`).
 pub(crate) fn style_range(
     doc: &MindMapDocument,
     start: usize,
     end: usize,
-    ops: &[baumhard::document::mutation::ops::TextOp],
+    ops: Vec<baumhard::document::mutation::ops::TextOp>,
 ) -> Steps {
     if start >= end {
         return Err(format!("range: {start}..{end} holds no grapheme"));
@@ -161,10 +161,7 @@ pub(crate) fn style_range(
     let d = doc.doc();
     let mut steps = Vec::new();
     for section in targets(doc, None)? {
-        for op in ops {
-            steps
-                .extend(compose::style_range(d, section, start, end, op.clone()).map_err(|e| e.to_string())?);
-        }
+        steps.extend(compose::style_range(d, section, start, end, ops.clone()).map_err(|e| e.to_string())?);
     }
     Ok(steps)
 }

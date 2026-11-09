@@ -674,7 +674,7 @@ pub fn edit_named(
                     section,
                     0,
                     3,
-                    TextOp::SetColor(Some(ColorRef::Var(VarId(0)))),
+                    vec![TextOp::SetColor(Some(ColorRef::Var(VarId(0))))],
                 )
                 .ok()?,
                 name,
