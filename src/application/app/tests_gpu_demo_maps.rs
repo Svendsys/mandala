@@ -4,20 +4,22 @@
 //! the real renderer (TEST_CONVENTIONS §T8) through a projection of
 //! their own, the committed path the README images are made by.
 //!
-//! Nothing in the app projects a document into glyph runs yet (the
-//! projection is V1-B7, its wiring V1-C3), so this file holds the least
-//! one the demo maps need: each node's sections as boxes, each frame's
-//! rings round the node's outline with the ring's resolved fit, span,
-//! sides and spacing (`RingLayout::of`), each connector and line link as
-//! a straight run between the two nodes' outermost rings, and every run
-//! drawn at its node's opacity times its ancestors'. It is a test's
-//! projection, not the app's: it reads what the demo maps hold and
-//! nothing more (no palettes' own projection, no labels, caps or portal
-//! ends), on the map's one background: the frame is cleared to it
-//! (V1-B12), and a demo map gives none, so it is black. What a demo map shows is what the format spells: a per-glyph
-//! override (a glyph's offset, scale or color, `format/mutations.md`
-//! "Glyph run mutations") has no spelling in a `.mandala.json`
-//! yet, so no demo map carries one and this projection applies none.
+//! The app does not draw through the projection yet (the projection is
+//! V1-B7, its wiring V1-C3), so this file holds the least drawing the
+//! demo maps need: each node's sections as boxes, each frame's rings
+//! round the node's outline with the ring's resolved fit, span, sides
+//! and spacing (`RingLayout::of`), and every run drawn at its node's
+//! opacity times its ancestors'. Each connector and line link is the
+//! projector's own (`Projector::project_full`, #296): its ends, its
+//! curve through its control points and its glyphs as the app lays
+//! them. The rest is a test's projection, not the app's: it reads what
+//! the demo maps hold and nothing more (no palettes' own projection, no
+//! portal ends), on the map's one background: the frame is cleared to
+//! it (V1-B12), and a demo map gives none, so it is black. What a demo
+//! map shows is what the format spells: a per-glyph override (a glyph's
+//! offset, scale or color, `format/mutations.md` "Glyph run mutations")
+//! has no spelling in a `.mandala.json` yet, so no demo map carries one
+//! and this projection applies none.
 //!
 //! Every assertion is structural, never a pixel (§T10): each demo map
 //! loads, every ring and connector it holds is placed with no glyph
@@ -41,17 +43,18 @@ use baumhard::document::resolve::{
     resolve_background, resolve_frame, resolve_node, resolve_path, resolve_ring, resolve_text, Content,
     ResolvedText,
 };
-use baumhard::document::values::{Align, FitMode, FontSize};
+use baumhard::document::values::{Align, FitMode, FontSize, LinkKind};
 use baumhard::engine::tree::Placement;
 use baumhard::flow::{
-    offset, outline, place_on_closed, place_on_open, ring_offset, shape_box, shape_run, Curve, FlowSpan,
-    Outline, PlacedRun, Rect, RingLayout, ShapedRun,
+    offset, outline, place_on_closed, ring_offset, shape_box, shape_run, FlowSpan, PlacedRun, Rect,
+    RingLayout, ShapedRun,
 };
 use baumhard::font::fonts::{self, AppFont, FontSystemLease};
 use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
 use baumhard::gfx_structs::tree::GfxTree;
+use baumhard::projection::{GlyphLayers, Layer, Projector};
 use glam::Vec2;
 
 use super::gpu_harness::headless_app;
@@ -74,9 +77,6 @@ const FILL: f32 = 0.94;
 /// Where the maps are drawn: a stretch of canvas far from every node of
 /// the harness's own map, so the frame shows the demo and nothing else.
 const FAR: Vec2 = Vec2::new(100_000.0, 100_000.0);
-
-/// The space between a frame's outermost ring and a connector's end.
-const RING_MARGIN: f32 = 6.0;
 
 /// What a map projects to: its runs, the canvas they cover, and what
 /// was placed and lost on the way.
@@ -109,17 +109,6 @@ impl Projected {
             }
         }
     }
-}
-
-/// A node as drawn: its outline, and how far past it its outermost
-/// ring reaches.
-struct Drawn {
-    /// The node's id in the map.
-    ident: u32,
-    outline: Outline,
-    reach: f32,
-    /// The alpha it draws at ([`opacity_of`]).
-    alpha: f32,
 }
 
 /// Run `f` under the font guard, released before the result returns.
@@ -202,38 +191,6 @@ fn path_run(run: ShapedRun, placed: PlacedRun, opacity: f32) -> GlyphRunData {
     .expect("no overrides")
 }
 
-/// Whether `p` lies inside `o`.
-fn inside(o: &Outline, p: Vec2) -> bool {
-    match *o {
-        Outline::Ellipse { rect } => {
-            let q = (p - rect.center()) / (rect.size * 0.5);
-            q.length_squared() <= 1.0
-        }
-        Outline::RoundedRect { rect, radius } => {
-            let q = (p - rect.center()).abs() - (rect.size * 0.5 - Vec2::splat(radius));
-            q.max(Vec2::ZERO).length() + q.x.max(q.y).min(0.0) - radius <= 0.0
-        }
-    }
-}
-
-/// Where a ray from `node`'s center toward `toward` leaves its outline
-/// grown past its outermost ring: where a path to it ends.
-fn end_on(node: &Drawn, toward: Vec2) -> Vec2 {
-    let grown = offset(&node.outline, node.reach + RING_MARGIN);
-    let center = node.outline.rect().center();
-    let dir = (toward - center).normalize_or_zero();
-    let (mut low, mut high) = (0.0_f32, 1.0e6_f32);
-    for _ in 0..64 {
-        let mid = 0.5 * (low + high);
-        if inside(&grown, center + dir * mid) {
-            low = mid;
-        } else {
-            high = mid;
-        }
-    }
-    center + dir * low
-}
-
 /// The alpha `node` draws at: its `opacity` times every ancestor
 /// node's, as a node's opacity multiplies everything it and its subtree
 /// draw (`format/schema.md`, "Node").
@@ -262,7 +219,6 @@ pub(super) fn project(doc: &Document, fs: &mut FontSystemLease) -> Projected {
         labels: Vec::new(),
         fonts: Vec::new(),
     };
-    let mut drawn: Vec<(NodeId, Drawn)> = Vec::new();
     for node in nodes_of(doc) {
         let Some(DocElement::Node(data)) = doc.get(node) else {
             continue;
@@ -353,76 +309,52 @@ pub(super) fn project(doc: &Document, fs: &mut FontSystemLease) -> Projected {
             out.bounds.0.min(grown.origin),
             out.bounds.1.max(grown.origin + grown.size),
         );
-        drawn.push((
-            node,
-            Drawn {
-                ident: data.ident.0,
-                outline: base,
-                reach,
-                alpha,
-            },
-        ));
     }
-    let find = |id: NodeId| drawn.iter().find(|(n, _)| *n == id).map(|(_, d)| d);
-    for (node, child) in &drawn {
-        // Its connector from its parent node, and its line links: drawn
-        // at the alpha of the node they belong to.
-        let mut paths: Vec<(NodeId, &Drawn, &Drawn)> = Vec::new();
-        if let Some(parent) = doc.parent(*node).and_then(find) {
-            for connector in children_of(doc, *node, DocKind::Connector) {
-                if let Some(DocElement::Connector(c)) = doc.get(connector) {
-                    if c.path.visible {
-                        paths.push((connector, parent, child));
-                    }
-                }
-            }
+    // Each connector and line link as the projector the app draws with
+    // lays it (`Projector::project_full`): its ends, its curve and its
+    // glyphs are the projector's own, moved to where this projection
+    // draws the map.
+    let mut layers = GlyphLayers::new();
+    let projector = Projector::project_full(doc, &mut layers, fs);
+    let ident = |n: NodeId| match doc.get(n) {
+        Some(DocElement::Node(data)) => data.ident.0,
+        _ => 0,
+    };
+    let connections = layers.tree(Layer::Connections);
+    for glyph in connections.root().descendants(connections.arena()) {
+        let Some(run) = connections.arena()[glyph].get().glyph_run() else {
+            continue;
+        };
+        let Some(path) = projector.element_of(Layer::Connections, glyph) else {
+            continue;
+        };
+        let Some(own) = doc.parent(path) else {
+            continue;
+        };
+        let ends = match doc.get(path) {
+            Some(DocElement::Connector(_)) => doc.parent(own).map(|up| (up, own)),
+            Some(DocElement::Link(l)) if l.kind == LinkKind::Line => Some((own, l.to)),
+            _ => None,
+        };
+        let Some((from, to)) = ends else {
+            continue;
+        };
+        // The faces it asks for: its spans', or its text's style's.
+        match resolve_path(tree, path, &mut ()).content {
+            Content::Spans => out.pin(spans_of(doc, path, 0.0).iter().map(|(_, style)| style.font)),
+            Content::Text(_) => out.pin([resolve_text(tree, path, &mut ()).font]),
         }
-        for link in children_of(doc, *node, DocKind::Link) {
-            if let Some(DocElement::Link(l)) = doc.get(link) {
-                if l.kind == baumhard::document::values::LinkKind::Line && l.path.visible {
-                    if let Some(to) = find(l.to) {
-                        paths.push((link, child, to));
-                    }
-                }
-            }
-        }
-        for (path, from, to) in paths {
-            let points = match doc.get(path) {
-                Some(DocElement::Connector(c)) => c.path.control_points.clone(),
-                Some(DocElement::Link(l)) => l.path.control_points.clone(),
-                _ => Vec::new(),
-            };
-            // TODO(#296): a connector's ends, its pitch and a shared
-            // side's splay are #296's. Until then each path runs from
-            // where the ray between the two nodes' centers leaves the
-            // one's outermost ring to where it meets the other's, its
-            // control points offsets from those ends, at the path's own
-            // spacing.
-            let (a, b) = (from.outline.rect().center(), to.outline.rect().center());
-            let (p0, p1) = (end_on(from, b), end_on(to, a));
-            let control: Vec<Vec2> = match points.as_slice() {
-                [c] => vec![p0 + *c],
-                [c1, c2] => vec![p0 + *c1, p1 + *c2],
-                _ => Vec::new(),
-            };
-            let Some(curve) = Curve::from_points(p0, &control, p1) else {
-                continue;
-            };
-            let resolved = resolve_path(tree, path, &mut ());
-            let style = resolve_text(tree, path, &mut ());
-            let spans = match &resolved.content {
-                Content::Spans => spans_of(doc, path, 0.0),
-                Content::Text(text) => vec![(text.clone(), style)],
-            };
-            out.pin(spans.iter().map(|(_, style)| style.font));
-            let shaped = shape_run(&flow_spans(&spans), 1.0, fs);
-            let (rescaled, placed) =
-                place_on_open(&shaped, &curve, &resolved.fit, resolved.spacing, &style, fs);
-            out.labels.push(format!("path {}>{}", from.ident, to.ident));
-            out.runs
-                .push(path_run(rescaled.unwrap_or(shaped), placed, child.alpha));
-            out.paths += 1;
-        }
+        let moved = GlyphRunData::new(
+            run.shaped().clone(),
+            run.origin() + FAR,
+            run.overrides().clone(),
+            run.opacity(),
+            run.zoom(),
+        )
+        .expect("the projector's own overrides");
+        out.labels.push(format!("path {}>{}", ident(from), ident(to)));
+        out.runs.push(moved);
+        out.paths += 1;
     }
     out
 }
