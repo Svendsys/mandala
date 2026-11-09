@@ -65,6 +65,8 @@ pub(super) fn handle_keyboard_input(logical_key: Key, ctx: &mut InputHandlerCont
         }
     }
     if let Some(edit) = ctx.keybinds.edit_for(k, ctrl, shift, alt) {
-        let _ = edits::fire(edit);
+        if let Some(doc) = ctx.document.as_mut() {
+            edits::run_key(doc, ctx.view.as_ref(), ctx.edits, edit, ctx.clock.now_ms());
+        }
     }
 }

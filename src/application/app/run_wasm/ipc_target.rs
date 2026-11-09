@@ -110,7 +110,11 @@ impl Borrowed<'_> {
     /// injected input queued, in real time only, since under a virtual
     /// clock the heartbeats that land it are a step's.
     pub(super) fn needs_continuation(&self) -> bool {
-        !self.input.injected.is_empty() && !self.input.clock.is_virtual()
+        (!self.input.injected.is_empty() && !self.input.clock.is_virtual())
+            || crate::application::app::animation::keeps_ticking(
+                Some(&self.input.document),
+                &self.input.clock,
+            )
     }
 
     /// What `clock.wait` reads ([`Settling`]), as native's

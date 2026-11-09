@@ -16,7 +16,7 @@
 //!   `&mut WasmInputState` (added in Track B Commit 5).
 //!
 //! The trait surface is intentionally small: the four operations
-//! the macro body needs (Action, CustomMutation, ConsoleLine,
+//! the macro body needs (Action, Edit, ConsoleLine,
 //! selection-resolve) plus a registry borrow for the id lookup at
 //! the head of the loop.
 
@@ -59,6 +59,11 @@ pub(in crate::application::app) trait MacroDispatchTarget {
     /// macro fired before any document loads doesn't consume the
     /// keystroke event).
     fn execute_console_line(&mut self, line: &str) -> bool;
+
+    /// Run an `Edit` step: the edit `id` at `at`, through the funnel
+    /// every route takes (`families::edits::run_step`). Returns whether
+    /// it ran.
+    fn run_edit(&mut self, id: &str, at: &crate::application::macros::MacroTarget) -> bool;
 
     /// A step has run to completion (a skipped or gate-rejected one
     /// has not). The seam an observer hangs between steps on: the IPC
@@ -143,10 +148,11 @@ pub(in crate::application::app) fn run_macro_steps<T: MacroDispatchTarget>(
                     any_ran = true;
                 }
             }
-            MacroStep::CustomMutation { id, .. } => {
-                // The step fires an edit; edits are V1-D1's (#250),
-                // and until then it runs nothing and bumps nothing.
-                if super::families::edits::fire(id) == DispatchOutcome::Handled {
+            MacroStep::Edit { id, target: at } => {
+                // An edit is a document change like an Action's, and
+                // every tier may run one: it is one undoable entry,
+                // with no I/O.
+                if target.run_edit(id, at) {
                     any_ran = true;
                 }
             }
@@ -204,6 +210,7 @@ mod tests {
         calls: Vec<String>,
         action_outcome: DispatchOutcome,
         console_line_executed: bool,
+        edit_ran: bool,
     }
 
     impl MockTarget {
@@ -213,6 +220,7 @@ mod tests {
                 calls: Vec::new(),
                 action_outcome: DispatchOutcome::Handled,
                 console_line_executed: true,
+                edit_ran: true,
             }
         }
     }
@@ -228,6 +236,10 @@ mod tests {
         fn execute_console_line(&mut self, line: &str) -> bool {
             self.calls.push(format!("console:{}", line));
             self.console_line_executed
+        }
+        fn run_edit(&mut self, id: &str, at: &MacroTarget) -> bool {
+            self.calls.push(format!("edit:{id}:{at:?}"));
+            self.edit_ran
         }
     }
 
@@ -331,25 +343,23 @@ mod tests {
         assert_eq!(t.calls, vec!["action:Undo".to_string()]);
     }
 
-    /// The edit step runs nothing until V1-D1 (#250) rebuilds edits, and
-    /// so bumps nothing: a macro of only that step is not handled.
-    /// Control: the same macro with an Action beside it is.
+    /// The edit step runs the edit at its target, at every tier, and
+    /// counts as having run when the edit did. Control: an edit that
+    /// was refused does not count.
     #[test]
-    fn test_an_edit_step_runs_nothing_until_edits_are_rebuilt() {
-        let edit = MacroStep::CustomMutation {
+    fn test_an_edit_step_runs_the_edit_at_its_target() {
+        let edit = MacroStep::Edit {
             id: "nudge".into(),
-            target: MacroTarget::CurrentSelection,
+            target: MacroTarget::NodeId(3),
         };
-        let only = macro_with_steps("only", vec![edit.clone()]);
-        let mixed = macro_with_steps("mixed", vec![edit, MacroStep::Action { action: Action::Undo }]);
-        let mut t = MockTarget::new(registry_with(vec![
-            (only, SourceTier::User),
-            (mixed, SourceTier::User),
-        ]));
-        assert!(!dispatch_macro("only", &mut t));
-        assert!(t.calls.is_empty());
-        assert!(dispatch_macro("mixed", &mut t));
-        assert_eq!(t.calls, vec!["action:Undo".to_string()]);
+        let only = macro_with_steps("only", vec![edit]);
+        let mut t = MockTarget::new(registry_with(vec![(only.clone(), SourceTier::App)]));
+        assert!(dispatch_macro("only", &mut t), "an App-tier edit step runs");
+        assert_eq!(t.calls, vec!["edit:nudge:NodeId(3)".to_string()]);
+        let mut refused = MockTarget::new(registry_with(vec![(only, SourceTier::User)]));
+        refused.edit_ran = false;
+        assert!(!dispatch_macro("only", &mut refused));
+        assert_eq!(refused.calls.len(), 1, "it was asked");
     }
 
     /// An Action that does not apply, and a console line that soft-skips,

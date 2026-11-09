@@ -86,6 +86,9 @@ pub(super) struct WasmInputState {
     /// — the App and User tiers, loaded at startup. Consulted by the
     /// keyboard handler's Action → Macro → edit fall-through.
     pub macros: crate::application::macros::MacroRegistry,
+    /// The edits' App and User tiers and the handlers. Mirrors native's
+    /// `InputHandlerContext::edits`.
+    pub edits: crate::application::edits::EditRegistry,
     /// Touch gesture recognizer. Cross-platform peer of native's
     /// `InitState.touch_recognizer`. WASM mobile is the *primary*
     /// surface this targets (mobile-browser tap-and-hold is
@@ -259,6 +262,18 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
             baumhard::util::log::console_line_excerpt(line),
         );
         false
+    }
+
+    fn run_edit(&mut self, id: &str, at: &crate::application::macros::MacroTarget) -> bool {
+        let input = &mut *self.input;
+        super::dispatch::families::edits::run_step(
+            &mut input.document,
+            input.view.as_ref(),
+            &input.edits,
+            id,
+            at,
+            input.clock.now_ms(),
+        )
     }
 
     fn step_finished(&mut self) {
@@ -658,6 +673,7 @@ pub(super) fn run(mut app: Application) {
         // so cross-target log triage stays uniform. A map carries no
         // macros: its verbs replace them.
         let macros = crate::application::macros::loader::build_macro_registry();
+        let edits = crate::application::edits::EditRegistry::load();
 
         // Unconditional now that a rejected load yields a placard
         // document: the input state exists even when the map did
@@ -673,6 +689,7 @@ pub(super) fn run(mut app: Application) {
             modifiers: crate::application::platform::input::Modifiers::empty(),
             interaction_mode: super::InteractionMode::Default,
             macros,
+            edits,
             touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
             clock: crate::application::clock::AppClock::default(),
             injected: InjectedQueue::default(),

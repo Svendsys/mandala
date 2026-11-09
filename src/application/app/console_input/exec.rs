@@ -107,6 +107,23 @@ pub(in crate::application::app) fn execute_console_line(
         });
     }
 
+    // So is an edit's: what it lists, describes or ran. One that ran
+    // changed the map, which the sync below draws.
+    let mut edit_report = None;
+    if let Some(ConsoleSideEffect::Edit(line)) = &side_effect {
+        edit_report = Some(super::edits::take(ctx, line));
+    }
+    if let Some(result) = edit_report {
+        let synced = match (ctx.document.as_mut(), ctx.view.as_mut()) {
+            (Some(doc), Some(view)) => view.sync(doc, ctx.renderer),
+            _ => false,
+        };
+        return Some(LineRun {
+            outcome: LineOutcome::Ran(result),
+            changed_view: synced,
+        });
+    }
+
     // A screenshot's report is the line's output, so it is taken here,
     // before anything else could run, and replaces the verb's silent
     // `Ok`. It draws through a camera of its own and changes nothing
@@ -141,8 +158,8 @@ pub(in crate::application::app) fn execute_console_line(
     })
 }
 
-/// Perform the side effect a verb asked for. The three that are a
-/// line's whole report (`Record`, `Clock`, `Screenshot`) are taken by
+/// Perform the side effect a verb asked for. The four that are a
+/// line's whole report (`Record`, `Clock`, `Edit`, `Screenshot`) are taken by
 /// [`execute_console_line`] before this is reached.
 fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffect) {
     match effect {
@@ -156,7 +173,10 @@ fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffec
         }
         // Per CODE_CONVENTIONS §9 (interactive paths must not panic),
         // log + soft-skip instead of `unreachable!`.
-        ConsoleSideEffect::Screenshot(_) | ConsoleSideEffect::Record(_) | ConsoleSideEffect::Clock(_) => {
+        ConsoleSideEffect::Screenshot(_)
+        | ConsoleSideEffect::Record(_)
+        | ConsoleSideEffect::Clock(_)
+        | ConsoleSideEffect::Edit(_) => {
             log::error!("console: {effect:?} reached the side-effect handler; it is taken before — ignoring");
         }
     }

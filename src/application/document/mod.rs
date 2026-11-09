@@ -39,6 +39,7 @@ pub use selection::Selection;
 
 use std::path::Path;
 
+use baumhard::document::edit::Animate;
 use baumhard::document::format::{self, LoadError};
 use baumhard::document::ids::Document;
 use baumhard::document::writer::error::ApplyError;
@@ -46,6 +47,15 @@ use baumhard::document::writer::feed::ChangeRecord;
 use baumhard::document::writer::transaction::{Transaction, TransactionKind};
 use baumhard::document::writer::{ChangeSource, EditRequest, Revision};
 use log::{info, warn};
+
+/// An animated edit in progress: how it animates, and when it started.
+#[derive(Copy, Clone, Debug)]
+struct EditAnimation {
+    /// Its timing.
+    animate: Animate,
+    /// The app clock's reading when it started.
+    started_ms: f64,
+}
 
 /// The one file extension a map is read from and written to (D19).
 pub const MAP_EXTENSION: &str = ".mandala.json";
@@ -80,6 +90,9 @@ pub struct MindMapDocument {
     pub file_path: Option<String>,
     /// What is selected.
     pub selection: Selection,
+    /// The animated edit in progress, when the open transaction is one
+    /// ([`Self::run_edit`]); the per-frame tick writes it.
+    animation: Option<EditAnimation>,
     /// The one open transaction (D28), or `None`. Opened by
     /// [`Self::begin`]; V1-C7 and V1-C8 stage into it and end it.
     transaction: Option<Transaction>,
@@ -108,6 +121,7 @@ impl MindMapDocument {
             file_path,
             selection: Selection::new(),
             transaction: None,
+            animation: None,
             status: None,
             clipboard: None,
             load_failure: false,
@@ -371,11 +385,96 @@ impl MindMapDocument {
 
     /// Drop the transaction handle when the writer has closed what it
     /// named: a change that finished an animated one, an undo or a redo
-    /// that settled either kind.
+    /// that settled either kind. An animation goes with its transaction.
     fn forget_closed_transaction(&mut self) {
         if self.transaction.as_ref().is_some_and(|tx| !self.doc.is_open(tx)) {
             self.transaction = None;
         }
+        if self.transaction.is_none() {
+            self.animation = None;
+        }
+    }
+
+    /// **Run an edit's request** (design §10.1): applied as one history
+    /// entry, or — with `animate` — staged as an animated transaction
+    /// that [`Self::tick_animation`] writes part-way each frame from
+    /// `now_ms` on and commits as one entry at its end. Either way an
+    /// edit that changes nothing makes no entry.
+    ///
+    /// Who yields is the writer's (D28): an animated edit already
+    /// running is finished and committed first; an open interactive
+    /// transaction refuses this one, reported as [`Self::apply`]
+    /// reports a refusal.
+    ///
+    /// Cost: the request's; animated, its stage and one write at `t`.
+    pub fn run_edit(
+        &mut self,
+        req: EditRequest,
+        animate: Option<Animate>,
+        source: ChangeSource,
+        now_ms: f64,
+    ) -> Result<(), ApplyError> {
+        let Some(animate) = animate else {
+            return self.apply(req, source).map(|_| ());
+        };
+        let label = req.label.clone();
+        let tx = match self.doc.begin(source, TransactionKind::Animated) {
+            Ok(tx) => tx,
+            Err(error) => {
+                self.report_refusal(&label, &error);
+                return Err(error);
+            }
+        };
+        // `begin` finished the animation it found, if any.
+        self.animation = None;
+        let staged = self
+            .doc
+            .stage(&tx, req)
+            .and_then(|()| self.doc.stage_progress(&tx, animate.progress(0.0), animate.snap));
+        if let Err(error) = staged {
+            self.doc.cancel(tx);
+            self.transaction = None;
+            self.report_refusal(&label, &error);
+            return Err(error);
+        }
+        self.transaction = Some(tx);
+        self.animation = Some(EditAnimation {
+            animate,
+            started_ms: now_ms,
+        });
+        self.status = None;
+        Ok(())
+    }
+
+    /// Write the animated edit in progress at `now_ms`: part-way while it
+    /// runs, and committed as one history entry once it has run its
+    /// course. Returns whether it wrote anything. Nothing runs when no
+    /// edit is animating, or the one that was has been finished by
+    /// another change. O(its journal).
+    pub fn tick_animation(&mut self, now_ms: f64) -> bool {
+        self.forget_closed_transaction();
+        let (Some(animation), Some(tx)) = (self.animation, self.transaction.as_ref()) else {
+            return false;
+        };
+        let elapsed = now_ms - animation.started_ms;
+        if animation.animate.is_done(elapsed) {
+            self.animation = None;
+            if let Some(tx) = self.transaction.take() {
+                self.doc.commit(tx);
+            }
+            return true;
+        }
+        let t = animation.animate.progress(elapsed);
+        if let Err(error) = self.doc.stage_progress(tx, t, animation.animate.snap) {
+            log::error!("document: the animated edit could not be written at {t}: {error}");
+        }
+        true
+    }
+
+    /// Whether an animated edit is running: what keeps the frame loop
+    /// ticking. O(1).
+    pub fn is_animating(&self) -> bool {
+        self.animation.is_some()
     }
 
     /// Drop the selected elements the document no longer holds: what a

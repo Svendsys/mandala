@@ -98,6 +98,9 @@ pub(crate) mod common;
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) mod console;
 pub(crate) mod document;
+// The edits the app can run: the App and User tiers and the handlers
+// (`format/edits.md`), on both targets.
+pub(crate) mod edits;
 // The one writer behind every caller-chosen path. Native-only with its
 // consumers, the IPC file sidecar and the screenshot engine.
 #[cfg(not(target_arch = "wasm32"))]

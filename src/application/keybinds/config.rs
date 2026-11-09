@@ -16,7 +16,7 @@
 //!
 //! What stays hand-written here is what is not per-Action: the JSON
 //! entry point, the unrecognized-key report, and the tail of
-//! `resolve()` that folds in the id-keyed custom-mutation and macro
+//! `resolve()` that folds in the id-keyed edit and macro
 //! binding maps.
 
 use std::collections::HashMap;
@@ -635,9 +635,8 @@ keybind_surface! {
         /// 4.0 floor at resolve time.
         pub console_font_size: f32 = 16.0,
         /// Map of key combo → edit id (design §14: what was
-        /// `custom_mutation_bindings`). Resolved and kept; firing an
-        /// edit is V1-D1's (#250), so a key bound here is unhandled
-        /// until then.
+        /// `custom_mutation_bindings`): the key runs the edit at the
+        /// selection (`format/edits.md`).
         pub edit_bindings: HashMap<String, String> = HashMap::new(),
         /// Map of key combo → macro id. Macros resolve AFTER
         /// built-in `Action`s and BEFORE edits, so a key bound to

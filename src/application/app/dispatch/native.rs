@@ -340,6 +340,14 @@ impl super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarget<'_, '_
         }
     }
 
+    fn run_edit(&mut self, id: &str, at: &crate::application::macros::MacroTarget) -> bool {
+        let ctx = &mut *self.ctx;
+        let Some(doc) = ctx.document.as_mut() else {
+            return false;
+        };
+        super::families::edits::run_step(doc, ctx.view.as_ref(), ctx.edits, id, at, ctx.clock.now_ms())
+    }
+
     fn step_finished(&mut self) {
         if let Some(observe) = self.after_step.as_mut() {
             observe(self.ctx);

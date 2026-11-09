@@ -914,7 +914,7 @@ Inverted windows (`min > max`) render as "always hidden" at
 runtime; `maptool verify` flags these as authoring errors.
 
 The seam waiting here is **zoom-triggered LOD
-mutations**: an edit (V1-D1) bound to a zoom threshold could
+mutations**: an edit (`format/edits.md`) bound to a zoom threshold could
 swap a node's content entirely at the transition, so a cluster
 summary becomes a detail view as you zoom in.
 `GlyphAreaField::ZoomVisibility` already carries the mutator
@@ -1472,7 +1472,7 @@ and a request cannot declare them). Nothing outside `document` holds a
   it held out of the tree. `is_dirty` compares the history position
   with the saved one by identity, so undoing back to the saved state is
   clean and a different change of the same length is not.
-- **Transactions** (`begin`, `stage`, `apply_in`, `interpolate`,
+- **Transactions** (`begin`, `stage`, `apply_in`, `stage_progress`,
   `commit`, `cancel`) are live interaction: a stage replaces the one
   before it, so a drag stages the whole offset every frame and the
   document is exact at each; a base call (`apply_in`) stays across
@@ -1498,6 +1498,37 @@ and a request cannot declare them). Nothing outside `document` holds a
   revert and re-apply around each change.
 
 `lib/baumhard/src/document/writer/`.
+
+### Edits — `EditDef`, `Reach`, `Target`, the edit funnel
+
+**A named, saved, undoable change to the map** (design §10.1, D6;
+V1-D1, #250; [`format/edits.md`](./format/edits.md)). From the nodes
+of the selection an edit takes a node set (`Reach`: self, children,
+descendants, subtree, parent, siblings), the elements of one kind in
+it (`Target`), keeps those a filter passes, and changes each once:
+
+- **mutations** — one `Macro` at each element, root only;
+- **a mutator** — the V1-A1 AST, anchored at each element;
+- **a handler** — a Rust layout (`edit_handlers`: `flower`, `cascade`)
+  that reads `&Document` and the projector's drawn rectangles
+  (`projection::Geometry`) and returns its walks, one per write; it
+  cannot write, the type says so.
+
+An edit is written with **names** (`var(accent)`, a palette, a font, a
+verb) and resolved against the open map each time it runs, because the
+App tier (`assets/edits.json`) and the User tier (`edits.json`) are
+read before any map is. A map's own `edits` win by id over both.
+
+Every route — a key in `edit_bindings`, a macro's `Edit` step, the
+console's `edit apply` — runs **one funnel**,
+`app::dispatch::families::edits::run_edit`: one `EditRequest`, applied
+as one history entry, or, when the edit animates, staged in an animated
+transaction that the frame's tick (`app::animation`) writes part-way
+on the app clock (`Document::stage_progress`) and commits as one entry.
+Another change, or an undo, finishes it first (D28).
+
+`lib/baumhard/src/document/edit/`, `lib/baumhard/src/edit_handlers.rs`,
+`src/application/edits.rs`.
 
 ### TextFlow — `FlowSpan`, `ShapedRun`, `ShapedBox`, `PlacedRun`, `Outline`, `Curve`
 
@@ -1786,8 +1817,9 @@ The glyph vocabulary — commands, deltas and glyph-run mutations — and
 the `MutatorNode` AST that carries it, with runtime holes a
 `BuildContext` fills, are kept (D24) and published in
 [`format/mutations.md`](./format/mutations.md). Nothing in a
-`.mandala.json` holds a glyph mutation today: the authored carrier is
-the **edit** (V1-D1, #250), and presentations are V1-D2's.
+`.mandala.json` holds a glyph mutation today: an **edit** changes the
+map in the document's vocabulary ([`format/edits.md`](./format/edits.md)),
+and glyph-layer effects are presentations, V1-D2's.
 
 ## §5 The application runtime
 
@@ -2495,7 +2527,7 @@ Some(&DispatchHit { click_hit, canvas_pos }))`.
    `~/.config/mandala/macros.json` on native. See
    `crate::application::macros` for `Macro`, `MacroStep`,
    `MacroRegistry`, and `dispatch_macro`. Steps fan out to
-   `dispatch_action`, the edit step (V1-D1), or
+   `dispatch_action`, the `Edit` step, or
    `execute_console_line` depending on `MacroStep` kind, so plugin
    authors and macro recorders share one runtime path. That path is
    `run_macro_steps`, the gated step loop `dispatch_macro` calls
@@ -2504,8 +2536,8 @@ Some(&DispatchHit { click_hit, canvas_pos }))`.
    arrives. **Unknown
    macro id falls through** to the edit tier, so a typo'd or
    half-loaded macros file doesn't swallow the keystroke.
-3. `keybinds.edit_for(...)` — edit bindings, which fire nothing until
-   V1-D1 (#250) rebuilds edits.
+3. `keybinds.edit_for(...)` — edit bindings, run at the selection
+   through the edit funnel (`dispatch::families::edits::run_edit`).
 
 **Built-in Actions win on collision.** A key combo bound to both
 `Action::Copy` (in `copy: ["Ctrl+C"]`) and a macro on `"Ctrl+C"` in

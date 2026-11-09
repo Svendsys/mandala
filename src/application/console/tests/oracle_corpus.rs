@@ -106,6 +106,17 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     // selection, decides them.
     (Sel::Multi, "node x=1"),
     (Sel::Multi, "mode resize"),
+    // edit — the verb only reads the line; the executor runs it against
+    // the edit registry, so a well-formed one is a silent OK.
+    (Sel::Node, "edit"),
+    (Sel::Node, "edit list"),
+    (Sel::Node, "edit LIST"),
+    (Sel::Node, "edit apply flower 1 2"),
+    (Sel::Node, "edit apply"),
+    (Sel::Node, "edit apply flower x"),
+    (Sel::Node, "edit help"),
+    (Sel::Node, "edit inspect cascade extra"),
+    (Sel::Node, "edit nope"),
 ];
 
 /// `(selection fixture, input line)` — the completion popup for
@@ -207,6 +218,10 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::None, "record start frame="),
     (Sel::None, "clock "),
     (Sel::None, "clock step "),
+    // edit
+    (Sel::None, "ed"),
+    (Sel::None, "edit "),
+    (Sel::None, "edit apply "),
 ];
 
 /// The one outcome whose tail this machine chose rather than the

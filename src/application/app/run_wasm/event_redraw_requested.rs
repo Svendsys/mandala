@@ -23,6 +23,11 @@
 //! Under a virtual clock the frame lands no sample, as native's loop
 //! frame does not: the heartbeats that land one are a step's
 //! (`run_wasm::step`).
+//!
+//! On a real clock the frame also writes the running animations at its
+//! instant (`app::animation::tick`) before the sync draws them, and asks
+//! for the next frame while one is running
+//! (`app::animation::keeps_ticking`, through `needs_continuation`).
 
 #![cfg(target_arch = "wasm32")]
 
@@ -51,6 +56,14 @@ impl super::WasmApp {
             // `Beat::Loop`, the predicate native's loop frame reads.
             if Beat::Loop.lands_injected(&borrowed.input.clock) {
                 borrowed.land_injected();
+            }
+            // The animations at the frame's instant, on a real clock:
+            // under a virtual one they are a step's (`run_wasm::step`).
+            if !borrowed.input.clock.is_virtual() {
+                crate::application::app::animation::tick(
+                    Some(&mut borrowed.input.document),
+                    &borrowed.input.clock,
+                );
             }
             borrowed.sync_view();
             continuing = borrowed.needs_continuation();

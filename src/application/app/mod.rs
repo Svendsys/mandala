@@ -53,6 +53,9 @@
 // directory's `mod.rs` re-exports the public surface so callers stay
 // terse.
 pub(crate) mod dispatch;
+// The animation tick both targets' frames run (animated edits; V1-D2's
+// presentations join it).
+mod animation;
 
 // Native-only — interactive modal state machines absent on WASM.
 // See CLAUDE.md "Dual-target status".
@@ -642,6 +645,11 @@ pub struct OneShot {
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests;
+
+// The edit funnel and its animation tick (V1-D1).
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_edits;
 
 // The GPU-backed half of the suite (TEST_CONVENTIONS §T8): a whole
 // native app with no window on whatever adapter the machine has —
