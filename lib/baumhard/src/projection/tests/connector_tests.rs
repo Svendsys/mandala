@@ -940,6 +940,55 @@ fn test_projection_untangle_answers_as_measuring_every_pair_each_round() {
             "{count} paths {wide} wide"
         );
     }
+    // Junctions drawn at random, some paths straight and some through a
+    // point, crowded enough that rounds run: among them pairs of straight
+    // paths too near each other, carried from round to round since
+    // neither is ever halved, and paths halved together, one passing
+    // where the other was the round before. The failing inputs are a
+    // carried pair dropped, and a halved path's old points left in the
+    // grid, each found near a curve that is no longer there.
+    let mut next = scatter(2 * 7919);
+    let (mut carried, mut rounds) = (0, 0);
+    for case in 0..200 {
+        let count = 2 + (next() as usize) % 6;
+        let lanes: Vec<Lane> = (0..count)
+            .map(|_| {
+                let end = Vec2::new((next() - 50.0) * 4.0, 20.0 + next() * 3.0);
+                let leaves = Vec2::from_angle((next() - 50.0) * 0.012).rotate(Vec2::Y);
+                Lane {
+                    start: (Vec2::ZERO, leaves, 4.0),
+                    hold: 0.0,
+                    end: (end, -Vec2::Y, 4.0),
+                    via: if next() < 80.0 {
+                        vec![Vec2::new((next() - 50.0) * 2.0, next() - 50.0)]
+                    } else {
+                        Vec::new()
+                    },
+                    width: 3.0,
+                    straight: next() < 15.0,
+                }
+            })
+            .collect();
+        UNTANGLE_GRIDS.with(|c| c.set(0));
+        let got = untangle(&lanes);
+        rounds += UNTANGLE_GRIDS.with(std::cell::Cell::get);
+        // Two straight lanes too near each other: a pair carried.
+        let straight: Vec<Vec<Vec2>> = lanes
+            .iter()
+            .filter(|lane| lane.straight)
+            .map(|lane| {
+                let line = [Curve::Line(lane.start.0, lane.end.0)];
+                sample(&line, 0.25 * lane.width, CLEARANCE * lane.hold.max(lane.width))
+            })
+            .collect();
+        let widths = vec![3.0; straight.len()];
+        carried += usize::from(!near_pairwise(&straight, &widths).is_empty());
+        assert_eq!(got, untangle_afresh(&lanes), "case {case}: {lanes:?}");
+    }
+    assert!(
+        carried > 0 && rounds > 400,
+        "precondition: straight pairs too near ({carried}) and rounds after the first ({rounds} in all)"
+    );
 }
 
 /// `count` paths fanned out of one point, held out `hold`, to a row
