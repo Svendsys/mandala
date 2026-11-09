@@ -821,25 +821,45 @@ fn test_a_font_this_build_has_no_face_for_is_refused() {
 }
 
 #[test]
-fn test_a_system_font_is_not_a_face_the_file_can_name() {
-    // An installed system font resolves to the fallback face on native,
-    // which has no name a file could write back. The test build always
-    // has one: the decoy faces under "Noto Sans" (`fonts::DECOY_FAMILY`,
-    // ruling R30) stand in for a host font and are attributed
-    // `AppFont::Any`, as a host face is, so the arm is reached on every
-    // machine whatever it has installed.
-    let family = crate::font::fonts::loaded_families_iter()
-        .find(|family| {
-            crate::font::fonts::app_font_by_family(family) == Some(crate::font::fonts::AppFont::Any)
-        })
-        .expect("precondition: the test build's decoy family is a family no compiled face provides");
-    rejects(
-        &map_of(&format!(r#","font":{}"#, serde_json::to_string(family).unwrap())),
-        "nodes[0].font",
-        LoadErrorKind::UnknownFont {
-            family: family.to_string(),
-        },
+fn test_a_listed_family_loads_if_compiled_and_is_refused_if_only_installed() {
+    // Every family the font listing offers (`font list`, the console's
+    // completion, a `console_font`) is either a compiled face, which a map
+    // can name and load, or, on native, an installed system font (#228),
+    // attributed to the fallback face `AppFont::Any`, which has no name a
+    // file could write back: the loader refuses it until #329 lets a map
+    // name an installed family. A host with no installed family has
+    // nothing for the second arm, and says so.
+    use crate::font::fonts::{app_font_by_family, loaded_families_iter, AppFont};
+    let (mut compiled, mut installed) = (0, 0);
+    for family in loaded_families_iter() {
+        let map = map_of(&format!(r#","font":{}"#, serde_json::to_string(family).unwrap()));
+        match app_font_by_family(family) {
+            Some(AppFont::Any) => {
+                installed += 1;
+                rejects(
+                    &map,
+                    "nodes[0].font",
+                    LoadErrorKind::UnknownFont {
+                        family: family.to_string(),
+                    },
+                );
+            }
+            Some(_) => {
+                compiled += 1;
+                assert!(load(&map).is_ok(), "the compiled family {family:?} does not load");
+            }
+            None => panic!("the listed family {family:?} resolves to no face"),
+        }
+    }
+    assert!(
+        compiled >= 50,
+        "precondition: the compiled families are listed ({compiled})"
     );
+    if installed == 0 {
+        crate::util::test_skip::note_skipped(
+            "format_reject_tests: no installed family on this host, so the refusal of one is unproven",
+        );
+    }
 }
 
 #[test]

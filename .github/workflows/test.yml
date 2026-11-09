@@ -61,7 +61,10 @@ jobs:
       # is installed above; ubuntu-latest ships node), so a missing one
       # means this workflow broke, and the probe must fail rather than
       # pass by skipping. `MANDALA_REQUIRE_GPU` is the same contract
-      # for the GPU-backed tests and the adapter installed above.
+      # for the GPU-backed tests and the adapter installed above, and
+      # `MANDALA_REQUIRE_FONTCONFIG_HOSTS` for `font_state`'s host test,
+      # whose planted hosts need a fontdb that reads `FONTCONFIG_FILE`
+      # (Linux): it skips with a note elsewhere, and must not here.
       #
       # `--lint` adds the fmt, clippy and doc gates (host and wasm32
       # legs). They are hard gates with zero baselines, and without
@@ -71,6 +74,7 @@ jobs:
         env:
           MANDALA_REQUIRE_WASM_PROBE: "1"
           MANDALA_REQUIRE_GPU: "1"
+          MANDALA_REQUIRE_FONTCONFIG_HOSTS: "1"
         run: ./test.sh --lint
 
   # `vendor/cosmic-text` is the published cosmic-text 0.19.0 plus

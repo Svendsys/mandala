@@ -25,6 +25,16 @@ use std::sync::Arc;
 
 use super::overlay::SELECTION_HIGHLIGHT;
 
+/// The band's corners, in the order top-left, top-right, bottom-left,
+/// bottom-right: the console frame's rounded arcs.
+pub(crate) const BAND_CORNERS: [char; 4] = ['\u{256D}', '\u{256E}', '\u{2570}', '\u{256F}'];
+
+/// The band's top and bottom edges, one per cell: a light triple dash.
+pub(crate) const BAND_HORIZONTAL: char = '\u{2504}'; // ┄
+
+/// The band's sides, one per row: a light triple dash, upright.
+pub(crate) const BAND_VERTICAL: &str = "\u{2506}"; // ┆
+
 /// The band's glyph size, in points.
 const BAND_SIZE_PT: f32 = 14.0;
 
@@ -60,9 +70,11 @@ pub(super) fn runs_for(rect: Option<Rect>) -> [GlyphRunData; 4] {
     let advance = monospace_advance(BAND_SIZE_PT);
     let cells = ((max.x - min.x) / advance).max(1.0) as usize;
     let rows = ((max.y - min.y) / BAND_SIZE_PT).max(1.0) as usize;
-    let top = format!("\u{256D}{}\u{256E}", "\u{2504}".repeat(cells));
-    let bottom = format!("\u{2570}{}\u{256F}", "\u{2504}".repeat(cells));
-    let side = vec!["\u{2506}"; rows].join("\n");
+    let [top_left, top_right, bottom_left, bottom_right] = BAND_CORNERS;
+    let edge: String = std::iter::repeat_n(BAND_HORIZONTAL, cells).collect();
+    let top = format!("{top_left}{edge}{top_right}");
+    let bottom = format!("{bottom_left}{edge}{bottom_right}");
+    let side = vec![BAND_VERTICAL; rows].join("\n");
     [
         run_of(
             &top,

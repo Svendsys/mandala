@@ -486,10 +486,11 @@ builds a GL-only instance with one `warn!`
 now renders the bundle, on WebGL2. Two limits remain. First, the
 same-task read is established for WebGL's model on a plain canvas; on
 this bundle under the fallback it has not been run through
-`capture.screenshot` yet. Second, the browser has no Latin text face for
-the default family, so edge labels draw as `.notdef` boxes and
-connection dots vanish (#228, open) — on every backend, and on a native
-machine with no system fonts too. Nothing in `./test.sh` runs a browser
+`capture.screenshot` yet. Second, until #228 the browser had no Latin
+text face for the default family, so edge labels drew as `.notdef`
+boxes and connection dots vanished; the default family is now a
+compiled face (Inter) on every target, and native draws the same frame
+with or without the host's fonts. Nothing in `./test.sh` runs a browser
 (TEST_CONVENTIONS §T8).
 
 ## Tear down

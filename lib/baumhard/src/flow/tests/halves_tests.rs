@@ -319,9 +319,8 @@ pub(crate) fn band_residual(
     x_per_pt: &dyn Fn(usize) -> f32,
 ) -> BandMeasure {
     // A glyph with no outline to measure — a `.notdef` or a bitmap, as a
-    // side ornament no compiled face holds is drawn where no host face
-    // does — inked as its box, its advance by the line height, as the
-    // engine inks it.
+    // side ornament no compiled face holds is drawn — inked as its box,
+    // its advance by the line height, as the engine inks it.
     let inks: Vec<Option<(Vec2, Vec2)>> = inks(run, placed)
         .into_iter()
         .zip(&placed.glyphs)

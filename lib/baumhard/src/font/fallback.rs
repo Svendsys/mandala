@@ -1,164 +1,191 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The ornament fallback (V1-B11, #297): the compiled faces the shaper
-//! reaches first, after a span's own face, for a glyph that face lacks.
+//! The default face and the fallback (#228, #297): which compiled face
+//! draws text that pins no family, and which faces a glyph a span's own
+//! face lacks is looked for in, in what order — the same on every target.
 //!
-//! The demo maps and the built-in styles draw ornaments — `✦`, `❦`, `♪`,
-//! `∙`, the connector's `·`, the portal end's `◈`, the frames demo's `🌸`
-//! — that no compiled text face holds. cosmic-text looks for such a glyph
-//! in the fallback families its platform lists (on Linux `Noto Sans`,
-//! `DejaVu Sans`, …, `Noto Color Emoji`), and only after them in every
-//! other face. So on native they were drawn in whatever host face holds
-//! them, and in the browser, which has only the compiled faces, in
-//! whichever compiled face came first, or as an empty box.
+//! **The default face** is
+//! [`DEFAULT_FACE`](crate::font::fallback::DEFAULT_FACE), Inter 4.1's
+//! variable face, compiled in. cosmic-text names a face for each generic
+//! family (`Family::SansSerif`, which `Attrs::new()` asks for,
+//! `Family::Monospace` and the rest), and `new_font_system` names this
+//! one for all of them.
+//! So a span with no family — an `AppFont::Any` span, an edge label, a
+//! connector's `·` — is drawn in it on every machine and in the browser.
+//! Until #228 those names were cosmic-text's own ("Open Sans", "Noto Sans
+//! Mono"), which no compiled face bears: on a Linux desktop the text
+//! reached the host's DejaVu Sans through the fallback, and in the
+//! browser, or on a host with no fonts, a decorative face or an empty box.
 //!
-//! Two compiled faces hold them now, subset from freely licensed sources
-//! by `scripts/ornament_fonts.sh`
-//! ([`ORNAMENT_FALLBACK`](crate::font::fallback::ORNAMENT_FALLBACK)), and
-//! the font system is built with a
-//! [`Fallback`](cosmic_text::Fallback) that lists their families ahead of
-//! the platform's, in the common list and in every script's
-//! (`new_font_system`). A span's own face still comes first: a pinned
-//! family that holds a glyph draws it. What changes is the face a glyph
-//! falls back to, which is now a compiled one on every install.
+//! **The fallback** is one list,
+//! [`fallback_families`](crate::font::fallback::fallback_families),
+//! which cosmic-text tries after a span's own face: the default face, then
+//! the two ornament faces
+//! ([`ORNAMENT_FALLBACK`](crate::font::fallback::ORNAMENT_FALLBACK)),
+//! then the compiled faces of the scripts the default face does not write
+//! ([`SCRIPT_FALLBACK`](crate::font::fallback::SCRIPT_FALLBACK)). It is
+//! the common list of a [`Fallback`](cosmic_text::Fallback) whose script
+//! lists are empty, so a run of any script, on any target, tries the same
+//! faces in the same order;
+//! cosmic-text's platform lists, which differ between Linux, Windows,
+//! macOS and the browser and name host families, are not consulted. A
+//! glyph none of those faces holds is looked for in every other face, as
+//! cosmic-text does after its lists, in the order of its `FontMatchKey`:
+//! emoji faces first, then nearest in weight, in stretch and in slant,
+//! then lighter and narrower, and only among faces equal in all of those
+//! in the order they were loaded — the compiled faces in the order the
+//! build lists them, then, on native, the host's (#228). So a host face
+//! draws a glyph no compiled face holds; and a glyph only an unlisted
+//! (decorative) compiled face holds can be drawn first by a host emoji
+//! face, by a host face of the span's weight where the compiled one has
+//! another, or, for an italic span, by a host italic face. Every glyph the
+//! app, its built-in styles and the shipped maps draw is held by a listed
+//! face, so none reaches that pass.
+//!
+//! The ornament faces hold no code point the default face holds
+//! (`scripts/ornament_fonts.sh`, held by `font::tests::ornament_tests`),
+//! so a letter, digit, space or punctuation mark is never drawn by an
+//! ornament face, whatever face a span pins (#228's choice (a)); and a
+//! span's own face still comes first, so a pinned family that holds an
+//! ornament draws it in its own design.
 //!
 //! cosmic-text matches a fallback family only at the exact weight a span
-//! asks for (or within a variable face's `wght` axis), so each fallback
-//! face is registered at every CSS weight (`register_every_weight`): the
-//! same outlines under each weight, no weight synthesized, as a
-//! single-weight family draws every weight at its own (ruling R30). The
-//! slant needs no registering, since the matcher does not filter on it:
-//! an italic span's ornament is drawn by the upright face, which
-//! cosmic-text skews by 14° (`CacheKeyFlags::FAKE_ITALIC`), as it skewed
-//! the host's upright DejaVu Sans before.
-//!
-//! What this cannot reach is a span's own family when that is a host
-//! face: a span that pins no compiled family asks for cosmic-text's
-//! default, which on a host that has it is a host face, and a glyph it
-//! holds is drawn in it. That is the default family's gap (#228), not a
-//! fallback's.
+//! asks for, or within a variable face's `wght` axis. The default face is
+//! variable from 100 to 900; each static fallback face is registered at
+//! every CSS weight instead (`register_every_weight`): the same outlines
+//! under each weight, no weight synthesized, as a single-weight family
+//! draws every weight at its own (ruling R30). The slant needs no
+//! registering, since the matcher does not filter on it: an italic span's
+//! glyph is drawn by an upright face, which cosmic-text skews by 14°
+//! (`CacheKeyFlags::FAKE_ITALIC`).
 
-use std::sync::OnceLock;
-
-use cosmic_text::fontdb::{Weight, ID};
-use cosmic_text::{Fallback, FontSystem, PlatformFallback};
+use cosmic_text::fontdb::{Database, Weight, ID};
+use cosmic_text::{Fallback, FontSystem};
 use tinyvec::TinyVec;
 use unicode_script::Script;
 
 use crate::font::fonts::AppFont;
 
-/// The compiled faces a glyph falls back to before any host face, in the
-/// order they are tried, with the family name each face stores.
+/// The face text that pins no family is drawn in, and the first face of
+/// the fallback, with the family name it stores: Inter 4.1's variable
+/// face (SIL Open Font License 1.1), `wght` 100 to 900. It holds Latin,
+/// Greek and Cyrillic and the punctuation, arrows and geometric shapes
+/// the maps and the app's own text draw; the box-drawing characters it
+/// lacks are in `Mandala Ornaments`. `format/fonts.md` records why this
+/// face.
+pub const DEFAULT_FACE: (AppFont, &str) = (AppFont::InterVariable, "Inter Variable");
+
+/// The ornament faces, in the order they are tried, after the default
+/// face, with the family name each face stores.
 ///
-/// - **Mandala Ornaments**: DejaVu Sans 2.37 subset to the space and
-///   `+ ~ · ∙ ◈ ♪ ✦ ❦` (Bitstream Vera and Arev licenses).
+/// - **Mandala Ornaments**: DejaVu Sans 2.37 subset to `∙ ◈ ✦ ❦` and the
+///   box-drawing `─ ━ │ ┃ ╭ ╮ ╯ ╰` (Bitstream Vera and Arev licenses).
 /// - **Mandala Emoji**: Noto Color Emoji 2.047 subset to `🌸` (OFL 1.1).
 ///
-/// Two faces, because cosmic-text tries one face of a fallback family:
-/// a second face under the same name would be reached only after every
-/// host face. The names are spelled here, not read from the faces,
-/// because the fallback lists are built with the font system, before the
-/// compiled faces are registered in it;
-/// `test_each_ornament_fallback_names_its_faces_family_at_every_weight`
-/// holds each to its face.
+/// Two faces, because cosmic-text tries one face of a fallback family: a
+/// second face under the same name would be reached only after every
+/// listed family.
 pub const ORNAMENT_FALLBACK: &[(AppFont, &str)] = &[
     (AppFont::MandalaOrnaments, "Mandala Ornaments"),
     (AppFont::MandalaEmoji, "Mandala Emoji"),
 ];
 
-/// The weights each [`ORNAMENT_FALLBACK`] face is registered at: every
-/// CSS weight, so a span at any of them reaches it.
+/// The compiled faces of the scripts the default face does not write,
+/// tried after the ornament faces, with the family name each face stores.
+/// Listed, each is registered at every weight and met at the span's own
+/// weight before cosmic-text's last pass, where another face that holds
+/// the script — a host face at the span's weight, or Public Pixel, which
+/// holds Hebrew letters — could come first. A compiled script face is
+/// added here when it is compiled in.
+pub const SCRIPT_FALLBACK: &[(AppFont, &str)] = &[
+    (AppFont::NotoSansHebrewRegular, "Noto Sans Hebrew"),
+    (AppFont::NotoSansDevanagariRegular, "Noto Sans Devanagari"),
+    (AppFont::NotoSerifTibetanRegular, "Noto Serif Tibetan"),
+    (
+        AppFont::NotoSansEgyptianHieroglyphsRegular,
+        "Noto Sans Egyptian Hieroglyphs",
+    ),
+];
+
+/// The weights each static fallback face is registered at: every CSS
+/// weight, so a span at any of them reaches it.
 pub const FALLBACK_WEIGHTS: [u16; 9] = [100, 200, 300, 400, 500, 600, 700, 800, 900];
 
-/// cosmic-text's platform fallback lists with [`ORNAMENT_FALLBACK`]'s
-/// families first in each: the list every script's run falls back to
-/// last (`common`), and each script's own list, which a run of that
-/// script tries before it (`scripts`).
-///
-/// The trait hands out borrows of the lists, so each is kept here. A
-/// script's is built the first time cosmic-text asks for it, in its slot
-/// of `scripts`, indexed by the script's `u8` discriminant: Unicode's
-/// scripts cannot be listed up front through `unicode_script` (a
-/// `ScriptExtension` of every script iterates as `Common` alone).
-struct OrnamentsFirst {
-    /// The ornament families, then the platform's common list.
+/// Every face of the fallback, in the order cosmic-text tries them:
+/// [`DEFAULT_FACE`], [`ORNAMENT_FALLBACK`], [`SCRIPT_FALLBACK`]. It is
+/// the list a span of any family asks for: the `AttrsList` bridge asks
+/// for no family either (`font::attrs`), so no path reaches
+/// cosmic-text's `Family::Monospace` search, which tries every
+/// monospaced face before the list.
+pub fn fallback_families() -> impl Iterator<Item = &'static (AppFont, &'static str)> {
+    std::iter::once(&DEFAULT_FACE)
+        .chain(ORNAMENT_FALLBACK)
+        .chain(SCRIPT_FALLBACK)
+}
+
+/// The locale the font system is built with. cosmic-text reads a locale
+/// only to choose a script's fallback list, which [`CompiledFallback`]
+/// leaves empty, so it decides nothing; it is fixed rather than read
+/// from the host so that it cannot.
+const LOCALE: &str = "en-US";
+
+/// The fallback lists: [`fallback_families`] as the common list, and no
+/// script's own list, on every target.
+struct CompiledFallback {
+    /// [`fallback_families`]' names, in order.
     common: Vec<&'static str>,
-    /// For each script, once asked for, the ornament families, then the
-    /// platform's list for it at `locale`.
-    scripts: [OnceLock<Vec<&'static str>>; 256],
-    /// The locale `scripts` is built for.
-    locale: String,
-    /// The platform's lists.
-    platform: PlatformFallback,
 }
 
-/// [`ORNAMENT_FALLBACK`]'s family names, in order.
-fn ornament_families() -> impl Iterator<Item = &'static str> {
-    ORNAMENT_FALLBACK.iter().map(|(_, family)| *family)
-}
-
-impl OrnamentsFirst {
-    /// The lists for a font system at `locale`. Cost: the common list; a
-    /// script's costs one platform lookup and one small `Vec`, the first
-    /// time it is asked for.
-    fn new(locale: &str) -> Self {
-        let platform = PlatformFallback;
-        let common = ornament_families()
-            .chain(platform.common_fallback().iter().copied())
-            .collect();
-        Self {
-            common,
-            scripts: std::array::from_fn(|_| OnceLock::new()),
-            locale: locale.to_string(),
-            platform,
-        }
-    }
-}
-
-impl Fallback for OrnamentsFirst {
+impl Fallback for CompiledFallback {
     fn common_fallback(&self) -> &[&'static str] {
         &self.common
     }
 
     fn forbidden_fallback(&self) -> &[&'static str] {
-        self.platform.forbidden_fallback()
+        &[]
     }
 
-    fn script_fallback(&self, script: Script, locale: &str) -> &[&'static str] {
-        // cosmic-text asks for its own locale, which is the one the lists
-        // are built for; another gets the platform's list unchanged.
-        if locale != self.locale {
-            return self.platform.script_fallback(script, locale);
-        }
-        self.scripts[script as usize].get_or_init(|| {
-            ornament_families()
-                .chain(self.platform.script_fallback(script, locale).iter().copied())
-                .collect()
-        })
+    fn script_fallback(&self, _script: Script, _locale: &str) -> &[&'static str] {
+        &[]
     }
 }
 
-/// The font system [`FONT_SYSTEM`](crate::font::fonts) is: cosmic-text's
-/// own (`FontSystem::new`, the host's faces indexed on native, the locale
-/// read from the system), with [`OrnamentsFirst`]'s fallback lists in
-/// place of the platform's. Cost: `FontSystem::new`, then one more walk
+/// The font system over `db`, which holds the compiled faces first and,
+/// on native, the host's after them: [`DEFAULT_FACE`]'s family named for
+/// every generic family, and [`CompiledFallback`]'s lists. The host's
+/// locale is not read, nor its platform's fallback lists. Cost: one walk
 /// over the database's faces, which cosmic-text makes to list the
 /// monospaced ones.
-pub(crate) fn new_font_system() -> FontSystem {
-    let (locale, db) = FontSystem::new().into_locale_and_db();
-    let fallback = OrnamentsFirst::new(&locale);
-    FontSystem::new_with_locale_and_db_and_fallback(locale, db, fallback)
+pub(crate) fn new_font_system(mut db: Database) -> FontSystem {
+    let family = DEFAULT_FACE.1;
+    db.set_sans_serif_family(family);
+    db.set_serif_family(family);
+    db.set_monospace_family(family);
+    db.set_cursive_family(family);
+    db.set_fantasy_family(family);
+    let common = fallback_families().map(|(_, family)| *family).collect();
+    FontSystem::new_with_locale_and_db_and_fallback(LOCALE.to_string(), db, CompiledFallback { common })
+}
+
+/// Whether the font `data` (a face of a collection at `index`) is
+/// variable in weight: whether it has a `wght` axis, and the whole
+/// weights it spans if so, its ends rounded inward. Cost: one parse of the font's table directory and its
+/// `fvar` table.
+pub(crate) fn weight_axis(data: &[u8], index: u32) -> Option<(u16, u16)> {
+    use cosmic_text::skrifa::{FontRef, MetadataProvider, Tag};
+    let font = FontRef::from_index(data, index).ok()?;
+    let axis = font.axes().get_by_tag(Tag::new(b"wght"))?;
+    // Inward, so every weight reported as spanned is one cosmic-text,
+    // which compares the axis's own ends, matches the face at.
+    Some((axis.min_value().ceil() as u16, axis.max_value().floor() as u16))
 }
 
 /// Register the face `ids` names at every one of [`FALLBACK_WEIGHTS`] it
 /// is not already at, adding each new face's id to `ids`: the same
 /// source, family and outlines under another weight. Cost: one database
 /// insert per weight added.
-pub(crate) fn register_every_weight(font_system: &mut FontSystem, ids: &mut TinyVec<[ID; 8]>) {
-    let faces: Vec<_> = ids
-        .iter()
-        .filter_map(|id| font_system.db().face(*id).cloned())
-        .collect();
+pub(crate) fn register_every_weight(db: &mut Database, ids: &mut TinyVec<[ID; 8]>) {
+    let faces: Vec<_> = ids.iter().filter_map(|id| db.face(*id).cloned()).collect();
     let have: Vec<u16> = faces.iter().map(|face| face.weight.0).collect();
     let Some(face) = faces.first() else {
         return;
@@ -170,6 +197,6 @@ pub(crate) fn register_every_weight(font_system: &mut FontSystem, ids: &mut Tiny
         let mut info = face.clone();
         info.id = ID::dummy();
         info.weight = Weight(weight);
-        ids.push(font_system.db_mut().push_face_info(info));
+        ids.push(db.push_face_info(info));
     }
 }

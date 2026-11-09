@@ -54,6 +54,7 @@ pub fn do_flow_span_attrs_carry_weight_slant_and_size() {
     let galatia = crate::font::fonts::PinnedFamily {
         name: "Galatia SIL".to_string(),
         weights: vec![400, 700],
+        axes: Vec::new(),
         faces: Vec::new(),
     };
     let attrs = span_attrs(&span(&bold_italic), 2.0, Some(&galatia));
@@ -801,8 +802,7 @@ pub fn do_flow_shape_run_maps_a_zwj_emoji() {
 /// shaping first in the default family shaped without them, and one
 /// pinning a compiled family under a lease re-entered the lock the lease
 /// held. Gated on `cfg(test)` and plain (lib/baumhard/CONVENTIONS.md §B8,
-/// class 1): it runs this test binary again, which only a test build has,
-/// and reads the test build's record of the host faces loading removed.
+/// class 1): it runs this test binary again, which only a test build has.
 #[cfg(test)]
 mod cold_process {
     use crate::document::values::FontSize;
@@ -814,8 +814,7 @@ mod cold_process {
     const COLD_CHILD_ENV: &str = "MANDALA_FLOW_COLD_CHILD";
 
     /// What a child shaped, first thing in its process: the faces its font
-    /// system holds and the host faces removed for shadowing a compiled
-    /// family, then a heading in the default family (bold, 74 pt, as
+    /// system holds, then a heading in the default family (bold, 74 pt, as
     /// testament's "Lord God") and a word pinned to a compiled face, each
     /// as its glyphs' faces and advances.
     fn shaped_cold() -> String {
@@ -830,13 +829,6 @@ mod cold_process {
         let pinned = real_run("cold", &style(12.0), &mut fs);
         let faces = fs.fonts().db().faces().count();
         drop(fs);
-        let removed = fonts::SHADOWING_FACES_REMOVED
-            .get()
-            .expect("precondition: the font system is built");
-        assert!(
-            removed.iter().any(|name| name == fonts::SHADOWING_DECOY),
-            "precondition: the test build's stand-in host face was registered and removed ({removed:?})"
-        );
         let glyphs = |run: &crate::flow::ShapedRun| -> Vec<String> {
             run.layout_glyphs()
                 .zip(&run.glyphs)
@@ -849,7 +841,7 @@ mod cold_process {
             (8, 4),
             "precondition: each run shaped a glyph per character"
         );
-        format!("faces {faces} removed {removed:?} | {default_family:?} | {pinned:?}")
+        format!("faces {faces} | {default_family:?} | {pinned:?}")
     }
 
     #[test]
