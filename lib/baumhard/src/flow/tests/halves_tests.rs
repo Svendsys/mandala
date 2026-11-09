@@ -198,6 +198,31 @@ fn inks(run: &ShapedRun, placed: &PlacedRun) -> Vec<Option<(Vec2, Vec2)>> {
     })
 }
 
+/// Whether the rasterizer draws a pixel of each glyph of `run`, as the
+/// renderer asks for its image — read here from the rasterizer, not
+/// through the engine's own reading of it (#333).
+fn rasterized(run: &ShapedRun) -> Vec<bool> {
+    with_fonts(|fs| {
+        let fs = fs.fonts();
+        let mut cache = SwashCache::new();
+        run.layout_glyphs()
+            .map(|laid| {
+                let (key, _, _) = cosmic_text::CacheKey::new(
+                    laid.font_id,
+                    laid.glyph_id,
+                    laid.font_size,
+                    (0.0, 0.0),
+                    laid.font_weight,
+                    laid.cache_key_flags,
+                );
+                cache
+                    .get_image_uncached(fs, key)
+                    .is_some_and(|image| image.placement.width > 0 && image.placement.height > 0)
+            })
+            .collect()
+    })
+}
+
 /// The distance between two boxes, 0 where they meet.
 fn gap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> f32 {
     (b.0 - a.1).max(a.0 - b.1).max(Vec2::ZERO).length()
@@ -302,7 +327,9 @@ pub(crate) type BandMeasure = (f32, (f32, f32), usize, usize, f32);
 /// inward, where the outline under an anchor is thinner across than
 /// twice the offset, no curve inside it lies at the offset from it all
 /// round, and the band curve folds over the outline's far side. A glyph
-/// with no outline to measure is inked as its box, as the engine inks it.
+/// with no outline that the rasterizer draws all the same is inked as its
+/// box, and one it draws nothing for has no ink, as the engine inks them
+/// (#333).
 ///
 /// And the most any ink not folded reaches toward the outline from its
 /// anchor, as the engine models an ink's reach: the support, along the
@@ -318,16 +345,19 @@ pub(crate) fn band_residual(
     offset: f32,
     x_per_pt: &dyn Fn(usize) -> f32,
 ) -> BandMeasure {
-    // A glyph with no outline to measure — a `.notdef` or a bitmap, as a
-    // side ornament no compiled face holds is drawn — inked as its box,
-    // its advance by the line height, as the engine inks it.
+    // A glyph with no outline that is drawn all the same — a bitmap —
+    // inked as its box, its advance by the line height, and one that
+    // draws nothing — a `.notdef` whose outline is empty — not at all, as
+    // the engine inks them (#333).
+    let drawn = rasterized(run);
     let inks: Vec<Option<(Vec2, Vec2)>> = inks(run, placed)
         .into_iter()
         .zip(&placed.glyphs)
         .map(|(ink, g)| {
             let glyph = &run.glyphs[g.glyph as usize];
             ink.or_else(|| {
-                (!glyph.blank).then(|| (g.pos, g.pos + Vec2::new(glyph.advance.max(0.0), run.line_height)))
+                (!glyph.blank && drawn[g.glyph as usize])
+                    .then(|| (g.pos, g.pos + Vec2::new(glyph.advance.max(0.0), run.line_height)))
             })
         })
         .collect();
@@ -411,7 +441,6 @@ pub(crate) fn folded(path: &ArcPath, p: Vec2, offset: f32) -> bool {
 /// How near the most any ink of a frame laid outward reaches toward the
 /// outline must lie to its offset, in points (#308, ruling B15.1): a
 /// hundredth, what the engine solves the offset to (`OFFSET_TOLERANCE`).
-#[cfg(test)]
 pub(crate) const REACH_TOLERANCE: f32 = 0.01;
 
 /// The most a glyph's anchor may lie off its frame's band curve, and the
@@ -2210,6 +2239,132 @@ fn laid_without_outlines(text: &str, shape: &Outline) {
             );
         }
     }
+}
+
+#[test]
+fn test_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance() {
+    do_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance();
+}
+
+/// A frame's glyph that the rasterizer draws nothing for — U+10FFFD, the
+/// last private-use code point, which no compiled face maps, at Galatia
+/// SIL's `.notdef`, whose outline is empty — has no ink (#333), and its
+/// line lays it by its advance alone: nothing is cut, and every glyph
+/// that draws is laid; the band curve lies as near the outline as lets
+/// every drawn ink clear it, the most any of them reaches toward the
+/// outline its offset to within `REACH_TOLERANCE` (`band_residual`),
+/// and every anchor lies on it. In a line of words, and beside a line of
+/// nothing else, which has no letter to lay and draws nothing. And it
+/// opens no gap of the line's tracking: in `aaaa`, U+10FFFD, `aaaa`, laid
+/// `Spread`, the letters either side of it are as far apart, ink to ink,
+/// as two neighbors are, and its advance more.
+///
+/// Precondition: the text holds glyphs that are no space and that the
+/// rasterizer draws nothing for — where no host face maps U+10FFFD.
+/// Control: such a glyph inked as its box, its advance by the line
+/// height, as a glyph with no outline was before #333, red: the box
+/// reaches further toward the outline than any letter and the band curve
+/// is set by it, the drawn inks' most reach 0.31 short of the offset
+/// ("its drawn inks' most reach toward the outline lies -0.30978584 past
+/// its offset"). Control: such a glyph owing the line's gap as a space
+/// does, red: the letters either side of it 72.42 further apart than two
+/// neighbors, the gap of 62.92 and its advance of 9.51.
+pub fn do_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance() {
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(820.0, 330.0)), Shape::Ellipse);
+    let top = StartPoint {
+        edge: Edge::Top,
+        at: 0.0,
+    };
+    let path = ArcPath::closed(&shape, top, Direction::Clockwise, MIN_TABLE_SPACING);
+    for text in [
+        "a time \u{10FFFD} to every purpose \u{10FFFD}\u{10FFFD} under the heaven",
+        "a time to every purpose under the heaven\n\u{10FFFD}\u{10FFFD}\u{10FFFD}",
+    ] {
+        let (run, placed, trace) = frame_with(
+            text,
+            30.0,
+            &shape,
+            &FitMode::Once { filler: None },
+            &RingLayout::whole(),
+            true,
+        );
+        let drawn = rasterized(&run);
+        let undrawn = run
+            .glyphs
+            .iter()
+            .zip(&drawn)
+            .filter(|(glyph, drawn)| !glyph.blank && !**drawn)
+            .count();
+        assert!(
+            undrawn > 0,
+            "precondition: {text:?}: the text holds a glyph that draws nothing"
+        );
+        assert!(!placed.truncated, "{text:?}: nothing cut");
+        let laid = |k: usize| placed.glyphs.iter().any(|g| g.glyph as usize == k);
+        let unlaid: Vec<usize> = (0..run.glyphs.len())
+            .filter(|&k| !run.glyphs[k].blank && drawn[k] && !laid(k))
+            .collect();
+        assert!(
+            unlaid.is_empty(),
+            "{text:?}: every glyph that draws is laid, not {unlaid:?}"
+        );
+        let offset = trace.offset.expect("a frame on its halves has a band curve");
+        let (off, _, measured, fold, past) =
+            band_residual(&run, &placed, &path, offset, &|_| x_height_per_point());
+        assert!(
+            measured > 0 && off <= BAND_RESIDUAL && fold == 0,
+            "{text:?}: {measured} anchors, the most {off} off its band curve, {fold} where it folds"
+        );
+        assert!(
+            past.abs() <= REACH_TOLERANCE,
+            "{text:?}: its drawn inks' most reach toward the outline lies {past} past its offset, within {REACH_TOLERANCE}"
+        );
+    }
+    // Its advance alone, no gap of the line's tracking: two letters either
+    // side of it are as far apart, ink to ink, as two neighbors are, and
+    // its advance more.
+    let text = "aaaa\u{10FFFD}aaaa";
+    let (run, placed, _) = frame_with(text, 30.0, &shape, &FitMode::Spread, &RingLayout::whole(), true);
+    let undrawn = run
+        .glyphs
+        .iter()
+        .position(|g| g.bytes.start == 4)
+        .expect("U+10FFFD is shaped");
+    let advance = run.glyphs[undrawn].advance;
+    let boxes = inks(&run, &placed);
+    let lettered: Vec<(u32, (Vec2, Vec2))> = placed
+        .glyphs
+        .iter()
+        .zip(&boxes)
+        .filter_map(|(g, ink)| ink.map(|ink| (g.glyph, ink)))
+        .collect();
+    assert_eq!(
+        lettered.len(),
+        8,
+        "precondition: {text:?}: eight letters laid in one line"
+    );
+    let gaps: Vec<(bool, f32)> = lettered
+        .windows(2)
+        .map(|w| {
+            (
+                (w[0].0 as usize) < undrawn && undrawn < (w[1].0 as usize),
+                gap(w[0].1, w[1].1),
+            )
+        })
+        .collect();
+    let neighbors: Vec<f32> = gaps.iter().filter(|g| !g.0).map(|g| g.1).collect();
+    let across: Vec<f32> = gaps.iter().filter(|g| g.0).map(|g| g.1).collect();
+    let tracked = neighbors.iter().sum::<f32>() / neighbors.len() as f32;
+    assert!(
+        advance > 0.0 && across.len() == 1 && tracked > 1.0,
+        "precondition: {text:?}: U+10FFFD has an advance ({advance}) and lies between two letters, tracked {tracked} apart ({gaps:?})"
+    );
+    assert!(
+        (across[0] - tracked - advance).abs() <= 0.1,
+        "{text:?}: the letters either side of U+10FFFD are {} apart, their neighbors {tracked}: {} more, not its advance {advance}",
+        across[0],
+        across[0] - tracked
+    );
 }
 
 #[test]

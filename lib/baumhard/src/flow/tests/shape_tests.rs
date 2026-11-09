@@ -339,6 +339,136 @@ pub fn do_flow_shape_run_measures_an_ornaments_ink() {
     });
 }
 
+/// A code point no face draws (#333): U+0378, unassigned, which no
+/// compiled face maps.
+#[cfg(test)]
+const UNDRAWN: char = '\u{378}';
+
+/// Whether the rasterizer draws a pixel of `laid`, as the renderer asks
+/// for its image: its face, id, size, weight and flags, at its pen. Read
+/// here from the rasterizer, not through the engine's own reading of it.
+#[cfg(test)]
+fn rasterizes(fs: &mut crate::font::FontSystem, laid: &crate::font::LayoutGlyph) -> bool {
+    let (key, _, _) = cosmic_text::CacheKey::new(
+        laid.font_id,
+        laid.glyph_id,
+        laid.font_size,
+        (0.0, 0.0),
+        laid.font_weight,
+        laid.cache_key_flags,
+    );
+    crate::font::SwashCache::new()
+        .get_image_uncached(fs, key)
+        .is_some_and(|image| image.placement.width > 0 && image.placement.height > 0)
+}
+
+/// A glyph no face draws has no ink (#333), as the rasterizer draws
+/// nothing for it, and its advance is kept: shaped in a font system of
+/// the compiled faces alone, as a host with no fonts has it, U+0378 falls
+/// to Galatia SIL's `.notdef`, whose outline is empty. In an ornament
+/// (`·`, U+0378, `🌸`) it has no ink when shaped, nor once the run is
+/// inked as a frame's text is (`flow::inked`); the dot keeps its outline's
+/// ink, and the emoji, drawn from a bitmap with no outline, its box: its
+/// advance by the line height. In text (`a`, U+0378, `b`), inked, it has
+/// none either, and the letters theirs.
+///
+/// Preconditions: the font system holds no host face — every face is a
+/// compiled one, loaded from the binary — and no face of it maps U+0378;
+/// the rasterizer draws nothing for the glyph it shapes to, and draws the
+/// emoji. Controls: a glyph with no outline inked as its box whatever it
+/// draws, the rule before #333, red on U+0378 in both runs, shaped and
+/// inked ("U+0378 draws nothing: Some(Ink { .. })"); every glyph with no
+/// outline taken to draw nothing, red on the emoji ("the emoji, drawn
+/// from a bitmap, has its box: None"). (No `do_*` twin: it builds a font
+/// system of its own.)
+#[test]
+fn test_flow_shape_a_glyph_no_face_draws_has_no_ink() {
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::compiled_font_system();
+    let faces: Vec<_> = fs
+        .db()
+        .faces()
+        .map(|face| (face.id, face.post_script_name.clone()))
+        .collect();
+    let hosts: Vec<&String> = fs
+        .db()
+        .faces()
+        .filter(|face| !matches!(face.source, cosmic_text::fontdb::Source::Binary(_)))
+        .map(|face| &face.post_script_name)
+        .collect();
+    assert!(
+        !faces.is_empty() && hosts.is_empty(),
+        "precondition: the font system holds compiled faces alone, not {hosts:?}"
+    );
+    let mapping: Vec<&String> = faces
+        .iter()
+        .filter(|(id, _)| {
+            fs.get_font(*id, crate::font::FontWeight::NORMAL)
+                .is_some_and(|font| font.as_swash().charmap().map(UNDRAWN) != 0)
+        })
+        .map(|(_, name)| name)
+        .collect();
+    assert!(
+        mapping.is_empty(),
+        "precondition: no face maps U+0378: {mapping:?}"
+    );
+    let flow = style(30.0);
+    let shaped = |text: &str, fs: &mut crate::font::FontSystem| {
+        crate::flow::shape::shape_run_in(
+            &[FlowSpan {
+                text,
+                style: &flow,
+                link: None,
+            }],
+            1.0,
+            fs,
+        )
+    };
+    let ornament = shaped("·\u{378}🌸", &mut fs);
+    let text = shaped("a\u{378}b", &mut fs);
+    let ornament_inked = crate::flow::inked(&ornament, &mut fs);
+    let text_inked = crate::flow::inked(&text, &mut fs);
+    let laid: Vec<_> = ornament.layout_glyphs().cloned().collect();
+    let drawn: Vec<bool> = laid.iter().map(|laid| rasterizes(&mut fs, laid)).collect();
+    assert_eq!(
+        drawn,
+        [true, false, true],
+        "precondition: the rasterizer draws the dot and the emoji, and nothing for U+0378 ({:?})",
+        laid.iter().map(|g| (g.font_id, g.glyph_id)).collect::<Vec<_>>()
+    );
+    assert!(
+        ornament.glyphs.iter().all(|g| !g.letter) && text.glyphs.iter().any(|g| g.letter),
+        "precondition: the first run is an ornament, the second text"
+    );
+    for (what, run, k) in [
+        ("shaped", &ornament, 1),
+        ("inked", &ornament_inked, 1),
+        ("inked text", &text_inked, 1),
+    ] {
+        let glyph = &run.glyphs[k];
+        assert!(
+            !glyph.blank && glyph.advance > 0.0,
+            "{what}: U+0378 is no space, and has an advance: {glyph:?}"
+        );
+        assert_eq!(glyph.ink, None, "{what}: U+0378 draws nothing");
+    }
+    for (what, run) in [("shaped", &ornament), ("inked", &ornament_inked)] {
+        assert!(run.glyphs[0].ink.is_some(), "{what}: the dot has its ink");
+        let emoji = &run.glyphs[2];
+        let ink = emoji.ink;
+        assert_eq!(
+            ink.map(|ink| ink.max - ink.min),
+            Some(Vec2::new(emoji.advance, run.line_height)),
+            "{what}: the emoji, drawn from a bitmap, has its box"
+        );
+    }
+    assert!(
+        text_inked.glyphs[0].ink.is_some() && text_inked.glyphs[2].ink.is_some(),
+        "the letters have their ink: {:?}",
+        text_inked.glyphs
+    );
+}
+
 #[test]
 fn test_flow_shape_run_of_nothing() {
     do_flow_shape_run_of_nothing();

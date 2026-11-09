@@ -2113,6 +2113,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_fit_fills_a_steep_line_with_an_ornament", |b| {
         b.iter(do_flow_fit_fills_a_steep_line_with_an_ornament)
     });
+    c.bench_function(
+        "flow_an_ornament_steps_a_glyph_that_draws_nothing_by_its_advance",
+        |b| b.iter(do_flow_an_ornament_steps_a_glyph_that_draws_nothing_by_its_advance),
+    );
     c.bench_function("flow_fit_clamped_at_max_spreads_the_rest", |b| {
         b.iter(do_flow_fit_clamped_at_max_spreads_the_rest)
     });
@@ -2449,6 +2453,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_halves_a_glyph_with_no_outline_is_laid", |b| {
         b.iter(do_flow_halves_a_glyph_with_no_outline_is_laid)
     });
+    c.bench_function(
+        "flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance",
+        |b| b.iter(do_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance),
+    );
     c.bench_function("flow_halves_spread_and_once_and_inward", |b| {
         b.iter(do_flow_halves_spread_and_once_and_inward)
     });

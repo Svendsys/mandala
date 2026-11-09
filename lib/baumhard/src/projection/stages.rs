@@ -1811,19 +1811,18 @@ pub(crate) fn own_opacity(opacity: f32) -> f32 {
 }
 
 /// The canvas box of each glyph of `placed` that draws, by `run`'s
-/// metrics: its ink, or where none was measured its box, its advance by
-/// its line height. A space draws nothing. O(its glyphs).
+/// metrics, inked ([`inked_run`]): its ink. A space draws nothing, nor a
+/// glyph with no ink, which the rasterizer draws nothing for (#333).
+/// O(its glyphs).
 fn placed_inks<'a>(run: &'a ShapedRun, placed: &'a PlacedRun) -> impl Iterator<Item = Rect> + 'a {
     let baseline = run.baseline();
     placed.glyphs.iter().filter_map(move |g| {
         let metrics = run.glyphs.get(g.glyph as usize)?;
-        if metrics.blank {
-            return None;
-        }
-        Some(match metrics.ink {
-            Some(ink) => Rect::new(g.pos + Vec2::new(0.0, baseline) + ink.min, ink.max - ink.min),
-            None => Rect::new(g.pos, Vec2::new(metrics.advance, run.line_height)),
-        })
+        let ink = metrics.ink.filter(|_| !metrics.blank)?;
+        Some(Rect::new(
+            g.pos + Vec2::new(0.0, baseline) + ink.min,
+            ink.max - ink.min,
+        ))
     })
 }
 

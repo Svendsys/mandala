@@ -156,9 +156,9 @@ use super::lines::{frame_halves, frame_lines, line_partition, place_lines_in};
 use super::*;
 use crate::document::values::FontSize;
 use crate::flow::path::{Bend, CornerForm, EllipseForm, FormPoint, OffsetIn};
-use crate::flow::shape::shape_run;
+use crate::flow::shape::{drawn_ink, shape_run};
 use crate::flow::span::FlowSpan;
-use crate::font::fonts::{face_char_ink, glyph_outline_ink};
+use crate::font::fonts::{face_char_ink, glyph_draws, glyph_outline_ink};
 use crate::font::SwashCache;
 
 /// The most probes a line's tracking bracket is closed in ([`falsi`]):
@@ -1006,11 +1006,14 @@ fn middle(b: (Vec2, Vec2)) -> Vec2 {
     Vec2::new(b.0.x.midpoint(b.1.x), b.0.y.midpoint(b.1.y))
 }
 
-/// `run` with every glyph's [`GlyphMetrics::ink`] measured but a space's:
-/// what tracking a line, and its side ornament, step by. A glyph with
-/// no outline to measure — a bitmap emoji, a face with no outlines — is
-/// inked as its box, its advance by the line height, so a line keeps it
-/// and steps it like any other letter.
+/// `run` with every glyph's [`GlyphMetrics::ink`] measured but a space's,
+/// as the rasterizer draws it ([`drawn_ink`], #333): what tracking a line,
+/// and its side ornament, step by. A glyph with no outline that is drawn
+/// all the same — a bitmap emoji — is inked as its box, its advance by
+/// the line height, so a line keeps it and steps it like any other
+/// letter; one that draws nothing — a `.notdef` whose outline is empty,
+/// a face that is not loaded — has no ink, and a line steps it by its
+/// advance alone.
 ///
 /// Each distinct glyph's outline is read once (#309): a glyph's ink is a
 /// function of its face, its id, its size, its weight, its flags and its
@@ -1018,8 +1021,10 @@ fn middle(b: (Vec2, Vec2)) -> Vec2 {
 /// most of a line's letters are — reads the ink its first read did, to
 /// the bit.
 ///
-/// Cost: one outline scale per distinct glyph that is not a space, and a
-/// search of the distinct glyphs read so far per glyph.
+/// Cost: one outline scale per distinct glyph that is not a space, one
+/// rasterization per distinct glyph of those with no outline
+/// ([`glyph_draws`]), and a search of the distinct glyphs read so far per
+/// glyph.
 pub(crate) fn inked(run: &ShapedRun, fs: &mut FontSystem) -> ShapedRun {
     #[cfg(test)]
     INKED_STEPS.with(|count| count.set(count.get() + inking_steps(run)));
@@ -1032,16 +1037,14 @@ pub(crate) fn inked(run: &ShapedRun, fs: &mut FontSystem) -> ShapedRun {
     let mut read: BTreeMap<InkKey, Option<(Vec2, Vec2)>> = BTreeMap::new();
     for (glyph, laid) in out.glyphs.iter_mut().zip(&laid) {
         if !glyph.blank {
-            let boxed = Ink {
-                min: Vec2::new(0.0, -baseline),
-                max: Vec2::new(glyph.advance.max(0.0), height - baseline),
-            };
-            let ink = *read.entry(ink_key(laid)).or_insert_with(|| {
+            let outline = *read.entry(ink_key(laid)).or_insert_with(|| {
                 #[cfg(test)]
                 OUTLINE_READS.with(|count| count.set(count.get() + 1));
                 glyph_outline_ink(fs, &mut cache, laid)
             });
-            glyph.ink = Some(ink.map_or(boxed, |(min, max)| Ink { min, max }));
+            glyph.ink = drawn_ink(outline, glyph.advance, (baseline, height), || {
+                glyph_draws(fs, &mut cache, laid)
+            });
         }
     }
     out
@@ -1563,7 +1566,9 @@ impl<'w> InkLay<'w> {
     }
 
     /// Lay `cluster` at gap `g`: a space owing its advance and `g` more,
-    /// placed where the box rule would start its step; a letter set by
+    /// and a glyph that draws nothing, which has no ink (#333), its
+    /// advance alone, each placed where the box rule would start its step;
+    /// a letter set by
     /// the pairwise rule ([`pair`]) as far from the last ink as owed —
     /// and at least `g` from the few before it ([`EARLIER`]) — or, the
     /// first, at the lay's start. Every letter after owes `g`.
@@ -1577,13 +1582,20 @@ impl<'w> InkLay<'w> {
         if self.abandoned {
             return;
         }
-        if cluster.blank && self.modeled {
+        // A space, and a glyph that draws nothing (#333): it has no ink to
+        // keep apart, and owes its advance — a space `g` more, as the line
+        // tracks its words apart; a glyph that draws nothing its advance
+        // alone: it is no letter to track, and a run of them that draws
+        // nothing opens no gap.
+        let inkless = !inks(cluster);
+        let owes = cluster.advance + if cluster.blank { g } else { 0.0 };
+        if inkless && self.modeled {
             // A model lay places nothing: a space only owes its room.
-            self.owed += cluster.advance + g;
+            self.owed += owes;
             self.s += cluster.advance;
             return;
         }
-        if cluster.blank {
+        if inkless {
             // Anchored on the band curve too, though it draws nothing.
             let at = walk.path.offset_at(self.s, self.band.offset).point;
             let none = Ink {
@@ -1597,7 +1609,7 @@ impl<'w> InkLay<'w> {
                     pos: at - Vec2::new(0.5 * cluster.advance, walk.baseline + anchor),
                 });
             }
-            self.owed += cluster.advance + g;
+            self.owed += owes;
             self.s += cluster.advance;
             #[cfg(test)]
             note_step(before, self.side);
@@ -3144,7 +3156,7 @@ impl Layout<'_> {
             reaches.extend(
                 clusters
                     .iter()
-                    .filter(|c| !c.blank)
+                    .filter(|c| inks(c))
                     .filter_map(|c| match walk.body_of(c) {
                         Body::Inked { ink, .. } => {
                             let rise =
@@ -3483,8 +3495,7 @@ impl Layout<'_> {
         let sb = nb + (hi - nb) * span;
         // A line of one letter has no gap to track: it sits at
         // its font's gap, centered on its part.
-        let letters = p.clusters.iter().filter(|c| !c.blank).count();
-        let steps = letters.saturating_sub(1) + p.clusters.iter().filter(|c| c.blank).count();
+        let (letters, steps) = gaps_of(&p.clusters);
         let (gap, tracked) = if letters < 2 {
             let mid = sa.midpoint(sb);
             let gap = p.natural_gap;
@@ -3783,7 +3794,7 @@ impl<'a> SideOrnament<'a> {
         let (advance, ink) = self
             .clusters
             .iter()
-            .find(|c| !c.blank)
+            .find(|c| inks(c))
             .and_then(|c| c.ink.map(|i| (c.advance, i)))?;
         Some((advance - (ink.max.x - ink.min.x)).max(JOIN_FLOOR))
     }
@@ -3812,7 +3823,7 @@ struct SideArc<'s> {
 
 impl<'s> SideArc<'s> {
     fn new(side: &'s SideOrnament<'s>, (from, ca): ArcEnd, (to, near_b): ArcEnd) -> Option<Self> {
-        side.clusters.iter().find(|c| !c.blank && c.ink.is_some())?;
+        side.clusters.iter().find(|c| inks(c))?;
         let path = side.walk.path;
         // Each end ink's anchor lies on the band curve where it is set
         // along the path, the outline's point nearest it (#308).
@@ -3955,7 +3966,7 @@ impl<'s> SideArc<'s> {
     /// How many gaps `n` copies have: one before each ink of every copy,
     /// and the join to `to`.
     fn gaps(&self, n: usize) -> f32 {
-        let inked = self.side.clusters.iter().filter(|c| !c.blank).count().max(1);
+        let inked = self.side.clusters.iter().filter(|c| inks(c)).count().max(1);
         (n * inked + 1) as f32
     }
 
@@ -4819,7 +4830,7 @@ impl Layout<'_> {
     fn would_press(&self, run: &ShapedRun, lines: &[Prepared], laid: &[Line], next: Clear) -> bool {
         lines.iter().zip(laid).any(|(p, line)| {
             let (lo, hi) = self.room(p.half, next[p.half]);
-            let letters = p.clusters.iter().filter(|c| !c.blank).count();
+            let letters = p.clusters.iter().filter(|c| inks(c)).count();
             if line.pressed || letters < 2 || (lo, hi) == line.room {
                 return false;
             }
@@ -6212,6 +6223,30 @@ fn glyph_box(run: &ShapedRun, glyph: &PlacedGlyph) -> Option<InkBox> {
     Some((pen + ink.min, pen + ink.max))
 }
 
+/// Whether `cluster` (of a run [`inked`]) has ink to lay: a letter, set
+/// by the pairwise rule. A space has none, nor a glyph that draws nothing
+/// (#333): each owes its advance, and is no letter of its line.
+fn inks(cluster: &Cluster) -> bool {
+    !cluster.blank && cluster.ink.is_some()
+}
+
+/// How many letters `clusters` (of a line) hold ([`inks`]), and how many
+/// gaps tracking them sets ([`solve_tracking`]'s `steps`): each letter's
+/// but the first, and each space's between the first letter and the last.
+/// A glyph that draws nothing owes its advance alone, no gap (#333), and a
+/// space before the first letter or past the last is none between two
+/// inks.
+fn gaps_of(clusters: &[Cluster]) -> (usize, usize) {
+    let letters = clusters.iter().filter(|c| inks(c)).count();
+    let first = clusters.iter().position(inks);
+    let last = clusters.iter().rposition(inks);
+    let between = match (first, last) {
+        (Some(first), Some(last)) => clusters[first..=last].iter().filter(|c| c.blank).count(),
+        _ => 0,
+    };
+    (letters, letters.saturating_sub(1) + between)
+}
+
 /// `clusters` without their trailing spaces.
 fn trimmed(clusters: &[Cluster]) -> &[Cluster] {
     let end = clusters.iter().rposition(|c| !c.blank).map_or(0, |i| i + 1);
@@ -6478,7 +6513,7 @@ pub(super) fn place_halves(
             .collect();
         let too_long = |p: &Prepared| {
             let (lo, hi) = lay.room(p.half, seed[p.half]);
-            p.clusters.iter().filter(|c| !c.blank).count() >= 2
+            p.clusters.iter().filter(|c| inks(c)).count() >= 2
                 && !lay
                     .reach(p.half, &drawn, &p.clusters, lo, p.natural_gap)
                     .le(&(hi - lo + resolved(SLIDE_TOLERANCE, hi)))
@@ -7093,8 +7128,7 @@ pub(crate) fn solve_line_seam(
     let walk = line_walk(halves.path(0), &run, true);
     let sa = halves.junctions[0].0;
     let sb = sa + room;
-    let letters = clusters.iter().filter(|c| !c.blank).count();
-    let steps = letters.saturating_sub(1) + clusters.iter().filter(|c| c.blank).count();
+    let (_, steps) = gaps_of(&clusters);
     let layout = seam_layout(&halves, &run, &clusters, fs);
     let lay = |g: f32| track(&walk, &run.glyphs, &clusters, (sa, sb), g, layout.band());
     let (gap, tracked) = solve_tracking(lay, steps, sb, None, &|| false);

@@ -248,23 +248,26 @@ fn test_the_placement_property_finds_a_position_that_is_not_finite() {
     use crate::flow::tests::flow_fuzz::check_placement;
     let plain = style(16.0);
     let run = with_fonts(|fs| real_run("ab", &plain, fs));
+    let mut lease = crate::font::fonts::FontSystemLease::new("flow fuzz tests");
     let placed = |pos: Vec2, glyph: u32| PlacedRun {
         glyphs: vec![PlacedGlyph { glyph, pos }],
         truncated: false,
     };
     assert_eq!(
-        check_placement(&run, &placed(Vec2::ONE, 1), false, "p"),
+        check_placement(&run, &placed(Vec2::ONE, 1), false, "p", &mut lease),
         Ok(()),
         "precondition: the control passes"
     );
     assert!(
-        check_placement(&run, &placed(Vec2::new(f32::NAN, 0.0), 0), false, "p")
+        check_placement(&run, &placed(Vec2::new(f32::NAN, 0.0), 0), false, "p", &mut lease)
             .unwrap_err()
             .contains("placed at")
     );
-    assert!(check_placement(&run, &placed(Vec2::ONE, 2), false, "p")
-        .unwrap_err()
-        .contains("placed glyph 2 of 2"));
+    assert!(
+        check_placement(&run, &placed(Vec2::ONE, 2), false, "p", &mut lease)
+            .unwrap_err()
+            .contains("placed glyph 2 of 2")
+    );
 }
 
 /// The style of the flow finding: a face whose space has no width, at
@@ -892,7 +895,13 @@ fn test_a_spread_around_an_outline_near_the_largest_f32_places_every_glyph_finit
                 "precondition: {fit:?} {direction:?} places all three glyphs ({})",
                 placed.glyphs.len()
             );
-            if let Err(why) = check_placement(&run, &placed, true, "around the outline") {
+            if let Err(why) = check_placement(
+                &run,
+                &placed,
+                true,
+                "around the outline",
+                &mut crate::font::fonts::FontSystemLease::new("flow fuzz tests"),
+            ) {
                 panic!("{fit:?} {direction:?}: {why}");
             }
         }
@@ -985,7 +994,13 @@ fn test_a_spread_along_a_line_as_long_as_an_f32_places_every_glyph() {
                 let (replaced, placed) = place_on_open(&run, &curve, &fit, 0.0, &plain, fs);
                 (replaced.unwrap_or(run), placed)
             });
-            if let Err(why) = check_placement(&run, &placed, true, "along the line") {
+            if let Err(why) = check_placement(
+                &run,
+                &placed,
+                true,
+                "along the line",
+                &mut crate::font::fonts::FontSystemLease::new("flow fuzz tests"),
+            ) {
                 panic!("{reach:e} {fit:?}: {why}");
             }
         }
@@ -1013,15 +1028,27 @@ fn test_a_spread_across_the_canvas_places_every_glyph() {
             let (replaced, placed) = place_on_open(&run, &curve, &fit, 0.0, &plain, fs);
             (replaced.unwrap_or(run), placed)
         });
-        if let Err(why) = check_placement(&run, &placed, true, "across the canvas") {
+        if let Err(why) = check_placement(
+            &run,
+            &placed,
+            true,
+            "across the canvas",
+            &mut crate::font::fonts::FontSystemLease::new("flow fuzz tests"),
+        ) {
             panic!("{fit:?}: {why}");
         }
         let mut short = placed.clone();
         short.glyphs.pop();
         assert!(
-            check_placement(&run, &short, true, "short")
-                .unwrap_err()
-                .contains("was not placed"),
+            check_placement(
+                &run,
+                &short,
+                true,
+                "short",
+                &mut crate::font::fonts::FontSystemLease::new("flow fuzz tests")
+            )
+            .unwrap_err()
+            .contains("was not placed"),
             "{fit:?}: the property sees a glyph left out"
         );
     }
@@ -1051,14 +1078,20 @@ fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solvi
     use crate::flow::place::{GLYPHS_PLACED, MAX_RUN_ON_STEPS, STEPS_TAKEN};
     use crate::flow::MAX_PLACED_GLYPHS;
     let found = include_bytes!("fuzz_findings/repeat_of_an_ornament_along_a_cubic_its_floats_cannot_resolve");
-    for counter in [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS] {
+    use crate::flow::tests::flow_fuzz::PITCHED_LOOKUPS;
+    for counter in [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS, &PITCHED_LOOKUPS] {
         counter.with(|count| count.set(0));
     }
     if let Err(why) = check_flow_structured_as_found(found) {
         panic!("the fuzzer's input: {why}");
     }
-    let [steps, placed, lookups] =
-        [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS].map(|counter| counter.with(std::cell::Cell::get));
+    let [steps, placed, lookups, pitched] = [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS, &PITCHED_LOOKUPS]
+        .map(|counter| counter.with(std::cell::Cell::get));
+    // The walk's: the whole-glyph placement the replay lays beside it is
+    // a placement of its own, with its own cost (#296), and lays this
+    // input's glyphs too where a face draws one of them with no outline,
+    // a bitmap, and inks it as its box (#333).
+    let lookups = lookups - pitched;
     assert!(
         placed + 64 > MAX_PLACED_GLYPHS && steps < placed / 4 + MAX_RUN_ON_STEPS,
         "precondition: the input lays the cap of an ornament ({placed} glyphs, {steps} box steps)"

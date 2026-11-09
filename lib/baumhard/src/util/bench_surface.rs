@@ -656,6 +656,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
             CannotCompileIntoTheLibrary,
         ),
         (
+            "flow/tests/shape_tests.rs",
+            "test_flow_shape_a_glyph_no_face_draws_has_no_ink",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
             "util/tests/grapheme_chad_tests.rs",
             "test_replace_substring_says_so_when_it_refuses",
             DrivesAPanic,

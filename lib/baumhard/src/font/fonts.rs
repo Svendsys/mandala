@@ -75,6 +75,42 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
 /// inserts per static fallback face, the host's font scan on native and
 /// one walk over every face it adds, and [`fallback::new_font_system`].
 fn complete_font_system() -> FontSystem {
+    let (db, compiled_font_id_map) = compiled_database();
+    // The host's faces, after every compiled one (#228). The browser has
+    // none to load.
+    #[cfg(not(target_arch = "wasm32"))]
+    let db = {
+        let mut db = db;
+        db.load_system_fonts();
+        remove_shadowing_faces(&mut db, &compiled_font_id_map);
+        db
+    };
+    let font_system = fallback::new_font_system(db);
+    FACE_SET_GENERATION.fetch_add(1, Ordering::Release);
+    let _ = COMPILED_IDS.set(compiled_font_id_map);
+    font_system
+}
+
+/// A font system of the compiled faces alone, built as [`FONT_SYSTEM`]'s
+/// is but with no host face: what the browser has, and a host with no
+/// fonts installed. Its compiled faces' ids are the font system's own,
+/// since both databases are built in the same order. A test's, so a
+/// shaping that falls past every compiled face meets no host face
+/// (#333).
+#[cfg(test)]
+pub(crate) fn compiled_font_system() -> FontSystem {
+    fallback::new_font_system(compiled_database().0)
+}
+
+/// A database of every compiled-in face, each static
+/// [`fallback::fallback_families`] face at every weight
+/// ([`fallback::register_every_weight`], #297), and each compiled face's
+/// ids. Cost: one `load_font_source` call per entry in [`FONT_SOURCES`],
+/// and eight database inserts per static fallback face.
+fn compiled_database() -> (
+    cosmic_text::fontdb::Database,
+    FxHashMap<AppFont, TinyVec<[ID; 8]>>,
+) {
     let mut db = cosmic_text::fontdb::Database::new();
     let mut compiled_font_id_map = FxHashMap::default();
     // In `FONT_DATA`'s order, which the build sorts, rather than
@@ -102,17 +138,7 @@ fn complete_font_system() -> FontSystem {
             }
         }
     }
-    // The host's faces, after every compiled one (#228). The browser has
-    // none to load.
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        db.load_system_fonts();
-        remove_shadowing_faces(&mut db, &compiled_font_id_map);
-    }
-    let font_system = fallback::new_font_system(db);
-    FACE_SET_GENERATION.fetch_add(1, Ordering::Release);
-    let _ = COMPILED_IDS.set(compiled_font_id_map);
-    font_system
+    (db, compiled_font_id_map)
 }
 
 /// Remove from `db` every face that is not compiled in and bears a
@@ -1242,12 +1268,55 @@ pub fn measure_glyph_ink_bounds(
     out
 }
 
+/// Whether the rasterizer draws anything for a laid-out glyph: whether
+/// the image the renderer asks for it — its color outline, else its color
+/// bitmap, else its outline (`SwashCache::get_image_uncached`) — covers a
+/// pixel. What tells a glyph with no outline that is drawn all the same,
+/// a bitmap emoji, from one that draws nothing: a `.notdef` whose outline
+/// is empty, a face that is not loaded (#333).
+///
+/// Asked at the glyph's face, id, size, weight and flags, at no sub-pixel
+/// offset: whether a glyph covers a pixel does not turn on where in one it
+/// is drawn.
+///
+/// Cost: one lookup in a per-thread cache, kept as the outline cache is
+/// (`cached_outline_bounds`); on a miss, one rasterization of the glyph.
+pub fn glyph_draws(
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    glyph: &cosmic_text::LayoutGlyph,
+) -> bool {
+    let (key, _, _) = CacheKey::new(
+        glyph.font_id,
+        glyph.glyph_id,
+        glyph.font_size,
+        (0.0, 0.0),
+        glyph.font_weight,
+        glyph.cache_key_flags,
+    );
+    let entry = (font_system.instance(), key);
+    if let Some(draws) = DRAWS.with(|cache| cache.borrow().get(&entry).copied()) {
+        return draws;
+    }
+    let draws = swash_cache
+        .get_image_uncached(font_system, key)
+        .is_some_and(|image| image.placement.width > 0 && image.placement.height > 0);
+    DRAWS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= OUTLINE_CACHE_ENTRIES {
+            cache.clear();
+        }
+        cache.insert(entry, draws);
+    });
+    draws
+}
+
 /// The ink of one laid-out glyph: the bounding box of its outline, as
 /// its `(min, max)` corners relative to its pen on the baseline, in
 /// points at its size, `y` pointing down — where a renderer drawing it
 /// at that pen puts its ink, the shaper's offsets included. `None` for
 /// a glyph with no outline: a space, a bitmap-only emoji, a face that
-/// is not loaded.
+/// is not loaded ([`glyph_draws`] tells which of these is drawn).
 ///
 /// Measured from the outline, not a rasterization: unhinted, so it is
 /// linear in size and a measure at one size scales to another, and
@@ -1346,6 +1415,10 @@ thread_local! {
     static OUTLINE_BOUNDS: std::cell::RefCell<OutlineEntries> = std::cell::RefCell::default();
     /// Outlines read on this thread: the cache's misses.
     static OUTLINE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Whether each glyph is drawn ([`glyph_draws`], #333), by its font
+    /// system and its rasterizer's key, kept as [`OUTLINE_BOUNDS`] is.
+    static DRAWS: std::cell::RefCell<rustc_hash::FxHashMap<(u64, CacheKey), bool>> =
+        std::cell::RefCell::default();
 }
 
 /// How many outlines have been read off their faces on this thread

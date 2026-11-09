@@ -1016,27 +1016,25 @@ impl PathWalk<'_> {
     /// wherever the path runs steep, and a glyph-and-space ornament would
     /// open a gap at every turn of a ring. In text a space keeps its line
     /// height, which is what parts two words stacked on a steep side. An
-    /// ornament's glyph with no outline to measure is inked as its box.
+    /// ornament's glyph that draws nothing has no ink either (#333,
+    /// [`GlyphMetrics::ink`]), and steps its advance as a space does.
     fn body(&self, advance: f32, ink: Option<Ink>, blank: bool, h: f32) -> Body {
         if !self.ornament || self.level {
             return Body::Boxed { w: advance, h };
         }
-        if blank {
-            let middle = Vec2::new(advance * 0.5, 0.0);
-            return Body::Inked {
-                advance,
-                ink: Ink {
-                    min: middle,
-                    max: middle,
-                },
-            };
+        match ink.filter(|_| !blank) {
+            Some(ink) => Body::Inked { advance, ink },
+            None => {
+                let middle = Vec2::new(advance * 0.5, 0.0);
+                Body::Inked {
+                    advance,
+                    ink: Ink {
+                        min: middle,
+                        max: middle,
+                    },
+                }
+            }
         }
-        // A glyph with no outline to measure is inked as its box.
-        let ink = ink.unwrap_or(Ink {
-            min: Vec2::new(0.0, -self.baseline),
-            max: Vec2::new(advance, h - self.baseline),
-        });
-        Body::Inked { advance, ink }
     }
 
     /// [`body`](Self::body) for `cluster` as shaped.

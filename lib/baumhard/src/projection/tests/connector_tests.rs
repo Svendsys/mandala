@@ -285,6 +285,162 @@ fn test_projection_a_connector_stops_at_its_frames_outermost_ink() {
     p.check().unwrap();
 }
 
+/// Two nodes framed by a ring of `·` and U+10FFFD in Galatia SIL (#333):
+/// U+10FFFD, the last private-use code point, which no compiled face
+/// maps, falls to Galatia SIL's `.notdef`, whose outline is empty — where
+/// no host face maps it either, which the test's precondition reads from
+/// the rasterizer. Node 2 is node 1's child, below it, joined by a
+/// connector from node 1's bottom side to node 2's top: the sides a
+/// line-high box reaches furthest past a dot.
+fn undrawn_frames() -> Projected {
+    let ring = |w: f32, h: f32| {
+        json!({
+            "min_size": [w, h],
+            "frame": {"inset": 4.0, "rings": [
+                {"fit": "repeat", "size": 0.25, "font": "Galatia SIL", "spans": [{"text": "·\u{10FFFD}"}]}
+            ]}
+        })
+    };
+    Projected::new(load_map(json!({"nodes": [
+        node(1, None, with(ring(160.0, 60.0), json!({"sections": [text_section("one")]}))),
+        node(2, Some(1), with(ring(160.0, 60.0), json!({
+            "position": [0.0, 260.0],
+            "sections": [text_section("two")],
+            "connector": {"size": 14.0}
+        }))),
+    ]})))
+}
+
+/// Each drawn and each undrawn ring glyph of `node`, on the canvas: a
+/// drawn glyph's box the rasterizer's image of it, as the renderer asks
+/// for it, at its pen — read here from the rasterizer, not through the
+/// engine's own reading of it; an undrawn one's, what a glyph with no
+/// outline was inked as before #333, its advance by its run's line height.
+fn rasterized_ring(p: &mut Projected, node: NodeId) -> (Vec<Rect>, Vec<Rect>) {
+    let mut cache = crate::font::SwashCache::new();
+    let fs = p.fonts.fonts();
+    let (mut drawn, mut undrawn) = (Vec::new(), Vec::new());
+    for u in &p.projector.nodes[&node].units {
+        let UnitBody::Ring(ring) = &p.projector.units[u].body else {
+            continue;
+        };
+        let Some(placed) = ring.flow.placed.as_ref() else {
+            continue;
+        };
+        let run = &placed.run;
+        let laid: Vec<_> = run.layout_glyphs().cloned().collect();
+        for g in &placed.placed.glyphs {
+            let (metrics, laid) = (&run.glyphs[g.glyph as usize], &laid[g.glyph as usize]);
+            if metrics.blank {
+                continue;
+            }
+            let (key, _, _) = cosmic_text::CacheKey::new(
+                laid.font_id,
+                laid.glyph_id,
+                laid.font_size,
+                (0.0, 0.0),
+                laid.font_weight,
+                laid.cache_key_flags,
+            );
+            let pen = g.pos
+                + Vec2::new(0.0, run.baseline())
+                + Vec2::new(laid.font_size * laid.x_offset, -laid.font_size * laid.y_offset);
+            match cache.get_image_uncached(fs, key) {
+                Some(image) if image.placement.width > 0 && image.placement.height > 0 => {
+                    let p = image.placement;
+                    drawn.push(Rect::new(
+                        pen + Vec2::new(p.left as f32, -p.top as f32),
+                        Vec2::new(p.width as f32, p.height as f32),
+                    ));
+                }
+                _ => undrawn.push(Rect::new(g.pos, Vec2::new(metrics.advance, run.line_height))),
+            }
+        }
+    }
+    (drawn, undrawn)
+}
+
+/// The box round `node`'s drawn rings' inks, as the projector keeps it:
+/// what its paths attach to (#296).
+fn ring_reach(projector: &Projector, node: NodeId) -> Option<Rect> {
+    projector.nodes[&node]
+        .units
+        .iter()
+        .filter_map(|u| match &projector.units[u].body {
+            UnitBody::Ring(ring) => ring.ink,
+            _ => None,
+        })
+        .reduce(|a, b| a.union(&b))
+}
+
+/// A ring holding a glyph the rasterizer draws nothing for reaches
+/// exactly as far as its drawn inks (#333): the box round each node's
+/// ring inks, what its paths attach to, is the box round the images the
+/// rasterizer draws of its glyphs, each edge within the pixel the image
+/// rounds its ink out to; and the connector leaves and reaches the
+/// midpoints of those boxes' facing sides.
+///
+/// Preconditions: each ring holds glyphs the rasterizer draws nothing
+/// for, and their boxes — what such a glyph was inked as before #333 —
+/// reach past the drawn ones by more than a pixel, so the reach they
+/// would make is not the drawn inks'. Control: a glyph with no outline
+/// inked as its box whatever it draws, the rule before #333, red: each
+/// node's reach 14.4 past its drawn inks ("node 1's reach Rect { .. } is
+/// its drawn inks' Rect { .. }, within a pixel: 14.375 off"); with that
+/// assertion stepped past, the connector's start 14.2 below its drawn
+/// inks' bottom midpoint.
+#[test]
+fn test_projection_a_ring_reaches_as_far_as_its_drawn_inks() {
+    let mut p = undrawn_frames();
+    let (one, two) = (ident(&p.doc, 1), ident(&p.doc, 2));
+    let rasters = [rasterized_ring(&mut p, one), rasterized_ring(&mut p, two)];
+    p.release();
+    for (k, (drawn, undrawn)) in rasters.iter().enumerate() {
+        let node = k + 1;
+        assert!(
+            !drawn.is_empty() && !undrawn.is_empty(),
+            "precondition: node {node}'s ring draws some glyphs and not others ({} and {})",
+            drawn.len(),
+            undrawn.len()
+        );
+        let inked = bounds(drawn);
+        let boxed = undrawn.iter().fold(inked, |a, b| a.union(b));
+        let past = (inked.origin - boxed.origin)
+            .max(boxed.max() - inked.max())
+            .max_element();
+        assert!(
+            past > 2.0,
+            "precondition: node {node}'s undrawn glyphs' boxes reach {past} past its drawn inks"
+        );
+        let reach = ring_reach(&p.projector, ident(&p.doc, node as u32))
+            .unwrap_or_else(|| panic!("node {node} has a reach"));
+        let off = (reach.origin - inked.origin)
+            .abs()
+            .max((reach.max() - inked.max()).abs())
+            .max_element();
+        assert!(
+            off <= 1.0,
+            "node {node}'s reach {reach:?} is its drawn inks' {inked:?}, within a pixel: {off} off"
+        );
+    }
+    // The connector leaves and reaches the midpoints of its drawn inks'
+    // facing sides (#296, rule 1).
+    let connector = kid(&p.doc, two, DocKind::Connector);
+    let (_, curves) = line(&p.projector, connector);
+    let drawn = [bounds(&rasters[0].0), bounds(&rasters[1].0)];
+    let ends = [curves[0].point(0.0), curves[curves.len() - 1].point(1.0)];
+    for (k, label) in [(0, "start"), (1, "end")] {
+        let side = side_toward(drawn[k], Anchor::Auto, drawn[1 - k].center());
+        let (mid, _) = side_point(drawn[k], side);
+        assert!(
+            ends[k].distance(mid) <= 1.0,
+            "the connector's {label} {} is its drawn inks' {side:?} midpoint {mid}, within a pixel",
+            ends[k]
+        );
+    }
+    p.check().unwrap();
+}
+
 /// A ring respaced moves its inks along its sides and keeps the box round
 /// them: the connector whose end gap is measured to the nearest of them is
 /// laid again all the same (the review of #326). Node 1 above node 2, so
