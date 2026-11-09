@@ -268,6 +268,54 @@ fn test_projection_node_at_reads_the_bodies_and_not_the_glyphs() {
     );
 }
 
+/// What `node_at` is for: a link drawn **over** a node's body. Node 1
+/// links to node 3 straight across node 2, so on a link glyph inside 2's
+/// body the hit is the link — the layers come first — and `node_at` is 2,
+/// the body under it. A `node_at` written as `hit`'s node would answer 1,
+/// the link's owner.
+#[test]
+fn test_projection_node_at_is_the_body_under_a_path_drawn_over_it() {
+    let doc = load_map(json!({"nodes": [
+        node(1, None, json!({
+            "sections": [{"spans": [{"text": "from"}]}],
+            "links": [{"to": 3, "kind": "line"}]
+        })),
+        node(2, None, json!({
+            "position": [600.0, 0.0],
+            "min_size": [200.0, 120.0],
+            "sections": [{"spans": [{"text": "under"}]}]
+        })),
+        node(3, None, json!({
+            "position": [1400.0, 0.0],
+            "sections": [{"spans": [{"text": "to"}]}]
+        })),
+    ]}));
+    let (one, two) = (ident(&doc, 1), ident(&doc, 2));
+    let link = kid(&doc, one, DocKind::Link);
+    let mut p = Projected::new(doc);
+    let rect = p.projector.node_rect(two).expect("the node is drawn");
+    let mut over = None;
+    'scan: for x in (rect.origin.x as i32)..(rect.max().x as i32) {
+        for y in (rect.origin.y as i32)..(rect.max().y as i32) {
+            let point = Vec2::new(x as f32, y as f32);
+            if p.projector
+                .hit(&mut p.layers, point)
+                .is_some_and(|hit| hit.element == link)
+            {
+                over = Some(point);
+                break 'scan;
+            }
+        }
+    }
+    let point = over.expect("precondition: a link glyph is drawn inside 2's body");
+    assert_eq!(
+        p.projector.hit(&mut p.layers, point).map(|h| h.node),
+        Some(one),
+        "the hit is the link's"
+    );
+    assert_eq!(p.projector.node_at(point), Some(two), "the body under it is 2");
+}
+
 #[test]
 fn test_projection_a_click_inside_a_nested_body_hits_the_innermost_node() {
     // Node 2, node 1's child, has its body wholly inside its parent's.
