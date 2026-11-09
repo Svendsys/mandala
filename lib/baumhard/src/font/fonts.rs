@@ -53,35 +53,23 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
 ///
 /// So the set of faces anything is shaped with is the same from the first
 /// shaping on, whoever takes the lock first and whatever it shapes, and
-/// the same on every machine and in the browser: [`compiled_font_system`]
-/// reads nothing of the host. Until #228 the native build began from
-/// cosmic-text's `FontSystem::new`, which indexes the host's fonts, so a
-/// map's text that pinned no family was drawn in whatever the machine had
-/// installed.
+/// the same on every machine and in the browser: it is built from an
+/// empty database and reads nothing of the host. Until #228 the native
+/// build began from cosmic-text's `FontSystem::new`, which indexes the
+/// host's fonts, so a map's text that pinned no family was drawn in
+/// whatever the machine had installed.
 ///
-/// It takes no lock: the value is not yet in one. Cost:
-/// [`compiled_font_system`].
+/// It takes no lock: the value is not yet in one. Cost: one
+/// `load_font_source` call per entry in [`FONT_SOURCES`], eight database
+/// inserts per static fallback face, and [`fallback::new_font_system`].
 fn complete_font_system() -> FontSystem {
-    let (font_system, compiled_font_id_map) = compiled_font_system();
-    FACE_SET_GENERATION.fetch_add(1, Ordering::Release);
-    let _ = COMPILED_IDS.set(compiled_font_id_map);
-    font_system
-}
-
-/// A font system of the compiled faces alone, as [`complete_font_system`]
-/// builds it, and each compiled face's ids in it; it touches no global.
-/// A test reads it to see what the font system is built from, and a
-/// fresh one is built whole each time. Cost: one `load_font_source` call
-/// per entry in [`FONT_SOURCES`], eight database inserts per static
-/// fallback face, and [`fallback::new_font_system`].
-fn compiled_font_system() -> (FontSystem, FxHashMap<AppFont, TinyVec<[ID; 8]>>) {
     let mut db = cosmic_text::fontdb::Database::new();
     let mut compiled_font_id_map = FxHashMap::default();
     // In `FONT_DATA`'s order, which the build sorts, rather than
     // `FONT_SOURCES`' hash order, which hashes the enum's discriminant at
     // the target's pointer width: so the faces are numbered alike on
-    // every target, and cosmic-text, which tries the faces no fallback
-    // list names in that order, meets them alike.
+    // every target, and cosmic-text, which breaks ties between the faces
+    // no fallback list names by that number, meets them alike.
     for (font, _) in FONT_DATA {
         let Some(source) = FONT_SOURCES.get(&font) else {
             continue;
@@ -102,7 +90,10 @@ fn compiled_font_system() -> (FontSystem, FxHashMap<AppFont, TinyVec<[ID; 8]>>) 
             }
         }
     }
-    (fallback::new_font_system(db), compiled_font_id_map)
+    let font_system = fallback::new_font_system(db);
+    FACE_SET_GENERATION.fetch_add(1, Ordering::Release);
+    let _ = COMPILED_IDS.set(compiled_font_id_map);
+    font_system
 }
 
 /// The compiled faces' ids, as [`complete_font_system`] registered them.
@@ -474,6 +465,11 @@ impl PinnedFamily {
     /// else the one [`nearest_weight`] picks among the family's static
     /// weights and the ends of its axes. O(weights + axes).
     pub fn weight_for(&self, requested: u16) -> u16 {
+        // Every family but the default face's is static: no allocation
+        // on its path, which the shaping and halo loops take per span.
+        if self.axes.is_empty() {
+            return nearest_weight(requested, &self.weights);
+        }
         if self
             .axes
             .iter()
