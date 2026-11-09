@@ -640,7 +640,6 @@ const UNROUTED: &[(&str, &str, &str)] = &[
     ("stress_long_edges", "5>121", "5>119"),
     ("stress_long_edges", "5>121", "5>120"),
     ("stress_long_edges", "5>121", "6>121"),
-    ("testament", "29>31", "29>32"),
 ];
 
 /// The least distance between an ink of `a` and an ink of `b`, of those
@@ -943,17 +942,6 @@ fn test_maps_hold_the_connector_rules() {
     );
 }
 
-/// Testament's paths [`test_maps_draw_no_path_through_another_node`]
-/// finds still passing through another node, each by name.
-const THROUGH: &[&str] = &[
-    "3>4", "4>5", "6>235", "12>237", "23>26", "29>30", "29>31", "29>33", "29>39", "29>40", "29>41", "29>42",
-    "50>85", "52>53", "52>54", "52>55", "52>61", "52>62", "52>63", "52>64", "74>75", "74>76", "74>77",
-    "74>78", "74>79", "74>80", "74>81", "74>82", "74>83", "112>113", "122>123", "135>140", "141>148",
-    "150>151", "150>153", "154>155", "163>168", "190>191", "190>192", "190>193", "199>200", "199>201",
-    "199>202", "199>203", "199>204", "199>205", "199>206", "208>209", "208>210", "208>211", "208>217",
-    "208>218", "208>219", "220>221", "220>227", "227>230", "227>231", "235>236", "241>243",
-];
-
 /// No connector or line link passes through another node (the owner's
 /// answer on #326, which fixes the maps rather than routing round a
 /// node): no glyph of a path lies inside the reach — the box round the
@@ -961,15 +949,12 @@ const THROUGH: &[&str] = &[
 /// two, on the demo maps, testament and theme_demo. `stress_long_edges`
 /// is left out: its long edges cross the rows they span by design.
 ///
-/// Testament's paths that still pass through another node are listed in
-/// [`THROUGH`], each by name: rows of children too near their parent,
-/// whose paths to the far ones cross the near ones, and the like. A
-/// listed path that passes through none is a fault too, so the list only
-/// shrinks as the map is laid out again.
-///
-/// Control: with Border Toolkit's children back in the two rows they had,
+/// Controls: with Border Toolkit's children back in the two rows they had,
 /// the second row straight under the first, red on testament: the paths
-/// to the second row pass through the first.
+/// to the second row pass through the first. With Ishmael's sons back in
+/// their row 158 units above him, red on testament: a row that near its
+/// parent takes the paths to its far ends in at their sides, through
+/// their neighbors.
 #[test]
 fn test_maps_draw_no_path_through_another_node() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("maps");
@@ -996,19 +981,11 @@ fn test_maps_draw_no_path_through_another_node() {
                     .map(|(node, _)| (ink.center(), *node))
             });
             checked += p.inks.len();
-            let listed = name == "testament" && THROUGH.contains(&p.name.as_str());
-            match (through, listed) {
-                (Some((at, node)), false) => {
-                    faults.push(format!(
-                        "{name} {}: a glyph at {at:.0?} inside node {node:?}'s reach",
-                        p.name
-                    ));
-                }
-                (None, true) => faults.push(format!(
-                    "{name} {}: listed in THROUGH, and passes through no node: remove it",
+            if let Some((at, node)) = through {
+                faults.push(format!(
+                    "{name} {}: a glyph at {at:.0?} inside node {node:?}'s reach",
                     p.name
-                )),
-                _ => {}
+                ));
             }
         }
     }
