@@ -335,13 +335,13 @@ pub fn reparent(doc: &Document, nodes: &[NodeId], new_parent: NodeId) -> Result<
 /// Errors: [`MutationError::NotA`] for an element that is not of `kind`,
 /// or for `kind` being a node. One step, or none for no elements.
 pub fn remove(doc: &Document, kind: DocKind, elements: &[NodeId]) -> Result<Vec<DocStep>, MutationError> {
+    if kind == DocKind::Node {
+        return Err(MutationError::NotA {
+            element: elements.first().copied().unwrap_or(doc.root()),
+            expected: "an element that is not a node",
+        });
+    }
     for &element in elements {
-        if kind == DocKind::Node {
-            return Err(MutationError::NotA {
-                element,
-                expected: "an element that is not a node",
-            });
-        }
         require(doc, element, kind, "an element of the kind removed")?;
     }
     if elements.is_empty() {

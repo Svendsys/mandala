@@ -303,6 +303,10 @@ pub fn do_document_compose_removes_elements() {
         remove(&doc, DocKind::Node, &[ids.d]),
         Err(MutationError::NotA { .. })
     ));
+    assert!(
+        matches!(remove(&doc, DocKind::Node, &[]), Err(MutationError::NotA { .. })),
+        "a node is refused with no elements too"
+    );
     assert!(matches!(
         remove(&doc, DocKind::Section, &[ids.b_label]),
         Err(MutationError::NotA { .. })
