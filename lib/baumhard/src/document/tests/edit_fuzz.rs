@@ -21,12 +21,15 @@
 //! `edit_fuzz_tests` runs the generator on stable, in `./test.sh`.
 
 use crate::arena::NodeId;
+use crate::document::bounds::MAX_ANIMATE_MS;
 use crate::document::edit::parse_edits;
 use crate::document::element::{DocElement, DocKind};
 use crate::document::format::{load, save, LoadErrorKind};
 use crate::document::ids::Document;
-use crate::document::writer::ChangeSource;
+use crate::document::writer::transaction::TransactionKind;
+use crate::document::writer::{ChangeSource, EditRequest};
 use crate::edit_handlers::registry;
+use crate::engine::interpolate::Snap;
 use crate::flow::{Curve, Rect, ShapedBox};
 use crate::projection::Geometry;
 use crate::util::tests::choices::Choices;
@@ -76,7 +79,7 @@ pub fn check_edits_json(bytes: &[u8]) -> Result<(), String> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Ok(());
     };
-    check_text(text, false)
+    check_text(text, false, &[0.5])
 }
 
 /// Every property of the edits file `bytes` choose.
@@ -84,15 +87,82 @@ pub fn check_edits_structured(bytes: &[u8]) -> Result<(), String> {
     check_edits_generated(&mut Choices::new(bytes))
 }
 
-/// [`check_edits_structured`] for choices from any source.
+/// [`check_edits_structured`] for choices from any source: the file's
+/// properties, its animated runs at two progress points the choices
+/// draw, and the same edits read inside a map, its `nodes` before or
+/// after them.
 pub fn check_edits_generated(choices: &mut Choices<'_>) -> Result<(), String> {
-    check_text(&generate(choices), true)
+    let file = generate(choices);
+    let progress = [
+        choices.below(1001) as f32 / 1000.0,
+        choices.below(1001) as f32 / 1000.0,
+    ];
+    let nodes_first = choices.one_in(2);
+    check_text(&file, true, &progress)?;
+    check_in_a_map(&file, nodes_first)
+}
+
+/// A map's `edits` read as an edits file's do: both read, or both are
+/// refused with the same kind at the same path — whatever comes before
+/// them in the map. `file` is one of [`generate`]'s.
+fn check_in_a_map(file: &str, nodes_first: bool) -> Result<(), String> {
+    let list = file
+        .strip_prefix(r#"{"edits":"#)
+        .and_then(|rest| rest.strip_suffix('}'))
+        .ok_or("a generated file is `{\"edits\":[…]}`")?;
+    let nodes = r#""nodes":[{"id":1,"position":[0,0]}]"#;
+    let map = if nodes_first {
+        format!(r#"{{"format":1,"name":"t",{nodes},"edits":{list}}}"#)
+    } else {
+        format!(r#"{{"format":1,"name":"t","edits":{list},{nodes}}}"#)
+    };
+    match (parse_edits(file), load(&map)) {
+        (Ok(_), Ok(_)) => Ok(()),
+        (Err(a), Err(b)) if a.kind == b.kind && a.path == b.path => Ok(()),
+        (file_read, map_read) => Err(format!(
+            "an edits file and a map read the same edits apart: {:?} and {:?}\n{map}",
+            file_read.err(),
+            map_read.err()
+        )),
+    }
+}
+
+/// Run `request` as an animated edit on `doc`: begin, stage, write each
+/// of `progress`, commit — or cancel when the stage is refused, which
+/// must leave the map as it was.
+fn run_animated(
+    doc: &mut Document,
+    request: EditRequest,
+    progress: &[f32],
+    snap: Snap,
+) -> Result<(), String> {
+    let before = save(doc).map_err(|error| format!("the map saves: {error}"))?;
+    let tx = doc
+        .begin(ChangeSource::Edit, TransactionKind::Animated)
+        .map_err(|error| format!("an animated edit did not begin: {error}"))?;
+    if doc.stage(&tx, request).is_err() {
+        doc.cancel(tx);
+        let after = save(doc).map_err(|error| format!("the map saves: {error}"))?;
+        return if after == before {
+            Ok(())
+        } else {
+            Err("a refused stage, cancelled, left the map changed".to_string())
+        };
+    }
+    for &t in progress {
+        doc.stage_progress(&tx, t, snap)
+            .map_err(|error| format!("progress {t} was refused: {error}"))?;
+    }
+    doc.commit(tx);
+    Ok(())
 }
 
 /// The properties, on the edits file `text`; `generated` when it is one
 /// of [`generate`]'s, which are always JSON of the file's shape, so a
-/// refusal must be inside an edit.
-fn check_text(text: &str, generated: bool) -> Result<(), String> {
+/// refusal must be inside an edit. Each edit is run instantly and
+/// animated through `progress`, and the two must end in the same map
+/// and the same history.
+fn check_text(text: &str, generated: bool, progress: &[f32]) -> Result<(), String> {
     let edits = match parse_edits(text) {
         Ok(edits) => edits,
         Err(error) => {
@@ -133,9 +203,23 @@ fn check_text(text: &str, generated: bool) -> Result<(), String> {
             }
             continue;
         };
+        let mut animated = doc.clone();
         let applied = doc.apply(request, ChangeSource::Edit);
         let now =
             save(&doc).map_err(|error| format!("edit `{}`: the map no longer saves: {error}", edit.id))?;
+        let again = edit
+            .request(&animated, &geometry, &handlers, &anchors)
+            .map_err(|error| format!("edit `{}` resolved once, then not: {error}", edit.id))?;
+        let snap = edit.animate.map_or(Snap::End, |a| a.snap);
+        run_animated(&mut animated, again, progress, snap)
+            .map_err(|error| format!("edit `{}`: {error}", edit.id))?;
+        let animated_now = save(&animated).map_err(|error| format!("the map saves: {error}"))?;
+        if animated_now != now || animated.history().count() != doc.history().count() {
+            return Err(format!(
+                "edit `{}`: animated, it ended apart from the instant run",
+                edit.id
+            ));
+        }
         match applied {
             Ok(_) if doc.revision() != revision => {
                 doc.undo();
@@ -247,7 +331,10 @@ fn edit(choices: &mut Choices<'_>, i: u32) -> String {
             out.push_str(&format!(r#","mutations":[{}]"#, mutations.join(",")));
         }
         2 => {
-            let depth = 1 + choices.below(36);
+            // Past the definition bound (32) and past the JSON reader's
+            // own limit (about 42 levels of mutator), where only the
+            // depth scan answers.
+            let depth = 1 + choices.below(45);
             out.push_str(&format!(r#","mutator":{}"#, mutator(choices, depth)));
         }
         _ => out.push_str(&format!(
@@ -256,10 +343,17 @@ fn edit(choices: &mut Choices<'_>, i: u32) -> String {
         )),
     }
     if choices.one_in(2) {
+        // Mostly short, sometimes at the bound and one past it.
+        let ms = match choices.below(8) {
+            0 => MAX_ANIMATE_MS,
+            1 => MAX_ANIMATE_MS + 1,
+            _ => choices.below(1000),
+        };
         out.push_str(&format!(
-            r#","animate":{{"ms":{},"easing":"{}"}}"#,
-            choices.below(1000),
-            choices.pick(&["linear", "ease_in", "ease_out", "ease_in_out"])
+            r#","animate":{{"ms":{ms},"delay_ms":{},"easing":"{}","snap":"{}"}}"#,
+            choices.below(100),
+            choices.pick(&["linear", "ease_in", "ease_out", "ease_in_out"]),
+            choices.pick(&["start", "end"])
         ));
     }
     out.push('}');
