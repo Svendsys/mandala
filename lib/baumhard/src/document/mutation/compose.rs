@@ -351,6 +351,69 @@ pub fn remove(doc: &Document, kind: DocKind, elements: &[NodeId]) -> Result<Vec<
     ))])
 }
 
+/// Apply `mutations`, in order, to every one of `elements`, each an
+/// element of `kind`, as one walk: the shape of a field edit across a
+/// selection — a color on the selected sections, a fit and a gap on the
+/// selected frames. An element named twice is walked once, as every
+/// anchor list is.
+///
+/// Errors: [`MutationError::NotA`] for an element that is not of
+/// `kind`; a payload `kind` does not take is refused by the validator
+/// when the step runs. One step, or none for no elements or no
+/// mutations.
+pub fn set(
+    doc: &Document,
+    kind: DocKind,
+    mut mutations: Vec<DocMutation>,
+    elements: &[NodeId],
+) -> Result<Vec<DocStep>, MutationError> {
+    for &element in elements {
+        require(doc, element, kind, "an element of the kind set")?;
+    }
+    if elements.is_empty() || mutations.is_empty() {
+        return Ok(Vec::new());
+    }
+    let key = BranchKey::new(kind, 0);
+    let mutator = match mutations.len() {
+        1 => Mutator::new(mutations.remove(0), key),
+        _ => Mutator::new_macro(mutations, key),
+    };
+    Ok(vec![DocStep::fixed(walk_at(
+        DocMutatorTree::new_with(mutator),
+        elements.to_vec(),
+    ))])
+}
+
+/// Insert a copy of `subtree` under every one of `parents`, each an
+/// element of `parent_kind`, after every child the parent has
+/// (`Placement::Last`): a frame under nodes, a ring after a frame's
+/// rings. Whether a parent may hold it — a node holds one frame — is
+/// judged once the request has run.
+///
+/// Errors: [`MutationError::NotA`] for a parent that is not of
+/// `parent_kind`. One step, or none for no parents.
+pub fn insert(
+    doc: &Document,
+    parent_kind: DocKind,
+    parents: &[NodeId],
+    subtree: Subtree<DocElement>,
+) -> Result<Vec<DocStep>, MutationError> {
+    for &parent in parents {
+        require(doc, parent, parent_kind, "a parent of the kind inserted under")?;
+    }
+    if parents.is_empty() {
+        return Ok(Vec::new());
+    }
+    let insert = command(
+        StructOp::Insert {
+            subtree,
+            at: Placement::Last,
+        },
+        parent_kind,
+    );
+    Ok(vec![DocStep::fixed(walk_at(insert, parents.to_vec()))])
+}
+
 /// Insert a line link from each of `sources` to `target`, after their
 /// other links, every style field inherited. A source that is the target
 /// is skipped (a link never leads to its own node), and so is one that
@@ -553,33 +616,37 @@ fn normalize(section: NodeId, spans: usize) -> impl Iterator<Item = DocStep> {
     (0..merge_steps(spans)).map(move |_| merge_step(section))
 }
 
-/// Apply `op` to the text of `section` between grapheme clusters
-/// `start` and `end`: split the spans at both boundaries (skipping a
-/// boundary already on a span edge), apply `op` to every span now
-/// inside the range, then normalize.
+/// Apply `ops`, in order, to the text of `section` between grapheme
+/// clusters `start` and `end`: split the spans at both boundaries
+/// (skipping a boundary already on a span edge), apply every op to every
+/// span now inside the range in one walk, then normalize.
 ///
 /// Errors: [`MutationError::NotA`] when `section` is not a section. No
-/// step for an empty range; otherwise two splits, the styling, and
-/// [`merge_steps`] of the span count the section can then hold.
+/// step for an empty range or no ops; otherwise two splits, the styling,
+/// and [`merge_steps`] of the span count the section can then hold.
 pub fn style_range(
     doc: &Document,
     section: NodeId,
     start: usize,
     end: usize,
-    op: TextOp,
+    ops: Vec<TextOp>,
 ) -> Result<Vec<DocStep>, MutationError> {
     require(doc, section, DocKind::Section, "a section")?;
-    if start >= end {
+    if start >= end || ops.is_empty() {
         return Ok(Vec::new());
     }
+    let mutations: Vec<DocMutation> = ops
+        .into_iter()
+        .map(|op| DocMutation::Span(SpanOp::Text(op)))
+        .collect();
     let style = DocStep::new(move |doc| {
         let inside: Vec<NodeId> = span_ranges(doc, section)
             .into_iter()
             .filter(|&(_, s, e)| start <= s && e <= end && s < e)
             .map(|(span, _, _)| span)
             .collect();
-        Ok((!inside.is_empty())
-            .then(|| walk_at(single(DocMutation::Span(SpanOp::Text(op)), DocKind::Span), inside)))
+        let mutator = Mutator::new_macro(mutations, BranchKey::new(DocKind::Span, 0));
+        Ok((!inside.is_empty()).then(|| walk_at(DocMutatorTree::new_with(mutator), inside)))
     });
     let mut steps = vec![split_at(section, start), split_at(section, end), style];
     steps.extend(normalize(section, span_count(doc, section) + 2));
@@ -786,9 +853,10 @@ pub fn split_section(doc: &Document, section: NodeId, at: usize) -> Result<Vec<D
     Ok(vec![split_at(section, at), insert, remove])
 }
 
-/// Add an empty section to `node`: right after the section `after`,
-/// on its channel, or before every section on channel 0 when `after`
-/// is `None`.
+/// Add a section holding `spans` to `node`: right after the section
+/// `after`, on its channel, or before every section on channel 0 when
+/// `after` is `None`. No spans adds an empty section; the spans are taken
+/// as given, as [`replace_spans`] takes them.
 ///
 /// Errors: [`MutationError::NotA`] when `node` is not a node or `after`
 /// is not one of its sections. One step.
@@ -796,6 +864,7 @@ pub fn add_section(
     doc: &Document,
     node: NodeId,
     after: Option<NodeId>,
+    spans: &[SpanData],
 ) -> Result<Vec<DocStep>, MutationError> {
     require(doc, node, DocKind::Node, "a node")?;
     let (channel, at) = match after {
@@ -818,7 +887,13 @@ pub fn add_section(
     });
     let insert = command(
         StructOp::Insert {
-            subtree: Subtree::leaf(section),
+            subtree: Subtree {
+                root: section,
+                children: spans
+                    .iter()
+                    .map(|span| Subtree::leaf(DocElement::Span(span.clone())))
+                    .collect(),
+            },
             at,
         },
         DocKind::Node,

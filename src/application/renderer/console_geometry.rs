@@ -86,7 +86,7 @@ pub enum ConsoleOverlayLineKind {
 /// the selection marker before it and the hint after it stay in the
 /// console default font, so a face that lacks those glyphs cannot
 /// turn them into tofu. Set by the font-name completer so each
-/// candidate row renders in its own face — `font set A` shows every
+/// candidate row renders in its own face — `font family=A` shows every
 /// "A..." family pre-shaped in that family. `None` (or a family that
 /// is not loaded) means "use the console's default font".
 #[derive(Clone, Debug)]

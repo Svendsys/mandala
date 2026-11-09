@@ -63,6 +63,7 @@ pub(crate) mod index;
 mod load_map;
 mod load_node;
 pub(crate) mod load_style;
+mod read;
 pub(crate) mod rows;
 pub(crate) mod spelling;
 mod strict;
@@ -70,6 +71,7 @@ pub(crate) mod to_dto;
 mod writer;
 
 pub use error::{LoadError, LoadErrorKind, NodeContext, SaveError, SaveErrorKind, TextPosition};
+pub use read::{align, direction, edge, fit, line_span, shape, sides, start, weight};
 
 use crate::document::format::context::{dto_excerpt, offset_in, peek_excerpt, peek_id, position_at};
 use crate::document::format::dto::{MapHeaderDto, NodeDto};
@@ -748,11 +750,20 @@ pub fn save_to(doc: &Document, out: &mut impl std::io::Write) -> Result<(), Save
 ///
 /// Cost: the text's length, and a search of the theme's variables.
 pub fn color(doc: &Document, text: &str) -> Option<crate::document::values::ColorRef> {
-    use crate::document::values::{ColorRef, Rgba, VarId};
     use serde::de::{value::Error, IntoDeserializer};
     use serde::Deserialize;
     let deserializer: serde::de::value::StrDeserializer<'_, Error> = text.into_deserializer();
-    Some(match spelling::ColorDto::deserialize(deserializer).ok()? {
+    color_of(doc, spelling::ColorDto::deserialize(deserializer).ok()?)
+}
+
+/// The color `dto` spells in `doc`, as the loader reads it: a variable by
+/// name among `doc`'s theme's. `None` for a variable the theme lacks.
+pub(crate) fn color_of(
+    doc: &Document,
+    dto: spelling::ColorDto<'_>,
+) -> Option<crate::document::values::ColorRef> {
+    use crate::document::values::{ColorRef, Rgba, VarId};
+    Some(match dto {
         spelling::ColorDto::Hex(hex) => ColorRef::Rgba(Rgba(hex.0)),
         spelling::ColorDto::Var(name) => {
             let variables = &doc.theme().variables;
@@ -763,6 +774,18 @@ pub fn color(doc: &Document, text: &str) -> Option<crate::document::values::Colo
         }
         spelling::ColorDto::Palette(field) => ColorRef::Palette(field.into()),
     })
+}
+
+/// The face the font family name `family` stands for, as the loader
+/// reads a `font` key: a family this build compiles in and a file can
+/// name ([`nameable_font`](crate::document::place::nameable_font)), or
+/// `None` — for an unknown name, and for one that is only an installed
+/// system font (#329). One rule for a file and for a typed name, so the
+/// console accepts exactly the faces a load does.
+///
+/// Cost: a scan of the compiled-in families (about 30).
+pub fn font(family: &str) -> Option<crate::font::fonts::AppFont> {
+    crate::font::fonts::app_font_by_family(family).filter(|font| crate::document::place::nameable_font(*font))
 }
 
 /// `rgba` in the file's spelling: `#rrggbb`, or `#rrggbbaa` when it is

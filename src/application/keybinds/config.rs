@@ -532,20 +532,21 @@ keybind_surface! {
         SetPathAnchor { from, to } => set_path_anchor,
         /// `body glyph=<dot|dash|double|wave|chain>`.
         SetPathContent(glyph) => set_path_content,
-        /// One field of the selected nodes' frames, named by `field`.
+        /// One field of the selected nodes' frames, named by `field`
+        /// as `frame <field>=<value>` names it. Maps to
+        /// [`Action::SetFrameField`].
         SetFrameField { field, value } => set_frame_field,
         /// `cap from=<arrow|circle|diamond|none> to=<…>`.
         SetPathCap { from, to } => set_path_cap,
-        /// `args = [axis, value]` where `axis` is `bg|text|border`
-        /// and `value` is a color string (`#rrggbb`, `var(--name)`,
-        /// palette key). Maps to [`Action::SetColor`].
+        /// `args = [axis, value]` where `axis` is `text|border|ring`
+        /// and `value` is a color as a map spells one (`#rrggbb[aa]`,
+        /// `var(name)`, `palette(field)`) or `reset`. Maps to
+        /// [`Action::SetColor`].
         SetColor { axis, value } => set_color,
-        /// `args = [target_kind, field, value]` where `target_kind ∈
-        /// {node, section, canvas-border, canvas-sf, canvas-sf-focused}`
-        /// (kebab-case, matching [`super::BorderPreviewTargetKind`]'s
-        /// strum-`IntoStaticStr`-derived form), and `field` and `value`
-        /// name the frame field previewed. Maps to
-        /// [`Action::SetFramePreview`].
+        /// `args = [target_kind, field, value]` where `target_kind` is
+        /// `node|defaults` ([`super::FramePreviewTarget`]) and `field`
+        /// and `value` are as `frame preview <field>=<value>` names them.
+        /// Maps to [`Action::SetFramePreview`].
         SetFramePreview { target_kind, field, value } => set_frame_preview,
         /// The selected path's kind: `cross_link|parent_child`.
         SetEdgeType(edge_type) => set_edge_type,
@@ -554,11 +555,11 @@ keybind_surface! {
         /// Reset part of the selected path:
         /// `straight|curve|style|position`.
         ResetPath(reset_kind) => reset_path,
-        /// `font set <family>` on the current selection.
+        /// `font family=<family>` on the current selection.
         SetFontFamily(family) => set_font_family,
-        /// `args = [slot, pt]` where `slot` is `size|min|max` and
-        /// `pt` is a positive finite float string. Maps to
-        /// [`Action::SetFont`].
+        /// `args = [slot, value]` where `slot` is
+        /// `size|weight|italic`, as the `font` verb spells each. Maps
+        /// to [`Action::SetFont`].
         SetFont { slot, value } => set_font,
         /// `label text=<text>`; an empty payload clears the label.
         SetLabelText(text) => set_label_text,
@@ -580,11 +581,9 @@ keybind_surface! {
         /// `args = [w, h]` parsed as f64 at dispatch. Maps to
         /// [`Action::SetSectionSizeAbs`].
         SetSectionSizeAbs { w, h } => set_section_size_abs,
-        /// `args = [text, runs_mode]` where `runs_mode` is
-        /// `preserve` (clip existing runs to the new length) or
-        /// `clear` (collapse to a single run). Maps to
-        /// [`Action::SetSectionText`].
-        SetSectionText { text, runs_mode } => set_section_text,
+        /// `args = [text]`: the one span the section's spans become.
+        /// Maps to [`Action::SetSectionText`].
+        SetSectionText { text } => set_section_text,
         /// `args = [at, text]` where `at` is `""` (append) or a
         /// section index, and `text` is the new section's body
         /// (`""` for an empty section). Maps to

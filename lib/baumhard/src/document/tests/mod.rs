@@ -60,6 +60,8 @@ pub mod format_tests;
 #[cfg(test)]
 mod format_text;
 #[cfg(test)]
+mod format_value_tests;
+#[cfg(test)]
 mod format_writer_tests;
 pub mod ids_tests;
 pub mod inspect_tests;

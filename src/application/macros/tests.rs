@@ -87,10 +87,7 @@ fn macro_source_allows_action_gates_destructive_actions_for_non_user() {
         Action::NewDocumentAt("/tmp/x.mandala.json".into()),
         // §4.6 destructive section variants — User tier passes;
         // non-User tier rejects (next block).
-        Action::SetSectionText {
-            text: "x".into(),
-            runs_mode: "clear".into(),
-        },
+        Action::SetSectionText { text: "x".into() },
         Action::AddSection {
             at: "".into(),
             text: "x".into(),
@@ -143,10 +140,7 @@ fn macro_source_allows_action_gates_destructive_actions_for_non_user() {
             // covers them transitively, but a load-bearing
             // explicit pin catches a future refactor that
             // bypassed `is_destructive()` for any reason.
-            Action::SetSectionText {
-                text: "x".into(),
-                runs_mode: "clear".into(),
-            },
+            Action::SetSectionText { text: "x".into() },
             Action::AddSection {
                 at: "".into(),
                 text: "x".into(),

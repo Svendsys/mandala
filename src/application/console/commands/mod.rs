@@ -84,21 +84,24 @@ pub mod body;
 pub mod cap;
 pub mod clock;
 pub mod color;
+pub mod defaults;
 pub mod edit;
 pub mod font;
 pub mod fps;
+pub mod frame;
 pub mod help;
 pub mod label;
 pub mod mode;
 pub mod new;
 pub mod node;
 pub mod open;
-pub mod range_kv;
+pub mod range;
 pub mod record;
 pub mod save;
 pub mod screenshot;
 pub mod section;
 pub mod spacing;
+pub mod theme;
 pub mod zoom;
 
 /// One entry in the console command registry. Kept small and
@@ -176,6 +179,10 @@ pub const COMMANDS: &[Command] = &[
     new::COMMAND,
     node::COMMAND,
     section::COMMAND,
+    frame::COMMAND,
+    range::COMMAND,
+    theme::COMMAND,
+    defaults::COMMAND,
     zoom::COMMAND,
 ];
 
@@ -186,10 +193,6 @@ pub fn command_by_name(name: &str) -> Option<&'static Command> {
         c.name.eq_ignore_ascii_case(&lower) || c.aliases.iter().any(|a| a.eq_ignore_ascii_case(&lower))
     })
 }
-
-/// The owner of the node, section and style verbs (`node`, `section`,
-/// `color`, `font`, `zoom`), as a refusal names it.
-pub(super) const FIELD_NODES_OWNER: &str = "V1-C5 (#246)";
 
 /// The owner of the connector, link and label verbs (`anchor`,
 /// `body`, `cap`, `label`, `spacing`), as a refusal names it.
@@ -207,17 +210,48 @@ pub(super) const TEXT_OWNER: &str = "V1-C8 (#249)";
 /// against.
 #[cfg(test)]
 pub(crate) const REBUILT_VERBS: &[(&str, &str)] = &[
-    ("node", FIELD_NODES_OWNER),
-    ("section", FIELD_NODES_OWNER),
-    ("color", FIELD_NODES_OWNER),
-    ("font", FIELD_NODES_OWNER),
-    ("zoom", FIELD_NODES_OWNER),
     ("anchor", FIELD_PATHS_OWNER),
     ("body", FIELD_PATHS_OWNER),
     ("cap", FIELD_PATHS_OWNER),
     ("label", FIELD_PATHS_OWNER),
     ("spacing", FIELD_PATHS_OWNER),
 ];
+
+/// Run a field edit from the console (`crate::application::fields`):
+/// its steps as one request declared `ChangeSource::Console`, so one
+/// line is one undo entry. Answers `<label>: applied`, `<label>: no
+/// change`, or the refusal's words.
+pub(super) fn edit(
+    eff: &mut ConsoleEffects,
+    steps: crate::application::fields::Steps,
+    label: &str,
+) -> ExecResult {
+    let source = baumhard::document::writer::ChangeSource::Console;
+    match crate::application::fields::apply(eff.document_mut(), steps, label, source) {
+        Ok(true) => ExecResult::ok_msg(format!("{label}: applied")),
+        Ok(false) => ExecResult::ok_msg(format!("{label}: no change")),
+        Err(refused) => ExecResult::err(refused.message()),
+    }
+}
+
+/// The descent of a verb's line, refused with the engine's own words
+/// when the word at a subverb slot names nothing, or a kv made the slot
+/// kv form ([`spec::descent::Descent::quoting_hint`]).
+pub(super) fn descend<'a>(
+    grammar: &'static Grammar,
+    args: &Args<'a>,
+) -> Result<spec::descent::Descent<'a>, ExecResult> {
+    use spec::descent::Stop;
+    let descent = spec::descent::descend(grammar, args.tokens());
+    match descent.stop {
+        Stop::Unknown => Err(ExecResult::err(spec::usage::unknown_subverb_message(
+            descent.level,
+            descent.typed.unwrap_or_default(),
+        ))),
+        Stop::KvForm => Err(ExecResult::err(descent.quoting_hint(args))),
+        Stop::Bare | Stop::Matched(_) => Ok(descent),
+    }
+}
 
 /// The answer a console verb that edited the old model gets until
 /// `owner` rebuilds it on the one writer: an error naming the owner, and

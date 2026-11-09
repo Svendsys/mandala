@@ -53,7 +53,7 @@ use crate::document::values::{
 };
 use crate::document::writer::Derived;
 use crate::engine::tree::{Placement, Tree};
-use crate::font::fonts::{app_font_by_family, AppFont};
+use crate::font::fonts::AppFont;
 use glam::Vec2;
 
 /// What every step of the builder returns.
@@ -628,8 +628,7 @@ impl Builder {
         let found = match self.fonts.get(family) {
             Some(found) => *found,
             None => {
-                let found =
-                    app_font_by_family(family).filter(|font| crate::document::place::nameable_font(*font));
+                let found = super::font(family);
                 self.fonts.insert(family.to_string(), found);
                 found
             }

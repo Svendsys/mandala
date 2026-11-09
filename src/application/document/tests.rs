@@ -11,7 +11,7 @@ use baumhard::document::writer::error::ApplyError;
 use baumhard::document::writer::transaction::TransactionKind;
 use baumhard::document::writer::{ChangeSource, EditRequest};
 
-use super::{MindMapDocument, TRANSACTION_OPEN_STATUS};
+use super::{Interaction, MindMapDocument, TRANSACTION_OPEN_STATUS};
 
 /// A request that creates a root node: a real edit the writer accepts
 /// whenever no transaction holds the document.
@@ -42,7 +42,11 @@ fn test_an_open_transaction_refuses_an_apply_and_says_so_on_the_status_line() {
     assert_eq!(doc.status(), None, "an accepted change leaves no status");
 
     assert!(
-        doc.begin(ChangeSource::Input, TransactionKind::Interactive),
+        doc.begin(
+            ChangeSource::Input,
+            TransactionKind::Interactive,
+            crate::application::document::Interaction::Test
+        ),
         "begin opens one"
     );
     assert!(doc.transaction.is_some(), "and the helper holds its handle");
@@ -57,7 +61,11 @@ fn test_an_open_transaction_refuses_an_apply_and_says_so_on_the_status_line() {
 
     doc.status = None;
     assert!(
-        !doc.begin(ChangeSource::Input, TransactionKind::Interactive),
+        !doc.begin(
+            ChangeSource::Input,
+            TransactionKind::Interactive,
+            crate::application::document::Interaction::Test
+        ),
         "a second begin is refused while one is open"
     );
     assert_eq!(
@@ -79,7 +87,11 @@ fn test_an_open_transaction_refuses_an_apply_and_says_so_on_the_status_line() {
 #[test]
 fn test_an_undo_closes_the_transaction_and_the_helper_forgets_its_handle() {
     let mut doc = MindMapDocument::new_blank(None, 50);
-    assert!(doc.begin(ChangeSource::Input, TransactionKind::Interactive));
+    assert!(doc.begin(
+        ChangeSource::Input,
+        TransactionKind::Interactive,
+        crate::application::document::Interaction::Test
+    ));
     assert!(doc.transaction.is_some(), "control: the handle is held");
     let req = create_root(&doc);
     assert!(
@@ -98,7 +110,11 @@ fn test_an_undo_closes_the_transaction_and_the_helper_forgets_its_handle() {
         "nothing holds the document any more"
     );
     assert!(
-        doc.begin(ChangeSource::Input, TransactionKind::Interactive),
+        doc.begin(
+            ChangeSource::Input,
+            TransactionKind::Interactive,
+            crate::application::document::Interaction::Test
+        ),
         "and a new one opens"
     );
 }
@@ -147,7 +163,11 @@ fn test_an_interaction_begun_mid_animation_outlives_the_edits_end() {
     assert!(doc.is_animating());
 
     // A drag begins: the edit is finished and committed first (D28).
-    assert!(doc.begin(ChangeSource::Input, TransactionKind::Interactive));
+    assert!(doc.begin(
+        ChangeSource::Input,
+        TransactionKind::Interactive,
+        Interaction::Test
+    ));
     assert!(!doc.is_animating(), "the begin finished the edit");
     assert_eq!(
         doc.doc().history().count(),
@@ -157,17 +177,24 @@ fn test_an_interaction_begun_mid_animation_outlives_the_edits_end() {
 
     // The edit's old end time passes: nothing of the drag is touched.
     assert!(!doc.tick_animation(1000.0), "no animation is left to write");
-    let drag = doc.transaction.as_ref().expect("the drag's handle");
-    assert!(doc.doc.is_open(drag), "the drag is still open");
-    doc.doc.stage(drag, nudge(10.0)).expect("its stage still lands");
+    assert_eq!(
+        doc.open_interaction(),
+        Some(Interaction::Test),
+        "the drag is still open"
+    );
+    doc.stage(Interaction::Test, nudge(10.0))
+        .expect("its stage still lands");
     assert!(
-        !doc.begin(ChangeSource::Input, TransactionKind::Interactive),
+        !doc.begin(
+            ChangeSource::Input,
+            TransactionKind::Interactive,
+            Interaction::Test
+        ),
         "the drag still holds the document"
     );
 
     // Its own commit is the second entry.
-    let drag = doc.transaction.take().expect("the drag's handle");
-    assert!(doc.doc.commit(drag).is_some());
+    assert!(doc.commit(Interaction::Test).is_some());
     assert_eq!(
         doc.doc().history().count(),
         3,

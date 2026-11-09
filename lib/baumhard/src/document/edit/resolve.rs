@@ -15,13 +15,13 @@ use crate::document::bounds::{self, BoundError};
 use crate::document::defaults::{FIT_MAX, FIT_MIN};
 use crate::document::edit::EditError;
 use crate::document::element::{DocElement, DocKind};
-use crate::document::format::dto::{AlignDto, AnchorDto, DirectionDto, LinkKindDto, LinkTargetDto, ZoomDto};
+use crate::document::format::dto::{AnchorDto, LinkKindDto, LinkTargetDto, ZoomDto};
 use crate::document::format::edits::{
     FieldDto, FilterDto, FrameOpDto, InstructionDto, LabelOpDto, LayoutOpDto, MutationDto, MutatorDto,
     NodeOpDto, PathOpDto, PortalEndOpDto, RingOpDto, SectionOpDto, SpanOpDto, TextOpDto,
 };
 use crate::document::format::spelling::{
-    ColorDto, EdgeDto, FitDto, LineSpanDto, ShapeDto, SidesDto, StartDto, WeightDto,
+    ColorDto, FitDto, LineSpanDto, ShapeDto, SidesDto, StartDto, WeightDto,
 };
 use crate::document::ids::Document;
 use crate::document::inspect::DocField;
@@ -30,8 +30,8 @@ use crate::document::mutation::ops::{
 };
 use crate::document::place::{nameable_font, Unit};
 use crate::document::values::{
-    Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteId,
-    Percent, PlainColor, Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
+    Anchor, ColorRef, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteId, Percent, PlainColor,
+    Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
 };
 use crate::engine::builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
 use crate::engine::predicate::Predicate;
@@ -590,41 +590,11 @@ impl From<AnchorDto> for Anchor {
     }
 }
 
-impl From<AlignDto> for Align {
-    fn from(dto: AlignDto) -> Self {
-        match dto {
-            AlignDto::Left => Align::Left,
-            AlignDto::Center => Align::Center,
-            AlignDto::Right => Align::Right,
-        }
-    }
-}
-
-impl From<DirectionDto> for Direction {
-    fn from(dto: DirectionDto) -> Self {
-        match dto {
-            DirectionDto::Clockwise => Direction::Clockwise,
-            DirectionDto::Counterclockwise => Direction::CounterClockwise,
-        }
-    }
-}
-
 impl From<LinkKindDto> for LinkKind {
     fn from(dto: LinkKindDto) -> Self {
         match dto {
             LinkKindDto::Line => LinkKind::Line,
             LinkKindDto::Portal => LinkKind::Portal,
-        }
-    }
-}
-
-impl From<EdgeDto> for Edge {
-    fn from(dto: EdgeDto) -> Self {
-        match dto {
-            EdgeDto::Top => Edge::Top,
-            EdgeDto::Right => Edge::Right,
-            EdgeDto::Bottom => Edge::Bottom,
-            EdgeDto::Left => Edge::Left,
         }
     }
 }
