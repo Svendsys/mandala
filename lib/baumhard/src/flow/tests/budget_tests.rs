@@ -147,7 +147,8 @@ fn grid(
                 };
                 let (run, ornament) =
                     with_fonts(|fs| (spans_run(text, fs), ornament_run(&layout, &flow, 1.0, fs)));
-                let allowed = overshoot_steps(&run, ornament.as_ref(), sized);
+                let tables = crate::flow::place::setup_table_samples(&run, shape, fit, &flow);
+                let allowed = overshoot_steps(&run, ornament.as_ref(), sized, tables);
                 for outward in [true, false] {
                     for &budget in budgets {
                         PAST_BUDGET.with(|past| past.set(0));
