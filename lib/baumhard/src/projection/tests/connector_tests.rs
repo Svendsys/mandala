@@ -538,6 +538,61 @@ fn test_projection_a_held_fan_clears_its_neighbors_across_the_slope() {
     row.check().unwrap();
 }
 
+/// Node 1 with seven children 230 below it at ±480, ±320, ±160 and 0,
+/// those in `straight` with straight connectors: a capped fan with paths
+/// that do not turn.
+fn seven_with_straight(straight: &[usize]) -> Projected {
+    let xs = [-480.0_f32, -320.0, -160.0, 0.0, 160.0, 320.0, 480.0];
+    let mut nodes = vec![node(
+        1,
+        None,
+        with(dotted(200.0, 60.0), json!({"position": [-100.0, -30.0]})),
+    )];
+    for (k, &x) in xs.iter().enumerate() {
+        let connector = if straight.contains(&k) {
+            json!({"size": 14.0, "straight": true})
+        } else {
+            json!({"size": 14.0})
+        };
+        nodes.push(node(
+            10 + k as u32,
+            Some(1),
+            with(
+                dotted(120.0, 50.0),
+                json!({"position": [x - 60.0, 260.0], "connector": connector}),
+            ),
+        ));
+    }
+    Projected::new(load_map(json!({ "nodes": nodes })))
+}
+
+#[test]
+fn test_projection_a_straight_path_in_a_fan_is_fanned_round() {
+    // Seven children at the cap, each in turn the one whose connector is
+    // straight: its segment leaves in the direction it points, which no
+    // fan turns, so the others are ordered and turned round that
+    // direction and held out as any capped fan's are. No glyph of one
+    // comes nearer another's than their own gap allows, along the whole
+    // of every path. The failing inputs are a straight path given a slot
+    // of the even fan it does not take, its neighbors turned for that
+    // slot running through its glyphs, and a hold reckoned for the fan's
+    // step alone, which two straight neighbors nearer than it outrun.
+    // Then two neighbors straight, nearer each other than the fan's
+    // step: held out as far as those two need.
+    let singles = (0..7).map(|k| vec![k]);
+    for straight in singles.chain([vec![0, 1], vec![5, 6], vec![2, 3]]) {
+        let mut p = seven_with_straight(&straight);
+        let seven = branches(&p, 7);
+        for &k in &straight {
+            let [Curve::Line(..)] = seven[k].0[..] else {
+                panic!("precondition: child {k}'s connector is one segment");
+            };
+        }
+        clear_along(&seven, &format!("children {straight:?} straight"));
+        p.check().unwrap();
+    }
+}
+
 /// The least distance between a glyph of one of `branches` and a glyph
 /// of another, against the median gap between a branch's own glyphs: no
 /// two branches of one junction nearer than 0.8 of it, anywhere along
@@ -844,8 +899,10 @@ fn untangle_afresh(lanes: &[Lane]) -> Vec<f32> {
         if count == 0 {
             break;
         }
-        for (h, _) in handles.iter_mut().zip(&near).filter(|(_, &n)| n) {
-            *h = (*h * 0.5).max(1.0 / 4096.0);
+        for (k, h) in handles.iter_mut().enumerate() {
+            if near[k] && !lanes[k].straight {
+                *h = (*h * 0.5).max(1.0 / 4096.0);
+            }
         }
     }
     best.1

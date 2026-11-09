@@ -1413,18 +1413,27 @@ impl Projector {
                         _ => None,
                     })
                     .collect();
-                let sizes: Vec<(f32, f32)> = fan.iter().map(|m| (m.2.spread, m.2.clear)).collect();
-                let hold = geometry::fan(&sizes).first().map_or(0.0, |f| f.1);
+                // A straight path leaves in its one segment's direction,
+                // which no fan turns: the others fan round it.
+                let member = |m: &(NodeId, usize, Attach, Attach, Vec<Vec2>, bool)| geometry::FanMember {
+                    spread: m.2.spread,
+                    clear: m.2.clear,
+                    fixed: m.5.then(|| geometry::turn_to(m.2.normal, m.3.point - m.2.point)),
+                };
+                let hold = geometry::fan_hold(&fan.iter().map(member).collect::<Vec<_>>());
                 // In the order each turns toward its other end's lead, seen
-                // from where the fan's leads end: the way their curves run.
+                // from where the fan's leads end: the way their curves run;
+                // a straight path by the turn it leaves in.
                 let lead = fan.iter().map(|m| m.2.lead).fold(0.0_f32, f32::max);
                 let order = |m: &(NodeId, usize, Attach, Attach, Vec<Vec2>, bool)| {
+                    if m.5 {
+                        return geometry::turn_to(m.2.normal, m.3.point - m.2.point);
+                    }
                     let from = m.2.point + m.2.normal * (lead + hold);
                     geometry::turn_to(m.2.normal, m.3.point + m.3.normal * m.3.lead - from)
                 };
                 fan.sort_by(|a, b| order(a).total_cmp(&order(b)).then(a.0.cmp(&b.0)));
-                let sizes: Vec<(f32, f32)> = fan.iter().map(|m| (m.2.spread, m.2.clear)).collect();
-                let turns = geometry::fan(&sizes);
+                let turns = geometry::fan(&fan.iter().map(member).collect::<Vec<_>>());
                 let lanes: Vec<geometry::Lane> = fan
                     .iter()
                     .zip(&turns)

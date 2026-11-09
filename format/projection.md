@@ -77,15 +77,22 @@ node to the node it leads to.
   chord: between facing sides an S as deep as the sides are apart,
   between a side and one turned a quarter from it a round bend. A
   [`straight`](./schema.md#connector) path is one segment from its
-  start's side midpoint to its end's instead; at a shared side its first
-  glyphs are held out as any path's are.
+  start's side midpoint to its end's instead; at a shared side it keeps
+  the direction that segment leaves in, and its first glyphs are held
+  out as any path's are.
 - **Paths that share a side.** The paths that leave one side of a node
   leave its one midpoint, fanned in the order they turn toward their
   other ends, as seen from where their first two glyphs end. Each two
   neighbors are apart by the turn at which their first glyphs clear each
   other by their own gap — the widest any of them needs — and none turns
   more than 40° from the side's normal: past that the fan is narrowed to
-  hold it, and their first glyphs are held out until they clear. Along
+  hold it, and their first glyphs are held out until they clear. A
+  straight path is not turned: it takes its place in the order by the
+  direction it leaves in, and the others fan round it, as near the even
+  fan as keeps them that far from it (between it and the normal they
+  may turn as far as it does); the hold is as far as the nearest two
+  neighbors need, two straight ones included. Two straight paths that
+  leave in one direction cannot be held apart. Along
   their whole length no two come nearer each other than their own gap
   and a glyph: two that would turn toward their other ends sooner, their
   curves' handles shortened until they keep clear. A path alone on its
