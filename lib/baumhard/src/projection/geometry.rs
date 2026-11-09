@@ -470,7 +470,7 @@ pub(crate) fn untangle(lanes: &[Lane]) -> Vec<f32> {
             near[j] = true;
         }
         let count = near.iter().filter(|&&n| n).count();
-        if count <= best.0 {
+        if count < best.0 {
             best = (count, handles.clone());
         }
         if count == 0 {
