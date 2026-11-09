@@ -107,13 +107,18 @@ fn test_a_size_only_reshape_lays_out_the_runs_shaping_and_shapes_nothing() {
                 })
             });
             assert!(
-                reference.shapes > 0,
-                "precondition: {spans:?} at {factor}: the reference shapes the text again"
+                reference.shapes > 0 && shaped.1,
+                "precondition: {spans:?} at {factor}: the reference shapes the text again, and says so"
             );
-            assert_eq!(
-                work.shapes, 0,
-                "{spans:?} at {factor}: a size-only reshape shaped text"
+            // What a frame counts for a reshape is read from its report
+            // (`halves::resizing_steps`): it must be the shaper's own word.
+            assert!(
+                work.shapes == 0 && !resized.1,
+                "{spans:?} at {factor}: a size-only reshape shaped text ({} shapings), or said it did ({})",
+                work.shapes,
+                resized.1
             );
+            let (resized, shaped) = (resized.0, shaped.0);
             let (resized, shaped) = (facts(&resized), facts(&shaped));
             assert_eq!(
                 resized.0, shaped.0,
@@ -144,10 +149,13 @@ fn test_a_reshape_with_a_filler_still_shapes() {
     });
     let work = with_fonts(|fs| {
         let before = shape_work();
-        reshape(&run, 1.0, Some(("\u{00b7} ", &flow)), fs.fonts());
-        shape_work().since(before)
+        let (_, shaped) = reshape(&run, 1.0, Some(("\u{00b7} ", &flow)), fs.fonts());
+        (shape_work().since(before), shaped)
     });
-    assert!(work.shapes > 0, "a filler is shaped");
+    assert!(
+        work.0.shapes > 0 && work.1,
+        "a filler is shaped, and the reshape says so"
+    );
 }
 
 /// A placement's shapings, its rescaled run's facts, and what it placed.
@@ -268,8 +276,8 @@ fn test_an_ornaments_outlines_are_read_once_per_glyph_and_size() {
     assert_eq!(warm, 0, "the second measure reads no outline");
     assert_eq!(first.glyphs, second.glyphs, "and measures the same inks");
 
-    let (_, resized) = reads(&|fs| reshape(&first, 0.5, None, fs.fonts()));
-    let (_, again) = reads(&|fs| reshape(&first, 0.5, None, fs.fonts()));
+    let (_, resized) = reads(&|fs| reshape(&first, 0.5, None, fs.fonts()).0);
+    let (_, again) = reads(&|fs| reshape(&first, 0.5, None, fs.fonts()).0);
     assert!(resized > 0, "a new size is a new outline");
     assert_eq!(again, 0, "and is kept too");
 }

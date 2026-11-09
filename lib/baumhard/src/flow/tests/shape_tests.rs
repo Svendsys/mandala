@@ -442,7 +442,7 @@ pub fn do_flow_reshape_rescales_and_keeps_the_mapping() {
             1.0,
             fs,
         );
-        let doubled = reshape(&run, 2.0, None, fs.fonts());
+        let (doubled, _) = reshape(&run, 2.0, None, fs.fonts());
         (run, doubled)
     });
     assert_eq!(doubled.glyphs.len(), 4);
@@ -466,7 +466,7 @@ pub fn do_flow_reshape_appends_a_filler_on_its_own_line() {
     let flow = style(24.0);
     let (run, filled) = with_fonts(|fs| {
         let run = real_run("ab", &style(12.0), fs);
-        let filled = reshape(&run, 1.0, Some(("~-", &flow)), fs.fonts());
+        let (filled, _) = reshape(&run, 1.0, Some(("~-", &flow)), fs.fonts());
         (run, filled)
     });
     assert_eq!(filled.glyphs.len(), 4);

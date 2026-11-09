@@ -482,7 +482,7 @@ fn lay_lines(
             )
         }
         FitMode::Once { filler: Some(filler) } => {
-            let filled = reshape(run, 1.0, Some((filler, flow)), fs.fonts());
+            let (filled, _) = reshape(run, 1.0, Some((filler, flow)), fs.fonts());
             #[cfg(test)]
             super::halves::note_reshape();
             work.shaped(&filled);
@@ -613,8 +613,8 @@ fn fit_reshape(
         super::halves::FIT_RESHAPES.with(|count| count.set(count.get() + 1));
         #[cfg(test)]
         super::halves::note_reshape();
-        let reshaped = reshape(run, scale, None, fs.fonts());
-        work.resized(run);
+        let (reshaped, shaped) = reshape(run, scale, None, fs.fonts());
+        work.resized(&reshaped, shaped);
         reshaped
     };
     let mut reshaped = (scale != 1.0).then(|| shaped(scale, fs));

@@ -1769,11 +1769,11 @@ fn noncharacters(n: usize) -> String {
 /// timeout is cut until a frame of no text beside it fits, on every host:
 /// fifty distinct noncharacters, code points no face holds, each a pass of
 /// the shaper through every face (`SHAPE_NOTDEF_STEPS`) each time the
-/// ornament is shaped, take a frame of no text to 488,550 glyph steps,
+/// ornament is shaped, take a frame of no text to 484,150 glyph steps,
 /// past the 464,396 one input may take; [`sides_in_time`] cuts them to
 /// what fits, 25 of them, 403,130. (Fifty U+FFFE, one code point, is one
-/// segment of one cluster, two passes however long, and fits uncut since
-/// #304, 412,498; until then each was a pass, 624,221.)
+/// pass however long, and fits uncut since #304, 408,098; until then each
+/// was a pass, 624,221.)
 ///
 /// Control: with the ornament left uncut, red.
 ///

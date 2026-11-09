@@ -955,6 +955,11 @@ fn run_from_assembly(assembly: Assembly<'_>, fs: &mut FontSystem) -> ShapedRun {
 /// em. A run whose text holds a tab, or that already carries a filler,
 /// is shaped again, as before.
 ///
+/// Returns the run, and whether it was shaped: `false` where it took
+/// `run`'s shaping and was only laid out. What a frame counts for a
+/// reshape is read from that (`halves::resizing_steps`), so the count and
+/// the work cannot part.
+///
 /// Cost: with a filler, one shaping pass over the run's text and the
 /// filler; without one, one layout pass and no shaping. Either way the
 /// piece table and glyph list, and attributes per drawn stretch.
@@ -963,7 +968,7 @@ pub(crate) fn reshape(
     factor: f32,
     filler: Option<(&str, &ResolvedText)>,
     fs: &mut FontSystem,
-) -> ShapedRun {
+) -> (ShapedRun, bool) {
     // The filler's text and family name outlive the attribute list that
     // borrows them.
     // The filler is one line, so no paragraph separator in it is drawn.
@@ -1052,7 +1057,6 @@ pub(crate) fn reshape(
     let resized = (filler_text.is_empty() || filler.is_none())
         .then(|| resized_buffer(fs, &run.buffer, &rich, font_size, line_height))
         .flatten();
-    #[cfg(test)]
     let shaped = resized.is_none();
     let buffer = match resized {
         Some(buffer) => buffer,
@@ -1066,23 +1070,18 @@ pub(crate) fn reshape(
         pieces,
     };
     #[cfg(test)]
-    crate::flow::place::halves::SHAPED_STEPS.with(|count| {
-        let steps = if shaped {
-            crate::flow::place::halves::shaping_steps(&run)
-        } else {
-            crate::flow::place::halves::resizing_steps(&run)
-        };
-        count.set(count.get() + steps);
-    });
-    run
+    crate::flow::place::halves::SHAPED_STEPS
+        .with(|count| count.set(count.get() + crate::flow::place::halves::resizing_steps(&run, shaped)));
+    (run, shaped)
 }
 
-/// Whether a reshape of `run` to another size with no filler shapes
-/// nothing (#304): it is one line, so it holds no filler, and its text
-/// holds no tab, whose last-resort check is made after shaping. Such a
-/// line holds the very text it was shaped from, so it takes its own
-/// shaping ([`resized_buffer`]). What a frame counts for the reshape
-/// rests on it (`halves::resizing_steps`).
+/// Whether [`reshape`] tries to lay `run` out at another size from its
+/// own shaping, given no filler (#304): it is one line, and its text holds
+/// no tab, whose last-resort check [`new_buffer`] makes after shaping.
+/// The reshape's gate ([`resized_buffer`]), and what a bound read before
+/// a reshape predicts of it (`halves::build_steps`,
+/// `halves::overshoot_steps`); what a frame counts once it has run is the
+/// reshape's own report, so the count never rests on this.
 pub(crate) fn resizes(run: &ShapedRun) -> bool {
     resizes_buffer(&run.buffer)
 }
@@ -1100,9 +1099,7 @@ fn resizes_buffer(buffer: &Buffer) -> bool {
 /// attributes differ from the ones `shaped` was shaped with only in their
 /// metrics, and shaping is in units of the em.
 ///
-/// `None`, to be shaped instead, when `shaped` is not one line (it holds
-/// a filler) or its text holds a tab (whose last-resort check
-/// [`new_buffer`] makes after shaping), as [`resizes`] says, or when the
+/// `None`, to be shaped instead, where [`resizes`] says no, or when the
 /// line will not take the shaping. In test builds, also while
 /// `RESHAPE_BY_SHAPING` is set.
 ///
@@ -1118,12 +1115,12 @@ fn resized_buffer(
     if RESHAPE_BY_SHAPING.with(std::cell::Cell::get) {
         return None;
     }
-    let [from] = shaped.lines.as_slice() else {
-        return None;
-    };
     if !resizes_buffer(shaped) {
         return None;
     }
+    let [from] = shaped.lines.as_slice() else {
+        return None;
+    };
     let font_size = font_size.max(MIN_FONT_SIZE_PT);
     let line_height = line_height.max(MIN_FONT_SIZE_PT * LINE_HEIGHT_FACTOR);
     let metrics = Metrics::new(font_size, line_height);

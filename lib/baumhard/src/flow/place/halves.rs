@@ -365,9 +365,10 @@ pub(crate) fn frame_budget(glyphs: usize) -> usize {
 // [`track`] took — and rounded up, so that one counted step takes about
 // the same time whatever work it counts. What a frame counts of each
 // unit follows the work as it runs: since #304 a reshape at a size counts
-// no shaping ([`resizing_steps`]), a `.notdef` a pass a segment and a
-// cluster ([`SHAPE_NOTDEF_STEPS`]), and an inking a read a distinct
-// glyph ([`inking_steps`]), each from what the shaper and the inker were
+// no shaping where it reports none ([`resizing_steps`]), a `.notdef` a
+// pass a distinct code point or a glyph of its line
+// ([`SHAPE_NOTDEF_STEPS`]), and an inking a read a distinct glyph
+// ([`inking_steps`]), each from what the shaper and the inker were
 // counted doing, no weight timed again. Measured at e301e041, at a load
 // average of 1 to 2: each call of the work timed by a temporary
 // instrumentation of the engine, never committed, over every committed
@@ -393,21 +394,32 @@ pub(crate) const SHAPE_FACE_STEPS: usize = 330;
 
 /// A pass of the shaper through every face it has, for glyphs no face
 /// holds (`.notdef`, glyph 0): 34.8 ms ÷ 16 µs = 2,173, rounded up to
-/// 2,200, measured while every shaping of a run holding one made it.
+/// 2,200, measured while every shaping of a run holding one made it. The
+/// run lengths it was measured at are not on record (#294's table gives
+/// the envelope, not its runs), so all it is taken to bound is the pass
+/// of a run of one glyph, which costs no more than the pass of any run
+/// the measurement saw.
 ///
-/// Counted a segment and a distinct cluster, not a glyph, since #304
-/// ([`undrawn_passes`]). The shaper still tries every face for a shaped
-/// run whose missing glyphs it cannot give up early (a `.notdef` cluster
-/// of several code points), once a run however many `.notdef`s it holds:
-/// at most once a segment of them, a stretch of glyphs no face holds. And
-/// it asks every face about a code point no face draws, one code point
-/// shaped alone in each, the first time its font system meets it; every
-/// later shaping reads the answer kept (`font::tests::shape_work_tests`:
-/// a hundred contiguous such code points cost the shapings two cost, and
-/// ask nothing). A frame cannot know which code points its font system
-/// has met, and what it counts must not depend on it (#323), so it counts
-/// that pass for each distinct cluster too. A `.notdef` past those is a
-/// glyph shaped ([`SHAPE_GLYPH_STEPS`]), as any other.
+/// Counted, since #304, for the passes the shaper still makes
+/// ([`notdef_steps`]):
+/// - it asks every face about a code point no face draws, that code point
+///   shaped alone in each, once a font system for each direction and
+///   weight; every later shaping reads the answer kept
+///   (`font::tests::shape_work_tests`: a hundred contiguous such code
+///   points cost the shapings two cost, and ask nothing). That pass is
+///   the same whatever run holds the code point: one weight a distinct
+///   code point, direction and weight, since a frame cannot know which
+///   its font system has met, and what it counts must not depend on it
+///   (#323);
+/// - it tries every face for a shaped run whose missing glyphs it cannot
+///   give up early, a `.notdef` cluster of several code points among
+///   them, shaping the whole run in each. That pass grows with the run,
+///   one shaping of its glyphs a face, so it is counted as shaping is, a
+///   glyph at a time: a run of `n` glyphs costs no more than `n` passes
+///   of a run of one, one weight a glyph of its line.
+///
+/// A single-code-point `.notdef` past those is a glyph shaped
+/// ([`SHAPE_GLYPH_STEPS`]), as any other.
 pub(crate) const SHAPE_NOTDEF_STEPS: usize = 2_200;
 
 /// Inking a run ([`inked`], each glyph's outline read uncached), a call:
@@ -597,30 +609,36 @@ fn faces(run: &ShapedRun) -> usize {
     faces.len()
 }
 
-/// The passes through every face that shaping `run`'s `.notdef`s may cost
-/// ([`SHAPE_NOTDEF_STEPS`], #304): one for each segment of them, a stretch
-/// of a line's glyphs no face holds, and one for each distinct cluster
-/// among them.
+/// The glyph steps the shaper's passes through every face for `run`'s
+/// `.notdef`s may cost a shaping ([`SHAPE_NOTDEF_STEPS`], #304): a pass
+/// for each distinct one-code-point `.notdef`, by the key the shaper keeps
+/// its answer under (its code point, the run's direction, its weight),
+/// and for each line holding a `.notdef` cluster of
+/// several code points a pass a glyph of the line, whose shaped runs, its
+/// words, the shaper passes through every face whole.
 ///
-/// Cost: one pass over the glyphs, and a sort of the `.notdef`s'
-/// clusters.
-pub(crate) fn undrawn_passes(run: &ShapedRun) -> usize {
-    let mut segments = 0;
-    let mut clusters: Vec<&str> = Vec::new();
+/// Cost: one pass over the glyphs, and a sort of the one-code-point
+/// `.notdef`s' keys.
+pub(crate) fn notdef_steps(run: &ShapedRun) -> usize {
+    let mut asked: Vec<(&str, u16, bool)> = Vec::new();
+    let mut passed = 0usize;
     for line in run.buffer.layout_runs() {
-        let mut after = false;
-        for glyph in line.glyphs {
-            let undrawn = glyph.glyph_id == 0;
-            if undrawn {
-                segments += usize::from(!after);
-                clusters.push(line.text.get(glyph.start..glyph.end).unwrap_or_default());
+        let mut whole = false;
+        for glyph in line.glyphs.iter().filter(|glyph| glyph.glyph_id == 0) {
+            let cluster = line.text.get(glyph.start..glyph.end).unwrap_or_default();
+            if cluster.chars().nth(1).is_some() {
+                whole = true;
+            } else {
+                asked.push((cluster, glyph.font_weight.0, glyph.level.is_rtl()));
             }
-            after = undrawn;
+        }
+        if whole {
+            passed = passed.saturating_add(line.glyphs.len());
         }
     }
-    clusters.sort_unstable();
-    clusters.dedup();
-    segments + clusters.len()
+    asked.sort_unstable();
+    asked.dedup();
+    SHAPE_NOTDEF_STEPS.saturating_mul(asked.len().saturating_add(passed))
 }
 
 /// The glyph steps shaping `run` counts (ruling R46.1).
@@ -628,29 +646,37 @@ pub(crate) fn shaping_steps(run: &ShapedRun) -> usize {
     SHAPE_CALL_STEPS
         .saturating_add(SHAPE_GLYPH_STEPS.saturating_mul(run.glyphs.len()))
         .saturating_add(SHAPE_FACE_STEPS.saturating_mul(faces(run)))
-        .saturating_add(SHAPE_NOTDEF_STEPS.saturating_mul(undrawn_passes(run)))
+        .saturating_add(notdef_steps(run))
 }
 
-/// The glyph steps reshaping `run` to another size with no filler counts
-/// (#304). Where it shapes nothing ([`resizes`](crate::flow::shape::resizes);
-/// `flow::tests::reshape_tests`: such a reshape makes no shaping), no
-/// face is tried and no `.notdef` asked about: what is left is the
+/// The glyph steps a reshape to `run` counts, as the reshape reports it
+/// (`shape::reshape`; #304). One that `shaped` counts its shaping
+/// ([`shaping_steps`]). One that did not took its source's shaping
+/// (`flow::tests::reshape_tests`: such a reshape makes no shaping), so no
+/// face is tried and no `.notdef` asked about. What is left is the
 /// buffer's setup, at a call's weight ([`SHAPE_CALL_STEPS`]), and walks
 /// over the run's own glyphs, its layout's and its metrics' (a pen
 /// advanced a glyph, a search into its pieces and its clusters, a font
-/// lookup at a change of face), weighed as R27's arithmetic lays walk
-/// their clusters, [`CLUSTERS_A_STEP`] a step. Where it shapes, its
-/// shaping ([`shaping_steps`]).
+/// lookup at a change of face). These are weighed as R27's arithmetic lays
+/// walk their clusters, [`CLUSTERS_A_STEP`] a step.
 ///
 /// (Until #304 every reshape shaped, and counted [`SHAPE_GLYPH_STEPS`] a
 /// glyph, the cost of a glyph shaped in a face, and of the fallback's
 /// merge round it.)
-pub(crate) fn resizing_steps(run: &ShapedRun) -> usize {
-    if crate::flow::shape::resizes(run) {
-        SHAPE_CALL_STEPS.saturating_add(run.glyphs.len().div_ceil(CLUSTERS_A_STEP))
-    } else {
+pub(crate) fn resizing_steps(run: &ShapedRun, shaped: bool) -> usize {
+    if shaped {
         shaping_steps(run)
+    } else {
+        SHAPE_CALL_STEPS.saturating_add(run.glyphs.len().div_ceil(CLUSTERS_A_STEP))
     }
+}
+
+/// [`resizing_steps`] for a reshape of `run` to another size not yet made,
+/// for a bound read before it ([`build_steps`], [`overshoot_steps`]): as
+/// the reshape's own gate predicts it ([`resizes`](crate::flow::shape::resizes)).
+/// A frame counts the reshape's report, not this.
+pub(crate) fn predicted_resizing_steps(run: &ShapedRun) -> usize {
+    resizing_steps(run, !crate::flow::shape::resizes(run))
 }
 
 /// The glyph steps inking `run` counts (ruling R46.1), as [`inked`] does
@@ -693,13 +719,13 @@ pub(crate) const OVERSHOOT_TRACKS: usize = 8;
 /// The most glyph steps one build of a frame's text counts in shaping
 /// and inking (ruling R47.2), for a text shaped as `text` and, with
 /// sides, an ornament shaped alone as `ornament`: the text reshaped at a
-/// size ([`resizing_steps`]) and inked, its spans' band centers read with it
+/// size ([`predicted_resizing_steps`]) and inked, its spans' band centers read with it
 /// ([`band_steps`], #308); with sides, the ornament and an `x` shaped and inked
 /// to size it, and shaped and inked again beside the text, which is
 /// shaped again with it (`side_run`). Each run's own faces and
 /// `.notdef`s are counted, as the build counts them.
 pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usize {
-    let alone = resizing_steps(text)
+    let alone = predicted_resizing_steps(text)
         .saturating_add(inking_steps(text))
         .saturating_add(band_steps(text));
     let Some(ornament) = ornament else {
@@ -726,8 +752,8 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
 /// frame (`sized`), R27's search for the size it fits — a lay of its
 /// lines at each end of the size window and at each of up to
 /// `SOLVE_ROUNDS` sizes between, each a walk of its clusters
-/// ([`CLUSTERS_A_STEP`] a step) — and its reshape at that size — one
-/// build's shaping and inking
+/// ([`CLUSTERS_A_STEP`] a step) — and its reshape at that size
+/// ([`predicted_resizing_steps`]) — one build's shaping and inking
 /// ([`build_steps`]), and a lay of each line ([`OVERSHOOT_TRACKS`]
 /// `track`s of every glyph), which the touch checks that end the frame
 /// fall within. A budget is read before each build, each reshape of
@@ -755,7 +781,7 @@ pub(crate) fn overshoot_steps(
     // a build at the text's own size never makes, held R27's walks.)
     let walk = text.glyphs.len().div_ceil(CLUSTERS_A_STEP).max(1);
     let r27 = if sized {
-        resizing_steps(text).saturating_add((SOLVE_ROUNDS + 2).saturating_mul(walk))
+        predicted_resizing_steps(text).saturating_add((SOLVE_ROUNDS + 2).saturating_mul(walk))
     } else {
         0
     };
@@ -2807,9 +2833,10 @@ impl Work {
         self.take(shaping_steps(run));
     }
 
-    /// Count reshaping `run` to another size with no filler (#304).
-    pub(super) fn resized(&self, run: &ShapedRun) {
-        self.take(resizing_steps(run));
+    /// Count a reshape to `run`, as the reshape reported it: `shaped`, or
+    /// laid out from its source's shaping (#304).
+    pub(super) fn resized(&self, run: &ShapedRun, shaped: bool) {
+        self.take(resizing_steps(run, shaped));
     }
 
     /// Count inking `run` (ruling R46.1).
@@ -5860,7 +5887,7 @@ fn side_run(
         ..*flow
     };
     let fsys = fs.fonts();
-    let with = reshape(run, 1.0, Some((content.as_str(), &style)), fsys);
+    let (with, _) = reshape(run, 1.0, Some((content.as_str(), &style)), fsys);
     #[cfg(test)]
     note_reshape();
     work.shaped(&with);
@@ -6390,10 +6417,10 @@ pub(super) fn place_halves(
             base.clone()
         } else {
             let fsys = fs.fonts();
-            let scaled = reshape(&base, scale, None, fsys);
+            let (scaled, shaped) = reshape(&base, scale, None, fsys);
             #[cfg(test)]
             note_reshape();
-            lay.work.resized(&base);
+            lay.work.resized(&scaled, shaped);
             scaled
         };
         let (drawn, side) = match side_run(&scaled, &layout.sides, flow, fs, &lay.work) {

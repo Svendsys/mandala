@@ -160,9 +160,11 @@ pub const FUZZ_TIMEOUT_SECONDS: u64 = 20;
 ///
 /// That quarter is not derived from the frames' weights, which would not
 /// fit it: a frame counts a pass of the shaper through every face,
-/// `SHAPE_NOTDEF_STEPS`, 2,200 steps, for each segment of glyphs no face
-/// holds and each distinct one (#304), by which a 4,096-byte raw input of
-/// some 1,365 distinct private-use characters would shape for some 48 s.
+/// `SHAPE_NOTDEF_STEPS`, 2,200 steps, for each distinct one-code-point
+/// glyph no face holds, and one a glyph of a line holding a `.notdef`
+/// cluster of several code points (#304), by which a 4,096-byte raw input
+/// of some 1,365 distinct private-use characters would shape for some
+/// 48 s.
 /// The weight bounds a pass; a pass for one code point shapes it alone in
 /// each face, once a font system, and the published shaper's fallback,
 /// which shaped the whole segment in each face, was measured at some
@@ -1306,9 +1308,9 @@ pub fn sides_in_time(
 /// from a hairline to an em dash, an underscore with no side bearings
 /// and an Egyptian hieroglyph, each held and inked by a compiled face, so that it shapes alike on
 /// every host — and one, U+FFFE, a noncharacter no face holds on any
-/// host, as a map's ornament may hold glyphs no face does: a segment of
-/// `.notdef`s, and each distinct one, weighs 2,200 glyph steps a shaping
-/// (`SHAPE_NOTDEF_STEPS`), which [`sides_in_time`] cuts the ornament for.
+/// host, as a map's ornament may hold glyphs no face does: each distinct
+/// `.notdef` weighs 2,200 glyph steps a shaping (`SHAPE_NOTDEF_STEPS`),
+/// which [`sides_in_time`] cuts the ornament for.
 /// (At e402949d it drew `❧`, `⸻` and `﷽`, which no compiled face holds:
 /// held by a host face here and not on CI, so the long ornaments CI drew
 /// were `.notdef`s, which the harness did not cut for — the flow_structured
@@ -1346,8 +1348,8 @@ pub const LONG_ORNAMENT_BYTES: usize = 200;
 /// budget is the 400,000-step floor: 411,669. A text of one glyph beside
 /// the heaviest long ornament the compiled faces hold, 200 `|`s, takes
 /// 409,308, with host faces or without; a frame of no text beside fifty
-/// U+FFFE, a segment of one code point no face holds, 412,498, and beside
-/// fifty distinct noncharacters 488,550, so that ornament is cut first.
+/// U+FFFE, one code point no face holds, 408,098, and beside fifty
+/// distinct noncharacters 484,150, so that ornament is cut first.
 pub fn long_ornament(choices: &mut Choices<'_>, layout: RingLayout) -> RingLayout {
     if !choices.one_in(4) {
         return layout;

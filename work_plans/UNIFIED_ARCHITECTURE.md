@@ -824,9 +824,11 @@ line (cosmic-text gives each glyph's advance), then placed:
      frame's work, each kind weighted to about one `track` step's time
      (ruling R46.1): its tracking and side lays, its shaping and inking,
      its touch checks and R27's walks, each counted as it runs (#304): a
-     reshape at a size shapes nothing, a segment of `.notdef`s and each
-     distinct one is a pass of the shaper through every face, and an
-     inking reads each distinct glyph once. The budget is read before every lay, build and
+     reshape at a size shapes nothing, each distinct one-code-point
+     `.notdef` is a pass of the shaper through every face, a `.notdef`
+     cluster of several code points a pass a glyph of its line (a pass
+     shapes its whole run in each face), and an inking reads each
+     distinct glyph once. The budget is read before every lay, build and
      reshape and before each copy of a side ornament, which is laid only
      while the frame can afford it and its arc's touch check after, at
      `touch_looks` looks a box of the classes of height the check holds
