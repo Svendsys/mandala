@@ -270,6 +270,9 @@ pub(crate) struct Lane {
     /// How near another path's curve may come to its own: its own gap and
     /// a glyph.
     pub(crate) width: f32,
+    /// Whether it is one straight segment from end to end, which its
+    /// handles do not bend.
+    pub(crate) straight: bool,
 }
 
 /// The share of its handles each path of a junction keeps, so that no two
@@ -296,7 +299,11 @@ pub(crate) fn untangle(lanes: &[Lane]) -> Vec<f32> {
             .iter()
             .zip(&handles)
             .map(|(lane, &h)| {
-                let curves = path_through(lane.start, lane.end, &lane.via, h);
+                let curves = if lane.straight {
+                    vec![Curve::Line(lane.start.0, lane.end.0)]
+                } else {
+                    path_through(lane.start, lane.end, &lane.via, h)
+                };
                 sample(&curves, 0.25 * lane.width, CLEARANCE * lane.hold.max(lane.width))
             })
             .collect();

@@ -1497,6 +1497,24 @@ fn test_a_path_has_at_most_eight_control_points() {
 }
 
 #[test]
+fn test_a_straight_path_has_no_control_points() {
+    // One segment from end to end: a straight path loads, saves `straight`
+    // and loads again, and a straight path with a point is refused at the
+    // point, by the bound a straight path's points are held to.
+    let json = |fields: &str| map_of_two(&format!(r#","links":[{{"to":2,"kind":"line"{fields}}}]"#), "");
+    let doc = load(&json(r#","straight":true"#)).expect("a straight path loads");
+    let saved = crate::document::format::save(&doc).expect("it saves");
+    assert!(saved.contains(r#""straight": true"#), "straight is saved: {saved}");
+    assert!(load(&saved).is_ok(), "and loads again");
+    assert!(load(&json(r#","straight":false,"control_points":[[1,1]]"#)).is_ok());
+    rejects_bound(
+        &json(r#","straight":true,"control_points":[[1,1]]"#),
+        "nodes[0].links[0].control_points",
+        BoundError::TooMany { count: 1, max: 0 },
+    );
+}
+
+#[test]
 fn test_a_node_id_must_be_a_node_id() {
     let not_an_id = |value| BoundError::NotAnIdent(value);
     rejects_bound(

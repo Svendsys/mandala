@@ -394,13 +394,12 @@ pub fn check_zoom_window(min: Option<f32>, max: Option<f32>) -> Result<(), Bound
 }
 
 /// A path's control-point count if it is at most
-/// [`MAX_CONTROL_POINTS`]. O(1).
-pub fn check_control_points(count: usize) -> Result<usize, BoundError> {
-    if count > MAX_CONTROL_POINTS {
-        Err(BoundError::TooMany {
-            count,
-            max: MAX_CONTROL_POINTS,
-        })
+/// [`MAX_CONTROL_POINTS`], or for a `straight` path, which is one segment
+/// from end to end, if it is none. O(1).
+pub fn check_control_points(count: usize, straight: bool) -> Result<usize, BoundError> {
+    let max = if straight { 0 } else { MAX_CONTROL_POINTS };
+    if count > max {
+        Err(BoundError::TooMany { count, max })
     } else {
         Ok(count)
     }

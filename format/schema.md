@@ -591,7 +591,8 @@ portal is a connector with `visible: false` plus a portal link.
 | `color` | [color](#colors) | no | unset | |
 | `content` | string | no | unset | The text drawn when the path has no spans. |
 | `anchors` | `[from, to]`, each `"auto"`, `"top"`, `"right"`, `"bottom"` or `"left"` | no | `["auto", "auto"]` | Where it attaches at its start and at its end. |
-| `control_points` | array of `[x, y]` | no | `[]` | [Points the path passes through](#control-points): at most 8. |
+| `control_points` | array of `[x, y]` | no | `[]` | [Points the path passes through](#control-points): at most 8, and none on a straight path. |
+| `straight` | boolean | no | `false` | One straight segment from its start's side midpoint to its end's, which [fans and holds](./projection.md#where) at a shared side as any path does. A straight path takes no `control_points`: a file that gives it some is refused at the first. |
 | `visible` | boolean | no | `true` | Whether it is drawn. |
 | `zoom` | [zoom](#zoom) | no | none | |
 | `spans` | array of [spans](#span) | no | `[]` | The line's content (`"─"`, `"·"`, a line of poetry). |
@@ -617,7 +618,8 @@ line link only; naming one on a portal link is an error, and so is
 | `color` | [color](#colors) | no | unset | Line only. |
 | `content` | string | no | unset | Line only. |
 | `anchors` | `[from, to]` | no | `["auto", "auto"]` | Line only. |
-| `control_points` | array of `[x, y]` | no | `[]` | Line only. At most 8. |
+| `control_points` | array of `[x, y]` | no | `[]` | Line only. At most 8, and none when straight. |
+| `straight` | boolean | no | `false` | Line only. |
 | `visible` | boolean | no | `true` | Line only. |
 | `zoom` | [zoom](#zoom) | no | none | Line only. |
 | `spans` | array of [spans](#span) | no | `[]` | Line only. |
@@ -870,6 +872,12 @@ written to that reading is converted by hand, a curve's points taken
 where it ran (the README's frames map, and testament's twelve authored
 curves, were).
 
+A path was never straight before `straight` (#296): every map written
+before it reads as it did, a curve between its two ends, and a path
+meant straight is marked so by hand. A straight path is one segment
+from its start's side midpoint to its end's; it has no points to pass
+through.
+
 ### Start point
 
 Where a `repeat` ring starts on the outline (a ring in another mode is
@@ -948,7 +956,7 @@ its path.
 | `fit` bounds | `0 < min <= max` |
 | Corner radius | `0` to `100` |
 | Weight | 100, 200, ... 900 |
-| `control_points` | at most 8 (`MAX_CONTROL_POINTS`) |
+| `control_points` | at most 8 (`MAX_CONTROL_POINTS`); none on a `straight` path |
 | A node's `id` and `parent`, a link's `to` | `1` to `4294967294` (`MAX_NODE_IDENT`); a larger integer is this bound, not another error |
 | `channel` (node, section, ring) | `0` to `4294967295` (`MAX_CHANNEL`), the most a `usize` holds on wasm32, so every target accepts the same files |
 | `palettes`, theme variables, theme variants, `verbs`, `edits`, `presentations` | at most 65536 each, the most an index addresses |

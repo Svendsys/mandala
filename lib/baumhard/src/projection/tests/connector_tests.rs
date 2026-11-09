@@ -346,6 +346,32 @@ fn test_projection_a_dropped_connector_reads_no_reach() {
     p.check().unwrap();
 }
 
+#[test]
+fn test_projection_a_straight_connector_is_one_segment_between_midpoints() {
+    // Node 2 beside and below node 1, its connector straight: one segment
+    // from node 1's side midpoint to node 2's, its glyphs on it.
+    let mut p = Projected::new(load_map(json!({"nodes": [
+        node(1, None, dotted(160.0, 60.0)),
+        node(2, Some(1), with(dotted(160.0, 60.0), json!({
+            "position": [420.0, 140.0],
+            "connector": {"straight": true, "size": 14.0}
+        }))),
+    ]})));
+    let connector = kid(&p.doc, ident(&p.doc, 2), DocKind::Connector);
+    let (body, curves) = line(&p.projector, connector);
+    let [Curve::Line(from, to)] = curves else {
+        panic!("one straight segment: {curves:?}");
+    };
+    let (a, b) = (from.to_owned(), to.to_owned());
+    let glyphs = inks(body);
+    assert!(glyphs.len() > 3, "precondition: glyphs laid: {}", glyphs.len());
+    let off = |q: Vec2| ((q - a).perp_dot(b - a) / (b - a).length()).abs();
+    for g in &glyphs {
+        assert!(off(g.center()) < 1e-2, "a glyph {} off the segment", off(g.center()));
+    }
+    p.check().unwrap();
+}
+
 /// Node 1 with children below it at `xs`, each a dotted connector.
 fn fan_of(xs: &[f32]) -> Projected {
     let mut nodes = vec![node(

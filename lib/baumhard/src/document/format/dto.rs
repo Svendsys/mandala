@@ -1216,9 +1216,16 @@ pub(crate) struct PathDto<'a> {
         deserialize_with = "present"
     )]
     pub anchors: Option<[AnchorDto; 2]>,
-    /// Bézier control points: 0, 1 or 2.
+    /// The points it passes through: at most 8, and none when straight.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub control_points: Vec<[f32; 2]>,
+    /// Whether it is one straight segment from end to end.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub straight: Option<bool>,
     /// Whether it is drawn.
     #[serde(
         default,
@@ -1310,9 +1317,16 @@ pub(crate) struct LinkDto<'a> {
         deserialize_with = "present"
     )]
     pub anchors: Option<[AnchorDto; 2]>,
-    /// Bézier control points: 0, 1 or 2.
+    /// The points it passes through: at most 8, and none when straight.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub control_points: Vec<[f32; 2]>,
+    /// Whether it is one straight segment from end to end.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub straight: Option<bool>,
     /// Whether it is drawn.
     #[serde(
         default,

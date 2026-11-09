@@ -52,6 +52,7 @@ pub fn path_data() -> PathData {
         flow: Default::default(),
         anchors: (Anchor::Auto, Anchor::Auto),
         control_points: Vec::new(),
+        straight: false,
         visible: true,
         zoom: None,
     }

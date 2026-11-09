@@ -144,6 +144,7 @@ fn rich_path() -> PathData {
         flow: rich_flow(),
         anchors: (Anchor::Top, Anchor::Bottom),
         control_points: vec![Vec2::new(1.0, 2.0), Vec2::new(3.0, 4.0)],
+        straight: false,
         visible: true,
         zoom: None,
     }
@@ -748,6 +749,30 @@ pub fn do_document_path_ops_write_their_field() {
             &p,
             DocMutation::Path(PathOp::MoveControlPoint { index: 2, to }),
             &s,
+        );
+        // Straight drops the points; points make it a curve again.
+        case(
+            "SetStraight",
+            &p,
+            DocMutation::Path(PathOp::SetStraight(true)),
+            &s,
+            |e| {
+                path(e).straight = true;
+                path(e).control_points.clear();
+            },
+        );
+        let mut straight = p.clone();
+        path(&mut straight).straight = true;
+        path(&mut straight).control_points.clear();
+        case(
+            "SetControlPoints on a straight path",
+            &straight,
+            DocMutation::Path(PathOp::SetControlPoints(vec![Vec2::ONE])),
+            &s,
+            |e| {
+                path(e).straight = false;
+                path(e).control_points = vec![Vec2::ONE];
+            },
         );
         case(
             "SetVisible",

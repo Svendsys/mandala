@@ -278,13 +278,15 @@ fn classify(before: &DocElement, after: &DocElement) -> Touched {
 }
 
 /// Whether a path's style changed: its flow style is what resolution
-/// reads; its anchors, control points, visibility and zoom window are
+/// reads; its anchors, control points, straightness, visibility and zoom
+/// window are
 /// geometry and visibility, read by no resolver.
 fn path_style_changed(a: &PathData, b: &PathData) -> bool {
     let PathData {
         flow,
         anchors: _,
         control_points: _,
+        straight: _,
         visible: _,
         zoom: _,
     } = a;

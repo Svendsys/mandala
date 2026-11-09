@@ -269,9 +269,10 @@ pub(crate) struct LineState {
     /// How each end leaves its junction, as the junction was last fanned
     /// (#296).
     pub(crate) fans: [Fanned; 2],
-    /// Its control points, as its geometry stage read them: what its
-    /// junctions are untangled by.
+    /// Its control points, and whether it is straight, as its geometry
+    /// stage read them: what its junctions are untangled by.
     pub(crate) via: Vec<Vec2>,
+    pub(crate) straight: bool,
     /// Its curves, once placed: empty until then.
     pub(crate) path: Vec<Curve>,
 }

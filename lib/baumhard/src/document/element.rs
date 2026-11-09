@@ -391,6 +391,10 @@ pub struct PathData {
     /// the way along the straight line from its start to its end. At most
     /// [`MAX_CONTROL_POINTS`](crate::document::bounds::MAX_CONTROL_POINTS).
     pub control_points: Vec<Vec2>,
+    /// Whether it is one straight segment from its start to its end
+    /// (#296): no control points then, which a load and a mutation refuse
+    /// ([`check_control_points`](crate::document::bounds::check_control_points)).
+    pub straight: bool,
     /// Whether it is drawn.
     pub visible: bool,
     /// The zoom range it renders in.

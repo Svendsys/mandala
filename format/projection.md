@@ -75,7 +75,10 @@ node to the node it leads to.
   joined without a kink. An end's handle reaches 0.5523 of how far the
   curve's other end lies along it, and at least a third of the curve's
   chord: between facing sides an S as deep as the sides are apart,
-  between a side and one turned a quarter from it a round bend.
+  between a side and one turned a quarter from it a round bend. A
+  [`straight`](./schema.md#connector) path is one segment from its
+  start's side midpoint to its end's instead; at a shared side its first
+  glyphs are held out as any path's are.
 - **Paths that share a side.** The paths that leave one side of a node
   leave its one midpoint, fanned in the order they turn toward their
   other ends, as seen from where their first two glyphs end. Each two

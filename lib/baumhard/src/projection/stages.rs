@@ -1223,9 +1223,9 @@ impl Projector {
     /// same point. Marks the junctions an end moved at, so the paths
     /// that share them are laid again, and queues its own lay. O(1).
     fn line_ends(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut PhaseWork) {
-        let Some((anchors, via)) = element(tree, id)
+        let Some((anchors, via, straight)) = element(tree, id)
             .and_then(DocElement::as_path)
-            .map(|p| (p.anchors, p.control_points.clone()))
+            .map(|p| (p.anchors, p.control_points.clone(), p.straight))
         else {
             return;
         };
@@ -1279,7 +1279,7 @@ impl Projector {
             return;
         };
         let old = std::mem::replace(&mut line.attach, attach.map(Some));
-        line.via = via;
+        (line.via, line.straight) = (via, straight);
         let key = |a: &Attach| (a.node, Some(a.side));
         // Both its junctions are fanned again, whatever changed: how its
         // neighbors there keep clear of it reads its whole curve.
@@ -1399,13 +1399,13 @@ impl Projector {
         match key.1 {
             Some(side) => {
                 // Each path's end here and its other end.
-                let mut fan: Vec<(NodeId, usize, Attach, Attach, Vec<Vec2>)> = members
+                let mut fan: Vec<(NodeId, usize, Attach, Attach, Vec<Vec2>, bool)> = members
                     .iter()
                     .filter_map(|p| match at(p) {
                         Some(UnitBody::Line(line)) => line.attach.iter().enumerate().find_map(|(k, a)| {
                             let (here, there) = (a.as_ref()?, line.attach[1 - k].as_ref()?);
                             (here.node == key.0 && here.side == side)
-                                .then(|| (*p, k, *here, *there, line.via.clone()))
+                                .then(|| (*p, k, *here, *there, line.via.clone(), line.straight))
                         }),
                         _ => None,
                     })
@@ -1415,7 +1415,7 @@ impl Projector {
                 // In the order each turns toward its other end's lead, seen
                 // from where the fan's leads end: the way their curves run.
                 let lead = sizes.iter().map(|s| s.1).fold(0.0_f32, f32::max);
-                let order = |m: &(NodeId, usize, Attach, Attach, Vec<Vec2>)| {
+                let order = |m: &(NodeId, usize, Attach, Attach, Vec<Vec2>, bool)| {
                     let from = m.2.point + m.2.normal * (lead + hold);
                     geometry::turn_to(m.2.normal, m.3.point + m.3.normal * m.3.lead - from)
                 };
@@ -1439,6 +1439,7 @@ impl Projector {
                             m.4.iter().rev().copied().collect()
                         },
                         width: 0.5 * m.2.lead,
+                        straight: m.5,
                     })
                     .collect();
                 let untangled = geometry::untangle(&lanes);
@@ -1509,12 +1510,16 @@ impl Projector {
         let mut reads = vec![ProjectionInput::Opacity(owner)];
         let fans = line.fans;
         let turned = |a: &Attach, k: usize| Vec2::from_angle(fans[k].turn).rotate(a.normal);
-        let curves = geometry::path_through(
-            (start.point, turned(&start, 0), start.lead + fans[0].hold),
-            (end.point, turned(&end, 1), end.lead + fans[1].hold),
-            &path.control_points,
-            fans[0].handles.min(fans[1].handles),
-        );
+        let curves = if path.straight {
+            vec![crate::flow::Curve::Line(start.point, end.point)]
+        } else {
+            geometry::path_through(
+                (start.point, turned(&start, 0), start.lead + fans[0].hold),
+                (end.point, turned(&end, 1), end.lead + fans[1].hold),
+                &path.control_points,
+                fans[0].handles.min(fans[1].handles),
+            )
+        };
         let label_at = line
             .label
             .id
