@@ -664,6 +664,9 @@ mod tests_gpu_demo_checker;
 mod tests_gpu_demo_maps;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
+mod tests_gpu_fields;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 mod tests_gpu_glyph_runs;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]

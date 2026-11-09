@@ -188,8 +188,8 @@ mod tests {
     #[test]
     fn test_tokenize_splits_on_whitespace() {
         assert_eq!(
-            tokenize("color bg=#123 text=accent"),
-            vec!["color", "bg=#123", "text=accent"]
+            tokenize("color ring=#123 text=accent"),
+            vec!["color", "ring=#123", "text=accent"]
         );
     }
 
@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn test_args_positional_skips_kv_tokens() {
         let toks: Vec<String> = vec![
-            "bg=#123".into(),
+            "ring=#123".into(),
             "my-id".into(),
             "text=accent".into(),
             "extra".into(),
@@ -269,10 +269,10 @@ mod tests {
 
     #[test]
     fn test_args_kvs_iterates_key_value_pairs() {
-        let toks: Vec<String> = vec!["bg=#123".into(), "positional".into(), "text=accent".into()];
+        let toks: Vec<String> = vec!["ring=#123".into(), "positional".into(), "text=accent".into()];
         let args = Args::new(&toks);
         let pairs: Vec<(&str, &str)> = args.kvs().collect();
-        assert_eq!(pairs, vec![("bg", "#123"), ("text", "accent")]);
+        assert_eq!(pairs, vec![("ring", "#123"), ("text", "accent")]);
     }
 
     #[test]
@@ -289,11 +289,11 @@ mod tests {
     /// the shell intuition that the last one sticks).
     #[test]
     fn test_args_kvs_keeps_every_occurrence_in_order() {
-        let toks: Vec<String> = vec!["bg=#111".into(), "bg=#222".into()];
+        let toks: Vec<String> = vec!["ring=#111".into(), "ring=#222".into()];
         let args = Args::new(&toks);
         assert_eq!(
             args.kvs().collect::<Vec<_>>(),
-            vec![("bg", "#111"), ("bg", "#222")]
+            vec![("ring", "#111"), ("ring", "#222")]
         );
     }
 }

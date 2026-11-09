@@ -470,7 +470,11 @@ fn test_connect_does_not_duplicate_and_a_connector_is_not_deleted() {
     // D28: an open interactive transaction refuses the delete, and the
     // reply says so. Control: a plain unhandled Action's reason is null.
     select(init, vec![n5]);
-    assert!(document_mut(init).begin(ChangeSource::Input, TransactionKind::Interactive));
+    assert!(document_mut(init).begin(
+        ChangeSource::Input,
+        TransactionKind::Interactive,
+        crate::application::document::Interaction::Test
+    ));
     assert_eq!(
         reason(init, json!("DeleteSelection")),
         json!(TRANSACTION_OPEN_STATUS)

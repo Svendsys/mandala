@@ -98,6 +98,10 @@ pub(crate) mod common;
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) mod console;
 pub(crate) mod document;
+// Field editing I (V1-C5): the steps of the node, section, frame, theme,
+// defaults and style edits that the field Actions and console verbs
+// share, on both targets.
+pub(crate) mod fields;
 // The one writer behind every caller-chosen path. Native-only with its
 // consumers, the IPC file sidecar and the screenshot engine.
 #[cfg(not(target_arch = "wasm32"))]

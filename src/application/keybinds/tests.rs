@@ -389,10 +389,7 @@ fn test_wasm_compatibility_section_aabb_actions_are_compatible() {
             x: "10".into(),
             y: "20".into(),
         },
-        Action::SetSectionText {
-            text: "x".into(),
-            runs_mode: "clear".into(),
-        },
+        Action::SetSectionText { text: "x".into() },
         Action::AddSection {
             at: "".into(),
             text: "x".into(),
@@ -636,15 +633,12 @@ fn test_wasm_compatibility_label_edit_primitives_are_native_only() {
 // asked us to remove) fails one of these tests.
 
 /// `Action::SetFramePreview` round-trips through the JSON
-/// config — pre-fix the Action variant existed and was
-/// dispatched but had no `KeybindConfig` field, so users could
-/// not bind a key to preview-set via JSON.
+/// config: its args are the frame previewed, the field and its value.
 #[test]
-fn test_set_border_preview_keybind_round_trips_through_json() {
-    use crate::application::keybinds::BorderPreviewTargetKind;
+fn test_set_frame_preview_keybind_round_trips_through_json() {
     let json = r#"{
         "set_frame_preview": [
-            { "combo": "Ctrl+H", "args": ["node", "preset", "heavy"] }
+            { "combo": "Ctrl+H", "args": ["defaults", "fit", "repeat"] }
         ]
     }"#;
     let cfg = KeybindConfig::from_json(json).unwrap();
@@ -653,35 +647,64 @@ fn test_set_border_preview_keybind_round_trips_through_json() {
     assert_eq!(
         r.action_for_context(InputContext::Document, "h", true, false, false),
         Some(Action::SetFramePreview {
-            target_kind: BorderPreviewTargetKind::Node,
-            field: "preset".into(),
-            value: "heavy".into(),
+            target_kind: crate::application::keybinds::FramePreviewTarget::Defaults,
+            field: "fit".into(),
+            value: "repeat".into(),
         })
     );
 }
 
-/// All five `BorderPreviewTargetKind` variants round-trip
-/// through the strum-derived parser.
+/// **The renamed frame Actions load, and the names they replaced do
+/// not** (V1-C5, #246; no aliases): a keybinds file naming
+/// `cycle_frame_content`, `toggle_frame_visible` and `set_frame_field`
+/// binds each, and one naming the `main` spellings —
+/// `cycle_border_preset`, `toggle_border_visible`, `set_border_field`,
+/// `set_border_preview` — binds nothing: each is an unknown key, warned
+/// about and skipped. The first half is the second's control: the same
+/// bindings under the new names bind.
 #[test]
-fn test_border_preview_target_kind_strum_round_trip() {
-    use crate::application::keybinds::BorderPreviewTargetKind;
-    use std::str::FromStr;
-    for (s, expected) in [
-        ("node", BorderPreviewTargetKind::Node),
-        ("section", BorderPreviewTargetKind::Section),
-        ("canvas-border", BorderPreviewTargetKind::CanvasBorder),
-        ("canvas-sf", BorderPreviewTargetKind::CanvasSf),
-        ("canvas-sf-focused", BorderPreviewTargetKind::CanvasSfFocused),
-    ] {
-        let parsed = BorderPreviewTargetKind::from_str(s).unwrap_or_else(|_| panic!("parses {}", s));
-        assert_eq!(parsed, expected, "round-trip {} → variant", s);
-        let back: &'static str = expected.into();
-        assert_eq!(back, s, "round-trip variant → {}", s);
+fn test_the_renamed_frame_actions_load_and_the_old_names_do_not() {
+    let renamed = KeybindConfig::from_json(
+        r#"{
+            "cycle_frame_content": ["Ctrl+F5"],
+            "toggle_frame_visible": ["Ctrl+F6"],
+            "set_frame_field": [{ "combo": "Ctrl+F7", "args": ["fit", "repeat"] }]
+        }"#,
+    )
+    .unwrap()
+    .resolve();
+    assert_eq!(
+        renamed.action_for_context(InputContext::Document, "f5", true, false, false),
+        Some(Action::CycleFrameContent)
+    );
+    assert_eq!(
+        renamed.action_for_context(InputContext::Document, "f6", true, false, false),
+        Some(Action::ToggleFrameVisible)
+    );
+    assert_eq!(
+        renamed.action_for_context(InputContext::Document, "f7", true, false, false),
+        Some(Action::SetFrameField {
+            field: "fit".into(),
+            value: "repeat".into(),
+        })
+    );
+    let old = KeybindConfig::from_json(
+        r#"{
+            "cycle_border_preset": ["Ctrl+F5"],
+            "toggle_border_visible": ["Ctrl+F6"],
+            "set_border_field": [{ "combo": "Ctrl+F7", "args": ["fit", "repeat"] }],
+            "set_border_preview": [{ "combo": "Ctrl+F8", "args": ["node", "fit", "repeat"] }]
+        }"#,
+    )
+    .unwrap()
+    .resolve();
+    for key in ["f5", "f6", "f7", "f8"] {
+        assert_eq!(
+            old.action_for_context(InputContext::Document, key, true, false, false),
+            None,
+            "an old name binds nothing ({key})"
+        );
     }
-    // Unknown tokens fail the parse — `push_parametric` warns
-    // and skips on these.
-    assert!(BorderPreviewTargetKind::from_str("canvas-sf-focsed").is_err());
-    assert!(BorderPreviewTargetKind::from_str("nodes").is_err());
 }
 
 /// `cancel_frame_preview` ships unbound by default — the
@@ -1719,11 +1742,11 @@ fn test_parametric_binding_round_trips_through_json() {
 }
 
 #[test]
-fn test_parametric_set_border_field_resolves_with_two_args() {
+fn test_parametric_set_frame_field_resolves_with_two_args() {
     let cfg = KeybindConfig {
         set_frame_field: vec![ParametricBinding {
             combo: "Ctrl+Shift+b".into(),
-            args: vec!["preset".into(), "rounded".into()],
+            args: vec!["fit".into(), "repeat".into()],
         }],
         ..KeybindConfig::default()
     };
@@ -1731,8 +1754,8 @@ fn test_parametric_set_border_field_resolves_with_two_args() {
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "b", true, true, false),
         Some(Action::SetFrameField {
-            field: "preset".into(),
-            value: "rounded".into(),
+            field: "fit".into(),
+            value: "repeat".into(),
         }),
     );
 }
@@ -1743,11 +1766,11 @@ fn test_parametric_color_axes_resolve() {
         set_color: vec![
             ParametricBinding {
                 combo: "F1".into(),
-                args: vec!["bg".into(), "#fafafa".into()],
+                args: vec!["ring".into(), "#fafafa".into()],
             },
             ParametricBinding {
                 combo: "F2".into(),
-                args: vec!["text".into(), "accent".into()],
+                args: vec!["text".into(), "var(accent)".into()],
             },
             ParametricBinding {
                 combo: "F3".into(),
@@ -1760,7 +1783,7 @@ fn test_parametric_color_axes_resolve() {
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f1", false, false, false),
         Some(Action::SetColor {
-            axis: ColorAxis::Bg,
+            axis: ColorAxis::Ring,
             value: "#fafafa".into(),
         }),
     );
@@ -1768,7 +1791,7 @@ fn test_parametric_color_axes_resolve() {
         resolved.action_for_context(InputContext::Document, "f2", false, false, false),
         Some(Action::SetColor {
             axis: ColorAxis::Text,
-            value: "accent".into(),
+            value: "var(accent)".into(),
         }),
     );
     assert_eq!(
@@ -1826,11 +1849,11 @@ fn test_parametric_font_family_size_resolve() {
             },
             ParametricBinding {
                 combo: "Ctrl+F8".into(),
-                args: vec!["min".into(), "10".into()],
+                args: vec!["weight".into(), "bold".into()],
             },
             ParametricBinding {
                 combo: "Shift+F8".into(),
-                args: vec!["max".into(), "32".into()],
+                args: vec!["italic".into(), "true".into()],
             },
         ],
         ..KeybindConfig::default()
@@ -1850,15 +1873,15 @@ fn test_parametric_font_family_size_resolve() {
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f8", true, false, false),
         Some(Action::SetFont {
-            slot: FontSlot::Min,
-            value: "10".into(),
+            slot: FontSlot::Weight,
+            value: "bold".into(),
         }),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f8", false, true, false),
         Some(Action::SetFont {
-            slot: FontSlot::Max,
-            value: "32".into(),
+            slot: FontSlot::Italic,
+            value: "true".into(),
         }),
     );
 }
@@ -2175,21 +2198,18 @@ fn test_parametric_set_section_offset_abs_resolves_with_two_args() {
 }
 
 #[test]
-fn test_parametric_set_section_text_resolves_with_two_args() {
+fn test_parametric_set_section_text_resolves_with_one_arg() {
     let cfg = KeybindConfig {
         set_section_text: vec![ParametricBinding {
             combo: "Ctrl+Shift+F2".into(),
-            args: vec!["hello".into(), "preserve".into()],
+            args: vec!["hello".into()],
         }],
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f2", true, true, false),
-        Some(Action::SetSectionText {
-            text: "hello".into(),
-            runs_mode: "preserve".into(),
-        }),
+        Some(Action::SetSectionText { text: "hello".into() }),
     );
 }
 
@@ -2327,10 +2347,10 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         ),
         (
             "set_frame_field",
-            &["preset", "rounded"],
+            &["fit", "repeat"],
             Action::SetFrameField {
-                field: "preset".into(),
-                value: "rounded".into(),
+                field: "fit".into(),
+                value: "repeat".into(),
             },
         ),
         (
@@ -2343,19 +2363,19 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         ),
         (
             "set_color",
-            &["bg", "#fafafa"],
+            &["ring", "#fafafa"],
             Action::SetColor {
-                axis: ColorAxis::Bg,
+                axis: ColorAxis::Ring,
                 value: "#fafafa".into(),
             },
         ),
         (
             "set_frame_preview",
-            &["node", "preset", "rounded"],
+            &["node", "start", "top"],
             Action::SetFramePreview {
-                target_kind: BorderPreviewTargetKind::Node,
-                field: "preset".into(),
-                value: "rounded".into(),
+                target_kind: crate::application::keybinds::FramePreviewTarget::Node,
+                field: "start".into(),
+                value: "top".into(),
             },
         ),
         (
@@ -2423,11 +2443,8 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         ),
         (
             "set_section_text",
-            &["hello", "preserve"],
-            Action::SetSectionText {
-                text: "hello".into(),
-                runs_mode: "preserve".into(),
-            },
+            &["hello"],
+            Action::SetSectionText { text: "hello".into() },
         ),
         (
             "add_section",

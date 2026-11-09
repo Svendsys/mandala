@@ -174,7 +174,7 @@ fn builders() -> Vec<(&'static str, Builder)> {
             set_link_kind(doc, ids.portal, LinkKind::Line).unwrap()
         }),
         ("style_range", |doc, ids| {
-            style_range(doc, ids.a_title, 1, 3, TextOp::SetItalic(Some(true))).unwrap()
+            style_range(doc, ids.a_title, 1, 3, vec![TextOp::SetItalic(Some(true))]).unwrap()
         }),
         ("insert_text", |doc, ids| {
             insert_text(doc, ids.a_title, 2, "xy".to_string()).unwrap()
@@ -186,10 +186,10 @@ fn builders() -> Vec<(&'static str, Builder)> {
             split_section(doc, ids.a_title, 2).unwrap()
         }),
         ("add_section after", |doc, ids| {
-            add_section(doc, ids.b, Some(ids.b_section)).unwrap()
+            add_section(doc, ids.b, Some(ids.b_section), &[]).unwrap()
         }),
         ("add_section first", |doc, ids| {
-            add_section(doc, ids.b, None).unwrap()
+            add_section(doc, ids.b, None, &[]).unwrap()
         }),
         ("remove_links", |_, ids| vec![remove_links(vec![ids.line])]),
     ]

@@ -201,29 +201,24 @@ fn test_console_oracle_completions_are_unchanged() {
     }
 }
 
-/// The three vocabularies the pinned tables deliberately leave
-/// out — they enumerate the *host's* installed fonts, so a
-/// byte-pin would assert something about the machine rather than
-/// about the console. Pinned structurally instead.
+/// The font vocabulary the pinned tables deliberately leave out —
+/// it enumerates the faces this process loaded, which on native
+/// include the *host's* installed fonts, so a byte-pin would assert
+/// something about the machine rather than about the console. Pinned
+/// structurally instead.
 ///
-/// There are three slots — `font set <TAB>`, `border font <TAB>`
-/// and `border font=<TAB>` — and this loop drives all three. It
-/// drove one of them for a while and said "the two vocabularies",
-/// so a sentinel planted in `font.rs` alone was invisible here,
-/// and `font set <TAB>` was absent from `COMPLETION_CORPUS`,
-/// absent from `EXEC_PREFIX_CORPUS`, and absent from the fallback
-/// that exists for exactly the rows those two leave out. Then it
-/// drove two while the doc claimed three, `border font=<TAB>`
-/// being covered by a per-verb test rather than structurally.
-///
-/// There is now one body behind all three (`font.rs`'s
-/// [`crate::application::console::commands::font::font_family_completions`]);
-/// there were two, and the quoting assertion below is what the
-/// second one lacked, so 43 of this host's 77 families tab-accepted
-/// into a line `border font` refused.
+/// One slot offers it, `font family=<TAB>`, from one body
+/// ([`crate::application::console::commands::font::font_family_completions`]),
+/// and it offers exactly the families a map can name
+/// (`format::font`), which is what `family=` accepts: a host font the
+/// loader would refuse (#329) is never offered. A second body once
+/// lacked the quoting asserted below, so 43 of a host's 77 families
+/// tab-accepted into a line the verb refused.
 #[test]
 fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
-    let families: Vec<&str> = baumhard::font::fonts::loaded_families_iter().collect();
+    let families: Vec<&str> = baumhard::font::fonts::loaded_families_iter()
+        .filter(|family| baumhard::document::format::font(family).is_some())
+        .collect();
     assert!(
         !families.is_empty(),
         "the font system must be initialized for this fixture"
@@ -231,7 +226,7 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
 
     let doc = doc_for(Sel::Node);
     let ctx = ConsoleContext::from_document(&doc);
-    for (line, sentinels) in [("font set ", &[][..] as &[&str])] {
+    for (line, sentinels) in [("font family=", &["reset"][..] as &[&str])] {
         let all = complete(line, line.len(), &ctx);
         let (rows, extra): (Vec<_>, Vec<_>) = all.into_iter().partition(|c| c.font_family.is_some());
         assert_eq!(
@@ -242,7 +237,7 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
         assert_eq!(
             rows.iter().map(|c| c.display.as_str()).collect::<Vec<_>>(),
             families,
-            "`{line}<TAB>` offers one row per loaded family"
+            "`{line}<TAB>` offers one row per family a map can name"
         );
         // The shaped face is the fourth channel
         // `completion_signature` renders, and the only one no
