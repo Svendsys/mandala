@@ -292,9 +292,33 @@ fn fontconfig(dir: &std::path::Path) -> String {
     )
 }
 
-/// What `HOSTS` reports in this process: `STRAYS n`, `DEFAULT faults`
-/// (the fixture's glyphs drawn in another face than the default face, or
-/// as a `.notdef`), then `MAP name digest` for every shipped map.
+/// The faces a host's own font index holds where this process runs, by
+/// PostScript name, sorted: what `fontdb::Database::load_system_fonts`
+/// finds, the call cosmic-text's `FontSystem::new` makes. The host test's
+/// precondition: it reads the planted fonts, and none for the empty
+/// host, or the hosts are no adversary.
+fn host_faces() -> Vec<String> {
+    let mut db = cosmic_text::fontdb::Database::new();
+    db.load_system_fonts();
+    let mut names: Vec<String> = db.faces().map(|face| face.post_script_name.clone()).collect();
+    names.sort();
+    names
+}
+
+/// A scratch directory, removed when dropped, so a failed child's panic
+/// does not leave it behind.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// What `HOSTS` reports in this process: `HOST faces` (what the host's
+/// font index holds, [`host_faces`]), `STRAYS n`, `DEFAULT faults` (the
+/// fixture's glyphs drawn in another face than the default face, or as a
+/// `.notdef`), then `MAP name digest` for every shipped map.
 fn host_report() -> Vec<String> {
     use baumhard::font::fallback::DEFAULT_FACE;
     use baumhard::font::fonts::COMPILED_FONT_ID_MAP;
@@ -343,7 +367,11 @@ fn host_report() -> Vec<String> {
         glyphs > 50,
         "precondition: the fixture's text is laid out ({glyphs} glyphs)"
     );
-    let mut report = vec![format!("STRAYS {strays:?}"), format!("DEFAULT {faults:?}")];
+    let mut report = vec![
+        format!("HOST {:?}", host_faces()),
+        format!("STRAYS {strays:?}"),
+        format!("DEFAULT {faults:?}"),
+    ];
     for (name, text) in the_maps() {
         report.push(format!("MAP {name} {}", digest(&layout(&text))));
     }
@@ -359,10 +387,16 @@ fn test_every_shipped_map_lays_out_alike_whatever_the_host_has_installed() {
     // face were the host's fonts indexed), and on this machine, whatever
     // it has. Each host is a child process whose fontconfig names one
     // directory, empty or planted, and whose home is empty; every glyph of
-    // the default-family fixture is the default face's in each. Control:
-    // with the host's fonts indexed again (`db.load_system_fonts()` in
-    // `compiled_font_system`), red on the planted host's strays and on its
-    // fixture drawn in the planted copy of Inter.
+    // the default-family fixture is the default face's in each. The
+    // hosts are an adversary only where fontdb reads `FONTCONFIG_FILE`
+    // (Linux, with cosmic-text's `fontconfig` feature), so each child
+    // first reports what the host's own font index holds, and the test
+    // requires the planted faces and nothing else, and nothing for the
+    // empty host: a target where the fixture cannot be built fails here
+    // as unproven rather than passing. Control: with the host's fonts
+    // indexed again (`db.load_system_fonts()` in `complete_font_system`),
+    // red on the planted host's strays and on its fixture drawn in the
+    // planted copy of Inter.
     if let Ok(what) = std::env::var(CHILD) {
         if what == HOSTS {
             for line in host_report() {
@@ -371,8 +405,9 @@ fn test_every_shipped_map_lays_out_alike_whatever_the_host_has_installed() {
         }
         return;
     }
-    let scratch = std::env::temp_dir().join(format!("baumhard_font_hosts_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&scratch);
+    let scratch = Scratch(std::env::temp_dir().join(format!("baumhard_font_hosts_{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(&scratch.0);
+    let scratch = &scratch.0;
     let (empty, planted, home) = (
         scratch.join("empty"),
         scratch.join("planted"),
@@ -426,15 +461,24 @@ fn test_every_shipped_map_lays_out_alike_whatever_the_host_has_installed() {
         ("no fonts", report("empty", &empty)),
         ("planted", report("planted", &planted)),
     ];
-    let _ = std::fs::remove_dir_all(&scratch);
     assert_eq!(
         here.len(),
-        MAPS.len() + 2,
+        MAPS.len() + 3,
         "precondition: this process reports every map"
     );
-    assert_eq!(here[0], "STRAYS []", "this process: faces not compiled in");
+    let planted_faces = r#"HOST ["GalatiaSIL", "InterVariable", "NotoSansHebrew-Regular"]"#;
     assert_eq!(
-        here[1], "DEFAULT []",
+        (
+            hosts[0].1.first().map(String::as_str),
+            hosts[1].1.first().map(String::as_str)
+        ),
+        (Some("HOST []"), Some(planted_faces)),
+        "precondition: each child's host font index holds what its fontconfig names, \
+         or the hosts are no adversary on this target"
+    );
+    assert_eq!(here[1], "STRAYS []", "this process: faces not compiled in");
+    assert_eq!(
+        here[2], "DEFAULT []",
         "this process: default text not in the default face"
     );
     for (host, report) in hosts {
@@ -443,12 +487,12 @@ fn test_every_shipped_map_lays_out_alike_whatever_the_host_has_installed() {
             here.len(),
             "precondition: the {host} host reports every map"
         );
-        assert_eq!(report[0], "STRAYS []", "the {host} host: faces not compiled in");
+        assert_eq!(report[1], "STRAYS []", "the {host} host: faces not compiled in");
         assert_eq!(
-            report[1], "DEFAULT []",
+            report[2], "DEFAULT []",
             "the {host} host: default text not in the default face"
         );
-        for (there, here) in report.iter().zip(&here).skip(2) {
+        for (there, here) in report.iter().zip(&here).skip(3) {
             assert_eq!(
                 there, here,
                 "the {host} host lays a map out otherwise than this machine"
