@@ -181,10 +181,23 @@ pub(crate) fn turn_to(normal: Vec2, toward: Vec2) -> f32 {
 /// direction, and at least a third of the curve's chord, so a curve
 /// between facing sides is an S as deep as the sides are apart and one
 /// between a side and the side turned a quarter from it a round bend; a
-/// handle between is a third of the tangent.
+/// handle between is a third of the tangent. `handles` scales the two
+/// leads' handles, from `1`: less, the path turns toward its other end
+/// sooner after each lead, as the paths of a crowded junction must to
+/// keep clear of each other ([`untangle`]); still C1.
 ///
 /// Cost: O(`via`); one allocation, `via.len() + 3` curves.
-pub(crate) fn path_through(start: (Vec2, Vec2, f32), end: (Vec2, Vec2, f32), via: &[Vec2]) -> Vec<Curve> {
+pub(crate) fn path_through(
+    start: (Vec2, Vec2, f32),
+    end: (Vec2, Vec2, f32),
+    via: &[Vec2],
+    handles: f32,
+) -> Vec<Curve> {
+    let handles = if handles.is_finite() {
+        handles.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
     let (p0, p1) = (usable_point(start.0), usable_point(end.0));
     let room = 0.25 * p0.distance(p1);
     let lead = |l: f32| if l.is_finite() { l.clamp(0.0, room) } else { 0.0 };
@@ -199,7 +212,7 @@ pub(crate) fn path_through(start: (Vec2, Vec2, f32), end: (Vec2, Vec2, f32), via
     // A lead's handle: along `dir`, as far as the curve reaches that way.
     let handle = |from: Vec2, dir: Vec2, to: Vec2| {
         let chord = to - from;
-        dir * (HANDLE_SHARE * chord.dot(dir).abs().max(chord.length() / 3.0))
+        dir * (handles * HANDLE_SHARE * chord.dot(dir).abs().max(chord.length() / 3.0))
     };
     // The tangent at knot `k`, as a handle's reach: out of it for the
     // curve after, into it for the curve before.
@@ -224,6 +237,141 @@ pub(crate) fn path_through(start: (Vec2, Vec2, f32), end: (Vec2, Vec2, f32), via
         curves.push(Curve::Line(q1, p1));
     }
     curves
+}
+
+/// How many rounds [`untangle`] takes, at most: each halves the handles
+/// of the paths that come too near another, down to [`LEAST_HANDLES`].
+const UNTANGLE_ROUNDS: usize = 14;
+
+/// How much nearer than its width [`untangle`] keeps another path's
+/// curve: a quarter more, as two curves' glyphs are boxes upright on
+/// them, whose corners reach further across a slope than a glyph's own
+/// size.
+const CLEARANCE: f32 = 1.25;
+
+/// The least share of their handles [`untangle`] leaves a path: all but
+/// straight from lead to lead.
+const LEAST_HANDLES: f32 = 1.0 / 4096.0;
+
+/// One path of a junction, as [`untangle`] reads it.
+#[derive(Clone, Debug)]
+pub(crate) struct Lane {
+    /// The junction's point, the way the path leaves it, turned by its
+    /// fan, and how far it runs straight before it bends: its first two
+    /// glyphs' reach and its fan's hold.
+    pub(crate) start: (Vec2, Vec2, f32),
+    /// Where its first glyph is held out to: inside it, the fan keeps the
+    /// paths apart.
+    pub(crate) hold: f32,
+    /// Its far end: the point, the way it leaves backward, its lead.
+    pub(crate) end: (Vec2, Vec2, f32),
+    /// Its through points.
+    pub(crate) via: Vec<Vec2>,
+    /// How near another path's curve may come to its own: its own gap and
+    /// a glyph.
+    pub(crate) width: f32,
+}
+
+/// The share of its handles each path of a junction keeps, so that no two
+/// come nearer each other than their widths along their whole length
+/// (#296, rule 4: "no glyph overlaps", as ruled on #326): `lanes` in fan
+/// order, their curves sampled every quarter width past their holds. The
+/// paths that come too near another turn toward their far ends sooner,
+/// their handles halved, a round at a time, at most [`UNTANGLE_ROUNDS`];
+/// a path that keeps clear keeps its handles. Of the rounds, the one with
+/// the fewest paths too near, and of those the fullest handles, is kept:
+/// two paths whose far ends lie on one line from the junction meet
+/// however straight they run, and keep the curves they had.
+///
+/// Cost: per round O(each lane's length over its width) samples, and as
+/// many grid lookups per pair of lanes; allocates the samples.
+pub(crate) fn untangle(lanes: &[Lane]) -> Vec<f32> {
+    let mut handles = vec![1.0_f32; lanes.len()];
+    if lanes.len() < 2 {
+        return handles;
+    }
+    let mut best = (usize::MAX, handles.clone());
+    for _ in 0..UNTANGLE_ROUNDS {
+        let samples: Vec<Vec<Vec2>> = lanes
+            .iter()
+            .zip(&handles)
+            .map(|(lane, &h)| {
+                let curves = path_through(lane.start, lane.end, &lane.via, h);
+                sample(&curves, 0.25 * lane.width, CLEARANCE * lane.hold.max(lane.width))
+            })
+            .collect();
+        let mut near = vec![false; lanes.len()];
+        for k in 0..lanes.len() {
+            for j in k + 1..lanes.len() {
+                let need = CLEARANCE * lanes[k].width.max(lanes[j].width);
+                if nearer(&samples[k], &samples[j], need) {
+                    near[k] = true;
+                    near[j] = true;
+                }
+            }
+        }
+        let count = near.iter().filter(|&&n| n).count();
+        if count <= best.0 {
+            best = (count, handles.clone());
+        }
+        if count == 0 {
+            break;
+        }
+        for (h, _) in handles.iter_mut().zip(&near).filter(|(_, &n)| n) {
+            *h = (*h * 0.5).max(LEAST_HANDLES);
+        }
+    }
+    best.1
+}
+
+/// Points along `curves` at most `step` apart, from `skip` along on.
+fn sample(curves: &[Curve], step: f32, skip: f32) -> Vec<Vec2> {
+    let step = step.max(1e-2);
+    let mut out = Vec::new();
+    let mut along = 0.0_f32;
+    for curve in curves {
+        let (a, d) = (curve.point(0.0), curve.point(1.0));
+        let reach = match *curve {
+            Curve::Cubic(_, b, c, _) => a.distance(b) + b.distance(c) + c.distance(d),
+            Curve::Quadratic(_, b, _) => a.distance(b) + b.distance(d),
+            Curve::Line(..) => a.distance(d),
+        };
+        if !reach.is_finite() {
+            continue;
+        }
+        let n = ((reach / step).ceil() as usize).clamp(1, 1 << 16);
+        let mut last = a;
+        for i in 0..n {
+            let p = curve.point(i as f32 / n as f32);
+            along += p.distance(last);
+            last = p;
+            if along >= skip {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Whether a point of `a` and a point of `b` are nearer than `need`: a
+/// grid of cells `need` wide holds `b`'s, so each of `a`'s is measured to
+/// the nine cells round it. O(points).
+fn nearer(a: &[Vec2], b: &[Vec2], need: f32) -> bool {
+    let cell = need.max(1e-3);
+    let key = |p: Vec2| ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64);
+    let mut grid: rustc_hash::FxHashMap<(i64, i64), Vec<Vec2>> = Default::default();
+    for &p in b {
+        grid.entry(key(p)).or_default().push(p);
+    }
+    a.iter().any(|&p| {
+        let (x, y) = key(p);
+        (-1..=1).any(|dx| {
+            (-1..=1).any(|dy| {
+                grid.get(&(x + dx, y + dy))
+                    .is_some_and(|cell| cell.iter().any(|q| q.distance(p) < need))
+            })
+        })
+    })
 }
 
 /// `size` in points, for shaping: a relative size — a fraction of the

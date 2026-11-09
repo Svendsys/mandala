@@ -139,7 +139,7 @@ fn test_projection_a_path_leaves_and_arrives_square_and_passes_its_points() {
     // through a wave: up 30 a third of the way, down 30 two thirds.
     let (p0, p1) = (Vec2::ZERO, Vec2::new(300.0, 60.0));
     let via = [Vec2::new(0.0, -30.0), Vec2::new(0.0, 30.0)];
-    let curves = path_through((p0, Vec2::X, 0.0), (p1, -Vec2::X, 0.0), &via);
+    let curves = path_through((p0, Vec2::X, 0.0), (p1, -Vec2::X, 0.0), &via, 1.0);
     assert_eq!(curves.len(), 3, "a cubic from each point to the next");
     assert!(
         degrees(curves[0].derivative(0.0), Vec2::X) < 0.01,
@@ -164,7 +164,7 @@ fn test_projection_a_path_leaves_and_arrives_square_and_passes_its_points() {
     }
     // With none, an S between two facing sides as deep as they are apart:
     // its handles reach 0.5523 of the 300 the far end lies on.
-    let s = path_through((p0, Vec2::X, 0.0), (p1, -Vec2::X, 0.0), &[]);
+    let s = path_through((p0, Vec2::X, 0.0), (p1, -Vec2::X, 0.0), &[], 1.0);
     let Curve::Cubic(_, c1, c2, _) = s[0] else { panic!("one cubic") };
     assert!(
         (c1 - Vec2::new(165.69, 0.0)).length() < 0.01,
@@ -176,7 +176,7 @@ fn test_projection_a_path_leaves_and_arrives_square_and_passes_its_points() {
     );
     // Each end runs straight for its own lead: 20 at the start, which a
     // fan holds out, and none at the end, which no other path shares.
-    let led = path_through((p0, Vec2::X, 20.0), (p1, -Vec2::X, 0.0), &[]);
+    let led = path_through((p0, Vec2::X, 20.0), (p1, -Vec2::X, 0.0), &[], 1.0);
     assert_eq!(
         led.first(),
         Some(&Curve::Line(p0, Vec2::new(20.0, 0.0))),
@@ -433,42 +433,68 @@ fn test_projection_paths_that_share_a_side_leave_one_point_fanned() {
         (most - SPLAY_CAP.to_degrees()).abs() < 0.01,
         "the outermost at the cap: {most}°"
     );
-    // At the cap the turn alone no longer clears them: each path is held
-    // straight on past the point, its first glyphs as far out as clears
-    // its neighbor's. Within that reach no two neighbors' glyphs are
-    // nearer than their own gap allows.
+    // At the cap the turn alone no longer clears their first glyphs: each
+    // path is held straight on past the point until they clear. Along the
+    // whole of each path, no glyph comes nearer another's than their own
+    // gap allows.
+    clear_along(&seven, "seven children in a row");
+    wide.check().unwrap();
+}
+
+/// The least distance between a glyph of one of `branches` and a glyph
+/// of another, against the median gap between a branch's own glyphs: no
+/// two branches of one junction nearer than 0.8 of it, anywhere along
+/// them (#296, rule 4, as ruled on #326).
+fn clear_along(branches: &[(Vec<Curve>, Vec<Rect>)], what: &str) {
     let own = median(
-        seven
+        branches
             .iter()
             .flat_map(|b| b.1.windows(2).map(|w| gap(&w[0], &w[1])))
             .collect(),
     );
-    let connector = kid(&wide.doc, ident(&wide.doc, 10), DocKind::Connector);
-    let Some(UnitBody::Line(first)) = wide.projector.units.get(&connector).map(|u| &u.body) else {
-        panic!("the first branch is a drawn line");
-    };
-    let (hold, lead) = (first.fans[0].1, first.attach[0].map_or(0.0, |a| a.lead));
-    assert!(hold > 0.0, "precondition: a fan at the cap is held out: {hold}");
-    let point = seven[0].0[0].point(0.0);
-    let near = |b: &(Vec<Curve>, Vec<Rect>)| -> Vec<Rect> {
-        b.1.iter()
-            .filter(|r| r.center().distance(point) <= hold + lead)
-            .copied()
-            .collect()
-    };
-    for k in 0..6 {
-        let (a, b) = (near(&seven[k]), near(&seven[k + 1]));
-        let nearest = a
-            .iter()
-            .flat_map(|x| b.iter().map(move |y| gap(x, y)))
-            .fold(f32::INFINITY, f32::min);
-        assert!(
-            !a.is_empty() && !b.is_empty() && nearest >= 0.8 * own,
-            "branches {k} and {} have glyphs {nearest} apart near the point, their own gap {own}",
-            k + 1
-        );
+    for (i, a) in branches.iter().enumerate() {
+        for (j, b) in branches.iter().enumerate().skip(i + 1) {
+            let (nearest, at) =
+                a.1.iter()
+                    .flat_map(|x| b.1.iter().map(move |y| (gap(x, y), x.center())))
+                    .fold((f32::INFINITY, Vec2::ZERO), |m, g| if g.0 < m.0 { g } else { m });
+            assert!(
+                nearest >= 0.8 * own,
+                "{what}: branches {i} and {j} have glyphs {nearest} apart at {at}, their own gap {own}"
+            );
+        }
     }
-    wide.check().unwrap();
+}
+
+/// Node 1, 240 by 60, and three children 240 by 60 in a row far to its
+/// right and 200 below it, one behind another along the way to them:
+/// `stress_long_edges`' rows, where the paths to the further children
+/// pass the nearer ones' ends.
+fn far_row() -> Projected {
+    let mut nodes = vec![node(1, None, dotted(240.0, 60.0))];
+    for (k, x) in [5440.0, 5760.0, 6080.0].into_iter().enumerate() {
+        nodes.push(node(
+            10 + k as u32,
+            Some(1),
+            with(
+                dotted(240.0, 60.0),
+                json!({"position": [x, 200.0], "connector": {"size": 14.0}}),
+            ),
+        ));
+    }
+    Projected::new(load_map(json!({ "nodes": nodes })))
+}
+
+#[test]
+fn test_projection_the_paths_of_a_junction_keep_clear_along_their_length() {
+    // Three paths leave node 1's right side for three children in a row
+    // along their way. Leaving and arriving square, their long curves
+    // would run on top of one another into the nearer children's ends;
+    // each turns toward its child sooner, and keeps clear of the others.
+    let mut p = far_row();
+    let three = branches(&p, 3);
+    clear_along(&three, "a row along the way");
+    p.check().unwrap();
 }
 
 #[test]

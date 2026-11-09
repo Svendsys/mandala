@@ -1528,9 +1528,9 @@ element.
   makes one. That is the box step, which `Repeat` rings take. A
   connector's or a line link's `Repeat` ornament is laid instead as
   whole glyphs evenly gapped from node to node (`place_pitched`, #296):
-  as many inks as bring every gap nearest the pattern's own, its two end
-  gaps among them, each measured to the boxes at its end (the frame's
-  inks). A frame's text is sized with the level step (ruling R28,
+  as many inks as bring every gap, box to box, nearest the pattern's
+  own, whichever way the path runs, its two end gaps among them, each
+  measured to the boxes at its end (the frame's inks). A frame's text is sized with the level step (ruling R28,
   `PathWalk::level_len`: `w` horizontally), then laid by its letters'
   inks along its half (below). Around an outline each cluster is pushed
   outward by half its extent, so text sits on the outline rather than
@@ -1686,9 +1686,11 @@ the layers to learn what the document is, and nothing flows back.
   points, one cubic between each two. The paths that leave one side of
   a node share its midpoint, fanned by the turn that clears their first
   glyphs, at most 40°, and held out past the point where the cap leaves
-  them too close (`Projector::junctions`, keyed by node and side). Each
-  junction is fanned once an update, after every path's ends are found,
-  and only the paths whose turn or hold changed are laid again. Portal
+  them too close (`Projector::junctions`, keyed by node and side). Along
+  their whole length they keep clear of each other: two that would come
+  too near turn toward their other ends sooner (`geometry::untangle`).
+  Each junction is fanned once an update, after every path's ends are
+  found, and only the paths whose fan changed are laid again. Portal
   ends with no `border_t` that face one way at a node are held apart
   along its outline the same way.
 - **Captured dependencies.** Every read of another element's state goes

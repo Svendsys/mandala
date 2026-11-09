@@ -78,16 +78,22 @@ node to the node it leads to.
   between a side and one turned a quarter from it a round bend.
 - **Paths that share a side.** The paths that leave one side of a node
   leave its one midpoint, fanned in the order they turn toward their
-  other ends. Each two neighbors are apart by the turn at which their
-  first glyphs clear each other by their own gap — the widest any of
-  them needs — and none turns more than 40° from the side's normal: past
-  that the fan is narrowed to hold it. A path alone on its side leaves
-  along the normal.
+  other ends, as seen from where their first two glyphs end. Each two
+  neighbors are apart by the turn at which their first glyphs clear each
+  other by their own gap — the widest any of them needs — and none turns
+  more than 40° from the side's normal: past that the fan is narrowed to
+  hold it, and their first glyphs are held out until they clear. Along
+  their whole length no two come nearer each other than their own gap
+  and a glyph: two that would turn toward their other ends sooner, their
+  curves' handles shortened until they keep clear. A path alone on its
+  side leaves along the normal.
 - **Its glyphs.** A `repeat` path whose text has ink to measure — an
   ornament, `·` or `~` — holds a whole number of glyphs: as many as
-  bring every gap between two inks nearest the gap its font sets them
-  at on a line plus its `spacing`, the difference spread evenly over all
-  of them. The gaps at its two ends are among them, each measured from
+  bring every gap between two inks, box to box, nearest the gap its font
+  sets them at on a line plus its `spacing`, the difference spread evenly
+  over all of them. The gaps are the same whichever way the path runs,
+  so a wide glyph steps further along a level stretch than down a steep
+  one. The gaps at its two ends are among them, each measured from
   its end glyph's ink to the nearest ink of the node's rings, or to its
   rectangle: the end glyph moves back past the side's midpoint, through
   the rings and never into the rectangle, or on, to keep it. Any other

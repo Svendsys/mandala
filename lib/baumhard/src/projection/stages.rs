@@ -33,8 +33,8 @@ use crate::projection::geometry::{self, drawn_rect, label_center, points, reach}
 use crate::projection::input::{Dependent, ProjectionInput, Reads, Stage};
 use crate::projection::shapes::ShapeCache;
 use crate::projection::state::{
-    Attach, BoxFlow, BoxKey, EndState, JunctionKey, LabelState, OwnFields, PathFlow, Placed, PortalAt,
-    RingResolved, RunFlow, RunKey, UnitBody,
+    Attach, BoxFlow, BoxKey, EndState, Fanned, JunctionKey, LabelState, OwnFields, PathFlow, Placed,
+    PortalAt, RingResolved, RunFlow, RunKey, UnitBody,
 };
 use crate::projection::structure::element;
 use crate::projection::Projector;
@@ -1223,7 +1223,10 @@ impl Projector {
     /// same point. Marks the junctions an end moved at, so the paths
     /// that share them are laid again, and queues its own lay. O(1).
     fn line_ends(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut PhaseWork) {
-        let Some(anchors) = element(tree, id).and_then(DocElement::as_path).map(|p| p.anchors) else {
+        let Some((anchors, via)) = element(tree, id)
+            .and_then(DocElement::as_path)
+            .map(|p| (p.anchors, p.control_points.clone()))
+        else {
             return;
         };
         let Some(UnitBody::Line(line)) = self.units.get(&id).map(|u| &u.body) else {
@@ -1252,7 +1255,10 @@ impl Projector {
             let spacing = line.resolved.as_ref().map_or(0.0, |(r, _)| r.spacing);
             pattern_gap(&f.shaped, spacing).unwrap_or((spacing, f.shaped.line_height))
         });
-        let (spread, lead) = (geometry::spread(gap, size), 2.0 * (gap + size));
+        // Two first glyphs leave the point side by side or across a slope,
+        // where an upright box reaches as far as its diagonal.
+        let spread = geometry::spread(gap, size * std::f32::consts::SQRT_2);
+        let lead = 2.0 * (gap + size);
         let ends = [(from, a, anchors.0, b), (to, b, anchors.1, a)];
         let mut attach = ends.map(|(node, own, anchor, other)| {
             let side = geometry::side_toward(own, anchor, other.center());
@@ -1273,11 +1279,11 @@ impl Projector {
             return;
         };
         let old = std::mem::replace(&mut line.attach, attach.map(Some));
+        line.via = via;
         let key = |a: &Attach| (a.node, Some(a.side));
+        // Both its junctions are fanned again, whatever changed: how its
+        // neighbors there keep clear of it reads its whole curve.
         for (was, now) in old.into_iter().zip(attach) {
-            if was == Some(now) {
-                continue;
-            }
             // The side it left, unless its other end is there now.
             if let Some(was) = was.filter(|w| attach.iter().all(|a| key(a) != key(w))) {
                 self.unjoin(key(&was), id, work);
@@ -1392,24 +1398,56 @@ impl Projector {
         let mut changed: Vec<NodeId> = Vec::new();
         match key.1 {
             Some(side) => {
-                // (toward, path, end, spread, lead)
-                let mut fan: Vec<(f32, NodeId, usize, f32, f32)> = members
+                // Each path's end here and its other end.
+                let mut fan: Vec<(NodeId, usize, Attach, Attach, Vec<Vec2>)> = members
                     .iter()
                     .filter_map(|p| match at(p) {
                         Some(UnitBody::Line(line)) => line.attach.iter().enumerate().find_map(|(k, a)| {
-                            a.filter(|a| a.node == key.0 && a.side == side)
-                                .map(|a| (a.toward, *p, k, a.spread, a.lead))
+                            let (here, there) = (a.as_ref()?, line.attach[1 - k].as_ref()?);
+                            (here.node == key.0 && here.side == side)
+                                .then(|| (*p, k, *here, *there, line.via.clone()))
                         }),
                         _ => None,
                     })
                     .collect();
-                fan.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-                let turns = geometry::fan(&fan.iter().map(|m| (m.3, m.4)).collect::<Vec<_>>());
-                for (m, value) in fan.iter().zip(turns) {
-                    if let Some(UnitBody::Line(line)) = self.units.get_mut(&m.1).map(|u| &mut u.body) {
-                        if line.fans[m.2] != value {
-                            line.fans[m.2] = value;
-                            changed.push(m.1);
+                let sizes: Vec<(f32, f32)> = fan.iter().map(|m| (m.2.spread, m.2.lead)).collect();
+                let hold = geometry::fan(&sizes).first().map_or(0.0, |f| f.1);
+                // In the order each turns toward its other end's lead, seen
+                // from where the fan's leads end: the way their curves run.
+                let lead = sizes.iter().map(|s| s.1).fold(0.0_f32, f32::max);
+                let order = |m: &(NodeId, usize, Attach, Attach, Vec<Vec2>)| {
+                    let from = m.2.point + m.2.normal * (lead + hold);
+                    geometry::turn_to(m.2.normal, m.3.point + m.3.normal * m.3.lead - from)
+                };
+                fan.sort_by(|a, b| order(a).total_cmp(&order(b)).then(a.0.cmp(&b.0)));
+                let sizes: Vec<(f32, f32)> = fan.iter().map(|m| (m.2.spread, m.2.lead)).collect();
+                let turns = geometry::fan(&sizes);
+                let lanes: Vec<geometry::Lane> = fan
+                    .iter()
+                    .zip(&turns)
+                    .map(|(m, &(turn, hold))| geometry::Lane {
+                        start: (
+                            m.2.point,
+                            Vec2::from_angle(turn).rotate(m.2.normal),
+                            m.2.lead + hold,
+                        ),
+                        hold,
+                        end: (m.3.point, m.3.normal, m.3.lead),
+                        via: if m.1 == 0 {
+                            m.4.clone()
+                        } else {
+                            m.4.iter().rev().copied().collect()
+                        },
+                        width: 0.5 * m.2.lead,
+                    })
+                    .collect();
+                let untangled = geometry::untangle(&lanes);
+                for ((m, &(turn, hold)), &handles) in fan.iter().zip(&turns).zip(&untangled) {
+                    let value = Fanned { turn, hold, handles };
+                    if let Some(UnitBody::Line(line)) = self.units.get_mut(&m.0).map(|u| &mut u.body) {
+                        if line.fans[m.1] != value {
+                            line.fans[m.1] = value;
+                            changed.push(m.0);
                         }
                     }
                 }
@@ -1470,11 +1508,12 @@ impl Projector {
         };
         let mut reads = vec![ProjectionInput::Opacity(owner)];
         let fans = line.fans;
-        let turned = |a: &Attach, turn: f32| Vec2::from_angle(turn).rotate(a.normal);
+        let turned = |a: &Attach, k: usize| Vec2::from_angle(fans[k].turn).rotate(a.normal);
         let curves = geometry::path_through(
-            (start.point, turned(&start, fans[0].0), start.lead + fans[0].1),
-            (end.point, turned(&end, fans[1].0), end.lead + fans[1].1),
+            (start.point, turned(&start, 0), start.lead + fans[0].hold),
+            (end.point, turned(&end, 1), end.lead + fans[1].hold),
             &path.control_points,
+            fans[0].handles.min(fans[1].handles),
         );
         let label_at = line
             .label
@@ -1501,7 +1540,7 @@ impl Projector {
                     let ends = [0, 1].map(|k| PathEnd {
                         inks: &inks[k],
                         back: backs[k],
-                        hold: fans[k].1,
+                        hold: fans[k].hold,
                     });
                     (None, place_pitched(&input, &curves, resolved.spacing, ends))
                 })

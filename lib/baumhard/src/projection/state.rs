@@ -266,11 +266,37 @@ pub(crate) struct LineState {
     /// Where it leaves each of its ends, as its geometry stage found it:
     /// what the paths leaving the same side of a node are fanned by.
     pub(crate) attach: [Option<Attach>; 2],
-    /// Each end's turn from its side's normal and how far out its first
-    /// glyph is held, as its junction was last fanned (#296).
-    pub(crate) fans: [(f32, f32); 2],
+    /// How each end leaves its junction, as the junction was last fanned
+    /// (#296).
+    pub(crate) fans: [Fanned; 2],
+    /// Its control points, as its geometry stage read them: what its
+    /// junctions are untangled by.
+    pub(crate) via: Vec<Vec2>,
     /// Its curves, once placed: empty until then.
     pub(crate) path: Vec<Curve>,
+}
+
+/// How one end of a path leaves its junction (#296), as the junction's
+/// fan and [`untangle`](super::geometry::untangle) set it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Fanned {
+    /// The turn from the side's normal.
+    pub(crate) turn: f32,
+    /// How far out its first glyph is held, its center along the path.
+    pub(crate) hold: f32,
+    /// The share of its handles it keeps, from `1`; the path takes the
+    /// smaller of its two ends'.
+    pub(crate) handles: f32,
+}
+
+impl Default for Fanned {
+    fn default() -> Self {
+        Fanned {
+            turn: 0.0,
+            hold: 0.0,
+            handles: 1.0,
+        }
+    }
 }
 
 /// A junction (#296): the paths that leave one side of a node, or with no

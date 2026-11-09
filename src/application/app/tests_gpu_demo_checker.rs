@@ -616,6 +616,67 @@ fn side_of(reach: &Ink, point: Vec2) -> (Vec2, Vec2) {
     .unwrap_or((c, -Vec2::Y))
 }
 
+/// The pairs of paths that share a side which (h) does not hold yet, each
+/// by map and the two paths' names, and why (#326, put to the owner): no
+/// curve from the shared point keeps them apart without routing round a
+/// node, which #296 does not do.
+///
+/// - **On the way.** One path's far end lies on the other's way: its
+///   node sits between the junction and the other's node, its end on the
+///   line the other must cross, so the other meets it however it curves.
+/// - **Two rows.** Border Toolkit's eight children: six to one side at a
+///   capped fan, the second row straight under the first, so the paths
+///   to the near row turn across the stubs of those to the far row.
+///
+/// A pair listed here that keeps clear is a fault too, so the list only
+/// shrinks.
+const UNROUTED: &[(&str, &str, &str)] = &[
+    ("stress_long_edges", "5>120", "5>119"),
+    ("stress_long_edges", "5>121", "5>119"),
+    ("stress_long_edges", "5>121", "5>120"),
+    ("stress_long_edges", "5>121", "6>121"),
+    ("testament", "12>237", "12>239"),
+    ("testament", "29>31", "29>32"),
+    ("testament", "244>246", "244>249"),
+    ("testament", "244>246", "244>250"),
+    ("testament", "244>247", "244>249"),
+];
+
+/// The least distance between an ink of `a` and an ink of `b`, of those
+/// nearer than `within`, and where it is; `within`, nowhere, where none
+/// is. A grid of cells `within`
+/// wide and as wide as the largest ink holds `b`'s inks, so each of
+/// `a`'s is measured to those of the nine cells round its own alone:
+/// two paths of thousands of glyphs each are compared in O(inks).
+fn nearest_between(a: &[Ink], b: &[Ink], within: f32) -> (f32, Option<Vec2>) {
+    let largest = b
+        .iter()
+        .chain(a)
+        .map(|i| (i.max - i.min).max_element())
+        .fold(0.0_f32, f32::max);
+    let cell = (within + largest).max(1e-3);
+    let key = |p: Vec2| ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64);
+    let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> = Default::default();
+    for (j, ink) in b.iter().enumerate() {
+        grid.entry(key(ink.center())).or_default().push(j);
+    }
+    let mut best = (within, None);
+    for ink in a {
+        let (x, y) = key(ink.center());
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for &j in grid.get(&(x + dx, y + dy)).into_iter().flatten() {
+                    let gap = ink.gap(&b[j]);
+                    if gap < best.0 {
+                        best = (gap, Some(ink.center()));
+                    }
+                }
+            }
+        }
+    }
+    best
+}
+
 fn median(mut v: Vec<f32>) -> f32 {
     v.sort_by(f32::total_cmp);
     v.get(v.len() / 2).copied().unwrap_or(0.0)
@@ -658,10 +719,13 @@ struct End {
 ///   where the paths that share the side are fanned, the path starts on
 ///   the midpoint, within half a pixel, and its end glyph lies in the cone
 ///   between the normal and its turn, which is at most 40°;
-/// - **(h)** where paths share a side, no glyph of the two each lays
-///   nearest it comes nearer the other path's than ×0.8 their own gap;
-/// - **(j)** the paths of one style (glyph, face, size) step within ±10%
-///   of their mean pitch.
+/// - **(h)** where paths share a side, no glyph of one comes nearer a
+///   glyph of another than ×0.8 their own gap, anywhere along either
+///   (rule 4: "no glyph overlaps", ruled on #326 to hold over the whole
+///   path);
+/// - **(j)** the paths of one style (glyph, face, size) are gapped within
+///   ±10% of their mean ink gap (rule 5, its pitch read as the gap
+///   between inks, box to box, as ruled on #326).
 ///
 /// Distances are the inks' as `read` rasterizes them, at eight times
 /// their size; every threshold is the #291 checker's, the cone's widened
@@ -809,47 +873,49 @@ fn test_maps_hold_the_connector_rules() {
                 }
             }
         }
-        // (h) the two glyphs nearest a shared side, of each two paths there.
+        // (h) every glyph of each two paths that share a side.
         for members in sides.values().filter(|m| m.len() > 1) {
-            let near_side = |e: &End| {
-                let p = &paths[e.path];
-                if e.k == 0 {
-                    vec![p.inks[0], p.inks[1]]
-                } else {
-                    vec![p.inks[p.inks.len() - 1], p.inks[p.inks.len() - 2]]
-                }
-            };
             for (x, &a) in members.iter().enumerate() {
                 for &b in &members[x + 1..] {
                     let (ea, eb) = (&ends[a], &ends[b]);
+                    if ea.path == eb.path {
+                        continue;
+                    }
                     let gap = own[ea.path].max(own[eb.path]);
-                    let nearest = near_side(ea)
-                        .iter()
-                        .flat_map(|p| near_side(eb).into_iter().map(move |q| p.gap(&q)))
-                        .fold(f32::INFINITY, f32::min);
-                    if nearest < 0.8 * gap {
+                    let (pa, pb) = (&paths[ea.path], &paths[eb.path]);
+                    let (nearest, at) = nearest_between(&pa.inks, &pb.inks, gap);
+                    let listed = UNROUTED.iter().any(|&(map, x, y)| {
+                        map == name && ((x == pa.name && y == pb.name) || (x == pb.name && y == pa.name))
+                    });
+                    if listed && nearest >= 0.8 * gap {
                         faults.push(format!(
-                            "(h) {name} {} and {}: their glyphs by the shared side {nearest:.2} apart, ×{:.2} their own gap {gap:.2} (canvas units)",
-                            paths[ea.path].name,
-                            paths[eb.path].name,
+                            "(h) {name} {} and {}: listed as unrouted, and keep clear: remove them from UNROUTED",
+                            pa.name, pb.name
+                        ));
+                    } else if !listed && nearest < 0.8 * gap {
+                        faults.push(format!(
+                            "(h) {name} {} and {}: their glyphs {nearest:.2} apart at {:.0?}, ×{:.2} their own gap {gap:.2} (canvas units)",
+                            pa.name,
+                            pb.name,
+                            at.unwrap_or_default(),
                             nearest / gap
                         ));
                     }
                 }
             }
         }
-        // (j) one style, one pitch.
+        // (j) one style, one ink gap.
         let mut styles: std::collections::BTreeMap<&str, Vec<f32>> = Default::default();
         for (i, p) in paths.iter().enumerate().filter(|(_, p)| p.inks.len() >= 3) {
-            styles.entry(p.style.as_str()).or_default().push(pitch[i]);
+            styles.entry(p.style.as_str()).or_default().push(own[i]);
         }
-        for (style, pitches) in &styles {
-            let mean = pitches.iter().sum::<f32>() / pitches.len() as f32;
-            let worst = pitches.iter().map(|p| (p / mean - 1.0).abs()).fold(0.0, f32::max);
+        for (style, gaps) in &styles {
+            let mean = gaps.iter().sum::<f32>() / gaps.len() as f32;
+            let worst = gaps.iter().map(|g| (g / mean - 1.0).abs()).fold(0.0, f32::max);
             if worst > 0.10 {
                 faults.push(format!(
-                    "(j) {name} {style}: {} paths' pitches within {:.1}% of their mean {mean:.2}",
-                    pitches.len(),
+                    "(j) {name} {style}: {} paths' ink gaps within {:.1}% of their mean {mean:.2}",
+                    gaps.len(),
                     worst * 100.0
                 ));
             }
