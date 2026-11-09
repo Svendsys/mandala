@@ -39,6 +39,11 @@ use baumhard::projection::{GlyphLayers, Layer, Projector};
 /// Set in a child process: the map it projects, fresh, and reports.
 const CHILD: &str = "BAUMHARD_FONT_STATE_CHILD";
 
+/// Set where the host test's planted hosts must be built (CI's Linux
+/// runner): a target whose fontdb does not read `FONTCONFIG_FILE` fails
+/// there, where it would skip with a note elsewhere.
+const REQUIRE_HOSTS: &str = "MANDALA_REQUIRE_FONTCONFIG_HOSTS";
+
 /// A map in the default family only, the shape of testament's first node:
 /// a bold heading at 74 points, and body text in regular and italic. It
 /// pins no compiled family, so projecting it reads nothing of the compiled
@@ -306,6 +311,112 @@ fn host_faces() -> Vec<String> {
     names
 }
 
+/// A run of each compiled script face's script, with the face that must
+/// draw it: what `HOSTS` shapes at every weight and slant, against the
+/// planted host's bold face of each script ([`renamed_bold`]).
+const SCRIPTS: [(&str, baumhard::font::fonts::AppFont); 4] = [
+    ("שלום", baumhard::font::fonts::AppFont::NotoSansHebrewRegular),
+    ("नमस्ते", baumhard::font::fonts::AppFont::NotoSansDevanagariRegular),
+    ("བོད", baumhard::font::fonts::AppFont::NotoSerifTibetanRegular),
+    (
+        "𓀀𓁐",
+        baumhard::font::fonts::AppFont::NotoSansEgyptianHieroglyphsRegular,
+    ),
+];
+
+/// The compiled script faces [`SCRIPTS`] names, by file under the font
+/// directory, as the planted host's bold faces are made from them.
+const SCRIPT_FILES: [&str; 4] = [
+    "noto-sans-hebrew-font/NotoSansHebrew-Regular.ttf",
+    "noto-sans-devanagari-font/NotoSansDevanagari-Regular.ttf",
+    "noto-serif-tibetan-font/NotoSerifTibetan-Regular.ttf",
+    "noto-sans-egyptian-hieroglyphs-font/NotoSansEgyptianHieroglyphs-Regular.ttf",
+];
+
+/// A copy of the font `data` a host could have installed beside the
+/// compiled one: every `Noto` in its `name` table spelled `Host`, so it
+/// bears no compiled family's name and is not removed as a shadow, and
+/// its `OS/2` weight class 700, so a bold span meets it at its own weight
+/// in cosmic-text's last pass. The outlines are the compiled face's. Made
+/// at test time, byte for byte the same every run; the table checksums
+/// are left stale, which nothing that loads a face checks.
+fn renamed_bold(data: &[u8]) -> Vec<u8> {
+    let u16_at = |at: usize| u16::from_be_bytes([data[at], data[at + 1]]) as usize;
+    let u32_at =
+        |at: usize| u32::from_be_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]) as usize;
+    let mut out = data.to_vec();
+    let (mut name, mut os2) = (None, None);
+    for record in (0..u16_at(4)).map(|i| 12 + 16 * i) {
+        let (offset, length) = (u32_at(record + 8), u32_at(record + 12));
+        match &data[record..record + 4] {
+            b"name" => name = Some(offset..offset + length),
+            b"OS/2" => os2 = Some(offset),
+            _ => {}
+        }
+    }
+    let name = name.expect("precondition: the face has a name table");
+    let os2 = os2.expect("precondition: the face has an OS/2 table");
+    let table = &mut out[name];
+    let spellings: [(&[u8], &[u8]); 2] = [(b"\0N\0o\0t\0o", b"\0H\0o\0s\0t"), (b"Noto", b"Host")];
+    for (from, to) in spellings {
+        let mut at = 0;
+        while at + from.len() <= table.len() {
+            if &table[at..at + from.len()] == from {
+                table[at..at + from.len()].copy_from_slice(to);
+                at += from.len();
+            } else {
+                at += 1;
+            }
+        }
+    }
+    out[os2 + 4..os2 + 6].copy_from_slice(&700u16.to_be_bytes());
+    out
+}
+
+/// Each [`SCRIPTS`] run, shaped unpinned at every CSS weight, upright
+/// and italic, in the font system: every glyph that is not its script's
+/// compiled face's, or is a `.notdef`, as `weight style face`.
+fn script_faults() -> Vec<String> {
+    use baumhard::font::fonts::COMPILED_FONT_ID_MAP;
+    use cosmic_text::{Attrs, Buffer, Metrics, Shaping, Style, Weight};
+    let mut fonts = FontSystemLease::new("tests/font_state::scripts");
+    let fs = fonts.fonts();
+    let mut faults = Vec::new();
+    let mut glyphs = 0;
+    for (text, face) in SCRIPTS {
+        let ids = &COMPILED_FONT_ID_MAP[&face];
+        for weight in [100, 200, 300, 400, 500, 600, 700, 800, 900] {
+            for style in [Style::Normal, Style::Italic] {
+                let mut buffer = Buffer::new(fs, Metrics::new(16.0, 20.0));
+                let attrs = Attrs::new().weight(Weight(weight)).style(style);
+                buffer.set_text(text, &attrs, Shaping::Advanced, None);
+                buffer.shape_until_scroll(fs, false);
+                let drawn: Vec<(cosmic_text::fontdb::ID, u16)> = buffer
+                    .layout_runs()
+                    .flat_map(|run| {
+                        run.glyphs
+                            .iter()
+                            .map(|g| (g.font_id, g.glyph_id))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                glyphs += drawn.len();
+                for (id, glyph) in drawn {
+                    if !ids.contains(&id) || glyph == 0 {
+                        let name = fs.db().face(id).map(|f| f.post_script_name.clone());
+                        faults.push(format!("{text} {weight} {style:?} {name:?} {glyph}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        glyphs >= 4 * 18,
+        "precondition: every script run is shaped ({glyphs} glyphs)"
+    );
+    faults
+}
+
 /// A scratch directory, removed when dropped, so a failed child's panic
 /// does not leave it behind.
 struct Scratch(PathBuf);
@@ -320,8 +431,8 @@ impl Drop for Scratch {
 /// font index holds, [`host_faces`]), `SHADOWS faces` (the font
 /// system's faces that are not compiled in and bear a compiled family's
 /// name), `DEFAULT faults` (the fixture's glyphs drawn in another face
-/// than the default face, or as a `.notdef`), then `MAP name digest` for
-/// every shipped map.
+/// than the default face, or as a `.notdef`), `SCRIPTS faults`
+/// ([`script_faults`]), then `MAP name digest` for every shipped map.
 fn host_report() -> Vec<String> {
     use baumhard::font::fallback::DEFAULT_FACE;
     use baumhard::font::fonts::COMPILED_FONT_ID_MAP;
@@ -379,6 +490,7 @@ fn host_report() -> Vec<String> {
         format!("HOST {:?}", host_faces()),
         format!("SHADOWS {shadows:?}"),
         format!("DEFAULT {faults:?}"),
+        format!("SCRIPTS {:?}", script_faults()),
     ];
     for (name, text) in the_maps() {
         report.push(format!("MAP {name} {}", digest(&layout(&text))));
@@ -395,20 +507,28 @@ fn test_every_shipped_map_lays_out_alike_whatever_the_host_has_installed() {
     // installed copies of compiled faces under their own names (Inter,
     // the default face, and Galatia SIL among them: what would shadow the
     // default face and a pin were they kept), and on this machine,
-    // whatever it has. Each host is a child process whose fontconfig names one
-    // directory, empty or planted, and whose home is empty; every glyph of
-    // the default-family fixture is the default face's in each. The
-    // hosts are an adversary only where fontdb reads `FONTCONFIG_FILE`
-    // (Linux, with cosmic-text's `fontconfig` feature), so each child
-    // first reports what the host's own font index holds, and the test
-    // requires the planted faces and nothing else, and nothing for the
-    // empty host: a target where the fixture cannot be built fails here
-    // as unproven rather than passing. Controls: with the shadowing faces
-    // kept (no `remove_shadowing_faces`), red on the planted host's
-    // shadows (and, with Inter's italic face planted beside it, on the
-    // fixture's italic text drawn in it); with the host's fonts loaded
-    // before the compiled ones, red on the layouts, this machine's ids
-    // no longer the hosts'.
+    // whatever it has. Each host is a child process whose fontconfig
+    // names one directory, empty or planted, and whose home is empty;
+    // every glyph of the default-family fixture is the default face's in
+    // each. The planted host also holds a bold face of each compiled
+    // script under a name of its own ([`renamed_bold`]), which no run of
+    // the script, at any weight or slant, may reach.
+    //
+    // The hosts are an adversary only where fontdb reads
+    // `FONTCONFIG_FILE` (Linux, with cosmic-text's `fontconfig` feature),
+    // so each child first reports what the host's own font index holds,
+    // and the test requires the planted faces and nothing else, and
+    // nothing for the empty host. A target where the fixture cannot be
+    // built skips with a note, and fails where
+    // `MANDALA_REQUIRE_FONTCONFIG_HOSTS` is set, as CI sets it.
+    //
+    // Controls: with a script's `SCRIPT_FALLBACK` entry removed, red on
+    // that script at the heavier weights, drawn in the planted bold face;
+    // with the shadowing faces kept (no `remove_shadowing_faces`), red on
+    // the planted host's shadows (and, with Inter's italic face planted
+    // beside it, on the fixture's italic text drawn in it); with the
+    // host's fonts loaded before the compiled ones, red on the layouts,
+    // this machine's ids no longer the hosts'.
     if let Ok(what) = std::env::var(CHILD) {
         if what == HOSTS {
             for line in host_report() {
@@ -438,6 +558,14 @@ fn test_every_shipped_map_lays_out_alike_whatever_the_host_has_installed() {
         ),
     ] {
         std::fs::copy(fonts.join(from), planted.join(to)).unwrap_or_else(|e| panic!("{from}: {e}"));
+    }
+    // A bold face of each compiled script under a name of its own, which
+    // a bold span meets at its own weight in the last pass, ahead of the
+    // compiled face's 400, unless the fallback lists the compiled face.
+    for (k, from) in SCRIPT_FILES.iter().enumerate() {
+        let data = std::fs::read(fonts.join(from)).unwrap_or_else(|e| panic!("{from}: {e}"));
+        std::fs::write(planted.join(format!("HostBold{k}.ttf")), renamed_bold(&data))
+            .expect("a planted face");
     }
     let report = |name: &str, dir: &std::path::Path| -> Vec<String> {
         let conf = scratch.join(format!("{name}.conf"));
@@ -475,18 +603,8 @@ fn test_every_shipped_map_lays_out_alike_whatever_the_host_has_installed() {
     ];
     assert_eq!(
         here.len(),
-        MAPS.len() + 3,
+        MAPS.len() + 4,
         "precondition: this process reports every map"
-    );
-    let planted_faces = r#"HOST ["GalatiaSIL", "InterVariable", "NotoSansHebrew-Regular"]"#;
-    assert_eq!(
-        (
-            hosts[0].1.first().map(String::as_str),
-            hosts[1].1.first().map(String::as_str)
-        ),
-        (Some("HOST []"), Some(planted_faces)),
-        "precondition: each child's host font index holds what its fontconfig names, \
-         or the hosts are no adversary on this target"
     );
     assert_eq!(
         here[1], "SHADOWS []",
@@ -496,6 +614,32 @@ fn test_every_shipped_map_lays_out_alike_whatever_the_host_has_installed() {
         here[2], "DEFAULT []",
         "this process: default text not in the default face"
     );
+    assert_eq!(
+        here[3], "SCRIPTS []",
+        "this process: a compiled script drawn in another face"
+    );
+    let planted_faces = concat!(
+        r#"HOST ["GalatiaSIL", "HostSansDevanagari-Regular", "HostSansEgyptianHieroglyphs-Regular", "#,
+        r#""HostSansHebrew-Regular", "HostSerifTibetan-Regular", "InterVariable", "NotoSansHebrew-Regular"]"#
+    );
+    let indexed = (
+        hosts[0].1.first().map(String::as_str),
+        hosts[1].1.first().map(String::as_str),
+    );
+    if indexed != (Some("HOST []"), Some(planted_faces)) {
+        // fontdb reads `FONTCONFIG_FILE` only on Linux with fontconfig:
+        // elsewhere the hosts are the machine's own, no adversary. CI
+        // runs on Linux and requires them.
+        assert!(
+            std::env::var_os(REQUIRE_HOSTS).is_none(),
+            "precondition: each child's host font index holds what its fontconfig names, \
+             or the hosts are no adversary on this target ({indexed:?})"
+        );
+        baumhard::util::test_skip::note_skipped(
+            "font_state: this target does not read FONTCONFIG_FILE, so the planted hosts are unproven",
+        );
+        return;
+    }
     for (host, report) in hosts {
         assert_eq!(
             report.len(),
@@ -510,11 +654,111 @@ fn test_every_shipped_map_lays_out_alike_whatever_the_host_has_installed() {
             report[2], "DEFAULT []",
             "the {host} host: default text not in the default face"
         );
-        for (there, here) in report.iter().zip(&here).skip(3) {
+        assert_eq!(
+            report[3], "SCRIPTS []",
+            "the {host} host: a compiled script drawn in another face"
+        );
+        for (there, here) in report.iter().zip(&here).skip(4) {
             assert_eq!(
                 there, here,
                 "the {host} host lays a map out otherwise than this machine"
             );
         }
     }
+}
+
+/// Every glyph `text` projects to that is not drawn in a face its span
+/// names or a listed fallback face, or is a `.notdef`, as `layer text
+/// face glyph`, and how many glyphs were read. A span's face is read from
+/// the attributes its buffer shaped it with: a family name names the
+/// compiled faces bearing it; a generic family, the default face.
+fn stray_glyphs(text: &str) -> (Vec<String>, usize) {
+    use baumhard::font::fallback::{fallback_families, DEFAULT_FACE};
+    use baumhard::font::fonts::COMPILED_FONT_ID_MAP;
+    use cosmic_text::Family;
+    let doc = load(text).unwrap_or_else(|error| panic!("precondition: the map loads: {error}"));
+    let mut layers = GlyphLayers::new();
+    let mut fonts = FontSystemLease::new("tests/font_state::glyphs");
+    Projector::project_full(&doc, &mut layers, &mut fonts);
+    let fs = fonts.fonts();
+    let compiled: Vec<_> = COMPILED_FONT_ID_MAP
+        .values()
+        .flat_map(|ids| ids.iter().copied())
+        .collect();
+    let listed: Vec<_> = fallback_families()
+        .flat_map(|(font, _)| COMPILED_FONT_ID_MAP[font].iter().copied())
+        .collect();
+    let bearing = |name: &str| -> Vec<cosmic_text::fontdb::ID> {
+        compiled
+            .iter()
+            .copied()
+            .filter(|id| {
+                fs.db()
+                    .face(*id)
+                    .is_some_and(|face| face.families.iter().any(|(family, _)| family == name))
+            })
+            .collect()
+    };
+    let (mut faults, mut read) = (Vec::new(), 0);
+    for layer in Layer::ALL {
+        let tree = layers.tree(layer);
+        for id in tree.root().descendants(tree.arena()) {
+            let Some(run) = tree.arena()[id].get().glyph_run() else {
+                continue;
+            };
+            let buffer = match run.shaped() {
+                RunShape::Box(shaped) => shaped.buffer.clone(),
+                RunShape::Path { run, .. } => run.buffer.clone(),
+            };
+            for line in buffer.layout_runs() {
+                let attrs_list = buffer.lines[line.line_i].attrs_list();
+                for glyph in line.glyphs {
+                    read += 1;
+                    let named = match attrs_list.get_span(glyph.start).family {
+                        Family::Name(name) => bearing(name),
+                        _ => COMPILED_FONT_ID_MAP[&DEFAULT_FACE.0].to_vec(),
+                    };
+                    if (!named.contains(&glyph.font_id) && !listed.contains(&glyph.font_id))
+                        || glyph.glyph_id == 0
+                    {
+                        let face = fs.db().face(glyph.font_id).map(|f| f.post_script_name.clone());
+                        faults.push(format!(
+                            "{layer:?} {:?} {face:?} glyph {}",
+                            line.text.get(glyph.start..glyph.end),
+                            glyph.glyph_id
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    (faults, read)
+}
+
+#[test]
+fn test_every_shipped_map_draws_each_glyph_in_a_face_its_span_names_or_the_fallback() {
+    // #228: whatever the host has installed, a shipped map draws every
+    // glyph in a face its span names or a listed fallback face, never in
+    // an unlisted compiled face, a host face or as a `.notdef` — the
+    // property that makes the shipped maps independent of the host, on
+    // any host, where the host comparison above samples only this
+    // machine's faces and the planted ones. Cosmic-text's last pass, the
+    // only way to another face, can put a host emoji face, a host face of
+    // the span's weight or, for an italic span, a host italic face ahead
+    // of a compiled one (`format/fonts.md` "Fallback"), so no glyph may
+    // reach it. Control: a `┌`, which only decorative compiled faces
+    // hold, added to the default-family fixture's italic text, red on it.
+    let maps = the_maps();
+    let mut faults = Vec::new();
+    for (name, text) in &maps {
+        let (strays, read) = stray_glyphs(text);
+        assert!(read > 20, "precondition: {name}'s glyphs are read ({read})");
+        faults.extend(strays.into_iter().map(|stray| format!("{name}: {stray}")));
+    }
+    assert!(
+        faults.is_empty(),
+        "{} glyphs not in a face their span names or the fallback:\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
 }

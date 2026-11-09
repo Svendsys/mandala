@@ -321,7 +321,10 @@ the parity trajectory (or why none is owed):
   holds for `lib/baumhard/tests/wasm_font_lock.rs`, which *runs*
   baumhard's font-lock helpers on wasm32 under `node` (TEST_CONVENTIONS
   §T9): it skips with a note without the target or `node`, and CI sets
-  `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. **And for
+  `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. So does
+  `lib/baumhard/tests/font_state.rs`'s host test where fontdb does not
+  read `FONTCONFIG_FILE` (off Linux), which CI's
+  `MANDALA_REQUIRE_FONTCONFIG_HOSTS` turns into a failure. **And for
   the GPU-backed tests** (`src/application/app/tests_gpu.rs`,
   TEST_CONVENTIONS §T8): they build the real app headless on whatever
   adapter the machine has — Mesa's lavapipe on a GPU-less box,
