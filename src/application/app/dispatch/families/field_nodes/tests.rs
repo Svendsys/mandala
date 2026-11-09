@@ -999,3 +999,29 @@ fn test_a_default_frame_preview_cancels_to_nothing_and_commits_as_one_entry() {
     doc.undo();
     assert_eq!(bytes(&doc), FIXTURE);
 }
+
+/// **A ring added to several frames takes each frame's own last
+/// channel**, so a frame saves alike whatever was selected beside it:
+/// node 1's rings are on channel 0 and node 2's on 3, and `frame ring
+/// add` on both gives node 1's new ring channel 0 (written as nothing)
+/// and node 2's channel 3. Control: node 2's new ring does carry its
+/// channel, so the comparison sees one.
+#[test]
+fn test_a_ring_added_to_several_frames_takes_each_frames_channel() {
+    let map = r#"{"format": 1, "name": "c", "nodes": [
+        {"id": 1, "position": [0.0, 0.0], "frame": {"rings": [{"spans": [{"text": "a"}]}]}},
+        {"id": 2, "position": [0.0, 300.0], "frame": {"rings": [{"channel": 3, "spans": [{"text": "b"}]}]}}
+    ]}"#;
+    let mut doc = MindMapDocument::from_json_str(map, None, DEFAULT_HISTORY_LIMIT).expect("loads");
+    select(&mut doc, Select::Nodes(&[1, 2]));
+    run_line(&mut doc, "frame ring add text=new").expect("applies");
+    let saved = bytes(&doc);
+    assert!(
+        saved.contains(r#""rings": [{"spans": [{"text": "a"}]}, {"spans": [{"text": "new"}]}]"#),
+        "node 1's new ring is on its channel: {saved}"
+    );
+    assert!(
+        saved.contains(r#"{"channel": 3, "spans": [{"text": "b"}]}, {"channel": 3, "spans": [{"text": "new"}]}"#),
+        "node 2's new ring is on its own: {saved}"
+    );
+}

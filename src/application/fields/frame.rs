@@ -247,22 +247,33 @@ pub(crate) fn cycle(doc: &MindMapDocument) -> Steps {
 
 /// The steps that add a ring holding `text` (one span; none when
 /// `None`), of relative size `size`, after the rings of each selected
-/// node's frame; a node with no frame is given one holding that ring.
+/// node's frame, on that frame's last ring's channel, so the file a
+/// frame saves to does not depend on what was selected beside it; a node
+/// with no frame is given one holding that ring. One insert per channel
+/// the frames' last rings are on.
 pub(crate) fn add_ring(doc: &MindMapDocument, text: Option<&str>, size: Option<f32>) -> Steps {
     let (framed, bare) = split(doc)?;
     let d = doc.doc();
     let spans = text.map(plain).unwrap_or_default();
-    let channel = framed
-        .iter()
-        .flat_map(|&frame| children_of_kind(d, frame, DocKind::Ring))
-        .filter_map(|ring| match d.get(ring) {
-            Some(DocElement::Ring(ring)) => Some(ring.channel),
-            _ => None,
-        })
-        .max()
-        .unwrap_or(0);
-    let mut steps = compose::insert(d, DocKind::Frame, &framed, ring(spans.clone(), size, channel))
-        .map_err(|e| e.to_string())?;
+    let mut by_channel: Vec<(usize, Vec<NodeId>)> = Vec::new();
+    for frame in framed {
+        let channel = children_of_kind(d, frame, DocKind::Ring)
+            .last()
+            .and_then(|ring| match d.get(ring) {
+                Some(DocElement::Ring(ring)) => Some(ring.channel),
+                _ => None,
+            })
+            .unwrap_or(0);
+        match by_channel.binary_search_by_key(&channel, |(c, _)| *c) {
+            Ok(at) => by_channel[at].1.push(frame),
+            Err(at) => by_channel.insert(at, (channel, vec![frame])),
+        }
+    }
+    let mut steps = Vec::new();
+    for (channel, frames) in by_channel {
+        let new = ring(spans.clone(), size, channel);
+        steps.extend(compose::insert(d, DocKind::Frame, &frames, new).map_err(|e| e.to_string())?);
+    }
     steps.extend(frame_the(d, &bare, Some(ring(spans, size, 0)))?);
     Ok(steps)
 }
