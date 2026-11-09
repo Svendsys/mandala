@@ -129,14 +129,12 @@ impl Selection {
         had
     }
 
-    /// Drop every element no longer in `doc`'s tree — what a change, an
-    /// undo or a redo that removed it leaves behind. A removed element
-    /// stays readable in the arena for the journal that holds it, so the
-    /// question is the tree's (`Tree::contains`), not `Document::get`'s.
-    /// Returns whether any was dropped. O(the selection).
+    /// Drop every element `doc` no longer holds — what a change, an undo
+    /// or a redo that removed it leaves behind. Returns whether any was
+    /// dropped. O(the selection).
     pub fn retain_live(&mut self, doc: &Document) -> bool {
         let before = self.items.len();
-        self.items.retain(|&id| doc.tree().contains(id));
+        self.items.retain(|&id| doc.get(id).is_some());
         if self.items.is_empty() {
             self.range = None;
         }

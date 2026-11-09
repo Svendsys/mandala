@@ -90,7 +90,7 @@ fn walk_at(mutator: DocMutatorTree, nodes: Vec<NodeId>) -> DocWalk {
 /// names what it should have been.
 fn require(doc: &Document, id: NodeId, kind: DocKind, expected: &'static str) -> Result<(), MutationError> {
     match doc.get(id) {
-        Some(element) if element.kind() == kind && doc.tree().contains(id) => Ok(()),
+        Some(element) if element.kind() == kind => Ok(()),
         _ => Err(MutationError::NotA {
             element: id,
             expected,
@@ -268,12 +268,9 @@ pub fn delete(doc: &Document, nodes: &[NodeId]) -> Result<Vec<DocStep>, Mutation
 /// left with none builds nothing.
 pub fn remove_links(links: Vec<NodeId>) -> DocStep {
     DocStep::new(move |doc| {
-        let mut members = Membership::default();
         let live: Vec<NodeId> = links
             .into_iter()
-            .filter(|&l| {
-                doc.get(l).map(DocElement::kind) == Some(DocKind::Link) && members.contains(doc.tree(), l)
-            })
+            .filter(|&l| doc.get(l).map(DocElement::kind) == Some(DocKind::Link))
             .collect();
         Ok((!live.is_empty()).then(|| walk_at(command(StructOp::Remove, DocKind::Link), live)))
     })
@@ -803,9 +800,7 @@ pub fn add_section(
     require(doc, node, DocKind::Node, "a node")?;
     let (channel, at) = match after {
         Some(after) => match doc.get(after) {
-            Some(DocElement::Section(section))
-                if doc.parent(after) == Some(node) && doc.tree().contains(after) =>
-            {
+            Some(DocElement::Section(section)) if doc.parent(after) == Some(node) => {
                 (section.channel, Placement::After(after))
             }
             _ => {

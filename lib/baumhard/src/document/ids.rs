@@ -320,38 +320,47 @@ impl Document {
         (self.next_ident <= bounds::MAX_NODE_IDENT).then_some(NodeIdent(self.next_ident))
     }
 
-    /// The element at `id`, or `None` if `id` is not in the tree. O(1).
+    /// `id` when it is in the tree ([`Tree::contains`]): not freed, and
+    /// not in a subtree a change took out, which stays in the arena for
+    /// the journal that holds it. O(1).
+    fn live(&self, id: NodeId) -> Option<NodeId> {
+        self.tree.contains(id).then_some(id)
+    }
+
+    /// The element at `id`, or `None` if `id` is not in the tree — a
+    /// removed element included, though its journal still holds it. O(1).
     pub fn get(&self, id: NodeId) -> Option<&DocElement> {
-        get(&self.tree, id)
+        get(&self.tree, self.live(id)?)
     }
 
     /// `id`'s children, in sibling order (kind, then channel). Empty for
     /// an id not in the tree. No allocation.
     pub fn children(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-        let id = self.tree.get(id).map(|_| id);
+        let id = self.live(id);
         id.into_iter().flat_map(|id| id.children(self.tree.arena()))
     }
 
     /// `id`'s parent; `None` for the root and for an id not in the tree.
     /// O(1).
     pub fn parent(&self, id: NodeId) -> Option<NodeId> {
-        self.tree.node(id)?.parent()
+        self.tree.node(self.live(id)?)?.parent()
     }
 
     /// How many [`Node`](DocKind::Node) elements are above `id`: `0`
     /// for a root node and for everything outside the nodes, `1` for a
-    /// root node's children, and so on. O(depth): a one-off question —
-    /// no walk asks it once per element (§20 rule 11).
+    /// root node's children, and so on; `0` for an id not in the tree.
+    /// O(depth): a one-off question — no walk asks it once per element
+    /// (§20 rule 11).
     pub fn depth(&self, id: NodeId) -> usize {
-        depth(&self.tree, id)
+        self.live(id).map_or(0, |id| depth(&self.tree, id))
     }
 
     /// The nearest [`Node`](DocKind::Node) at or above `id`: the node
     /// itself, or the node a section, span, frame, path or end belongs
-    /// to. `None` for the map, theme, palettes and defaults. O(depth
-    /// within the node).
+    /// to. `None` for the map, theme, palettes and defaults, and for an
+    /// id not in the tree. O(depth within the node).
     pub fn owning_node(&self, id: NodeId) -> Option<NodeId> {
-        owning_node(&self.tree, id)
+        owning_node(&self.tree, self.live(id)?)
     }
 
     /// The theme. O(1).
@@ -454,12 +463,17 @@ static EMPTY_THEME: ThemeData = ThemeData {
 /// which a document's construction rules out. See [`EMPTY_THEME`].
 static EMPTY_DEFAULTS: std::sync::LazyLock<DefaultsData> = std::sync::LazyLock::new(DefaultsData::default);
 
-/// The element at `id` in `tree`, or `None` if it is not there. O(1).
+/// The element at `id` in `tree`'s arena, or `None` if the arena does
+/// not hold it. **A removed element is still there**, for the journal
+/// that holds it: the reads of a removal itself — the change feed's
+/// addresses, the projector's and the writer's own bookkeeping — use
+/// this, and everything that asks about the document as it stands uses
+/// [`Document::get`], which answers by [`Tree::contains`]. O(1).
 pub fn get(tree: &Tree<DocElement>, id: NodeId) -> Option<&DocElement> {
     tree.get(id).map(|node| node.get())
 }
 
-/// [`Document::depth`] over a tree. O(depth).
+/// [`Document::depth`] over a tree's arena, as [`get`] reads it. O(depth).
 pub fn depth(tree: &Tree<DocElement>, id: NodeId) -> usize {
     if tree.get(id).is_none() {
         return 0;
@@ -470,7 +484,8 @@ pub fn depth(tree: &Tree<DocElement>, id: NodeId) -> usize {
         .count()
 }
 
-/// [`Document::owning_node`] over a tree. O(depth within the node).
+/// [`Document::owning_node`] over a tree's arena: a removed element's
+/// owning node included, as [`get`] reads it. O(depth within the node).
 pub fn owning_node(tree: &Tree<DocElement>, id: NodeId) -> Option<NodeId> {
     tree.get(id)?;
     crate::engine::tree::climb(tree.arena(), id).find(|&a| tree.arena()[a].get().kind() == DocKind::Node)

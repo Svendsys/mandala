@@ -291,7 +291,7 @@ mod modes {
             };
             let sources: Vec<NodeId> = sources
                 .into_iter()
-                .filter(|&s| doc.doc().tree().contains(s))
+                .filter(|&s| doc.doc().get(s).is_some())
                 .collect();
             match (reparenting, target) {
                 (true, Some(target)) if !valid_reparent_target(doc.doc(), &sources, target) => {

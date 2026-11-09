@@ -569,3 +569,25 @@ fn test_a_modes_status_line_outlasts_the_changes_made_in_the_mode() {
         "the mode over, the decline shows"
     );
 }
+
+/// **A source deleted during the mode is reported as `null`** (review
+/// 5821011650, probe P1): `query.mode` names a mode's sources by integer
+/// id, and one the document no longer holds has none. Control: before
+/// the delete the same query names it by its id.
+#[test]
+fn test_query_mode_reports_a_deleted_source_as_null() {
+    let Some(mut app) = headless_app(&fixture("structure")) else {
+        return;
+    };
+    let init = &mut app.init;
+    frame(init);
+    let sources = |init: &mut InitState| {
+        let reply = ipc(init, json!({"id": 1, "cmd": "query.mode"}));
+        reply["result"]["interaction_mode"]["sources"].clone()
+    };
+    select(init, vec![node(init, 6)]);
+    assert_eq!(act(init, json!("EnterReparentMode")), "handled");
+    assert_eq!(sources(init), json!([6]), "control: the source by its id");
+    assert_eq!(act(init, json!("DeleteSelection")), "handled");
+    assert_eq!(sources(init), json!([null]), "a deleted source has no id");
+}
