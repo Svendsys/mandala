@@ -42,6 +42,7 @@ use crate::document::ids::{Document, NodeIdent};
 use crate::document::mutation::error::MutationError;
 use crate::document::mutation::ops::{DocMutation, DocMutatorTree, LinkOp, SpanOp, TextOp};
 use crate::document::mutation::step::{DocStep, DocWalk};
+use crate::document::shape::cardinality;
 use crate::document::values::{Anchor, LinkKind};
 use crate::engine::anchor::Anchors;
 use crate::engine::key::BranchKey;
@@ -683,9 +684,10 @@ pub fn delete_text(
 /// `spans` are taken as given: a normalized list stays normalized, and an
 /// empty one leaves the owners with no text.
 ///
-/// Errors: [`MutationError::NotA`] when an owner is not of the first
-/// owner's kind. One step for the removal and one per span; none for no
-/// owners.
+/// Errors: [`MutationError::NotA`] when the first owner holds no spans by
+/// the shape rules (a section, ring, path, cap, label or portal end does;
+/// a node or a portal link does not), or another owner is not of its
+/// kind. One step for the removal and one per span; none for no owners.
 ///
 /// Cost: O(the owners' children) for the removal, and one walk per span.
 pub fn replace_spans(
@@ -693,18 +695,19 @@ pub fn replace_spans(
     owners: &[NodeId],
     spans: &[SpanData],
 ) -> Result<Vec<DocStep>, MutationError> {
-    let Some(kind) = owners
-        .first()
-        .and_then(|&owner| doc.get(owner))
-        .map(DocElement::kind)
-    else {
-        return match owners.first() {
-            Some(&element) => Err(MutationError::NotA {
-                element,
+    let Some(&first) = owners.first() else {
+        return Ok(Vec::new());
+    };
+    // The shape rules say which kinds hold spans: a portal link holds
+    // none, a line link does.
+    let kind = match doc.get(first) {
+        Some(element) if cardinality(element, false, DocKind::Span).is_some() => element.kind(),
+        _ => {
+            return Err(MutationError::NotA {
+                element: first,
                 expected: "an element that holds spans",
-            }),
-            None => Ok(Vec::new()),
-        };
+            })
+        }
     };
     for &owner in owners {
         require(doc, owner, kind, "an element of the first owner's kind")?;

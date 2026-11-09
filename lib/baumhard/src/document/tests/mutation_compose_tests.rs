@@ -423,6 +423,22 @@ pub fn do_document_compose_replaces_spans() {
         replace_spans(&doc, &[ids.a_body, ids.b_label], &new),
         Err(MutationError::NotA { .. })
     ));
+    for owner in [ids.a, ids.portal] {
+        assert!(
+            matches!(
+                replace_spans(&doc, &[owner], &new),
+                Err(MutationError::NotA {
+                    expected: "an element that holds spans",
+                    ..
+                })
+            ),
+            "{owner} holds no spans"
+        );
+    }
+    assert!(
+        replace_spans(&doc, &[ids.line_label, ids.b_label], &[]).is_ok(),
+        "control: labels do"
+    );
     assert!(replace_spans(&doc, &[], &new).unwrap().is_empty());
 }
 
