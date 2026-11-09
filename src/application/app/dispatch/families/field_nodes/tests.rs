@@ -898,3 +898,48 @@ fn test_a_field_edit_is_one_walk_per_distinct_value() {
     let steps = style::zoom(&doc, style::Zoom::CLEAR).expect("the clear builds");
     assert_eq!(steps.len(), 1, "two equal windows: one walk");
 }
+
+/// **A first preview the writer refuses leaves no transaction open**:
+/// `frame preview gap=-1` is refused by the gap's bound after its
+/// transaction began, and the document is as it was — bytes, history,
+/// nothing open — and takes the next edit. A refused later preview, from
+/// the console or a keybind's Action, keeps the stage before it.
+/// Control: the cancel of the empty transaction is what this holds;
+/// without it the color line after the refusal is refused as busy.
+#[test]
+fn test_a_refused_preview_leaves_nothing_locked_and_keeps_the_stage_before() {
+    use crate::application::document::Interaction;
+    let mut doc = fixture();
+    doc.selection.select_only(node(&doc, 1));
+    let entries = doc.doc().history().count();
+    assert!(
+        run_line(&mut doc, "frame preview gap=-1").is_err(),
+        "a negative gap is refused"
+    );
+    assert_eq!(
+        doc.open_interaction(),
+        None,
+        "the transaction it began is cancelled"
+    );
+    assert_eq!(bytes(&doc), FIXTURE);
+    assert_eq!(doc.doc().history().count(), entries);
+    run_line(&mut doc, "color text=#ff0000").expect("the document is not left locked");
+    doc.undo();
+
+    run_line(&mut doc, "frame preview gap=2").expect("a preview stages");
+    let staged = bytes(&doc);
+    assert!(run_line(&mut doc, "frame preview gap=-1").is_err());
+    let inset = Action::SetFramePreview {
+        field: "inset".into(),
+        value: "-3".into(),
+    };
+    assert_eq!(
+        run(&inset, &mut doc),
+        DispatchOutcome::Unhandled,
+        "an Action's refusal too"
+    );
+    assert_eq!(bytes(&doc), staged, "the stage before them stands");
+    assert_eq!(doc.open_interaction(), Some(Interaction::FramePreview));
+    run_line(&mut doc, "frame cancel").expect("cancels");
+    assert_eq!(bytes(&doc), FIXTURE);
+}
