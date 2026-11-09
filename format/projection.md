@@ -90,9 +90,13 @@ node to the node it leads to.
   straight path is not turned: it takes its place in the order by the
   direction it leaves in, and the others fan round it, as near the even
   fan as keeps them that far from it (between it and the normal they
-  may turn as far as it does); the hold is as far as the nearest two
-  neighbors need, two straight ones included. Two straight paths that
-  leave in one direction cannot be held apart. Along
+  may turn as far as it does), and the paths between two straight ones
+  share the room between them. Each path is held out as far as the step
+  and its own two neighbors need — further only for a neighbor nearer
+  than the step — but never past a quarter of the straight line to its
+  other end, so it keeps its glyphs whatever its neighbors do. Two
+  straight paths that leave in exactly one direction cannot be told
+  apart, and overlap. Along
   their whole length no two come nearer each other than their own gap
   and a glyph: two that would turn toward their other ends sooner, their
   curves' handles shortened until they keep clear. A path alone on its

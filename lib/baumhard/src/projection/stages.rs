@@ -1424,6 +1424,7 @@ impl Projector {
                     spread: m.2.spread,
                     clear: m.2.clear,
                     fixed: m.5.then(|| geometry::turn_to(m.2.normal, m.3.point - m.2.point)),
+                    chord: m.2.point.distance(m.3.point),
                 };
                 let hold = geometry::fan_hold(&fan.iter().map(member).collect::<Vec<_>>());
                 // In the order each turns toward its other end's lead, seen

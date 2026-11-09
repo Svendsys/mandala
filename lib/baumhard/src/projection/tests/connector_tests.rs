@@ -593,6 +593,123 @@ fn test_projection_a_straight_path_in_a_fan_is_fanned_round() {
     }
 }
 
+/// Node 1 with a child at each of `children`: its center, and whether its
+/// connector is straight.
+fn children_at(children: &[(Vec2, bool)]) -> Projected {
+    let mut nodes = vec![node(
+        1,
+        None,
+        with(dotted(200.0, 60.0), json!({"position": [-100.0, -30.0]})),
+    )];
+    for (k, &(center, straight)) in children.iter().enumerate() {
+        nodes.push(node(
+            10 + k as u32,
+            Some(1),
+            with(
+                dotted(120.0, 50.0),
+                json!({"position": [center.x - 60.0, center.y - 25.0],
+                       "connector": {"size": 14.0, "straight": straight}}),
+            ),
+        ));
+    }
+    Projected::new(load_map(json!({ "nodes": nodes })))
+}
+
+/// Child `k`'s connector's hold at node 1, its inks, and its chord.
+fn held_branch(p: &Projected, k: u32) -> (f32, Vec<Rect>, f32) {
+    let connector = kid(&p.doc, ident(&p.doc, 10 + k), DocKind::Connector);
+    let Some(UnitBody::Line(state)) = p.projector.units.get(&connector).map(|u| &u.body) else {
+        panic!("child {k}'s connector is a drawn line");
+    };
+    let (body, curves) = line(&p.projector, connector);
+    let chord = curves[0].point(0.0).distance(curves[curves.len() - 1].point(1.0));
+    (state.fans[0].hold, inks(body), chord)
+}
+
+#[test]
+fn test_projection_two_straight_paths_near_each_other_hold_only_themselves() {
+    // Child 10's curved connector leaves node 1's bottom far to the left;
+    // children 11 and 12 have straight connectors, 12's moved toward 11's
+    // direction until the two leave as one. Only the two straight paths
+    // are held out the further for it, each no further than a quarter of
+    // its chord, as far as it can carry, and the more continuously the
+    // nearer they come: child 10 keeps its hold and its glyphs at every
+    // step. Then a curved child 13 sorted between the two straight ones,
+    // whose room closes as they meet: it is held out as its own room
+    // needs, never past a quarter of its chord, and keeps its glyphs, as
+    // does child 10. The failing inputs are one hold for
+    // the whole side, the nearest pair's (child 10 drawn with no glyph from
+    // x = 130), and a pair's hold not capped (none from x = 125); and the
+    // fan's step narrowed for the whole side to fit the path between.
+    let alone = held_branch(&children_at(&[(Vec2::new(-400.0, 300.0), false)]), 0);
+    let mut first: Option<f32> = None;
+    let mut last_pair = 0.0_f32;
+    for x in [160.0, 140.0, 130.0, 125.0, 123.0, 122.0, 121.5, 121.0] {
+        let mut p = children_at(&[
+            (Vec2::new(-400.0, 300.0), false),
+            (Vec2::new(40.0, 300.0), true),
+            (Vec2::new(x, 800.0), true),
+        ]);
+        let (hold, glyphs, _) = held_branch(&p, 0);
+        assert!(
+            glyphs.len() * 2 >= alone.1.len(),
+            "x = {x}: child 10 lays {} glyphs, against {} alone",
+            glyphs.len(),
+            alone.1.len()
+        );
+        let first = *first.get_or_insert(hold);
+        assert!(
+            hold <= 1.1 * first,
+            "x = {x}: child 10's hold {hold}, against {first} with the pair apart"
+        );
+        for k in [1, 2] {
+            let (pair_hold, pair_glyphs, chord) = held_branch(&p, k);
+            assert!(
+                pair_hold <= 0.25 * chord + 1e-3 && !pair_glyphs.is_empty(),
+                "x = {x}: child {} held {pair_hold} out of a chord {chord}, {} glyphs",
+                10 + k,
+                pair_glyphs.len()
+            );
+            if k == 2 {
+                assert!(
+                    pair_hold + 1e-3 >= last_pair.min(0.25 * chord),
+                    "x = {x}: the hold falls as the two meet, short of its cap: {pair_hold} after {last_pair}"
+                );
+                last_pair = pair_hold;
+            }
+        }
+        p.check().unwrap();
+    }
+    // A curved path between the two straight ones: its child far out
+    // along the direction halfway between theirs, so that it sorts between.
+    let between = |x: f32| {
+        let (a, b) = (Vec2::new(40.0, 245.0), Vec2::new(x, 745.0));
+        let halfway = (a.normalize() + b.normalize()).normalize();
+        Vec2::new(0.0, 30.0) + halfway * 1500.0 + Vec2::new(0.0, 25.0)
+    };
+    for x in [200.0, 160.0, 140.0, 130.0, 125.0, 122.0] {
+        let mut p = children_at(&[
+            (Vec2::new(-400.0, 300.0), false),
+            (Vec2::new(40.0, 300.0), true),
+            (Vec2::new(x, 800.0), true),
+            (between(x), false),
+        ]);
+        let (hold, glyphs, chord) = held_branch(&p, 0);
+        assert!(
+            glyphs.len() * 2 >= alone.1.len() && hold <= 0.1 * chord,
+            "x = {x}, a path between: child 10 held {hold}, {} glyphs",
+            glyphs.len()
+        );
+        let (between_hold, between_glyphs, chord) = held_branch(&p, 3);
+        assert!(
+            between_hold <= 0.25 * chord + 1e-3 && !between_glyphs.is_empty(),
+            "x = {x}: child 13 held {between_hold} out of a chord {chord}, {} glyphs",
+            between_glyphs.len()
+        );
+        p.check().unwrap();
+    }
+}
+
 /// The least distance between a glyph of one of `branches` and a glyph
 /// of another, against the median gap between a branch's own glyphs: no
 /// two branches of one junction nearer than 0.8 of it, anywhere along

@@ -592,7 +592,7 @@ portal is a connector with `visible: false` plus a portal link.
 | `content` | string | no | unset | The text drawn when the path has no spans. |
 | `anchors` | `[from, to]`, each `"auto"`, `"top"`, `"right"`, `"bottom"` or `"left"` | no | `["auto", "auto"]` | Where it attaches at its start and at its end. |
 | `control_points` | array of `[x, y]` | no | `[]` | [Points the path passes through](#control-points): at most 8, and none on a straight path. |
-| `straight` | boolean | no | `false` | One straight segment from its start's side midpoint to its end's. At a shared side it leaves in its own direction, the other paths [fan round it](./projection.md#where), and its first glyphs are held out as any path's are. A straight path takes no `control_points`: a file that gives it some is refused at the first. |
+| `straight` | boolean | no | `false` | One straight segment from its start's side midpoint to its end's. At a shared side it leaves in its own direction, the other paths [fan round it](./projection.md#where), and its first glyphs are held out as any path's are. Two straight paths that leave one side in exactly one direction cannot be told apart, and overlap (put to the owner on #326). A straight path takes no `control_points`: a file that gives it some is refused at the first. |
 | `visible` | boolean | no | `true` | Whether it is drawn. |
 | `zoom` | [zoom](#zoom) | no | none | |
 | `spans` | array of [spans](#span) | no | `[]` | The line's content (`"─"`, `"·"`, a line of poetry). |

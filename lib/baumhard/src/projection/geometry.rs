@@ -87,12 +87,15 @@ pub(crate) fn spread(gap: f32, size: f32) -> f32 {
 /// (`spread`), how far apart their first glyphs' centers must be to clear
 /// side by side or across a slope (`clear`), and, for a straight path,
 /// the turn from the normal its one segment leaves in, which no fan
-/// changes (`fixed`).
+/// changes (`fixed`); and the straight line from its end here to its
+/// other end (`chord`), a quarter of which is as far as it can be held
+/// out, as a lead is ([`path_through`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FanMember {
     pub(crate) spread: f32,
     pub(crate) clear: f32,
     pub(crate) fixed: Option<f32>,
+    pub(crate) chord: f32,
 }
 
 /// How far a fan of `members` holds its first glyphs out when none of
@@ -145,72 +148,110 @@ fn held_out(step: f32, widest: f32, clear: f32) -> f32 {
 /// nowhere.
 ///
 /// A straight path keeps the turn its segment leaves in (`fixed`), and
-/// the others fan round it: the step is the widest, up to the widest
-/// spread, at which every path that is not straight keeps that far from
-/// its neighbors and within the cap — or, past a straight path that
-/// leaves beyond the cap, within an even capped fan's step of room for
-/// each path beyond it — and
-/// each such path takes the even fan's turn, as near as that allows. Two
-/// straight paths are as far apart as they leave, which no fan changes:
-/// the first glyphs are held out as far as the nearest two neighbors
-/// need, and two straight paths that leave in one direction cannot be
-/// held apart at all.
+/// the others fan round it. Those before the first straight path and
+/// after the last take the widest step, up to the widest spread, at
+/// which they keep that far from their neighbors within the cap — or,
+/// past a straight path, within an even capped fan's step of room for
+/// each path beyond it, where that reaches further. Those between two
+/// straight paths share the room between them, a step apart where it
+/// holds them. Each takes the even fan's turn, as near as that allows.
+///
+/// Each path is held out as far as its own neighbors need: as far as the
+/// step needs, and further only for a neighbor nearer than the step —
+/// two straight paths may leave nearer each other than that, and the
+/// paths between them are as near as their room makes them — but never
+/// past a quarter of its own `chord`, as far as it can carry. So a path
+/// keeps its glyphs whatever its neighbors do, and its hold grows
+/// continuously as two directions meet. Two straight paths that leave
+/// in exactly one direction cannot be told apart: they overlap.
 ///
 /// Cost: O(members) with no straight path; with one, O(members) for each
-/// of a fixed number of trial steps. One allocation, two with a straight
-/// path.
+/// of a fixed number of trial steps. One allocation, three with a
+/// straight path.
 pub(crate) fn fan(members: &[FanMember]) -> Vec<(f32, f32)> {
     if members.len() < 2 {
         return members.iter().map(|m| (m.fixed.unwrap_or(0.0), 0.0)).collect();
     }
     let last = (members.len() - 1) as f32;
     let (widest, clear) = widest_spread_and_clear(members);
-    let held = |step: f32| held_out(step, widest, clear);
+    // The hold that neighbors `gap` apart need, at most a quarter of
+    // `chord`: none at the widest spread or wider, without bound as the
+    // gap closes — so capped, and the cap reached continuously.
+    let held = |gap: f32, chord: f32| {
+        let cap = (0.25 * chord).max(0.0);
+        let need = if gap >= widest {
+            0.0
+        } else if gap > 0.0 {
+            clear / (2.0 * (0.5 * gap).sin())
+        } else {
+            f32::INFINITY
+        };
+        if need.is_nan() {
+            0.0
+        } else {
+            need.min(cap)
+        }
+    };
     if members.iter().all(|m| m.fixed.is_none()) {
         let step = widest.min(2.0 * SPLAY_CAP / last);
-        let hold = held(step);
-        return (0..members.len())
-            .map(|rank| ((rank as f32 - 0.5 * last) * step, hold))
+        return members
+            .iter()
+            .enumerate()
+            .map(|(rank, m)| ((rank as f32 - 0.5 * last) * step, held(step, m.chord)))
             .collect();
     }
+    let fixed = |rank: usize| members[rank].fixed.filter(|t| t.is_finite());
     // The room the paths that are not straight may turn in: the cap, or
-    // past a straight path that leaves beyond it, an even capped fan's
-    // step for each path beyond that one.
+    // past a straight path, as far as an even capped fan's step for each
+    // path beyond it reaches, if that is further.
     let even = 2.0 * SPLAY_CAP / last;
     let mut low = -SPLAY_CAP;
     let mut high = SPLAY_CAP;
-    for (rank, m) in members.iter().enumerate() {
-        if let Some(turn) = m.fixed.filter(|t| t.is_finite()) {
+    for rank in 0..members.len() {
+        if let Some(turn) = fixed(rank) {
             low = low.min(turn - rank as f32 * even);
             high = high.max(turn + (last - rank as f32) * even);
         }
     }
+    // The step each path keeps from the one before it, at `step`: between
+    // two straight paths, no more than their room shares out.
+    let pins: Vec<usize> = (0..members.len()).filter(|&r| fixed(r).is_some()).collect();
+    let apart = |rank: usize, step: f32| -> f32 {
+        let below = pins.iter().rev().find(|&&p| p < rank);
+        let above = pins.iter().find(|&&p| p >= rank);
+        match (below, above) {
+            (Some(&a), Some(&b)) => {
+                let room = fixed(b).unwrap_or(0.0) - fixed(a).unwrap_or(0.0);
+                step.min((room / (b - a) as f32).max(0.0))
+            }
+            _ => step,
+        }
+    };
     // The turns packed as far toward `low` (`up`) or `high` (`!up`) as
-    // `step` allows, each straight path at its own; `None` where the
+    // the steps allow, each straight path at its own; `None` where the
     // paths that are not straight do not fit.
     let packed = |step: f32, up: bool| -> Option<Vec<f32>> {
         let mut turns = vec![0.0_f32; members.len()];
-        let mut before: Option<f32> = None;
+        let mut before: Option<(usize, f32)> = None;
         let ranks: Vec<usize> = if up {
             (0..members.len()).collect()
         } else {
             (0..members.len()).rev().collect()
         };
         for rank in ranks {
-            let m = members[rank];
-            let turn = match m.fixed.filter(|t| t.is_finite()) {
+            let turn = match fixed(rank) {
                 Some(turn) => turn,
                 None if up => {
-                    let turn = before.map_or(low, |b| (b + step).max(low));
+                    let turn = before.map_or(low, |(_, b)| (b + apart(rank, step)).max(low));
                     (turn <= high + 1e-6).then_some(turn)?
                 }
                 None => {
-                    let turn = before.map_or(high, |b| (b - step).min(high));
+                    let turn = before.map_or(high, |(b_rank, b)| (b - apart(b_rank, step)).min(high));
                     (turn >= low - 1e-6).then_some(turn)?
                 }
             };
             turns[rank] = turn;
-            before = Some(turn);
+            before = Some((rank, turn));
         }
         Some(turns)
     };
@@ -239,28 +280,32 @@ pub(crate) fn fan(members: &[FanMember]) -> Vec<(f32, f32)> {
     };
     let turns: Vec<f32> = match (packed(step, true), packed(step, false)) {
         // The even fan's turn, held between the two packings: each two
-        // neighbors stay at least a step apart, both packings being so.
-        (Some(least), Some(most)) => members
-            .iter()
-            .enumerate()
-            .map(|(rank, m)| {
+        // neighbors stay their step apart, both packings being so.
+        (Some(least), Some(most)) => (0..members.len())
+            .map(|rank| {
                 let even = (rank as f32 - 0.5 * last) * step;
-                m.fixed
-                    .filter(|t| t.is_finite())
-                    .unwrap_or(even.clamp(least[rank], most[rank].max(least[rank])))
+                fixed(rank).unwrap_or(even.clamp(least[rank], most[rank].max(least[rank])))
             })
             .collect(),
-        _ => members
-            .iter()
-            .enumerate()
-            .map(|(rank, m)| m.fixed.unwrap_or((rank as f32 - 0.5 * last) * step))
+        _ => (0..members.len())
+            .map(|rank| fixed(rank).unwrap_or((rank as f32 - 0.5 * last) * step))
             .collect(),
     };
-    // Held out as far as the nearest two neighbors need: two straight
-    // paths may leave nearer each other than the step.
-    let nearest = turns.windows(2).map(|w| (w[1] - w[0]).abs()).fold(step, f32::min);
-    let hold = held(nearest);
-    turns.into_iter().map(|turn| (turn, hold)).collect()
+    // Each held out as far as the step and its own two neighbors need.
+    (0..members.len())
+        .map(|rank| {
+            let gap = |other: usize| (turns[other] - turns[rank]).abs();
+            let nearest = [
+                rank.checked_sub(1),
+                (rank + 1 < members.len()).then_some(rank + 1),
+            ]
+            .into_iter()
+            .flatten()
+            .map(gap)
+            .fold(step, f32::min);
+            (turns[rank], held(nearest, members[rank].chord))
+        })
+        .collect()
 }
 
 /// The side of `rect` a path attaches to: `anchor`'s, or for
