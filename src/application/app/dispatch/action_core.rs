@@ -51,12 +51,13 @@ pub(in crate::application::app) fn dispatch_compatible(
             *core.interaction_mode = InteractionMode::Default;
             // A post-Esc click is not paired with a pre-Esc one.
             *core.last_click = None;
-            // A reparent's or a connect's target tint goes at the next
-            // frame's sync.
-            #[cfg(not(target_arch = "wasm32"))]
-            if let Some(view) = core.view.as_mut() {
-                view.set_hover_target(None);
+            // A refusal's status line, and a reparent's or a connect's
+            // tints and status line, go at the next frame's sync.
+            if let Some(doc) = core.document.as_deref_mut() {
+                doc.set_status(None);
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            families::structure::leave(core);
             DispatchOutcome::Handled
         }
         Action::Undo | Action::Redo => {

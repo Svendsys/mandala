@@ -449,3 +449,57 @@ fn test_connect_does_not_duplicate_and_a_connector_is_not_deleted() {
     assert_eq!(entries(init), 1, "the delete made no entry");
     assert_eq!(document(init).status(), Some(CONNECTOR_STATUS));
 }
+
+/// **Each mode says what it is doing, as `main` did, and tints its
+/// sources.** Entering reparent mode with two nodes selected draws
+/// `reparent: 2 sources — click a target node` on the renderer's status
+/// line and hands the view the two sources to tint; `ExitMode` clears
+/// both. Connect with one source says `connect: 1 source — …`, and the
+/// click that ends the mode clears both too.
+///
+/// Controls: the line is empty and nothing is tinted as a source before
+/// either mode, so the line and the tint are the modes' work.
+#[test]
+fn test_each_mode_shows_its_status_line_and_tints_its_sources() {
+    let Some(mut app) = headless_app(&fixture("structure")) else {
+        return;
+    };
+    let init = &mut app.init;
+    frame(init);
+    let (n5, n6) = (node(init, 5), node(init, 6));
+    let line = |init: &InitState| init.renderer.mode_status_text().map(str::to_string);
+    let sources = |init: &InitState| init.view.as_ref().expect("a view").sources().to_vec();
+    assert_eq!(line(init), None, "control: no status line before a mode");
+    assert!(sources(init).is_empty(), "control: no source tint before a mode");
+
+    select(init, vec![n5, n6]);
+    assert_eq!(act(init, json!("EnterReparentMode")), "handled");
+    frame(init);
+    assert_eq!(
+        line(init).as_deref(),
+        Some("reparent: 2 sources \u{2014} click a target node")
+    );
+    assert_eq!(sources(init), vec![n5, n6]);
+    assert_eq!(act(init, json!("ExitMode")), "handled");
+    frame(init);
+    assert_eq!(line(init), None, "ExitMode clears the line");
+    assert!(sources(init).is_empty(), "and the tint");
+
+    select(init, vec![n5]);
+    assert_eq!(act(init, json!("EnterConnectMode")), "handled");
+    frame(init);
+    assert_eq!(
+        line(init).as_deref(),
+        Some("connect: 1 source \u{2014} click a target node")
+    );
+    assert_eq!(sources(init), vec![n5]);
+    assert_eq!(
+        act(init, json!({"ConnectToTarget": null})),
+        "unhandled",
+        "empty canvas links nothing"
+    );
+    frame(init);
+    assert_eq!(line(init), None, "the click that ends the mode clears the line");
+    assert!(sources(init).is_empty());
+    assert_eq!(init.interaction_mode, InteractionMode::Default);
+}

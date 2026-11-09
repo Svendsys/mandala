@@ -1320,7 +1320,7 @@ Params: none.
 | result field | type | meaning |
 |---|---|---|
 | `text` | string | The cyan mode-status line the renderer shows, or `null` when none is showing (Default mode). The app already writes this line for a human, so an agent reads it instead of re-deriving it. |
-| `document` | string | The line the document's last refused change left — the busy message an open interactive edit answers another change with — or `null` when the last change was accepted. |
+| `document` | string | The document's status line: what its last refused or declined change left — the busy message an open interactive edit answers another change with, why a connector alone was not deleted, why a reparent target was refused — or what an active reparent or connect mode says (`reparent: 2 sources — click a target node`); `null` once a change is accepted, the mode is left, or `ExitMode` dismisses it. |
 
 ### `query.editors`
 

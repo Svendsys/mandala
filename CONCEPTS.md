@@ -1877,9 +1877,11 @@ on `InitState`.
 What the user is doing at the canvas level. `Default` — a click
 selects, a drag pans, Shift+drag draws a rubber band — and the two
 target-picking modes, `Reparent` and `Connect` (native), which hold
-their source nodes: the pointer's valid target is tinted with the
-view's target overlay, and the next click moves the sources under it
-or links them to it. The resize and node-edit modes return with V1-C7
+their source nodes: the sources wear the view's source tint in place
+of the selection's, the status line says what the mode does (as on
+`main`), the pointer's valid target is tinted with the view's target
+overlay, and the next click moves the sources under it or links them
+to it. The resize and node-edit modes return with V1-C7
 (#248) and V1-C8 (#249); until then their Actions answer `unhandled`,
 naming their owner.
 

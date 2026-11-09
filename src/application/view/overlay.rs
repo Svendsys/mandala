@@ -3,7 +3,8 @@
 //! View-only glyph mutators (design §12.5): effects drawn over the
 //! projected runs that mean nothing in the document — the selection
 //! tint, the rubber band's preview of what it covers, the reparent and
-//! connect target ([`TARGET_HIGHLIGHT`]), and in a later issue
+//! connect sources ([`SOURCE_HIGHLIGHT`]) and target
+//! ([`TARGET_HIGHLIGHT`]), and in a later issue
 //! NodeEdit's dimming (V1-C8).
 //!
 //! **One mechanism.** An [`Overlay`] is a run override
@@ -59,6 +60,11 @@ pub(crate) const SELECTION_HIGHLIGHT: Rgba = Rgba::opaque(0x00, 0xE5, 0xFF);
 /// The tint of the node a reparent or a connect would land on, under the
 /// pointer in either mode: `main`'s target green, `#33FF66`.
 pub(crate) const TARGET_HIGHLIGHT: Rgba = Rgba::opaque(0x33, 0xFF, 0x66);
+
+/// The tint of the nodes a reparent or a connect moves or links, in
+/// place of the selection's while either mode is active: `main`'s source
+/// orange, `#FF8C00`.
+pub(crate) const SOURCE_HIGHLIGHT: Rgba = Rgba::opaque(0xFF, 0x8C, 0x00);
 
 /// One view-only glyph mutator: `op` stamped on the runs of `targets`.
 /// See the [module docs](self).

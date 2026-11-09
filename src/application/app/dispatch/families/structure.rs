@@ -244,14 +244,27 @@ mod modes {
     use crate::application::app::InteractionMode;
 
     /// `EnterReparentMode` / `EnterConnectMode`: the selected nodes are
-    /// the sources. `Unhandled` with none selected.
+    /// the sources, tinted as such, and the status line says so, as on
+    /// `main`. `Unhandled` with none selected.
     pub(super) fn enter(action: &Action, core: &mut InputContextCore<'_>) -> DispatchOutcome {
-        let Some(doc) = core.document.as_deref() else {
+        let Some(doc) = core.document.as_deref_mut() else {
             return DispatchOutcome::Unhandled;
         };
         let sources = selected(doc, DocKind::Node);
         if sources.is_empty() {
             return DispatchOutcome::Unhandled;
+        }
+        let verb = match action {
+            Action::EnterReparentMode => "reparent",
+            _ => "connect",
+        };
+        let n = sources.len();
+        let plural = if n == 1 { "" } else { "s" };
+        doc.set_status(Some(format!(
+            "{verb}: {n} source{plural} \u{2014} click a target node"
+        )));
+        if let Some(view) = core.view.as_mut() {
+            view.set_sources(sources.clone());
         }
         *core.interaction_mode = match action {
             Action::EnterReparentMode => InteractionMode::Reparent { sources },
@@ -259,6 +272,18 @@ mod modes {
         };
         *core.last_click = None;
         DispatchOutcome::Handled
+    }
+
+    /// What leaving either mode undoes: the source and target tints and
+    /// the mode's status line. The next frame's sync draws it.
+    pub(in crate::application::app) fn leave(core: &mut InputContextCore<'_>) {
+        if let Some(view) = core.view.as_mut() {
+            view.set_hover_target(None);
+            view.set_sources(Vec::new());
+        }
+        if let Some(doc) = core.document.as_deref_mut() {
+            doc.set_status(None);
+        }
     }
 
     /// `ReparentToTarget` / `ConnectToTarget`: leave the mode, and move or
@@ -281,9 +306,7 @@ mod modes {
                 return DispatchOutcome::Unhandled;
             }
         };
-        if let Some(view) = core.view.as_mut() {
-            view.set_hover_target(None);
-        }
+        leave(core);
         super::edit(core, |doc| {
             let target = match target.map(|ident| doc.doc().node_by_ident(NodeIdent(ident))) {
                 Some(Some(node)) => Some(node),
@@ -329,6 +352,9 @@ mod modes {
         true
     }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(in crate::application::app) use modes::leave;
 
 #[cfg(test)]
 mod tests {

@@ -497,3 +497,49 @@ fn test_the_target_tint_stamps_the_hovered_node_beside_the_selection() {
         "and the next pass is quiet"
     );
 }
+
+/// **A mode's source tint goes on the sources only, in place of their
+/// selection tint, and gives it back when the mode ends.** With `a` and
+/// `b` selected and `a` the one source, `a`'s runs turn the source color
+/// in one pass — its selection stamp cleared before the source stamp, so
+/// the source's wins — while `b` keeps the selection's (the control: a
+/// tint on every selected node would turn `b` too). Ending the mode turns
+/// `a` back, in one pass the other way.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_the_source_tint_replaces_the_selections_on_the_sources_only() {
+    use super::overlay::{SELECTION_HIGHLIGHT, SOURCE_HIGHLIGHT};
+    let mut doc = testament();
+    let mut view = MapView::for_test(&doc);
+    let (a, b) = two_drawn_roots(&doc, &view);
+    doc.selection.set([a, b]);
+    view.sync_for_test(&mut doc).expect("the selection is stamped");
+    let tinted = |view: &MapView, doc: &MindMapDocument, node: NodeId, color| {
+        runs(view, doc, node)
+            .into_iter()
+            .all(|(layer, glyph)| tint_of(view, layer, glyph) == Some(color))
+    };
+    assert!(
+        tinted(&view, &doc, a, SELECTION_HIGHLIGHT),
+        "precondition: a is selected"
+    );
+
+    view.set_sources(vec![a]);
+    view.sync_for_test(&mut doc).expect("the source tint changed");
+    assert!(
+        tinted(&view, &doc, a, SOURCE_HIGHLIGHT),
+        "a wears the source tint"
+    );
+    assert!(
+        tinted(&view, &doc, b, SELECTION_HIGHLIGHT),
+        "b keeps the selection's"
+    );
+
+    view.set_sources(Vec::new());
+    view.sync_for_test(&mut doc).expect("the source tint went");
+    assert!(
+        tinted(&view, &doc, a, SELECTION_HIGHLIGHT),
+        "a is the selection's again"
+    );
+    assert!(tinted(&view, &doc, b, SELECTION_HIGHLIGHT));
+}
