@@ -28,7 +28,7 @@
 
 use baumhard::document::format::load;
 use baumhard::flow::FILLER_SPAN;
-use baumhard::font::fallback::ORNAMENT_FALLBACK;
+use baumhard::font::fallback::fallback_families;
 use baumhard::font::fonts::AppFont;
 use baumhard::gfx_structs::run::{GlyphRunData, RunShape};
 use glam::Vec2;
@@ -355,7 +355,8 @@ fn shaped_glyphs(run: &GlyphRunData) -> Vec<(String, glyphon::fontdb::ID, u16)> 
 /// The compiled faces a demo map may draw a glyph in: every compiled
 /// face of each family it pins (`fonts`: a bold span is drawn in its
 /// family's bold face), read by name from the font system as a pin is
-/// matched, and the ornament fallback's (#297).
+/// matched, and the fallback's (#228, #297): the default face, the
+/// ornament faces and the script faces.
 fn allowed_faces(fs: &glyphon::FontSystem, fonts: &[AppFont]) -> Vec<glyphon::fontdb::ID> {
     let compiled = &baumhard::font::fonts::COMPILED_FONT_ID_MAP;
     let families_of = |ids: &[glyphon::fontdb::ID]| -> Vec<String> {
@@ -374,34 +375,33 @@ fn allowed_faces(fs: &glyphon::FontSystem, fonts: &[AppFont]) -> Vec<glyphon::fo
         .filter(|ids| families_of(ids).iter().any(|family| pinned.contains(family)))
         .flat_map(|ids| ids.iter().copied())
         .collect();
-    for (font, _) in ORNAMENT_FALLBACK {
+    for (font, _) in fallback_families() {
         allowed.extend(compiled.get(font).into_iter().flat_map(|ids| ids.iter().copied()));
     }
     allowed
 }
 
-/// (i) No demo map draws a glyph in a host face (#297): every glyph of
-/// every run, text, ornament and connector alike, is drawn in a compiled
-/// face of a family the map pins, or in an ornament fallback face, and
-/// none is a `.notdef`. So the four README images show the same glyphs on
-/// every install, and in the browser, which has the compiled faces alone.
+/// (i) No demo map draws a glyph in a face it did not ask for (#228,
+/// #297): every glyph of every run, text, ornament and connector alike,
+/// is drawn in a compiled face of a family the map pins, or in a face of
+/// the fallback — the default face, an ornament face, a script face —
+/// and none is a `.notdef`. So the four README images show the same
+/// glyphs on every install and in the browser. The font system holds the
+/// compiled faces alone (#228), so the first half, a glyph in a face not
+/// compiled in, now guards that.
 ///
-/// The two halves past "compiled" are what keep the property from passing
-/// on a host with no faces of its own (CI, or `FONTCONFIG_FILE` at an
-/// empty directory, §T14). There a glyph no face holds is not drawn in a
-/// host face but as the first face's empty box, and a glyph one compiled
-/// face holds is drawn in whichever comes first in cosmic-text's order, a
-/// decorative face the map never named, unless the ornament fallback
-/// comes before it.
+/// The halves past "compiled" are what keep the property from passing on
+/// any host: a glyph no listed face holds is drawn as the first face's
+/// empty box, and a glyph only an unlisted compiled face holds is drawn
+/// in whichever comes first in cosmic-text's order, a decorative face the
+/// map never named.
 ///
-/// Controls: with `OrnamentsFirst` listing the platform's families alone
-/// (the ornament fallback off), red on a desktop on the 15 glyphs drawn
-/// in `DejaVuSans` and `NotoColorEmoji`, and with the host's faces hidden
-/// on the connectors' `~`, drawn in `212Keyboard`. Before the ornament
-/// faces were compiled in, red with the host's faces hidden on `✦`, `❦`
-/// and `🌸` drawn as Galatia SIL's `.notdef`.
+/// Controls: with the ornament families left out of the fallback list,
+/// red on the demo maps' `✦`, `❦` and `🌸`, drawn as `.notdef`s or in a
+/// decorative face; before #228, with the host's faces hidden, red on
+/// the connectors' `~`, drawn in `212Keyboard`.
 #[test]
-fn test_demo_maps_draw_every_glyph_in_a_face_they_pin_or_the_ornament_fallback() {
+fn test_demo_maps_draw_every_glyph_in_a_face_they_pin_or_the_fallback() {
     let maps = demo_maps();
     assert!(
         maps.len() >= 4,
@@ -450,7 +450,7 @@ fn test_demo_maps_draw_every_glyph_in_a_face_they_pin_or_the_ornament_fallback()
     faults.dedup();
     assert!(
         faults.is_empty(),
-        "{} glyphs not drawn in a face the map pins or the ornament fallback:\n{}",
+        "{} glyphs not drawn in a face the map pins or the fallback:\n{}",
         faults.len(),
         faults.join("\n")
     );

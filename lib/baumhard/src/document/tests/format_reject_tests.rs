@@ -821,25 +821,23 @@ fn test_a_font_this_build_has_no_face_for_is_refused() {
 }
 
 #[test]
-fn test_a_system_font_is_not_a_face_the_file_can_name() {
-    // An installed system font resolves to the fallback face on native,
-    // which has no name a file could write back. The test build always
-    // has one: the decoy faces under "Noto Sans" (`fonts::DECOY_FAMILY`,
-    // ruling R30) stand in for a host font and are attributed
-    // `AppFont::Any`, as a host face is, so the arm is reached on every
-    // machine whatever it has installed.
-    let family = crate::font::fonts::loaded_families_iter()
-        .find(|family| {
-            crate::font::fonts::app_font_by_family(family) == Some(crate::font::fonts::AppFont::Any)
-        })
-        .expect("precondition: the test build's decoy family is a family no compiled face provides");
-    rejects(
-        &map_of(&format!(r#","font":{}"#, serde_json::to_string(family).unwrap())),
-        "nodes[0].font",
-        LoadErrorKind::UnknownFont {
-            family: family.to_string(),
-        },
+fn test_every_listed_family_is_a_face_the_file_can_name() {
+    // Every family the font listing offers (`font list`, the console's
+    // completion, a `console_font`) is a compiled face a map can name and
+    // load: the font system holds the compiled faces alone (#228), so no
+    // family resolves to the fallback face, `AppFont::Any`, which has no
+    // name a file could write back. Until #228 an installed system font
+    // was listed on native, and refused here.
+    let families: Vec<&str> = crate::font::fonts::loaded_families_iter().collect();
+    assert!(
+        families.len() >= 50,
+        "precondition: the families are listed ({})",
+        families.len()
     );
+    for family in families {
+        let map = map_of(&format!(r#","font":{}"#, serde_json::to_string(family).unwrap()));
+        assert!(load(&map).is_ok(), "the listed family {family:?} does not load");
+    }
 }
 
 #[test]

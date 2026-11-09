@@ -1117,8 +1117,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("a_pinned_family_lists_its_compiled_weights_and_faces", |b| {
         b.iter(do_a_pinned_family_lists_its_compiled_weights_and_faces)
     });
-    c.bench_function("no_compiled_face_is_variable", |b| {
-        b.iter(do_no_compiled_face_is_variable)
+    c.bench_function(
+        "only_the_default_face_is_variable_and_its_pin_spans_its_axis",
+        |b| b.iter(do_only_the_default_face_is_variable_and_its_pin_spans_its_axis),
+    );
+    c.bench_function("the_font_system_holds_the_compiled_faces_alone", |b| {
+        b.iter(do_the_font_system_holds_the_compiled_faces_alone)
     });
     c.bench_function(
         "no_compiled_family_has_a_slant_at_a_weight_its_other_slant_lacks",
@@ -1133,13 +1137,28 @@ fn criterion_benchmark(c: &mut Criterion) {
         "the_regeneration_script_subsets_exactly_the_listed_code_points",
         |b| b.iter(do_the_regeneration_script_subsets_exactly_the_listed_code_points),
     );
-    c.bench_function("every_built_in_ornament_is_an_ornament_face_glyph", |b| {
-        b.iter(do_every_built_in_ornament_is_an_ornament_face_glyph)
+    c.bench_function(
+        "the_ornament_faces_hold_no_code_point_the_default_face_holds",
+        |b| b.iter(do_the_ornament_faces_hold_no_code_point_the_default_face_holds),
+    );
+    c.bench_function("every_built_in_glyph_is_held_by_a_compiled_fallback_face", |b| {
+        b.iter(do_every_built_in_glyph_is_held_by_a_compiled_fallback_face)
+    });
+    c.bench_function("each_fallback_names_its_faces_family_at_every_weight", |b| {
+        b.iter(do_each_fallback_names_its_faces_family_at_every_weight)
+    });
+    // The fallback shaped (#228, #297): ornaments pinned and unpinned at
+    // every weight, and text that must not reach an ornament face.
+    c.bench_function("a_pinned_span_draws_each_ornament_in_its_compiled_face", |b| {
+        b.iter(do_a_pinned_span_draws_each_ornament_in_its_compiled_face)
     });
     c.bench_function(
-        "each_ornament_fallback_names_its_faces_family_at_every_weight",
-        |b| b.iter(do_each_ornament_fallback_names_its_faces_family_at_every_weight),
+        "an_unpinned_span_draws_each_ornament_in_its_compiled_face_at_every_weight",
+        |b| b.iter(do_an_unpinned_span_draws_each_ornament_in_its_compiled_face_at_every_weight),
     );
+    c.bench_function("no_text_glyph_is_drawn_by_an_ornament_face", |b| {
+        b.iter(do_no_text_glyph_is_drawn_by_an_ornament_face)
+    });
     // The patched font fallback (#304): every oracle text, and a long
     // word of each, shaped in five faces with both merges; and one word
     // of letters pinned to a face that holds none of them, shaped with

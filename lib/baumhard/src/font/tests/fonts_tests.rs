@@ -8,6 +8,7 @@
 
 use cosmic_text::SwashCache;
 
+use crate::font::fallback::DEFAULT_FACE;
 use crate::font::fonts;
 use crate::font::fonts::{
     acquire_font_system_write, app_font_by_family, family_name_of, list_loaded_families,
@@ -604,17 +605,20 @@ fn has_fvar(data: &[u8]) -> bool {
 }
 
 #[test]
-fn test_no_compiled_face_is_variable() {
-    do_no_compiled_face_is_variable();
+fn test_only_the_default_face_is_variable_and_its_pin_spans_its_axis() {
+    do_only_the_default_face_is_variable_and_its_pin_spans_its_axis();
 }
 
-/// [`fonts::PinnedFamily`] lists a family's static weights, and
-/// cosmic-text also keeps a pin at a weight a variable face's `wght` axis
-/// covers. The weights listed are all the weights a family can be drawn
-/// at only while no compiled face is variable; a variable face added
-/// later must widen the rule first. The scanner is checked on a planted
-/// `fvar` table before it is trusted with the compiled set.
-pub fn do_no_compiled_face_is_variable() {
+/// [`fonts::PinnedFamily`] lists a family's static weights and the `wght`
+/// axes of its variable faces, since cosmic-text keeps a pin at any
+/// weight a variable face's axis covers. The one variable compiled face
+/// is the default face (#228), Inter, whose axis runs from 100 to 900: a
+/// span pinned to it is drawn at the weight it asks for, 250 and 350
+/// included, where its static default weight alone (400) would draw both
+/// at 400. A static family keeps CSS's nearest weight. A variable face
+/// added later is red here until it is listed. The scanner is checked on
+/// a planted `fvar` table before it is trusted with the compiled set.
+pub fn do_only_the_default_face_is_variable_and_its_pin_spans_its_axis() {
     let mut planted = vec![0u8, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
     planted.extend_from_slice(b"fvar");
     planted.extend_from_slice(&[0; 12]);
@@ -622,100 +626,96 @@ pub fn do_no_compiled_face_is_variable() {
     planted[12..16].copy_from_slice(b"glyf");
     assert!(!has_fvar(&planted), "control: another table is not");
     let mut read = 0;
+    let mut variable = Vec::new();
     for (font, source) in fonts::FONT_SOURCES.iter() {
         let cosmic_text::fontdb::Source::Binary(data) = source else {
             continue;
         };
         let data: &[u8] = (**data).as_ref();
-        assert!(!has_fvar(data), "{font:?} is a variable font");
+        if has_fvar(data) {
+            variable.push(*font);
+        }
         read += 1;
     }
     assert!(read >= 50, "precondition: the compiled sources are read ({read})");
+    assert_eq!(variable, vec![DEFAULT_FACE.0], "the variable compiled faces");
+    fonts::init();
+    let (inter, silhous) = {
+        let fs = acquire_font_system_write("fonts_tests::do_*");
+        (
+            fonts::pinned_family(&fs, DEFAULT_FACE.0).unwrap(),
+            fonts::pinned_family(&fs, AppFont::SilhousTwo).unwrap(),
+        )
+    };
+    assert_eq!(inter.weights, vec![400], "precondition: Inter's static weight");
+    assert_eq!(inter.axes, vec![(100, 900)], "Inter's wght axis");
+    for weight in [100, 250, 350, 400, 700, 900] {
+        assert_eq!(inter.weight_for(weight), weight, "Inter at {weight}");
+    }
+    assert_eq!(inter.weight_for(950), 900, "beyond its axis, its heaviest");
+    assert_eq!(silhous.axes, Vec::new(), "a static family has no axis");
+    assert_eq!(silhous.weight_for(250), 400);
 }
 
-/// Ruling R30.1: no face but a compiled one bears a compiled family's
-/// name, so a pin names the compiled faces on every machine. The test
-/// build registers a stand-in for a host face with a compiled family's
-/// name and weight (`SHADOWING_DECOY`, "SilhousTwo" at 400, Galatia SIL's
-/// outlines) ahead of the compiled set in the database, as the host's
-/// faces are; loading removes it, and a SilhousTwo span is drawn in the
-/// compiled SilhousTwo. Plain, not a `do_*()` pair: it reads the
-/// test-build record of what loading removed.
 #[test]
-fn test_no_face_but_a_compiled_one_bears_a_compiled_family_name() {
-    fonts::init();
-    let removed = fonts::SHADOWING_FACES_REMOVED
-        .get()
-        .expect("precondition: the fonts are loaded");
-    assert!(
-        removed.iter().any(|name| name == fonts::SHADOWING_DECOY),
-        "precondition: the stand-in host face was registered and removed ({removed:?})"
-    );
-    // Read everything under the guard, and assert once it is released, so
-    // a failure here does not poison the lock for the tests beside it.
-    let (shadowing, families, pin, drawn) = {
-        let mut fs = acquire_font_system_write("fonts_tests::shadowing");
-        let compiled: Vec<cosmic_text::fontdb::ID> = fonts::COMPILED_FONT_ID_MAP
-            .values()
-            .flat_map(|ids| ids.iter().copied())
-            .collect();
-        let names: Vec<String> = compiled
-            .iter()
-            .filter_map(|id| fs.db().face(*id))
-            .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
-            .collect();
-        let shadowing: Vec<String> = fs
-            .db()
+fn test_the_font_system_holds_the_compiled_faces_alone() {
+    do_the_font_system_holds_the_compiled_faces_alone();
+}
+
+/// #228: the font system is built from the compiled faces and nothing of
+/// the host, so every face in it is a compiled one, on every machine, and
+/// a pin can be met by no face but its family's compiled ones (what ruling
+/// R30.1 once removed host faces for). The default face is named for every
+/// generic family, so text that pins none asks for it by name. The reader
+/// is held first to a list of compiled faces with Galatia SIL's left out,
+/// which it must find. `font_state`'s host test runs the same build under
+/// a host with no fonts and one with planted fonts.
+pub fn do_the_font_system_holds_the_compiled_faces_alone() {
+    use cosmic_text::fontdb::Family;
+    let strays = |fs: &cosmic_text::FontSystem, compiled: &[cosmic_text::fontdb::ID]| -> Vec<String> {
+        fs.db()
             .faces()
             .filter(|face| !compiled.contains(&face.id))
-            .filter(|face| face.families.iter().any(|(name, _)| names.contains(name)))
             .map(|face| face.post_script_name.clone())
-            .collect();
-        let families: Vec<(AppFont, String)> = fonts::COMPILED_FONT_ID_MAP
-            .iter()
-            .filter_map(|(font, ids)| {
-                let face = fs.db().face(*ids.first()?)?;
-                Some((*font, face.families.first()?.0.clone()))
-            })
-            .collect();
-        // What a SilhousTwo pin draws "ab" in.
-        let pin = fonts::pinned_family(&fs, AppFont::SilhousTwo).unwrap();
-        let mut buffer = cosmic_text::Buffer::new(&mut fs, cosmic_text::Metrics::new(16.0, 20.0));
-        buffer.set_text(
-            "ab",
-            &fonts::regular_attrs(Some(&pin)),
-            cosmic_text::Shaping::Advanced,
-            None,
-        );
-        buffer.shape_until_scroll(&mut fs, false);
-        let drawn: Vec<(cosmic_text::fontdb::ID, Option<String>)> = buffer
-            .layout_runs()
-            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.font_id).collect::<Vec<_>>())
-            .map(|id| (id, fs.db().face(id).map(|info| info.post_script_name.clone())))
-            .collect();
-        (shadowing, families, pin, drawn)
+            .collect()
     };
-    assert_eq!(
-        shadowing,
-        Vec::<String>::new(),
-        "faces not compiled in that bear a compiled family's name"
+    fonts::init();
+    let compiled: Vec<cosmic_text::fontdb::ID> = fonts::COMPILED_FONT_ID_MAP
+        .values()
+        .flat_map(|ids| ids.iter().copied())
+        .collect();
+    let galatia = &fonts::COMPILED_FONT_ID_MAP[&AppFont::GalatiaSIL];
+    let without_galatia: Vec<cosmic_text::fontdb::ID> = compiled
+        .iter()
+        .filter(|id| !galatia.contains(id))
+        .copied()
+        .collect();
+    let fs = acquire_font_system_write("fonts_tests::do_*");
+    let (control, strays, total, generic) = (
+        strays(&fs, &without_galatia),
+        strays(&fs, &compiled),
+        fs.db().len(),
+        [
+            Family::SansSerif,
+            Family::Serif,
+            Family::Monospace,
+            Family::Cursive,
+            Family::Fantasy,
+        ]
+        .map(|family| fs.db().family_name(&family).to_string()),
     );
-    // A map naming a compiled family resolves to its compiled face, not to
-    // `Any`, as it would were a host face of that name met first.
+    drop(fs);
     assert!(
-        families.len() >= 50,
-        "precondition: the compiled families are read"
+        control.iter().any(|name| name == "GalatiaSIL"),
+        "control: a face left out is found ({control:?})"
     );
-    for (font, name) in families {
-        let resolved = fonts::app_font_by_family(&name);
-        assert!(
-            resolved.is_some_and(|resolved| resolved != AppFont::Any),
-            "{font:?}'s family {name:?} resolves to {resolved:?}"
-        );
-    }
-    assert_eq!(drawn.len(), 2, "precondition: two glyphs");
-    for (id, name) in drawn {
-        assert!(pin.faces.contains(&id), "a SilhousTwo glyph is drawn in {name:?}");
+    assert!(
+        total >= 50,
+        "precondition: the compiled faces are loaded ({total})"
+    );
+    assert_eq!(strays, Vec::<String>::new(), "faces not compiled in");
+    for name in generic {
+        assert_eq!(name, DEFAULT_FACE.1, "a generic family names the default face");
     }
 }
 

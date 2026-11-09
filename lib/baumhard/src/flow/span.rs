@@ -83,7 +83,8 @@ pub fn point_size(style: &ResolvedText) -> f32 {
 ///   caller pins the span's `AppFont` (it resolves the family once,
 ///   against the font system it holds). `None` keeps cosmic-text's
 ///   default family — what an `AppFont::Any` span asks for, or a face
-///   the font system does not know.
+///   the font system does not know — which the font system names the
+///   default face, Inter (#228).
 /// - **Size:** through [`Attrs::metrics`], at `scale ×` [`point_size`],
 ///   clamped to the shaper's domain, with a line height
 ///   [`LINE_HEIGHT_FACTOR`] times that.
@@ -91,8 +92,9 @@ pub fn point_size(style: &ResolvedText) -> f32 {
 ///   — on a pinned span, the nearest weight its family's compiled faces
 ///   have ([`PinnedFamily::weight_for`], CSS Fonts 4 §5.2, nothing
 ///   synthesized): cosmic-text keeps a pin only at a weight the family
-///   has, and would otherwise draw the span in whatever host face has
-///   the exact weight asked for (ruling R30). **Slant** `Style::Italic`
+///   has, and would otherwise draw the span in another face that has
+///   the weight asked for, the variable default face among them (ruling
+///   R30). **Slant** `Style::Italic`
 ///   when the style is italic: the matcher keeps a pinned face whatever
 ///   its slant, so the slant needs no resolving. And the style's
 ///   **color**.

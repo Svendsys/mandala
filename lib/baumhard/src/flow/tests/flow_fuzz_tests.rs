@@ -115,14 +115,15 @@ fn test_generated_flows_hold_every_flow_property() {
     }
 }
 
-/// The sweep above over [`every_face`]: `faces()` and the ornament
-/// fallback's two (#297), which a map's `font` can pin as it pins any
-/// other. `faces()` stays as it is, since every committed structured seed
-/// and finding chose its faces from that list; this sweep and the
-/// flow_structured_every_face target are where a span pins `Mandala
-/// Ornaments` or `Mandala Emoji`, the second the first compiled face with
-/// no outline and no space. The seeds are other inputs than the sweep
-/// above's, the list being longer.
+/// The sweep above over [`every_face`]: `faces()`, the ornament
+/// fallback's two (#297) and the default face (#228), which a map's
+/// `font` can pin as it pins any other. `faces()` stays as it is, since
+/// every committed structured seed and finding chose its faces from that
+/// list; this sweep and the flow_structured_every_face target are where a
+/// span pins `Mandala Ornaments`, `Mandala Emoji` — the first compiled
+/// face with no outline and no space — or `Inter Variable`, the first
+/// variable one. The seeds are other inputs than the sweep above's, the
+/// list being longer.
 ///
 /// Precondition: each fallback face is pinned by some seed's spans or
 /// flow, so the sweep cannot pass without meeting them. Control: with
@@ -137,7 +138,10 @@ fn test_generated_flows_over_every_face_hold_every_flow_property() {
             Err(why) => panic!("seed {seed}: {why}"),
         }
     }
-    for (font, _) in crate::font::fallback::ORNAMENT_FALLBACK {
+    for (font, _) in crate::font::fallback::ORNAMENT_FALLBACK
+        .iter()
+        .chain(std::iter::once(&crate::font::fallback::DEFAULT_FACE))
+    {
         let times = pinned.iter().filter(|pin| *pin == font).count();
         assert!(
             times > 0,
@@ -694,33 +698,34 @@ fn test_a_tab_the_up_front_check_lets_through_is_laid_out_again_as_a_space() {
 /// Ruling R30: a span pinned to a family, at a weight the family's
 /// compiled faces lack, is drawn in that family at the nearest weight it
 /// has — on every machine. Before R30 cosmic-text skipped the pin and
-/// drew it in any host face of the exact weight: the CI runner's
-/// `DejaVuSans-ExtraLight` for SilhousTwo at 200. The test build stands
-/// in for such a host on every machine: it registers a face at 200 (and
-/// at every other weight but 400 and 700) in cosmic-text's first common
-/// fallback family (`fonts::register_host_decoys`). This is the style
-/// the R24 finding was shaped in, and the control that the zero-width
-/// tests' precondition bites.
+/// drew it in any face of the exact weight: the CI runner's
+/// `DejaVuSans-ExtraLight` for SilhousTwo at 200. Since #228 the face
+/// that would take it is the default face, the first face of the
+/// fallback, whose `wght` axis covers 200 and which holds every letter
+/// of the text. This is the style the R24 finding was shaped in, and the
+/// control that the zero-width tests' precondition bites.
 #[test]
 fn test_a_span_at_a_weight_its_family_lacks_is_drawn_in_its_family() {
-    use crate::font::fonts::{pinned_family, DECOY_FAMILY};
+    use crate::font::fallback::DEFAULT_FACE;
+    use crate::font::fonts::pinned_family;
     let face = ResolvedText {
         weight: Weight::new(200).unwrap(),
         italic: true,
         ..zero_width_space_style()
     };
-    let (decoys, pin) = with_fonts(|fs| {
+    let (default, pin) = with_fonts(|fs| {
         let fs: &crate::font::FontSystem = fs.fonts();
-        let decoys = fs
-            .db()
-            .faces()
-            .filter(|info| info.weight.0 == 200 && info.families.iter().any(|(name, _)| name == DECOY_FAMILY))
-            .count();
-        (decoys, pinned_family(fs, AppFont::SilhousTwo))
+        (
+            pinned_family(fs, DEFAULT_FACE.0),
+            pinned_family(fs, AppFont::SilhousTwo),
+        )
     });
     assert!(
-        decoys > 0,
-        "precondition: a host face at 200 the matcher falls back to"
+        default.is_some_and(|default| default
+            .axes
+            .iter()
+            .any(|(lightest, heaviest)| (*lightest..=*heaviest).contains(&200))),
+        "precondition: a face at 200 the matcher falls back to"
     );
     let pin = pin.expect("precondition: SilhousTwo has a family");
     assert_eq!(

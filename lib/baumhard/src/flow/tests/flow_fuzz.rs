@@ -1159,10 +1159,7 @@ fn plain_style() -> ResolvedText {
 /// and by `test_generated_flows_over_every_face_hold_every_flow_property`.
 /// A face a map can pin that this list lacks belongs there, not here.
 pub(crate) fn faces() -> Vec<AppFont> {
-    let fallback: Vec<AppFont> = crate::font::fallback::ORNAMENT_FALLBACK
-        .iter()
-        .map(|(font, _)| *font)
-        .collect();
+    let fallback: Vec<AppFont> = later_faces().collect();
     let mut faces: Vec<AppFont> = COMPILED_FONT_ID_MAP
         .iter()
         .filter(|(font, ids)| !ids.is_empty() && !fallback.contains(font))
@@ -1172,19 +1169,28 @@ pub(crate) fn faces() -> Vec<AppFont> {
     faces
 }
 
-/// `faces()`, then the ornament fallback's faces (#297), in
+/// The faces compiled in after the seeds [`faces`] picks from were
+/// committed, which it leaves out for that reason: the ornament
+/// fallback's (#297), in
 /// [`ORNAMENT_FALLBACK`](crate::font::fallback::ORNAMENT_FALLBACK)'s
-/// order: every face a map can pin. `Mandala Emoji` is the first compiled
-/// face with no outline at all and no space, the kind of face unlike the
-/// others that gave the R24 findings, and both are on the untrusted
-/// surface, since a map's `font` can name either.
+/// order, then the default face (#228).
+fn later_faces() -> impl Iterator<Item = AppFont> {
+    crate::font::fallback::ORNAMENT_FALLBACK
+        .iter()
+        .chain(std::iter::once(&crate::font::fallback::DEFAULT_FACE))
+        .map(|(font, _)| *font)
+}
+
+/// `faces()`, then [`later_faces`]: every face a map can pin. `Mandala
+/// Emoji` is the first compiled face with no outline at all and no space,
+/// the kind of face unlike the others that gave the R24 findings; the
+/// default face, Inter, the first variable one; and all three are on the
+/// untrusted surface, since a map's `font` can name any of them. Adding a
+/// face here moves the flow_structured_every_face seeds' faces, so its
+/// `pins_*` seeds are drawn again with it (#228).
 pub fn every_face() -> Vec<AppFont> {
     let mut faces = faces();
-    faces.extend(
-        crate::font::fallback::ORNAMENT_FALLBACK
-            .iter()
-            .map(|(font, _)| *font),
-    );
+    faces.extend(later_faces());
     faces
 }
 
@@ -1764,9 +1770,9 @@ fn cluster(line: &str, glyph: &crate::font::LayoutGlyph) -> String {
 ///
 /// Without the weight resolved within the family
 /// ([`PinnedFamily::weight_for`](crate::font::fonts::PinnedFamily::weight_for)),
-/// a span at a weight its family lacks is drawn in any host face of that
-/// exact weight; the test build registers such faces on every machine
-/// (`fonts::register_host_decoys`), so this property catches it there.
+/// a span at a weight its family lacks is drawn in another face that has
+/// that weight: the default face, whose axis covers every weight (#228),
+/// so this property catches it on every machine.
 pub fn shapes_in_pinned_faces(
     spans: &[FlowSpan<'_>],
     glyphs: impl IntoIterator<Item = (cosmic_text::fontdb::ID, usize, String)>,

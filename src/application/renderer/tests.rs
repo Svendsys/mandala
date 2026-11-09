@@ -1184,11 +1184,12 @@ fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
 
     let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (advance)");
 
-    // A light horizontal rule and a full-block, which are not the
-    // same width in any face this ships with. Both single-glyph, so
-    // sum and max agree and this pair pins only the "max across the
-    // set" half.
-    let (narrow, wide) = ("\u{2500}", "\u{2588}");
+    // A light horizontal rule, which Mandala Ornaments draws, and a
+    // `W`, which the default face draws wider (#228: no compiled face
+    // holds the full block `█` this pair used, which a host face drew).
+    // Both single-glyph, so sum and max agree and this pair pins only
+    // the "max across the set" half.
+    let (narrow, wide) = ("\u{2500}", "W");
     let (_, narrow_w, narrow_n) = shape_cluster_advances(&mut fs, narrow, size);
     let (_, wide_w, wide_n) = shape_cluster_advances(&mut fs, wide, size);
     assert!(narrow_w > 0.0 && wide_w > 0.0, "both clusters must shape");
