@@ -91,7 +91,22 @@ impl FrameField {
         Ok(field)
     }
 
-    /// The op that writes it.
+    /// Write it into `style`: the map's default frame's
+    /// (`defaults frame.<key>=`, and a `defaults` preview).
+    pub(crate) fn write(self, style: &mut FrameStyle) {
+        match self {
+            FrameField::Start(start) => style.start = start,
+            FrameField::Direction(direction) => style.direction = direction,
+            FrameField::Fit(fit) => style.fit = fit,
+            FrameField::Gap(gap) => style.gap = gap,
+            FrameField::Inset(inset) => style.inset = inset,
+            FrameField::Span(span) => style.ring_layout.span = span,
+            FrameField::Sides(sides) => style.ring_layout.sides = sides,
+            FrameField::Spacing(spacing) => style.ring_layout.spacing = spacing,
+        }
+    }
+
+    /// The op that writes it on a frame.
     fn op(&self) -> FrameOp {
         match self {
             FrameField::Start(start) => FrameOp::SetStart(*start),
@@ -361,10 +376,12 @@ pub(crate) fn delete_ring(doc: &MindMapDocument, index: usize) -> Steps {
 /// The label of a frame preview's stage and of the entry its commit makes.
 pub(crate) const PREVIEW_LABEL: &str = "frame preview";
 
-/// Stage `fields` — each a frame field's key and its value — on the frame
-/// `target` names, as the preview: the selected nodes' frames, or the
-/// map's default frame, whose defaults are replaced with those fields
-/// changed (`map::defaults`, `frame.<key>`). The preview's transaction
+/// Stage `fields` — each a frame field's key and its value, read by
+/// [`FrameField::read`] whichever the target, so both take the same
+/// fields — on the frame `target` names, as the preview: the selected
+/// nodes' frames, or the map's default frame, whose defaults are
+/// replaced with those fields changed (`frame.<key>`,
+/// [`FrameField::write`]). The preview's transaction
 /// is opened first when none is open (D28: refused while another
 /// interaction holds the document). A second preview replaces the
 /// first, as a stage replaces a stage.
@@ -376,23 +393,20 @@ pub(crate) fn preview(
 ) -> Result<(), super::Refused> {
     use baumhard::document::writer::transaction::TransactionKind;
     use baumhard::document::writer::EditRequest;
-    let steps = match target {
-        FramePreviewTarget::Node => fields
-            .iter()
-            .map(|(key, value)| FrameField::read(doc.doc(), key, value))
-            .collect::<Result<Vec<_>, _>>()
-            .and_then(|fields| set(doc, &fields)),
-        FramePreviewTarget::Defaults => {
-            let keys: Vec<String> = fields.iter().map(|(key, _)| format!("frame.{key}")).collect();
-            let changes: Vec<(&str, &str)> = keys
-                .iter()
-                .zip(fields)
-                .map(|(key, (_, value))| (key.as_str(), *value))
-                .collect();
-            super::map::defaults(doc, &changes)
-        }
-    }
-    .map_err(super::Refused::Because)?;
+    let steps = fields
+        .iter()
+        .map(|(key, value)| FrameField::read(doc.doc(), key, value))
+        .collect::<Result<Vec<_>, _>>()
+        .and_then(|fields| match target {
+            FramePreviewTarget::Node => set(doc, &fields),
+            FramePreviewTarget::Defaults => super::map::replace(doc, |defaults| {
+                fields
+                    .into_iter()
+                    .for_each(|field| field.write(&mut defaults.frame));
+                Ok(())
+            }),
+        })
+        .map_err(super::Refused::Because)?;
     let began = match doc.open_interaction() {
         None if doc.begin(source, TransactionKind::Interactive, Interaction::FramePreview) => true,
         Some(Interaction::FramePreview) => false,

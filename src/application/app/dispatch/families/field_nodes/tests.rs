@@ -1127,3 +1127,72 @@ fn test_a_font_on_a_paths_spans_and_a_selected_span_does_not_depend_on_the_order
     }
     assert_eq!(saved[0], saved[1], "the same document either way");
 }
+
+/// **Both frame preview targets take the same fields**, read by
+/// `FrameField::read` whichever the target: every frame field stages on
+/// the selected node's frame and on the map's default frame, #291's
+/// per-frame `span`, `sides` and `spacing` among them, and `visible`,
+/// which is not a frame field, is refused by both. The default frame's
+/// `span`, `sides` and `spacing` commit as one entry with the bytes
+/// written here. Control: reading the defaults target as `defaults
+/// frame.<key>=` took `visible` there and not on a node.
+#[test]
+fn test_both_frame_preview_targets_take_the_same_fields() {
+    use crate::application::fields::frame::FIELD_KEYS;
+    let samples = [
+        ("start", "top-left"),
+        ("direction", "ccw"),
+        ("fit", "spread"),
+        ("gap", "2"),
+        ("inset", "1"),
+        ("span", "natural"),
+        ("sides", "✦"),
+        ("spacing", "2"),
+    ];
+    assert_eq!(samples.map(|(key, _)| key), FIELD_KEYS, "a sample of every field");
+    let preview = |target_kind, field: &str, value: &str| Action::SetFramePreview {
+        target_kind,
+        field: field.into(),
+        value: value.into(),
+    };
+    let mut doc = fixture();
+    doc.selection.select_only(node(&doc, 1));
+    for target in [FramePreviewTarget::Node, FramePreviewTarget::Defaults] {
+        for (key, value) in samples {
+            assert_eq!(
+                run(&preview(target, key, value), &mut doc),
+                DispatchOutcome::Handled,
+                "{target:?} previews {key}={value}"
+            );
+            assert_eq!(
+                run(&Action::CancelFramePreview, &mut doc),
+                DispatchOutcome::Handled
+            );
+        }
+        assert_eq!(
+            run(&preview(target, "visible", "false"), &mut doc),
+            DispatchOutcome::Unhandled,
+            "{target:?}: visible is not a frame field"
+        );
+        assert_eq!(bytes(&doc), FIXTURE, "{target:?}: every preview cancelled");
+    }
+
+    let entries = doc.doc().history().count();
+    run_line(
+        &mut doc,
+        "frame preview target=defaults span=natural sides=✦ spacing=2",
+    )
+    .expect("stages");
+    run_line(&mut doc, "frame commit").expect("commits");
+    assert_eq!(
+        bytes(&doc),
+        expected(&[(
+            "      \"size\": 14.0\n    }\n",
+            "      \"size\": 14.0\n    },\n    \"frame\": {\n      \"span\": \"natural\",\n      \"sides\": \"✦\",\n      \"spacing\": 2.0\n    }\n"
+        )]),
+        "the default frame's span, sides and spacing"
+    );
+    assert_eq!(doc.doc().history().count(), entries + 1, "one entry");
+    doc.undo();
+    assert_eq!(bytes(&doc), FIXTURE);
+}

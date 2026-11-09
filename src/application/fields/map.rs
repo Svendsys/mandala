@@ -21,6 +21,7 @@ use baumhard::document::mutation::compose;
 use baumhard::document::mutation::ops::{DefaultsOp, DocMutation, ThemeOp};
 use baumhard::document::values::{ColorRef, FontSize, VarId};
 
+use super::frame::{FrameField, FIELD_KEYS};
 use super::values::{self, or_reset};
 use super::Steps;
 use crate::application::document::MindMapDocument;
@@ -187,25 +188,17 @@ pub(crate) fn set_default(
         "node" => text(doc, &mut defaults.node.text, field, value, false)?,
         "section" => text(doc, &mut defaults.section, field, value, false)?,
         "span" => text(doc, &mut defaults.span, field, value, false)?,
-        "frame" => {
-            let f = &mut defaults.frame;
-            match field {
-                "visible" => f.visible = or_reset(value, values::boolean)?,
-                "start" => f.start = or_reset(value, values::start)?,
-                "direction" => f.direction = or_reset(value, values::direction)?,
-                "fit" => f.fit = or_reset(value, values::fit)?,
-                "gap" => f.gap = num(value)?,
-                "inset" => f.inset = num(value)?,
-                _ => {
-                    if !layout(doc, &mut f.ring_layout, field, value)? {
-                        return text(doc, &mut f.text, field, value, true)?
-                            .then_some(())
-                            .ok_or_else(unknown);
-                    }
-                }
+        "frame" => match field {
+            "visible" => {
+                defaults.frame.visible = or_reset(value, values::boolean)?;
+                true
             }
-            true
-        }
+            _ if FIELD_KEYS.contains(&field) => {
+                FrameField::read(doc, field, value)?.write(&mut defaults.frame);
+                true
+            }
+            _ => text(doc, &mut defaults.frame.text, field, value, true)?,
+        },
         "ring" => {
             let r = &mut defaults.ring;
             match field {
@@ -254,14 +247,25 @@ pub(crate) fn set_default(
 /// The steps that replace the defaults with every `(key, value)` of
 /// `changes` set ([`set_default`]) and every other field as it is.
 pub(crate) fn defaults(doc: &MindMapDocument, changes: &[(&str, &str)]) -> Steps {
-    let d = doc.doc();
     if changes.is_empty() {
         return Err("defaults: give <group>.<field>=<value>".to_string());
     }
+    let d = doc.doc();
+    replace(doc, |defaults| {
+        changes
+            .iter()
+            .try_for_each(|&(key, value)| set_default(d, defaults, key, value))
+    })
+}
+
+/// The steps that replace the defaults with `edit` made to them.
+pub(crate) fn replace(
+    doc: &MindMapDocument,
+    edit: impl FnOnce(&mut DefaultsData) -> Result<(), String>,
+) -> Steps {
+    let d = doc.doc();
     let mut defaults = d.defaults().clone();
-    for &(key, value) in changes {
-        set_default(d, &mut defaults, key, value)?;
-    }
+    edit(&mut defaults)?;
     let (element, _) = ids::defaults(d.tree()).ok_or("defaults: the map holds no defaults")?;
     compose::set(
         d,
