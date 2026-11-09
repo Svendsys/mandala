@@ -1330,7 +1330,7 @@ fn test_a_frame_round_an_outline_whose_width_is_not_a_number_is_not_cut() {
 /// glyphs of its text, what one frame lays inside the fuzz timeout: 247
 /// `track`s and 340,712 lookups on the second machine. Since ruling
 /// R46.3 the harness lays a frame from what its work fits inside the
-/// timeout, at most 150 glyphs; the replay lays its text as it was found,
+/// timeout, at most 150 glyphs (152 since #304); the replay lays its text as it was found,
 /// cut to 210 characters, 209 glyphs, at R44's 320
 /// ([`FOUND_FRAME_GLYPHS`](crate::flow::tests::flow_fuzz::FOUND_FRAME_GLYPHS)),
 /// so its frames are as they were.
@@ -1752,12 +1752,28 @@ fn test_a_long_fuzzed_ornament_fits_the_per_input_bound() {
     );
 }
 
+/// `n` distinct noncharacters, code points no face holds on any host: the
+/// 32 of U+FDD0 to U+FDEF, then the last two of each plane, U+FFFE and
+/// U+FFFF first. Each is a pass of the shaper through every face, its
+/// first time (`halves::SHAPE_NOTDEF_STEPS`, #304), where one code point
+/// repeated is one pass however often.
+fn noncharacters(n: usize) -> String {
+    (0xFDD0..=0xFDEF_u32)
+        .chain((0..17).flat_map(|plane: u32| [plane * 0x1_0000 + 0xFFFE, plane * 0x1_0000 + 0xFFFF]))
+        .filter_map(char::from_u32)
+        .take(n)
+        .collect()
+}
+
 /// R50.3, R45.1: a long side ornament no frame could lay inside the
 /// timeout is cut until a frame of no text beside it fits, on every host:
-/// fifty U+FFFE, a noncharacter no face holds, each `.notdef` weighed at
-/// `SHAPE_NOTDEF_STEPS` twice, take a frame of no text to 624,221 glyph
-/// steps, past the 464,396 one input may take; [`sides_in_time`] cuts
-/// them to what fits, some copies' worth left.
+/// fifty distinct noncharacters, code points no face holds, each a pass of
+/// the shaper through every face (`SHAPE_NOTDEF_STEPS`) each time the
+/// ornament is shaped, take a frame of no text to 484,150 glyph steps,
+/// past the 464,396 one input may take; [`sides_in_time`] cuts them to
+/// what fits, 25 of them, 403,130. (Fifty U+FFFE, one code point, is one
+/// pass however long, and fits uncut since #304, 408,098; until then each
+/// was a pass, 624,221.)
 ///
 /// Control: with the ornament left uncut, red.
 ///
@@ -1767,7 +1783,12 @@ fn test_a_long_ornament_no_face_holds_is_cut_to_fit() {
     use crate::flow::place::halves::frame_work_steps;
     use crate::flow::tests::flow_fuzz::{frame_steps, sides_in_time};
     let flow = style(16.0);
-    let given = "\u{FFFE}".repeat(50);
+    let given = noncharacters(50);
+    assert_eq!(
+        given.chars().count(),
+        50,
+        "precondition: fifty distinct noncharacters"
+    );
     let layout = RingLayout {
         sides: Some((given.clone(), Rgba::new(255, 255, 255, 255))),
         ..RingLayout::whole()
@@ -1840,12 +1861,15 @@ fn test_the_flow_properties_find_a_frame_whose_inks_touch() {
 /// R44.2, R46.3: a fuzzed frame's text is held to what its frame lays
 /// inside the timeout ([`fits_in_time`]): a long text of one face is laid
 /// from its first [`MAX_FRAME_GLYPHS`] glyphs or fewer, a short one
-/// whole, and a text of glyphs no face holds, which the shaper searches
-/// every face for, is cut shorter still, to what its frame's work fits.
+/// whole, and so is a text of sixty distinct glyphs no face holds. Its
+/// first shaping searches every face for each, but that is before its
+/// frame: the frame only reshapes it at a size, which shapes nothing
+/// (#304, `halves::resizing_steps`), so it is no heavier to lay than
+/// sixty letters. (Until #304 a frame counted each a pass again at every
+/// reshape, and cut it to what its work fit.)
 ///
-/// Controls: with no text cut, the long text's 2,000 glyphs, red; with
-/// the cut by glyphs alone, as at R44, the heavy text's frame past its
-/// share of the input's work, red.
+/// Controls: with no text cut, the long text's 2,000 glyphs, red; with a
+/// size-only reshape counted as a shaping, the heavy text cut.
 ///
 /// [`MAX_FRAME_GLYPHS`]: crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS
 /// [`fits_in_time`]: crate::flow::tests::flow_fuzz::fits_in_time
@@ -1855,8 +1879,13 @@ fn test_a_fuzzed_frame_is_held_to_what_one_frame_lays_in_the_timeout() {
     use crate::flow::tests::flow_fuzz::{fits_in_time, frame_steps, framed, MAX_FRAME_GLYPHS};
     let flow = style(16.0);
     let fits = |run: &crate::flow::ShapedRun| fits_in_time(run, None, 1, 0);
-    // A private-use code point no face here holds (`.notdef`).
-    let heavy_text = "\u{10FFFD}".repeat(60);
+    // Sixty noncharacters, distinct code points no face holds (`.notdef`).
+    let heavy_text = noncharacters(60);
+    assert_eq!(
+        heavy_text.chars().count(),
+        60,
+        "precondition: sixty distinct noncharacters"
+    );
     let (long, short, heavy) = with_fonts(|fs| {
         let cut = |text: String, fs: &mut crate::font::fonts::FontSystemLease| {
             let kept = framed(&[text], std::slice::from_ref(&flow), 1.0, fs, &fits);
@@ -1876,8 +1905,8 @@ fn test_a_fuzzed_frame_is_held_to_what_one_frame_lays_in_the_timeout() {
     );
     assert_eq!(short.2, ["word ".repeat(20)], "a short text is laid whole");
     assert!(
-        heavy.2[0].chars().count() < 60 && heavy.1 <= frame_steps(1),
-        "the heavy text is cut to what its frame's work fits: {} of 60 characters, {} glyph steps of {}",
+        heavy.2[0] == heavy_text && heavy.1 <= frame_steps(1),
+        "a text of sixty glyphs no face holds is laid whole: {} of 60 characters, {} glyph steps of {}",
         heavy.2[0].chars().count(),
         heavy.1,
         frame_steps(1)
@@ -1993,8 +2022,9 @@ fn test_a_rings_cap_holds_the_copy_its_tables_leave() {
 /// that a frame at the floor of its budget fits that share at all — no
 /// cut can make a frame lighter than its budget's floor — and that
 /// [`MAX_FRAME_GLYPHS`] is the most glyphs of the lightest text, one
-/// face, with a short side ornament, that fit: 150, 462,949 glyph steps,
-/// 14.95 s; 151 take 466,014, 15.05 s.
+/// face, with a short side ornament, that fit: 152, 463,355 glyph steps,
+/// 14.97 s; 153 take 466,434, 15.07 s (150 and 151 until #304 counted a
+/// reshape at a size as no shaping).
 ///
 /// A `Repeat` ring's work (#310) fits an input's as its one budgeted
 /// placement, and not beside a frame; and [`MAX_RING_GLYPHS`] is the most
@@ -2004,7 +2034,7 @@ fn test_a_rings_cap_holds_the_copy_its_tables_leave() {
 /// — and no fewer than a copy's, so one copy always fits.
 ///
 /// Control: flow_raw's three frames an input, as before R45, red — three
-/// floor frames take 1,206,315 steps, 38.96 s.
+/// floor frames take 1,206,402 steps, 38.97 s.
 ///
 /// [`RAW_FRAMES`]: crate::flow::tests::flow_fuzz::RAW_FRAMES
 /// [`STRUCTURED_FRAMES`]: crate::flow::tests::flow_fuzz::STRUCTURED_FRAMES

@@ -2360,9 +2360,10 @@ whatever the wall clock did meanwhile and whenever virtual time began
 two independently loaded views of one document, each driven through the
 same script of a selection, a pan, a zoom, an edit and its undo, to it:
 the document's arena, the projector's layers and the dump's walk are all
-in document order, so nothing depends on an order a process chooses —
-except, until #323 lands, the font state, which shaping still reads). What the contract
-does not cover: `now_ms` itself, whose virtual origin is the
+in document order, so nothing depends on an order a process chooses; and
+shaping reads no font state that earlier shaping moves (#323), which the
+test holds by projecting every other shipped map between its two runs).
+What the contract does not cover: `now_ms` itself, whose virtual origin is the
 real reading at engagement, and anything a concurrent human does.
 
 **Also a console verb.** `clock status`, `clock real`, `clock

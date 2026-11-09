@@ -37,6 +37,13 @@ baumhard = { path = "../lib/baumhard" }
 
 [workspace]
 
+# The root manifest's patch, repeated: cargo reads `[patch]` from the
+# workspace root only, and this crate is a workspace of its own. The
+# fuzzed baumhard shapes with the same cosmic-text as the app (V1-B14,
+# #304); `baumhard::util::manifests` holds the two tables equal.
+[patch.crates-io]
+cosmic-text = { path = "../vendor/cosmic-text" }
+
 # Debug assertions and overflow checks stay on in the fuzzed build, as
 # cargo-fuzz builds by default: a `debug_assert!` that fires on an input
 # is a finding, the way it would be in `./test.sh`.

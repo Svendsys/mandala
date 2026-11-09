@@ -488,7 +488,8 @@ const SWEEP: [(&str, &[f32]); 5] = [
 /// sweep — letters and ornaments round ellipses and squares at the origin,
 /// outward and inward, the engine's cap — closes at its own budget, and
 /// `STEPS_PER_GLYPH` is at least five times the most steps a glyph any of
-/// them takes: the margin R47.1 pins for frames. A ring's glyphs are the
+/// them takes: the margin R47.1 pinned for frames, which #304 raised to
+/// eight for them. A ring's glyphs are the
 /// fewer of those it placed and those its budget was scaled by, so that
 /// neither an estimate past what it lays nor one short of it hides a
 /// ring's cost. 6.57 times, at this head: `| ·` round an ellipse 10,000

@@ -442,7 +442,7 @@ pub fn do_flow_reshape_rescales_and_keeps_the_mapping() {
             1.0,
             fs,
         );
-        let doubled = reshape(&run, 2.0, None, fs.fonts());
+        let (doubled, _) = reshape(&run, 2.0, None, fs.fonts());
         (run, doubled)
     });
     assert_eq!(doubled.glyphs.len(), 4);
@@ -466,7 +466,7 @@ pub fn do_flow_reshape_appends_a_filler_on_its_own_line() {
     let flow = style(24.0);
     let (run, filled) = with_fonts(|fs| {
         let run = real_run("ab", &style(12.0), fs);
-        let filled = reshape(&run, 1.0, Some(("~-", &flow)), fs.fonts());
+        let (filled, _) = reshape(&run, 1.0, Some(("~-", &flow)), fs.fonts());
         (run, filled)
     });
     assert_eq!(filled.glyphs.len(), 4);
@@ -794,53 +794,107 @@ pub fn do_flow_shape_run_maps_a_zwj_emoji() {
     );
 }
 
-/// Shaping's precondition (`shape_run`'s docs): `fonts::init` runs before
-/// the guard is taken. Each half runs in a fresh child process, so the
-/// compiled font table really is cold there. With the call, a cold
-/// process shapes; without it, the first face lookup registers the fonts
-/// under the lock the caller holds, and the re-entrancy check refuses it
-/// by name. Plain `#[test]`: it spawns processes and drives a panic
-/// (lib/baumhard/CONVENTIONS.md §B8, class 2).
-#[test]
-fn test_flow_shaping_needs_fonts_init_before_the_guard() {
-    use crate::font::fonts::{self, FontSystemLease};
-    // Set in a child process to say which half it runs: `init` calls
-    // `fonts::init` before taking the guard, `none` does not.
+/// Shaping without `fonts::init` (#323): what a process shapes before
+/// anything has read the compiled font table is shaped with the font
+/// system's whole set of faces, as after `init`. Until #323 the compiled
+/// faces were registered on that table's first read, so a cold process
+/// shaping first in the default family shaped without them, and one
+/// pinning a compiled family under a lease re-entered the lock the lease
+/// held. Gated on `cfg(test)` and plain (lib/baumhard/CONVENTIONS.md §B8,
+/// class 1): it runs this test binary again, which only a test build has,
+/// and reads the test build's record of the host faces loading removed.
+#[cfg(test)]
+mod cold_process {
+    use crate::document::values::FontSize;
+    use crate::flow::tests::support::{real_run, style};
+    use crate::font::fonts::{self, AppFont, FontSystemLease};
+
+    /// Set in a child process to say which half it runs: `init` calls
+    /// `fonts::init` first, `none` does not.
     const COLD_CHILD_ENV: &str = "MANDALA_FLOW_COLD_CHILD";
-    if let Ok(mode) = std::env::var(COLD_CHILD_ENV) {
-        if mode == "init" {
-            fonts::init();
-        }
+
+    /// What a child shaped, first thing in its process: the faces its font
+    /// system holds and the host faces removed for shadowing a compiled
+    /// family, then a heading in the default family (bold, 74 pt, as
+    /// testament's "Lord God") and a word pinned to a compiled face, each
+    /// as its glyphs' faces and advances.
+    fn shaped_cold() -> String {
         let mut fs = FontSystemLease::new("flow::cold");
-        let run = real_run("cold", &style(12.0), &mut fs);
-        println!("FLOW_COLD_SHAPED {}", run.glyphs.len());
-        return;
+        let heading = crate::document::resolve::ResolvedText {
+            font: AppFont::Any,
+            size: FontSize::Pt(74.0),
+            weight: crate::document::values::Weight::BOLD,
+            ..style(12.0)
+        };
+        let default_family = real_run("Lord God", &heading, &mut fs);
+        let pinned = real_run("cold", &style(12.0), &mut fs);
+        let faces = fs.fonts().db().faces().count();
+        drop(fs);
+        let removed = fonts::SHADOWING_FACES_REMOVED
+            .get()
+            .expect("precondition: the font system is built");
+        assert!(
+            removed.iter().any(|name| name == fonts::SHADOWING_DECOY),
+            "precondition: the test build's stand-in host face was registered and removed ({removed:?})"
+        );
+        let glyphs = |run: &crate::flow::ShapedRun| -> Vec<String> {
+            run.layout_glyphs()
+                .zip(&run.glyphs)
+                .map(|(laid, glyph)| format!("{:?}/{}/{}", laid.font_id, laid.glyph_id, glyph.advance))
+                .collect()
+        };
+        let (default_family, pinned) = (glyphs(&default_family), glyphs(&pinned));
+        assert_eq!(
+            (default_family.len(), pinned.len()),
+            (8, 4),
+            "precondition: each run shaped a glyph per character"
+        );
+        format!("faces {faces} removed {removed:?} | {default_family:?} | {pinned:?}")
     }
-    let name = format!(
-        "{}::test_flow_shaping_needs_fonts_init_before_the_guard",
-        module_path!()
-            .split_once("::")
-            .expect("module paths start with the crate")
-            .1
-    );
-    let child = |mode: &str| {
-        std::process::Command::new(std::env::current_exe().expect("the test binary has a path"))
-            .args(["--exact", &name, "--nocapture", "--test-threads=1"])
-            .env(COLD_CHILD_ENV, mode)
-            .output()
-            .expect("the test binary runs")
-    };
-    let warm = child("init");
-    let warm_out = String::from_utf8_lossy(&warm.stdout);
-    assert!(warm.status.success(), "{warm_out}");
-    assert!(warm_out.contains("FLOW_COLD_SHAPED 4"), "{warm_out}");
-    let cold = child("none");
-    let cold_out = format!(
-        "{}{}",
-        String::from_utf8_lossy(&cold.stdout),
-        String::from_utf8_lossy(&cold.stderr)
-    );
-    assert!(!cold.status.success(), "{cold_out}");
-    assert!(cold_out.contains("re-entrant"), "{cold_out}");
-    assert!(!cold_out.contains("FLOW_COLD_SHAPED"), "{cold_out}");
+
+    #[test]
+    fn test_flow_shaping_without_init_sees_every_compiled_face() {
+        if let Ok(mode) = std::env::var(COLD_CHILD_ENV) {
+            if mode == "init" {
+                fonts::init();
+            }
+            println!("FLOW_COLD {}", shaped_cold());
+            return;
+        }
+        let name = format!(
+            "{}::test_flow_shaping_without_init_sees_every_compiled_face",
+            module_path!()
+                .split_once("::")
+                .expect("module paths start with the crate")
+                .1
+        );
+        let child = |mode: &str| {
+            let out =
+                std::process::Command::new(std::env::current_exe().expect("the test binary has a path"))
+                    .args(["--exact", &name, "--nocapture", "--test-threads=1"])
+                    .env(COLD_CHILD_ENV, mode)
+                    .output()
+                    .expect("the test binary runs");
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(out.status.success(), "{mode}: {text}");
+            // libtest prints the test's name on the line the child's
+            // report starts, so the marker is found within a line.
+            text.lines()
+                .find_map(|line| {
+                    line.split_once("FLOW_COLD ")
+                        .map(|(_, report)| report.to_string())
+                })
+                .unwrap_or_else(|| panic!("{mode} shaped nothing: {text}"))
+        };
+        let warm = child("init");
+        let cold = child("none");
+        assert_eq!(
+            cold, warm,
+            "a process that never called `fonts::init` shaped with another set of faces than one that did"
+        );
+    }
 }

@@ -587,3 +587,87 @@ fn test_flow_budget_a_filler_past_a_spent_budget_places_a_handful() {
         "{spent} filler copies placed at a budget of 1, a handful at most"
     );
 }
+
+/// #304, from the B9 review: a frame whose text and side ornament each
+/// hold about a hundred glyphs no face holds is laid whole, without
+/// reaching its budget, both its side arcs laid. A build shapes the
+/// ornament alone and the text again beside it (`side_run`); each run's
+/// `.notdef`s are one code point, counted one pass of the shaper through
+/// every face a shaping (`halves::SHAPE_NOTDEF_STEPS`, `notdef_steps`).
+/// R27's sizing reshapes the text at a size, which shapes nothing
+/// (`halves::resizing_steps`). It spends 28,203 glyph steps of its
+/// 400,000.
+///
+/// Control: with each `.notdef` counted a pass again, as before #304, it
+/// spends 667,977, past its budget, and leaves both side arcs empty.
+#[test]
+fn test_flow_budget_a_hundred_notdefs_are_not_cut_for_budget() {
+    let text = format!("one {} two", "\u{FFFE}".repeat(100));
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(400.0, 300.0)), Shape::Ellipse);
+    let fit = FitMode::Fit { min: 0.5, max: 2.0 };
+    let layout = RingLayout {
+        sides: Some(("\u{FFFE}".repeat(100), Rgba::opaque(0, 0, 0))),
+        ..RingLayout::whole()
+    };
+    let (run, _, trace) = frame_with(&text, POINTS, &shape, &fit, &layout, false);
+    let notdefs = run.layout_glyphs().filter(|glyph| glyph.glyph_id == 0).count();
+    assert!(
+        notdefs >= 100,
+        "precondition: the text's hundred noncharacters are glyphs no face holds ({notdefs})"
+    );
+    assert!(
+        trace.spent > 0 && trace.spent < trace.budget.saturating_sub(trace.reserve) && trace.unheld.sides.is_empty(),
+        "a frame of a hundred `.notdef`s took {} glyph steps of its budget's {} (less {} held back), its sides left {:?}: cut for budget",
+        trace.spent,
+        trace.budget,
+        trace.reserve,
+        trace.unheld.sides
+    );
+}
+
+/// #304, review 5821569167: what a frame counts for the shaper's pass
+/// through every face grows with the run the pass shapes, as the pass
+/// does. A `.notdef` cluster of several code points, U+10FFF5 and a
+/// combining acute, sends its run through every face, the whole run
+/// shaped in each: after 150 letters the pass shapes some ten times the
+/// bytes it shapes after 10, and `notdef_steps` counts a pass a glyph of
+/// the line, 152 against 12. A one-code-point `.notdef` is asked about
+/// once, that code point alone, and counted one pass whatever its run.
+///
+/// Control: with the pass counted once a run, as a flat weight, the two
+/// runs count the same, red.
+#[test]
+fn test_flow_budget_a_notdef_pass_is_counted_by_its_run() {
+    use crate::flow::place::halves::{notdef_steps, SHAPE_NOTDEF_STEPS};
+    use cosmic_text::shape_work;
+    let flow = style(16.0);
+    let shaped = |text: String| {
+        with_fonts(|fs| {
+            let before = shape_work();
+            let run = real_run(&text, &flow, fs);
+            (shape_work().since(before), notdef_steps(&run), run.glyphs.len())
+        })
+    };
+    let cluster = "\u{10FFF5}\u{0301}";
+    let (short_work, short, short_glyphs) = shaped(format!("{}{cluster}", "a".repeat(10)));
+    let (long_work, long, long_glyphs) = shaped(format!("{}{cluster}", "a".repeat(150)));
+    assert!(
+        short_work.fallback_rounds > 0
+            && long_work.fallback_rounds == short_work.fallback_rounds
+            && long_work.bytes_shaped > 5 * short_work.bytes_shaped,
+        "precondition: the cluster sends each run through every face, shaping it whole in each: {short_work:?} then {long_work:?}"
+    );
+    assert_eq!(
+        (short, long),
+        (
+            SHAPE_NOTDEF_STEPS * short_glyphs,
+            SHAPE_NOTDEF_STEPS * long_glyphs
+        ),
+        "a pass is counted a glyph of its line ({short_glyphs} and {long_glyphs} glyphs)"
+    );
+    let (_, one, _) = shaped(format!("{}\u{FFFE}", "a".repeat(150)));
+    assert_eq!(
+        one, SHAPE_NOTDEF_STEPS,
+        "a one-code-point `.notdef` is one pass, whatever its run"
+    );
+}

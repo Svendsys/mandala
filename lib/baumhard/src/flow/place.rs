@@ -3155,7 +3155,7 @@ fn once<'p>(
     let (Some(filler), Some(_)) = (filler, next) else {
         return placed;
     };
-    let filled = reshape(run, 1.0, Some((filler, flow)), fs);
+    let (filled, _) = reshape(run, 1.0, Some((filler, flow)), fs);
     let text_glyphs = filled.glyphs.iter().take_while(|g| g.span != FILLER_SPAN).count();
     if text_glyphs == filled.glyphs.len() {
         return placed;
@@ -3644,7 +3644,7 @@ fn fit_to<'p>(
     let mut rounds = 0;
     let mut previous: Option<(f32, f32)> = None;
     loop {
-        let rescaled = (scale != 1.0).then(|| reshape(run, scale, None, fs));
+        let rescaled = (scale != 1.0).then(|| reshape(run, scale, None, fs).0);
         let placed_run = rescaled.as_ref().unwrap_or(run);
         let slack = if scale > low { SOLVE_TOLERANCE } else { 0.0 };
         let placed_walk = walk_for(placed_run);

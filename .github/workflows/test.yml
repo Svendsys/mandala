@@ -73,6 +73,28 @@ jobs:
           MANDALA_REQUIRE_GPU: "1"
         run: ./test.sh --lint
 
+  # `vendor/cosmic-text` is the published cosmic-text 0.19.0 plus
+  # `mandala.patch` (V1-B14, #304; vendor/cosmic-text/PATCHES.md). A path
+  # package has no checksum in the lockfile, so nothing else ties the
+  # directory to what crates.io published. This job fetches the crate,
+  # checks its sha256, applies the patch and compares the result with the
+  # directory, then runs cosmic-text's own test suite, which is not
+  # vendored, against the patched sources. Its own job, not part of
+  # `./test.sh`, because it needs the network and the gate stays offline.
+  vendored-cosmic-text:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup show
+
+      - name: vendor/cosmic-text is 0.19.0 plus its patch, and its tests pass
+        run: scripts/check_vendored_cosmic_text.sh
+
   # The workspace-hack (`crates/workspace-hack`, `.config/hakari.toml`,
   # #284) is current. It names, as a dependency of every member, each
   # third-party crate whose feature set would otherwise differ from one
