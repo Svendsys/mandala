@@ -6,9 +6,11 @@
 //! wrapper [`rich_text_spans_from_regions`]).
 //!
 //! Follows the `do_*()` / `test_*()` split from §T2.2 — every `do_*`
-//! body is benchmarkable from `benches/test_bench.rs`.
+//! body is benchmarkable from `benches/test_bench.rs`. Every body shapes
+//! with the global font system, which holds the compiled faces alone
+//! (#228), never a `FontSystem::new()`, which indexes the host's fonts.
 
-use cosmic_text::{Attrs, Color, Family, FontSystem};
+use cosmic_text::{Attrs, Color, Family};
 
 use crate::core::primitives::{ColorFontRegion, ColorFontRegions, Range};
 use crate::font::attrs::{
@@ -30,7 +32,8 @@ fn test_attrs_list_from_empty_regions_yields_no_spans() {
 /// input gives a length-0 span list.
 pub fn do_attrs_list_from_empty_regions_yields_no_spans() {
     let regions = ColorFontRegions::new_empty();
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let list = attrs_list_from_regions("hello world", &regions, &mut fs);
     assert_eq!(list.spans().len(), 0);
 }
@@ -49,7 +52,8 @@ pub fn do_attrs_list_from_single_color_region_emits_one_span() {
         None,
         Some([1.0, 0.0, 0.0, 1.0]),
     ));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let list = attrs_list_from_regions("hello world", &regions, &mut fs);
     assert_eq!(list.spans().len(), 1);
 }
@@ -73,7 +77,8 @@ pub fn do_attrs_list_from_two_regions_emits_two_spans() {
         None,
         Some([0.0, 1.0, 0.0, 1.0]),
     ));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let list = attrs_list_from_regions("hello world", &regions, &mut fs);
     assert_eq!(list.spans().len(), 2);
 }
@@ -114,16 +119,18 @@ pub fn do_attrs_list_pins_family_name_when_region_carries_app_font() {
 }
 
 #[test]
-fn test_attrs_list_falls_back_to_monospace_when_region_has_no_font() {
-    do_attrs_list_falls_back_to_monospace_when_region_has_no_font();
+fn test_attrs_list_asks_for_no_family_when_region_has_no_font() {
+    do_attrs_list_asks_for_no_family_when_region_has_no_font();
 }
 
-/// `resolve_font_family` returns `None` for a region without a
-/// font id; `attrs_list_from_regions` then forces
-/// `Family::Monospace` per its documented fallback. The matching
-/// contract for the spans helper (no pin instead of forced
-/// monospace) is in `do_rich_text_spans_no_family_pin_when_region_has_no_font`.
-pub fn do_attrs_list_falls_back_to_monospace_when_region_has_no_font() {
+/// `resolve_font_family` returns `None` for a region without a font id;
+/// `attrs_list_from_regions` then asks for no family, cosmic-text's
+/// default (`SansSerif`), which the font system names the default face —
+/// the same contract as the spans helper
+/// (`do_rich_text_spans_no_family_pin_when_region_has_no_font`). Until
+/// #228 it forced `Family::Monospace`, on which path cosmic-text tries
+/// every monospaced face before the fallback list.
+pub fn do_attrs_list_asks_for_no_family_when_region_has_no_font() {
     use cosmic_text::FamilyOwned;
 
     let mut regions = ColorFontRegions::new_empty();
@@ -132,13 +139,14 @@ pub fn do_attrs_list_falls_back_to_monospace_when_region_has_no_font() {
         None,
         Some([0.0, 0.0, 0.0, 1.0]),
     ));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let list = attrs_list_from_regions("hello world", &regions, &mut fs);
     let spans = list.spans();
     assert_eq!(spans.len(), 1);
     match &spans[0].1.family_owned {
-        FamilyOwned::Monospace => {}
-        other => panic!("expected Family::Monospace, got {:?}", other),
+        FamilyOwned::SansSerif => {}
+        other => panic!("expected cosmic-text's default family, got {:?}", other),
     }
 }
 
@@ -166,7 +174,8 @@ pub fn do_attrs_list_slice_at_zwj_grapheme_boundary() {
         None,
         Some([1.0, 0.0, 0.0, 1.0]),
     ));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let list = attrs_list_from_regions(text, &regions, &mut fs);
     let spans = list.spans();
     assert_eq!(spans.len(), 1, "one region → one span");
@@ -195,7 +204,8 @@ fn test_rich_text_spans_empty_regions_yield_single_whole_text_span() {
 /// regions" means "uniform default styling".
 pub fn do_rich_text_spans_empty_regions_yield_single_whole_text_span() {
     let regions = ColorFontRegions::new_empty();
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve("hello", &regions, &mut fs);
     let spans = rich_text_spans_from_regions(&families, 16.0, 18.0, None);
     assert_eq!(spans.len(), 1);
@@ -221,7 +231,8 @@ pub fn do_rich_text_spans_two_regions_slice_text_per_range() {
         None,
         Some([0.0, 1.0, 0.0, 1.0]),
     ));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve("hello world", &regions, &mut fs);
     let spans = rich_text_spans_from_regions(&families, 16.0, 18.0, None);
     assert_eq!(spans.len(), 2);
@@ -240,7 +251,8 @@ fn test_rich_text_spans_drop_zero_width_regions() {
 pub fn do_rich_text_spans_drop_zero_width_regions() {
     let mut regions = ColorFontRegions::new_empty();
     regions.submit_region(ColorFontRegion::new(Range::new(3, 3), None, None));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve("hello", &regions, &mut fs);
     let spans = rich_text_spans_from_regions(&families, 16.0, 18.0, None);
     assert!(spans.is_empty());
@@ -265,7 +277,8 @@ pub fn do_rich_text_spans_color_override_recolors_every_span() {
         None,
         Some([0.0, 1.0, 0.0, 1.0]),
     ));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve("abcdef", &regions, &mut fs);
     let halo = Color::rgba(255, 255, 0, 255);
     let spans = rich_text_spans_from_regions(&families, 16.0, 18.0, Some(halo));
@@ -310,11 +323,9 @@ fn test_rich_text_spans_no_family_pin_when_region_has_no_font() {
 }
 
 /// A region with `font: None` produces a span with no family pin
-/// (cosmic-text default) — the rich-text variant differs from
-/// `attrs_list_from_regions`, which forces `Family::Monospace`. The
-/// walker's pre-existing behaviour was the no-pin variant; preserving
-/// it keeps the renderer's fallback-font choice in cosmic-text's
-/// hands rather than forcing monospace on every unpinned region.
+/// (cosmic-text default), as `attrs_list_from_regions` does since #228:
+/// the default face, which the font system names for every generic
+/// family.
 pub fn do_rich_text_spans_no_family_pin_when_region_has_no_font() {
     let mut regions = ColorFontRegions::new_empty();
     regions.submit_region(ColorFontRegion::new(
@@ -322,7 +333,8 @@ pub fn do_rich_text_spans_no_family_pin_when_region_has_no_font() {
         None,
         Some([1.0, 1.0, 1.0, 1.0]),
     ));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve("abc", &regions, &mut fs);
     let spans = rich_text_spans_from_regions(&families, 16.0, 18.0, None);
     assert_eq!(spans.len(), 1);
@@ -355,7 +367,8 @@ pub fn do_rich_text_spans_clamps_out_of_range_region_end() {
         None,
         Some([1.0, 0.0, 0.0, 1.0]),
     ));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve("hello", &regions, &mut fs);
     let spans = rich_text_spans_from_regions(&families, 16.0, 18.0, None);
     assert_eq!(spans.len(), 1);
@@ -377,7 +390,8 @@ pub fn do_rich_text_spans_clamps_fully_out_of_range_region() {
         None,
         Some([1.0, 0.0, 0.0, 1.0]),
     ));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve("hi", &regions, &mut fs);
     let spans = rich_text_spans_from_regions(&families, 16.0, 18.0, None);
     assert!(spans.is_empty());
@@ -395,7 +409,8 @@ fn test_rich_text_spans_color_override_applies_to_uncolored_region() {
 pub fn do_rich_text_spans_color_override_applies_to_uncolored_region() {
     let mut regions = ColorFontRegions::new_empty();
     regions.submit_region(ColorFontRegion::new(Range::new(0, 3), None, None));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve("abc", &regions, &mut fs);
     let halo = Color::rgba(0, 255, 0, 255);
     let spans = rich_text_spans_from_regions(&families, 16.0, 18.0, Some(halo));
@@ -415,7 +430,8 @@ fn test_rich_text_spans_color_override_drops_zero_width_regions() {
 pub fn do_rich_text_spans_color_override_drops_zero_width_regions() {
     let mut regions = ColorFontRegions::new_empty();
     regions.submit_region(ColorFontRegion::new(Range::new(2, 2), None, None));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve("hello", &regions, &mut fs);
     let halo = Color::rgba(0, 0, 255, 255);
     let spans = rich_text_spans_from_regions(&families, 16.0, 18.0, Some(halo));
@@ -445,7 +461,8 @@ pub fn do_rich_text_spans_slice_at_grapheme_boundary() {
         None,
         Some([1.0, 0.0, 0.0, 1.0]),
     ));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve("\u{1F1F8}\u{1F1EA}\u{1F1EB}\u{1F1EE}", &regions, &mut fs);
     let spans = rich_text_spans_from_regions(&families, 16.0, 18.0, None);
     assert_eq!(spans.len(), 1);
@@ -475,7 +492,8 @@ pub fn do_rich_text_spans_slice_at_zwj_grapheme_boundary() {
         None,
         Some([1.0, 0.0, 0.0, 1.0]),
     ));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve(text, &regions, &mut fs);
     let spans = rich_text_spans_from_regions(&families, 16.0, 18.0, None);
     assert_eq!(spans.len(), 1);
@@ -500,7 +518,8 @@ pub fn do_rich_text_spans_empty_text_with_region_yields_no_spans() {
         None,
         Some([1.0, 0.0, 0.0, 1.0]),
     ));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve("", &regions, &mut fs);
     let spans = rich_text_spans_from_regions(&families, 16.0, 18.0, None);
     assert!(spans.is_empty());
@@ -531,7 +550,8 @@ pub fn do_rich_text_spans_into_refills_rather_than_appends() {
         None,
         Some([0.0, 1.0, 0.0, 1.0]),
     ));
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve("abcdef", &regions, &mut fs);
 
     let halo = Color::rgba(0, 0, 0, 255);
@@ -564,7 +584,8 @@ fn test_rich_text_spans_into_keeps_the_no_region_whole_text_span() {
 /// into the same buffer yields it again rather than two.
 pub fn do_rich_text_spans_into_keeps_the_no_region_whole_text_span() {
     let regions = ColorFontRegions::new_empty();
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve("whole", &regions, &mut fs);
 
     let mut out = Vec::new();
@@ -593,7 +614,8 @@ pub fn do_displayed_text_is_the_concatenated_covered_slices() {
     regions.submit_region(ColorFontRegion::new(Range::new(6, 11), None, None));
     assert_eq!(displayed_text("hello world", &regions), "helloworld");
 
-    let mut fs = FontSystem::new();
+    crate::font::fonts::init();
+    let mut fs = crate::font::fonts::acquire_font_system_write("attrs_tests::do_*");
     let families = RegionFamilies::resolve("hello world", &regions, &mut fs);
     let shaped: String = rich_text_spans_from_regions(&families, 16.0, 18.0, None)
         .into_iter()

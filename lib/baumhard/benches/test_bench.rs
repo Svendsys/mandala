@@ -1253,10 +1253,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("attrs_list_pins_family_name_when_region_carries_app_font", |b| {
         b.iter(do_attrs_list_pins_family_name_when_region_carries_app_font)
     });
-    c.bench_function(
-        "attrs_list_falls_back_to_monospace_when_region_has_no_font",
-        |b| b.iter(do_attrs_list_falls_back_to_monospace_when_region_has_no_font),
-    );
+    c.bench_function("attrs_list_asks_for_no_family_when_region_has_no_font", |b| {
+        b.iter(do_attrs_list_asks_for_no_family_when_region_has_no_font)
+    });
     c.bench_function(
         "rich_text_spans_empty_regions_yield_single_whole_text_span",
         |b| b.iter(do_rich_text_spans_empty_regions_yield_single_whole_text_span),
