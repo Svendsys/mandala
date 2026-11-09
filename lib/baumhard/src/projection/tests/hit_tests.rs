@@ -228,6 +228,46 @@ fn test_projection_a_label_over_its_connection_is_hit_before_it() {
     );
 }
 
+/// `node_at` asks the bodies alone: a point on a connector's glyphs, off
+/// every body, is a hit but no node; a point in a body is that node,
+/// whatever glyph is drawn there (the control: `node_at` is not `None`
+/// everywhere).
+#[test]
+fn test_projection_node_at_reads_the_bodies_and_not_the_glyphs() {
+    let doc = load_map(json!({"nodes": [
+        node(1, None, json!({"sections": [{"spans": [{"text": "from"}]}]})),
+        node(2, Some(1), json!({
+            "position": [600.0, 0.0],
+            "sections": [{"spans": [{"text": "to"}]}]
+        })),
+    ]}));
+    let two = ident(&doc, 2);
+    let connector = kid(&doc, two, DocKind::Connector);
+    let mut p = Projected::new(doc);
+    let rect = p.projector.node_rect(two).expect("the node is drawn");
+    let mut on_path = None;
+    'scan: for x in 0..600 {
+        for y in -8..=8 {
+            let point = Vec2::new(x as f32, rect.center().y + y as f32);
+            if drawn_at(&mut p, Layer::Connections, point)
+                && p.projector.nodes_in(Rect::new(point, Vec2::ZERO)).is_empty()
+            {
+                on_path = Some(point);
+                break 'scan;
+            }
+        }
+    }
+    let point = on_path.expect("a connector glyph lies off both bodies");
+    let hit = p.projector.hit(&mut p.layers, point).expect("the glyph is hit");
+    assert_eq!(hit.element, connector);
+    assert_eq!(p.projector.node_at(point), None, "no body holds it");
+    assert_eq!(
+        p.projector.node_at(rect.center()),
+        Some(two),
+        "control: a body does"
+    );
+}
+
 #[test]
 fn test_projection_a_click_inside_a_nested_body_hits_the_innermost_node() {
     // Node 2, node 1's child, has its body wholly inside its parent's.

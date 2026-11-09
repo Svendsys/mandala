@@ -1911,6 +1911,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_compose_reparents", |b| {
         b.iter(do_document_compose_reparents)
     });
+    c.bench_function("document_compose_removes_elements", |b| {
+        b.iter(do_document_compose_removes_elements)
+    });
+    c.bench_function("document_compose_connects", |b| {
+        b.iter(do_document_compose_connects)
+    });
+    c.bench_function("document_compose_replaces_spans", |b| {
+        b.iter(do_document_compose_replaces_spans)
+    });
     c.bench_function("document_compose_switches_link_kind", |b| {
         b.iter(do_document_compose_switches_link_kind)
     });

@@ -35,8 +35,8 @@
 use crate::arena::NodeId;
 use crate::document::defaults::DEFAULT_OPACITY;
 use crate::document::element::{
-    ConnectorData, DocElement, DocKind, NodeData, NodeStyle, PathData, PortalEndData, SectionData, SpanData,
-    Triggers,
+    ConnectorData, DocElement, DocKind, LinkData, NodeData, NodeStyle, PathData, PortalEndData, SectionData,
+    SpanData, Triggers,
 };
 use crate::document::ids::{Document, NodeIdent};
 use crate::document::mutation::error::MutationError;
@@ -115,18 +115,21 @@ fn new_node(position: Vec2) -> DocElement {
     })
 }
 
-/// A connector with nothing set: a visible line attached automatically
-/// at both ends, every style field inherited.
+/// A path with nothing set: a visible line attached automatically at
+/// both ends, every style field inherited.
+fn new_path() -> PathData {
+    PathData {
+        flow: Default::default(),
+        anchors: (Anchor::Auto, Anchor::Auto),
+        control_points: Vec::new(),
+        visible: true,
+        zoom: None,
+    }
+}
+
+/// A connector with nothing set ([`new_path`]).
 fn new_connector() -> DocElement {
-    DocElement::Connector(ConnectorData {
-        path: PathData {
-            flow: Default::default(),
-            anchors: (Anchor::Auto, Anchor::Auto),
-            control_points: Vec::new(),
-            visible: true,
-            zoom: None,
-        },
-    })
+    DocElement::Connector(ConnectorData { path: new_path() })
 }
 
 /// A section on channel 0 with nothing set and no spans.
@@ -321,6 +324,76 @@ pub fn reparent(doc: &Document, nodes: &[NodeId], new_parent: NodeId) -> Result<
         Ok((!roots.is_empty()).then(|| walk_at(insert, roots)))
     });
     Ok(vec![connect, DocStep::fixed(walk_at(move_to, tops))])
+}
+
+/// Remove `elements`, each an element of `kind` other than a node, with
+/// their subtrees: sections, links, labels. A node's removal is
+/// [`delete`]'s, which trims a nested selection and lets the writer take
+/// the links into it; no element of the kinds this removes holds
+/// another of its own kind. Whether what is left keeps its shape — a
+/// connector is the line to its parent, a portal keeps two ends — is
+/// judged once the request has run. An element named twice is walked
+/// once, as every anchor list is.
+///
+/// Errors: [`MutationError::NotA`] for an element that is not of `kind`,
+/// or for `kind` being a node. One step, or none for no elements.
+pub fn remove(doc: &Document, kind: DocKind, elements: &[NodeId]) -> Result<Vec<DocStep>, MutationError> {
+    for &element in elements {
+        if kind == DocKind::Node {
+            return Err(MutationError::NotA {
+                element,
+                expected: "an element that is not a node",
+            });
+        }
+        require(doc, element, kind, "an element of the kind removed")?;
+    }
+    if elements.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(vec![DocStep::fixed(walk_at(
+        command(StructOp::Remove, kind),
+        elements.to_vec(),
+    ))])
+}
+
+/// Insert a line link from each of `sources` to `target`, after their
+/// other links, every style field inherited. A source that is the target
+/// is skipped (a link never leads to its own node), and so is one that
+/// already holds a line link to it, so connecting twice adds nothing. A
+/// source named twice is walked once, as every anchor list is.
+///
+/// Errors: [`MutationError::NotA`] when a source or `target` is not a
+/// node. One step, or none when every source is skipped.
+///
+/// Cost: O(the sources' children), for the links they already hold.
+pub fn connect(doc: &Document, sources: &[NodeId], target: NodeId) -> Result<Vec<DocStep>, MutationError> {
+    require(doc, target, DocKind::Node, "a node")?;
+    let mut from = Vec::with_capacity(sources.len());
+    for &source in sources {
+        require(doc, source, DocKind::Node, "a node")?;
+        let linked = doc.children(source).any(|child| {
+            matches!(doc.get(child), Some(DocElement::Link(link)) if link.to == target && link.kind == LinkKind::Line)
+        });
+        if source != target && !linked {
+            from.push(source);
+        }
+    }
+    if from.is_empty() {
+        return Ok(Vec::new());
+    }
+    let link = DocElement::Link(LinkData {
+        to: target,
+        kind: LinkKind::Line,
+        path: new_path(),
+    });
+    let insert = command(
+        StructOp::Insert {
+            subtree: Subtree::leaf(link),
+            at: Placement::Last,
+        },
+        DocKind::Node,
+    );
+    Ok(vec![DocStep::fixed(walk_at(insert, from))])
 }
 
 /// Switch `link` to `kind`, with the children the new kind holds: a
@@ -604,6 +677,61 @@ pub fn delete_text(
     });
     let mut steps = vec![split_at(section, start), split_at(section, end), remove];
     steps.extend(normalize(section, span_count(doc, section) + 2));
+    Ok(steps)
+}
+
+/// Replace the spans of every one of `owners` with `spans`: every span
+/// child of each is removed, then each of `spans` is inserted, in order,
+/// into every owner. The owners are of one kind — sections, say — and
+/// `spans` are taken as given: a normalized list stays normalized, and an
+/// empty one leaves the owners with no text.
+///
+/// Errors: [`MutationError::NotA`] when an owner is not of the first
+/// owner's kind. One step for the removal and one per span; none for no
+/// owners.
+///
+/// Cost: O(the owners' children) for the removal, and one walk per span.
+pub fn replace_spans(
+    doc: &Document,
+    owners: &[NodeId],
+    spans: &[SpanData],
+) -> Result<Vec<DocStep>, MutationError> {
+    let Some(kind) = owners
+        .first()
+        .and_then(|&owner| doc.get(owner))
+        .map(DocElement::kind)
+    else {
+        return match owners.first() {
+            Some(&element) => Err(MutationError::NotA {
+                element,
+                expected: "an element that holds spans",
+            }),
+            None => Ok(Vec::new()),
+        };
+    };
+    for &owner in owners {
+        require(doc, owner, kind, "an element of the first owner's kind")?;
+    }
+    let of = owners.to_vec();
+    let clear = DocStep::new(move |doc| {
+        let old: Vec<NodeId> = of
+            .iter()
+            .flat_map(|&owner| doc.children(owner))
+            .filter(|&id| doc.get(id).map(DocElement::kind) == Some(DocKind::Span))
+            .collect();
+        Ok((!old.is_empty()).then(|| walk_at(command(StructOp::Remove, DocKind::Span), old)))
+    });
+    let mut steps = vec![clear];
+    steps.extend(spans.iter().map(|span| {
+        let insert = command(
+            StructOp::Insert {
+                subtree: Subtree::leaf(DocElement::Span(span.clone())),
+                at: Placement::Last,
+            },
+            kind,
+        );
+        DocStep::fixed(walk_at(insert, owners.to_vec()))
+    }));
     Ok(steps)
 }
 
