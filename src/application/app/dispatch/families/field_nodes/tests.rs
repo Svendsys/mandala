@@ -362,6 +362,12 @@ const CASES: &[Case] = &[
         edits: &[(N1_COLOR, "      \"size\": 20.0,\n      \"color\": \"var(fg)\",\n      \"weight\": \"bold\",\n      \"italic\": true,\n")],
     },
     Case {
+        name: "font family",
+        select: N3,
+        input: Input::Line("font family=Novem"),
+        edits: &[(N3_ZOOM, "      \"zoom\": {\"min\": 0.25},\n      \"font\": \"Novem\",\n")],
+    },
+    Case {
         name: "font size on a connector",
         select: Select::Connector(2),
         input: Input::Line("font size=9"),
@@ -440,6 +446,12 @@ const CASES: &[Case] = &[
             value: "700".into(),
         }),
         edits: &[(N3_ZOOM, "      \"zoom\": {\"min\": 0.25},\n      \"weight\": \"bold\",\n")],
+    },
+    Case {
+        name: "SetFontFamily",
+        select: N3,
+        input: Input::Act(|| Action::SetFontFamily("Galatia SIL".into())),
+        edits: &[(N3_ZOOM, "      \"zoom\": {\"min\": 0.25},\n      \"font\": \"Galatia SIL\",\n")],
     },
     Case {
         name: "SetZoom",
