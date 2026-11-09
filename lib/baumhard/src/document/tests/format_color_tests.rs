@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `format::color` and `format::hex`: the file's color reader and hex
-//! spelling, for callers outside a load (the app's paste and copy). Each
-//! is held to the loader itself: a spelling reads to the color a map
-//! carrying it loads with, and one the loader refuses reads to nothing.
+//! `format::color`, `format::hex` and `format::font`: the file's color
+//! reader, hex spelling and face reader, for callers outside a load (the
+//! app's paste and copy, the console). Each is held to the loader
+//! itself: a spelling reads to the value a map carrying it loads with,
+//! and one the loader refuses reads to nothing.
 
 use crate::document::element::DocElement;
 use crate::document::format::{self, load};
@@ -85,4 +86,49 @@ fn test_format_hex_writes_the_spelling_the_loader_reads_back() {
             "{text:?} loads back"
         );
     }
+}
+
+/// A map whose one span names the face `family`: the loaded document,
+/// or the loader's refusal.
+fn map_in_font(family: &str) -> Result<Document, format::LoadError> {
+    let family = serde_json::to_string(family).expect("a string serializes");
+    load(&format!(
+        r#"{{"format":1,"name":"f","nodes":[{{"id":1,"position":[0.0,0.0],"sections":[{{"spans":[{{"text":"x","font":{family}}}]}}]}}]}}"#
+    ))
+}
+
+/// **`format::font` reads what the loader reads, and refuses what it
+/// refuses**, for every family this process has loaded — the compiled
+/// ones, and on native the host's, which no file may name (#329) — and
+/// for names no face has. Each accepted name reads to the face a map
+/// naming it loads with. Controls: some family is accepted, so the loop
+/// is not vacuous, and the refused names really are refused by the
+/// loader.
+#[test]
+fn test_format_font_reads_what_the_loader_reads() {
+    let mut accepted = 0;
+    let families: Vec<String> = crate::font::fonts::loaded_families_iter()
+        .map(str::to_string)
+        .chain(["", "Nope Sans", "inter"].map(String::from))
+        .collect();
+    for family in &families {
+        let read = format::font(family);
+        match map_in_font(family) {
+            Ok(doc) => {
+                accepted += 1;
+                let loaded = doc.tree().descendants().find_map(|id| match doc.get(id) {
+                    Some(DocElement::Span(span)) => span.style.font,
+                    _ => None,
+                });
+                assert_eq!(read, loaded, "{family:?} reads as it loads");
+                assert!(read.is_some(), "{family:?} loads, so it reads");
+                // The loader shares `format::font`, so agreeing with it
+                // proves nothing alone: what is read must also save back.
+                assert!(format::save(&doc).is_ok(), "{family:?}: a face read saves");
+            }
+            Err(_) => assert_eq!(read, None, "{family:?} is refused by the loader"),
+        }
+    }
+    assert!(accepted > 0, "control: a compiled family loads");
+    assert!(format::font("Nope Sans").is_none() && map_in_font("Nope Sans").is_err());
 }

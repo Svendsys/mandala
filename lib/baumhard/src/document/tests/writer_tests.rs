@@ -186,10 +186,10 @@ fn builders() -> Vec<(&'static str, Builder)> {
             split_section(doc, ids.a_title, 2).unwrap()
         }),
         ("add_section after", |doc, ids| {
-            add_section(doc, ids.b, Some(ids.b_section)).unwrap()
+            add_section(doc, ids.b, Some(ids.b_section), &[]).unwrap()
         }),
         ("add_section first", |doc, ids| {
-            add_section(doc, ids.b, None).unwrap()
+            add_section(doc, ids.b, None, &[]).unwrap()
         }),
         ("remove_links", |_, ids| vec![remove_links(vec![ids.line])]),
     ]

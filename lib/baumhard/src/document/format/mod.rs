@@ -760,6 +760,18 @@ pub fn color(doc: &Document, text: &str) -> Option<crate::document::values::Colo
     })
 }
 
+/// The face the font family name `family` stands for, as the loader
+/// reads a `font` key: a family this build compiles in and a file can
+/// name ([`nameable_font`](crate::document::place::nameable_font)), or
+/// `None` — for an unknown name, and for one that is only an installed
+/// system font (#329). One rule for a file and for a typed name, so the
+/// console accepts exactly the faces a load does.
+///
+/// Cost: a scan of the compiled-in families (about 30).
+pub fn font(family: &str) -> Option<crate::font::fonts::AppFont> {
+    crate::font::fonts::app_font_by_family(family).filter(|font| crate::document::place::nameable_font(*font))
+}
+
 /// `rgba` in the file's spelling: `#rrggbb`, or `#rrggbbaa` when it is
 /// not opaque. O(1).
 pub fn hex(rgba: crate::document::values::Rgba) -> String {

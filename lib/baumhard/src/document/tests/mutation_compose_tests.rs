@@ -16,11 +16,12 @@ use crate::arena::NodeId;
 use crate::document::element::{DocElement, DocKind, SectionData, SpanData, TextStyle};
 use crate::document::ids::{Document, NodeIdent};
 use crate::document::mutation::compose::{
-    add_section, connect, create_child, create_root, delete, delete_text, insert_text, merge_steps, remove,
-    remove_links, reparent, replace_spans, set_link_kind, split_section, style_range, tops_counting,
+    add_section, connect, create_child, create_root, delete, delete_text, insert, insert_text, merge_steps,
+    remove, remove_links, reparent, replace_spans, set, set_link_kind, split_section, style_range,
+    tops_counting,
 };
 use crate::document::mutation::error::MutationError;
-use crate::document::mutation::ops::TextOp;
+use crate::document::mutation::ops::{DocMutation, FrameOp, SectionOp, TextOp};
 use crate::document::mutation::step::DocStep;
 use crate::document::mutation::validate::validate_applied;
 use crate::document::shape::validate_shape;
@@ -666,14 +667,14 @@ pub fn do_document_compose_splits_and_adds_sections() {
         (0, Vec2::new(3.0, 4.0), None)
     );
 
-    let steps = add_section(&doc, node2, Some(section2)).unwrap();
+    let steps = add_section(&doc, node2, Some(section2), &[]).unwrap();
     apply(&mut doc, steps);
     let sections_after = children_of(&doc, node2, DocKind::Section);
     assert_eq!(sections_after.len(), 3);
     assert_eq!((sections_after[0], sections_after[2]), (sections[0], sections[1]));
     assert!(doc.children(sections_after[1]).next().is_none());
 
-    let steps = add_section(&doc, node2, None).unwrap();
+    let steps = add_section(&doc, node2, None, &[]).unwrap();
     apply(&mut doc, steps);
     let first = children_of(&doc, node2, DocKind::Section)[0];
     assert!(!sections_after.contains(&first), "the new section is first");
@@ -683,9 +684,108 @@ pub fn do_document_compose_splits_and_adds_sections() {
     ));
 
     assert!(matches!(
-        add_section(&doc, node2, Some(node2)),
+        add_section(&doc, node2, Some(node2), &[]),
         Err(MutationError::NotA { .. })
     ));
+}
+
+#[test]
+fn test_document_compose_sets_inserts_and_adds_a_section_with_spans() {
+    do_document_compose_sets_inserts_and_adds_a_section_with_spans();
+}
+
+/// `set` writes one payload on every element named, as one walk, and
+/// refuses an element of another kind; `insert` puts a copy of a subtree
+/// under every parent named, after its children of that kind, and a
+/// second frame under a node that has one is refused when the request is
+/// judged; `add_section` puts the spans it is given in the new section.
+pub fn do_document_compose_sets_inserts_and_adds_a_section_with_spans() {
+    use crate::document::element::{FrameData, RingData};
+    use crate::engine::structure::Subtree;
+    let (mut doc, ids) = built();
+    let text = |op| DocMutation::Section(SectionOp::Text(op));
+    let both = vec![text(TextOp::SetItalic(Some(true))), text(TextOp::SetSize(None))];
+    let steps = set(
+        &doc,
+        DocKind::Section,
+        both.clone(),
+        &[ids.a_title, ids.b_section],
+    )
+    .unwrap();
+    assert_eq!(steps.len(), 1, "one walk for every element");
+    apply(&mut doc, steps);
+    for section in [ids.a_title, ids.b_section] {
+        let Some(DocElement::Section(data)) = doc.get(section) else { panic!("a section") };
+        assert_eq!((data.text.italic, data.text.size), (Some(true), None));
+    }
+    let Some(DocElement::Section(body)) = doc.get(ids.a_body) else { panic!("a section") };
+    assert_eq!(
+        body.text.italic, None,
+        "control: a section not named keeps its own"
+    );
+    assert!(set(&doc, DocKind::Section, both.clone(), &[]).unwrap().is_empty());
+    assert!(set(&doc, DocKind::Section, Vec::new(), &[ids.a_title])
+        .unwrap()
+        .is_empty());
+    assert!(matches!(
+        set(&doc, DocKind::Section, both, &[ids.a]),
+        Err(MutationError::NotA { .. })
+    ));
+
+    let ring = Subtree {
+        root: DocElement::Ring(RingData::default()),
+        children: vec![Subtree::leaf(span_of("─", TextStyle::default(), None))],
+    };
+    let steps = insert(&doc, DocKind::Frame, &[ids.frame], ring.clone()).unwrap();
+    apply(&mut doc, steps);
+    let rings = children_of(&doc, ids.frame, DocKind::Ring);
+    assert_eq!(rings.len(), 2);
+    assert_eq!(rings[0], ids.ring, "the new ring goes after the old one");
+    assert_eq!(spans(&doc, rings[1]), vec![("─".to_string(), None)]);
+
+    let frame = Subtree {
+        root: DocElement::Frame(FrameData::default()),
+        children: vec![ring],
+    };
+    let steps = insert(&doc, DocKind::Node, &[ids.b], frame.clone()).unwrap();
+    apply(&mut doc, steps);
+    let frames = children_of(&doc, ids.b, DocKind::Frame);
+    assert_eq!(frames.len(), 1);
+    assert_eq!(children_of(&doc, frames[0], DocKind::Ring).len(), 1);
+    assert!(matches!(
+        insert(
+            &doc,
+            DocKind::Node,
+            &[ids.frame],
+            Subtree::leaf(DocElement::Frame(FrameData::default()))
+        ),
+        Err(MutationError::NotA { .. })
+    ));
+    let visible = DocMutation::Frame(FrameOp::SetVisible(Some(false)));
+    let steps = set(&doc, DocKind::Frame, vec![visible], &[ids.frame]).unwrap();
+    apply(&mut doc, steps);
+
+    let steps = add_section(
+        &doc,
+        ids.b,
+        Some(ids.b_section),
+        &[SpanData {
+            text: FAMILY.to_string(),
+            style: TextStyle::default(),
+            link: None,
+        }],
+    )
+    .unwrap();
+    apply(&mut doc, steps);
+    let sections = children_of(&doc, ids.b, DocKind::Section);
+    assert_eq!(sections.len(), 2);
+    assert_eq!(spans(&doc, sections[1]), vec![(FAMILY.to_string(), None)]);
+
+    let steps = insert(&doc, DocKind::Node, &[ids.a], frame).unwrap();
+    assert!(
+        matches!(run(&mut doc, steps), Err(MutationError::Shape(_))),
+        "a node holds one frame"
+    );
 }
 
 #[test]

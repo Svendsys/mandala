@@ -694,7 +694,7 @@ pub fn edit_named(
         }
         "compose::add_section" => {
             let node = pick(c, doc, K::Node)?;
-            EditRequest::new(compose::add_section(doc, node, None).ok()?, name)
+            EditRequest::new(compose::add_section(doc, node, None, &[]).ok()?, name)
         }
         // A ring inserted just inside another of its frame, on that
         // ring's channel: the ring it lands inside of clears it, and
