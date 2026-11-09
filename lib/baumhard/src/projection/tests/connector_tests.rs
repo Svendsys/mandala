@@ -14,7 +14,10 @@ use crate::arena::NodeId;
 use crate::document::element::DocKind;
 use crate::document::values::Anchor;
 use crate::flow::{Curve, Rect};
-use crate::projection::geometry::{held_apart, path_through, side_point, side_toward, SPLAY_CAP};
+use crate::projection::geometry::{
+    held_apart, near_lanes, path_through, side_point, side_toward, untangle, Lane, CLEARANCE, SPLAY_CAP,
+    UNTANGLE_GRIDS, UNTANGLE_ROUNDS,
+};
 use crate::projection::state::{Placed, UnitBody};
 use crate::projection::tests::maps::{ident, kid, load_map, node, text_section};
 use crate::projection::tests::support::Projected;
@@ -712,4 +715,91 @@ fn test_projection_portal_ends_that_face_one_way_are_held_apart() {
         a.distance(b)
     );
     p.check().unwrap();
+}
+
+/// The pairs of `samples` nearer than [`CLEARANCE`] times the wider of
+/// their `widths`, each pair measured point by point: what
+/// [`near_lanes`] answers from one grid.
+fn near_pairwise(samples: &[Vec<Vec2>], widths: &[f32]) -> Vec<bool> {
+    let mut near = vec![false; samples.len()];
+    for k in 0..samples.len() {
+        for j in k + 1..samples.len() {
+            let need = CLEARANCE * widths[k].max(widths[j]);
+            let close = samples[k]
+                .iter()
+                .any(|p| samples[j].iter().any(|q| q.distance(*p) < need));
+            if close {
+                near[k] = true;
+                near[j] = true;
+            }
+        }
+    }
+    near
+}
+
+#[test]
+fn test_projection_near_lanes_finds_the_pairs_measured_point_by_point() {
+    // Lanes of scattered points and of differing widths, some crowded and
+    // some apart: one grid for them all finds the lanes too near another
+    // exactly as measuring each pair point by point does. The failing
+    // input is a grid as wide as one lane's own distance, which misses a
+    // pair held apart by the wider of the two.
+    let mut seed = 0x9e37_79b9_u32;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        (seed % 10_000) as f32 / 100.0
+    };
+    let mut some_near = 0;
+    let mut some_clear = 0;
+    for _ in 0..200 {
+        let lanes = 2 + (next() as usize) % 7;
+        let samples: Vec<Vec<Vec2>> = (0..lanes)
+            .map(|_| {
+                (0..(1 + next() as usize % 12))
+                    .map(|_| Vec2::new(next(), next()))
+                    .collect()
+            })
+            .collect();
+        let widths: Vec<f32> = (0..lanes).map(|_| 0.5 + next() * 0.08).collect();
+        let (got, want) = (near_lanes(&samples, &widths), near_pairwise(&samples, &widths));
+        assert_eq!(got, want, "lanes {samples:?}, widths {widths:?}");
+        some_near += want.iter().filter(|&&n| n).count();
+        some_clear += want.iter().filter(|&&n| !n).count();
+    }
+    assert!(
+        some_near > 0 && some_clear > 0,
+        "precondition: lanes both near and clear: {some_near}, {some_clear}"
+    );
+}
+
+#[test]
+fn test_projection_untangle_measures_a_junction_once_a_round() {
+    // Twenty paths from one point to a row, crowded where they leave it:
+    // each round of untangling measures the junction's lanes in one grid,
+    // not one for each pair of them — 190 a round here, the square of the
+    // junction's size, which a wide row of children multiplied into
+    // seconds of projection under the fuzzer.
+    let lanes: Vec<Lane> = (0..20)
+        .map(|k| Lane {
+            start: (Vec2::ZERO, Vec2::Y, 4.0),
+            hold: 0.0,
+            end: (Vec2::new(k as f32 * 6.0 - 57.0, 400.0), -Vec2::Y, 4.0),
+            via: Vec::new(),
+            width: 3.0,
+            straight: false,
+        })
+        .collect();
+    UNTANGLE_GRIDS.with(|count| count.set(0));
+    let handles = untangle(&lanes);
+    let grids = UNTANGLE_GRIDS.with(std::cell::Cell::get);
+    assert!(
+        handles.iter().any(|&h| h < 1.0),
+        "precondition: the lanes are crowded, so rounds run: {handles:?}"
+    );
+    assert!(
+        (1..=UNTANGLE_ROUNDS).contains(&grids),
+        "{grids} grids for at most {UNTANGLE_ROUNDS} rounds"
+    );
 }

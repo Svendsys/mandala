@@ -244,13 +244,13 @@ pub(crate) fn path_through(
 
 /// How many rounds [`untangle`] takes, at most: each halves the handles
 /// of the paths that come too near another, down to [`LEAST_HANDLES`].
-const UNTANGLE_ROUNDS: usize = 14;
+pub(crate) const UNTANGLE_ROUNDS: usize = 14;
 
 /// How much nearer than its width [`untangle`] keeps another path's
 /// curve: a quarter more, as two curves' glyphs are boxes upright on
 /// them, whose corners reach further across a slope than a glyph's own
 /// size.
-const CLEARANCE: f32 = 1.25;
+pub(crate) const CLEARANCE: f32 = 1.25;
 
 /// The least share of their handles [`untangle`] leaves a path: all but
 /// straight from lead to lead.
@@ -289,8 +289,8 @@ pub(crate) struct Lane {
 /// two paths whose far ends lie on one line from the junction meet
 /// however straight they run, and keep the curves they had.
 ///
-/// Cost: per round O(each lane's length over its width) samples, and as
-/// many grid lookups per pair of lanes; allocates the samples.
+/// Cost: per round O(each lane's length over its width) samples, and one
+/// grid of them all ([`near_lanes`]); allocates the samples and the grid.
 pub(crate) fn untangle(lanes: &[Lane]) -> Vec<f32> {
     let mut handles = vec![1.0_f32; lanes.len()];
     if lanes.len() < 2 {
@@ -310,16 +310,8 @@ pub(crate) fn untangle(lanes: &[Lane]) -> Vec<f32> {
                 sample(&curves, 0.25 * lane.width, CLEARANCE * lane.hold.max(lane.width))
             })
             .collect();
-        let mut near = vec![false; lanes.len()];
-        for k in 0..lanes.len() {
-            for j in k + 1..lanes.len() {
-                let need = CLEARANCE * lanes[k].width.max(lanes[j].width);
-                if nearer(&samples[k], &samples[j], need) {
-                    near[k] = true;
-                    near[j] = true;
-                }
-            }
-        }
+        let widths: Vec<f32> = lanes.iter().map(|lane| lane.width).collect();
+        let near = near_lanes(&samples, &widths);
         let count = near.iter().filter(|&&n| n).count();
         if count <= best.0 {
             best = (count, handles.clone());
@@ -363,25 +355,58 @@ fn sample(curves: &[Curve], step: f32, skip: f32) -> Vec<Vec2> {
     out
 }
 
-/// Whether a point of `a` and a point of `b` are nearer than `need`: a
-/// grid of cells `need` wide holds `b`'s, so each of `a`'s is measured to
-/// the nine cells round it. O(points).
-fn nearer(a: &[Vec2], b: &[Vec2], need: f32) -> bool {
-    let cell = need.max(1e-3);
+/// Which of the lanes whose points are `samples` come too near another:
+/// a point of one nearer a point of another than [`CLEARANCE`] times the
+/// wider of their `widths`. One grid of every lane's points, in cells as
+/// wide as the widest such distance, so each point is measured to the
+/// other lanes' points in the nine cells round it — once a round for
+/// the whole junction, not once for each pair of its lanes, whose count
+/// grows as the square of the junction's.
+///
+/// Cost: O(the points) to grid them, and per point the other lanes'
+/// points in the nine cells round it; one allocation per occupied cell.
+pub(crate) fn near_lanes(samples: &[Vec<Vec2>], widths: &[f32]) -> Vec<bool> {
+    #[cfg(test)]
+    UNTANGLE_GRIDS.with(|count| count.set(count.get() + 1));
+    let mut near = vec![false; samples.len()];
+    let widest = widths.iter().copied().fold(0.0_f32, f32::max);
+    let cell = (CLEARANCE * widest).max(1e-3);
     let key = |p: Vec2| ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64);
-    let mut grid: rustc_hash::FxHashMap<(i64, i64), Vec<Vec2>> = Default::default();
-    for &p in b {
-        grid.entry(key(p)).or_default().push(p);
+    let mut grid: rustc_hash::FxHashMap<(i64, i64), Vec<(usize, Vec2)>> = Default::default();
+    for (lane, points) in samples.iter().enumerate() {
+        for &p in points {
+            grid.entry(key(p)).or_default().push((lane, p));
+        }
     }
-    a.iter().any(|&p| {
-        let (x, y) = key(p);
-        (-1..=1).any(|dx| {
-            (-1..=1).any(|dy| {
-                grid.get(&(x + dx, y + dy))
-                    .is_some_and(|cell| cell.iter().any(|q| q.distance(p) < need))
-            })
-        })
-    })
+    for (k, points) in samples.iter().enumerate() {
+        for &p in points {
+            let (x, y) = key(p);
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for &(j, q) in grid.get(&(x + dx, y + dy)).into_iter().flatten() {
+                        // Each pair once, from its lower lane, and not
+                        // again once both are known too near.
+                        if j <= k || (near[k] && near[j]) {
+                            continue;
+                        }
+                        let need = CLEARANCE * widths[k].max(widths[j]);
+                        if q.distance(p) < need {
+                            near[k] = true;
+                            near[j] = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    near
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test counter: the grids [`near_lanes`] has built on this thread,
+    /// one for each round of [`untangle`] that measures its lanes.
+    pub(crate) static UNTANGLE_GRIDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `size` in points, for shaping: a relative size — a fraction of the
