@@ -34,7 +34,8 @@
 //! - **A placed node never overlaps another drawn node** (owner, on
 //!   #250): not a sibling, not the parent, not anything else on the map.
 //!   A petal moves outward along its ray, a row downward,
-//!   [`CLEAR_STEP`] at a time, and after [`MAX_CLEAR_STEPS`] tries it
+//!   [`CLEAR_STEP`](crate::edit_handlers::CLEAR_STEP) at a time, and after
+//!   [`MAX_CLEAR_STEPS`](crate::edit_handlers::MAX_CLEAR_STEPS) tries it
 //!   goes past everything drawn, where it is clear by construction.
 //!   Only a layout keeps clear: a node moved by hand goes where it is
 //!   put.
@@ -128,7 +129,7 @@ pub const MAX_CLEAR_STEPS: u32 = 64;
 /// largest child's, plus [`RADIAL_PADDING`]. A petal that would overlap
 /// another drawn node — a sibling already placed, the parent, anything
 /// else on the map — moves outward along its ray, [`CLEAR_STEP`] at a
-/// time, until it is clear (see [`Clear`]). Parents are placed before
+/// time, until it is clear (see `Clear`). Parents are placed before
 /// their children, in tree order, and a node one flower moves is the
 /// center of its own where it is moved to, so nested nodes compose.
 ///
@@ -181,7 +182,7 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
 /// centered under it, each level placed from its parent's new place. A
 /// row that would overlap another drawn node — a row already placed,
 /// the anchor, anything else on the map — moves down, [`CLEAR_STEP`] at
-/// a time, until it is clear (see [`Clear`]). A node nested under
+/// a time, until it is clear (see `Clear`). A node nested under
 /// another of `nodes` is laid out as part of the outer one's tree, so
 /// the walk starts from the outermost. Breadth first and iterative.
 ///
