@@ -687,6 +687,15 @@ mod tests {
     /// thread. That a map lays out alike first in a fresh process is
     /// `lib/baumhard/tests/font_state.rs`'s to hold.
     ///
+    /// **Not this suite's #323 gate.** With the lazy registration #323
+    /// removed planted again, this test is red only where its first run
+    /// is the first shaping its process makes, as when it is run alone. In
+    /// the whole test binary, other tests on other threads have registered
+    /// the compiled faces before it runs, so both runs shape with them and
+    /// it passes (review 5821569167). The deterministic #323 gate inside
+    /// `./test.sh` is `lib/baumhard/tests/font_state.rs`, which lays each
+    /// map in a child process of its own.
+    ///
     /// Controls: consecutive steps dump differently, so each comparison
     /// is of a reading that depends on the script; and the dumps hold the
     /// map, not two empty replies.
