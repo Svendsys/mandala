@@ -38,9 +38,11 @@ use super::ipc_target::IpcCommandTarget;
 use super::run_native_init::InitState;
 use super::step::Beat;
 use super::InteractionMode;
-use crate::application::document::MindMapDocument;
+use crate::application::document::{MindMapDocument, TRANSACTION_OPEN_STATUS};
 use crate::application::ipc::run_attached;
 use crate::application::view::inspect::children_of_kind;
+use baumhard::document::writer::transaction::TransactionKind;
+use baumhard::document::writer::ChangeSource;
 
 /// A file under the fixtures directory.
 fn fixture(name: &str) -> String {
@@ -90,6 +92,14 @@ fn act(init: &mut InitState, action: Value) -> String {
         .as_str()
         .unwrap_or_else(|| panic!("act.action answers: {reply}"))
         .to_string()
+}
+
+/// `act.action` with `action`, and the reason its reply gives for not
+/// running (`null` for none).
+fn reason(init: &mut InitState, action: Value) -> Value {
+    let reply = ipc(init, json!({"id": 1, "cmd": "act.action", "action": action}));
+    assert_eq!(reply["result"]["outcome"], "unhandled", "{reply}");
+    reply["result"]["reason"].clone()
 }
 
 /// The node with integer id `ident`.
@@ -380,7 +390,11 @@ fn test_reparent_mode_refuses_a_descendant_and_takes_a_sibling() {
     assert_eq!(over(init, n2), None, "nor is the source itself");
     assert_eq!(over(init, n3), Some(n3), "control: the sibling is");
 
-    assert_eq!(act(init, json!({"ReparentToTarget": 4})), "unhandled");
+    assert_eq!(
+        reason(init, json!({"ReparentToTarget": 4})),
+        json!(INVALID_TARGET_STATUS),
+        "act.action says why"
+    );
     assert_eq!(bytes(init), baseline, "the refused reparent changed nothing");
     assert_eq!(entries(init), 0, "and made no entry");
     assert_eq!(document(init).status(), Some(INVALID_TARGET_STATUS));
@@ -444,10 +458,30 @@ fn test_connect_does_not_duplicate_and_a_connector_is_not_deleted() {
     let connector = child(init, n2, DocKind::Connector, 0);
     let before = bytes(init);
     select(init, vec![connector]);
-    assert_eq!(act(init, json!("DeleteSelection")), "unhandled");
+    assert_eq!(
+        reason(init, json!("DeleteSelection")),
+        json!(CONNECTOR_STATUS),
+        "act.action says why"
+    );
     assert_eq!(bytes(init), before);
     assert_eq!(entries(init), 1, "the delete made no entry");
     assert_eq!(document(init).status(), Some(CONNECTOR_STATUS));
+
+    // D28: an open interactive transaction refuses the delete, and the
+    // reply says so. Control: a plain unhandled Action's reason is null.
+    select(init, vec![n5]);
+    assert!(document_mut(init).begin(ChangeSource::Input, TransactionKind::Interactive));
+    assert_eq!(
+        reason(init, json!("DeleteSelection")),
+        json!(TRANSACTION_OPEN_STATUS)
+    );
+    assert_eq!(entries(init), 1);
+    select(init, Vec::new());
+    assert_eq!(
+        reason(init, json!("Copy")),
+        Value::Null,
+        "control: no reason to give"
+    );
 }
 
 /// **Each mode says what it is doing, as `main` did, and tints its

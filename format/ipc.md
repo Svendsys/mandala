@@ -1104,7 +1104,11 @@ Treat an unrecognized value as `"unhandled"`.
 
 `reason` (string or `null`): why an `unhandled` Action did not run,
 when its arm declined for a stated reason; `null` otherwise, and
-always `null` with `"handled"`. `FastResizeStart` is one: the resize
+always `null` with `"handled"`, on both targets. The structure Actions
+give theirs: `DeleteSelection` of a connector alone, `ReparentToTarget`
+onto a source or a node below one, and any of them that would edit
+while an interactive edit is open (D28); each is the line the status
+line shows. `FastResizeStart` is one too: the resize
 it starts is finalized by the release of the mouse button holding the
 gesture, and a synthetic pointer holds none, so with `x`/`y` it is
 refused with a reason saying nothing holds the gesture rather than

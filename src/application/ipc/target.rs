@@ -91,10 +91,7 @@ pub(crate) enum ActionOutcome {
     /// Nothing ran: the Action does not apply in the current context.
     Unhandled,
     /// Nothing ran: the arm's guard declined, for this reason (#194).
-    /// The reply carries it as `reason`. Native-only, as the
-    /// `DispatchOutcome::Refused` it mirrors is: no browser arm declines
-    /// for a stated reason yet.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// The reply carries it as `reason`, on both targets.
     Refused(&'static str),
 }
 

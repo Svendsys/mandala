@@ -33,8 +33,9 @@ use glam::Vec2;
 
 use crate::application::clipboard;
 use crate::application::document::selection::{child_nodes, kind_of};
-use crate::application::document::MindMapDocument;
+use crate::application::document::{MindMapDocument, TRANSACTION_OPEN_STATUS};
 use crate::application::keybinds::Action;
+use baumhard::document::writer::error::ApplyError;
 
 use super::super::cross_dispatch::{view_ctx, DispatchHit, DispatchOutcome};
 use crate::application::app::input_context_core::InputContextCore;
@@ -82,38 +83,52 @@ pub(in crate::application::app) fn dispatch(
     Some(outcome)
 }
 
+/// What a body did: `Ok(true)` when it changed something, `Ok(false)`
+/// when nothing applied, `Err(reason)` when it declined or the writer
+/// refused for a reason the user is told on the status line — which
+/// `act.action` answers too (`DispatchOutcome::Refused`, #194).
+type Ran = Result<bool, &'static str>;
+
 /// Run `body` on the document, then sync the view — a status line it
-/// left is drawn even when nothing changed. `Handled` when it changed
-/// something.
-fn edit(core: &mut InputContextCore<'_>, body: impl FnOnce(&mut MindMapDocument) -> bool) -> DispatchOutcome {
+/// left is drawn even when nothing changed.
+fn edit(core: &mut InputContextCore<'_>, body: impl FnOnce(&mut MindMapDocument) -> Ran) -> DispatchOutcome {
     let Some(doc) = core.document.as_deref_mut() else {
         return DispatchOutcome::Unhandled;
     };
-    let changed = body(doc);
+    let ran = body(doc);
     if let Some(mut vc) = view_ctx!(core, doc) {
         vc.sync();
     }
-    if changed {
-        DispatchOutcome::Handled
-    } else {
-        DispatchOutcome::Unhandled
+    match ran {
+        Ok(true) => DispatchOutcome::Handled,
+        Ok(false) => DispatchOutcome::Unhandled,
+        Err(reason) => DispatchOutcome::Refused(reason),
     }
 }
 
-/// Apply `steps` as one request called `label`, from an Action. `false`
-/// when there is nothing to apply, a builder refused (logged), or the
-/// writer did (reported by [`MindMapDocument::apply`]).
-fn apply(doc: &mut MindMapDocument, steps: Result<Vec<DocStep>, MutationError>, label: &str) -> bool {
+/// Apply `steps` as one request called `label`, from an Action. Nothing
+/// applies for no steps, or a builder that refused (logged); a writer
+/// refusal is reported by [`MindMapDocument::apply`], and an open
+/// interactive transaction's (D28) is the reason returned.
+fn apply(doc: &mut MindMapDocument, steps: Result<Vec<DocStep>, MutationError>, label: &str) -> Ran {
     match steps {
-        Ok(steps) if steps.is_empty() => false,
-        Ok(steps) => doc
-            .apply(EditRequest::new(steps, label), ChangeSource::Action)
-            .is_ok(),
+        Ok(steps) if steps.is_empty() => Ok(false),
+        Ok(steps) => match doc.apply(EditRequest::new(steps, label), ChangeSource::Action) {
+            Ok(_) => Ok(true),
+            Err(ApplyError::TransactionOpen) => Err(TRANSACTION_OPEN_STATUS),
+            Err(_) => Ok(false),
+        },
         Err(error) => {
             log::warn!("structure: {label}: {error}");
-            false
+            Ok(false)
         }
     }
+}
+
+/// Decline with `why`: the status line says it, and so does the reply.
+fn decline(doc: &mut MindMapDocument, why: &'static str) -> Ran {
+    doc.decline(why);
+    Err(why)
 }
 
 /// The selected elements of `kind`, in selection order.
@@ -124,22 +139,22 @@ fn selected(doc: &MindMapDocument, kind: DocKind) -> Vec<NodeId> {
 
 /// `CreateOrphanNode`: a root node at `at`, with one empty section,
 /// selected.
-fn create_orphan(doc: &mut MindMapDocument, at: Vec2) -> bool {
-    if !apply(doc, compose::create_root(doc.doc(), at), "create node") {
-        return false;
+fn create_orphan(doc: &mut MindMapDocument, at: Vec2) -> Ran {
+    if !apply(doc, compose::create_root(doc.doc(), at), "create node")? {
+        return Ok(false);
     }
     let map = doc.doc().root();
     if let Some(new) = child_nodes(doc.doc(), map).last() {
         doc.selection.select_only(new);
     }
-    true
+    Ok(true)
 }
 
 /// `DeleteSelection`: the selected labels, sections, links and nodes (with
 /// their subtrees, and the links into them), in that order, so nothing is
 /// named after its owner went. A selected connector is not deleted; with
 /// nothing else to delete, the status line says so.
-fn delete_selection(doc: &mut MindMapDocument) -> bool {
+fn delete_selection(doc: &mut MindMapDocument) -> Ran {
     let d = doc.doc();
     let steps = (|| {
         let mut steps = Vec::new();
@@ -150,8 +165,7 @@ fn delete_selection(doc: &mut MindMapDocument) -> bool {
         Ok(steps)
     })();
     if matches!(&steps, Ok(steps) if steps.is_empty()) && !selected(doc, DocKind::Connector).is_empty() {
-        doc.decline(CONNECTOR_STATUS);
-        return false;
+        return decline(doc, CONNECTOR_STATUS);
     }
     let deleted = apply(doc, steps, "delete");
     doc.retain_live_selection();
@@ -160,7 +174,7 @@ fn delete_selection(doc: &mut MindMapDocument) -> bool {
 
 /// `OrphanSelection`: the selected nodes that are not roots become roots,
 /// where they are on the canvas, and are the selection.
-fn orphan_selection(doc: &mut MindMapDocument) -> bool {
+fn orphan_selection(doc: &mut MindMapDocument) -> Ran {
     let map = doc.doc().root();
     let nodes: Vec<NodeId> = selected(doc, DocKind::Node)
         .into_iter()
@@ -171,12 +185,12 @@ fn orphan_selection(doc: &mut MindMapDocument) -> bool {
 
 /// Move `nodes` under `parent` — a node, or the map's root — as one
 /// request, and select them.
-fn reparent(doc: &mut MindMapDocument, nodes: Vec<NodeId>, parent: NodeId) -> bool {
-    if !apply(doc, compose::reparent(doc.doc(), &nodes, parent), "reparent") {
-        return false;
+fn reparent(doc: &mut MindMapDocument, nodes: Vec<NodeId>, parent: NodeId) -> Ran {
+    if !apply(doc, compose::reparent(doc.doc(), &nodes, parent), "reparent")? {
+        return Ok(false);
     }
     doc.selection.set(nodes);
-    true
+    Ok(true)
 }
 
 /// Whether `target` is a node `sources` may move under: not one of them,
@@ -194,44 +208,44 @@ pub(in crate::application::app) fn valid_reparent_target(
 /// `Copy` or `Cut`: the selection's clipboard form to the platform's
 /// clipboard and the document's; a cut also clears it, as one request.
 /// A cut of a range leaves the range empty where it was.
-fn copy(doc: &mut MindMapDocument, cut: bool) -> bool {
+fn copy(doc: &mut MindMapDocument, cut: bool) -> Ran {
     let taken = match clipboard::take(doc.doc(), &doc.selection, cut) {
         Ok(Some(taken)) => taken,
-        Ok(None) => return false,
+        Ok(None) => return Ok(false),
         Err(error) => {
             log::warn!("structure: cut: {error}");
-            return false;
+            return Ok(false);
         }
     };
     let (content, steps) = taken;
-    if cut && !apply(doc, Ok(steps), "cut") {
-        return false;
+    if cut && !apply(doc, Ok(steps), "cut")? {
+        return Ok(false);
     }
     clipboard::write_clipboard(&content.text);
     doc.clipboard = Some(content);
     if let (true, Some((section, start, _))) = (cut, doc.selection.range()) {
         doc.selection.select_range(section, start, start);
     }
-    true
+    Ok(true)
 }
 
 /// `Paste`: the platform's clipboard text — or, where it has none, the
 /// app's — into the selection, as one request. A pasted range covers what
 /// was pasted.
-fn paste(doc: &mut MindMapDocument) -> bool {
+fn paste(doc: &mut MindMapDocument) -> Ran {
     let Some(text) = clipboard::read_clipboard().or_else(|| doc.clipboard.as_ref().map(|c| c.text.clone()))
     else {
-        return false;
+        return Ok(false);
     };
     let steps = clipboard::paste(doc.doc(), &doc.selection, &text, doc.clipboard.as_ref());
-    if !apply(doc, steps, "paste") {
-        return false;
+    if !apply(doc, steps, "paste")? {
+        return Ok(false);
     }
     if let Some((section, start, _)) = doc.selection.range() {
         let pasted = baumhard::util::grapheme_chad::count_grapheme_clusters(&text);
         doc.selection.select_range(section, start, start + pasted);
     }
-    true
+    Ok(true)
 }
 
 /// The two target-picking modes: entering them, and the click that ends
@@ -286,7 +300,7 @@ mod modes {
         super::edit(core, |doc| {
             let target = match target.map(|ident| doc.doc().node_by_ident(NodeIdent(ident))) {
                 Some(Some(node)) => Some(node),
-                Some(None) => return false,
+                Some(None) => return Ok(false),
                 None => None,
             };
             let sources: Vec<NodeId> = sources
@@ -295,8 +309,7 @@ mod modes {
                 .collect();
             match (reparenting, target) {
                 (true, Some(target)) if !valid_reparent_target(doc.doc(), &sources, target) => {
-                    doc.decline(INVALID_TARGET_STATUS);
-                    false
+                    decline(doc, INVALID_TARGET_STATUS)
                 }
                 (true, Some(target)) => reparent(doc, sources, target),
                 (true, None) => {
@@ -304,16 +317,16 @@ mod modes {
                     orphan_selection(doc)
                 }
                 (false, Some(target)) => connect(doc, &sources, target),
-                (false, None) => false,
+                (false, None) => Ok(false),
             }
         })
     }
 
     /// A line link from each of `sources` to `target`, as one request;
     /// the selection becomes the line links between them.
-    fn connect(doc: &mut MindMapDocument, sources: &[NodeId], target: NodeId) -> bool {
-        if !apply(doc, compose::connect(doc.doc(), sources, target), "connect") {
-            return false;
+    fn connect(doc: &mut MindMapDocument, sources: &[NodeId], target: NodeId) -> Ran {
+        if !apply(doc, compose::connect(doc.doc(), sources, target), "connect")? {
+            return Ok(false);
         }
         let d = doc.doc();
         let links: Vec<NodeId> = sources
@@ -325,7 +338,7 @@ mod modes {
             })
             .collect();
         doc.selection.set(links);
-        true
+        Ok(true)
     }
 }
 
@@ -408,7 +421,7 @@ mod tests {
         let s = section(&doc, node(&doc, 1), 0);
         doc.selection.select_range(s, 1, 3);
 
-        assert!(copy(&mut doc, true), "the cut ran");
+        assert_eq!(copy(&mut doc, true), Ok(true), "the cut ran");
         let taken = doc.clipboard.as_ref().map(|c| c.text.clone());
         assert_eq!(
             taken,
@@ -426,7 +439,7 @@ mod tests {
             "a range carries no fragment"
         );
 
-        assert!(paste(&mut doc), "the paste ran");
+        assert_eq!(paste(&mut doc), Ok(true), "the paste ran");
         assert_eq!(element_text(doc.doc(), s), format!("x{FAMILY}{MARKED}y"));
         assert_eq!(
             doc.selection.range(),
@@ -451,13 +464,13 @@ mod tests {
         let n2 = node(&doc, 2);
         let (one, two) = (section(&doc, n2, 0), section(&doc, n2, 1));
         doc.selection.select_only(two);
-        assert!(copy(&mut doc, false));
+        assert_eq!(copy(&mut doc, false), Ok(true));
         let clipboard: Clipboard = doc.clipboard.clone().expect("copied");
         assert_eq!(clipboard.text, "two parts");
         doc.selection.select_only(one);
 
         let steps = clipboard::paste(doc.doc(), &doc.selection, "other", Some(&clipboard));
-        assert!(apply(&mut doc, steps, "paste"));
+        assert_eq!(apply(&mut doc, steps, "paste"), Ok(true));
         assert_eq!(spans(&doc, one), vec![("other".to_string(), false)]);
         let Some(DocElement::Section(data)) = doc.doc().get(one) else { panic!("a section") };
         assert_eq!(
@@ -468,7 +481,7 @@ mod tests {
         doc.undo();
 
         let steps = clipboard::paste(doc.doc(), &doc.selection, "two parts", Some(&clipboard));
-        assert!(apply(&mut doc, steps, "paste"));
+        assert_eq!(apply(&mut doc, steps, "paste"), Ok(true));
         assert_eq!(
             spans(&doc, one),
             vec![("two ".to_string(), true), ("parts".to_string(), false)],
@@ -485,12 +498,12 @@ mod tests {
         let mut doc = structure();
         let (n1, n3, n5, n6) = (node(&doc, 1), node(&doc, 3), node(&doc, 5), node(&doc, 6));
         doc.selection.set([n1, n3]);
-        assert!(copy(&mut doc, false));
+        assert_eq!(copy(&mut doc, false), Ok(true));
         assert_eq!(doc.clipboard.as_ref().map(|c| c.text.as_str()), Some("A\n\nC"));
         let clipboard = doc.clipboard.clone();
 
         doc.selection.set([n5, n6]);
-        assert!(paste(&mut doc));
+        assert_eq!(paste(&mut doc), Ok(true));
         let text = |doc: &MindMapDocument, n| element_text(doc.doc(), section(doc, n, 0));
         assert_eq!(
             (text(&doc, n5), text(&doc, n6)),
@@ -501,7 +514,7 @@ mod tests {
 
         doc.selection.set([n5, n6, n3]);
         let steps = clipboard::paste(doc.doc(), &doc.selection, "A\n\nC", clipboard.as_ref());
-        assert!(apply(&mut doc, steps, "paste"));
+        assert_eq!(apply(&mut doc, steps, "paste"), Ok(true));
         assert_eq!(
             text(&doc, n6),
             "A\n\nC",
@@ -518,12 +531,20 @@ mod tests {
         let before = bytes(&doc);
         doc.selection.select_only(node(&doc, 6));
         assert!(doc.begin(ChangeSource::Input, TransactionKind::Interactive));
-        assert!(!delete_selection(&mut doc), "refused");
+        assert_eq!(
+            delete_selection(&mut doc),
+            Err(TRANSACTION_OPEN_STATUS),
+            "refused, saying why"
+        );
         assert_eq!(doc.status(), Some(TRANSACTION_OPEN_STATUS));
         assert_eq!(bytes(&doc), before);
 
         doc.undo();
-        assert!(delete_selection(&mut doc), "control: with none open, it deletes");
+        assert_eq!(
+            delete_selection(&mut doc),
+            Ok(true),
+            "control: with none open, it deletes"
+        );
         assert!(doc.selection.iter().next().is_none());
     }
 
@@ -561,7 +582,7 @@ mod tests {
             ("  ", None),
         ] {
             let steps = clipboard::paste(doc.doc(), &doc.selection, text, None);
-            apply(&mut doc, steps, "paste");
+            let _ = apply(&mut doc, steps, "paste");
             assert_eq!(own(&doc), want, "{text:?}");
         }
         for text in ["red", "var(nope)", "#zz"] {

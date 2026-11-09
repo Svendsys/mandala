@@ -54,9 +54,9 @@ pub(in crate::application::app) enum DispatchOutcome {
     /// Nothing ran: the Action does not apply in the current context, or
     /// its family is rebuilt by an owner issue (`super::families`).
     Unhandled,
-    /// Nothing ran: the arm's guard declined, for this reason (#194).
-    /// Native-only: no browser arm declines for a stated reason yet.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Nothing ran: the arm's guard declined, for this reason (#194) —
+    /// on both targets: the structure family's declines and D28 refusals
+    /// are the browser's.
     Refused(&'static str),
 }
 

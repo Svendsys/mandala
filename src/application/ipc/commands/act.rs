@@ -166,7 +166,6 @@ fn action_reply(outcome: ActionOutcome) -> Value {
     match outcome {
         ActionOutcome::Handled => json!({ "outcome": "handled", "reason": null }),
         ActionOutcome::Unhandled => json!({ "outcome": "unhandled", "reason": null }),
-        #[cfg(not(target_arch = "wasm32"))]
         ActionOutcome::Refused(reason) => json!({ "outcome": "unhandled", "reason": reason }),
     }
 }
