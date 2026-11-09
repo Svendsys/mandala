@@ -138,8 +138,10 @@ pub struct Projector {
     /// [`Projector::label_pos`] reads.
     pub(crate) label_hosts: FxHashMap<NodeId, NodeId>,
     /// Each junction — a node's side, or a node's portal ends — and the
-    /// drawn paths with an end in it (#296): what is fanned together.
-    pub(crate) junctions: FxHashMap<state::JunctionKey, Vec<NodeId>>,
+    /// drawn paths with an end in it (#296): what is fanned together. A
+    /// set, so a path joins and leaves in O(1); `refan` orders the
+    /// members itself, with a total tie-break on their ids.
+    pub(crate) junctions: FxHashMap<state::JunctionKey, rustc_hash::FxHashSet<NodeId>>,
     /// One shaping per key, for every unit whose key is equal
     /// ([`shapes`]).
     pub(crate) shapes: shapes::ShapeCache,

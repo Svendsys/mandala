@@ -1315,10 +1315,10 @@ impl Projector {
     }
 
     /// Take the path `id` out of the junction `key`, to be fanned again.
-    /// O(the paths there).
+    /// O(1).
     pub(crate) fn unjoin(&mut self, key: JunctionKey, id: NodeId, work: &mut PhaseWork) {
         if let Some(joined) = self.junctions.get_mut(&key) {
-            joined.retain(|&p| p != id);
+            joined.remove(&id);
             if joined.is_empty() {
                 self.junctions.remove(&key);
             }
@@ -1327,12 +1327,9 @@ impl Projector {
     }
 
     /// Put the path `id` in the junction `key`, to be fanned again.
-    /// O(the paths there).
+    /// O(1).
     fn join(&mut self, key: JunctionKey, id: NodeId, work: &mut PhaseWork) {
-        let joined = self.junctions.entry(key).or_default();
-        if !joined.contains(&id) {
-            joined.push(id);
-        }
+        self.junctions.entry(key).or_default().insert(id);
         work.fans.insert(key);
     }
 
