@@ -102,7 +102,8 @@ impl InputHandlerContext<'_> {
         self.drain_inputs()
     }
 
-    /// The per-frame drains: the rubber band (`drain_frame`), then the
+    /// The per-frame drains: the rubber band (`drain_frame`), the view's
+    /// following of the mode (`view::MapView::follow_mode`), then the
     /// view's sync — the one pipeline (`view::MapView::sync`) — so a
     /// change any path made reaches the layers this frame even if the
     /// path did not sync it itself; a sync with nothing to do does
@@ -114,7 +115,10 @@ impl InputHandlerContext<'_> {
     pub(super) fn drain_inputs(&mut self) -> bool {
         drain_frame::drain_rect_select(self.drag_state, self.document, self.view, self.renderer);
         match (self.document.as_mut(), self.view.as_mut()) {
-            (Some(doc), Some(view)) => view.sync(doc, self.renderer),
+            (Some(doc), Some(view)) => {
+                view.follow_mode(self.interaction_mode);
+                view.sync(doc, self.renderer)
+            }
             _ => false,
         }
     }

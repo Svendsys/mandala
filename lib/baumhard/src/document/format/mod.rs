@@ -735,6 +735,37 @@ pub fn save_to(doc: &Document, out: &mut impl std::io::Write) -> Result<(), Save
     write_unchecked(doc, out)
 }
 
+/// The color `text` spells in the file's own spelling — `#rrggbb`,
+/// `#rrggbbaa`, `var(name)` naming a variable of `doc`'s theme, or
+/// `palette(frame|text|title)` — as `doc` would load it; `None` for
+/// anything the file refuses. One parser for a file and for a pasted
+/// color, so a paste accepts and refuses exactly what a load does.
+///
+/// Cost: the text's length, and a search of the theme's variables.
+pub fn color(doc: &Document, text: &str) -> Option<crate::document::values::ColorRef> {
+    use crate::document::values::{ColorRef, Rgba, VarId};
+    use serde::de::{value::Error, IntoDeserializer};
+    use serde::Deserialize;
+    let deserializer: serde::de::value::StrDeserializer<'_, Error> = text.into_deserializer();
+    Some(match spelling::ColorDto::deserialize(deserializer).ok()? {
+        spelling::ColorDto::Hex(hex) => ColorRef::Rgba(Rgba(hex.0)),
+        spelling::ColorDto::Var(name) => {
+            let variables = &doc.theme().variables;
+            let at = variables
+                .binary_search_by(|known| known.as_str().cmp(&name))
+                .ok()?;
+            ColorRef::Var(VarId(u16::try_from(at).ok()?))
+        }
+        spelling::ColorDto::Palette(field) => ColorRef::Palette(field.into()),
+    })
+}
+
+/// `rgba` in the file's spelling: `#rrggbb`, or `#rrggbbaa` when it is
+/// not opaque. O(1).
+pub fn hex(rgba: crate::document::values::Rgba) -> String {
+    spelling::format_hex(rgba.0)
+}
+
 /// The writing half of [`save_to`], with no check.
 fn write_unchecked(doc: &Document, out: &mut impl std::io::Write) -> Result<(), SaveError> {
     let io = |path: String| {

@@ -1087,8 +1087,8 @@ key, a macro or the console) does.
 
 | param | type | required | meaning |
 |---|---|---|---|
-| `action` | string\|object | yes | The `Action`, in the externally tagged form macro `Action` steps deserialize through: a string for a unit variant (`"Undo"`), and a `{"Variant": payload}` object for a payload variant (`{"OpenDocument": "/path/m.mandala.json"}`). An unknown variant or a mistyped payload is `invalid_params`, naming what serde expected. |
-| `x`, `y` | number | no, together | A pointer position. With it, the cursor stands there for this dispatch only (afterwards it is back where the user's real pointer is, so their next wheel or key acts where they point, not where the agent did), and the dispatch carries what the canonical click hit test (`compute_click_hit`, the one mouse presses use) finds under it, as a mouse handler's `DispatchHit` does. Pointer-driven arms then behave as under a real pointer: `DoubleClickActivate` routes on the hit, and `ZoomIn` / `ZoomOut` / `CreateOrphanNode` use the position. Without it they use the current cursor, and `DoubleClickActivate` reports `unhandled`. One without the other is `invalid_params`. |
+| `action` | string\|object | yes | The `Action`, in the externally tagged form macro `Action` steps deserialize through: a string for a unit variant (`"Undo"`), and a `{"Variant": payload}` object for a payload variant (`{"OpenDocument": "/path/m.mandala.json"}`). An unknown variant or a mistyped payload is `invalid_params`, naming what serde expected. `ReparentToTarget` and `ConnectToTarget` take their target in their payload instead, by integer node id (`{"ReparentToTarget": 3}`; `{"ReparentToTarget": null}` is a click on empty canvas), as the click in their mode sends it. |
+| `x`, `y` | number | no, together | A pointer position. With it, the cursor stands there for this dispatch only (afterwards it is back where the user's real pointer is, so their next wheel or key acts where they point, not where the agent did), and the dispatch carries what the canonical click hit test (`compute_click_hit`, the one mouse presses use) finds under it, as a mouse handler's `DispatchHit` does. Pointer-driven arms then behave as under a real pointer: `DoubleClickActivate` routes on the hit, and `ZoomIn` / `ZoomOut` / `CreateOrphanNode` use the position. Without it `ZoomIn` and `ZoomOut` use the current cursor, `CreateOrphanNode` the viewport's center (where a key places a node), and `DoubleClickActivate` reports `unhandled`. One without the other is `invalid_params`. |
 | `space` | string | no | The coordinate space of `x`/`y`: `"canvas"` (default) or `"surface"` ([Coordinate spaces](#coordinate-spaces)). Only valid with `x`/`y`. |
 
 Result: `outcome` (string), `"handled"` or `"unhandled"`: the
@@ -1104,7 +1104,11 @@ Treat an unrecognized value as `"unhandled"`.
 
 `reason` (string or `null`): why an `unhandled` Action did not run,
 when its arm declined for a stated reason; `null` otherwise, and
-always `null` with `"handled"`. `FastResizeStart` is one: the resize
+always `null` with `"handled"`, on both targets. The structure Actions
+give theirs: `DeleteSelection` of a connector alone, `ReparentToTarget`
+onto a source or a node below one, and any of them that would edit
+while an interactive edit is open (D28); each is the line the status
+line shows. `FastResizeStart` is one too: the resize
 it starts is finalized by the release of the mouse button holding the
 gesture, and a synthetic pointer holds none, so with `x`/`y` it is
 refused with a reason saying nothing holds the gesture rather than
@@ -1307,7 +1311,7 @@ Params: none.
 
 | result field | type | meaning |
 |---|---|---|
-| `interaction_mode` | object | `{"kind": "Default"}`: the one mode while the editing modes are rebuilt on the document's writer (resize by V1-C7, node editing by V1-C8). |
+| `interaction_mode` | object | `kind`: `Default`, `Reparent` or `Connect`. `Reparent` and `Connect` (native: `EnterReparentMode`, `EnterConnectMode`) carry `sources`, the nodes the next click moves or links, by integer id, in selection order (`null` for one the document no longer holds). Resize returns with V1-C7 and node editing with V1-C8. |
 | `drag_state` | object | `kind`: `None`, `Pending`, `PendingRight`, `Panning` or `SelectingRect`. `Pending` carries `start_pos` (surface pixels) and `hit`, the element the press landed on (`null` over empty canvas). `PendingRight` carries `start_pos`, `start_canvas` and `hit`. `Panning` carries its `owner`, which is what ends it: `"button"` with the `button` that holds it (`"left"`, `"right"`, `"middle"`, as `input.mouse_button` spells them) or `"key"` with the `key` name that holds it — each ends on that input's release and no other — or `"toggled"`, a pan armed by a dispatch with no release behind it (`act.action`, `act.console`, `act.macro`), which the next `PanCanvas` ends. `SelectingRect` carries `start_canvas` and `current_canvas`. |
 | `modals` | array | Every open modal, in the order the keyboard handler consults them: `console`, `color_picker`. The console takes **every** key. The color picker claims **only its own** keys; every other key falls through. `query.editors` has each one's state. |
 | `key_owner` | string | Who receives an *ordinary* key right now: `console`, or `none` (normal dispatch). Never `color_picker`, which claims only its own keys. |
@@ -1320,7 +1324,7 @@ Params: none.
 | result field | type | meaning |
 |---|---|---|
 | `text` | string | The cyan mode-status line the renderer shows, or `null` when none is showing (Default mode). The app already writes this line for a human, so an agent reads it instead of re-deriving it. |
-| `document` | string | The line the document's last refused change left — the busy message an open interactive edit answers another change with — or `null` when the last change was accepted. |
+| `document` | string | The document's status line: what its last refused or declined change left — the busy message an open interactive edit answers another change with, why a connector alone was not deleted, why a reparent target was refused — or `null` once a change is accepted or `ExitMode` dismisses it. While a reparent or connect mode is active, `text` shows the mode's line (`reparent: 2 sources — click a target node`) over this one, which shows again when the mode ends. |
 
 ### `query.editors`
 

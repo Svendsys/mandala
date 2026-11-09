@@ -283,7 +283,7 @@ run headless, so time is virtual and the drag's 13 queued samples land on a
 step; in a window (real time) the `--wait-settled` on the drag waits for them
 itself and the `clock.step` line is not needed. The editing Actions are
 rebuilt on the document's writer in V1-C4..C8; until each lands, its Action
-answers `unhandled`, as `DeleteSelection` does here:
+answers `unhandled`. `DeleteSelection` (V1-C4) has landed, and deletes the node:
 
 ```text
 $ mandalactl input.click_node 247
@@ -307,7 +307,12 @@ $ mandalactl query.selection
 count: 1
 elements[0].node: 247
 $ mandalactl act.action DeleteSelection --wait-settled
-outcome: "unhandled"
+outcome: "handled"
+reason: null
+wait.elapsed_ms: 0
+$ mandalactl query.selection
+count: 0
+elements: []
 ```
 
 - **Check before you drag.** A drag pans wherever it starts (moving a node

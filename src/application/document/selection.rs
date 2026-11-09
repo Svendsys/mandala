@@ -11,9 +11,14 @@
 //! it names ([`selectable`]), and the keyboard's moves follow the
 //! document's own tree.
 //!
+//! One section's text can be selected in part: a range of grapheme
+//! clusters within it ([`Selection::range`]), which every other change
+//! of the selection drops. V1-C8's node editing makes one; the clipboard
+//! reads it.
+//!
 //! The selection is app state, not document state: it is never saved
-//! and never in the history. An undo that removes a selected element
-//! leaves an id that no longer reads anything, which
+//! and never in the history. A change or an undo that removes a selected
+//! element leaves an id no longer in the tree, which
 //! [`Selection::retain_live`] drops.
 
 use baumhard::arena::NodeId;
@@ -21,10 +26,13 @@ use baumhard::document::element::DocKind;
 use baumhard::document::ids::Document;
 use baumhard::projection::Hit;
 
-/// The selected elements, oldest first, each once.
+/// The selected elements, oldest first, each once, and the part of a
+/// lone selected section's text that is selected, if only part is.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Selection {
     items: Vec<NodeId>,
+    /// Grapheme clusters `start..end` of the one selected element.
+    range: Option<(usize, usize)>,
 }
 
 impl Selection {
@@ -57,19 +65,37 @@ impl Selection {
             .filter(move |&id| kind_of(doc, id) == Some(DocKind::Node))
     }
 
+    /// The selected range: the one selected section, and grapheme
+    /// clusters `start..end` of its text. O(1).
+    pub fn range(&self) -> Option<(NodeId, usize, usize)> {
+        let (start, end) = self.range?;
+        Some((self.first()?, start, end))
+    }
+
+    /// Select grapheme clusters `start..end` of `section`'s text alone:
+    /// what V1-C8's (#249) node editing selects, and what a cut or a
+    /// paste of a range leaves selected.
+    pub fn select_range(&mut self, section: NodeId, start: usize, end: usize) {
+        self.items.clear();
+        self.items.push(section);
+        self.range = Some((start.min(end), start.max(end)));
+    }
+
     /// Select `id` alone. Returns whether the selection changed.
     pub fn select_only(&mut self, id: NodeId) -> bool {
-        if self.items.len() == 1 && self.items[0] == id {
+        if self.items.len() == 1 && self.items[0] == id && self.range.is_none() {
             return false;
         }
         self.items.clear();
         self.items.push(id);
+        self.range = None;
         true
     }
 
     /// Add `id` when it is not selected, take it out when it is: what a
     /// Shift-click does. O(the selection).
     pub fn toggle(&mut self, id: NodeId) {
+        self.range = None;
         match self.items.iter().position(|&s| s == id) {
             Some(at) => {
                 self.items.remove(at);
@@ -87,10 +113,11 @@ impl Selection {
                 next.push(id);
             }
         }
-        if next == self.items {
+        if next == self.items && self.range.is_none() {
             return false;
         }
         self.items = next;
+        self.range = None;
         true
     }
 
@@ -98,15 +125,19 @@ impl Selection {
     pub fn clear(&mut self) -> bool {
         let had = !self.items.is_empty();
         self.items.clear();
+        self.range = None;
         had
     }
 
-    /// Drop every element `doc` no longer holds — what an undo or a redo
-    /// that removed it leaves behind. Returns whether any was dropped.
-    /// O(the selection).
+    /// Drop every element `doc` no longer holds — what a change, an undo
+    /// or a redo that removed it leaves behind. Returns whether any was
+    /// dropped. O(the selection).
     pub fn retain_live(&mut self, doc: &Document) -> bool {
         let before = self.items.len();
         self.items.retain(|&id| doc.get(id).is_some());
+        if self.items.is_empty() {
+            self.range = None;
+        }
         self.items.len() != before
     }
 }

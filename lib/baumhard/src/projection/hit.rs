@@ -236,6 +236,14 @@ impl Projector {
         self.bodies.within(rect)
     }
 
+    /// The smallest visible node whose body holds `point` by its shape —
+    /// what [`Self::hit`] falls back to, asked directly, so a path or a
+    /// label drawn over a node does not stand in for it: the node a
+    /// reparent or a connect lands on. Cost: a cell of the body index.
+    pub fn node_at(&self, point: Vec2) -> Option<NodeId> {
+        self.bodies.at(point)
+    }
+
     /// What `point`, on the canvas, hits (#241 §6, ruling B7.1): the first
     /// layer, top-down, whose glyph BVH finds a glyph element there — a
     /// path run only where one of its glyphs is drawn — mapped back

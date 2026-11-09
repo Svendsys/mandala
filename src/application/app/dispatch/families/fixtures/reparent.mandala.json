@@ -1,0 +1,42 @@
+{
+  "format": 1,
+  "name": "Structure",
+  "nodes": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "sections": [{"spans": [{"text": "A"}]}]
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "position": [300.0, 0.0],
+      "sections": [{"spans": [{"text": "one"}]}, {"channel": 1, "offset": [0.0, 40.0], "align": "center", "color": "#ffcc00", "italic": true, "spans": [{"text": "two ", "weight": "bold"}, {"text": "parts", "color": "#00ff00"}]}, {"channel": 2, "offset": [0.0, 80.0], "spans": [{"text": "three"}]}],
+      "connector": {"color": "#888888", "label": {"spans": [{"text": "via"}]}}
+    },
+    {
+      "id": 4,
+      "parent": 2,
+      "position": [600.0, 0.0],
+      "sections": [{"spans": [{"text": "D"}]}]
+    },
+    {
+      "id": 3,
+      "parent": 1,
+      "position": [300.0, 200.0],
+      "sections": [{"spans": [{"text": "C"}]}]
+    },
+    {
+      "id": 6,
+      "parent": 3,
+      "position": [0.0, 600.0],
+      "sections": [{"spans": [{"text": "F"}]}]
+    },
+    {
+      "id": 5,
+      "position": [0.0, 400.0],
+      "sections": [{"spans": [{"text": "E"}]}],
+      "links": [{"to": 4, "kind": "line"}, {"to": 3, "kind": "line"}]
+    }
+  ]
+}

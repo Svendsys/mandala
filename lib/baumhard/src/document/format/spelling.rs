@@ -211,6 +211,18 @@ pub(crate) enum PaletteFieldDto {
     Title,
 }
 
+impl From<PaletteFieldDto> for crate::document::values::PaletteField {
+    /// The field a `palette(...)` spelling names.
+    fn from(field: PaletteFieldDto) -> Self {
+        use crate::document::values::PaletteField;
+        match field {
+            PaletteFieldDto::Frame => PaletteField::Frame,
+            PaletteFieldDto::Text => PaletteField::Text,
+            PaletteFieldDto::Title => PaletteField::Title,
+        }
+    }
+}
+
 impl PaletteFieldDto {
     /// The name inside `palette(...)`.
     fn name(self) -> &'static str {

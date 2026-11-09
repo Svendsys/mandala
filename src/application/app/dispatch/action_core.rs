@@ -5,8 +5,10 @@
 //! Handles every Action whose body needs only state both targets have:
 //! the history (`Undo`, `Redo`), the camera, the selection, the FPS
 //! readout and `ExitMode`. Before any of it, the Action is offered to
-//! the families an owner issue rebuilds (`super::families`), which
-//! answer theirs `Unhandled`. Returns `Handled` when a body ran;
+//! the structure family (`super::families::structure`: create, delete,
+//! reparent, connect, the clipboard), then to the families an owner
+//! issue rebuilds (`super::families`), which answer theirs `Unhandled`.
+//! Returns `Handled` when a body ran;
 //! `Unhandled` for variants this dispatcher doesn't own — the caller's
 //! fall-through (native only) runs the platform-specific arm.
 //!
@@ -31,14 +33,16 @@ use super::families;
 /// Actions, and the families' Actions).
 ///
 /// `hit` carries the pointer-event-only payload (what the press landed
-/// on, where it landed in canvas space); no arm here reads it today, and
-/// the pointer-driven arms that will (V1-C4's reparent target, V1-C8's
-/// double-click) take it from here.
+/// on, where it landed in canvas space): `CreateOrphanNode` places its
+/// node there, and V1-C8's double-click will take it from here.
 pub(in crate::application::app) fn dispatch_compatible(
     action: &Action,
     core: &mut InputContextCore<'_>,
-    _hit: Option<&cross_dispatch::DispatchHit>,
+    hit: Option<&cross_dispatch::DispatchHit>,
 ) -> DispatchOutcome {
+    if let Some(outcome) = families::structure::dispatch(action, core, hit) {
+        return outcome;
+    }
     if let Some(outcome) = families::dispatch(action) {
         return outcome;
     }
@@ -47,6 +51,11 @@ pub(in crate::application::app) fn dispatch_compatible(
             *core.interaction_mode = InteractionMode::Default;
             // A post-Esc click is not paired with a pre-Esc one.
             *core.last_click = None;
+            // A refusal's status line goes at the next frame's sync; a
+            // mode's tints and line follow the mode there.
+            if let Some(doc) = core.document.as_deref_mut() {
+                doc.dismiss_status();
+            }
             DispatchOutcome::Handled
         }
         Action::Undo | Action::Redo => {
