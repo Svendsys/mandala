@@ -101,17 +101,23 @@ fn map_in_font(family: &str) -> Result<Document, format::LoadError> {
 /// refuses**, for every family this process has loaded — the compiled
 /// ones, and on native the host's, which no file may name (#329) — and
 /// for names no face has. Each accepted name reads to the face a map
-/// naming it loads with. Controls: some family is accepted, so the loop
-/// is not vacuous, and the refused names really are refused by the
-/// loader.
+/// naming it loads with, and saves back: the loader shares
+/// `format::font`, so agreeing with it proves nothing alone.
+///
+/// Controls: some family is accepted, so the loop is not vacuous; and
+/// some *loaded* family is refused — a host face, the one kind of name
+/// that tells the face filter from no filter. A machine whose only
+/// families are the compiled ones has none, so there the test notes the
+/// skip, and fails where `MANDALA_REQUIRE_FONTCONFIG_HOSTS` is set, as CI
+/// sets it (`tests/font_state.rs`'s rule).
 #[test]
 fn test_format_font_reads_what_the_loader_reads() {
-    let mut accepted = 0;
-    let families: Vec<String> = crate::font::fonts::loaded_families_iter()
+    let (mut accepted, mut hosts) = (0, 0);
+    let loaded: Vec<String> = crate::font::fonts::loaded_families_iter()
         .map(str::to_string)
-        .chain(["", "Nope Sans", "inter"].map(String::from))
         .collect();
-    for family in &families {
+    let unknown = ["", "Nope Sans", "inter"].map(String::from);
+    for family in loaded.iter().chain(&unknown) {
         let read = format::font(family);
         match map_in_font(family) {
             Ok(doc) => {
@@ -122,13 +128,23 @@ fn test_format_font_reads_what_the_loader_reads() {
                 });
                 assert_eq!(read, loaded, "{family:?} reads as it loads");
                 assert!(read.is_some(), "{family:?} loads, so it reads");
-                // The loader shares `format::font`, so agreeing with it
-                // proves nothing alone: what is read must also save back.
                 assert!(format::save(&doc).is_ok(), "{family:?}: a face read saves");
             }
-            Err(_) => assert_eq!(read, None, "{family:?} is refused by the loader"),
+            Err(_) => {
+                assert_eq!(read, None, "{family:?} is refused by the loader");
+                hosts += usize::from(!unknown.contains(family));
+            }
         }
     }
     assert!(accepted > 0, "control: a compiled family loads");
     assert!(format::font("Nope Sans").is_none() && map_in_font("Nope Sans").is_err());
+    if hosts == 0 {
+        assert!(
+            std::env::var_os("MANDALA_REQUIRE_FONTCONFIG_HOSTS").is_none(),
+            "no host face is loaded, so the face filter went untested"
+        );
+        crate::util::test_skip::note_skipped(
+            "format::font met no host-only face; its filter is untested on this machine",
+        );
+    }
 }
