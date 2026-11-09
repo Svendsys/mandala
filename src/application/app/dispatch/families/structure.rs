@@ -20,8 +20,9 @@
 //! `Action::ConnectToTarget`, which the click handler dispatches). While
 //! one is active the pointer's valid target is tinted
 //! (`MapView::set_hover_target`). Both are native-only, as on `main`:
-//! their clicks and hover come from native's pointer handlers, so the
-//! browser answers their Actions `Unhandled`.
+//! their clicks and hover come from native's pointer handlers. On the
+//! browser their Actions reach no arm here and are answered `Unhandled`
+//! by `action_core`, and IPC refuses them `unsupported` first.
 
 use baumhard::arena::NodeId;
 use baumhard::document::element::DocKind;
@@ -73,11 +74,6 @@ pub(in crate::application::app) fn dispatch(
         Action::ReparentToTarget(target) | Action::ConnectToTarget(target) => {
             modes::finish(action, *target, core)
         }
-        #[cfg(target_arch = "wasm32")]
-        Action::EnterReparentMode
-        | Action::EnterConnectMode
-        | Action::ReparentToTarget(_)
-        | Action::ConnectToTarget(_) => DispatchOutcome::Unhandled,
         _ => return None,
     };
     Some(outcome)
