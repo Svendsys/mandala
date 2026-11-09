@@ -228,6 +228,12 @@ names. A handler that declines says why, and the refusal names the edit.
 | `flower` | each node's child nodes on a circle round it, the first at the top |
 | `cascade` | each node's descendants as a top-down tree, rows below their parents |
 
+A layout places no node over another drawn node — a sibling, the
+parent, or anything else on the map: a petal that would overlap one
+moves outward along its ray, and a row moves down, until it is clear.
+A node moved by hand, or by a `set_position` or `nudge`, goes where it
+is put, overlap or not.
+
 A handler places what is drawn: a hidden node, or one under a fold, is
 left where it is, and takes no place in the layout — a flower of
 twelve children with one hidden has eleven petals, and a cascade row

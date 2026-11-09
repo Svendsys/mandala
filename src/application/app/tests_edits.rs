@@ -327,3 +327,117 @@ fn test_a_handler_after_a_step_reads_the_view_that_step_left() {
         "straight above the parent as moved: {petal} over {parent}"
     );
 }
+
+/// Every node of `doc`, with its position. Iterative.
+fn nodes_of(doc: &MindMapDocument) -> Vec<(NodeId, Vec2)> {
+    let d = doc.doc();
+    let mut out = Vec::new();
+    let mut pending = vec![d.root()];
+    while let Some(id) = pending.pop() {
+        for child in d.children(id) {
+            if let Some(DocElement::Node(data)) = d.get(child) {
+                out.push((child, data.position));
+                pending.push(child);
+            }
+        }
+    }
+    out
+}
+
+/// Run `id` at `anchors` from the bundled edits, instantly, and the
+/// nodes it moved that are drawn over another drawn node, with that
+/// node. A shared edge is not an overlap.
+fn overlaps_after(
+    doc: &mut MindMapDocument,
+    view: &mut MapView,
+    id: &str,
+    anchors: &[NodeId],
+) -> Vec<(NodeId, NodeId)> {
+    let before = nodes_of(doc);
+    run_edit(
+        doc,
+        view,
+        &bundled(true),
+        id,
+        Some(anchors),
+        ChangeSource::Edit,
+        0.0,
+    )
+    .unwrap_or_else(|error| panic!("{id}: {error}"));
+    let _ = view.sync_for_test(doc);
+    let after = nodes_of(doc);
+    let moved: Vec<NodeId> = before
+        .iter()
+        .zip(&after)
+        .filter(|(b, a)| b != a)
+        .map(|(_, (node, _))| *node)
+        .collect();
+    assert!(
+        !moved.is_empty(),
+        "{id}: precondition: the layout moved something"
+    );
+    let rect = |node| baumhard::projection::Geometry::node_rect(view.projector(), node);
+    let drawn: Vec<(NodeId, baumhard::flow::Rect)> = after
+        .iter()
+        .filter_map(|&(node, _)| rect(node).map(|r| (node, r)))
+        .collect();
+    let meets = |a: &baumhard::flow::Rect, b: &baumhard::flow::Rect| {
+        a.origin.x < b.max().x && b.origin.x < a.max().x && a.origin.y < b.max().y && b.origin.y < a.max().y
+    };
+    let mut found = Vec::new();
+    for &node in &moved {
+        let Some(mine) = rect(node) else { continue };
+        found.extend(
+            drawn
+                .iter()
+                .filter(|(other, r)| *other != node && meets(&mine, r))
+                .map(|(other, _)| (node, *other)),
+        );
+    }
+    found
+}
+
+/// **Testament's Ishmael flower lays no son over another node** (owner,
+/// on #250): on `main`'s placement Hadad and Massa landed on Hagar,
+/// Ishmael's mother. Read through the real projection.
+///
+/// Control: `main`'s placement went red here.
+#[test]
+fn test_ishmael_flower_lays_no_son_over_another_node() {
+    let (mut doc, mut view) = setup();
+    let ishmael = doc
+        .doc()
+        .node_by_ident(baumhard::document::ids::NodeIdent(52))
+        .expect("Ishmael");
+    let found = overlaps_after(&mut doc, &mut view, "flower", &[ishmael]);
+    assert!(found.is_empty(), "{} overlaps: {found:?}", found.len());
+}
+
+/// **Over the whole of testament at once, neither layout lays a node over
+/// another** (owner, on #250): `flower` and `cascade`, each run with
+/// every node that has a child as an anchor — nested, dense, the map's
+/// every family — leave no moved node drawn over any other.
+///
+/// Control: `main`'s placement went red here.
+#[test]
+fn test_layouts_at_every_family_lay_no_node_over_another() {
+    for id in ["flower", "cascade"] {
+        let (mut doc, mut view) = setup();
+        let d = doc.doc();
+        let families: Vec<NodeId> = nodes_of(&doc)
+            .into_iter()
+            .map(|(node, _)| node)
+            .filter(|&node| {
+                d.children(node)
+                    .any(|c| d.get(c).is_some_and(|e| e.kind() == DocKind::Node))
+            })
+            .collect();
+        let found = overlaps_after(&mut doc, &mut view, id, &families);
+        assert!(
+            found.is_empty(),
+            "{id}: {} overlaps, first {:?}",
+            found.len(),
+            found.first()
+        );
+    }
+}

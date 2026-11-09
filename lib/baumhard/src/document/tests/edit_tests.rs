@@ -821,6 +821,76 @@ fn test_a_layout_pins_at_the_canvas_bound() {
     );
 }
 
+/// Each node of `moved` whose box overlaps another node's in `doc`, with
+/// that node: a shared edge is not an overlap.
+fn overlaps(doc: &Document, moved: &[NodeId]) -> Vec<(NodeId, NodeId)> {
+    let boxes = Boxes::of(doc);
+    let meets = |a: &crate::flow::Rect, b: &crate::flow::Rect| {
+        a.origin.x < b.max().x && b.origin.x < a.max().x && a.origin.y < b.max().y && b.origin.y < a.max().y
+    };
+    let mut found = Vec::new();
+    for &m in moved {
+        for (&other, rect) in &boxes.0 {
+            if other != m && meets(&boxes.0[&m], rect) {
+                found.push((m, other));
+            }
+        }
+    }
+    found
+}
+
+/// Node 1 at the origin with twelve children stacked on it, inside a
+/// grid of `cols` × `rows` other nodes, each box touching its neighbors:
+/// no place inside the grid is clear.
+fn crowded(cols: i32, rows: i32) -> String {
+    let mut nodes = vec![r#"{"id":1,"position":[0,0]}"#.to_string()];
+    nodes.extend((2..=13).map(|id| format!(r#"{{"id":{id},"parent":1,"position":[0,0]}}"#)));
+    let mut id = 100;
+    for col in 0..cols {
+        for row in 0..rows {
+            let (x, y) = ((col - cols / 2) * 100, (row - rows / 2) * 40);
+            nodes.push(format!(r#"{{"id":{id},"position":[{x},{y}]}}"#));
+            id += 1;
+        }
+    }
+    format!(r#"{{"format":1,"name":"t","nodes":[{}]}}"#, nodes.join(","))
+}
+
+/// **A layout places no node over another drawn node** (owner, on #250:
+/// testament's Ishmael flower put Hadad and Massa on Hagar). A node
+/// where `flower`'s first petal and `cascade`'s first row would go is
+/// stepped round; and in a grid where nothing nearby is clear — larger
+/// than the bounded search, so some petals go past it all — every petal
+/// and every row is still clear of every other box.
+///
+/// Control: `main`'s placement put the petal and the row on that node,
+/// and laid the crowded family over the grid.
+#[test]
+fn test_a_layout_places_no_node_over_another() {
+    let blocker = format!(
+        r#"{},{{"id":7,"channel":1,"position":[0,-140]}},{{"id":8,"channel":2,"position":[-140,120]}}]}}"#,
+        FAMILY.strip_suffix("]}").expect("FAMILY ends its list")
+    );
+    for (text, family) in [(blocker, vec![2, 3, 4]), (crowded(60, 120), (2..=13).collect())] {
+        for handler in ["flower", "cascade"] {
+            let mut doc = load(&text).unwrap();
+            let one = n(&doc, 1);
+            let def = edit(&format!(
+                r#"{{"id":"h","name":"H","reach":"self","target":"node","handler":"{handler}"}}"#
+            ));
+            run(&mut doc, &def, &[one]).unwrap();
+            let moved: Vec<NodeId> = family.iter().map(|&i| n(&doc, i)).collect();
+            let found = overlaps(&doc, &moved);
+            assert!(
+                found.is_empty(),
+                "{handler}: {} overlaps, first {:?}",
+                found.len(),
+                found.first()
+            );
+        }
+    }
+}
+
 #[test]
 fn test_a_node_that_is_not_drawn_is_left_in_place() {
     let mut doc = load(FAMILY).unwrap();

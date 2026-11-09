@@ -26,15 +26,23 @@
 //! what the document is. A node the projection does not draw (hidden,
 //! under a fold) has no rectangle, and a layout leaves it where it is.
 //!
-//! `flower` and `cascade` are ported from `main`'s
-//! `document/mutations/flower_layout.rs` and `tree_cascade.rs`: the same
-//! placement for a family that is wholly drawn — angles, radius, rows
-//! and gaps, breadth-first order — with one difference where it is not.
-//! `main` gave every child a slot, an undrawn one included; here a
-//! child with no rectangle has no size to lay out by (D5), so it takes
-//! no slot: one hidden child of twelve makes an eleven-petal flower, and
-//! a cascade row without it. Each placement is emitted as one
-//! `NodeOp::SetPosition` per node, each
+//! `flower` and `cascade` start from `main`'s
+//! `document/mutations/flower_layout.rs` and `tree_cascade.rs` —
+//! angles, radius, rows and gaps, breadth-first order — and place
+//! differently in two ways:
+//!
+//! - **A placed node never overlaps another drawn node** (owner, on
+//!   #250): not a sibling, not the parent, not anything else on the map.
+//!   A petal moves outward along its ray, a row downward,
+//!   [`CLEAR_STEP`] at a time, and after [`MAX_CLEAR_STEPS`] tries it
+//!   goes past everything drawn, where it is clear by construction.
+//!   Only a layout keeps clear: a node moved by hand goes where it is
+//!   put.
+//! - A child with no rectangle has no size to lay out by (D5), so it
+//!   takes no slot: one hidden child of twelve makes an eleven-petal
+//!   flower, and a cascade row without it. `main` gave it one.
+//!
+//! Each placement is emitted as one `NodeOp::SetPosition` per node, each
 //! its own walk: a walk applies one mutator per sibling key, and sibling
 //! nodes commonly share one, so one walk could not place them apart
 //! (ruling on #250).
@@ -106,28 +114,42 @@ pub const ROW_GAP: f32 = 80.0;
 /// The space between siblings in a cascade's row.
 pub const SIBLING_GAP: f32 = 40.0;
 
+/// How far a layout moves a node at a time while it looks for a place
+/// clear of every other drawn node: a petal outward along its ray, a
+/// cascade row downward.
+pub const CLEAR_STEP: f32 = 40.0;
+
+/// How many [`CLEAR_STEP`]s a layout tries before it places the node
+/// past everything drawn, where it is clear by construction.
+pub const MAX_CLEAR_STEPS: u32 = 64;
+
 /// `flower`: each node's child nodes on a circle round it, the first at
 /// the top, clockwise. The radius clears the parent's half-span and the
-/// largest child's, plus [`RADIAL_PADDING`], so no child's outline
-/// crosses the parent's. Parents are placed before their children, in
-/// tree order, and a node one flower moves is the center of its own
-/// where it is moved to, so nested nodes compose. O(the nodes'
-/// children, plus the tree order of `nodes`).
+/// largest child's, plus [`RADIAL_PADDING`]. A petal that would overlap
+/// another drawn node — a sibling already placed, the parent, anything
+/// else on the map — moves outward along its ray, [`CLEAR_STEP`] at a
+/// time, until it is clear (see [`Clear`]). Parents are placed before
+/// their children, in tree order, and a node one flower moves is the
+/// center of its own where it is moved to, so nested nodes compose.
+///
+/// Cost: one pass over the map's nodes for what is drawn, then per
+/// petal at most [`MAX_CLEAR_STEPS`] lookups, each of the grid cells
+/// the petal covers.
 pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Result<Walks, String> {
+    let families: Vec<Family> = in_tree_order(doc.tree(), nodes, false)
+        .into_iter()
+        .filter_map(|parent| {
+            let rect = geometry.node_rect(parent)?;
+            let children = drawn_children(doc, geometry, parent);
+            (!children.is_empty()).then_some((parent, rect, children))
+        })
+        .collect();
+    let mut clear = Clear::around(doc, geometry, families.iter().flat_map(|(_, _, row)| row));
     let mut planned: Vec<(NodeId, Vec2)> = Vec::new();
     // Where each node is drawn once placed: its new rectangle's origin.
     let mut placed: FxHashMap<NodeId, Vec2> = FxHashMap::default();
-    for parent in in_tree_order(doc.tree(), nodes, false) {
-        let Some(rect) = geometry.node_rect(parent) else {
-            continue;
-        };
+    for (parent, rect, children) in families {
         let origin = placed.get(&parent).copied().unwrap_or(rect.origin);
-        let children: Vec<(NodeId, Rect)> = child_nodes(doc, parent)
-            .filter_map(|child| geometry.node_rect(child).map(|r| (child, r)))
-            .collect();
-        if children.is_empty() {
-            continue;
-        }
         let parent_span = rect.size.max_element() / 2.0;
         let child_span = children
             .iter()
@@ -137,8 +159,16 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
         let center = origin + rect.size / 2.0;
         let n = children.len() as f32;
         for (i, (child, r)) in children.iter().enumerate() {
-            let theta = START_ANGLE + i as f32 * std::f32::consts::TAU / n;
-            let at = center + radius * Vec2::new(theta.cos(), theta.sin()) - r.size / 2.0;
+            let ray = Vec2::from_angle(START_ANGLE + i as f32 * std::f32::consts::TAU / n);
+            let along = |d: f32| center + d * ray - r.size / 2.0;
+            let tried = (0..MAX_CLEAR_STEPS)
+                .map(|k| along(radius + k as f32 * CLEAR_STEP))
+                .find(|&o| clear.is_clear(Rect::new(o, r.size)));
+            // Past every drawn rectangle: its center farther from `center`
+            // than any of them reaches, by more than its own half-diagonal.
+            let at =
+                tried.unwrap_or_else(|| along(radius.max(clear.reach(center) + r.size.length() / 2.0 + 1.0)));
+            clear.add(Rect::new(at, r.size));
             placed.insert(*child, at);
             planned.push((*child, position_for(doc, *child, *r, at)));
         }
@@ -148,53 +178,199 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
 
 /// `cascade`: each node's descendants as a top-down tree — each row
 /// [`ROW_GAP`] below its parent, siblings [`SIBLING_GAP`] apart and
-/// centered under it, each level placed from its parent's new place.
-/// A node nested under another of `nodes` is laid out as part of the
-/// outer one's tree, so the walk starts from the outermost.
-/// Breadth first and iterative. O(the subtrees).
+/// centered under it, each level placed from its parent's new place. A
+/// row that would overlap another drawn node — a row already placed,
+/// the anchor, anything else on the map — moves down, [`CLEAR_STEP`] at
+/// a time, until it is clear (see [`Clear`]). A node nested under
+/// another of `nodes` is laid out as part of the outer one's tree, so
+/// the walk starts from the outermost. Breadth first and iterative.
+///
+/// Cost: the subtrees, one pass over the map's nodes for what is drawn,
+/// then per row at most [`MAX_CLEAR_STEPS`] lookups of its nodes.
 pub fn cascade(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Result<Walks, String> {
-    let mut planned: Vec<(NodeId, Vec2)> = Vec::new();
-    // Where each node is drawn once placed: its new rectangle's origin.
-    let mut placed: FxHashMap<NodeId, Vec2> = FxHashMap::default();
+    // The rows, breadth first: which does not depend on where they go.
+    let mut rows: Vec<Family> = Vec::new();
     let outermost = in_tree_order(doc.tree(), nodes, true);
     let mut seen: FxHashSet<NodeId> = outermost.iter().copied().collect();
     let mut queue: VecDeque<NodeId> = outermost.into();
     while let Some(parent) = queue.pop_front() {
-        let children: Vec<NodeId> = child_nodes(doc, parent).collect();
-        for &child in &children {
+        for child in child_nodes(doc, parent) {
             if seen.insert(child) {
                 queue.push_back(child);
             }
         }
-        let Some(rect) = geometry.node_rect(parent) else {
-            continue;
-        };
-        let origin = placed.get(&parent).copied().unwrap_or(rect.origin);
-        let row: Vec<(NodeId, Rect)> = children
-            .iter()
-            .filter_map(|&child| geometry.node_rect(child).map(|r| (child, r)))
-            .collect();
-        if row.is_empty() {
-            continue;
+        if let Some(rect) = geometry.node_rect(parent) {
+            let row = drawn_children(doc, geometry, parent);
+            if !row.is_empty() {
+                rows.push((parent, rect, row));
+            }
         }
+    }
+    let mut clear = Clear::around(doc, geometry, rows.iter().flat_map(|(_, _, row)| row));
+    let mut planned: Vec<(NodeId, Vec2)> = Vec::new();
+    // Where each node is drawn once placed: its new rectangle's origin.
+    let mut placed: FxHashMap<NodeId, Vec2> = FxHashMap::default();
+    for (parent, rect, row) in rows {
+        let origin = placed.get(&parent).copied().unwrap_or(rect.origin);
         let width: f32 =
             row.iter().map(|(_, r)| r.size.x).sum::<f32>() + SIBLING_GAP * (row.len() as f32 - 1.0);
-        let row_y = origin.y + rect.size.y + ROW_GAP;
-        let mut x = origin.x + rect.size.x / 2.0 - width / 2.0;
-        for (child, r) in row {
-            let at = Vec2::new(x, row_y);
-            placed.insert(child, at);
-            planned.push((child, position_for(doc, child, r, at)));
-            x += r.size.x + SIBLING_GAP;
+        let left = origin.x + rect.size.x / 2.0 - width / 2.0;
+        // The row's rectangles with its top at `y`.
+        let at = |y: f32| {
+            let mut x = left;
+            row.iter()
+                .map(|(_, r)| {
+                    let laid = Rect::new(Vec2::new(x, y), r.size);
+                    x += r.size.x + SIBLING_GAP;
+                    laid
+                })
+                .collect::<Vec<Rect>>()
+        };
+        let top = origin.y + rect.size.y + ROW_GAP;
+        let tried = (0..MAX_CLEAR_STEPS)
+            .map(|k| top + k as f32 * CLEAR_STEP)
+            .find(|&y| at(y).iter().all(|&laid| clear.is_clear(laid)));
+        // Below every drawn rectangle.
+        let y = tried.unwrap_or_else(|| top.max(clear.bottom() + ROW_GAP));
+        for ((child, r), laid) in row.iter().zip(at(y)) {
+            clear.add(laid);
+            placed.insert(*child, laid.origin);
+            planned.push((*child, position_for(doc, *child, *r, laid.origin)));
         }
     }
     Ok(positions(planned))
 }
 
+/// A drawn node and where, with its drawn child nodes and where: what a
+/// layout places round, or under, one node.
+type Family = (NodeId, Rect, Vec<(NodeId, Rect)>);
+
 /// The child nodes of `id`, in sibling order.
 fn child_nodes(doc: &Document, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     doc.children(id)
         .filter(move |&child| doc.get(child).is_some_and(|e| e.kind() == DocKind::Node))
+}
+
+/// The child nodes of `id` that are drawn, with where, in sibling order.
+fn drawn_children(doc: &Document, geometry: &dyn Geometry, id: NodeId) -> Vec<(NodeId, Rect)> {
+    child_nodes(doc, id)
+        .filter_map(|child| geometry.node_rect(child).map(|r| (child, r)))
+        .collect()
+}
+
+/// The side of a [`Clear`] grid cell, in canvas units.
+const CELL: f32 = 512.0;
+
+/// The most grid cells a rectangle is filed under; a larger one is kept
+/// apart and tested against every query.
+const MAX_CELLS: i64 = 64;
+
+/// The drawn rectangles a layout keeps its nodes clear of: every drawn
+/// node it does not move, as drawn, and every node it has placed, as
+/// placed. Two rectangles are clear when their insides do not meet; a
+/// shared edge is clear. Filed in a uniform grid so a lookup reads only
+/// the rectangles near it.
+struct Clear {
+    /// The rectangles filed under each cell they cover.
+    cells: FxHashMap<(i32, i32), Vec<Rect>>,
+    /// The rectangles that cover more than [`MAX_CELLS`] cells.
+    wide: Vec<Rect>,
+    /// Every rectangle, for [`Self::reach`] and [`Self::bottom`].
+    all: Vec<Rect>,
+}
+
+impl Clear {
+    /// Every drawn node of `doc` but those in `moved`. One pass over the
+    /// map's nodes, iterative.
+    fn around<'a>(
+        doc: &Document,
+        geometry: &dyn Geometry,
+        moved: impl Iterator<Item = &'a (NodeId, Rect)>,
+    ) -> Self {
+        let moved: FxHashSet<NodeId> = moved.map(|(node, _)| *node).collect();
+        let mut clear = Clear {
+            cells: FxHashMap::default(),
+            wide: Vec::new(),
+            all: Vec::new(),
+        };
+        let mut pending = vec![doc.root()];
+        while let Some(id) = pending.pop() {
+            for child in child_nodes(doc, id) {
+                if !moved.contains(&child) {
+                    if let Some(rect) = geometry.node_rect(child) {
+                        clear.add(rect);
+                    }
+                }
+                pending.push(child);
+            }
+        }
+        clear
+    }
+
+    /// The cells `rect` covers, or `None` past [`MAX_CELLS`].
+    fn cells_of(rect: Rect) -> Option<impl Iterator<Item = (i32, i32)>> {
+        let cell = |v: f32| (v / CELL).floor() as i32;
+        let (x0, y0, x1, y1) = (
+            cell(rect.origin.x),
+            cell(rect.origin.y),
+            cell(rect.max().x),
+            cell(rect.max().y),
+        );
+        let count = (i64::from(x1) - i64::from(x0) + 1) * (i64::from(y1) - i64::from(y0) + 1);
+        (count <= MAX_CELLS).then(|| (x0..=x1).flat_map(move |x| (y0..=y1).map(move |y| (x, y))))
+    }
+
+    /// File `rect`.
+    fn add(&mut self, rect: Rect) {
+        match Self::cells_of(rect) {
+            Some(cells) => {
+                for cell in cells {
+                    self.cells.entry(cell).or_default().push(rect);
+                }
+            }
+            None => self.wide.push(rect),
+        }
+        self.all.push(rect);
+    }
+
+    /// Whether `rect` is clear of every filed rectangle.
+    fn is_clear(&self, rect: Rect) -> bool {
+        let meets = |other: &Rect| {
+            rect.origin.x < other.max().x
+                && other.origin.x < rect.max().x
+                && rect.origin.y < other.max().y
+                && other.origin.y < rect.max().y
+        };
+        let near = match Self::cells_of(rect) {
+            Some(cells) => cells
+                .filter_map(|cell| self.cells.get(&cell))
+                .any(|filed| filed.iter().any(meets)),
+            None => self.all.iter().any(meets),
+        };
+        !near && !self.wide.iter().any(meets)
+    }
+
+    /// How far from `center` the farthest filed rectangle reaches: past
+    /// it, a disk round `center` holds every one.
+    fn reach(&self, center: Vec2) -> f32 {
+        self.all
+            .iter()
+            .flat_map(|r| {
+                [
+                    r.origin,
+                    r.max(),
+                    Vec2::new(r.origin.x, r.max().y),
+                    Vec2::new(r.max().x, r.origin.y),
+                ]
+            })
+            .map(|corner| (corner - center).length())
+            .fold(0.0, f32::max)
+    }
+
+    /// The lowest edge of any filed rectangle.
+    fn bottom(&self) -> f32 {
+        self.all.iter().map(|r| r.max().y).fold(f32::MIN, f32::max)
+    }
 }
 
 /// The position that draws `node`'s rectangle, now `drawn`, at
