@@ -262,7 +262,10 @@ pub enum PathOp {
     SetContent(Option<String>),
     /// Set where it attaches at its start and at its end.
     SetAnchors(Anchor, Anchor),
-    /// Replace its control points: 0, 1 or 2.
+    /// Replace its control points: at most 8 points the path passes
+    /// through, point `k` of `n` an offset from the point `k / (n + 1)`
+    /// of the way between its ends (`format/schema.md`, "Control
+    /// points").
     SetControlPoints(Vec<Vec2>),
     /// Move one control point; one the path does not have is left
     /// alone.
