@@ -135,9 +135,9 @@ pub struct Projector {
     /// Each label a unit projects, and that unit: what
     /// [`Projector::label_pos`] reads.
     pub(crate) label_hosts: FxHashMap<NodeId, NodeId>,
-    /// Each node, and the drawn connectors and line links with an end at
-    /// it (#296): the paths whose ends one side of it fans.
-    pub(crate) junctions: FxHashMap<NodeId, Vec<NodeId>>,
+    /// Each junction — a node's side, or a node's portal ends — and the
+    /// drawn paths with an end in it (#296): what is fanned together.
+    pub(crate) junctions: FxHashMap<state::JunctionKey, Vec<NodeId>>,
     /// Every piece of work the last call ran, in order: what the tests of
     /// the dependency index read. Test builds only: the product keeps no
     /// log of its work.

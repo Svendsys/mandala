@@ -767,52 +767,91 @@ fn test_projection_a_sides_color_change_rewrites_the_reused_shaping() {
 }
 
 /// How many children the wide row holds: enough that a connector reading
-/// its parent's row is two hundred resolutions an edit.
-const WIDE: u32 = 200;
+/// its parent's row, or a fan laying every path at a node, is fifty
+/// placements an edit.
+const WIDE: u32 = 50;
 
-/// Node 1 with [`WIDE`] children, each with a labeled connector, and a
-/// second root, node 2, to move one of them to, with a child of its own,
-/// node 3: a connector at node 2 and not at node 1.
+/// Node 1, 200 by 60, with [`WIDE`] children in a row 400 below it —
+/// every one leaves node 1's bottom side — each with a labeled connector;
+/// node 9 beside it, 600 to the right, whose connector leaves node 1's
+/// right side; and a second root, node 2, to move a child to, with a child
+/// of its own, node 3, below it.
 fn wide_row() -> Document {
-    let mut nodes = vec![node(1, None, json!({}))];
+    let mut nodes = vec![node(1, None, json!({"min_size": [200.0, 60.0]}))];
     for i in 0..WIDE {
         nodes.push(node(
             10 + i,
             Some(1),
             json!({
-                "position": [i as f32 * 60.0, 300.0],
+                "position": [100.0 + (i as f32 - 24.5) * 30.0, 400.0],
                 "connector": {"label": {"spans": [{"text": "c"}]}}
             }),
         ));
     }
+    nodes.push(node(9, Some(1), json!({"position": [700.0, 30.0]})));
     // The flat list is in pre-order: the second root after the first's
     // subtree.
     nodes.push(node(2, None, json!({"position": [0.0, 900.0]})));
-    nodes.push(node(3, Some(2), json!({"position": [300.0, 1200.0]})));
+    nodes.push(node(3, Some(2), json!({"position": [0.0, 1300.0]})));
     load_map(json!({ "nodes": nodes }))
+}
+
+/// The connectors a stage of which ran in the last call.
+fn connectors_of(p: &Projected, stage: Stage) -> FxHashSet<NodeId> {
+    ran(p, stage)
+        .into_iter()
+        .filter(|&u| p.doc.get(u).is_some_and(|e| e.kind() == DocKind::Connector))
+        .collect()
 }
 
 /// How many connectors a stage of which ran in the last call.
 fn connectors_ran(p: &Projected, stage: Stage) -> usize {
-    ran(p, stage)
-        .into_iter()
-        .filter(|&u| p.doc.get(u).is_some_and(|e| e.kind() == DocKind::Connector))
-        .count()
+    connectors_of(p, stage).len()
 }
 
-/// One child added to a wide row resolves and finds the ends of its own
-/// connector alone (ruling B7.5 on #241): no sibling reads the row. Every
-/// connector at the parent is laid again, and no other: the paths that
-/// leave one side of a node are fanned together, so one more among them
-/// turns each (#296, rule 4), and a lay reads the junction at each of its
-/// nodes.
+/// Node `id`'s connector in `doc`.
+fn connector_of(doc: &Document, id: u32) -> NodeId {
+    kid(doc, ident(doc, id), DocKind::Connector)
+}
+
+/// A child of the wide row nudged by (1, 1), its order in the row kept,
+/// finds its own ends and is laid again, and no other connector is: its
+/// siblings' turns are what they were (#296, rule 4; the review of #326).
 #[test]
-fn test_projection_an_insert_into_a_wide_row_resolves_one_connector() {
+fn test_projection_a_nudge_in_a_wide_row_lays_one_connector() {
+    let doc = wide_row();
+    let nudged = ident(&doc, 10 + WIDE / 2);
+    let own = connector_of(&doc, 10 + WIDE / 2);
+    let mut p = Projected::new(doc);
+    let to = Vec2::new(100.0 + 0.5 * 30.0 + 1.0, 401.0);
+    let mutation = single(DocKind::Node, DocMutation::Node(NodeOp::SetPosition(to)));
+    p.apply(request(mutation, vec![nudged], "nudge one child"))
+        .unwrap();
+    assert_eq!(connectors_ran(&p, Stage::Resolve), 0, "a move resolves nothing");
+    for stage in [Stage::Geometry, Stage::Place] {
+        let ran = connectors_of(&p, stage);
+        assert!(
+            ran.len() == 1 && ran.contains(&own),
+            "{} connectors ran {stage:?} for one child of {WIDE} nudged: its own alone",
+            ran.len()
+        );
+    }
+    p.check().unwrap();
+}
+
+/// One child added to the wide row resolves and finds the ends of its own
+/// connector alone (ruling B7.5 on #241): no sibling reads the row. Every
+/// connector that leaves node 1's bottom side is laid again — one more
+/// among them turns each (#296, rule 4) — and no other: not node 9's, on
+/// node 1's right side, nor node 3's, at node 2.
+#[test]
+fn test_projection_an_insert_into_a_wide_row_lays_its_side() {
     use crate::document::mutation::compose;
     let doc = wide_row();
     let parent = ident(&doc, 1);
+    let (side, other) = (connector_of(&doc, 9), connector_of(&doc, 3));
     let mut p = Projected::new(doc);
-    let steps = compose::create_child(&p.doc, parent, Vec2::new(30.0, 600.0)).unwrap();
+    let steps = compose::create_child(&p.doc, parent, Vec2::new(115.0, 400.0)).unwrap();
     p.apply(EditRequest::new(steps, "one more child")).unwrap();
     for stage in [Stage::Resolve, Stage::Geometry] {
         let n = connectors_ran(&p, stage);
@@ -821,43 +860,47 @@ fn test_projection_an_insert_into_a_wide_row_resolves_one_connector() {
             "{n} connectors ran {stage:?} for one child added to a row of {WIDE}"
         );
     }
-    let laid = connectors_ran(&p, Stage::Place);
+    let laid = connectors_of(&p, Stage::Place);
     assert_eq!(
-        laid,
+        laid.len(),
         WIDE as usize + 1,
-        "every connector at node 1 is laid again, and node 3's, at node 2, is not"
+        "the bottom side's connectors are laid again, each once, the new one with them"
+    );
+    assert!(
+        !laid.contains(&side) && !laid.contains(&other),
+        "node 9's connector, on another side, and node 3's, at another node, are not laid"
     );
     p.check().unwrap();
 }
 
-/// One child moved out of a wide row resolves its own connector alone
-/// (ruling B7.5 on #241). The siblings it left are laid again — their fan
-/// lost a branch (#296, rule 4) — and so is node 3's connector, whose
-/// node 2 gained one.
+/// One child moved out of the wide row resolves its own connector alone
+/// (ruling B7.5 on #241). The siblings it left on node 1's bottom side are
+/// laid again — their fan lost a branch (#296, rule 4) — with the moved
+/// one, and no other: not node 9's, on node 1's right side, nor node 3's,
+/// on node 2's bottom side, where the moved child arrives on its top.
 #[test]
-fn test_projection_a_move_out_of_a_wide_row_resolves_one_connector() {
+fn test_projection_a_move_out_of_a_wide_row_lays_its_old_side() {
     use crate::document::mutation::compose;
     let doc = wide_row();
     let (moved, to) = (ident(&doc, 10 + WIDE / 2), ident(&doc, 2));
+    let (side, other) = (connector_of(&doc, 9), connector_of(&doc, 3));
     let mut p = Projected::new(doc);
     let steps = compose::reparent(&p.doc, &[moved], to).unwrap();
     p.apply(EditRequest::new(steps, "move one out")).unwrap();
-    for stage in [Stage::Resolve, Stage::Geometry] {
-        let n = connectors_ran(&p, stage);
-        assert!(
-            n <= 1,
-            "{n} connectors ran {stage:?} for one child moved out of a row of {WIDE}"
-        );
-    }
     assert_eq!(
         connectors_ran(&p, Stage::Resolve),
         1,
-        "the moved child's connector resolves again"
+        "the moved child's connector resolves again, and no other"
     );
+    let laid = connectors_of(&p, Stage::Place);
     assert_eq!(
-        connectors_ran(&p, Stage::Place),
-        WIDE as usize + 1,
-        "the moved connector, the siblings it left and node 3's are laid again, and no other"
+        laid.len(),
+        WIDE as usize,
+        "the moved connector and the siblings it left are laid again, each once"
+    );
+    assert!(
+        !laid.contains(&side) && !laid.contains(&other),
+        "node 9's connector, on another side, and node 3's, on another side of node 2, are not laid"
     );
     p.check().unwrap();
 }

@@ -53,10 +53,6 @@ pub enum ProjectionInput {
     /// a ring's ink box changed, or a ring left; a node with no ring marks
     /// its [`Self::Geometry`] instead, which the paths read too.
     Reach(NodeId),
-    /// The paths that have an end at a node, and where each leaves it
-    /// (#296): what the paths leaving one of its sides are fanned by.
-    /// Marked when a path's end at the node moved, came or went.
-    Junction(NodeId),
 }
 
 /// The stage of a unit's projection a dependency belongs to: what has to

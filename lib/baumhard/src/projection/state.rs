@@ -264,9 +264,16 @@ pub(crate) struct LineState {
     /// Where it leaves each of its ends, as its geometry stage found it:
     /// what the paths leaving the same side of a node are fanned by.
     pub(crate) attach: [Option<Attach>; 2],
+    /// Each end's turn from its side's normal and how far out its first
+    /// glyph is held, as its junction was last fanned (#296).
+    pub(crate) fans: [(f32, f32); 2],
     /// Its curves, once placed: empty until then.
     pub(crate) path: Vec<Curve>,
 }
+
+/// A junction (#296): the paths that leave one side of a node, or with no
+/// side the portal ends with no `border_t` at a node.
+pub(crate) type JunctionKey = (NodeId, Option<crate::document::values::Anchor>);
 
 /// Where one end of a connector or a line link leaves its node (#296):
 /// the side of the node's reach box, the side's midpoint and outward
@@ -318,6 +325,9 @@ pub(crate) struct PortalState {
     /// found it: what the ends that face one way at a node are held apart
     /// by (#296).
     pub(crate) at: [Option<PortalAt>; 2],
+    /// Where along its outline each end with no `border_t` sits, held
+    /// apart from the others there as its junction was last fanned.
+    pub(crate) held: [f32; 2],
 }
 
 /// Where a portal end with no `border_t` faces along its node's outline,

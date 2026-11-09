@@ -82,6 +82,33 @@ pub(crate) fn spread(gap: f32, size: f32) -> f32 {
     }
 }
 
+/// The turns and holds of the paths that leave one point of a side, in
+/// order, each given as `(spread, lead)` (#296, rule 4): each two
+/// neighbors apart by the widest spread among them, and none more than
+/// [`SPLAY_CAP`] from the normal — the fan narrowed to hold it. Narrowed,
+/// its first glyphs are held out from the point to where neighbors that
+/// far apart clear each other: half the widest lead over twice the sine
+/// of half the step. A path alone leaves along the normal, held nowhere.
+/// O(members); one allocation.
+pub(crate) fn fan(members: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    if members.len() < 2 {
+        return vec![(0.0, 0.0); members.len()];
+    }
+    let last = (members.len() - 1) as f32;
+    let widest = members.iter().map(|m| m.0).fold(0.0_f32, f32::max);
+    let step = widest.min(2.0 * SPLAY_CAP / last);
+    let hold = if step < widest {
+        let reach = members.iter().map(|m| m.1).fold(0.0_f32, f32::max) * 0.5;
+        reach / (2.0 * (0.5 * step).sin())
+    } else {
+        0.0
+    };
+    let hold = if hold.is_finite() { hold } else { 0.0 };
+    (0..members.len())
+        .map(|rank| ((rank as f32 - 0.5 * last) * step, hold))
+        .collect()
+}
+
 /// The side of `rect` a path attaches to: `anchor`'s, or for
 /// [`Anchor::Auto`] the side the ray from `rect`'s center toward
 /// `toward` leaves it through (#296, rule 2): left or right where
