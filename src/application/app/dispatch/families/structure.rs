@@ -103,11 +103,7 @@ fn edit(core: &mut InputContextCore<'_>, body: impl FnOnce(&mut MindMapDocument)
 /// Apply `steps` as one request called `label`, from an Action. `false`
 /// when there is nothing to apply, a builder refused (logged), or the
 /// writer did (reported by [`MindMapDocument::apply`]).
-pub(in crate::application::app) fn apply(
-    doc: &mut MindMapDocument,
-    steps: Result<Vec<DocStep>, MutationError>,
-    label: &str,
-) -> bool {
+fn apply(doc: &mut MindMapDocument, steps: Result<Vec<DocStep>, MutationError>, label: &str) -> bool {
     match steps {
         Ok(steps) if steps.is_empty() => false,
         Ok(steps) => doc
@@ -128,7 +124,7 @@ fn selected(doc: &MindMapDocument, kind: DocKind) -> Vec<NodeId> {
 
 /// `CreateOrphanNode`: a root node at `at`, with one empty section,
 /// selected.
-pub(in crate::application::app) fn create_orphan(doc: &mut MindMapDocument, at: Vec2) -> bool {
+fn create_orphan(doc: &mut MindMapDocument, at: Vec2) -> bool {
     if !apply(doc, compose::create_root(doc.doc(), at), "create node") {
         return false;
     }
@@ -143,7 +139,7 @@ pub(in crate::application::app) fn create_orphan(doc: &mut MindMapDocument, at: 
 /// their subtrees, and the links into them), in that order, so nothing is
 /// named after its owner went. A selected connector is not deleted; with
 /// nothing else to delete, the status line says so.
-pub(in crate::application::app) fn delete_selection(doc: &mut MindMapDocument) -> bool {
+fn delete_selection(doc: &mut MindMapDocument) -> bool {
     let d = doc.doc();
     let steps = (|| {
         let mut steps = Vec::new();
@@ -164,7 +160,7 @@ pub(in crate::application::app) fn delete_selection(doc: &mut MindMapDocument) -
 
 /// `OrphanSelection`: the selected nodes that are not roots become roots,
 /// where they are on the canvas, and are the selection.
-pub(in crate::application::app) fn orphan_selection(doc: &mut MindMapDocument) -> bool {
+fn orphan_selection(doc: &mut MindMapDocument) -> bool {
     let map = doc.doc().root();
     let nodes: Vec<NodeId> = selected(doc, DocKind::Node)
         .into_iter()
