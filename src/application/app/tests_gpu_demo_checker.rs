@@ -649,8 +649,8 @@ fn side_of(reach: &Ink, point: Vec2) -> (Vec2, Vec2) {
 ///   node sits between the junction and the other's node, its end on the
 ///   line the other must cross, so the other meets it however it curves.
 ///
-/// A pair listed here that keeps clear is a fault too, so the list only
-/// shrinks.
+/// A pair listed here that keeps clear is a fault too, and so is one that
+/// no two paths sharing a side are, so the list only shrinks.
 const UNROUTED: &[(&str, &str, &str)] = &[
     ("stress_long_edges", "5>120", "5>119"),
     ("stress_long_edges", "5>121", "5>119"),
@@ -758,6 +758,8 @@ struct End {
 fn test_maps_hold_the_connector_rules() {
     let mut faults: Vec<String> = Vec::new();
     let (mut measured, mut fanned, mut held) = (0, 0, 0);
+    // Which `UNROUTED` entries a pair of paths that share a side met.
+    let mut visited = vec![false; UNROUTED.len()];
     for (name, path) in connector_maps() {
         let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
         let doc = load(&text).unwrap_or_else(|e| panic!("{name} must load: {e}"));
@@ -908,9 +910,13 @@ fn test_maps_hold_the_connector_rules() {
                     let gap = own[ea.path].max(own[eb.path]);
                     let (pa, pb) = (&paths[ea.path], &paths[eb.path]);
                     let (nearest, at) = nearest_between(&pa.inks, &pb.inks, gap);
-                    let listed = UNROUTED.iter().any(|&(map, x, y)| {
+                    let listed = UNROUTED.iter().position(|&(map, x, y)| {
                         map == name && ((x == pa.name && y == pb.name) || (x == pb.name && y == pa.name))
                     });
+                    if let Some(entry) = listed {
+                        visited[entry] = true;
+                    }
+                    let listed = listed.is_some();
                     if listed && nearest >= 0.8 * gap {
                         faults.push(format!(
                             "(h) {name} {} and {}: listed as unrouted, and keep clear: remove them from UNROUTED",
@@ -944,6 +950,13 @@ fn test_maps_hold_the_connector_rules() {
                 ));
             }
         }
+    }
+    // An entry no two paths that share a side met — the map renumbered,
+    // a path moved to another side — is checked by nothing.
+    for (&(map, x, y), _) in UNROUTED.iter().zip(&visited).filter(|(_, &v)| !v) {
+        faults.push(format!(
+            "(h) {map} {x} and {y}: listed as unrouted, and no two paths that share a side are those"
+        ));
     }
     assert!(
         measured > 0 && fanned > 0 && held > 0,
