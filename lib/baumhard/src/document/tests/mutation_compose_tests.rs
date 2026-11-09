@@ -771,8 +771,8 @@ fn test_document_compose_trims_a_deep_selection_once_per_ancestor() {
 /// selection (§20 rule 11, R14.5), counted in steps, not timed.
 ///
 /// - Every node of a `DEEP` chain, deepest first: the top is the one
-///   top, in at most two climbs' worth of the chain (membership and
-///   nesting).
+///   top, in one climb's worth of the chain. (Whether each is in the
+///   tree is `Document::get`'s O(1) question, not a climb.)
 /// - A chain of 2,000 with 2,000 leaves at its bottom, the chain's top
 ///   and every leaf selected: each leaf is nested, found by a climb that
 ///   stops at the bottom of the chain after the first, so the steps are
@@ -783,7 +783,7 @@ pub fn do_document_compose_trims_a_deep_selection_once_per_ancestor() {
     let deepest_first: Vec<NodeId> = nodes.iter().rev().copied().collect();
     let (tops, climbed) = tops_counting(&doc, &deepest_first);
     assert_eq!(tops.unwrap(), vec![nodes[0]]);
-    assert!(climbed <= 2 * DEEP + 2, "{climbed} steps for {DEEP} nodes");
+    assert!(climbed <= DEEP + 2, "{climbed} steps for {DEEP} nodes");
 
     const SIDE: usize = 2_000;
     let mut builder = DocumentBuilder::new();
@@ -800,7 +800,7 @@ pub fn do_document_compose_trims_a_deep_selection_once_per_ancestor() {
     let (tops, climbed) = tops_counting(&doc, &selection);
     assert_eq!(tops.unwrap(), vec![spine[0]]);
     assert!(
-        climbed <= 4 * SIDE,
+        climbed <= 2 * SIDE + 2,
         "{climbed} steps for {SIDE} ancestors and {SIDE} leaves"
     );
 

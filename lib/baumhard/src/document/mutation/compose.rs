@@ -46,7 +46,6 @@ use crate::document::shape::cardinality;
 use crate::document::values::{Anchor, LinkKind};
 use crate::engine::anchor::Anchors;
 use crate::engine::key::BranchKey;
-use crate::engine::membership::Membership;
 use crate::engine::mutator::Mutator;
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tree::Placement;
@@ -148,9 +147,9 @@ fn tops(doc: &Document, nodes: &[NodeId]) -> Result<Vec<NodeId>, MutationError> 
     tops_counting(doc, nodes).0
 }
 
-/// [`tops`], and how many ancestors its climbs went through — the
-/// membership check's and the nesting check's together — for the tests
-/// that hold it to the selection's distinct ancestors (§20 rule 11).
+/// [`tops`], and how many ancestors its climbs went through — for the
+/// tests that hold it to the selection's distinct ancestors (§20 rule
+/// 11).
 pub(crate) fn tops_counting(doc: &Document, nodes: &[NodeId]) -> (Result<Vec<NodeId>, MutationError>, usize) {
     let mut climbed = 0;
     let result = tops_climbing(doc, nodes, &mut climbed);
@@ -165,7 +164,6 @@ fn tops_climbing(
     let tree = doc.tree();
     let arena = tree.arena();
     let given: FxHashSet<NodeId> = nodes.iter().copied().collect();
-    let mut members = Membership::default();
     // For every element a climb went through: whether it or one of its
     // ancestors is given. A climb stops at the first element already
     // answered, or at a given one, so each ancestor is climbed through
@@ -175,7 +173,7 @@ fn tops_climbing(
     let mut seen: FxHashSet<NodeId> = FxHashSet::default();
     let mut tops = Vec::new();
     for &node in nodes {
-        if doc.get(node).map(DocElement::kind) != Some(DocKind::Node) || !members.contains(tree, node) {
+        if doc.get(node).map(DocElement::kind) != Some(DocKind::Node) {
             return Err(MutationError::NotA {
                 element: node,
                 expected: "a node",
@@ -203,7 +201,6 @@ fn tops_climbing(
             tops.push(node);
         }
     }
-    *climbed += members.climbed();
     Ok(tops)
 }
 
