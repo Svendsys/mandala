@@ -1135,9 +1135,11 @@ fn check_generated_pinning(
                 }
                 2 => {
                     let points: Vec<Vec2> = (0..choices.below(3)).map(|_| any_vec2(choices)).collect();
-                    let Some(curve) = Curve::from_points(any_vec2(choices), &points, any_vec2(choices))
-                    else {
-                        return Err("two control points or fewer always make a curve".to_string());
+                    let (start, end) = (any_vec2(choices), any_vec2(choices));
+                    let curve = match points[..] {
+                        [c] => Curve::Quadratic(start, c, end),
+                        [c1, c2] => Curve::Cubic(start, c1, c2, end),
+                        _ => Curve::Line(start, end),
                     };
                     let fit = fit(choices, &texts);
                     let spacing = any_f32(choices);

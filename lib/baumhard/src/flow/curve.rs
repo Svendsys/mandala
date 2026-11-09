@@ -42,18 +42,6 @@ pub fn chain_point(curves: &[Curve], t: f32) -> Option<Vec2> {
 }
 
 impl Curve {
-    /// The Bézier from `start` to `end` with `control_points` as its
-    /// control points: a line for none, a quadratic for one, a cubic for
-    /// two. More than two make no single curve, so `None`. O(1).
-    pub fn from_points(start: Vec2, control_points: &[Vec2], end: Vec2) -> Option<Curve> {
-        match *control_points {
-            [] => Some(Curve::Line(start, end)),
-            [c] => Some(Curve::Quadratic(start, c, end)),
-            [c1, c2] => Some(Curve::Cubic(start, c1, c2, end)),
-            _ => None,
-        }
-    }
-
     /// The point at parameter `t` in `0.0..=1.0`. O(1).
     pub fn point(&self, t: f32) -> Vec2 {
         let u = 1.0 - t;

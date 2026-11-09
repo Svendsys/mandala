@@ -2076,7 +2076,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_open_path_holds_its_ends", |b| {
         b.iter(do_flow_open_path_holds_its_ends)
     });
-    c.bench_function("flow_curve_from_points", |b| b.iter(do_flow_curve_from_points));
     c.bench_function("flow_outline_support_faces_its_direction", |b| {
         b.iter(do_flow_outline_support_faces_its_direction)
     });
