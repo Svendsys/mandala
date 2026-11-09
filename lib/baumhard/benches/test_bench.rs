@@ -1198,6 +1198,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("two_font_systems_never_answer_each_others_outlines", |b| {
         b.iter(do_two_font_systems_never_answer_each_others_outlines)
     });
+    c.bench_function("whether_a_glyph_draws_is_read_once_whatever_its_size", |b| {
+        b.iter(do_whether_a_glyph_draws_is_read_once_whatever_its_size)
+    });
     // The patched merge's and early stop's guards, on fixtures built of
     // shaped glyphs (and a font system with no faces).
     c.bench_function(

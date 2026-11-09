@@ -684,6 +684,54 @@ pub fn do_two_font_systems_never_answer_each_others_outlines() {
     );
 }
 
+#[test]
+fn test_whether_a_glyph_draws_is_read_once_whatever_its_size() {
+    do_whether_a_glyph_draws_is_read_once_whatever_its_size();
+}
+
+/// Whether a glyph draws is read off the rasterizer once, at
+/// `DRAWS_SIZE`, whatever size the glyph is asked about at (#333): a
+/// bitmap emoji, 🌸 in MandalaEmoji, which has no outline, asked about
+/// laid at 12, 512 and 4,096 points, is rasterized once and draws at each.
+/// So no frame probing sizes rasterizes a glyph per size, nor an image as
+/// large as its largest: the seed
+/// `fuzz/seeds/flow_structured_every_face/pins_mandala_ornaments_28` had a
+/// host's color emoji rasterized at 4,096 pixels per em on each probe,
+/// past the fuzz timeout on CI.
+/// Precondition: the emoji has no outline.
+///
+/// Control: the glyph asked about at its own size, red: three reads
+/// ("3 rasterizations for three sizes").
+pub fn do_whether_a_glyph_draws_is_read_once_whatever_its_size() {
+    use crate::font::fonts::{draw_reads, glyph_draws, glyph_outline_ink};
+    use cosmic_text::SwashCache;
+    let mut emoji = private_font_system(&[AppFont::MandalaEmoji]);
+    let family = family_in(&emoji, AppFont::MandalaEmoji);
+    let (buffer, _) = shaped_in_family(&mut emoji, &family, "\u{1F338}");
+    let laid = buffer
+        .layout_runs()
+        .flat_map(|run| run.glyphs.iter().cloned())
+        .next()
+        .expect("precondition: the emoji is laid out");
+    let mut cache = SwashCache::new();
+    assert!(
+        glyph_outline_ink(&mut emoji, &mut cache, &laid).is_none(),
+        "precondition: the emoji has no outline"
+    );
+    let before = draw_reads();
+    let draws: Vec<bool> = [12.0, 512.0, 4096.0]
+        .into_iter()
+        .map(|size| {
+            let mut at = laid.clone();
+            at.font_size = size;
+            glyph_draws(&mut emoji, &mut cache, &at)
+        })
+        .collect();
+    let reads = draw_reads() - before;
+    assert_eq!(draws, [true, true, true], "the emoji draws at every size");
+    assert_eq!(reads, 1, "{reads} rasterizations for three sizes");
+}
+
 /// The random differential's fragments, by kind: Latin and its
 /// ligatures, combining marks, Hebrew and Arabic with their marks,
 /// Devanagari, Tamil, Malayalam, Khmer, Myanmar, Tibetan, Thai, Hangul

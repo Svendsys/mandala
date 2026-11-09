@@ -1275,12 +1275,18 @@ pub fn measure_glyph_ink_bounds(
 /// a bitmap emoji, from one that draws nothing: a `.notdef` whose outline
 /// is empty, a face that is not loaded (#333).
 ///
-/// Asked at the glyph's face, id, size, weight and flags, at no sub-pixel
-/// offset: whether a glyph covers a pixel does not turn on where in one it
-/// is drawn.
+/// Asked at the glyph's face, id, weight and flags, at [`DRAWS_SIZE`] and
+/// no sub-pixel offset, whatever size it is laid at: whether a glyph
+/// draws is a property of its face's data — a color outline with a layer
+/// that has area, a bitmap in some strike — not of the size or the place
+/// it is drawn at, while an image's area grows as its size's square. So a
+/// glyph is rasterized once, small, however many sizes a frame probes it
+/// at, never at the size it is laid at: a bitmap emoji in a frame at
+/// 4,096 points would be an image 4,096 pixels square.
 ///
 /// Cost: one lookup in a per-thread cache, kept as the outline cache is
-/// (`cached_outline_bounds`); on a miss, one rasterization of the glyph.
+/// (`cached_outline_bounds`); on a miss, one rasterization of the glyph at
+/// [`DRAWS_SIZE`].
 pub fn glyph_draws(
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
@@ -1289,7 +1295,7 @@ pub fn glyph_draws(
     let (key, _, _) = CacheKey::new(
         glyph.font_id,
         glyph.glyph_id,
-        glyph.font_size,
+        DRAWS_SIZE,
         (0.0, 0.0),
         glyph.font_weight,
         glyph.cache_key_flags,
@@ -1298,6 +1304,7 @@ pub fn glyph_draws(
     if let Some(draws) = DRAWS.with(|cache| cache.borrow().get(&entry).copied()) {
         return draws;
     }
+    DRAW_READS.with(|reads| reads.set(reads.get() + 1));
     let draws = swash_cache
         .get_image_uncached(font_system, key)
         .is_some_and(|image| image.placement.width > 0 && image.placement.height > 0);
@@ -1310,6 +1317,11 @@ pub fn glyph_draws(
     });
     draws
 }
+
+/// The size, in pixels per em, [`glyph_draws`] asks the rasterizer at:
+/// small, so its image is a few hundred pixels, and large enough that a
+/// layer or a bitmap with area covers one.
+pub const DRAWS_SIZE: f32 = 16.0;
 
 /// The ink of one laid-out glyph: the bounding box of its outline, as
 /// its `(min, max)` corners relative to its pen on the baseline, in
@@ -1419,6 +1431,16 @@ thread_local! {
     /// system and its rasterizer's key, kept as [`OUTLINE_BOUNDS`] is.
     static DRAWS: std::cell::RefCell<rustc_hash::FxHashMap<(u64, CacheKey), bool>> =
         std::cell::RefCell::default();
+    /// Glyphs rasterized on this thread to learn whether they draw: the
+    /// misses of [`glyph_draws`]'s cache.
+    static DRAW_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many glyphs [`glyph_draws`] has rasterized on this thread (its
+/// cache's misses): a work counter, so a test reads what asking cost by
+/// difference, never by a clock.
+pub fn draw_reads() -> u64 {
+    DRAW_READS.with(std::cell::Cell::get)
 }
 
 /// How many outlines have been read off their faces on this thread

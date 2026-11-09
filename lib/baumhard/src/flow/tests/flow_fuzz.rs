@@ -1808,12 +1808,14 @@ pub fn check_placement(
 
 /// Whether the rasterizer draws a pixel of `laid`, as the renderer asks
 /// for its image: read from the rasterizer, not through the flow's own
-/// reading of it (#333).
+/// reading of it (#333). At 16 pixels per em, whatever its size: whether
+/// a glyph draws does not turn on its size, and its image at a frame's
+/// largest would be thousands of pixels square.
 fn rasterizes(laid: &crate::font::LayoutGlyph, fs: &mut FontSystemLease) -> bool {
     let (key, _, _) = cosmic_text::CacheKey::new(
         laid.font_id,
         laid.glyph_id,
-        laid.font_size,
+        16.0,
         (0.0, 0.0),
         laid.font_weight,
         laid.cache_key_flags,
