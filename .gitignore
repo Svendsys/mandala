@@ -10,3 +10,4 @@
 lcov.info
 .rustc_info.json
 *.profraw
+*.whl
