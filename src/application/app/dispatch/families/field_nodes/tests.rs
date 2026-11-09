@@ -1021,7 +1021,9 @@ fn test_a_ring_added_to_several_frames_takes_each_frames_channel() {
         "node 1's new ring is on its channel: {saved}"
     );
     assert!(
-        saved.contains(r#"{"channel": 3, "spans": [{"text": "b"}]}, {"channel": 3, "spans": [{"text": "new"}]}"#),
+        saved.contains(
+            r#"{"channel": 3, "spans": [{"text": "b"}]}, {"channel": 3, "spans": [{"text": "new"}]}"#
+        ),
         "node 2's new ring is on its own: {saved}"
     );
 }

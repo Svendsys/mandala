@@ -51,11 +51,11 @@ fn test_accept_completion_positional_appends_space() {
 /// trailing space — the value comes next.
 #[test]
 fn test_accept_completion_kv_key_no_trailing_space() {
-    let mut state = open_state("color b", 7, &["bg="]);
+    let mut state = open_state("color b", 7, &["border="]);
     accept_console_completion(&mut state);
     if let ConsoleState::Open { input, cursor, .. } = state {
-        assert_eq!(input, "color bg=");
-        assert_eq!(cursor, 9);
+        assert_eq!(input, "color border=");
+        assert_eq!(cursor, 13);
     } else {
         panic!("state closed");
     }
@@ -65,11 +65,11 @@ fn test_accept_completion_kv_key_no_trailing_space() {
 /// (not the key=) and adds no trailing space.
 #[test]
 fn test_accept_completion_kv_value_replaces_only_value_slot() {
-    let mut state = open_state("color bg=ac", 11, &["accent"]);
+    let mut state = open_state("color text=va", 13, &["var(accent)"]);
     accept_console_completion(&mut state);
     if let ConsoleState::Open { input, cursor, .. } = state {
-        assert_eq!(input, "color bg=accent");
-        assert_eq!(cursor, 15);
+        assert_eq!(input, "color text=var(accent)");
+        assert_eq!(cursor, 22);
     } else {
         panic!("state closed");
     }
@@ -80,11 +80,11 @@ fn test_accept_completion_kv_value_replaces_only_value_slot() {
 /// after the value — no trailing space.
 #[test]
 fn test_accept_completion_kv_value_empty_partial() {
-    let mut state = open_state("color bg=", 9, &["accent"]);
+    let mut state = open_state("color text=", 11, &["var(accent)"]);
     accept_console_completion(&mut state);
     if let ConsoleState::Open { input, cursor, .. } = state {
-        assert_eq!(input, "color bg=accent");
-        assert_eq!(cursor, 15);
+        assert_eq!(input, "color text=var(accent)");
+        assert_eq!(cursor, 22);
     } else {
         panic!("state closed");
     }
@@ -93,11 +93,11 @@ fn test_accept_completion_kv_value_empty_partial() {
 /// Accepting when the popup is empty is a no-op.
 #[test]
 fn test_accept_completion_no_popup_is_noop() {
-    let mut state = open_state("color bg=", 9, &[]);
+    let mut state = open_state("color text=", 11, &[]);
     accept_console_completion(&mut state);
     if let ConsoleState::Open { input, cursor, .. } = state {
-        assert_eq!(input, "color bg=");
-        assert_eq!(cursor, 9);
+        assert_eq!(input, "color text=");
+        assert_eq!(cursor, 11);
     } else {
         panic!("state closed");
     }

@@ -858,18 +858,16 @@ fn test_the_console_source_scan_reads_what_it_claims_to() {
 /// every alternative in it must be a word the vocabulary declares or
 /// a fragment of its placeholder. Prose is not checked, because prose
 /// is not a quotation. A leading `key=` names which vocabulary the
-/// run belongs to, which is how `section text`'s
-/// `(runs=preserve|clear)` is read against the `runs` key rather than
-/// against the subverb's own text slot.
+/// run belongs to, which is how a hint like `(align=left|right)` is
+/// read against the `align` key rather than against a subverb's own
+/// slot.
 ///
-/// That narrowness shapes the correction as well as the check. The
-/// `color` *key*'s hint listed its values with commas —
-/// `"#hex, var(--name), preset, or 'reset'"` — which no alternation
-/// scan can tell from prose, so it is now spelled
-/// `"#hex, var(--name), accent | edge | fg, or 'reset'"`: the three
-/// values the vocabulary declares are written as the alternation they
-/// are, and the rewrite is what brings them under this test. A hint
-/// that quotes a vocabulary in prose is still outside it.
+/// That narrowness shapes the correction as well as the check. A hint
+/// that lists its values with commas — `"left, center or right"` — is
+/// one no alternation scan can tell from prose; written as the
+/// alternation it is, `"left | center | right"`, it is brought under
+/// this test. A hint that quotes a vocabulary in prose is still outside
+/// it.
 #[test]
 fn test_every_hinted_alternation_names_values_its_vocabulary_accepts() {
     let mut offenders: Vec<String> = Vec::new();

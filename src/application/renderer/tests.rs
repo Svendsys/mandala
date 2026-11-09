@@ -527,8 +527,8 @@ fn console_geometry_with_faces(default_font: Option<AppFont>, pinned_family: &st
         font_family: font_family.map(str::to_string),
     };
     ConsoleOverlayGeometry {
-        input: "font set".to_string(),
-        cursor_grapheme: 8,
+        input: "font family=".to_string(),
+        cursor_grapheme: 12,
         scrollback: vec![
             line("unpinned", None),
             line("pinned", Some(pinned_family)),
