@@ -465,7 +465,8 @@ impl<'a> NearGrid<'a> {
     /// of the pairs of two lanes not fresh, those in `before`, whose
     /// points have not moved since it was measured.
     ///
-    /// Cost: per fresh point, the points in the nine cells round it.
+    /// Cost: per fresh point, the points in the nine cells round it; one
+    /// stamp a lane.
     fn near_pairs(
         &self,
         samples: &[Vec<Vec2>],
@@ -474,15 +475,19 @@ impl<'a> NearGrid<'a> {
     ) -> rustc_hash::FxHashSet<(usize, usize)> {
         #[cfg(test)]
         UNTANGLE_GRIDS.with(|count| count.set(count.get() + 1));
-        let lanes = samples.len();
-        // Which pairs are known near, by `lower * lanes + higher`: read
-        // for every two points that share a neighborhood, so a table.
-        let mut known = vec![false; lanes * lanes];
-        let mut pairs: rustc_hash::FxHashSet<(usize, usize)> = Default::default();
-        for &(k, j) in before.iter().filter(|&&(k, j)| !fresh[k] && !fresh[j]) {
-            known[k * lanes + j] = true;
-            pairs.insert((k, j));
-        }
+        let mut pairs: rustc_hash::FxHashSet<(usize, usize)> = before
+            .iter()
+            .copied()
+            .filter(|&(k, j)| !fresh[k] && !fresh[j])
+            .collect();
+        // The fresh lane each lane was last found near: a pair carried
+        // from `before` is of two lanes not fresh, so never met in the loop
+        // below, and a pair of two fresh lanes was decided while the lower
+        // one's points were measured, nearness being symmetric. One stamp
+        // a lane, not a table of pairs.
+        let mut seen = vec![usize::MAX; samples.len()];
+        #[cfg(test)]
+        UNTANGLE_SCRATCH.with(|count| count.set(count.get() + seen.len()));
         let mut around: Vec<&CellPoints> = Vec::with_capacity(9);
         for (k, points) in samples.iter().enumerate().filter(|&(k, _)| fresh[k]) {
             let mut around_of = None;
@@ -498,13 +503,12 @@ impl<'a> NearGrid<'a> {
                     around_of = Some((x, y));
                 }
                 for &(j, q) in around.iter().copied().flatten() {
-                    let (a, b) = (k.min(j), k.max(j));
-                    if j == k || known[a * lanes + b] {
+                    if j == k || (fresh[j] && j < k) || seen[j] == k {
                         continue;
                     }
                     if q.distance(p) < CLEARANCE * self.widths[k].max(self.widths[j]) {
-                        known[a * lanes + b] = true;
-                        pairs.insert((a, b));
+                        seen[j] = k;
+                        pairs.insert((k.min(j), k.max(j)));
                     }
                 }
             }
@@ -545,6 +549,9 @@ thread_local! {
     /// every lane's once, and after that a lane's again only when its
     /// curve changed.
     pub(crate) static UNTANGLE_GRIDDED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter: the entries of the tables [`NearGrid::near_pairs`]
+    /// has allocated on this thread to know which pairs it has found.
+    pub(crate) static UNTANGLE_SCRATCH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `size` in points, for shaping: a relative size — a fraction of the

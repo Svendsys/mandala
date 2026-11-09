@@ -16,7 +16,7 @@ use crate::document::values::Anchor;
 use crate::flow::{Curve, Rect};
 use crate::projection::geometry::{
     held_apart, near_pairs, path_through, side_point, side_toward, untangle, Lane, CLEARANCE, SPLAY_CAP,
-    UNTANGLE_GRIDDED, UNTANGLE_GRIDS, UNTANGLE_ROUNDS,
+    UNTANGLE_GRIDDED, UNTANGLE_GRIDS, UNTANGLE_ROUNDS, UNTANGLE_SCRATCH,
 };
 use crate::projection::state::{Placed, UnitBody};
 use crate::projection::tests::maps::{ident, kid, load_map, node, text_section};
@@ -980,5 +980,44 @@ fn test_projection_untangle_measures_again_only_what_it_moved() {
     assert!(
         points == first + pair_points,
         "{points} points gridded: the six clear lanes' {first} once, and the pair's {pair_points}"
+    );
+}
+
+#[test]
+fn test_projection_untangle_keeps_one_stamp_a_lane_on_a_very_wide_side() {
+    // Four thousand paths on one side, as a node with that many children
+    // in a row has: what untangling them allocates to know which pairs it
+    // has found grows with the paths, one stamp each a round, not with
+    // their pairs — 16 million entries a round as a table of pairs, which
+    // past 46 340 paths no longer fits a 32-bit address space. Each path
+    // here is short and clear of the others, so one round settles them.
+    let count = 4096;
+    let lanes: Vec<Lane> = (0..count)
+        .map(|k| {
+            let at = Vec2::new(k as f32 * 40.0, 0.0);
+            Lane {
+                start: (at, Vec2::Y, 4.0),
+                hold: 0.0,
+                end: (at + Vec2::new(0.0, 30.0), -Vec2::Y, 4.0),
+                via: Vec::new(),
+                width: 3.0,
+                straight: false,
+            }
+        })
+        .collect();
+    UNTANGLE_GRIDS.with(|c| c.set(0));
+    UNTANGLE_SCRATCH.with(|c| c.set(0));
+    let handles = untangle(&lanes);
+    let (rounds, scratch) = (
+        UNTANGLE_GRIDS.with(std::cell::Cell::get),
+        UNTANGLE_SCRATCH.with(std::cell::Cell::get),
+    );
+    assert!(
+        rounds >= 1 && handles.iter().all(|&h| h == 1.0),
+        "precondition: the paths are measured and clear: {rounds} rounds"
+    );
+    assert!(
+        scratch <= rounds * count,
+        "{scratch} entries over {rounds} rounds for {count} paths"
     );
 }
