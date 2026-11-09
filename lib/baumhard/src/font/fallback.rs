@@ -22,15 +22,16 @@
 //! which cosmic-text tries after a span's own face: the default face, then
 //! the two ornament faces
 //! ([`ORNAMENT_FALLBACK`](crate::font::fallback::ORNAMENT_FALLBACK)),
-//! then the compiled faces of the scripts no other compiled face writes
-//! ([`SCRIPT_FALLBACK`](crate::font::fallback::SCRIPT_FALLBACK)). It is
+//! then the compiled faces of scripts another compiled face would compete
+//! for ([`SCRIPT_FALLBACK`](crate::font::fallback::SCRIPT_FALLBACK)). It is
 //! the common list of a [`Fallback`](cosmic_text::Fallback) whose script
 //! lists are empty, so a run of any script, on any target, tries the same
 //! faces in the same order;
 //! cosmic-text's platform lists, which differ between Linux, Windows,
 //! macOS and the browser and name host families, are not consulted. A
 //! glyph none of those faces holds is looked for in every other compiled
-//! face, as cosmic-text does after its lists.
+//! face, as cosmic-text does after its lists: nearest in weight first,
+//! and in the order the build lists them among equals.
 //!
 //! The ornament faces hold no code point the default face holds
 //! (`scripts/ornament_fonts.sh`, held by `font::tests::ornament_tests`),
@@ -80,26 +81,31 @@ pub const ORNAMENT_FALLBACK: &[(AppFont, &str)] = &[
     (AppFont::MandalaEmoji, "Mandala Emoji"),
 ];
 
-/// The compiled faces of the scripts the default face does not write,
-/// tried after the ornament faces, with the family name each face stores:
-/// so a run of Hebrew is drawn in Noto Sans Hebrew on every target,
-/// rather than in whichever compiled face holds a Hebrew letter first.
-pub const SCRIPT_FALLBACK: &[(AppFont, &str)] = &[
-    (AppFont::NotoSansHebrewRegular, "Noto Sans Hebrew"),
-    (AppFont::NotoSansDevanagariRegular, "Noto Sans Devanagari"),
-    (AppFont::NotoSerifTibetanRegular, "Noto Serif Tibetan"),
-    (
-        AppFont::NotoSansEgyptianHieroglyphsRegular,
-        "Noto Sans Egyptian Hieroglyphs",
-    ),
-];
+/// The compiled faces of scripts the default face does not write that
+/// another compiled face holds too, tried after the ornament faces, with
+/// the family name each face stores. Hebrew alone today: Public Pixel
+/// also holds Hebrew letters, and without this entry a run of Hebrew
+/// would be drawn in whichever of the two cosmic-text's last pass meets
+/// first. Today that is Noto Sans Hebrew, which sorts first by name at
+/// the same weight, so the entry is what keeps it so when a compiled face
+/// that sorts earlier holds Hebrew (the test builds one: Public Pixel
+/// loaded first). Noto Sans Devanagari, Noto Serif
+/// Tibetan and Noto Sans Egyptian Hieroglyphs are each the only compiled
+/// face of their script, which that last pass reaches at any weight; a
+/// script's face is added here when a second compiled face holds that
+/// script.
+pub const SCRIPT_FALLBACK: &[(AppFont, &str)] = &[(AppFont::NotoSansHebrewRegular, "Noto Sans Hebrew")];
 
 /// The weights each static fallback face is registered at: every CSS
 /// weight, so a span at any of them reaches it.
 pub const FALLBACK_WEIGHTS: [u16; 9] = [100, 200, 300, 400, 500, 600, 700, 800, 900];
 
 /// Every face of the fallback, in the order cosmic-text tries them:
-/// [`DEFAULT_FACE`], [`ORNAMENT_FALLBACK`], [`SCRIPT_FALLBACK`].
+/// [`DEFAULT_FACE`], [`ORNAMENT_FALLBACK`], [`SCRIPT_FALLBACK`]. It is
+/// the list a span of any family asks for: the `AttrsList` bridge asks
+/// for no family either (`font::attrs`), so no path reaches
+/// cosmic-text's `Family::Monospace` search, which tries every
+/// monospaced face before the list.
 pub fn fallback_families() -> impl Iterator<Item = &'static (AppFont, &'static str)> {
     std::iter::once(&DEFAULT_FACE)
         .chain(ORNAMENT_FALLBACK)
@@ -151,14 +157,16 @@ pub(crate) fn new_font_system(mut db: Database) -> FontSystem {
 }
 
 /// Whether the font `data` (a face of a collection at `index`) is
-/// variable in weight: whether it has a `wght` axis, and the weights it
-/// spans if so. Cost: one parse of the font's table directory and its
+/// variable in weight: whether it has a `wght` axis, and the whole
+/// weights it spans if so, its ends rounded inward. Cost: one parse of the font's table directory and its
 /// `fvar` table.
 pub(crate) fn weight_axis(data: &[u8], index: u32) -> Option<(u16, u16)> {
     use cosmic_text::skrifa::{FontRef, MetadataProvider, Tag};
     let font = FontRef::from_index(data, index).ok()?;
     let axis = font.axes().get_by_tag(Tag::new(b"wght"))?;
-    Some((axis.min_value().round() as u16, axis.max_value().round() as u16))
+    // Inward, so every weight reported as spanned is one cosmic-text,
+    // which compares the axis's own ends, matches the face at.
+    Some((axis.min_value().ceil() as u16, axis.max_value().floor() as u16))
 }
 
 /// Register the face `ids` names at every one of [`FALLBACK_WEIGHTS`] it

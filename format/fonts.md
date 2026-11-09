@@ -106,13 +106,24 @@ system's fallback is one list, the same on every target
 | Family | Holds | Source | License |
 |--------|-------|--------|---------|
 | `Inter Variable` | the default face (above) | Inter 4.1 | SIL Open Font License 1.1 |
-| `Mandala Ornaments` | `∙ ◈ ✦ ❦`, and the box-drawing `─ ━ │ ┃ ╭ ╮ ╯ ╰` | DejaVu Sans 2.37 | Bitstream Vera and Arev; DejaVu's changes public domain |
+| `Mandala Ornaments` | `∙ ◈ ✦ ❦`; the box-drawing `─ ━ │ ┃ ┄ ┆ ═ ╭ ╮ ╯ ╰`; the chrome's `❯ ▌ ▏ ▸ ∼ ⋯` (with `❮ ∽`, their mirrored forms) | DejaVu Sans 2.37 | Bitstream Vera and Arev; DejaVu's changes public domain |
 | `Mandala Emoji` | `🌸` | Noto Color Emoji 2.047 (its color bitmap) | SIL Open Font License 1.1 |
-| `Noto Sans Hebrew`, `Noto Sans Devanagari`, `Noto Serif Tibetan`, `Noto Sans Egyptian Hieroglyphs` | their scripts | Noto | SIL Open Font License 1.1 |
+| `Noto Sans Hebrew` | Hebrew | Noto | SIL Open Font License 1.1 |
+
+A script's face is listed when another compiled face holds that script
+too: Public Pixel holds Hebrew letters, so without the entry a run of
+Hebrew would be drawn in whichever of the two the last pass (below)
+meets first — today Noto Sans Hebrew, which sorts first by name at the
+same weight, but a face that sorts earlier would take it. Noto Sans Devanagari, Noto Serif Tibetan and Noto Sans
+Egyptian Hieroglyphs are each the only compiled face of their script,
+which the last pass reaches at any weight; each is listed when a second
+compiled face holds its script.
 
 The two ornament faces hold the ornaments the demo maps draw (sides,
-`repeat` rings), the built-in portal end's `◈`, and the box-drawing
-characters of the console's frame and of testament's custom sides —
+`repeat` rings), the built-in portal end's `◈`, the box-drawing
+characters of testament's custom sides, and the glyphs of the app's own
+chrome: the console's frame, prompt, cursor, gutter and completion
+marker, the rubber band's corners and dashes, and the `body` presets —
 **and no code point the default face holds** (#228). So a letter, digit,
 space or punctuation mark is drawn by a text face, never by an ornament
 face, whatever face a span pins: a decorative face that lacks a space or
@@ -129,9 +140,12 @@ How it holds:
   the same faces in the same order. cosmic-text's platform lists, which
   differ between Linux, Windows, macOS and the browser and name host
   families, are not consulted. A character none of the listed faces
-  holds is looked for in every other compiled face, in the order the
-  build lists them; one no compiled face holds is drawn as the span
-  face's `.notdef` box.
+  holds is looked for in every other compiled face, nearest in weight
+  first, and in the order the build lists them among equals; one no
+  compiled face holds is drawn as the span face's `.notdef` box. Every
+  path asks for one of the generic families the default face is named
+  for, never `Family::Monospace`, on which cosmic-text tries every
+  monospaced face before the list.
 - **At every weight.** cosmic-text matches a fallback family only at the
   exact weight a span asks for, or within a variable face's axis. The
   default face's axis spans every weight; each static fallback face is
@@ -149,9 +163,12 @@ How it holds:
 `scripts/ornament_fonts.sh`, run it (it checks its sources' SHA-256 and
 the pinned fontTools version, and writes the faces byte for byte), and
 add it to the list `font/tests/ornament_tests.rs` holds the faces, the
-script and the built-in styles to. A code point the default face holds
-is not added: the default face draws it, and the test that holds the
-ornament faces apart from it refuses it. The two licenses cannot share
+script and the built-in styles to. A glyph of the app's own chrome
+belongs in a named constant, which
+`renderer::tests::test_every_chrome_glyph_is_drawn_by_the_default_or_an_ornament_face`
+holds to the default face or `Mandala Ornaments`. A code point the
+default face holds is not added: the default face draws it, and the
+test that holds the ornament faces apart from it refuses it. The two licenses cannot share
 one font file, which is why there are two ornament faces. Each face's
 `info.txt` and `misc/` record its source and license.
 

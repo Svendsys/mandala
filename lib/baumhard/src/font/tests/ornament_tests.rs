@@ -594,3 +594,94 @@ pub fn do_no_text_glyph_is_drawn_by_an_ornament_face() {
         faults.join("\n")
     );
 }
+
+#[test]
+fn test_a_hebrew_run_is_drawn_in_noto_sans_hebrew_not_public_pixel() {
+    do_a_hebrew_run_is_drawn_in_noto_sans_hebrew_not_public_pixel();
+}
+
+/// [`SCRIPT_FALLBACK`](crate::font::fallback::SCRIPT_FALLBACK)'s one
+/// entry: Public Pixel holds Hebrew letters too, so a run of Hebrew that
+/// its span's face lacks — unpinned, or pinned to Galatia SIL — is drawn
+/// in Noto Sans Hebrew because the fallback lists it, at the regular and
+/// the bold weight, and not in whichever of the two cosmic-text's last
+/// pass meets first.
+///
+/// In the font system itself the last pass would meet Noto Sans Hebrew
+/// first anyway: the two are both 400, and between equal weights the
+/// pass goes in build order, which sorts Noto before Public Pixel by
+/// name. So the run is shaped twice: in the font system, and in one
+/// built over the same fallback with Public Pixel loaded first, as a
+/// compiled Hebrew face whose name sorts earlier would be. There only
+/// the entry decides.
+///
+/// Control: with `SCRIPT_FALLBACK` empty, red on every letter of the
+/// second shaping, drawn in `PublicPixel`; the first stays green.
+pub fn do_a_hebrew_run_is_drawn_in_noto_sans_hebrew_not_public_pixel() {
+    const WORD: &str = "שלום";
+    let pixel = mapped(face_data(AppFont::PublicPixel));
+    let galatia = mapped(face_data(AppFont::GalatiaSIL));
+    let default = mapped(face_data(DEFAULT_FACE.0));
+    for c in WORD.chars() {
+        assert!(
+            pixel.contains(&c),
+            "precondition: Public Pixel holds {c:?}, so it competes"
+        );
+        assert!(
+            !galatia.contains(&c) && !default.contains(&c),
+            "precondition: neither span face holds {c:?}, so it falls back"
+        );
+    }
+    // Shape `WORD` unpinned and pinned to Galatia SIL at 400 and 700 in
+    // `fs`, naming each glyph that is not one of `hebrew` or is a
+    // `.notdef`.
+    let faults_in = |fs: &mut cosmic_text::FontSystem, hebrew: &[cosmic_text::fontdb::ID], what: &str| {
+        let mut faults = Vec::new();
+        for weight in [400, 700] {
+            let unpinned = cosmic_text::Attrs::new().weight(cosmic_text::Weight(weight));
+            let shaped = [
+                ("unpinned", drawn_with(fs, WORD, &unpinned)),
+                ("Galatia SIL", drawn(fs, WORD, "Galatia SIL", weight)),
+            ];
+            for (span, glyphs) in shaped {
+                if glyphs.len() != WORD.chars().count() {
+                    faults.push(format!("{what}, {span} at {weight}: {} glyphs", glyphs.len()));
+                }
+                for (id, name, glyph) in glyphs {
+                    if !hebrew.contains(&id) || glyph == 0 {
+                        faults.push(format!("{what}, {span} at {weight}: {name} glyph {glyph}"));
+                    }
+                }
+            }
+        }
+        faults
+    };
+    fonts::init();
+    let mut faults = {
+        let mut fs = acquire_font_system_write("ornament_tests::hebrew");
+        let hebrew = fonts::COMPILED_FONT_ID_MAP[&AppFont::NotoSansHebrewRegular].to_vec();
+        faults_in(&mut fs, &hebrew, "the font system")
+    };
+    // Public Pixel first, then the span faces and the fallback's, each
+    // static fallback face at every weight as the font system has it.
+    let mut db = cosmic_text::fontdb::Database::new();
+    let mut load = |font: AppFont| -> tinyvec::TinyVec<[cosmic_text::fontdb::ID; 8]> {
+        db.load_font_source(FONT_SOURCES[&font].clone())
+    };
+    load(AppFont::PublicPixel);
+    load(AppFont::GalatiaSIL);
+    load(AppFont::GalatiaSILBold);
+    load(DEFAULT_FACE.0);
+    let mut statics: Vec<_> = ORNAMENT_FALLBACK.iter().map(|(font, _)| load(*font)).collect();
+    let mut hebrew = load(AppFont::NotoSansHebrewRegular);
+    for ids in statics.iter_mut().chain(std::iter::once(&mut hebrew)) {
+        crate::font::fallback::register_every_weight(&mut db, ids);
+    }
+    let mut scratch = crate::font::fallback::new_font_system(db);
+    faults.extend(faults_in(&mut scratch, &hebrew, "Public Pixel first"));
+    assert!(
+        faults.is_empty(),
+        "Hebrew not drawn in Noto Sans Hebrew:\n{}",
+        faults.join("\n")
+    );
+}

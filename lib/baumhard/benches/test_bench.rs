@@ -1159,6 +1159,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("no_text_glyph_is_drawn_by_an_ornament_face", |b| {
         b.iter(do_no_text_glyph_is_drawn_by_an_ornament_face)
     });
+    c.bench_function(
+        "a_hebrew_run_is_drawn_in_noto_sans_hebrew_not_public_pixel",
+        |b| b.iter(do_a_hebrew_run_is_drawn_in_noto_sans_hebrew_not_public_pixel),
+    );
     // The patched font fallback (#304): every oracle text, and a long
     // word of each, shaped in five faces with both merges; and one word
     // of letters pinned to a face that holds none of them, shaped with
