@@ -338,8 +338,8 @@ pub(crate) fn held_apart(ends: &[(f32, f32)], perimeter: f32) -> Vec<f32> {
         offset[i] = offset[i - 1] + 0.5 * (ends[order[i - 1]].1 + ends[order[i]].1);
     }
     let mut blocks: Vec<(f32, usize)> = Vec::with_capacity(n);
-    for i in 0..n {
-        let mut block = (faced(i) - offset[i], 1usize);
+    for (i, &off) in offset.iter().enumerate() {
+        let mut block = (faced(i) - off, 1usize);
         while let Some(&(sum, count)) = blocks.last() {
             if sum / count as f32 > block.0 / block.1 as f32 {
                 blocks.pop();
