@@ -146,6 +146,8 @@ pub(crate) fn font(doc: &MindMapDocument, font: Font) -> Steps {
     if let Some((section, start, end)) = range(doc) {
         return compose::style_range(d, section, start, end, font.ops(true)).map_err(|e| e.to_string());
     }
+    // Keyed by `with_size` (`Font::ops`): whether the element's size is
+    // its text style's.
     let mut groups = Groups::default();
     for id in doc.selection.iter() {
         let Some(kind) = kind_of(d, id) else { continue };
@@ -155,14 +157,16 @@ pub(crate) fn font(doc: &MindMapDocument, font: Font) -> Steps {
                     DocKind::PortalEnd => DocMutation::PortalEnd(PortalEndOp::SetSize(size)),
                     _ => DocMutation::Path(PathOp::SetSize(size)),
                 });
-                groups.add(d, id, (), || size.into_iter().collect());
+                groups.add(d, id, true, || size.into_iter().collect());
                 let spans: Vec<DocMutation> = font
                     .ops(false)
                     .into_iter()
                     .filter_map(|op| text_op(DocKind::Span, op))
                     .collect();
+                // A path's spans take no size and a selected span does:
+                // the key keeps them apart, whichever came first.
                 for span in children_of_kind(d, id, DocKind::Span) {
-                    groups.add(d, span, (), || spans.clone());
+                    groups.add(d, span, false, || spans.clone());
                 }
             }
             DocKind::Node
@@ -170,7 +174,7 @@ pub(crate) fn font(doc: &MindMapDocument, font: Font) -> Steps {
             | DocKind::Span
             | DocKind::Label
             | DocKind::CapStart
-            | DocKind::CapEnd => groups.add(d, id, (), || {
+            | DocKind::CapEnd => groups.add(d, id, true, || {
                 font.ops(true)
                     .into_iter()
                     .filter_map(|op| text_op(kind, op))

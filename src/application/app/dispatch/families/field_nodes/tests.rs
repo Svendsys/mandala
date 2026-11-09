@@ -1069,3 +1069,61 @@ fn test_a_ring_added_to_several_frames_takes_each_frames_channel() {
         "node 2's new ring is on its own: {saved}"
     );
 }
+
+/// **A font on a path's spans and a selected span is one document,
+/// whichever is selected first**: `font size=20 weight=bold` on a
+/// connector with a span and a section's span sets the connector's size
+/// and its span's weight, and the selected span's size and weight. A
+/// path's spans take no size, a selected span does, so the two are
+/// grouped apart. Control: one key for both makes the first one met
+/// decide for the other — the size lands on the connector's span, or
+/// leaves the selected span.
+#[test]
+fn test_a_font_on_a_paths_spans_and_a_selected_span_does_not_depend_on_the_order() {
+    use baumhard::document::element::DocElement;
+    use baumhard::document::values::{FontSize, Weight};
+    const MAP: &str = r#"{"format": 1, "name": "t", "nodes": [
+        {"id": 1, "position": [0.0, 0.0], "sections": [{"spans": [{"text": "a"}]}]},
+        {"id": 2, "parent": 1, "position": [300.0, 0.0], "sections": [{"spans": [{"text": "b"}]}],
+         "connector": {"spans": [{"text": "·"}]}}
+    ]}"#;
+    let style = |doc: &MindMapDocument, span: NodeId| match doc.doc().get(span) {
+        Some(DocElement::Span(span)) => (span.style.size, span.style.weight),
+        _ => panic!("a span"),
+    };
+    let mut saved = Vec::new();
+    for connector_first in [true, false] {
+        let mut doc =
+            MindMapDocument::from_json_str(MAP, None, DEFAULT_HISTORY_LIMIT).expect("the map loads");
+        let connector = child(&doc, 2, DocKind::Connector, 0);
+        let on_path = children_of_kind(doc.doc(), connector, DocKind::Span)
+            .next()
+            .expect("the connector's span");
+        let section = child(&doc, 1, DocKind::Section, 0);
+        let selected = children_of_kind(doc.doc(), section, DocKind::Span)
+            .next()
+            .expect("the section's span");
+        doc.selection.set(match connector_first {
+            true => vec![connector, selected],
+            false => vec![selected, connector],
+        });
+        run_line(&mut doc, "font size=20 weight=bold").expect("the font applies");
+        let order = if connector_first {
+            "connector first"
+        } else {
+            "span first"
+        };
+        assert_eq!(
+            style(&doc, selected),
+            (Some(FontSize::Pt(20.0)), Some(Weight::BOLD)),
+            "{order}: the selected span takes the size and the weight"
+        );
+        assert_eq!(
+            style(&doc, on_path),
+            (None, Some(Weight::BOLD)),
+            "{order}: the connector's span takes the weight and no size"
+        );
+        saved.push(bytes(&doc));
+    }
+    assert_eq!(saved[0], saved[1], "the same document either way");
+}
