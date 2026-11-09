@@ -6,7 +6,9 @@
 //! the history (`Undo`, `Redo`), the camera, the selection, the FPS
 //! readout and `ExitMode`. Before any of it, the Action is offered to
 //! the structure family (`super::families::structure`: create, delete,
-//! reparent, connect, the clipboard), then to the families an owner
+//! reparent, connect, the clipboard) and the field family
+//! (`super::families::field_nodes`: node, section and frame fields, and
+//! style across the selection), then to the families an owner
 //! issue rebuilds (`super::families`), which answer theirs `Unhandled`.
 //! Returns `Handled` when a body ran;
 //! `Unhandled` for variants this dispatcher doesn't own — the caller's
@@ -43,11 +45,25 @@ pub(in crate::application::app) fn dispatch_compatible(
     if let Some(outcome) = families::structure::dispatch(action, core, hit) {
         return outcome;
     }
+    if let Some(outcome) = families::field_nodes::dispatch(action, core) {
+        return outcome;
+    }
     if let Some(outcome) = families::dispatch(action) {
         return outcome;
     }
     match action {
         Action::ExitMode => {
+            // An open frame preview is reverted first, and that is the
+            // whole of the key's work, as on `main`: the next press
+            // leaves the mode.
+            if let Some(doc) = core.document.as_deref_mut() {
+                if doc.cancel(crate::application::document::Interaction::FramePreview) {
+                    if let Some(mut vc) = view_ctx!(core, doc) {
+                        vc.sync();
+                    }
+                    return DispatchOutcome::Handled;
+                }
+            }
             *core.interaction_mode = InteractionMode::Default;
             // A post-Esc click is not paired with a pre-Esc one.
             *core.last_click = None;

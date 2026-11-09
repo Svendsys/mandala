@@ -34,7 +34,7 @@ use super::ConsoleContext;
 ///
 /// `font_family` pins the shaped face for the candidate's `display`
 /// text (not the hint). Set by the font-name completer so each row
-/// renders in its own face — `font set A` shows every "A..." family
+/// renders in its own face — `font family=A` shows every "A..." family
 /// pre-shaped in that family.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Completion {
@@ -270,12 +270,12 @@ mod tests {
 
     #[test]
     fn test_context_kv_value_is_detected_on_equals() {
-        match detect_context("color bg=") {
-            CompletionContext::KvValue { key } => assert_eq!(key, "bg"),
+        match detect_context("color ring=") {
+            CompletionContext::KvValue { key } => assert_eq!(key, "ring"),
             other => panic!("expected KvValue, got {:?}", other),
         }
-        match detect_context("color bg=#12") {
-            CompletionContext::KvValue { key } => assert_eq!(key, "bg"),
+        match detect_context("color ring=#12") {
+            CompletionContext::KvValue { key } => assert_eq!(key, "ring"),
             other => panic!("expected KvValue, got {:?}", other),
         }
     }
@@ -285,7 +285,7 @@ mod tests {
         // Two prior kv-form tokens, one positional. Cursor sits on
         // a fresh bare-token slot — positional index is 1 (the one
         // prior positional was counted).
-        match detect_context("help bg=#fff extra ") {
+        match detect_context("help ring=#fff extra ") {
             CompletionContext::Token { index } => assert_eq!(index, 1),
             other => panic!("expected Token, got {:?}", other),
         }

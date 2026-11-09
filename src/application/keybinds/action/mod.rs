@@ -20,54 +20,53 @@ use super::context::InputContext;
 // `wasm_compatibility` and `context`. Each serializes as the kv key a
 // keybind or macro spells it with.
 
-/// Which color axis a [`Action::SetColor`] targets: the `bg|text|border`
-/// kv key of the `color` console verb's grammar. The strum derives
-/// generate the bidirectional kv-key conversion: `Bg.into() == "bg"`
-/// (via `IntoStaticStr`) and `"bg".parse::<ColorAxis>() == Ok(Bg)` (via
-/// `EnumString`).
+/// Which color a [`Action::SetColor`] sets: the `text|border|ring` kv
+/// key of the `color` console verb's grammar. The strum derives
+/// generate the bidirectional kv-key conversion: `Text.into() ==
+/// "text"` (via `IntoStaticStr`) and `"text".parse::<ColorAxis>() ==
+/// Ok(Text)` (via `EnumString`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, IntoStaticStr, EnumString)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum ColorAxis {
-    Bg,
+    /// The text: a node's, a section's, a label's; a path's, a cap's
+    /// and a portal end's one color.
     Text,
+    /// A node's frame, which its rings inherit; a path's, a cap's and a
+    /// portal end's one color, as `text`.
     Border,
+    /// Each ring of a node's frame, its own.
+    Ring,
 }
 
-/// Which frame a [`Action::SetFramePreview`] previews: a node's, a
-/// section's, or one of the theme's frame defaults. A keybind spells it
-/// in kebab case.
-///
-/// Same strum-derive shape as [`ColorAxis`]: `Node.into() ==
-/// "node"`, `"node".parse::<BorderPreviewTargetKind>() ==
-/// Ok(Node)`.
+/// Which frame a [`Action::SetFramePreview`] previews: the selected
+/// nodes' frames, or the map's default frame (`Defaults.frame`), which
+/// every frame that sets nothing of its own inherits — `main`'s
+/// `canvas-border`. A keybind spells it in kebab case. Sections have no
+/// frame (D8), so `main`'s section targets have no counterpart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, IntoStaticStr, EnumString)]
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
-pub enum BorderPreviewTargetKind {
+pub enum FramePreviewTarget {
     /// The selected nodes' frames.
     Node,
-    /// The selected sections' frames.
-    Section,
-    /// The theme's default node frame.
-    CanvasBorder,
-    /// The theme's default section frame.
-    CanvasSf,
-    /// The theme's default frame of a focused section.
-    CanvasSfFocused,
+    /// The map's default frame.
+    Defaults,
 }
 
-/// Which font slot a [`Action::SetFont`] targets: the `size|min|max`
+/// Which text field a [`Action::SetFont`] sets: the `size|weight|italic`
 /// kv key of the `font` console verb's grammar. The family is its own
-/// Action, [`Action::SetFontFamily`], since its value is a name rather
-/// than a size.
+/// Action, [`Action::SetFontFamily`], since its value is a name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, IntoStaticStr, EnumString)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum FontSlot {
+    /// The size in points.
     Size,
-    Min,
-    Max,
+    /// `normal`, `bold` or a weight from 100 to 900.
+    Weight,
+    /// `true` or `false`.
+    Italic,
 }
 
 /// Which zoom bound a [`Action::SetZoom`] targets: the `min|max` kv key
@@ -623,9 +622,11 @@ pub enum Action {
     // ── Parametric field Actions (Document context) ─────────────
     // Each sets one field of the selection from a keybind or a macro,
     // without a console line. Free-form `String` payloads are parsed
-    // when dispatched. Owned by V1-C5 (#246) for nodes, sections,
-    // frames and the theme, and V1-C6 (#247) for connectors, links,
-    // labels and rings; until then each answers `unhandled`.
+    // when dispatched. V1-C5 (#246) rebuilt the ones for nodes,
+    // sections, frames and style across the selection
+    // (`app::dispatch::families::field_nodes`); V1-C6 (#247) owns the
+    // ones for connectors, links and labels, which answer `unhandled`
+    // until it lands.
     /// Set the selected connector's anchor sides, `from` and `to`:
     /// `auto|top|right|bottom|left`.
     /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
@@ -636,41 +637,40 @@ pub enum Action {
     /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetPathContent(String),
-    /// Set one field of the selected nodes' frames, named by `field`.
-    /// The name is a string checked when dispatched, not at bind time;
-    /// #227 tracks typed per-field variants that would catch a
-    /// misspelling at load.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
+    /// Set one field of the selected nodes' frames, named by `field`
+    /// as the `frame` console verb names it (`start`, `direction`,
+    /// `fit`, `gap`, `inset`). The name is a string checked when
+    /// dispatched, not at bind time; #227 tracks typed per-field
+    /// variants that would catch a misspelling at load.
     #[action(context = Document, wasm = Compatible)]
     SetFrameField { field: String, value: String },
-    /// Advance the selected nodes' frame content to the next of its
-    /// kind, wrapping at the end. No payload, so one key cycles it.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
+    /// Replace the first ring's text of each selected node's frame with
+    /// the next of `─`, `━`, `═`, wrapping; a node with no frame gets
+    /// one with one ring. No payload, so one key cycles it.
     #[action(context = Document, wasm = Compatible)]
     CycleFrameContent,
-    /// Show or hide each selected node's frame, each node on its own.
-    /// No payload, so one key toggles it.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
+    /// Show or hide each selected node's frame, each node on its own; a
+    /// node with no frame gets one with one `─` ring. No payload, so one
+    /// key toggles it.
     #[action(context = Document, wasm = Compatible)]
     ToggleFrameVisible,
-    /// Preview one frame field on the frame `target_kind` names
-    /// ([`BorderPreviewTargetKind`]) without writing it: an open
-    /// transaction that [`Self::CommitFramePreview`] commits and
-    /// [`Self::CancelFramePreview`] reverts.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
+    /// Preview one field of the frame `target_kind` names
+    /// ([`FramePreviewTarget`]) without making it an edit: an open
+    /// interactive transaction (D28) whose stage is the preview, which
+    /// [`Self::CommitFramePreview`] makes one undo entry and
+    /// [`Self::CancelFramePreview`] reverts. A second preview replaces
+    /// the first.
     #[action(context = Document, wasm = Compatible)]
     SetFramePreview {
-        target_kind: BorderPreviewTargetKind,
+        target_kind: FramePreviewTarget,
         field: String,
         value: String,
     },
     /// Commit the open frame preview. Nothing when none is open.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     CommitFramePreview,
     /// Revert the open frame preview. Nothing when none is open.
-    /// Default-bound to nothing.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
+    /// Default-bound to nothing: `ExitMode` reverts it first.
     #[action(context = Document, wasm = Compatible)]
     CancelFramePreview,
     /// Set the selected connector's end caps, `from` and `to`:
@@ -678,10 +678,10 @@ pub enum Action {
     /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetPathCap { from: String, to: String },
-    /// Set one color of the selection: `axis` picks the background, the
-    /// text or the frame, and `value` is a color as a map spells one
-    /// (`#rrggbb`, a theme variable, a palette key).
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
+    /// Set one color of every selected element, whatever its kind:
+    /// `axis` picks the text, the frame or the rings ([`ColorAxis`]),
+    /// and `value` is a color as a map spells one (`#rrggbb[aa]`,
+    /// `var(name)`, `palette(field)`), or `reset` to inherit.
     #[action(context = Document, wasm = Compatible)]
     SetColor { axis: ColorAxis, value: String },
     /// Set the selected path's kind: a connector between parent and
@@ -699,13 +699,12 @@ pub enum Action {
     /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     ResetPath(String),
-    /// Set the selection's font family by name.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
+    /// Set the selection's font family by name: a family a map may
+    /// name, as the loader reads one.
     #[action(context = Document, wasm = Compatible)]
     SetFontFamily(String),
-    /// Set one font size of the selection, in points: `slot` picks the
-    /// size or its screen-space clamp (`size|min|max`).
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
+    /// Set one text field of the selection: `slot` picks the size in
+    /// points, the weight or the slant ([`FontSlot`]).
     #[action(context = Document, wasm = Compatible)]
     SetFont { slot: FontSlot, value: String },
     /// Set the selected path's label text; an empty payload clears it.
@@ -722,18 +721,15 @@ pub enum Action {
     /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetPathSpacing(String),
-    /// Set one bound of the zoom range the selection draws in:
-    /// `bound` picks `min|max`, and `value` is a positive zoom or
-    /// `unset`.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
+    /// Set one bound of the zoom range the selected nodes and paths
+    /// draw in: `bound` picks `min|max`, and `value` is a positive zoom
+    /// or `unset`.
     #[action(context = Document, wasm = Compatible)]
     SetZoom { bound: ZoomBound, value: String },
     /// Clear both bounds of the zoom range the selection draws in.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     ClearZoom,
     /// Move the selected section by `(dx, dy)` canvas units.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     //
     // Stringly-typed payload convention: f64 / usize fields on
     // `Action` variants ride as `String` because the enum
@@ -743,41 +739,33 @@ pub enum Action {
     // variant and to any future numeric-payload Action.
     #[action(context = Document, wasm = Compatible)]
     SetSectionOffsetDelta { dx: String, dy: String },
-    /// Set the selected section's size to `(w, h)`.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
+    /// Set the selected section's size to `(w, h)`: its minimum (D5).
     #[action(context = Document, wasm = Compatible)]
     SetSectionSizeAbs { w: String, h: String },
-    /// Let the selected section fill its node again, with no size of
+    /// Let the selected section fit its content again, with no size of
     /// its own.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetSectionSizeFillParent,
     /// Place the selected section at `(x, y)`: the absolute form of
     /// [`Self::SetSectionOffsetDelta`].
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible)]
     SetSectionOffsetAbs { x: String, y: String },
-    /// Replace the selected section's text, keeping its spans' styles
-    /// (`runs_mode = "preserve"`) or collapsing them to one
-    /// (`"clear"`). Destructive.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
+    /// Replace the selected section's spans with one span holding
+    /// `text`, which inherits the section's style. Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
-    SetSectionText { text: String, runs_mode: String },
+    SetSectionText { text: String },
     /// Add a section to the selected node, at index `at` (empty:
     /// appended), holding `text`. Destructive.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible, destructive)]
     AddSection { at: String, text: String },
-    /// Delete the selected section; a node keeps at least one.
-    /// Destructive.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
+    /// Delete the selected sections, as `DeleteSelection` deletes a
+    /// section. Destructive.
     #[action(context = Document, wasm = Compatible, destructive)]
     DeleteSection,
     /// Split the selected section at grapheme `at_grapheme`, which is
     /// required: a split at the end would only add an empty section.
     /// Named apart from [`Self::AddSection`]'s `at`, a section index.
     /// Destructive.
-    /// Answers `unhandled` until V1-C5 (#246) rebuilds it.
     #[action(context = Document, wasm = Compatible, destructive)]
     SplitSection { at_grapheme: String },
     /// Mirror `open <path>` — replace the current document with the

@@ -23,7 +23,7 @@ use crate::document::element::{
     PathData, PortalEndData, RingData, RingStyle, SectionData, SpanData, TextStyle, Triggers,
 };
 use crate::document::format::dto::{
-    AlignDto, AnchorDto, CapDto, FrameDto, LabelDto, LinkDto, LinkKindDto, LinkTargetDto, NodeDto, PathDto,
+    AnchorDto, CapDto, FrameDto, LabelDto, LinkDto, LinkKindDto, LinkTargetDto, NodeDto, PathDto,
     PortalEndDto, RingDto, SectionDto, SpanDto,
 };
 use crate::document::format::error::{LoadErrorKind, Seg};
@@ -179,11 +179,7 @@ impl Builder {
             channel,
             offset,
             min_size,
-            align: dto.align.map(|align| match align {
-                AlignDto::Left => Align::Left,
-                AlignDto::Center => Align::Center,
-                AlignDto::Right => Align::Right,
-            }),
+            align: dto.align.map(Align::from),
             text,
         });
         self.element(node, data, |b, section| b.spans(section, &dto.spans))

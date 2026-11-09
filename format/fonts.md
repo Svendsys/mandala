@@ -204,11 +204,13 @@ everywhere by compiling a face for it in.
 
 ## Console
 
-The `font` console verb is rebuilt on the document's one writer by
-V1-C5 (#246); until then it refuses, naming its owner. Its family
-completion is live: when the cursor sits in the family slot of
-`font set ...`, the popup shows every family whose name starts with the
-typed prefix (case-insensitive) — the compiled ones, and on native the
-host's — each candidate row pre-shaped in that very face. A
+`font family=<name>` sets the face of every selected element, on the
+document's one writer, and takes exactly the names a map's `font` key
+takes: a compiled family. An installed host font cannot be named by a
+map yet (#329), so `family=` refuses it as the loader does. When the
+cursor sits on the value of `font family=`, the popup shows every
+family a map can name whose name starts with the typed prefix
+(case-insensitive), each candidate row pre-shaped in that very face;
+`font list` prints every loaded family, the host's included on native. A
 `console_font` that names no compiled family is drawn in the default
 face, with a `warn!` when it names no loaded family at all.

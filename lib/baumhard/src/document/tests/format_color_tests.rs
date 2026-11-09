@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `format::color` and `format::hex`: the file's color reader and hex
-//! spelling, for callers outside a load (the app's paste and copy). Each
-//! is held to the loader itself: a spelling reads to the color a map
-//! carrying it loads with, and one the loader refuses reads to nothing.
+//! `format::color`, `format::hex` and `format::font`: the file's color
+//! reader, hex spelling and face reader, for callers outside a load (the
+//! app's paste and copy, the console). Each is held to the loader
+//! itself: a spelling reads to the value a map carrying it loads with,
+//! and one the loader refuses reads to nothing.
 
 use crate::document::element::DocElement;
 use crate::document::format::{self, load};
@@ -83,6 +84,67 @@ fn test_format_hex_writes_the_spelling_the_loader_reads_back() {
             loaded_color(&doc),
             Some(ColorRef::Rgba(rgba)),
             "{text:?} loads back"
+        );
+    }
+}
+
+/// A map whose one span names the face `family`: the loaded document,
+/// or the loader's refusal.
+fn map_in_font(family: &str) -> Result<Document, format::LoadError> {
+    let family = serde_json::to_string(family).expect("a string serializes");
+    load(&format!(
+        r#"{{"format":1,"name":"f","nodes":[{{"id":1,"position":[0.0,0.0],"sections":[{{"spans":[{{"text":"x","font":{family}}}]}}]}}]}}"#
+    ))
+}
+
+/// **`format::font` reads what the loader reads, and refuses what it
+/// refuses**, for every family this process has loaded — the compiled
+/// ones, and on native the host's, which no file may name (#329) — and
+/// for names no face has. Each accepted name reads to the face a map
+/// naming it loads with, and saves back: the loader shares
+/// `format::font`, so agreeing with it proves nothing alone.
+///
+/// Controls: some family is accepted, so the loop is not vacuous; and
+/// some *loaded* family is refused — a host face, the one kind of name
+/// that tells the face filter from no filter. A machine whose only
+/// families are the compiled ones has none, so there the test notes the
+/// skip, and fails where `MANDALA_REQUIRE_FONTCONFIG_HOSTS` is set, as CI
+/// sets it (`tests/font_state.rs`'s rule).
+#[test]
+fn test_format_font_reads_what_the_loader_reads() {
+    let (mut accepted, mut hosts) = (0, 0);
+    let loaded: Vec<String> = crate::font::fonts::loaded_families_iter()
+        .map(str::to_string)
+        .collect();
+    let unknown = ["", "Nope Sans", "inter"].map(String::from);
+    for family in loaded.iter().chain(&unknown) {
+        let read = format::font(family);
+        match map_in_font(family) {
+            Ok(doc) => {
+                accepted += 1;
+                let loaded = doc.tree().descendants().find_map(|id| match doc.get(id) {
+                    Some(DocElement::Span(span)) => span.style.font,
+                    _ => None,
+                });
+                assert_eq!(read, loaded, "{family:?} reads as it loads");
+                assert!(read.is_some(), "{family:?} loads, so it reads");
+                assert!(format::save(&doc).is_ok(), "{family:?}: a face read saves");
+            }
+            Err(_) => {
+                assert_eq!(read, None, "{family:?} is refused by the loader");
+                hosts += usize::from(!unknown.contains(family));
+            }
+        }
+    }
+    assert!(accepted > 0, "control: a compiled family loads");
+    assert!(format::font("Nope Sans").is_none() && map_in_font("Nope Sans").is_err());
+    if hosts == 0 {
+        assert!(
+            std::env::var_os("MANDALA_REQUIRE_FONTCONFIG_HOSTS").is_none(),
+            "no host face is loaded, so the face filter went untested"
+        );
+        crate::util::test_skip::note_skipped(
+            "format::font met no host-only face; its filter is untested on this machine",
         );
     }
 }

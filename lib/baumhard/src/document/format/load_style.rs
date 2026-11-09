@@ -121,10 +121,7 @@ impl Builder {
                 Some(start) => Some(self.start("start", start)?),
                 None => None,
             },
-            direction: frame.direction.map(|direction| match direction {
-                DirectionDto::Clockwise => Direction::Clockwise,
-                DirectionDto::Counterclockwise => Direction::CounterClockwise,
-            }),
+            direction: frame.direction.map(Direction::from),
             fit: match frame.fit {
                 Some(fit) => Some(self.fit("fit", fit)?),
                 None => None,

@@ -53,7 +53,7 @@ use crate::document::values::{
 };
 use crate::document::writer::Derived;
 use crate::engine::tree::{Placement, Tree};
-use crate::font::fonts::{app_font_by_family, AppFont};
+use crate::font::fonts::AppFont;
 use glam::Vec2;
 
 /// What every step of the builder returns.
@@ -628,8 +628,7 @@ impl Builder {
         let found = match self.fonts.get(family) {
             Some(found) => *found,
             None => {
-                let found =
-                    app_font_by_family(family).filter(|font| crate::document::place::nameable_font(*font));
+                let found = super::font(family);
                 self.fonts.insert(family.to_string(), found);
                 found
             }
@@ -763,17 +762,10 @@ impl Builder {
         key: &'static str,
         start: &crate::document::format::spelling::StartDto,
     ) -> LoadResult<StartPoint> {
-        use crate::document::format::spelling::EdgeDto;
-        use crate::document::values::Edge;
         let point = start.0;
         let at = self.key(key, |b| b.bounded("at", bounds::check_unit_interval(point.at)))?;
         Ok(StartPoint {
-            edge: match point.edge {
-                EdgeDto::Top => Edge::Top,
-                EdgeDto::Right => Edge::Right,
-                EdgeDto::Bottom => Edge::Bottom,
-                EdgeDto::Left => Edge::Left,
-            },
+            edge: point.edge.into(),
             at,
         })
     }

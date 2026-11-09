@@ -241,9 +241,7 @@ mod tests {
             .iter()
             .find(|l| l.starts_with("tags: "))
             .expect("color publishes a tags line");
-        for word in [
-            "color", "bg", "text", "border", "pick", "picker", "section", "range", "wheel",
-        ] {
+        for word in ["color", "text", "border", "ring", "pick", "picker", "wheel"] {
             assert!(
                 tags.contains(word),
                 "`help color`'s tags must carry '{word}': {tags}"
@@ -252,7 +250,7 @@ mod tests {
         // `usage:` leads with the forms, one per line — the first
         // under the `usage:` label, the rest indented under it.
         assert!(
-            color_lines.iter().any(|l| l == "usage: color bg"),
+            color_lines.iter().any(|l| l == "usage: color text"),
             "the first derived form leads the usage block; got {color_lines:?}"
         );
         assert!(

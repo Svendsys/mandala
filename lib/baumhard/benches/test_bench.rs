@@ -2014,6 +2014,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_compose_styles_a_range", |b| {
         b.iter(do_document_compose_styles_a_range)
     });
+    c.bench_function(
+        "document_compose_sets_inserts_and_adds_a_section_with_spans",
+        |b| b.iter(do_document_compose_sets_inserts_and_adds_a_section_with_spans),
+    );
     c.bench_function("document_compose_normalizes_spans", |b| {
         b.iter(do_document_compose_normalizes_spans)
     });
