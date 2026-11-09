@@ -23,10 +23,11 @@
 //!
 //! Two indices on the body index's grid keep this proportional to what
 //! moved: every visible node's region (a [`BodyIndex`]), and where each
-//! drawn path's glyphs are ([`PathCells`]). A path's hide stage, run once
-//! every path is laid and every ring placed, tries each of its glyphs
-//! against the regions in that glyph's cells, and records reading the
-//! geometry and reach of each node it meets. So a node that moves, is
+//! drawn path's glyphs are
+//! ([`PathCells`](crate::projection::behind::PathCells)). A path's hide
+//! stage, run once every path is laid and every ring placed, tries each
+//! of its glyphs against the regions in that glyph's cells, and records
+//! reading the geometry and reach of each node it meets. So a node that moves, is
 //! reshaped or leaves marks exactly the paths with a glyph its old region
 //! met, through the dependency index. Each node whose geometry or reach
 //! was marked is then set again in the region index, and finds the paths
