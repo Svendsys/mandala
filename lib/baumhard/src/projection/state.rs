@@ -317,9 +317,6 @@ pub(crate) struct Attach {
     pub(crate) point: Vec2,
     /// The side's outward normal.
     pub(crate) normal: Vec2,
-    /// The turn from the normal toward the path's other end: the order
-    /// of the paths that share the side.
-    pub(crate) toward: f32,
     /// The least turn between this path and a neighbor leaving the same
     /// point at which their first glyphs clear each other by this path's
     /// own gap.

@@ -1262,7 +1262,7 @@ impl Projector {
         let clear = gap + diagonal;
         let lead = 2.0 * (gap + size);
         let ends = [(from, a, anchors.0, b), (to, b, anchors.1, a)];
-        let mut attach = ends.map(|(node, own, anchor, other)| {
+        let attach = ends.map(|(node, own, anchor, other)| {
             let side = geometry::side_toward(own, anchor, other.center());
             let (point, normal) = geometry::side_point(own, side);
             Attach {
@@ -1270,14 +1270,11 @@ impl Projector {
                 side,
                 point,
                 normal,
-                toward: 0.0,
                 spread,
                 clear,
                 lead,
             }
         });
-        attach[0].toward = geometry::turn_to(attach[0].normal, attach[1].point - attach[0].point);
-        attach[1].toward = geometry::turn_to(attach[1].normal, attach[0].point - attach[1].point);
         let Some(UnitBody::Line(line)) = self.units.get_mut(&id).map(|u| &mut u.body) else {
             return;
         };
