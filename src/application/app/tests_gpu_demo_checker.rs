@@ -480,6 +480,9 @@ struct DrawnPath {
     curves: Vec<baumhard::flow::Curve>,
     style: String,
     ends: [NodeId; 2],
+    /// Whether it is one straight segment, which leaves and arrives along
+    /// its own line rather than its sides' normals.
+    straight: bool,
 }
 
 /// Every node's frame inks, by node: its rings', or for a node that
@@ -551,6 +554,11 @@ fn drawn_paths(doc: &Document) -> (Vec<DrawnPath>, Frames, f32) {
                             curves: projector.curve(element).map(<[_]>::to_vec).unwrap_or_default(),
                             style,
                             ends,
+                            straight: match doc.get(element) {
+                                Some(DocElement::Connector(c)) => c.path.straight,
+                                Some(DocElement::Link(l)) => l.path.straight,
+                                _ => false,
+                            },
                         });
                     }
                     _ => {}
@@ -624,9 +632,6 @@ fn side_of(reach: &Ink, point: Vec2) -> (Vec2, Vec2) {
 /// - **On the way.** One path's far end lies on the other's way: its
 ///   node sits between the junction and the other's node, its end on the
 ///   line the other must cross, so the other meets it however it curves.
-/// - **Two rows.** Border Toolkit's eight children: six to one side at a
-///   capped fan, the second row straight under the first, so the paths
-///   to the near row turn across the stubs of those to the far row.
 ///
 /// A pair listed here that keeps clear is a fault too, so the list only
 /// shrinks.
@@ -635,11 +640,7 @@ const UNROUTED: &[(&str, &str, &str)] = &[
     ("stress_long_edges", "5>121", "5>119"),
     ("stress_long_edges", "5>121", "5>120"),
     ("stress_long_edges", "5>121", "6>121"),
-    ("testament", "12>237", "12>239"),
     ("testament", "29>31", "29>32"),
-    ("testament", "244>246", "244>249"),
-    ("testament", "244>246", "244>250"),
-    ("testament", "244>247", "244>249"),
 ];
 
 /// The least distance between an ink of `a` and an ink of `b`, of those
@@ -838,8 +839,16 @@ fn test_maps_hold_the_connector_rules() {
                     own[end.path]
                 ));
             }
-            // (g)
-            if end.turn > 0.5 {
+            // (g), but for the direction a straight path leaves and arrives
+            // in, which is its own line's.
+            if p.straight {
+                let off = end.start.distance(end.mid) * zoom;
+                if off > 0.5 {
+                    faults.push(format!(
+                        "(g) {tag}: straight, starts {off:.2}px off its side's midpoint"
+                    ));
+                }
+            } else if end.turn > 0.5 {
                 fanned += 1;
                 let reach = ink.center() - end.start;
                 let cone = reach
@@ -929,6 +938,84 @@ fn test_maps_hold_the_connector_rules() {
     assert!(
         faults.is_empty(),
         "{} faults:\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
+}
+
+/// Testament's paths [`test_maps_draw_no_path_through_another_node`]
+/// finds still passing through another node, each by name.
+const THROUGH: &[&str] = &[
+    "3>4", "4>5", "6>235", "12>237", "23>26", "29>30", "29>31", "29>33", "29>39", "29>40", "29>41", "29>42",
+    "50>85", "52>53", "52>54", "52>55", "52>61", "52>62", "52>63", "52>64", "74>75", "74>76", "74>77",
+    "74>78", "74>79", "74>80", "74>81", "74>82", "74>83", "112>113", "122>123", "135>140", "141>148",
+    "150>151", "150>153", "154>155", "163>168", "190>191", "190>192", "190>193", "199>200", "199>201",
+    "199>202", "199>203", "199>204", "199>205", "199>206", "208>209", "208>210", "208>211", "208>217",
+    "208>218", "208>219", "220>221", "220>227", "227>230", "227>231", "235>236", "241>243",
+];
+
+/// No connector or line link passes through another node (the owner's
+/// answer on #326, which fixes the maps rather than routing round a
+/// node): no glyph of a path lies inside the reach — the box round the
+/// frame's inks, or the drawn rectangle — of a node other than its own
+/// two, on the demo maps, testament and theme_demo. `stress_long_edges`
+/// is left out: its long edges cross the rows they span by design.
+///
+/// Testament's paths that still pass through another node are listed in
+/// [`THROUGH`], each by name: rows of children too near their parent,
+/// whose paths to the far ones cross the near ones, and the like. A
+/// listed path that passes through none is a fault too, so the list only
+/// shrinks as the map is laid out again.
+///
+/// Control: with Border Toolkit's children back in the two rows they had,
+/// the second row straight under the first, red on testament: the paths
+/// to the second row pass through the first.
+#[test]
+fn test_maps_draw_no_path_through_another_node() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("maps");
+    let mut maps = demo_maps();
+    for name in ["testament", "theme_demo"] {
+        maps.push((name.to_string(), root.join(format!("{name}.mandala.json"))));
+    }
+    let mut faults: Vec<String> = Vec::new();
+    let mut checked = 0;
+    for (name, path) in maps {
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let doc = load(&text).unwrap_or_else(|e| panic!("{name} must load: {e}"));
+        let (paths, frames, _) = drawn_paths(&doc);
+        let reaches: Vec<(NodeId, Ink)> = frames
+            .iter()
+            .filter(|(_, inks)| !inks.is_empty())
+            .map(|(node, inks)| (*node, ink_bounds(inks)))
+            .collect();
+        for p in &paths {
+            let through = p.inks.iter().find_map(|ink| {
+                reaches
+                    .iter()
+                    .find(|(node, reach)| !p.ends.contains(node) && ink.overlap(reach) > 0.0)
+                    .map(|(node, _)| (ink.center(), *node))
+            });
+            checked += p.inks.len();
+            let listed = name == "testament" && THROUGH.contains(&p.name.as_str());
+            match (through, listed) {
+                (Some((at, node)), false) => {
+                    faults.push(format!(
+                        "{name} {}: a glyph at {at:.0?} inside node {node:?}'s reach",
+                        p.name
+                    ));
+                }
+                (None, true) => faults.push(format!(
+                    "{name} {}: listed in THROUGH, and passes through no node: remove it",
+                    p.name
+                )),
+                _ => {}
+            }
+        }
+    }
+    assert!(checked > 0, "precondition: path glyphs are read");
+    assert!(
+        faults.is_empty(),
+        "{} paths pass through another node:\n{}",
         faults.len(),
         faults.join("\n")
     );

@@ -358,7 +358,7 @@
       "position": [699.10815, -2005.8618],
       "min_size": [664.79834, 179.48926],
       "sections": [{"spans": [{"text": "commanded the man", "size": 59.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 59.0, "color": "#ffffff"}, {"text": "Genesis 2:16", "size": 59.0, "color": "#ffffff", "weight": "bold", "italic": true}]}],
-      "connector": {"color": "#30b082", "anchors": ["auto", "bottom"]}
+      "connector": {"color": "#30b082"}
     },
     {
       "id": 3,
@@ -366,8 +366,8 @@
       "position": [796.5163, -1673.4907],
       "min_size": [790.5091, 245.44214],
       "sections": [{"spans": [{"text": "“You are free to eat from any tree in the garden; but you must not eat from\"", "size": 55.0, "color": "#ffffff", "weight": "bold", "italic": true}]}],
-      "connector": {"color": "#e24271", "anchors": ["auto", "bottom"]},
-      "links": [{"to": 234, "kind": "line", "color": "#858088", "anchors": ["auto", "bottom"]}]
+      "connector": {"color": "#e24271"},
+      "links": [{"to": 234, "kind": "line", "color": "#858088"}]
     },
     {
       "id": 4,
@@ -383,7 +383,7 @@
       "position": [2153.1812, -1714.5548],
       "min_size": [941.1277, 928.42114],
       "sections": [{"spans": [{"text": "in the day of your eating from it,\n dying you shall die\n", "size": 33.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n", "size": 33.0, "color": "#ffffff"}, {"text": "of your eating", "size": 33.0, "color": "#ffffff", "weight": "bold"}, {"text": " → אֲכָלְךָ (akhalka) — infinitive construct of אכל (akhal, \"to eat, consume\") with second person masculine singular suffix. Temporal, not conditional: \n\"when you eat.\"\n\n", "size": 33.0, "color": "#ffffff"}, {"text": "dying", "size": 33.0, "color": "#ffffff", "weight": "bold"}, {"text": " → מוֹת (mot) — infinitive absolute of מות (mut, \"to die\"). The intensifying construction — opens dying as a state entered, processual, not a single event.\n\n", "size": 33.0, "color": "#ffffff"}, {"text": "you shall die", "size": 33.0, "color": "#ffffff", "weight": "bold"}, {"text": " → תָּמוּת (tamut) — second person masculine singular imperfect of מות. \nThe finite verb completing the construction.\n\nThe infinitive absolute (mot) initiates a condition. The finite verb (tamut) completes it. \nBetween them is the entire span of mortal life.", "size": 33.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#6b4737", "anchors": ["auto", "bottom"]}
+      "connector": {"color": "#6b4737"}
     },
     {
       "id": 6,
@@ -441,7 +441,7 @@
       "min_size": [989.8541, 402.31287],
       "sections": [{"spans": [{"text": "Lamech (לֶמֶךְ)", "size": 24.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nP", "size": 24.0, "color": "#ffffff"}, {"text": "ossible decompositions:\n\n\"Br", "size": 24.0, "color": "#ffffff", "italic": true}, {"text": "ought low\" — ", "size": 24.0, "color": "#ffffff", "weight": "bold", "italic": true}, {"text": "from מוך (mukh), to be poor or diminished, with a ל- prefix\n\n\"Powerful one\" — cognate with Arabic lamaka, to be strong\n\n\"To w", "size": 24.0, "color": "#ffffff", "italic": true}, {"text": "hat purpose?\" — fr", "size": 24.0, "color": "#ffffff", "weight": "bold", "italic": true}, {"text": "om למה (lamah), \"why?", "size": 24.0, "color": "#ffffff", "italic": true}, {"text": "\", the", "size": 24.0, "color": "#ffffff", "weight": "bold", "italic": true}, {"text": " q", "size": 24.0, "color": "#ffffff", "italic": true}, {"text": "uestioning/despairing one\n\n\"Pr", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": "iestly servant\" — possibly from Sumerian/Akkadian lumakku, a cultic office", "size": 24.0, "color": "#ffffff", "italic": true}]}],
       "connector": {"color": "#c4752d"},
-      "links": [{"to": 237, "kind": "line", "color": "#d89580", "anchors": ["auto", "bottom"], "label": {"color": "#d07021", "spans": [{"text": "Father of"}]}}, {"to": 239, "kind": "line", "color": "#d89580", "anchors": ["auto", "bottom"], "label": {"color": "#d07021", "spans": [{"text": "Father of"}]}}]
+      "links": [{"to": 237, "kind": "line", "color": "#d89580", "label": {"color": "#d07021", "spans": [{"text": "Father of"}]}}, {"to": 239, "kind": "line", "color": "#d89580", "label": {"color": "#d07021", "spans": [{"text": "Father of"}]}}]
     },
     {
       "id": 13,
@@ -749,7 +749,7 @@
       "position": [3765.3286, 5269.9697],
       "min_size": [475.9004, 378.94727],
       "sections": [{"spans": [{"text": "Isaac", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"He laughs\"\n\nAbram and Sarah laughs when God \ntells them to have another child, due to \ntheir old age. God tells them to name him\n\nYitzhak — \"he laughs.\"\n\n\"God has made laughter for me. \nEveryone who hears will laugh with me.\"", "size": 22.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#ab8d31", "anchors": ["auto", "bottom"], "control_points": [[-172.1, -92.8]], "label": {"color": "#ab8d31", "spans": [{"text": "Abram is 100\nSarah is 90"}]}},
+      "connector": {"color": "#ab8d31", "control_points": [[-172.1, -92.8]], "label": {"color": "#ab8d31", "spans": [{"text": "Abram is 100\nSarah is 90"}]}},
       "links": [{"to": 85, "kind": "line", "color": "#2fd8a7"}]
     },
     {
@@ -2232,7 +2232,7 @@
       "position": [-345.99542, -1660.3315],
       "min_size": [1054.5695, 1054.5695],
       "sections": [{"spans": [{"text": "The tree of knowing good and evil", "size": 43.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\nThe → הַ (ha) — definite article. Specific, singular, set apart.\n\ntree → עֵץ (ets) — tree, wood, timber. \n\nPossibly rooted in עצה/עצם suggesting firmness, substance, structure. The thing that holds and transmits.\n\nof the knowing → דַּעַת (da'at) — verbal noun from ידע (yada). Not information but transformative participatory contact.\n The verb for sexual union, covenant intimacy, craft mastery. \nYou don't yada something and remain what you were.\n\nof good → טוֹב (tov) — functional, ripe, beautiful, beneficial, \nfit-for-purpose, complete. \n\nand → וָ (va) — conjunction, but in paired constructions can signal spectrum, tension, or totality. The hinge between poles.\n\nevil → רָע (ra) — harmful, broken, spoiled, ugly, calamitous, dysfunctional. Not abstract metaphysical evil but the experienced quality of things that damage and diminish. Bad fruit, bad road, bad outcome.", "size": 29.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#cecf4d", "anchors": ["auto", "bottom"], "control_points": [[-61.2, -13.9], [78.2, -125.4]], "label": {"color": "#cecf4d", "spans": [{"text": "Eats the fruit of"}]}}
+      "connector": {"color": "#cecf4d", "control_points": [[-61.2, -13.9], [78.2, -125.4]], "label": {"color": "#cecf4d", "spans": [{"text": "Eats the fruit of"}]}}
     },
     {
       "id": 235,
@@ -2264,7 +2264,7 @@
       "position": [-92.46277, 1659.5801],
       "min_size": [227.96466, 42.105225],
       "sections": [{"spans": [{"text": "Nomadic Herdsmen", "size": 22.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#d07021", "anchors": ["auto", "bottom"], "label": {"color": "#d07021", "spans": [{"text": "Father of"}]}}
+      "connector": {"color": "#d07021", "label": {"color": "#d07021", "spans": [{"text": "Father of"}]}}
     },
     {
       "id": 239,
@@ -2280,7 +2280,7 @@
       "position": [304.47662, 1623.9509],
       "min_size": [145.50787, 75.78943],
       "sections": [{"spans": [{"text": "Musicians /\nEntertainers", "size": 22.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#d07021", "anchors": ["auto", "bottom"], "label": {"color": "#d07021", "spans": [{"text": "Father of"}]}}
+      "connector": {"color": "#d07021", "label": {"color": "#d07021", "spans": [{"text": "Father of"}]}}
     },
     {
       "id": 241,
@@ -2297,7 +2297,7 @@
       "min_size": [223.36346, 109.47363],
       "palette": "navy-v3",
       "sections": [{"spans": [{"text": "Tubal-cain", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nCraftsman\nTeacher of Artisans", "size": 22.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#e24271", "anchors": ["auto", "bottom"], "label": {"color": "#2f77da", "spans": [{"text": "Mother of"}]}},
+      "connector": {"color": "#e24271", "label": {"color": "#2f77da", "spans": [{"text": "Mother of"}]}},
       "links": [{"to": 12, "kind": "line", "color": "#2175b1", "anchors": ["bottom", "auto"], "label": {"color": "#2f77da", "spans": [{"text": "Father of"}]}}]
     },
     {
@@ -2307,7 +2307,7 @@
       "min_size": [329.11096, 143.15796],
       "palette": "stars-v3",
       "sections": [{"spans": [{"text": "Naamah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(Pleasant / To be agreeable /\nShe who is pleasant)\nF", "size": 22.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#e24271", "anchors": ["auto", "bottom"], "control_points": [[-117.8, -149.1], [-190.8, -222.3]], "label": {"color": "#30b082", "spans": [{"text": "Mother of"}]}},
+      "connector": {"color": "#e24271", "control_points": [[-117.8, -149.1], [-190.8, -222.3]], "label": {"color": "#30b082", "spans": [{"text": "Mother of"}]}},
       "links": [{"to": 12, "kind": "line", "color": "#26cc20", "anchors": ["bottom", "auto"], "label": {"color": "#30b082", "spans": [{"text": "Father of"}]}}]
     },
     {
@@ -2321,7 +2321,7 @@
     {
       "id": 245,
       "parent": 244,
-      "position": [-780.0, 11700.0],
+      "position": [-1433.12, 12360.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Atomic-repeat", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\ntop = \"+=##=+\"", "size": 20.0, "color": "#ffffff"}]}],
       "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "+=##=+"}]}]},
@@ -2330,7 +2330,7 @@
     {
       "id": 246,
       "parent": 244,
-      "position": [-355.2, 11700.0],
+      "position": [-993.12, 12360.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Prefix-Fill-Suffix", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\ntop = \"###(*)###\"", "size": 20.0, "color": "#ffffff"}]}],
       "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "###(*)###"}]}]},
@@ -2339,7 +2339,7 @@
     {
       "id": 247,
       "parent": 244,
-      "position": [69.6, 11700.0],
+      "position": [-553.12, 12360.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Multi-cluster", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nrepeat \"◆·\" on all sides", "size": 20.0, "color": "#ffffff"}]}],
       "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "◆·"}]}]},
@@ -2348,7 +2348,7 @@
     {
       "id": 248,
       "parent": 244,
-      "position": [502.79, 11700.0],
+      "position": [-113.12, 12360.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Custom corners", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n◆ ◇ ◇ ◆", "size": 20.0, "color": "#ffffff"}]}],
       "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "·"}]}]},
@@ -2357,7 +2357,7 @@
     {
       "id": 249,
       "parent": 244,
-      "position": [-780.0, 11874.8],
+      "position": [326.88, 12360.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Palette-cycled", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nrainbow per glyph", "size": 20.0, "color": "#ffffff"}]}],
       "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "·"}]}]},
@@ -2366,7 +2366,7 @@
     {
       "id": 250,
       "parent": 244,
-      "position": [-355.2, 11874.8],
+      "position": [766.88, 12360.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Escape grammar", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\ntop = \"+=#(\\(\\))#=+\"", "size": 20.0, "color": "#ffffff"}]}],
       "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "+=#(\\(\\))#=+"}]}]},
@@ -2375,7 +2375,7 @@
     {
       "id": 251,
       "parent": 244,
-      "position": [69.6, 11874.8],
+      "position": [1206.88, 12360.0],
       "min_size": [378.29, 110.0],
       "sections": [{"spans": [{"text": "Heavy chars + diamonds", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\npreset=custom, sides=━┃, corners=◆", "size": 20.0, "color": "#ffffff"}]}],
       "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "•"}]}]},
@@ -2384,7 +2384,7 @@
     {
       "id": 252,
       "parent": 244,
-      "position": [502.79, 11874.8],
+      "position": [1665.16, 12360.0],
       "min_size": [465.8, 270.0],
       "sections": [{"min_size": [420.0, 90.0], "spans": [{"text": "Per-section frame: atomic", "size": 18.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(enter NodeEdit to see frames)", "size": 18.0, "color": "#ffffff"}]}, {"offset": [0.0, 90.0], "min_size": [420.0, 90.0], "spans": [{"text": "Per-section frame: double", "size": 18.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(enter NodeEdit to see frame)", "size": 18.0, "color": "#ffffff"}]}, {"offset": [0.0, 180.0], "min_size": [420.0, 90.0], "spans": [{"text": "Per-section frame: rounded + summer palette", "size": 18.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(enter NodeEdit to see frame)", "size": 18.0, "color": "#ffffff"}]}],
       "frame": {"inset": 8.0, "rings": [{"fit": "repeat", "size": 0.05925926, "spans": [{"text": "·"}]}]},
