@@ -44,9 +44,8 @@ pub(super) enum Beat {
 
 impl Beat {
     /// Whether this frame runs the time-driven half beyond the injected
-    /// sample: native's recorder frame. Native-only with the recorder;
-    /// the browser's frame has no other time-driven work.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// sample: the animation tick, on both targets, and native's
+    /// recorder frame.
     pub(super) fn moves_time(self, clock: &AppClock) -> bool {
         match self {
             Beat::Loop => !clock.is_virtual(),

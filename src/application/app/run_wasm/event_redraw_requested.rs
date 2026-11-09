@@ -57,9 +57,10 @@ impl super::WasmApp {
             if Beat::Loop.lands_injected(&borrowed.input.clock) {
                 borrowed.land_injected();
             }
-            // The animations at the frame's instant, on a real clock:
-            // under a virtual one they are a step's (`run_wasm::step`).
-            if !borrowed.input.clock.is_virtual() {
+            // The animations at the frame's instant when the frame moves
+            // time — `Beat::Loop`, as native's loop frame reads it: under
+            // a virtual clock they are a step's (`run_wasm::step`).
+            if Beat::Loop.moves_time(&borrowed.input.clock) {
                 crate::application::app::animation::tick(
                     Some(&mut borrowed.input.document),
                     &borrowed.input.clock,
