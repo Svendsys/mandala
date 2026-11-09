@@ -1139,13 +1139,13 @@ fn plain_style() -> ResolvedText {
 }
 
 /// Every face a span can name and replay alike on every machine: each
-/// compiled-in `AppFont`, in name order — not `Any`, which draws in the
-/// host's fallback face, so a finding in it need not replay elsewhere
-/// (ruling R30's intent). Read from the compiled set itself rather than from
-/// the family index, which attributes a family to `Any` when a host face
-/// bearing its name comes first (the shadowing R30.1 removes): a sweep
-/// that drew its faces from the index would stop pinning that family at
-/// all, and so could not see a host face win its pin.
+/// compiled-in `AppFont`, in name order — not `Any`, which until #228
+/// drew in the host's fallback face, so a finding in it need not have
+/// replayed elsewhere (ruling R30's intent). Read from the compiled set
+/// itself rather than from the family index, which until #228 attributed
+/// a family to `Any` when a host face bearing its name came first (the
+/// shadowing R30.1 removed): a sweep that drew its faces from the index
+/// would have stopped pinning that family at all.
 ///
 /// Not the ornament fallback's faces (#297) either, and this list must
 /// not change length. Every committed structured seed and finding chose
