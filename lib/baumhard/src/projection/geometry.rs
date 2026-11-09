@@ -54,74 +54,151 @@ pub(crate) fn drawn_rect(
     Rect::new(usable_point(position), size.max(Vec2::ZERO))
 }
 
-/// The midpoints of `rect`'s top, right, bottom and left sides: where a
-/// path attaches. Each lies on the node's outline whatever its shape —
-/// a rounded rectangle's straight sides and an inscribed ellipse both
-/// pass through them. O(1).
-pub(crate) fn side_midpoints(rect: Rect) -> [Vec2; 4] {
-    let c = rect.center();
-    let max = rect.max();
-    [
-        Vec2::new(c.x, rect.origin.y),
-        Vec2::new(max.x, c.y),
-        Vec2::new(c.x, max.y),
-        Vec2::new(rect.origin.x, c.y),
-    ]
-}
+/// The share of the distance between a cubic's two ends its handles
+/// reach along the end directions: 0.5523, at which one cubic draws a
+/// quarter circle between two perpendicular sides as closely as one can
+/// (#296). A path between two facing sides is then an S, and one between
+/// a side and the side turned a quarter from it a round bend.
+const HANDLE_SHARE: f32 = 0.5523;
 
-/// Where a path attaches to the node drawn in `rect` (#241 §2): the
-/// midpoint of the side `anchor` names, or for [`Anchor::Auto`] the side
-/// midpoint nearest the other end's center (the first on a tie, top
-/// before right, bottom and left). O(1).
-pub(crate) fn anchor_point(rect: Rect, anchor: Anchor, other_center: Vec2) -> Vec2 {
-    let [top, right, bottom, left] = side_midpoints(rect);
-    match anchor {
-        Anchor::Top => top,
-        Anchor::Right => right,
-        Anchor::Bottom => bottom,
-        Anchor::Left => left,
-        Anchor::Auto => {
-            let mut best = top;
-            let mut best_d = top.distance_squared(other_center);
-            for point in [right, bottom, left] {
-                let d = point.distance_squared(other_center);
-                if d < best_d {
-                    best = point;
-                    best_d = d;
-                }
-            }
-            best
-        }
+/// How far a path end may turn from its side's normal to keep clear of
+/// the other paths that leave the same side (#296, rule 4).
+pub(crate) const SPLAY_CAP: f32 = 40.0 * std::f32::consts::PI / 180.0;
+
+/// The turn between two paths that leave one point at which their first
+/// glyphs clear each other by `gap` (#296, rule 4), for glyphs `size`
+/// across whose first sits its end gap, `gap`, from the point: its
+/// center `gap + size / 2` out, and two such centers `2 r sin(θ / 2)`
+/// apart at a turn of `θ`, which is to be `gap + size`. Radians;
+/// a half turn where no turn clears them, or the sizes are not finite.
+/// O(1).
+pub(crate) fn spread(gap: f32, size: f32) -> f32 {
+    let (gap, size) = (gap.max(0.0), size.max(0.0));
+    let ratio = (gap + size) / (2.0 * gap + size);
+    if ratio.is_finite() && ratio < 1.0 {
+        2.0 * ratio.asin()
+    } else {
+        std::f32::consts::PI
     }
 }
 
-/// The curve of a path from the node drawn in `from` to the node drawn
-/// in `to` (#241 §2): from the `from` end's anchor point to the `to`
-/// end's, a line with no control points, a quadratic Bézier with one —
-/// an offset from `from`'s center — and a cubic with two — the first an
-/// offset from `from`'s center, the second from `to`'s. `None` for more
-/// than two, which no loaded document has. O(1).
-pub(crate) fn curve_between(
-    from: Rect,
-    to: Rect,
-    anchors: (Anchor, Anchor),
-    control_points: &[Vec2],
-) -> Option<Curve> {
-    let start = anchor_point(from, anchors.0, to.center());
-    let end = anchor_point(to, anchors.1, from.center());
-    Some(match *control_points {
-        [] => Curve::Line(start, end),
-        [c] => Curve::Quadratic(start, from.center() + usable_point(c), end),
-        [c1, c2] => Curve::Cubic(
-            start,
-            from.center() + usable_point(c1),
-            to.center() + usable_point(c2),
-            end,
-        ),
-        _ => return None,
-    })
+/// The side of `rect` a path attaches to: `anchor`'s, or for
+/// [`Anchor::Auto`] the side the ray from `rect`'s center toward
+/// `toward` leaves it through (#296, rule 2): left or right where
+/// `|dx| / half-width` is the larger, top or bottom otherwise — on a tie,
+/// and for a ray of no length or not finite, top or bottom by `dy`'s sign,
+/// top at 0. A box of no width and no height compares `|dx|` and `|dy|`.
+/// Never [`Anchor::Auto`]. O(1).
+pub(crate) fn side_toward(rect: Rect, anchor: Anchor, toward: Vec2) -> Anchor {
+    if anchor != Anchor::Auto {
+        return anchor;
+    }
+    let d = toward - rect.center();
+    let d = if d.is_finite() { d } else { Vec2::ZERO };
+    let half = rect.size * 0.5;
+    let (across, along) = if half == Vec2::ZERO {
+        (d.x.abs(), d.y.abs())
+    } else {
+        (d.x.abs() * half.y, d.y.abs() * half.x)
+    };
+    match (across > along, d.x > 0.0, d.y > 0.0) {
+        (true, true, _) => Anchor::Right,
+        (true, false, _) => Anchor::Left,
+        (false, _, true) => Anchor::Bottom,
+        (false, _, false) => Anchor::Top,
+    }
 }
 
+/// The midpoint of `side` of `rect`, and the side's outward normal.
+/// [`Anchor::Auto`] reads as the top. O(1).
+pub(crate) fn side_point(rect: Rect, side: Anchor) -> (Vec2, Vec2) {
+    let (c, max) = (rect.center(), rect.max());
+    match side {
+        Anchor::Right => (Vec2::new(max.x, c.y), Vec2::X),
+        Anchor::Bottom => (Vec2::new(c.x, max.y), Vec2::Y),
+        Anchor::Left => (Vec2::new(rect.origin.x, c.y), -Vec2::X),
+        Anchor::Top | Anchor::Auto => (Vec2::new(c.x, rect.origin.y), -Vec2::Y),
+    }
+}
+
+/// The signed angle from `normal` to `toward`, radians in `-π..=π`:
+/// positive turning as [`Vec2::from_angle`] turns, clockwise on the
+/// screen. What the paths leaving one side are ordered by. `0` for a
+/// direction of no length. O(1).
+pub(crate) fn turn_to(normal: Vec2, toward: Vec2) -> f32 {
+    let a = normal.perp_dot(toward).atan2(normal.dot(toward));
+    if a.is_finite() {
+        a
+    } else {
+        0.0
+    }
+}
+
+/// The curves of a path (#296, rule 3): from `start` to `end`, each a
+/// point and the direction the path leaves it in — at `end`, the
+/// direction it leaves *backward*, the end side's outward normal for a
+/// path that arrives straight on — through each of `via`. Point `k` of
+/// `n` is the point `k / (n + 1)` of the way along the straight line
+/// from end to end, moved by `via[k - 1]`; one that is not finite moves
+/// it nothing.
+///
+/// Each end first runs straight along its direction for `lead` — a
+/// path's first two glyphs, so they step square to their side however
+/// the path then bends — but never more than a quarter of the straight
+/// line from end to end. Between the two leads, one cubic between each
+/// two points: at a lead's end along its direction, at a point between
+/// along the line through the points on either side of it (a Catmull-Rom
+/// spline), so the curves join without a kink. A lead's handle reaches
+/// [`HANDLE_SHARE`] of how far its curve's other end lies along its
+/// direction, and at least a third of the curve's chord, so a curve
+/// between facing sides is an S as deep as the sides are apart and one
+/// between a side and the side turned a quarter from it a round bend; a
+/// handle between is a third of the tangent.
+///
+/// Cost: O(`via`); one allocation, `via.len() + 3` curves.
+pub(crate) fn path_through(start: (Vec2, Vec2), end: (Vec2, Vec2), via: &[Vec2], lead: f32) -> Vec<Curve> {
+    let (p0, p1) = (usable_point(start.0), usable_point(end.0));
+    let lead = if lead.is_finite() {
+        lead.clamp(0.0, 0.25 * p0.distance(p1))
+    } else {
+        0.0
+    };
+    let (q0, q1) = (p0 + start.1 * lead, p1 + end.1 * lead);
+    let n = via.len();
+    let knot = |k: usize| match k {
+        0 => q0,
+        k if k > n => q1,
+        k => p0 + (p1 - p0) * (k as f32 / (n + 1) as f32) + usable_point(via[k - 1]),
+    };
+    // A lead's handle: along `dir`, as far as the curve reaches that way.
+    let handle = |from: Vec2, dir: Vec2, to: Vec2| {
+        let chord = to - from;
+        dir * (HANDLE_SHARE * chord.dot(dir).abs().max(chord.length() / 3.0))
+    };
+    // The tangent at knot `k`, as a handle's reach: out of it for the
+    // curve after, into it for the curve before.
+    let tangent = |k: usize| -> Vec2 {
+        if k == 0 {
+            handle(q0, start.1, knot(1))
+        } else if k > n {
+            -handle(q1, end.1, knot(n))
+        } else {
+            (knot(k + 1) - knot(k - 1)) / 6.0
+        }
+    };
+    let mut curves = Vec::with_capacity(n + 3);
+    if lead > 0.0 {
+        curves.push(Curve::Line(p0, q0));
+    }
+    curves.extend((0..=n).map(|k| {
+        let (a, b) = (knot(k), knot(k + 1));
+        Curve::Cubic(a, a + tangent(k), b - tangent(k + 1), b)
+    }));
+    if lead > 0.0 {
+        curves.push(Curve::Line(q1, p1));
+    }
+    curves
+}
 /// `size` in points, for shaping: a relative size — a fraction of the
 /// node's shorter side (D10) — times `min(w, h)` of the node's drawn
 /// rectangle (#241 amendment 1). Either is clamped to the shapeable
@@ -150,45 +227,91 @@ pub(crate) fn left_normal(tangent: Vec2) -> Vec2 {
 /// curve's arc length, held to `0..=1`, `0.5` when not a number — moved
 /// `offset` along the curve's left normal there. Cost: one arc-length
 /// table of the curve (none for a line) and one lookup.
-pub(crate) fn label_center(curve: &Curve, t: f32, offset: f32) -> Vec2 {
-    let arc = ArcPath::open(curve, POINT_TABLE_SPACING);
+pub(crate) fn label_center(path: &[Curve], t: f32, offset: f32) -> Vec2 {
+    let arc = ArcPath::open(path, POINT_TABLE_SPACING);
     let t = if t.is_nan() { 0.5 } else { t.clamp(0.0, 1.0) };
     let (point, tangent) = arc.at(t * arc.length());
     let offset = if offset.is_finite() { offset } else { 0.0 };
     point + left_normal(tangent) * offset
 }
 
-/// Where a portal end sits on `outline` (#241 §2), and the outline's
-/// outward normal there: at `border` — a fraction of the perimeter from
-/// the top side's start, clockwise — or, for [`BorderPoint::Auto`],
-/// facing `toward`, the other end's center: where the ray from the
-/// outline's center through it leaves the outline. The point is moved
-/// `offset` along the normal. Cost: one arc-length walk of the outline (a
-/// table for an ellipse) and a lookup, and for `Auto` a nearest-point
+/// Where along `outline`'s perimeter a portal end sits (#241 §2), as an
+/// arc length from the start of its top side, clockwise: at `border`, a
+/// fraction of the perimeter, or for [`BorderPoint::Auto`] facing
+/// `toward`, the other end's center — where the ray from the outline's
+/// center through it leaves the outline. Cost: one arc-length walk of the
+/// outline (a table for an ellipse), and for `Auto` a nearest-point
 /// search.
-pub(crate) fn portal_point(
-    outline: &Outline,
-    border: BorderPoint,
-    toward: Vec2,
-    offset: f32,
-) -> (Vec2, Vec2) {
-    let start = StartPoint {
-        edge: Edge::Top,
-        at: 0.0,
-    };
-    let arc = ArcPath::closed(outline, start, Direction::Clockwise, POINT_TABLE_SPACING);
-    let s = match border {
+pub(crate) fn portal_along(outline: &Outline, border: BorderPoint, toward: Vec2) -> f32 {
+    let arc = portal_arc(outline);
+    match border {
         BorderPoint::At(t) => {
             let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
             t * arc.length()
         }
         BorderPoint::Auto => arc.nearest(ray_exit(outline, toward)),
-    };
+    }
+}
+
+/// The point `s` along `outline`'s perimeter ([`portal_along`]), moved
+/// `offset` along the outline's outward normal there, and that normal.
+/// Cost: one arc-length walk of the outline and a lookup.
+pub(crate) fn portal_point(outline: &Outline, s: f32, offset: f32) -> (Vec2, Vec2) {
     let offset = if offset.is_finite() { offset } else { 0.0 };
-    let point = arc.offset_at(s, offset);
+    let point = portal_arc(outline).offset_at(s, offset);
     (point.point, point.normal)
 }
 
+/// `outline` walked once clockwise from the start of its top side: what
+/// a portal end's place along the perimeter is measured on.
+fn portal_arc(outline: &Outline) -> ArcPath {
+    let start = StartPoint {
+        edge: Edge::Top,
+        at: 0.0,
+    };
+    ArcPath::closed(outline, start, Direction::Clockwise, POINT_TABLE_SPACING)
+}
+
+/// Where each of `ends` — `(along, width)`: its place along one outline
+/// and how wide its marker and label are, sorted by place — is held
+/// apart from the others (#296; portal ends that face one way piled up on
+/// one point): no two nearer, center to center, than half their widths
+/// summed, and each run of ends that had to move centered where they
+/// faced, so an end alone, or clear of the others, stays where it faces.
+/// O(ends); one allocation.
+pub(crate) fn held_apart(ends: &[(f32, f32)]) -> Vec<f32> {
+    let mut at: Vec<f32> = ends.iter().map(|e| e.0).collect();
+    let mut run_start = 0;
+    for i in 0..ends.len() {
+        let pushed = i > 0 && {
+            let least = at[i - 1] + 0.5 * (ends[i - 1].1 + ends[i].1);
+            if at[i] < least {
+                at[i] = least;
+                true
+            } else {
+                false
+            }
+        };
+        if !pushed {
+            run_start = i;
+        }
+        let last_of_run = i + 1 == ends.len() || {
+            let least = at[i] + 0.5 * (ends[i].1 + ends[i + 1].1);
+            ends[i + 1].0 >= least
+        };
+        if last_of_run && i > run_start {
+            let run = run_start..=i;
+            let count = (i - run_start + 1) as f32;
+            let shift = (run.clone().map(|k| ends[k].0).sum::<f32>()
+                - run.clone().map(|k| at[k]).sum::<f32>())
+                / count;
+            for k in run {
+                at[k] += shift;
+            }
+        }
+    }
+    at
+}
 /// Where the ray from `outline`'s center toward `toward` leaves it: on an
 /// ellipse exactly; on a rounded rectangle, where it leaves the
 /// rectangle, which the nearest-point search then takes onto a rounded

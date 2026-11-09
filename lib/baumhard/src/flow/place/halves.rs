@@ -893,7 +893,7 @@ fn middle(b: (Vec2, Vec2)) -> Vec2 {
 ///
 /// Cost: one outline scale per distinct glyph that is not a space, and a
 /// search of the distinct glyphs read so far per glyph.
-fn inked(run: &ShapedRun, fs: &mut FontSystem) -> ShapedRun {
+pub(crate) fn inked(run: &ShapedRun, fs: &mut FontSystem) -> ShapedRun {
     #[cfg(test)]
     INKED_STEPS.with(|count| count.set(count.get() + inking_steps(run)));
     #[cfg(test)]

@@ -591,7 +591,7 @@ portal is a connector with `visible: false` plus a portal link.
 | `color` | [color](#colors) | no | unset | |
 | `content` | string | no | unset | The text drawn when the path has no spans. |
 | `anchors` | `[from, to]`, each `"auto"`, `"top"`, `"right"`, `"bottom"` or `"left"` | no | `["auto", "auto"]` | Where it attaches at its start and at its end. |
-| `control_points` | array of `[x, y]` | no | `[]` | Bézier control points: at most 2. 0 points is a line, 1 a quadratic and 2 a cubic Bézier. |
+| `control_points` | array of `[x, y]` | no | `[]` | [Points the path passes through](#control-points): at most 8. |
 | `visible` | boolean | no | `true` | Whether it is drawn. |
 | `zoom` | [zoom](#zoom) | no | none | |
 | `spans` | array of [spans](#span) | no | `[]` | The line's content (`"─"`, `"·"`, a line of poetry). |
@@ -617,7 +617,7 @@ line link only; naming one on a portal link is an error, and so is
 | `color` | [color](#colors) | no | unset | Line only. |
 | `content` | string | no | unset | Line only. |
 | `anchors` | `[from, to]` | no | `["auto", "auto"]` | Line only. |
-| `control_points` | array of `[x, y]` | no | `[]` | Line only. At most 2. |
+| `control_points` | array of `[x, y]` | no | `[]` | Line only. At most 8. |
 | `visible` | boolean | no | `true` | Line only. |
 | `zoom` | [zoom](#zoom) | no | none | Line only. |
 | `spans` | array of [spans](#span) | no | `[]` | Line only. |
@@ -697,7 +697,7 @@ What a text does when it and its path differ in length (D10, §6.4).
 
 | Spelling | Meaning |
 |---|---|
-| `"repeat"` | The text repeated until the path is full. Around a frame, as many whole repetitions as fit, evenly spaced, so the ring closes without a seam; along a connector, the last repetition is cut. An ornament (text with no letter or digit, such as `"✦ "`) is spaced by its ink, so its gaps look the same where the path runs level, steep, or round a corner. |
+| `"repeat"` | The text repeated until the path is full. Around a frame, as many whole repetitions as fit, evenly spaced, so the ring closes without a seam. An ornament (text with no letter or digit, such as `"✦ "`) is spaced by its ink, so its gaps look the same where the path runs level, steep, or round a corner; along a connector or a line link it is as many whole glyphs as fit at its own gap, the gaps at its ends included, evenly spaced from node to node ([projection](./projection.md#where)). Text with letters along a connector is repeated from its start, the last repetition cut. |
 | `"spread"` | The text once, spaced out to end where the path ends. On a frame's ring, the same as `"once"`: how far each of its two lines reaches is its [span](#span-of-a-line). |
 | `"once"` | The text once; the rest of the path gets nothing. On a frame's ring, its two lines at the declared size, as far as their [span](#span-of-a-line); a line is cut only where its half cannot hold it at the font's own letter gap. |
 | `{ "once": { "filler": "·" } }` | The text once, then the filler repeated. On a frame's ring the filler is its [sides](#sides) when `sides` is unset: what the two lines leave is the breaks between them. So a filler is held to the sides' bounds: it must have something to draw and be at most 256 bytes long. |
@@ -852,6 +852,24 @@ its frame and both defaults, and the ring's [fit](#fit) is
 text color: round a frame, what the two lines leave is the breaks. The
 saver writes `{ "content": … }` without a `color` as the bare string.
 
+### Control points
+
+The points a connector or a line link passes through between its two
+ends, in order from its start, each `[x, y]` in canvas units: point `k`
+of `n` is that offset from the point `k / (n + 1)` of the way along the
+straight line from the path's start to its end. `[[0, -30], [0, 30]]`
+is a wave, up a third of the way along and down two thirds. The path is
+one curve through them, leaving its start and arriving at its end
+square to the side it attaches to ([projection](./projection.md#where)),
+so the points shape it and move with its two nodes. With none, the
+path is that curve between its two ends alone.
+
+Before V1-B10 (#296) the points were a quadratic's or a cubic's
+Bézier control points, offsets from the two nodes' centers; a map
+written to that reading is converted by hand, a curve's points taken
+where it ran (the README's frames map, and testament's twelve authored
+curves, were).
+
 ### Start point
 
 Where a `repeat` ring starts on the outline (a ring in another mode is
@@ -930,7 +948,7 @@ its path.
 | `fit` bounds | `0 < min <= max` |
 | Corner radius | `0` to `100` |
 | Weight | 100, 200, ... 900 |
-| `control_points` | at most 2 (`MAX_CONTROL_POINTS`) |
+| `control_points` | at most 8 (`MAX_CONTROL_POINTS`) |
 | A node's `id` and `parent`, a link's `to` | `1` to `4294967294` (`MAX_NODE_IDENT`); a larger integer is this bound, not another error |
 | `channel` (node, section, ring) | `0` to `4294967295` (`MAX_CHANNEL`), the most a `usize` holds on wasm32, so every target accepts the same files |
 | `palettes`, theme variables, theme variants, `verbs`, `edits`, `presentations` | at most 65536 each, the most an index addresses |
@@ -1094,7 +1112,7 @@ node 5 was made after node 3 but sits under node 2.
       "parent": 1,
       "position": [320.0, -80.0],
       "sections": [{"spans": [{"text": "the heaven"}]}],
-      "links": [{"to": 4, "kind": "line", "control_points": [[400.0, 0.0]]}]
+      "links": [{"to": 4, "kind": "line", "control_points": [[0.0, -40.0]]}]
     },
     {
       "id": 5,

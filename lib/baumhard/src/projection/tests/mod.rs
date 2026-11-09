@@ -4,6 +4,8 @@
 //! against re-placing, hit testing, depth, and the bench bodies.
 
 /// The oracle's corpus: generated documents and edits.
+#[cfg(test)]
+mod connector_tests;
 pub mod corpus;
 /// A chain as deep as memory allows.
 pub mod deep_tests;

@@ -386,8 +386,10 @@ pub struct PathData {
     pub flow: FlowStyle,
     /// Where it attaches at its start and at its end.
     pub anchors: (Anchor, Anchor),
-    /// Bézier control points, offsets in canvas units: 0, 1 or 2
-    /// ([`MAX_CONTROL_POINTS`](crate::document::bounds::MAX_CONTROL_POINTS)).
+    /// The points it passes through between its ends (#296): point `k`
+    /// of `n` an offset in canvas units from the point `k / (n + 1)` of
+    /// the way along the straight line from its start to its end. At most
+    /// [`MAX_CONTROL_POINTS`](crate::document::bounds::MAX_CONTROL_POINTS).
     pub control_points: Vec<Vec2>,
     /// Whether it is drawn.
     pub visible: bool,

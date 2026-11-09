@@ -17,6 +17,7 @@ mod flow_fuzz_tests;
 pub mod halves_tests;
 pub mod lines_tests;
 pub mod outline_tests;
+pub mod pitch_tests;
 pub mod place_tests;
 pub mod readable_tests;
 /// The exact work removals of #309, each pinned by its counter.

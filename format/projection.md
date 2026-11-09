@@ -60,14 +60,38 @@ scaled very small still loads and saves as written.
 
 **A path** (a connector, a line link) runs from its start node to its end
 node: a connector from its node's parent to its node, a link from its
-node to the node it leads to. Each end attaches to the midpoint of one
-side of its node's rectangle, which lies on the outline whatever its
-shape: the side its `anchors` entry names, or for `auto` the side
-midpoint nearest the other node's center (top, right, bottom, left, in
-that order on a tie). With no control points the path is a line; with
-one it is a quadratic Bézier whose control point is that offset from the
-start node's center; with two a cubic, the first an offset from the start
-node's center and the second from the end node's.
+node to the node it leads to.
+
+- **Where it attaches.** Each end sits at the midpoint of one side of
+  its node's *reach*: the box round the inks of the node's drawn rings,
+  or its drawn rectangle where it draws none. The side is the one its
+  `anchors` entry names, or for `auto` the side the ray from the reach's
+  center toward the other node's reach's center leaves through: left or
+  right where the ray's `|dx|` over the reach's half width is the larger,
+  top or bottom otherwise.
+- **How it runs.** It leaves its start and arrives at its end square to
+  their sides, and passes through its [control
+  points](./schema.md#control-points): one cubic between each two points,
+  joined without a kink. An end's handle reaches 0.5523 of how far the
+  curve's other end lies along it, and at least a third of the curve's
+  chord: between facing sides an S as deep as the sides are apart,
+  between a side and one turned a quarter from it a round bend.
+- **Paths that share a side.** The paths that leave one side of a node
+  leave its one midpoint, fanned in the order they turn toward their
+  other ends. Each two neighbors are apart by the turn at which their
+  first glyphs clear each other by their own gap — the widest any of
+  them needs — and none turns more than 40° from the side's normal: past
+  that the fan is narrowed to hold it. A path alone on its side leaves
+  along the normal.
+- **Its glyphs.** A `repeat` path whose text has ink to measure — an
+  ornament, `·` or `~` — holds a whole number of glyphs: as many as
+  bring every gap between two inks nearest the gap its font sets them
+  at on a line plus its `spacing`, the difference spread evenly over all
+  of them. The gaps at its two ends are among them, each measured from
+  its end glyph's ink to the nearest ink of the node's rings, or to its
+  rectangle: the end glyph moves back past the side's midpoint, through
+  the rings and never into the rectangle, or on, to keep it. Any other
+  path is walked by its fit mode from its start.
 
 **Caps** are centered on the path's start (`cap_start`) and end
 (`cap_end`).
@@ -80,7 +104,11 @@ its lines centered.
 **A portal end** sits on its own node's outline: at `border_t`, a
 fraction of the outline's perimeter from the start of its top side,
 clockwise; unset, where the ray from its node's center toward the other
-node's center leaves the outline, so it faces the other end. It is moved
+node's center leaves the outline, so it faces the other end. The ends
+with `border_t` unset at one node are held apart along the outline, no
+two nearer, center to center, than half the larger sides of their
+markers' and labels' boxes summed; a run of them that had to move is
+centered where they face. It is moved
 `offset` along the outline's outward normal there, and its marker is set
 just outside that point. Its label sits beside the marker, further out
 along the same normal by the label's `offset`; a portal end's label has

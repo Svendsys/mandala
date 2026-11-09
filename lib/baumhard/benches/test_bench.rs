@@ -38,6 +38,7 @@ use baumhard::flow::tests::fit_tests::*;
 use baumhard::flow::tests::halves_tests::*;
 use baumhard::flow::tests::lines_tests::*;
 use baumhard::flow::tests::outline_tests::*;
+use baumhard::flow::tests::pitch_tests::*;
 use baumhard::flow::tests::place_tests::*;
 use baumhard::flow::tests::readable_tests::*;
 use baumhard::flow::tests::shape_tests::*;
@@ -2084,6 +2085,18 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("flow_path_measures_past_the_root_of_the_largest_f32", |b| {
         b.iter(do_flow_path_measures_past_the_root_of_the_largest_f32)
+    });
+    c.bench_function("flow_pitched_holds_the_nearer_whole_count_evenly", |b| {
+        b.iter(do_flow_pitched_holds_the_nearer_whole_count_evenly)
+    });
+    c.bench_function("flow_pitched_keeps_one_pitch_in_every_direction", |b| {
+        b.iter(do_flow_pitched_keeps_one_pitch_in_every_direction)
+    });
+    c.bench_function("flow_pitched_measures_each_end_to_the_boxes_beside_it", |b| {
+        b.iter(do_flow_pitched_measures_each_end_to_the_boxes_beside_it)
+    });
+    c.bench_function("flow_pitched_lays_no_text_and_no_empty_path", |b| {
+        b.iter(do_flow_pitched_lays_no_text_and_no_empty_path)
     });
     c.bench_function("flow_place_horizontal_steps_by_advance", |b| {
         b.iter(do_flow_place_horizontal_steps_by_advance)

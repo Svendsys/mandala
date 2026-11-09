@@ -458,7 +458,7 @@
       "position": [-1211.4767, 256.81036],
       "min_size": [219.49017, 338.97437],
       "sections": [{"spans": [{"text": "Seth", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(Put in place of /\nPlant firm)\n\nThe replacement \nfor Abel, since we \nruled Abel out by \nkilling him\n\nLived 912 years ", "size": 22.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#cecf4d", "control_points": [[-597.61224, 112.67389], [276.8315, -49.54779]], "label": {"color": "#cecf4d", "spans": [{"text": "Adam was 130 years old"}]}}
+      "connector": {"color": "#cecf4d", "control_points": [[-63.1, 4.0], [-85.0, 38.1]], "label": {"color": "#cecf4d", "spans": [{"text": "Adam was 130 years old"}]}}
     },
     {
       "id": 15,
@@ -506,7 +506,7 @@
       "position": [-1264.184, 3174.9614],
       "min_size": [338.0008, 311.5791],
       "sections": [{"spans": [{"text": "Methuselah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(his death sends a projectile)\n\nWhen this one dies, \nsomething is launched. \n\nLived 969 years\n\nHe dies the year of the flood ", "size": 22.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#4e615c", "control_points": [[0.0, 221.27795], [-6.224854, -346.20648]], "label": {"color": "#4e615c", "spans": [{"text": "At 65 years old"}]}}
+      "connector": {"color": "#4e615c", "control_points": [[-1.0, -22.5], [-3.1, -49.6]], "label": {"color": "#4e615c", "spans": [{"text": "At 65 years old"}]}}
     },
     {
       "id": 21,
@@ -522,7 +522,7 @@
       "position": [-1364.3213, 4224.532],
       "min_size": [589.9414, 1278.7578],
       "sections": [{"spans": [{"text": "Noah\n\"Rest\" or \n\"Settle\"", "size": 40.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\n", "size": 36.0, "color": "#ffffff"}, {"text": "Builds the Ark and\nsurvives the cataclysm", "size": 23.0, "color": "#ffffff"}, {"text": "\n", "size": 32.0, "color": "#ffffff"}, {"text": "\n", "size": 36.0, "color": "#ffffff"}, {"text": "Bridge between \nthe old world and\nthe new", "size": 23.0, "color": "#ffffff"}, {"text": "\n", "size": 36.0, "color": "#ffffff"}, {"text": "\nThe people who survived \nthe Cataclysm split into three \ncultures\n\n", "size": 26.0, "color": "#ffffff"}, {"text": "The Bible tells the story from a Shem perspective\nSo Japheth and Ham are secondary", "size": 23.0, "color": "#ffffff", "italic": true}, {"text": "\n\n", "size": 36.0, "color": "#ffffff"}, {"text": "Lived 950 years", "size": 26.0, "color": "#ffffff"}, {"text": "\n\n", "size": 36.0, "color": "#ffffff"}, {"text": "This is the first splitting / division\nWhen one becomes many\n\nThe symbolism of Jesus (God's son)\n\"dying on the cross\" suddenly seems apt.\n\n\"The Crux of the matter\"\nGod is the Word\nHe sends his son, the Word in flesh\n\nIt is perfect, but upon contact with humanity\nit is killed on the cross. The cross is a universal \nsymbol for division.", "size": 20.0, "color": "#ffffff", "italic": true}]}],
-      "connector": {"color": "#4e615c", "control_points": [[-1.673828, 224.75241], [-16.533295, -738.7159]], "label": {"color": "#789dab", "spans": [{"text": "At 182 years old"}]}}
+      "connector": {"color": "#4e615c", "control_points": [[-6.1, -21.9], [-6.0, -20.8]], "label": {"color": "#789dab", "spans": [{"text": "At 182 years old"}]}}
     },
     {
       "id": 23,
@@ -749,7 +749,7 @@
       "position": [3765.3286, 5269.9697],
       "min_size": [475.9004, 378.94727],
       "sections": [{"spans": [{"text": "Isaac", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"He laughs\"\n\nAbram and Sarah laughs when God \ntells them to have another child, due to \ntheir old age. God tells them to name him\n\nYitzhak — \"he laughs.\"\n\n\"God has made laughter for me. \nEveryone who hears will laugh with me.\"", "size": 22.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#ab8d31", "anchors": ["auto", "bottom"], "control_points": [[81.99107, 2.602203]], "label": {"color": "#ab8d31", "spans": [{"text": "Abram is 100\nSarah is 90"}]}},
+      "connector": {"color": "#ab8d31", "anchors": ["auto", "bottom"], "control_points": [[-172.1, -92.8]], "label": {"color": "#ab8d31", "spans": [{"text": "Abram is 100\nSarah is 90"}]}},
       "links": [{"to": 85, "kind": "line", "color": "#2fd8a7"}]
     },
     {
@@ -871,7 +871,7 @@
       "min_size": [388.7295, 210.52637],
       "palette": "coral",
       "sections": [{"spans": [{"text": "Keturah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Incense\" or\n\"perfumed one\"\n\nAfter Sarah dies, Abraham fathers\nseveral sons with Keturah", "size": 22.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#7c9a1f", "control_points": [[0.0, -296.22144], [-121.7486, 240.55954]]}
+      "connector": {"color": "#7c9a1f", "control_points": [[-163.2, -78.8], [-149.9, -63.6]]}
     },
     {
       "id": 66,
@@ -1042,7 +1042,7 @@
       "position": [-604.09204, 9841.291],
       "min_size": [70.4646, 42.10547],
       "sections": [{"spans": [{"text": "Esau", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
-      "connector": {"color": "#39ac69", "control_points": [[-223.36737, 0.0], [-0.191807, -76.69937]]},
+      "connector": {"color": "#39ac69", "control_points": [[-78.4, -111.4], [-58.9, -55.9]]},
       "links": [{"to": 92, "kind": "line", "color": "#20562a", "label": {"color": "#858088", "spans": [{"text": "Twins"}]}}]
     },
     {
@@ -1172,7 +1172,7 @@
       "position": [2282.1746, 8284.361],
       "min_size": [523.1907, 776.1592],
       "sections": [{"spans": [{"text": "Moses\n\"The born one\"", "size": 49.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\n", "size": 22.0, "color": "#ffffff"}, {"text": "Raised as Egyptian royalty.\n\nAfter he kills an Egyptian taskmaster \nfor beating a Hebrew slave he\nflees to ", "size": 22.0, "color": "#ffffff", "italic": true}, {"text": "Midian", "size": 22.0, "color": "#ffffff", "weight": "bold", "italic": true}, {"text": ", and meets his wife\n\n called by God to liberate the Hebrews\n\nHe acts as a mediator between God\nand humanity.\n\nHe attains his connection with God\nwhile working near mount Sinai\n\nHe remains relatively poor materialistically \nhis whole life, and is not allowed to enter\nthe promised land, because he disrespected \nthe Lord in front of his people ", "size": 22.0, "color": "#ffffff", "italic": true}]}],
-      "connector": {"color": "#58254c", "control_points": [[0.0, -311.39954], [10.554535, 516.551]]}
+      "connector": {"color": "#58254c", "control_points": [[-24.5, -51.4], [31.6, -34.0]]}
     },
     {
       "id": 103,
@@ -1333,7 +1333,7 @@
       "min_size": [210.1958, 75.78906],
       "palette": "summer",
       "sections": [{"spans": [{"text": "Mother unknown\nunspecified", "size": 22.0, "color": "#ffffff", "weight": "bold"}]}],
-      "connector": {"color": "#be4781", "control_points": [[-105.642944, 0.0], [125.84123, 6.115635]]}
+      "connector": {"color": "#be4781", "control_points": [[-46.7, 26.4], [42.7, -22.3]]}
     },
     {
       "id": 123,
@@ -1487,7 +1487,7 @@
       "min_size": [306.8247, 311.3418],
       "palette": "sweet",
       "sections": [{"spans": [{"text": "Hur", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": " \n\"Free/noble\" or\n\"White/pale\"\n\nHe was close and trusted \nby Moses and Aaron\n\nBorn a slave, then freed\nin Exodus by God", "size": 22.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#be4781", "control_points": [[284.5244, 0.0], [-277.65097, 31.088745]]}
+      "connector": {"color": "#be4781", "control_points": [[5.3, 9.1], [-22.1, 11.6]]}
     },
     {
       "id": 142,
@@ -1591,7 +1591,7 @@
       "position": [4849.371, 8597.759],
       "min_size": [191.3418, 176.84277],
       "sections": [{"spans": [{"text": "Maacah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\"Oppression\"\n\"Pressed down\"\n\nConcubine ", "size": 22.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#be4781", "control_points": [[0.0, 122.033875], [-91.84543, -138.43484]]}
+      "connector": {"color": "#be4781", "control_points": [[-6.2, -3.5], [-23.0, -2.4]]}
     },
     {
       "id": 155,
@@ -2232,7 +2232,7 @@
       "position": [-345.99542, -1660.3315],
       "min_size": [1054.5695, 1054.5695],
       "sections": [{"spans": [{"text": "The tree of knowing good and evil", "size": 43.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n\nThe → הַ (ha) — definite article. Specific, singular, set apart.\n\ntree → עֵץ (ets) — tree, wood, timber. \n\nPossibly rooted in עצה/עצם suggesting firmness, substance, structure. The thing that holds and transmits.\n\nof the knowing → דַּעַת (da'at) — verbal noun from ידע (yada). Not information but transformative participatory contact.\n The verb for sexual union, covenant intimacy, craft mastery. \nYou don't yada something and remain what you were.\n\nof good → טוֹב (tov) — functional, ripe, beautiful, beneficial, \nfit-for-purpose, complete. \n\nand → וָ (va) — conjunction, but in paired constructions can signal spectrum, tension, or totality. The hinge between poles.\n\nevil → רָע (ra) — harmful, broken, spoiled, ugly, calamitous, dysfunctional. Not abstract metaphysical evil but the experienced quality of things that damage and diminish. Bad fruit, bad road, bad outcome.", "size": 29.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#cecf4d", "anchors": ["auto", "bottom"], "control_points": [[12.367218, -198.75568], [13.014099, 278.64227]], "label": {"color": "#cecf4d", "spans": [{"text": "Eats the fruit of"}]}}
+      "connector": {"color": "#cecf4d", "anchors": ["auto", "bottom"], "control_points": [[-61.2, -13.9], [78.2, -125.4]], "label": {"color": "#cecf4d", "spans": [{"text": "Eats the fruit of"}]}}
     },
     {
       "id": 235,
@@ -2307,7 +2307,7 @@
       "min_size": [329.11096, 143.15796],
       "palette": "stars-v3",
       "sections": [{"spans": [{"text": "Naamah", "size": 22.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(Pleasant / To be agreeable /\nShe who is pleasant)\nF", "size": 22.0, "color": "#ffffff"}]}],
-      "connector": {"color": "#e24271", "anchors": ["auto", "bottom"], "control_points": [[90.58154, 378.13147], [-471.24634, -655.297]], "label": {"color": "#30b082", "spans": [{"text": "Mother of"}]}},
+      "connector": {"color": "#e24271", "anchors": ["auto", "bottom"], "control_points": [[-117.8, -149.1], [-190.8, -222.3]], "label": {"color": "#30b082", "spans": [{"text": "Mother of"}]}},
       "links": [{"to": 12, "kind": "line", "color": "#26cc20", "anchors": ["bottom", "auto"], "label": {"color": "#30b082", "spans": [{"text": "Father of"}]}}]
     },
     {

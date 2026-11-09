@@ -3,7 +3,7 @@
 //! The oracle's corpus (#241, Tests): seeded documents of fifty nodes or
 //! more using everything the projection draws, and seeded edits drawing
 //! on every op of the mutation vocabulary and every composite builder.
-//! Built from [`Choices`](crate::util::tests::choices::Choices), so a sweep's case replays from its seed.
+//! Built from [`Choices`], so a sweep's case replays from its seed.
 
 use glam::Vec2;
 

@@ -58,8 +58,8 @@ use crate::flow::place::{
     MIN_TABLE_SPACING,
 };
 use crate::flow::{
-    offset, outline, place_at_point, place_on_open, shape_box, shape_run, Curve, FlowSpan, Outline,
-    PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
+    offset, outline, place_at_point, place_on_open, place_pitched, shape_box, shape_run, Curve, FlowSpan,
+    Outline, PathEnd, PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
 };
 use crate::font::fonts::{self, AppFont, FontSystemLease, COMPILED_FONT_ID_MAP};
 use crate::util::tests::choices::Choices;
@@ -520,7 +520,45 @@ pub(crate) fn check_raw(bytes: &[u8], fits: &[FitMode], bounded: bool) -> Result
             "along a line",
         )?;
     }
+    check_pitched(&run, &[Curve::Line(Vec2::ZERO, Vec2::new(200.0, 0.0))], 1.0)?;
     check_placement(&run, &place_at_point(&run, Vec2::ZERO), false, "at a point")
+}
+
+/// `run` laid as whole glyphs along `path` and on along a line past its
+/// end (#296), a box at each end of the chain to keep its gap from, the
+/// start's half a line height back from the path's start: the
+/// placement's properties ([`check_placement`]). It draws no choice of
+/// its own, so a committed seed draws what it drew before.
+fn check_pitched(run: &ShapedRun, path: &[Curve], spacing: f32) -> Result<(), String> {
+    let (Some(first), Some(last)) = (path.first(), path.last()) else {
+        return Ok(());
+    };
+    let (start, end) = (first.point(0.0), last.point(1.0));
+    let mut chain = path.to_vec();
+    chain.push(Curve::Line(end, end + Vec2::new(50.0, 25.0)));
+    let side = Vec2::splat(run.line_height.max(1.0));
+    let boxes = [
+        [Rect::new(start - side * 1.5, side)],
+        [Rect::new(end + Vec2::new(50.0, 25.0), side)],
+    ];
+    let ends = [
+        PathEnd {
+            inks: &boxes[0],
+            back: 0.5 * run.line_height,
+            hold: 0.0,
+        },
+        PathEnd {
+            inks: &boxes[1],
+            back: spacing,
+            hold: run.line_height,
+        },
+    ];
+    check_placement(
+        run,
+        &place_pitched(run, &chain, spacing, ends),
+        false,
+        "as whole glyphs",
+    )
 }
 
 /// The layouts a frame drawn in layout `drawn` is laid in: `drawn`, and
@@ -1108,6 +1146,7 @@ fn check_generated_pinning(
                     // enter (ruling R6, reading 7).
                     let whole = owes_whole(&run, &fit, curve_room(&curve));
                     check_placed(&spans, &run, placed, whole, "along a curve")
+                        .and_then(|()| check_pitched(&run, &[curve], spacing))
                 }
                 _ => check_placement(
                     &run,

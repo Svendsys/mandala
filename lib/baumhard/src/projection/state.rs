@@ -225,6 +225,17 @@ pub(crate) struct RingState {
     /// clears (`flow::ring_offset` over this prefix). Each ring reads only
     /// the one just inside it, so a frame's rings place in O(rings).
     pub(crate) extent: Option<(f32, u32)>,
+    /// The box round its placed glyphs' inks — a glyph with no ink
+    /// measured, text, by its box — once placed and drawn: what its node's
+    /// paths stop at (#296).
+    pub(crate) ink: Option<Rect>,
+    /// The box of each of its placed glyphs' inks, once placed and drawn.
+    pub(crate) inks: Vec<Rect>,
+    /// A text ring's run as placed, and that run with its glyphs' inks
+    /// measured: what its inks are read from, measured again only when
+    /// placement returns another run (placement returns a text run with
+    /// no ink, a run's ink being an ornament's own).
+    pub(crate) inked: Option<(Arc<ShapedRun>, Arc<ShapedRun>)>,
 }
 
 /// A ring's resolution, besides its spans.
@@ -249,8 +260,36 @@ pub(crate) struct LineState {
     pub(crate) flows: [PathFlow; 3],
     /// Its label.
     pub(crate) label: LabelState,
-    /// Its curve, once placed.
-    pub(crate) curve: Option<Curve>,
+    /// Where it leaves each of its ends, as its geometry stage found it:
+    /// what the paths leaving the same side of a node are fanned by.
+    pub(crate) attach: [Option<Attach>; 2],
+    /// Its curves, once placed: empty until then.
+    pub(crate) path: Vec<Curve>,
+}
+
+/// Where one end of a connector or a line link leaves its node (#296):
+/// the side of the node's reach box, the side's midpoint and outward
+/// normal, and what the paths that share the side are fanned by.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Attach {
+    /// The node.
+    pub(crate) node: NodeId,
+    /// The side, never [`Anchor::Auto`](crate::document::values::Anchor::Auto).
+    pub(crate) side: crate::document::values::Anchor,
+    /// The side's midpoint.
+    pub(crate) point: Vec2,
+    /// The side's outward normal.
+    pub(crate) normal: Vec2,
+    /// The turn from the normal toward the path's other end: the order
+    /// of the paths that share the side.
+    pub(crate) toward: f32,
+    /// The least turn between this path and a neighbor leaving the same
+    /// point at which their first glyphs clear each other by this path's
+    /// own gap.
+    pub(crate) spread: f32,
+    /// How far the path runs straight from the side before it bends: its
+    /// first two glyphs' reach.
+    pub(crate) lead: f32,
 }
 
 /// One end of a portal link.
@@ -274,6 +313,23 @@ pub(crate) struct PortalState {
     /// End 0, beside its own node, and end 1, beside the node it leads
     /// to.
     pub(crate) end: [EndState; 2],
+    /// Where each end with no `border_t` faces, as its geometry stage
+    /// found it: what the ends that face one way at a node are held apart
+    /// by (#296).
+    pub(crate) at: [Option<PortalAt>; 2],
+}
+
+/// Where a portal end with no `border_t` faces along its node's outline,
+/// and how wide its marker and label are (#296).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PortalAt {
+    /// The node.
+    pub(crate) node: NodeId,
+    /// Its place along the outline, by arc length from the start of its
+    /// top side, clockwise.
+    pub(crate) along: f32,
+    /// The larger side of its marker's box and its label's.
+    pub(crate) width: f32,
 }
 
 /// What a unit is, and what it keeps.
@@ -282,7 +338,7 @@ pub(crate) enum UnitBody {
     /// A section: one box run in the sections layer.
     Section(SectionState),
     /// A ring: one path run in the frames layer.
-    Ring(RingState),
+    Ring(Box<RingState>),
     /// A connector or a line link: body, start cap, end cap in the
     /// connections layer, its label in the labels layer.
     Line(Box<LineState>),

@@ -932,22 +932,24 @@ impl ArcPath {
         }
     }
 
-    /// `curve` walked from its source end, tabled no coarser than
-    /// `spacing` unless it is a straight line.
+    /// `path` — one curve, or a chain of curves each starting where the
+    /// last ended — walked from its source end, each curve tabled no
+    /// coarser than `spacing` unless it is a straight line.
     ///
-    /// Cost: O(1) for a line; one table of `O(length / spacing)` samples,
-    /// at most [`MAX_TABLE_SAMPLES`], for a Bézier.
-    pub(crate) fn open(curve: &Curve, spacing: f32) -> Self {
-        let origin = curve.point(0.0);
-        let stretch = match *curve {
+    /// Cost: O(1) a line; one table of `O(length / spacing)` samples, at
+    /// most [`MAX_TABLE_SAMPLES`], a Bézier.
+    pub(crate) fn open(path: &(impl AsRef<[Curve]> + ?Sized), spacing: f32) -> Self {
+        let curves = path.as_ref();
+        let origin = curves.first().map_or(Vec2::ZERO, |c| c.point(0.0));
+        let stretches = curves.iter().filter_map(|curve| match *curve {
             Curve::Line(a, b) => Some(Stretch::Line {
                 from: a,
                 dir: direction_of(b - a).unwrap_or(Vec2::X),
                 len: length_of(b - a),
             }),
             _ => table(Param::Curve(*curve), 0.0, 1.0, curve.speed_bound(), spacing),
-        };
-        ArcPath::from_stretches(stretch, origin, 0.0)
+        });
+        ArcPath::from_stretches(stretches, origin, 0.0)
     }
 
     /// The path's length, `P`.

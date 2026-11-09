@@ -26,11 +26,15 @@
 //! It draws nothing, so it runs wherever the GPU suite's module is
 //! compiled, adapter or none.
 
+use baumhard::arena::NodeId;
+use baumhard::document::element::DocElement;
 use baumhard::document::format::load;
+use baumhard::document::ids::Document;
 use baumhard::flow::FILLER_SPAN;
 use baumhard::font::fallback::ORNAMENT_FALLBACK;
 use baumhard::font::fonts::AppFont;
 use baumhard::gfx_structs::run::{GlyphRunData, RunShape};
+use baumhard::projection::{GlyphLayers, Layer, Projector};
 use glam::Vec2;
 use glyphon::{CacheKey, SwashCache};
 
@@ -451,6 +455,414 @@ fn test_demo_maps_draw_every_glyph_in_a_face_they_pin_or_the_ornament_fallback()
     assert!(
         faults.is_empty(),
         "{} glyphs not drawn in a face the map pins or the ornament fallback:\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
+}
+
+/// The README's demo maps and the four maps converted from the old format
+/// (#244), each by name: what the connector checks read.
+fn connector_maps() -> Vec<(String, std::path::PathBuf)> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("maps");
+    let mut maps = demo_maps();
+    for name in ["palette_cascade", "stress_long_edges", "testament", "theme_demo"] {
+        maps.push((name.to_string(), root.join(format!("{name}.mandala.json"))));
+    }
+    maps
+}
+
+/// A drawn connector or line link as the real projector drew it (#296):
+/// its body's inks in order, its curves, its body's first glyph's face and
+/// size, and at each end the node it attaches to.
+struct DrawnPath {
+    name: String,
+    inks: Vec<Ink>,
+    curves: Vec<baumhard::flow::Curve>,
+    style: String,
+    ends: [NodeId; 2],
+}
+
+/// Every node's frame inks, by node: its rings', or for a node that
+/// draws none its drawn rectangle.
+type Frames = std::collections::HashMap<NodeId, Vec<Ink>>;
+
+/// Every connector and line link of `doc` and the inks of every node's
+/// frame, through the projector the app draws with
+/// (`Projector::project_full`) and each glyph's rasterized ink (`read`);
+/// and the zoom of the camera that frames them.
+fn drawn_paths(doc: &Document) -> (Vec<DrawnPath>, Frames, f32) {
+    let mut layers = GlyphLayers::new();
+    let projector = with_fonts(|fs| Projector::project_full(doc, &mut layers, fs));
+    let tree = doc.tree();
+    let parent = |id: NodeId| tree.node(id).and_then(|n| n.parent());
+    let node_of = |mut id: NodeId| loop {
+        if matches!(doc.get(id), Some(DocElement::Node(_))) {
+            return Some(id);
+        }
+        id = parent(id)?;
+    };
+    let mut swash = SwashCache::new();
+    let mut frames: Frames = Default::default();
+    let mut paths = Vec::new();
+    with_fonts(|fs| {
+        let fsys = fs.fonts();
+        for layer in [Layer::Frames, Layer::Connections] {
+            let t = layers.tree(layer);
+            for glyph in t.root().descendants(t.arena()) {
+                let Some(run) = t.arena()[glyph].get().glyph_run() else {
+                    continue;
+                };
+                let Some(element) = projector.element_of(layer, glyph) else {
+                    continue;
+                };
+                let inks: Vec<Ink> = read(run, fsys, &mut swash)
+                    .into_iter()
+                    .filter_map(|g| g.0)
+                    .collect();
+                match (layer, doc.get(element)) {
+                    (Layer::Frames, _) => {
+                        if let Some(node) = node_of(element) {
+                            frames.entry(node).or_default().extend(inks);
+                        }
+                    }
+                    (_, Some(DocElement::Connector(_))) | (_, Some(DocElement::Link(_))) => {
+                        let Some(own) = node_of(element) else { continue };
+                        let ends = match doc.get(element) {
+                            Some(DocElement::Link(link)) => [own, link.to],
+                            _ => match parent(own).and_then(node_of) {
+                                Some(up) => [up, own],
+                                None => continue,
+                            },
+                        };
+                        let RunShape::Path { run: shaped, .. } = run.shaped() else { continue };
+                        let style = shaped.layout_glyphs().next().map_or(String::new(), |g| {
+                            format!(
+                                "glyph {} of face {:?} at {:.1}pt",
+                                g.glyph_id, g.font_id, g.font_size
+                            )
+                        });
+                        let ident = |n: NodeId| match doc.get(n) {
+                            Some(DocElement::Node(data)) => data.ident.0,
+                            _ => 0,
+                        };
+                        paths.push(DrawnPath {
+                            name: format!("{}>{}", ident(ends[0]), ident(ends[1])),
+                            inks,
+                            curves: projector.curve(element).map(<[_]>::to_vec).unwrap_or_default(),
+                            style,
+                            ends,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
+    for node in paths.iter().flat_map(|p| p.ends) {
+        if let (std::collections::hash_map::Entry::Vacant(slot), Some(rect)) =
+            (frames.entry(node), projector.node_rect(node))
+        {
+            slot.insert(vec![Ink {
+                min: rect.origin,
+                max: rect.max(),
+            }]);
+        }
+    }
+    let all: Vec<Ink> = frames.values().flatten().copied().collect();
+    let min = all.iter().fold(Vec2::splat(f32::INFINITY), |a, i| a.min(i.min));
+    let max = all
+        .iter()
+        .fold(Vec2::splat(f32::NEG_INFINITY), |a, i| a.max(i.max));
+    (paths, frames, camera_on((min, max)).zoom)
+}
+
+/// The box round `inks`.
+fn ink_bounds(inks: &[Ink]) -> Ink {
+    inks.iter().skip(1).fold(inks[0], |a, b| Ink {
+        min: a.min.min(b.min),
+        max: a.max.max(b.max),
+    })
+}
+
+/// The side of `reach` whose line `point` lies nearest: its midpoint and
+/// outward normal.
+fn side_of(reach: &Ink, point: Vec2) -> (Vec2, Vec2) {
+    let c = (reach.min + reach.max) * 0.5;
+    [
+        (
+            Vec2::new(c.x, reach.min.y),
+            -Vec2::Y,
+            (point.y - reach.min.y).abs(),
+        ),
+        (
+            Vec2::new(reach.max.x, c.y),
+            Vec2::X,
+            (point.x - reach.max.x).abs(),
+        ),
+        (
+            Vec2::new(c.x, reach.max.y),
+            Vec2::Y,
+            (point.y - reach.max.y).abs(),
+        ),
+        (
+            Vec2::new(reach.min.x, c.y),
+            -Vec2::X,
+            (point.x - reach.min.x).abs(),
+        ),
+    ]
+    .into_iter()
+    .min_by(|a, b| a.2.total_cmp(&b.2))
+    .map(|(m, n, _)| (m, n))
+    .unwrap_or((c, -Vec2::Y))
+}
+
+fn median(mut v: Vec<f32>) -> f32 {
+    v.sort_by(f32::total_cmp);
+    v.get(v.len() / 2).copied().unwrap_or(0.0)
+}
+
+/// The checker's raster: an ink is measured to an eighth of a canvas point
+/// (`read`), so a direction measured between two inks `d` apart is good
+/// to the angle an eighth subtends at `d`.
+fn raster_degrees(d: f32) -> f32 {
+    (0.125 / d.max(1e-3)).atan().to_degrees()
+}
+
+/// One end of a drawn path, measured: where it sits, the paths that share
+/// its side, and how it meets its frame.
+struct End {
+    path: usize,
+    /// Which end: 0 its start, 1 its end.
+    k: usize,
+    /// Its side's midpoint and outward normal, on the frame's ink box.
+    mid: Vec2,
+    normal: Vec2,
+    /// Where the path starts at this end, and how far it turns from the
+    /// normal there, degrees.
+    start: Vec2,
+    turn: f32,
+}
+
+/// #296's measures, as the #291 checker named them, on every connector
+/// and line link the real projector draws in the demo maps and the
+/// converted maps:
+///
+/// - **(a)** both end gaps, from the end glyph's ink to the nearest ink of
+///   its node's frame (or its drawn rectangle, for a node with none), are
+///   0.8–1.2× the path's own median gap between inks — but where the
+///   paths that share the side are fanned to the 40° cap, whose first
+///   glyphs are held out until they clear each other (rule 4: "no glyph
+///   overlaps"), and are measured by (h) instead;
+/// - **(g)** each end glyph sits off its side's midpoint by at most half a
+///   step and its last step runs within 10° of the side's normal — or,
+///   where the paths that share the side are fanned, the path starts on
+///   the midpoint, within half a pixel, and its end glyph lies in the cone
+///   between the normal and its turn, which is at most 40°;
+/// - **(h)** where paths share a side, no glyph of the two each lays
+///   nearest it comes nearer the other path's than ×0.8 their own gap;
+/// - **(j)** the paths of one style (glyph, face, size) step within ±10%
+///   of their mean pitch.
+///
+/// Distances are the inks' as `read` rasterizes them, at eight times
+/// their size; every threshold is the #291 checker's, the cone's widened
+/// by what that raster resolves.
+///
+/// Controls: with the reach a node's drawn rectangle (`Projector::reach`
+/// ignoring the rings), red on (a), (g) and (h); with no lead
+/// (`path_through`'s `lead` 0), red on (g); with the pitch laid as a
+/// `repeat` walk (`place_on_open`), red on (a) and (h); with no hold at a
+/// capped fan, red on (h); with a text ring's inks read as its glyphs'
+/// boxes, red on (a) and (g) at ecclesiastes' text frame; with no fan, red
+/// on the precondition that some end is fanned.
+#[test]
+fn test_maps_hold_the_connector_rules() {
+    let mut faults: Vec<String> = Vec::new();
+    let (mut measured, mut fanned, mut held) = (0, 0, 0);
+    for (name, path) in connector_maps() {
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let doc = load(&text).unwrap_or_else(|e| panic!("{name} must load: {e}"));
+        let (paths, frames, zoom) = drawn_paths(&doc);
+        let own: Vec<f32> = paths
+            .iter()
+            .map(|p| median(p.inks.windows(2).map(|w| w[0].gap(&w[1])).collect()))
+            .collect();
+        let pitch: Vec<f32> = paths
+            .iter()
+            .map(|p| {
+                median(
+                    p.inks
+                        .windows(2)
+                        .map(|w| w[0].center().distance(w[1].center()))
+                        .collect(),
+                )
+            })
+            .collect();
+        let end_ink = |p: &DrawnPath, k: usize| {
+            if k == 0 {
+                p.inks[0]
+            } else {
+                p.inks[p.inks.len() - 1]
+            }
+        };
+        let next_ink = |p: &DrawnPath, k: usize| {
+            if k == 0 {
+                p.inks[1]
+            } else {
+                p.inks[p.inks.len() - 2]
+            }
+        };
+        // Every end, and the ends that share each side.
+        let mut ends: Vec<End> = Vec::new();
+        let mut sides: std::collections::HashMap<(NodeId, [i32; 2]), Vec<usize>> = Default::default();
+        for (i, p) in paths.iter().enumerate() {
+            if p.inks.len() < 3 || p.curves.is_empty() {
+                continue;
+            }
+            for k in 0..2 {
+                let (first, last) = (p.curves[0], p.curves[p.curves.len() - 1]);
+                let (start, tangent) = if k == 0 {
+                    (first.point(0.0), first.derivative(0.0))
+                } else {
+                    (last.point(1.0), -last.derivative(1.0))
+                };
+                let (mid, normal) = side_of(&ink_bounds(&frames[&p.ends[k]]), start);
+                let turn = tangent
+                    .normalize_or_zero()
+                    .dot(normal)
+                    .clamp(-1.0, 1.0)
+                    .acos()
+                    .to_degrees();
+                let key = (
+                    p.ends[k],
+                    [(mid.x * 10.0).round() as i32, (mid.y * 10.0).round() as i32],
+                );
+                sides.entry(key).or_default().push(ends.len());
+                ends.push(End {
+                    path: i,
+                    k,
+                    mid,
+                    normal,
+                    start,
+                    turn,
+                });
+            }
+        }
+        // A fan at the cap holds its first glyphs out (rule 4).
+        let mut capped = vec![false; ends.len()];
+        for members in sides.values() {
+            let widest = members.iter().map(|&e| ends[e].turn).fold(0.0_f32, f32::max);
+            for &e in members {
+                capped[e] = members.len() > 1 && (widest - 40.0).abs() < 0.05;
+            }
+        }
+        for (e, end) in ends.iter().enumerate() {
+            measured += 1;
+            let p = &paths[end.path];
+            let (ink, next) = (end_ink(p, end.k), next_ink(p, end.k));
+            let tag = format!("{name} {} end {}", p.name, end.k);
+            // (a)
+            let near = frames[&p.ends[end.k]]
+                .iter()
+                .map(|f| ink.gap(f))
+                .fold(f32::INFINITY, f32::min);
+            let ratio = near / own[end.path];
+            if capped[e] {
+                held += 1;
+            } else if !(0.8..=1.2).contains(&ratio) {
+                faults.push(format!(
+                    "(a) {tag}: {near:.2} from its frame, ×{ratio:.2} its own gap {:.2} (canvas units)",
+                    own[end.path]
+                ));
+            }
+            // (g)
+            if end.turn > 0.5 {
+                fanned += 1;
+                let reach = ink.center() - end.start;
+                let cone = reach
+                    .normalize_or_zero()
+                    .dot(end.normal)
+                    .clamp(-1.0, 1.0)
+                    .acos()
+                    .to_degrees();
+                let off = end.start.distance(end.mid) * zoom;
+                if off > 0.5 || cone > end.turn + 0.5 + raster_degrees(reach.length()) || end.turn > 40.01 {
+                    faults.push(format!(
+                        "(g) {tag}: fanned {:.1}°, starts {off:.2}px off its side's midpoint, its end glyph {cone:.1}° off the normal",
+                        end.turn
+                    ));
+                }
+            } else {
+                let across = Vec2::new(-end.normal.y, end.normal.x);
+                let off = (ink.center() - end.mid).dot(across).abs();
+                let step = next.center() - ink.center();
+                let angle = step
+                    .normalize_or_zero()
+                    .dot(end.normal)
+                    .clamp(-1.0, 1.0)
+                    .acos()
+                    .to_degrees();
+                if off > 0.5 * pitch[end.path] || angle > 10.0 + raster_degrees(step.length()) {
+                    faults.push(format!(
+                        "(g) {tag}: {off:.2} off its side's midpoint (half a step {:.2}), its last step {angle:.1}° off the normal",
+                        0.5 * pitch[end.path]
+                    ));
+                }
+            }
+        }
+        // (h) the two glyphs nearest a shared side, of each two paths there.
+        for members in sides.values().filter(|m| m.len() > 1) {
+            let near_side = |e: &End| {
+                let p = &paths[e.path];
+                if e.k == 0 {
+                    vec![p.inks[0], p.inks[1]]
+                } else {
+                    vec![p.inks[p.inks.len() - 1], p.inks[p.inks.len() - 2]]
+                }
+            };
+            for (x, &a) in members.iter().enumerate() {
+                for &b in &members[x + 1..] {
+                    let (ea, eb) = (&ends[a], &ends[b]);
+                    let gap = own[ea.path].max(own[eb.path]);
+                    let nearest = near_side(ea)
+                        .iter()
+                        .flat_map(|p| near_side(eb).into_iter().map(move |q| p.gap(&q)))
+                        .fold(f32::INFINITY, f32::min);
+                    if nearest < 0.8 * gap {
+                        faults.push(format!(
+                            "(h) {name} {} and {}: their glyphs by the shared side {nearest:.2} apart, ×{:.2} their own gap {gap:.2} (canvas units)",
+                            paths[ea.path].name,
+                            paths[eb.path].name,
+                            nearest / gap
+                        ));
+                    }
+                }
+            }
+        }
+        // (j) one style, one pitch.
+        let mut styles: std::collections::BTreeMap<&str, Vec<f32>> = Default::default();
+        for (i, p) in paths.iter().enumerate().filter(|(_, p)| p.inks.len() >= 3) {
+            styles.entry(p.style.as_str()).or_default().push(pitch[i]);
+        }
+        for (style, pitches) in &styles {
+            let mean = pitches.iter().sum::<f32>() / pitches.len() as f32;
+            let worst = pitches.iter().map(|p| (p / mean - 1.0).abs()).fold(0.0, f32::max);
+            if worst > 0.10 {
+                faults.push(format!(
+                    "(j) {name} {style}: {} paths' pitches within {:.1}% of their mean {mean:.2}",
+                    pitches.len(),
+                    worst * 100.0
+                ));
+            }
+        }
+    }
+    assert!(
+        measured > 0 && fanned > 0 && held > 0,
+        "precondition: ends are measured ({measured}), some fanned ({fanned}) and some held at the cap ({held})"
+    );
+    faults.sort();
+    assert!(
+        faults.is_empty(),
+        "{} faults:\n{}",
         faults.len(),
         faults.join("\n")
     );

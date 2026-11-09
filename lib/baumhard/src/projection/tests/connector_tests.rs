@@ -1,0 +1,465 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! Connector geometry (#296): the side a path attaches at, the curve it
+//! runs along, where its glyphs stop at a frame, the fan of the paths
+//! that share a side, and portal ends held apart. Each property is read
+//! from what the projector placed — glyph inks from the placed runs'
+//! metrics, read here and not through the projector's own reading of
+//! them — and every projector test ends on the oracle.
+
+use glam::Vec2;
+use serde_json::{json, Value};
+
+use crate::arena::NodeId;
+use crate::document::element::DocKind;
+use crate::document::values::Anchor;
+use crate::flow::{Curve, Rect};
+use crate::projection::geometry::{held_apart, path_through, side_point, side_toward, SPLAY_CAP};
+use crate::projection::state::{Placed, UnitBody};
+use crate::projection::tests::maps::{ident, kid, load_map, node, text_section};
+use crate::projection::tests::support::Projected;
+use crate::projection::Projector;
+
+/// A ring of middle dots `size` of the node's shorter side, round a node
+/// at least `w × h`.
+fn dotted(w: f32, h: f32) -> Value {
+    json!({
+        "min_size": [w, h],
+        "frame": {"inset": 4.0, "rings": [{"fit": "repeat", "size": 0.25, "spans": [{"text": "·"}]}]}
+    })
+}
+
+/// `fields` with `more` merged in.
+fn with(mut fields: Value, more: Value) -> Value {
+    if let (Some(out), Some(more)) = (fields.as_object_mut(), more.as_object()) {
+        for (k, v) in more {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+    fields
+}
+
+/// The canvas box of each inked glyph of `placed`: its pen the run's
+/// baseline below its box's corner, its ink about the pen as shaped.
+fn inks(placed: &Placed) -> Vec<Rect> {
+    let baseline = placed.run.baseline();
+    placed
+        .placed
+        .glyphs
+        .iter()
+        .filter_map(|g| {
+            let ink = placed.run.glyphs[g.glyph as usize].ink?;
+            let pen = g.pos + Vec2::new(0.0, baseline);
+            Some(Rect::new(pen + ink.min, ink.max - ink.min))
+        })
+        .collect()
+}
+
+/// The gap between two boxes, 0 where they meet.
+fn gap(a: &Rect, b: &Rect) -> f32 {
+    (b.origin - a.max())
+        .max(a.origin - b.max())
+        .max(Vec2::ZERO)
+        .length()
+}
+
+/// The median of `values`.
+fn median(mut values: Vec<f32>) -> f32 {
+    values.sort_by(f32::total_cmp);
+    values[values.len() / 2]
+}
+
+/// A drawn line's body placement and curves.
+fn line(projector: &Projector, id: NodeId) -> (&Placed, &[Curve]) {
+    let Some(UnitBody::Line(line)) = projector.units.get(&id).map(|u| &u.body) else {
+        panic!("{id:?} is a drawn line");
+    };
+    (
+        line.flows[0].placed.as_ref().expect("its body is placed"),
+        &line.path,
+    )
+}
+
+/// Every ink of every ring `node` draws.
+fn ring_inks(projector: &Projector, node: NodeId) -> Vec<Rect> {
+    projector.nodes[&node]
+        .units
+        .iter()
+        .filter_map(|u| match &projector.units[u].body {
+            UnitBody::Ring(ring) => ring.flow.placed.as_ref(),
+            _ => None,
+        })
+        .flat_map(inks)
+        .collect()
+}
+
+/// The box round `boxes`.
+fn bounds(boxes: &[Rect]) -> Rect {
+    boxes.iter().skip(1).fold(boxes[0], |a, b| a.union(b))
+}
+
+/// The angle between two directions, degrees.
+fn degrees(a: Vec2, b: Vec2) -> f32 {
+    a.angle_to(b).abs().to_degrees()
+}
+
+#[test]
+fn test_projection_auto_side_is_the_one_the_ray_leaves_through() {
+    // A box 400 wide and 40 tall about the origin. Toward (300, 60) the
+    // right side's midpoint is the nearer, 117 off against the bottom's
+    // 301, but the ray leaves through the bottom: 60 over a half height of
+    // 20 is past 300 over a half width of 200.
+    let wide = Rect::new(Vec2::new(-200.0, -20.0), Vec2::new(400.0, 40.0));
+    assert_eq!(
+        side_toward(wide, Anchor::Auto, Vec2::new(300.0, 60.0)),
+        Anchor::Bottom
+    );
+    assert_eq!(
+        side_toward(wide, Anchor::Auto, Vec2::new(300.0, 20.0)),
+        Anchor::Right
+    );
+    assert_eq!(
+        side_toward(wide, Anchor::Auto, Vec2::new(-300.0, -20.0)),
+        Anchor::Left
+    );
+    assert_eq!(
+        side_toward(wide, Anchor::Auto, Vec2::new(10.0, -21.0)),
+        Anchor::Top
+    );
+    assert_eq!(
+        side_toward(wide, Anchor::Left, Vec2::new(300.0, 60.0)),
+        Anchor::Left,
+        "a side named is kept"
+    );
+}
+
+#[test]
+fn test_projection_a_path_leaves_and_arrives_square_and_passes_its_points() {
+    // From a right side at the origin to a left side 300 on and 60 down,
+    // through a wave: up 30 a third of the way, down 30 two thirds.
+    let (p0, p1) = (Vec2::ZERO, Vec2::new(300.0, 60.0));
+    let via = [Vec2::new(0.0, -30.0), Vec2::new(0.0, 30.0)];
+    let curves = path_through((p0, Vec2::X), (p1, -Vec2::X), &via, 0.0);
+    assert_eq!(curves.len(), 3, "a cubic from each point to the next");
+    assert!(
+        degrees(curves[0].derivative(0.0), Vec2::X) < 0.01,
+        "it leaves square to its side"
+    );
+    assert!(
+        degrees(curves[2].derivative(1.0), Vec2::X) < 0.01,
+        "it arrives square to its side"
+    );
+    for (k, v) in via.iter().enumerate() {
+        let at = p0 + (p1 - p0) * ((k + 1) as f32 / 3.0) + *v;
+        assert!(curves[k].point(1.0).distance(at) < 1e-3, "through point {k}");
+        assert!(
+            curves[k + 1].point(0.0).distance(at) < 1e-3,
+            "point {k} starts the next curve"
+        );
+        let (into, out) = (curves[k].derivative(1.0), curves[k + 1].derivative(0.0));
+        assert!(
+            into.distance(out) < 1e-3 * into.length(),
+            "no kink at point {k}: {into} into, {out} out"
+        );
+    }
+    // With none, an S between two facing sides as deep as they are apart:
+    // its handles reach 0.5523 of the 300 the far end lies on.
+    let s = path_through((p0, Vec2::X), (p1, -Vec2::X), &[], 0.0);
+    let Curve::Cubic(_, c1, c2, _) = s[0] else { panic!("one cubic") };
+    assert!(
+        (c1 - Vec2::new(165.69, 0.0)).length() < 0.01,
+        "the start's handle: {c1}"
+    );
+    assert!(
+        (c2 - Vec2::new(300.0 - 165.69, 60.0)).length() < 0.01,
+        "the end's handle: {c2}"
+    );
+}
+
+/// Node 1 and its child node 2 beside it, each in a ring of dots, the
+/// child's connector a line of dots.
+fn two_frames() -> Projected {
+    Projected::new(load_map(json!({"nodes": [
+        node(1, None, with(dotted(160.0, 60.0), json!({"sections": [text_section("one")]}))),
+        node(2, Some(1), with(dotted(160.0, 60.0), json!({
+            "position": [420.0, 140.0],
+            "sections": [text_section("two")],
+            "connector": {"size": 14.0}
+        }))),
+    ]})))
+}
+
+#[test]
+fn test_projection_a_connector_stops_at_its_frames_outermost_ink() {
+    let mut p = two_frames();
+    let (one, two) = (ident(&p.doc, 1), ident(&p.doc, 2));
+    let connector = kid(&p.doc, two, DocKind::Connector);
+    let (body, curves) = line(&p.projector, connector);
+    let own = inks(body);
+    assert!(
+        own.len() >= 8,
+        "precondition: a connector of some length, {} glyphs",
+        own.len()
+    );
+    let between = median(own.windows(2).map(|w| gap(&w[0], &w[1])).collect());
+    let pitch = median(
+        own.windows(2)
+            .map(|w| w[0].center().distance(w[1].center()))
+            .collect(),
+    );
+    let frames = [ring_inks(&p.projector, one), ring_inks(&p.projector, two)];
+    assert!(
+        !frames[0].is_empty() && !frames[1].is_empty(),
+        "precondition: both nodes draw their rings"
+    );
+    let reaches = [bounds(&frames[0]), bounds(&frames[1])];
+    for (k, label, end_ink, at) in [(0, "start", own[0], 0.0), (1, "end", own[own.len() - 1], 1.0)] {
+        let frame = &frames[k];
+        // The ink gap to the frame, against the connector's own (rule 5).
+        let near = frame
+            .iter()
+            .map(|f| gap(&end_ink, f))
+            .fold(f32::INFINITY, f32::min);
+        let ratio = near / between;
+        assert!(
+            (0.8..=1.2).contains(&ratio),
+            "the {label} glyph is {near} from its frame's ink, ×{ratio} its own gap {between}"
+        );
+        // At the midpoint of the frame's side facing the other node, and
+        // square to it (rule 1).
+        let side = side_toward(reaches[k], Anchor::Auto, reaches[1 - k].center());
+        let (mid, normal) = side_point(reaches[k], side);
+        let across = Vec2::new(-normal.y, normal.x);
+        let start = if at == 0.0 {
+            curves[0].point(0.0)
+        } else {
+            curves[curves.len() - 1].point(1.0)
+        };
+        assert!(
+            start.distance(mid) < 1e-2,
+            "the path's {label} is its frame's side midpoint {mid}, not {start}"
+        );
+        let off = (end_ink.center() - mid).dot(across).abs();
+        assert!(
+            off <= 0.5 * pitch,
+            "the {label} glyph is {off} off its side's midpoint, half a step is {}",
+            0.5 * pitch
+        );
+        let curve = if at == 0.0 {
+            curves[0]
+        } else {
+            curves[curves.len() - 1]
+        };
+        let travel = curve.derivative(at);
+        let square = if at == 0.0 { normal } else { -normal };
+        assert!(
+            degrees(travel, square) <= 10.0,
+            "the {label} runs {}° off its side's normal",
+            degrees(travel, square)
+        );
+        // Nothing of the connector on the frame.
+        for ink in &own {
+            for f in frame {
+                assert!(
+                    gap(ink, f) > 0.0,
+                    "a connector glyph {ink:?} touches its frame's ink {f:?}"
+                );
+            }
+        }
+    }
+    p.check().unwrap();
+}
+
+/// A connector dropped with its node reads nothing after: its ends read
+/// its nodes' reach, and a later change of the parent's ring — which
+/// moves the reach — must not reach the connector that is gone. Before
+/// its ends' reads were dropped with it, that change marked its
+/// geometry after the phase it runs in, and the debug build panicked.
+#[test]
+fn test_projection_a_dropped_connector_reads_no_reach() {
+    use crate::document::mutation::compose;
+    use crate::document::mutation::ops::{DocMutation, SpanOp};
+    use crate::document::tests::writer_support::{request, single};
+    let mut p = two_frames();
+    let (one, two) = (ident(&p.doc, 1), ident(&p.doc, 2));
+    let steps = compose::delete(&p.doc, &[two]).unwrap();
+    p.apply(crate::document::writer::EditRequest::new(
+        steps,
+        "delete the child",
+    ))
+    .unwrap();
+    p.check().unwrap();
+    let ring = kid(&p.doc, kid(&p.doc, one, DocKind::Frame), DocKind::Ring);
+    let span = kid(&p.doc, ring, DocKind::Span);
+    let edit = single(DocKind::Span, DocMutation::Span(SpanOp::SetText("✦".into())));
+    p.apply(request(edit, vec![span], "another ring")).unwrap();
+    p.check().unwrap();
+}
+
+/// Node 1 with children below it at `xs`, each a dotted connector.
+fn fan_of(xs: &[f32]) -> Projected {
+    let mut nodes = vec![node(
+        1,
+        None,
+        with(dotted(200.0, 60.0), json!({"position": [-100.0, -30.0]})),
+    )];
+    for (k, &x) in xs.iter().enumerate() {
+        nodes.push(node(
+            10 + k as u32,
+            Some(1),
+            with(
+                dotted(120.0, 50.0),
+                json!({"position": [x - 60.0, 260.0], "connector": {"size": 14.0}}),
+            ),
+        ));
+    }
+    Projected::new(load_map(json!({ "nodes": nodes })))
+}
+
+/// The connectors of node 1's children at `xs`, left to right: their
+/// curves and first inks.
+fn branches(p: &Projected, count: usize) -> Vec<(Vec<Curve>, Vec<Rect>)> {
+    (0..count)
+        .map(|k| {
+            let connector = kid(&p.doc, ident(&p.doc, 10 + k as u32), DocKind::Connector);
+            let (body, curves) = line(&p.projector, connector);
+            (curves.to_vec(), inks(body))
+        })
+        .collect()
+}
+
+#[test]
+fn test_projection_paths_that_share_a_side_leave_one_point_fanned() {
+    // Two children below, one to each side: both leave the parent's
+    // bottom midpoint, turned apart evenly, each toward its own child, by
+    // as little as clears their first glyphs.
+    let mut p = fan_of(&[-260.0, 260.0]);
+    let pair = branches(&p, 2);
+    let start = pair[0].0[0].point(0.0);
+    assert!(
+        start.distance(pair[1].0[0].point(0.0)) < 1e-3,
+        "one point: {start} and {}",
+        pair[1].0[0].point(0.0)
+    );
+    let turns: Vec<f32> = pair
+        .iter()
+        .map(|b| Vec2::Y.angle_to(b.0[0].derivative(0.0)).to_degrees())
+        .collect();
+    assert!(
+        turns[0] > 1.0 && turns[1] < -1.0,
+        "each turned toward its own child: {turns:?}"
+    );
+    assert!(
+        (turns[0] + turns[1]).abs() < 0.01,
+        "turned apart evenly: {turns:?}"
+    );
+    assert!(
+        turns[0] <= SPLAY_CAP.to_degrees() + 0.01,
+        "within the cap: {turns:?}"
+    );
+    let own = median(pair[0].1.windows(2).map(|w| gap(&w[0], &w[1])).collect());
+    let first = gap(&pair[0].1[0], &pair[1].1[0]);
+    assert!(
+        first >= 0.8 * own,
+        "their first glyphs {first} apart, their own gap {own}"
+    );
+    p.check().unwrap();
+    // One child alone leaves along the normal.
+    let mut lone = fan_of(&[260.0]);
+    let one = branches(&lone, 1);
+    assert!(
+        degrees(one[0].0[0].derivative(0.0), Vec2::Y) < 0.01,
+        "a lone path is not turned"
+    );
+    lone.check().unwrap();
+    // Seven children turn no further than the cap, the outermost to it.
+    let mut wide = fan_of(&[-480.0, -320.0, -160.0, 0.0, 160.0, 320.0, 480.0]);
+    let seven = branches(&wide, 7);
+    let most = seven
+        .iter()
+        .map(|b| degrees(Vec2::Y, b.0[0].derivative(0.0)))
+        .fold(0.0_f32, f32::max);
+    assert!(
+        (most - SPLAY_CAP.to_degrees()).abs() < 0.01,
+        "the outermost at the cap: {most}°"
+    );
+    wide.check().unwrap();
+}
+
+#[test]
+fn test_projection_a_moved_branch_turns_its_neighbors() {
+    use crate::document::mutation::ops::{DocMutation, NodeOp};
+    use crate::document::tests::writer_support::{request, single};
+    // A child moved from the right of its sibling to its left swaps their
+    // turns: the sibling, which nothing touched, is laid again.
+    let mut p = fan_of(&[-260.0, 260.0]);
+    let before = branches(&p, 2)[0].0[0].derivative(0.0);
+    let moved = ident(&p.doc, 11);
+    let to = Vec2::new(-600.0, 260.0);
+    let mutation = single(DocKind::Node, DocMutation::Node(NodeOp::SetPosition(to)));
+    p.apply(request(mutation, vec![moved], "move a child across its sibling"))
+        .unwrap();
+    let after = branches(&p, 2)[0].0[0].derivative(0.0);
+    assert!(
+        degrees(before, after) > 1.0,
+        "the untouched sibling turned: {before} then {after}"
+    );
+    p.check().unwrap();
+}
+
+#[test]
+fn test_projection_portal_ends_that_face_one_way_are_held_apart() {
+    // Three ends side by side round 100: the middle two would overlap, so
+    // they are pushed apart and centered where they faced; the first,
+    // clear, stays.
+    let ends = [(0.0, 10.0), (100.0, 20.0), (104.0, 20.0)];
+    let held = held_apart(&ends);
+    assert!(
+        (held[0] - 0.0).abs() < 1e-4,
+        "an end clear of the rest stays: {held:?}"
+    );
+    assert!(
+        (held[2] - held[1] - 20.0).abs() < 1e-4,
+        "two ends half their widths summed apart: {held:?}"
+    );
+    assert!(
+        (held[1] + held[2] - 204.0).abs() < 1e-3,
+        "centered where they faced: {held:?}"
+    );
+    // Projected: node 1's two portals to node 2 face it from one point.
+    let mut p = Projected::new(load_map(json!({"nodes": [
+        node(1, None, json!({"sections": [text_section("source")], "links": [
+            {"to": 2, "kind": "portal"}, {"to": 2, "kind": "portal"}
+        ]})),
+        node(2, None, json!({"position": [400.0, 0.0], "sections": [text_section("target")]})),
+    ]})));
+    let one = ident(&p.doc, 1);
+    let portals: Vec<NodeId> = p
+        .doc
+        .children(one)
+        .filter(|&c| p.doc.get(c).is_some_and(|e| e.kind() == DocKind::Link))
+        .collect();
+    let center = |id: NodeId| match &p.projector.units[&id].body {
+        UnitBody::Portal(portal) => portal.end[0].center.expect("its end is placed"),
+        _ => panic!("a portal"),
+    };
+    let (a, b) = (center(portals[0]), center(portals[1]));
+    let marker = match &p.projector.units[&portals[0]].body {
+        UnitBody::Portal(portal) => {
+            portal.end[0]
+                .marker
+                .placed
+                .as_ref()
+                .expect("placed")
+                .run
+                .line_height
+        }
+        _ => unreachable!(),
+    };
+    assert!(
+        a.distance(b) >= 0.99 * marker,
+        "the two ends {a} and {b} are {} apart, a marker is {marker} tall",
+        a.distance(b)
+    );
+    p.check().unwrap();
+}

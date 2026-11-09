@@ -76,7 +76,7 @@
       "color": "#333333",
       "sections": [{"spans": [{"text": "Unthemed"}]}],
       "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.2, "color": "#222222", "spans": [{"text": "·"}]}]},
-      "links": [{"to": 1, "kind": "line", "color": "#909090"}]
+      "links": [{"to": 1, "kind": "line", "color": "#909090", "control_points": [[-150.0, 0.0], [-150.0, 0.0]]}]
     }
   ]
 }
