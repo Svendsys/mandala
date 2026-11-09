@@ -828,6 +828,7 @@ pub(crate) fn held_apart(ends: &[(f32, f32)], perimeter: f32) -> Vec<f32> {
     }
     at
 }
+
 /// Where the ray from `outline`'s center toward `toward` leaves it: on an
 /// ellipse exactly; on a rounded rectangle, where it leaves the
 /// rectangle, which the nearest-point search then takes onto a rounded
