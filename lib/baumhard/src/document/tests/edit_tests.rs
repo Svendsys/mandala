@@ -511,6 +511,79 @@ fn test_a_definition_has_at_most_65536_parts() {
     );
 }
 
+/// A mutator that aligns a node's sections: it reaches below its root.
+const ALIGN_SECTIONS: &str = r#""mutator":{"void":{"kind":"node","channel":0,"children":[{"macro":{"kind":"section","channel":0,"mutations":[{"section":{"set_align":"right"}}]}}]}}"#;
+
+/// **A mutator that reaches below its root is not aimed at nodes
+/// through `descendants` or `subtree`** (review of #331): those nodes
+/// nest, and the walker starts only from the outermost, so the rest
+/// would be changed only where the mutator happens to reach them.
+///
+/// Controls: the same mutator at `self` reads, and so does one that
+/// touches only its root at `subtree`, and one over sections — which do
+/// not nest — at `subtree`.
+#[test]
+fn test_a_mutator_reaching_below_its_root_is_refused_over_nested_nodes() {
+    for reach in ["descendants", "subtree"] {
+        let (path, kind) = refusal(&format!(
+            r#"{{"id":"e","name":"E","reach":"{reach}","target":"node",{ALIGN_SECTIONS}}}"#
+        ));
+        assert_eq!(path, "edits[0].mutator", "{reach}");
+        assert!(
+            matches!(&kind, LoadErrorKind::InvalidEdit { message } if message.contains("outermost")),
+            "{reach}: {kind:?}"
+        );
+    }
+    edit(&format!(
+        r#"{{"id":"e","name":"E","reach":"self","target":"node",{ALIGN_SECTIONS}}}"#
+    ));
+    edit(
+        r#"{"id":"e","name":"E","reach":"subtree","target":"node","mutator":{"macro":{"kind":"node","channel":0,"mutations":[{"node":{"nudge":[1.0,0.0]}}]}}}"#,
+    );
+    edit(
+        r#"{"id":"e","name":"E","reach":"subtree","target":"sections","mutator":{"macro":{"kind":"section","channel":0,"mutations":[],"children":[{"macro":{"kind":"span","channel":0,"mutations":[{"span":{"text":{"grow_size":1.0}}}]}}]}}}"#,
+    );
+}
+
+/// **At a nested selection, a mutator that reaches below its root
+/// starts only from the outermost anchor** (review of #331): pinned.
+/// Node 2 is node 1's child; at both, the walk starts at node 1, whose
+/// channel-0 section it aligns, and changes node 2's only where it reaches
+/// them — here nowhere, since it stops at node 1's own sections.
+///
+/// Control: a `mutations` body over `sections` at the same selection
+/// aligns node 2's section too.
+#[test]
+fn test_a_nested_anchor_is_walked_only_from_the_outer_one() {
+    let mut doc = map();
+    let (one, two) = (n(&doc, 1), n(&doc, 2));
+    let def = edit(&format!(
+        r#"{{"id":"e","name":"E","reach":"self","target":"node",{ALIGN_SECTIONS}}}"#
+    ));
+    let walks = def
+        .walks(&doc, &Boxes::of(&doc), &registry(), &[two, one])
+        .unwrap();
+    assert_eq!(walks.len(), 1);
+    assert_eq!(
+        walks[0].mutator.walk_starts(doc.tree(), &walks[0].anchors),
+        Ok(vec![one])
+    );
+    run(&mut doc, &def, &[two, one]).unwrap();
+    let aligned = |doc: &Document, ident: u32| {
+        doc.children(n(doc, ident))
+            .filter(|&c| matches!(doc.get(c), Some(DocElement::Section(s)) if s.align.is_some()))
+            .count()
+    };
+    assert_eq!((aligned(&doc, 1), aligned(&doc, 2)), (1, 0));
+
+    let mut control = map();
+    let sections = edit(
+        r#"{"id":"e","name":"E","reach":"self","target":"sections","mutations":[{"section":{"set_align":"right"}}]}"#,
+    );
+    run(&mut control, &sections, &[two, one]).unwrap();
+    assert_eq!((aligned(&control, 1), aligned(&control, 2)), (2, 1));
+}
+
 /// A map of node 1 at the origin with children 2, 3 and 4, node 5
 /// under node 2, and node 6 under node 5.
 const FAMILY: &str = r#"{"format":1,"name":"t","nodes":[

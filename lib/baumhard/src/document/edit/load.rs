@@ -11,6 +11,9 @@
 //!   has the target's kind, which is the only kind it can be anchored
 //!   at;
 //! - a handler is one this build has, and is aimed at `node`;
+//! - a mutator that reaches below its root is not aimed at nodes through
+//!   `descendants` or `subtree`, whose nodes nest: the walker starts
+//!   only from the outermost of nested anchors;
 //! - no deeper than [`MAX_DEFINITION_DEPTH`] levels and no more than
 //!   [`MAX_DEFINITION_PARTS`] parts;
 //! - every value means something on some map: it is made concrete
@@ -27,11 +30,12 @@ use crate::document::bounds::{MAX_DEFINITION_DEPTH, MAX_DEFINITION_PARTS};
 use crate::document::edit::resolve::{self, Fault, NameKind};
 use crate::document::edit::{Animate, EditBody, EditDef, Filter, Mutations, MutatorAst, Target};
 use crate::document::format::context::position_at;
-use crate::document::format::edits::{EditDto, EditsFileDto, InstructionDto, MutatorDto, SnapDto};
+use crate::document::format::edits::{EditDto, EditsFileDto, InstructionDto, MutatorDto, ReachDto, SnapDto};
 use crate::document::format::error::{render_path, LoadError, LoadErrorKind, Seg};
 use crate::document::format::index::parse_extent;
 use crate::document::keyed::KeyedSet;
 use crate::document::place::{name_fault, NameFault};
+use crate::engine::builder::{build, NoRuntime};
 use serde_json::value::RawValue;
 
 /// The deepest JSON nesting inside a map's `edits`, or an edits file,
@@ -205,7 +209,17 @@ pub(crate) fn definition(dto: EditDto) -> Result<EditDef, (Vec<Seg>, LoadErrorKi
             ));
         }
         measure(&mutator, 1, &mut parts, &mut vec![Seg::Key("mutator")])?;
-        resolve::mutator(&mutator, None).map_err(|f| fault(vec![Seg::Key("mutator")], f))?;
+        let node = resolve::mutator(&mutator, None).map_err(|f| fault(vec![Seg::Key("mutator")], f))?;
+        let nested = target == Target::Node && matches!(dto.reach, ReachDto::Descendants | ReachDto::Subtree);
+        if nested && build(&node, &NoRuntime).is_ok_and(|tree| tree.reaches_below_root()) {
+            return Err(invalid(
+                vec![Seg::Key("mutator")],
+                "a mutator that reaches below its root walks only from the outermost of the nodes \
+                 `descendants` and `subtree` reach, so the others would be changed only where it \
+                 reaches them: reach `self` and let the mutator walk down, or use `mutations`"
+                    .to_string(),
+            ));
+        }
         EditBody::Mutator(MutatorAst(mutator))
     } else {
         let name = dto.handler.unwrap_or_default();

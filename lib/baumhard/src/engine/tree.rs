@@ -768,6 +768,19 @@ impl<E: TreeElement, M: Mutation<E>> MutatorTree<E, M> {
         apply_anchored(self, tree, anchors, seed_for, None)
     }
 
+    /// The anchors a walk of this mutator tree at `anchors` starts
+    /// from, in tree order: steps 1 to 3 of [`Self::apply_at`], with
+    /// nothing applied. A node `anchors` names that is not among them is
+    /// of another kind than the root's or, when this tree reaches below
+    /// its root, inside another anchor's subtree — changed only where
+    /// the walk from that one reaches it. What a tool shows as where a
+    /// walk runs. Refuses a stale node as `apply_at` does.
+    ///
+    /// Cost: `apply_at`'s validating, resolving and ordering.
+    pub fn walk_starts(&self, tree: &Tree<E>, anchors: &Anchors) -> Result<Vec<NodeId>, TreeError> {
+        crate::engine::anchor::walk_starts(self, tree, anchors)
+    }
+
     /// [`Self::apply_at`], recorded in `journal`: the same anchors, the
     /// same nested-anchor rule and the same per-anchor seeds, and every
     /// element the walk applies to is recorded — its before-image and

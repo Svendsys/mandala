@@ -8,8 +8,8 @@ it, are another list and another page.
 
 An edit runs at the selection. From each selected element's node it
 takes a set of nodes (`reach`), the elements of one kind within them
-(`target`), keeps the ones a `filter` passes, and changes each of those
-elements once with its body. Running it is one `Document::apply` and
+(`target`), keeps the ones a `filter` passes, and changes those
+elements with its body. Running it is one `Document::apply` and
 one history entry; an edit that changes nothing makes no entry.
 
 ```json
@@ -159,8 +159,26 @@ The advanced body: the mutator AST of [`mutations.md`](./mutations.md#mutator--t
 in the document's kinds, anchored at each element. Its root's `kind`
 is the target's (it is anchored nowhere else, and a root of another
 kind is refused). What it reaches below its root is the author's to
-say; when one element lies below another, the inner one is not walked
-again, so nothing is changed twice.
+say.
+
+A mutator that reaches below its root — a child that is not a `void`,
+or an `instruction` root — is walked once from each anchor that has no
+other anchor above it. An anchor inside another's subtree is **not**
+walked from: it is changed only where the walk from the outer one
+reaches it, so nothing is changed twice. Only nodes nest, so this is a
+`node` target's rule:
+
+- With `reach` `descendants` or `subtree` the reached nodes always
+  nest, and such a mutator is refused when the edit is read: it would
+  start only from the outermost. Reach `self` and let the mutator walk
+  down (`repeat_while` reaches any depth), or use `mutations`, which
+  change every element they reach.
+- With any other reach the selection itself can nest — a node and its
+  child both selected — and the inner one is then walked from the
+  outer one only. `edit inspect` lists the anchors each walk starts
+  from, and the ones it does not, apart.
+
+A mutator that touches only its root is walked from every anchor.
 
 | Node | Keys |
 |---|---|
@@ -252,8 +270,9 @@ one.
 ## On the surfaces
 
 - Console: `edit list`, `edit apply <id> [node-id …]`, `edit help <id>`,
-  `edit inspect <id>` (the resolved reach and target, the anchors it
-  would use, its body and its tier).
+  `edit inspect <id>` (the resolved reach and target, the elements it
+  reaches at the selection, its body and its tier, and its walks: where
+  each starts, and for a handler what it returns, from running it).
 - Keys: `edit_bindings` in `keybinds.json` maps a key combo to an edit
   id.
 - Macros: the `Edit` step, `{"kind": "Edit", "id": "…"}`

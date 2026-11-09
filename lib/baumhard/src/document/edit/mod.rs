@@ -345,9 +345,16 @@ impl EditDef {
         written.unwrap_or_else(|error| format!("<{error}>"))
     }
 
-    /// The walks of [`Self::request`]: one for a declarative edit; a
-    /// handler's, one per write it needs (ruling on #250).
-    fn walks(
+    /// The walks of [`Self::request`] at `anchors`: one for a
+    /// declarative edit, anchored at [`Self::elements`]; a handler's,
+    /// one per write it needs (ruling on #250), from running it. What
+    /// `edit inspect` shows. Reads only.
+    ///
+    /// Errors: as [`Self::request`]'s.
+    ///
+    /// Cost: [`Self::elements`], then resolving the body or running the
+    /// handler.
+    pub fn walks(
         &self,
         doc: &Document,
         geometry: &dyn Geometry,

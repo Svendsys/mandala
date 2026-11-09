@@ -7,13 +7,16 @@
 //! (`dispatch::families::edits::run_edit`), on the app clock.
 
 use baumhard::arena::NodeId;
-use baumhard::document::edit::{EditBody, EditDef, Reach, Target};
+use baumhard::document::edit::{EditDef, Reach, Target};
 use baumhard::document::ids::{Document, NodeIdent};
 use baumhard::document::writer::ChangeSource;
+use baumhard::engine::anchor::Anchors;
+use baumhard::engine::mutator::Mutator;
+use baumhard::projection::Geometry;
 
 use crate::application::console::commands::edit::EditLine;
 use crate::application::console::ExecResult;
-use crate::application::edits::EditTier;
+use crate::application::edits::{EditRegistry, EditTier};
 
 use super::super::dispatch::families::edits::{run_edit, with_drawn};
 use super::super::input_context::InputHandlerContext;
@@ -74,58 +77,95 @@ pub(super) fn take(ctx: &mut InputHandlerContext<'_>, line: &EditLine) -> ExecRe
         },
         EditLine::Inspect(id) => {
             let selection: Vec<NodeId> = doc.selection.iter().collect();
-            match ctx.edits.find(doc.doc(), id) {
-                Some((def, tier)) => inspect(doc.doc(), def, tier, &selection),
-                None => ExecResult::err(format!("edit inspect: no edit is called `{id}`")),
-            }
+            let registry = ctx.edits;
+            with_drawn(ctx.view.as_mut(), ctx.renderer, |drawn| {
+                let geometry = drawn.synced(doc);
+                match registry.find(doc.doc(), id) {
+                    Some((def, tier)) => inspect(doc.doc(), geometry, registry, def, tier, &selection),
+                    None => ExecResult::err(format!("edit inspect: no edit is called `{id}`")),
+                }
+            })
         }
     }
 }
 
-/// `edit inspect`: the resolved reach and target, the anchors the edit
-/// would use at `selection`, its body and its tier, and the walk it
-/// runs, as the walker will run it.
-fn inspect(doc: &Document, def: &EditDef, tier: EditTier, selection: &[NodeId]) -> ExecResult {
+/// `edit inspect`: the resolved reach and target, the elements the edit
+/// reaches at `selection`, its body and its tier, and its walks as the
+/// walker runs them — a handler run to get them, which only reads —
+/// each with the anchors it starts from, and apart from those the ones
+/// it does not start from because they lie inside another's subtree.
+fn inspect(
+    doc: &Document,
+    geometry: &dyn Geometry,
+    registry: &EditRegistry,
+    def: &EditDef,
+    tier: EditTier,
+    selection: &[NodeId],
+) -> ExecResult {
+    let fail = |error: &dyn std::fmt::Display| ExecResult::err(format!("edit inspect: {error}"));
     let elements = match def.elements(doc, selection) {
         Ok(elements) => elements,
-        Err(error) => return ExecResult::err(format!("edit inspect: {error}")),
+        Err(error) => return fail(&error),
     };
-    let shown: Vec<String> = elements.iter().map(|&id| element_name(doc, id)).collect();
-    let walk = match &def.body {
-        EditBody::Mutations(_) => format!(
-            "walk: one Macro of the mutations, keyed `{:?}`, applied at each of the {} anchors, root only",
-            def.target.kind(),
-            elements.len()
-        ),
-        EditBody::Mutator(_) => format!(
-            "walk: the mutator, anchored at each of the {} anchors; an anchor inside another's subtree is reached through it",
-            elements.len()
-        ),
-        EditBody::Handler(name) => format!(
-            "walks: the handler `{name}` reads the {} nodes and where they are drawn, and returns one walk per write",
-            elements.len()
-        ),
+    let walks = match def.walks(doc, geometry, registry.handlers(), selection) {
+        Ok(walks) => walks,
+        Err(error) => return fail(&error),
     };
-    ExecResult::lines([
+    let names = |ids: &[NodeId]| {
+        ids.iter()
+            .map(|&id| element_name(doc, id))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut lines = vec![
         format!("{} — {} ({})", def.id, def.name, tier.name()),
         format!(
             "reach: {} · target: {}",
             reach_name(def.reach),
             target_name(def.target)
         ),
-        format!(
-            "anchors ({}): {}",
-            elements.len(),
-            if shown.is_empty() {
-                "none — select a node".to_string()
-            } else {
-                shown.join(", ")
-            }
-        ),
+        if elements.is_empty() {
+            "reached: none — select a node".to_string()
+        } else {
+            format!("reached ({}): {}", elements.len(), names(&elements))
+        },
         format!("body: {}", def.body_json()),
-        walk,
-        animation(def),
-    ])
+        format!("walks ({}):", walks.len()),
+    ];
+    for (i, walk) in walks.iter().enumerate() {
+        let starts = match walk.mutator.walk_starts(doc.tree(), &walk.anchors) {
+            Ok(starts) => starts,
+            Err(error) => return fail(&error),
+        };
+        let what = match walk.mutator.arena()[walk.mutator.root()].get() {
+            Mutator::Single { mutation, .. } => format!("{mutation:?}"),
+            Mutator::Macro { mutations, .. } => format!("a macro of {} mutations", mutations.len()),
+            _ => "the mutator".to_string(),
+        };
+        let below = if walk.mutator.reaches_below_root() {
+            ", and below"
+        } else {
+            ""
+        };
+        lines.push(format!("  {}. {what}, at {}{below}", i + 1, names(&starts)));
+        let given: &[NodeId] = match &walk.anchors {
+            Anchors::Nodes(nodes) => nodes,
+            _ => &[],
+        };
+        for &inner in given.iter().filter(|id| !starts.contains(id)) {
+            let outer =
+                std::iter::successors(doc.parent(inner), |&id| doc.parent(id)).find(|id| starts.contains(id));
+            if let Some(outer) = outer {
+                lines.push(format!(
+                    "     not from {}: inside {}, changed only where the walk from it reaches",
+                    element_name(doc, inner),
+                    element_name(doc, outer)
+                ));
+            }
+        }
+    }
+    lines.push(animation(def));
+    ExecResult::lines(lines)
 }
 
 /// An element, for a person: its kind and its node's id.
@@ -193,5 +233,51 @@ fn target_name(target: Target) -> &'static str {
         Target::Connector => "connector",
         Target::Links => "links",
         Target::Labels => "labels",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::app::dispatch::families::edits::Undrawn;
+    use crate::application::document::MindMapDocument;
+
+    /// Node 1 with its child node 2, and an edit that aligns a node's
+    /// sections: a mutator that reaches below its root.
+    const MAP: &str = r##"{"format":1,"name":"t",
+"edits":[{"id":"align","name":"Align","reach":"self","target":"node","mutator":{"void":{"kind":"node","channel":0,"children":[{"macro":{"kind":"section","channel":0,"mutations":[{"section":{"set_align":"right"}}]}}]}}}],
+"nodes":[{"id":1,"position":[0,0],"sections":[{"spans":[{"text":"a"}]}]},
+{"id":2,"parent":1,"position":[0,100],"sections":[{"spans":[{"text":"b"}]}]}]}"##;
+
+    /// **`edit inspect` names where the walk starts, and the anchor it
+    /// does not start from** (review of #331). With nodes 1 and 2
+    /// selected the walk starts at node 1 only; node 2 is listed apart,
+    /// inside node 1.
+    ///
+    /// Control: when it printed the reached elements as the anchors,
+    /// node 2 read as one the walk starts from.
+    #[test]
+    fn test_inspect_shows_the_walk_starts_and_the_nested_anchor_apart() {
+        let doc = MindMapDocument::from_json_str(MAP, None, 50).expect("the map loads");
+        let node = |ident| doc.doc().node_by_ident(NodeIdent(ident)).expect("the node");
+        let registry = EditRegistry::new(Vec::new(), Vec::new());
+        let (def, tier) = registry.find(doc.doc(), "align").expect("the map's edit");
+        let ExecResult::Lines(lines) =
+            inspect(doc.doc(), &Undrawn, &registry, def, tier, &[node(2), node(1)])
+        else {
+            panic!("inspect answers in lines");
+        };
+        let text: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+        assert!(text.contains(&"reached (2): node 1, node 2"), "{text:#?}");
+        assert!(
+            text.contains(&"  1. the mutator, at node 1, and below"),
+            "{text:#?}"
+        );
+        assert!(
+            text.contains(
+                &"     not from node 2: inside node 1, changed only where the walk from it reaches"
+            ),
+            "{text:#?}"
+        );
     }
 }
