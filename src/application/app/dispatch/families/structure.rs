@@ -632,13 +632,13 @@ mod tests {
         assert!(doc.selection.iter().next().is_none());
     }
 
-    /// The color a paste names is read as the file reads one: canonical
-    /// hex, a theme variable by name, a palette field; empty text for
-    /// none. What the file refuses is not a color — a name, an unknown
-    /// variable, short or uppercase hex, an opaque color spelled with
-    /// its alpha digits.
+    /// The color a paste names: hex as `main` read it — 3, 4, 6 or 8
+    /// digits in either case, as other apps copy it — and a theme
+    /// variable or a palette field as the file spells them; empty text
+    /// for none. A name, an unknown variable or palette field, and
+    /// malformed hex are not colors.
     #[test]
-    fn test_a_pasted_color_is_read_as_the_file_reads_one() {
+    fn test_a_pasted_color_is_hex_as_main_read_it_or_the_files_spelling() {
         let mut doc = load(json!({"format": 1, "name": "colors",
         "theme": {"active": "dark", "variants": {"dark": {"accent": "#d4a24c"}}},
         "nodes": [
@@ -661,6 +661,24 @@ mod tests {
                 )),
             ),
             (
+                "#abc",
+                Some(baumhard::document::values::ColorRef::Rgba(
+                    baumhard::document::values::Rgba::opaque(0xaa, 0xbb, 0xcc),
+                )),
+            ),
+            (
+                "#FFFFFF",
+                Some(baumhard::document::values::ColorRef::Rgba(
+                    baumhard::document::values::Rgba::opaque(0xff, 0xff, 0xff),
+                )),
+            ),
+            (
+                "#102030ff",
+                Some(baumhard::document::values::ColorRef::Rgba(
+                    baumhard::document::values::Rgba::opaque(0x10, 0x20, 0x30),
+                )),
+            ),
+            (
                 "var(accent)",
                 Some(baumhard::document::values::ColorRef::Var(
                     baumhard::document::values::VarId(0),
@@ -678,15 +696,7 @@ mod tests {
             let _ = apply(&mut doc, steps, "paste");
             assert_eq!(own(&doc), want, "{text:?}");
         }
-        for text in [
-            "red",
-            "var(nope)",
-            "#zz",
-            "#abc",
-            "#FFFFFF",
-            "#102030ff",
-            "palette(nope)",
-        ] {
+        for text in ["red", "var(nope)", "#zz", "#12345", "palette(nope)"] {
             let steps = clipboard::paste(doc.doc(), &doc.selection, text, None).expect("builds");
             assert!(steps.is_empty(), "{text:?} is not a color");
         }

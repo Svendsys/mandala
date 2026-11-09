@@ -11,7 +11,7 @@
 //! | a section | its text, and its spans and style ([`SectionFragment`]) | empties its spans | the fragment's spans and style; other text as one unstyled span |
 //! | part of a section ([`Selection::range`]) | that text | deletes it | replaces it with the text |
 //! | a node | its sections' text, joined by `\n` | empties every section | the text as section 0's one span |
-//! | a connector, link, label or portal end | its resolved color, as hex | clears its own color | a color in the file's spelling (`#rrggbb`, `var(name)`, `palette(text)`, …) as its own; empty text clears it |
+//! | a connector, link, label or portal end | its resolved color, as hex | clears its own color | a color as its own — hex of 3, 4, 6 or 8 digits in either case, `var(name)`, `palette(text)`; empty text clears it |
 //!
 //! Several elements copy as their texts joined by
 //! `MULTI_TARGET_SEPARATOR`; a paste onto as many elements as the text
@@ -45,7 +45,7 @@ use baumhard::document::mutation::ops::{
 };
 use baumhard::document::mutation::step::{DocStep, DocWalk};
 use baumhard::document::resolve::resolve_text;
-use baumhard::document::values::{Align, ColorRef, LinkTarget, VarId, VerbId};
+use baumhard::document::values::{Align, ColorRef, LinkTarget, Rgba, VarId, VerbId};
 use baumhard::engine::anchor::Anchors;
 use baumhard::engine::key::BranchKey;
 use baumhard::engine::mutator::Mutator;
@@ -375,13 +375,20 @@ fn set_color(kind: DocKind, color: Option<ColorRef>, ids: Vec<NodeId>) -> DocSte
     DocStep::fixed(DocWalk::new(mutator, Anchors::Nodes(ids)))
 }
 
-/// The color pasted text names, read as the file reads one
-/// (`format::color`): `Some(None)` for empty text, which clears an
-/// element's own color; `None` for anything the file refuses.
+/// The color pasted text names: `Some(None)` for empty text, which
+/// clears an element's own color. Hex is read as `main` read it, by the
+/// project's one hex parser (`hex_to_color`: 3, 4, 6 or 8 digits, either
+/// case), since that is what other apps put on the clipboard; anything
+/// else as the file reads it (`format::color`: `var(name)`,
+/// `palette(field)`). `None` for anything neither reads.
 fn color(doc: &Document, text: &str) -> Option<Option<ColorRef>> {
     let text = text.trim();
     if text.is_empty() {
         return Some(None);
+    }
+    if text.starts_with('#') {
+        let color = baumhard::util::color_conversion::hex_to_color(text)?;
+        return Some(Some(ColorRef::Rgba(Rgba(color.rgba))));
     }
     format::color(doc, text).map(Some)
 }
