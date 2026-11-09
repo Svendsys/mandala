@@ -25,13 +25,13 @@
 //!
 //! The JSON reader follows 128 levels; a definition at the depth bound
 //! is far inside that, and [`check_nesting`] refuses anything deeper
-//! inside `edits` before the reader sees it, so the refusal a user meets
-//! is the definition bound, never the reader's.
+//! inside `edits` before the reader reads it into definitions, so the
+//! refusal a user meets is the definition bound, never the reader's.
 
 use crate::document::bounds::{check_animate_ms, MAX_DEFINITION_DEPTH, MAX_DEFINITION_PARTS};
 use crate::document::edit::resolve::{self, Fault, NameKind};
 use crate::document::edit::{Animate, EditBody, EditDef, Filter, Mutations, MutatorAst, Target};
-use crate::document::format::context::position_at;
+use crate::document::format::context::{offset_in, position_at};
 use crate::document::format::edits::{EditDto, EditsFileDto, InstructionDto, MutatorDto, ReachDto, SnapDto};
 use crate::document::format::error::{render_path, LoadError, LoadErrorKind, Seg};
 use crate::document::format::index::parse_extent;
@@ -61,7 +61,13 @@ pub type EditsError = LoadError;
 ///
 /// Cost: O(text), and each definition's own size.
 pub fn parse_edits(json: &str) -> Result<Vec<EditDef>, EditsError> {
-    check_nesting(json)?;
+    /// The file's `edits`, captured whatever its depth. A file this does
+    /// not read is the strict read's to refuse, below.
+    #[derive(serde::Deserialize)]
+    struct Extent<'t> {
+        #[serde(borrow)]
+        edits: Option<&'t RawValue>,
+    }
     let whole: &RawValue = serde_json::from_str(json).map_err(|error| {
         LoadError::new(
             String::new(),
@@ -70,6 +76,9 @@ pub fn parse_edits(json: &str) -> Result<Vec<EditDef>, EditsError> {
             },
         )
     })?;
+    if let Ok(Extent { edits: Some(edits) }) = serde_json::from_str(whole.get()) {
+        check_nesting(json, edits)?;
+    }
     let file: EditsFileDto = parse_extent(json, whole, &[])?;
     let mut seen: KeyedSet<String> = KeyedSet::default();
     let mut edits = Vec::with_capacity(file.edits.len());
@@ -99,62 +108,45 @@ pub fn parse_edits(json: &str) -> Result<Vec<EditDef>, EditsError> {
     Ok(edits)
 }
 
-/// Refuse a text — a map, or an edits file — whose top-level `edits`
-/// nest deeper than [`MAX_EDITS_JSON_DEPTH`], at the definition that
-/// does, before the JSON reader meets it. Nesting anywhere else, and a
-/// text that is not JSON, is left to the reader. O(text).
-pub(crate) fn check_nesting(json: &str) -> Result<(), LoadError> {
-    let bytes = json.as_bytes();
+/// Refuse `edits` — the extent of a map's or an edits file's `edits`
+/// value, a slice of `text` — when it nests deeper than
+/// [`MAX_EDITS_JSON_DEPTH`], at the definition that does, before the
+/// JSON reader reads it into definitions and would stop at its own
+/// limit. The extent itself was captured without that limit (the
+/// reader skips a value it only captures iteratively), and after the
+/// whole text was read as JSON, so a syntax error anywhere is reported
+/// first. O(edits).
+pub(crate) fn check_nesting(text: &str, edits: &RawValue) -> Result<(), LoadError> {
+    let json = edits.get();
     let mut depth = 0usize;
     let mut in_string = false;
     let mut escaped = false;
-    // The top-level key being read, and the entry of its array.
-    let mut key_start = None;
-    let mut last_string: (usize, usize) = (0, 0);
-    let mut key: (usize, usize) = (0, 0);
+    // Which definition of the list the scan is in.
     let mut entry = 0usize;
-    for (offset, &byte) in bytes.iter().enumerate() {
+    for (offset, &byte) in json.as_bytes().iter().enumerate() {
         if in_string {
             match (escaped, byte) {
                 (true, _) => escaped = false,
                 (false, b'\\') => escaped = true,
-                (false, b'"') => {
-                    in_string = false;
-                    if let Some(start) = key_start.take() {
-                        last_string = (start, offset);
-                    }
-                }
+                (false, b'"') => in_string = false,
                 _ => {}
             }
             continue;
         }
         match byte {
-            b'"' => {
-                in_string = true;
-                if depth == 1 {
-                    key_start = Some(offset + 1);
-                }
-            }
-            b':' if depth == 1 => {
-                key = last_string;
-                entry = 0;
-            }
-            b',' if depth == 2 => entry += 1,
+            b'"' => in_string = true,
+            b',' if depth == 1 => entry += 1,
             b'{' | b'[' => {
                 depth += 1;
-                if depth > MAX_EDITS_JSON_DEPTH + 1 {
-                    let name = json.get(key.0..key.1).unwrap_or("");
-                    if name != "edits" {
-                        // Not a definition: the reader's to refuse.
-                        return Ok(());
-                    }
+                if depth > MAX_EDITS_JSON_DEPTH {
                     let mut error = LoadError::new(
                         render_path(&[Seg::Key("edits"), Seg::Index(entry)]),
                         LoadErrorKind::DefinitionTooDeep {
                             max: MAX_DEFINITION_DEPTH,
                         },
                     );
-                    error.position = Some(position_at(json, offset));
+                    let base = offset_in(text, json).unwrap_or(0);
+                    error.position = Some(position_at(text, base + offset));
                     return Err(error);
                 }
             }

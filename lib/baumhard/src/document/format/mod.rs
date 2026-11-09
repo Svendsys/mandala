@@ -296,8 +296,10 @@ pub(crate) fn load_counting_checks(json: &str) -> Result<(Document, usize), Load
 /// The three phases of [`load`], counting the rows checked.
 fn load_counted(json: &str, limits: Limits) -> Result<(Document, usize), LoadError> {
     check_text_cap_against(json, limits.bytes)?;
-    crate::document::edit::load::check_nesting(json)?;
     let index = index::index(json)?;
+    if let Some(edits) = index.value("edits") {
+        crate::document::edit::load::check_nesting(json, edits)?;
+    }
     let mut builder = begin_build(&index, limits)?;
     for (i, extent) in index.nodes.iter().enumerate() {
         let dto: NodeDto = index::parse_extent(index.text, extent, &[Seg::Key("nodes"), Seg::Index(i)])

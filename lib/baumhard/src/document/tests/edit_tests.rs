@@ -476,6 +476,42 @@ fn test_a_definition_nests_at_most_thirty_two_levels() {
     assert!(error.path.starts_with("edits[0].mutator"), "{}", error.path);
 }
 
+/// **A map's deep `edits` are refused as a definition whatever comes
+/// before them, and after a syntax error** (review of #331). A node
+/// that nests 118 levels — within the reader's 128 — comes first, then
+/// `edits` with a mutator 45 levels deep: refused as too deep a
+/// definition. And a map whose deep `edits` come first, cut off at its
+/// end, is refused as cut off: the syntax error, anywhere, first.
+///
+/// Controls: when the scan ran over the whole text before the index, it
+/// stopped at the node and the reader answered "recursion limit
+/// exceeded"; and the cut-off map read "too deep".
+#[test]
+fn test_deep_edits_are_a_definition_refusal_after_any_syntax_error() {
+    let edits = format!(
+        r#"[{{"id":"e","name":"E","reach":"self","target":"node","mutator":{}}}]"#,
+        nested_mutator(45)
+    );
+    let node = format!(
+        r#"{{"id":1,"position":[0,0],"x":{}{}}}"#,
+        "[".repeat(115),
+        "]".repeat(115)
+    );
+    let error = load(&format!(
+        r#"{{"format":1,"name":"t","nodes":[{node}],"edits":{edits}}}"#
+    ))
+    .unwrap_err();
+    assert_eq!(error.kind, LoadErrorKind::DefinitionTooDeep { max: 32 });
+    assert_eq!(error.path, "edits[0]");
+    let edits_first = format!(r#"{{"format":1,"name":"t","edits":{edits},"nodes":[]}}"#);
+    let error = load(&edits_first[..edits_first.len() - 1]).unwrap_err();
+    assert!(
+        matches!(error.kind, LoadErrorKind::Syntax { .. }),
+        "{:?}",
+        error.kind
+    );
+}
+
 #[test]
 fn test_nesting_at_the_readers_limit_is_refused_as_a_definition() {
     // 128 levels of JSON — where the reader would stop with its own
