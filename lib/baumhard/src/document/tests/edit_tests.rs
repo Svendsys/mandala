@@ -928,6 +928,91 @@ fn test_a_blocked_cascade_row_moves_whole_sideways_before_down() {
     assert!(overlaps(&doc, &moved).is_empty());
 }
 
+/// [`Boxes`], counting every question a layout asks of it.
+struct Counted(Boxes, std::cell::Cell<usize>);
+
+impl crate::projection::Geometry for Counted {
+    fn node_rect(&self, node: NodeId) -> Option<crate::flow::Rect> {
+        self.1.set(self.1.get() + 1);
+        self.0.node_rect(node)
+    }
+    fn section_box(&self, _: NodeId) -> Option<(Vec2, &std::sync::Arc<crate::flow::ShapedBox>)> {
+        None
+    }
+    fn curve(&self, _: NodeId) -> Option<crate::flow::Curve> {
+        None
+    }
+    fn label_pos(&self, _: NodeId) -> Option<Vec2> {
+        None
+    }
+    fn nodes_meeting(&self, rect: crate::flow::Rect) -> Vec<NodeId> {
+        self.1.set(self.1.get() + 1);
+        self.0.nodes_meeting(rect)
+    }
+}
+
+/// **A layout's work follows the families it moves, not the map**
+/// (review of #331, §20 rules 4 and 5): `flower` and `cascade` at node
+/// 1 ask the same number of questions of the geometry whether the map
+/// holds FAMILY alone or 10,000 more nodes far away. What is drawn
+/// comes from the projector's index, a query at a time.
+///
+/// Control: building the obstacles from a scan of every drawn node asked
+/// 10,000 more.
+#[test]
+fn test_a_layouts_work_does_not_grow_with_the_map() {
+    use crate::projection::Geometry;
+    let far: Vec<String> = (0..10_000)
+        .map(|i| format!(r#"{{"id":{},"position":[{},0]}}"#, 100 + i, 1_000_000 + i * 200))
+        .collect();
+    let big = format!(
+        r#"{},{}]}}"#,
+        FAMILY.strip_suffix("]}").expect("FAMILY ends its list"),
+        far.join(",")
+    );
+    for handler in ["flower", "cascade"] {
+        let def = edit(&format!(
+            r#"{{"id":"h","name":"H","reach":"self","target":"node","handler":"{handler}"}}"#
+        ));
+        let asked = |text: &str| {
+            let doc = load(text).unwrap();
+            let geometry = Counted(Boxes::of(&doc), std::cell::Cell::new(0));
+            assert!(geometry.node_rect(n(&doc, 1)).is_some());
+            geometry.1.set(0);
+            def.request(&doc, &geometry, &registry(), &[n(&doc, 1)]).unwrap();
+            geometry.1.get()
+        };
+        let (small, large) = (asked(FAMILY), asked(&big));
+        assert!(small > 0, "{handler}: precondition: the layout asks");
+        assert_eq!(small, large, "{handler}: as many questions on the larger map");
+    }
+}
+
+/// **A rectangle too large to count, or not finite, is filed under no
+/// cell and never overflows the count** (review of #331): a child drawn
+/// across the whole float range, and one drawn with an infinite size,
+/// are laid out without panicking.
+///
+/// Control: counting cells as a product of the two axes' spans
+/// overflowed `i64` on the first child, and the layout panicked.
+#[test]
+fn test_a_layout_survives_a_rectangle_too_large_to_count() {
+    let doc = load(FAMILY).unwrap();
+    for rect in [
+        crate::flow::Rect::new(Vec2::splat(-3e38), Vec2::splat(f32::MAX)),
+        crate::flow::Rect::new(Vec2::splat(-1e38), Vec2::splat(f32::INFINITY)),
+    ] {
+        let mut geometry = Boxes::of(&doc);
+        geometry.0.insert(n(&doc, 2), rect);
+        for handler in ["flower", "cascade"] {
+            let def = edit(&format!(
+                r#"{{"id":"h","name":"H","reach":"self","target":"node","handler":"{handler}"}}"#
+            ));
+            def.request(&doc, &geometry, &registry(), &[n(&doc, 1)]).unwrap();
+        }
+    }
+}
+
 #[test]
 fn test_a_node_that_is_not_drawn_is_left_in_place() {
     let mut doc = load(FAMILY).unwrap();

@@ -89,6 +89,9 @@ impl Geometry for Undrawn {
     fn label_pos(&self, _: NodeId) -> Option<Vec2> {
         None
     }
+    fn nodes_meeting(&self, _: Rect) -> Vec<NodeId> {
+        Vec::new()
+    }
 }
 
 /// Run `f` with what draws the map: the view and `renderer`, or

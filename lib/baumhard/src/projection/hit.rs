@@ -188,13 +188,36 @@ impl BodyIndex {
     /// the large ones; a larger one tries every body. O(the bodies
     /// tried), plus a sort of what is found.
     pub(crate) fn within(&self, rect: Rect) -> Vec<NodeId> {
+        self.query(rect, |body, shape| {
+            let min = body.origin;
+            shape.intersects_local_aabb(rect.origin - min, rect.max() - min, body.max() - min)
+        })
+    }
+
+    /// Every body whose drawn **rectangle** `rect` meets, in ascending
+    /// node id: their insides overlap, so a shared edge does not meet,
+    /// and the outline shape is not consulted — what a layout keeps its
+    /// nodes clear of. The cells tried are [`Self::within`]'s. O(the
+    /// bodies tried), plus a sort of what is found.
+    pub(crate) fn meeting(&self, rect: Rect) -> Vec<NodeId> {
+        self.query(rect, |body, _| {
+            rect.origin.x < body.max().x
+                && body.origin.x < rect.max().x
+                && rect.origin.y < body.max().y
+                && body.origin.y < rect.max().y
+        })
+    }
+
+    /// The bodies `test` passes among those `rect`'s cells hold, and the
+    /// large ones — or among every body, for a `rect` spanning more than
+    /// [`MAX_CELLS`] cells — in ascending node id.
+    fn query(&self, rect: Rect, test: impl Fn(Rect, NodeShape) -> bool) -> Vec<NodeId> {
         let overlaps = |node: NodeId| {
             #[cfg(test)]
             self.within_tried.set(self.within_tried.get() + 1);
-            self.bodies.get(&node).is_some_and(|&(body, shape, _)| {
-                let min = body.origin;
-                shape.intersects_local_aabb(rect.origin - min, rect.max() - min, body.max() - min)
-            })
+            self.bodies
+                .get(&node)
+                .is_some_and(|&(body, shape, _)| test(body, shape))
         };
         let mut found: Vec<NodeId> = match cells(rect) {
             Some(((x0, y0), (x1, y1))) => {
@@ -234,6 +257,14 @@ impl Projector {
     /// rectangle spanning more cells than the index lists per body.
     pub fn nodes_in(&self, rect: Rect) -> Vec<NodeId> {
         self.bodies.within(rect)
+    }
+
+    /// The visible nodes whose drawn rectangles `rect` meets: their
+    /// insides overlap, so a shared edge does not count, and the outline
+    /// shape is not consulted. In ascending node id. Cost: the body
+    /// index's cells under `rect`, as [`Self::nodes_in`].
+    pub fn nodes_meeting(&self, rect: Rect) -> Vec<NodeId> {
+        self.bodies.meeting(rect)
     }
 
     /// The smallest visible node whose body holds `point` by its shape —

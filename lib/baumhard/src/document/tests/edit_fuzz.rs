@@ -69,6 +69,21 @@ impl Geometry for Boxes {
     fn label_pos(&self, _: NodeId) -> Option<Vec2> {
         None
     }
+    fn nodes_meeting(&self, rect: Rect) -> Vec<NodeId> {
+        let mut found: Vec<NodeId> = self
+            .0
+            .iter()
+            .filter(|(_, b)| {
+                rect.origin.x < b.max().x
+                    && b.origin.x < rect.max().x
+                    && rect.origin.y < b.max().y
+                    && b.origin.y < rect.max().y
+            })
+            .map(|(&node, _)| node)
+            .collect();
+        found.sort_unstable();
+        found
+    }
 }
 
 /// The map edits are run on: the format's fullest fixture.

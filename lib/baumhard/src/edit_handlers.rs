@@ -33,16 +33,19 @@
 //!
 //! - **A placed node never overlaps another drawn node** (owner, on
 //!   #250): not a sibling, not the parent, not anything else on the map.
-//!   A petal moves outward along its ray,
-//!   [`CLEAR_STEP`](crate::edit_handlers::CLEAR_STEP) at a time, and after
-//!   [`MAX_CLEAR_STEPS`](crate::edit_handlers::MAX_CLEAR_STEPS) tries it
-//!   goes past everything drawn, where it is clear by construction. A
-//!   cascade row moves as a whole, keeping its spacing: down by steps,
-//!   and at each depth straight, then right and left by growing steps
-//!   ([`MAX_SIDE_STEPS`](crate::edit_handlers::MAX_SIDE_STEPS)), and last
-//!   below everything drawn.
-//!   Only a layout keeps clear: a node moved by hand goes where it is
-//!   put.
+//!   A petal moves outward along its ray, and a cascade row down as a
+//!   whole, keeping its spacing, trying at each depth straight below,
+//!   then right and left by growing steps
+//!   ([`MAX_SIDE_STEPS`](crate::edit_handlers::MAX_SIDE_STEPS)). The
+//!   distances tried are [`probes`](crate::edit_handlers::probes):
+//!   [`MAX_CLEAR_STEPS`](crate::edit_handlers::MAX_CLEAR_STEPS) steps of
+//!   [`CLEAR_STEP`](crate::edit_handlers::CLEAR_STEP), then doubling
+//!   steps out to twice the canvas bound, where every probe past the
+//!   drawn nodes meets nothing. What is drawn is asked of the projector's
+//!   body index (`Geometry::nodes_meeting`), never scanned: a run keeps
+//!   only the set of nodes it moves and the rectangles it has placed, so
+//!   its cost follows the families it moves, not the map. Only a layout
+//!   keeps clear: a node moved by hand goes where it is put.
 //! - A child with no rectangle has no size to lay out by (D5), so it
 //!   takes no slot: one hidden child of twelve makes an eleven-petal
 //!   flower, and a cascade row without it. `main` gave it one.
@@ -63,7 +66,7 @@
 //! ```
 
 use crate::arena::NodeId;
-use crate::document::bounds::clamp_canvas_coord;
+use crate::document::bounds::{clamp_canvas_coord, MAX_CANVAS_COORD};
 use crate::document::element::{DocElement, DocKind};
 use crate::document::ids::Document;
 use crate::document::mutation::ops::{DocMutation, DocMutatorTree, NodeOp};
@@ -121,12 +124,26 @@ pub const SIBLING_GAP: f32 = 40.0;
 
 /// How far a layout moves a node at a time while it looks for a place
 /// clear of every other drawn node: a petal outward along its ray, a
-/// cascade row downward.
+/// cascade row downward, and a row sideways.
 pub const CLEAR_STEP: f32 = 40.0;
 
-/// How many [`CLEAR_STEP`]s a layout tries before it places the node
-/// past everything drawn, where it is clear by construction.
+/// How many [`CLEAR_STEP`]s a layout tries before its steps double.
 pub const MAX_CLEAR_STEPS: u32 = 64;
+
+/// The distances a layout tries a node or a row at, from where it
+/// belongs, in order: [`MAX_CLEAR_STEPS`] steps of [`CLEAR_STEP`] from
+/// `0`, then doubling from twice the last, out to twice the canvas bound
+/// (about nineteen more). Past the drawn nodes a probe meets nothing, so
+/// a layout finds a clear place unless a drawn node reaches across the
+/// whole of it; then the node stays where it belongs. O(1) per item.
+pub fn probes() -> impl Iterator<Item = f32> {
+    let linear = MAX_CLEAR_STEPS as f32 * CLEAR_STEP;
+    (0..MAX_CLEAR_STEPS)
+        .map(|k| k as f32 * CLEAR_STEP)
+        .chain(std::iter::successors(Some(2.0 * linear), |d| {
+            (*d * 2.0 <= 2.0 * MAX_CANVAS_COORD).then_some(*d * 2.0)
+        }))
+}
 
 /// How many [`CLEAR_STEP`]s a cascade row tries to each side, at each
 /// depth, before it steps down again.
@@ -136,14 +153,14 @@ pub const MAX_SIDE_STEPS: u32 = 16;
 /// the top, clockwise. The radius clears the parent's half-span and the
 /// largest child's, plus [`RADIAL_PADDING`]. A petal that would overlap
 /// another drawn node — a sibling already placed, the parent, anything
-/// else on the map — moves outward along its ray, [`CLEAR_STEP`] at a
-/// time, until it is clear (see `Clear`). Parents are placed before
-/// their children, in tree order, and a node one flower moves is the
-/// center of its own where it is moved to, so nested nodes compose.
+/// else on the map — moves outward along its ray, by [`probes`], until
+/// it is clear (see `Clear`). Parents are placed before their children,
+/// in tree order, and a node one flower moves is the center of its own
+/// where it is moved to, so nested nodes compose.
 ///
-/// Cost: one pass over the map's nodes for what is drawn, then per
-/// petal at most [`MAX_CLEAR_STEPS`] lookups, each of the grid cells
-/// the petal covers.
+/// Cost: per petal at most the [`probes`] (83), each a query of the
+/// projector's body index over the cells the petal covers and a lookup
+/// of this run's placements. Nothing is proportional to the map.
 pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Result<Walks, String> {
     let families: Vec<Family> = in_tree_order(doc.tree(), nodes, false)
         .into_iter()
@@ -153,7 +170,7 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
             (!children.is_empty()).then_some((parent, rect, children))
         })
         .collect();
-    let mut clear = Clear::around(doc, geometry, families.iter().flat_map(|(_, _, row)| row));
+    let mut clear = Clear::new(geometry, families.iter().flat_map(|(_, _, row)| row));
     let mut planned: Vec<(NodeId, Vec2)> = Vec::new();
     // Where each node is drawn once placed: its new rectangle's origin.
     let mut placed: FxHashMap<NodeId, Vec2> = FxHashMap::default();
@@ -170,13 +187,10 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
         for (i, (child, r)) in children.iter().enumerate() {
             let ray = Vec2::from_angle(START_ANGLE + i as f32 * std::f32::consts::TAU / n);
             let along = |d: f32| center + d * ray - r.size / 2.0;
-            let tried = (0..MAX_CLEAR_STEPS)
-                .map(|k| along(radius + k as f32 * CLEAR_STEP))
-                .find(|&o| clear.is_clear(Rect::new(o, r.size)));
-            // Past every drawn rectangle: its center farther from `center`
-            // than any of them reaches, by more than its own half-diagonal.
-            let at =
-                tried.unwrap_or_else(|| along(radius.max(clear.reach(center) + r.size.length() / 2.0 + 1.0)));
+            let at = probes()
+                .map(|d| along(radius + d))
+                .find(|&o| clear.is_clear(Rect::new(o, r.size)))
+                .unwrap_or_else(|| along(radius));
             clear.add(Rect::new(at, r.size));
             placed.insert(*child, at);
             planned.push((*child, position_for(doc, *child, *r, at)));
@@ -194,15 +208,16 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
 /// each depth from where it belongs down by [`CLEAR_STEP`]s, at most
 /// [`MAX_CLEAR_STEPS`] of them, and at each depth first straight below,
 /// then shifted right and then left by one [`CLEAR_STEP`], by two, and
-/// so on to [`MAX_SIDE_STEPS`]. When none of those is clear the row goes
-/// below everything drawn, still whole. A single node is never moved
+/// so on to [`MAX_SIDE_STEPS`]; the depths beyond are the doubling
+/// [`probes`], each tried the same way. A single node is never moved
 /// out of its row. A node nested under another of `nodes` is laid out
 /// as part of the outer one's tree, so the walk starts from the
 /// outermost. Breadth first and iterative.
 ///
-/// Cost: the subtrees, one pass over the map's nodes for what is drawn,
-/// then per row at most [`MAX_CLEAR_STEPS`] × (2 × [`MAX_SIDE_STEPS`] +
-/// 1) tries, each a lookup per node of the row.
+/// Cost: the subtrees, then per row at most the [`probes`] × (2 ×
+/// [`MAX_SIDE_STEPS`] + 1) tries, each a query of the projector's body
+/// index and a lookup of this run's placements per node of the row.
+/// Nothing is proportional to the map.
 pub fn cascade(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Result<Walks, String> {
     // The rows, breadth first: which does not depend on where they go.
     let mut rows: Vec<Family> = Vec::new();
@@ -222,7 +237,7 @@ pub fn cascade(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Res
             }
         }
     }
-    let mut clear = Clear::around(doc, geometry, rows.iter().flat_map(|(_, _, row)| row));
+    let mut clear = Clear::new(geometry, rows.iter().flat_map(|(_, _, row)| row));
     let mut planned: Vec<(NodeId, Vec2)> = Vec::new();
     // Where each node is drawn once placed: its new rectangle's origin.
     let mut placed: FxHashMap<NodeId, Vec2> = FxHashMap::default();
@@ -250,11 +265,10 @@ pub fn cascade(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Res
                 [d, -d]
             }))
         };
-        let tried = (0..MAX_CLEAR_STEPS)
-            .flat_map(|k| sideways().map(move |dx| (dx, top + k as f32 * CLEAR_STEP)))
-            .find(|&(dx, y)| at(dx, y).iter().all(|&laid| clear.is_clear(laid)));
-        // Below every drawn rectangle, straight under the parent.
-        let (dx, y) = tried.unwrap_or_else(|| (0.0, top.max(clear.bottom() + ROW_GAP)));
+        let (dx, y) = probes()
+            .flat_map(|d| sideways().map(move |dx| (dx, top + d)))
+            .find(|&(dx, y)| at(dx, y).iter().all(|&laid| clear.is_clear(laid)))
+            .unwrap_or((0.0, top));
         for ((child, r), laid) in row.iter().zip(at(dx, y)) {
             clear.add(laid);
             placed.insert(*child, laid.origin);
@@ -281,118 +295,97 @@ fn drawn_children(doc: &Document, geometry: &dyn Geometry, id: NodeId) -> Vec<(N
         .collect()
 }
 
-/// The side of a [`Clear`] grid cell, in canvas units.
+/// The side of a cell of a run's placements, in canvas units.
 const CELL: f32 = 512.0;
 
-/// The most grid cells a rectangle is filed under; a larger one is kept
-/// apart and tested against every query.
+/// The most cells a placed rectangle is filed under; a larger one is
+/// kept apart and tested against every query.
 const MAX_CELLS: i64 = 64;
 
-/// The drawn rectangles a layout keeps its nodes clear of: every drawn
-/// node it does not move, as drawn, and every node it has placed, as
-/// placed. Two rectangles are clear when their insides do not meet; a
-/// shared edge is clear. Filed in a uniform grid so a lookup reads only
-/// the rectangles near it.
-struct Clear {
-    /// The rectangles filed under each cell they cover.
+/// What a layout keeps its nodes clear of: every drawn node it does not
+/// move, as the projector's body index has it
+/// ([`Geometry::nodes_meeting`]), and every rectangle this run has
+/// placed, filed in a small grid of its own. Two rectangles are clear
+/// when their insides do not meet; a shared edge is clear. Holds only
+/// the moved set and the placements: nothing of the map is copied.
+struct Clear<'g> {
+    /// Where the map is drawn.
+    geometry: &'g dyn Geometry,
+    /// The nodes this run moves, whose drawn rectangles are where they
+    /// were, not where they go.
+    moved: FxHashSet<NodeId>,
+    /// The placed rectangles filed under each cell they cover.
     cells: FxHashMap<(i32, i32), Vec<Rect>>,
-    /// The rectangles that cover more than [`MAX_CELLS`] cells.
-    wide: Vec<Rect>,
-    /// Every rectangle, for [`Self::reach`] and [`Self::bottom`].
-    all: Vec<Rect>,
+    /// Every placed rectangle, for a query too large for the cells.
+    placed: Vec<Rect>,
 }
 
-impl Clear {
-    /// Every drawn node of `doc` but those in `moved`. One pass over the
-    /// map's nodes, iterative.
-    fn around<'a>(
-        doc: &Document,
-        geometry: &dyn Geometry,
-        moved: impl Iterator<Item = &'a (NodeId, Rect)>,
-    ) -> Self {
-        let moved: FxHashSet<NodeId> = moved.map(|(node, _)| *node).collect();
-        let mut clear = Clear {
+/// Whether the insides of `a` and `b` meet. O(1).
+fn meets(a: &Rect, b: &Rect) -> bool {
+    a.origin.x < b.max().x && b.origin.x < a.max().x && a.origin.y < b.max().y && b.origin.y < a.max().y
+}
+
+/// The cells `rect` covers, or `None` past [`MAX_CELLS`] or for a
+/// rectangle that is not finite. Each axis is bounded before the count
+/// is taken, so no rectangle, however large, overflows it.
+fn cells_of(rect: Rect) -> Option<impl Iterator<Item = (i32, i32)>> {
+    if !rect.origin.is_finite() || !rect.size.is_finite() {
+        return None;
+    }
+    let cell = |v: f32| i64::from((v / CELL).floor().clamp(i32::MIN as f32, i32::MAX as f32) as i32);
+    let (x0, y0, x1, y1) = (
+        cell(rect.origin.x),
+        cell(rect.origin.y),
+        cell(rect.max().x),
+        cell(rect.max().y),
+    );
+    let (w, h) = (x1 - x0 + 1, y1 - y0 + 1);
+    if w > MAX_CELLS || h > MAX_CELLS || w * h > MAX_CELLS {
+        return None;
+    }
+    // Each is within an `i32` cell coordinate: they came from one.
+    let (x0, y0, x1, y1) = (x0 as i32, y0 as i32, x1 as i32, y1 as i32);
+    Some((x0..=x1).flat_map(move |x| (y0..=y1).map(move |y| (x, y))))
+}
+
+impl<'g> Clear<'g> {
+    /// Nothing placed yet; the nodes of `moved` are skipped where the
+    /// projector has them. O(moved).
+    fn new<'a>(geometry: &'g dyn Geometry, moved: impl Iterator<Item = &'a (NodeId, Rect)>) -> Self {
+        Clear {
+            geometry,
+            moved: moved.map(|(node, _)| *node).collect(),
             cells: FxHashMap::default(),
-            wide: Vec::new(),
-            all: Vec::new(),
-        };
-        let mut pending = vec![doc.root()];
-        while let Some(id) = pending.pop() {
-            for child in child_nodes(doc, id) {
-                if !moved.contains(&child) {
-                    if let Some(rect) = geometry.node_rect(child) {
-                        clear.add(rect);
-                    }
-                }
-                pending.push(child);
-            }
+            placed: Vec::new(),
         }
-        clear
     }
 
-    /// The cells `rect` covers, or `None` past [`MAX_CELLS`].
-    fn cells_of(rect: Rect) -> Option<impl Iterator<Item = (i32, i32)>> {
-        let cell = |v: f32| (v / CELL).floor() as i32;
-        let (x0, y0, x1, y1) = (
-            cell(rect.origin.x),
-            cell(rect.origin.y),
-            cell(rect.max().x),
-            cell(rect.max().y),
-        );
-        let count = (i64::from(x1) - i64::from(x0) + 1) * (i64::from(y1) - i64::from(y0) + 1);
-        (count <= MAX_CELLS).then(|| (x0..=x1).flat_map(move |x| (y0..=y1).map(move |y| (x, y))))
-    }
-
-    /// File `rect`.
+    /// File a placed `rect`. O(its cells).
     fn add(&mut self, rect: Rect) {
-        match Self::cells_of(rect) {
-            Some(cells) => {
-                for cell in cells {
-                    self.cells.entry(cell).or_default().push(rect);
-                }
+        if let Some(cells) = cells_of(rect) {
+            for cell in cells {
+                self.cells.entry(cell).or_default().push(rect);
             }
-            None => self.wide.push(rect),
         }
-        self.all.push(rect);
+        self.placed.push(rect);
     }
 
-    /// Whether `rect` is clear of every filed rectangle.
+    /// Whether `rect` is clear of every drawn node this run does not
+    /// move and of every rectangle it has placed. O(the body index's
+    /// cells under `rect`, and this run's placements in them).
     fn is_clear(&self, rect: Rect) -> bool {
-        let meets = |other: &Rect| {
-            rect.origin.x < other.max().x
-                && other.origin.x < rect.max().x
-                && rect.origin.y < other.max().y
-                && other.origin.y < rect.max().y
-        };
-        let near = match Self::cells_of(rect) {
+        let placed = match cells_of(rect) {
             Some(cells) => cells
                 .filter_map(|cell| self.cells.get(&cell))
-                .any(|filed| filed.iter().any(meets)),
-            None => self.all.iter().any(meets),
+                .any(|filed| filed.iter().any(|other| meets(&rect, other))),
+            None => self.placed.iter().any(|other| meets(&rect, other)),
         };
-        !near && !self.wide.iter().any(meets)
-    }
-
-    /// How far from `center` the farthest filed rectangle reaches: past
-    /// it, a disk round `center` holds every one.
-    fn reach(&self, center: Vec2) -> f32 {
-        self.all
-            .iter()
-            .flat_map(|r| {
-                [
-                    r.origin,
-                    r.max(),
-                    Vec2::new(r.origin.x, r.max().y),
-                    Vec2::new(r.max().x, r.origin.y),
-                ]
-            })
-            .map(|corner| (corner - center).length())
-            .fold(0.0, f32::max)
-    }
-
-    /// The lowest edge of any filed rectangle.
-    fn bottom(&self) -> f32 {
-        self.all.iter().map(|r| r.max().y).fold(f32::MIN, f32::max)
+        !placed
+            && self
+                .geometry
+                .nodes_meeting(rect)
+                .iter()
+                .all(|node| self.moved.contains(node))
     }
 }
 
