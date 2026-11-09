@@ -1699,7 +1699,7 @@ the layers to learn what the document is, and nothing flows back.
   Each junction is fanned once an update, after every path's ends are
   found, and only the paths whose fan changed are laid again. Portal
   ends with no `border_t` that face one way at a node are held apart
-  along its outline the same way.
+  along its outline (`geometry::held_apart`).
 - **Captured dependencies.** Every read of another element's state goes
   through a recorder into the dependency index (`projection::Input`:
   the resolvers' `document::resolve::Input`s, and the projection's own
