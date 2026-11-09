@@ -1393,16 +1393,9 @@ fn test_every_chrome_glyph_is_drawn_by_the_default_or_an_ornament_face() {
     baumhard::font::fonts::init();
     // Read under the guard and assert once it is released, so a failure
     // does not poison the lock for the tests beside it.
-    let drawn: Vec<(
-        char,
-        String,
-        Vec<baumhard::font::FontId>,
-        baumhard::font::FontId,
-        u16,
-        Option<String>,
-    )> = {
+    let (glyphs, faults): (usize, Vec<String>) = {
         let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (chrome glyphs)");
-        let mut drawn = Vec::new();
+        let (mut glyphs, mut faults) = (0, Vec::new());
         for (c, file) in &scanned {
             let pin = pinned.iter().find(|(p, _, _)| p == c);
             let (attrs, allowed) = match pin {
@@ -1414,31 +1407,21 @@ fn test_every_chrome_glyph_is_drawn_by_the_default_or_an_ornament_face() {
             buf.shape_until_scroll(&mut fs, false);
             for run in buf.layout_runs() {
                 for glyph in run.glyphs.iter() {
-                    let name = fs.db().face(glyph.font_id).map(|f| f.post_script_name.clone());
-                    drawn.push((
-                        *c,
-                        file.clone(),
-                        allowed.clone(),
-                        glyph.font_id,
-                        glyph.glyph_id,
-                        name,
-                    ));
+                    glyphs += 1;
+                    if !allowed.contains(&glyph.font_id) || glyph.glyph_id == 0 {
+                        let name = fs.db().face(glyph.font_id).map(|f| f.post_script_name.clone());
+                        faults.push(format!("{c:?} ({file}): {name:?} glyph {}", glyph.glyph_id));
+                    }
                 }
             }
         }
-        drawn
+        (glyphs, faults)
     };
     assert!(
-        drawn.len() >= scanned.len(),
-        "precondition: each scanned character shapes ({} glyphs, {} characters)",
-        drawn.len(),
+        glyphs >= scanned.len(),
+        "precondition: each scanned character shapes ({glyphs} glyphs, {} characters)",
         scanned.len()
     );
-    let faults: Vec<String> = drawn
-        .iter()
-        .filter(|(_, _, allowed, face, glyph, _)| !allowed.contains(face) || *glyph == 0)
-        .map(|(c, file, _, _, glyph, name)| format!("{c:?} ({file}): {name:?} glyph {glyph}"))
-        .collect();
     assert!(
         faults.is_empty(),
         "chrome glyphs not drawn by the default face or Mandala Ornaments (or their pin):\n{}",
