@@ -900,11 +900,11 @@ by the ring.
 
 `font` is a font family name that resolves to a face compiled into this
 build, for example `"Public Pixel"`. A family that is not compiled in is
-an error, including one that happens to be installed as a system font on
-this machine: such a family resolves to the fallback face, which has no
-name a file can write back, and the same map would mean something else
-on another machine. A face with several family names loads under any of
-them and is written under the first.
+an error, whatever this machine has installed: the font system holds the
+compiled faces alone ([`fonts.md`](./fonts.md)), so the same map means
+the same thing on every machine. A face with several family names loads
+under any of them and is written under the first. A span that names no
+family is drawn in the default face, Inter.
 
 ### Numbers
 

@@ -811,23 +811,19 @@ What they hold, in short (each module's docs are the full list):
   size is finite; no placement exceeds `MAX_PLACED_GLYPHS`; a span
   pinned to a compiled family is drawn in that family's compiled faces
   but for a character none of them holds (R30). The generator draws
-  every weight from 100 to 900, and the test build registers a host
-  face at every weight but 400 and 700 in cosmic-text's first common
-  fallback family (`fonts::register_host_decoys`), so a span the
-  matcher would let slip to a host face does so on every machine, not
-  only where the host happens to have one; and one face under a
-  compiled family's name, ahead of the compiled set, which loading must
-  remove (R30.1). The suite's sweep, with the decoys, is the
-  deterministic half of R30's regression; the fuzz targets, which build
-  baumhard without them, are the other half, and what they can catch
-  depends on the host's fonts. The generator's face list, `faces()`,
-  never changes length: a choice picks a face modulo it, so a face added
-  moves every committed structured seed and finding to another face, and
-  silently, since each still passes. Faces it lacks that a map can pin,
-  the ornament fallback's two (#297), are drawn from `every_face()`, by
-  flow_structured_every_face with seeds of its own and by
-  `test_generated_flows_over_every_face_hold_every_flow_property`, whose
-  precondition is that each of them is pinned.
+  every weight from 100 to 900, and the default face, first in the
+  fallback, is variable across all of them (#228), so a span the matcher
+  would let slip past its pin to another face of that weight does so on
+  every machine; the font system holds the compiled faces alone, so the
+  suite's sweep and the fuzz targets see the same faces wherever they
+  run. The generator's face list, `faces()`, never changes length: a
+  choice picks a face modulo it, so a face added moves every committed
+  structured seed and finding to another face, and silently, since each
+  still passes. Faces it lacks that a map can pin, the ornament
+  fallback's two (#297) and the default face (#228), are drawn from
+  `every_face()`, by flow_structured_every_face with seeds of its own
+  and by `test_generated_flows_over_every_face_hold_every_flow_property`,
+  whose precondition is that each of them is pinned.
 - **Glyph-layer mutations.** No panic; no non-finite box reaches an
   ancestor; a run's overrides are empty or exactly as long as its
   placed glyphs, whatever range is named; `same_state` is reflexive and
@@ -917,16 +913,12 @@ R51.2) and long mixed side ornaments, up to 200 bytes of a wide glyph
 among thin ones (`long_ornament`, R50.3), the ornament cut
 until a frame of no text beside it fits, and then the frame's text, to
 leave their shaping and inking room within the per-input bound below
-(`sides_in_time`, `framed`). A glyph a compiled face lacks shapes as a
-host face holds it, or as a `.notdef`, weighed 2,200 steps, where none
-does — on CI, which has few host faces — so a harness counts what it
-shapes on the host it runs on, and a fixture names glyphs the compiled
-faces hold. The ornament fallback's glyphs are among them since #297
-(the space, `+ ~ · ∙ ◈ ♪ ✦ ❦` and `🌸`, `format/fonts.md` "Ornament
-fallback"): a span whose face lacks one draws it in a compiled ornament
-face on every host, before any host face. To see what CI sees, point `FONTCONFIG_FILE` at a config
-whose one `<dir>` is empty: the host's faces are then not indexed, and
-the compiled ones alone remain. A counted step costs at
+(`sides_in_time`, `framed`). A glyph no compiled face holds shapes as a
+`.notdef`, weighed 2,200 steps, so a fixture names glyphs the compiled
+faces hold: the default face's (#228), and the ornament fallback's
+(`∙ ◈ ✦ ❦`, the box-drawing `─ ━ │ ┃ ╭ ╮ ╯ ╰` and `🌸`, `format/fonts.md`
+"Fallback"). The font system holds the compiled faces alone, so what a
+harness counts is the same on every host, CI's included. A counted step costs at
 most `ASAN_STEP_NANOS`, 32.3 µs — the most measured, 21.5 µs, times
 1.5 — under the ASan build (`flow_fuzz.rs` says how it was measured).
 An input's worst case is the sum of its frames' work at that cost, and

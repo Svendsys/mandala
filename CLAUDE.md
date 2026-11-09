@@ -157,10 +157,10 @@ the parity trajectory (or why none is owed):
   engine's framing (`width`/`height`/`region`/`fit`/`scale`): it is
   the canvas as drawn, at its own size, and `describe` declares
   exactly the parameters each target takes. Recording stays native;
-  `describe` says so. What any browser frame shows is limited by #228
-  (open): the browser has no Latin text face for the default family,
-  so edge labels draw as `.notdef` boxes and connection dots vanish, on
-  every backend.
+  `describe` says so. Since #228 the default family is a compiled face
+  (Inter) and the font system holds the compiled faces alone on every
+  target, so a browser frame draws a map's text in the faces native
+  draws it in (`format/fonts.md`).
 - **Headless and one-shot launches** (`--headless`, `--size`,
   `--adapter`, `--screenshot`; `src/application/app/run_headless.rs`,
   `app/pump.rs`, `app/shell.rs`, `renderer/adapter.rs`; IPC-10/#70) —
