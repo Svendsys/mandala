@@ -5,7 +5,7 @@
 //! Each assertion has a control beside it that would make it fail.
 
 use crate::arena::NodeId;
-use crate::document::bounds::{MAX_DEFINITION_DEPTH, MAX_DEFINITION_PARTS};
+use crate::document::bounds::{MAX_ANIMATE_MS, MAX_DEFINITION_DEPTH, MAX_DEFINITION_PARTS};
 use crate::document::edit::{parse_edits, EditDef, EditError};
 use crate::document::element::{DocElement, DocKind};
 use crate::document::format::{load, LoadErrorKind};
@@ -396,6 +396,32 @@ fn test_a_load_refuses_what_no_map_could_run() {
     edit(&format!(
         r#"{{{base},"target":"spans","mutations":[{{"span":{{"text":{{"set_font":"Novem"}}}}}}]}}"#
     ));
+}
+
+/// **An animation takes at most a minute, and waits at most one**
+/// (review of #331): `ms` and `delay_ms` at [`MAX_ANIMATE_MS`] read, and
+/// one past it is refused as a bound at its path.
+///
+/// Control: with no bound, `4294967295` read — 49.7 days.
+#[test]
+fn test_an_animation_and_its_delay_are_at_most_a_minute() {
+    let with = |animate: String| {
+        format!(
+            r#"{{"id":"e","name":"E","reach":"self","target":"node","handler":"flower","animate":{{{animate}}}}}"#
+        )
+    };
+    for key in ["ms", "delay_ms"] {
+        let at = |ms: u32| {
+            let other = if key == "ms" { "" } else { r#""ms":1,"# };
+            with(format!(r#"{other}"{key}":{ms}"#))
+        };
+        edit(&at(MAX_ANIMATE_MS));
+        let (path, kind) = refusal(&at(MAX_ANIMATE_MS + 1));
+        assert_eq!(path, format!("edits[0].animate.{key}"));
+        assert!(matches!(kind, LoadErrorKind::Bound { .. }), "{key}: {kind:?}");
+    }
+    let (path, _) = refusal(&with(r#""ms":4294967295"#.to_string()));
+    assert_eq!(path, "edits[0].animate.ms");
 }
 
 #[test]

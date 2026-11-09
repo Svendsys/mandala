@@ -937,6 +937,7 @@ its path.
 | A node's `id` and `parent`, a link's `to` | `1` to `4294967294` (`MAX_NODE_IDENT`); a larger integer is this bound, not another error |
 | `channel` (node, section, ring) | `0` to `4294967295` (`MAX_CHANNEL`), the most a `usize` holds on wasm32, so every target accepts the same files |
 | `palettes`, theme variables, theme variants, `verbs`, `edits`, `presentations` | at most 65536 each, the most an index addresses |
+| An edit's `animate.ms` and `animate.delay_ms` | at most 60000 each (`MAX_ANIMATE_MS`, one minute; [`edits.md`](./edits.md#bounds)) |
 
 ## Errors
 

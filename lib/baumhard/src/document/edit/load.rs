@@ -15,7 +15,9 @@
 //!   `descendants` or `subtree`, whose nodes nest: the walker starts
 //!   only from the outermost of nested anchors;
 //! - no deeper than [`MAX_DEFINITION_DEPTH`] levels and no more than
-//!   [`MAX_DEFINITION_PARTS`] parts;
+//!   [`MAX_DEFINITION_PARTS`] parts, and animated for no longer than
+//!   [`MAX_ANIMATE_MS`](crate::document::bounds::MAX_ANIMATE_MS), with
+//!   no longer a delay;
 //! - every value means something on some map: it is made concrete
 //!   against no map, where every map-specific name answers, so a
 //!   face this build lacks or a radius past 100 is refused here, and a
@@ -26,7 +28,7 @@
 //! inside `edits` before the reader sees it, so the refusal a user meets
 //! is the definition bound, never the reader's.
 
-use crate::document::bounds::{MAX_DEFINITION_DEPTH, MAX_DEFINITION_PARTS};
+use crate::document::bounds::{check_animate_ms, MAX_DEFINITION_DEPTH, MAX_DEFINITION_PARTS};
 use crate::document::edit::resolve::{self, Fault, NameKind};
 use crate::document::edit::{Animate, EditBody, EditDef, Filter, Mutations, MutatorAst, Target};
 use crate::document::format::context::position_at;
@@ -237,6 +239,16 @@ pub(crate) fn definition(dto: EditDto) -> Result<EditDef, (Vec<Seg>, LoadErrorKi
         }
         EditBody::Handler(name)
     };
+    if let Some(animate) = &dto.animate {
+        for (key, ms) in [("ms", animate.ms), ("delay_ms", animate.delay_ms)] {
+            check_animate_ms(ms).map_err(|error| {
+                (
+                    vec![Seg::Key("animate"), Seg::Key(key)],
+                    LoadErrorKind::Bound { error },
+                )
+            })?;
+        }
+    }
     if parts > MAX_DEFINITION_PARTS {
         return Err((
             Vec::new(),

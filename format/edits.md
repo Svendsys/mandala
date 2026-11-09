@@ -237,8 +237,8 @@ left where it is.
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
-| `ms` | integer | yes | | How long the change takes, in milliseconds. |
-| `delay_ms` | integer | no | `0` | How long it holds at its start first. |
+| `ms` | integer | yes | | How long the change takes, in milliseconds: at most 60,000. |
+| `delay_ms` | integer | no | `0` | How long it holds at its start first, in milliseconds: at most 60,000. |
 | `easing` | `"linear"`, `"ease_in"`, `"ease_out"`, `"ease_in_out"` | no | `"linear"` | How progress follows time: `t`, `t²`, `1 - (1 - t)²`, `t²(3 - 2t)`. |
 | `snap` | `"start"`, `"end"` | no | `"end"` | When the fields that do not blend switch. |
 
@@ -262,7 +262,18 @@ level) and has at most **65,536 parts** (mutator nodes, mutations and
 filter tests). Each is refused at load past its bound, at the
 definition's path, naming the bound. Reaching any depth of the map is
 done by repeating down the tree (`repeat_while`), not by nesting, and
-the map's own depth has no bound. Inside `edits` a text that nests
+the map's own depth has no bound.
+
+An animation's `ms` and its `delay_ms` are each at most **60,000** (one
+minute), refused at load past it, at the key's path. While an edit
+animates the app keeps drawing frames and the change is not yet
+committed: a save then writes the map without it, a quit does not ask
+about it, and a settled wait does not settle. A minute is far longer
+than a person watches one change land (the bundled edits take 150 to
+400 ms), and short enough that a number from a shared map, or a typo,
+cannot hold the app there for hours.
+
+Inside `edits` a text that nests
 deeper than any definition within the bounds can is refused the same
 way before the JSON reader's own limit, so the refusal is always this
 one.
