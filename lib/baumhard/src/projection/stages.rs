@@ -807,7 +807,10 @@ impl Projector {
             return;
         };
         let changed = state.extent != Some(extent);
-        let reach_changed = state.ink != ink;
+        // Every ink, not only their box: a connector's end gap is measured
+        // to the nearest one, and a respaced ring moves its inks along a
+        // straight side and keeps its box.
+        let reach_changed = state.inks != inks;
         state.extent = Some(extent);
         state.ink = ink;
         state.inks = inks;

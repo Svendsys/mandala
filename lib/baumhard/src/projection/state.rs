@@ -225,12 +225,13 @@ pub(crate) struct RingState {
     /// clears (`flow::ring_offset` over this prefix). Each ring reads only
     /// the one just inside it, so a frame's rings place in O(rings).
     pub(crate) extent: Option<(f32, u32)>,
-    /// The box round its placed glyphs' inks — a glyph with no ink
+    /// The box of each of its placed glyphs' inks — a glyph with no ink
     /// measured, text, by its box — once placed and drawn: what its node's
     /// paths stop at (#296).
-    pub(crate) ink: Option<Rect>,
-    /// The box of each of its placed glyphs' inks, once placed and drawn.
     pub(crate) inks: Vec<Rect>,
+    /// The box round [`Self::inks`], kept beside them so a node's reach
+    /// reads one box a ring.
+    pub(crate) ink: Option<Rect>,
     /// A text ring's run as placed, and that run with its glyphs' inks
     /// measured: what its inks are read from, measured again only when
     /// placement returns another run (placement returns a text run with

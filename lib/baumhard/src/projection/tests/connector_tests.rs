@@ -270,6 +270,44 @@ fn test_projection_a_connector_stops_at_its_frames_outermost_ink() {
     p.check().unwrap();
 }
 
+/// A ring respaced moves its inks along its sides and keeps the box round
+/// them: the connector whose end gap is measured to the nearest of them is
+/// laid again all the same (the review of #326). Node 1 above node 2, so
+/// the connector leaves 1's bottom side, along which the respacing slides
+/// its dots.
+#[test]
+fn test_projection_a_respaced_ring_lays_its_connector_again() {
+    use crate::document::mutation::ops::{DocMutation, LayoutOp, RingOp};
+    use crate::document::tests::writer_support::{request, single};
+    let mut p = Projected::new(load_map(json!({"nodes": [
+        node(1, None, with(dotted(160.0, 60.0), json!({"sections": [text_section("one")]}))),
+        node(2, Some(1), with(dotted(160.0, 60.0), json!({
+            "position": [0.0, 240.0],
+            "sections": [text_section("two")],
+            "connector": {"size": 14.0}
+        }))),
+    ]})));
+    let one = ident(&p.doc, 1);
+    let ring = kid(&p.doc, kid(&p.doc, one, DocKind::Frame), DocKind::Ring);
+    let box_of = |p: &Projected| match &p.projector.units[&ring].body {
+        UnitBody::Ring(state) => (state.ink, state.inks.clone()),
+        _ => panic!("a ring"),
+    };
+    let before = box_of(&p);
+    let edit = single(
+        DocKind::Ring,
+        DocMutation::Ring(RingOp::Layout(LayoutOp::SetSpacing(Some(0.7)))),
+    );
+    p.apply(request(edit, vec![ring], "respace the ring")).unwrap();
+    let after = box_of(&p);
+    assert_eq!(
+        before.0, after.0,
+        "precondition: the box round the ring's inks stays"
+    );
+    assert_ne!(before.1, after.1, "precondition: the respacing moves the inks");
+    p.check().unwrap();
+}
+
 /// A connector dropped with its node reads nothing after: its ends read
 /// its nodes' reach, and a later change of the parent's ring — which
 /// moves the reach — must not reach the connector that is gone. Before
