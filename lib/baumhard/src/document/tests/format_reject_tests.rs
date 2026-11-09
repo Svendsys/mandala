@@ -1504,7 +1504,10 @@ fn test_a_straight_path_has_no_control_points() {
     let json = |fields: &str| map_of_two(&format!(r#","links":[{{"to":2,"kind":"line"{fields}}}]"#), "");
     let doc = load(&json(r#","straight":true"#)).expect("a straight path loads");
     let saved = crate::document::format::save(&doc).expect("it saves");
-    assert!(saved.contains(r#""straight": true"#), "straight is saved: {saved}");
+    assert!(
+        saved.contains(r#""straight": true"#),
+        "straight is saved: {saved}"
+    );
     assert!(load(&saved).is_ok(), "and loads again");
     assert!(load(&json(r#","straight":false,"control_points":[[1,1]]"#)).is_ok());
     rejects_bound(

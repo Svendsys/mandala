@@ -367,7 +367,11 @@ fn test_projection_a_straight_connector_is_one_segment_between_midpoints() {
     assert!(glyphs.len() > 3, "precondition: glyphs laid: {}", glyphs.len());
     let off = |q: Vec2| ((q - a).perp_dot(b - a) / (b - a).length()).abs();
     for g in &glyphs {
-        assert!(off(g.center()) < 1e-2, "a glyph {} off the segment", off(g.center()));
+        assert!(
+            off(g.center()) < 1e-2,
+            "a glyph {} off the segment",
+            off(g.center())
+        );
     }
     p.check().unwrap();
 }
