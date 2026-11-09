@@ -177,7 +177,7 @@ pub fn pattern_gap(run: &ShapedRun, spacing: f32) -> Option<(f32, f32)> {
 ///
 /// Cost: O(clusters) to read the pattern; O(inks) path lookups to count
 /// the inks, and as many again for each of a few rounds of the slack for
-/// each of the two counts nearest, each ink [`REFINE`] gap measures; and
+/// each of the two counts nearest, each ink a few gap measures where the path bends; and
 /// O(`ends`' boxes) per end measure. Allocates the placement and one
 /// scratch vector of positions.
 pub fn place_pitched(
