@@ -54,6 +54,20 @@ pub const MAP_EXTENSION: &str = ".mandala.json";
 /// shows (D28). Short, because it is a status line.
 pub const TRANSACTION_OPEN_STATUS: &str = "busy: finish or cancel the edit in progress first";
 
+/// What the one open transaction is for: the interaction that began it,
+/// and the only one that may stage into it, commit it or cancel it — so
+/// `frame commit` never ends a drag or an editor session that happens to
+/// be open. Each interaction that opens a transaction (V1-C7's drags,
+/// V1-C8's editors) names itself here.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Interaction {
+    /// A frame preview (V1-C5): its stage is the previewed frame fields.
+    FramePreview,
+    /// An interaction the tests open, which nothing else stages into.
+    #[cfg(test)]
+    Test,
+}
+
 /// Whether `path` names a map: it ends in [`MAP_EXTENSION`]. A path that
 /// does not is refused by every surface that opens or saves one, with
 /// [`extension_refusal`]'s words.
@@ -80,9 +94,11 @@ pub struct MindMapDocument {
     pub file_path: Option<String>,
     /// What is selected.
     pub selection: Selection,
-    /// The one open transaction (D28), or `None`. Opened by
-    /// [`Self::begin`]; V1-C7 and V1-C8 stage into it and end it.
-    transaction: Option<Transaction>,
+    /// The one open transaction (D28) and what it is for, or `None`.
+    /// Opened by [`Self::begin`], staged into by [`Self::stage`] and
+    /// ended by [`Self::commit`] or [`Self::cancel`], each for the
+    /// interaction that began it.
+    transaction: Option<(Transaction, Interaction)>,
     /// The status line the last refusal or decline left, until the next
     /// change the writer accepts.
     status: Option<&'static str>,
@@ -255,27 +271,76 @@ impl MindMapDocument {
         }
     }
 
-    /// Open a transaction of `kind`, declared by `source` (§9), and hold
-    /// its handle: the one an editor, a drag or a preview stages into.
-    /// A refusal is reported as [`Self::apply`]'s is, and `false`
-    /// returned.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "interactive transactions are opened by V1-C7 (#248) and V1-C8 (#249)"
-        )
-    )]
-    pub fn begin(&mut self, source: ChangeSource, kind: TransactionKind) -> bool {
+    /// Open a transaction of `kind` for `interaction`, declared by
+    /// `source` (§9), and hold its handle: the one an editor, a drag or a
+    /// preview stages into. A refusal is reported as [`Self::apply`]'s
+    /// is, and `false` returned.
+    pub fn begin(&mut self, source: ChangeSource, kind: TransactionKind, interaction: Interaction) -> bool {
         match self.doc.begin(source, kind) {
             Ok(transaction) => {
-                self.transaction = Some(transaction);
+                self.transaction = Some((transaction, interaction));
                 self.status = None;
                 true
             }
             Err(error) => {
                 self.report_refusal("begin", &error);
                 false
+            }
+        }
+    }
+
+    /// What the open transaction is for, or `None` when none is open.
+    /// O(1).
+    pub fn open_interaction(&self) -> Option<Interaction> {
+        self.transaction.as_ref().map(|(_, interaction)| *interaction)
+    }
+
+    /// Stage `req` in the transaction `interaction` began (§9): it
+    /// replaces the previous stage. Refused with
+    /// [`ApplyError::TransactionClosed`] when no transaction of
+    /// `interaction` is open; a refusal is reported as [`Self::apply`]'s
+    /// is.
+    pub fn stage(&mut self, interaction: Interaction, req: EditRequest) -> Result<(), ApplyError> {
+        let label = req.label.clone();
+        let result = match &self.transaction {
+            Some((tx, open)) if *open == interaction => self.doc.stage(tx, req),
+            _ => Err(ApplyError::TransactionClosed),
+        };
+        match &result {
+            Ok(()) => self.status = None,
+            Err(error) => self.report_refusal(&label, error),
+        }
+        result
+    }
+
+    /// Commit the transaction `interaction` began: its stage becomes one
+    /// history entry. Returns the new revision, or `None` when it
+    /// changed nothing or no transaction of `interaction` is open.
+    pub fn commit(&mut self, interaction: Interaction) -> Option<Revision> {
+        let tx = self.take_transaction(interaction)?;
+        self.doc.commit(tx)
+    }
+
+    /// Cancel the transaction `interaction` began: the document is as it
+    /// was before it. Returns whether one was open.
+    pub fn cancel(&mut self, interaction: Interaction) -> bool {
+        match self.take_transaction(interaction) {
+            Some(tx) => {
+                self.doc.cancel(tx);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The handle of the transaction `interaction` began, taken out of
+    /// the slot; `None`, and the slot left alone, for any other.
+    fn take_transaction(&mut self, interaction: Interaction) -> Option<Transaction> {
+        match self.transaction.take() {
+            Some((tx, open)) if open == interaction => Some(tx),
+            other => {
+                self.transaction = other;
+                None
             }
         }
     }
@@ -373,7 +438,11 @@ impl MindMapDocument {
     /// named: a change that finished an animated one, an undo or a redo
     /// that settled either kind.
     fn forget_closed_transaction(&mut self) {
-        if self.transaction.as_ref().is_some_and(|tx| !self.doc.is_open(tx)) {
+        if self
+            .transaction
+            .as_ref()
+            .is_some_and(|(tx, _)| !self.doc.is_open(tx))
+        {
             self.transaction = None;
         }
     }

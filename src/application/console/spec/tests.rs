@@ -458,11 +458,13 @@ fn test_the_extra_positional_sentence_is_built_from_what_the_level_has() {
     );
 
     // Hold the doc comment's division of labor against the real
-    // registry rather than trusting it. Two arms are seconded by a
-    // pinned corpus row *because* a level reaches them; the other two
-    // are pinned here alone *because* none does. A level that grows a
-    // `preview` subverb flips that, and this is what says so — at
-    // which point the arm wants a corpus row and this comment wants a
+    // registry rather than trusting it. Three arms are seconded by a
+    // pinned corpus row *because* a level reaches them — `frame`'s
+    // `preview` beside its kv form is the staged one, `frame on extra`
+    // in `EXEC_CORPUS`; the preview-only arm is pinned here alone
+    // *because* none does. A level that grows a `preview` subverb and
+    // no kv form flips that, and this is what says so — at which
+    // point the arm wants a corpus row and this comment wants a
     // rewrite.
     let mut reached = [false; 4];
     for (_, grammar) in all_levels() {
@@ -474,13 +476,13 @@ fn test_the_extra_positional_sentence_is_built_from_what_the_level_has() {
         reached[usize::from(composed) * 2 + usize::from(staged)] = true;
     }
     assert!(
-        reached[2] && reached[0],
-        "the two arms `EXEC_CORPUS` seconds must each be reachable: {reached:?}"
+        reached[2] && reached[0] && reached[3],
+        "the three arms `EXEC_CORPUS` seconds must each be reachable: {reached:?}"
     );
     assert!(
-        !reached[1] && !reached[3],
-        "a level now declares `preview` beside a bare form, so a staged arm is reachable \
-         and owes a pinned corpus row of its own: {reached:?}"
+        !reached[1],
+        "a level now declares `preview` with no kv form, so the preview-only arm is \
+         reachable and owes a pinned corpus row of its own: {reached:?}"
     );
 }
 
@@ -906,9 +908,9 @@ fn test_every_hinted_alternation_names_values_its_vocabulary_accepts() {
         }
     }
     // A hint scan that found no alternations would pass by reading
-    // nothing. The live registry declares two since V1-C3 deleted the
-    // `border` family that declared most of them; any at all proves
-    // the parse reads hints.
+    // nothing. Any at all proves the parse reads hints; the field
+    // verbs (V1-C5) declare several, `node shape`'s and `frame
+    // direction`'s among them.
     assert!(
         checked > 0,
         "the hint scan found only {checked} alternations — the parse, not the registry, is what broke"
@@ -1095,12 +1097,25 @@ fn test_a_repeated_key_resolves_to_its_last_occurrence() {
 /// with all of them, because one table answers for every level it
 /// serves.
 fn dispatchers() -> Vec<(&'static str, Vec<&'static Grammar>, Vec<&'static str>)> {
-    use crate::application::console::commands::{clock, fps, mode, record};
+    use crate::application::console::commands::{
+        clock, color, font, fps, frame, mode, node, record, section, theme, zoom,
+    };
     vec![
         ("fps", vec![&fps::GRAMMAR], fps::routed_names()),
         ("mode", vec![&mode::GRAMMAR], mode::routed_names()),
         ("clock", vec![&clock::GRAMMAR], clock::routed_names()),
         ("record", vec![&record::GRAMMAR], record::routed_names()),
+        ("node", vec![&node::GRAMMAR], node::routed_names()),
+        (
+            "section",
+            vec![&section::grammar::SECTION],
+            section::routed_names(),
+        ),
+        ("frame", vec![&frame::GRAMMAR], frame::routed_names()),
+        ("color", vec![&color::GRAMMAR], color::routed_names()),
+        ("font", vec![&font::GRAMMAR], font::routed_names()),
+        ("zoom", vec![&zoom::GRAMMAR], zoom::routed_names()),
+        ("theme", vec![&theme::GRAMMAR], theme::routed_names()),
     ]
 }
 

@@ -75,7 +75,7 @@ pub struct Descent<'a> {
         not(target_arch = "wasm32"),
         expect(
             dead_code,
-            reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
+            reason = "no live verb reaches it: the field verbs V1-C5 (#246) rebuilt read their level directly; V1-C6 (#247) rebuilds the path verbs"
         )
     )]
     path: [Option<&'static Subverb>; MAX_DEPTH],
@@ -83,7 +83,7 @@ pub struct Descent<'a> {
         not(target_arch = "wasm32"),
         expect(
             dead_code,
-            reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
+            reason = "no live verb reaches it: the field verbs V1-C5 (#246) rebuilt read their level directly; V1-C6 (#247) rebuilds the path verbs"
         )
     )]
     depth: usize,
@@ -103,7 +103,7 @@ impl<'a> Descent<'a> {
     /// branch am I in" without ever seeing a token index.
     #[expect(
         dead_code,
-        reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
+        reason = "no live verb reaches it: the field verbs V1-C5 (#246) rebuilt read their level directly; V1-C6 (#247) rebuilds the path verbs"
     )]
     pub fn parent(&self, i: usize) -> Option<&'static Subverb> {
         if i >= self.depth {
@@ -116,7 +116,7 @@ impl<'a> Descent<'a> {
     /// handler writes.
     #[expect(
         dead_code,
-        reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
+        reason = "no live verb reaches it: the field verbs V1-C5 (#246) rebuilt read their level directly; V1-C6 (#247) rebuilds the path verbs"
     )]
     pub fn parent_name(&self, i: usize) -> Option<&'static str> {
         self.parent(i).map(|s| s.name)
@@ -171,10 +171,6 @@ impl<'a> Descent<'a> {
     /// the same sentence. Reading it off the descent is also what
     /// keeps the raw token slice out of a verb's hands: the only
     /// thing a handler passes is the `args` it already has.
-    #[expect(
-        dead_code,
-        reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
-    )]
     pub fn quoting_hint(&self, args: &Args) -> String {
         unquoted_multiword_hint(
             self.level.label,
@@ -337,10 +333,6 @@ pub fn subverb_slot_is_positional(tokens: &[String], verb_pos: usize) -> bool {
 /// message exists for — suggested ``border palette="Sans"``, naming
 /// a key the user had not typed and quoting the tail of the value
 /// rather than the value.
-#[expect(
-    dead_code,
-    reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
-)]
 fn unquoted_multiword_hint(label: &str, tokens: &[String], verb_pos: usize, verb: &str) -> String {
     let suggestion = split_kv_suggestion(tokens, verb_pos).unwrap_or_else(|| format!("<key>=\"{}\"", verb));
     format!(
@@ -370,10 +362,6 @@ fn unquoted_multiword_hint(label: &str, tokens: &[String], verb_pos: usize, verb
 ///
 /// `None` only if no kv precedes the positional — impossible at
 /// every call site, since the hint fires precisely when one does.
-#[expect(
-    dead_code,
-    reason = "no live verb reaches it since V1-C3 deleted the editing verbs; the verbs V1-C5 (#246) and V1-C6 (#247) rebuild are its users"
-)]
 fn split_kv_suggestion(tokens: &[String], verb_pos: usize) -> Option<String> {
     let end = tokens
         .iter()

@@ -520,8 +520,8 @@ mod tests {
     }
 
     /// **A copied section pastes the theme variable and the verb it
-    /// named, though names were added before them since** (what V1-C5's
-    /// theme editing will do). The fragment is copied where `accent` is
+    /// named, though names were added before them since** (what a map
+    /// edited elsewhere and opened again can hold). The fragment is copied where `accent` is
     /// variable 0 and `glow` verb 0, and pasted where `aaa` and `alpha`
     /// come first: its span is `var(accent)` and links to `glow` there,
     /// by name — an index kept as copied would name `aaa` and `alpha`.
@@ -614,7 +614,11 @@ mod tests {
         let mut doc = structure();
         let before = bytes(&doc);
         doc.selection.select_only(node(&doc, 6));
-        assert!(doc.begin(ChangeSource::Input, TransactionKind::Interactive));
+        assert!(doc.begin(
+            ChangeSource::Input,
+            TransactionKind::Interactive,
+            crate::application::document::Interaction::Test
+        ));
         assert_eq!(
             delete_selection(&mut doc),
             Err(TRANSACTION_OPEN_STATUS),

@@ -23,13 +23,15 @@ pub fn always(_: &ConsoleContext) -> bool {
     true
 }
 
-/// Exactly one node is selected: the `section` verb's target, whose
-/// subverbs each resolve to one section of one node. Paths selected
-/// beside it do not count.
-pub fn node_or_section_selected_single_node(ctx: &ConsoleContext) -> bool {
+/// A node or a section is selected: what the `section` and `range`
+/// verbs reach (`fields::section::targets`). Paths selected beside them
+/// do not count.
+pub fn node_or_section_selected(ctx: &ConsoleContext) -> bool {
     let doc = ctx.document.doc();
-    let mut nodes = ctx.document.selection.nodes(doc);
-    nodes.next().is_some() && nodes.next().is_none()
+    ctx.document
+        .selection
+        .iter()
+        .any(|id| matches!(kind_of(doc, id), Some(DocKind::Node | DocKind::Section)))
 }
 
 /// A path — a connector or a link — is selected: the target of the
@@ -68,24 +70,33 @@ mod tests {
         doc
     }
 
-    /// `section` wants exactly one node: none and two are refused, one
-    /// is admitted.
+    /// `section` wants a node or a section: nothing and a connector
+    /// alone are refused; a node, two nodes and a section are admitted.
     #[test]
-    fn test_the_section_predicate_admits_exactly_one_node() {
+    fn test_the_section_predicate_admits_nodes_and_sections() {
         let mut doc = two_nodes();
         let nodes: Vec<_> = every_node(doc.doc()).collect();
         assert_eq!(nodes.len(), 2);
-        assert!(!node_or_section_selected_single_node(
-            &ConsoleContext::from_document(&doc)
-        ));
+        let admits = |doc: &MindMapDocument| node_or_section_selected(&ConsoleContext::from_document(doc));
+        assert!(!admits(&doc), "nothing selected");
         doc.selection.select_only(nodes[0]);
-        assert!(node_or_section_selected_single_node(
-            &ConsoleContext::from_document(&doc)
-        ));
+        assert!(admits(&doc));
         doc.selection.set(nodes.iter().copied());
-        assert!(!node_or_section_selected_single_node(
-            &ConsoleContext::from_document(&doc)
-        ));
+        assert!(admits(&doc), "two nodes");
+        let section = doc
+            .doc()
+            .children(nodes[0])
+            .find(|&c| kind_of(doc.doc(), c) == Some(DocKind::Section))
+            .expect("a node has a section");
+        doc.selection.select_only(section);
+        assert!(admits(&doc), "a section");
+        let connector = doc
+            .doc()
+            .children(nodes[1])
+            .find(|&c| kind_of(doc.doc(), c) == Some(DocKind::Connector))
+            .expect("a child has a connector");
+        doc.selection.select_only(connector);
+        assert!(!admits(&doc), "a connector alone");
     }
 
     /// The path verbs want a path: a node alone is not one, the child's

@@ -42,7 +42,11 @@ fn test_an_open_transaction_refuses_an_apply_and_says_so_on_the_status_line() {
     assert_eq!(doc.status(), None, "an accepted change leaves no status");
 
     assert!(
-        doc.begin(ChangeSource::Input, TransactionKind::Interactive),
+        doc.begin(
+            ChangeSource::Input,
+            TransactionKind::Interactive,
+            crate::application::document::Interaction::Test
+        ),
         "begin opens one"
     );
     assert!(doc.transaction.is_some(), "and the helper holds its handle");
@@ -57,7 +61,11 @@ fn test_an_open_transaction_refuses_an_apply_and_says_so_on_the_status_line() {
 
     doc.status = None;
     assert!(
-        !doc.begin(ChangeSource::Input, TransactionKind::Interactive),
+        !doc.begin(
+            ChangeSource::Input,
+            TransactionKind::Interactive,
+            crate::application::document::Interaction::Test
+        ),
         "a second begin is refused while one is open"
     );
     assert_eq!(
@@ -79,7 +87,11 @@ fn test_an_open_transaction_refuses_an_apply_and_says_so_on_the_status_line() {
 #[test]
 fn test_an_undo_closes_the_transaction_and_the_helper_forgets_its_handle() {
     let mut doc = MindMapDocument::new_blank(None, 50);
-    assert!(doc.begin(ChangeSource::Input, TransactionKind::Interactive));
+    assert!(doc.begin(
+        ChangeSource::Input,
+        TransactionKind::Interactive,
+        crate::application::document::Interaction::Test
+    ));
     assert!(doc.transaction.is_some(), "control: the handle is held");
     let req = create_root(&doc);
     assert!(
@@ -98,7 +110,11 @@ fn test_an_undo_closes_the_transaction_and_the_helper_forgets_its_handle() {
         "nothing holds the document any more"
     );
     assert!(
-        doc.begin(ChangeSource::Input, TransactionKind::Interactive),
+        doc.begin(
+            ChangeSource::Input,
+            TransactionKind::Interactive,
+            crate::application::document::Interaction::Test
+        ),
         "and a new one opens"
     );
 }

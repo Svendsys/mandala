@@ -669,7 +669,11 @@ fn test_a_refused_change_is_drawn_on_the_status_line() {
     );
 
     let doc = init.document.as_mut().expect("document");
-    assert!(doc.begin(ChangeSource::Input, TransactionKind::Interactive));
+    assert!(doc.begin(
+        ChangeSource::Input,
+        TransactionKind::Interactive,
+        crate::application::document::Interaction::Test
+    ));
     let req = EditRequest {
         steps: compose::create_root(doc.doc(), glam::Vec2::new(10.0, 10.0)).expect("a root composes"),
         label: "test: create root".to_string(),

@@ -2675,8 +2675,8 @@ Four things the shape is load-bearing for:
   whichever key was typed first pick the form. That exclusion is
   the verb's own, a handwritten guard with a message naming both
   shapes — one of the two bespoke semantics #27's fix plan names as
-  staying behind the table — which returns with the verb's body
-  (V1-C5, #246).
+  staying behind the table — which is `section move`'s body's
+  (`console/commands/section`).
 - **No verb sees a raw token index.** `spec::descent` is the
   only reader of token order. A handler asks
   `descent.subverb()`, `descent.parent_name(0)` and
@@ -2828,18 +2828,18 @@ costs the layer. `user_config::salvage` holds the primitives, and
 **Parametric Actions.** A subset of variants carries payload
 (`String` paths, `(field, value)` tuples, etc.) — these wrap
 parameterized console verbs so a user can bind e.g. `Ctrl+B` →
-`SetFrameField { field: "preset", value: "rounded" }` directly
+`SetFrameField { field: "fit", value: "repeat" }` directly
 in `keybinds.json` without authoring a macro. Bindings use a
 sibling `ParametricBinding` shape:
 
 ```jsonc
 {
-  "set_border_field": [
-    { "combo": "Ctrl+B", "args": ["preset", "rounded"] }
+  "set_frame_field": [
+    { "combo": "Ctrl+B", "args": ["fit", "repeat"] }
   ],
   "set_color": [
-    { "combo": "Ctrl+1", "args": ["bg", "#fafafa"] },
-    { "combo": "Ctrl+2", "args": ["text", "accent"] }
+    { "combo": "Ctrl+1", "args": ["text", "#fafafa"] },
+    { "combo": "Ctrl+2", "args": ["ring", "var(accent)"] }
   ],
   "set_font": [
     { "combo": "F8", "args": ["size", "14"] }
@@ -2853,8 +2853,8 @@ sibling `ParametricBinding` shape:
 }
 ```
 
-Color / font / zoom carry the axis as the first arg (`bg|text|border`,
-`size|min|max`, `min|max` respectively) so a single binding-list
+Color / font / zoom carry the axis as the first arg (`text|border|ring`,
+`size|weight|italic`, `min|max` respectively) so a single binding-list
 covers the whole field group. The typed `ColorAxis` / `FontSlot` /
 `ZoomBound` enums on the Action variant make the dispatcher's
 match exhaustive without a fan-out guard, and they reach the

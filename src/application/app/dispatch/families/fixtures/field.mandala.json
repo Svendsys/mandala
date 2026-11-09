@@ -1,0 +1,54 @@
+{
+  "format": 1,
+  "name": "Fields",
+  "theme": {
+    "active": "dark",
+    "variants": {
+      "dark": {
+        "accent": "#30b082",
+        "fg": "#eeeeee"
+      },
+      "light": {
+        "accent": "#b84a62",
+        "fg": "#1b1b1b"
+      }
+    }
+  },
+  "palettes": {
+    "warm": [
+      {
+        "frame": "#a20000",
+        "text": "#a30000"
+      }
+    ]
+  },
+  "defaults": {
+    "section": {
+      "size": 14.0
+    }
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "color": "var(fg)",
+      "sections": [{"spans": [{"text": "Title"}]}, {"channel": 1, "offset": [0.0, 40.0], "spans": [{"text": "body"}]}],
+      "frame": {"fit": "repeat", "rings": [{"spans": [{"text": "─"}]}]}
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "position": [300.0, 0.0],
+      "min_size": [200.0, 60.0],
+      "sections": [{"min_size": [180.0, 40.0], "spans": [{"text": "a👨‍👩‍👧é̂b"}]}],
+      "connector": {"color": "var(accent)"}
+    },
+    {
+      "id": 3,
+      "position": [0.0, 300.0],
+      "zoom": {"min": 0.25},
+      "sections": [{"spans": [{"text": "plain"}]}],
+      "links": [{"to": 2, "kind": "line"}]
+    }
+  ]
+}

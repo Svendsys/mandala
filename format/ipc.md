@@ -1108,7 +1108,11 @@ always `null` with `"handled"`, on both targets. The structure Actions
 give theirs: `DeleteSelection` of a connector alone, `ReparentToTarget`
 onto a source or a node below one, and any of them that would edit
 while an interactive edit is open (D28); each is the line the status
-line shows. `FastResizeStart` is one too: the resize
+line shows. The field Actions (`SetColor`, `SetFont`, the frame,
+section and zoom Actions) give the same D28 reason while an
+interactive edit — an open frame preview among them — holds the
+document; one whose value does not read, or that reaches nothing
+selected, is `unhandled` with `null`, and the app log says why. `FastResizeStart` is one too: the resize
 it starts is finalized by the release of the mouse button holding the
 gesture, and a synthetic pointer holds none, so with `x`/`y` it is
 refused with a reason saying nothing holds the gesture rather than
