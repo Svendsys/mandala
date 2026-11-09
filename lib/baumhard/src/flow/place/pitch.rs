@@ -153,9 +153,12 @@ pub fn pattern_gap(run: &ShapedRun, spacing: f32) -> Option<(f32, f32)> {
 /// Place `run` along the open `path` as whole glyphs, evenly gapped from
 /// end to end (see the module docs): the pattern's inked clusters
 /// repeated in order, as many as bring every gap nearest the pattern's
-/// own, both end gaps measured to `ends`. `spacing` is added to every
-/// step, as a `repeat` walk adds it; one that is not finite or not
-/// positive adds nothing.
+/// own, both end gaps measured to `ends`. The count is taken again for
+/// the room the measured ends leave, and the ends measured again for a
+/// count that changed; a count that would change a second time is not
+/// taken, so the glyphs are always laid at a count their ends were
+/// measured for. `spacing` is added to every step, as a `repeat` walk
+/// adds it; one that is not finite or not positive adds nothing.
 ///
 /// A run with no ink — text, or only spaces — has no pitch, and is
 /// placed empty: [`place_on_open`](crate::flow::place_on_open) lays it.
@@ -286,7 +289,7 @@ pub fn place_pitched(
     let mut centers: Vec<f32> = Vec::new();
     // The ends measured, a few rounds; then the count again for the room
     // they left, and the ends again if it changed — once.
-    for _ in 0..2 {
+    for pass in 0..2 {
         if n == 0 {
             return PlacedRun::default();
         }
@@ -357,7 +360,7 @@ pub fn place_pitched(
             to -= over[1].max(0.0);
         }
         let recount = count_in(to - from);
-        if recount.0 == n {
+        if recount.0 == n || pass == 1 {
             break;
         }
         (n, capped) = recount;
