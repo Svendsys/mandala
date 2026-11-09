@@ -1234,19 +1234,115 @@ fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
     );
 }
 
+/// Every non-ASCII character of a string or char literal in the code
+/// that ships under `src/application/{console,renderer,view}/` — comments
+/// and test modules stripped (`baumhard::util::rust_source`), files of
+/// tests skipped — with the file it is in, `\u{…}` escapes decoded, and
+/// whitespace and invisible controls left out.
+fn chrome_literal_chars() -> Vec<(char, String)> {
+    use baumhard::util::rust_source::{blank_string_literals, production_code, string_literals};
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+            let path = entry.expect("a directory entry").path();
+            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            if path.is_dir() {
+                if name != "tests" {
+                    walk(&path, out);
+                }
+            } else if name.ends_with(".rs") && !name.starts_with("tests") {
+                out.push(path);
+            }
+        }
+    }
+    let decode = |text: &str| -> String {
+        let mut out = String::new();
+        let mut rest = text;
+        while let Some(at) = rest.find("\\u{") {
+            out.push_str(&rest[..at]);
+            let tail = &rest[at + 3..];
+            let close = tail.find('}').unwrap_or(tail.len());
+            match u32::from_str_radix(&tail[..close], 16)
+                .ok()
+                .and_then(char::from_u32)
+            {
+                Some(c) => out.push(c),
+                None => out.push_str(&rest[at..at + 3 + close]),
+            }
+            rest = tail.get(close + 1..).unwrap_or("");
+        }
+        out.push_str(rest);
+        out
+    };
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    for dir in ["console", "renderer", "view"] {
+        walk(&root.join("src/application").join(dir), &mut files);
+    }
+    files.sort();
+    let mut found: Vec<(char, String)> = Vec::new();
+    for path in files {
+        let relative = path
+            .strip_prefix(root)
+            .expect("under the repository")
+            .to_string_lossy()
+            .to_string();
+        let code = production_code(&relative);
+        let mut literals: Vec<String> = string_literals(&code).into_iter().map(decode).collect();
+        let blanked = blank_string_literals(&code);
+        let mut at = 0;
+        while let Some(found_at) = blanked[at..].find('\'') {
+            let start = at + found_at + 1;
+            let rest = &blanked[start..];
+            let end = if rest.starts_with("\\u{") {
+                rest.find("}'").map(|close| close + 1)
+            } else {
+                rest.chars()
+                    .next()
+                    .map(char::len_utf8)
+                    .filter(|len| rest[*len..].starts_with('\''))
+            };
+            match end {
+                Some(end) => {
+                    literals.push(decode(&rest[..end]));
+                    at = start + end + 1;
+                }
+                None => at = start,
+            }
+        }
+        for literal in literals {
+            for c in literal
+                .chars()
+                .filter(|c| !c.is_ascii() && !c.is_whitespace() && !c.is_control())
+            {
+                if !found.iter().any(|(seen, _)| *seen == c) {
+                    found.push((c, relative.clone()));
+                }
+            }
+        }
+    }
+    found
+}
+
 /// **Every glyph of the app's own chrome is drawn by the default face or
-/// `Mandala Ornaments`** (#228): the console's prompt, cursor, gutter,
+/// `Mandala Ornaments`** (#228): every non-ASCII character a literal in
+/// the shipping code of the console, the renderer and the view spells
+/// ([`chrome_literal_chars`]) — the console's prompt, cursor, gutter,
 /// completion marker and frame, the rubber band's corners and dashes,
-/// and the `body` presets. Each is drawn in the default family, so its
-/// look must not depend on the machine: a glyph neither face holds is
-/// drawn in whatever face the host has, as a `.notdef` box where it has
-/// none and in the browser, or in a decorative face the app never chose
-/// (`▌` and `═` in `African`). Each is shaped as the chrome
-/// shapes it, with no family, and every glyph must be the default face's
-/// or the ornament face's, and not a `.notdef`.
+/// the `body` presets, and whatever a new chrome surface adds. Each is
+/// drawn in the default family, so its look must not depend on the
+/// machine: a glyph neither face holds is drawn in whatever face the
+/// host has, as a `.notdef` box where it has none and in the browser, or
+/// in a decorative face the app never chose (`▌` and `═` in `African`).
+/// Each is shaped as the chrome shapes it, with no family, and every
+/// glyph must be the default face's or the ornament face's, and not a
+/// `.notdef`. A character a surface draws in a pinned face is listed
+/// with its face instead, and held to that face.
 ///
-/// Control: with the pre-chrome `Mandala Ornaments` (#228's first
-/// subset, which held the frame alone), red on `❯ ▌ ▏ ▸ ┄ ┆ ═ ∼ ⋯`.
+/// The chrome's named glyphs are the scan's precondition: it must find
+/// each of them. Controls: with the pre-chrome `Mandala Ornaments`
+/// (#228's first subset, which held the frame alone), red on
+/// `❯ ▌ ▏ ▸ ┄ ┆ ═ ∼ ⋯`; with a `"\u{272A}"` constant planted in
+/// `console/visuals.rs`, red on it, drawn in a host face.
 #[test]
 fn test_every_chrome_glyph_is_drawn_by_the_default_or_an_ornament_face() {
     use crate::application::console::commands::body::PRESETS;
@@ -1256,66 +1352,96 @@ fn test_every_chrome_glyph_is_drawn_by_the_default_or_an_ornament_face() {
     use crate::application::view::band::{BAND_CORNERS, BAND_HORIZONTAL, BAND_VERTICAL};
     use baumhard::font::fallback::DEFAULT_FACE;
     use baumhard::font::fonts::COMPILED_FONT_ID_MAP;
-    use baumhard::font::{buffer, SHAPING_ADVANCED};
+    use baumhard::font::{buffer, Family, SHAPING_ADVANCED};
 
+    // Drawn pinned, so held to its pin: the backdrop's full block, in
+    // Public Pixel (`backdrop.rs`).
+    let pinned: [(char, AppFont, &str); 1] = [('\u{2588}', AppFont::PublicPixel, "Public Pixel")];
+    let scanned = chrome_literal_chars();
     let (top, bottom, side, _) = build_console_border_strings(3, 1);
-    let mut chrome: Vec<(String, String)> = vec![
-        ("the prompt".into(), PROMPT_GLYPH.into()),
-        ("the cursor".into(), CURSOR_GLYPH.into()),
-        ("the gutter".into(), GUTTER_GLYPH.into()),
-        ("the completion marker".into(), SELECTED_COMPLETION_MARKER.into()),
-        ("the console frame's top".into(), top),
-        ("the console frame's bottom".into(), bottom),
-        ("the console frame's side".into(), side),
-        ("the band's corners".into(), BAND_CORNERS.iter().collect()),
-        ("the band's edge".into(), BAND_HORIZONTAL.into()),
-        ("the band's side".into(), BAND_VERTICAL.into()),
-    ];
-    for (name, glyph) in PRESETS {
-        chrome.push((format!("the `body {name}` preset"), (*glyph).into()));
+    let named: String = [
+        PROMPT_GLYPH,
+        CURSOR_GLYPH,
+        GUTTER_GLYPH,
+        SELECTED_COMPLETION_MARKER,
+        BAND_VERTICAL,
+    ]
+    .concat()
+        + &top
+        + &bottom
+        + &side
+        + &BAND_CORNERS.iter().collect::<String>()
+        + &BAND_HORIZONTAL.to_string()
+        + &PRESETS.iter().map(|(_, glyph)| *glyph).collect::<String>();
+    for c in named.chars().filter(|c| !c.is_ascii() && !c.is_whitespace()) {
+        assert!(
+            scanned.iter().any(|(found, _)| *found == c),
+            "precondition: the scan finds the chrome's {c:?}"
+        );
     }
-    let allowed: Vec<baumhard::font::FontId> = [DEFAULT_FACE.0, AppFont::MandalaOrnaments]
-        .iter()
-        .flat_map(|font| COMPILED_FONT_ID_MAP[font].iter().copied())
+    for (c, _, _) in pinned {
+        assert!(
+            scanned.iter().any(|(found, _)| *found == c),
+            "precondition: the scan finds the pinned {c:?}, or its exception is stale"
+        );
+    }
+    let faces = |font: AppFont| -> Vec<baumhard::font::FontId> { COMPILED_FONT_ID_MAP[&font].to_vec() };
+    let unpinned_allowed: Vec<baumhard::font::FontId> = faces(DEFAULT_FACE.0)
+        .into_iter()
+        .chain(faces(AppFont::MandalaOrnaments))
         .collect();
     baumhard::font::fonts::init();
     // Read under the guard and assert once it is released, so a failure
     // does not poison the lock for the tests beside it.
-    let drawn: Vec<(String, char, baumhard::font::FontId, u16, Option<String>)> = {
+    let drawn: Vec<(
+        char,
+        String,
+        Vec<baumhard::font::FontId>,
+        baumhard::font::FontId,
+        u16,
+        Option<String>,
+    )> = {
         let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (chrome glyphs)");
         let mut drawn = Vec::new();
-        for (what, text) in &chrome {
-            for c in text.chars().filter(|c| !c.is_whitespace()) {
-                let mut buf = buffer::create_square(&mut fs, 16.0);
-                buf.set_text(&c.to_string(), &Attrs::new(), SHAPING_ADVANCED, None);
-                buf.shape_until_scroll(&mut fs, false);
-                for run in buf.layout_runs() {
-                    for glyph in run.glyphs.iter() {
-                        let name = fs.db().face(glyph.font_id).map(|f| f.post_script_name.clone());
-                        drawn.push((what.clone(), c, glyph.font_id, glyph.glyph_id, name));
-                    }
+        for (c, file) in &scanned {
+            let pin = pinned.iter().find(|(p, _, _)| p == c);
+            let (attrs, allowed) = match pin {
+                Some((_, font, family)) => (Attrs::new().family(Family::Name(family)), faces(*font)),
+                None => (Attrs::new(), unpinned_allowed.clone()),
+            };
+            let mut buf = buffer::create_square(&mut fs, 16.0);
+            buf.set_text(&c.to_string(), &attrs, SHAPING_ADVANCED, None);
+            buf.shape_until_scroll(&mut fs, false);
+            for run in buf.layout_runs() {
+                for glyph in run.glyphs.iter() {
+                    let name = fs.db().face(glyph.font_id).map(|f| f.post_script_name.clone());
+                    drawn.push((
+                        *c,
+                        file.clone(),
+                        allowed.clone(),
+                        glyph.font_id,
+                        glyph.glyph_id,
+                        name,
+                    ));
                 }
             }
         }
         drawn
     };
-    let glyphs: usize = chrome
-        .iter()
-        .map(|(_, text)| text.chars().filter(|c| !c.is_whitespace()).count())
-        .sum();
-    assert_eq!(
+    assert!(
+        drawn.len() >= scanned.len(),
+        "precondition: each scanned character shapes ({} glyphs, {} characters)",
         drawn.len(),
-        glyphs,
-        "precondition: each chrome glyph shapes to one glyph"
+        scanned.len()
     );
     let faults: Vec<String> = drawn
         .iter()
-        .filter(|(_, _, face, glyph, _)| !allowed.contains(face) || *glyph == 0)
-        .map(|(what, c, _, glyph, name)| format!("{what}'s {c:?}: {name:?} glyph {glyph}"))
+        .filter(|(_, _, allowed, face, glyph, _)| !allowed.contains(face) || *glyph == 0)
+        .map(|(c, file, _, _, glyph, name)| format!("{c:?} ({file}): {name:?} glyph {glyph}"))
         .collect();
     assert!(
         faults.is_empty(),
-        "chrome glyphs not drawn by the default face or Mandala Ornaments:\n{}",
+        "chrome glyphs not drawn by the default face or Mandala Ornaments (or their pin):\n{}",
         faults.join("\n")
     );
 }
