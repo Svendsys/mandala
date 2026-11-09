@@ -216,7 +216,7 @@ the element is dropped.
 `handler` names a layout in Rust: a function that reads the map and
 where it is drawn and returns its walks — a mutator and its anchors for
 each write it needs — never writing the map itself
-(`lib/baumhard/src/document/edit/handlers.rs`). The walks are the steps
+(`lib/baumhard/src/edit_handlers.rs`). The walks are the steps
 of the edit's one request, so it is still one history entry (amendment
 on #250: one walk applies one mutator per sibling key, and sibling nodes
 commonly share one, so a layout that places each node apart needs a walk

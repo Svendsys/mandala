@@ -190,7 +190,7 @@ impl ResolvedKeybinds {
     }
 
     /// Set or replace an edit binding at runtime. Returns
-    /// the previous mutation id bound to the same combo, if any.
+    /// the previous edit id bound to the same combo, if any.
     /// The `combo_string` is re-parsed through `KeyBind::parse` so
     /// invalid inputs are rejected uniformly with the resolve-time
     /// path.
@@ -222,7 +222,7 @@ impl ResolvedKeybinds {
     }
 
     /// Remove the edit binding for the given combo.
-    /// Returns the removed mutation id, if one was bound. Test-gated
+    /// Returns the removed edit id, if one was bound. Test-gated
     /// — see [`Self::set_edit_binding`].
     #[cfg(test)]
     pub fn remove_edit_binding(&mut self, combo_string: &str) -> Result<Option<String>, String> {

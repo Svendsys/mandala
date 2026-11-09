@@ -152,9 +152,11 @@ pub(crate) fn first_free_ident(highest: u32, named: impl IntoIterator<Item = u32
 /// Every node ident `definitions` name: the hook through which a
 /// definition's targets reach the ident counter ([`first_free_ident`]).
 ///
-/// **Today it names none.** A verb, an edit and a presentation carry
-/// only an id and a name until V1-D1–D3 give them targets; those land
-/// here, and nowhere else. No other field of a saved map can name a
+/// **Today it names none.** An edit (V1-D1) reaches its nodes from
+/// where it runs and names none — a span link it sets names a URL or a
+/// verb — and a verb and a presentation carry only an id and a name
+/// until V1-D2 and V1-D3 give them targets; those land here, and nowhere
+/// else. No other field of a saved map can name a
 /// node that is not in it. A node's `parent` and a link's `to` must name
 /// a node of the map on load and in
 /// [`check_savable`](crate::document::format::check_savable), so no
@@ -162,8 +164,8 @@ pub(crate) fn first_free_ident(highest: u32, named: impl IntoIterator<Item = u32
 /// links into a removed node in the same request. Both are therefore
 /// covered by the highest node ident.
 pub(crate) fn idents_named_by(definitions: &Definitions) -> impl Iterator<Item = u32> + '_ {
-    // The targets V1-D1–D3 add are named here, as `definitions.verbs`
-    // and `definitions.presentations` grow them.
+    // The targets V1-D2 and V1-D3 add are named here, as
+    // `definitions.verbs` and `definitions.presentations` grow them.
     let Definitions {
         edits: _,
         presentations: _,

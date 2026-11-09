@@ -4,8 +4,8 @@
 //!
 //! A macro is a named `Vec<MacroStep>` invoked atomically through
 //! `crate::application::app::dispatch::dispatch_macro`. Three step
-//! kinds — built-in `Action`, an edit by id (`Edit`, whose
-//! dispatch returns with V1-D1 #250), console-line — cover every
+//! kinds — built-in `Action`, an edit by id (`Edit`, V1-D1 #250),
+//! console-line — cover every
 //! user-driven entry point at the application layer. Plugins, future macro-recording UI, and the
 //! `macro_bindings` resolution tier all reach the same dispatcher.
 //!
@@ -33,8 +33,12 @@ use crate::application::source_tier::SourceTier;
 /// from every other tier — today the `App` bundle — with a `warn!`,
 /// and keeps doing so for whichever tier is added next.
 ///
-/// Document-mutating step kinds (`Action`, `Edit`) gate
-/// via [`SourceTier::allows_action`].
+/// An [`MacroStep::Action`] step gates via
+/// [`SourceTier::allows_action`]. An [`MacroStep::Edit`] step is **not
+/// gated**: every tier may run one. An edit changes only the open map,
+/// as one undoable history entry, through the same writer as a key or
+/// the console, and does no I/O — there is no file, process or socket
+/// it can reach — so there is nothing for a tier to withhold.
 ///
 /// These live here rather than in `source_tier` because the policy
 /// is about what a *macro step* may do, not about what a tier is.

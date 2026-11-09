@@ -281,18 +281,25 @@ the parity trajectory (or why none is owed):
   draining a drag state — not a frame: the browser's frame exists
   (`run_wasm/event_redraw_requested.rs`) and runs an injected sample
   and the view's sync.
-- **Animations** — none run, on either target, since V1-C3 (#244).
-  Animated edits return with V1-D1 (#250) and presentations with
-  V1-D2 (#251), each as a transaction on the document's writer.
+- **Animations** — not gated: an animated edit (V1-D1, #250) runs on
+  both targets, as a transaction on the document's writer that the
+  frame's tick (`app/animation.rs`: `tick`, `keeps_ticking`) writes on
+  the app clock and commits as one history entry — native's from the
+  heartbeat's frame, the browser's from its redraw
+  (`run_wasm/event_redraw_requested.rs`), which asks for the next
+  frame while `keeps_ticking` says one is owed, and from its clock
+  step (`run_wasm/step.rs`). No parity is owed. Presentations, the
+  other kind of animation, return with V1-D2 (#251).
 - **Virtual-clock stepping: the native frame it steps**
   (`src/application/app/heartbeat.rs`; IPC-09/#69) — what a step
   runs at each heartbeat on native is native's whole frame: the
-  rubber band and the view's sync, the recorder's frame, the freeze
-  watchdog's tick. **The step itself is not gated, since IPC-15
+  animation tick, the rubber band and the view's sync, the recorder's
+  frame, the freeze watchdog's tick. **The step itself is not gated, since IPC-15
   (#75)**: the schedule (`app/step.rs`: `run_step`, the `Steps`
   trait, `Beat`) is one body both targets run, the browser
   implements it over its own frame (`run_wasm/step.rs`: one injected
-  sample, then the view's sync, at each virtual instant), and
+  sample, the animation tick, then the view's sync, at each virtual
+  instant), and
   `clock.set_mode` / `clock.step` / `clock.wait` are served over the
   browser transport. The clock was never gated:
   `AppClock` (`src/application/clock.rs`) compiles for both targets,
