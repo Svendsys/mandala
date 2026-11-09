@@ -14,7 +14,7 @@
 //! | a connector, link, label or portal end | its resolved color, as hex | clears its own color | a hex or `var(name)` color as its own; empty text clears it |
 //!
 //! Several elements copy as their texts joined by
-//! [`MULTI_TARGET_SEPARATOR`]; a paste onto as many elements as the text
+//! `MULTI_TARGET_SEPARATOR`; a paste onto as many elements as the text
 //! splits into gives each its piece, and otherwise gives every one the
 //! whole text.
 //!
@@ -53,7 +53,7 @@ use crate::application::view::inspect::{children_of_kind, element_text};
 
 /// Between the texts of several copied elements. Doubled, so a section
 /// whose text holds a line break still splits back into one piece.
-pub const MULTI_TARGET_SEPARATOR: &str = "\n\n";
+const MULTI_TARGET_SEPARATOR: &str = "\n\n";
 
 /// Read text from the system clipboard, or `None` on failure.
 #[cfg(not(any(target_arch = "wasm32", test)))]
