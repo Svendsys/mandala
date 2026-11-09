@@ -19,6 +19,9 @@ pub mod lines_tests;
 pub mod outline_tests;
 pub mod place_tests;
 pub mod readable_tests;
+/// The exact work removals of #309, each pinned by its counter.
+#[cfg(test)]
+mod removal_tests;
 /// A size-only reshape lays the run's shaping out again (#304).
 #[cfg(test)]
 mod reshape_tests;
@@ -28,3 +31,6 @@ mod ring_budget_tests;
 pub mod shape_tests;
 /// Fixtures: resolved styles, real and synthetic runs.
 pub(crate) mod support;
+/// A frame's work counted by kind of outline (#309).
+#[cfg(test)]
+mod work_tests;

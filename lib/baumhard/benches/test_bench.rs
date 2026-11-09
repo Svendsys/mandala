@@ -1104,6 +1104,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("outline_bounds_follows_the_curve", |b| {
         b.iter(do_outline_bounds_follows_the_curve)
     });
+    c.bench_function(
+        "flow_a_closed_paths_table_samples_are_known_before_it_is_built",
+        |b| b.iter(do_flow_a_closed_paths_table_samples_are_known_before_it_is_built),
+    );
+    c.bench_function("flow_a_closed_paths_length_is_finite_as_its_build_says", |b| {
+        b.iter(do_flow_a_closed_paths_length_is_finite_as_its_build_says)
+    });
     c.bench_function("nearest_weight_follows_css_fonts_4", |b| {
         b.iter(do_nearest_weight_follows_css_fonts_4)
     });
@@ -2352,6 +2359,13 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("flow_halves_tracking_grows_with_the_gap", |b| {
         b.iter(do_flow_halves_tracking_grows_with_the_gap)
+    });
+    c.bench_function(
+        "flow_halves_closed_form_roots_are_the_first_at_what_is_owed",
+        |b| b.iter(do_flow_halves_closed_form_roots_are_the_first_at_what_is_owed),
+    );
+    c.bench_function("flow_halves_a_side_arc_is_filled_from_its_model_lays", |b| {
+        b.iter(do_flow_halves_a_side_arc_is_filled_from_its_model_lays)
     });
     c.bench_function("flow_halves_sides_hold_the_junctions", |b| {
         b.iter(do_flow_halves_sides_hold_the_junctions)
