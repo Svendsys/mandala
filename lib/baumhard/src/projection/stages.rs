@@ -14,26 +14,27 @@ use rustc_hash::FxHashSet;
 use crate::arena::NodeId;
 use crate::document::element::{DocElement, DocKind};
 use crate::document::ids::Document;
+use crate::document::resolve::BorderPoint;
 use crate::document::resolve::{
     carry_binding, resolve_frame, resolve_label, resolve_node, resolve_path, resolve_portal_end,
     resolve_ring_in, resolve_text_in, Binding, Content, Input as DocInput, ReadRecorder, ResolvedText,
 };
-use crate::document::values::{Align, FontSize};
+use crate::document::values::{Align, FitMode, FontSize};
 use crate::engine::tree::Tree;
+use crate::flow::inked as inked_run;
 use crate::flow::{
-    offset as offset_outline, outline, place_at_point, place_on_closed, place_on_open, shape_box, shape_run,
-    FlowSpan, PlacedRun, Rect, RingLayout, ShapedRun,
+    chain_point, offset as offset_outline, outline, pattern_gap, place_at_point, place_on_closed,
+    place_on_open, place_pitched, shape_box, shape_run, FlowSpan, PathEnd, PlacedRun, Rect, RingLayout,
+    ShapedRun,
 };
 use crate::font::fonts::FontSystemLease;
 use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
-use crate::projection::geometry::{
-    self, curve_between, drawn_rect, label_center, points, portal_point, reach,
-};
+use crate::projection::geometry::{self, drawn_rect, label_center, points, reach};
 use crate::projection::input::{Dependent, ProjectionInput, Reads, Stage};
 use crate::projection::shapes::ShapeCache;
 use crate::projection::state::{
-    BoxFlow, BoxKey, EndState, LabelState, OwnFields, PathFlow, Placed, RingResolved, RunFlow, RunKey,
-    UnitBody,
+    Attach, BoxFlow, BoxKey, EndState, Fanned, JunctionKey, LabelState, OwnFields, PathFlow, Placed,
+    PortalAt, RingResolved, RunFlow, RunKey, UnitBody,
 };
 use crate::projection::structure::element;
 use crate::projection::Projector;
@@ -44,7 +45,9 @@ const SECTIONS: u8 = 1;
 const MEASURE: u8 = 2;
 const PLACE: u8 = 3;
 const PATHS: u8 = 4;
-const DONE: u8 = 5;
+const FANS: u8 = 5;
+const LAY: u8 = 6;
+const DONE: u8 = 7;
 
 /// One update's worklists, and what its structural step left for the
 /// write.
@@ -63,8 +66,14 @@ pub(crate) struct PhaseWork {
     /// Phase B: frames with rings to project, each once.
     frames: Vec<NodeId>,
     frames_seen: FxHashSet<NodeId>,
-    /// Phase C: connectors and links.
+    /// Phase C: connectors and links to resolve, and lines whose ends to
+    /// find.
     paths: Vec<NodeId>,
+    /// Phase C, once every line's ends are found: the junctions whose
+    /// members came, went or moved, each fanned once.
+    fans: FxHashSet<JunctionKey>,
+    /// Phase C, once the junctions are fanned: paths to lay.
+    lay: Vec<NodeId>,
     /// The phase running.
     phase: u8,
     /// The nodes this update created state for.
@@ -287,17 +296,19 @@ impl Projector {
     /// Mark `dep` to run, in the phase its stage and unit belong to.
     /// O(1).
     pub(crate) fn queue(&self, work: &mut PhaseWork, dep: Dependent) {
-        let section = matches!(
-            self.units.get(&dep.unit).map(|u| &u.body),
-            Some(UnitBody::Section(_))
-        );
+        let body = self.units.get(&dep.unit).map(|u| &u.body);
+        let path = matches!(body, Some(UnitBody::Line(_)) | Some(UnitBody::Portal(_)));
         let phase = match dep.stage {
             Stage::Carry => CARRY,
             // A section's geometry is its box: due in the sections phase,
             // before its node is measured from it.
-            Stage::Geometry if section => SECTIONS,
+            Stage::Geometry if matches!(body, Some(UnitBody::Section(_))) => SECTIONS,
+            // A path's is where it leaves its nodes, found for every path
+            // before any is laid (#296).
+            Stage::Geometry if path => PATHS,
             Stage::Geometry => MEASURE,
-            _ => match self.units.get(&dep.unit).map(|u| &u.body) {
+            Stage::Place if path => LAY,
+            _ => match body {
                 Some(UnitBody::Section(_)) if dep.stage == Stage::Resolve => SECTIONS,
                 Some(UnitBody::Section(_)) | Some(UnitBody::Ring(_)) => PLACE,
                 Some(UnitBody::Line(_)) | Some(UnitBody::Portal(_)) => PATHS,
@@ -332,7 +343,8 @@ impl Projector {
                 }
                 _ => work.to_place.push(dep.unit),
             },
-            _ => work.paths.push(dep.unit),
+            PATHS => work.paths.push(dep.unit),
+            _ => work.lay.push(dep.unit),
         }
     }
 
@@ -386,6 +398,16 @@ impl Projector {
             if work.take(Dependent::new(id, Stage::Resolve)) {
                 self.path_resolve(tree, id, work, fonts);
             }
+            if work.take(Dependent::new(id, Stage::Geometry)) {
+                self.line_ends(tree, id, work);
+            }
+        }
+        work.phase = FANS;
+        for key in std::mem::take(&mut work.fans) {
+            self.refan(key, work);
+        }
+        work.phase = LAY;
+        while let Some(id) = work.lay.pop() {
             if work.take(Dependent::new(id, Stage::Place)) {
                 self.path_place(tree, id, fonts);
             }
@@ -760,6 +782,7 @@ impl Projector {
         };
         let input = state.flow.flow.as_ref().map(|f| f.shaped.clone());
         let prev = state.flow.placed.clone();
+        let was_inked = state.inked.clone();
         self.deps.record(Dependent::new(id, Stage::Place), &reads);
         let placed = match (frame.visible, input, text) {
             (true, Some(input), Some(text)) => {
@@ -789,6 +812,22 @@ impl Projector {
         };
         let line_height = placed.as_ref().map_or(0.0, |p| p.run.line_height);
         let extent = (inner.0 + line_height, inner.1 + 1);
+        // Its inks, what its node's paths stop at (#296): a text ring's
+        // run, which placement returns with no ink, inked once a shaping.
+        let inked = placed.as_ref().map(|p| {
+            if p.run.glyphs.iter().all(|g| g.blank || g.ink.is_some()) {
+                return p.run.clone();
+            }
+            match was_inked {
+                Some((from, inked)) if Arc::ptr_eq(&from, &p.run) => inked,
+                _ => Arc::new(inked_run(&p.run, fonts.fonts())),
+            }
+        });
+        let inks: Vec<Rect> = match (&placed, &inked) {
+            (Some(p), Some(run)) => placed_inks(run, &p.placed).collect(),
+            _ => Vec::new(),
+        };
+        let ink = inks.iter().copied().reduce(|a, b| a.union(&b));
         let Some(unit) = self.units.get_mut(&id) else {
             return;
         };
@@ -796,7 +835,17 @@ impl Projector {
             return;
         };
         let changed = state.extent != Some(extent);
+        // Every ink, not only their box: a connector's end gap is measured
+        // to the nearest one, and a respaced ring moves its inks along a
+        // straight side and keeps its box.
+        let reach_changed = state.inks != inks;
         state.extent = Some(extent);
+        state.ink = ink;
+        state.inks = inks;
+        state.inked = placed
+            .as_ref()
+            .zip(inked)
+            .map(|(p, inked)| (p.run.clone(), inked));
         state.visible = frame.visible;
         state.resolved = Some(resolved);
         unit.slots[0].want = placed.as_ref().and_then(|p| {
@@ -813,6 +862,9 @@ impl Projector {
         state.flow.placed = placed;
         if changed {
             self.mark(work, ProjectionInput::Geometry(id));
+        }
+        if reach_changed {
+            self.mark(work, ProjectionInput::Reach(node));
         }
     }
 
@@ -858,6 +910,12 @@ impl Projector {
             .is_some_and(|(from, to)| self.nodes.contains_key(&from) && self.nodes.contains_key(&to))
             && (portal || visible);
         let binding = Binding::Carried(self.nodes.get(&owner).and_then(|n| n.binding));
+        // A path not drawn, or of the other kind now, leaves no end at a
+        // junction.
+        let was_portal = matches!(self.units.get(&id).map(|u| &u.body), Some(UnitBody::Portal(_)));
+        if !drawn || was_portal != portal {
+            self.leave_junctions(id, work);
+        }
         // A link that switched kind takes on the other kind's slots, and
         // its old kind's labels leave the label index.
         let mut old_labels: [Option<NodeId>; 2] = [None, None];
@@ -884,6 +942,7 @@ impl Projector {
         }
         if !drawn {
             self.deps.record(Dependent::new(id, Stage::Resolve), &reads);
+            self.deps.clear(Dependent::new(id, Stage::Geometry));
             self.deps.clear(Dependent::new(id, Stage::Place));
             // Its labels are not drawn either, so they leave the label
             // index: a label of a path not drawn has no position. They
@@ -919,7 +978,7 @@ impl Projector {
         } else {
             self.line_resolve(tree, id, ends, binding, reads, fonts);
         }
-        self.queue(work, Dependent::new(id, Stage::Place));
+        self.queue(work, Dependent::new(id, Stage::Geometry));
     }
 
     /// [`Self::path_resolve`] for a connector or a line link.
@@ -1157,9 +1216,298 @@ impl Projector {
         }
     }
 
-    /// A connector's or line link's placement: its curve between its ends'
-    /// drawn rectangles, its body along it, its caps at its ends, its
-    /// label at its position along it.
+    /// Phase C for a connector's or line link's geometry (#296): where it
+    /// leaves each of its nodes — the side of the node's reach box its
+    /// `anchors` name, or that faces the other end; the side's midpoint
+    /// and normal — and how far it must turn from a neighbor leaving the
+    /// same point. Marks the junctions an end moved at, so the paths
+    /// that share them are laid again, and queues its own lay. O(1).
+    fn line_ends(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut PhaseWork) {
+        let Some((anchors, via, straight)) = element(tree, id)
+            .and_then(DocElement::as_path)
+            .map(|p| (p.anchors, p.control_points.clone(), p.straight))
+        else {
+            return;
+        };
+        let Some(UnitBody::Line(line)) = self.units.get(&id).map(|u| &u.body) else {
+            self.portal_ends(tree, id, work);
+            return;
+        };
+        let Some((from, to)) = line.ends.filter(|_| line.drawn) else {
+            return;
+        };
+        self.deps.record(
+            Dependent::new(id, Stage::Geometry),
+            &[
+                ProjectionInput::Geometry(from),
+                ProjectionInput::Geometry(to),
+                ProjectionInput::Reach(from),
+                ProjectionInput::Reach(to),
+            ],
+        );
+        let (Some(a), Some(b)) = (self.reach(from), self.reach(to)) else {
+            return;
+        };
+        // How far apart two paths' first glyphs must leave one point to
+        // clear each other by this one's own gap, and how far its first two
+        // glyphs reach, which leave along its side before it bends.
+        let (gap, size) = line.flows[0].flow.as_ref().map_or((0.0, 0.0), |f| {
+            let spacing = line.resolved.as_ref().map_or(0.0, |(r, _)| r.spacing);
+            pattern_gap(&f.shaped, spacing).unwrap_or((spacing, f.shaped.line_height))
+        });
+        // Two first glyphs leave the point side by side or across a slope,
+        // where an upright box reaches as far as its diagonal.
+        let diagonal = size * std::f32::consts::SQRT_2;
+        let spread = geometry::spread(gap, diagonal);
+        let clear = gap + diagonal;
+        let lead = 2.0 * (gap + size);
+        let ends = [(from, a, anchors.0, b), (to, b, anchors.1, a)];
+        let attach = ends.map(|(node, own, anchor, other)| {
+            let side = geometry::side_toward(own, anchor, other.center());
+            let (point, normal) = geometry::side_point(own, side);
+            Attach {
+                node,
+                side,
+                point,
+                normal,
+                spread,
+                clear,
+                lead,
+            }
+        });
+        let Some(UnitBody::Line(line)) = self.units.get_mut(&id).map(|u| &mut u.body) else {
+            return;
+        };
+        let old = std::mem::replace(&mut line.attach, attach.map(Some));
+        (line.via, line.straight) = (via, straight);
+        let key = |a: &Attach| (a.node, Some(a.side));
+        // Both its junctions are fanned again, whatever changed: how its
+        // neighbors there keep clear of it reads its whole curve.
+        for (was, now) in old.into_iter().zip(attach) {
+            // The side it left, unless its other end is there now.
+            if let Some(was) = was.filter(|w| attach.iter().all(|a| key(a) != key(w))) {
+                self.unjoin(key(&was), id, work);
+            }
+            self.join(key(&now), id, work);
+        }
+        self.queue(work, Dependent::new(id, Stage::Place));
+    }
+
+    /// Take the path `id` out of every junction it has an end at, each to
+    /// be fanned again. O(the paths there).
+    pub(crate) fn leave_junctions(&mut self, id: NodeId, work: &mut PhaseWork) {
+        let keys: Vec<JunctionKey> = match self.units.get_mut(&id).map(|u| &mut u.body) {
+            Some(UnitBody::Line(line)) => std::mem::take(&mut line.attach)
+                .iter()
+                .flatten()
+                .map(|a| (a.node, Some(a.side)))
+                .collect(),
+            Some(UnitBody::Portal(portal)) => std::mem::take(&mut portal.at)
+                .iter()
+                .flatten()
+                .map(|a| (a.node, None))
+                .collect(),
+            _ => return,
+        };
+        for key in keys {
+            self.unjoin(key, id, work);
+        }
+    }
+
+    /// Take the path `id` out of the junction `key`, to be fanned again.
+    /// O(1).
+    pub(crate) fn unjoin(&mut self, key: JunctionKey, id: NodeId, work: &mut PhaseWork) {
+        if let Some(joined) = self.junctions.get_mut(&key) {
+            joined.remove(&id);
+            if joined.is_empty() {
+                self.junctions.remove(&key);
+            }
+        }
+        work.fans.insert(key);
+    }
+
+    /// Put the path `id` in the junction `key`, to be fanned again.
+    /// O(1).
+    fn join(&mut self, key: JunctionKey, id: NodeId, work: &mut PhaseWork) {
+        self.junctions.entry(key).or_default().insert(id);
+        work.fans.insert(key);
+    }
+
+    /// The box `node`'s paths attach to (#296): the box round its drawn
+    /// rings' inks, or its drawn rectangle where it draws no ring. `None`
+    /// for a node not drawn. O(its units).
+    fn reach(&self, node: NodeId) -> Option<Rect> {
+        let n = self.nodes.get(&node)?;
+        let rings = n
+            .units
+            .iter()
+            .filter_map(|u| match self.units.get(u).map(|u| &u.body) {
+                Some(UnitBody::Ring(ring)) => ring.ink,
+                _ => None,
+            });
+        Some(rings.reduce(|a, b| a.union(&b)).unwrap_or(n.rect))
+    }
+
+    /// The boxes a path's end glyph at `node` keeps its gap from: every
+    /// drawn ring's inks, or its drawn rectangle where it draws no ring.
+    /// O(its rings' glyphs).
+    fn reach_inks(&self, node: NodeId) -> Vec<Rect> {
+        let Some(n) = self.nodes.get(&node) else {
+            return Vec::new();
+        };
+        let mut inks = Vec::new();
+        for u in &n.units {
+            if let Some(UnitBody::Ring(ring)) = self.units.get(u).map(|u| &u.body) {
+                inks.extend_from_slice(&ring.inks);
+            }
+        }
+        if inks.is_empty() {
+            inks.push(n.rect);
+        }
+        inks
+    }
+
+    /// How far a path's end glyph at `attach` may move back past the
+    /// side's midpoint to keep its gap: as far as the reach box lies past
+    /// the node's drawn rectangle on that side — through its frame, never
+    /// into the node. O(1).
+    fn back(&self, attach: &Attach) -> f32 {
+        let Some(rect) = self.nodes.get(&attach.node).map(|n| n.rect) else {
+            return 0.0;
+        };
+        let inner = geometry::side_point(rect, attach.side).0;
+        (attach.point - inner).dot(attach.normal).max(0.0)
+    }
+
+    /// Phase C, between the ends and the lays: fan the junction `key` once
+    /// (#296, rule 4). The paths that leave one side of a node are ordered
+    /// by their turn toward their other ends (a straight path by its own
+    /// direction), given their turns and holds ([`geometry::fan`]), and
+    /// untangled along their whole length ([`geometry::untangle`]); the
+    /// portal ends with no `border_t` at a node, ordered round its
+    /// outline, are held apart there ([`geometry::held_apart`]). Each
+    /// member whose value changed is queued to be laid again, and no
+    /// other: a drag that keeps the order lays the dragged path alone.
+    ///
+    /// Cost: a side is fanned and untangled whole on every update that
+    /// marks it — every frame of a drag of one of its paths' far ends
+    /// re-fans and re-untangles all of its siblings, though it lays only
+    /// the one dragged. The fan is O(the members, log them); `untangle`
+    /// samples every member's whole curve every quarter of its width in
+    /// its first round, and in each of at most [`UNTANGLE_ROUNDS`] after
+    /// it, the members it halved. Portal ends: O(the members, log them).
+    ///
+    /// [`UNTANGLE_ROUNDS`]: geometry::UNTANGLE_ROUNDS
+    fn refan(&mut self, key: JunctionKey, work: &mut PhaseWork) {
+        let Some(members) = self.junctions.get(&key) else {
+            return;
+        };
+        let at = |p: &NodeId| self.units.get(p).map(|u| &u.body);
+        let mut changed: Vec<NodeId> = Vec::new();
+        match key.1 {
+            Some(side) => {
+                // Each path's end here and its other end.
+                let mut fan: Vec<(NodeId, usize, Attach, Attach, Vec<Vec2>, bool)> = members
+                    .iter()
+                    .filter_map(|p| match at(p) {
+                        Some(UnitBody::Line(line)) => line.attach.iter().enumerate().find_map(|(k, a)| {
+                            let (here, there) = (a.as_ref()?, line.attach[1 - k].as_ref()?);
+                            (here.node == key.0 && here.side == side)
+                                .then(|| (*p, k, *here, *there, line.via.clone(), line.straight))
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+                // A straight path leaves in its one segment's direction,
+                // which no fan turns: the others fan round it.
+                let member = |m: &(NodeId, usize, Attach, Attach, Vec<Vec2>, bool)| geometry::FanMember {
+                    spread: m.2.spread,
+                    clear: m.2.clear,
+                    fixed: m.5.then(|| geometry::turn_to(m.2.normal, m.3.point - m.2.point)),
+                    chord: m.2.point.distance(m.3.point),
+                };
+                let hold = geometry::fan_hold(&fan.iter().map(member).collect::<Vec<_>>());
+                // In the order each turns toward its other end's lead, seen
+                // from where the fan's leads end: the way their curves run;
+                // a straight path by the turn it leaves in.
+                let lead = fan.iter().map(|m| m.2.lead).fold(0.0_f32, f32::max);
+                let order = |m: &(NodeId, usize, Attach, Attach, Vec<Vec2>, bool)| {
+                    if m.5 {
+                        return geometry::turn_to(m.2.normal, m.3.point - m.2.point);
+                    }
+                    let from = m.2.point + m.2.normal * (lead + hold);
+                    geometry::turn_to(m.2.normal, m.3.point + m.3.normal * m.3.lead - from)
+                };
+                fan.sort_by(|a, b| order(a).total_cmp(&order(b)).then(a.0.cmp(&b.0)));
+                let turns = geometry::fan(&fan.iter().map(member).collect::<Vec<_>>());
+                let lanes: Vec<geometry::Lane> = fan
+                    .iter()
+                    .zip(&turns)
+                    .map(|(m, &(turn, hold))| geometry::Lane {
+                        start: (
+                            m.2.point,
+                            Vec2::from_angle(turn).rotate(m.2.normal),
+                            m.2.lead + hold,
+                        ),
+                        hold,
+                        end: (m.3.point, m.3.normal, m.3.lead),
+                        via: if m.1 == 0 {
+                            m.4.clone()
+                        } else {
+                            m.4.iter().rev().copied().collect()
+                        },
+                        width: 0.5 * m.2.lead,
+                        straight: m.5,
+                    })
+                    .collect();
+                let untangled = geometry::untangle(&lanes);
+                for ((m, &(turn, hold)), &handles) in fan.iter().zip(&turns).zip(&untangled) {
+                    let value = Fanned { turn, hold, handles };
+                    if let Some(UnitBody::Line(line)) = self.units.get_mut(&m.0).map(|u| &mut u.body) {
+                        if line.fans[m.1] != value {
+                            line.fans[m.1] = value;
+                            changed.push(m.0);
+                        }
+                    }
+                }
+            }
+            None => {
+                // (along, path, end, width, perimeter)
+                let mut ends: Vec<(f32, NodeId, usize, f32, f32)> = members
+                    .iter()
+                    .filter_map(|p| match at(p) {
+                        Some(UnitBody::Portal(portal)) => portal.at.iter().enumerate().find_map(|(k, a)| {
+                            a.filter(|a| a.node == key.0)
+                                .map(|a| (a.along, *p, k, a.width, a.perimeter))
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+                ends.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                let perimeter = ends.first().map_or(0.0, |e| e.4);
+                let held =
+                    geometry::held_apart(&ends.iter().map(|e| (e.0, e.3)).collect::<Vec<_>>(), perimeter);
+                for (e, along) in ends.iter().zip(held) {
+                    if let Some(UnitBody::Portal(portal)) = self.units.get_mut(&e.1).map(|u| &mut u.body) {
+                        if portal.held[e.2] != along {
+                            portal.held[e.2] = along;
+                            changed.push(e.1);
+                        }
+                    }
+                }
+            }
+        }
+        for id in changed {
+            self.queue(work, Dependent::new(id, Stage::Place));
+        }
+    }
+
+    /// Phase C, a connector's or line link's lay: its curves from end to
+    /// end, each end leaving its side turned by its fan (#296), through
+    /// its control points; its body along them — an ornament `repeat` as
+    /// whole glyphs gapped evenly from frame to frame, anything else as its
+    /// fit mode walks it — its caps at its ends, its label at its position
+    /// along it.
     fn line_place(&mut self, tree: &Tree<DocElement>, id: NodeId, fonts: &mut FontSystemLease) {
         let Some(path) = element(tree, id).and_then(DocElement::as_path).cloned() else {
             return;
@@ -1171,21 +1519,25 @@ impl Projector {
         let UnitBody::Line(line) = &unit.body else {
             return;
         };
-        let Some((from, to)) = line.ends else {
+        let (Some((from, to)), [Some(start), Some(end)]) = (line.ends, line.attach) else {
             return;
         };
-        let (Some(a), Some(b), Some(o)) =
-            (self.nodes.get(&from), self.nodes.get(&to), self.nodes.get(&owner))
-        else {
+        let Some(opacity) = self.nodes.get(&owner).map(|o| o.opacity) else {
             return;
         };
-        let opacity = o.opacity;
-        let mut reads = vec![
-            ProjectionInput::Geometry(from),
-            ProjectionInput::Geometry(to),
-            ProjectionInput::Opacity(owner),
-        ];
-        let curve = curve_between(a.rect, b.rect, path.anchors, &path.control_points);
+        let mut reads = vec![ProjectionInput::Opacity(owner)];
+        let fans = line.fans;
+        let turned = |a: &Attach, k: usize| Vec2::from_angle(fans[k].turn).rotate(a.normal);
+        let curves = if path.straight {
+            vec![crate::flow::Curve::Line(start.point, end.point)]
+        } else {
+            geometry::path_through(
+                (start.point, turned(&start, 0), start.lead + fans[0].hold),
+                (end.point, turned(&end, 1), end.lead + fans[1].hold),
+                &path.control_points,
+                fans[0].handles.min(fans[1].handles),
+            )
+        };
         let label_at = line
             .label
             .id
@@ -1201,35 +1553,48 @@ impl Projector {
             .as_ref()
             .map(|f| (f.shaped.clone(), f.shaped.size));
         let mut placed: [Option<Placed>; 3] = [None, None, None];
-        if let Some(curve) = curve {
-            if let Some(input) = flows[0].flow.as_ref().map(|f| f.shaped.clone()) {
-                let params = (&curve, &resolved.fit, resolved.spacing, &text);
-                let (replaced, p) = memo::placed(&input, &params, || {
-                    place_on_open(&input, &curve, &resolved.fit, resolved.spacing, &text, fonts)
-                });
-                placed[0] = Some(settle(flows[0].placed.as_ref(), &input, replaced, p));
+        if let Some(input) = flows[0].flow.as_ref().map(|f| f.shaped.clone()) {
+            let pitched = resolved.fit == FitMode::Repeat && pattern_gap(&input, resolved.spacing).is_some();
+            let (replaced, p) = if pitched {
+                let inks = [self.reach_inks(from), self.reach_inks(to)];
+                let backs = [self.back(&start), self.back(&end)];
+                let params = (&curves, resolved.spacing, &inks, backs, fans);
+                memo::placed(&input, &params, || {
+                    let ends = [0, 1].map(|k| PathEnd {
+                        inks: &inks[k],
+                        back: backs[k],
+                        hold: fans[k].hold,
+                    });
+                    (None, place_pitched(&input, &curves, resolved.spacing, ends))
+                })
+            } else {
+                let params = (&curves, &resolved.fit, resolved.spacing, &text);
+                memo::placed(&input, &params, || {
+                    place_on_open(&input, &curves, &resolved.fit, resolved.spacing, &text, fonts)
+                })
+            };
+            placed[0] = Some(settle(flows[0].placed.as_ref(), &input, replaced, p));
+        }
+        for (k, at) in [(1, 0.0), (2, 1.0)] {
+            if flows[k].id.is_none() {
+                continue;
             }
-            for (k, end) in [(1, 0.0), (2, 1.0)] {
-                if flows[k].id.is_none() {
-                    continue;
-                }
-                if let Some(input) = flows[k].flow.as_ref().map(|f| f.shaped.clone()) {
-                    let p = place_at_point(&input, curve.point(end));
-                    placed[k] = Some(settle(flows[k].placed.as_ref(), &input, None, p));
-                }
+            if let (Some(input), Some(point)) = (
+                flows[k].flow.as_ref().map(|f| f.shaped.clone()),
+                chain_point(&curves, at),
+            ) {
+                let p = place_at_point(&input, point);
+                placed[k] = Some(settle(flows[k].placed.as_ref(), &input, None, p));
             }
         }
-        let label_center_at = match (curve, label_at) {
-            (Some(curve), Some(label)) => Some(label_center(&curve, label.t, label.offset)),
-            _ => None,
-        };
+        let label_center_at = label_at.map(|label| label_center(&curves, label.t, label.offset));
         let Some(unit) = self.units.get_mut(&id) else {
             return;
         };
         let UnitBody::Line(line) = &mut unit.body else {
             return;
         };
-        line.curve = curve;
+        line.path = curves;
         for (k, placed) in placed.iter_mut().enumerate() {
             unit.slots[k].want = placed.as_ref().and_then(|p| {
                 run_data(
@@ -1257,9 +1622,83 @@ impl Projector {
         };
     }
 
+    /// Phase C for a portal link's geometry: where along its node's
+    /// outline each end with no `border_t` faces the other node, and how
+    /// wide its marker and label are, so the ends that face one way at a
+    /// node are held apart (#296). Marks the junctions an end moved at,
+    /// and queues its own lay. Cost: an outline walk and a nearest-point
+    /// search an end.
+    fn portal_ends(&mut self, tree: &Tree<DocElement>, id: NodeId, work: &mut PhaseWork) {
+        let Some(UnitBody::Portal(portal)) = self.units.get(&id).map(|u| &u.body) else {
+            return;
+        };
+        let Some((from, to)) = portal.ends.filter(|_| portal.drawn) else {
+            return;
+        };
+        let (Some(a), Some(b)) = (self.nodes.get(&from), self.nodes.get(&to)) else {
+            return;
+        };
+        let mut reads = vec![ProjectionInput::Geometry(from), ProjectionInput::Geometry(to)];
+        let sides = [
+            (from, a.outline, b.rect.center()),
+            (to, b.outline, a.rect.center()),
+        ];
+        let mut at: [Option<PortalAt>; 2] = [None, None];
+        for (k, (node, outline, toward)) in sides.into_iter().enumerate() {
+            let end = &portal.end[k];
+            let Some(end_id) = end.marker.id else {
+                continue;
+            };
+            let border = resolve_portal_end(
+                tree,
+                end_id,
+                &mut Filtered {
+                    reads: &mut reads,
+                    drop: |i| matches!(i, DocInput::Style(_) | DocInput::Row(_)),
+                },
+            )
+            .border_t;
+            if border != BorderPoint::Auto {
+                continue;
+            }
+            let marker = end.marker.flow.as_ref().map_or(Vec2::ZERO, |f| {
+                Vec2::new(
+                    f.shaped.glyphs.iter().map(|g| g.advance).sum(),
+                    f.shaped.line_height,
+                )
+            });
+            let label = end.label.flow.as_ref().map_or(Vec2::ZERO, |f| f.shaped.size);
+            let (along, perimeter) = geometry::portal_along(&outline, border, toward);
+            at[k] = Some(PortalAt {
+                node,
+                along,
+                perimeter,
+                width: marker.max(label).max_element(),
+            });
+        }
+        self.deps.record(Dependent::new(id, Stage::Geometry), &reads);
+        let Some(UnitBody::Portal(portal)) = self.units.get_mut(&id).map(|u| &mut u.body) else {
+            return;
+        };
+        let old = std::mem::replace(&mut portal.at, at);
+        for node in [from, to] {
+            let was = old.iter().flatten().find(|e| e.node == node);
+            let now = at.iter().flatten().find(|e| e.node == node);
+            if was == now {
+                continue;
+            }
+            match now {
+                Some(_) => self.join((node, None), id, work),
+                None => self.unjoin((node, None), id, work),
+            }
+        }
+        self.queue(work, Dependent::new(id, Stage::Place));
+    }
+
     /// A portal link's placement: each end's marker on its node's outline,
-    /// facing the other node or where its `border_t` says, pushed off the
-    /// outline by its offset and its own reach; its label beside it.
+    /// where its `border_t` says, or facing the other node, held apart
+    /// from the other ends that face one way there; pushed off the outline
+    /// by its offset and its own reach; its label beside it.
     fn portal_place(&mut self, tree: &Tree<DocElement>, id: NodeId) {
         let Some(unit) = self.units.get(&id) else {
             return;
@@ -1301,7 +1740,11 @@ impl Projector {
                 },
             );
             let (own_outline, toward) = sides[k];
-            let (point, normal) = portal_point(&own_outline, resolved.border_t, toward, resolved.offset);
+            let along = match &portal.at[k] {
+                Some(_) => portal.held[k],
+                None => geometry::portal_along(&own_outline, resolved.border_t, toward).0,
+            };
+            let (point, normal) = geometry::portal_point(&own_outline, along, resolved.offset);
             let Some(input) = end.marker.flow.as_ref().map(|f| f.shaped.clone()) else {
                 continue;
             };
@@ -1365,6 +1808,23 @@ pub(crate) fn own_opacity(opacity: f32) -> f32 {
     } else {
         1.0
     }
+}
+
+/// The canvas box of each glyph of `placed` that draws, by `run`'s
+/// metrics: its ink, or where none was measured its box, its advance by
+/// its line height. A space draws nothing. O(its glyphs).
+fn placed_inks<'a>(run: &'a ShapedRun, placed: &'a PlacedRun) -> impl Iterator<Item = Rect> + 'a {
+    let baseline = run.baseline();
+    placed.glyphs.iter().filter_map(move |g| {
+        let metrics = run.glyphs.get(g.glyph as usize)?;
+        if metrics.blank {
+            return None;
+        }
+        Some(match metrics.ink {
+            Some(ink) => Rect::new(g.pos + Vec2::new(0.0, baseline) + ink.min, ink.max - ink.min),
+            None => Rect::new(g.pos, Vec2::new(metrics.advance, run.line_height)),
+        })
+    })
 }
 
 /// A cap of a line, resolved: its element, its spans' ids, and their

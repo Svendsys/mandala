@@ -1532,12 +1532,16 @@ element.
   path, θ the direction of the chord the step spans: side by side along
   a horizontal stretch, a line apart along a vertical one, blended on a
   curve and turning smoothly through a sharp corner — the way ASCII art
-  makes one. That is the box step, which `Repeat` rings and connectors
-  take. A frame's text is sized with the level step (ruling R28,
+  makes one. That is the box step, which `Repeat` rings take. A
+  connector's or a line link's `Repeat` ornament is laid instead as
+  whole glyphs evenly gapped from node to node (`place_pitched`, #296):
+  as many inks as bring every gap, box to box, nearest the pattern's
+  own, whichever way the path runs, its two end gaps among them, each
+  measured to the boxes at its end (the frame's inks). A frame's text is sized with the level step (ruling R28,
   `PathWalk::level_len`: `w` horizontally), then laid by its letters'
-  inks along its half (below). Around an outline each cluster is
-  pushed outward by half its extent, so text sits on the outline
-  rather than across it.
+  inks along its half (below). Around an outline each cluster is pushed
+  outward by half its extent, so text sits on the outline rather than
+  across it.
 - **Readable path text** (D33, #291). Path text reads left to right or
   top to bottom.
   - **A frame's text is two lines** (ruling R27; `flow/place/lines.rs`).
@@ -1677,20 +1681,38 @@ the layers to learn what the document is, and nothing flows back.
   sections, D5, and its outline); a unit resolves (`Resolve`), shapes
   (`Shape`, only when its shape key — the texts and styles shaped from —
   changed) and places (`Place`). Phases order them: carry top-down,
-  sections, measure, then sections' and rings' placement, then paths.
+  sections, measure, then sections' and rings' placement, then paths —
+  and of the paths, every one's ends (`Geometry`) before any is laid
+  (`Place`), because the paths that leave one side of a node are fanned
+  together (#296).
+- **Connector geometry** (#296, `projection/geometry.rs`). A path
+  attaches to its node's **reach** — the box round its drawn rings'
+  inks, or its drawn rectangle — at the midpoint of the side its
+  `anchors` name or that the ray toward the other node leaves through,
+  leaves and arrives square to that side, and passes through its control
+  points, one cubic between each two. The paths that leave one side of
+  a node share its midpoint, fanned by the turn that clears their first
+  glyphs, at most 40°, and held out past the point where the cap leaves
+  them too close (`Projector::junctions`, keyed by node and side). Along
+  their whole length they keep clear of each other: two that would come
+  too near turn toward their other ends sooner (`geometry::untangle`).
+  Each junction is fanned once an update, after every path's ends are
+  found, and only the paths whose fan changed are laid again. Portal
+  ends with no `border_t` that face one way at a node are held apart
+  along its outline (`geometry::held_apart`).
 - **Captured dependencies.** Every read of another element's state goes
   through a recorder into the dependency index (`projection::Input`:
   the resolvers' `document::resolve::Input`s, and the projection's own
-  `Geometry`, `Size`, `Visibility`, `Opacity`, `Parent` and `Inner` of
-  an element), keyed by the stage that read it. The change records'
-  `inputs` and `rows` (ruling B7.2) seed it, and a touched element
-  seeds only the stage its unclassified fields feed: a label, a portal
-  end or a cap its unit's placement, a section's offset its box, a
-  path's anchors, control points and zoom window its placement — its
-  resolution only when a field that resolution read changed. So a drag
-  — of a node, a section, a label, a portal marker or a control point,
-  geometry only — reaches geometry and placement and resolves and
-  shapes nothing. Nothing is listed by hand; the oracle test
+  `Geometry`, `Size`, `Visibility`, `Opacity`, `Parent`, `Inner` and
+  `Reach` of an element), keyed by the stage that read it. The change
+  records' `inputs` and `rows` (ruling B7.2) seed it, and a touched
+  element seeds only the stage its unclassified fields feed: a label, a
+  portal end or a cap its unit's placement, a section's offset its box,
+  a line's anchors, control points and zoom window its ends, which lay
+  it — its resolution only when a field that resolution read changed.
+  So a drag — of a node, a section, a label, a portal marker or a
+  control point, geometry only — reaches geometry and placement and
+  resolves and shapes nothing. Nothing is listed by hand; the oracle test
   holds the index to it, comparing the incremental layers with a full
   projection after every edit of a corpus of generated maps and the
   format's fixtures.

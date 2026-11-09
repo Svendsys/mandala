@@ -752,7 +752,7 @@ fn path(path: &PathData) -> Result<(), String> {
     flow_style(&path.flow)?;
     named(
         "control_points",
-        bounds::check_control_points(path.control_points.len()),
+        bounds::check_control_points(path.control_points.len(), path.straight),
     )?;
     for point in &path.control_points {
         coordinates("control_points", &[point.x, point.y])?;

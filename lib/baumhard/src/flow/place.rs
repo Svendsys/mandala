@@ -126,8 +126,11 @@ use crate::flow::span::{point_size, LINE_HEIGHT_FACTOR};
 use crate::font::fonts::{clamp_font_metric, FontSystemLease, MIN_FONT_SIZE_PT};
 use crate::font::FontSystem;
 
+pub use pitch::{pattern_gap, place_pitched, PathEnd};
+
 pub(crate) mod halves;
 mod lines;
+mod pitch;
 pub(crate) mod ring;
 pub(crate) use lines::{frame_halves, place_lines};
 use ring::{RingLoss, RingWork};
@@ -2713,9 +2716,9 @@ fn lay_on_closed(
     place(run, &arc, true, fit, gap, outward, flow, fs, ring_cap, trace)
 }
 
-/// Place `run` along the open `curve` (a connector or a line link),
-/// from its source end, as `fit` says, with `spacing` between clusters
-/// (#239 §5, §6).
+/// Place `run` along the open `path` (a connector or a line link) — a
+/// [`Curve`], or a chain of them — from its source end, as `fit` says,
+/// with `spacing` between clusters (#239 §5, §6).
 ///
 /// Cluster centers sit on the curve. `spacing` is the gap between steps
 /// for `Once` and `Repeat` (and between filler copies); `Spread` and
@@ -2728,7 +2731,7 @@ fn lay_on_closed(
 /// for a Bézier.
 pub fn place_on_open(
     run: &ShapedRun,
-    curve: &Curve,
+    curve: &(impl AsRef<[Curve]> + ?Sized),
     fit: &FitMode,
     spacing: f32,
     flow: &ResolvedText,
@@ -2741,7 +2744,7 @@ pub fn place_on_open(
 /// seam for the readable rule (#291).
 pub(crate) fn place_on_open_traced(
     run: &ShapedRun,
-    curve: &Curve,
+    curve: &(impl AsRef<[Curve]> + ?Sized),
     fit: &FitMode,
     spacing: f32,
     flow: &ResolvedText,

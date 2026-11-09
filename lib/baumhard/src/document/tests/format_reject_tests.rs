@@ -1484,34 +1484,56 @@ fn test_a_weight_must_be_one_of_the_nine() {
 }
 
 #[test]
-fn test_a_path_has_at_most_two_control_points() {
+fn test_a_path_has_at_most_eight_control_points() {
     let json = |points: &str| {
         map_of_two(
             &format!(r#","links":[{{"to":2,"kind":"line","control_points":{points}}}]"#),
             "",
         )
     };
-    for points in ["[]", "[[1,1]]", "[[1,1],[2,2]]"] {
-        assert!(load(&json(points)).is_ok(), "{points}");
+    let points = |n: usize| format!("[{}]", vec!["[1,1]"; n].join(","));
+    for n in [0, 1, 2, 8] {
+        assert!(load(&json(&points(n))).is_ok(), "{n} control points");
     }
     rejects_bound(
-        &json("[[1,1],[2,2],[3,3]]"),
+        &json(&points(9)),
         "nodes[0].links[0].control_points",
         BoundError::TooMany {
-            count: 3,
+            count: 9,
             max: bounds::MAX_CONTROL_POINTS,
         },
     );
     rejects_bound(
         &map_of_two(
             r#""#,
-            r#","connector":{"control_points":[[0,0],[0,0],[0,0],[0,0]]}"#,
+            &format!(r#","connector":{{"control_points":{}}}"#, points(10)),
         ),
         "nodes[1].connector.control_points",
         BoundError::TooMany {
-            count: 4,
+            count: 10,
             max: bounds::MAX_CONTROL_POINTS,
         },
+    );
+}
+
+#[test]
+fn test_a_straight_path_has_no_control_points() {
+    // One segment from end to end: a straight path loads, saves `straight`
+    // and loads again, and a straight path with a point is refused at the
+    // point, by the bound a straight path's points are held to.
+    let json = |fields: &str| map_of_two(&format!(r#","links":[{{"to":2,"kind":"line"{fields}}}]"#), "");
+    let doc = load(&json(r#","straight":true"#)).expect("a straight path loads");
+    let saved = crate::document::format::save(&doc).expect("it saves");
+    assert!(
+        saved.contains(r#""straight": true"#),
+        "straight is saved: {saved}"
+    );
+    assert!(load(&saved).is_ok(), "and loads again");
+    assert!(load(&json(r#","straight":false,"control_points":[[1,1]]"#)).is_ok());
+    rejects_bound(
+        &json(r#","straight":true,"control_points":[[1,1]]"#),
+        "nodes[0].links[0].control_points",
+        BoundError::TooMany { count: 1, max: 0 },
     );
 }
 

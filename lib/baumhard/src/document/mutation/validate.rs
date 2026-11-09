@@ -512,14 +512,17 @@ impl<'d> Validator<'d> {
             PathOp::SetSpacing(spacing) => self.non_negative("path.spacing", *spacing),
             PathOp::SetSize(size) => self.points("path.size", *size),
             PathOp::SetColor(color) => self.color(color.as_ref()),
-            PathOp::SetContent(_) | PathOp::SetAnchors(..) | PathOp::SetVisible(_) => Ok(()),
-            PathOp::SetControlPoints(points) => self.control_points(points),
+            PathOp::SetContent(_)
+            | PathOp::SetAnchors(..)
+            | PathOp::SetVisible(_)
+            | PathOp::SetStraight(_) => Ok(()),
+            PathOp::SetControlPoints(points) => self.control_points(points, false),
             PathOp::MoveControlPoint { index, to } => {
                 // The point must be one a path can have; whether the
                 // path reached has it is the walk's (see `ops`).
                 self.bound(
                     "path.control_points",
-                    check_control_points(index.saturating_add(1)),
+                    check_control_points(index.saturating_add(1), false),
                 )?;
                 self.canvas("path.control_points", *to)
             }
@@ -527,8 +530,11 @@ impl<'d> Validator<'d> {
         }
     }
 
-    fn control_points(&self, points: &[Vec2]) -> Result<(), MutationError> {
-        self.bound("path.control_points", check_control_points(points.len()))?;
+    fn control_points(&self, points: &[Vec2], straight: bool) -> Result<(), MutationError> {
+        self.bound(
+            "path.control_points",
+            check_control_points(points.len(), straight),
+        )?;
         points
             .iter()
             .try_for_each(|point| self.canvas("path.control_points", *point))
@@ -543,7 +549,7 @@ impl<'d> Validator<'d> {
 
     fn path_data(&self, path: &PathData) -> Result<(), MutationError> {
         self.flow(&path.flow)?;
-        self.control_points(&path.control_points)?;
+        self.control_points(&path.control_points, path.straight)?;
         self.zoom("path.zoom", path.zoom.as_ref())
     }
 

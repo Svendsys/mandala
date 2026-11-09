@@ -50,15 +50,19 @@ mod place;
 mod shape;
 mod span;
 
-pub use curve::Curve;
+pub use curve::{chain_point, Curve};
 pub use outline::{offset, outline, ring_offset, Outline, Rect};
 /// The arc-length walk, for the projection's single-point questions — a
 /// label at a fraction of its curve, a portal end at a fraction of its
 /// outline (V1-B7) — answered by the walk placement itself uses.
 pub(crate) use path::ArcPath;
 pub use path::MAX_TABLE_SAMPLES;
+/// A run with every glyph's ink measured, text too: what a text ring's
+/// paths stop at (#296).
+pub(crate) use place::halves::inked;
 pub use place::{
-    place_at_point, place_on_closed, place_on_open, PlacedGlyph, PlacedRun, RingLayout, MAX_PLACED_GLYPHS,
+    pattern_gap, place_at_point, place_on_closed, place_on_open, place_pitched, PathEnd, PlacedGlyph,
+    PlacedRun, RingLayout, MAX_PLACED_GLYPHS,
 };
 pub use shape::{shape_box, shape_run, GlyphMetrics, Ink, ShapedBox, ShapedRun, FILLER_SPAN};
 pub use span::{point_size, span_attrs, FlowSpan, LINE_HEIGHT_FACTOR};

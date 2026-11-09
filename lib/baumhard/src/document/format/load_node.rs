@@ -262,6 +262,7 @@ impl Builder {
             flow_in!(dto),
             dto.anchors,
             &dto.control_points,
+            dto.straight,
             dto.visible,
             dto.zoom.as_ref(),
         )?;
@@ -287,13 +288,14 @@ impl Builder {
         flow: crate::document::format::load_style::FlowIn<'_>,
         anchors: Option<[AnchorDto; 2]>,
         control_points: &[[f32; 2]],
+        straight: Option<bool>,
         visible: Option<bool>,
         zoom: Option<&crate::document::format::dto::ZoomDto>,
     ) -> LoadResult<PathData> {
         let flow = self.flow_style(flow)?;
         self.bounded(
             "control_points",
-            bounds::check_control_points(control_points.len()),
+            bounds::check_control_points(control_points.len(), straight == Some(true)),
         )?;
         let mut points = Vec::with_capacity(control_points.len());
         self.key("control_points", |b| {
@@ -312,6 +314,7 @@ impl Builder {
             flow,
             anchors: anchors.map_or(AUTO_ANCHORS, |[from, to]| (anchor(from), anchor(to))),
             control_points: points,
+            straight: straight == Some(true),
             visible: visible.unwrap_or(true),
             zoom: zoom.map(|zoom| self.zoom("zoom", zoom)).transpose()?,
         })
@@ -386,6 +389,7 @@ impl Builder {
                     flow_in!(dto),
                     dto.anchors,
                     &dto.control_points,
+                    dto.straight,
                     dto.visible,
                     dto.zoom.as_ref(),
                 )?
@@ -453,6 +457,7 @@ impl Builder {
             ("content", dto.content.is_some()),
             ("anchors", dto.anchors.is_some()),
             ("control_points", !dto.control_points.is_empty()),
+            ("straight", dto.straight.is_some()),
             ("visible", dto.visible.is_some()),
             ("zoom", dto.zoom.is_some()),
             ("spans", !dto.spans.is_empty()),
@@ -494,6 +499,7 @@ fn default_path() -> PathData {
         flow: Default::default(),
         anchors: AUTO_ANCHORS,
         control_points: Vec::new(),
+        straight: false,
         visible: true,
         zoom: None,
     }

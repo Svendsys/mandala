@@ -262,8 +262,16 @@ pub enum PathOp {
     SetContent(Option<String>),
     /// Set where it attaches at its start and at its end.
     SetAnchors(Anchor, Anchor),
-    /// Replace its control points: 0, 1 or 2.
+    /// Replace its control points: at most 8 points the path passes
+    /// through, point `k` of `n` an offset from the point `k / (n + 1)`
+    /// of the way between its ends (`format/schema.md`, "Control
+    /// points").
     SetControlPoints(Vec<Vec2>),
+    /// Make it one straight segment from end to end, or a curve again.
+    /// A straight path has no control points: set straight, it drops
+    /// them, and points set on it make it a curve again
+    /// ([`PathOp::SetControlPoints`]), so the two never meet.
+    SetStraight(bool),
     /// Move one control point; one the path does not have is left
     /// alone.
     MoveControlPoint {
@@ -596,7 +604,16 @@ fn apply_path(op: &PathOp, path: &mut crate::document::element::PathData) {
         PathOp::SetColor(color) => path.flow.color = *color,
         PathOp::SetContent(content) => path.flow.content.clone_from(content),
         PathOp::SetAnchors(start, end) => path.anchors = (*start, *end),
-        PathOp::SetControlPoints(points) => path.control_points.clone_from(points),
+        PathOp::SetControlPoints(points) => {
+            path.control_points.clone_from(points);
+            path.straight &= points.is_empty();
+        }
+        PathOp::SetStraight(straight) => {
+            path.straight = *straight;
+            if *straight {
+                path.control_points.clear();
+            }
+        }
         PathOp::MoveControlPoint { index, to } => match path.control_points.get_mut(*index) {
             Some(point) => *point = Vec2::new(clamp_canvas_coord(to.x), clamp_canvas_coord(to.y)),
             None => debug!("document mutation: the path has no control point {index}"),

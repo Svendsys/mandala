@@ -89,7 +89,9 @@ pub(in crate::application::app) fn selection_center(
     for id in doc.selection.iter() {
         let at = match kind_of(doc.doc(), id) {
             Some(DocKind::Node) => projector.node_rect(id).map(|rect| rect.center()),
-            Some(DocKind::Connector | DocKind::Link) => projector.curve(id).map(|curve| curve.point(0.5)),
+            Some(DocKind::Connector | DocKind::Link) => projector
+                .curve(id)
+                .and_then(|curves| baumhard::flow::chain_point(curves, 0.5)),
             _ => None,
         };
         if let Some(at) = at {

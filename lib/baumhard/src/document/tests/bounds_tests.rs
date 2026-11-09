@@ -163,13 +163,19 @@ fn test_document_bounds_control_points() {
     do_document_bounds_control_points();
 }
 
-/// Two control points — a cubic — are in; three are out.
+/// Eight control points — four crests of a wave — are in; nine are out.
+/// A straight path takes none: one is out.
 pub fn do_document_bounds_control_points() {
-    assert_eq!(MAX_CONTROL_POINTS, 2);
-    assert_eq!(check_control_points(2), Ok(2));
+    assert_eq!(MAX_CONTROL_POINTS, 8);
+    assert_eq!(check_control_points(8, false), Ok(8));
     assert_eq!(
-        check_control_points(3),
-        Err(BoundError::TooMany { count: 3, max: 2 })
+        check_control_points(9, false),
+        Err(BoundError::TooMany { count: 9, max: 8 })
+    );
+    assert_eq!(check_control_points(0, true), Ok(0));
+    assert_eq!(
+        check_control_points(1, true),
+        Err(BoundError::TooMany { count: 1, max: 0 })
     );
 }
 

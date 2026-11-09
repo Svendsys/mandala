@@ -32,9 +32,11 @@ pub const MAX_CANVAS_COORD: f32 = 1.0e9;
 /// The largest [`Percent`](crate::document::values::Percent).
 pub const MAX_PERCENT: u8 = 100;
 
-/// The most control points a path may have: 0 is a line, 1 a quadratic
-/// and 2 a cubic Bézier.
-pub const MAX_CONTROL_POINTS: usize = 2;
+/// The most control points a path may have: points it passes through,
+/// each joined to the next by a cubic (#296). Eight is a wave of four
+/// crests between two nodes, more than a connector between two frames
+/// has room to show.
+pub const MAX_CONTROL_POINTS: usize = 8;
 
 /// The largest ident a node may carry — read at load or issued by the
 /// counter, one ceiling for both, so whatever the counter issues loads
@@ -392,13 +394,12 @@ pub fn check_zoom_window(min: Option<f32>, max: Option<f32>) -> Result<(), Bound
 }
 
 /// A path's control-point count if it is at most
-/// [`MAX_CONTROL_POINTS`]. O(1).
-pub fn check_control_points(count: usize) -> Result<usize, BoundError> {
-    if count > MAX_CONTROL_POINTS {
-        Err(BoundError::TooMany {
-            count,
-            max: MAX_CONTROL_POINTS,
-        })
+/// [`MAX_CONTROL_POINTS`], or for a `straight` path, which is one segment
+/// from end to end, if it is none. O(1).
+pub fn check_control_points(count: usize, straight: bool) -> Result<usize, BoundError> {
+    let max = if straight { 0 } else { MAX_CONTROL_POINTS };
+    if count > max {
+        Err(BoundError::TooMany { count, max })
     } else {
         Ok(count)
     }

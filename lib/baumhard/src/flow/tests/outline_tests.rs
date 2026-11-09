@@ -329,21 +329,6 @@ pub fn do_flow_open_path_holds_its_ends() {
 }
 
 #[test]
-fn test_flow_curve_from_points() {
-    do_flow_curve_from_points();
-}
-
-/// Zero, one and two control points are a line, a quadratic and a
-/// cubic; a third is invalid.
-pub fn do_flow_curve_from_points() {
-    let (a, c, d, b) = (Vec2::ZERO, Vec2::X, Vec2::Y, Vec2::ONE);
-    assert_eq!(Curve::from_points(a, &[], b), Some(Curve::Line(a, b)));
-    assert_eq!(Curve::from_points(a, &[c], b), Some(Curve::Quadratic(a, c, b)));
-    assert_eq!(Curve::from_points(a, &[c, d], b), Some(Curve::Cubic(a, c, d, b)));
-    assert_eq!(Curve::from_points(a, &[c, d, c], b), None);
-}
-
-#[test]
 fn test_flow_table_spacing_has_a_floor() {
     do_flow_table_spacing_has_a_floor();
 }

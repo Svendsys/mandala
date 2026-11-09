@@ -2223,6 +2223,7 @@ hidden_items!();
             flow,
             anchors: (Anchor::Auto, Anchor::Auto),
             control_points: Vec::new(),
+            straight: false,
             visible: true,
             zoom: None,
         };
