@@ -1257,7 +1257,9 @@ impl Projector {
         });
         // Two first glyphs leave the point side by side or across a slope,
         // where an upright box reaches as far as its diagonal.
-        let spread = geometry::spread(gap, size * std::f32::consts::SQRT_2);
+        let diagonal = size * std::f32::consts::SQRT_2;
+        let spread = geometry::spread(gap, diagonal);
+        let clear = gap + diagonal;
         let lead = 2.0 * (gap + size);
         let ends = [(from, a, anchors.0, b), (to, b, anchors.1, a)];
         let mut attach = ends.map(|(node, own, anchor, other)| {
@@ -1270,6 +1272,7 @@ impl Projector {
                 normal,
                 toward: 0.0,
                 spread,
+                clear,
                 lead,
             }
         });
@@ -1410,17 +1413,17 @@ impl Projector {
                         _ => None,
                     })
                     .collect();
-                let sizes: Vec<(f32, f32)> = fan.iter().map(|m| (m.2.spread, m.2.lead)).collect();
+                let sizes: Vec<(f32, f32)> = fan.iter().map(|m| (m.2.spread, m.2.clear)).collect();
                 let hold = geometry::fan(&sizes).first().map_or(0.0, |f| f.1);
                 // In the order each turns toward its other end's lead, seen
                 // from where the fan's leads end: the way their curves run.
-                let lead = sizes.iter().map(|s| s.1).fold(0.0_f32, f32::max);
+                let lead = fan.iter().map(|m| m.2.lead).fold(0.0_f32, f32::max);
                 let order = |m: &(NodeId, usize, Attach, Attach, Vec<Vec2>, bool)| {
                     let from = m.2.point + m.2.normal * (lead + hold);
                     geometry::turn_to(m.2.normal, m.3.point + m.3.normal * m.3.lead - from)
                 };
                 fan.sort_by(|a, b| order(a).total_cmp(&order(b)).then(a.0.cmp(&b.0)));
-                let sizes: Vec<(f32, f32)> = fan.iter().map(|m| (m.2.spread, m.2.lead)).collect();
+                let sizes: Vec<(f32, f32)> = fan.iter().map(|m| (m.2.spread, m.2.clear)).collect();
                 let turns = geometry::fan(&sizes);
                 let lanes: Vec<geometry::Lane> = fan
                     .iter()

@@ -378,6 +378,12 @@ fn test_projection_a_straight_connector_is_one_segment_between_midpoints() {
 
 /// Node 1 with children below it at `xs`, each a dotted connector.
 fn fan_of(xs: &[f32]) -> Projected {
+    fan_of_glyph(xs, 260.0, "")
+}
+
+/// [`fan_of`], the children's tops at `y` and each connector of
+/// `content` where it is not empty.
+fn fan_of_glyph(xs: &[f32], y: f32, content: &str) -> Projected {
     let mut nodes = vec![node(
         1,
         None,
@@ -389,7 +395,11 @@ fn fan_of(xs: &[f32]) -> Projected {
             Some(1),
             with(
                 dotted(120.0, 50.0),
-                json!({"position": [x - 60.0, 260.0], "connector": {"size": 14.0}}),
+                json!({"position": [x - 60.0, y], "connector": if content.is_empty() {
+                    json!({"size": 14.0})
+                } else {
+                    json!({"size": 14.0, "content": content})
+                }}),
             ),
         ));
     }
@@ -469,6 +479,60 @@ fn test_projection_paths_that_share_a_side_leave_one_point_fanned() {
     // gap allows.
     clear_along(&seven, "seven children in a row");
     wide.check().unwrap();
+}
+
+#[test]
+fn test_projection_a_held_fan_clears_its_neighbors_across_the_slope() {
+    // Thirteen children in a row, as testament's Joktan's: the fan at its
+    // cap, each two neighbors 6.7° apart, so each path is held straight on
+    // past the point. Turned that far from the normal, two neighbors' first
+    // glyphs stand side by side across a slope, where an upright box
+    // reaches as far as its diagonal: they clear each other only held out
+    // as far as the turn between them is reckoned for.
+    let xs: Vec<f32> = (-6..=6).map(|k| k as f32 * 130.0).collect();
+    let mut row = fan_of_glyph(&xs, 900.0, "■");
+    let thirteen = branches(&row, 13);
+    let most = thirteen
+        .iter()
+        .map(|b| degrees(Vec2::Y, b.0[0].derivative(0.0)))
+        .fold(0.0_f32, f32::max);
+    assert!(
+        (most - SPLAY_CAP.to_degrees()).abs() < 0.01,
+        "precondition: the outermost at the cap: {most}°"
+    );
+    let connector = kid(&row.doc, ident(&row.doc, 10), DocKind::Connector);
+    let Some(UnitBody::Line(first)) = row.projector.units.get(&connector).map(|u| &u.body) else {
+        panic!("the first branch is a drawn line");
+    };
+    let (hold, lead) = (first.fans[0].hold, first.attach[0].map_or(0.0, |a| a.lead));
+    assert!(hold > 0.0, "precondition: a fan at the cap is held out: {hold}");
+    let point = thirteen[0].0[0].point(0.0);
+    let near = |b: &(Vec<Curve>, Vec<Rect>)| -> Vec<Rect> {
+        b.1.iter()
+            .filter(|r| r.center().distance(point) <= hold + lead)
+            .copied()
+            .collect()
+    };
+    let own = median(
+        thirteen
+            .iter()
+            .flat_map(|b| b.1.windows(2).map(|w| gap(&w[0], &w[1])))
+            .collect(),
+    );
+    for k in 0..12 {
+        let (a, b) = (near(&thirteen[k]), near(&thirteen[k + 1]));
+        let nearest = a
+            .iter()
+            .flat_map(|x| b.iter().map(move |y| gap(x, y)))
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            !a.is_empty() && !b.is_empty() && nearest >= 0.8 * own,
+            "branches {k} and {} have glyphs {nearest} apart near the point, their own gap {own}",
+            k + 1
+        );
+    }
+    clear_along(&thirteen, "thirteen children in a row");
+    row.check().unwrap();
 }
 
 /// The least distance between a glyph of one of `branches` and a glyph

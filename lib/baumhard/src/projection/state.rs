@@ -324,6 +324,12 @@ pub(crate) struct Attach {
     /// point at which their first glyphs clear each other by this path's
     /// own gap.
     pub(crate) spread: f32,
+    /// How far apart this path's first glyph's center and a neighbor's
+    /// must be to clear each other by this path's own gap, side by side
+    /// or across a slope: the gap and the glyph's diagonal, what
+    /// [`spread`](Self::spread) is reckoned for, and what a fan at its cap
+    /// holds its first glyphs out to.
+    pub(crate) clear: f32,
     /// How far the path runs straight from the side before it bends: its
     /// first two glyphs' reach.
     pub(crate) lead: f32,

@@ -83,13 +83,16 @@ pub(crate) fn spread(gap: f32, size: f32) -> f32 {
 }
 
 /// The turns and holds of the paths that leave one point of a side, in
-/// order, each given as `(spread, lead)` (#296, rule 4): each two
+/// order, each given as `(spread, clear)` (#296, rule 4): each two
 /// neighbors apart by the widest spread among them, and none more than
 /// [`SPLAY_CAP`] from the normal — the fan narrowed to hold it. Narrowed,
 /// its first glyphs are held out from the point to where neighbors that
-/// far apart clear each other: half the widest lead over twice the sine
-/// of half the step. A path alone leaves along the normal, held nowhere.
-/// O(members); one allocation.
+/// far apart clear each other: their centers the widest `clear` apart —
+/// the gap and the glyph's diagonal, as the spread is reckoned, since
+/// two neighbors turned off the normal stand side by side across a
+/// slope — so the widest clear over twice the sine of half the step. A
+/// path alone leaves along the normal, held nowhere. O(members); one
+/// allocation.
 pub(crate) fn fan(members: &[(f32, f32)]) -> Vec<(f32, f32)> {
     if members.len() < 2 {
         return vec![(0.0, 0.0); members.len()];
@@ -98,8 +101,8 @@ pub(crate) fn fan(members: &[(f32, f32)]) -> Vec<(f32, f32)> {
     let widest = members.iter().map(|m| m.0).fold(0.0_f32, f32::max);
     let step = widest.min(2.0 * SPLAY_CAP / last);
     let hold = if step < widest {
-        let reach = members.iter().map(|m| m.1).fold(0.0_f32, f32::max) * 0.5;
-        reach / (2.0 * (0.5 * step).sin())
+        let clear = members.iter().map(|m| m.1).fold(0.0_f32, f32::max);
+        clear / (2.0 * (0.5 * step).sin())
     } else {
         0.0
     };
