@@ -1185,10 +1185,12 @@ fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
     let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (advance)");
 
     // A light horizontal rule, which Mandala Ornaments draws, and a
-    // `W`, which the default face draws wider (#228: no compiled face
-    // holds the full block `█` this pair used, which a host face drew).
-    // Both single-glyph, so sum and max agree and this pair pins only
-    // the "max across the set" half.
+    // `W`, which the default face draws wider. The pair used the full
+    // block `█` until #228: only decorative faces hold it (Public Pixel,
+    // African and two others), so unpinned it is drawn in whichever
+    // comes first, where it used to reach the host's DejaVu Sans. Both
+    // single-glyph, so sum and max agree and this pair pins only the
+    // "max across the set" half.
     let (narrow, wide) = ("\u{2500}", "W");
     let (_, narrow_w, narrow_n) = shape_cluster_advances(&mut fs, narrow, size);
     let (_, wide_w, wide_n) = shape_cluster_advances(&mut fs, wide, size);
@@ -1229,6 +1231,91 @@ fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
         measure_max_glyph_advance(&mut fs, None, &[""], size),
         monospace_advance(size),
         "a set that shapes to nothing must fall back rather than return zero"
+    );
+}
+
+/// **Every glyph of the app's own chrome is drawn by the default face or
+/// `Mandala Ornaments`** (#228): the console's prompt, cursor, gutter,
+/// completion marker and frame, the rubber band's corners and dashes,
+/// and the `body` presets. Each is drawn in the default family, and the
+/// font system holds the compiled faces alone, so a glyph neither face
+/// holds is drawn as a `.notdef` box or in a decorative face the app
+/// never chose (`▌` and `═` in `African`). Each is shaped as the chrome
+/// shapes it, with no family, and every glyph must be the default face's
+/// or the ornament face's, and not a `.notdef`.
+///
+/// Control: with the pre-chrome `Mandala Ornaments` (#228's first
+/// subset, which held the frame alone), red on `❯ ▌ ▏ ▸ ┄ ┆ ═ ∼ ⋯`.
+#[test]
+fn test_every_chrome_glyph_is_drawn_by_the_default_or_an_ornament_face() {
+    use crate::application::console::commands::body::PRESETS;
+    use crate::application::console::visuals::{
+        CURSOR_GLYPH, GUTTER_GLYPH, PROMPT_GLYPH, SELECTED_COMPLETION_MARKER,
+    };
+    use crate::application::view::band::{BAND_CORNERS, BAND_HORIZONTAL, BAND_VERTICAL};
+    use baumhard::font::fallback::DEFAULT_FACE;
+    use baumhard::font::fonts::COMPILED_FONT_ID_MAP;
+    use baumhard::font::{buffer, SHAPING_ADVANCED};
+
+    let (top, bottom, side, _) = build_console_border_strings(3, 1);
+    let mut chrome: Vec<(String, String)> = vec![
+        ("the prompt".into(), PROMPT_GLYPH.into()),
+        ("the cursor".into(), CURSOR_GLYPH.into()),
+        ("the gutter".into(), GUTTER_GLYPH.into()),
+        ("the completion marker".into(), SELECTED_COMPLETION_MARKER.into()),
+        ("the console frame's top".into(), top),
+        ("the console frame's bottom".into(), bottom),
+        ("the console frame's side".into(), side),
+        ("the band's corners".into(), BAND_CORNERS.iter().collect()),
+        ("the band's edge".into(), BAND_HORIZONTAL.into()),
+        ("the band's side".into(), BAND_VERTICAL.into()),
+    ];
+    for (name, glyph) in PRESETS {
+        chrome.push((format!("the `body {name}` preset"), (*glyph).into()));
+    }
+    let allowed: Vec<baumhard::font::FontId> = [DEFAULT_FACE.0, AppFont::MandalaOrnaments]
+        .iter()
+        .flat_map(|font| COMPILED_FONT_ID_MAP[font].iter().copied())
+        .collect();
+    baumhard::font::fonts::init();
+    // Read under the guard and assert once it is released, so a failure
+    // does not poison the lock for the tests beside it.
+    let drawn: Vec<(String, char, baumhard::font::FontId, u16, Option<String>)> = {
+        let mut fs = baumhard::font::fonts::acquire_font_system_write("renderer::tests (chrome glyphs)");
+        let mut drawn = Vec::new();
+        for (what, text) in &chrome {
+            for c in text.chars().filter(|c| !c.is_whitespace()) {
+                let mut buf = buffer::create_square(&mut fs, 16.0);
+                buf.set_text(&c.to_string(), &Attrs::new(), SHAPING_ADVANCED, None);
+                buf.shape_until_scroll(&mut fs, false);
+                for run in buf.layout_runs() {
+                    for glyph in run.glyphs.iter() {
+                        let name = fs.db().face(glyph.font_id).map(|f| f.post_script_name.clone());
+                        drawn.push((what.clone(), c, glyph.font_id, glyph.glyph_id, name));
+                    }
+                }
+            }
+        }
+        drawn
+    };
+    let glyphs: usize = chrome
+        .iter()
+        .map(|(_, text)| text.chars().filter(|c| !c.is_whitespace()).count())
+        .sum();
+    assert_eq!(
+        drawn.len(),
+        glyphs,
+        "precondition: each chrome glyph shapes to one glyph"
+    );
+    let faults: Vec<String> = drawn
+        .iter()
+        .filter(|(_, _, face, glyph, _)| !allowed.contains(face) || *glyph == 0)
+        .map(|(what, c, _, glyph, name)| format!("{what}'s {c:?}: {name:?} glyph {glyph}"))
+        .collect();
+    assert!(
+        faults.is_empty(),
+        "chrome glyphs not drawn by the default face or Mandala Ornaments:\n{}",
+        faults.join("\n")
     );
 }
 

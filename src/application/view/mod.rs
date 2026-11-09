@@ -50,7 +50,7 @@
 //! document is.
 
 #[cfg(not(target_arch = "wasm32"))]
-mod band;
+pub(crate) mod band;
 pub(crate) mod chrome;
 pub(crate) mod inspect;
 pub(crate) mod overlay;

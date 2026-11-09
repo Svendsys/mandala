@@ -7,7 +7,8 @@
 #
 # The faces are what the shaper reaches, after a span's own face and the
 # default face (Inter), for the ornament glyphs the demo maps, the
-# built-in styles and the console frame draw
+# built-in styles and the app's own chrome (the console, the rubber band,
+# the `body` presets) draw
 # (`baumhard::font::fallback::ORNAMENT_FALLBACK`, `format/fonts.md`
 # "Fallback"), so that every target draws the same glyph for them. They
 # hold no code point the default face holds (#228): a letter, digit,
@@ -61,11 +62,16 @@ NOTO_EMOJI_SHA256=93cdc4ee9aa40e2afceecc63da0ca05ec7aab4bec991ece51a6b52389f48a4
 FONTTOOLS_VERSION=4.68.0
 
 # ∙ ◈ ✦ ❦: the ornaments of the demo maps' sides, rings and connectors,
-# and the built-in portal-end glyph (`document::defaults::BUILT_IN`); and
-# ─ ━ │ ┃ ╭ ╮ ╯ ╰: the console's frame and testament's custom sides. The
-# default face holds none of them; it holds the space, `+ ~ ·` and `♪`,
-# which this face held until #228, and draws them.
-ORNAMENTS=U+2219,U+2500,U+2501,U+2502,U+2503,U+256D,U+256E,U+256F,U+2570,U+25C8,U+2726,U+2766
+# and the built-in portal-end glyph (`document::defaults::BUILT_IN`);
+# ─ ━ │ ┃ ╭ ╮ ╯ ╰: the console's frame and testament's custom sides; and
+# the rest of the app's chrome: the console's prompt `❯`, cursor `▌`,
+# gutter `▏` and completion marker `▸`, the rubber band's dashed edges
+# `┄ ┆`, and the `body` presets' `═ ∼ ⋯`; with `∽` and `❮`, the mirrored
+# forms of `∼` and `❯`, which pyftsubset keeps beside them so a
+# right-to-left run can mirror them. The default face holds none of
+# them; it holds the space, `+ ~ ·` and `♪`, which this face held until
+# #228, and draws them.
+ORNAMENTS=U+2219,U+223C,U+223D,U+22EF,U+2500,U+2501,U+2502,U+2503,U+2504,U+2506,U+2550,U+256D,U+256E,U+256F,U+2570,U+258C,U+258F,U+25B8,U+25C8,U+2726,U+2766,U+276E,U+276F
 # 🌸, the emoji of the frames demo.
 EMOJI=U+1F338
 

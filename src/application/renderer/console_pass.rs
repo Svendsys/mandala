@@ -361,7 +361,7 @@ pub(super) fn console_overlay_areas(
         &input_with_cursor,
         content_cols.saturating_sub(2),
     );
-    let prompt_text = "\u{276F} ";
+    let prompt_text = crate::application::console::visuals::PROMPT_GLYPH;
     let combined = format!("{prompt_text}{input_clipped}");
     let prompt_chars = baumhard::util::grapheme_chad::count_grapheme_clusters(prompt_text);
     let input_chars = baumhard::util::grapheme_chad::count_grapheme_clusters(input_clipped);

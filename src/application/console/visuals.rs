@@ -36,6 +36,16 @@ pub const ERROR_COLOR: Color = Color::rgba(0xe2, 0x8c, 0x8c, 0xff);
 pub const ACCENT_COLOR: Color = Color::rgba(0x7f, 0xc3, 0xa5, 0xff);
 
 // ---- glyph constants -------------------------------------------------
+//
+// Every glyph here is drawn in the default family, so each must be held
+// by the default face or `Mandala Ornaments` (#228): the font system
+// holds the compiled faces alone, and a glyph neither holds is drawn as
+// a `.notdef` box or in a decorative face.
+// `renderer::tests::test_every_chrome_glyph_is_drawn_by_the_default_or_an_ornament_face`
+// holds them to it.
+
+/// The prompt, ahead of the input line, in the accent color.
+pub const PROMPT_GLYPH: &str = "\u{276F} "; // ❯
 
 /// Cursor block — inserted into the input buffer at the cursor
 /// position.
