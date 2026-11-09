@@ -519,6 +519,60 @@ mod tests {
         );
     }
 
+    /// **A copied section pastes the theme variable and the verb it
+    /// named, though names were added before them since** (what V1-C5's
+    /// theme editing will do). The fragment is copied where `accent` is
+    /// variable 0 and `glow` verb 0, and pasted where `aaa` and `alpha`
+    /// come first: its span is `var(accent)` and links to `glow` there,
+    /// by name — an index kept as copied would name `aaa` and `alpha`.
+    /// A name that is gone pastes as inherited.
+    #[test]
+    fn test_a_copied_fragment_keeps_its_variables_and_verbs_by_name() {
+        let map = |vars: serde_json::Value, verbs: serde_json::Value| {
+            load(json!({"format": 1, "name": "names",
+                "theme": {"active": "dark", "variants": {"dark": vars}},
+                "verbs": verbs,
+                "nodes": [{"id": 1, "position": [0.0, 0.0], "sections": [{"spans": [
+                    {"text": "x", "color": "var(accent)", "link": {"verb": "glow"}}
+                ]}]}]
+            }))
+        };
+        let mut from = map(
+            json!({"accent": "#d4a24c"}),
+            json!([{"id": "glow", "name": "Glow"}]),
+        );
+        let s = section(&from, node(&from, 1), 0);
+        from.selection.select_only(s);
+        assert_eq!(copy(&mut from, false), Ok(true));
+        let clipboard = from.clipboard.clone().expect("copied");
+
+        let mut to = map(
+            json!({"aaa": "#000000", "accent": "#d4a24c"}),
+            json!([{"id": "alpha", "name": "Alpha"}, {"id": "glow", "name": "Glow"}]),
+        );
+        let target = section(&to, node(&to, 1), 0);
+        to.selection.select_only(target);
+        let steps = clipboard::paste(to.doc(), &to.selection, &clipboard.text, Some(&clipboard));
+        assert_eq!(apply(&mut to, steps, "paste"), Ok(true));
+        let saved = bytes(&to);
+        assert!(
+            saved.contains(r#"{"text": "x", "color": "var(accent)", "link": {"verb": "glow"}}"#),
+            "the names, not the indices: {saved}"
+        );
+
+        let mut bare = load(json!({"format": 1, "name": "bare", "nodes": [
+            {"id": 1, "position": [0.0, 0.0], "sections": [{"spans": [{"text": "y"}]}]}
+        ]}));
+        let target = section(&bare, node(&bare, 1), 0);
+        bare.selection.select_only(target);
+        let steps = clipboard::paste(bare.doc(), &bare.selection, &clipboard.text, Some(&clipboard));
+        assert_eq!(apply(&mut bare, steps, "paste"), Ok(true));
+        assert!(
+            bytes(&bare).contains(r#"{"text": "x"}"#),
+            "names the document lacks paste as inherited"
+        );
+    }
+
     /// **Several copied elements paste one piece each onto as many
     /// targets** — the texts of nodes 1 and 3 onto sections of 5 and 6 —
     /// **and the whole text onto any other count** (the control: three

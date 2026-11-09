@@ -24,8 +24,11 @@
 //! platform's text is still that text — so text copied in another app in
 //! between wins — and reads the app's text where the platform has none
 //! (the browser). The fragment is the section in the document's own
-//! terms: its colors and fonts name this document's theme and faces,
-//! which is why it is never handed to another document.
+//! types, but a theme variable and a verb are indices that shift when a
+//! name is added before theirs, so the fragment keeps the names its
+//! indices meant when it was copied, and a paste maps each one back by
+//! name in the document as it then is (a name that is gone pastes as
+//! inherited). The OS clipboard only ever gets plain text.
 //!
 //! Every change Cut and Paste make is one request: the selection's
 //! elements are grouped by what they receive, and each group is one walk
@@ -42,7 +45,7 @@ use baumhard::document::mutation::ops::{
 };
 use baumhard::document::mutation::step::{DocStep, DocWalk};
 use baumhard::document::resolve::resolve_text;
-use baumhard::document::values::{Align, ColorRef};
+use baumhard::document::values::{Align, ColorRef, LinkTarget, VarId, VerbId};
 use baumhard::engine::anchor::Anchors;
 use baumhard::engine::key::BranchKey;
 use baumhard::engine::mutator::Mutator;
@@ -102,15 +105,60 @@ pub struct Clipboard {
 
 /// A copied section in the file's terms (`format/schema.md`
 /// §"Sections"): its spans and the style fields of its own, without its
-/// place in its node (channel, offset, minimum size).
+/// place in its node (channel, offset, minimum size). An internal
+/// representation: the OS clipboard gets the text.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SectionFragment {
     /// How its lines align.
-    pub align: Option<Align>,
+    align: Option<Align>,
     /// The text defaults its spans inherit.
-    pub style: TextStyle,
+    style: TextStyle,
     /// Its spans, in order.
-    pub spans: Vec<SpanData>,
+    spans: Vec<SpanData>,
+    /// The copied document's theme variables, by name, in the order a
+    /// `VarId` indexes them then.
+    vars: Vec<String>,
+    /// Its verbs' ids, in the order a `VerbId` indexes them then.
+    verbs: Vec<String>,
+}
+
+impl SectionFragment {
+    /// The fragment's style and spans with every theme variable and verb
+    /// it names mapped, by name, to its index in `doc`: what pasting it
+    /// into `doc` as it now is means. A name `doc` no longer has is left
+    /// unset, so the span inherits. O(the spans, and a search per name).
+    fn in_doc(&self, doc: &Document) -> (TextStyle, Vec<SpanData>) {
+        let color = |color: Option<ColorRef>| match color {
+            Some(ColorRef::Var(VarId(at))) => {
+                let name = self.vars.get(usize::from(at))?;
+                let at = doc.theme().variables.binary_search(name).ok()?;
+                Some(ColorRef::Var(VarId(u16::try_from(at).ok()?)))
+            }
+            other => other,
+        };
+        let style = |style: &TextStyle| TextStyle {
+            color: color(style.color),
+            ..style.clone()
+        };
+        let link = |link: &Option<LinkTarget>| match link {
+            Some(LinkTarget::Verb(VerbId(at))) => {
+                let id = self.verbs.get(usize::from(*at))?;
+                let at = doc.definitions().verbs.iter().position(|verb| verb.id == *id)?;
+                Some(LinkTarget::Verb(VerbId(u16::try_from(at).ok()?)))
+            }
+            other => other.clone(),
+        };
+        let spans = self
+            .spans
+            .iter()
+            .map(|span| SpanData {
+                text: span.text.clone(),
+                style: style(&span.style),
+                link: link(&span.link),
+            })
+            .collect();
+        (style(&self.style), spans)
+    }
 }
 
 /// What Copy (`cut: false`) or Cut takes from `selection`: the clipboard,
@@ -222,8 +270,9 @@ pub fn paste(
         }
     }
     if let (Some(fragment), false) = (fragment, styled.is_empty()) {
-        steps.extend(replace_spans(doc, &styled, &fragment.spans)?);
-        steps.push(section_style(fragment, styled));
+        let (style, spans) = fragment.in_doc(doc);
+        steps.extend(replace_spans(doc, &styled, &spans)?);
+        steps.push(section_style(fragment.align, &style, styled));
     }
     for (text, owners) in plain {
         let spans = [SpanData {
@@ -288,15 +337,21 @@ fn section_fragment(doc: &Document, section: NodeId) -> Option<SectionFragment> 
         align: *align,
         style: text.clone(),
         spans,
+        vars: doc.theme().variables.clone(),
+        verbs: doc
+            .definitions()
+            .verbs
+            .iter()
+            .map(|verb| verb.id.clone())
+            .collect(),
     })
 }
 
-/// The walk that gives `sections` the fragment's own style fields.
-fn section_style(fragment: &SectionFragment, sections: Vec<NodeId>) -> DocStep {
-    let style = &fragment.style;
+/// The walk that gives `sections` a fragment's own style fields.
+fn section_style(align: Option<Align>, style: &TextStyle, sections: Vec<NodeId>) -> DocStep {
     let text = |op| DocMutation::Section(SectionOp::Text(op));
     let mutations = vec![
-        DocMutation::Section(SectionOp::SetAlign(fragment.align)),
+        DocMutation::Section(SectionOp::SetAlign(align)),
         text(TextOp::SetFont(style.font)),
         text(TextOp::SetSize(style.size)),
         text(TextOp::SetColor(style.color)),
