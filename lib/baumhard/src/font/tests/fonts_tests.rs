@@ -668,9 +668,12 @@ fn test_no_host_face_bears_a_compiled_name_or_comes_before_a_compiled_face() {
 /// - no face that is not compiled bears a compiled family's name
 ///   (ruling R30.1, `remove_shadowing_faces`), so a pin, and the default
 ///   face, name the compiled faces alone;
-/// - every compiled face's id comes before every other face's, so a tie
-///   in cosmic-text's last pass, which goes by id among equal weights,
-///   falls to a compiled face;
+/// - every compiled face's id comes before every other face's, so in
+///   cosmic-text's last pass, which goes by id only among faces equal in
+///   emoji-ness, weight, stretch and slant distance, weight and stretch,
+///   such a tie falls to a compiled face (an emoji host face, or one
+///   nearer the span's weight or slant, is ordered before it all the
+///   same: `format/fonts.md` "Fallback");
 /// - the default face is named for every generic family, so text that
 ///   pins none asks for it by name.
 ///

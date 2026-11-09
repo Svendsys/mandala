@@ -118,17 +118,13 @@ system's fallback is one list, the same on every target
 | `Inter Variable` | the default face (above) | Inter 4.1 | SIL Open Font License 1.1 |
 | `Mandala Ornaments` | `∙ ◈ ✦ ❦`; the box-drawing `─ ━ │ ┃ ┄ ┆ ═ ╭ ╮ ╯ ╰`; the chrome's `❯ ▌ ▏ ▸ ∼ ⋯` (with `❮ ∽`, their mirrored forms) | DejaVu Sans 2.37 | Bitstream Vera and Arev; DejaVu's changes public domain |
 | `Mandala Emoji` | `🌸` | Noto Color Emoji 2.047 (its color bitmap) | SIL Open Font License 1.1 |
-| `Noto Sans Hebrew` | Hebrew | Noto | SIL Open Font License 1.1 |
+| `Noto Sans Hebrew`, `Noto Sans Devanagari`, `Noto Serif Tibetan`, `Noto Sans Egyptian Hieroglyphs` | their scripts | Noto | SIL Open Font License 1.1 |
 
-A script's face is listed when another compiled face holds that script
-too: Public Pixel holds Hebrew letters, so without the entry a run of
-Hebrew would be drawn in whichever of the two the last pass (below)
-meets first — today Noto Sans Hebrew, which sorts first by name at the
-same weight, but a face that sorts earlier would take it. Noto Sans
-Devanagari, Noto Serif Tibetan and Noto Sans Egyptian Hieroglyphs are
-each the only compiled face of their script,
-which the last pass reaches at any weight; each is listed when a second
-compiled face holds its script.
+Each script face is listed, so it is registered at every weight and met
+at the span's own weight, before the last pass (below), where another
+face that holds the script could come first: a host face at the span's
+weight — FreeSerif Bold for bold Devanagari on a Debian desktop — or
+Public Pixel, which holds Hebrew letters.
 
 The two ornament faces hold the ornaments the demo maps draw (sides,
 `repeat` rings), the built-in portal end's `◈`, the box-drawing
@@ -151,13 +147,21 @@ How it holds:
   the same faces in the same order. cosmic-text's platform lists, which
   differ between Linux, Windows, macOS and the browser and name host
   families, are not consulted. A character none of the listed faces
-  holds is looked for in every other face, nearest in weight first, and
-  among equals in the order the faces were loaded: the compiled faces in
-  the order the build lists them, then, on native, the host's. So a host
-  face draws a character no compiled face holds; one only a decorative
-  compiled face holds, at another weight than the span's, a host face of
-  the span's weight can draw first, which is why every glyph the app and
-  its built-in styles draw is held by a listed face. One no face holds
+  holds is looked for in every other face, in the order of
+  cosmic-text's `FontMatchKey`: emoji faces first; then nearest the
+  span in weight, in stretch and in slant; then lighter, then narrower;
+  and only among faces equal in all of those, in the order they were
+  loaded — the compiled faces in the order the build lists them, then,
+  on native, the host's. So a host face draws a character no compiled
+  face holds. A character only an unlisted (decorative) compiled face
+  holds can be drawn first by a host face in three ways: by a host
+  emoji face, at any weight and slant (`♠ ☺` in Noto Color Emoji on a
+  Debian desktop); by a host face of the span's weight where the
+  compiled one has another; and, for an italic span, by a host italic
+  face (`┌ ░` in Liberation Serif Italic). Every glyph the app, its
+  built-in styles and the shipped maps draw is held by a face its span
+  names or a listed face, and tests hold all three to that, so none of
+  them reaches this pass. One no face holds
   is drawn as the span face's `.notdef` box. Every path asks for one of
   the generic families the default face is named for, never
   `Family::Monospace`, on which cosmic-text tries every monospaced face

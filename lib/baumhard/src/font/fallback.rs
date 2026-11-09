@@ -22,20 +22,25 @@
 //! which cosmic-text tries after a span's own face: the default face, then
 //! the two ornament faces
 //! ([`ORNAMENT_FALLBACK`](crate::font::fallback::ORNAMENT_FALLBACK)),
-//! then the compiled faces of scripts another compiled face would compete
-//! for ([`SCRIPT_FALLBACK`](crate::font::fallback::SCRIPT_FALLBACK)). It is
+//! then the compiled faces of the scripts the default face does not write
+//! ([`SCRIPT_FALLBACK`](crate::font::fallback::SCRIPT_FALLBACK)). It is
 //! the common list of a [`Fallback`](cosmic_text::Fallback) whose script
 //! lists are empty, so a run of any script, on any target, tries the same
 //! faces in the same order;
 //! cosmic-text's platform lists, which differ between Linux, Windows,
 //! macOS and the browser and name host families, are not consulted. A
 //! glyph none of those faces holds is looked for in every other face, as
-//! cosmic-text does after its lists: nearest in weight first, and among
-//! equals in the order the faces were loaded — the compiled faces in the
-//! order the build lists them, then, on native, the host's (#228). So a
-//! host face draws a glyph no compiled face holds; and one only a
-//! decorative compiled face holds, at another weight than the span's, a
-//! host face of the span's own weight can draw first.
+//! cosmic-text does after its lists, in the order of its `FontMatchKey`:
+//! emoji faces first, then nearest in weight, in stretch and in slant,
+//! then lighter and narrower, and only among faces equal in all of those
+//! in the order they were loaded — the compiled faces in the order the
+//! build lists them, then, on native, the host's (#228). So a host face
+//! draws a glyph no compiled face holds; and a glyph only an unlisted
+//! (decorative) compiled face holds can be drawn first by a host emoji
+//! face, by a host face of the span's weight where the compiled one has
+//! another, or, for an italic span, by a host italic face. Every glyph the
+//! app, its built-in styles and the shipped maps draw is held by a listed
+//! face, so none reaches that pass.
 //!
 //! The ornament faces hold no code point the default face holds
 //! (`scripts/ornament_fonts.sh`, held by `font::tests::ornament_tests`),
@@ -85,20 +90,22 @@ pub const ORNAMENT_FALLBACK: &[(AppFont, &str)] = &[
     (AppFont::MandalaEmoji, "Mandala Emoji"),
 ];
 
-/// The compiled faces of scripts the default face does not write that
-/// another compiled face holds too, tried after the ornament faces, with
-/// the family name each face stores. Hebrew alone today: Public Pixel
-/// also holds Hebrew letters, and without this entry a run of Hebrew
-/// would be drawn in whichever of the two cosmic-text's last pass meets
-/// first. Today that is Noto Sans Hebrew, which sorts first by name at
-/// the same weight, so the entry is what keeps it so when a compiled face
-/// that sorts earlier holds Hebrew (the test builds one: Public Pixel
-/// loaded first). Noto Sans Devanagari, Noto Serif
-/// Tibetan and Noto Sans Egyptian Hieroglyphs are each the only compiled
-/// face of their script, which that last pass reaches at any weight; a
-/// script's face is added here when a second compiled face holds that
-/// script.
-pub const SCRIPT_FALLBACK: &[(AppFont, &str)] = &[(AppFont::NotoSansHebrewRegular, "Noto Sans Hebrew")];
+/// The compiled faces of the scripts the default face does not write,
+/// tried after the ornament faces, with the family name each face stores.
+/// Listed, each is registered at every weight and met at the span's own
+/// weight before cosmic-text's last pass, where another face that holds
+/// the script — a host face at the span's weight, or Public Pixel, which
+/// holds Hebrew letters — could come first. A compiled script face is
+/// added here when it is compiled in.
+pub const SCRIPT_FALLBACK: &[(AppFont, &str)] = &[
+    (AppFont::NotoSansHebrewRegular, "Noto Sans Hebrew"),
+    (AppFont::NotoSansDevanagariRegular, "Noto Sans Devanagari"),
+    (AppFont::NotoSerifTibetanRegular, "Noto Serif Tibetan"),
+    (
+        AppFont::NotoSansEgyptianHieroglyphsRegular,
+        "Noto Sans Egyptian Hieroglyphs",
+    ),
+];
 
 /// The weights each static fallback face is registered at: every CSS
 /// weight, so a span at any of them reaches it.

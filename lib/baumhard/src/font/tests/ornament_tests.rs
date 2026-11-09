@@ -600,8 +600,9 @@ fn test_a_hebrew_run_is_drawn_in_noto_sans_hebrew_not_public_pixel() {
     do_a_hebrew_run_is_drawn_in_noto_sans_hebrew_not_public_pixel();
 }
 
-/// [`SCRIPT_FALLBACK`](crate::font::fallback::SCRIPT_FALLBACK)'s one
-/// entry: Public Pixel holds Hebrew letters too, so a run of Hebrew that
+/// [`SCRIPT_FALLBACK`](crate::font::fallback::SCRIPT_FALLBACK)'s Hebrew
+/// entry against the one compiled face that competes for a script:
+/// Public Pixel holds Hebrew letters too, so a run of Hebrew that
 /// its span's face lacks — unpinned, or pinned to Galatia SIL — is drawn
 /// in Noto Sans Hebrew because the fallback lists it, at the regular and
 /// the bold weight, and not in whichever of the two cosmic-text's last
@@ -615,8 +616,10 @@ fn test_a_hebrew_run_is_drawn_in_noto_sans_hebrew_not_public_pixel() {
 /// compiled Hebrew face whose name sorts earlier would be. There only
 /// the entry decides.
 ///
-/// Control: with `SCRIPT_FALLBACK` empty, red on every letter of the
-/// second shaping, drawn in `PublicPixel`; the first stays green.
+/// Against a host face, the same entry and the other script faces' are
+/// held by `font_state`'s host test, which plants a bold face of each
+/// script. Control: with `SCRIPT_FALLBACK` empty, red on every letter of
+/// the second shaping, drawn in `PublicPixel`; the first stays green.
 pub fn do_a_hebrew_run_is_drawn_in_noto_sans_hebrew_not_public_pixel() {
     const WORD: &str = "שלום";
     let pixel = mapped(face_data(AppFont::PublicPixel));

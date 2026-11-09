@@ -54,14 +54,17 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
 ///
 /// So the set of faces anything is shaped with is the same from the first
 /// shaping on, whoever takes the lock first and whatever it shapes. And
-/// the faces a map's text is drawn in do not depend on the host where the
-/// compiled faces hold it (#228): text that names no family asks for the
-/// default face by name, every generic family naming it; the fallback
-/// list names compiled faces alone; the compiled faces are loaded first,
-/// so they keep the lower ids every tie in cosmic-text's last pass is
-/// broken by; and no host face can answer for a compiled family's name.
-/// The host's faces draw what no compiled face holds — on native, as a
-/// last resort, and named by a map once #329 lands. The browser has no
+/// the faces a map's text is drawn in do not depend on the host where a
+/// face the span names, or a listed fallback face, holds it (#228): text
+/// that names no family asks for the default face by name, every generic
+/// family naming it; the fallback list names compiled faces alone, each
+/// met at the span's own weight; and no host face can answer for a
+/// compiled family's name. Past the list, in cosmic-text's last pass, a
+/// host face can come first — an emoji face always, one nearer the span's
+/// weight or slant — and the compiled faces' lower ids decide only among
+/// faces equal in all of those (`format/fonts.md` "Fallback"). The host's
+/// faces draw what no compiled face holds — on native, as a last resort,
+/// and named by a map once #329 lands. The browser has no
 /// host faces. Until #228 the native build began from cosmic-text's
 /// `FontSystem::new`, which loaded the host's fonts first and named no
 /// compiled face for the generic families, so text that pinned no family
