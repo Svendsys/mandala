@@ -23,8 +23,8 @@ use crate::document::element::{
     PathData, PortalEndData, RingData, RingStyle, SectionData, SpanData, TextStyle, Triggers,
 };
 use crate::document::format::dto::{
-    AlignDto, AnchorDto, CapDto, FrameDto, LabelDto, LinkDto, LinkKindDto, LinkTargetDto, NodeDto, PathDto,
-    PortalEndDto, RingDto, SectionDto, SpanDto,
+    AnchorDto, CapDto, FrameDto, LabelDto, LinkDto, LinkTargetDto, NodeDto, PathDto, PortalEndDto, RingDto,
+    SectionDto, SpanDto,
 };
 use crate::document::format::error::{LoadErrorKind, Seg};
 use crate::document::format::from_dto::{Builder, Keep, LoadResult, PendingLink};
@@ -36,17 +36,6 @@ use glam::Vec2;
 
 /// The anchors a path with none written has.
 const AUTO_ANCHORS: (Anchor, Anchor) = (Anchor::Auto, Anchor::Auto);
-
-/// The anchor a name stands for.
-fn anchor(dto: AnchorDto) -> Anchor {
-    match dto {
-        AnchorDto::Auto => Anchor::Auto,
-        AnchorDto::Top => Anchor::Top,
-        AnchorDto::Right => Anchor::Right,
-        AnchorDto::Bottom => Anchor::Bottom,
-        AnchorDto::Left => Anchor::Left,
-    }
-}
 
 /// The reason a span has no `size` inside a ring.
 const SPAN_SIZE_IN_RING: &str =
@@ -179,11 +168,7 @@ impl Builder {
             channel,
             offset,
             min_size,
-            align: dto.align.map(|align| match align {
-                AlignDto::Left => Align::Left,
-                AlignDto::Center => Align::Center,
-                AlignDto::Right => Align::Right,
-            }),
+            align: dto.align.map(Align::from),
             text,
         });
         self.element(node, data, |b, section| b.spans(section, &dto.spans))
@@ -314,7 +299,7 @@ impl Builder {
         })?;
         Ok(PathData {
             flow,
-            anchors: anchors.map_or(AUTO_ANCHORS, |[from, to]| (anchor(from), anchor(to))),
+            anchors: anchors.map_or(AUTO_ANCHORS, |[from, to]| (Anchor::from(from), Anchor::from(to))),
             control_points: points,
             visible: visible.unwrap_or(true),
             zoom: zoom.map(|zoom| self.zoom("zoom", zoom)).transpose()?,
@@ -371,10 +356,7 @@ impl Builder {
     /// id `owner.1`: a line, or a portal with its two ends.
     fn link(&mut self, node: NodeId, owner: (usize, u32), at: usize, dto: &LinkDto) -> LoadResult<()> {
         let to = self.link_target(dto.to)?;
-        let kind = match dto.kind {
-            LinkKindDto::Line => LinkKind::Line,
-            LinkKindDto::Portal => LinkKind::Portal,
-        };
+        let kind = LinkKind::from(dto.kind);
         let path = match kind {
             LinkKind::Line => {
                 if dto.ends.is_some() {

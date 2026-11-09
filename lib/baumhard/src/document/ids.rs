@@ -57,15 +57,7 @@ impl NodeIdent {
     pub const UNASSIGNED: NodeIdent = NodeIdent(0);
 }
 
-/// An edit the map defines (§10.1). Only its identity for now; V1-D1
-/// completes it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct EditDef {
-    /// The id the file and the verbs name it by.
-    pub id: String,
-    /// The name shown to the user.
-    pub name: String,
-}
+pub use crate::document::edit::EditDef;
 
 /// A presentation the map defines (§10.2). Only its identity for now;
 /// V1-D2 completes it.

@@ -197,7 +197,11 @@ fn resolve<E: TreeElement>(
 /// Cost, with `u` the size of that union: O(u log u) for the order,
 /// one hash map and two `Vec`s of `u` entries, plus the row scans
 /// ties need. Nothing is proportional to the depth per anchor.
-fn in_tree_order<E: TreeElement>(tree: &Tree<E>, anchors: &[NodeId], drop_nested: bool) -> Vec<NodeId> {
+pub(crate) fn in_tree_order<E: TreeElement>(
+    tree: &Tree<E>,
+    anchors: &[NodeId],
+    drop_nested: bool,
+) -> Vec<NodeId> {
     // A resolved anchor is a given node, its parent or its sibling, so
     // it is in the tree; the climb only adds its path to the union.
     let mut members = Membership::default();

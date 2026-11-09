@@ -78,6 +78,17 @@ pub const MAX_EDITS: usize = 1 << 16;
 /// `u16`.
 pub const MAX_PRESENTATIONS: usize = 1 << 16;
 
+/// How deep a map-borne definition — an edit's mutator, a presentation's
+/// — may nest (owner, format Q4 on #250 and #251). Reaching any depth of
+/// the map is done by repeating down the tree, not by nesting, and the
+/// node tree itself has no bound (R13).
+pub const MAX_DEFINITION_DEPTH: usize = 32;
+
+/// How many parts a map-borne definition may have: mutator nodes,
+/// mutations and predicate tests, counted after any expansion the format
+/// allows (owner, format Q4).
+pub const MAX_DEFINITION_PARTS: usize = 65_536;
+
 /// The lightest [`Weight`](crate::document::values::Weight).
 pub const MIN_WEIGHT: u16 = 100;
 

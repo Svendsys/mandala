@@ -87,6 +87,8 @@ jobs:
           - glyph_mutation_raw
           - glyph_mutation_structured
           - projection_edits
+          - edits_raw
+          - edits_structured
     steps:
       - uses: actions/checkout@v7
 

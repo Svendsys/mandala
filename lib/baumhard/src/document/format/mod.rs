@@ -55,6 +55,8 @@ mod macros;
 mod chain;
 pub mod context;
 pub(crate) mod dto;
+/// An edit as a file writes it (`format/edits.md`, V1-D1).
+pub(crate) mod edits;
 pub mod error;
 mod from_dto;
 pub(crate) mod index;
@@ -294,6 +296,7 @@ pub(crate) fn load_counting_checks(json: &str) -> Result<(Document, usize), Load
 /// The three phases of [`load`], counting the rows checked.
 fn load_counted(json: &str, limits: Limits) -> Result<(Document, usize), LoadError> {
     check_text_cap_against(json, limits.bytes)?;
+    crate::document::edit::load::check_nesting(json)?;
     let index = index::index(json)?;
     let mut builder = begin_build(&index, limits)?;
     for (i, extent) in index.nodes.iter().enumerate() {

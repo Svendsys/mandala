@@ -1233,7 +1233,8 @@ pub fn do_writer_session_of_edits_undos_and_transactions_stays_exact() {
                 let changed = staged_something(&mut doc);
                 let full = saved(&doc);
                 let snap = if rng.below(2) == 0 { Snap::Start } else { Snap::End };
-                doc.interpolate(&tx, rng.below(10) as f32 / 10.0, snap).unwrap();
+                doc.stage_progress(&tx, rng.below(10) as f32 / 10.0, snap)
+                    .unwrap();
                 assert_consistent(&doc, "part-way");
                 // Every arm finishes the animation first: committed, an
                 // entry of its own when it changed something.

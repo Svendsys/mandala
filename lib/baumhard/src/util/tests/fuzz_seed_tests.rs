@@ -27,7 +27,7 @@ type Check = fn(&[u8]) -> Result<(), String>;
 
 /// Every fuzz target: its name, the property function its file calls (as
 /// the file spells the call's last two segments) and the function.
-const TARGETS: [(&str, &str, Check); 8] = [
+const TARGETS: [(&str, &str, Check); 10] = [
     (
         "load_raw",
         "format_fuzz::check_load_bytes",
@@ -67,6 +67,16 @@ const TARGETS: [(&str, &str, Check); 8] = [
         "projection_edits",
         "projection_fuzz::check_projection_edits",
         crate::projection::tests::projection_fuzz::check_projection_edits,
+    ),
+    (
+        "edits_raw",
+        "edit_fuzz::check_edits_json",
+        crate::document::tests::edit_fuzz::check_edits_json,
+    ),
+    (
+        "edits_structured",
+        "edit_fuzz::check_edits_structured",
+        crate::document::tests::edit_fuzz::check_edits_structured,
     ),
 ];
 

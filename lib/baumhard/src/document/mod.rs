@@ -35,6 +35,8 @@ pub mod defaults;
 /// [`inputs_changed`](deps::inputs_changed): which resolution inputs a
 /// change of one element touches.
 pub mod deps;
+/// Edits: named, saved, undoable changes (§10.1, V1-D1).
+pub mod edit;
 /// [`DocKind`](element::DocKind), [`DocElement`](element::DocElement)
 /// and the per-kind data, and the engine instantiation.
 pub mod element;

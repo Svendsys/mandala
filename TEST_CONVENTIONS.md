@@ -756,6 +756,8 @@ decoders and every regression test compile and run on stable, in every
 | `glyph_mutation_raw` | authored run mutations (B6; there is no fill since B12), any bytes as JSON | `gfx_structs::tests::glyph_layer_fuzz::check_glyph_mutations_json` |
 | `glyph_mutation_structured` | the same, built from choices | `gfx_structs::tests::glyph_layer_fuzz::check_glyph_mutations_structured` |
 | `projection_edits` | the projection (B7): a generated map and edit sequences from choices | `projection::tests::projection_fuzz::check_projection_edits` |
+| `edits_raw` | authored edits (D1), any bytes as an edits file, each edit that reads run on a map | `document::tests::edit_fuzz::check_edits_json` |
+| `edits_structured` | the same, edits built from choices | `document::tests::edit_fuzz::check_edits_structured` |
 
 What they hold, in short (each module's docs are the full list):
 

@@ -361,7 +361,7 @@ pub fn do_writer_an_animated_transaction_yields_by_finishing() {
     let (mut doc, ids) = built();
     let tx = doc.begin(ChangeSource::Edit, Animated).unwrap();
     doc.stage(&tx, place(vec![ids.a], Vec2::new(100.0, 0.0))).unwrap();
-    doc.interpolate(&tx, 0.5, Snap::End).unwrap();
+    doc.stage_progress(&tx, 0.5, Snap::End).unwrap();
     assert_eq!(position(&doc, ids.a), Some(Vec2::new(50.0, 0.0)), "half way");
     assert_consistent(&doc, "half way");
     doc.apply(fade(vec![ids.b], 0.5), ChangeSource::Action).unwrap();
@@ -383,14 +383,14 @@ pub fn do_writer_an_animated_transaction_yields_by_finishing() {
         "the animation, then the apply"
     );
     assert_eq!(
-        doc.interpolate(&tx, 0.5, Snap::End),
+        doc.stage_progress(&tx, 0.5, Snap::End),
         Err(ApplyError::TransactionClosed)
     );
     assert_consistent(&doc, "after the apply");
 
     let tx = doc.begin(ChangeSource::Edit, Animated).unwrap();
     doc.stage(&tx, place(vec![ids.d], Vec2::new(0.0, 10.0))).unwrap();
-    doc.interpolate(&tx, 0.25, Snap::End).unwrap();
+    doc.stage_progress(&tx, 0.25, Snap::End).unwrap();
     let next = doc.begin(ChangeSource::Input, Interactive).unwrap();
     assert_eq!(
         position(&doc, ids.d),
@@ -399,7 +399,7 @@ pub fn do_writer_an_animated_transaction_yields_by_finishing() {
     );
     assert_eq!(doc.history().count(), 3);
     assert_eq!(
-        doc.interpolate(&next, 0.5, Snap::End),
+        doc.stage_progress(&next, 0.5, Snap::End),
         Err(ApplyError::NotAnimated)
     );
     doc.cancel(next);
@@ -411,7 +411,7 @@ pub fn do_writer_an_animated_transaction_yields_by_finishing() {
     let before = position(&doc, ids.d);
     let tx = doc.begin(ChangeSource::Edit, Animated).unwrap();
     doc.stage(&tx, place(vec![ids.d], Vec2::new(0.0, 20.0))).unwrap();
-    doc.interpolate(&tx, 0.5, Snap::End).unwrap();
+    doc.stage_progress(&tx, 0.5, Snap::End).unwrap();
     let revision = doc.revision().0;
     assert_eq!(
         doc.undo(),
@@ -429,7 +429,7 @@ pub fn do_writer_an_animated_transaction_yields_by_finishing() {
     assert_eq!(position(&doc, ids.d), Some(Vec2::new(0.0, 20.0)), "whole");
     let tx = doc.begin(ChangeSource::Edit, Animated).unwrap();
     doc.stage(&tx, place(vec![ids.d], Vec2::new(0.0, 30.0))).unwrap();
-    doc.interpolate(&tx, 0.5, Snap::End).unwrap();
+    doc.stage_progress(&tx, 0.5, Snap::End).unwrap();
     let revision = doc.revision().0;
     assert_eq!(
         doc.redo(),

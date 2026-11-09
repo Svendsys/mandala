@@ -258,7 +258,7 @@ pub fn sweep(
                     p.check().map_err(|e| at(&format!("stage {stage} ({name})"), e))?;
                 }
             }
-            if kind == TransactionKind::Animated && p.doc.interpolate(&tx, 0.5, Snap::End).is_ok() {
+            if kind == TransactionKind::Animated && p.doc.stage_progress(&tx, 0.5, Snap::End).is_ok() {
                 *covered.entry("transaction::interpolate").or_default() += 1;
                 p.sync_and_discard();
                 p.check().map_err(|e| at("interpolate", e))?;

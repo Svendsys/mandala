@@ -105,3 +105,17 @@ path = "fuzz_targets/projection_edits.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "edits_raw"
+path = "fuzz_targets/edits_raw.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "edits_structured"
+path = "fuzz_targets/edits_structured.rs"
+test = false
+doc = false
+bench = false
