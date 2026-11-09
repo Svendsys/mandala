@@ -277,7 +277,14 @@ instant edit's. The app's clock drives it, so under a virtual clock
 (`--headless`, `clock.step`) a step lands it on exact instants.
 
 - Another change while it runs — another edit, an action, a console
-  line — first finishes it and commits it, then proceeds.
+  line — first finishes it and commits it, then proceeds. An action or
+  a console line does so before it reads the map, so a copy or a field
+  value it reads is the edit's end, never a frame of it. Actions that
+  only move the camera, change the selection or toggle the FPS readout
+  leave it running. So do the verbs `clock` (a step is how a virtual
+  clock moves it), `help`, `fps`, `mode`, `screenshot`, `record`,
+  `save` (which writes the map as committed) and `edit` (whose
+  `inspect` says when an edit is still animating).
 - Undo while it runs finishes it, commits it, and undoes it: the map is
   as it was before the edit, and redo brings the edit back.
 

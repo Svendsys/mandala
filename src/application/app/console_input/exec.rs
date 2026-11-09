@@ -27,6 +27,23 @@ pub(in crate::application::app) struct LineRun {
     pub(in crate::application::app) changed_view: bool,
 }
 
+/// The verbs that leave an animated edit running: `clock`, which
+/// drives it (a step is how a virtual clock moves it); `help`, `fps`,
+/// `mode`, `screenshot` and `record`, which change nothing of the map;
+/// `save`, which writes the map as committed, a running edit not yet in
+/// it (§9); and `edit`, whose `apply` settles in the edit funnel and
+/// whose `inspect` reports the animation. Every other verb settles it.
+pub(in crate::application::app) const LEAVE_ANIMATION_RUNNING: [&str; 8] = [
+    "clock",
+    "help",
+    "fps",
+    "mode",
+    "screenshot",
+    "record",
+    "save",
+    "edit",
+];
+
 /// Parse and execute a console line against `ctx`, and return what the
 /// verb produced. `None` when no document is loaded, because every verb
 /// runs against one. Takes the one `ConsoleSideEffect` the verb
@@ -47,6 +64,11 @@ pub(in crate::application::app) struct LineRun {
 /// [`log_console_line`], and IPC also returns the outcome in its
 /// reply. No caller but the prompt touches the scrollback
 /// (`format/ipc.md` §act).
+///
+/// An animated edit still running is settled — fast-forwarded and
+/// committed — before the verb runs, so a verb that reads a value to
+/// build its change reads the map the edit leaves (D28), unless the
+/// verb is one of [`LEAVE_ANIMATION_RUNNING`].
 ///
 /// `#[must_use]` here as well as on [`LineRun`]: the lint does not
 /// reach through the `Option` this returns, so without it a bare call
@@ -79,6 +101,11 @@ pub(in crate::application::app) fn execute_console_line(
         }
     };
     let cmd: &'static Command = cmd;
+    // Settle an animated edit first, as `dispatch_compatible` does for
+    // an Action, unless the verb leaves it running.
+    if !LEAVE_ANIMATION_RUNNING.contains(&cmd.name) {
+        doc.finish_animation();
+    }
     let (result, side_effect, close_after) = {
         let mut effects = ConsoleEffects::new(doc);
         let result = (cmd.execute)(&Args::new(&args), &mut effects);
@@ -295,6 +322,20 @@ pub(in crate::application::app) fn save_document_to_bound_path(doc: &mut MindMap
 
 #[cfg(test)]
 mod tests {
+    /// Every verb that leaves an animated edit running is a verb the
+    /// console has, by its own name: a renamed verb cannot silently
+    /// start settling. Control: a misspelled entry is not found.
+    #[test]
+    fn test_every_verb_that_leaves_an_animation_running_is_a_verb() {
+        let named = |name: &str| {
+            crate::application::console::commands::command_by_name(name).is_some_and(|cmd| cmd.name == name)
+        };
+        for name in super::LEAVE_ANIMATION_RUNNING {
+            assert!(named(name), "`{name}` is a verb");
+        }
+        assert!(!named("clocks"), "control");
+    }
+
     use super::*;
 
     /// A failed line run by anything but the prompt is logged under
