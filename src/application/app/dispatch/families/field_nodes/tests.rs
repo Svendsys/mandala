@@ -885,6 +885,58 @@ fn test_a_frame_preview_cancels_to_nothing_and_commits_as_one_entry() {
     assert_eq!(bytes(&doc), FIXTURE, "and one undo takes it back");
 }
 
+/// **A frame preview begun while an edit animates finishes the edit,
+/// and outlives the edit's end** (D28; review of #331, where the
+/// animated edit and #330's preview shared one transaction slot). The
+/// preview's `begin` fast-forwards the edit and commits it, the first
+/// entry; a tick past the edit's old end time leaves the preview open;
+/// and `frame commit` makes the second entry.
+///
+/// Control: with the edit's tick ending whatever the shared slot held,
+/// the tick at the old end time committed the preview, and the
+/// `frame commit` found nothing to commit.
+#[test]
+fn test_a_frame_preview_during_an_animated_edit_outlives_the_edits_end() {
+    use crate::application::app::dispatch::families::edits::{run_edit, Undrawn};
+    use crate::application::document::Interaction;
+    use crate::application::edits::EditRegistry;
+    use baumhard::document::writer::ChangeSource;
+    let mut doc = fixture();
+    doc.selection.select_only(node(&doc, 1));
+    let entries = doc.doc().history().count();
+    let nudge = baumhard::document::edit::parse_edits(
+        r#"{"edits":[{"id":"nudge","name":"Nudge","reach":"self","target":"node","mutations":[{"node":{"nudge":[50.0,0.0]}}],"animate":{"ms":400}}]}"#,
+    )
+    .expect("the edit reads");
+    let registry = EditRegistry::new(nudge, Vec::new());
+    run_edit(
+        &mut doc,
+        &mut Undrawn,
+        &registry,
+        "nudge",
+        None,
+        ChangeSource::Edit,
+        0.0,
+    )
+    .expect("the edit starts");
+    doc.tick_animation(100.0);
+    assert!(doc.is_animating(), "precondition: the edit is part way");
+
+    run_line(&mut doc, "frame preview fit=spread").expect("the preview stages");
+    assert!(!doc.is_animating(), "the preview's begin finished the edit");
+    assert_eq!(doc.doc().history().count(), entries + 1, "the edit's entry");
+
+    assert!(!doc.tick_animation(1000.0), "no animation is left to write");
+    assert_eq!(
+        doc.open_interaction(),
+        Some(Interaction::FramePreview),
+        "the preview is still open past the edit's end"
+    );
+    run_line(&mut doc, "frame commit").expect("the commit runs");
+    assert_eq!(doc.doc().history().count(), entries + 2, "the preview's entry");
+    assert_eq!(doc.open_interaction(), None);
+}
+
 /// **A frame preview never ends another interaction's transaction.**
 /// With a transaction another interaction opened, `frame commit` and
 /// `frame cancel` find no preview and leave it open, and a preview is
