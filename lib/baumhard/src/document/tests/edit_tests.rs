@@ -511,12 +511,13 @@ fn test_a_definition_has_at_most_65536_parts() {
     );
 }
 
-/// A map of node 1 at the origin with children 2, 3 and 4, and node 5
-/// under node 2.
+/// A map of node 1 at the origin with children 2, 3 and 4, node 5
+/// under node 2, and node 6 under node 5.
 const FAMILY: &str = r#"{"format":1,"name":"t","nodes":[
 {"id":1,"position":[0,0]},
 {"id":2,"parent":1,"position":[10,10]},
 {"id":5,"parent":2,"position":[20,20]},
+{"id":6,"parent":5,"position":[30,30]},
 {"id":3,"parent":1,"channel":1,"position":[10,10]},
 {"id":4,"parent":1,"channel":2,"position":[10,10]}]}"#;
 
@@ -573,6 +574,52 @@ fn test_cascade_sets_each_row_below_its_parent() {
     // Node 5 is placed from node 2's new place, not its old one.
     assert_eq!(at(5), Vec2::new(left, 2.0 * row));
     assert_eq!(at(1), Vec2::ZERO, "the anchor stays");
+}
+
+/// Where FAMILY's nodes 1 to 6 are, after `handler` runs at each of
+/// `runs` in turn — each run one edit, read from the map as the last
+/// one left it.
+fn laid_out(handler: &str, runs: &[&[u32]]) -> Vec<Vec2> {
+    let mut doc = load(FAMILY).unwrap();
+    let def = edit(&format!(
+        r#"{{"id":"h","name":"H","reach":"self","target":"node","handler":"{handler}"}}"#
+    ));
+    for idents in runs {
+        let anchors: Vec<NodeId> = idents.iter().map(|&i| n(&doc, i)).collect();
+        run(&mut doc, &def, &anchors).unwrap();
+    }
+    (1..=6).map(|i| node(&doc, i).1.position).collect()
+}
+
+/// **A node nested under another anchor is laid out from where the
+/// outer one puts it** (review of #331). Run at node 1 and a node in
+/// its subtree — its child 2, or its grandchild 5, which has a child of
+/// its own — `flower` ends where running it at node 1 and then at the
+/// inner node ends, the inner node's children round its new place, and
+/// `cascade` where running it at node 1 alone does, since that already
+/// lays out the whole subtree, each row from its parent's new place.
+///
+/// Controls: when `flower` read each anchor's drawn rectangle, node 5
+/// was placed round node 2's old place; when `cascade` seeded every
+/// anchor, node 6 was placed under node 5's.
+#[test]
+fn test_nested_anchors_compose_as_the_outer_then_the_inner() {
+    for inner in [2, 5] {
+        let flower = laid_out("flower", &[&[1], &[inner]]);
+        assert_ne!(
+            flower,
+            laid_out("flower", &[&[1]]),
+            "precondition: the flower at node {inner} moves its child"
+        );
+        let cascade = laid_out("cascade", &[&[1]]);
+        for (handler, expected) in [("flower", flower), ("cascade", cascade)] {
+            assert_eq!(
+                laid_out(handler, &[&[1, inner]]),
+                expected,
+                "{handler} at 1 and {inner}"
+            );
+        }
+    }
 }
 
 #[test]

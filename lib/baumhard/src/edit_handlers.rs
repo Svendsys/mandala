@@ -47,7 +47,7 @@ use crate::arena::NodeId;
 use crate::document::element::{DocElement, DocKind};
 use crate::document::ids::Document;
 use crate::document::mutation::ops::{DocMutation, DocMutatorTree, NodeOp};
-use crate::engine::anchor::Anchors;
+use crate::engine::anchor::{in_tree_order, Anchors};
 use crate::engine::key::BranchKey;
 use crate::engine::mutator::Mutator;
 use crate::engine::tree::MutatorTree;
@@ -102,13 +102,19 @@ pub const SIBLING_GAP: f32 = 40.0;
 /// `flower`: each node's child nodes on a circle round it, the first at
 /// the top, clockwise. The radius clears the parent's half-span and the
 /// largest child's, plus [`RADIAL_PADDING`], so no child's outline
-/// crosses the parent's. O(the nodes' children).
+/// crosses the parent's. Parents are placed before their children, in
+/// tree order, and a node one flower moves is the center of its own
+/// where it is moved to, so nested nodes compose. O(the nodes'
+/// children, plus the tree order of `nodes`).
 pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Result<Walks, String> {
     let mut planned: Vec<(NodeId, Vec2)> = Vec::new();
-    for &parent in nodes {
+    // Where each node is drawn once placed: its new rectangle's origin.
+    let mut placed: FxHashMap<NodeId, Vec2> = FxHashMap::default();
+    for parent in in_tree_order(doc.tree(), nodes, false) {
         let Some(rect) = geometry.node_rect(parent) else {
             continue;
         };
+        let origin = placed.get(&parent).copied().unwrap_or(rect.origin);
         let children: Vec<(NodeId, Rect)> = child_nodes(doc, parent)
             .filter_map(|child| geometry.node_rect(child).map(|r| (child, r)))
             .collect();
@@ -121,11 +127,12 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
             .map(|(_, r)| r.size.max_element() / 2.0)
             .fold(0.0_f32, f32::max);
         let radius = parent_span + child_span + RADIAL_PADDING;
-        let center = rect.origin + rect.size / 2.0;
+        let center = origin + rect.size / 2.0;
         let n = children.len() as f32;
         for (i, (child, r)) in children.iter().enumerate() {
             let theta = START_ANGLE + i as f32 * std::f32::consts::TAU / n;
             let at = center + radius * Vec2::new(theta.cos(), theta.sin()) - r.size / 2.0;
+            placed.insert(*child, at);
             planned.push((*child, position_for(doc, *child, *r, at)));
         }
     }
@@ -135,13 +142,16 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
 /// `cascade`: each node's descendants as a top-down tree — each row
 /// [`ROW_GAP`] below its parent, siblings [`SIBLING_GAP`] apart and
 /// centered under it, each level placed from its parent's new place.
+/// A node nested under another of `nodes` is laid out as part of the
+/// outer one's tree, so the walk starts from the outermost.
 /// Breadth first and iterative. O(the subtrees).
 pub fn cascade(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Result<Walks, String> {
     let mut planned: Vec<(NodeId, Vec2)> = Vec::new();
     // Where each node is drawn once placed: its new rectangle's origin.
     let mut placed: FxHashMap<NodeId, Vec2> = FxHashMap::default();
-    let mut queue: VecDeque<NodeId> = nodes.iter().copied().collect();
-    let mut seen: FxHashSet<NodeId> = nodes.iter().copied().collect();
+    let outermost = in_tree_order(doc.tree(), nodes, true);
+    let mut seen: FxHashSet<NodeId> = outermost.iter().copied().collect();
+    let mut queue: VecDeque<NodeId> = outermost.into();
     while let Some(parent) = queue.pop_front() {
         let children: Vec<NodeId> = child_nodes(doc, parent).collect();
         for &child in &children {
