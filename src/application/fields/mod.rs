@@ -113,7 +113,7 @@ pub(crate) fn selected(doc: &MindMapDocument, kind: DocKind) -> Vec<NodeId> {
 /// value, so equal keys of one kind always mean equal mutations.
 pub(crate) struct Groups<K> {
     index: FxHashMap<(DocKind, K), usize>,
-    groups: Vec<(DocKind, Vec<DocMutation>, Vec<NodeId>)>,
+    groups: Vec<(DocKind, K, Vec<DocMutation>, Vec<NodeId>)>,
 }
 
 impl<K> Default for Groups<K> {
@@ -125,7 +125,7 @@ impl<K> Default for Groups<K> {
     }
 }
 
-impl<K: Hash + Eq> Groups<K> {
+impl<K: Hash + Eq + Clone> Groups<K> {
     /// Give `id`, an element of `doc`, the mutations `key` stands for:
     /// `mutations` makes them, once, for the first element of its group.
     /// Nothing for an id the document does not hold. O(1) amortized, so a
@@ -139,22 +139,30 @@ impl<K: Hash + Eq> Groups<K> {
     ) {
         let Some(kind) = kind_of(doc, id) else { return };
         let groups = &mut self.groups;
-        let at = *self.index.entry((kind, key)).or_insert_with(|| {
-            groups.push((kind, mutations(), Vec::new()));
+        let at = *self.index.entry((kind, key.clone())).or_insert_with(|| {
+            groups.push((kind, key, mutations(), Vec::new()));
             groups.len() - 1
         });
-        self.groups[at].2.push(id);
+        self.groups[at].3.push(id);
     }
 
     /// Whether no element was added.
     pub(crate) fn is_empty(&self) -> bool {
-        self.groups.iter().all(|(_, mutations, _)| mutations.is_empty())
+        self.groups
+            .iter()
+            .all(|(_, _, mutations, _)| mutations.is_empty())
+    }
+
+    /// Each group's key and elements, in the order each was first met,
+    /// for an edit that is not a [`compose::set`].
+    pub(crate) fn members(self) -> impl Iterator<Item = (K, Vec<NodeId>)> {
+        self.groups.into_iter().map(|(_, key, _, ids)| (key, ids))
     }
 
     /// One walk per group with mutations ([`compose::set`]).
     pub(crate) fn steps(self, doc: &Document) -> Steps {
         let mut steps = Vec::new();
-        for (kind, mutations, ids) in self.groups {
+        for (kind, _, mutations, ids) in self.groups {
             steps.extend(compose::set(doc, kind, mutations, &ids).map_err(|e| e.to_string())?);
         }
         Ok(steps)

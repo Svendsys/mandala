@@ -278,7 +278,7 @@ pub(crate) fn add_ring(doc: &MindMapDocument, text: Option<&str>, size: Option<f
     let (framed, bare) = split(doc)?;
     let d = doc.doc();
     let spans = text.map(plain).unwrap_or_default();
-    let mut by_channel: Vec<(usize, Vec<NodeId>)> = Vec::new();
+    let mut by_channel = Groups::default();
     for frame in framed {
         let channel = children_of_kind(d, frame, DocKind::Ring)
             .last()
@@ -287,13 +287,10 @@ pub(crate) fn add_ring(doc: &MindMapDocument, text: Option<&str>, size: Option<f
                 _ => None,
             })
             .unwrap_or(0);
-        match by_channel.binary_search_by_key(&channel, |(c, _)| *c) {
-            Ok(at) => by_channel[at].1.push(frame),
-            Err(at) => by_channel.insert(at, (channel, vec![frame])),
-        }
+        by_channel.add(d, frame, channel, Vec::new);
     }
     let mut steps = Vec::new();
-    for (channel, frames) in by_channel {
+    for (channel, frames) in by_channel.members() {
         let new = ring(spans.clone(), size, channel);
         steps.extend(compose::insert(d, DocKind::Frame, &frames, new).map_err(|e| e.to_string())?);
     }
