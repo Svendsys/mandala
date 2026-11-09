@@ -79,7 +79,7 @@ fn cell_of(v: f32) -> i32 {
 }
 
 /// The cells `rect` covers, when they are few enough to list.
-fn cells(rect: Rect) -> Option<((i32, i32), (i32, i32))> {
+pub(crate) fn cells(rect: Rect) -> Option<((i32, i32), (i32, i32))> {
     if !rect.origin.is_finite() || !rect.size.is_finite() {
         return None;
     }
@@ -188,38 +188,58 @@ impl BodyIndex {
     /// the large ones; a larger one tries every body. O(the bodies
     /// tried), plus a sort of what is found.
     pub(crate) fn within(&self, rect: Rect) -> Vec<NodeId> {
-        let overlaps = |node: NodeId| {
-            #[cfg(test)]
-            self.within_tried.set(self.within_tried.get() + 1);
-            self.bodies.get(&node).is_some_and(|&(body, shape, _)| {
-                let min = body.origin;
-                shape.intersects_local_aabb(rect.origin - min, rect.max() - min, body.max() - min)
-            })
-        };
-        let mut found: Vec<NodeId> = match cells(rect) {
+        let mut found = Vec::new();
+        self.candidates(rect, |node| found.push(node));
+        found.sort_unstable();
+        found.dedup();
+        found.retain(|&node| self.overlaps(node, rect));
+        found
+    }
+
+    /// Each body [`Self::within`] finds, passed to `f` as it is found and
+    /// nothing collected: a body in more than one of the cells tried is
+    /// passed once for each, in no set order. For a caller that asks of
+    /// one small box after another (#332). O(the bodies tried).
+    pub(crate) fn each_within(&self, rect: Rect, mut f: impl FnMut(NodeId)) {
+        self.candidates(rect, |node| {
+            if self.overlaps(node, rect) {
+                f(node);
+            }
+        });
+    }
+
+    /// The bodies `rect`'s cells hold, and the large ones — or every
+    /// body, for a `rect` spanning more than [`MAX_CELLS`] cells — passed
+    /// to `f`, a body in more than one of those cells once for each.
+    fn candidates(&self, rect: Rect, mut f: impl FnMut(NodeId)) {
+        match cells(rect) {
             Some(((x0, y0), (x1, y1))) => {
-                let mut tried: Vec<NodeId> = self.large.clone();
+                self.large.iter().copied().for_each(&mut f);
                 for x in x0..=x1 {
                     for y in y0..=y1 {
                         #[cfg(test)]
                         self.within_cells.set(self.within_cells.get() + 1);
-                        tried.extend(self.cells.get(&(x, y)).into_iter().flatten());
+                        self.cells
+                            .get(&(x, y))
+                            .into_iter()
+                            .flatten()
+                            .copied()
+                            .for_each(&mut f);
                     }
                 }
-                tried.sort_unstable();
-                tried.dedup();
-                tried.retain(|&node| overlaps(node));
-                tried
             }
-            None => self
-                .bodies
-                .keys()
-                .copied()
-                .filter(|&node| overlaps(node))
-                .collect(),
-        };
-        found.sort_unstable();
-        found
+            None => self.bodies.keys().copied().for_each(f),
+        }
+    }
+
+    /// Whether `rect` overlaps `node`'s body by its shape, inclusively.
+    fn overlaps(&self, node: NodeId, rect: Rect) -> bool {
+        #[cfg(test)]
+        self.within_tried.set(self.within_tried.get() + 1);
+        self.bodies.get(&node).is_some_and(|&(body, shape, _)| {
+            let min = body.origin;
+            shape.intersects_local_aabb(rect.origin - min, rect.max() - min, body.max() - min)
+        })
     }
 }
 

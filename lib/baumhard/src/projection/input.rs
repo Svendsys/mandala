@@ -74,6 +74,10 @@ pub enum Stage {
     Shape,
     /// A flow's placement.
     Place,
+    /// Which of a connector's or line link's placed glyphs the nodes it
+    /// does not end at hide (#332): a view decision over its placement,
+    /// run after every path is laid.
+    Hide,
 }
 
 /// One piece of projection work: a stage of one unit's projection.

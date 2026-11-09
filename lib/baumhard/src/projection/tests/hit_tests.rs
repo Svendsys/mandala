@@ -268,17 +268,19 @@ fn test_projection_node_at_reads_the_bodies_and_not_the_glyphs() {
     );
 }
 
-/// What `node_at` is for: a link drawn **over** a node's body. Node 1
-/// links to node 3 straight across node 2, so on a link glyph inside 2's
-/// body the hit is the link — the layers come first — and `node_at` is 2,
-/// the body under it. A `node_at` written as `hit`'s node would answer 1,
-/// the link's owner.
+/// What `node_at` is for: a link's label drawn **over** a node's body.
+/// Node 1 links to node 3 straight across node 2, its label at the
+/// link's middle, inside 2's body — the link's own glyphs there are hidden
+/// behind 2 (#332), its label is not — so on a glyph of the label the hit
+/// is the label — the layers come first — and `node_at` is 2, the body
+/// under it. A `node_at` written as `hit`'s node would answer 1, the
+/// link's owner.
 #[test]
 fn test_projection_node_at_is_the_body_under_a_path_drawn_over_it() {
     let doc = load_map(json!({"nodes": [
         node(1, None, json!({
             "sections": [{"spans": [{"text": "from"}]}],
-            "links": [{"to": 3, "kind": "line"}]
+            "links": [{"to": 3, "kind": "line", "label": {"spans": [{"text": "over"}]}}]
         })),
         node(2, None, json!({
             "position": [600.0, 0.0],
@@ -291,7 +293,7 @@ fn test_projection_node_at_is_the_body_under_a_path_drawn_over_it() {
         })),
     ]}));
     let (one, two) = (ident(&doc, 1), ident(&doc, 2));
-    let link = kid(&doc, one, DocKind::Link);
+    let label = kid(&doc, kid(&doc, one, DocKind::Link), DocKind::Label);
     let mut p = Projected::new(doc);
     let rect = p.projector.node_rect(two).expect("the node is drawn");
     let mut over = None;
@@ -300,14 +302,14 @@ fn test_projection_node_at_is_the_body_under_a_path_drawn_over_it() {
             let point = Vec2::new(x as f32, y as f32);
             if p.projector
                 .hit(&mut p.layers, point)
-                .is_some_and(|hit| hit.element == link)
+                .is_some_and(|hit| hit.element == label)
             {
                 over = Some(point);
                 break 'scan;
             }
         }
     }
-    let point = over.expect("precondition: a link glyph is drawn inside 2's body");
+    let point = over.expect("precondition: a glyph of the link's label is drawn inside 2's body");
     assert_eq!(
         p.projector.hit(&mut p.layers, point).map(|h| h.node),
         Some(one),

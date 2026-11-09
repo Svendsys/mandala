@@ -24,8 +24,8 @@ use crate::engine::tree::Tree;
 use crate::flow::inked as inked_run;
 use crate::flow::{
     chain_point, offset as offset_outline, outline, pattern_gap, place_at_point, place_on_closed,
-    place_on_open, place_pitched, shape_box, shape_run, FlowSpan, PathEnd, PlacedRun, Rect, RingLayout,
-    ShapedRun,
+    place_on_open, place_pitched, shape_box, shape_run, FlowSpan, PathEnd, PlacedGlyph, PlacedRun, Rect,
+    RingLayout, ShapedRun,
 };
 use crate::font::fonts::FontSystemLease;
 use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
@@ -33,8 +33,8 @@ use crate::projection::geometry::{self, drawn_rect, label_center, points, reach}
 use crate::projection::input::{Dependent, ProjectionInput, Reads, Stage};
 use crate::projection::shapes::ShapeCache;
 use crate::projection::state::{
-    Attach, BoxFlow, BoxKey, EndState, Fanned, JunctionKey, LabelState, OwnFields, PathFlow, Placed,
-    PortalAt, RingResolved, RunFlow, RunKey, UnitBody,
+    Attach, BoxFlow, BoxKey, EndState, Fanned, JunctionKey, LabelState, LineState, OwnFields, PathFlow,
+    Placed, PortalAt, RingResolved, RunFlow, RunKey, UnitBody,
 };
 use crate::projection::structure::element;
 use crate::projection::Projector;
@@ -47,7 +47,8 @@ const PLACE: u8 = 3;
 const PATHS: u8 = 4;
 const FANS: u8 = 5;
 const LAY: u8 = 6;
-const DONE: u8 = 7;
+const HIDE: u8 = 7;
+const DONE: u8 = 8;
 
 /// One update's worklists, and what its structural step left for the
 /// write.
@@ -74,6 +75,12 @@ pub(crate) struct PhaseWork {
     fans: FxHashSet<JunctionKey>,
     /// Phase C, once the junctions are fanned: paths to lay.
     lay: Vec<NodeId>,
+    /// Phase D, once every path is laid and every reach is final: the
+    /// elements whose geometry or reach was marked — the nodes among them
+    /// are what hides the paths' glyphs — and the paths to hide glyphs of
+    /// (#332).
+    reaches: FxHashSet<NodeId>,
+    hide: Vec<NodeId>,
     /// The phase running.
     phase: u8,
     /// The nodes this update created state for.
@@ -308,6 +315,7 @@ impl Projector {
             Stage::Geometry if path => PATHS,
             Stage::Geometry => MEASURE,
             Stage::Place if path => LAY,
+            Stage::Hide => HIDE,
             _ => match body {
                 Some(UnitBody::Section(_)) if dep.stage == Stage::Resolve => SECTIONS,
                 Some(UnitBody::Section(_)) | Some(UnitBody::Ring(_)) => PLACE,
@@ -344,12 +352,16 @@ impl Projector {
                 _ => work.to_place.push(dep.unit),
             },
             PATHS => work.paths.push(dep.unit),
-            _ => work.lay.push(dep.unit),
+            LAY => work.lay.push(dep.unit),
+            _ => work.hide.push(dep.unit),
         }
     }
 
     /// Mark every piece of work that read `input`. O(those).
     pub(crate) fn mark(&self, work: &mut PhaseWork, input: ProjectionInput) {
+        if let ProjectionInput::Geometry(id) | ProjectionInput::Reach(id) = input {
+            work.reaches.insert(id);
+        }
         for &dep in self.deps.dependents(&input) {
             self.queue(work, dep);
         }
@@ -410,6 +422,16 @@ impl Projector {
         while let Some(id) = work.lay.pop() {
             if work.take(Dependent::new(id, Stage::Place)) {
                 self.path_place(tree, id, fonts);
+                self.queue(work, Dependent::new(id, Stage::Hide));
+            }
+        }
+        work.phase = HIDE;
+        for id in std::mem::take(&mut work.reaches) {
+            self.rehide(id, work);
+        }
+        while let Some(id) = work.hide.pop() {
+            if work.take(Dependent::new(id, Stage::Hide)) {
+                self.hide(id);
             }
         }
         work.phase = DONE;
@@ -915,6 +937,7 @@ impl Projector {
         let was_portal = matches!(self.units.get(&id).map(|u| &u.body), Some(UnitBody::Portal(_)));
         if !drawn || was_portal != portal {
             self.leave_junctions(id, work);
+            self.unhide(id);
         }
         // A link that switched kind takes on the other kind's slots, and
         // its old kind's labels leave the label index.
@@ -1251,10 +1274,7 @@ impl Projector {
         // How far apart two paths' first glyphs must leave one point to
         // clear each other by this one's own gap, and how far its first two
         // glyphs reach, which leave along its side before it bends.
-        let (gap, size) = line.flows[0].flow.as_ref().map_or((0.0, 0.0), |f| {
-            let spacing = line.resolved.as_ref().map_or(0.0, |(r, _)| r.spacing);
-            pattern_gap(&f.shaped, spacing).unwrap_or((spacing, f.shaped.line_height))
-        });
+        let (gap, size) = gap_and_size(line);
         // Two first glyphs leave the point side by side or across a slope,
         // where an upright box reaches as far as its diagonal.
         let diagonal = size * std::f32::consts::SQRT_2;
@@ -1336,7 +1356,7 @@ impl Projector {
     /// The box `node`'s paths attach to (#296): the box round its drawn
     /// rings' inks, or its drawn rectangle where it draws no ring. `None`
     /// for a node not drawn. O(its units).
-    fn reach(&self, node: NodeId) -> Option<Rect> {
+    pub(crate) fn reach(&self, node: NodeId) -> Option<Rect> {
         let n = self.nodes.get(&node)?;
         let rings = n
             .units
@@ -1596,7 +1616,7 @@ impl Projector {
         };
         line.path = curves;
         for (k, placed) in placed.iter_mut().enumerate() {
-            unit.slots[k].want = placed.as_ref().and_then(|p| {
+            line.laid[k] = placed.as_ref().and_then(|p| {
                 run_data(
                     RunShape::Path {
                         run: p.run.clone(),
@@ -1800,6 +1820,16 @@ impl Projector {
     }
 }
 
+/// A line's own gap between two glyphs, and its glyphs' size: its
+/// ornament's, or its `spacing` and line height for a text it cannot
+/// measure. `(0, 0)` before its body is shaped. O(1).
+pub(crate) fn gap_and_size(line: &LineState) -> (f32, f32) {
+    line.flows[0].flow.as_ref().map_or((0.0, 0.0), |f| {
+        let spacing = line.resolved.as_ref().map_or(0.0, |(r, _)| r.spacing);
+        pattern_gap(&f.shaped, spacing).unwrap_or((spacing, f.shaped.line_height))
+    })
+}
+
 /// A node's own opacity as its carry reads it: clamped to `0..=1`, and
 /// `1` for a value that is not finite.
 pub(crate) fn own_opacity(opacity: f32) -> f32 {
@@ -1811,19 +1841,25 @@ pub(crate) fn own_opacity(opacity: f32) -> f32 {
 }
 
 /// The canvas box of each glyph of `placed` that draws, by `run`'s
-/// metrics: its ink, or where none was measured its box, its advance by
-/// its line height. A space draws nothing. O(its glyphs).
+/// metrics ([`glyph_ink`]). O(its glyphs).
 fn placed_inks<'a>(run: &'a ShapedRun, placed: &'a PlacedRun) -> impl Iterator<Item = Rect> + 'a {
-    let baseline = run.baseline();
-    placed.glyphs.iter().filter_map(move |g| {
-        let metrics = run.glyphs.get(g.glyph as usize)?;
-        if metrics.blank {
-            return None;
-        }
-        Some(match metrics.ink {
-            Some(ink) => Rect::new(g.pos + Vec2::new(0.0, baseline) + ink.min, ink.max - ink.min),
-            None => Rect::new(g.pos, Vec2::new(metrics.advance, run.line_height)),
-        })
+    placed.glyphs.iter().filter_map(move |g| glyph_ink(run, g))
+}
+
+/// The canvas box of the placed glyph `g` of `run`, by the run's
+/// metrics: its ink, or where none was measured its box, its advance by
+/// its line height. `None` for a space, which draws nothing. O(1).
+pub(crate) fn glyph_ink(run: &ShapedRun, g: &PlacedGlyph) -> Option<Rect> {
+    let metrics = run.glyphs.get(g.glyph as usize)?;
+    if metrics.blank {
+        return None;
+    }
+    Some(match metrics.ink {
+        Some(ink) => Rect::new(
+            g.pos + Vec2::new(0.0, run.baseline()) + ink.min,
+            ink.max - ink.min,
+        ),
+        None => Rect::new(g.pos, Vec2::new(metrics.advance, run.line_height)),
     })
 }
 

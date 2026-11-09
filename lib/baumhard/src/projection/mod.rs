@@ -57,8 +57,10 @@
 //!    each connector and line link finds where it leaves its two nodes —
 //!    every one of them before any is laid, since the paths that leave
 //!    one side of a node are fanned together (#296); then connectors,
-//!    links, labels and portal ends are laid. A piece of work runs at
-//!    most once per phase.
+//!    links, labels and portal ends are laid. **Phase D:** the nodes
+//!    whose reach moved find the paths behind them, and each path laid or
+//!    found leaves out the glyphs a node it does not end at hides
+//!    (#332). A piece of work runs at most once per phase.
 //! 4. **Emit.** Every run whose new data differs from what the projector
 //!    last wrote — its own state, never the live element, which overlays
 //!    may have written (#241 amendment 2) — is set, inserted, removed or
@@ -70,6 +72,8 @@
 //!
 //! `format/projection.md` spells where each element is drawn.
 
+/// Nodes hide the paths behind them (#332).
+mod behind;
 /// The geometry rules: drawn rectangles, anchors, curves, labels, portal
 /// ends.
 pub(crate) mod geometry;
@@ -114,6 +118,7 @@ use crate::document::ids::Document;
 use crate::document::writer::feed::ChangeRecord;
 use crate::flow::{Curve, Rect, ShapedBox};
 use crate::font::fonts::FontSystemLease;
+use crate::gfx_structs::run::GlyphRunData;
 use crate::projection::hit::BodyIndex;
 use crate::projection::input::DepIndex;
 use crate::projection::layers::LayerBuilders;
@@ -134,6 +139,12 @@ pub struct Projector {
     pub(crate) deps: DepIndex,
     /// The visible nodes' bodies, for the hit test.
     pub(crate) bodies: BodyIndex,
+    /// The visible nodes' regions, their reaches round their rectangles:
+    /// what hides a path's glyphs (#332).
+    pub(crate) regions: BodyIndex,
+    /// Where each drawn connector's and line link's glyphs are: what a
+    /// node's region finds the paths it hides by (#332).
+    pub(crate) path_cells: behind::PathCells,
     /// Each label a unit projects, and that unit: what
     /// [`Projector::label_pos`] reads.
     pub(crate) label_hosts: FxHashMap<NodeId, NodeId>,
@@ -264,6 +275,16 @@ impl Projector {
     pub fn curve(&self, path: NodeId) -> Option<&[Curve]> {
         match &self.units.get(&path)?.body {
             UnitBody::Line(line) if line.drawn && !line.path.is_empty() => Some(&line.path),
+            _ => None,
+        }
+    }
+
+    /// A drawn connector's or line link's body run as laid, every glyph:
+    /// the run its layer holds, but for the glyphs the nodes it does not
+    /// end at hide (#332). `None` until it is placed. O(1).
+    pub fn laid(&self, path: NodeId) -> Option<&GlyphRunData> {
+        match &self.units.get(&path)?.body {
+            UnitBody::Line(line) if line.drawn => line.laid[0].as_ref(),
             _ => None,
         }
     }

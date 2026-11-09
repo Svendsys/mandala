@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! The projection's bench bodies (#241, Tests): a full projection of a
-//! generated map, an update after a single-node edit, and a rubber band's
-//! query (`Projector::nodes_in`). Each is a test too, holding what it
-//! measures to its result.
+//! generated map, an update after a single-node edit, a rubber band's
+//! query (`Projector::nodes_in`), and a node dragged across two paths
+//! (#332). Each is a test too, holding what it measures to its result.
 //!
 //! Follows the `do_*()` / `test_*()` split (§T2.2): every `do_*` body
 //! has a bench entry in `benches/test_bench.rs`.
@@ -124,4 +124,54 @@ pub fn do_projection_nodes_in_bands_over_a_grid() {
         p.projector.nodes_in(between).is_empty(),
         "a band between the rows"
     );
+}
+
+#[test]
+fn test_projection_a_node_dragged_across_two_paths() {
+    do_projection_a_node_dragged_across_two_paths();
+}
+
+/// A node dragged down in forty steps across one straight connector and
+/// on across another 2000 below it (#332), the projection updated at
+/// each step: each path has glyphs hidden while the node is on it, both
+/// are drawn whole once it is past them, and the layers equal a full
+/// projection of the map where it stops.
+pub fn do_projection_a_node_dragged_across_two_paths() {
+    use crate::projection::state::UnitBody;
+    use crate::projection::tests::maps::{ident, kid, two_paths};
+    let doc = two_paths(
+        Vec2::new(480.0, -400.0),
+        serde_json::json!({}),
+        serde_json::json!({}),
+    );
+    let node = ident(&doc, 3);
+    let paths = [2, 5].map(|n| kid(&doc, ident(&doc, n), DocKind::Connector));
+    let mut p = Projected::new(doc);
+    // How many glyphs of each path's body its layer leaves out.
+    let hidden = |p: &Projected| {
+        paths.map(|path| {
+            let unit = &p.projector.units[&path];
+            let UnitBody::Line(line) = &unit.body else {
+                return 0;
+            };
+            let count = |run: Option<&crate::gfx_structs::run::GlyphRunData>| {
+                run.map_or(0, |r| r.shaped().glyph_count())
+            };
+            count(line.laid[0].as_ref()) - count(unit.slots[0].want.as_ref())
+        })
+    };
+    let mut most = [0, 0];
+    for step in 0..=40 {
+        let to = Vec2::new(480.0, -400.0 + step as f32 * 65.0);
+        let mutation = single(DocKind::Node, DocMutation::Node(NodeOp::SetPosition(to)));
+        p.apply(request(mutation, vec![node], "drag")).unwrap();
+        let now = hidden(&p);
+        most = [most[0].max(now[0]), most[1].max(now[1])];
+    }
+    assert!(
+        most[0] > 0 && most[1] > 0,
+        "each path is hidden on the way: {most:?}"
+    );
+    assert_eq!(hidden(&p), [0, 0], "past both, both are drawn whole");
+    p.check().unwrap();
 }

@@ -4,6 +4,7 @@
 //! by the loader — the one way a document is made outside `document`
 //! (rule 4) — and the elements found in them again by node id and kind.
 
+use glam::Vec2;
 use serde_json::{json, Value};
 
 use crate::arena::NodeId;
@@ -58,4 +59,53 @@ pub fn kid(doc: &Document, parent: NodeId, kind: DocKind) -> NodeId {
 /// A section of one span of `text`.
 pub fn text_section(text: &str) -> Value {
     json!({"spans": [{"text": text}]})
+}
+
+/// Where the blocker, node 3, stands off both paths.
+pub const AWAY: Vec2 = Vec2::new(480.0, 1000.0);
+
+/// Where the blocker stands across path P, the connector of node 2.
+pub const ON_P: Vec2 = Vec2::new(480.0, -10.0);
+
+/// Where the blocker stands across path Q, the connector of node 5.
+pub const ON_Q: Vec2 = Vec2::new(480.0, 1990.0);
+
+/// A blocker and two paths (#332): two straight connectors 900 long, P from node 1 to node 2 along
+/// y = 20 and Q from node 4 to node 5 along y = 2020, eight cells of the
+/// grid apart; and node 3, 60 by 60 and of `blocker`'s fields, which
+/// ends neither, at `at`. `path` is merged into both connectors.
+pub fn two_paths(at: Vec2, blocker: Value, path: Value) -> Document {
+    let box_ = json!({"min_size": [100.0, 40.0]});
+    let connector = merged(json!({"straight": true}), path);
+    let blocker = merged(
+        json!({"min_size": [60.0, 60.0], "position": [at.x, at.y]}),
+        blocker,
+    );
+    let at = |x: f32, y: f32, mut fields: Value| {
+        fields["position"] = json!([x, y]);
+        fields
+    };
+    let child = |x: f32, y: f32| {
+        let mut fields = at(x, y, box_.clone());
+        fields["connector"] = connector.clone();
+        fields
+    };
+    let (p, q) = (child(1000.0, 0.0), child(1000.0, 2000.0));
+    load_map(json!({"nodes": [
+        node(1, None, at(0.0, 0.0, box_.clone())),
+        node(2, Some(1), p),
+        node(3, None, blocker),
+        node(4, None, at(0.0, 2000.0, box_.clone())),
+        node(5, Some(4), q),
+    ]}))
+}
+
+/// `fields` with `more` merged in.
+pub fn merged(mut fields: Value, more: Value) -> Value {
+    if let (Some(out), Some(more)) = (fields.as_object_mut(), more.as_object()) {
+        for (k, v) in more {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+    fields
 }

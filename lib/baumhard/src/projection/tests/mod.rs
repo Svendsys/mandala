@@ -15,6 +15,9 @@ mod dependency_tests;
 /// The oracle's comparison, and its controls.
 #[cfg(test)]
 mod equivalent_tests;
+/// Nodes hide the paths behind them (#332).
+#[cfg(test)]
+mod hide_tests;
 /// Hit testing.
 #[cfg(test)]
 mod hit_tests;

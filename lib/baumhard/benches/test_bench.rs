@@ -1864,6 +1864,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("projection_nodes_in_bands_over_a_grid", |b| {
         b.iter(do_projection_nodes_in_bands_over_a_grid)
     });
+    c.bench_function("projection_a_node_dragged_across_two_paths", |b| {
+        b.iter(do_projection_a_node_dragged_across_two_paths)
+    });
     c.bench_function("projection_deep_chain_projects_edits_hides_moves_and_hits", |b| {
         b.iter(do_projection_deep_chain_projects_edits_hides_moves_and_hits)
     });

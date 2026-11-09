@@ -473,11 +473,13 @@ fn connector_maps() -> Vec<(String, std::path::PathBuf)> {
 }
 
 /// A drawn connector or line link as the real projector drew it (#296):
-/// its body's inks in order, its curves, its body's first glyph's face and
-/// size, and at each end the node it attaches to.
+/// its body's inks in order as laid, its curves, its body's first glyph's
+/// face and size, and at each end the node it attaches to; and the inks
+/// its layer holds, those the nodes it does not end at leave out (#332).
 struct DrawnPath {
     name: String,
     inks: Vec<Ink>,
+    drawn: Vec<Ink>,
     curves: Vec<baumhard::flow::Curve>,
     style: String,
     ends: [NodeId; 2],
@@ -490,8 +492,9 @@ struct DrawnPath {
 /// draws none its drawn rectangle — every node's, a path's end or not.
 type Frames = std::collections::HashMap<NodeId, Vec<Ink>>;
 
-/// Every connector and line link of `doc` and the inks of every node's
-/// frame, through the projector the app draws with
+/// Every connector and line link of `doc` — its inks as laid, and as its
+/// layer draws them — and the inks of every node's frame, through the
+/// projector the app draws with
 /// (`Projector::project_full`) and each glyph's rasterized ink (`read`);
 /// and the zoom of the camera that frames the rings and the paths' ends.
 fn drawn_paths(doc: &Document) -> (Vec<DrawnPath>, Frames, f32) {
@@ -519,10 +522,13 @@ fn drawn_paths(doc: &Document) -> (Vec<DrawnPath>, Frames, f32) {
                 let Some(element) = projector.element_of(layer, glyph) else {
                     continue;
                 };
-                let inks: Vec<Ink> = read(run, fsys, &mut swash)
-                    .into_iter()
-                    .filter_map(|g| g.0)
-                    .collect();
+                let mut inks_of = |run: &GlyphRunData| -> Vec<Ink> {
+                    read(run, fsys, &mut swash)
+                        .into_iter()
+                        .filter_map(|g| g.0)
+                        .collect()
+                };
+                let inks = inks_of(run);
                 match (layer, doc.get(element)) {
                     (Layer::Frames, _) => {
                         if let Some(node) = node_of(element) {
@@ -551,7 +557,8 @@ fn drawn_paths(doc: &Document) -> (Vec<DrawnPath>, Frames, f32) {
                         };
                         paths.push(DrawnPath {
                             name: format!("{}>{}", ident(ends[0]), ident(ends[1])),
-                            inks,
+                            inks: projector.laid(element).map_or_else(|| inks.clone(), &mut inks_of),
+                            drawn: inks,
                             curves: projector.curve(element).map(<[_]>::to_vec).unwrap_or_default(),
                             style,
                             ends,
@@ -975,8 +982,10 @@ fn test_maps_hold_the_connector_rules() {
 /// answer on #326, which fixes the maps rather than routing round a
 /// node): no glyph of a path lies inside the reach — the box round the
 /// frame's inks, or the drawn rectangle — of a node other than its own
-/// two, on the demo maps, testament and theme_demo. `stress_long_edges`
-/// is left out: its long edges cross the rows they span by design.
+/// two, on the demo maps, testament and theme_demo — each path as laid,
+/// before any node hides its glyphs (#332), since this holds the maps'
+/// layout. `stress_long_edges` is left out: its long edges cross the
+/// rows they span by design.
 ///
 /// Controls: with Border Toolkit's children back in the two rows they had,
 /// the second row straight under the first, red on testament: the paths
@@ -1024,6 +1033,75 @@ fn test_maps_draw_no_path_through_another_node() {
     assert!(
         faults.is_empty(),
         "{} paths pass through another node:\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
+}
+
+/// Nodes hide the glyphs of the paths behind them, and no others (#332),
+/// on every map the connector rules are checked on: no glyph a path's
+/// layer draws lies inside the reach of a node other than its own two —
+/// the box round its frame's inks, or its drawn rectangle — and every
+/// glyph it leaves out lies within its own gap of one, measured as the
+/// projector measures it but from the rasterized inks: a quarter of the
+/// gap more, for the slack a `repeat` path spreads over its gaps, and
+/// half a point for the raster.
+///
+/// Controls: with a node's region its drawn rectangle alone, red on the
+/// glyphs drawn inside its rings' reach on `stress_long_edges`; with the
+/// margin three gaps, red on the glyphs left out that no node is near;
+/// with `hide` leaving every glyph in, red on the precondition.
+#[test]
+fn test_maps_hide_only_the_glyphs_behind_other_nodes() {
+    let mut faults: Vec<String> = Vec::new();
+    let mut hidden = 0;
+    for (name, path) in connector_maps() {
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let doc = load(&text).unwrap_or_else(|e| panic!("{name} must load: {e}"));
+        let (paths, frames, _) = drawn_paths(&doc);
+        let reaches: Vec<(NodeId, Ink)> = frames
+            .iter()
+            .filter(|(_, inks)| !inks.is_empty())
+            .map(|(node, inks)| (*node, ink_bounds(inks)))
+            .collect();
+        for p in &paths {
+            let others: Vec<Ink> = reaches
+                .iter()
+                .filter(|(node, _)| !p.ends.contains(node))
+                .map(|(_, reach)| *reach)
+                .collect();
+            for ink in &p.drawn {
+                if let Some(reach) = others.iter().find(|r| ink.overlap(r) > 0.0) {
+                    faults.push(format!(
+                        "{name} {}: a glyph drawn at {:.0?} inside the reach at {:.0?}",
+                        p.name,
+                        ink.center(),
+                        reach.min
+                    ));
+                }
+            }
+            let own = median(p.inks.windows(2).map(|w| w[0].gap(&w[1])).collect());
+            let margin = own * 1.25 + 0.5;
+            let left_out = p
+                .inks
+                .iter()
+                .filter(|i| !p.drawn.iter().any(|d| d.min == i.min && d.max == i.max));
+            for ink in left_out {
+                hidden += 1;
+                if !others.iter().any(|r| ink.gap(r) <= margin) {
+                    faults.push(format!(
+                        "{name} {}: a glyph at {:.0?} left out, no other node within {margin:.2}",
+                        p.name,
+                        ink.center()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(hidden > 0, "precondition: some path runs behind a node");
+    assert!(
+        faults.is_empty(),
+        "{} faults:\n{}",
         faults.len(),
         faults.join("\n")
     );

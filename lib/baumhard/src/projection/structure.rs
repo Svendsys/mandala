@@ -276,6 +276,7 @@ impl Projector {
         work: &mut PhaseWork,
     ) {
         self.leave_junctions(id, work);
+        self.unhide(id);
         let Some(unit) = self.units.remove(&id) else {
             return;
         };

@@ -112,6 +112,18 @@ node to the node it leads to.
   rectangle: the end glyph moves back past the side's midpoint, through
   the rings and never into the rectangle, or on, to keep it. Any other
   path is walked by its fit mode from its start.
+- **Behind a node.** A node's contents take priority over every path
+  that does not end at it. A glyph of a path's body or caps is not drawn
+  where its box — its ink, or its advance by its line height where it
+  has none — grown by the path's own gap meets the node's *region*: the
+  box round its drawn rectangle and its rings' inks, shaped by its
+  `shape` (an ellipse's region is the ellipse in that box). So a path
+  shown on either side of a node stops one gap short of it, as it stops
+  short of its own frames. A glyph is drawn whole or not at all, never
+  clipped. The path's own two nodes never hide it, and a node hides
+  whatever its zoom window and opacity. Hiding changes nothing in the
+  document: the glyphs are drawn again when the node moves off the path.
+  A path's label is not hidden.
 
 **Caps** are centered on the path's start (`cap_start`) and end
 (`cap_end`).
