@@ -345,7 +345,10 @@ impl super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarget<'_, '_
         let Some(doc) = ctx.document.as_mut() else {
             return false;
         };
-        super::families::edits::run_step(doc, ctx.view.as_ref(), ctx.edits, id, at, ctx.clock.now_ms())
+        let (registry, now_ms) = (ctx.edits, ctx.clock.now_ms());
+        super::families::edits::with_drawn(ctx.view.as_mut(), ctx.renderer, |drawn| {
+            super::families::edits::run_step(doc, drawn, registry, id, at, now_ms)
+        })
     }
 
     fn step_finished(&mut self) {

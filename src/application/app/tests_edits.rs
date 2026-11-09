@@ -18,7 +18,7 @@ use crate::application::edits::EditRegistry;
 use crate::application::view::MapView;
 
 use super::animation;
-use super::dispatch::families::edits::run_edit;
+use super::dispatch::families::edits::{run_edit, Undrawn};
 
 /// The bundled edits; with `instant`, each with its animation taken off.
 fn bundled(instant: bool) -> EditRegistry {
@@ -56,8 +56,8 @@ fn setup() -> (MindMapDocument, MapView) {
 }
 
 /// Run `id` at the selection from `registry`, at `now_ms`.
-fn run(doc: &mut MindMapDocument, view: &MapView, registry: &EditRegistry, id: &str, now_ms: f64) {
-    run_edit(doc, Some(view), registry, id, None, ChangeSource::Edit, now_ms)
+fn run(doc: &mut MindMapDocument, view: &mut MapView, registry: &EditRegistry, id: &str, now_ms: f64) {
+    run_edit(doc, view, registry, id, None, ChangeSource::Edit, now_ms)
         .unwrap_or_else(|error| panic!("{id} runs: {error}"));
 }
 
@@ -78,13 +78,13 @@ const BUNDLED: [&str; 5] = [
 fn test_each_bundled_edit_instant_and_animated_ends_the_same_as_one_entry() {
     let (instant, animated) = (bundled(true), bundled(false));
     for id in BUNDLED {
-        let (mut a, view) = setup();
-        let (mut b, _) = setup();
+        let (mut a, mut va) = setup();
+        let (mut b, mut vb) = setup();
         let before = saved(&mut a);
-        run(&mut a, &view, &instant, id, 0.0);
+        run(&mut a, &mut va, &instant, id, 0.0);
         assert!(!a.is_animating(), "{id}: instant");
         let ms = f64::from(animated.find(b.doc(), id).unwrap().0.animate.unwrap().ms);
-        run(&mut b, &view, &animated, id, 0.0);
+        run(&mut b, &mut vb, &animated, id, 0.0);
         assert!(b.is_animating(), "{id}: animated");
         assert!(b.tick_animation(ms / 3.0));
         assert_eq!(b.doc().history().count(), 0, "{id}: no entry while it runs");
@@ -112,14 +112,14 @@ fn position(doc: &MindMapDocument, node: NodeId) -> Vec2 {
 
 #[test]
 fn test_under_the_virtual_clock_an_edit_lands_on_its_eased_curve() {
-    let (mut doc, view) = setup();
+    let (mut doc, mut view) = setup();
     let registry = bundled(false);
     let node = a_family(&doc);
     let x0 = position(&doc, node).x;
     let mut clock = AppClock::default();
     clock.set_mode(ClockMode::Virtual);
     let start = clock.now_ms();
-    run(&mut doc, &view, &registry, "nudge-right-50", start);
+    run(&mut doc, &mut view, &registry, "nudge-right-50", start);
     let def = registry.find(doc.doc(), "nudge-right-50").unwrap().0;
     let animate = def.animate.unwrap();
     assert_eq!(animate.ms, 150);
@@ -149,7 +149,7 @@ fn test_under_the_virtual_clock_an_edit_lands_on_its_eased_curve() {
 
 #[test]
 fn test_a_delay_holds_the_start() {
-    let (mut doc, view) = setup();
+    let (mut doc, mut view) = setup();
     let mut defs: Vec<EditDef> = baumhard::document::edit::parse_edits(
         r#"{"edits":[{"id":"late","name":"Late","reach":"self","target":"node","mutations":[{"node":{"nudge":[100.0,0.0]}}],"animate":{"ms":100,"delay_ms":40}}]}"#,
     )
@@ -157,7 +157,7 @@ fn test_a_delay_holds_the_start() {
     let registry = EditRegistry::new(std::mem::take(&mut defs), Vec::new());
     let node = a_family(&doc);
     let x0 = position(&doc, node).x;
-    run(&mut doc, &view, &registry, "late", 0.0);
+    run(&mut doc, &mut view, &registry, "late", 0.0);
     doc.tick_animation(30.0);
     assert_eq!(position(&doc, node).x, x0, "held through the delay");
     doc.tick_animation(90.0);
@@ -169,7 +169,7 @@ fn test_a_delay_holds_the_start() {
 
 #[test]
 fn test_undo_mid_animation_leaves_the_map_as_it_was_and_redo_brings_the_edit_back() {
-    let (mut doc, view) = setup();
+    let (mut doc, mut view) = setup();
     let registry = bundled(false);
     let before = saved(&mut doc);
     let family = a_family(&doc);
@@ -180,7 +180,7 @@ fn test_undo_mid_animation_leaves_the_map_as_it_was_and_redo_brings_the_edit_bac
         .collect();
     let at = |doc: &MindMapDocument| children.iter().map(|&c| position(doc, c)).collect::<Vec<_>>();
     let start = at(&doc);
-    run(&mut doc, &view, &registry, "flower", 0.0);
+    run(&mut doc, &mut view, &registry, "flower", 0.0);
     doc.tick_animation(100.0);
     assert_ne!(at(&doc), start, "control: part-way, the children have moved");
     assert_eq!(
@@ -199,8 +199,8 @@ fn test_undo_mid_animation_leaves_the_map_as_it_was_and_redo_brings_the_edit_bac
         "R36: the edit was committed, then undone"
     );
     doc.redo();
-    let (mut whole, _) = setup();
-    run(&mut whole, &view, &bundled(true), "flower", 0.0);
+    let (mut whole, mut wv) = setup();
+    run(&mut whole, &mut wv, &bundled(true), "flower", 0.0);
     assert_eq!(
         saved(&mut doc),
         saved(&mut whole),
@@ -210,11 +210,11 @@ fn test_undo_mid_animation_leaves_the_map_as_it_was_and_redo_brings_the_edit_bac
 
 #[test]
 fn test_a_second_edit_mid_animation_finishes_the_first() {
-    let (mut doc, view) = setup();
+    let (mut doc, mut view) = setup();
     let registry = bundled(false);
-    run(&mut doc, &view, &registry, "nudge-right-50", 0.0);
+    run(&mut doc, &mut view, &registry, "nudge-right-50", 0.0);
     doc.tick_animation(50.0);
-    run(&mut doc, &view, &registry, "grow-font-2pt", 50.0);
+    run(&mut doc, &mut view, &registry, "grow-font-2pt", 50.0);
     assert_eq!(
         doc.doc().history().count(),
         1,
@@ -223,20 +223,20 @@ fn test_a_second_edit_mid_animation_finishes_the_first() {
     doc.tick_animation(1000.0);
     assert_eq!(doc.doc().history().count(), 2, "then the second");
     // The first ended where it would have: 50 to the right.
-    let (mut both, _) = setup();
+    let (mut both, mut bv) = setup();
     let instant = bundled(true);
-    run(&mut both, &view, &instant, "nudge-right-50", 0.0);
-    run(&mut both, &view, &instant, "grow-font-2pt", 0.0);
+    run(&mut both, &mut bv, &instant, "nudge-right-50", 0.0);
+    run(&mut both, &mut bv, &instant, "grow-font-2pt", 0.0);
     assert_eq!(saved(&mut doc), saved(&mut both));
 }
 
 #[test]
 fn test_an_unknown_edit_is_refused_and_changes_nothing() {
-    let (mut doc, view) = setup();
+    let (mut doc, mut view) = setup();
     let revision = doc.revision();
     let error = run_edit(
         &mut doc,
-        Some(&view),
+        &mut view,
         &bundled(false),
         "spiral",
         None,
@@ -246,4 +246,84 @@ fn test_an_unknown_edit_is_refused_and_changes_nothing() {
     .unwrap_err();
     assert_eq!(error, "no edit is called `spiral`");
     assert_eq!(doc.revision(), revision);
+}
+
+/// A map with one span at 10 pt and two edits of its own: `grow` (10 pt
+/// over 200 ms) and `tint`, which reds the spans above 17 pt.
+const GROW_THEN_TINT: &str = r##"{"format":1,"name":"t",
+"edits":[
+ {"id":"grow","name":"Grow","reach":"self","target":"spans","mutations":[{"span":{"text":{"grow_size":10.0}}}],"animate":{"ms":200}},
+ {"id":"tint","name":"Tint","reach":"self","target":"spans","filter":{"fields":[[{"font_size":{"pt":17.0}},{"GreaterThan":false}]]},"mutations":[{"span":{"text":{"set_color":"#ff0000"}}}]}],
+"nodes":[{"id":1,"position":[0,0],"sections":[{"spans":[{"text":"x","size":10.0}]}]}]}"##;
+
+/// **A second edit reads the map the first leaves** (review of #331,
+/// blocker 3). `tint`, run while `grow` is half way (15 pt), is resolved
+/// only after `grow` is fast-forwarded and committed (20 pt), so its
+/// filter reaches the span: two entries, and the span red — the same map
+/// as the two run one after the other.
+///
+/// Control: resolving before the fast-forward read 15 pt, reached
+/// nothing, and lost the `tint` with no entry and no word.
+#[test]
+fn test_an_edit_run_mid_animation_reads_the_map_the_first_leaves() {
+    let load = || {
+        let mut doc = MindMapDocument::from_json_str(GROW_THEN_TINT, None, 50).expect("the map loads");
+        let node = doc
+            .doc()
+            .node_by_ident(baumhard::document::ids::NodeIdent(1))
+            .unwrap();
+        doc.selection.select_only(node);
+        doc
+    };
+    let registry = EditRegistry::new(Vec::new(), Vec::new());
+    let run = |doc: &mut MindMapDocument, id: &str, now_ms: f64| {
+        run_edit(doc, &mut Undrawn, &registry, id, None, ChangeSource::Edit, now_ms)
+            .unwrap_or_else(|error| panic!("{id}: {error}"));
+    };
+    let mut mid = load();
+    run(&mut mid, "grow", 0.0);
+    mid.tick_animation(100.0);
+    run(&mut mid, "tint", 100.0);
+    assert_eq!(mid.doc().history().count(), 2, "grow's entry, then tint's");
+
+    let mut after = load();
+    run(&mut after, "grow", 0.0);
+    after.tick_animation(1000.0);
+    run(&mut after, "tint", 1000.0);
+    assert_eq!(saved(&mut mid), saved(&mut after));
+    assert!(saved(&mut mid).contains("#ff0000"), "the span is red");
+}
+
+/// **A handler reads the map as drawn after the step before it** (review
+/// of #331, blocker 3). A macro of `nudge-right-50` then `flower` has no
+/// frame between its steps; the flower's first petal still sits straight
+/// above the parent where the nudge left it, because the funnel syncs
+/// the view before it resolves.
+///
+/// Control: without the sync the petal sat above the parent's old,
+/// 50-unit-left rect.
+#[test]
+fn test_a_handler_after_a_step_reads_the_view_that_step_left() {
+    let (mut doc, mut view) = setup();
+    let registry = bundled(true);
+    let parent = a_family(&doc);
+    run(&mut doc, &mut view, &registry, "nudge-right-50", 0.0);
+    run(&mut doc, &mut view, &registry, "flower", 0.0);
+    let _ = view.sync_for_test(&mut doc);
+    let geometry = view.projector();
+    let center = |node: NodeId| {
+        let rect = baumhard::projection::Geometry::node_rect(geometry, node).expect("drawn");
+        rect.origin + rect.size / 2.0
+    };
+    let petal = doc
+        .doc()
+        .children(parent)
+        .find(|&c| doc.doc().get(c).is_some_and(|e| e.kind() == DocKind::Node))
+        .expect("the parent has a child node");
+    let (petal, parent) = (center(petal), center(parent));
+    assert!(petal.y < parent.y, "the first petal is above its parent");
+    assert!(
+        (petal.x - parent.x).abs() < 0.5,
+        "straight above the parent as moved: {petal} over {parent}"
+    );
 }

@@ -266,14 +266,11 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
 
     fn run_edit(&mut self, id: &str, at: &crate::application::macros::MacroTarget) -> bool {
         let input = &mut *self.input;
-        super::dispatch::families::edits::run_step(
-            &mut input.document,
-            input.view.as_ref(),
-            &input.edits,
-            id,
-            at,
-            input.clock.now_ms(),
-        )
+        let now_ms = input.clock.now_ms();
+        let (document, registry) = (&mut input.document, &input.edits);
+        super::dispatch::families::edits::with_drawn(input.view.as_mut(), self.renderer, |drawn| {
+            super::dispatch::families::edits::run_step(document, drawn, registry, id, at, now_ms)
+        })
     }
 
     fn step_finished(&mut self) {

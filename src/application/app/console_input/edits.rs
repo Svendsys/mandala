@@ -15,7 +15,7 @@ use crate::application::console::commands::edit::EditLine;
 use crate::application::console::ExecResult;
 use crate::application::edits::EditTier;
 
-use super::super::dispatch::families::edits::run_edit;
+use super::super::dispatch::families::edits::{run_edit, with_drawn};
 use super::super::input_context::InputHandlerContext;
 
 /// Do what `line` asks, and say what happened.
@@ -47,15 +47,11 @@ pub(super) fn take(ctx: &mut InputHandlerContext<'_>, line: &EditLine) -> ExecRe
             }
             let at = (!anchors.is_empty()).then_some(anchors.as_slice());
             let now_ms = ctx.clock.now_ms();
-            match run_edit(
-                doc,
-                ctx.view.as_ref(),
-                ctx.edits,
-                id,
-                at,
-                ChangeSource::Console,
-                now_ms,
-            ) {
+            let registry = ctx.edits;
+            let ran = with_drawn(ctx.view.as_mut(), ctx.renderer, |drawn| {
+                run_edit(doc, drawn, registry, id, at, ChangeSource::Console, now_ms)
+            });
+            match ran {
                 Ok(()) if doc.is_animating() => ExecResult::ok_msg(format!("edit: `{id}` is animating")),
                 Ok(()) => ExecResult::ok_msg(format!("edit: ran `{id}`")),
                 Err(message) => ExecResult::err(message),
