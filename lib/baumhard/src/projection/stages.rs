@@ -1440,10 +1440,9 @@ impl Projector {
         let fans = line.fans;
         let turned = |a: &Attach, turn: f32| Vec2::from_angle(turn).rotate(a.normal);
         let curves = geometry::path_through(
-            (start.point, turned(&start, fans[0].0)),
-            (end.point, turned(&end, fans[1].0)),
+            (start.point, turned(&start, fans[0].0), start.lead + fans[0].1),
+            (end.point, turned(&end, fans[1].0), end.lead + fans[1].1),
             &path.control_points,
-            start.lead + fans[0].1.max(fans[1].1),
         );
         let label_at = line
             .label

@@ -139,7 +139,7 @@ fn test_projection_a_path_leaves_and_arrives_square_and_passes_its_points() {
     // through a wave: up 30 a third of the way, down 30 two thirds.
     let (p0, p1) = (Vec2::ZERO, Vec2::new(300.0, 60.0));
     let via = [Vec2::new(0.0, -30.0), Vec2::new(0.0, 30.0)];
-    let curves = path_through((p0, Vec2::X), (p1, -Vec2::X), &via, 0.0);
+    let curves = path_through((p0, Vec2::X, 0.0), (p1, -Vec2::X, 0.0), &via);
     assert_eq!(curves.len(), 3, "a cubic from each point to the next");
     assert!(
         degrees(curves[0].derivative(0.0), Vec2::X) < 0.01,
@@ -164,7 +164,7 @@ fn test_projection_a_path_leaves_and_arrives_square_and_passes_its_points() {
     }
     // With none, an S between two facing sides as deep as they are apart:
     // its handles reach 0.5523 of the 300 the far end lies on.
-    let s = path_through((p0, Vec2::X), (p1, -Vec2::X), &[], 0.0);
+    let s = path_through((p0, Vec2::X, 0.0), (p1, -Vec2::X, 0.0), &[]);
     let Curve::Cubic(_, c1, c2, _) = s[0] else { panic!("one cubic") };
     assert!(
         (c1 - Vec2::new(165.69, 0.0)).length() < 0.01,
@@ -173,6 +173,18 @@ fn test_projection_a_path_leaves_and_arrives_square_and_passes_its_points() {
     assert!(
         (c2 - Vec2::new(300.0 - 165.69, 60.0)).length() < 0.01,
         "the end's handle: {c2}"
+    );
+    // Each end runs straight for its own lead: 20 at the start, which a
+    // fan holds out, and none at the end, which no other path shares.
+    let led = path_through((p0, Vec2::X, 20.0), (p1, -Vec2::X, 0.0), &[]);
+    assert_eq!(
+        led.first(),
+        Some(&Curve::Line(p0, Vec2::new(20.0, 0.0))),
+        "the start's lead: {led:?}"
+    );
+    assert!(
+        matches!(led.last(), Some(Curve::Cubic(.., end)) if *end == p1),
+        "no lead at the end: {led:?}"
     );
 }
 

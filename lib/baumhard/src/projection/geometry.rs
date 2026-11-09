@@ -162,17 +162,18 @@ pub(crate) fn turn_to(normal: Vec2, toward: Vec2) -> f32 {
 }
 
 /// The curves of a path (#296, rule 3): from `start` to `end`, each a
-/// point and the direction the path leaves it in — at `end`, the
+/// point, the direction the path leaves it in — at `end`, the
 /// direction it leaves *backward*, the end side's outward normal for a
-/// path that arrives straight on — through each of `via`. Point `k` of
+/// path that arrives straight on — and its lead, through each of `via`. Point `k` of
 /// `n` is the point `k / (n + 1)` of the way along the straight line
 /// from end to end, moved by `via[k - 1]`; one that is not finite moves
 /// it nothing.
 ///
-/// Each end first runs straight along its direction for `lead` — a
-/// path's first two glyphs, so they step square to their side however
-/// the path then bends — but never more than a quarter of the straight
-/// line from end to end. Between the two leads, one cubic between each
+/// Each end first runs straight along its direction for its own lead —
+/// its first two glyphs, and as far as the paths that share its point
+/// hold their glyphs out, so they step square to their side however the
+/// path then bends — but never more than a quarter of the straight line
+/// from end to end. Between the two leads, one cubic between each
 /// two points: at a lead's end along its direction, at a point between
 /// along the line through the points on either side of it (a Catmull-Rom
 /// spline), so the curves join without a kink. A lead's handle reaches
@@ -183,14 +184,12 @@ pub(crate) fn turn_to(normal: Vec2, toward: Vec2) -> f32 {
 /// handle between is a third of the tangent.
 ///
 /// Cost: O(`via`); one allocation, `via.len() + 3` curves.
-pub(crate) fn path_through(start: (Vec2, Vec2), end: (Vec2, Vec2), via: &[Vec2], lead: f32) -> Vec<Curve> {
+pub(crate) fn path_through(start: (Vec2, Vec2, f32), end: (Vec2, Vec2, f32), via: &[Vec2]) -> Vec<Curve> {
     let (p0, p1) = (usable_point(start.0), usable_point(end.0));
-    let lead = if lead.is_finite() {
-        lead.clamp(0.0, 0.25 * p0.distance(p1))
-    } else {
-        0.0
-    };
-    let (q0, q1) = (p0 + start.1 * lead, p1 + end.1 * lead);
+    let room = 0.25 * p0.distance(p1);
+    let lead = |l: f32| if l.is_finite() { l.clamp(0.0, room) } else { 0.0 };
+    let (l0, l1) = (lead(start.2), lead(end.2));
+    let (q0, q1) = (p0 + start.1 * l0, p1 + end.1 * l1);
     let n = via.len();
     let knot = |k: usize| match k {
         0 => q0,
@@ -214,18 +213,19 @@ pub(crate) fn path_through(start: (Vec2, Vec2), end: (Vec2, Vec2), via: &[Vec2],
         }
     };
     let mut curves = Vec::with_capacity(n + 3);
-    if lead > 0.0 {
+    if l0 > 0.0 {
         curves.push(Curve::Line(p0, q0));
     }
     curves.extend((0..=n).map(|k| {
         let (a, b) = (knot(k), knot(k + 1));
         Curve::Cubic(a, a + tangent(k), b - tangent(k + 1), b)
     }));
-    if lead > 0.0 {
+    if l1 > 0.0 {
         curves.push(Curve::Line(q1, p1));
     }
     curves
 }
+
 /// `size` in points, for shaping: a relative size — a fraction of the
 /// node's shorter side (D10) — times `min(w, h)` of the node's drawn
 /// rectangle (#241 amendment 1). Either is clamped to the shapeable
