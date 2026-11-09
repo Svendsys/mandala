@@ -329,6 +329,8 @@ pub(crate) struct PortalAt {
     /// Its place along the outline, by arc length from the start of its
     /// top side, clockwise.
     pub(crate) along: f32,
+    /// The outline's perimeter: where its seam closes.
+    pub(crate) perimeter: f32,
     /// The larger side of its marker's box and its label's.
     pub(crate) width: f32,
 }

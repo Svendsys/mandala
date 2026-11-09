@@ -239,18 +239,19 @@ pub(crate) fn label_center(path: &[Curve], t: f32, offset: f32) -> Vec2 {
 /// arc length from the start of its top side, clockwise: at `border`, a
 /// fraction of the perimeter, or for [`BorderPoint::Auto`] facing
 /// `toward`, the other end's center — where the ray from the outline's
-/// center through it leaves the outline. Cost: one arc-length walk of the
-/// outline (a table for an ellipse), and for `Auto` a nearest-point
-/// search.
-pub(crate) fn portal_along(outline: &Outline, border: BorderPoint, toward: Vec2) -> f32 {
+/// center through it leaves the outline — and the perimeter's length.
+/// Cost: one arc-length walk of the outline (a table for an ellipse), and
+/// for `Auto` a nearest-point search.
+pub(crate) fn portal_along(outline: &Outline, border: BorderPoint, toward: Vec2) -> (f32, f32) {
     let arc = portal_arc(outline);
-    match border {
+    let s = match border {
         BorderPoint::At(t) => {
             let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
             t * arc.length()
         }
         BorderPoint::Auto => arc.nearest(ray_exit(outline, toward)),
-    }
+    };
+    (s, arc.length())
 }
 
 /// The point `s` along `outline`'s perimeter ([`portal_along`]), moved
@@ -272,42 +273,68 @@ fn portal_arc(outline: &Outline) -> ArcPath {
     ArcPath::closed(outline, start, Direction::Clockwise, POINT_TABLE_SPACING)
 }
 
-/// Where each of `ends` — `(along, width)`: its place along one outline
-/// and how wide its marker and label are, sorted by place — is held
-/// apart from the others (#296; portal ends that face one way piled up on
-/// one point): no two nearer, center to center, than half their widths
-/// summed, and each run of ends that had to move centered where they
-/// faced, so an end alone, or clear of the others, stays where it faces.
-/// O(ends); one allocation.
-pub(crate) fn held_apart(ends: &[(f32, f32)]) -> Vec<f32> {
-    let mut at: Vec<f32> = ends.iter().map(|e| e.0).collect();
-    let mut run_start = 0;
-    for i in 0..ends.len() {
-        let pushed = i > 0 && {
-            let least = at[i - 1] + 0.5 * (ends[i - 1].1 + ends[i].1);
-            if at[i] < least {
-                at[i] = least;
-                true
+/// Where each of `ends` — `(along, width)`: its place along one closed
+/// outline `perimeter` long and how wide its marker and label are,
+/// sorted by place — is held apart from the others (#296; portal ends
+/// that face one way piled up on one point): no two neighbors, round the
+/// outline and across its seam, nearer center to center than half their
+/// widths summed, every end as near where it faced as that allows — the
+/// least squares of the moves, by pool-adjacent-violators: the ends are
+/// read from the widest free stretch of the outline on, each block of
+/// ends that would overlap the one before it merged with it and centered
+/// on where its ends faced, until none does. An end clear of the others
+/// stays where it faces. A `perimeter` that is not a positive number is
+/// read as an open line, with no seam. O(ends) amortized; two allocations.
+pub(crate) fn held_apart(ends: &[(f32, f32)], perimeter: f32) -> Vec<f32> {
+    let n = ends.len();
+    let closed = perimeter.is_finite() && perimeter > 0.0;
+    // Read from just past the widest free stretch, round the seam.
+    let cut = if closed && n > 1 {
+        let free = |k: usize| {
+            let before = if k == 0 {
+                ends[n - 1].0 - perimeter
             } else {
-                false
-            }
+                ends[k - 1].0
+            };
+            ends[k].0 - before
         };
-        if !pushed {
-            run_start = i;
+        (0..n).max_by(|&a, &b| free(a).total_cmp(&free(b))).unwrap_or(0)
+    } else {
+        0
+    };
+    let order: Vec<usize> = (0..n).map(|i| (cut + i) % n).collect();
+    let faced = |i: usize| ends[order[i]].0 + if closed && order[i] < cut { perimeter } else { 0.0 };
+    // Each end's least offset from the first, the ends packed tight: what
+    // its place less its offset is held in order by.
+    let mut offset = vec![0.0_f32; n];
+    for i in 1..n {
+        offset[i] = offset[i - 1] + 0.5 * (ends[order[i - 1]].1 + ends[order[i]].1);
+    }
+    let mut blocks: Vec<(f32, usize)> = Vec::with_capacity(n);
+    for i in 0..n {
+        let mut block = (faced(i) - offset[i], 1usize);
+        while let Some(&(sum, count)) = blocks.last() {
+            if sum / count as f32 > block.0 / block.1 as f32 {
+                blocks.pop();
+                block = (block.0 + sum, block.1 + count);
+            } else {
+                break;
+            }
         }
-        let last_of_run = i + 1 == ends.len() || {
-            let least = at[i] + 0.5 * (ends[i].1 + ends[i + 1].1);
-            ends[i + 1].0 >= least
-        };
-        if last_of_run && i > run_start {
-            let run = run_start..=i;
-            let count = (i - run_start + 1) as f32;
-            let shift = (run.clone().map(|k| ends[k].0).sum::<f32>()
-                - run.clone().map(|k| at[k]).sum::<f32>())
-                / count;
-            for k in run {
-                at[k] += shift;
-            }
+        blocks.push(block);
+    }
+    let mut at = vec![0.0_f32; n];
+    let mut i = 0;
+    for (sum, count) in blocks {
+        let mean = sum / count as f32;
+        for _ in 0..count {
+            let place = mean + offset[i];
+            at[order[i]] = if closed {
+                place.rem_euclid(perimeter)
+            } else {
+                place
+            };
+            i += 1;
         }
     }
     at

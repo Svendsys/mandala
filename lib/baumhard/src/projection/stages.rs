@@ -1544,9 +1544,11 @@ impl Projector {
                 )
             });
             let label = end.label.flow.as_ref().map_or(Vec2::ZERO, |f| f.shaped.size);
+            let (along, perimeter) = geometry::portal_along(&outline, border, toward);
             at[k] = Some(PortalAt {
                 node,
-                along: geometry::portal_along(&outline, border, toward),
+                along,
+                perimeter,
                 width: marker.max(label).max_element(),
             });
         }
@@ -1595,7 +1597,10 @@ impl Projector {
             })
             .collect();
         members.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let held = geometry::held_apart(&members.iter().map(|m| (m.0, m.2)).collect::<Vec<_>>());
+        let held = geometry::held_apart(
+            &members.iter().map(|m| (m.0, m.2)).collect::<Vec<_>>(),
+            end.perimeter,
+        );
         members
             .iter()
             .position(|m| m.1 == id)
@@ -1652,7 +1657,7 @@ impl Projector {
             let (own_outline, toward) = sides[k];
             let along = match &portal.at[k] {
                 Some(at) => self.portal_along(at, id),
-                None => geometry::portal_along(&own_outline, resolved.border_t, toward),
+                None => geometry::portal_along(&own_outline, resolved.border_t, toward).0,
             };
             let (point, normal) = geometry::portal_point(&own_outline, along, resolved.offset);
             let Some(input) = end.marker.flow.as_ref().map(|f| f.shaped.clone()) else {

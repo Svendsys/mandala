@@ -445,13 +445,58 @@ fn test_projection_a_moved_branch_turns_its_neighbors() {
     p.check().unwrap();
 }
 
+/// The distance between two places round an outline `perimeter` long,
+/// the shorter way.
+fn round(a: f32, b: f32, perimeter: f32) -> f32 {
+    let d = (a - b).rem_euclid(perimeter);
+    d.min(perimeter - d)
+}
+
+#[test]
+fn test_projection_held_apart_merges_a_run_pushed_into_the_one_before() {
+    // The review's probe: ends 1..=3 overlap and are pushed apart; centered
+    // on where they faced alone, they would land on end 0. Merged with it,
+    // all four are 10 apart and centered on where the four faced.
+    let ends = [(0.0, 10.0), (10.0, 10.0), (11.0, 10.0), (12.0, 10.0)];
+    let held = held_apart(&ends, 1000.0);
+    for k in 0..3 {
+        let apart = round(held[k], held[k + 1], 1000.0);
+        assert!(
+            apart >= 10.0 - 1e-3,
+            "ends {k} and {} are {apart} apart, they need 10: {held:?}",
+            k + 1
+        );
+    }
+    let unwrapped: f32 = held.iter().map(|&h| if h > 500.0 { h - 1000.0 } else { h }).sum();
+    assert!(
+        (unwrapped - 33.0).abs() < 1e-3,
+        "centered where the four faced, 33 summed: {held:?}"
+    );
+}
+
+#[test]
+fn test_projection_held_apart_reaches_across_the_seam() {
+    // Two ends either side of the start of the top side, 7 apart round the
+    // seam and 993 apart along the perimeter: they are pushed apart across
+    // it, 1.5 each, and not left on top of one another.
+    let held = held_apart(&[(2.0, 10.0), (995.0, 10.0)], 1000.0);
+    assert!(
+        (round(held[0], held[1], 1000.0) - 10.0).abs() < 1e-3,
+        "the two ends across the seam are half their widths summed apart: {held:?}"
+    );
+    assert!(
+        (held[0] - 3.5).abs() < 1e-3 && (held[1] - 993.5).abs() < 1e-3,
+        "each moved 1.5: {held:?}"
+    );
+}
+
 #[test]
 fn test_projection_portal_ends_that_face_one_way_are_held_apart() {
     // Three ends side by side round 100: the middle two would overlap, so
     // they are pushed apart and centered where they faced; the first,
     // clear, stays.
     let ends = [(0.0, 10.0), (100.0, 20.0), (104.0, 20.0)];
-    let held = held_apart(&ends);
+    let held = held_apart(&ends, 1000.0);
     assert!(
         (held[0] - 0.0).abs() < 1e-4,
         "an end clear of the rest stays: {held:?}"
