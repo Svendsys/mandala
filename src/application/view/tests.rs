@@ -544,3 +544,46 @@ fn test_the_source_tint_replaces_the_selections_on_the_sources_only() {
     );
     assert!(tinted(&view, &doc, b, SELECTION_HIGHLIGHT));
 }
+
+/// **A hovered target that becomes selected wears the selection's tint,
+/// and keeps it when the hover leaves** (review 5821011650, probe P2):
+/// one tint per node holds in the view, not only where the hover is set.
+/// `a` is the mode's source; `b` is hovered, then selected while the
+/// pointer stands still (`SelectAll`, a sibling move), then the hover
+/// leaves. Control: before `b` is selected it wears the target tint, so
+/// the hover did stamp it.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_a_hovered_target_that_is_selected_keeps_the_selections_tint() {
+    use super::overlay::{SELECTION_HIGHLIGHT, TARGET_HIGHLIGHT};
+    use crate::application::app::InteractionMode;
+    let mut doc = testament();
+    let mut view = MapView::for_test(&doc);
+    let (a, b) = two_drawn_roots(&doc, &view);
+    doc.selection.select_only(a);
+    view.follow_mode(&InteractionMode::Reparent { sources: vec![a] });
+    view.set_hover_target(Some(b));
+    view.sync_for_test(&mut doc).expect("the tints are stamped");
+    let tinted = |view: &MapView, doc: &MindMapDocument, color| {
+        runs(view, doc, b)
+            .into_iter()
+            .all(|(layer, glyph)| tint_of(view, layer, glyph) == Some(color))
+    };
+    assert!(
+        tinted(&view, &doc, TARGET_HIGHLIGHT),
+        "control: b wears the target tint"
+    );
+
+    doc.selection.set([a, b]);
+    view.sync_for_test(&mut doc).expect("the selection changed");
+    assert!(
+        tinted(&view, &doc, SELECTION_HIGHLIGHT),
+        "selected, b wears the selection's"
+    );
+    view.set_hover_target(None);
+    view.sync_for_test(&mut doc);
+    assert!(
+        tinted(&view, &doc, SELECTION_HIGHLIGHT),
+        "and keeps it when the hover leaves"
+    );
+}

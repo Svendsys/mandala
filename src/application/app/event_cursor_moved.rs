@@ -56,8 +56,8 @@ pub(super) fn handle_cursor_moved(
 }
 
 /// In reparent or connect mode, tint the node under the cursor when the
-/// mode could land on it — never a selected node or a source, nor, for a
-/// reparent, one below a source. The next frame's sync stamps it.
+/// mode could land on it — for a reparent, not a source nor one below a
+/// source. The next frame's sync stamps it (`MapView::set_hover_target`).
 fn follow_target(ctx: &mut InputHandlerContext<'_>, cursor: (f64, f64)) {
     let sources = ctx.interaction_mode.sources();
     let (Some(doc), Some(view)) = (ctx.document.as_ref(), ctx.view.as_mut()) else {
@@ -68,11 +68,8 @@ fn follow_target(ctx: &mut InputHandlerContext<'_>, cursor: (f64, f64)) {
     } else {
         let canvas_pos = ctx.renderer.screen_to_canvas(cursor.0 as f32, cursor.1 as f32);
         let reparenting = matches!(ctx.interaction_mode, InteractionMode::Reparent { .. });
-        view.node_at(canvas_pos).filter(|&node| {
-            !doc.selection.contains(node)
-                && !sources.contains(&node)
-                && (!reparenting || valid_reparent_target(doc.doc(), sources, node))
-        })
+        view.node_at(canvas_pos)
+            .filter(|&node| !reparenting || valid_reparent_target(doc.doc(), sources, node))
     };
     view.set_hover_target(target);
 }

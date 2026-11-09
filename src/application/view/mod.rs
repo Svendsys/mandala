@@ -346,9 +346,9 @@ impl MapView {
             self.projector
                 .update(doc.doc(), &records, &mut self.layers, &mut fonts)
         });
-        // A mode's sources wear their own tint instead of the selection's,
-        // and the hover target is neither (`set_hover_target`), so no two
-        // overlays are stamped on one run.
+        // One tint per node, by construction: a mode's sources wear their
+        // own instead of the selection's, and the target tint goes only on
+        // a node that wears neither, so no two overlays stamp one run.
         let MapView {
             highlight,
             hover,
@@ -365,8 +365,10 @@ impl MapView {
             None => doc.selection.iter().collect(),
         };
         targets.retain(|target| !source_targets.contains(target));
+        let hovered: Option<NodeId> =
+            hover_target.filter(|target| !targets.contains(target) && !source_targets.contains(target));
         let mut overlays: [(&mut Overlay, &[NodeId]); 3] = [
-            (hover, hover_target.as_slice()),
+            (hover, hovered.as_slice()),
             (sources, source_targets.as_slice()),
             (highlight, &targets),
         ];
@@ -440,9 +442,10 @@ impl MapView {
     }
 
     /// Tint `target` as the node a reparent or a connect would land on,
-    /// or tint none with `None`; the caller passes only a valid target
-    /// that is not selected. Takes effect at the next [`Self::sync`].
-    /// Returns whether it changed. Native, with the two modes.
+    /// or tint none with `None`; the caller passes only a valid target. A
+    /// target that is selected or a source keeps that tint instead.
+    /// Takes effect at the next [`Self::sync`]. Returns whether it
+    /// changed. Native, with the two modes.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn set_hover_target(&mut self, target: Option<NodeId>) -> bool {
         if self.hover_target == target {
