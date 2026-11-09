@@ -73,16 +73,17 @@
 //!
 //! The trace reports each (`Trace::ring`): a ring is never capped
 //! silently. So a ring takes at most its budget and [`ring_overshoot`]
-//! past it: its setup, and the one cluster that finds it spent, at most
-//! [`CLUSTER_READS`] reads.
+//! past it: its setup, its path's table, and the one cluster that finds
+//! it spent, at most [`CLUSTER_READS`] reads.
 //!
 //! The ring counts, too, the glyphs its walks set and phase 2 handles,
-//! [`GLYPHS_A_STEP`] to a step, and a setup of its own ([`RING_STEPS`]):
-//! the work a ring does past its reads.
+//! [`GLYPHS_A_STEP`] to a step, a setup of its own ([`RING_STEPS`]), and
+//! its path's table, at its samples (`halves::TABLE_SAMPLES_A_STEP`,
+//! ruling B16.3a): the work a ring does past its reads.
 
 use std::cell::Cell;
 
-use super::halves::frame_budget;
+use super::halves::{frame_budget, table_steps};
 use super::{ArcPath, GlyphMetrics, CHORD_ROUNDS, INK_ROUNDS, INK_STRIDES, INK_TURNS, MAX_RUN_ON_STEPS};
 
 #[cfg(doc)]
@@ -289,21 +290,25 @@ pub(crate) fn cluster_steps(glyphs: usize) -> usize {
 }
 
 /// The most glyph steps a ring of `glyphs` glyphs a copy may take past
-/// its budget (#310): its setup ([`RING_STEPS`]), counted before its
+/// its budget (#310): its setup ([`RING_STEPS`]) and its path's table of
+/// `tables` samples ([`table_steps`], ruling B16.3a), counted before its
 /// budget is first read, and the cluster whose walk found it spent
 /// ([`cluster_steps`]). Every other cluster laid past it is held back
 /// for ([`phase_two_steps`]).
-pub(crate) fn ring_overshoot(glyphs: usize) -> usize {
-    RING_STEPS.saturating_add(cluster_steps(glyphs))
+pub(crate) fn ring_overshoot(glyphs: usize, tables: usize) -> usize {
+    RING_STEPS
+        .saturating_add(table_steps(tables))
+        .saturating_add(cluster_steps(glyphs))
 }
 
 /// The most glyph steps a ring of `copy` glyphs a copy, its budget scaled
-/// by `glyphs` ([`ring_glyphs`]), may take in all: its budget
-/// ([`frame_budget`]) and the most past it ([`ring_overshoot`]). What the
-/// flow fuzzers hold an input's ring to (ruling R45.1), its glyphs at
-/// most the cap they lay it with (ruling B17.2b).
-pub(crate) fn ring_work_steps(glyphs: usize, copy: usize) -> usize {
-    frame_budget(glyphs).saturating_add(ring_overshoot(copy))
+/// by `glyphs` ([`ring_glyphs`]), its path's table of `tables` samples,
+/// may take in all: its budget ([`frame_budget`]) and the most past it
+/// ([`ring_overshoot`]). What the flow fuzzers hold an input's ring to
+/// (ruling R45.1), its glyphs at most the cap they lay it with (ruling
+/// B17.2b).
+pub(crate) fn ring_work_steps(glyphs: usize, copy: usize, tables: usize) -> usize {
+    frame_budget(glyphs).saturating_add(ring_overshoot(copy, tables))
 }
 
 /// How a ring's budget, or its cap, left it (#310), when it stopped its
@@ -328,6 +333,9 @@ pub(crate) enum RingLoss {
 pub(crate) struct RingWork {
     /// The path's reads when the ring began ([`ArcPath::reads`]).
     from: usize,
+    /// The samples its path's table was built with, counted in its setup
+    /// (ruling B16.3a).
+    tables: usize,
     /// The ring's glyphs a copy, and whether any of them is a letter,
     /// which phase 2 lays in reading order.
     copy: usize,
@@ -385,6 +393,7 @@ impl RingWork {
         let length = path.length();
         RingWork {
             from: path.reads(),
+            tables: path.table_samples(),
             copy,
             letters,
             cap,
@@ -414,10 +423,16 @@ impl RingWork {
         self.cap
     }
 
-    /// The glyph steps taken along `path`: its setup, its reads and the
-    /// glyphs it has set.
+    /// The samples its path's table was built with (ruling B16.3a).
+    pub(crate) fn tables(&self) -> usize {
+        self.tables
+    }
+
+    /// The glyph steps taken along `path`: its setup, its path's table,
+    /// its reads and the glyphs it has set.
     pub(crate) fn spent(&self, path: &ArcPath) -> usize {
         RING_STEPS
+            .saturating_add(table_steps(self.tables))
             .saturating_add(steps_of(path.reads().saturating_sub(self.from)))
             .saturating_add(self.set.get().div_ceil(GLYPHS_A_STEP))
     }

@@ -98,6 +98,10 @@ pub mod tests;
 // directly. The crate boundary stays here; a future swap to a
 // different shaper / layout engine is one edit per site below.
 
+/// A face's id in the font system's database (`fontdb::ID`): what a
+/// [`LayoutGlyph`] names its face by, ordered so `crate::flow` can key a
+/// glyph's ink by it without hashing.
+pub use cosmic_text::fontdb::ID as FontId;
 /// Cosmic-text `Align` — text alignment passed to the rich-text /
 /// set-text API.
 pub use cosmic_text::Align;

@@ -811,6 +811,97 @@ pub fn do_flow_halves_tracking_grows_with_the_gap() {
 }
 
 #[test]
+fn test_flow_halves_closed_form_roots_are_the_first_at_what_is_owed() {
+    do_flow_halves_closed_form_roots_are_the_first_at_what_is_owed();
+}
+
+/// The closed-form layer's roots held to their oracles (#309, ruling
+/// B16.1b; `check_pair_model`): over 2,000 seeded cases each, the tangent
+/// line's root in closed form is the one the iterative rule brackets and
+/// bisects; and a letter set at its root on the band curve's form — a
+/// side, an arc, a sharp corner's sweep — is set at what is owed, read back
+/// from the path, and at the first root along the band curve, read from
+/// the path's own gap function, not from the iterative rule's answer
+/// (review 5811563882). The flow_structured target holds every input to
+/// the same; the 20,000-seed sweep is
+/// `test_the_pair_model_sets_the_first_root_at_what_is_owed`.
+pub fn do_flow_halves_closed_form_roots_are_the_first_at_what_is_owed() {
+    use crate::flow::tests::flow_fuzz::check_pair_model;
+    use crate::util::tests::choices::Choices;
+    for seed in 0..2_000 {
+        if let Err(why) = check_pair_model(&mut Choices::seeded(seed)) {
+            panic!("seed {seed}: {why}");
+        }
+    }
+}
+
+/// Ruling B16.2d: [`do_flow_halves_a_side_arc_is_filled_from_its_model_lays`]
+/// fills both arcs, its letters set from the band curve's form on its
+/// model lays, in at most 12 path lookups a side glyph placed (#309's
+/// target).
+///
+/// Control (run, not committed): the layer off (`NO_CLOSED_FORM`), no
+/// letter set from a form, and past the bound.
+#[test]
+fn test_flow_halves_a_side_arc_is_filled_from_its_model_lays() {
+    use crate::flow::place::halves::{MODEL_LETTERS, SIDE_STEP_LOOKUPS};
+    let models = MODEL_LETTERS.with(std::cell::Cell::get);
+    let (_, lookups) = SIDE_STEP_LOOKUPS.with(std::cell::Cell::get);
+    let sides = do_flow_halves_a_side_arc_is_filled_from_its_model_lays();
+    let models = MODEL_LETTERS.with(std::cell::Cell::get) - models;
+    let lookups = SIDE_STEP_LOOKUPS.with(std::cell::Cell::get).1 - lookups;
+    assert!(
+        models > 0,
+        "precondition: model lays set letters from the band curve's form"
+    );
+    assert!(
+        lookups <= 12 * sides,
+        "{lookups} path lookups for {sides} side glyphs, {:.1} a glyph, at most 12",
+        lookups as f64 / sides as f64
+    );
+}
+
+/// A side ornament round a rounded rectangle, its sides and arcs (#309,
+/// ruling B16.2d): the quatrain outward round a 300 × 200 rectangle of
+/// corners half its short side, `Fit` at span whole, `·` beside it. Both
+/// arcs are filled, each copy's gap solved on model lays first. Returns
+/// the side glyphs placed.
+pub fn do_flow_halves_a_side_arc_is_filled_from_its_model_lays() -> usize {
+    let shape = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(300.0, 200.0)),
+        Shape::Rectangle {
+            radius: Percent::new(50),
+        },
+    );
+    let layout = RingLayout {
+        span: LineSpan::WHOLE,
+        sides: Some(("·".to_owned(), Rgba::opaque(9, 9, 9))),
+        ..RingLayout::whole()
+    };
+    let (run, placed, trace) = frame_with(
+        QUATRAIN,
+        16.0,
+        &shape,
+        &FitMode::Fit { min: 0.5, max: 2.0 },
+        &layout,
+        true,
+    );
+    assert!(
+        trace.unheld.sides.is_empty(),
+        "both arcs are filled ({:?})",
+        trace.unheld
+    );
+    let text = placed
+        .glyphs
+        .iter()
+        .filter(|g| run.glyphs[g.glyph as usize].span != FILLER_SPAN)
+        .count();
+    let sides = placed.glyphs.len() - text;
+    assert!(sides > 0, "the arcs hold copies ({} glyphs)", placed.glyphs.len());
+    sides
+}
+
+#[test]
 fn test_flow_halves_sides_hold_the_junctions() {
     do_flow_halves_sides_hold_the_junctions();
 }
@@ -3421,7 +3512,8 @@ fn test_flow_halves_a_spent_budget_is_overshot_by_a_lay_at_most() {
         let past =
             FRAME_STEPS + inking_steps(&run) + OVERSHOOT_TRACKS * (run.glyphs.len() + TRACK_CALL_STEPS);
         assert!(
-            past <= overshoot_steps(&run, None, false),
+            // A sharp rectangle's halves build no table (ruling B16.3a).
+            past <= overshoot_steps(&run, None, false, 0),
             "precondition: the frame's overshoot is within the general bound"
         );
         let held = budget.max(trace.reserve);
@@ -3834,7 +3926,10 @@ fn a_long_side_ornament(shape: Shape, what: &str, own: &[(usize, crate::flow::pl
     let flow = style(16.0);
     let allowed = with_fonts(|fs| {
         let ornament = ornament_run(&layout, &flow, 1.0, fs);
-        overshoot_steps(&real_run(text, &flow, fs), ornament.as_ref(), false)
+        let run = real_run(text, &flow, fs);
+        let tables =
+            crate::flow::place::setup_table_samples(&run, &shape, &FitMode::Once { filler: None }, &flow);
+        overshoot_steps(&run, ornament.as_ref(), false, tables)
     });
     let letters = text.chars().filter(|c| !c.is_whitespace()).count();
     for (budget, sides, why) in [
