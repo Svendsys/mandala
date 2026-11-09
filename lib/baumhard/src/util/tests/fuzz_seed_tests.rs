@@ -619,6 +619,11 @@ fn test_the_fuzz_lockfile_locks_what_the_workspace_locks() {
         "precondition: every member's manifest is read ({:?})",
         dev_only.keys().collect::<Vec<_>>()
     );
+    assert!(
+        dev_only.get("cosmic-text").is_some_and(BTreeSet::is_empty),
+        "precondition: the patched path package is read, with no dev-only names ({:?})",
+        dev_only.keys().collect::<Vec<_>>()
+    );
     let problems = fuzz_lock_problems(&root, &fuzz, &dev_only);
     assert!(
         problems.is_empty(),
@@ -706,9 +711,13 @@ fn test_the_fuzz_lockfile_locks_what_the_workspace_locks() {
     );
 }
 
-/// Every workspace member's dev-only dependency names, by package name:
-/// each `Cargo.toml` under `lib/` and `crates/`, read for its
-/// `[package]` name and [`dev_only_dependencies`].
+/// Every path package's dev-only dependency names, by package name.
+/// A workspace member's are each `Cargo.toml` under `lib/` and
+/// `crates/`, read for its `[package]` name and
+/// [`dev_only_dependencies`]. A package the root manifest's
+/// `[patch.crates-io]` takes from a path (`vendor/cosmic-text`, V1-B14)
+/// is no member, so neither lockfile locks a dev-dependency of it: its
+/// set is empty, keyed by the name its own manifest declares.
 fn path_package_dev_only() -> BTreeMap<String, BTreeSet<String>> {
     let mut out = BTreeMap::new();
     for dir in ["lib", "crates"] {
@@ -731,7 +740,44 @@ fn path_package_dev_only() -> BTreeMap<String, BTreeSet<String>> {
             out.insert(name, dev_only_dependencies(&text));
         }
     }
+    for dir in
+        patched_paths(&std::fs::read_to_string(repo_path("Cargo.toml")).expect("the root manifest reads"))
+    {
+        let manifest = repo_path(&dir).join("Cargo.toml");
+        let text =
+            std::fs::read_to_string(&manifest).unwrap_or_else(|e| panic!("{}: {e}", manifest.display()));
+        let name = text
+            .split("[package]")
+            .nth(1)
+            .and_then(|package| {
+                package.lines().find_map(|line| {
+                    line.trim()
+                        .strip_prefix("name = \"")
+                        .and_then(|rest| rest.strip_suffix('"'))
+                })
+            })
+            .unwrap_or_else(|| panic!("{} names its package", manifest.display()))
+            .to_string();
+        out.insert(name, BTreeSet::new());
+    }
     out
+}
+
+/// The paths of the root manifest's `[patch.crates-io]` entries, as
+/// written there (relative to the repository root). The table's header
+/// is matched as a whole line: the manifest names it in a comment above
+/// it too.
+fn patched_paths(manifest: &str) -> Vec<String> {
+    manifest
+        .lines()
+        .skip_while(|line| line.trim() != "[patch.crates-io]")
+        .skip(1)
+        .take_while(|line| !line.trim_start().starts_with('['))
+        .filter_map(|line| {
+            let (_, rest) = line.split_once("path = \"")?;
+            Some(rest.split_once('"')?.0.to_string())
+        })
+        .collect()
 }
 
 /// `scripts/fuzz.sh`'s `-max_len` for each target, from its
