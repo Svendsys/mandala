@@ -34,7 +34,7 @@ const SUBVERBS: &[Subverb] = &[
 ];
 
 const SHAPES: &[Word] = &[
-    Word::new("rectangle", "corners rounded by `radius`"),
+    Word::new("rectangle", "corners rounded by `radius`, or `rectangle:<0-100>`"),
     Word::new("ellipse", "the ellipse inscribed in the node"),
 ];
 const BOOLS: &[Word] = &[Word::bare("true"), Word::bare("false")];
@@ -169,13 +169,23 @@ fn execute_node(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 }
 
 /// The fields a `node` line's keys set.
+///
+/// `radius=` makes the outline a rectangle with that corner radius, so
+/// beside `shape=` it may only refine `shape=rectangle`.
 fn read_fields(eff: &ConsoleEffects, pairs: &[kvs::Pair]) -> Result<NodeFields, String> {
     let mut fields = NodeFields::default();
+    if let Some(radius) = kvs::value(pairs, "radius") {
+        if kvs::value(pairs, "shape").is_some_and(|shape| shape != "rectangle") {
+            return Err("node: radius= is a rectangle's; give it with shape=rectangle or alone".to_string());
+        }
+        let bad = || format!("'{radius}' is not a percentage from 0 to 100");
+        fields.shape = Some(values::rectangle(radius).ok_or_else(bad)?);
+    }
     for pair in pairs {
         let value = pair.value;
         match pair.key.name {
-            "shape" => fields.shape = Some(node::shape_kind(value)?),
-            "radius" => fields.radius = Some(values::percent(value)?),
+            "shape" if fields.shape.is_none() => fields.shape = Some(values::shape(value)?),
+            "shape" | "radius" => {}
             "opacity" => fields.opacity = Some(values::number(value)?),
             "hidden" => fields.hidden = Some(values::boolean(value)?),
             "folded" => fields.folded = Some(values::boolean(value)?),

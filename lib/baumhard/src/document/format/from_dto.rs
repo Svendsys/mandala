@@ -762,17 +762,10 @@ impl Builder {
         key: &'static str,
         start: &crate::document::format::spelling::StartDto,
     ) -> LoadResult<StartPoint> {
-        use crate::document::format::spelling::EdgeDto;
-        use crate::document::values::Edge;
         let point = start.0;
         let at = self.key(key, |b| b.bounded("at", bounds::check_unit_interval(point.at)))?;
         Ok(StartPoint {
-            edge: match point.edge {
-                EdgeDto::Top => Edge::Top,
-                EdgeDto::Right => Edge::Right,
-                EdgeDto::Bottom => Edge::Bottom,
-                EdgeDto::Left => Edge::Left,
-            },
+            edge: point.edge.into(),
             at,
         })
     }

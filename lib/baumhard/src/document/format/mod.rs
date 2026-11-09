@@ -61,6 +61,7 @@ pub(crate) mod index;
 mod load_map;
 mod load_node;
 pub(crate) mod load_style;
+mod read;
 pub(crate) mod rows;
 pub(crate) mod spelling;
 mod strict;
@@ -68,6 +69,7 @@ pub(crate) mod to_dto;
 mod writer;
 
 pub use error::{LoadError, LoadErrorKind, NodeContext, SaveError, SaveErrorKind, TextPosition};
+pub use read::{align, direction, edge, fit, line_span, shape, start, weight};
 
 use crate::document::format::context::{dto_excerpt, offset_in, peek_excerpt, peek_id, position_at};
 use crate::document::format::dto::{MapHeaderDto, NodeDto};
