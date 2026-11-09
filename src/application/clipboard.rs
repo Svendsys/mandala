@@ -11,7 +11,7 @@
 //! | a section | its text, and its spans and style ([`SectionFragment`]) | empties its spans | the fragment's spans and style; other text as one unstyled span |
 //! | part of a section ([`Selection::range`]) | that text | deletes it | replaces it with the text |
 //! | a node | its sections' text, joined by `\n` | empties every section | the text as section 0's one span |
-//! | a connector, link, label or portal end | its resolved color, as hex | clears its own color | a hex or `var(name)` color as its own; empty text clears it |
+//! | a connector, link, label or portal end | its resolved color, as hex | clears its own color | a color in the file's spelling (`#rrggbb`, `var(name)`, `palette(text)`, …) as its own; empty text clears it |
 //!
 //! Several elements copy as their texts joined by
 //! `MULTI_TARGET_SEPARATOR`; a paste onto as many elements as the text
@@ -33,6 +33,7 @@
 
 use baumhard::arena::NodeId;
 use baumhard::document::element::{DocElement, DocKind, SectionData, SpanData, TextStyle};
+use baumhard::document::format;
 use baumhard::document::ids::Document;
 use baumhard::document::mutation::compose::{delete_text, insert_text, replace_spans};
 use baumhard::document::mutation::error::MutationError;
@@ -41,7 +42,7 @@ use baumhard::document::mutation::ops::{
 };
 use baumhard::document::mutation::step::{DocStep, DocWalk};
 use baumhard::document::resolve::resolve_text;
-use baumhard::document::values::{Align, ColorRef, Rgba, VarId};
+use baumhard::document::values::{Align, ColorRef};
 use baumhard::engine::anchor::Anchors;
 use baumhard::engine::key::BranchKey;
 use baumhard::engine::mutator::Mutator;
@@ -153,7 +154,7 @@ pub fn take(
                 }
             }
             Some(kind @ (DocKind::Connector | DocKind::Link | DocKind::Label | DocKind::PortalEnd)) => {
-                pieces.push(hex(resolve_text(doc.tree(), id, &mut ()).color));
+                pieces.push(format::hex(resolve_text(doc.tree(), id, &mut ()).color));
                 group(&mut cleared, kind, id);
             }
             _ => {}
@@ -319,30 +320,13 @@ fn set_color(kind: DocKind, color: Option<ColorRef>, ids: Vec<NodeId>) -> DocSte
     DocStep::fixed(DocWalk::new(mutator, Anchors::Nodes(ids)))
 }
 
-/// `color` as hex: `#rrggbb`, or `#rrggbbaa` when it is not opaque.
-fn hex(Rgba([r, g, b, a]): Rgba) -> String {
-    if a == 255 {
-        format!("#{r:02x}{g:02x}{b:02x}")
-    } else {
-        format!("#{r:02x}{g:02x}{b:02x}{a:02x}")
-    }
-}
-
-/// The color pasted text names: `Some(None)` for empty text, which
-/// clears an element's own color; a hex literal; `var(name)` for a
-/// variable of `doc`'s theme. `None` for anything else.
+/// The color pasted text names, read as the file reads one
+/// (`format::color`): `Some(None)` for empty text, which clears an
+/// element's own color; `None` for anything the file refuses.
 fn color(doc: &Document, text: &str) -> Option<Option<ColorRef>> {
     let text = text.trim();
     if text.is_empty() {
         return Some(None);
     }
-    if let Some(name) = text.strip_prefix("var(").and_then(|rest| rest.strip_suffix(')')) {
-        let at = doc.theme().variables.iter().position(|var| var == name)?;
-        return Some(Some(ColorRef::Var(VarId(u16::try_from(at).ok()?))));
-    }
-    if !text.starts_with('#') {
-        return None;
-    }
-    let color = baumhard::util::color_conversion::hex_to_color(text)?;
-    Some(Some(ColorRef::Rgba(Rgba(color.rgba))))
+    format::color(doc, text).map(Some)
 }

@@ -578,10 +578,13 @@ mod tests {
         assert!(doc.selection.iter().next().is_none());
     }
 
-    /// The color a paste names: hex, a theme variable by name, empty for
-    /// none; anything else is not a color.
+    /// The color a paste names is read as the file reads one: canonical
+    /// hex, a theme variable by name, a palette field; empty text for
+    /// none. What the file refuses is not a color — a name, an unknown
+    /// variable, short or uppercase hex, an opaque color spelled with
+    /// its alpha digits.
     #[test]
-    fn test_a_pasted_color_is_hex_a_variable_or_nothing() {
+    fn test_a_pasted_color_is_read_as_the_file_reads_one() {
         let mut doc = load(json!({"format": 1, "name": "colors",
         "theme": {"active": "dark", "variants": {"dark": {"accent": "#d4a24c"}}},
         "nodes": [
@@ -609,13 +612,27 @@ mod tests {
                     baumhard::document::values::VarId(0),
                 )),
             ),
+            (
+                "palette(text)",
+                Some(baumhard::document::values::ColorRef::Palette(
+                    baumhard::document::values::PaletteField::Text,
+                )),
+            ),
             ("  ", None),
         ] {
             let steps = clipboard::paste(doc.doc(), &doc.selection, text, None);
             let _ = apply(&mut doc, steps, "paste");
             assert_eq!(own(&doc), want, "{text:?}");
         }
-        for text in ["red", "var(nope)", "#zz"] {
+        for text in [
+            "red",
+            "var(nope)",
+            "#zz",
+            "#abc",
+            "#FFFFFF",
+            "#102030ff",
+            "palette(nope)",
+        ] {
             let steps = clipboard::paste(doc.doc(), &doc.selection, text, None).expect("builds");
             assert!(steps.is_empty(), "{text:?} is not a color");
         }
