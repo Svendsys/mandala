@@ -414,7 +414,12 @@ fn test_glyph_run_emit_scales_a_cluster_about_its_own_box() {
 /// (`continues_cluster`), so each mark must sit where it sits on a
 /// rightward line, which no stretch reverses, and a scale override
 /// must scale each cluster about its own box: tripled, a mark sits
-/// three times as far from its base's pen.
+/// three times as far from its base's pen. A pen is drawn at a quarter
+/// pixel (cosmic-text's `SubpixelBin`), so a distance between two pens
+/// is off by up to a quarter pixel, and three times one by three
+/// quarters: the tripled distance is held to `K` quarters plus its own
+/// quarter, where a cluster scaled about another point than its own box
+/// is off by pixels.
 #[test]
 fn test_glyph_run_emit_keeps_a_cluster_whole_on_a_reversed_stretch() {
     const K: f32 = 3.0;
@@ -498,7 +503,7 @@ fn test_glyph_run_emit_keeps_a_cluster_whole_on_a_reversed_stretch() {
     let (big, _) = emit(&scaled, &identity_camera());
     for (i, (got, was)) in from_base(&big).iter().zip(&unscaled).enumerate() {
         assert!(
-            (got - K * was).abs() <= 0.5,
+            (got - K * was).abs() <= (K + 1.0) * 0.25,
             "glyph {i} keeps its place on its tripled base: {got} vs {}",
             K * was
         );

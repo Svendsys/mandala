@@ -620,9 +620,10 @@ impl Builder {
     /// face for is an error, and so is one that is only an installed
     /// system font: it resolves to the fallback face
     /// ([`AppFont::Any`]), which has no name a file could write, so
-    /// the document could not save it back. Which faces a document may
-    /// hold is [`nameable_font`](crate::document::place::nameable_font),
-    /// the rule the mutations share.
+    /// the document could not save it back (#329 lets a map name one).
+    /// Which faces a document may hold is
+    /// [`nameable_font`](crate::document::place::nameable_font), the rule
+    /// the mutations share.
     pub fn font(&mut self, family: &str) -> LoadResult<AppFont> {
         let found = match self.fonts.get(family) {
             Some(found) => *found,

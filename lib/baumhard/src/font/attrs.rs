@@ -61,10 +61,12 @@ use crate::util::grapheme_chad;
 ///
 /// One span is emitted per region. A region with `color = Some(rgba)`
 /// gets that color; otherwise the span uses cosmic-text's default. A
-/// region with `font = Some(id)` resolves to that font family; an
-/// unknown or unresolvable font id falls back to `Family::Monospace`
-/// with a warning — this function runs inside the renderer's frame
-/// loop and a corrupt save must not abort it.
+/// region with `font = Some(id)` resolves to that font family; one
+/// without, or with an unknown or unresolvable font id (with a warning —
+/// this function runs inside the renderer's frame loop and a corrupt
+/// save must not abort it), asks for no family: cosmic-text's default,
+/// which the font system names the default face (#228), as the
+/// rich-text bridge does.
 ///
 /// `text` is required because `AttrsList::add_span` expects byte
 /// ranges into the text it styles, while `Range` on the data layer
@@ -105,17 +107,17 @@ pub fn attrs_list_from_regions(
         }
 
         // Resolve the font family. Both miss paths (compiled-id map
-        // miss, fontdb face miss) fall back to Monospace with a
-        // warning — consistent with §9's "degrade the frame, not
-        // abort the process" rule.
+        // miss, fontdb face miss) ask for no family, with a warning —
+        // consistent with §9's "degrade the frame, not abort the
+        // process" rule. Not `Family::Monospace`: cosmic-text tries every
+        // monospaced face before the fallback list on that path (#228).
         let family = resolve_font_family(region.font.as_ref(), font_system);
-        attrs = match family {
+        if let Some(ref pin) = family {
             // At the weight the family draws the regular one at (R30).
-            Some(ref pin) => attrs
+            attrs = attrs
                 .family(Family::Name(pin.name.as_str()))
-                .weight(cosmic_text::Weight(pin.weight_for(400))),
-            None => attrs.family(Family::Monospace),
-        };
+                .weight(cosmic_text::Weight(pin.weight_for(400)));
+        }
         if start >= end {
             continue;
         }
@@ -164,9 +166,9 @@ fn region_byte_bounds<'r>(
 /// `None` silently when `font_id` is `None` (the region asked for no
 /// pin); returns `None` with a `log::warn!` when `font_id` is
 /// `Some` but the lookup misses (corrupt save / build skew).
-/// Callers decide what `None` means at the cosmic-text seam:
-/// [`attrs_list_from_regions`] forces `Family::Monospace`,
-/// [`rich_text_spans_from_regions`] omits the family pin entirely.
+/// At the cosmic-text seam both [`attrs_list_from_regions`] and
+/// [`rich_text_spans_from_regions`] read `None` as no family pin:
+/// cosmic-text's default family, the default face.
 fn resolve_font_family(
     font_id: Option<&crate::font::fonts::AppFont>,
     font_system: &mut FontSystem,

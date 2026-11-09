@@ -157,10 +157,10 @@ the parity trajectory (or why none is owed):
   engine's framing (`width`/`height`/`region`/`fit`/`scale`): it is
   the canvas as drawn, at its own size, and `describe` declares
   exactly the parameters each target takes. Recording stays native;
-  `describe` says so. What any browser frame shows is limited by #228
-  (open): the browser has no Latin text face for the default family,
-  so edge labels draw as `.notdef` boxes and connection dots vanish, on
-  every backend.
+  `describe` says so. Since #228 the default family is a compiled face
+  (Inter) and the fallback lists compiled faces alone, ahead of the
+  host's, so a browser frame draws a map's text in the faces native
+  draws it in wherever the compiled faces hold it (`format/fonts.md`).
 - **Headless and one-shot launches** (`--headless`, `--size`,
   `--adapter`, `--screenshot`; `src/application/app/run_headless.rs`,
   `app/pump.rs`, `app/shell.rs`, `renderer/adapter.rs`; IPC-10/#70) —
@@ -321,7 +321,10 @@ the parity trajectory (or why none is owed):
   holds for `lib/baumhard/tests/wasm_font_lock.rs`, which *runs*
   baumhard's font-lock helpers on wasm32 under `node` (TEST_CONVENTIONS
   §T9): it skips with a note without the target or `node`, and CI sets
-  `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. **And for
+  `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. So does
+  `lib/baumhard/tests/font_state.rs`'s host test where fontdb does not
+  read `FONTCONFIG_FILE` (off Linux), which CI's
+  `MANDALA_REQUIRE_FONTCONFIG_HOSTS` turns into a failure. **And for
   the GPU-backed tests** (`src/application/app/tests_gpu.rs`,
   TEST_CONVENTIONS §T8): they build the real app headless on whatever
   adapter the machine has — Mesa's lavapipe on a GPU-less box,

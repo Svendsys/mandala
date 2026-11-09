@@ -154,8 +154,8 @@ fn test_glyph_advance_scales_with_size() {
 /// that the cache key includes the size.
 pub fn do_glyph_advance_scales_with_size() {
     fonts::init();
-    let small = glyph_advance(None, 12.0, "█");
-    let big = glyph_advance(None, 24.0, "█");
+    let small = glyph_advance(None, 12.0, "M");
+    let big = glyph_advance(None, 24.0, "M");
     // 24pt should be roughly 2× 12pt for the same glyph. Not
     // strictly 2× due to hinting/sub-pixel rounding; tolerance
     // stays wide on purpose.

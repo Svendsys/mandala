@@ -210,16 +210,9 @@ pub extern "C" fn flow_shape_and_place() -> u32 {
 }
 
 /// The ornament fallback in the browser's font system (#297), shaped by
-/// TextFlow as a frame's ring is: on wasm32 cosmic-text's platform lists
-/// are empty, so the common list is the two ornament families alone, and
-/// there are no host faces. A `✦` in a Galatia SIL span, which Galatia
-/// lacks, is drawn in `Mandala Ornaments` (returns 2 if not), and `🌸`
-/// in `Mandala Emoji` (3). On wasm32 these are the only compiled faces
-/// that hold them, so those two cannot tell the fallback's order from the
-/// end of the search; a `~` in a span that pins no face can (4): ahead of
-/// the fallback the search meets a decorative face holding one,
-/// `212Keyboard`, which is where it was drawn before #297, as the §T14
-/// seam shows on native.
+/// TextFlow as a frame's ring is. A `✦` in a Galatia SIL span, which
+/// Galatia lacks, is drawn in `Mandala Ornaments` (returns 2 if not), and
+/// `🌸` in `Mandala Emoji` (3).
 #[no_mangle]
 pub extern "C" fn ornaments_fall_back_to_their_compiled_faces() -> u32 {
     install_hook();
@@ -231,16 +224,57 @@ pub extern "C" fn ornaments_fall_back_to_their_compiled_faces() -> u32 {
         weight: Weight::NORMAL,
         italic: false,
     };
-    let unpinned = ResolvedText {
-        font: AppFont::Any,
-        ..pinned.clone()
-    };
     let cases = [
         ("\u{2726}", &pinned, AppFont::MandalaOrnaments, 2),
         ("\u{1F338}", &pinned, AppFont::MandalaEmoji, 3),
-        ("~", &unpinned, AppFont::MandalaOrnaments, 4),
     ];
     let mut fs = FontSystemLease::new("probe::ornaments");
+    for (text, style, face, code) in cases {
+        let span = FlowSpan {
+            text,
+            style,
+            link: None,
+        };
+        let run = shape_run(&[span], 1.0, &mut fs);
+        let ids = &fonts::COMPILED_FONT_ID_MAP[&face];
+        let drawn = run.layout_glyphs().all(|glyph| ids.contains(&glyph.font_id) && glyph.glyph_id != 0);
+        if run.glyphs.is_empty() || !drawn {
+            return code;
+        }
+    }
+    1
+}
+
+/// The default face in the browser's font system (#228), shaped by
+/// TextFlow as an edge label is: text that pins no face — letters,
+/// digits, spaces, punctuation and the connector's `·` — is drawn in the
+/// compiled default face, Inter, every glyph of it, at the regular weight
+/// (returns 2 if not) and bold italic (3), where before #228 the browser
+/// drew it as `.notdef` boxes or in a decorative face; and a Hebrew word
+/// that pins no face in Noto Sans Hebrew, the fallback's face for it (4).
+#[no_mangle]
+pub extern "C" fn default_text_is_drawn_in_the_default_face() -> u32 {
+    install_hook();
+    fonts::init();
+    let regular = ResolvedText {
+        font: AppFont::Any,
+        size: FontSize::Pt(14.0),
+        color: Rgba::opaque(255, 255, 255),
+        weight: Weight::NORMAL,
+        italic: false,
+    };
+    let bold_italic = ResolvedText {
+        weight: Weight::BOLD,
+        italic: true,
+        ..regular.clone()
+    };
+    let default = baumhard::font::fallback::DEFAULT_FACE.0;
+    let cases = [
+        ("Lord God 2:16, + ~ \u{00B7} \u{201C}free\u{201D}", &regular, default, 2),
+        ("Lord God 2:16, + ~ \u{00B7} \u{201C}free\u{201D}", &bold_italic, default, 3),
+        ("\u{05D0}\u{05D1}\u{05D2}", &regular, AppFont::NotoSansHebrewRegular, 4),
+    ];
+    let mut fs = FontSystemLease::new("probe::default_face");
     for (text, style, face, code) in cases {
         let span = FlowSpan {
             text,

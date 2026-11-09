@@ -45,51 +45,108 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
 }
 
 /// The font system [`FONT_SYSTEM`] holds, built complete before it is put
-/// in the lock (#323): the host's faces, every compiled-in face, each
-/// [`fallback::ORNAMENT_FALLBACK`] face at every weight
-/// ([`fallback::register_every_weight`], #297), and none of the host's
-/// faces that bear a compiled family's name ([`remove_shadowing_faces`],
-/// ruling R30.1). The compiled faces' ids go to `COMPILED_IDS`, which
-/// [`COMPILED_FONT_ID_MAP`] reads.
+/// in the lock (#323): every compiled-in face, each static
+/// [`fallback::fallback_families`] face at every weight
+/// ([`fallback::register_every_weight`], #297), and on native, after
+/// them, the host's installed faces, less any that bears a compiled
+/// family's name ([`remove_shadowing_faces`], ruling R30.1). The compiled
+/// faces' ids go to `COMPILED_IDS`, which [`COMPILED_FONT_ID_MAP`] reads.
 ///
 /// So the set of faces anything is shaped with is the same from the first
-/// shaping on, whoever takes the lock first and whatever it shapes. Until
-/// #323 the compiled faces were registered lazily, on the first read of
-/// `COMPILED_FONT_ID_MAP` — at [`init`], or when a span first pinned a
-/// compiled family — and text in the default family shaped before that
-/// was shaped with the host's faces alone: one map laid out differently
-/// after another had been opened.
+/// shaping on, whoever takes the lock first and whatever it shapes. And
+/// the faces a map's text is drawn in do not depend on the host where a
+/// face the span names, or a listed fallback face, holds it (#228): text
+/// that names no family asks for the default face by name, every generic
+/// family naming it; the fallback list names compiled faces alone, each
+/// met at the span's own weight; and no host face can answer for a
+/// compiled family's name. Past the list, in cosmic-text's last pass, a
+/// host face can come first — an emoji face always, one nearer the span's
+/// weight or slant — and the compiled faces' lower ids decide only among
+/// faces equal in all of those (`format/fonts.md` "Fallback"). The host's
+/// faces draw what no compiled face holds — on native, as a last resort,
+/// and named by a map once #329 lands. The browser has no
+/// host faces. Until #228 the native build began from cosmic-text's
+/// `FontSystem::new`, which loaded the host's fonts first and named no
+/// compiled face for the generic families, so text that pinned no family
+/// was drawn in whatever the machine had installed.
 ///
-/// It takes no lock: the value is not yet in one. Costs:
-/// `fallback::new_font_system`, one `load_font_source` call per entry in
-/// [`FONT_SOURCES`], eight database inserts per fallback face, and one
-/// walk over every face in the database.
+/// It takes no lock: the value is not yet in one. Cost: one
+/// `load_font_source` call per entry in [`FONT_SOURCES`], eight database
+/// inserts per static fallback face, the host's font scan on native and
+/// one walk over every face it adds, and [`fallback::new_font_system`].
 fn complete_font_system() -> FontSystem {
-    let mut font_system = fallback::new_font_system();
-    // Where the host's faces are: indexed by `FontSystem::new`, ahead of
-    // the compiled set.
-    #[cfg(test)]
-    register_host_decoys(&mut font_system);
+    let mut db = cosmic_text::fontdb::Database::new();
     let mut compiled_font_id_map = FxHashMap::default();
-    do_for_all_sources(|x, source| {
-        let font_id = font_system.db_mut().load_font_source(source.clone());
-        debug!("loaded font {x:?}");
-        compiled_font_id_map.insert(x, font_id);
-    });
-    // The ornament fallback at every weight a span can ask for (#297).
-    for (font, _) in fallback::ORNAMENT_FALLBACK {
+    // In `FONT_DATA`'s order, which the build sorts, rather than
+    // `FONT_SOURCES`' hash order, which hashes the enum's discriminant at
+    // the target's pointer width: so the faces are numbered alike on
+    // every target, and cosmic-text, which breaks ties between the faces
+    // no fallback list names by that number, meets them alike.
+    for (font, _) in FONT_DATA {
+        let Some(source) = FONT_SOURCES.get(&font) else {
+            continue;
+        };
+        let font_id = db.load_font_source(source.clone());
+        debug!("loaded font {font:?}");
+        compiled_font_id_map.insert(font, font_id);
+    }
+    // Each static fallback face at every weight a span can ask for (#297);
+    // a variable one is matched across its axis already.
+    for (font, _) in fallback::fallback_families() {
         if let Some(ids) = compiled_font_id_map.get_mut(font) {
-            fallback::register_every_weight(&mut font_system, ids);
+            let variable = ids
+                .first()
+                .is_some_and(|id| db.with_face_data(*id, fallback::weight_axis).flatten().is_some());
+            if !variable {
+                fallback::register_every_weight(&mut db, ids);
+            }
         }
     }
-    let removed = remove_shadowing_faces(&mut font_system, &compiled_font_id_map);
+    // The host's faces, after every compiled one (#228). The browser has
+    // none to load.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        db.load_system_fonts();
+        remove_shadowing_faces(&mut db, &compiled_font_id_map);
+    }
+    let font_system = fallback::new_font_system(db);
     FACE_SET_GENERATION.fetch_add(1, Ordering::Release);
-    #[cfg(test)]
-    let _ = SHADOWING_FACES_REMOVED.set(removed);
-    #[cfg(not(test))]
-    drop(removed);
     let _ = COMPILED_IDS.set(compiled_font_id_map);
     font_system
+}
+
+/// Remove from `db` every face that is not compiled in and bears a
+/// compiled family's name (ruling R30.1 on #278).
+///
+/// cosmic-text resolves a family by name, and fontdb's query picks the
+/// best weight and slant among every face of that name: a host's Inter
+/// Variable Italic would take every italic span of default text from the
+/// compiled upright face, and a host's Galatia SIL at a weight the
+/// compiled one lacks would take a span pinned to it. With them gone, the
+/// default face and every pin name the compiled faces on every machine.
+/// The host's other families stay. Cost: one walk over every face in the
+/// database, and one removal per shadowing face.
+#[cfg(not(target_arch = "wasm32"))]
+fn remove_shadowing_faces(
+    db: &mut cosmic_text::fontdb::Database,
+    compiled: &FxHashMap<AppFont, TinyVec<[ID; 8]>>,
+) {
+    let compiled_ids: Vec<ID> = compiled.values().flat_map(|ids| ids.iter().copied()).collect();
+    let names: Vec<String> = compiled_ids
+        .iter()
+        .filter_map(|id| db.face(*id))
+        .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
+        .collect();
+    let shadowing: Vec<(ID, String)> = db
+        .faces()
+        .filter(|face| !compiled_ids.contains(&face.id))
+        .filter(|face| face.families.iter().any(|(name, _)| names.contains(name)))
+        .map(|face| (face.id, face.post_script_name.clone()))
+        .collect();
+    for (id, name) in shadowing {
+        debug!("removed {name}: it bears a compiled family's name");
+        db.remove_face(id);
+    }
 }
 
 /// The compiled faces' ids, as [`complete_font_system`] registered them.
@@ -109,195 +166,6 @@ pub fn face_set_generation() -> u64 {
     FACE_SET_GENERATION.load(Ordering::Acquire)
 }
 
-/// Remove from the database every face that is not compiled in and bears
-/// a compiled family's name (ruling R30.1 on #278), returning their
-/// PostScript names.
-///
-/// cosmic-text matches a pinned family by name and weight alone, and
-/// `FontSystem::new` indexes the host's fonts before the compiled set is
-/// added. So a host face with a compiled family's name and weight — the
-/// Noto Sans Hebrew or Noto Serif Tibetan a Debian or Ubuntu desktop
-/// installs — is met first and drawn in place of the compiled one, with
-/// its own metrics, unlike the browser. With it gone, a pin names the
-/// compiled faces on every machine. The host's other families stay, for
-/// fallback and for `font list`. Cost: one walk over every face in the
-/// database, and one removal per shadowing face.
-fn remove_shadowing_faces(
-    font_system: &mut FontSystem,
-    compiled: &FxHashMap<AppFont, TinyVec<[ID; 8]>>,
-) -> Vec<String> {
-    let compiled_ids: Vec<ID> = compiled.values().flat_map(|ids| ids.iter().copied()).collect();
-    let names: Vec<String> = compiled_ids
-        .iter()
-        .filter_map(|id| font_system.db().face(*id))
-        .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
-        .collect();
-    let shadowing: Vec<(ID, String)> = font_system
-        .db()
-        .faces()
-        .filter(|face| !compiled_ids.contains(&face.id))
-        .filter(|face| face.families.iter().any(|(name, _)| names.contains(name)))
-        .map(|face| (face.id, face.post_script_name.clone()))
-        .collect();
-    for (id, name) in &shadowing {
-        debug!("removed {name}: it bears a compiled family's name");
-        font_system.db_mut().remove_face(*id);
-    }
-    shadowing.into_iter().map(|(_, name)| name).collect()
-}
-
-/// Test builds only: the faces [`remove_shadowing_faces`] removed when
-/// the compiled set was loaded, by PostScript name — what a test of the
-/// removal reads.
-#[cfg(test)]
-pub(crate) static SHADOWING_FACES_REMOVED: OnceLock<Vec<String>> = OnceLock::new();
-
-/// The compiled family a test build's decoy borrows the name of
-/// ([`register_host_decoys`]): SilhousTwo, whose space has no width, so a
-/// pin that reached the decoy (Galatia SIL's outlines, whose space has
-/// one) would show in every zero-width test.
-#[cfg(test)]
-pub(crate) const SHADOWING_DECOY: &str = "Decoy-SilhousTwo";
-
-/// The weights [`register_host_decoys`] gives a decoy face: every CSS
-/// weight but the regular and the bold, which compiled faces have (so a
-/// span resolved to one of those is never drawn in a decoy).
-#[cfg(test)]
-pub(crate) const DECOY_WEIGHTS: [u16; 7] = [100, 200, 300, 500, 600, 800, 900];
-
-/// The family the decoys are registered under: the first of
-/// cosmic-text's common fallback families on Linux.
-#[cfg(test)]
-pub(crate) const DECOY_FAMILY: &str = "Noto Sans";
-
-/// Where [`register_host_decoys`] registers a copy of each ornament
-/// fallback face (#297), as `(face, family, weight)`: a host face that
-/// holds the ornaments, in cosmic-text's common fallback families, and,
-/// for the ornaments, in the script fallback family a run of Arabic
-/// tries first (an emoji is shaped as a word of its own, with no script).
-/// Without the ornament fallback a span whose face lacks an ornament is
-/// drawn in one of these on every machine, as it is drawn in DejaVu Sans
-/// or Noto Color Emoji on a desktop.
-///
-/// - The ornaments in [`DECOY_FAMILY`] at the regular and the bold weight,
-///   the weights a pinned compiled text face asks for, which no R30 decoy
-///   takes; and in `FreeSans`, which no R30 decoy takes at all, at every
-///   one of [`fallback::FALLBACK_WEIGHTS`], the weights an unpinned span
-///   asks for as written.
-/// - The emoji in `Noto Color Emoji`, at every one of them.
-///
-/// Each face has families of its own: cosmic-text tries one face of a
-/// family, and sorts a color face first, so an emoji copy would shadow an
-/// ornament copy beside it.
-#[cfg(test)]
-pub(crate) const ORNAMENT_DECOYS: [(AppFont, &str, u16); 21] = {
-    use AppFont::{MandalaEmoji as E, MandalaOrnaments as O};
-    const FREE: &str = "FreeSans";
-    const EMOJI: &str = "Noto Color Emoji";
-    [
-        (O, DECOY_FAMILY, 400),
-        (O, DECOY_FAMILY, 700),
-        (O, "Noto Sans Arabic", 400),
-        (O, FREE, 100),
-        (O, FREE, 200),
-        (O, FREE, 300),
-        (O, FREE, 400),
-        (O, FREE, 500),
-        (O, FREE, 600),
-        (O, FREE, 700),
-        (O, FREE, 800),
-        (O, FREE, 900),
-        (E, EMOJI, 100),
-        (E, EMOJI, 200),
-        (E, EMOJI, 300),
-        (E, EMOJI, 400),
-        (E, EMOJI, 500),
-        (E, EMOJI, 600),
-        (E, EMOJI, 700),
-        (E, EMOJI, 800),
-        (E, EMOJI, 900),
-    ]
-};
-
-/// The PostScript name of the copy of the ornament fallback face `font`
-/// that [`register_host_decoys`] registers under `family` at `weight`.
-/// It keeps the face's own "Emoji", which cosmic-text sorts by.
-#[cfg(test)]
-pub(crate) fn ornament_decoy_name(font: AppFont, family: &str, weight: u16) -> String {
-    format!("Decoy-{font:?}-{}-{weight}", family.replace(' ', ""))
-}
-
-/// Test builds only (ruling R30): register, under [`DECOY_FAMILY`], one
-/// face at each of [`DECOY_WEIGHTS`] — Galatia SIL's outlines under
-/// another name — standing in for a host that has an exact-weight face
-/// in a family cosmic-text falls back to, as the CI runner has for 200
-/// (`DejaVuSans-ExtraLight`). cosmic-text 0.19 keeps a pinned family only
-/// at a weight it has; without [`PinnedFamily::weight_for`], a span
-/// pinned to a single-weight family at another weight would be drawn in
-/// one of these. Registered once, before the compiled fonts, so every test
-/// of the binary sees the same faces whatever runs first, and every
-/// machine the same decoys.
-///
-/// And (ruling R30.1) one face under a compiled family's name, at that
-/// family's weight: [`SHADOWING_DECOY`], SilhousTwo 400 upright,
-/// registered before the compiled set as a host face is indexed before
-/// it, so it comes first in the database. cosmic-text would draw every
-/// SilhousTwo pin in it; [`remove_shadowing_faces`] removes it, as it
-/// removes a real host face of that name.
-///
-/// And (#297) a copy of each ornament fallback face at each of
-/// [`ORNAMENT_DECOYS`]: a host face holding the ornaments, which the
-/// ornament fallback must come before.
-#[cfg(test)]
-fn register_host_decoys(font_system: &mut FontSystem) {
-    use cosmic_text::fontdb::{FaceInfo, Language, Stretch, Style, Weight};
-    let Some(source) = FONT_SOURCES.get(&AppFont::GalatiaSIL).cloned() else {
-        return;
-    };
-    font_system.db_mut().push_face_info(FaceInfo {
-        id: ID::dummy(),
-        source: source.clone(),
-        index: 0,
-        families: vec![("SilhousTwo".to_string(), Language::English_UnitedStates)],
-        post_script_name: SHADOWING_DECOY.to_string(),
-        style: Style::Normal,
-        weight: Weight(400),
-        stretch: Stretch::Normal,
-        monospaced: false,
-    });
-    for weight in DECOY_WEIGHTS {
-        font_system.db_mut().push_face_info(FaceInfo {
-            id: ID::dummy(),
-            source: source.clone(),
-            index: 0,
-            families: vec![(DECOY_FAMILY.to_string(), Language::English_UnitedStates)],
-            post_script_name: format!("Decoy-{weight}"),
-            style: Style::Normal,
-            weight: Weight(weight),
-            stretch: Stretch::Normal,
-            monospaced: false,
-        });
-    }
-    // After the Noto Sans decoys above, so that at their weights the
-    // family's first face is still one of theirs.
-    for (font, family, weight) in ORNAMENT_DECOYS {
-        let Some(source) = FONT_SOURCES.get(&font).cloned() else {
-            continue;
-        };
-        font_system.db_mut().push_face_info(FaceInfo {
-            id: ID::dummy(),
-            source,
-            index: 0,
-            families: vec![(family.to_string(), Language::English_UnitedStates)],
-            post_script_name: ornament_decoy_name(font, family, weight),
-            style: Style::Normal,
-            weight: Weight(weight),
-            stretch: Stretch::Normal,
-            monospaced: false,
-        });
-    }
-}
-
 lazy_static! {
     /// `AppFont → fontdb::Source` map built once from the compiled-in
     /// `FONT_DATA` byte arrays.
@@ -315,11 +183,11 @@ lazy_static! {
     /// hold the lock invisibly, and a same-thread re-acquire under it
     /// could no longer be told from ordinary contention.
     ///
-    /// Built complete by [`complete_font_system`] — every compiled face
-    /// registered, the fallback lists reaching the compiled ornament faces
-    /// before any host face (#297) — before it is put in the lock, so the
-    /// first acquire, by anyone, already holds the faces every later one
-    /// does (#323).
+    /// Built complete by [`complete_font_system`] — the compiled faces and
+    /// nothing else (#228), the default face named for every generic
+    /// family, one fallback list on every target (#297) — before it is put
+    /// in the lock, so the first acquire, by anyone, already holds the
+    /// faces every later one does (#323).
     static ref FONT_SYSTEM: RecursiveRwLock<FontSystem> = RecursiveRwLock::new(complete_font_system());
     /// `AppFont → fontdb face IDs` map, from the same build as
     /// [`FONT_SYSTEM`]: reading it builds the font system if nothing has
@@ -459,14 +327,13 @@ static FAMILY_INDEX: OnceLock<Vec<(String, AppFont)>> = OnceLock::new();
 ///
 /// The reverse lookup (`app_font_by_family`) maps each unique
 /// family name to the first `AppFont` whose face advertises that
-/// name. Faces fontdb knows about but that aren't compiled in map to
-/// `Any` so the cosmic-text fallback picks them up. **On native that
-/// set is not empty:** `FONT_SYSTEM` is `FontSystem::new()`, which
-/// indexes the host's fontconfig, so every family the machine has
-/// installed lands in this index too. The browser build has no
-/// fontconfig and sees only the compiled-in faces, which is the
-/// native-only divergence `format/fonts.md` opens by describing.
-/// Sorting is alphabetical so a UI list is stable.
+/// name. A face that is not compiled in — on native, a host's installed
+/// face (#228) — is attributed to `AppFont::Any`, so `font list` and the
+/// console's completion offer it; a map cannot store `Any` yet (the
+/// loader refuses it), which #329 changes. No host face bears a compiled
+/// family's name (`remove_shadowing_faces`), so a compiled family always
+/// resolves to its compiled face. The browser has no host faces. Sorting
+/// is alphabetical so a UI list is stable.
 fn build_family_index() -> Vec<(String, AppFont)> {
     // The compiled faces' ids, which come with the font system's build
     // and take no lock (#323).
@@ -493,24 +360,7 @@ fn build_family_index() -> Vec<(String, AppFont)> {
             );
             continue;
         }
-        let attributed = match id_to_app_font.get(&face.id).copied() {
-            Some(app_font) => app_font,
-            None => {
-                // The codebase owns the fontdb today (see `build.rs`
-                // and the comment at the top of this file), so any
-                // face we don't recognize comes from a future
-                // system-fonts loader or a test that registered
-                // fonts directly. Surface that at `debug` so it's
-                // observable without spamming `warn`.
-                log::debug!(
-                    "build_family_index: face id {:?} ({:?}) is not in COMPILED_FONT_ID_MAP; \
-                     attributing to AppFont::Any",
-                    face.id,
-                    face.families.first().map(|(n, _)| n.as_str()).unwrap_or("?"),
-                );
-                AppFont::Any
-            }
-        };
+        let attributed = id_to_app_font.get(&face.id).copied().unwrap_or(AppFont::Any);
         for (family, _lang) in face.families.iter() {
             if family.is_empty() {
                 continue;
@@ -632,34 +482,56 @@ pub(crate) fn face_family_name_for_pin(
 /// compiled faces of that family have (ruling R30 on #278).
 ///
 /// cosmic-text 0.19 keeps a pinned family only through a face of
-/// exactly the requested weight (or a variable face whose `wght` axis
-/// covers it). A request for a weight the family lacks skips the pin and
-/// draws in whatever host face has that exact weight — the CI runner's
-/// `DejaVuSans-ExtraLight` for SilhousTwo at 200 — so on native the
-/// host's fonts would decide the face, where the browser has only the
-/// compiled ones. Every shaping path that pins a family therefore asks
-/// for [`PinnedFamily::weight_for`] the weight it wants, never the
-/// weight itself. No compiled face is variable
-/// (`test_no_compiled_face_is_variable`), so the weights listed here are
-/// all the weights the family can be drawn at.
+/// exactly the requested weight, or a variable face whose `wght` axis
+/// covers it. A request for a weight the family lacks skips the pin and
+/// draws in another face that has that weight: before #228 the CI
+/// runner's `DejaVuSans-ExtraLight` for SilhousTwo at 200, and now the
+/// default face, whose axis covers every weight from 100 to 900. Every
+/// shaping path that pins a family therefore asks for
+/// [`PinnedFamily::weight_for`] the weight it wants, never the weight
+/// itself. The weights and the axes listed are all the weights the
+/// family can be drawn at.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PinnedFamily {
     /// The family name, as the compiled face stores it.
     pub name: String,
     /// The weights of the compiled faces in that family, ascending, each
-    /// once.
+    /// once: a variable face's default weight among them.
     pub weights: Vec<u16>,
+    /// The `wght` axis of each variable compiled face in that family, as
+    /// `(lightest, heaviest)`, each once: every weight it spans is one
+    /// the family is drawn at. Empty for a family of static faces.
+    pub axes: Vec<(u16, u16)>,
     /// The compiled faces in that family: the only faces a span pinned
     /// to it may be drawn in, but for a character none of them holds.
     pub faces: Vec<ID>,
 }
 
 impl PinnedFamily {
-    /// The weight to ask cosmic-text for when `requested` is wanted: the
-    /// one [`nearest_weight`] picks among the family's compiled faces.
-    /// O(weights).
+    /// The weight to ask cosmic-text for when `requested` is wanted:
+    /// `requested` itself where one of [`axes`](Self::axes) spans it,
+    /// else the one [`nearest_weight`] picks among the family's static
+    /// weights and the ends of its axes. O(weights + axes).
     pub fn weight_for(&self, requested: u16) -> u16 {
-        nearest_weight(requested, &self.weights)
+        // Every family but the default face's is static: no allocation
+        // on its path, which the shaping and halo loops take per span.
+        if self.axes.is_empty() {
+            return nearest_weight(requested, &self.weights);
+        }
+        if self
+            .axes
+            .iter()
+            .any(|(lightest, heaviest)| (*lightest..=*heaviest).contains(&requested))
+        {
+            return requested;
+        }
+        let mut available = self.weights.clone();
+        available.extend(
+            self.axes
+                .iter()
+                .flat_map(|(lightest, heaviest)| [*lightest, *heaviest]),
+        );
+        nearest_weight(requested, &available)
     }
 }
 
@@ -698,7 +570,8 @@ pub fn nearest_weight(desired: u16, available: &[u16]) -> u16 {
 /// The compiled family `app_font` pins, with the weights its compiled
 /// faces have: `None` where [`face_family_name_for_pin`] finds no name.
 ///
-/// Cost: one walk over every compiled face's `fontdb` record.
+/// Cost: one walk over every compiled face's `fontdb` record, and one
+/// read of each of the family's faces' `fvar` table.
 pub(crate) fn pinned_family(
     font_system: &cosmic_text::FontSystem,
     app_font: AppFont,
@@ -713,12 +586,24 @@ pub(crate) fn pinned_family(
     let mut weights: Vec<u16> = faces.iter().map(|face| face.weight.0).collect();
     weights.sort_unstable();
     weights.dedup();
+    let mut axes: Vec<(u16, u16)> = faces
+        .iter()
+        .filter_map(|face| {
+            font_system
+                .db()
+                .with_face_data(face.id, fallback::weight_axis)
+                .flatten()
+        })
+        .collect();
+    axes.sort_unstable();
+    axes.dedup();
     let mut ids: Vec<ID> = faces.iter().map(|face| face.id).collect();
     ids.sort_unstable();
     ids.dedup();
     Some(PinnedFamily {
         name,
         weights,
+        axes,
         faces: ids,
     })
 }

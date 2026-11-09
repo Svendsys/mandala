@@ -1,0 +1,5 @@
+license: SIL Open Font License (OFL) 1.1, no Reserved Font Name (misc/LICENSE.txt)
+link: https://rsms.me/inter/
+source: Inter 4.1 (InterVariable.ttf, "Version 4.001;git-9221beed3"), from the release archive https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip (SHA-256 9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e), unmodified: SHA-256 4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf, 879708 bytes
+axes: wght 100-900 (default 400), opsz 14-32 (default 14)
+role: the default family (#228): text that pins no family, and the first face of the fallback (format/fonts.md)

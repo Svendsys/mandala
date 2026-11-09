@@ -35,7 +35,8 @@
 //! the family's compiled faces have ([`PinnedFamily`], resolved once per
 //! shaping by the private `families_of`), never the weight it asked for:
 //! cosmic-text keeps a pinned family only at an exact weight, and draws a
-//! weight the family lacks in whatever host face has it. So a span is
+//! weight the family lacks in another face that has it — the default
+//! face, variable across every weight, if no other. So a span is
 //! drawn in its family's compiled faces on every machine, and the tab
 //! check below measures the face the tab is shaped in.
 //!

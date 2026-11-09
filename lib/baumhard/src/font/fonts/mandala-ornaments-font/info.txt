@@ -1,5 +1,5 @@
 license: Bitstream Vera Fonts license and Arev Fonts license; DejaVu changes in the public domain (misc/LICENSE.txt)
 link: https://dejavu-fonts.github.io/License.html
 source: DejaVu Sans 2.37 (DejaVuSans.ttf), Ubuntu 24.04 fonts-dejavu-core 2.37-8, SHA-256 ae7b7855e115a5966d8b1b3f80f254ccc117ec86f9965e202ee2940453837280
-subset: U+0020 U+002B U+007E U+00B7 U+2219 U+25C8 U+266A U+2726 U+2766 (space + ~ · ∙ ◈ ♪ ✦ ❦), renamed "Mandala Ornaments" as the license asks of a modified font
+subset: U+2219 U+223C U+223D U+22EF U+2500 U+2501 U+2502 U+2503 U+2504 U+2506 U+2550 U+256D U+256E U+256F U+2570 U+258C U+258F U+25B8 U+25C8 U+2726 U+2766 U+276E U+276F (∙ ∼ ∽ ⋯ ─ ━ │ ┃ ┄ ┆ ═ ╭ ╮ ╯ ╰ ▌ ▏ ▸ ◈ ✦ ❦ ❮ ❯), no code point the default face (Inter) holds, renamed "Mandala Ornaments" as the license asks of a modified font
 regenerate: scripts/ornament_fonts.sh (pyftsubset, fonttools 4.68.0)
