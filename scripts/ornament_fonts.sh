@@ -5,11 +5,14 @@
 # Usage:
 #   scripts/ornament_fonts.sh [DejaVuSans.ttf] [NotoColorEmoji.ttf]
 #
-# The faces are what the shaper reaches first, after a span's own face,
-# for the ornament glyphs the demo maps and the built-in styles draw
+# The faces are what the shaper reaches, after a span's own face and the
+# default face (Inter), for the ornament glyphs the demo maps, the
+# built-in styles and the console frame draw
 # (`baumhard::font::fallback::ORNAMENT_FALLBACK`, `format/fonts.md`
-# "Ornament fallback"), so that every install, and the browser, draws
-# the same glyph for them instead of whatever host face holds one:
+# "Fallback"), so that every target draws the same glyph for them. They
+# hold no code point the default face holds (#228): a letter, digit,
+# space or punctuation mark is always drawn by a text face, never by an
+# ornament face.
 #
 #   mandala-ornaments-font/MandalaOrnaments-Regular.ttf
 #     DejaVu Sans 2.37, subset to ORNAMENTS below. Bitstream Vera and
@@ -22,12 +25,14 @@
 # Two faces, not one: the two licenses cannot be merged into one font
 # (the OFL asks a derivative to be distributed under the OFL alone), and
 # cosmic-text reaches one face of a fallback family, so a second face
-# under the same family name would be met only after every host face.
+# under the same family name would be met only after every listed one.
 #
 # To add a glyph, add its code point to ORNAMENTS (or EMOJI), run this
 # script, and add it to `ORNAMENT_CODE_POINTS` (or `EMOJI_CODE_POINTS`)
 # in `lib/baumhard/src/font/tests/ornament_tests.rs`, which holds this
-# list, the faces' character maps and the demo maps to one another.
+# list, the faces' character maps, the default face's and the demo maps
+# to one another. A code point the default face holds is not added: that
+# face draws it.
 #
 # The sources are pinned by SHA-256: Ubuntu 24.04's fonts-dejavu-core
 # 2.37-8 and fonts-noto-color-emoji 2.047-0ubuntu0.24.04.1, at the paths
@@ -55,11 +60,12 @@ DEJAVU_SHA256=ae7b7855e115a5966d8b1b3f80f254ccc117ec86f9965e202ee2940453837280
 NOTO_EMOJI_SHA256=93cdc4ee9aa40e2afceecc63da0ca05ec7aab4bec991ece51a6b52389f48a477
 FONTTOOLS_VERSION=4.68.0
 
-# space + ~ · ∙ ◈ ♪ ✦ ❦: the ornaments of the demo maps' sides, rings and
-# connectors, and the built-in connector, link and portal-end glyphs
-# (`document::defaults::BUILT_IN`), with the space an ornament's copy is
-# parted by.
-ORNAMENTS=U+0020,U+002B,U+007E,U+00B7,U+2219,U+25C8,U+266A,U+2726,U+2766
+# ∙ ◈ ✦ ❦: the ornaments of the demo maps' sides, rings and connectors,
+# and the built-in portal-end glyph (`document::defaults::BUILT_IN`); and
+# ─ ━ │ ┃ ╭ ╮ ╯ ╰: the console's frame and testament's custom sides. The
+# default face holds none of them; it holds the space, `+ ~ ·` and `♪`,
+# which this face held until #228, and draws them.
+ORNAMENTS=U+2219,U+2500,U+2501,U+2502,U+2503,U+256D,U+256E,U+256F,U+2570,U+25C8,U+2726,U+2766
 # 🌸, the emoji of the frames demo.
 EMOJI=U+1F338
 
