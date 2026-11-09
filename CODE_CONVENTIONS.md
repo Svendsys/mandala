@@ -155,37 +155,35 @@ decision, not a drive-by edit.
   role). The renderer never reaches into the document; the document
   never holds GPU handles.
 - **Render document content through the Baumhard tree.** Every
-  visual that comes from the model — nodes, connections, borders,
-  portals, labels, section frames, handles — converges on
-  `GfxTree` and is shaped by
-  `src/application/renderer/tree_walker.rs`. There is exactly one
-  pipeline for them: a data pass plus a tree projection under
-  `lib/baumhard/src/mindmap/tree_builder/`, driven by `CanvasFrame`
-  in `src/application/app/scene_rebuild.rs`. Model-derived content
-  reaching the GPU any other way is a second pipeline; do not add
-  one.
+  visual that comes from the document — nodes, sections, frames,
+  connectors, links, labels, portal ends — converges on the glyph
+  layers (`GfxTree`s). There is exactly one pipeline for them: the
+  document's change feed, the projector (`lib/baumhard/src/projection/`)
+  writing the glyph layers, and the layer renderer applying their
+  journals, driven by the view's sync (`src/application/view/`).
+  Document-derived content reaching the GPU any other way is a second
+  pipeline; do not add one.
 
   **Transient chrome is the carve-out**, and the list is small and
-  closed: the rubber-band selection rectangle
-  (`renderer/selection_overlay.rs`), the console overlay
+  closed: the chrome layer (`view/band.rs`'s rubber band, and V1-C7's
+  handles and V1-C8's section frames to come), the console overlay
   (`renderer/console_pass.rs`), the glyph-wheel color picker
-  (`renderer/color_picker.rs`), and the FPS / mode-status overlays.
+  (`renderer/color_picker.rs`), and the FPS / status-line overlays.
   The discriminator is *what the visual is a projection of*, not
   whether it ever reads the model: each of these belongs to an
   interaction rather than to document content, so it has no model
   element to be the projection *of* — even where it quotes one (the
-  mode-status line reports the active `MindNode`'s id and section
-  count, but the overlay is a property of the mode, not of the
-  node). A new visual qualifies only on that test; if it is a
+  status line quotes what the document refused, but the line is a
+  property of the refusal, not of any element). A new visual
+  qualifies only on that test; if it is a
   rendering of document content, it belongs in the tree.
-- **Mutation-first interaction.** Where a user action can be expressed
-  as a `GfxMutatorTree`, express it that way. Every user-facing
-  mutation gets a matching `UndoAction` variant and an `undo()` branch.
-- **Single-parent tree.** `MindNode.parent_id: Option<String>` is the
-  hierarchy. Non-hierarchical relationships are edges with
-  `edge_type: "cross_link"` or portal pairs.
-- **Edges have no stable IDs.** Identified by `(from_id, to_id,
-  edge_type)`. No `Uuid` fields, no maintained indices.
+- **Mutation-first interaction.** Every change to the document is a
+  mutation request to its one writer (`EditRequest`), which journals
+  it, so undo and redo are the history's, not a per-feature branch.
+  View-only changes are glyph mutators on the layers or the chrome.
+- **Single-parent tree.** The document is a tree: every node has one
+  parent, a node or the map. Relationships across the tree are links
+  (`line` or `portal`).
 - **Everything is glyphs.** Text, borders, connections — all positioned
   font glyphs via cosmic-text. No rectangle shaders, no bitmap UI, no
   sprite atlases. A new shader pipeline is project-scale.
@@ -215,30 +213,17 @@ decision, not a drive-by edit.
     `last_click` tracker run before the funnel. They're not
     user-named effects; they're machinery the funnel rests on.
 
-    **One thing on that same path is a user-named effect, and it is
-    deliberately not an `Action`:** a click or tap that lands on a
-    node runs `click_triggers::fire_onclick_triggers`, which applies
-    whatever `OnClick` `CustomMutation`s the *map author* bound to
-    it, plus their document actions. Those are authored effects by
-    definition. They stay outside the funnel because the funnel
-    reifies behaviors the *application* names — one `Action` per
-    user-facing verb, bindable by key — whereas these are named per
-    node in the document and reach the model through the mutation
-    pipeline instead.
-
-    **They carry no `SourceTier`, and that is a gap rather than a
-    sanction.** An earlier draft of this bullet explained their
-    ungated-ness by saying the trust boundary for document content
-    is the loader — which contradicts this project's actual stated
-    threat model, where a `.mindmap.json` is *untrusted* and a
-    "hostile shared mindmap" is named as the adversary
-    (`src/application/macros/mod.rs`). The loader validates shape,
-    not intent. The correct statement is that `OnClick` triggers
-    are outside the *dispatch funnel*, not outside the security
-    posture: they are a second route from map content to
-    `apply_document_actions` that never passes `dispatch_macro`,
-    which is exactly why the gating rule below says *every* apply
-    site rather than that one.
+    **A node's click trigger, when V1-D3 (#252) brings it back, is
+    a user-named effect on that same path and deliberately not an
+    `Action`:** it is named per node by the *map author*, where the
+    funnel reifies behaviors the *application* names — one `Action`
+    per user-facing verb, bindable by key. Outside the funnel is not
+    outside the security posture: a `.mandala.json` is *untrusted*
+    and a "hostile shared mindmap" is the named adversary
+    (`src/application/macros/mod.rs`), and the loader validates
+    shape, not intent. So a trigger is a route from map content to
+    an edit that never passes `dispatch_macro`, which is why the
+    gating rule below says *every* apply site rather than that one.
   - **Per-frame continuous-gesture state.** A drag's per-cursor-move
     delta (e.g. `RenderDecree::CameraPan(dx, dy)` in `event_cursor_moved`)
     legitimately stays inline. For a *mouse* drag the funnel still
@@ -263,8 +248,8 @@ decision, not a drive-by edit.
     The line this carve-out draws is therefore "is the effect a
     continuous camera delta?", not "did a funneled press start it".
     A continuous gesture that *mutates the document* per frame is a
-    different question and is not covered here — see the
-    `ThrottledDrag` ladder.
+    different question and is not covered here: V1-C7 (#248) gives
+    such gestures their transactions.
 
   Anything else — a new gesture or a new console-verb behavior that
   mutates document state or changes view state — must go through the
@@ -288,43 +273,19 @@ decision, not a drive-by edit.
   MUST hold as new dispatch surfaces are added (IPC included —
   `format/ipc.md` §"Trust model").
 
-  `DocumentAction` (carried by `MacroStep::CustomMutation`) is
-  `#[non_exhaustive]`. Today every variant is a pure in-memory
-  canvas-theme write, safe to expose. **Any new variant that
-  performs file I/O, network access, arbitrary content load, or
-  cross-process side effects MUST be gated at *every site that
-  applies a `DocumentAction`*** (look up the existing `allows_*`
-  pattern on `SourceTier` and extend it).
-
-  **"Every site" is the load-bearing phrase, and this paragraph
-  used to say "at the `dispatch_macro` site" instead — which is
-  wrong in the direction that matters.** `dispatch_macro` is not
-  the only route from a `.mindmap.json` to
-  `MindMapDocument::apply_document_actions`. There are three, and
-  the second is the one a hostile map would take:
-
-  1. The keybind / macro tier —
-     `cross_dispatch::dispatch_custom_mutation_for_key` and the two
-     `MacroDispatchTarget` impls — which is the route
-     `dispatch_macro`'s gates cover.
-  2. `click_triggers::fire_onclick_triggers` — a node's `OnClick`
-     binding, authored **in the map**, fired by a click or a touch
-     tap. It carries no `SourceTier` at all, because it is document
-     content rather than a dispatch surface. A variant gated only
-     at `dispatch_macro` stays fully reachable here.
-  3. `console::commands::mutation` — the `mutation` console verb,
-     User tier by construction, since the user typed it.
-
-  Routes 1 and 2 land through one body since #144,
-  `app::fire_custom_mutation`, and it carries no tier of its own:
-  a gate placed there has to be told which route fired it, or sit
-  at the two callers. Either way it is still every route, not one.
-
-  Nothing turns on this today: both shipped variants
-  (`SetThemeVariant`, `SetThemeVariables`) are in-memory theme
-  writes and route 2 is harmless for them. The instruction is
-  written down correctly now so the first dangerous variant does
-  not get gated at one site and shipped as though it were gated.
+  **An effect a map can carry that performs file I/O, network
+  access, arbitrary content load, or cross-process side effects
+  MUST be gated at *every site that applies it*** (look up the
+  existing `allows_*` pattern on `SourceTier` and extend it).
+  "Every site" is the load-bearing phrase: `dispatch_macro` is not
+  the only route from a `.mandala.json` to an edit. When V1-D1
+  (#250) brings back the edit by id (`MacroStep::CustomMutation`)
+  and V1-D3 (#252) the node's click trigger, there are three — the
+  keybind and macro tier, which `dispatch_macro`'s gates cover; the
+  click trigger, authored **in the map** and carrying no
+  `SourceTier`, the one a hostile map would take; and the console,
+  User tier by construction — and a gate at one of them is not a
+  gate.
 
   Source-tier assignment is loader-pinned. Each loader call site
   hardcodes the tier; nothing in the on-disk format can affect it.
@@ -459,7 +420,7 @@ industrial cost/benefit reasoning. This is not license for speculation.
   the two into one doc block, and a *relative* link inside the merged
   block resolves against no module — `[`Foo`]` fails even where `Foo`
   is declared in that very file. Both halves of the pair are the
-  house style here (`lib/baumhard/src/mindmap/mod.rs` puts a one-line
+  house style here (`lib/baumhard/src/document/mod.rs` puts a one-line
   summary on every `pub mod` it declares, and each of those files
   opens with its own `//!`), so the combination is normal and the
   hazard is latent in every one of them. What makes it worth a rule
@@ -501,12 +462,9 @@ industrial cost/benefit reasoning. This is not license for speculation.
 - **A figure derived from a recorded constant belongs beside the
   constant, not copied into prose.** Name the constant and state the
   relation; a number restated in a doc comment goes stale silently
-  while still reading as authority.
-  `MEASURED_WORST_ESCAPE_ULPS` in
-  `lib/baumhard/src/mindmap/connection/tests.rs` carries the canonical
-  statement of this and the incident that produced it. It has since
-  been broken once more, in prose about that same constant, which is
-  why it is repeated here where the doc rules live.
+  while still reading as authority. The rule was broken twice in
+  prose about one measured constant, which is why it is stated here
+  where the doc rules live.
 - **A comment may assert what the standard says and what this
   repository does; a claim about what a *named engine* does at
   runtime needs either a device or a hedge.** The proved-vs-observed
@@ -533,7 +491,7 @@ industrial cost/benefit reasoning. This is not license for speculation.
   `Error` enums. Adding one is a project-scale discussion.
 - **Interactive paths must not panic.** Interactive paths are
   `Application::run` and everything reachable from it after the first
-  frame: input, mutation, undo/redo, scene rebuild, render, document
+  frame: input, mutation, undo/redo, the view's sync, render, document
   mutation. Degrade the frame, log via `log::warn!`/`log::error!`, keep
   running. A crash during editing is the one user-visible failure this
   codebase cannot tolerate. Defensive `let Some(...) else { return; }`
@@ -632,9 +590,8 @@ industrial cost/benefit reasoning. This is not license for speculation.
   interactive path. The count this rule was written against was
   twenty-six sites (#42); six weeks later ten of them had moved or
   vanished under unrelated work, leaving sixteen — and the scan
-  found seventeen. The extra one was not new:
-  `mindmap/connection/mod.rs:90` had been at that line since
-  2026-04-15, eleven weeks before the issue was filed, and the hand
+  found seventeen. The extra one was not new: it had been at its line
+  since 2026-04-15, eleven weeks before the issue was filed, and the hand
   count missed it. A list does not only go stale, it can be wrong
   the day it is written, which is why the posture is checked rather
   than listed.
@@ -643,20 +600,20 @@ industrial cost/benefit reasoning. This is not license for speculation.
   *program precondition* that did not hold — no adapter, no fonts,
   nonsense on the command line. There is no window yet and nothing
   sensible to draw into it, so a loud abort is the honest outcome. A
-  `.mindmap.json` the loader rejects is not that: it is a user
+  `.mandala.json` the loader rejects is not that: it is a user
   *input* the program is supposed to have an opinion about, and
   `expect` turns having an opinion into a crash. On a desktop launch
   — double-click, `.desktop` entry, file association — that crash is
   a process that vanishes leaving no window at all, which tells the
   person holding the file strictly less than the empty window it
-  would replace. So the initial `loader::load_from_file` on native
+  would replace. So the initial `MindMapDocument::load` on native
   and the `?map=` fetch + parse in the browser **put the loader's
   message in front of the user and keep the shell alive**: both
   resolve through `app::startup_load`, which logs the message —
   behind the path or URL that was asked for, because most of the
   loader's messages do not name it — and hands the shell
-  `baumhard::mindmap::placard`'s one-node map carrying the same
-  words, installed by the same code that installs a real document.
+  `MindMapDocument::load_failure_placard`'s one-node document carrying
+  the same words, installed by the same code that installs a real document.
   Each target makes exactly one call into that module and is handed a
   document, never a `Result`: a startup-error surface that exists on
   only one of them is not a fix (§4), and a `Result` in an init site's

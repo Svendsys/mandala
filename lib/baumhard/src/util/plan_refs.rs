@@ -50,14 +50,11 @@ use crate::util::source_scan::{relative_to_repo, workspace_rust_sources};
 
 /// The comments allowed to write a flagged form, each anchored to
 /// the text of the one site it exempts: `(file, needle)`, where a
-/// hit is allowed only when it starts inside that needle. The one
-/// entry is the regression test pinning that a user-facing border
-/// error no longer surfaces a plan citation, whose doc quotes the
-/// string it forbids.
-const ALLOWED: &[(&str, &str)] = &[(
-    "src/application/console/commands/border/tests.rs",
-    "no longer surfaces \"Plan §5.4 #3\"",
-)];
+/// hit is allowed only when it starts inside that needle. Empty since
+/// V1-C3 deleted the `border` verb and the regression test whose doc
+/// quoted the citation it forbade; an entry is added only with the
+/// site it exempts.
+const ALLOWED: &[(&str, &str)] = &[];
 
 /// One flagged citation: the 1-based line its keyword starts on, the
 /// form it matched, and which [`ALLOWED`] needle (of the ones passed

@@ -217,7 +217,7 @@ the browser gaining a single-line editor.
 It is a member of the **mixed-branch set**, which is now one list —
 `keybinds::action::MIXED_BRANCH_ACTIONS` — read by both
 `lift_mixed_branch_for_wasm_macro` and
-`keybinds::tests::test_wasm_compatibility_mixed_branch_actions_are_native_only`.
+`keybinds::tests::test_wasm_compatibility_mixed_branch_actions_are_native_only` (gone).
 Written out twice, the two drifted: the test named three members and
 the lift named four. They could not simply be merged, either, because
 the members do **not** share a classification — `ExitMode` is

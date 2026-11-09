@@ -20,7 +20,7 @@ use crate::gfx_structs::run::GlyphRunData;
 use crate::gfx_structs::tree::GfxMutatorTree;
 use crate::projection::layers::{GlyphLayers, Layer, LayerBuilders, CHILD_GROUP_CHANNEL, RUN_CHANNEL};
 use crate::projection::stages::PhaseWork;
-use crate::projection::state::Owner;
+use crate::projection::state::{Owner, ProjectedUnit, UnitBody};
 use crate::projection::structure::{parent_node, units_in_order};
 use crate::projection::Projector;
 
@@ -50,6 +50,19 @@ fn apply(
 /// A structural command on one target, as a mutator tree.
 fn command(op: StructOp<GfxElement>) -> GfxMutatorTree {
     GfxMutatorTree::new_with(GfxMutator::new_structure(op, RUN_CHANNEL))
+}
+
+/// The element a run of the unit `unit_id` is drawn for, as a reader of
+/// the update asks it ([`LayerChanges::removed_owner`]): a section's or a
+/// ring's node, and a connector's or a link's own element. Exhaustive
+/// over [`UnitBody`], so a new kind of unit decides it. O(1).
+///
+/// [`LayerChanges::removed_owner`]: crate::projection::LayerChanges::removed_owner
+pub(crate) fn run_owner(unit_id: NodeId, unit: &ProjectedUnit) -> NodeId {
+    match unit.body {
+        UnitBody::Section(_) | UnitBody::Ring(_) => unit.node,
+        UnitBody::Line(_) | UnitBody::Portal(_) => unit_id,
+    }
 }
 
 /// Remove `glyph` and its subtree from `layer`, journaled: detached, the
@@ -335,12 +348,13 @@ impl Projector {
         // Runs of a kind a link left.
         let retiring: Vec<NodeId> = work.units_run.iter().copied().collect();
         for unit_id in &retiring {
-            let retired = match self.units.get_mut(unit_id) {
-                Some(unit) => std::mem::take(&mut unit.retired),
+            let (retired, owner) = match self.units.get_mut(unit_id) {
+                Some(unit) => (std::mem::take(&mut unit.retired), run_owner(*unit_id, unit)),
                 None => continue,
             };
             for slot in retired {
                 if let Some(glyph) = slot.glyph {
+                    out.removed(slot.layer, glyph, owner);
                     self.owners.remove(&(slot.layer, glyph));
                     remove(layers, out, slot.layer, glyph);
                 }
@@ -501,6 +515,7 @@ impl Projector {
             return;
         };
         let node = unit.node;
+        let owner = run_owner(unit_id, unit);
         for slot in 0..unit_slot_count(self, unit_id) {
             let Some(s) = self.units.get(&unit_id).map(|u| &u.slots[slot]) else {
                 return;
@@ -511,6 +526,7 @@ impl Projector {
             };
             match (s.glyph, s.want.clone()) {
                 (Some(glyph), None) => {
+                    out.removed(layer, glyph, owner);
                     self.owners.remove(&(layer, glyph));
                     remove(layers, out, layer, glyph);
                     if let Some(s) = self.units.get_mut(&unit_id).map(|u| &mut u.slots[slot]) {

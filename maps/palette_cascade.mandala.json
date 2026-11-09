@@ -1,0 +1,82 @@
+{
+  "format": 1,
+  "name": "palette cascade",
+  "palettes": {
+    "cascade": [
+      {
+        "frame": "#a20000",
+        "text": "#a30000",
+        "title": "#a40000"
+      },
+      {
+        "frame": "#b20000",
+        "text": "#b30000",
+        "title": "#b40000"
+      },
+      {
+        "frame": "#c20000",
+        "text": "#c30000"
+      }
+    ]
+  },
+  "defaults": {
+    "section": {
+      "size": 14.0
+    }
+  },
+  "nodes": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "min_size": [220.0, 70.0],
+      "palette": "cascade",
+      "sections": [{"spans": [{"text": "Themed root\nsecond line"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.2, "spans": [{"text": "·"}]}]}
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "position": [400.0, 0.0],
+      "min_size": [226.9, 70.0],
+      "sections": [{"spans": [{"text": "Run keeps its color", "size": 24.0, "color": "#abcdef"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.2, "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#a20000"}
+    },
+    {
+      "id": 3,
+      "parent": 2,
+      "position": [800.0, 0.0],
+      "min_size": [220.0, 70.0],
+      "palette": "cascade",
+      "sections": [{"spans": [{"text": "Clamped to the last group"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.2, "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#b20000"}
+    },
+    {
+      "id": 4,
+      "position": [0.0, 200.0],
+      "min_size": [220.0, 70.0],
+      "palette": "cascade",
+      "sections": [{"spans": [{"text": "Transparent schema root"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.2, "color": "#222222", "spans": [{"text": "·"}]}]}
+    },
+    {
+      "id": 5,
+      "parent": 4,
+      "position": [400.0, 200.0],
+      "min_size": [220.0, 70.0],
+      "sections": [{"spans": [{"text": "Child takes groups[0]"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.2, "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#909090"}
+    },
+    {
+      "id": 6,
+      "position": [0.0, 400.0],
+      "min_size": [220.0, 70.0],
+      "color": "#333333",
+      "sections": [{"spans": [{"text": "Unthemed"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.2, "color": "#222222", "spans": [{"text": "·"}]}]},
+      "links": [{"to": 1, "kind": "line", "color": "#909090"}]
+    }
+  ]
+}

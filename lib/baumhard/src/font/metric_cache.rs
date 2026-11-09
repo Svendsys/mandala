@@ -9,8 +9,8 @@
 //! LiberationSans light box-drawing chars; on every other glyph
 //! (`◆`, `━`, `┃`, `=`, `#`, etc.) and on every other face the
 //! approximation diverged from what cosmic-text actually shaped,
-//! producing the alignment and tiling defects users saw in
-//! testament's Border Toolkit demo.
+//! producing the alignment and tiling defects a ring of glyphs shows
+//! when its measurements disagree.
 //!
 //! The fix is structural: a callsite that asks "how wide will this
 //! glyph end up?" or "how tall will this row of glyphs be?" with a
@@ -74,7 +74,7 @@
 //!
 //! ## Why not just measure inline at every call site?
 //!
-//! `border_run_specs` runs per visible node per scene rebuild and
+//! A frame's ring fitting runs per visible node per projection and
 //! asks for roughly a dozen clusters per node. Measuring one
 //! cluster means allocating a cosmic-text `Buffer`, setting its
 //! text, running `shape_until_scroll` and walking the layout runs

@@ -5,7 +5,7 @@
 //! the server wrote it.
 //!
 //! **One line per leaf, path first.** A result becomes `path: value`
-//! lines — `counts.nodes: 252`, `nodes[0].node_id: "1.2"` — so any
+//! lines — `counts.nodes: 252`, `nodes[0].id: 2` — so any
 //! fact is one `grep` away and carries its own context, the property
 //! that makes a nested dump greppable at all. Scalars print as JSON, so
 //! the string `"1"` and the number `1` stay distinguishable. A result

@@ -11,7 +11,7 @@
 //! layers once and hand them to the shared
 //! [`super::layered::load_layered`] driver.
 //!
-//! The three desktop loaders (keybinds, mutations, macros) used to
+//! The desktop loaders (keybinds, macros, settings) used to
 //! open-code the layer construction, so the `exists()` policy below
 //! lived as a comment in two files and a third variant in the
 //! macros loader. It lives here now, once.
@@ -25,7 +25,7 @@ use super::{load_layered, read_capped, xdg::xdg_mandala_path, ConfigLayer};
 /// `$HOME/.config` fallback), then nothing.
 ///
 /// `label` names the config in log lines (`"keybinds"`,
-/// `"mutations"`, `"macros"`). `explicit_path` is `None` for a config
+/// `"macros"`, `"settings"`). `explicit_path` is `None` for a config
 /// that has no CLI flag — the layer is then not built at all rather
 /// than built and skipped. Returns the parsed value plus the resolved
 /// path of the layer that produced it, owned so the caller can log it

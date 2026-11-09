@@ -468,8 +468,8 @@ pub fn do_area_rotate_command_applies() {
 /// `visit_seq`), *not* as an `{ "x": …, "y": … }` map. Nothing else
 /// in the suite touches this command's serialization, so a doc
 /// example in the wrong shape would sail past every other test and
-/// then fail at load time — and `MindMap.custom_mutations` is a
-/// required-shape field, so one bad example takes the whole document
+/// then fail when a reader copies it — and a payload that fails to
+/// parse takes the whole file it sits in
 /// down with it. This test is the guard: it asserts the emitted
 /// string, and then **reads the example out of `format/mutations.md`
 /// itself** and parses that, so editing the doc back to the object

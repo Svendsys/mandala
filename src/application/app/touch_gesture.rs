@@ -377,17 +377,6 @@ impl TouchGestureRecognizer {
         }
     }
 
-    /// True when no finger is tracked. A finger landing now would be
-    /// the first of a gesture, not the second finger of a pinch.
-    ///
-    /// Native-only because its one reader is: the native touch router
-    /// (`touch_handle`) lets a finger take a resize handle only when it
-    /// starts a gesture, and the browser has no handle drag yet.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn is_idle(&self) -> bool {
-        matches!(self.state, State::Idle)
-    }
-
     /// Frame-boundary tick. The runtime calls this once per frame
     /// (cheap when the state is `Idle` — one branch). Long-press
     /// fires here, not on the `Moved` / `Started` events, because
@@ -1318,7 +1307,7 @@ mod tests {
     /// the recognizer reads, so the two ends of the comparison are two
     /// derivations from one source — planting that literal leaves the
     /// whole `mandala` suite green but for the one test written for it,
-    /// `event_cursor_moved::tests::test_the_mouse_drag_arms_name_the_shared_pointer_threshold`,
+    /// `test_the_mouse_drag_arms_name_the_shared_pointer_threshold` (gone),
     /// which reads the mouse arms out of the source. That pin and this
     /// test are the parity claim together.
     #[test]

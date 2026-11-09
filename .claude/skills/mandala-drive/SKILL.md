@@ -26,7 +26,7 @@ display that was already running.
 **Just need one picture?** No socket, no teardown:
 
 ```sh
-target/release/mandala --headless --screenshot /tmp/map.png maps/testament.mindmap.json
+target/release/mandala --headless --screenshot /tmp/map.png maps/testament.mandala.json
 # exit 0: /tmp/map.png and /tmp/map.png.geometry.json, the map as loaded, 800×600
 # (--size 1920x1080 for more pixels; --overwrite to replace an existing file)
 ```
@@ -47,7 +47,7 @@ You do not need to read the server's source to use any of this.
 asks the running app for every parameter and result field. `format/ipc.md` is
 the full protocol.
 
-## Quick start: "open testament and screenshot the area around node 3.2"
+## Quick start: "open testament and screenshot the area around node 247"
 
 Run from the repo root. Shell state may not survive between your tool calls,
 so each block below sets `MANDALA_IPC` and `PATH` again. `BIN` asks cargo
@@ -63,7 +63,7 @@ cargo build --release -p mandala -p mandalactl
 #    where you want to watch, drop `--headless`).
 BIN="$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')/release"
 export MANDALA_IPC="${XDG_RUNTIME_DIR:-/tmp/mandala-$(id -u)}/mandala.sock"
-setsid nohup "$BIN/mandala" --headless maps/testament.mindmap.json --ipc "$MANDALA_IPC" \
+setsid nohup "$BIN/mandala" --headless maps/testament.mandala.json --ipc "$MANDALA_IPC" \
   > /tmp/mandala-app.log 2>&1 < /dev/null &
 
 # 3. Wait until it answers.
@@ -76,21 +76,21 @@ mandalactl ping                      # now_ms: 171.69…   (exit 0)
 export MANDALA_IPC="${XDG_RUNTIME_DIR:-/tmp/mandala-$(id -u)}/mandala.sock"
 BIN="$(cargo metadata --format-version 1 --no-deps | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')/release"
 export PATH="$BIN:$PATH"
-# 4. Where is 3.2? (canvas units; the scene's own laid-out rect)
-mandalactl scene.node_geometry 3.2 | grep -E '^(in_scene|canvas)'
-#   canvas.h: 115.399994   canvas.w: 378.0   canvas.x: -25.4   canvas.y: 11697.3   in_scene: true
+# 4. Where is node 247? (canvas units; the box its glyph runs are drawn in)
+mandalactl scene.node_geometry 247 | grep -E '^(in_scene|canvas)'
+#   canvas.h: 145.38086   canvas.w: 387.59277   canvas.x: -33.796875   canvas.y: 11680.75   in_scene: true
 
 # 5. Frame a region around it — the rect grown by one node on each side:
 #    {x: x−w, y: y−h, w: 3w, h: 3h}, rounded — and capture at
 #    a matching aspect (width/height ∝ w/h) so nothing extra is added.
-mandalactl capture.screenshot /tmp/around-3.2.png \
-  region:='{"x":-404,"y":11581,"w":1134,"h":347}' width=1134 height=347
-#   rendered: true   path: "/tmp/around-3.2.png"   sidecar_path: "/tmp/around-3.2.png.geometry.json"
+mandalactl capture.screenshot /tmp/around-247.png \
+  region:='{"x":-421,"y":11535,"w":1163,"h":436}' width=1163 height=436
+#   rendered: true   path: "/tmp/around-247.png"   sidecar_path: "/tmp/around-247.png.geometry.json"
 ```
 
-6. Look at `/tmp/around-3.2.png` (your file-reading tool shows images). The
-   sidecar says where 3.2 landed in that image:
-   `{"id":"3.2","rect":{"x":378.6,"y":116.3,"w":378.0,"h":115.4},"clipped":false,…}`.
+6. Look at `/tmp/around-247.png` (your file-reading tool shows images). The
+   sidecar says where node 247 landed in that image:
+   `{"id":247,"rect":{"x":387.20313,"y":145.75,"w":387.59277,"h":145.38086},"clipped":false,…}`.
 
 The live camera is untouched by a capture: `query.camera` reads the same
 before and after.
@@ -98,9 +98,9 @@ before and after.
 ## Launch
 
 ```sh
-"$BIN/mandala" --headless <map.mindmap.json> --ipc <socket-path>   # no display; BIN as in the quick start
-"$BIN/mandala" <map.mindmap.json> --ipc <socket-path>              # a window, on a desktop
-cargo run --release -- maps/testament.mindmap.json --ipc "$MANDALA_IPC"   # a window, building first
+"$BIN/mandala" --headless <map.mandala.json> --ipc <socket-path>   # no display; BIN as in the quick start
+"$BIN/mandala" <map.mandala.json> --ipc <socket-path>              # a window, on a desktop
+cargo run --release -- maps/testament.mandala.json --ipc "$MANDALA_IPC"   # a window, building first
 ```
 
 - **Headless or a window.** `--headless` opens no window and needs no X
@@ -226,23 +226,29 @@ Real output from testament:
 
 ```text
 $ mandalactl query.document
-counts.edges: 258
-counts.nodes: 252
 dirty: false
-file_path: "maps/testament.mindmap.json"
-map.name: "testament"
-undo_depth: 0
-…
+file_path: "maps/testament.mandala.json"
+history.redo: 0
+history.undo: 0
+name: "testament"
+nodes: 252
+revision: 0
 $ mandalactl scene.find_text "Border Toolkit"
-matches[0].kind: "section"
-matches[0].node_id: "3"
+matches[0].canvas.h: 67.200195
+matches[0].canvas.w: 697.83984
 matches[0].canvas.x: 0.0
 matches[0].canvas.y: 11500.0
-matches[0].visibility: "offscreen"
+matches[0].element.node: 244
+matches[0].element.section: 0
+matches[0].kind: "section"
 …
 $ mandalactl scene.hit_test 165 11755
-click_hit.kind: "Node"
-click_hit.node_id: "3.2"
+canvas.x: 165.0
+canvas.y: 11755.0
+click_hit.element.node: 247
+click_hit.kind: "Element"
+hit.element.node: 247
+hit.node.node: 247
 …
 ```
 
@@ -265,21 +271,23 @@ after an undo returns the model to where it was.
 |---|---|---|
 | `act.action <Action>` | one named `Action`, as a key binding fires it | `mandalactl act.action ZoomIn x=165 y=11755` (canvas point to zoom at) |
 | `act.console "<line>"` | a console line, without opening the console | `mandalactl act.console "fps on"` |
-| `input.*` | the hand on mouse and keyboard: clicks, drags, keys, typing | `mandalactl input.click_node 3.2` |
+| `input.*` | the hand on mouse and keyboard: clicks, drags, keys, typing | `mandalactl input.click_node 247` |
 
 **`--wait-settled`** on a mutating command waits, on the same connection,
-until the result is rendered (animations done, queued input landed, camera
-rebuilt), so your next read or screenshot sees it. Use it on every mutating
+until the result is rendered (queued input landed, the latest frame
+drawn), so your next read or screenshot sees it. Use it on every mutating
 call you are about to inspect. It is refused on read-only commands.
 
-A real sequence — bring an off-screen node into view, select it, delete it,
-undo. It was run headless, so time is virtual and the drag's 13 queued
-samples land on a step; in a window (real time) the `--wait-settled` on the
-drag waits for them itself and the `clock.step` line is not needed:
+A real sequence — bring an off-screen node into view and select it. It was
+run headless, so time is virtual and the drag's 13 queued samples land on a
+step; in a window (real time) the `--wait-settled` on the drag waits for them
+itself and the `clock.step` line is not needed. The editing Actions are
+rebuilt on the document's writer in V1-C4..C8; until each lands, its Action
+answers `unhandled`, as `DeleteSelection` does here:
 
 ```text
-$ mandalactl input.click_node 3.2
-error: not_found: node '3.2' is not on screen: its center lands at surface (350.0, 645.6), outside the 800×600 surface; bring it into view first …
+$ mandalactl input.click_node 247
+error: not_found: node 247 is not on screen: its center lands at surface (350.8, 645.3), outside the 800×600 surface; bring it into view first …
 $ mandalactl scene.hit_test 780 580 space=surface | grep click_hit.kind
 click_hit.kind: "Empty"                       # empty canvas: a drag here pans
 $ mandalactl input.drag 780 580 780 240 --wait-settled
@@ -289,22 +297,22 @@ wait.elapsed_ms: 0
 $ mandalactl clock.step frames=20             # headless only: land the queued samples
 frames_run: 20
 now_ms: 321.0
-$ mandalactl input.click_node 3.2 --wait-settled
+$ mandalactl input.click_node 247 --wait-settled
 applied: true
+pending: 0
+x: 350.790771484375
+y: 305.26129150390625
+wait.elapsed_ms: 0
 $ mandalactl query.selection
-kind: "Single"
-node_id: "3.2"
+count: 1
+elements[0].node: 247
 $ mandalactl act.action DeleteSelection --wait-settled
-outcome: "handled"
-$ mandalactl query.undo
-entries[0].kind: "DeleteNodes"
-entries[0].node_ids[0]: "3.2"
-$ mandalactl act.action Undo --wait-settled
-outcome: "handled"
+outcome: "unhandled"
 ```
 
-- **Check before you drag.** A drag that starts on a node moves the node;
-  one on empty canvas pans. `scene.hit_test X Y space=surface` tells you which.
+- **Check before you drag.** A drag pans wherever it starts (moving a node
+  returns with V1-C7); with Shift on empty canvas it is a rubber band.
+  `scene.hit_test X Y space=surface` tells you what is under a point.
 - **`input.click_node` needs the node on screen** (it clicks where a hand
   would). Pan first, as above; `act.action CenterOnSelection` re-centers once
   something is selected.
@@ -409,7 +417,7 @@ export MANDALA_WS="$(sed -n 's/^controller_url: "\(.*\)"$/\1/p' /tmp/bridge.txt)
 #    beside ?map=. In a desktop browser, paste the URL; from a script, any
 #    browser automation does (the repo's cloud container has Playwright's Chromium).
 trunk serve --release &                        # or: trunk build --release && python3 -m http.server -d dist 41815
-echo "http://127.0.0.1:41815/?map=maps/testament.mindmap.json&ipc=$APP_URL"
+echo "http://127.0.0.1:41815/?map=maps/testament.mandala.json&ipc=$APP_URL"
 
 # 3. Drive it. A controller before the page is refused `no_app` (exit 2) with the remedy.
 for i in $(seq 1 30); do mandalactl --timeout 2 ping >/dev/null 2>&1 && break; sleep 0.5; done
@@ -520,12 +528,11 @@ cleans up after itself: it exits on its own, through the graceful path.
 | `mandalactl: no socket path. Pass --ipc <path> or set MANDALA_IPC.` (exit 3) | your shell lost the export | re-export `MANDALA_IPC`, or pass `--ipc` |
 | `no greeting within N s. App busy or frozen?` (exit 2) | the process exists but its loop is not answering | wait and retry once; if it stays, it is wedged — see the next row |
 | app log: `!!! MANDALA FREEZE WATCHDOG !!!` (the banner `src/application/app/freeze_watchdog.rs` prints), process aborted | the main loop made no progress for 10 s, and the watchdog aborted it on purpose | a real hang: report what you sent last. An **idle** app is parked, not frozen — it answers `ping` instantly and is never aborted |
-| `query.document` shows `file_path: null`, `map.name: "load-failure"` | the map failed to load; the app is up with a placeholder | the app log's `startup: could not load …` line says why |
+| `query.document` shows `file_path: null`, `name: "load-failure"` | the map failed to load; the app is up with a placeholder | the app log's `startup: could not load …` line says why |
 | screenshot is all background | the frame rendered, but nothing is in it: check the sidecar — `"nodes":[]` means the framing missed the map | frame by a node's `canvas` rect, or `fit=true` with a large `width`/`height` |
 | reply `rendered: false` | the frame was not drawn; no file written | `skipped` says why; `font_system_contended` → just retry |
 | `input.click_node … not_found: … not on screen` | the node is off the surface | pan (drag empty canvas, see **Act**) and retry |
 | `error: busy: 202 injected samples are still queued …` from `input.click_node` | an earlier `input.drag` still has samples queued | in real time, `mandalactl clock.wait settled` (or `--wait-settled` the drag), then resend; on a virtual clock — headless, by default — `mandalactl clock.step frames=<n>` lands them first |
-| `clock.wait animations_complete` times out headless | the clock is virtual: animations move only when stepped | `mandalactl clock.step ms=<n>` past the animation, or `clock.set_mode real` |
 
 ## Recording a behavior
 

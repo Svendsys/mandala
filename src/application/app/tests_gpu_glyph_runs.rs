@@ -39,13 +39,20 @@ use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::GfxMutation;
 use baumhard::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunOverrideOp, RunShape};
 use baumhard::gfx_structs::tree::GfxTree;
-use baumhard::mindmap::custom_mutation::apply_mutations_to_element;
 use glam::Vec2;
 
 use super::gpu_harness::{headless_app, HARNESS_SIZE};
 use super::run_native_init::InitState;
-use crate::application::renderer::{CanvasSource, CaptureFailure, CapturedPixels, FrameSkip, ModalLayer};
-use crate::application::scene_host::CanvasRole;
+use crate::application::renderer::{CaptureFailure, CapturedPixels, FrameSkip, ModalLayer};
+
+/// Apply `mutations` to `target` in order, through the glyph mutation
+/// path a mutator walk takes for one element.
+fn apply_mutations_to_element(mutations: &[GfxMutation], target: &mut GfxElement) {
+    use baumhard::engine::mutation::Mutation;
+    for mutation in mutations {
+        mutation.apply_to(target, &());
+    }
+}
 
 fn map_path(name: &str) -> String {
     format!("{}/maps/{name}", env!("CARGO_MANIFEST_DIR"))
@@ -112,9 +119,11 @@ fn show(init: &mut InitState, runs: Vec<GlyphRunData>) {
         )
         .expect("a child of the root");
     }
-    init.app_scene
-        .register_canvas(CanvasRole::SectionFrames, tree, Vec2::ZERO);
-    init.renderer.rebuild_canvas_scene_buffers(&mut init.app_scene);
+    // The runs go in as the chrome layer, over no glyph layers at all,
+    // so the frame draws exactly them through the layer renderer.
+    tree.layer = baumhard::projection::Layer::ALL.len();
+    init.renderer
+        .load_view(&baumhard::projection::GlyphLayers::new(), &tree);
 }
 
 /// A camera on `center` at `zoom`, framing the harness surface.
@@ -134,7 +143,7 @@ fn draw(init: &mut InitState, camera: &Camera2D) -> CapturedPixels {
     loop {
         match init
             .renderer
-            .capture_frame(camera, ModalLayer::Omitted, CanvasSource::Live, &mut || {})
+            .capture_frame(camera, ModalLayer::Omitted, &mut || {})
         {
             Ok(pixels) => return pixels,
             Err(CaptureFailure::Skipped(FrameSkip::FontSystemContended)) if Instant::now() < deadline => {
@@ -187,11 +196,11 @@ fn circle(count: usize, glyphs: usize, center: Vec2, radius: f32, box_size: Vec2
 /// the re-placement's zero is a zero it chose.
 #[test]
 fn test_a_glyph_run_of_500_glyphs_on_a_circle_draws_from_one_shaped_run_in_one_draw_call() {
-    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
         return;
     };
     let init = &mut app.init;
-    let buffers_before = init.renderer.canvas_text_buffer_count();
+    let buffers_before = init.renderer.glyphon_buffer_count();
 
     let style = style(AppFont::GalatiaSIL, 24.0, Rgba::opaque(240, 220, 160));
     let shaped = Arc::new(with_fonts(|fs| shape("GLYPHRUN", &style, fs)));
@@ -217,7 +226,7 @@ fn test_a_glyph_run_of_500_glyphs_on_a_circle_draws_from_one_shaped_run_in_one_d
     assert_eq!(first.skipped, 0, "no glyph skipped: {first:?}");
     assert_eq!(first.draws, 1, "one draw call for the whole run: {first:?}");
     assert_eq!(
-        init.renderer.canvas_text_buffer_count(),
+        init.renderer.glyphon_buffer_count(),
         buffers_before,
         "the run added no glyphon buffer: no per-glyph Buffer or TextArea"
     );
@@ -303,7 +312,7 @@ fn test_a_glyph_run_of_500_glyphs_on_a_circle_draws_from_one_shaped_run_in_one_d
 /// test and never committed.
 #[test]
 fn test_frames_of_text_around_a_rounded_rectangle_and_an_ellipse_draw_in_one_call() {
-    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
         return;
     };
     let init = &mut app.init;
@@ -476,7 +485,7 @@ fn grid(text: &str, style: &ResolvedText, corner: Vec2, columns: usize, step: f3
 /// the space beside it, and the next frame rasterizes neither.
 #[test]
 fn test_the_glyph_atlas_grows_evicts_and_refuses_without_failing_a_frame() {
-    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
         return;
     };
     let init = &mut app.init;
@@ -593,7 +602,7 @@ fn with_overrides(run: GlyphRunData, ops: &[RunOverrideOp]) -> GlyphRunData {
 /// which evicts nothing and grows the page toward the device's limit.
 #[test]
 fn test_a_continuous_zoom_evicts_old_sizes_instead_of_growing_the_atlas() {
-    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
         return;
     };
     let init = &mut app.init;
@@ -678,7 +687,7 @@ fn alphabets(points: f32) -> Vec<GlyphRunData> {
 /// glyphs again every few frames.
 #[test]
 fn test_a_steady_view_is_not_evicted_by_the_new_keys_beside_it() {
-    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
         return;
     };
     let init = &mut app.init;
@@ -729,7 +738,7 @@ fn test_a_steady_view_is_not_evicted_by_the_new_keys_beside_it() {
 /// letters each time.
 #[test]
 fn test_two_alternating_views_settle_with_nothing_rasterized() {
-    let Some(mut app) = headless_app(&map_path("testament.mindmap.json")) else {
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
         return;
     };
     let init = &mut app.init;

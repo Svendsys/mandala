@@ -8,9 +8,9 @@
 //! used to carry its own answer to the same question — *which of
 //! these bytes are shipped code?*
 //!
-//! - `mindmap::loader::tests::test_every_mindmap_write_goes_through_the_contract`
-//!   asks whether any path outside `loader::to_json_value` turns a
-//!   `MindMap` into bytes.
+//! - `test_every_mindmap_write_goes_through_the_contract` (gone), the
+//!   old loader's, asked whether any path outside its serializer turned
+//!   the old model into bytes.
 //! - [`crate::util::serde_coverage::TypeGraph`] asks which types a
 //!   deserializer can be handed.
 //! - [`tests::test_no_doc_cites_a_test_that_does_not_exist`] asks
@@ -550,16 +550,15 @@ pub(crate) struct CitationScan {
 /// A citation is one of two things, decided by the name itself:
 ///
 /// - **a family**, when it ends in `_` — the trailing-`*` glob
-///   (`test_delete_node_*prefix*`) a comment uses to point at a group
+///   (`test_writer_*prefix*`) a comment uses to point at a group
 ///   of tests, and equally the shape a doc comment leaves behind when
 ///   rustfmt breaks a long name across two lines. It resolves when
 ///   any declared name starts with it.
 /// - **one test** otherwise, which has to be declared verbatim.
 ///
 /// Declarations are harvested by text rather than by `syn` on
-/// purpose: the throttled-interaction trait tests are emitted by
-/// `macro_rules!`, and a parser sees that body as opaque tokens while
-/// the `fn test_…` inside it is right there in the text. Over-reading
+/// purpose: a test a `macro_rules!` body emits is opaque tokens to a
+/// parser, while the `fn test_…` inside it is right there in the text. Over-reading
 /// a declaration weakens the check by one name; under-reading it
 /// fails a run over a test that exists, which is the worse of the two
 /// and the one a parser would produce here.
@@ -628,7 +627,11 @@ fn citation_resolves(name: &str, declared: &BTreeSet<String>) -> bool {
 
 /// Every `test_…` identifier in `text` that is not part of a longer
 /// word. A trailing `*` is dropped by the character class and leaves
-/// the `_` before it, which is what makes a glob read as a family.
+/// the `_` before it, which is what makes a glob read as a family. A
+/// citation followed by `(gone)` — after its closing backtick, as
+/// CODE_CONVENTIONS §8 spells the marker for every other identifier —
+/// names a test that was deleted on purpose, and is history rather
+/// than a pointer.
 fn test_names_in(text: &str) -> Vec<String> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
@@ -644,7 +647,9 @@ fn test_names_in(text: &str) -> Vec<String> {
         }
         from = end.max(start + 1);
         let preceded_by_word = start > 0 && is_word_byte(bytes[start - 1]);
-        if !preceded_by_word && end > start + "test_".len() {
+        let after = &text[end..];
+        let gone = after.strip_prefix('`').unwrap_or(after).starts_with(" (gone)");
+        if !preceded_by_word && end > start + "test_".len() && !gone {
             out.push(text[start..end].to_string());
         }
     }
@@ -702,716 +707,6 @@ pub(crate) fn relative_to_repo(path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .into_owned()
-}
-
-/// Every shipped write to a `MindNode`'s position *component*, as
-/// `(repo-relative file, 1-based line, the line's text)`.
-///
-/// A component write is one that computes a coordinate —
-/// `node.position.x = …`, `node.position.y += …`. Those are the writes
-/// that can leave [`MAX_CANVAS_COORD`](crate::mindmap::model::validate::MAX_CANVAS_COORD),
-/// and every one of them belongs in
-/// [`MindNode::set_position_clamped`](crate::mindmap::model::MindNode::set_position_clamped)
-/// or its offset sibling.
-///
-/// Whole-struct assignment (`node.position = other`) is deliberately
-/// **not** reported. It copies a `Position` that is already in the
-/// domain rather than deriving a new one: the undo writers restore a
-/// snapshot the model held, and `set_node_aabb` takes a caller-supplied
-/// position that `validate_node_position` has already rejected on. A
-/// scan that flagged those would need a whitelist of call sites, which
-/// is the drifting twin surface this exists to avoid.
-///
-/// Reads shipped text only — [`production_source`] for a test module
-/// written inside a file, [`test_gated_module_files`] for a file a
-/// `#[cfg(test)] mod x;` reaches — so a fixture that pokes a
-/// coordinate on purpose is not a finding.
-///
-/// Cost: one read and one `syn` parse of every `.rs` file in the
-/// workspace.
-pub(crate) fn node_position_component_writes() -> Vec<(String, usize, String)> {
-    let mut out = Vec::new();
-    let sources = workspace_rust_sources();
-    // `production_source` blanks a `#[cfg(test)]` item *inside* a file.
-    // A file that a `#[cfg(test)] mod tests;` names is test code in its
-    // entirety and contains no such marker of its own, so it has to be
-    // dropped by the declaration that reaches it — which is what
-    // `test_gated_module_files` resolves. Without this the scan reports
-    // fixtures that poke a coordinate on purpose.
-    let test_only = test_gated_module_files(&sources);
-    for file in sources {
-        if test_only.contains(&file) {
-            continue;
-        }
-        let text = std::fs::read_to_string(&file)
-            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
-        let shipped = production_source(&file, &text);
-        for (number, line) in shipped.lines().enumerate() {
-            let code = line.split("//").next().unwrap_or(line);
-            let Some(at) = code.find(".position.") else { continue };
-            let tail = &code[at + ".position.".len()..];
-            let Some(rest) = tail.strip_prefix('x').or_else(|| tail.strip_prefix('y')) else {
-                continue;
-            };
-            // `= ` or `+= ` / `-= ` / `*= ` / `/= `, but not `==`.
-            let rest = rest.trim_start();
-            let assigns =
-                rest.starts_with("= ") || ["+=", "-=", "*=", "/="].iter().any(|op| rest.starts_with(op));
-            if assigns {
-                out.push((relative_to_repo(&file), number + 1, code.trim().to_string()));
-            }
-        }
-    }
-    out
-}
-
-/// The `Vec` methods that add exactly **one** element. Only these can
-/// be guarded by `room_for_another_section`, which promises room for
-/// one more section and nothing beyond.
-const SECTION_SINGLE_GROWTH_METHODS: &[&str] = &["push", "insert"];
-
-/// The `Vec` methods that add **any number** of elements. A one-more
-/// guard says nothing about these, so they are always reported
-/// unguarded: a writer that needs one has to bound its count against
-/// `MAX_SECTIONS_PER_NODE` itself and be argued for by name.
-const SECTION_MULTI_GROWTH_METHODS: &[&str] = &[
-    "extend",
-    "extend_from_slice",
-    "extend_from_within",
-    "append",
-    "splice",
-    "resize",
-    "resize_with",
-];
-
-/// Methods whose closure argument runs once per item, so a growth
-/// inside it is a growth in a loop. Not exhaustive — a closure passed
-/// directly to anything else is assumed to run once, which is how both
-/// shipped writers use one (an undo envelope runs its closure once).
-/// `map` / `any` / `all` also run at most once on an `Option`; listing
-/// them reports that case too, the conservative direction.
-const ITERATING_CLOSURE_METHODS: &[&str] = &[
-    "for_each",
-    "try_for_each",
-    "map",
-    "map_while",
-    "filter",
-    "filter_map",
-    "flat_map",
-    "find",
-    "find_map",
-    "position",
-    "take_while",
-    "skip_while",
-    "partition",
-    "fold",
-    "try_fold",
-    "scan",
-    "inspect",
-    "any",
-    "all",
-    "retain",
-    "retain_mut",
-    "sort_by",
-    "sort_by_key",
-    "sort_unstable_by",
-    "sort_unstable_by_key",
-    "dedup_by",
-    "dedup_by_key",
-];
-
-/// How a [`SectionGrowth`] writes the vector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GrowthKind {
-    /// `x.sections.push(…)` / `insert(…)`, however rustfmt wraps the
-    /// chain: one element, so guardable (in a loop, per iteration).
-    Single,
-    /// `extend` and the rest of [`SECTION_MULTI_GROWTH_METHODS`]: any
-    /// number of elements, never guarded by a one-more check.
-    Multi,
-    /// `Vec::push(&mut x.sections, …)` — the same call spelled as a
-    /// path; one element for `push` / `insert`, else counted as
-    /// [`GrowthKind::Multi`].
-    Ufcs,
-    /// A wholesale replacement: `x.sections = …`,
-    /// `x.sections.clone_from(…)`, or `std::mem::{replace, swap, take}`
-    /// with `&mut x.sections`. Not a growth by one, and nothing about
-    /// the syntax bounds the new length, so it is reported for the
-    /// caller to account for by name.
-    Assign,
-}
-
-/// One site in a Rust source that grows or replaces a `sections`
-/// vector.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SectionGrowth {
-    /// Repo-relative file (empty for text scanned with
-    /// [`section_growths_in`] directly).
-    pub file: String,
-    /// 1-based line the growth starts on.
-    pub line: usize,
-    /// The enclosing fn's name.
-    pub function: String,
-    pub kind: GrowthKind,
-    /// Whether this site is covered by a `room_for_another_section`
-    /// guard — see [`section_growths_in`] for exactly what counts.
-    pub guarded: bool,
-}
-
-/// Every site in `source` that grows or replaces a `sections` vector,
-/// with its enclosing fn and whether it is **guarded**.
-///
-/// Read as syntax (`syn`), not as lines, so the rustfmt-wrapped
-/// `node.sections\n    .push(` is the same site as the one-line
-/// spelling. A site is any of: a growing method on a `.sections` field
-/// receiver ([`SECTION_SINGLE_GROWTH_METHODS`],
-/// [`SECTION_MULTI_GROWTH_METHODS`]); the same as a path call whose
-/// first argument is `&mut <expr>.sections`; or a replacement
-/// ([`GrowthKind::Assign`]) — wherever it sits in the fn body, a
-/// closure included (both shipped writers grow inside an undo
-/// envelope's closure).
-///
-/// **Guarded** is deliberately narrow, so a mention cannot pass for a
-/// check. A site is guarded only when all of these hold:
-///
-/// - it adds **one** element: `push` / `insert`, as a method or a path
-///   call — `room_for_another_section` promises room for exactly one,
-///   so a multi-element method is never guarded by it;
-/// - an earlier **top-level** statement of the body that encloses it
-///   propagates the guard's refusal. For straight-line code that body
-///   is the fn's. For a site in a `for` / `while` / `loop` body it is
-///   that loop body — a guard **per iteration** — because a push
-///   repeated N times behind one check before the loop is N growths;
-///   a site in a loop nested deeper needs a guard in its own body;
-/// - it is not inside an **opaque closure**. A closure written directly
-///   as a **method** call's argument runs where the call does — the
-///   undo-envelope shape both shipped writers grow in — unless the
-///   method is one of [`ITERATING_CLOSURE_METHODS`], which run it per
-///   item. Any other closure is opaque: one bound with `let`, returned
-///   or stored, and every closure argument of a *path* call
-///   (`iter::from_fn`, `repeat_with`, `Box::new`, `thread::spawn`, …),
-///   which may store it or call it any number of times. Where and how
-///   often an opaque closure runs is data flow, which a syntax scan
-///   cannot follow, so a growth in it is never guarded rather than
-///   guessed at;
-/// - the guard has **not been spent**. It promises room for one
-///   section against the length when it ran, so it covers the first
-///   guardable site after it in its body and no other: a second `push`
-///   after one guard — in the same statement, the same envelope
-///   closure, a second envelope, or the same iteration — needs a guard
-///   of its own. And *any* site recorded after the guard spends it,
-///   covered or not: a `Multi` or `Assign` site, one in an opaque
-///   closure, or one in a nested loop (each behind its own
-///   per-iteration check, which says nothing about the length after the
-///   loop) leaves the guard stale for whatever follows.
-///
-/// The propagating shapes are four: `room_for_another_section(…)`
-/// followed only by `map_err(…)` / `ok()` and then `?` (as a statement
-/// or a `let` initializer); `let Ok(..) = room_for_another_section(…)
-/// else { … }` (the compiler makes the `else` diverge);
-/// `if room_for_another_section(…)….is_err() { … }` or
-/// `if let Err(..) = room_for_another_section(…) { … }` whose block
-/// **ends** in a diverging statement; or a
-/// `match room_for_another_section(…)` with an unguarded `Err(..)` arm
-/// that ends in one. Diverging means `return`, `break`, `continue`, a
-/// `panic!`-family macro or `Err(…)?` — a block that merely *contains*
-/// a `return` (`if strict { return … }`) can fall through, and does not
-/// count. The call counts as a path (`validate::room_for_another_section(n)`)
-/// or a method (`n.room_for_another_section()`). A `?` inside any
-/// closure ends the closure, not the fn, so a guard there never counts.
-///
-/// Not a guard, so reported unguarded: a discarded result (`let _ = …`),
-/// a call inside a closure or on a branch, a call after the growth, a
-/// refusal swallowed (`or_else(…)?`), inverted (`is_ok()`) or answered
-/// only conditionally, or a check in a helper the fn calls.
-///
-/// Three approximations, stated so nobody reads in more: the guard is
-/// **not tied to the growth's receiver** — `room_for_another_section(a)?`
-/// covers a later `b.sections.push(…)` — and the receiver's **type is
-/// not resolved**, so a `.sections` field on an unrelated struct is a
-/// site too (the conservative direction: it is reported, not missed).
-/// And a third, in the same direction: guards are spent in source
-/// order, not per path, so `room(n)?; if a { push } else { push }`
-/// reports the second push although only one of the two runs.
-///
-/// What this cannot see: a growth through a binding
-/// (`let s = &mut node.sections; s.push(…)`), a raw pointer, or code
-/// inside a macro invocation's tokens — nor a growth hidden in a call,
-/// so `room(n)?; doc.add_section(…)?; n.sections.push(…)` counts the
-/// push as covered although the helper made the guard stale.
-///
-/// Pure over its input so the classification is tested against
-/// planted text, not only against whatever the workspace holds.
-pub(crate) fn section_growths_in(source: &str) -> Vec<SectionGrowth> {
-    use syn::visit::Visit;
-
-    struct Fns {
-        out: Vec<SectionGrowth>,
-    }
-    impl<'ast> Visit<'ast> for Fns {
-        fn visit_item_fn(&mut self, f: &'ast syn::ItemFn) {
-            scan_fn_body(&f.sig.ident.to_string(), &f.block, &mut self.out);
-            syn::visit::visit_item_fn(self, f);
-        }
-        fn visit_impl_item_fn(&mut self, f: &'ast syn::ImplItemFn) {
-            scan_fn_body(&f.sig.ident.to_string(), &f.block, &mut self.out);
-            syn::visit::visit_impl_item_fn(self, f);
-        }
-        fn visit_trait_item_fn(&mut self, f: &'ast syn::TraitItemFn) {
-            if let Some(block) = &f.default {
-                scan_fn_body(&f.sig.ident.to_string(), block, &mut self.out);
-            }
-            syn::visit::visit_trait_item_fn(self, f);
-        }
-    }
-
-    let file =
-        syn::parse_file(source).unwrap_or_else(|e| panic!("section growth scan: source must parse: {e}"));
-    let mut fns = Fns { out: Vec::new() };
-    fns.visit_file(&file);
-    fns.out.sort_by_key(|g| g.line);
-    fns.out
-}
-
-/// Scan one fn body's top-level statements in order: collect the
-/// growths in each, then let the statement turn the guard on.
-fn scan_fn_body(function: &str, body: &syn::Block, out: &mut Vec<SectionGrowth>) {
-    let mut guard_seen = false;
-    for stmt in &body.stmts {
-        let mut finder = GrowthFinder {
-            found: Vec::new(),
-            loop_depth: 0,
-            opaque_closure_depth: 0,
-        };
-        syn::visit::Visit::visit_stmt(&mut finder, stmt);
-        for site in finder.found {
-            // One guard is room for one section, checked against the
-            // length *then*. Only a guardable site at fn level is covered
-            // by it, but **every** site recorded after it — any kind, any
-            // loop depth, inside an opaque closure or not — spends it: a
-            // growth the guard did not count leaves it stale for the next.
-            let covered_here = site.loop_depth == 0 && site.guardable() && guard_seen;
-            guard_seen = false;
-            let guarded = if site.loop_depth == 0 {
-                covered_here
-            } else {
-                site.guardable() && site.iteration_guarded
-            };
-            out.push(SectionGrowth {
-                file: String::new(),
-                line: site.line,
-                function: function.to_string(),
-                kind: site.kind,
-                guarded,
-            });
-        }
-        if propagates_section_guard(stmt) {
-            guard_seen = true;
-        }
-    }
-}
-
-/// Is `expr` (after parentheses and references) a field access naming
-/// `sections`?
-fn is_sections_field(expr: &syn::Expr) -> bool {
-    match expr {
-        syn::Expr::Field(field) => matches!(&field.member, syn::Member::Named(name) if name == "sections"),
-        syn::Expr::Paren(inner) => is_sections_field(&inner.expr),
-        syn::Expr::Reference(inner) => is_sections_field(&inner.expr),
-        _ => false,
-    }
-}
-
-/// Is `expr` `&mut <expr>.sections`?
-fn is_mut_ref_to_sections(expr: &syn::Expr) -> bool {
-    matches!(expr, syn::Expr::Reference(r) if r.mutability.is_some() && is_sections_field(&r.expr))
-}
-
-/// One site [`GrowthFinder`] found, before the fn-level guard is
-/// applied.
-struct FoundSite {
-    line: usize,
-    kind: GrowthKind,
-    /// How many loops enclose the site within its statement; 0 is
-    /// straight-line code, which only a fn-level guard can cover.
-    loop_depth: usize,
-    /// Whether an earlier top-level statement of the innermost
-    /// enclosing loop body propagates the guard — a per-iteration
-    /// guard. Meaningful only when `loop_depth > 0`.
-    iteration_guarded: bool,
-    /// Whether the site is inside a closure that is **not** passed
-    /// directly as an argument — one bound with `let`, returned, or
-    /// stored — whose calls, and so how often it grows the vector,
-    /// this scan cannot follow. Never guarded.
-    in_opaque_closure: bool,
-}
-
-impl FoundSite {
-    /// Whether a guard could cover this site at all: one element added,
-    /// outside an opaque closure. A guard is spent only on such a site.
-    fn guardable(&self) -> bool {
-        matches!(self.kind, GrowthKind::Single | GrowthKind::Ufcs) && !self.in_opaque_closure
-    }
-}
-
-/// Collects the sites inside one statement, each with its loop depth
-/// and whether its innermost loop body guards every iteration. Nested
-/// fn items are skipped — the outer visitor scans them as fns of their
-/// own.
-struct GrowthFinder {
-    found: Vec<FoundSite>,
-    loop_depth: usize,
-    /// How many opaque closures (see [`FoundSite::in_opaque_closure`])
-    /// enclose the current position.
-    opaque_closure_depth: usize,
-}
-
-impl GrowthFinder {
-    fn record(&mut self, line: usize, kind: GrowthKind) {
-        self.found.push(FoundSite {
-            line,
-            kind,
-            loop_depth: self.loop_depth,
-            iteration_guarded: false,
-            in_opaque_closure: self.opaque_closure_depth > 0,
-        });
-    }
-
-    /// Visit one argument of a (non-iterating) **method** call. A
-    /// closure written directly as the argument is walked as code that
-    /// runs where the call runs — the undo-envelope shape both shipped
-    /// writers grow in. Any other argument goes through the ordinary
-    /// visitor, where a closure nested deeper is opaque.
-    fn visit_call_arg(&mut self, arg: &syn::Expr) {
-        match arg {
-            syn::Expr::Closure(closure) => syn::visit::visit_expr_closure(self, closure),
-            _ => syn::visit::Visit::visit_expr(self, arg),
-        }
-    }
-
-    /// Visit a `for` / `while` / `loop` body one level deeper, the way
-    /// [`scan_fn_body`] walks a fn body: once a top-level statement of
-    /// the body propagates the guard, the sites after it **at this
-    /// depth** are guarded per iteration. A site in a loop nested
-    /// deeper still needs a guard in its own body.
-    fn visit_loop_body(&mut self, body: &syn::Block) {
-        self.loop_depth += 1;
-        let mut guard_seen = false;
-        for stmt in &body.stmts {
-            let start = self.found.len();
-            syn::visit::Visit::visit_stmt(self, stmt);
-            for site in &mut self.found[start..] {
-                // As at fn level: the guard covers the first guardable site
-                // at this depth after it, and any site at this depth or
-                // deeper spends it, covered or not.
-                if site.loop_depth < self.loop_depth {
-                    continue;
-                }
-                if guard_seen && site.loop_depth == self.loop_depth && site.guardable() {
-                    site.iteration_guarded = true;
-                }
-                guard_seen = false;
-            }
-            if propagates_section_guard(stmt) {
-                guard_seen = true;
-            }
-        }
-        self.loop_depth -= 1;
-    }
-}
-
-impl<'ast> syn::visit::Visit<'ast> for GrowthFinder {
-    fn visit_item_fn(&mut self, _: &'ast syn::ItemFn) {}
-
-    /// Reached for every closure except one written directly as the
-    /// argument of a non-iterating method call (those go through
-    /// [`GrowthFinder::visit_call_arg`]).
-    fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
-        self.opaque_closure_depth += 1;
-        syn::visit::visit_expr_closure(self, closure);
-        self.opaque_closure_depth -= 1;
-    }
-
-    fn visit_expr_for_loop(&mut self, e: &'ast syn::ExprForLoop) {
-        // The iterated expression runs once, before the loop.
-        self.visit_expr(&e.expr);
-        self.visit_loop_body(&e.body);
-    }
-
-    fn visit_expr_while(&mut self, e: &'ast syn::ExprWhile) {
-        // The condition runs every iteration, ahead of any guard in
-        // the body, so nothing in it is guarded per iteration.
-        self.loop_depth += 1;
-        self.visit_expr(&e.cond);
-        self.loop_depth -= 1;
-        self.visit_loop_body(&e.body);
-    }
-
-    fn visit_expr_loop(&mut self, e: &'ast syn::ExprLoop) {
-        self.visit_loop_body(&e.body);
-    }
-
-    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
-        let method = call.method.to_string();
-        if is_sections_field(&call.receiver) {
-            let line = call.span().start().line;
-            if SECTION_SINGLE_GROWTH_METHODS.contains(&method.as_str()) {
-                self.record(line, GrowthKind::Single);
-            } else if SECTION_MULTI_GROWTH_METHODS.contains(&method.as_str()) {
-                self.record(line, GrowthKind::Multi);
-            } else if method == "clone_from" {
-                self.record(line, GrowthKind::Assign);
-            }
-        }
-        if ITERATING_CLOSURE_METHODS.contains(&method.as_str()) {
-            // The receiver runs once; the closure arguments run per item.
-            self.visit_expr(&call.receiver);
-            self.loop_depth += 1;
-            for arg in &call.args {
-                self.visit_expr(arg);
-            }
-            self.loop_depth -= 1;
-        } else {
-            self.visit_expr(&call.receiver);
-            for arg in &call.args {
-                self.visit_call_arg(arg);
-            }
-        }
-    }
-
-    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
-        if let syn::Expr::Path(path) = &*call.func {
-            let last = path
-                .path
-                .segments
-                .last()
-                .map(|s| s.ident.to_string())
-                .unwrap_or_default();
-            let line = call.span().start().line;
-            let first_is_sections = call.args.first().is_some_and(is_mut_ref_to_sections);
-            if first_is_sections && SECTION_SINGLE_GROWTH_METHODS.contains(&last.as_str()) {
-                self.record(line, GrowthKind::Ufcs);
-            } else if first_is_sections && SECTION_MULTI_GROWTH_METHODS.contains(&last.as_str()) {
-                self.record(line, GrowthKind::Multi);
-            } else if ["replace", "swap", "take"].contains(&last.as_str())
-                && call.args.iter().any(is_mut_ref_to_sections)
-            {
-                self.record(line, GrowthKind::Assign);
-            }
-        }
-        self.visit_expr(&call.func);
-        // A closure passed to a path call is opaque: `iter::from_fn`,
-        // `repeat_with`, `Box::new`, `thread::spawn` and the like store it
-        // or call it any number of times, and a path names no receiver
-        // the way the undo envelope's method call does.
-        for arg in &call.args {
-            self.visit_expr(arg);
-        }
-    }
-
-    fn visit_expr_assign(&mut self, assign: &'ast syn::ExprAssign) {
-        if is_sections_field(&assign.left) {
-            self.record(assign.span().start().line, GrowthKind::Assign);
-        }
-        syn::visit::visit_expr_assign(self, assign);
-    }
-}
-
-/// Whether `expr` *is* a `room_for_another_section` call — as a path
-/// (`validate::room_for_another_section(n)`) or a method
-/// (`n.room_for_another_section()`) — optionally followed only by
-/// `map_err(…)` and/or `ok()`, which keep the refusal (as `Err` or
-/// `None`) rather than swallow it.
-fn is_section_guard_call(expr: &syn::Expr) -> bool {
-    match expr {
-        syn::Expr::Call(call) => matches!(
-            &*call.func,
-            syn::Expr::Path(path) if path.path.segments.last().is_some_and(|s| s.ident == "room_for_another_section")
-        ),
-        syn::Expr::MethodCall(call) => {
-            call.method == "room_for_another_section"
-                || (["map_err", "ok"].contains(&call.method.to_string().as_str())
-                    && is_section_guard_call(&call.receiver))
-        }
-        syn::Expr::Paren(inner) => is_section_guard_call(&inner.expr),
-        _ => false,
-    }
-}
-
-/// The macros that never return.
-const DIVERGING_MACROS: &[&str] = &["panic", "unreachable", "todo", "unimplemented"];
-
-fn is_diverging_macro(mac: &syn::Macro) -> bool {
-    mac.path
-        .segments
-        .last()
-        .is_some_and(|s| DIVERGING_MACROS.contains(&s.ident.to_string().as_str()))
-}
-
-/// Whether `expr` **always** leaves the code that follows it: a
-/// `return`, `break` or `continue`, a `panic!`-family macro, an
-/// `Err(…)?`, or a block whose last statement is one of those. Merely
-/// *containing* a `return` is not enough — `{ if strict { return …; } }`
-/// falls through when `strict` is false, and the growth after it runs.
-fn diverges(expr: &syn::Expr) -> bool {
-    match expr {
-        syn::Expr::Return(_) | syn::Expr::Break(_) | syn::Expr::Continue(_) => true,
-        syn::Expr::Macro(m) => is_diverging_macro(&m.mac),
-        syn::Expr::Try(t) => matches!(
-            &*t.expr,
-            syn::Expr::Call(call) if matches!(
-                &*call.func,
-                syn::Expr::Path(path) if path.path.segments.last().is_some_and(|s| s.ident == "Err")
-            )
-        ),
-        syn::Expr::Block(b) => block_diverges(&b.block),
-        syn::Expr::Paren(inner) => diverges(&inner.expr),
-        _ => false,
-    }
-}
-
-/// Whether `block` ends in a statement that [`diverges`].
-fn block_diverges(block: &syn::Block) -> bool {
-    match block.stmts.last() {
-        Some(syn::Stmt::Expr(expr, _)) => diverges(expr),
-        Some(syn::Stmt::Macro(m)) => is_diverging_macro(&m.mac),
-        _ => false,
-    }
-}
-
-/// Whether `pat` is `Err(..)` / `Ok(..)` (by the variant's last path
-/// segment).
-fn is_variant_pattern(pat: &syn::Pat, variant: &str) -> bool {
-    match pat {
-        syn::Pat::TupleStruct(p) => p.path.segments.last().is_some_and(|s| s.ident == variant),
-        _ => false,
-    }
-}
-
-/// Does this top-level statement propagate a `room_for_another_section`
-/// refusal out of the fn? See [`section_growths_in`] for the four
-/// shapes; anything else is not a guard.
-fn propagates_section_guard(stmt: &syn::Stmt) -> bool {
-    let try_guard = |expr: &syn::Expr| matches!(expr, syn::Expr::Try(t) if is_section_guard_call(&t.expr));
-    match stmt {
-        syn::Stmt::Expr(expr, _) => match expr {
-            syn::Expr::Try(_) => try_guard(expr),
-            syn::Expr::If(i) => {
-                let cond_is_refusal = match &*i.cond {
-                    // `if room_for_another_section(…).is_err()`
-                    syn::Expr::MethodCall(call) => {
-                        call.method == "is_err" && is_section_guard_call(&call.receiver)
-                    }
-                    // `if let Err(..) = room_for_another_section(…)`
-                    syn::Expr::Let(l) => is_variant_pattern(&l.pat, "Err") && is_section_guard_call(&l.expr),
-                    _ => false,
-                };
-                cond_is_refusal && block_diverges(&i.then_branch)
-            }
-            syn::Expr::Match(m) => {
-                is_section_guard_call(&m.expr)
-                    && m.arms
-                        .iter()
-                        // An `Err(..) if …` arm parses as `Pat::Guard`, not a
-                        // tuple-struct pattern, so it is not counted: it lets the
-                        // other refusals fall through to a later arm.
-                        .any(|arm| is_variant_pattern(&arm.pat, "Err") && diverges(&arm.body))
-            }
-            _ => false,
-        },
-        syn::Stmt::Local(local) => match &local.init {
-            Some(init) => {
-                try_guard(&init.expr)
-                    || (is_variant_pattern(&local.pat, "Ok")
-                        && is_section_guard_call(&init.expr)
-                        // The compiler requires a `let … else` block to diverge.
-                        && init.diverge.is_some())
-            }
-            None => false,
-        },
-        _ => false,
-    }
-}
-
-/// [`section_growths_in`] over every shipped Rust source in the
-/// workspace: `production_source` blanks in-file test items, and the
-/// out-of-line test modules `test_gated_module_files` resolves are
-/// skipped whole, so a fixture that pads a node by direct push is not
-/// a finding.
-pub(crate) fn section_growth_sites() -> Vec<SectionGrowth> {
-    let mut out = Vec::new();
-    let sources = workspace_rust_sources();
-    let test_only = test_gated_module_files(&sources);
-    for file in sources {
-        if test_only.contains(&file) {
-            continue;
-        }
-        let text = std::fs::read_to_string(&file)
-            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
-        let rel = relative_to_repo(&file);
-        for mut site in section_growths_in(&production_source(&file, &text)) {
-            site.file = rel.clone();
-            out.push(site);
-        }
-    }
-    out
-}
-
-/// Every checked arena insert in the bodies of the engine's
-/// `siblings::insert_sorted` and `siblings::insert_value_at` — the
-/// path every new tree node and mutator-tree node goes through, and
-/// the insert it places a new node with — as `(repo-relative file, 1-based
-/// line, the line's text)`, plus the count of the value-inserting
-/// calls the body makes, so a caller can tell an empty finding from a
-/// scan that read nothing.
-///
-/// The arena's inserts of an existing node (`checked_append`,
-/// `checked_prepend`, `checked_insert_after`, `checked_insert_before`)
-/// check for a cycle by climbing from the destination to the top — an
-/// O(depth) walk, on every insert. The scene builder inserts once per
-/// node and once per section, and a `.mindmap.json` may declare a
-/// linear `parent_id` chain, which is a legal acyclic tree the loader
-/// accepts. Depth then equals the node count and the build is O(N²).
-///
-/// The `*_value` forms are the arena's O(1) inserts of a new node.
-/// `insert_sorted` places a value it is handed, so the node is new and
-/// detached by construction and the ancestor walk could never fire —
-/// the check would be pure cost.
-pub(crate) fn sorted_insert_checked_calls() -> (Vec<(String, usize, String)>, usize) {
-    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine/siblings.rs");
-    let rel = relative_to_repo(&file);
-    let text =
-        std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
-    let source = production_source(&file, &text);
-    let mut found = Vec::new();
-    let mut value_inserts = 0;
-    let mut in_body = false;
-    for (number, line) in source.lines().enumerate() {
-        if line.starts_with("pub(crate) fn insert_sorted")
-            || line.starts_with("pub(crate) fn insert_value_at")
-        {
-            in_body = true;
-        } else if in_body && line == "}" {
-            in_body = false;
-            continue;
-        }
-        if !in_body {
-            continue;
-        }
-        let code = line.split("//").next().unwrap_or(line);
-        for call in [
-            "append_value(",
-            "prepend_value(",
-            "insert_after_value(",
-            "insert_before_value(",
-        ] {
-            value_inserts += code.matches(call).count();
-        }
-        if code.contains("checked_") {
-            found.push((rel.clone(), number + 1, code.trim().to_string()));
-        }
-    }
-    (found, value_inserts)
 }
 
 /// The climbs to the root and the inserts of existing nodes in the
@@ -2283,12 +1578,33 @@ mod tests {
             vec!["test_delete_node_".to_string()]
         );
         assert_eq!(
-            test_names_in("/// `test_hit_test_direct_hit` is the exemplar"),
-            vec!["test_hit_test_direct_hit".to_string()]
+            test_names_in("/// `test_a_citation_marked_gone_reads_as_history` is the exemplar"),
+            vec!["test_a_citation_marked_gone_reads_as_history".to_string()]
         );
         assert!(
             test_names_in("no_test_foo and pretest_bar name nothing").is_empty(),
             "a `test_` inside a longer word is not a citation"
+        );
+    }
+
+    /// A citation marked `(gone)` is history and is not read; the same
+    /// name without the marker is. The control is what makes the
+    /// exemption a marker rather than a blind spot.
+    #[test]
+    fn test_a_citation_marked_gone_reads_as_history() {
+        assert!(
+            test_names_in("`test_the_old_check` (gone) held this").is_empty(),
+            "a marked citation is not a pointer"
+        );
+        assert_eq!(
+            test_names_in("`test_the_old_check` holds this"),
+            vec!["test_the_old_check".to_string()],
+            "control: unmarked, the same citation is read"
+        );
+        assert_eq!(
+            test_names_in("`test_a` (gone) and `test_b` held it"),
+            vec!["test_b".to_string()],
+            "the marker covers the one citation it follows"
         );
     }
 

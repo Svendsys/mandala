@@ -3,6 +3,9 @@
 //! The glyph layers the projector writes, and what one update changed in
 //! them (design §12.1, ruling B7.1 on #241).
 
+use rustc_hash::FxHashMap;
+
+use crate::arena::NodeId;
 use crate::engine::journal::{Journal, JournalBuilder};
 use crate::gfx_structs::element::GfxElement;
 use crate::gfx_structs::tree::GfxTree;
@@ -148,12 +151,29 @@ impl GlyphLayers {
 pub struct LayerChanges {
     /// One journal per layer, indexed by [`Layer::index`].
     pub per_layer: [Journal<GfxElement>; 5],
+    /// The former owner of each glyph element the update removed, by
+    /// layer and glyph: captured when the removal was written, since by
+    /// the time a reader sees the update the projector has forgotten the
+    /// glyph ([`Self::removed_owner`]).
+    removed: FxHashMap<(Layer, NodeId), NodeId>,
 }
 
 impl LayerChanges {
     /// The journal of `layer`. O(1).
     pub fn journal(&self, layer: Layer) -> &Journal<GfxElement> {
         &self.per_layer[layer.index()]
+    }
+
+    /// The document element a glyph this update removed from `layer`
+    /// was drawn for, as the projector knew it when it wrote the
+    /// removal: a group's node; a section's or a ring's node; a
+    /// connector's or a link's own element for its runs. `None` for a
+    /// glyph the update did not remove. What
+    /// [`Projector::element_of`](crate::projection::Projector::element_of)
+    /// can no longer answer for a removed glyph — a deleted, hidden or
+    /// folded-away node's included. O(1).
+    pub fn removed_owner(&self, layer: Layer, glyph: NodeId) -> Option<NodeId> {
+        self.removed.get(&(layer, glyph)).copied()
     }
 
     /// Whether the update changed nothing in any layer. O(1).
@@ -165,7 +185,11 @@ impl LayerChanges {
     /// the update removed — once nothing will revert them. Cost: O(the
     /// elements they hold).
     pub fn discard(self, layers: &mut GlyphLayers) {
-        let [sections, frames, connections, labels, portals] = self.per_layer;
+        let LayerChanges {
+            per_layer,
+            removed: _,
+        } = self;
+        let [sections, frames, connections, labels, portals] = per_layer;
         sections.discard(&mut layers.sections);
         frames.discard(&mut layers.frames);
         connections.discard(&mut layers.connections);
@@ -174,24 +198,39 @@ impl LayerChanges {
     }
 }
 
-/// One journal builder per layer, for one update.
-pub(crate) struct LayerBuilders(pub(crate) [JournalBuilder<GfxElement>; 5]);
+/// One journal builder per layer, for one update, and the former owner
+/// of each glyph it removed ([`LayerChanges::removed_owner`]).
+pub(crate) struct LayerBuilders {
+    journals: [JournalBuilder<GfxElement>; 5],
+    removed: FxHashMap<(Layer, NodeId), NodeId>,
+}
 
 impl LayerBuilders {
     /// Five empty builders. O(1).
     pub(crate) fn new() -> Self {
-        LayerBuilders(std::array::from_fn(|_| JournalBuilder::new()))
+        LayerBuilders {
+            journals: std::array::from_fn(|_| JournalBuilder::new()),
+            removed: FxHashMap::default(),
+        }
     }
 
     /// The builder of `layer`. O(1).
     pub(crate) fn of(&mut self, layer: Layer) -> &mut JournalBuilder<GfxElement> {
-        &mut self.0[layer.index()]
+        &mut self.journals[layer.index()]
+    }
+
+    /// Record that `glyph` of `layer`, which this update removes, was
+    /// drawn for `owner`. O(1).
+    pub(crate) fn removed(&mut self, layer: Layer, glyph: NodeId, owner: NodeId) {
+        self.removed.insert((layer, glyph), owner);
     }
 
     /// Close every builder against its layer. O(what each recorded).
     pub(crate) fn close(self, layers: &GlyphLayers) -> LayerChanges {
-        let [sections, frames, connections, labels, portals] = self.0;
+        let LayerBuilders { journals, removed } = self;
+        let [sections, frames, connections, labels, portals] = journals;
         LayerChanges {
+            removed,
             per_layer: [
                 sections.close(&layers.sections),
                 frames.close(&layers.frames),

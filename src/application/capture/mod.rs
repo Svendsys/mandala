@@ -11,11 +11,10 @@
 //! draws with (`renderer::capture`), and written here (`write()`): the
 //! PNG, its geometry sidecar, and — for a server-chosen path — the
 //! bounded artifacts dir. The app half that sits between planning and
-//! saving — projecting the zoom-dependent roles into the capture's own
-//! scratch scene for a capture that frames another zoom, so the live
-//! scene is never written for a picture of it — is `app::capture_flow`
-//! with `app::capture_scene`. IPC and the console both call that one
-//! function; neither has a capture path of its own.
+//! saving — the view's sync, then the frame drawn through the capture's
+//! own camera, which the glyph layers being in canvas space makes the
+//! whole of it — is `app::capture_flow`. IPC and the console both call
+//! that one function; neither has a capture path of its own.
 //!
 //! **Truthful.** A frame the renderer did not draw is reported as not
 //! drawn (`rendered: false`, with the reason), and no file is written:

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Shared loader scaffolding for user-tier JSON config files
-//! (`keybinds.json`, `mutations.json`, `macros.json`).
+//! (`keybinds.json`, `macros.json`, `settings.json`).
 //!
 //! Every one of them answers the same four questions the same way,
 //! so each answer lives here exactly once:
@@ -48,6 +48,8 @@ pub mod desktop;
 pub mod layered;
 
 pub mod salvage;
+
+pub mod settings;
 
 /// The shared `XDG_CONFIG_HOME` / `HOME` override harness. One
 /// module rather than a helper per test module, because the lock it

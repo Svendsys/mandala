@@ -74,8 +74,6 @@ impl<'a> IpcCommandTarget<'a> {
         ipc_state::OpenModals {
             console: self.init.console_state.is_open(),
             picker: self.init.color_picker_state.as_open().is_some(),
-            single_line: self.init.single_line_edit_state.is_open(),
-            text: self.init.text_edit_state.is_open(),
         }
     }
 
@@ -93,10 +91,10 @@ impl<'a> IpcCommandTarget<'a> {
     fn place_pointer(&mut self, point: Point) -> DispatchHit {
         let (surface, canvas) = self.resolve(point);
         self.init.cursor_pos = (f64::from(surface.x), f64::from(surface.y));
-        let parts =
-            super::compute_click_hit(canvas, self.init.mindmap_tree.as_mut(), &mut self.init.app_scene);
+        let click_hit =
+            super::compute_click_hit(self.init.document.as_ref(), self.init.view.as_mut(), canvas);
         DispatchHit {
-            click_hit: parts.click_hit,
+            click_hit,
             canvas_pos: canvas,
             // A synthetic pointer holds no button.
             held_by: None,
@@ -111,6 +109,7 @@ impl InitState {
     pub(super) fn observed(&self) -> Observed<'_> {
         Observed {
             document: self.document.as_ref(),
+            changes: self.view.as_ref().map_or(&[], |view| view.pending_feed()),
             camera: self.renderer.camera(),
             mode: &self.interaction_mode,
         }
@@ -178,27 +177,22 @@ impl CommandTarget for IpcCommandTarget<'_> {
         self.init.document.as_ref()
     }
 
-    fn animation_pause(&self) -> Option<u64> {
-        self.init.anim_pause_start_ms
-    }
-
     fn shell_state(&self, which: ShellState) -> Value {
         match which {
             ShellState::Camera => camera_json(self.init.renderer.camera()),
             ShellState::Mode => ipc_state::mode_to_ipc_json(
                 &self.init.interaction_mode,
-                self.init.drag_state.to_ipc_json(),
+                self.init.drag_state.to_ipc_json(self.init.document.as_ref()),
                 self.open_modals(),
-                self.init.hovered_node.as_deref(),
                 self.init.cursor_pos,
             ),
-            ShellState::Status => json!({ "text": self.init.renderer.mode_status_text() }),
+            ShellState::Status => json!({
+                "text": self.init.renderer.mode_status_text(),
+                "document": self.init.document.as_ref().and_then(MindMapDocument::status),
+            }),
             ShellState::Editors => ipc_state::editors_to_ipc_json(
                 ipc_state::console_to_ipc_json(&self.init.console_state),
                 ipc_state::picker_to_ipc_json(&self.init.color_picker_state),
-                self.init.single_line_edit_state.to_ipc_json(),
-                self.init.text_edit_state.to_ipc_json(),
-                self.init.document.as_ref(),
             ),
         }
     }
@@ -206,24 +200,16 @@ impl CommandTarget for IpcCommandTarget<'_> {
     fn scene(&self) -> Option<SceneView<'_>> {
         Some(SceneView {
             document: self.init.document.as_ref()?,
-            mindmap_tree: self.init.mindmap_tree.as_ref(),
-            app_scene: &self.init.app_scene,
+            view: self.init.view.as_ref()?,
             camera: self.init.renderer.camera(),
         })
     }
 
     fn hit_test(&mut self, point: Point) -> Option<Value> {
         let (surface, canvas) = self.resolve(point);
-        let canvas_per_pixel = dispatch::CanvasPerPixel::of(&self.init.renderer);
         let doc = self.init.document.as_ref()?;
-        Some(ipc_scene::hit_report(
-            canvas,
-            surface,
-            self.init.mindmap_tree.as_mut(),
-            &mut self.init.app_scene,
-            &doc.mindmap,
-            canvas_per_pixel,
-        ))
+        let view = self.init.view.as_mut()?;
+        Some(ipc_scene::hit_report(canvas, surface, doc, view))
     }
 
     fn surface_point(&self, point: Point) -> (f64, f64) {
@@ -270,9 +256,8 @@ impl CommandTarget for IpcCommandTarget<'_> {
         init.document.as_ref()?;
         let (scene, artifacts, _) = CaptureScene::of_init(init);
         let taken = capture_flow::capture(scene, request, destination, sidecar, artifacts);
-        // After the capture, which ran the camera-geometry rebuild the
-        // next frame owed: what is left is what a frame would still
-        // move on from.
+        // After the capture, which ran the sync the next frame owed:
+        // what is left is what a frame would still move on from.
         let settled = !init.needs_continuation();
         Some(taken.map(|outcome| Screenshot { outcome, settled }))
     }

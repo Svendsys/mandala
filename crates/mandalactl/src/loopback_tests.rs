@@ -159,7 +159,7 @@ fn test_a_reply_larger_than_a_megabyte_is_read_whole() {
     let big = "y".repeat(3 << 20);
     let expected = big.clone();
     let server = FakeServer::answering(move |r| vec![ok(&r["id"], json!({ "blob": big }))]);
-    let outcome = against(&server, "query.document fields=mindmap");
+    let outcome = against(&server, "query.document fields=document");
     assert_eq!(outcome.exit, Exit::Success);
     assert!(outcome.out.contains(&expected));
 }
@@ -264,13 +264,13 @@ fn test_a_json_object_action_and_a_double_dash_value_arrive_intact() {
     let server = lenient();
     against(
         &server,
-        r#"act.action '{"OpenDocument":"maps/a=b.mindmap.json"}'"#,
+        r#"act.action '{"OpenDocument":"maps/a=b.mandala.json"}'"#,
     );
     against(&server, "act.console -- fps=on");
     let requests = server.requests();
     assert_eq!(
         requests[0]["action"],
-        json!({"OpenDocument": "maps/a=b.mindmap.json"})
+        json!({"OpenDocument": "maps/a=b.mandala.json"})
     );
     assert_eq!(requests[1]["line"], json!("fps=on"));
 }

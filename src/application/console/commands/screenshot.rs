@@ -257,14 +257,16 @@ mod tests {
     use crate::application::document::MindMapDocument;
 
     /// Run `screenshot` with `args`: the result, the side effect, and
-    /// whether the verb took the document.
+    /// whether the verb changed the document.
     fn run(args: &[&str]) -> (ExecResult, Option<ConsoleSideEffect>, bool) {
         let tokens: Vec<String> = args.iter().map(|s| (*s).to_string()).collect();
-        let mut doc = MindMapDocument::new_blank(None);
+        let mut doc = MindMapDocument::new_blank(None, 50);
+        let revision = doc.revision();
         let mut eff = ConsoleEffects::new(&mut doc);
         let result = execute_screenshot(&Args::new(&tokens), &mut eff);
-        let mutated = eff.document_mutated();
-        (result, eff.side_effect.take(), mutated)
+        let side = eff.side_effect.take();
+        drop(eff);
+        (result, side, doc.revision() != revision)
     }
 
     fn line(args: &[&str]) -> ScreenshotLine {
@@ -276,7 +278,7 @@ mod tests {
 
     /// No arguments is the view, at the window's size, into the
     /// working-directory default, with a sidecar — and the verb never
-    /// touches the document, so the line costs no scene rebuild.
+    /// touches the document, so the line costs the view no sync.
     #[test]
     fn test_a_bare_screenshot_is_the_view_with_a_sidecar() {
         assert_eq!(

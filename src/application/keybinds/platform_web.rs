@@ -32,7 +32,7 @@ impl KeybindConfig {
     /// binds keys directly to `Action`s — including the
     /// filesystem-touching `open_document` / `save_document_as` /
     /// `new_document_at`, which are native-only and therefore inert
-    /// here, and `custom_mutation_bindings` / macro bindings, whose
+    /// here, and `edit_bindings` / macro bindings, whose
     /// own tier gates still apply. So the reachable harm from this
     /// door is smaller than from `?macros=`; the trust argument is
     /// identical, and a policy that held for one config and not its

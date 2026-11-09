@@ -10,7 +10,7 @@ Mandala is a mindmap application; Baumhard is the glyph-animation
 library it is built on. They are one project
 ([`CODE_CONVENTIONS.md §1`](./CODE_CONVENTIONS.md)). Together they
 have accumulated a vocabulary — `GlyphArea`, `MutatorTree`, `Channel`,
-`Portal`, `ZoomVisibility`, `ThrottledInteraction`, `CustomMutation`,
+`Portal`, `ZoomVisibility`, `Projector`, `GlyphLayers`,
 and so on — that sits deliberately across the thin line between *user*
 and *developer*. The project aims to expose as much power to end
 users as the architecture will carry, so even a curious non-programmer
@@ -47,7 +47,7 @@ useful **Vision** (named trajectory) and
 
 - [§1 Project foundations](#1-project-foundations)
 - [§2 The Baumhard foundation](#2-the-baumhard-foundation)
-- [§3 The mindmap domain](#3-the-mindmap-domain)
+- [§3 The document domain](#3-the-document-domain)
 - [§4 The mutation framework](#4-the-mutation-framework)
 - [§5 The application runtime](#5-the-application-runtime)
 - [§6 The authoring surface](#6-the-authoring-surface)
@@ -217,9 +217,8 @@ An arena-backed forest of typed nodes plus the element type's
 per-tree derived state, representing one layer of content.
 
 A `Tree` is how Baumhard stores anything
-hierarchical that needs to render or be hit-tested: one tree for the
-mindmap nodes, one for connection glyphs, one for borders, one for
-the console overlay, and so on. Every node in a tree is reached
+hierarchical that needs to render or be hit-tested: the document,
+each of the five glyph layers, the console overlay, and so on. Every node in a tree is reached
 through an opaque `NodeId` — not a pointer, not an index — so the
 tree can be rearranged, cached, or serialized without invalidating
 references. Nodes are `Clone`, mutation is in-place (never
@@ -279,8 +278,8 @@ If `Tree` is the *noun*, `MutatorTree` is the
 descendant of channel 2, repeat until the predicate fails." The
 walker pairs the two up by channel (or sibling position, depending on
 the instruction), applies matching mutations in place, and leaves the
-rest alone. This is the seam custom mutations
-([§4](#4-the-mutation-framework)) ride on.
+rest alone. This is the seam the mutation framework
+([§4](#4-the-mutation-framework)) rides on.
 
 Also in `lib/baumhard/src/engine/tree.rs`. Minimal — an
 `Arena<Mutator<E, M>>` and a `root: NodeId`, its children kept in key
@@ -486,14 +485,16 @@ blends `origin`, `opacity` and the override vectors and snaps the
 shaping. State comparison (`same_state`) compares the shaping by
 `Arc` identity. Introduced in V1-B6 (#240).
 
-A run in a canvas tree is drawn by the renderer's positioned-glyph
-pass (V1-C1, #242; design §13.2): every glyph of the run's one shaped
-buffer at its own placed position — upright, with its shaper offsets
-kept, its overrides applied and the run's opacity in its alpha — from
-an atlas the pass holds, in one instanced draw call per frame for
-every run there is. Nothing is shaped to draw it, and a pan or a zoom
-touches no run. The [projector](#projection--projector-glyphlayers-layerchanges-hit)
-emits them (V1-B7); the app draws them once C3 cuts over.
+A run in a canvas tree or a glyph layer is drawn by the renderer's
+positioned-glyph pass (V1-C1, #242; design §13.2): every glyph of the
+run's one shaped buffer at its own placed position — upright, with its
+shaper offsets kept, its overrides applied and the run's opacity in its
+alpha — from an atlas the pass holds, in one instanced draw call per
+frame for every run there is. Nothing is shaped to draw it, and a pan
+or a zoom touches no run. The [projector](#projection--projector-glyphlayers-layerchanges-hit)
+emits them into the glyph layers (V1-B7), which the
+[layer renderer](#layer-renderer) keeps and draws (V1-C2); the app draws
+them once C3 wires its projector to it.
 
 `lib/baumhard/src/gfx_structs/run.rs`; the mutations are
 `GfxMutation::Run*` in `mutator.rs`; the pass is
@@ -610,14 +611,13 @@ An element type answers `TreeElement::kind` and
 `Mutator` carries its own `key`. The kind keeps one parent's children
 of different kinds apart: a mutator for one kind's channel 0 cannot
 land on another kind's channel 0. The glyph trees have a single kind
-(`()`), so for them the key is the channel. In the mindmap domain,
-`MindNode.channel` is where this surfaces to end users; see
-[§3: Channels](#channels-mindmap-level).
+(`()`), so for them the key is the channel. In the document, a
+node's channel is where this surfaces to end users (§3, "Elements").
 
 Every parent's children are stored in key order (the sorted-children
 invariant of [`Tree<E>`](#treee)); siblings with an equal key keep the
-order the builder added them in, which for mind-nodes is **Dewey-id
-order** (`id_sort_key`). [`MapChildren`](#instruction) pairs strictly
+order they were added in, which for the document is the order its file
+writes them. [`MapChildren`](#instruction) pairs strictly
 by sibling position instead, for a layout where index matters more
 than tag.
 
@@ -644,8 +644,8 @@ seam for future reactive handlers).
 `AnchorTarget` payload have no layout solver behind them yet, and
 nothing in either crate constructs one. They survive the #41
 dead-code sweep on format grounds rather than code grounds:
-`Flag` is `Serialize` / `Deserialize` and reachable from a
-`.mindmap.json` through the `GfxElementField::Flag(Flag)`
+`Flag` is `Serialize` / `Deserialize` and reachable from authored
+JSON through the `GfxElementField::Flag(Flag)`
 predicate language, where
 [`format/mutations.md`](./format/mutations.md) publishes
 `Anchored(AnchorBox)` as an authorable variant. Removing the
@@ -727,7 +727,7 @@ matching predicate X"), some need spatial routing ("apply this
 to whichever node contains this point"), some need
 position-indexed pairing ("apply these N mutators to these N
 siblings, zip-style"). `Instruction` is the vocabulary. This is
-how one custom mutation can sweep a whole subtree without
+how one mutator can sweep a whole subtree without
 hand-listing every target.
 
 `lib/baumhard/src/engine/mutator.rs`.
@@ -867,71 +867,24 @@ path, so enable only when background legibility demands it.
 
 ### `NodeShape`
 
-A pluggable hit-test shape — `Rectangle` or
-`Ellipse` — shared between the BVH descent and the border builder.
+A pluggable hit-test shape — `Rectangle` or `Ellipse` — the
+silhouette a node's body occupies for the projector's hit test.
 
-A node's clickable silhouette and what is drawn around it must
-agree. `NodeShape` names the two shapes today (rectangle, ellipse)
-and gives the hit test one source of truth for "is this point
-inside?"; the border builder resolves the same spelling to the same
-variant and frames only a rectangle. Nothing draws the shape itself:
-a node draws no fill (V1-B12). Adding a new shape is one enum variant
-and the match arms the compiler then demands; `shape.rs`'s own
-module header is the recipe. What makes it safe to follow is that
-the arms are not remembered: three `match`es over `NodeShape` in
-`shape.rs` are exhaustive — `style_spellings`, `contains_local`,
-`intersects_local_aabb` — so a planted variant is three E0004s.
+A node's clickable silhouette and its document shape must agree. The
+projection keeps one `NodeShape` per visible node, taken from the
+node's typed `Shape` (`document::values::Shape`), and asks it whether
+a point or a rubber-band rectangle lands on the node. Nothing draws
+the shape itself: a node draws no fill (V1-B12), and its frame is text
+along the outline (`flow`). Adding a shape is one enum variant and the
+match arms the compiler then demands: `contains_local` and
+`intersects_local_aabb` are exhaustive `match`es over `NodeShape`, so
+a planted variant does not compile until it has both.
 
 `lib/baumhard/src/gfx_structs/shape.rs`.
 `contains_local` does point-in-AABB or point-in-ellipse
 (normalized coordinates, `nx² + ny² ≤ 1`); degenerate bounds
 always return `false`. `intersects_local_aabb` supports
 rect-select with conservative approximation for ellipses.
-
-The format's shape vocabulary (`KNOWN_SHAPES`, published in
-`format/enums.md` and enforced by `maptool verify`) is wider
-than the variant set: `"hexagon"`, `"diamond"`,
-`"parallelogram"` and `"rounded_rectangle"` are canonical but
-have no variant yet. `ShapeSpelling` is the pure
-classifier that separates those from a genuine typo —
-`Modeled` / `KnownNotYetModeled` / `Unrecognized` /
-`Unspecified` — and `is_author_error` / `is_quiet_fallback`
-are the two predicates it exposes for the reporting
-decision. Before it existed, every hexagon in the demo map
-warned on every load (issue #118).
-
-`ShapeReport` is the second half of the split: the *routing*
-as a value. `ShapeSpelling::report` composes the two
-predicates into `Some(UnknownSpelling)` /
-`Some(RectangleSubstituted)` / `None`, `ShapeReport::level`
-is the single definition of which `log::Level` each carries,
-and `from_style_string` does nothing but pick the literal
-macro per arm — literal because `log`'s release compile-out
-folds on a level the compiler can see, which a
-`log::log!(computed, …)` would defeat. The value being a
-value is what makes the decision ordinary testable data;
-what is left, arm-to-macro, is a fact about source text and
-`shape_tests.rs`'s `log_routing` reads it as one, holding
-`from_style_string`'s body to a whitelist rather than
-searching it for `log::` calls.
-
-`KNOWN_SHAPES` is restated five times across three files —
-three lists in `format/enums.md`, `LEGACY_SHAPE_ORDINALS` in
-`crates/maptool/src/convert/enums.rs`, and the `shape_type`
-ordinal table in `format/migration.md` — and each is pinned
-back by a test that reads the restatement. The first four
-derive their expectation from the constant directly; the
-ordinal table is pinned to `LEGACY_SHAPE_ORDINALS` instead,
-which is itself pinned to the constant, so the chain closes
-in two hops rather than one. Either way, widening the
-vocabulary is still one edit plus the copies the suite names
-for you. The table in `shape.rs`'s `KNOWN_SHAPES` doc is the
-index.
-
-Shape-aware borders (glyph-drawn frames that follow
-the ellipse outline, not just the AABB) wait on the
-[`GlyphBorderConfig`](#border-geometry) side; the primitive
-surface here is ready.
 
 ### `ZoomVisibility`
 
@@ -945,18 +898,14 @@ zoomed in on its region and noise when the whole map is on
 screen; an overview landmark is a guide when zoomed out and
 redundant up close. `ZoomVisibility` lets authors say "this
 appears between 1.5× and 3× zoom" and have the renderer silently
-honor it — no script, no custom mutation, just two fields.
+honor it — no script, no mutator, just two fields.
 
 `lib/baumhard/src/gfx_structs/zoom_visibility.rs`.
 Two `Option<f32>` fields, a `contains(zoom) -> bool` predicate;
 the cost is two float comparisons and nothing else — no
 cosmic-text reshaping or buffer-cache
-invalidation fires on zoom steps. At the mindmap layer the
-surface is two flat fields (`min_zoom_to_render`,
-`max_zoom_to_render`) on `MindNode`, `MindEdge`,
-`EdgeLabelConfig`, and `PortalEndpointState`; see
-[`format/zoom-bounds.md`](./format/zoom-bounds.md) and
-[§3: Zoom bounds](#zoom-bounds).
+invalidation fires on zoom steps. In the document the surface is a
+node's and a path's `zoom` window (`format/schema.md`).
 
 `NaN` zoom is treated as "not visible" deliberately —
 a `NaN` camera is a bug upstream, and culling the frame surfaces
@@ -965,7 +914,7 @@ Inverted windows (`min > max`) render as "always hidden" at
 runtime; `maptool verify` flags these as authoring errors.
 
 The seam waiting here is **zoom-triggered LOD
-mutations**: a `CustomMutation` bound to a zoom threshold could
+mutations**: an edit (V1-D1) bound to a zoom threshold could
 swap a node's content entirely at the transition, so a cluster
 summary becomes a detail view as you zoom in.
 `GlyphAreaField::ZoomVisibility` already carries the mutator
@@ -1009,9 +958,8 @@ verbatim, so "on screen" means one thing.
 A multi-layer compositor: owns many `Tree`s at
 different draw-order layers and screen-space offsets.
 
-The mindmap canvas is one tree; connection
-glyphs are another; the console overlay is another; the color
-picker overlay is yet another. `Scene` collects them all,
+The console overlay is one tree and the color picker overlay is
+another. `Scene` collects them all,
 orders them by layer, and provides a single `component_at(point)`
 hit-test entry that walks top-to-bottom and returns the first
 tree that owns the point. This is the structural seam where the
@@ -1244,7 +1192,7 @@ channels with the same template"), and the builder walks the AST
 with a `BuildContext` to resolve runtime values (counts, templates,
 dynamically-chosen mutations) into a concrete tree ready for
 `walk_tree_from`. This is the seam
-[custom mutations](#4-the-mutation-framework) attach to.
+[the mutation framework](#4-the-mutation-framework) attaches to.
 
 `lib/baumhard/src/engine/builder/`. The AST:
 `MutatorNode::{Void, Single, Macro, Instruction, Repeat}`, each naming
@@ -1358,37 +1306,6 @@ currently maintain them. Per-tree BVH descent (`Tree::descendant_at`)
 handles hit-testing today; when the region index is wired, region
 mutations must go through the mutator pipeline or the index will
 drift silently.
-
-### Animation primitives — `AnimationTiming`, `Easing`, `Followup`
-
-The vocabulary for motion: a serializable timing
-envelope on a mutation, an easing curve, and a reserved slot for
-what happens after a run completes.
-
-A "grow font" that snaps is fine; one that
-animates reads better. Rather than a general scheduler, motion
-here rides on the mutation that causes it — an authored
-`CustomMutation` carries `timing`, and the runtime blends between
-a pre-mutation and a post-mutation snapshot instead of executing
-a separate program.
-
-`lib/baumhard/src/mindmap/animation.rs` for the serializable
-half (`AnimationTiming`, `Easing`, `Followup`, and the `lerp_*`
-helpers); `src/application/document/types.rs` +
-`animations.rs` for the app-side per-playback record and tick,
-which live there because the snapshot type (`MindNode`) and the
-completion commit do. See [§4](#animation-timing) for the
-authoring surface and
-[`format/animation-roadmap.md`](./format/animation-roadmap.md)
-for what is wired versus dormant.
-
-A second, generic vocabulary — `AnimationDef` / `AnimationInstance`
-/ `Timeline` / `TimelineEvent` in `core/animation.rs` — was
-deleted in #41. It had no implementers of its `Mutable` bound, no
-callers, and an `update` signature that took its instance by value
-and returned nothing, so it could not have driven a tick as
-written. The long-form scheduling it stood for is the `Followup`
-slot's job when that lands.
 
 ### Utilities — `grapheme_chad`, `color`, `geometry`
 
@@ -1796,1261 +1713,74 @@ the caller's `FontSystemLease` — the lazy guard the spec names
 
 ---
 
-## §3 The mindmap domain
-
-The mindmap domain is the world of `.mindmap.json` — the on-disk
-format and its in-memory mirror. It lives in
-[`lib/baumhard/src/mindmap/`](./lib/baumhard/src/mindmap/) and is
-documented schema-side under
-[`format/`](./format/). The format references are authoritative
-for field-by-field detail; this section is conceptual.
-
-### `MindMap`
-
-The document root: nodes, edges, canvas configuration,
-palettes, custom mutations.
-
-Everything a user can save and reload is here.
-The `MindMap` is a plain serializable struct — no derived state, no
-runtime caches. The loader deserializes it from JSON and carries any
-key no field claims along untouched, so the save writes it back
-([preserved unknown keys](#preserved-unknown-keys)); the
-[canvas-role projection](#canvas-role-projection) and
-[tree builder](#tree-builder) turn it into renderable form;
-mutations transform it in place.
-Helper methods (`children_of`, `all_descendants`,
-`is_hidden_by_fold`, `is_ancestor_or_self`, `resolve_theme_colors`)
-walk the data on demand rather than caching.
-
-`lib/baumhard/src/mindmap/model/mod.rs`. The shape is `version` and
-`name`, a flat `HashMap<String, MindNode>` (keyed by Dewey id), a
-`Vec<MindEdge>`, a [`canvas: Canvas`](#canvas), a `palettes:
-HashMap<String, Palette>`, `custom_mutations: Vec<CustomMutation>`,
-an opaque `macros: Vec<serde_json::Value>`, and the two
-`#[serde(skip)]` carriers a load fills and a save writes back —
-`unknown_keys` and `skipped_constructs`. See
-[`format/legacy-schema.md`](./format/legacy-schema.md) for the JSON surface and
-[`format/README.md`](./format/README.md) for a minimum-viable
-example.
-
-### Preserved unknown keys
-
-Every object in `.mindmap.json` is **open**: a key no field claims
-neither fails the load nor disappears from the file. The loader warns
-once, carries the key on the map, and writes it back at the next save.
-
-The reason is version skew, in both directions at once. A map authored
-by a newer build carries keys an older build has never heard of;
-refusing the document leaves the reader with an empty window, and
-Mandala is an editor — it loads the whole map, mutates it, and writes
-the whole model back — so ignoring the keys deletes them at the next
-save. Keeping them is what lets an older build open, edit and resave a
-newer map without destroying the newer features. A typo
-(`"min_zoom_to_rendr"`) is kept the same way, and named the same way,
-because a key you still have is a key you can still fix;
-[`maptool verify`](#maptool-cli) is where it becomes a nonzero exit.
-The warning names the part of the document that carries the key —
-`node "1.2"`, `edge[3]`, `palette "coral"` — rather than a byte
-offset.
-
-Mechanically it is **not** a per-type `#[serde(flatten)]` catch-all,
-and could not be: `serde_json::Value` implements neither `Eq` nor
-`Hash`, and the graph reachable from a load is full of types that
-derive `Copy`, `Eq` or `Hash` (`Color`, `OrderedVec2`, `Position`,
-`Anchor`, `Range`, `GlyphMatrix`). A catch-all on only the types that
-can hold one would preserve keys in some places and drop them in
-others. Instead `mindmap::unknown_keys` wraps the one parse a load
-already pays for and records the route to every key serde handed to
-`deserialize_ignored_any` — which covers the whole graph, including
-types the source walk cannot see. What the model owes the mechanism is
-only that no type absorbs a key first: no `deny_unknown_fields`, no
-`flatten`, no `untagged` or `tag`. That set is not written down
-anywhere — a hand-kept list is the twin surface
-`lib/baumhard/CONVENTIONS.md` §B4 warns about — so
-`lib/baumhard/src/util/serde_coverage.rs` walks baumhard's own sources
-with `syn` and
-`loader::tests::test_no_loadable_type_can_swallow_an_unknown_key`
-fails the moment one appears.
-
-**A derivation is a reading, and a reading can be wrong in a way the
-document it feeds is wrong in too.** The same walk produces the list
-of arrays `format/legacy-schema.md` publishes — the places a captured key's
-route stops naming a node by its id and starts naming an element by
-its index — and for a long time it produced that list by matching the
-token `Vec` and one spelling of `#[serde(rename …)]`. Three live
-arrays were missing as a result: `ColorFontRegions::regions` is a
-`BTreeSet`, and `MutationListSrc::Literal` and
-`GlyphModelField::GlyphLines` are newtype-variant payloads with no
-field name. The document said the same three things, because it was
-written by reading the walk, so nothing disagreed
-([#122](https://github.com/Svendsys/mandala/issues/122)).
-
-The walk now resolves a field's type through the index — a `type`
-alias, a newtype struct, any of the eleven container spellings serde
-writes as a growable array, and the bare slice `[T]` that `Cow<'a,
-[T]>` bottoms out on. Four of those eleven do not keep the order the
-file was written in at all: `HashSet` and `FxHashSet` iterate by hash,
-`BTreeSet` by the element, `BinaryHeap` by its heap. That is a
-*stronger* reason to publish them than a `Vec`, not a weaker one — a
-save re-sorts them, so an index into one can move without anybody
-having edited anything. The walk also reads every spelling serde
-accepts for a member name, including the `deserialize` arm of a
-list-form `rename`, a container `rename_all`, and the extra spellings
-an `alias` admits. But the fix that matters is that the
-walk is no longer the only witness.
-`lib/baumhard/src/util/serde_probe.rs` asks the **generated**
-`Deserialize` impls the same questions by handing them a
-`Deserializer` that answers every request with the emptiest value
-that satisfies it and records what was asked — no source text, no
-`syn`, no list, and `serde_derive`'s own expansion as the authority
-on both member names and array-ness.
-`unknown_keys::tests::test_the_derived_positional_arrays_survive_an_independent_derivation`
-and its member-name sibling fail when the two disagree. Neither is a
-replacement for the other: the probe cannot see a serialize-only
-proxy, and the walk cannot see through a generic instantiation. Their
-disagreement is the signal. Both see `#[serde(alias = "…")]` and both
-publish it — the derive writes a field's aliases into the same
-`FIELDS` list as its name and a variant's into `VARIANTS` — because a
-file may write any accepted spelling and a captured route is recorded
-against whichever it wrote.
-
-Openness is about **keys, not meanings**. An `edge_type` the renderer
-does not know still loads — open vocabularies stay open — and semantic
-violations (an edge pointing at no node, a `color_schema` naming a
-palette that is not there) are [`maptool verify`](#maptool-cli)'s
-business. The interiors of `macros` / `inline_macros` are deliberately
-opaque and are never reported. Three legacy spellings are the
-exception and still refuse the load: a top-level `portals`, per-node
-`text` / `text_runs`, and a non-array `sections` are names the current
-model means something else by, and each has a `maptool convert` verb.
-
-`lib/baumhard/src/mindmap/unknown_keys.rs`,
-`lib/baumhard/src/mindmap/loader.rs`,
-`lib/baumhard/src/util/serde_coverage.rs`,
-`lib/baumhard/src/util/serde_probe.rs`. See
-[`format/legacy-schema.md`](./format/legacy-schema.md) §"Unknown keys are kept" for
-the policy as authors read it, and
-[`format/validation.md`](./format/validation.md) for the split between
-what the loader reports and what `verify` fails on. Its severe
-counterpart is [skipped constructs](#skippedconstruct--skippedconstructs),
-below.
-
-### `SkippedConstruct` / `SkippedConstructs`
-
-One construct a load could not read at all, lifted out of the document
-so the rest of the map opens, and written back untouched at the next
-save. `SkippedConstructs` is the ordered collection of them, carried
-on `MindMap` beside `unknown_keys` and with the same `#[serde(skip)]`:
-they go back at their own routes, not into a side object.
-
-The problem is the acute form of the one
-[preserved unknown keys](#preserved-unknown-keys) solves. A key from a
-newer build is **inert** — nothing reads it, so ignoring it changes
-nothing about what the map does. A **variant** from a newer build is
-the opposite: it *is* the instruction. `{"mutator": {"Glow": …}}` used
-to make the whole document unloadable, so opening a newer map in an
-older build gave an empty window and the newer feature was one
-accidental save away from gone.
-
-**The unit is the whole construct**, never the part inside it that
-failed, and that is the load-bearing design decision. Dropping one
-`Mutation` out of a macro would leave a custom mutation that still
-appears in `mutation list`, still fires, and now does two of the three
-things it says it does — a silent partial behavior with nothing to
-see. So the unit is the nearest container whose absence reads *as*
-absence: a whole `custom_mutations[i]`, a whole node
-`inline_mutations[i]`, or a whole node-or-section
-`trigger_bindings[i]`. Nothing else is skippable — a node, an edge,
-the canvas or a palette this build cannot read still fails the load,
-because a map missing part of itself with no sign of which part is
-worse than no map.
-
-**Refused for any reason, not only an unknown variant.** Sorting
-serde's message into "from the future" and "a typo" would mean parsing
-that message — the twin surface `lib/baumhard/CONVENTIONS.md` §B4 is
-about — and it sorts on the wrong axis anyway: the load's question is
-"can I carry this out?", and the answer is no in both cases. So the
-load skips what it cannot read, warns saying what serde said and that
-nothing the construct describes will run, and `maptool verify` reports
-every one as an `unknown_variant` violation with a nonzero exit. The
-two questions — *can I open this?* and *is this file right?* — stay
-separate.
-
-Ordering matters at save: captured keys are spliced back **before**
-skipped constructs, because a key's positional route was resolved
-against the array with the constructs already lifted out. See
-`loader::to_json_value`.
-
-`lib/baumhard/src/mindmap/unknown_keys.rs` (the types),
-`lib/baumhard/src/mindmap/loader.rs`
-(`load_skipping_unreadable_constructs`,
-`excise_unreadable_constructs`),
-`crates/maptool/src/verify/unknown_keys.rs`
-(`check_skipped_constructs`). See
-[`format/legacy-schema.md`](./format/legacy-schema.md) §"Unknown keys are kept" and
-[`format/validation.md`](./format/validation.md) §"Unknown variants".
-
-### `Canvas`
-
-The per-map shared rendering context: the one
-background color, default node and connection styles, live
-theme-variable map, named theme presets.
-
-Some things are per-map rather than per-node:
-the canvas background color, the defaults nodes and edges fall
-back to when their fields are absent, the `var(--name)` theme
-variables colors reference, and the presets theme-switching
-mutations copy into those live variables. `Canvas` is that
-shared state. It sits on `MindMap` directly (`canvas: Canvas`)
-and is consulted at scene-build time for defaults and theme
-resolution. Its `background_color`, resolved through the theme, is
-what every frame is cleared to (`MindMapDocument::background`,
-`Renderer::set_background`), on both targets.
-
-`lib/baumhard/src/mindmap/model/canvas.rs`. Fields:
-`background_color`; four optional default records —
-`default_border` (nodes), `default_connection` (edges),
-`default_section_frame_border` and
-`default_focused_section_frame_border` (the section-frame chrome,
-see [`SectionFrameElement`](#sectionframeelement-and-section-frame-chrome));
-`theme_variables: HashMap<String, String>` (live
-values), `theme_variants: HashMap<String, HashMap<String,
-String>>` (named presets). The
-[`SetThemeVariant`](#document-actions) document action copies
-a preset into the live map;
-[`SetThemeVariables`](#document-actions) patches individual
-entries.
-
-### `MindNode`
-
-One node — position, size, style, layout hint,
-palette binding, channel, trigger bindings, and one or more
-[`MindSection`](#mindsection)s carrying the text content.
-
-The unit of content. Each node renders as a
-shape with one or more text-bearing **sections** inside,
-optionally framed by a glyph border, and participates in the
-parent-child tree through its `parent_id`. Post-section refactor
-the node owns visual chrome (frame, shape, border, shadow) and
-structural pieces (`channel`, `color_schema`,
-`trigger_bindings`, `inline_mutations`, zoom-bounds); the
-user-typed text lives on its sections.
-
-`lib/baumhard/src/mindmap/model/node.rs`. Full
-field reference in [`format/legacy-schema.md`](./format/legacy-schema.md). Author
-owns non-overlap of node AABBs; the model does no collision
-checking. The tree builder excludes folded subtrees from the
-display tree; the underlying data persists either way. The node
-container materializes as a chrome-only `GfxElement::GlyphArea`
-in the runtime tree, with the section subtree appended as
-children — see [tree builder](#tree-builder).
-
-### `MindSection`
-
-A positioned text-bearing surface inside a
-`MindNode` — the post-section data shape's home for `text` and
-`text_runs`. Every renderable node has at least one section.
-
-The user-facing strata of data. A node is a
-*container*; a section is *what the user typed*. Sections give
-the architecture room to grow per-stratum styling, per-stratum
-mutations, and per-stratum interaction without making the node
-itself bigger. For migrated maps the typical shape is one default
-section per node (offset `(0, 0)`, fills the parent); authors who
-want multiple strata of data on one node opt in by appending
-extra sections.
-
-`lib/baumhard/src/mindmap/model/node.rs` (`MindSection`).
-Plain data — `text`, `text_runs`, `offset`, optional `size`,
-optional `channel`, its own `trigger_bindings`, and an optional
-`frame_border` for the per-section frame chrome. In the runtime
-tree each section becomes a
-`GfxElement::GlyphArea` child of the owning node's container area,
-plus a structural `GfxElement::GlyphModel` grandchild that exists
-as a future per-component-mutation seam (the renderer skips it).
-The renderer's tree walker shapes each section-area into its own
-`cosmic_text::Buffer` keyed by `unique_id`, so multiplicity falls
-out for free. Loader rejects pre-section maps with a concrete
-pointer at `maptool convert --sections`. Full reference:
-[`format/sections.md`](./format/sections.md).
-
-### `MindEdge`
-
-A directed connection between two nodes — line-mode
-or portal-mode — with style, optional label, and optional
-per-endpoint state.
-
-Edges carry both hierarchical structure (when
-their `type` is `parent_child`) and arbitrary cross-links (when
-`type` is `cross_link`). They render as either a path of glyphs
-along a Bézier curve (line mode) or a pair of small markers, one
-at each endpoint (portal mode). A line-mode edge can have a
-single text label sitting along the path; a portal-mode edge has
-two endpoint records, each with its own text and styling.
-
-`lib/baumhard/src/mindmap/model/edge.rs`. Edges
-have **no stable id** — they are identified by the tuple
-`(from_id, to_id, edge_type)`
-([`CODE_CONVENTIONS.md §3`](./CODE_CONVENTIONS.md)). The
-`display_mode` field switches rendering style without changing the
-underlying edge identity; flipping a long edge from line to portal
-is a one-field change. Field reference in
-[`format/legacy-schema.md`](./format/legacy-schema.md).
-
-Multiple edges between the same pair with different
-`type` are allowed (rare but legitimate). Multiple edges with the
-*same* tuple are a duplicate and a validation error.
-
-### Dewey-decimal IDs
-
-Dot-separated hierarchical node IDs (`"0"`, `"1.2"`,
-`"1.2.3"`) that encode tree structure in the key itself.
-
-Reading a `.mindmap.json` reveals the tree shape
-in the keys. IDs sort as numbers segment-by-segment (`"1.10"` after
-`"1.9"`, not before), and `derive_parent_id` recovers the parent
-without pointer chasing. The format is human-friendly and
-diff-friendly — exactly the sort of place where opaque UUIDs would
-have ended in the same byte count and zero readability.
-
-`lib/baumhard/src/mindmap/model/mod.rs`.
-`id_sort_key` extracts the last segment for sibling sort;
-`derive_parent_id` strips it. Fresh IDs are minted by
-`fresh_child_id` in `src/application/document/topology.rs`
-without reusing deleted gaps. Full reference:
-[`format/ids.md`](./format/ids.md).
-
-IDs do **not** cascade on runtime reparent — when
-node `"1.2"` moves under `"0"`, it stays `"1.2"` and `parent_id`
-becomes the truth. They *do* cascade on delete-with-orphan-promote.
-This trade keeps reparent cheap; `maptool verify` flags drift.
-
-### Channels (mindmap level)
-
-The `MindNode.channel` field — the user-facing
-surface of the Baumhard routing tag.
-
-Authors tag siblings with channels to opt them
-into selective mutations. A `CustomMutation` whose mutator targets
-channel 1 hits only siblings tagged 1; siblings tagged 0 are
-skipped. Multiple siblings can share a channel (broadcast group),
-or each can be unique (per-sibling targeting). All existing maps
-default to channel 0 and behave as if the field did not exist.
-
-Stored as `usize` on `MindNode`; preserved
-through tree builder onto the corresponding `GfxElement.channel`,
-which orders a node's children in the glyph tree; consulted by the
-walker's [key alignment](#channel) at walk time. Full reference:
-[`format/channels.md`](./format/channels.md).
-
-A `TargetScope::ChildrenOnChannel(n)` variant is the
-named extension waiting on this field — it would let a mutation
-declare "children whose channel is 1" without an inline predicate.
-
-### Palettes
-
-Map-level named color schemes; nodes reference them
-through `color_schema { palette, level, … }` rather than carrying
-colors inline.
-
-The legacy miMind format stored full palette
-data on every node; the testament map alone duplicated the same
-~225 palettes across nodes. Hoisting palettes to the document
-level is a 100× reduction in file size and turns "rethemes the
-whole map" into a single edit. Each palette is an array of
-`ColorGroup`s indexed by depth; a node's `level` is which group
-it pulls from. Level-clamping (last group when out of range) makes
-deep subtrees degrade gracefully.
-
-`lib/baumhard/src/mindmap/model/palette.rs`, with the cascade
-itself in `model/theme.rs`. A node's binding lives in its
-optional `color_schema` field, a `ColorSchema` record with
-`palette: String` (the key into `map.palettes`),
-`level: usize` (which `ColorGroup` to pull from), two
-flags — `starts_at_root` (does level 0 apply to the schema
-root or to its children?) and `connections_colored` (do edges
-leaving this node inherit the palette stroke color?) — and
-`overrides`, a `ColorOverrides` record of four optional strings
-naming this node's own exceptions to the group.
-`resolve_theme_colors` on `MindMap` does the lookup;
-out-of-range `level` clamps to the last group rather than
-failing, and `starts_at_root: false` leaves the schema root
-itself unresolved so its own `style` stands. Validation
-requires every referenced palette to exist with at least one
-group.
-
-The cascade is **override first, palette second, `style`
-third**. The background channel of it still resolves
-(`node_background_color`), and the console and color picker still
-write it, but nothing draws it: a node has no fill since V1-B12, and
-the cut-over (V1-C3) deletes the channel with the legacy model. The
-projection passes read the cascade through four sibling helpers —
-`node_background_color`, `node_frame_color`,
-`node_text_color`, `node_title_color` — plus
-`edge_theme_stroke_color`, which supplies the themed tier of
-[`MindEdge`](#mindedge)'s color cascade for an edge whose
-source node sets `connections_colored`. That helper reads
-`node_frame_theme_tier` — the same one the border ladder
-reads — so an `overrides.frame` reaches an edge exactly as it
-reaches the node's own frame, and an empty frame is a hole on
-both. Anything more specific
-than the node still wins: a `TextRun` naming its own color, a
-`border.color` override, a per-edge `glyph_connection.color`.
-
-The `overrides` tier is what makes the theme *editable per
-node*. A direct "make this one green" is more specific than an
-inherited theme and has to win, and it cannot land in `style`:
-`style` is the tier the palette shadows, and every migrated
-node carries baked `style` colors that are stale copies of its
-own theme, so a `style` write would report success and change
-nothing on screen. `set_node_bg_color` /
-`set_node_border_color` / `set_node_text_color` therefore write
-`color_schema.overrides` on a themed node and `style` on an
-unthemed one, through one shared
-`set_node_color_channel`; `UndoAction::EditNodeStyle` carries
-`before_color_schema` so undo puts the node back on its
-palette.
-
-A tier you can write is only half a tier: each of the three
-setters takes an `Option`, and `None` — what `color bg=reset`
-and the empty string on a non-fill channel both resolve to —
-*drops* the override so the group shows through again, rather
-than storing the authoring literal that would pin the node off
-its theme forever. On an unthemed node there is nothing below
-`style`, so the same `None` names the authoring default
-instead. Full reference:
-[`format/palettes.md`](./format/palettes.md).
-
-Animated palette transitions are the seam — the data
-shape is already mutation-friendly; the runtime would need to
-interpolate `ColorGroup` fields on a clock.
-
-### Text runs
-
-Non-overlapping styled character ranges within a
-node's text — bold, italic, underline, font, size, color,
-hyperlink.
-
-A single node can have rich text without being
-fragmented into multiple nodes. Text runs are the mindmap-side
-surface that the renderer translates into `ColorFontRegions`
-spans for shaping. The user-visible effect is a per-span
-override: emphasis on the first word, a colored annotation in
-the middle, a link at the end — all on one node.
-
-`lib/baumhard/src/mindmap/model/node.rs` (`TextRun`).
-Each run carries `start` and `end` — the only two keys a file must
-write — plus `bold`, `italic`, `underline` (default off), `font`
-and `color` (strings; the empty string means the section-level
-default), `size_pt` (default `DEFAULT_TEXT_RUN_SIZE_PT`, declared
-beside the struct) and `hyperlink: Option<String>`. The struct
-fields are not `Option`s: every styling field defaults to the value
-that renders like the section's own text, so `{"start": 0, "end":
-5, "bold": true}` is a complete run. Indexed by **grapheme
-clusters** — what users see
-as one character — matching `ColorFontRegions::Range` and
-baumhard's text primitives (see
-`lib/baumhard/CONVENTIONS.md §B1` and the
-[`Range`](#range) entry above). Cluster indexing keeps a run
-that ends after a Hebrew niqqud combining mark or a ZWJ-emoji
-family on the same boundary the cosmic-text bridges in
-`baumhard::font::attrs` slice on, so per-region styling lands
-on whole glyphs. Validation: non-overlapping, ascending,
-`end <= text's grapheme-cluster count`. Full reference:
-[`format/text-runs.md`](./format/text-runs.md).
-
-If `text_runs` is non-empty, **only covered ranges
-render** — uncovered graphemes drop silently; nothing inherits.
-So authors must cover every grapheme they want visible, not just
-the ones they want to restyle. This is by design (it simplifies the
-renderer's region pass) but it is the single biggest trap in
-the format; `maptool verify` does not catch partial-coverage
-intent vs. accident. The rule lives in one place for both
-cosmic-text bridges, `covered_slices` in
-`lib/baumhard/src/font/attrs.rs`: `rich_text_spans_into` shapes
-exactly those slices and `displayed_text` concatenates them, so
-what a section *displays* is not its `text` —
-`baumhard::font::attrs::displayed_text` answers it, and the IPC
-`scene` family reports that string. The only inheritance in the
-model is *within* a run: a styling field a run leaves at its default
-renders like the section's own text would have.
-
-### Theme variables
-
-Document-level CSS-style named colors referenced as
-`var(--name)` from any color field.
-
-Avoids hex repetition across hundreds of nodes
-and edges. A theme switch changes the variable; everything
-referencing it updates. Theme variants (presets) can be stored
-under `canvas.theme_variants` and applied through the
-`SetThemeVariant` document action.
-
-Resolved at scene-build time in the color
-cascade — variable lookup, then fall through to a default if the
-name is unknown. Document actions
-[`SetThemeVariant`](#document-actions) and `SetThemeVariables`
-mutate the live `canvas.theme_variables` map.
-
-### Zoom bounds
-
-The mindmap-level surface of
-[`ZoomVisibility`](#zoomvisibility): two flat fields
-(`min_zoom_to_render`, `max_zoom_to_render`) on every renderable
-entity (`MindNode`, `MindEdge`, `EdgeLabelConfig`,
-`PortalEndpointState`). Cascade rule (replace-not-intersect),
-field semantics, and authoring shape:
-[`format/zoom-bounds.md`](./format/zoom-bounds.md). Console-verb
-authoring: `zoom min=1.5 max=3.0`, `zoom clear`, `zoom max=unset`
-against the active selection.
-
-### Border geometry
-
-Glyph-drawn frames around nodes — Unicode box-drawing
-characters laid out around the node's AABB.
-
-Borders are the visual frame that gives a node
-its "boxed" appearance. They are made of glyphs (light, heavy,
-double, rounded, or fully custom box-drawing chars), not solid
-strokes — consistent with the
-[everything-is-glyphs](#everything-is-glyphs) invariant. Borders
-also serve as anchor surfaces for portal endpoints, which sit at
-parametric positions along the border perimeter.
-
-`lib/baumhard/src/mindmap/border.rs`. The
-`GlyphBorderConfig` per-node record (in
-`lib/baumhard/src/mindmap/model/node.rs`) carries:
-
-- `preset: String` — one of `"light"` (`─ │ ┌ ┐ └ ┘`, the
-  default: `default_border_preset` in `model/node.rs` is the serde
-  default, and `resolve_border_style` in `border.rs` floors an
-  unnamed preset to the same word), `"heavy"` (`━ ┃ ┏ ┓ ┗ ┛`),
-  `"double"` (`═ ║ ╔ ╗ ╚ ╝`), `"rounded"` (`─ │ ╭ ╮ ╰ ╯`), or
-  `"custom"`.
-- `font: Option<String>` — font family override; `None` =
-  system default.
-- `font_size_pt: f32` — glyph size.
-- `color: Option<String>` — `#RRGGBB` override. `None` on a
-  node border falls through the node's theme frame color, then
-  `canvas.default_border.color`, then `style.frame_color` (the one
-  field-level tier of an otherwise slot-level cascade); `None` on
-  a section frame is the selection-highlight cyan, with no theme
-  or canvas tier.
-- `glyphs: Option<CustomBorderGlyphs>` — per-side glyph
-  overrides (top / bottom / left / right / four corners); only
-  consulted when `preset = "custom"`.
-- `padding: f32` — border-to-content gap in pixels.
-- `color_palette: Option<String>` / `color_palette_field:
-  Option<String>` — cycle a named palette's field across the border
-  glyphs instead of one flat color (`border palette=…` on the
-  console).
-
-Geometry constants (`BORDER_CORNER_OVERLAP_FRAC`,
-`BORDER_APPROX_CHAR_WIDTH_FRAC`) are shared between the
-renderer and tree builder; they must agree, or corner
-alignment drifts.
-
-Borders today only render on rectangular nodes
-(`NodeShape::Rectangle` and `style.show_frame = true`). Ellipse
-borders need shape-aware glyph layout — a named seam not yet
-implemented.
-
-### `GlyphConnectionConfig`
-
-The per-edge rendering configuration: body glyph,
-caps, font, font size, screen-space font clamps, color.
-
-Every `MindEdge` carries one. `GlyphBorderConfig`
-is to a node what `GlyphConnectionConfig` is to an edge: the
-shape of the glyphs that draw the thing. The body glyph is
-repeated along the connection path; `cap_start` and `cap_end`
-override the terminal glyphs if present. Font size is
-interpreted as the target *on-screen* size at zoom = 1.0;
-`min_font_size_pt` and `max_font_size_pt` clamp the effective
-screen-space size as the camera zooms, so a long edge stays
-readable both zoomed in and zoomed out.
-
-`lib/baumhard/src/mindmap/model/edge.rs` (`GlyphConnectionConfig`).
-Fields: `body: String` (default mid-dot `·`), `cap_start` /
-`cap_end: Option<String>`, `font: Option<String>`, `font_size_pt:
-f32`, `min_font_size_pt` / `max_font_size_pt: f32` (plain floats
-with serde defaults, not `Option`s), `color: Option<String>`, and
-`spacing: f32` (the gap between body glyphs along the path). Color
-cascade priority (highest
-first): edge-label → `glyph_connection.color` → the source
-node's frame tier (`overrides.frame`, else its palette group's
-`frame`) → `canvas.default_connection.color` → `edge.color`.
-The theme sits above the canvas default because it is per-node
-and the default is map-wide, and the frame tier is the one
-`MindMap::node_frame_theme_tier` also hands the node's border
-resolver, so a per-node frame override moves both.
-`effective_font_size_pt(zoom)` is the helper callers reach for
-to derive the clamped screen-space size.
-
-### `ControlPoint`
-
-An author-set Bézier offset on a `MindEdge`,
-expressed as an offset from a node center rather than an
-absolute canvas coordinate.
-
-Straight line-mode edges can become curved
-when the author specifies control points. Zero control points
-is a straight segment; one promotes to a cubic Bézier (via
-quadratic-to-cubic lifting); two or more define a cubic
-directly. Control points live as offsets from endpoint centers
-so a node move drags the curve along without the author
-having to re-tune the path.
-
-`lib/baumhard/src/mindmap/model/edge.rs`. Consumed by
-[connection path construction](#connection-paths), where
-`build_connection_path` converts control points from offsets
-into cubic control coordinates in canvas space.
-
-### Portals
-
-Edges with `display_mode = "portal"`: rendered as two
-glyph markers, one at each endpoint, instead of a connecting
-line.
-
-When two endpoints are far apart on the canvas,
-drawing a literal line between them is visually noisy and
-expensive (hundreds of glyphs). Portals decouple the visual link
-from the physical span: the user sees a small glyph at each end,
-recognizes them as a pair (matching color, matching text), and
-can double-click either to fly the camera to the partner.
-Portals share the underlying edge with line-mode — the only
-difference is `display_mode`.
-
-`lib/baumhard/src/mindmap/model/edge.rs`. Per-endpoint state lives
-in `PortalEndpointState`: `color`, `border_t` (parametric
-position on the owning node's border), `perpendicular_offset`
-(signed distance along the outward normal), `text`, `text_color`,
-`text_font_size_pt`, `text_min/max_font_size_pt`,
-`min/max_zoom_to_render`. The icon and the adjacent text are
-sibling leaves of the portal tree, so a click resolves to exactly
-one of them through the tree's BVH
-(`AppScene::portal_at` → `PortalHitIndex::resolve`, yielding a
-`PortalHit` that names the sub-part). A click on the icon selects
-`SelectionState::PortalLabel` (and font/color ops target the icon
-channel) while a click on the text selects
-`SelectionState::PortalText` (and ops target the text channel).
-An endpoint with no text lays its text slot out at zero extent, so
-the reserved slot cannot answer a click.
-Full reference: [`format/portal-labels.md`](./format/portal-labels.md).
-
-### Edge labels
-
-Optional text along a line-mode edge, positioned by
-parametric `t` along the path with an optional perpendicular
-offset.
-
-Edge annotations — "depends on", "blocks",
-"derived from". Line-mode only; portal edges use per-endpoint
-text instead. Labels can be dragged to reposition (native today),
-authored via the `label position_t=… perpendicular=…` console
-verb (cross-platform), and given their own zoom-window override.
-
-`EdgeLabelConfig` on `MindEdge`. Position
-encoded as `(position_t, perpendicular_offset)`. Drag computes
-both via `closest_point_on_path`. Replace-not-intersect zoom
-cascade matches portals.
-
-### Connection paths
-
-The geometric backbone of edge rendering: straight
-segments and cubic Bézier curves with anchor resolution at the
-endpoints.
-
-Given two node AABBs and optional control
-points, compute the curve along which to lay out edge glyphs.
-The same path math powers glyph placement (sample at uniform arc
-length), label drag (project cursor onto path), and hit-testing
-(distance from cursor to path).
-
-`lib/baumhard/src/mindmap/connection/`. Key
-functions: `build_connection_path` (from anchors + control
-points), `resolve_anchor_point` (auto / top / right / bottom /
-left), `point_at_t`, `tangent_at_t`, `closest_point_on_path`
-(uniform-t sampling + Newton refinement for cubics, direct
-projection for straight lines), `sample_path` (arc-length-uniform
-glyph placement), `distance_to_path`, and the pair behind the edge hit-test —
-`distance_to_path_within`, which `hit_test_edge` calls, and
-`path_bounds`, which it calls in turn. `path_bounds` is the
-control polygon's AABB, which contains the curve by the Bezier
-convex-hull property *in real arithmetic*; the f32 escape from
-that box is what `distance_to_path_within`'s slack allows for, and
-it is the reason to reach for that function rather than to compare
-against the box by hand. Quadratics get promoted to
-cubic at build time, so the apply path is always one of two
-shapes.
-
-### Portal geometry
-
-The conversion between `border_t` — a side-indexed parameter with
-period `BORDER_T_PERIOD`, one unit per side — and a canvas point on
-a rectangular node's border, plus directional defaults.
-
-Portal endpoints must sit on their owning
-node's border, parametrically — so when the node is resized, a
-label at "the middle of the right edge" stays at the middle of
-the right edge. The side-indexed encoding — each side owns one
-unit of `t`, top, right, bottom, left in that order, so the period
-is the side count — is the right abstraction: stable across resize,
-deterministic across corners.
-
-`lib/baumhard/src/mindmap/portal_geometry.rs`, where
-`BORDER_T_PERIOD` is declared.
-Functions: `wrap_border_t` (rem-Euclid into `[0, BORDER_T_PERIOD)`),
-`border_point_at`, `border_outward_normal`,
-`default_border_t` (the auto-orientation: cast a ray from owner
-to partner center), `nearest_border_t` (project a canvas point to
-the closest border parameter, used by drag-snap).
-
-### Fold state
-
-A boolean per node; folded subtrees are excluded
-from the display tree but persist in the model.
-
-Hide subtrees without losing data. The user
-can collapse a region of the map; reopening restores it. Each
-build computes the hidden set once with
-`MindMap::fold_hidden_set` (an O(N) pass) and tests membership
-per element; the tree builder passes a `parent_folded` flag down
-the recursive walk so the same cascade is checked by construction.
-One-off callers can still use `MindMap::is_hidden_by_fold`, which
-walks the parent chain at O(depth) per call.
-
-### Tree builder
-
-Projects a `MindMap` into a Baumhard
-`GfxTree` mirroring the parent-child
-structure, with each `MindNode` materializing as a three-deep
-subtree (container + section-areas + section-models).
-
-Mutations need a `Tree` to walk against. The
-tree builder constructs it from the model: each visible
-`MindNode` becomes a chrome-only container `GfxElement::GlyphArea`
-plus one `GfxElement::GlyphArea` per section (carrying the
-section's text + theme-resolved regions) plus a structural
-`GfxElement::GlyphModel` grandchild per section-area as a
-future-mutation seam. Parent-child relationships become tree
-edges; channels are preserved. Per-role sub-builders cover
-borders, portals, connections, edge labels, and edge handles,
-each producing its own tree (and matching mutator-tree) so
-per-role mutations stay scoped.
-
-`lib/baumhard/src/mindmap/tree_builder/mod.rs`. Returns a
-`MindMapTree` with `node_map: HashMap<String, NodeId>` (mind id →
-container arena id), `section_map: HashMap<(String, usize), NodeId>`
-(mind id + section index → section-area arena id), reverse maps
-for both, and an `owning_mind_id` helper that climbs up to three
-arena edges (model → section → container) to find the owning
-mind-node. Section-areas (and section-models) carry
-`Flag::SectionRoot`. Folded nodes are excluded.
-
-### Canvas-role projection
-
-Projects a `MindMap` into one `GfxTree` per
-canvas role (`CanvasRole`, eight of them) — borders, connections,
-connection labels, portals, section frames, and the three handle
-families — beside the node tree the [tree builder](#tree-builder)
-produces, which the renderer takes through its own
-`rebuild_buffers_from_tree` rather than as a role. There is no
-flat intermediate scene: the walker in
-`src/application/renderer/tree_walker.rs` is the only consumer,
-and every role reaches it as a tree.
-
-Each role file under `lib/baumhard/src/mindmap/tree_builder/`
-follows the same **courier** shape:
-
-1. a *data pass* that resolves the model plus this frame's
-   [overrides](#frame-overrides) into plain per-element data —
-   `border_node_data`, `build_connection_elements`,
-   `build_label_elements`, `portal_pair_data`,
-   `build_section_frames`, `build_selected_node_handles`,
-   `build_selected_section_handles`;
-2. a *full-rebuild projection* (`build_*_tree`) and an *in-place
-   projection* (`build_*_mutator_tree`) over that data.
-
-Which projection runs is decided by hashing the data pass's
-output, because any interaction re-runs every role: clicking an
-edge label reaches the border and portal passes too. Two
-questions, and roles that can answer both ask both. The
-*structural* signature (`border_structure_signature`,
-`portal_structure_signature`, `connection_identity_sequence`,
-`handle_identity_sequence`, …) covers only what fixes the tree's
-channel layout, and answers *can a mutator align against the
-registered arena at all?* — a color change must leave it alone,
-or a color-picker hover would reallocate the arena every frame,
-which is the cost the in-place path exists to avoid. The
-*content* signature (`border_content_signature`,
-`portal_content_signature`) covers every field either projection
-reads, and answers *is there anything left for that mutator to
-write?* On a content match the role does nothing: the registered
-tree already holds what a rebuild would produce. Completeness
-runs the opposite way for the two — a structural signature is a
-deliberate subset, a content signature that misses a field
-serves a stale frame, so each content hasher destructures its
-element type exhaustively and a new field fails to compile until
-it is accounted for. Section frames, which have no in-place
-projection, carry only the content signature
-(`section_frame_content_signature`); the connection, label and
-handle roles carry only the structural one and always apply
-their mutator.
-
-Those three still spell theirs `*_identity_sequence` and return
-a `Vec` the caller hashes through `hash_canvas_signature`, which
-is the older shape of the same idea; borders and portals were
-converted to stream into the hasher when their content
-signatures landed. The two spellings mean the same thing and the
-conversion of the remaining three is unclaimed work, not a
-distinction.
-
-Style is resolved exactly once, in the data pass; neither
-projection re-resolves it. Two inputs cross role boundaries.
-`node_clip::node_clip_aabbs` is the one the connection sampler
-clips glyph samples against; it reads only the resolved border
-`font_size_pt`. [`EdgePathCache`](#edge-path-cache) is the other:
-the sampler, the selected edge's grab-handles and the label layout
-all want the same edge's `ConnectionPath`, and it is built once per
-edge per frame for whichever of them asks first.
-
-The application layer drives the sequence through
-`CanvasFrame` (`src/application/app/scene_rebuild.rs`), which owns
-the shared per-frame inputs (the fold-hidden set, the assembled
-overrides) and exposes one `update_*` per role so a caller can
-refresh only the roles its interaction can change — a scroll-wheel
-zoom touches connections, labels, portals, and edge handles but
-never a border or a resize handle.
-
-Selection highlight, drag-preview offsets, NodeEdit dimming, and
-color-picker previews are all applied at projection time and never
-committed back to the model. Caching at the
-[`scene_cache`](#scene-cache) level reuses sampled connection
-positions when endpoints don't move.
-
-### Frame overrides
-
-`tree_builder::overrides` holds the transient, frame-local
-substitutions the projection folds on top of the committed model:
-`SceneSelectionContext` (selection plus the inline label / portal
-text editors' uncommitted buffers), `EdgeColorPreview` /
-`PortalColorPreview` (color-picker hover), `BorderPreview` (staged
-`border preview …` edits), and `InteractionModeOverrides` (the
-mode-derived resize / NodeEdit targets). `FrameOverrides` bundles
-all four; `MindMapDocument::frame_overrides` assembles one per
-rebuild so no two roles can disagree about what the user is
-pointing at.
-
-### Scene cache
-
-A per-edge cache of sampled glyph positions, keyed
-on `(from_id, to_id, edge_type)`, reused across frames when
-endpoints have not moved.
-
-Sampling a cubic Bézier path at uniform arc
-length is the most expensive per-edge work. The cache invalidates
-on endpoint drag (via the drag `offsets` map) and on zoom or
-structural change. Otherwise the previous frame's samples are reused with a
-cheap `point_inside_any_node` clip filter.
-
-`lib/baumhard/src/mindmap/scene_cache.rs`.
-
-An entry holds the sampled geometry, the endpoints it was sampled at,
-and the `SampleParams` — effective font size, glyph spacing, per-path
-sample budget — it was sampled under. It holds nothing the frame
-*draws* with, and there is no exception: body glyph, cap glyphs, font
-family, font size and body color are all read from the live model on
-every path, so no styling edit can be served stale. The two reuse
-doors, `reusable` and `reusable_mut`, compare the whole
-`SampleParams`, so a font-size or spacing edit resamples without the
-mutating site having to remember `clear()`.
-
-What the caller still owes is geometry the params cannot see, and only
-that: an endpoint that moved in the model without appearing in the
-drag `offsets` map, an anchor or control-point edit, and a node
-resize. Nothing about color is on that list — neither a theme-variable
-edit nor a direct `edge.color` edit.
-
-`refill` is the cache's only writer, and it hands the sampler the
-buffer the entry already holds rather than a new one, so an edge that
-resamples while cached allocates nothing. A refill that fills nothing
-evicts, so an entry with no points — which the reuse doors would
-otherwise serve as an edge that draws nothing, forever — cannot
-exist.
-
-Liveness is a generation stamp rather than a per-frame set of keys:
-`begin_pass` opens a pass, every route that hands out or writes an
-entry stamps it, and `evict_unseen` drops what still carries an older
-stamp. Reaching an entry *is* marking it, so a route cannot draw an
-edge and then forget to record that it saw one.
-
-### Edge path cache
-
-A per-frame memo of `ConnectionPath`s, keyed by index into
-`map.edges` and filled on first ask.
-
-Three passes want the same edge's path in one rebuild: the
-connection sampler on a scene-cache miss, the label layout for
-every labeled edge, and the grab-handles for the selected edge.
-Each used to build its own.
-
-It is **lazy** rather than precomputed, which is the load-bearing
-half: an unlabeled, unselected edge that hits the scene cache asks
-for no path and none is built. It borrows the `MindMap` and the
-drag-offset map it resolves against, so a memo cannot outlive the
-inputs it is keyed on — nothing has to remember to invalidate it.
-`CanvasFrame` owns one per rebuild and threads it through both
-connection passes.
-
-`lib/baumhard/src/mindmap/tree_builder/edge_path.rs`.
-
-### Trigger bindings
-
-Per-node and per-section bindings of input events to
-custom-mutation ids: `Trigger::{OnClick, OnHover, OnKey(String),
-OnLink(String)}`.
-
-Authoring interactive map elements without
-custom code: a button-like node fires a custom mutation when
-clicked. Each `TriggerBinding` carries `trigger`, `mutation_id`
-and `contexts: Vec<PlatformContext>` — the platform filter
-(Desktop / Web / Touch); empty means "all platforms". There is no
-separate gate type: the binding's own `contexts` field is the
-carrier.
-
-`MindNode.trigger_bindings` and `MindSection.trigger_bindings`
-(`lib/baumhard/src/mindmap/custom_mutation/mod.rs` for the types);
-dispatch lives in the application's input handlers
-(`click_triggers::fire_onclick_triggers` for `OnClick`). Missing mutation IDs are
-silent no-ops — runtime ignores rather than panicking.
-
----
+## §3 The document domain
+
+A map is a **document**: a tree of typed elements, read from and
+written to `.mandala.json` ([`format/schema.md`](./format/schema.md)),
+changed only through one writer. It lives in
+[`lib/baumhard/src/document/`](./lib/baumhard/src/document/); the full
+explainer for it is V1-E4's (#256).
+
+### Elements
+
+`DocElement` is the element type of the document's tree (a `Tree<E>`,
+§1): the map at the root, its theme, palettes and defaults, and the
+nodes — each holding its sections and their spans, its frame and its
+rings, its connector to its parent, and its links with their labels,
+caps and portal ends. Each kind is a `DocKind`. A node's channel is
+its own, a portal end's is its end, every other kind's is 0: the key a
+document mutator routes on ([`format/mutations.md`](./format/mutations.md)
+§"The document's kinds and predicate fields"). Values are typed
+(`document::values`): a color, a size or a shape is parsed once, at
+load, and nothing after load parses a string.
+
+### Ids
+
+Inside the process an element is an arena `NodeId`. In the file and on
+the IPC wire a node is its integer ident (`NodeIdent`), and every other
+element is named relative to its node — `{node, section}`,
+`{node, connector: true}`, `{node, link}` ([`format/ipc.md`](./format/ipc.md)).
+
+### The format
+
+`document::format` loads and saves `.mandala.json` strictly: every type
+the loader reads denies unknown keys, none reads an index, and a map
+written in the saver's spelling saves back to its own bytes. The
+strictness is held against the sources through `util::serde_coverage`
+(`document::tests::format_strict_tests`).
+
+### The one writer
+
+Every change is an `EditRequest` — steps of document mutations —
+applied by the writer (`document::writer`). The writer journals each
+change into the history, which is what undo and redo walk; advances
+the document's `Revision`; and records the change on the change feed,
+which the view drains once per sync and hands to the projector and to
+the IPC event stream. An interactive or animated change is a
+transaction (D28): while one is open every other change is refused,
+and the app shows the refusal on its status line. Unsaved work is
+derived — the history against the position `mark_saved` last recorded.
+
+### Projection
+
+What the document looks like is the projector's (§2, "Projection"):
+the document into the five glyph layers once at load, then updated
+from the change feed.
 
 ## §4 The mutation framework
 
-The mutation framework is the primary extensibility seam. It spans
-both crates — the AST and walker live in Baumhard, the registry
-and dispatch live in Mandala — and is the answer to "how do I add
-behavior to a mindmap without recompiling?" Everything from
-"grow font 2pt on the selected subtree" to size-aware layouts like
-`flower-layout` and `tree-cascade` flows through it.
+The engine (`lib/baumhard/src/engine/`) applies a `MutatorTree` to a
+`Tree<E>`: the walker pairs mutators with elements by key, under a
+journal, so every application can be reverted and replayed exactly.
+Two element types use it: the glyph trees (`GfxElement`, with
+`GfxMutation`) and the document (`DocElement`, with `DocMutation`).
 
-For the JSON authoring surface see
-[`format/mutations.md`](./format/mutations.md). For the
-prescriptive carrier shape see
-[`lib/baumhard/src/mindmap/custom_mutation/`](./lib/baumhard/src/mindmap/custom_mutation/).
-
-### `CustomMutation`
-
-The carrier struct: an id, name, description,
-contexts, optional mutator AST, target scope, behavior, optional
-document actions, and optional animation timing.
-
-A `CustomMutation` is one named, reusable
-operation. Authored as JSON (declarative) or registered in Rust
-(imperative); referenced by id from console verbs, trigger
-bindings, or other custom mutations. The same shape covers tiny
-deltas ("add 2pt to font") and structural algorithms
-(`flower-layout`).
-
-`lib/baumhard/src/mindmap/custom_mutation/mod.rs`. Fields: `id`
-(unique key), `name` and `description` (human-readable),
-`contexts` (taxonomy tags — see
-[contexts](#contexts-taxonomy)), `mutator` (an optional
-`MutatorNode` AST), `target_scope` (which nodes the change
-covers), `behavior` (`Persistent` or `Toggle`), `predicate` (an
-optional `Predicate` filtering the targets the scope resolved),
-`document_actions` (canvas-level operations, empty when none),
-`timing` (optional `AnimationTiming`).
-
-### Four-source loader
-
-Mutations merge from four sources at startup, with
-ascending precedence: App < User < Map < Inline.
-
-Authors at every layer can define mutations
-without stepping on each other. A bundled "grow-font-2pt" can be
-overridden by the user's personal version, which can in turn be
-overridden by a map's local definition, which can in turn be
-overridden by a single node's `inline_mutations`. The
-`MindMapDocument::mutation_sources` map records which layer won
-each id, so `mutation help <id>` can report it.
-
-`src/application/document/mutations_loader/`. Native:
-- App from `assets/mutations/application.json` via `include_str!`.
-- User from `$XDG_CONFIG_HOME/mandala/mutations.json`. The desktop
-  wrapper takes an explicit-path layer ahead of it, but the CLI
-  never fills it — `run_native_init` calls
-  `load_app_and_user(None)`, and `--keybinds` is the only config
-  flag `main.rs` parses.
-
-WASM:
-- App from the same embedded JSON.
-- User from `localStorage` (never a URL query param).
-
-Map and inline are loaded from the document on every load. Each
-layer is best-effort — a malformed entry in the user file logs a
-warning and is skipped on its own (a file that is not the
-`{"mutations": [...]}` envelope at all is skipped whole); app bundle
-failures log an error (a build-time invariant violation).
-
-The provenance of each merged mutation is tracked in
-`MindMapDocument::mutation_sources` as a `SourceTier`
-(`src/application/source_tier.rs` — the same four-rung
-`App` / `User` / `Map` / `Inline` ladder the macro registry
-resolves against), so
-`mutation help <id>` on the console can report which layer
-won a given id.
-
-### Declarative path — `MutatorNode` AST
-
-A pure-data AST that compiles to a
-`GfxMutatorTree` and runs through the standard tree
-walker.
-
-Any mutation expressible as a tree of
-field-level deltas with control-flow instructions belongs here.
-This is the default: write JSON, the runtime walks it. The AST
-shape mirrors `Mutator` — `Void`, `Single`, `Macro`,
-`Instruction` — plus a `Repeat` wrapper for "N consecutive
-children at consecutive channels with the same template" (the
-flower-petal pattern, etc.).
-
-`build(ast, context)` in `lib/baumhard/src/engine/builder/build.rs`
-walks the AST recursively — over the mutator AST alone, never a
-target tree, and an AST read from JSON nests no deeper than
-`serde_json`'s default recursion limit lets it: 127 nested objects
-and arrays, three per AST level, so 42 levels, pinned by
-`test_builder_ast_from_json_nests_no_deeper_than_serde_json_allows`.
-A mutator spelled some other way — flat, as D30 spells nodes — would
-need a bound of its own (R15 Q4) before it lands — expands `Repeat` to N children with
-incrementing channels, resolves `Runtime("<label>")` holes and
-per-iteration `Template`s via the `BuildContext`, and returns a
-fully-inflated `MutatorTree` — or a `BuildError` for a shape no
-mutator tree can express. The
-walker then applies it via `apply_to`. After application, changed
-elements are synced back to the model so the change persists across
-the next scene build.
-
-### Imperative path — `DynamicMutationHandler`
-
-A registered Rust function pointer the dispatcher
-calls directly when the AST is too narrow.
-
-Some operations are inherently imperative —
-arbitrary BFS layouts, multi-pass spatial algorithms, anything
-that needs runtime control flow the walker doesn't provide. The
-handler registry lets them live as Rust functions registered at
-startup, with the same `id`/contexts/target-scope surface as a
-declarative mutation.
-
-`src/application/document/mutations/`. Built-in handlers:
-- `flower_layout.rs` — radial child arrangement.
-- `tree_cascade.rs` — hierarchical cascading layout.
-
-`register_builtin_handlers()` wires them at startup. Adding a new
-handler is: new module, new function, new registration call, new
-matching id in `assets/mutations/application.json`.
-
-When a higher-precedence layer (User / Map / Inline)
-declares the same id as a registered handler, **the declarative
-mutator wins**. The handler is bypassed. This prevents a subtle
-hijack where a user's JSON would silently invoke imperative code
-they did not author.
-
-### Target scopes
-
-Seven variants telling the dispatcher which nodes the
-mutation covers — also used as the snapshot window for undo.
-
-A mutation declares "I touch this node only" or
-"I touch this node and all its descendants" and the dispatcher
-both walks the right subtree and snapshots the right set for
-undo. The undo-snapshot equivalence is the load-bearing detail:
-if a mutation's `target_scope` is too narrow, undo will not
-fully reverse it.
-
-Variants: `SelfOnly`, `Children`,
-`Descendants` (not the anchor), `SelfAndDescendants`, `Parent`,
-`Siblings` (the anchor's siblings, excluding itself — a root has
-none, since "sibling" means "shares my parent" and the other
-roots of a multi-root map do not), `SectionsOnly` (the anchor's
-section-areas; the anchor `MindNode` is still the snapshot
-window). Scope helpers in `custom_mutation::scope` produce
-matching `MutatorNode` shapes for the AST walker.
-
-The scope resolves to a target set and the mutator is anchored at
-**each target in turn**, so a pairing has complete undo coverage
-only when that set is closed under the mutator's reach. Only the
-two descendant scopes are; every other scope needs a mutator that
-touches its anchor alone. `TargetScope::covers_reach` encodes that
-table and `warn!`s on a mismatch — see `format/mutations.md`.
-
-Closure is about undo coverage alone, not about how often the
-payload lands. Per-target anchoring runs a wider-than-`SelfOnly`
-mutator once per ancestor target, so a `SelfAndDescendants` scope
-paired with a `Descendants` reach writes a node at depth *k*
-*k + 1* times — covered by the snapshot, but compounding for a
-non-idempotent payload. The flat-apply path applies once per
-target and so avoids this today.
-
-### Behaviors — `Persistent` vs. `Toggle`
-
-Whether the mutation commits to the model and pushes
-an undo entry (`Persistent`) or only modifies the display tree
-and remembers itself in `active_toggles` (`Toggle`).
-
-Some mutations are "apply and remember"
-(persistent — visual change, undo coverage); others are
-"reversible inspection" (toggle — visual change without model
-commit, second trigger reverses). Toggles are the right shape
-for "highlight this", "expand this preview", "show debug
-overlay".
-
-Persistent: snapshot affected nodes, apply,
-sync back, push undo. The sync-back
-(`document/custom/sync.rs::sync_node_from_tree`) persists node
-position, section offset / size / text / color+font runs, and
-**font size** (the tree-side `scale` is distributed back across a
-section's run `size_pt` values as a delta, preserving relative
-run sizing); line-height is derived (`scale * LINE_HEIGHT_FACTOR`,
-`tree_builder/node.rs`) so it needs no separate home. Fields with no reverse converter (outline, shape,
-zoom-visibility, line-height) are `warn!`-flagged at apply time
-rather than silently applied-then-reverted. The undo entry and the
-`dirty` flag are gated on the sync-back reporting an actual model
-change, so a no-op apply (predicate filtered everything, non-flat
-mutator skipped, or a mutation that changed nothing) leaves no
-dead entry behind. Toggle: apply to tree only, insert
-`(node_id, mutation_id)` into `MindMapDocument::active_toggles`;
-on second trigger from the same anchor, remove the pair (undo
-stack gets no entry — re-triggering is the reverse). Because a
-rebuild projects the tree from the model and toggles never touch
-the model, `build_tree` re-stamps every active toggle
-(`reapply_active_toggles`) after each rebuild — without that
-re-application a toggle-on's visual would die at the end of the
-same dispatch and have nothing left to reverse.
-
-### Contexts taxonomy
-
-Dotted-namespace tags describing what a mutation
-operates on: `"internal"`, `"map"`, `"map.node"`, `"map.tree"`,
-plus the reserved `"plugin.<name>.<kind>"` namespace.
-
-The console's `mutation list` filters by
-context so users see only mutations relevant to their current
-selection. `"internal"` hides a mutation from listing entirely
-(used by handlers that compose into other mutations). The
-plugin namespace is the home of future plugin-authored
-mutations.
-
-`matches_context(query)` returns true if the
-mutation's `contexts` include `query` exactly or sit inside its
-dotted prefix; `matches_context("map")` hits both `"map.node"`
-and `"map.tree"`.
-
-### `PlatformContext`
-
-A three-variant enum — `Desktop`, `Web`, `Touch` —
-threaded through mutation handlers and trigger-binding filters
-so an authored mutation can branch on where it's running.
-
-Some operations should behave differently per
-target — a layout that reflows narrower on mobile, a trigger
-binding that only fires on Desktop. `PlatformContext` is the
-channel for that distinction, distinct from the dotted-namespace
-"contexts" taxonomy above (which describes *what* the mutation
-operates on).
-
-Defined in
-`lib/baumhard/src/mindmap/custom_mutation`. Today the variant is
-chosen at compile time (`Desktop` on native, `Web` on WASM,
-through `app::PLATFORM_CONTEXT`); the `Touch` variant exists but
-no input path dispatches on it yet — including the tap path,
-which reports the build's platform like every other input.
-Relabeling a gesture would silently stop every `["Web"]`-gated
-trigger from firing under a finger in the browser, so which
-platform a build *is* stays a build fact until the authoring
-format decides otherwise (`format/mutations.md`).
-Carried as `TriggerBinding.contexts: Vec<PlatformContext>` (see
-[trigger bindings](#trigger-bindings)) so a binding can declare
-which platforms it fires on; empty means all of them.
-
-### Document actions
-
-Canvas-level operations a mutation can carry
-alongside (or instead of) its tree mutations:
-`SetThemeVariant(name)`, `SetThemeVariables(map)`.
-
-"Switch the theme" is not a per-node delta —
-it touches `canvas.theme_variables`. Document actions cover that
-seam. They run alongside the tree mutation; a single mutation
-can both restyle nodes and switch the theme in one apply.
-
-`lib/baumhard/src/mindmap/custom_mutation/mod.rs` (`DocumentAction`,
-`#[non_exhaustive]` so the macro dispatcher's privilege carve-outs
-must grow with it — see [Action dispatch](#action-dispatch)).
-`SetThemeVariant` copies a named preset from
-`canvas.theme_variants` into the live `theme_variables`;
-`SetThemeVariables` overwrites individual entries while
-preserving unmentioned keys.
-
-### Animation timing
-
-Optional duration / delay / easing wrapper around
-any mutation, turning instant application into a clock-driven
-interpolation.
-
-A "grow font" that snaps is fine; one that
-animates over 300ms reads better. The timing wrapper lets a
-declarative mutation carry that timing without authoring an
-animation by hand. The dispatcher starts an `AnimationInstance`
-that ticks each frame, blends the in-flight state, and commits
-on completion.
-
-`lib/baumhard/src/mindmap/animation.rs` — reached as the `timing`
-field on `CustomMutation`. Fields:
-`duration_ms`, `delay_ms`, `easing` (`Linear` / `EaseIn` /
-`EaseOut` / `EaseInOut`), and a reserved `then` (`Followup`)
-slot. The app-side `AnimationInstance` that ticks it lives in
-`src/application/document/types.rs`.
-
-`Followup::{Reverse, Chain, Loop}` is named but not
-yet wired. When it lands, mutations will compose into chains
-and oscillations without scripting.
-
-### Runtime holes — `BuildContext`
-
-A trait the host implements to feed runtime values
-into a `MutatorNode` AST at build time.
-
-Some mutations need values the AST can't
-inline — the count of currently-visible children, the cursor
-position when invoked, a field looked up from the selected
-node. `MutationSrc::Runtime("<label>")`,
-`MutationListSrc::Runtime("<label>")` and
-`CountSrc::Runtime("<label>")` defer those holes to a
-`BuildContext` registered per-mutation-id, and a
-`MutationSrc::Template` is resolved by it per `Repeat` iteration;
-the builder consults it as it walks. Pure-data mutations (no holes)
-use `NoRuntime`, the context that supplies nothing.
-
-`lib/baumhard/src/engine/builder/context.rs`. `BuildContext<E, M>`
-has four methods: `count(&self, name) -> usize`,
-`mutation(&self, label) -> M` and `mutation_list(&self, label) ->
-Vec<M>` have default bodies that `unreachable!` rather than return a
-placeholder, because a hole the AST names and the context does not
-fill is an authoring error, not a runtime value; `resolve(&self,
-section, index, template) -> M` has none, because what a template
-means is the payload's to say. A glyph context resolves a
-`Vec<CellField>` template into an `AreaDelta` with the helpers in
-`gfx_structs/template.rs` — from a pre-built `GlyphArea` per cell
-(`resolve_from_area`), or field by field on a hot path
-(`area_delta_from_template`). Custom mutations register their
-context at apply time so the build produces the right concrete
-tree.
-
----
+The glyph vocabulary — commands, deltas and glyph-run mutations — and
+the `MutatorNode` AST that carries it, with runtime holes a
+`BuildContext` fills, are kept (D24) and published in
+[`format/mutations.md`](./format/mutations.md). Nothing in a
+`.mandala.json` holds a glyph mutation today: the authored carrier is
+the **edit** (V1-D1, #250), and presentations are V1-D2's.
 
 ## §5 The application runtime
 
@@ -3082,12 +1812,11 @@ and where a frame comes from.
 `src/application/app/run_native_init.rs` holds `InitState` and
 `build`; `run_native.rs` and `run_headless.rs` the two drivers.
 `InitState` carries the `shell` (the window or none, `app/shell.rs`),
-the renderer, a `document: Option<MindMapDocument>`, the
-`mindmap_tree` the tree builder projects from it (an
-`Option<MindMapTree>` — the tree is app state, not document state),
-`app_scene` and `scene_cache`, `drag_state`, `interaction_mode`,
-modal UI state (console, node text editor, single-line editor, color
-picker), `picker_hover`, the resolved keybind table and macro
+the renderer, a `document: Option<MindMapDocument>`, its `view`
+(an `Option<MapView>`: the projection and the glyph layers — view
+state, not document state), `app_scene`, `drag_state`,
+`interaction_mode`, modal UI state (console, color picker), the
+resolved keybind table and macro
 registry, the touch recognizer, and the clock, recorder, injected
 queue, watchdog and redraw ledger the IPC surface reads. Its `input_context()` produces a borrowed view of these
 fields per event so handlers can borrow disjoint subsets without
@@ -3111,25 +1840,15 @@ startup logged it and drew an empty canvas. Behind a double-click
 there is no terminal, so that log line did not exist for the person
 holding the file (#107).
 
-A placard is an ordinary one-node `MindMap`
-(`lib/baumhard/src/mindmap/placard.rs`) whose text is the headline,
-the path or URL that was asked for, the loader's message in full,
-and a line confirming nothing was written. Because it is a map, it
-reaches the screen through the same tree projection as any other
-document (§1 "Everything is glyphs") — no second pipeline, no
-renderer pass, and nothing that needs a GPU to test. The message is
-wrapped with `grapheme_chad::wrap_to_display_width`, so a path
-containing an emoji folds without shattering.
-
-"In full" has one bound, and it is not stylistic: a loader message
-is as long as the file makes it, because serde quotes an offending
-JSON string back verbatim. So the source and the message are each
-elided in the *middle* — both ends kept, a one-line notice between
-— past `PLACARD_HEAD_CLUSTERS + PLACARD_TAIL_CLUSTERS`. Nothing the
-loader realistically emits comes near that (the longest, a 400-node
-parent-cycle report, is 56 wrapped lines), and the budget is what
-keeps the placard a map the loader itself accepts: unbounded, a
-4 MB message asks for a node twice as tall as `MAX_NODE_AXIS`.
+A placard is an ordinary one-node document
+(`MindMapDocument::load_failure_placard`) whose text is the headline,
+the path or URL that was asked for — on a line of its own unless the
+message already names it (`document/placard.rs`) — and the loader's
+message. Because it is a document, it reaches the screen through the
+same projection as any other document (§1 "Everything is glyphs") —
+no second pipeline, no renderer pass, and nothing that needs a GPU to
+test. It is bound to no file, so a reflexive save cannot overwrite
+the file that failed to load.
 
 `src/application/app/startup_load.rs` is the decision. Each init
 path has one entry — `native_startup_document` and
@@ -3159,553 +1878,64 @@ one.
 
 ### Event loop and `drain_frame`
 
-The per-frame heartbeat: land one injected-input sample, drive the
-throttled drag and the picker hover, re-derive the rubber band,
-rebuild camera-driven geometry, tick animations (`animation_drain`,
-the body the browser's frame runs too). It does **not** render — the
-frame is drawn from winit's `RedrawRequested` (or the headless
-driver's owed-frame check), never from the drain.
+The per-frame heartbeat: land one injected-input sample, re-derive the
+rubber band, and sync the view with the document. It does **not**
+render — the frame is drawn from winit's `RedrawRequested` (or the
+headless driver's owed-frame check), never from the drain.
 
-Inputs arriving between frames mutate the document; the
-throttled-interaction shells and the renderer's
-connection-geometry flag ensure the drain rebuilds only what
-changed. This decouples mutation frequency (often per-input-sample)
-from rebuild frequency (at most once per frame), so a flurry of
-pointer events doesn't trigger a flurry of scene rebuilds. Scene
-rebuilds after a *mutation* are not the drain's business at all:
-they run at their call sites (`rebuild_all` and its tiers, see
-[scene rebuild granularity](#scene-rebuild-granularity)), and the
-[dirty flag](#dirty-flag) is the unsaved-changes marker, not a
-rebuild trigger.
-
-`src/application/app/heartbeat.rs` holds the frame:
-`InputHandlerContext::drain_frame(beat)` lands the injected sample
-and calls `drain_inputs`, whose body is the drain. Two of its steps
-are the helpers in `src/application/app/drain_frame.rs` (native-only,
-like the drag state they read); the animation tick is
-`animation_drain::drain_animation_tick` in
-`src/application/app/animation_drain.rs`, which is not native's alone
-— the browser's frame (`run_wasm/event_redraw_requested.rs`) runs the
-same body from `RedrawRequested` since #144; the rest are inline. It
-is called once per iteration of the loop body both
-native drivers run (`pump::iterate` in `app/pump.rs`, see
-[Headless driver](#headless-driver)) — winit's `about_to_wait`, or
-the headless pump's pass. Step order, as the code runs it:
-
-1. Land one injected-input sample from the IPC queue
-   (`apply_injected`), delivered to the same `on_*` arm the winit
-   event would reach — in real time, or on a step's heartbeat.
-2. Drive the active throttled drag, if any
-   ([`ThrottledInteraction::drive`](#throttledinteraction-and-throttleddrag)):
-   drain the pending delta if the throttle says so.
-3. Drive the picker-hover interaction while the picker is open
-   (`ColorPickerHoverInteraction::drive`); if the picker closed with
-   a drain still queued, clear the pending flags directly rather
-   than strand them behind the throttle window.
-4. `drain_rect_select` — unconditional, every frame, so the rubber
-   band's overlay and covered set are re-derived from whatever
-   `DragState` is found (see [`DragState`](#dragstate)).
-5. `drain_camera_geometry_rebuild` — the camera-driven re-projection
-   of the zoom-dependent roles, under the renderer's
-   `connection_geometry_dirty` flag, suppressed while a node is
-   being moved.
-6. Animation pause/resume bookkeeping around tree-mutating drags
-   (native's alone: there is no drag to pause for without a drag
-   state), then `animation_drain::drain_animation_tick` — advance
-   running animations, commit on completion (an undo entry is pushed
-   there) — when the frame moves time and no tree-mutating drag is
-   live.
-
-What the loop body does *around* the drain is `pump::iterate`'s
-business and is pinned by its tests: the IPC drain runs after
-`drain_frame`, the recorder's `record_tick` after that, then the
-redraw request, the FPS overlay's idle flip, the `clock.wait`
-evaluation and the exit check. On native, `Renderer::process` — the
-GPU half — runs only through `InitState::draw_frame`, which the
-`RedrawRequested` arm in `run_native.rs` calls, and which
-`run_headless.rs` calls when the redraw ledger (`app/settle.rs`)
-says a frame is owed; the FPS counter ticks there, not here.
-
-**Two halves.** Steps 2 through 5 are *input-driven*: they flush
-what input already did and need no clock. The *time-driven* half —
-the injected sample of step 1, the animation tick of step 6, and an
-active recording's frame after the IPC drain — is a function of when
-the frame runs, read off the [app clock](#app-clock). In real time
-every iteration runs both. Under a virtual clock the loop's own
-iterations (`Beat::Loop`) run the input-driven half only, and
-`clock.step` runs the whole frame at the virtual instants it names —
-a heartbeat every `HEARTBEAT_MS` (`Beat::Cadence`) and every frame
-boundary of a running recording (`Beat::Boundary`, which lands no
-injected sample) — ticking the watchdog per heartbeat. The frame is
-a method set on `InputHandlerContext` rather than on `InitState`,
-with the input arms (`on_*`) beside it, so a `clock step` console
-line runs the very frame the IPC command does.
+`InputHandlerContext::drain_frame(beat)` lands the injected sample and
+runs the drain; `src/application/app/drain_frame.rs` holds the rubber
+band (native-only, like the drag state it reads). The view's sync
+(`MapView::sync`) is the one place the document reaches the screen: it
+drains the change feed once, updates the projector, re-stamps the
+selection tint and hands the journals to the layer renderer, with the
+background and the status line. A pan or a zoom is a camera change and
+applies nothing. The browser's frame
+(`run_wasm/event_redraw_requested.rs`) runs the same sync.
 
 ### `MindMapDocument`
 
-The data plane: owns the `MindMap`, the selection, the undo stack,
-the running animations, the mutation registries, and the transient
-previews the projection reads.
+The app's handle on the open map: the document, and the app state that
+is about it.
 
-This is where every persistent piece of state
-lives. It is the only owner of the model and the undo stack; the
-renderer reads from it, never mutates. The dirty flag belongs to
-it. Transient previews (live color picker, in-flight label edit,
-in-flight portal-caption edit) belong to it too — read by the scene
-builder, never committed back without an explicit step.
-
-`src/application/document/mod.rs` (`struct MindMapDocument`). Its
-seventeen fields, in declaration order: `mindmap: MindMap`,
-`file_path`, `dirty: bool`, `load_failure: bool` (this document *is*
-the [load-failure placard](#load-failure-placard), which a one-shot
-`--screenshot` launch reads so it does not capture the placard as the
-map), `revision`
-(see [document revision](#document-revision)), `selection:
-SelectionState`, `undo_stack: Vec<UndoAction>`,
-`mutation_registry`, `mutation_sources`, `mutation_handlers`,
-`active_toggles`, `active_animations`, `label_edit_preview`,
-`portal_text_edit_preview`, `color_picker_preview`,
-`border_preview`, and `rect_select_preview` (the node ids a
-rubber-band rectangle currently covers — see
-[`DragState`](#dragstate)). What it does **not** own: the projected
-tree (`InitState::mindmap_tree` on native,
-`WasmInputState::mindmap_tree` in the browser — a view the tree
-builder derives from the model, rebuilt rather than kept in step),
-the renderer, GPU resources, drag/mode state, modal editor state,
-keybinds — those are all on `InitState`.
-
-### `SelectionState`
-
-A tagged union of what the user has selected:
-nothing, a node, multiple nodes, one section of one node, an
-edge body, an edge label, a portal icon, or a portal text.
-
-Selection variants are mutually exclusive by
-construction — at most one thing is selected at a time. The
-variant tag is the routing key for everything operating on the
-selection: which clipboard channel a copy goes through, which
-color field a color command sets, which font field a font
-command sets. The renderer uses it to apply the cyan highlight
-to the right element.
-
-`src/application/document/types.rs`. Variants:
-
-- `None`
-- `Single(node_id)` — one node
-- `Multi(Vec<node_id>)` — multiple nodes
-- `Section(SectionSel)` — one [`MindSection`](#mindsection) of
-  one node, identified by `(node_id, section_idx)`. Surfaces
-  when the user clicks on a section-area in a *multi-section*
-  node (single-section migrated nodes still route through
-  `Single` so today's whole-node verbs keep firing on the whole
-  node target). Per-section setters cover text
-  (`set_section_text`, `set_section_text_and_runs`,
-  `set_section_text_preserving_runs`), color
-  (`set_section_text_color`), font (`set_section_font_size`,
-  `set_section_font_family`), position + size
-  (`set_section_offset`, `set_section_size`), the
-  structured-clipboard payload (`apply_section_payload`), and —
-  added in Batch 5 — structural mutators that change the
-  `sections` vector length: `add_section` (insert with AABB
-  validation against the parent), `delete_section` (remove
-  with the "≥1 section per node" invariant enforced), and
-  `split_section` (split text at a grapheme boundary; runs
-  partitioned via `text_run_ops::slice`). The trait dispatcher
-  and the `section …` console verbs route here from a
-  `SelectionState::Section`, or from `Single(id)` on a
-  single-section node (which §4.5 rule 3 auto-resolves to
-  `(id, 0)`).
-- `MultiSection(Vec<SectionSel>)` — two or more sections,
-  possibly across distinct nodes. Built by shift+click on a
-  section while another section (or section-set) is selected;
-  each shift+click toggles the targeted section in / out of the
-  set. Per-section verbs (color text, font size / family) fan
-  out via `selection_targets` and apply to every section in the
-  set. Per-section gestures (drag-to-move, drag-to-resize) stay
-  single-target — a `MultiSection` selection emits no resize
-  handles, and a press on a section in the set **demotes** the
-  selection down to `Section(node, idx)` at threshold-cross so
-  mid-drag picker hints + per-section verbs reflect the
-  in-flight gesture's actual target rather than the prior
-  multi-set. Whole-node move and node-resize gestures demote
-  the same way (to `Single(node)`). The `section
-  move` / `section resize` verbs target the single-section
-  selected (or take an explicit `section=K` kv); `MultiSection`
-  is fan-out-only at the trait dispatch layer.
-- `SectionRange { sel, section_span, grapheme_range }` — one
-  anchor section plus the two range meanings a section-scoped
-  selection can carry, each in its own newtype so they can never
-  share a slot again (#47 part C): `section_span: SectionSpan` is
-  an inclusive span of **section indices** on the owning node
-  (what border / style verbs fan out over, and what
-  `cleanup_after_structural_mutation` clamps), and
-  `grapheme_range: GraphemeRange` is a half-open sub-range of the
-  anchor section's **grapheme clusters** (what the range-aware
-  setters `set_section_text_color_range`,
-  `set_section_font_size_range`, `set_section_font_family_range`
-  and the range-aware clipboard cut / paste consume). Produced by
-  the inline text editor's shift-select anchor on close: the
-  editor lifts the (anchor, cursor) pair into `grapheme_range`
-  with `section_span` covering just the anchor section. Accessors
-  that only care about the owning section (`selected_section`,
-  `is_selected`, `selected_ids`) treat it identically to
-  `Section`. **Clipboard contract:** `Cut` and `Paste` are
-  range-aware — cut removes the in-range graphemes and returns
-  them as text; paste splices into the range; `Copy` falls
-  through to whole-section copy because the structured payload's
-  geometry belongs to the whole section. **Picker contract:**
-  `ColorTarget::Section` and `PickerHandle::Section` carry the
-  grapheme sub-range, so commit calls
-  `set_section_text_color_range` directly (bypassing the
-  `MultiSection` fan-out — different sections' lengths make
-  cross-section sub-range semantics incoherent).
-- `Edge(EdgeRef)` — the whole edge body
-- `EdgeLabel(EdgeLabelSel)` — the text label of a line-mode edge
-- `PortalLabel(PortalLabelSel)` — a portal endpoint icon
-- `PortalText(PortalLabelSel)` — a portal endpoint text
-
-The four edge-adjacent variants (`Edge`, `EdgeLabel`,
-`PortalLabel`, `PortalText`) each route to a different
-clipboard / color / font channel: copy on a `PortalLabel` reads
-the icon color; copy on a `PortalText` reads the text color;
-font commands write to the corresponding field group.
-
-### `EdgeRef`
-
-The `(from_id, to_id, edge_type)` triple that
-identifies an edge.
-
-Edges have no stable id (§3:
-[`MindEdge`](#mindedge)), so selection, undo entries, and
-console arguments all carry this triple. Equality and lookup are
-by triple match against the model's `Vec<MindEdge>`.
-
-`src/application/document/types.rs` (`EdgeRef`). The `matches`
-method walks the edge vector linearly; this is fine because
-edges are sparse and the lookup happens at user-event frequency,
-not in hot loops.
+`src/application/document/mod.rs`. It holds the baumhard `Document`
+(the elements, the writer, the history and the change feed), the file
+it is bound to, the selection (a set of element ids), the open
+transaction's handle and the status line a refused change left (D28),
+and whether it is the [load-failure placard](#load-failure-placard).
+What it does **not** own: the view of it (`MapView`,
+`src/application/view/` — the projector and the glyph layers), the
+renderer, drag and mode state, modal editors and keybinds; those are
+on `InitState`.
 
 ### `InteractionMode`
 
-The single cross-platform interaction-mode enum that absorbed
-the pre-redesign `AppMode` (Reparent / Connect) plus the new
-Resize / NodeEdit modes the section-borders-resize PR added.
-Five variants today: `Default` / `Reparent { sources }` /
-`Connect { source }` / `NodeEdit { node_id }` / `Resize {
-target }`.
+What the user is doing at the canvas level. One variant today,
+`Default` — a click selects, a drag pans, Shift+drag draws a rubber
+band. The resize and node-edit modes return with V1-C7 (#248) and
+V1-C8 (#249), and reparent and connect with V1-C4 (#245); until then
+their Actions answer `unhandled`, naming their owner.
 
-Some user actions take two clicks (select a source, then click
-a target); some put the canvas into a sub-context where chrome
-and click-routing diverge (resize handles / per-section frames).
-`InteractionMode` is the modal substrate for both shapes — what
-the user is *doing right now*.
-
-- `Default` — normal canvas navigation. Click selects, drag
-  pans, edges snap.
-- `Reparent { sources }` — the next left-click on a node
-  attaches `sources` as its last children; left-click on empty
-  canvas promotes them to root; Esc cancels. Triggered by
-  `Ctrl+P` (`enter_reparent_mode`) on a selection.
-- `Connect { source }` — the next left-click on a target node
-  creates a `cross_link` edge from `source`; left-click on
-  empty canvas cancels. Esc also cancels. Triggered by `Ctrl+D`
-  (`enter_connect_mode`) on one node.
-- `Resize { target }` — chrome shows resize handles on the
-  target (a `ResizeTarget::Node(id)` or
-  `ResizeTarget::Section { node_id, section_idx }`). Drag a
-  handle to resize; Esc returns to `Default`. Triggered by `r`
-  keybind on a selectable AABB or by `mode resize`. Touch peer:
-  `LongPress` — deliberately native-only, see
-  `TouchGestureRecognizer` below.
-- `NodeEdit { node_id }` — chrome dims sibling nodes and frames
-  the active node's sections in cyan. Click a section to lift
-  it into a `Section` selection; Enter (or `section edit`)
-  opens the inline text editor on the active section. Esc /
-  outside-click returns to `Default`. `EnterNodeEdit` and
-  `EnterNodeEditClean` ship **unbound** (`enter_node_edit: []`), so
-  the mode is reached through `mode node-edit` / `node edit` on the
-  console or a binding the user adds.
-
-`src/application/app/interaction_mode.rs`. The enum is cross-
-platform (compiles + the field plumbs through `InitState` /
-`WasmInputState`); several entry-point Actions
-(`EnterResizeMode`, `EnterNodeEdit{,Clean}`, `EnterSectionEdit`,
-`FastResizeStart`) are NativeOnly today because they depend on
-the cursor-driven modal-stealer + DragState machinery that's
-native-gated — the `LongPress` touch default dispatches the same
-NativeOnly `EnterResizeMode` and so reports `Unhandled` on WASM,
-where a one-shot warn names it rather than the gesture vanishing.
-That one is a deliberate posture, not a pending port; the rest of
-the touch vocabulary (tap, one-finger pan, pinch) reaches no
-`Action` at all and works on both targets. See
-`TouchGestureRecognizer` below.
-Modal-stealer cascades route keystrokes per active mode (the
-keybind resolver keys on `(InputContext, key)` and the modal
-stealer can intercept e.g. Esc before normal dispatch).
-
-The console verbs `mode resize` / `mode node-edit` /
-`mode default` ride the same surface; `section edit
-[section=<idx>]` and `node edit` are sugar over the
-mode-flip + side-effect handler.
-
-See `work_plans/SECTIONS_BORDERS_RESIZE_PLAN.md` §2 for the design
-problem this lifted, and §3-§4 for the resize / node-edit
-mode UX. Plan §1 captured the three problems the
-`InteractionMode` enum unified (the consolidation of the
-pre-redesign `AppMode` into this enum is one of those).
+`src/application/app/interaction_mode.rs`.
 
 ### `DragState`
 
 The drag state machine: `None` / `Pending` / `PendingRight` /
-`Panning` / `SelectingRect` / `Throttled(ThrottledDrag)`.
+`Panning` / `SelectingRect`.
 
-Mouse-down does not commit to a drag yet —
-the user might be clicking, or might be about to drag. `Pending`
-captures everything the cursor was over at button-down
-(`PendingRight` is its body-only right-button counterpart); once
-movement crosses the drag threshold, the state transitions to
-`Panning` (empty space), `SelectingRect` (Shift+drag on empty
-space), or one of the seven `ThrottledDrag` variants depending
-on what was hit.
+Mouse-down does not commit to a drag yet — the user might be clicking,
+or might be about to drag. `Pending` holds the press's position and
+what it hit (`ClickHit`: an element, or empty canvas, through
+`Projector::hit`); `PendingRight` is its right-button counterpart.
+Once movement crosses the drag threshold the state becomes `Panning`
+or, with Shift on empty canvas, `SelectingRect` — the rubber band,
+whose covered set is `Projector::nodes_in` of the rectangle and which
+the selection highlight tints while it is out. Drags that move or
+resize document elements return with V1-C7 (#248), on writer
+transactions.
 
-`Pending` and `Throttled` carry boxed payloads, so `DragState`
-itself is 64 bytes rather than the 912 the widest variant used to
-impose on every state — including the `None` that is live for all
-but a few seconds of a session. `PendingRight`, 64 bytes, is the
-widest variant left and stays unboxed. Those three figures are the
-ones the comment on `DragState::Pending` in `app/mod.rs` records
-from the pass that boxed the two; no `size_of` assertion pins them,
-so read them as that comment's measurement rather than as a checked
-invariant.
-
-**`SelectingRect` splits its per-frame work in two, and only one
-half runs every frame.** The overlay rectangle tracks the pointer
-and is redrawn unconditionally. The covered-node preview is
-memoized: `drain_rect_select` hit-tests against the *installed*
-tree (a rubber-band drag mutates nothing, so its geometry is
-current) and repaints only when `set_rect_select_preview` reports
-the covered set actually moved. The set itself lives on
-`MindMapDocument` beside the other transient previews, so every
-rebuild path paints it — including the animation tick's, which
-runs after this drain in the same frame and used to wipe a preview
-stamped onto a tree the drain had built for itself. Before #37 the
-drain ran `doc.build_tree()` plus a full text-buffer rebuild on
-every frame of the gesture, under a comment calling it a
-"lightweight overlay redraw".
-
-**The variant is the authority; both artifacts are its
-projection.** Because the covered set is document state that every
-node-tree rebuild reads, a gesture that ended without it being
-dropped leaves the whole canvas painting a rectangle the user let
-go of — and `SelectingRect` has more ways out than the left-release
-arm that used to be the only one dropping it (a left press
-overwrote it with `Pending`, `Action::PanCanvas` with `Panning`,
-and a target-picker mode swallowed the release entirely). So the
-drain runs on *every* frame, not only the gesture's, and
-re-derives the overlay rectangle and the covered set from the drag
-state it finds; the two eager calls that remain (the release arm,
-the target-picker mode entries) exist only so the rebuild they run
-in the same breath does not paint the set one last time. Nothing
-has to enumerate the exits, so a new one cannot strand it.
-
-One consequence of hit-testing the installed tree is worth naming:
-the drain runs *before* the animation tick in the same frame, so a
-node an animation is advancing is hit-tested one tick behind where
-it is drawn. The window is a single frame and only opens while an
-animation and a rubber band are live at once; closing it would
-mean either ordering the animation tick first (which would make
-the rectangle lag the pointer) or going back to a per-frame arena
-build.
-
-`src/application/app/mod.rs`. Native-only today.
-
-**Hit priority, in the three parts it actually has.** The line
-that used to sit here read "edge handle > portal label > edge
-label > node, so small grab-areas always win over larger AABBs",
-and it was wrong in both clauses. What is true:
-
-- **Capture, at button-down.** One chain runs, `compute_click_hit`,
-  and it gives the *node* priority: a portal hit is resolved only
-  when no node was hit, an edge-label hit only when neither was.
-  `portal_label_drag_capture` then arms the portal drag on the
-  same condition. So a marker or a label sitting over a node
-  loses the press to the node — on the drag path and the click
-  path alike, because there is one chain and the drag reads its
-  answer. A larger AABB in front wins.
-- **Capture, outside that chain.** The press also runs three
-  handle hit-tests that never consult `hit_node`, each gated on
-  state instead: `hit_edge_handle` on the selection being
-  `SelectionState::Edge`, `hit_node_resize_handle` on
-  `InteractionMode::Resize { Node }`, and
-  `hit_section_resize_handle` on `Resize { Section }`. Handles
-  are what the mode or the selection *is for*, so a press near
-  one is read as aimed at it whatever the chain says.
-- **Promotion, at threshold-cross.** `event_cursor_moved.rs`
-  consumes the captured hits in the order node-resize-handle →
-  section-resize-handle → edge-label → portal-label → edge-handle
-  → section-move → node-move → Shift-rect-select → pan
-  (`Grab::PRECEDENCE`). Between the two label hits this order
-  decides nothing, since the capture rule above leaves at most one
-  of them. What it does decide is **all three handle families
-  versus the node**: each is ranked ahead of `hit_node`, and each
-  was captured without asking about it. It also decides **a
-  resize handle versus a label lying over it**: in Resize mode the
-  mode's own handles outrank the label grabs, since the mode
-  exists for them, and a label stays grabbable outside it (#218).
-  The resize handles are captured only in that mode, so outside it
-  the order is the label-first one it always was.
-- **Double-click, read off the same order.** What a press would
-  drag is what it is: when `first_grab()` in `Grab::PRECEDENCE` is
-  a handle (`NodeResizeHandle`, `SectionResizeHandle`,
-  `EdgeHandle`), the press takes no part in double-click detection,
-  neither completing one nor starting one
-  (`PendingPress::is_handle_press`, #218). So a second press on a
-  handle inside the double-click window grabs it rather than
-  opening the editor on the node behind it. A press whose first
-  grab is a label double-clicks as any press does, which is why a
-  double-click on an edge's label keeps opening its editor even
-  where the label sits on the selected edge's midpoint handle. The
-  same rule reaches a node: with an edge selected, a press where
-  one of its anchors or control points sits on a node is that
-  handle's press, so a double-click there does not open the node's
-  editor. The first release selects the node, which deselects the
-  edge, and the next pair double-clicks as usual. That press does
-  drag the anchor, so it is what it would drag.
-- **The gesture starts at the press.** The threshold decides
-  *whether* a press is a drag, not where the drag begins: the move
-  that promotes it seeds the new gesture with the travel from the
-  press position (`start_promoted_gesture`), so a dragged node, a
-  resized box or a panned canvas tracks the pointer exactly rather
-  than lagging it by the sub-threshold travel.
-
-**Where a click and a drag on the same press name different
-things** follows from that: the click ladder has no rung for
-handles at all, so every hit in the second bullet is a target the
-drag path can reach and the click path cannot. Three ways in, one
-shape.
-
-It is reachable, not theoretical. `resize_handle_positions` puts
-the eight handles *on* the boundary of the box they resize and
-`nearest_handle_within` accepts anything inside
-`HANDLE_HIT_TOLERANCE_PX` of one, while `hit_test_target` returns
-`None` for a point `point_in_node_aabb` refuses — and that
-predicate is shape-aware. So a press a few pixels outside a
-corner, or exactly on the corner handle of an ellipse-shaped node
-(where the corner is outside the shape by construction), is empty
-canvas to the click ladder and a resize to the drag: hold still
-and the selection clears, move and the node resizes. Where the
-handle sits *over* a node instead, the same press selects that
-node on a click and drags the handle on a drag.
-
-That is the intended shape — a handle is a drag affordance, and a
-click through it falling back to selection is what makes the
-handle non-modal — not a divergence to repair.
-
-Issue #48 reported the *portal* case as such a divergence,
-reading the promotion order without the capture rule.
-`test_portal_label_drag_capture_is_gated_by_the_same_node_hit_the_click_ladder_uses`
-now holds the two paths together, and names the gate that had
-been an unpinnable inline `if` inside the press handler.
-
-**A press never clobbers a gesture already in flight.** All three
-press paths in `event_mouse_click.rs` check the drag state before
-writing it, at two widths:
-
-- **Right and middle** refuse whenever the state is anything but
-  `None` (`handle_right_button`'s inline guard;
-  `route_middle_button`'s `Keep`). Neither button has a re-arming
-  role to preserve — a right press arms `PendingRight` and a
-  middle press dispatches `MouseGesture::MiddleClick`, and both
-  are meaningful only from rest.
-- **Left** refuses on the narrower
-  `DragState::would_abandon_gesture` class — `PendingRight` and
-  `Throttled(..)` — because it *is* the arming press for
-  `Pending`, and a click after a release the window never
-  delivered has to re-arm rather than do nothing.
-
-The class is the point: `Throttled(..)` owes the model a write
-and an undo entry that only `commit_on_release_core` performs,
-so replacing it leaves the tree holding dragged offsets that the
-next model rebuild silently snaps back — position loss with
-nothing to undo. `Panning`, `SelectingRect` and `Pending` owe the
-model nothing and are re-derived from the next sample or press.
-
-**The same class guards the *Action*, not only the presses.**
-`Action::PanCanvas` is the one Action that writes a drag state
-from rest, and it has three entry points, not one:
-`MouseGesture::MiddleClick`, `MouseGesture::LeftDrag` (which only
-ever runs from `Pending`), and any keyboard binding or macro step
-naming `pan_canvas` — a first-class user-bindable entry that
-`event_keyboard` dispatches with no drag-state check and that
-`SourceTier::allows_action` does not gate. So the guard sits on
-the arm (`dispatch::native::route_pan_canvas`, pure and pinned at
-`DragState` level the way `route_middle_button` is), which closes
-all three at once. `Pending` stays outside the refused class
-precisely because the `LeftDrag` threshold cross dispatches
-`PanCanvas` from it. The `RightDrag` cross does not need the same
-exemption for `PendingRight`: it takes the press down to `None`
-before it dispatches, with a hit built from the press, so a
-`RightDrag`-bound `pan_canvas` arms from rest and the right release
-ends it. `FastResizeStart` reads its target, its anchor and its
-owning button off that hit rather than off `PendingRight` (#194),
-which is what let the state come down first.
-
-The release halves match, and the rule is the same one: **the
-button that started a gesture is the one that finalizes it.**
-`resolve_release` commits only on the owning button and answers
-`PutBack` for every other, which both dispatchers honor by
-restoring the drag state. A stray right-click cannot end a
-left-button drag, and — since the left press started being
-refused mid-gesture — a left release cannot end a right-started
-fast-resize either; the right release, which the user still owes
-because the button is down, commits it. Middle-click was the
-exception on both halves until #37 — it overwrote any state on
-press and forced `None` on release — and the right-button guard's
-comment named that overwrite as the posture it was rejecting.
-
-**A pan belongs to the input that armed it** (#153).
-`Panning { owner: PanOwner }` records it, and the release rule
-above extends to it unchanged: a pan ends on its owner's release
-and on no other, so a middle release no longer ends a left-drag
-pan, nor a left release a middle-started one. What `pan_canvas`
-means on a key is the one decision this needed, and it is
-**momentary**: a key holds the pan exactly as a button does, and
-ends it on its own key-up (the Space-to-pan posture of most canvas
-tools). The reason is that momentary is what a held input *is* —
-the release is the "stop" every other pointer gesture here already
-reads — and it makes a key's auto-repeat harmless, where a toggle
-would flip the pan off and on while the key is down. An input
-with no release — a macro step, a console line, IPC `act.action`
-— cannot be momentary, so its pan is **modal**: `Toggled`, ended
-by the next `pan_canvas` from a key, a macro, the console or IPC.
-(Not from the mouse: a middle press arms only from `None`, so it
-cannot reach the arm while a pan runs.) One rule covers both
-halves: *held inputs hold, the rest toggle.* A touch `LongPress`
-bound to `pan_canvas` is one of the rest — `HeldInput` has no
-finger — so its pan toggles too. Whatever owns a pan, a left
-*press* re-arms `Pending` over it, as it always has: `Panning` owes
-the model nothing, and the release rule is about releases.
-
-The Action cannot see which input reached it — the funnel hands it
-only an `Action` — so the arm arms every pan `Toggled`, and a held
-input claims the pan its own dispatch armed on the way out of
-`dispatch_held_action` (the same read-the-decision-back shape the
-`LeftDrag` first-delta gate uses). A key bound to something else,
-pressed during a toggled pan, claims nothing: the claim is only for
-a pan that did not exist before the dispatch.
-
-**Focus loss resolves every state** (`DragState::end_on_focus_loss`,
-`WindowEvent::Focused(false)`). Before #153 nothing ran on it, so a
-`Throttled` gesture whose owning release never arrived — focus
-lost, the OS eating the release — was unreachable. Now the state
-ends at `None` and a throttled drag is **committed**, through the
-same `resolve_release` gate with `Release::FocusLost`, which
-answers `Commit` whichever button started it. Commit rather than
-discard because commit is the reversible one: the model takes what
-the user was looking at, with its undo entry, while a discard
-snaps the canvas back and leaves nothing to redo. A pending press
-is dropped without firing its click; a pan of either kind, and a
-rubber band, are simply ended. Native-only, as `DragState` is.
+`src/application/app/mod.rs` (`enum DragState`), native-only like the
+per-frame drain that drives it.
 
 ### `TouchGestureRecognizer`
 
@@ -3784,230 +2014,14 @@ the camera instead, and the variant is gone rather than
 default-unbound, because a binding firing on the same event as
 the camera step would be a conflict rather than a choice.
 
-Two consequences of that deletion, both since closed (#160).
-**A touch-only user lost every resize, not only
-`FastResizeStart`**: the route this paragraph used to offer —
-long-press into `Resize`, then drag a handle — did not exist,
-because a one-finger drag is always the recognizer's `Pan` and
-moved the camera out from under the handle. Now a finger that
-starts a gesture on a handle in `Resize` mode is the left button
-until it lifts (`app/touch_handle.rs`): it drives the press,
-cursor-move and release handlers a mouse drives, so the handle drag
-is the one that already exists, and it is never fed to the
-recognizer. Every other touch is unchanged, so one-finger pan and
-pinch keep their meaning everywhere off a handle. That makes
-`FastResizeStart` a mouse accelerator by design rather than by
-accident. Native-only, as the drag state is. **And an existing
-`keybinds.json` naming `"TwoFingerDrag"` was silently accepted and
-never matched**, because `KeyBind::parse` takes any non-modifier
-word; a retired name is now refused at parse time through the
-`RETIRED_NAMES` table, with a diagnostic saying what replaced it.
-
-### `ThrottledInteraction` and `ThrottledDrag`
-
-A trait pair + seven-variant enum providing one uniform
-shell for the whole lifecycle of a continuous, high-rate-input
-drag.
-
-Dragging a node, a section, a section's
-resize handle, a node's resize handle, an edge handle, a portal
-label, and an edge label all follow the same three-phase pattern:
-fold each cursor sample into pending state, ask the throttle
-whether to drain and apply if so, and commit to the model when
-the button comes up. All three phases live here; new throttled
-drags attach as one struct + one trait impl + one enum variant
-without growing either event-file dispatcher.
-
-`src/application/app/throttled_interaction/mod.rs`.
-
-`ThrottledInteraction` is the drain shell: `pending()` /
-`pending_mut()` are the only required state accessors, and
-`has_pending`, `throttle`, `should_perform_drain`,
-`needs_continuation` and the `drive` shell are all provided from
-them. Implementors add a `drain(ctx)` body and, rarely, a `reset`.
-
-`ThrottledDragInteraction` adds the two phases a drag has and the
-picker-hover interaction does not: `accumulate(DragInput)`
-(provided) and `commit_on_release_core(ReleaseCommit) ->
-ReleaseRefresh` (required). The core is required so that a new
-variant cannot compile with no release behavior at all, and it is
-the *only* release entry point on the trait — `ReleaseCommit`
-carries no renderer, so a commit body has nothing to reach one
-with. Running the decree needs `&mut Renderer` and lives on
-`ReleaseRefresh::execute`, off the gesture trait entirely. What
-stays convention is the drain half: `drain` and its `drive` shell
-take a `DrainContext` because a per-frame drain genuinely
-repaints.
-
-`ThrottledPending` (`throttled_interaction/pending.rs`) owns the
-pending half. Three disciplines cover every implementor, and each
-picks one at construction:
-
-- **delta-accumulate** — the drain applies an incremental
-  movement, so skipped samples sum;
-- **cursor-latch** — the drain projects an absolute position, so
-  only the last sample carries information;
-- **dirty flags** — nothing accumulates; a flag says the next
-  drain has work (the picker-hover interaction).
-
-`DragInput` carries one cursor sample in *both* forms — the
-canvas-space delta since the previous event and the absolute
-canvas-space position now — so the dispatcher never has to know
-which discipline the active gesture uses.
-
-`ReleaseRefresh` (`throttled_interaction/release.rs`) is the
-canvas work a commit owes once its model write has landed:
-`None`, `SceneOnly`, or `All`. Named rather than performed, so
-the commit body stays renderer-free.
-
-**What ends a drag is a `Release`**: `Button(b)` commits only when
-`b` started the gesture and hands the drag back otherwise;
-`FocusLost` commits whichever button did, because the owning
-release may never come and nothing else finalizes a throttled drag
-(see [`DragState`](#dragstate)).
-
-Variants:
-
-- `MovingNode(MovingNodeInteraction)`
-- `MovingSection(MovingSectionInteraction)` — drags one section's
-  `offset` relative to its owning node; threshold-cross promotes
-  here when the press lands on a section of a multi-section node.
-- `SectionResize(SectionResizeInteraction)` — drags one resize
-  handle of a `Some`-sized selected section. Threshold-cross
-  promotes here when the press lands on one of the 8 handles
-  (corners + edge midpoints); release commits a single
-  `(offset, size)` write through `set_section_aabb`.
-- `NodeResize(NodeResizeInteraction)` — drags one resize handle
-  of a `Single`-selected node. Threshold-cross promotes here
-  when the press lands on one of the node's 8 handles; release
-  commits a single `(position, size)` write through
-  `set_node_aabb`.
-- `EdgeHandle(EdgeHandleInteraction)`
-- `PortalLabel(PortalLabelInteraction)`
-- `EdgeLabel(EdgeLabelInteraction)`
-
-`as_dyn_mut()` / `as_dyn()` widen to
-`&mut dyn ThrottledDragInteraction` — the drag trait, which has
-`ThrottledInteraction` as a supertrait, so one ladder serves all
-three phases. Those two are the only per-variant matches on the
-*gesture* path: `event_cursor_moved`'s accumulate arm,
-`event_mouse_click`'s left-release arm and its right-release arm
-are each a single call through them. One more production-path
-match exists by design — `ThrottledDrag::to_ipc_json` in
-`app/ipc_state.rs`, the exhaustive projection `query.mode` reports
-the gesture through (see [IPC server](#ipc-server-ipcserver)) — and
-the test builds add three more — `variant_name` and
-`latches_the_cursor` in this module's tests, and the enumeration in
-`app/ipc_state.rs`'s own test module. Planting a variant yields
-E0004 at exactly those three production sites, and at those three
-test sites under `--all-targets`.
-
-Touch does **not** ride this ladder. Pinch-zoom, one-finger pan
-and tap-select ship as `TouchGestureRecognizer` emissions that
-reach the camera and the selection directly, because the
-recognizer already is the state machine `ThrottledDrag` would
-have supplied and the camera work is `CODE_CONVENTIONS §3`'s
-continuous-gesture carve-out. What would earn a variant here is
-a touch gesture that *mutates the document* per frame — dragging
-a node with a finger — and that wants the browser to have a
-drag-state machine first.
-
-### `MutationFrequencyThrottle` (and `frame_throttle`)
-
-An adaptive frame-counter throttle that gates
-*application* of mutations under load while leaving *acceptance*
-of input untouched.
-
-When per-frame work threatens the GPU
-budget, the system must degrade gracefully. The non-negotiable
-rule is **responsiveness is never traded for fidelity**: the
-cursor must stay current with the hardware pointer at all
-times, even if the dragged node updates only every fourth
-frame. The throttle samples actual work duration into a moving
-average; if the average exceeds budget, it raises `n` (the
-"drain divisor"); if work is well under budget with hysteresis
-margin, it lowers `n` toward 1.
-
-`src/application/frame_throttle.rs` (`MutationFrequencyThrottle`).
-`DEFAULT_BUDGET` is the per-frame budget (a 60 Hz frame minus a
-safety margin), `WINDOW_SIZE` the moving-average window, `MAX_N` the
-ceiling `n` clamps to above 1; the hysteresis band is a factor in
-the arithmetic of the adjust step rather than a named constant, so
-read it there. Each `ThrottledDrag` owns its own throttle, so
-per-gesture profiles tune independently — a 500-node move
-budget does not bias an edge-label drag's average.
-
-### `UndoAction`
-
-A 13-variant tagged union; one variant per
-user-facing mutation, dispatched through `MindMapDocument::undo`
-to reverse it.
-
-Every persistent change pushes one
-`UndoAction`; Ctrl+Z pops the back of the stack and dispatches.
-The discipline is **one mutation, one variant** — adding a new
-mutation means adding a new variant, snapshotting the right
-"before" state, and writing the matching `undo()` arm in the
-same commit.
-
-`src/application/document/undo_action.rs`. The thirteen
-variants, in declaration order (the count is read off that enum; the
-IPC projection in `document/ipc_state.rs` and `undo()` itself are
-the exhaustive matches that make a fourteenth a compile error, this
-list is not): `MoveNodes`, `CustomMutation`, `ReparentNodes`,
-`DeleteEdge`, `CreateEdge`, `EditEdge`, `CreateNode`,
-`EditNodeText`, `EditNodeStyle`, `EditNodeZoom`,
-`CanvasSnapshot`, `EditNodeAabb`, `DeleteNodes`. `CustomMutation`
-is the general bucket — it snapshots the `target_scope`-defined
-window so any declarative or imperative mutation replays
-cleanly. Every arm is bounds-checked (e.g. `index <
-edges.len()`) before mutating, so undo is always safe — never
-panics, even on a partially-deleted state.
-
-### The node-edit envelope and `NodeEditTail`
-
-The one place the *push* side of an `UndoAction` is written for
-node-scoped edits: snapshot → closure verdict → undo-push →
-auto-fit.
-
-`UndoAction` says what a reversal looks like; the envelope says
-how a setter records one. Three of the variants describe a
-per-node edit — `EditNodeStyle`, `EditNodeText`, `EditNodeAabb`
-— and each used to be open-coded at every setter that produced
-it, together with the `grow_one_node_to_fit_text` /
-`grow_one_node_to_fit_border` tail. That fan-out drifted into
-shipped bugs twice: a copy was corrected, its siblings were not.
-
-`src/application/document/nodes/undo_envelope.rs` holds one
-implementation. `mutate_node_with_style_undo` and
-`mutate_node_with_text_undo` take a closure returning
-`Some(value)` to commit or `None` to declare a no-op — on `None`
-the envelope restores exactly the fields the undo entry would
-have restored and pushes nothing, which is what lets a caller
-mutate speculatively instead of reaching for the
-`undo_stack.pop()` anti-pattern. `mutate_node_with_aabb_undo`
-computes its own verdict by comparing `(position, size)`
-**after** the auto-fit tail, which is what makes repeated writes
-idempotent on a framed node whose border-grow overshoots the
-requested size. Two section-scoped wrappers narrow the closure
-to one `MindSection` and fold the index lookup in, so a stale
-index is a no-op rather than a panic.
-
-`NodeEditTail` is the fourth argument and the named policy for
-what runs after a commit: `None` (color-only edits, which must
-not re-measure), `Border` (the explicit-shrink and
-border-config paths), `Grow` (anything that can change measured
-text extent), `GrowAndCleanup` (the structural mutators — the
-only edits that can strand a selection or a border preview on a
-dead section index). Naming it is the point: an auto-fit pass
-that is a copied suffix is a pass nobody chose.
-
-The edge side has the same shape one layer over:
-`MindMapDocument::mutate_edge` is the single `EditEdge`
-envelope, and `edges/font_triple.rs` holds the one
-`(size, min, max)` resolution — request ordering, inverted-bounds
-guard, clamp — that the body, label, and portal-text font
-channels share.
+The resize mode and its handle drag went with the old model, and
+V1-C7 (#248) brings them back as transactions — with them the route
+a finger takes onto a handle, which keeps `FastResizeStart` a mouse
+accelerator by design (#160). **An existing `keybinds.json` naming
+`"TwoFingerDrag"` was silently accepted and never matched**, because
+`KeyBind::parse` takes any non-modifier word; a retired name is now
+refused at parse time through the `RETIRED_NAMES` table, with a
+diagnostic saying what replaced it.
 
 ### `Renderer`
 
@@ -4036,232 +2050,91 @@ pipelines:
   [`GlyphRun`](#glyphrun) at its own canvas position, rasterized by
   cosmic-text into an atlas of its own (glyphon's cannot be reached
   from outside it) and drawn as one instanced quad per glyph, in one
-  draw call per frame.
+  draw call per frame: the canvas trees' runs, then the glyph layers'
+  ([layer renderer](#layer-renderer)).
 
-Sub-passes sit in `borders.rs`, `console_pass.rs`,
-`color_picker.rs` and `selection_overlay.rs`; connection glyphs
-have no pass of their own — they are a canvas-role tree walked by
-`tree_walker.rs` like every other role. Visibility culling is
+Sub-passes sit in `console_pass.rs` and `color_picker.rs`; the
+document's glyphs and the chrome layer's (the rubber band) are glyph
+runs of the layer renderer. Visibility culling is
 `Camera2D::visibility`, which answers the spatial cull and the
 [`ZoomVisibility`](#zoomvisibility) window in one verdict.
 
+### Layer renderer
+
+The projection's [glyph layers](#projection--projector-glyphlayers-layerchanges-hit)
+as the renderer keeps them: render state **per glyph element**, written
+only where a journal says a layer changed (design §13.1, V1-C2 #243).
+
+For each of the five layers it keeps a mirror of the layer's tree — a
+slot per element, linked to its parent and its siblings — so the
+layer's pre-order, which is the order its runs are drawn in, is a walk
+of links, and an element entering, leaving or moving is a splice of a
+few of them. A run's slot holds the run as the layer does: its shaping
+and placement by `Arc`, so keeping it never shapes.
+
+- **`load`** takes the layers whole, once per document: the only walk
+  of a layer.
+- **`apply`** takes the journals of what changed — the projector's
+  `LayerChanges`, merged with those of the glyph mutators applied over
+  them, from one or more projector updates — and visits exactly the
+  elements they name, each once, the last touch deciding. One that left
+  is dropped with its subtree, except what an earlier journal moved out
+  of it; one that entered gets a slot; one that changed is compared with
+  its slot and only a difference is written, into the buffers the slot
+  already has (a drag re-places the same shaping; an unchanged run
+  keeps its state); one whose place changed is spliced in after its
+  previous sibling, and an element counts as in place only after a
+  sibling no journal names. No other element is looked at.
+- **`encode`** hands every run to the frame's
+  [positioned-glyph pass](#glyphrun), in draw order: sections, frames,
+  connections, labels, portals, each in tree order, after the canvas
+  trees' runs and under the screen-space chrome. The pass applies the
+  camera and each run's zoom window at draw time; `encode` takes
+  `&self`, so a pan or a zoom applies nothing and writes no render
+  state. The instances are built per frame from the kept runs, as the
+  C1 decision record says: a glyph's rasterization depends on the zoom
+  and on its pen's subpixel position.
+
+`src/application/renderer/layers/`. The app's projector is wired to it
+by V1-C3; until then the window and every capture draw it empty.
+
 ### `AppScene` and scene host
 
-A two-role scene container: a camera-transformed
-canvas and a screen-space overlay, each composed of named
-sub-trees.
+The screen-space overlay trees of the modals: the console and the
+color picker, each a named slot (`OverlayRole`) holding a `GfxTree`.
 
-Mindmap content (nodes, borders, connections,
-portals, edge handles) belongs in the canvas role — pans and
-zooms with the camera. The console and color picker belong in
-the overlay role — fixed in screen space. The `AppScene`
-abstracts that split; rebuild dispatch
-(`InPlaceMutator` for small mutator-able changes,
-`FullRebuild` for structural changes) flows through the same
-seam for both roles. Canvas roles that also record a *content*
-signature ask both questions through one entry point,
-`canvas_dispatch_with_content`, which returns a third outcome —
-do nothing, because the registered tree is already what a
-rebuild would produce. One function rather than two calls per
-role because the *order* is the design: structure first, content
-second, and swapping them still renders correctly while undoing
-the whole point (see
-[canvas-role projection](#canvas-role-projection)).
-
-`src/application/scene_host.rs` (`struct AppScene`). Each
-role has named slots (`CanvasRole`, `OverlayRole`); each slot
-has a corresponding `GfxTree` and a
-mutator registry. The same idiom drives both canvas-role
-rebuilds (in `scene_rebuild.rs`) and overlay-role rebuilds
-(console text changes, color picker re-layout).
-
-### Scene shape cache
-
-The rule that decides, per walked element, whether
-its cosmic-text buffers are re-shaped, moved, or reused — one mechanism serving both of
-[`AppScene`](#appscene-and-scene-host)'s sub-scenes.
-
-Rebuild dispatch stops at the arena. A mutator
-apply reaches every slot of a role by design, and every writer
-above it assigns every field whether or not the value moved, so
-"mutate, don't rebuild" bought a reused arena and then paid for a
-full re-shape of it anyway: a picker hover shaped all 59 overlay
-elements, a console keystroke all ~50 rows, and every one of the
-ten `flush_canvas_scene_buffers` call sites shaped every buffer of
-all eight canvas roles no matter which one it had re-projected.
-
-`src/application/renderer/scene_shape_cache.rs`.
-`refresh(scene, ids, shaped, kind)` walks the sub-scene in layer
-order and keeps, per walk position, a `ShapedSceneElement` holding
-the output *and a verbatim copy of every input it was shaped from*
-— tree id, `unique_id`, registered offset, and the `GlyphArea`.
-Nothing announces a change: the pass re-validates against the live
-tree, which is why a new writer of scene-tree state cannot make it
-stale by forgetting to notify anyone, and why the ten canvas call
-sites are answered as a class rather than one at a time.
-
-Two details are load-bearing. `GlyphArea`'s derived equality is
-blind to a region *recolor* — `ColorFontRegion`'s `Eq` is set
-identity by range — which is exactly what a picker hover changes,
-so the check adds `ColorFontRegions::same_content` on top of `==`.
-And each element's output lives inside that element's own entry
-rather than in a flat list, so a partial re-shape cannot disturb the
-order glyphon is handed its text areas in.
-
-The key has two halves, and a mismatch is classified rather than
-merely detected (`ShapedSceneElement::classify` → `Verdict`).
-`GlyphArea::position` and the registered tree offset never reach
-cosmic-text — the walker adds them to each buffer's `pos` after
-shaping — so when they are the *only* difference the entry is
-`Moved`, and `patch_placement` rewrites its buffers' positions in
-place with no shaping and no `FONT_SYSTEM` lock. Any
-other difference is `Stale` and re-shapes. The patch re-derives
-each buffer from the stamp offset the walker recorded
-(`MindMapTextBuffer::emission_offset`), the same fix the mindmap's
-`patch_drag_positions` carries: an outlined element's eight halo
-stamps do not sit at its anchor, and writing the anchor flat would
-collapse them under the glyph. A picker drag-move — every cell
-repositioned, nothing else changed — is the case this exists for.
-
-`ScenePassKind` is the whole difference between the two passes: the
-site name the font lock is taken under. `refresh` takes a `&Scene` rather than a
-`&mut Renderer` so its granularity can be asserted without a live
-device (TEST_CONVENTIONS §T8) — the same reason
-[`RebuildTier`](#scene-rebuild-granularity) is a value rather than
-a statement.
-
-### Scene rebuild granularity
-
-Whole-canvas rebuild functions, a selection-change chooser, a
-camera-driven re-projection, and one updater per canvas role — each
-scoped to a specific change kind.
-
-Different changes invalidate different
-amounts of work. Editing a node's text might change its width
-(full rebuild); dragging a node only moves connection paths
-(connection-only rebuild); changing a portal endpoint color
-only touches portal markers (portal-only rebuild). Each tier
-is dispatched explicitly so the cheapest one runs.
-
-`src/application/app/scene_rebuild.rs`.
-Free functions: `rebuild_all` (node tree + every canvas role),
-`rebuild_scene_only` (reuse the node tree, refresh every canvas
-role), `rebuild_selection_highlight` (node text buffers only — no
-canvas roles, no mode-status line: what a change to *which nodes
-are highlighted* actually needs), `rebuild_after_selection_change`
-(the chooser, below), and `rebuild_camera_geometry` (the
-zoom-dependent roles only — connections, labels, portals, edge
-handles — which both targets reach: native from
-`drain_camera_geometry_rebuild` once per frame under the renderer's
-flag, the browser from its wheel handler; `rebuild_camera_geometry_at`
-is the screenshot engine's variant that projects at another camera
-and back). Then the per-role methods on
-[`CanvasFrame`](#canvas-role-projection) —
-`update_connection_trees` (edges + their grab handles),
-`update_portal_tree`, `update_border_tree`,
-`update_connection_label_tree`, `update_section_frame_tree`,
-`update_node_resize_handle_tree` and
-`update_section_resize_handle_tree` — each callable on its own so a
-caller refreshes only what its interaction can change, with
-`update_all` as the every-role batch the whole-canvas tiers call.
-
-**`RebuildTier` names the top two rather than running them.**
-`RebuildTier::{All, SceneOnly}` is the choice between the first
-two as a value, with `execute` as the only place either is
-actually called. The reason is the same one
-[`ReleaseRefresh`](#throttledinteraction-and-throttleddrag) has on
-the drag-release path: both tiers need `&mut Renderer`, so an
-interaction that *decides* a tier could not be tested without
-a device while deciding and performing were one statement
-(TEST_CONVENTIONS §T8). Handing the decision back as a value
-is what lets a renderer-free test ask which tier a given
-interaction picks.
-
-Two constructors carry the rules:
-
-- `for_selection_change(prev, new)` — `All` when either side is a
-  node-ish selection (`Single` / `Multi` / `Section` /
-  `MultiSection` / `SectionRange`), because section-area
-  highlights are stamped into the node tree's
-  `ColorFontRegions`; `SceneOnly` when both are edge-adjacent and
-  only the scene-level cascade moves.
-  `rebuild_after_selection_change` is this constructor plus
-  `execute`, and stays the one-liner for callers with nothing
-  else to weigh.
-- `for_click(triggers_fired, prev, new)` — the same, except a
-  fired `OnClick` trigger forces `All`, since a trigger's
-  document actions are unbounded (a theme switch repaints every
-  node). Both targets read this one function: native used to run
-  `rebuild_all` for every click outcome, and the browser used to
-  run the selection-delta tier even when a trigger had just
-  mutated the document, so §4's peers were wrong in opposite
-  directions.
-
-`highlight_entries_for(doc)` is the one mapping every
-node-tree rebuild site uses for *which* nodes to tint: the
-rubber-band preview when one is live, `doc.selection` otherwise.
-The preview replaces rather than adds to the selection's entries,
-because the gesture's release writes `SelectionState::from_ids`
-over the selection outright — painting both would show a set that
-is about to be discarded.
-
-Interactions that decide a tier are split into a renderer-free
-core that returns one and a shell that runs it —
-`click::handle_click_core` / `click::handle_click`,
-`event_cursor_moved::arm_label_drag` /
-`event_cursor_moved::start_label_drag`. Both label promotions
-(edge-label and portal-label) go through the second pair, so they
-cannot pick different tiers again.
+The document's content is not here; it is the glyph layers the view
+holds (§2, "Projection"). `src/application/scene_host.rs`
+(`struct AppScene`) registers, replaces and removes an overlay's
+tree, and answers which of the two update arms (§B2) a change takes:
+`InPlaceMutator` when the recorded structural signature matches,
+`FullRebuild` when it does not.
 
 ### Dirty flag
 
-A single `bool` on `MindMapDocument` marking
-unsaved changes: set by every document setter, cleared at
-construction and on a successful `save`.
+Whether the map has unsaved work: derived, not stored. The writer
+compares its history with the position `Document::mark_saved` last
+recorded, so an edit and its undo leave a map clean again.
 
-The user must not silently lose work. The
-flag is the "there are changes worth saving" bit guarding
-destructive document swaps.
-
-`src/application/document/mod.rs` (the `dirty`
-field). Set by the setter families under
-`document/{nodes,edges}/`; cleared at construction
-(`document/mod.rs`), by the `save` console verb
-(`console/commands/save.rs`), and by the Ctrl+S save
-(`save_document_to_bound_path`, `app/console_input/exec.rs`);
-read by the `open` and `new` verbs' guards, which refuse to
-replace a dirty document ("unsaved changes; save before…").
-Despite the name it is **not** a render or rebuild signal —
-scene rebuilds are call-site-driven (`rebuild_all` after
-mutations), and the per-frame drain consults the renderer's
-separate `connection_geometry_dirty` flag instead
-(`app/drain_frame.rs`). Nor is it a change counter: it is one bit,
-reset by a save. "Did anything change" is the
-[document revision](#document-revision), and the flag is turned on
-through the same call that advances it (`mark_dirty`).
+`MindMapDocument::is_dirty`. `mark_saved` is called only by
+`MindMapDocument::save_to`, after the file is written
+(`test_no_production_code_sets_dirty_directly` holds that); the `open`
+and `new` verbs refuse to replace a dirty document ("unsaved changes;
+save before…"). It is not a render signal — the change feed is.
 
 ### Document revision
 
-A monotonic `u64` on `MindMapDocument` counting committed model
-changes, plus the funnel that made the latest one.
+A counter on the document advanced by every change the writer accepts,
+an undo and a redo included, plus the funnel that made the latest one
+(`ChangeSource`).
 
-The flag above cannot answer "did anything change since I last
-looked", and nothing else could cheaply either (the undo stack pops,
-a re-serialization is O(document)). An IPC agent polling for change,
-and the event stream that spares it the polling
-([IPC server](#ipc-server-ipcserver)), need a number.
-
-`src/application/document/revision.rs`. Advanced by exactly two
-calls: `mark_dirty()`, which every setter ends in (a source scan
-holds that nothing else writes `dirty = true`), and
-`advance_revision()`, which undo calls because it mutates without
-dirtying. A preview, a selection and the camera advance nothing.
-`open` / `new` carry the counter across the swap (`succeed`) and
-bump a `generation`, so it is monotonic per process. Funnels
-declare themselves (`enter_source` / `leave_source` / `with_source`:
-`dispatch_action`, the console line executor, undo, custom
-mutations, animation commits) and the innermost wins, which is the
-`source` a `document_changed` event reports.
+An IPC agent polling for change, and the event stream that spares it
+the polling ([IPC server](#ipc-server-ipcserver)), need a number. The
+revision is the writer's (`Document::revision`). It restarts with each
+loaded document, and the event stream reports a `generation` beside it
+so a client can tell documents apart (`format/ipc.md`). A selection and
+the camera advance nothing. The source of the last record on the
+change feed is the `source` a `document_changed` event reports.
 
 ### FPS overlay
 
@@ -4360,20 +2233,19 @@ through `CommandTarget`, the app-side execution context. There is no
 parallel control path, so undo, gates and side effects match the
 keystroke each stands in for. The `query` family is the read half of
 the loop: `query.document`, `.selection`, `.camera`, `.mode`,
-`.status`, `.animations`, `.editors` and `.undo` return what a person
-reads off the chrome. They go through `observe()` and `&self`
-reads on `CommandTarget` (`document()`, `animation_pause()` and
-`shell_state()`), so a query cannot dirty the document, push undo or
+`.status`, `.editors` and `.undo` return what a person reads off
+the chrome. They go through `observe()` and `&self` reads on
+`CommandTarget` (`document()` and `shell_state()`), so a query cannot
+dirty the document, push undo or
 ask for a frame. Each wire form is an exhaustive-`match` projection beside the state it
 exposes (`document/ipc_state.rs`, `app/ipc_state.rs`), not a mirror
-struct, so a new `SelectionState`, `InteractionMode`, `DragState` or
-`UndoAction` variant breaks the build until it is given one. The
-`scene` family is what is drawn rather than what is known:
-`scene.dump`, `.visible_set`, `.node_geometry`, `.hit_test` and
-`.find_text` read the canvas trees through Baumhard's serializer
-(`baumhard::mindmap::scene_dump`) — rects in both spaces, the
-renderer's own cull verdict, and the text after run coverage — and
-name each element through its role's hit-test index. `scene.hit_test`
+struct, so a new `InteractionMode` or `DragState` variant breaks the
+build until it is given one. The `scene` family is what is drawn
+rather than what is known: `scene.dump`, `.visible_set`,
+`.node_geometry`, `.hit_test` and `.find_text` read the view
+(`view::inspect`: the projector's geometry and the glyph runs) — rects
+in both spaces, the cull verdict, and the displayed text — and name
+each element by its integer ref. `scene.hit_test`
 runs the canonical click ladder on the app side
 (`CommandTarget::hit_test`) rather than a copy of it. The `input`
 family is the hand on the mouse and keyboard, below the Action
@@ -4383,7 +2255,7 @@ delivered to the same `on_*` entry points those events
 reach, so the drag state machines, double-click timing and modal
 steals cannot tell them apart. `input.drag` paces its samples one per
 frame through the injected-input queue (`ipc/injected.rs`), so the
-throttled drag drains between its moves as under a real hand;
+drag's frame runs between its moves as under a real hand;
 `input.click_node` is a move and a click at a node's center, and
 `input.pending` reports how many injected samples are still queued,
 so a client polls it to zero before reading what a drag did. The
@@ -4443,27 +2315,12 @@ and scale) into the one `Camera2D` the frame is drawn through,
 refusing what cannot be drawn before anything is allocated;
 `artifacts` is the bounded, owner-only, per-process dir a
 server-chosen capture lands in, removed on exit; `geometry` is the
-sidecar, read off the node tree through `scene_dump` at the capture's
-camera; `png` encodes. `app/capture_flow.rs` is the app half both
-surfaces call: it runs the camera-geometry rebuild the next frame
-owes, and for a capture framed at another zoom projects the
-zoom-dependent roles — connections with their edge handles, labels,
-portals (`CanvasRole::zoom_dependent`) — into a scratch scene of the
-capture's own (`app/capture_scene.rs`: its own `AppScene`, its own
-`SceneConnectionCache`, its own hit indices), through the same
-`CanvasFrame::update_zoom_dependent_roles` body the camera rebuild
-runs on the live scene. The renderer walks the scratch into a second
-shaped set and composes one frame of it with the live set's
-zoom-independent roles by layer (`renderer::compose_capture_canvas`,
-`CanvasSource::Composed`); the live scene, cache and shaped set are
-read and never written, so there is nothing to project back. A node
-drag's drained offsets are passed into the scratch projection, so a
-capture at any zoom mid-drag shows the dragged node's connections
-where the window does, and no `busy` refusal is needed. The scratch
-cache stays warm across the frames of a recording at one zoom and
-follows the live cache's `clear` / `invalidate_edge` statements
-through `SceneConnectionCache::invalidations`, so it goes stale
-exactly when the live one is told to. Every caller-chosen path is written through
+sidecar, read off the view (the projector's geometry) at the
+capture's camera; `png` encodes. `app/capture_flow.rs` is the app
+half both surfaces call: it syncs the view, then the layer renderer
+draws the glyph layers through the capture's camera
+(`LayerRenderer::encode`) — the same layers the window draws, at any
+zoom, with nothing projected again. Every caller-chosen path is written through
 `guarded_file::publish` — atomic, no symlink followed, no file
 replaced unasked — the writer the IPC `to_file` sidecar uses too.
 
@@ -4571,8 +2428,8 @@ what *measures* reads.
 
 A reproducible run, a screenshot of an animation's middle, a test of a
 double-click at exactly its window all need time to hold still and
-move on command, while the FPS overlay, the freeze watchdog and the
-drag throttle's budget must keep measuring real cost. So the old
+move on command, while the FPS overlay and the freeze watchdog
+must keep measuring real cost. So the old
 single `now_ms()` bridge became two names, and every reader was
 dispositioned to one of them (`work_plans/LLM_IPC.md` §D9 has the
 table). The clock is threaded through `InputHandlerContext` and
@@ -4585,8 +2442,8 @@ and the `clock` console verb; `clock.wait` is its settling primitive
 
 Native and the browser each hold one; the browser's stays real. What
 it lacks is not the tick — since #144 the browser's frame runs the
-same `animation_drain` body and, like native's loop frame, ticks on a
-real clock only, so it would stand still under a virtual one — but the
+same view sync and, like native's loop frame, advances on a real
+clock only, so it would stand still under a virtual one — but the
 step driver (`heartbeat::step`, a method on native's
 `InputHandlerContext`) and the IPC transport to command it
 (`CLAUDE.md` "Dual-target status", "Virtual-clock stepping"). Both
@@ -4626,32 +2483,33 @@ Some(&DispatchHit { click_hit, canvas_pos }))`.
    `~/.config/mandala/macros.json` on native. See
    `crate::application::macros` for `Macro`, `MacroStep`,
    `MacroRegistry`, and `dispatch_macro`. Steps fan out to
-   `dispatch_action`, `fire_custom_mutation`, or
+   `dispatch_action`, the edit step (V1-D1), or
    `execute_console_line` depending on `MacroStep` kind, so plugin
    authors and macro recorders share one runtime path. That path is
    `run_macro_steps`, the gated step loop `dispatch_macro` calls
    after its lookup. IPC's `act.macro` runs an anonymous step list
    through it too, so there is one privilege gate however a macro
    arrives. **Unknown
-   macro id falls through** to the custom-mutation tier, so a
-   typo'd or half-loaded macros file doesn't swallow the keystroke.
-3. `keybinds.custom_mutation_for(...)` — per-node custom mutations.
+   macro id falls through** to the edit tier, so a typo'd or
+   half-loaded macros file doesn't swallow the keystroke.
+3. `keybinds.edit_for(...)` — edit bindings, which fire nothing until
+   V1-D1 (#250) rebuilds edits.
 
 **Built-in Actions win on collision.** A key combo bound to both
 `Action::Copy` (in `copy: ["Ctrl+C"]`) and a macro on `"Ctrl+C"` in
 `macro_bindings` runs the Action — the macro never gets a chance.
 To override a built-in Action with a macro, first unbind the
 Action's keybind (set `copy: []`) and then bind the macro. Same
-applies for built-in vs. custom-mutation collision.
+applies for a built-in vs. an edit binding.
 
 **Macro privilege model.** Macros are tagged by their loader tier
 (`SourceTier { App | User | Map | Inline }`); the dispatcher
 fail-closes on tier-restricted surfaces (`ConsoleLine` and
 destructive / I/O `Action` variants). Authoritative threat model
 + surface enumeration + tier-by-tier permissions:
-[`format/macros.md`](./format/macros.md). The `#[non_exhaustive]`
-gate on `DocumentAction` ensures any new I/O variant must add a
-matching dispatcher carve-out.
+[`format/macros.md`](./format/macros.md). An effect a map can
+carry that does I/O is gated at every site that applies it
+(CODE_CONVENTIONS §3).
 
 **Dispatch status per gesture.** `DoubleClick`, `MiddleClick`,
 `LeftDrag`, `WheelUp`, `WheelDown` are dispatched through
@@ -4695,15 +2553,6 @@ ships unbound. Users opt back in via:
 { "create_orphan_node_and_edit": ["DoubleClick"] }
 ```
 
-**Custom-mutation parity.** `dispatch_custom_mutation_for_key`
-and the click-trigger loop (`click_triggers::fire_onclick_triggers`)
-land through one body, `app::fire_custom_mutation`: animation-aware
-(`start_animation_at` when `timing.duration_ms > 0`, ticked by both
-targets' frames since #144), always invokes
-`apply_document_actions`, and applies with or without an installed
-tree (the no-tree decision on #144). Closes the silent feature gap
-where keyboard-triggered custom mutations skipped both.
-
 ---
 
 ## §6 The authoring surface
@@ -4713,196 +2562,27 @@ modal editors, the console, keybinds, the color picker, clipboard,
 and (briefly) the `maptool` and `mandalactl` CLIs. Most are native-only today; the
 parity story for each is honest.
 
-### Inline node-text editor
-
-Multi-line, grapheme-aware text editing on a
-selected node; commit-on-click-outside, cancel on Esc.
-
-Editing a node's text without leaving the
-canvas. Double-click or Enter opens the editor; Backspace on a
-selected node opens it pre-cleared; arrow keys move the cursor
-in grapheme units. Live edits paint through a `DeltaGlyphArea`
-mutation against the tree (not the model) so the user sees
-in-flight characters; on commit, the model is updated and a
-single `EditNodeText` undo entry is pushed.
-
-`src/application/app/text_edit/mod.rs` (`TextEditState`; the
-session body is `editor.rs`). Cross-platform — works on both native
-and WASM. Cursor math
-runs on grapheme-cluster indices throughout (via
-[`grapheme_chad`](#utilities--grapheme_chad-color-geometry)),
-so emoji and combining marks behave as single units. Original
-text and regions are snapshotted on open; Esc restores them.
-
-### Inline single-line editor
-
-Single-line text editing for the two one-line strings the model
-carries: a line-mode edge's label, and a portal endpoint's
-caption.
-
-Setting or changing either without leaving the canvas. Same
-lifecycle as the node editor (commit on click outside, cancel on
-Esc) but restricted to one line. Portal captions are
-per-endpoint: selection and editing target one endpoint at a
-time, and the other endpoint's caption is unaffected.
-
-`src/application/app/single_line_edit/`. One `SingleLineEditor`
-holds `{target, buffer, cursor_grapheme_pos, original}`; a
-`SingleLineEditTarget` variant owns everything that differs
-between the two — where the current value lives, which preview
-slot on `MindMapDocument` feeds the renderer
-(`label_edit_preview` vs `portal_text_edit_preview`), which
-canvas role is re-projected per keystroke, which setter commits,
-and what "the release landed back on the thing I am editing"
-means. Adding a third single-line editable is a variant plus one
-arm per method; the lifecycle, the modal steal, the
-click-outside commit and the dispatch arms do not grow.
-
-The lifecycle core is renderer-free and returns an `EditRefresh`
-naming the canvas work it owes, so the whole open / type /
-commit / cancel sequence is driven directly in renderer-free
-tests (§T8).
-
-One asymmetry survives on purpose: a portal caption stops being
-editable once its edge is deleted or leaves portal mode, and a
-mid-edit keystroke then closes the editor without committing.
-The edge-label target has never had that guard and keeps typing
-into a buffer whose edge is gone; its commit no-ops in
-`set_edge_label`. `SingleLineEditTarget::still_editable` is where
-the two answer differently, and the differential-oracle tests pin
-both columns.
-
-The `keybinds.json` vocabulary keeps its `label_edit_*` spelling
-(`Action::LabelEdit*`, `InputContext::LabelEdit`) — those are
-user-facing binding names, and both targets have always shared
-them.
-
-Native-only today. WASM users reach the same operations via the
-`label` console verb, which has full cross-platform parity.
-
 ### Modal editor ladder
 
-The steal / release shell both inline text editors sit in.
-
-While a text editor is open it owns the keyboard: the key
-resolves in that editor's input context, its commit / cancel pair
-goes through the `dispatch_action` funnel, and everything else
-reaches the editor's own handler as a literal `winit::Key`. On a
-pointer release, a release inside the edited element keeps
-editing and consumes the release; a release outside commits
-through the funnel and lets the click route normally so the new
-selection lands.
-
-`src/application/app/modal_editor.rs`. `ModalEditor` is that
-shell written once, over the node text editor and the single-line
-editor; `event_keyboard.rs` has one steal block and
-`event_mouse_click.rs` one click-outside-commit block rather than
-three each. Steal order prefers the single-line editor; the
-release ladder resolves the node text editor first. Both orders
-are pinned by tests, because they are the kind of caller-level
-contract a unit test on either editor cannot see.
+The steal / release shell the map's inline text editors will sit in.
+The node text editor and the single-line editor were deleted with the
+old model and return with V1-C8 (#249), on the writer; until then the
+console is the one modal that steals the keyboard, and the color picker
+claims only its own keys.
 
 ### Glyph-wheel color picker
 
-A modal HSV picker rendered as a hue ring of `HUE_SLOT_COUNT`
-glyphs with sat/value crosshairs and a central preview glyph.
-
-Picking a color for the current selection
-without leaving the canvas. Hover live-previews through the
-`color_picker_preview` transient on `MindMapDocument`; the
-connection, label, and portal passes read it during projection
-and substitute the preview color for the targeted element. Click commits, click
-outside cancels. Keyboard: h/H nudges hue, s/S sat, v/V value,
-Enter commits, Esc cancels. The theme-variable quick-pick chip row
-and its Tab cycling are gone: the `ColorPicker` context's `Action`
-set is cancel, commit and the six nudges, the layout carries no
-chip positions, and `compute_sizing.rs` names the retired row where
-its width reservation used to be.
+A modal HSV picker rendered as a hue ring of `HUE_SLOT_COUNT` glyphs
+with sat/value crosshairs and a central preview glyph.
 
 `src/application/color_picker/mod.rs` (`ColorPickerState`,
 `PickerMode`, `OpenPicker` in `state.rs`) and
 `src/application/color_picker_overlay/`. Native-only today.
-`compute_color_picker_layout()` is a pure function over
-geometry + viewport, so layout can be unit-tested without GPU.
-Two modes: contextual (modal, opened from edge context menu;
-commits to the targeted edge and closes) and standalone
-(persistent palette, opened via `color picker on`; commits to
-the current selection and stays open).
-
-Commit, cancel and the six HSV nudges are `Action`s that run in
-`dispatch_action` like every other user-named effect
-(CODE_CONVENTIONS §3), so a macro step can drive the picker.
-`color_picker_flow::picker_op_for` is the single predicate the
-funnel arm, the keyboard pre-filter and the click router share.
-Only the picker's Copy / Paste / Cut stay modal-local — they
-carry a hex payload no `Action` body can express.
-
-### `BorderPreview`
-
-A transient slot on `MindMapDocument` that stages border-config
-edits without writing the model — the renderer substitutes the
-preview style for the targeted node / section / canvas slot
-while the slot is `Some(...)`, and the user terminates with
-`commit` (writes through the matching committing setter) or
-`cancel` (discards).
-
-Authoring iteration on the four border surfaces (per-node,
-per-section, two canvas defaults). Without preview, every kv
-edit is a commit-then-undo cycle and the visual feedback comes
-*after* the model write — the "creative toolkit" framing
-depends on the user seeing changes before they land.
-
-`src/application/document/nodes/border.rs` (the slot type +
-setters) and `lib/baumhard/src/mindmap/tree_builder/overrides.rs`
-(the borrowed view + injection in `border.rs` / `node_clip.rs`,
-`section_frame.rs`). Same discipline as `ColorPickerPreview`:
-never serialized, never push undo, never flip `dirty`. Cancel
-or commit clears the slot; a fresh `set_border_preview` call
-replaces the prior preview atomically. Selection drift causes
-lazy defer-clear: the preview stops rendering when the live
-selection no longer covers the target, and the actual slot
-clear happens at the next `set_*` / `commit_*` / `cancel_*`
-call. Implicit cancel: any of the four committing setters
-clears the preview as their first line, so a non-preview edit
-always wins. `Action::SetBorderPreview { target_kind:
-BorderPreviewTargetKind, field, value }`,
-`Action::CommitBorderPreview`, `Action::CancelBorderPreview`
-expose the keybind / dispatch surface; `Esc` cancels through
-`Action::ExitMode`'s body before mode-clear.
-
-### `SectionFrameElement` and section-frame chrome
-
-The cyan rectangles drawn around an active node's sections
-while the user is in `InteractionMode::NodeEdit { node_id }`.
-Each section gets one rectangle keyed on `(node_id,
-section_idx, focused)`; the frame is heavier (or
-canvas-default-overridden) on the section currently being
-text-edited so the user sees which section their keystrokes
-land in.
-
-The chrome is a parallel canvas — it doesn't belong to the
-node's own `GfxElement` tree, so a node move or text rebuild
-doesn't re-emit the frames. The dedicated canvas role
-`CanvasRole::SectionFrames` registers its own
-`InPlaceMutator` slot; rebuild-or-skip dispatch keys on
-`section_frame_content_signature(elements) -> u64` which
-streams every field the projection reads directly into a
-hasher (no intermediate Vec) so the signature comparison runs
-allocation-free per `Plan §7.4`. This role needs only the one
-signature because it has no in-place mutator body to protect —
-see [canvas-role projection](#canvas-role-projection) for the
-two-signature shape borders and portals use instead.
-
-`lib/baumhard/src/mindmap/tree_builder/section_frame.rs` holds
-all three halves — the `SectionFrameElement` shape, the
-`build_section_frames` emission pass, and the tree builder +
-content hasher. Three style cascades
-feed the resolution: per-section `frame_border` →
-`canvas.default_section_frame_border` (or
-`default_focused_section_frame_border` for focused) →
-hardcoded floor. Each cascade is editable through the
-`section frame …` and `canvas section-frame [focused] …`
-console verbs, plus the `BorderPreview` lifecycle.
+`compute_color_picker_layout()` is a pure function over geometry +
+viewport, so layout can be unit-tested without GPU. What the picker
+writes — its previews and its commit — is V1-C7's (#248), on writer
+transactions: the widget is kept, and its commit and hover paths are
+not wired until then.
 
 ### Console
 
@@ -4929,9 +2609,7 @@ are the
 [Screenshot capture](#screenshot-capture)), `record` (see
 [Frame-sequence recording](#frame-sequence-recording)), `clock` (see
 [App clock](#app-clock)), `open`, `new`, `node`, `section`, `zoom`.
-Visuals borrow
-`baumhard::mindmap::border::BorderGlyphSet::box_drawing_rounded`
-for the frame; content is clipped via
+Visuals draw a rounded box-drawing frame; content is clipped via
 `grapheme_chad::truncate_to_display_width` so wide CJK
 characters never overflow.
 
@@ -4982,10 +2660,11 @@ Four things the shape is load-bearing for:
   the shape that reads `w=`. `section move`'s two forms differ
   only in their *keys*, so an empty positional list admits
   both equally; deciding between them would mean letting
-  whichever key was typed first pick the form. That exclusion
-  stays a handwritten guard in `execute_move`, with a message
-  naming both shapes — one of the two bespoke semantics #27's
-  fix plan names as staying behind the table.
+  whichever key was typed first pick the form. That exclusion is
+  the verb's own, a handwritten guard with a message naming both
+  shapes — one of the two bespoke semantics #27's fix plan names as
+  staying behind the table — which returns with the verb's body
+  (V1-C5, #246).
 - **No verb sees a raw token index.** `spec::descent` is the
   only reader of token order. A handler asks
   `descent.subverb()`, `descent.parent_name(0)` and
@@ -5059,27 +2738,10 @@ contents byte for byte, so a change that alters no pinned row
 is behavior-preserving by construction and a row that does move
 is a decision with a reason attached.
 
-**A command reaches the document through two different calls,
-and which one it picks is the rebuild signal.** `ConsoleEffects`
-hands out `document()` (shared) and `document_mut()`
-(exclusive); the second raises `document_mutated`, which
-`console_input/exec.rs` reads back in
-`console_line_needs_rebuild` to decide whether the line owes a
-`scene_cache.clear()` + `rebuild_all`. The other input is the
-command's `ConsoleSideEffect`: every variant counts except
-`SetFpsDisplay`, whose overlay is screen-space and shares no
-state with the scene tree. So `help`, `fps`, `mutation list`
-and any verb that fails after only reading no longer drop the
-connection cache and re-project the whole scene for output that
-never leaves the scrollback.
-
-The signal is the *borrow*, not the write. It over-reports — a
-`border reset` that turns out to be a no-op still counts — and
-that is the safe direction, since the cost is one rebuild
-against a canvas silently disagreeing with the model. It is
-also the version a new command cannot forget: there is no way
-to write to the document except through the call that raises
-it.
+**A console line owes no rebuild.** Whatever a line changes reaches
+the document through its writer, and the view's next sync projects
+exactly that from the change feed; a line that only reads changes
+nothing, and nothing is projected for it.
 
 Console parity on WASM is the obvious next step;
 the verb implementations are already cross-platform, only the
@@ -5154,7 +2816,7 @@ costs the layer. `user_config::salvage` holds the primitives, and
 **Parametric Actions.** A subset of variants carries payload
 (`String` paths, `(field, value)` tuples, etc.) — these wrap
 parameterized console verbs so a user can bind e.g. `Ctrl+B` →
-`SetBorderField { field: "preset", value: "rounded" }` directly
+`SetFrameField { field: "preset", value: "rounded" }` directly
 in `keybinds.json` without authoring a macro. Bindings use a
 sibling `ParametricBinding` shape:
 
@@ -5215,7 +2877,7 @@ conversion and `resolve()` — which is where "`set_color`'s first
 arg has to be a real `ColorAxis`" lives, and which the const
 check, reading two lists of identifiers, cannot see.
 
-Tuple rows (`SetEdgeBodyGlyph(glyph)`) sit outside the const
+Tuple rows (`SetPathContent(glyph)`) sit outside the const
 check by construction rather than by omission: their names are
 local bindings the table invents, and the pattern that binds
 them and the constructor that consumes them are the same macro
@@ -5224,19 +2886,8 @@ repetition, so there is no second order to disagree with.
 Three skips are possible at resolve time and all three are
 logged, never panicked: an unparseable combo, the wrong number
 of args, and an arg that is not a valid value for its field.
-The dispatch arms call `pub(crate)` mutation cores extracted
-from each console verb, so the same setter path runs whether
-the user types the verb or fires the bound key — including
-`CycleBorderPreset` / `ToggleBorderVisible` (cores in
-`console/commands/border/execute.rs`) and the font-size slots
-(one selection dispatcher in `console/commands/font.rs`).
-Section-targeted Action variants resolve their `(node_id,
-section_idx)` through the shared cascade in
-`console/commands/section/target.rs`, whose
-`SectionTargetPolicy` names the two places the Action path
-legitimately differs from the verb path (no document to count
-sections, so no single-section auto-resolve; a genuine
-multi-section selection is rejected rather than collapsed). Filesystem
+The editing Actions among them answer `unhandled` until their
+owners rebuild them on the writer (`app::dispatch::families`). Filesystem
 variants (`OpenDocument`, `SaveDocumentAs`, `NewDocumentAt`) are
 `NativeOnly` and denylisted from non-User macro tiers per the
 privilege gate.
@@ -5289,15 +2940,12 @@ wrapper a parser — no new read, cap, layer, or fallback code.
 
 ### `SourceTier`
 
-The `App < User < Map < Inline` ladder in
-`src/application/source_tier.rs`, shared by the custom-mutation
-registry and the macro registry — both are id-keyed and both take
-definitions from the same four places. The ladder means two
-things at once: **precedence** (later tiers override earlier ones
-on an id collision, which the derived `Ord` encodes) and **trust**
-(`App` ships with the binary and `User` is the user's own file,
-while `Map` and `Inline` arrive inside a possibly-shared
-`.mindmap.json`). The macro dispatcher's privilege gates —
+The `App < User` ladder in `src/application/source_tier.rs`, which
+the macro registry is keyed by. The ladder means two things at once:
+**precedence** (`User` overrides `App` on an id collision, which the
+derived `Ord` encodes) and **trust** (`App` ships with the binary and
+`User` is the user's own file; a map's own verbs are V1-D3's). The
+macro dispatcher's privilege gates —
 `allows_console_line`, `allows_action`, both `impl SourceTier`
 blocks in `src/application/macros/mod.rs` — key off exactly that
 trust split. Tier assignment is loader-pinned: nothing in an
@@ -5305,35 +2953,15 @@ on-disk file can raise its own tier.
 
 ### Clipboard
 
-Cross-platform copy / cut / paste, with native
-backed by `arboard` and WASM stubbed pending async-clipboard
-integration.
+The OS clipboard layer: native backed by `arboard`, WASM stubbed
+pending async-clipboard integration. It carries plain text.
 
-Selection-routed clipboard: each
-[`SelectionState`](#selectionstate) variant has its own channel.
-Copying a node copies its style and text; copying a section
-copies a structured payload (text + per-run formatting + offset
-/ size / channel / bindings); copying an edge copies the body
-color; copying an edge label copies the label color; copying
-a portal label copies the icon color; copying a portal text
-copies the text color. The font channel mirrors this routing
-for `font size= min= max=` writes.
-
-`src/application/clipboard.rs`. The OS
-clipboard layer (native `arboard`, WASM stub) carries plain
-text. A thread-local in-process `SECTION_BUFFER` slot carries
-the structured `SectionPayload` for within-app section→section
-round-trip; on paste, the payload is consulted only when its
-`text` snapshot matches the OS clipboard's current text exactly
-(consistency check; falls through to plain text when the user
-copied from another app between Mandala copy and paste).
-Failures on native are silent by construction — `read_clipboard`
-maps a failed `arboard` call to `None` through `.ok()` and
-`write_clipboard` discards its `Result` — because interactive
-paths must not panic, and a clipboard that is merely unavailable
-is not worth a log line per keystroke. The WASM stubs return
-`None` / do nothing and say so at `log::debug!`, pending the
-browser's async clipboard API.
+`src/application/clipboard.rs`. What a copy, a cut and a paste do with
+the selection is V1-C4's (#245): the Actions answer `unhandled`, naming
+it, until then. Failures on native are silent by construction — an
+interactive path must not panic, and a clipboard that is merely
+unavailable is not worth a log line per keystroke — and the WASM stubs
+say so at `log::debug!`.
 
 ### `mandalactl` CLI
 
@@ -5368,7 +2996,7 @@ is reported as it is.
 bare (positional) arguments. The app crate's tests hold it against the IPC
 registry in both directions, so a server command without its verb fails the
 PR that adds it. The sibling of `maptool`, not a mode of it: `maptool` reads
-`.mindmap.json` files and never talks to a process. Its one client-side
+`.mandala.json` files and never talks to a process. Its one client-side
 command, `record assemble <dir>`, turns a recording's frames and manifest
 (see [Frame-sequence recording](#frame-sequence-recording)) into a GIF, or an
 MP4 through the host's `ffmpeg`, and never opens the socket.
@@ -5378,26 +3006,9 @@ agent-facing reference is `mandalactl --help`.
 
 ### `maptool` CLI
 
-A separate binary in `crates/maptool/` for
-scripted operations on `.mindmap.json` files: `show`, `grep`,
-`apply`, `export`, `convert --legacy`, `convert --portals`,
-`convert --sections`, `verify`.
-
-Authoring and maintenance from outside the
-app. `verify` is the structural-invariant checker
-([`format/validation.md`](./format/validation.md)). `convert`
-migrates legacy formats — `--legacy` runs the portal and section
-folds inside itself, so a miMind import is one hop
-([`format/migration.md`](./format/migration.md)); every verb writes
-through an atomic staging file + rename, so input and output may be
-the same path. `apply` pipes node text through an
-external command for batch edits. `export` renders to Markdown.
-`grep` and `show` are read-only inspectors.
-
-`crates/maptool/`. Not the focus of this
-document — see the crate directly for the verb-level reference.
-The format docs under [`format/`](./format/) are the
-authoritative reference for what `verify` enforces.
+A separate binary in `crates/maptool/` for scripted operations on
+`.mandala.json` files. Its verbs (`show`, `grep`, `apply`, `export`,
+`verify`) are rebuilt as clients of the document by V1-E1 (#253); until
+then every invocation says so and exits `2`.
 
 ---
-

@@ -387,7 +387,7 @@ fn canvas_result_of(capture: &CanvasCapture) -> Value {
         "rendered": matches!(capture.outcome, CanvasOutcome::Drawn { .. }),
         "width": camera.viewport_size.0,
         "height": camera.viewport_size.1,
-        "scale": crate::application::document::f32_json(camera.pixel_ratio),
+        "scale": crate::application::view::inspect::f32_json(camera.pixel_ratio),
         "camera": CameraInfo::of(camera),
         "settled": capture.settled,
     });
@@ -566,7 +566,7 @@ fn result_of(screenshot: &Screenshot) -> Value {
         "rendered": files.is_ok(),
         "width": camera.viewport_size.0,
         "height": camera.viewport_size.1,
-        "scale": crate::application::document::f32_json(camera.pixel_ratio),
+        "scale": crate::application::view::inspect::f32_json(camera.pixel_ratio),
         "camera": CameraInfo::of(camera),
         "settled": screenshot.settled,
     });
@@ -811,9 +811,6 @@ mod tests {
         }
         fn document(&self) -> Option<&MindMapDocument> {
             panic!("a capture reaches the document through the engine");
-        }
-        fn animation_pause(&self) -> Option<u64> {
-            panic!("a capture must not read the animation pause");
         }
         fn shell_state(&self, _: ShellState) -> Value {
             panic!("a capture must not read the shell state");

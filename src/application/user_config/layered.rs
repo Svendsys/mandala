@@ -2,8 +2,8 @@
 
 //! The layered-fallback driver every user-tier config loader runs on.
 //!
-//! Each user-tier config (`keybinds.json`, `mutations.json`,
-//! `macros.json`) is looked up across an ordered list of candidate
+//! Each user-tier config (`keybinds.json`, `macros.json`,
+//! `settings.json`) is looked up across an ordered list of candidate
 //! sources — explicit CLI path before the XDG path on native,
 //! `localStorage` alone on web — and the first source
 //! that yields a payload which fits the size cap *and* parses wins.
@@ -65,7 +65,7 @@ pub struct ConfigLayer<'s, 'f> {
 /// `source` of the layer that produced it.
 ///
 /// `label` names the config being loaded (`"keybinds"`,
-/// `"mutations"`, `"macros"`) and prefixes every warning so a user
+/// `"macros"`, `"settings"`) and prefixes every warning so a user
 /// staring at a log can tell which file misbehaved. Every failure is
 /// non-fatal: this is a startup path that must always produce
 /// *something*, so the caller substitutes its own defaults when the

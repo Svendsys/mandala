@@ -8,7 +8,7 @@
 # directly.
 set -euo pipefail
 
-MAP="${1:-maps/testament.mindmap.json}"
+MAP="${1:-maps/testament.mandala.json}"
 NATIVE_BIN="target/release/mandala"
 
 if [ ! -x "$NATIVE_BIN" ]; then

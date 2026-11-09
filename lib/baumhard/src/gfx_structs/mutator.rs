@@ -128,9 +128,8 @@ pub enum GlyphTreeEvent {
 /// `Eq`, and **not reflexive**: the numeric payloads are `f32`, so a
 /// mutation carrying a `NaN` is not equal to itself. Use
 /// [`GfxMutation::writes_the_same`] — not `==` — for "would these two
-/// write the same thing", which is the question
-/// [`flat_mutations`](crate::mindmap::custom_mutation::flat_mutations)
-/// asks before collapsing an AST's nested payloads into one list.
+/// write the same thing", the question a caller asks before collapsing
+/// an AST's nested payloads into one list.
 /// `==` is still the right operator for an ordinary value
 /// comparison; it is only the *agreement* predicate that needs the
 /// reflexive form.
@@ -220,18 +219,14 @@ impl GfxMutation {
     ///
     /// Derived `PartialEq` over `f32` is not an equivalence relation:
     /// `NaN != NaN`, so a mutation carrying a `NaN` is not `==` to
-    /// itself. That matters because
-    /// [`flat_mutations`](crate::mindmap::custom_mutation::flat_mutations)
-    /// collapses an AST only when every payload beneath the root
-    /// agrees with the one it returns, and
-    /// [`scope::self_and_descendants`](crate::mindmap::custom_mutation::scope::self_and_descendants)
-    /// builds its AST by cloning **one** list into two `Macro` nodes
-    /// — so that comparison is a payload against itself. Under `==`
-    /// a `NaN` there declines the whole mutator while the identical
-    /// payload under
-    /// [`scope::self_only`](crate::mindmap::custom_mutation::scope::self_only)
-    /// applies: two helpers differing only in scope disagreeing on
-    /// whether the mutation runs at all.
+    /// itself. That matters to a caller that collapses an AST only
+    /// when every payload beneath the root agrees with the one it
+    /// returns, over an AST built by cloning **one** list into two
+    /// `Macro` nodes — so that comparison is a payload against itself.
+    /// Under `==` a `NaN` there declines the whole mutator while the
+    /// identical payload in a one-node AST applies: two ASTs differing
+    /// only in shape would disagree on whether the mutation runs at
+    /// all.
     ///
     /// Two payloads agree when they are `==` **or** when they are
     /// structurally identical. The second disjunct is what restores
@@ -253,7 +248,7 @@ impl GfxMutation {
     /// The serialized form is **not** usable for this: `serde_json`
     /// writes every non-finite float as `null`, so it would make a
     /// `NaN` payload agree with an `inf` one — and `inf` *is*
-    /// reachable from a `.mindmap.json` (an out-of-range literal), so
+    /// reachable from authored JSON (an out-of-range literal), so
     /// that would be a silently-dropped payload rather than merely an
     /// over-strict decline.
     ///
@@ -319,12 +314,14 @@ impl GfxMutation {
     /// variants write one; an area or model payload is ignored as at a
     /// `Void`.
     ///
-    /// Cost: O(1), except `RunSet` (a payload clone) and `RunOverrides`
-    /// (O(glyphs in range)). See [`Self::apply_to_area`] for the
-    /// `pub(crate)` rationale.
+    /// Cost: O(1), except `RunSet` (a payload copy, written into the
+    /// run's own override vectors by `clone_from`, so a payload with
+    /// overrides no longer than the run's allocates nothing) and
+    /// `RunOverrides` (O(glyphs in range)). See [`Self::apply_to_area`]
+    /// for the `pub(crate)` rationale.
     pub(crate) fn apply_to_run(&self, run: &mut GlyphRunData) {
         match self {
-            RunSet(data) => *run = (**data).clone(),
+            RunSet(data) => run.clone_from(data),
             RunOrigin(origin) => run.set_origin(*origin),
             RunOpacity(opacity) => run.set_opacity(*opacity),
             RunOverrides(op) => run.apply_override(op),
@@ -343,7 +340,7 @@ impl GfxMutation {
     /// nothing changes, in every build profile.
     ///
     /// The three authored variants (`RunOrigin`, `RunOpacity`,
-    /// `RunOverrides`) can come from a map's `custom_mutations`, which is untrusted input, and a
+    /// `RunOverrides`) can come from authored input, which is untrusted, and a
     /// scope such as `SelfAndDescendants` sends one list to elements of
     /// every kind. They are a logged no-op, as an area or model payload
     /// at the wrong element is, and never assert.

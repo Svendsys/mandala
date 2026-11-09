@@ -13,7 +13,7 @@
 //! person who needs it.
 //!
 //! The answer is a *document*: a rejected load becomes the
-//! [`baumhard::mindmap::placard`] map, which the shell then installs
+//! `MindMapDocument::load_failure_placard` map, which the shell then installs
 //! exactly as it installs a real one. The consequences are the point
 //! of doing it this way — the window opens, the canvas has content,
 //! the camera fits it, input works, and the console (native) can
@@ -23,8 +23,9 @@
 //! ## One call per target, taking only the source
 //!
 //! `native_startup_document` and `wasm_startup_document` are the
-//! whole surface. Each takes the path or URL and returns the document
-//! to install; neither hands its caller a `Result` to look at. That
+//! whole surface. Each takes the path or URL — and the history limit
+//! the document is held to (D18) — and returns the document to
+//! install; neither hands its caller a `Result` to look at. That
 //! is deliberate and it is the part worth defending: while the init
 //! sites composed the load themselves, the loader's message passed
 //! through their hands, and blanking it on the browser leg alone was
@@ -52,9 +53,7 @@
 //! module's own browser leg stayed open, and blanking the URL one
 //! level in was still a one-line change under a green suite.
 
-use baumhard::mindmap::placard;
-
-use crate::application::document::MindMapDocument;
+use crate::application::document::{placard, MindMapDocument};
 
 /// The decision: given the result of the initial load, what goes on
 /// the canvas.
@@ -93,8 +92,12 @@ enum StartupSurface {
 /// It takes a path and gets a document — see the module docs for why
 /// no `Result` crosses that boundary.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn native_startup_document(path: &str) -> MindMapDocument {
-    adopt(startup_surface(path, MindMapDocument::load(path)))
+pub(crate) fn native_startup_document(path: &str, history_limit: usize) -> MindMapDocument {
+    adopt(startup_surface(
+        path,
+        MindMapDocument::load(path, history_limit),
+        history_limit,
+    ))
 }
 
 /// Browser entry point: fetch `url` over the page origin, parse it,
@@ -106,9 +109,13 @@ pub(crate) fn native_startup_document(path: &str) -> MindMapDocument {
 /// does other than the fetch is [`browser_load`], which is compiled
 /// and tested on native.
 #[cfg(target_arch = "wasm32")]
-pub(crate) async fn wasm_startup_document(url: &str) -> MindMapDocument {
+pub(crate) async fn wasm_startup_document(url: &str, history_limit: usize) -> MindMapDocument {
     let fetched = fetch_map_json(url).await;
-    adopt(startup_surface(url, browser_load(url, fetched)))
+    adopt(startup_surface(
+        url,
+        browser_load(url, fetched, history_limit),
+        history_limit,
+    ))
 }
 
 /// Collapse the browser's two-stage load — fetch, then parse — into
@@ -125,13 +132,17 @@ pub(crate) async fn wasm_startup_document(url: &str) -> MindMapDocument {
 // rather than blanket-allowing on both targets — if the browser
 // caller goes away, wasm32 says so.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-fn browser_load(url: &str, fetched: Result<String, String>) -> Result<MindMapDocument, String> {
-    fetched.and_then(|json| MindMapDocument::from_json_str(&json, Some(url.to_string())))
+fn browser_load(
+    url: &str,
+    fetched: Result<String, String>,
+    history_limit: usize,
+) -> Result<MindMapDocument, String> {
+    fetched.and_then(|json| MindMapDocument::from_json_str(&json, Some(url.to_string()), history_limit))
 }
 
 /// Fetch `url` as text over the page origin. Browser-only:
 /// `std::fs` does not exist there, and this is the counterpart to
-/// native's `loader::load_from_file`.
+/// native's `MindMapDocument::load`.
 ///
 /// Lives here rather than in `run_wasm` because it is one half of the
 /// initial load, and the module that owns the initial load is the one
@@ -145,7 +156,7 @@ fn browser_load(url: &str, fetched: Result<String, String>) -> Result<MindMapDoc
 /// there. The messages do not have to name the URL:
 /// [`report_line`] puts the source in front of whatever comes back,
 /// once, for both targets — so a 404 reads `startup: could not load
-/// 'maps/x.mindmap.json': HTTP 404 Not Found` rather than the bare
+/// 'maps/x.mandala.json': HTTP 404 Not Found` rather than the bare
 /// `HTTP 404 Not Found` that told a reader with more than one map
 /// nothing.
 #[cfg(target_arch = "wasm32")]
@@ -179,11 +190,15 @@ async fn fetch_map_json(url: &str) -> Result<String, String> {
 /// Pure: builds a document either way and reports nothing. The
 /// reporting lives in [`adopt`], which is what makes this function
 /// assertable line by line without a logger or a device.
-fn startup_surface(source: &str, load: Result<MindMapDocument, String>) -> StartupSurface {
+fn startup_surface(
+    source: &str,
+    load: Result<MindMapDocument, String>,
+    history_limit: usize,
+) -> StartupSurface {
     match load {
         Ok(document) => StartupSurface::Loaded(document),
         Err(message) => StartupSurface::Rejected {
-            placard: MindMapDocument::load_failure_placard(source, &message),
+            placard: MindMapDocument::load_failure_placard(source, &message, history_limit),
             source: source.to_string(),
             message,
         },
@@ -194,19 +209,19 @@ fn startup_surface(source: &str, load: Result<MindMapDocument, String>) -> Start
 /// then the loader's own message — **with the source appearing
 /// exactly once**.
 ///
-/// *Why the source is added.* Exactly one of the loader's failure
-/// modes names the file — `load_from_file`'s *read* error — while
-/// `load_from_str`'s parse errors and every one of `fetch_map_json`'s
-/// never do. Without this the log read `startup: Failed to parse
-/// mindmap JSON: key must be a string at line 1 column 3`, which does
-/// not say *which* map, and a line that cannot be pasted into a bug
-/// report is not worth emitting.
+/// *Why the source is added.* The parse errors of
+/// `MindMapDocument::from_json_str` and every one of
+/// `fetch_map_json`'s never name the file. Without this the log read
+/// `startup: key must be a string at line 1 column 3`, which does not
+/// say *which* map, and a line that cannot be pasted into a bug report
+/// is not worth emitting.
 ///
-/// *Why it is conditional.* The one failure mode that does name the
-/// file is also the likeliest way anybody reaches this screen — a
-/// mistyped path — and prepending unconditionally produced `startup:
-/// could not load '/nope/x.mindmap.json': Failed to read file
-/// /nope/x.mindmap.json: No such file or directory`. The predicate is
+/// *Why it is conditional.* `MindMapDocument::load` names the file in
+/// its own messages, and its read error is the likeliest way anybody
+/// reaches this screen — a mistyped path — so prepending
+/// unconditionally produced `startup: could not load
+/// '/nope/x.mandala.json': /nope/x.mandala.json: could not read: No
+/// such file or directory`. The predicate is
 /// [`placard::message_names_source`], shared with the canvas so the
 /// two surfaces cannot disagree about what "once" means.
 ///
@@ -259,7 +274,7 @@ fn resolve(surface: StartupSurface) -> (MindMapDocument, Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use baumhard::mindmap::placard;
+    use baumhard::document::element::DocElement;
     use baumhard::util::rust_source::{self, braced_block_after, production_code, string_literals};
 
     /// This module's own path, for the pins that read it.
@@ -270,50 +285,43 @@ mod tests {
     const INIT_FILES: &[(&str, &str)] = &[
         (
             "src/application/app/run_native_init.rs",
-            "startup_load::native_startup_document(&options.mindmap_path)",
+            "startup_load::native_startup_document(&options.mindmap_path, settings.history_limit)",
         ),
         (
             "src/application/app/run_wasm/mod.rs",
-            "startup_load::wasm_startup_document(&mindmap_path).await",
+            "startup_load::wasm_startup_document(&mindmap_path, settings.history_limit).await",
         ),
     ];
 
-    /// The failing shape a hand-author actually meets: valid JSON,
-    /// but a node with no sections. Routed through the real loader
-    /// rather than a fabricated `Err`, so the message under test is
-    /// the message the loader emits.
-    const ZERO_SECTION_MAP: &str = r##"{
-        "version": "1.0",
-        "name": "broken",
-        "canvas": {"background_color": "#000", "default_border": null,
-                   "default_connection": null, "theme_variables": {},
-                   "theme_variants": {}},
-        "nodes": {"0": {
-            "id": "0", "parent_id": null,
-            "position": {"x": 0, "y": 0},
-            "size": {"width": 100, "height": 50},
-            "sections": [],
-            "style": {"background_color":"#000","frame_color":"#000",
-                      "text_color":"#fff","shape":"rectangle",
-                      "corner_radius_percent":0,"frame_thickness":0,
-                      "show_frame":false,"show_shadow":false},
-            "layout": {"type":"map","direction":"auto","spacing":0},
-            "folded": false, "notes": "",
-            "color_schema": null
-        }},
-        "edges": []
-    }"##;
+    /// The failing shape a hand-author actually meets: valid JSON of
+    /// the wrong shape. Routed through the real loader rather than a
+    /// fabricated `Err`, so the message under test is the message the
+    /// loader emits.
+    const ZERO_SECTION_MAP: &str = r##"{"format": 1, "name": "broken", "nodes": "not a list"}"##;
 
     /// The load result for a map the loader rejects, produced by the
     /// loader itself.
     fn rejected() -> (String, Result<MindMapDocument, String>) {
-        let result = MindMapDocument::from_json_str(ZERO_SECTION_MAP, None);
+        let result = MindMapDocument::from_json_str(ZERO_SECTION_MAP, None, 50);
         let message = result
             .as_ref()
             .err()
             .cloned()
-            .expect("the zero-section fixture must be rejected");
+            .expect("the wrong-shape fixture must be rejected");
         (message, result)
+    }
+
+    /// Every span's text in `doc`, in tree order, one line each: what
+    /// the canvas draws of a placard.
+    fn canvas_text(doc: &MindMapDocument) -> String {
+        let tree = doc.doc().tree();
+        let mut out = Vec::new();
+        for id in tree.descendants() {
+            if let Some(DocElement::Span(span)) = doc.doc().get(id) {
+                out.push(span.text.clone());
+            }
+        }
+        out.join("\n")
     }
 
     /// The exact body `wasm_startup_document` is allowed to have,
@@ -330,7 +338,8 @@ mod tests {
     /// small enough that "these two and nothing else" is a statement
     /// a test can make.
     const WASM_ENTRY_BODY: &str = "{ let fetched = fetch_map_json(url).await; \
-                                   adopt(startup_surface(url, browser_load(url, fetched))) }";
+                                   adopt(startup_surface( url, browser_load(url, fetched, history_limit), \
+                                   history_limit, )) }";
 
     /// `code` with every run of whitespace collapsed to one space.
     fn flatten(code: &str) -> String {
@@ -466,17 +475,19 @@ mod tests {
     /// `Ctrl+S` still knows where to write.
     #[test]
     fn test_successful_load_is_adopted_unchanged() {
-        let path = crate::application::document::tests_common::test_map_path();
-        let doc = MindMapDocument::load(&path.to_string_lossy()).expect("the testament fixture loads");
-        let name = doc.mindmap.name.clone();
-        let nodes = doc.mindmap.nodes.len();
+        let dir = baumhard::util::test_temp::TempDir::new("startup-adopted");
+        let path = dir.join("map.mandala.json").to_string_lossy().to_string();
+        let mut original = MindMapDocument::new_blank(None, 50);
+        original.create_root_for_test();
+        original.save_to(&path).expect("the fixture saves");
+        let saved = original.save_json().expect("and serializes");
+        let doc = MindMapDocument::load(&path, 50).expect("the fixture loads");
 
-        let surface = startup_surface("maps/testament.mindmap.json", Ok(doc));
+        let surface = startup_surface(&path, Ok(doc), 50);
         assert!(matches!(surface, StartupSurface::Loaded(_)));
-        let (adopted, report) = resolve(surface);
+        let (mut adopted, report) = resolve(surface);
         assert!(report.is_none(), "a successful load reports nothing: {report:?}");
-        assert_eq!(adopted.mindmap.name, name);
-        assert_eq!(adopted.mindmap.nodes.len(), nodes);
+        assert_eq!(adopted.save_json().expect("serializes"), saved);
         assert!(adopted.file_path.is_some(), "a real load stays bound to its file");
         assert!(!adopted.is_load_failure_placard(), "a real load is a map");
     }
@@ -489,7 +500,7 @@ mod tests {
     #[test]
     fn test_rejected_load_reports_the_loader_message_verbatim() {
         let (message, result) = rejected();
-        let (_, report) = resolve(startup_surface("broken.mindmap.json", result));
+        let (_, report) = resolve(startup_surface("broken.mandala.json", result, 50));
         let report = report.expect("a rejected load must report");
         assert!(
             report.contains(&message),
@@ -498,11 +509,9 @@ mod tests {
         );
     }
 
-    /// **The reported line names the map.** The loader names the file
-    /// in exactly one of its failure modes — the *read* error — and
-    /// in none of the others: a parse failure says `Failed to parse
-    /// mindmap JSON: …` and the browser's fetch says `HTTP 404 Not
-    /// Found`, neither of which tells a reader with more than one map
+    /// **The reported line names the map.** A parse failure names no
+    /// file and the browser's fetch says `HTTP 404 Not Found`, neither
+    /// of which tells a reader with more than one map
     /// open which one died. The placard carries the source on the
     /// canvas; this pins the copy that goes to `stderr` and the
     /// browser console, which is where a bug report is pasted from.
@@ -513,16 +522,16 @@ mod tests {
     #[test]
     fn test_the_reported_line_names_the_map_that_failed() {
         // The parse failure is the case that regressed: its message
-        // is produced by `load_from_str`, which never sees a path.
+        // is produced by `from_json_str`, which never sees a path.
         let (message, result) = rejected();
         assert!(
             !message.contains("precious"),
             "fixture assumption broken — the loader message must not already name the source: {message}"
         );
-        let (_, report) = resolve(startup_surface("/home/user/precious.mindmap.json", result));
+        let (_, report) = resolve(startup_surface("/home/user/precious.mandala.json", result, 50));
         let report = report.expect("a rejected load must report");
         assert!(
-            report.contains("/home/user/precious.mindmap.json"),
+            report.contains("/home/user/precious.mandala.json"),
             "the reported line must name the map that failed: {report}"
         );
         assert!(
@@ -536,9 +545,9 @@ mod tests {
         // copied, so an arm added there is covered here without
         // anyone remembering to add it.
         for bare in fetch_error_messages() {
-            let line = report_line("maps/testament.mindmap.json", &bare);
+            let line = report_line("maps/testament.mandala.json", &bare);
             assert!(
-                line.contains("maps/testament.mindmap.json") && line.contains(&bare),
+                line.contains("maps/testament.mandala.json") && line.contains(&bare),
                 "{bare:?} must reach the log with its source attached, got {line:?}"
             );
         }
@@ -547,15 +556,15 @@ mod tests {
     /// **The source appears once, in both failure shapes and on both
     /// surfaces.**
     ///
-    /// The loader names the file in exactly one of its failure modes,
-    /// and that one — `load_from_file`'s read error — is the mode a
-    /// mistyped path produces, which is the likeliest way anybody
-    /// meets this screen at all. Prepending unconditionally therefore
-    /// duplicated the path on the commonest line the fix emits:
+    /// `MindMapDocument::load` names the file in its own messages, and
+    /// its read error is the mode a mistyped path produces, which is
+    /// the likeliest way anybody meets this screen at all. Prepending
+    /// unconditionally therefore duplicated the path on the commonest
+    /// line the fix emits:
     ///
     /// ```text
-    /// startup: could not load '/nope/absent.mindmap.json': Failed to
-    /// read file /nope/absent.mindmap.json: No such file or directory
+    /// startup: could not load '/nope/absent.mandala.json':
+    /// /nope/absent.mandala.json: could not read: No such file or directory
     /// ```
     ///
     /// Both shapes are checked, in both directions, because a fix
@@ -568,14 +577,14 @@ mod tests {
         // Shape 1: the read failure, produced by the real loader
         // against a path that is not there. Its message already names
         // the file.
-        let missing = "/nonexistent/definitely-not-here.mindmap.json";
-        let read_error = MindMapDocument::load(missing)
+        let missing = "/nonexistent/definitely-not-here.mandala.json";
+        let read_error = MindMapDocument::load(missing, 50)
             .err()
             .expect("a path that is not there must not load");
         assert!(
             read_error.contains(missing),
-            "fixture assumption broken — `load_from_file`'s read error used to name the \
-             file, and this test is about what happens when it does: {read_error}"
+            "fixture assumption broken — the read error names the file, and this test is \
+             about what happens when it does: {read_error}"
         );
 
         // Shape 2: the parse failure, produced by the real loader
@@ -602,15 +611,15 @@ mod tests {
                 "the {shape} failure lost the loader's own words: {line}"
             );
 
-            let canvas = placard::load_failure_text(missing, message);
+            let canvas = canvas_text(&MindMapDocument::load_failure_placard(missing, message, 50));
             assert_eq!(
                 canvas.replace('\n', " ").matches(missing).count(),
                 1,
                 "the {shape} failure names {missing} more than once on the canvas:\n{canvas}"
             );
             assert!(
-                canvas.contains(placard::PLACARD_HEADLINE) && canvas.contains(placard::PLACARD_FOOTER),
-                "the {shape} placard lost its frame:\n{canvas}"
+                canvas.starts_with("could not load"),
+                "the {shape} placard lost its headline:\n{canvas}"
             );
         }
     }
@@ -621,26 +630,24 @@ mod tests {
     /// The pin above uses a long absolute path, and so did every
     /// other one here — which is how the "once" rule shipped with a
     /// hole in it. `mandala map` on a malformed file called `map`
-    /// draws the loader's `Failed to parse mindmap JSON: …`, and the
-    /// old predicate found `map` inside the word **mindmap**. Both
+    /// drew a parse message with `map` inside the word **mindmap**,
+    /// and the old predicate found it there. Both
     /// surfaces concluded the message had already named the file and
     /// dropped it, so neither said which file failed: the empty
     /// screen #107 is about, reached by a shorter route than #107's.
     ///
     /// Short sources are not exotic — a map in the working directory
     /// is typed as its bare name. The predicate lives in
-    /// `baumhard::mindmap::placard`, which pins the decision itself
+    /// `document::placard`, which pins the decision itself
     /// across a dozen spellings; this pins the two surfaces that ask
     /// it, because a predicate can be right while a caller drops its
     /// answer on the floor.
     #[test]
     fn test_a_short_source_reaches_both_surfaces() {
         let short = "map";
-        let message = MindMapDocument::from_json_str("map", None)
-            .err()
-            .expect("a bare word is not a mindmap and must not load");
+        let message = "expected a mindmap object at line 1 column 1".to_string();
         assert!(
-            message.contains(short),
+            message.contains(short) && !placard::message_names_source(short, &message),
             "fixture assumption broken — this test is about a message that contains the \
              source as a fragment rather than as a name: {message}"
         );
@@ -652,9 +659,9 @@ mod tests {
              got {line:?}"
         );
 
-        let canvas = placard::load_failure_text(short, &message);
+        let canvas = canvas_text(&MindMapDocument::load_failure_placard(short, &message, 50));
         assert!(
-            canvas.lines().any(|line| line == short),
+            canvas.contains(&format!("could not load {short}\n")),
             "the placard for a short source dropped it, leaving nothing on the canvas \
              that says which file failed:\n{canvas}"
         );
@@ -673,9 +680,9 @@ mod tests {
     /// arrive, must come out the far end intact.
     #[test]
     fn test_the_browser_leg_carries_every_fetch_message_through() {
-        const URL: &str = "maps/from-the-query-string.mindmap.json";
+        const URL: &str = "maps/from-the-query-string.mandala.json";
         for bare in fetch_error_messages() {
-            let (_, report) = resolve(startup_surface(URL, browser_load(URL, Err(bare.clone()))));
+            let (_, report) = resolve(startup_surface(URL, browser_load(URL, Err(bare.clone()), 50), 50));
             let report = report.expect("a failed fetch must report");
             assert!(
                 report.contains(&bare) && report.contains(URL),
@@ -688,7 +695,8 @@ mod tests {
         let (parse_message, _) = rejected();
         let (_, report) = resolve(startup_surface(
             URL,
-            browser_load(URL, Ok(ZERO_SECTION_MAP.to_string())),
+            browser_load(URL, Ok(ZERO_SECTION_MAP.to_string()), 50),
+            50,
         ));
         let report = report.expect("a rejected body must report");
         assert!(
@@ -698,10 +706,16 @@ mod tests {
 
         // A body that *did* parse keeps its origin, so the browser's
         // save-back knows where the document came from.
-        let good = std::fs::read_to_string(crate::application::document::tests_common::test_map_path())
-            .expect("the testament fixture is readable");
-        let doc = browser_load(URL, Ok(good)).expect("the testament fixture parses");
+        let good = MindMapDocument::new_blank(None, 50)
+            .save_json()
+            .expect("a blank map serializes");
+        let doc = browser_load(URL, Ok(good), 7).expect("a blank map parses");
         assert_eq!(doc.file_path.as_deref(), Some(URL));
+        assert_eq!(
+            doc.history_limit(),
+            7,
+            "the browser leg holds the document to the limit it is given"
+        );
     }
 
     /// **The fix, stated as a test.** A rejected load does not leave
@@ -710,33 +724,15 @@ mod tests {
     #[test]
     fn test_rejected_load_puts_the_loader_message_on_the_canvas() {
         let (message, result) = rejected();
-        let doc = adopt(startup_surface("broken.mindmap.json", result));
-
-        let text = doc
-            .mindmap
-            .nodes
-            .values()
-            .map(|n| {
-                n.sections
-                    .iter()
-                    .map(|s| s.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let doc = adopt(startup_surface("broken.mandala.json", result, 50));
+        let text = canvas_text(&doc);
         assert!(!text.trim().is_empty(), "the placard must not be blank");
-
-        // The loader's message, not a paraphrase of it. Compared
-        // word-by-word because the placard wraps to a column.
-        let on_canvas = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        let expected = message.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
-            on_canvas.contains(&expected),
-            "the placard does not carry the loader message.\nwanted: {expected}\ngot: {text}"
+            text.contains(&message),
+            "the placard does not carry the loader message.\nwanted: {message}\ngot: {text}"
         );
         assert!(
-            on_canvas.contains("broken.mindmap.json"),
+            text.contains("broken.mandala.json"),
             "the placard must name the map that failed: {text}"
         );
     }
@@ -744,20 +740,19 @@ mod tests {
     /// **The native entry point, end to end.** Everything above tests
     /// a piece; this runs the function `run_native_init` actually
     /// calls, on a path that does not exist, and checks the shell
-    /// gets something to render.
+    /// gets something to render, held to the limit it was given.
     #[test]
     fn test_native_startup_document_returns_a_placard_for_a_map_that_is_not_there() {
-        let missing = "/nonexistent/definitely-not-here.mindmap.json";
-        let doc = native_startup_document(missing);
-        assert_eq!(doc.mindmap.name, placard::PLACARD_MAP_NAME);
+        let missing = "/nonexistent/definitely-not-here.mandala.json";
+        let doc = native_startup_document(missing, 9);
         assert!(doc.file_path.is_none(), "a placard must never be savable");
         assert!(
             doc.is_load_failure_placard(),
             "a placard says it is one, so a one-shot launch refuses to pass it off as the map"
         );
-        let text = &doc.mindmap.nodes[placard::PLACARD_NODE_ID].sections[0].text;
-        let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(flat.contains(missing), "the placard must name the map: {text}");
+        assert_eq!(doc.history_limit(), 9);
+        let text = canvas_text(&doc);
+        assert!(text.contains(missing), "the placard must name the map: {text}");
     }
 
     /// The placard is bound to no file, so the save paths — which
@@ -768,36 +763,36 @@ mod tests {
     #[test]
     fn test_placard_is_not_bound_to_the_file_that_failed() {
         let (_, result) = rejected();
-        let doc = adopt(startup_surface("/home/user/precious.mindmap.json", result));
+        let doc = adopt(startup_surface("/home/user/precious.mandala.json", result, 50));
         assert!(doc.file_path.is_none(), "a placard must never be savable");
-        assert!(!doc.dirty, "a placard is not unsaved work");
-        assert_eq!(doc.mindmap.name, placard::PLACARD_MAP_NAME);
+        assert!(!doc.is_dirty(), "a placard is not unsaved work");
     }
 
     /// The placard is a live document, not a still image: the shell
-    /// installs it through the same path as a real map, so the tree
-    /// projection has to succeed on it. A placard that could not
-    /// build a tree would render the same empty canvas #107 is
-    /// about.
+    /// installs it through the same path as a real map, so the
+    /// projection has to succeed on it. A placard that projected
+    /// nothing would render the same empty canvas #107 is about.
     #[test]
-    fn test_placard_projects_into_a_renderable_tree() {
+    fn test_placard_projects_into_glyph_runs() {
+        use baumhard::projection::{GlyphLayers, Layer, Projector};
         let (_, result) = rejected();
-        let doc = adopt(startup_surface("broken.mindmap.json", result));
-        let tree = doc.build_tree();
-        assert_eq!(tree.node_count(), 1, "the placard must project its one node");
-        assert_eq!(
-            tree.section_count_for(placard::PLACARD_NODE_ID),
-            1,
-            "the placard's text must project as a renderable section"
+        let doc = adopt(startup_surface("broken.mandala.json", result, 50));
+        baumhard::font::fonts::init();
+        let mut layers = GlyphLayers::new();
+        let mut fonts = baumhard::font::fonts::FontSystemLease::new("startup_load tests");
+        let _projector = Projector::project_full(doc.doc(), &mut layers, &mut fonts);
+        assert!(
+            layers.tree(Layer::Sections).arena().live_count() > 1,
+            "the placard's text must project as glyph runs on the sections layer"
         );
     }
 
     /// **A placard is not announced as a map that loaded.** Under
     /// `RUST_LOG=info` the shell used to print
     /// `document: loaded mindmap "load-failure" with 1 node(s)`
-    /// immediately beside `startup: could not load …`, because
-    /// `MindMapDocument::finalize` carried the announcement and the
-    /// placard goes through `finalize` like any other map. A log
+    /// immediately beside `startup: could not load …`, because the old
+    /// `MindMapDocument::finalize` (gone) carried the announcement and the
+    /// placard went through it like any other map. A log
     /// that contradicts itself in two consecutive lines is worse
     /// than a quiet one.
     ///
@@ -815,7 +810,7 @@ mod tests {
         // ever truncates at one of those declarations it hands back
         // nothing, and every assertion below passes vacuously.
         assert!(
-            code.contains("fn finalize("),
+            code.contains("pub fn load_failure_placard("),
             "{DOCUMENT} did not reach this test — the reader truncated it"
         );
 
@@ -823,7 +818,7 @@ mod tests {
             ("pub fn load(", true),
             ("pub fn from_json_str(", true),
             ("pub fn load_failure_placard(", false),
-            ("fn finalize(", false),
+            ("pub fn new(", false),
         ] {
             let body = braced_block_after(&code, item)
                 .unwrap_or_else(|| panic!("{DOCUMENT} must still declare `{item}`"));
@@ -831,7 +826,7 @@ mod tests {
                 body.contains("log_loaded("),
                 announces,
                 "`{item}` {} announce the load. The line belongs to the constructors that \
-                 really loaded a map — not to `finalize`, which the load-failure placard also \
+                 really loaded a map — not to `new`, which the load-failure placard also \
                  goes through. Body seen: {body}",
                 if announces { "must" } else { "must not" }
             );
@@ -1043,9 +1038,9 @@ mod tests {
             "the initial map load — §9's carve-out, which must therefore panic nowhere",
         ),
         (
-            "lib/baumhard/src/mindmap/loader.rs",
-            "what the initial map load reaches — the parse and the validators behind \
-             `MindMapDocument::load`, inside the same carve-out",
+            "lib/baumhard/src/document/format/mod.rs",
+            "what the initial map load reaches — the parse behind `MindMapDocument::load`, \
+             inside the same carve-out",
         ),
     ];
 
@@ -1430,7 +1425,7 @@ mod tests {
     /// implements it.**
     ///
     /// #107's acceptance asked for exactly this: the convention
-    /// prescribed `expect` for the initial `loader::load_from_file`
+    /// prescribed `expect` for the initial map load
     /// and the code did something else, so one of the two had to
     /// move. §9 moved — but a paragraph is only a decision for as
     /// long as it survives the next edit of the file.
@@ -1481,7 +1476,7 @@ mod tests {
         // The `expect` list is where "the initial load now `expect`s"
         // would have to be written. It must not be.
         for excluded in [
-            "load_from_file",
+            "MindMapDocument::load",
             "from_json_str",
             "initial map load",
             "native_startup_document",
@@ -1499,7 +1494,7 @@ mod tests {
         // reader cannot get from the rule to the code.
         for named in [
             "app::startup_load",
-            "baumhard::mindmap::placard",
+            "MindMapDocument::load_failure_placard",
             "keep the shell alive",
         ] {
             assert!(
@@ -1511,7 +1506,7 @@ mod tests {
         // …and what it names has to be there.
         for module in [
             "src/application/app/startup_load.rs",
-            "lib/baumhard/src/mindmap/placard.rs",
+            "src/application/document/placard.rs",
         ] {
             assert!(
                 repo_path(module).is_file(),

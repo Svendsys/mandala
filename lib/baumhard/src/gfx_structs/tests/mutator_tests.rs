@@ -163,10 +163,9 @@ fn test_writes_the_same_is_reflexive_where_partial_eq_is_not() {
 }
 
 /// The property the derived `PartialEq` cannot provide, and the
-/// reason [`GfxMutation::writes_the_same`] exists: `flat_mutations`
-/// decides whether a mutator runs by asking whether two payloads
-/// agree, and `scope::self_and_descendants` asks that of a payload
-/// and a clone of itself.
+/// reason [`GfxMutation::writes_the_same`] exists: a caller that
+/// decides whether a mutator runs by asking whether two payloads agree
+/// asks it of a payload and a clone of itself.
 pub fn do_writes_the_same_is_reflexive_where_partial_eq_is_not() {
     let nan = GfxMutation::area_command(GlyphAreaCommand::NudgeRight(f32::NAN));
     assert_ne!(nan, nan.clone(), "precondition: `==` is not reflexive here");
@@ -222,7 +221,7 @@ fn test_instruction_repeat_while_always_true() {
 
 /// Build a target tree with a root and two children, then apply a
 /// `RepeatWhile(always_true)` instruction. The instruction node's
-/// child mutator carries a position delta; `repeat_while` applies
+/// child mutator carries a position delta; the repeat applies
 /// that child mutator to each target descendant that satisfies the
 /// predicate, recursing depth-first.
 pub fn do_instruction_repeat_while_always_true() {
@@ -247,7 +246,7 @@ pub fn do_instruction_repeat_while_always_true() {
 
     // -- mutator tree: root (Instruction RepeatWhile always_true, ch 0)
     //                    -> child mutator (Single: position += (5, 7), ch 0)
-    // The walker's `repeat_while` tests the predicate on each target
+    // The walker's `RepeatWhile` arm tests the predicate on each target
     // child, applies the child mutator to matching children, then
     // recurses into their descendants.
     let predicate = Predicate::always_true();
