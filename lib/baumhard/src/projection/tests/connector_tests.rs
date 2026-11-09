@@ -15,8 +15,8 @@ use crate::document::element::DocKind;
 use crate::document::values::Anchor;
 use crate::flow::{Curve, Rect};
 use crate::projection::geometry::{
-    held_apart, near_pairs, path_through, side_point, side_toward, untangle, Lane, CLEARANCE, SPLAY_CAP,
-    UNTANGLE_GRIDDED, UNTANGLE_GRIDS, UNTANGLE_ROUNDS, UNTANGLE_SCRATCH,
+    held_apart, near_pairs, path_through, sample, side_point, side_toward, untangle, Lane, CLEARANCE,
+    SPLAY_CAP, UNTANGLE_GRIDDED, UNTANGLE_GRIDS, UNTANGLE_ROUNDS, UNTANGLE_SCRATCH,
 };
 use crate::projection::state::{Placed, UnitBody};
 use crate::projection::tests::maps::{ident, kid, load_map, node, text_section};
@@ -882,9 +882,7 @@ fn untangle_afresh(lanes: &[Lane]) -> Vec<f32> {
                 } else {
                     path_through(lane.start, lane.end, &lane.via, h)
                 };
-                let step = (0.25 * lane.width).max(1e-2);
-                let skip = CLEARANCE * lane.hold.max(lane.width);
-                points_along(&curves, step, skip)
+                sample(&curves, 0.25 * lane.width, CLEARANCE * lane.hold.max(lane.width))
             })
             .collect();
         let mut near = vec![false; lanes.len()];
@@ -906,35 +904,6 @@ fn untangle_afresh(lanes: &[Lane]) -> Vec<f32> {
         }
     }
     best.1
-}
-
-/// Points along `curves` at most `step` apart, from `skip` along on, as
-/// the untangling samples them.
-fn points_along(curves: &[Curve], step: f32, skip: f32) -> Vec<Vec2> {
-    let mut out = Vec::new();
-    let mut along = 0.0_f32;
-    for curve in curves {
-        let (a, d) = (curve.point(0.0), curve.point(1.0));
-        let reach = match *curve {
-            Curve::Cubic(_, b, c, _) => a.distance(b) + b.distance(c) + c.distance(d),
-            Curve::Quadratic(_, b, _) => a.distance(b) + b.distance(d),
-            Curve::Line(..) => a.distance(d),
-        };
-        if !reach.is_finite() {
-            continue;
-        }
-        let n = ((reach / step).ceil() as usize).clamp(1, 1 << 16);
-        let mut last = a;
-        for i in 0..n {
-            let p = curve.point(i as f32 / n as f32);
-            along += p.distance(last);
-            last = p;
-            if along >= skip {
-                out.push(p);
-            }
-        }
-    }
-    out
 }
 
 /// `count` paths from one point down to a row `wide` across, `straight`
@@ -1031,7 +1000,7 @@ fn test_projection_untangle_measures_again_only_what_it_moved() {
         .iter()
         .map(|lane| {
             let curves = path_through(lane.start, lane.end, &lane.via, 1.0);
-            points_along(&curves, 0.25 * lane.width, CLEARANCE * lane.hold.max(lane.width)).len()
+            sample(&curves, 0.25 * lane.width, CLEARANCE * lane.hold.max(lane.width)).len()
         })
         .sum();
     assert!(

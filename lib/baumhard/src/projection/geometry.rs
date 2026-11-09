@@ -492,7 +492,7 @@ pub(crate) fn untangle(lanes: &[Lane]) -> Vec<f32> {
 }
 
 /// Points along `curves` at most `step` apart, from `skip` along on.
-fn sample(curves: &[Curve], step: f32, skip: f32) -> Vec<Vec2> {
+pub(crate) fn sample(curves: &[Curve], step: f32, skip: f32) -> Vec<Vec2> {
     let step = step.max(1e-2);
     let mut out = Vec::new();
     let mut along = 0.0_f32;
