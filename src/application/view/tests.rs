@@ -436,3 +436,64 @@ fn test_a_chrome_builder_follows_the_layer_changes_that_touch_its_target() {
         "a deleted node touches its follower"
     );
 }
+
+/// The color the overlays left on `glyph`'s first glyph, in `layer`.
+#[cfg(not(target_arch = "wasm32"))]
+fn tint_of(view: &MapView, layer: usize, glyph: NodeId) -> Option<baumhard::document::values::Rgba> {
+    let tree = view.layers().tree(baumhard::projection::Layer::ALL[layer]);
+    let run = tree.get(glyph)?.get().glyph_run()?;
+    run.overrides().color().first().copied().flatten()
+}
+
+/// **The reparent and connect target tint stamps exactly the hovered
+/// node's runs, in its own color, beside the selection's**, and clearing
+/// it clears exactly those. The selection's stamp is not touched: its
+/// runs keep the selection's color throughout (the control — a tint that
+/// overwrote or cleared every stamp would change them).
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_the_target_tint_stamps_the_hovered_node_beside_the_selection() {
+    use super::overlay::{SELECTION_HIGHLIGHT, TARGET_HIGHLIGHT};
+    let mut doc = testament();
+    let mut view = MapView::for_test(&doc);
+    let (a, b) = two_drawn_roots(&doc, &view);
+    doc.selection.select_only(a);
+    view.sync_for_test(&mut doc).expect("the selection is stamped");
+    let selected = |view: &MapView, doc: &MindMapDocument| {
+        runs(view, doc, a)
+            .into_iter()
+            .all(|(layer, glyph)| tint_of(view, layer, glyph) == Some(SELECTION_HIGHLIGHT))
+    };
+    assert!(
+        selected(&view, &doc),
+        "precondition: a carries the selection's tint"
+    );
+
+    assert!(view.set_hover_target(Some(b)));
+    let report = view.sync_for_test(&mut doc).expect("the tint changed");
+    assert_eq!(
+        stamped(&report),
+        runs(&view, &doc, b),
+        "b's runs, and nothing else"
+    );
+    for (layer, glyph) in runs(&view, &doc, b) {
+        assert_eq!(tint_of(&view, layer, glyph), Some(TARGET_HIGHLIGHT));
+    }
+    assert!(selected(&view, &doc), "the selection's stamp is untouched");
+
+    assert!(view.set_hover_target(None));
+    let report = view.sync_for_test(&mut doc).expect("the tint went");
+    assert_eq!(
+        stamped(&report),
+        runs(&view, &doc, b),
+        "only b's runs are cleared"
+    );
+    for (layer, glyph) in runs(&view, &doc, b) {
+        assert_eq!(tint_of(&view, layer, glyph), None);
+    }
+    assert!(selected(&view, &doc));
+    assert!(
+        view.sync_for_test(&mut doc).is_none(),
+        "and the next pass is quiet"
+    );
+}

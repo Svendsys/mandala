@@ -79,7 +79,7 @@ use crate::application::document::MindMapDocument;
 use crate::application::renderer::{LayerRenderer, Renderer};
 
 use self::chrome::{ChromeBuilder, PassChanges};
-use self::overlay::{Overlay, OverlayJournals, SELECTION_HIGHLIGHT};
+use self::overlay::{Overlay, OverlayJournals, SELECTION_HIGHLIGHT, TARGET_HIGHLIGHT};
 
 /// The view of one open map. See the [module docs](self).
 pub(crate) struct MapView {
@@ -109,6 +109,12 @@ pub(crate) struct MapView {
     /// The selection tint, stamped on the selection — or, while a rubber
     /// band is out, on what it covers (`band_targets`).
     highlight: Overlay,
+    /// The reparent and connect target tint, stamped on
+    /// [`Self::hover_target`].
+    hover: Overlay,
+    /// The node a reparent or a connect would land on, while the pointer
+    /// is over a valid one in either mode.
+    hover_target: Option<NodeId>,
     /// What a rubber band covers while one is out — the highlight's
     /// targets, not a preview of any document change: the highlight
     /// follows them instead of the selection, whose highlight stands down
@@ -185,6 +191,8 @@ impl MapView {
             #[cfg(not(target_arch = "wasm32"))]
             band_rect: None,
             highlight: Overlay::tint(SELECTION_HIGHLIGHT),
+            hover: Overlay::tint(TARGET_HIGHLIGHT),
+            hover_target: None,
             band_targets: None,
             feed: Vec::new(),
             shown_status: None,
@@ -231,7 +239,8 @@ impl MapView {
             .as_ref()
             .into_iter()
             .flat_map(LayerRenderer::journals_of);
-        renderer.apply_layer_journals(&self.layers, projected.chain(pass.stamps.journals()));
+        let stamped = pass.stamps.iter().flat_map(OverlayJournals::journals);
+        renderer.apply_layer_journals(&self.layers, projected.chain(stamped));
         if let Some(changes) = &pass.changes {
             renderer.set_background(resolve_background(doc.doc().tree(), &mut ()).0);
             if let Some(journal) = self.follow_chrome(changes, doc) {
@@ -322,10 +331,20 @@ impl MapView {
             Some(covered) => covered.clone(),
             None => doc.selection.iter().collect(),
         };
-        if changes.is_none() && targets == self.highlight.targets() {
+        let hovered: &[NodeId] = self.hover_target.as_slice();
+        if changes.is_none() && targets == self.highlight.targets() && hovered == self.hover.targets() {
             return None;
         }
-        let stamps = self.highlight.update(
+        // The hover target is never selected (`set_hover_target`), so the
+        // two never stamp the same run; the selection's goes last.
+        let hover = self.hover.update(
+            hovered,
+            changes.as_ref(),
+            doc.doc(),
+            &self.projector,
+            &mut self.layers,
+        );
+        let highlight = self.highlight.update(
             &targets,
             changes.as_ref(),
             doc.doc(),
@@ -333,7 +352,10 @@ impl MapView {
             &mut self.layers,
         );
         self.feed.extend(records);
-        Some(Pass { changes, stamps })
+        Some(Pass {
+            changes,
+            stamps: [hover, highlight],
+        })
     }
 
     /// Discard a pass's journals once the renderer has applied them.
@@ -341,7 +363,37 @@ impl MapView {
         if let Some(changes) = pass.changes {
             changes.discard(&mut self.layers);
         }
-        pass.stamps.discard(&mut self.layers);
+        for stamps in pass.stamps {
+            stamps.discard(&mut self.layers);
+        }
+    }
+
+    /// The node whose body holds `point`, on the canvas — a path or a
+    /// label drawn over it does not stand in for it
+    /// (`Projector::node_at`): what a reparent or a connect lands on.
+    /// Native, with the two modes.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn node_at(&self, point: Vec2) -> Option<NodeId> {
+        self.projector.node_at(point)
+    }
+
+    /// Tint `target` as the node a reparent or a connect would land on,
+    /// or tint none with `None`; the caller passes only a valid target
+    /// that is not selected. Takes effect at the next [`Self::sync`].
+    /// Returns whether it changed. Native, with the two modes.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn set_hover_target(&mut self, target: Option<NodeId>) -> bool {
+        if self.hover_target == target {
+            return false;
+        }
+        self.hover_target = target;
+        true
+    }
+
+    /// The node tinted as a reparent's or a connect's target, if any.
+    #[cfg(test)]
+    pub(crate) fn hover_target(&self) -> Option<NodeId> {
+        self.hover_target
     }
 
     /// A view of `doc` with no renderer behind it, for the tests that
@@ -376,7 +428,8 @@ impl MapView {
         });
         let stamped = pass
             .stamps
-            .journals()
+            .iter()
+            .flat_map(OverlayJournals::journals)
             .flat_map(|(layer, journal)| journal.touched().map(move |(id, _)| (layer, id)))
             .collect();
         let chrome = match &pass.changes {
@@ -548,8 +601,9 @@ impl MapView {
 struct Pass {
     /// What the projector wrote, when the document changed.
     changes: Option<LayerChanges>,
-    /// What the overlay re-stamped.
-    stamps: OverlayJournals,
+    /// What the overlays re-stamped: the target tint's, then the
+    /// selection's.
+    stamps: [OverlayJournals; 2],
 }
 
 /// What [`MapView::sync_for_test`] saw a pass write.

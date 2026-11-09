@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "name": "Structure",
+  "nodes": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "sections": [{"spans": [{"text": "A"}]}]
+    }
+  ]
+}

@@ -230,10 +230,21 @@ the parity trajectory (or why none is owed):
   64-bit wasm target, which is not this project's to schedule.
 - **Clipboard OS layer** (`src/application/clipboard.rs`) — native
   is backed by `arboard`; WASM is stubbed pending async-clipboard
-  integration (CONCEPTS §6 "Clipboard"). The clipboard Actions are
-  rebuilt on the document's writer by V1-C4 (#245); until then its
-  one native caller, the color picker's keys, is unreachable (V1-C7,
-  #248), and the WASM stubs have none.
+  integration (CONCEPTS §6 "Clipboard"). The browser's Copy, Cut and
+  Paste use the app's own clipboard, which the document holds on both
+  targets (`clipboard::Clipboard`), so they work within the page and
+  reach no other app. Parity is the async-clipboard integration, not
+  yet scheduled.
+- **Reparent and connect modes** (`EnterReparentMode`,
+  `EnterConnectMode` and the click that ends them;
+  `app/dispatch/families/structure.rs`, `app/event_mouse_click.rs`,
+  `app/event_cursor_moved.rs`) — native-only, as on `main`: the click
+  that picks the target and the hover that tints it come from native's
+  pointer handlers, so the browser answers the four Actions
+  `unhandled`. Every other structure Action — create, delete, orphan,
+  copy, cut, paste — runs on both targets, and so does the overlay
+  the target tint is stamped by (`view::overlay`). Parity is the
+  browser's click route recognizing the two modes, not yet scheduled.
 - **`fps` console verb** — native because the console shell is; the
   render-side FPS plumbing compiles on both targets and browsers
   expose frame timing via DevTools (CONCEPTS §5 "FPS overlay").

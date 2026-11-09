@@ -1532,17 +1532,10 @@ fn test_user_can_override_component_keybinds() {
 }
 
 /// Copy/Paste/Cut are Document-level actions that fall through to the
-/// color picker context. The bindings are the test's own: the three
-/// ship unbound until V1-C4 (#245) rebuilds the clipboard.
+/// color picker context, on their default bindings.
 #[test]
 fn test_copy_paste_cut_fall_through_to_picker() {
-    let resolved = KeybindConfig {
-        copy: vec!["Ctrl+C".into()],
-        paste: vec!["Ctrl+V".into()],
-        cut: vec!["Ctrl+X".into()],
-        ..KeybindConfig::default()
-    }
-    .resolve();
+    let resolved = KeybindConfig::default().resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::ColorPicker, "c", true, false, false),
         Some(Action::Copy),
@@ -2889,7 +2882,18 @@ const SHIPPED_TEMPLATE: &str = include_str!(concat!(
 /// template fails because the loop never verifies it; a key that
 /// appears fails until it is added here, which is the deliberate act
 /// the template's contents deserve.
-const SHIPPED_TEMPLATE_ACTION_KEYS: &[&str] = &["exit_mode", "open_console", "redo", "save_document", "undo"];
+const SHIPPED_TEMPLATE_ACTION_KEYS: &[&str] = &[
+    "create_orphan_node",
+    "delete_selection",
+    "enter_connect_mode",
+    "enter_reparent_mode",
+    "exit_mode",
+    "open_console",
+    "orphan_selection",
+    "redo",
+    "save_document",
+    "undo",
+];
 
 /// The rest of the template's top-level keys: the `_comment` the
 /// file carries its instructions in, and the non-Action schema keys

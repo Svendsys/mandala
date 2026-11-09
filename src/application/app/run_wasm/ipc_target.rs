@@ -189,6 +189,7 @@ impl CommandTarget for IpcCommandTarget<'_, '_> {
             ShellState::Camera => camera_json(self.app.renderer.camera()),
             ShellState::Mode => ipc_state::mode_to_ipc_json(
                 &input.interaction_mode,
+                Some(input.document.doc()),
                 ipc_state::no_drag_state_json(),
                 ipc_state::OpenModals::default(),
                 input.cursor_pos,
