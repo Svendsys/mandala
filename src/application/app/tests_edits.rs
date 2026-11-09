@@ -441,3 +441,63 @@ fn test_layouts_at_every_family_lay_no_node_over_another() {
         );
     }
 }
+
+/// **Over the whole of testament, every cascade row stays whole** (owner,
+/// on #250): with every node that has a child as an anchor, nothing
+/// overlaps, and each row's nodes still sit on one line,
+/// [`SIBLING_GAP`](baumhard::edit_handlers::SIBLING_GAP) apart — a row
+/// that had to move moved as a whole.
+///
+/// Control: a search that stepped each node down on its own broke rows.
+#[test]
+fn test_cascade_over_testament_keeps_every_row_whole() {
+    let (mut doc, mut view) = setup();
+    let d = doc.doc();
+    let families: Vec<NodeId> = nodes_of(&doc)
+        .into_iter()
+        .map(|(node, _)| node)
+        .filter(|&node| {
+            d.children(node)
+                .any(|c| d.get(c).is_some_and(|e| e.kind() == DocKind::Node))
+        })
+        .collect();
+    let found = overlaps_after(&mut doc, &mut view, "cascade", &families);
+    assert!(found.is_empty(), "{} overlaps", found.len());
+    let geometry = view.projector();
+    let d = doc.doc();
+    let mut broken = Vec::new();
+    let mut displaced = 0;
+    for &parent in &families {
+        let row: Vec<baumhard::flow::Rect> = d
+            .children(parent)
+            .filter(|&c| d.get(c).is_some_and(|e| e.kind() == DocKind::Node))
+            .filter_map(|c| baumhard::projection::Geometry::node_rect(geometry, c))
+            .collect();
+        // Where the row belongs: centered under its parent, one gap down.
+        if let (Some(above), Some(first), Some(last)) = (
+            baumhard::projection::Geometry::node_rect(geometry, parent),
+            row.first(),
+            row.last(),
+        ) {
+            let belongs_x = above.center().x - (last.max().x - first.origin.x) / 2.0;
+            let belongs_y = above.max().y + baumhard::edit_handlers::ROW_GAP;
+            if (first.origin.x - belongs_x).abs() > 0.05 || (first.origin.y - belongs_y).abs() > 0.05 {
+                displaced += 1;
+            }
+        }
+        for pair in row.windows(2) {
+            let gap = pair[1].origin.x - pair[0].max().x;
+            let level = pair[1].origin.y - pair[0].origin.y;
+            if (gap - baumhard::edit_handlers::SIBLING_GAP).abs() > 0.05 || level.abs() > 0.05 {
+                broken.push((parent, gap, level));
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "{} rows broken, first {:?}",
+        broken.len(),
+        broken.first()
+    );
+    assert!(displaced > 0, "precondition: some row had to move to be clear");
+}

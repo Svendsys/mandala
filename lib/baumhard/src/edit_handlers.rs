@@ -33,10 +33,14 @@
 //!
 //! - **A placed node never overlaps another drawn node** (owner, on
 //!   #250): not a sibling, not the parent, not anything else on the map.
-//!   A petal moves outward along its ray, a row downward,
+//!   A petal moves outward along its ray,
 //!   [`CLEAR_STEP`](crate::edit_handlers::CLEAR_STEP) at a time, and after
 //!   [`MAX_CLEAR_STEPS`](crate::edit_handlers::MAX_CLEAR_STEPS) tries it
-//!   goes past everything drawn, where it is clear by construction.
+//!   goes past everything drawn, where it is clear by construction. A
+//!   cascade row moves as a whole, keeping its spacing: down by steps,
+//!   and at each depth straight, then right and left by growing steps
+//!   ([`MAX_SIDE_STEPS`](crate::edit_handlers::MAX_SIDE_STEPS)), and last
+//!   below everything drawn.
 //!   Only a layout keeps clear: a node moved by hand goes where it is
 //!   put.
 //! - A child with no rectangle has no size to lay out by (D5), so it
@@ -124,6 +128,10 @@ pub const CLEAR_STEP: f32 = 40.0;
 /// past everything drawn, where it is clear by construction.
 pub const MAX_CLEAR_STEPS: u32 = 64;
 
+/// How many [`CLEAR_STEP`]s a cascade row tries to each side, at each
+/// depth, before it steps down again.
+pub const MAX_SIDE_STEPS: u32 = 16;
+
 /// `flower`: each node's child nodes on a circle round it, the first at
 /// the top, clockwise. The radius clears the parent's half-span and the
 /// largest child's, plus [`RADIAL_PADDING`]. A petal that would overlap
@@ -181,13 +189,20 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
 /// [`ROW_GAP`] below its parent, siblings [`SIBLING_GAP`] apart and
 /// centered under it, each level placed from its parent's new place. A
 /// row that would overlap another drawn node — a row already placed,
-/// the anchor, anything else on the map — moves down, [`CLEAR_STEP`] at
-/// a time, until it is clear (see `Clear`). A node nested under
-/// another of `nodes` is laid out as part of the outer one's tree, so
-/// the walk starts from the outermost. Breadth first and iterative.
+/// the anchor, anything else on the map — moves as a whole, keeping its
+/// spacing, until it is clear (see `Clear`). It tries, in this order,
+/// each depth from where it belongs down by [`CLEAR_STEP`]s, at most
+/// [`MAX_CLEAR_STEPS`] of them, and at each depth first straight below,
+/// then shifted right and then left by one [`CLEAR_STEP`], by two, and
+/// so on to [`MAX_SIDE_STEPS`]. When none of those is clear the row goes
+/// below everything drawn, still whole. A single node is never moved
+/// out of its row. A node nested under another of `nodes` is laid out
+/// as part of the outer one's tree, so the walk starts from the
+/// outermost. Breadth first and iterative.
 ///
 /// Cost: the subtrees, one pass over the map's nodes for what is drawn,
-/// then per row at most [`MAX_CLEAR_STEPS`] lookups of its nodes.
+/// then per row at most [`MAX_CLEAR_STEPS`] × (2 × [`MAX_SIDE_STEPS`] +
+/// 1) tries, each a lookup per node of the row.
 pub fn cascade(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Result<Walks, String> {
     // The rows, breadth first: which does not depend on where they go.
     let mut rows: Vec<Family> = Vec::new();
@@ -216,9 +231,9 @@ pub fn cascade(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Res
         let width: f32 =
             row.iter().map(|(_, r)| r.size.x).sum::<f32>() + SIBLING_GAP * (row.len() as f32 - 1.0);
         let left = origin.x + rect.size.x / 2.0 - width / 2.0;
-        // The row's rectangles with its top at `y`.
-        let at = |y: f32| {
-            let mut x = left;
+        // The row's rectangles with its top at `y`, shifted right by `dx`.
+        let at = |dx: f32, y: f32| {
+            let mut x = left + dx;
             row.iter()
                 .map(|(_, r)| {
                     let laid = Rect::new(Vec2::new(x, y), r.size);
@@ -228,12 +243,19 @@ pub fn cascade(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Res
                 .collect::<Vec<Rect>>()
         };
         let top = origin.y + rect.size.y + ROW_GAP;
+        // Straight below first, then right and left, one step further each.
+        let sideways = || {
+            std::iter::once(0.0).chain((1..=MAX_SIDE_STEPS).flat_map(|j| {
+                let d = j as f32 * CLEAR_STEP;
+                [d, -d]
+            }))
+        };
         let tried = (0..MAX_CLEAR_STEPS)
-            .map(|k| top + k as f32 * CLEAR_STEP)
-            .find(|&y| at(y).iter().all(|&laid| clear.is_clear(laid)));
-        // Below every drawn rectangle.
-        let y = tried.unwrap_or_else(|| top.max(clear.bottom() + ROW_GAP));
-        for ((child, r), laid) in row.iter().zip(at(y)) {
+            .flat_map(|k| sideways().map(move |dx| (dx, top + k as f32 * CLEAR_STEP)))
+            .find(|&(dx, y)| at(dx, y).iter().all(|&laid| clear.is_clear(laid)));
+        // Below every drawn rectangle, straight under the parent.
+        let (dx, y) = tried.unwrap_or_else(|| (0.0, top.max(clear.bottom() + ROW_GAP)));
+        for ((child, r), laid) in row.iter().zip(at(dx, y)) {
             clear.add(laid);
             placed.insert(*child, laid.origin);
             planned.push((*child, position_for(doc, *child, *r, laid.origin)));

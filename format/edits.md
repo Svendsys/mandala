@@ -229,8 +229,14 @@ names. A handler that declines says why, and the refusal names the edit.
 | `cascade` | each node's descendants as a top-down tree, rows below their parents |
 
 A layout places no node over another drawn node — a sibling, the
-parent, or anything else on the map: a petal that would overlap one
-moves outward along its ray, and a row moves down, until it is clear.
+parent, or anything else on the map. A petal that would overlap one
+moves outward along its ray, 40 units at a time, for at most 64 steps,
+and then past everything drawn. A cascade row moves as a whole and
+keeps its spacing: it tries each depth from where it belongs down by
+40 units, for at most 64 depths, and at each depth first straight
+below, then 40 units right, 40 left, 80 right, 80 left, and so on to
+16 steps each way. When none of those is clear, the row goes below
+everything drawn. A single node never leaves its row.
 A node moved by hand, or by a `set_position` or `nudge`, goes where it
 is put, overlap or not.
 

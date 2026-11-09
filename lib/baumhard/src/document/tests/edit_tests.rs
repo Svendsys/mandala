@@ -891,6 +891,43 @@ fn test_a_layout_places_no_node_over_another() {
     }
 }
 
+/// **A blocked cascade row moves as a whole, sideways before down**
+/// (owner, on #250). A node sits under the left end of node 1's row:
+/// straight below is blocked, and one [`CLEAR_STEP`] right is clear, so
+/// the row stays at its depth, shifted right, its spacing kept, and the
+/// rows below follow their parents.
+///
+/// Control: a search that only stepped down put the row one step lower.
+///
+/// [`CLEAR_STEP`]: crate::edit_handlers::CLEAR_STEP
+#[test]
+fn test_a_blocked_cascade_row_moves_whole_sideways_before_down() {
+    use crate::edit_handlers::{CLEAR_STEP, ROW_GAP};
+    let blocked = format!(
+        r#"{},{{"id":9,"channel":1,"position":[-200,120]}}]}}"#,
+        FAMILY.strip_suffix("]}").expect("FAMILY ends its list")
+    );
+    let mut doc = load(&blocked).unwrap();
+    let one = n(&doc, 1);
+    let cascade = edit(r#"{"id":"c","name":"C","reach":"self","target":"node","handler":"cascade"}"#);
+    run(&mut doc, &cascade, &[one]).unwrap();
+    let at = |i| node(&doc, i).1.position;
+    let row = 40.0 + ROW_GAP;
+    let left = 50.0 - (3.0 * 100.0 + 2.0 * 40.0) / 2.0 + CLEAR_STEP;
+    assert_eq!(
+        [at(2), at(3), at(4)],
+        [
+            Vec2::new(left, row),
+            Vec2::new(left + 140.0, row),
+            Vec2::new(left + 280.0, row)
+        ],
+        "the whole row, one step right, at its own depth"
+    );
+    assert_eq!(at(5), Vec2::new(left, 2.0 * row), "node 2's row follows it");
+    let moved: Vec<NodeId> = [2, 3, 4, 5, 6].iter().map(|&i| n(&doc, i)).collect();
+    assert!(overlaps(&doc, &moved).is_empty());
+}
+
 #[test]
 fn test_a_node_that_is_not_drawn_is_left_in_place() {
     let mut doc = load(FAMILY).unwrap();
