@@ -487,13 +487,13 @@ struct DrawnPath {
 }
 
 /// Every node's frame inks, by node: its rings', or for a node that
-/// draws none its drawn rectangle.
+/// draws none its drawn rectangle — every node's, a path's end or not.
 type Frames = std::collections::HashMap<NodeId, Vec<Ink>>;
 
 /// Every connector and line link of `doc` and the inks of every node's
 /// frame, through the projector the app draws with
 /// (`Projector::project_full`) and each glyph's rasterized ink (`read`);
-/// and the zoom of the camera that frames them.
+/// and the zoom of the camera that frames the rings and the paths' ends.
 fn drawn_paths(doc: &Document) -> (Vec<DrawnPath>, Frames, f32) {
     let mut layers = GlyphLayers::new();
     let projector = with_fonts(|fs| Projector::project_full(doc, &mut layers, fs));
@@ -582,7 +582,22 @@ fn drawn_paths(doc: &Document) -> (Vec<DrawnPath>, Frames, f32) {
     let max = all
         .iter()
         .fold(Vec2::splat(f32::NEG_INFINITY), |a, i| a.max(i.max));
-    (paths, frames, camera_on((min, max)).zoom)
+    let zoom = camera_on((min, max)).zoom;
+    // Every other node too — one that draws no frame and is no path's end
+    // still has a box a path must keep out of: its drawn rectangle.
+    let mut stack = vec![doc.root()];
+    while let Some(id) = stack.pop() {
+        if let (Some(DocElement::Node(_)), std::collections::hash_map::Entry::Vacant(slot), Some(rect)) =
+            (doc.get(id), frames.entry(id), projector.node_rect(id))
+        {
+            slot.insert(vec![Ink {
+                min: rect.origin,
+                max: rect.max(),
+            }]);
+        }
+        stack.extend(doc.children(id));
+    }
+    (paths, frames, zoom)
 }
 
 /// The box round `inks`.
@@ -955,7 +970,9 @@ fn test_maps_hold_the_connector_rules() {
 /// to the second row pass through the first. With Ishmael's sons back in
 /// their row 158 units above him, red on testament: a row that near its
 /// parent takes the paths to its far ends in at their sides, through
-/// their neighbors.
+/// their neighbors. With frames' node 3, which draws no frame and is no
+/// path's end, moved across the tilde link (to `[-60, -25]`), red on
+/// frames: every node has a reach, not only the paths' ends.
 #[test]
 fn test_maps_draw_no_path_through_another_node() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("maps");
