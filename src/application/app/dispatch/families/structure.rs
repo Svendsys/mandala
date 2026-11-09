@@ -36,6 +36,7 @@ use crate::application::clipboard;
 use crate::application::document::selection::{child_nodes, kind_of};
 use crate::application::document::{MindMapDocument, TRANSACTION_OPEN_STATUS};
 use crate::application::keybinds::Action;
+use crate::application::view::inspect::element_text;
 use baumhard::document::writer::error::ApplyError;
 
 use super::super::cross_dispatch::{view_ctx, DispatchHit, DispatchOutcome};
@@ -234,11 +235,20 @@ fn paste(doc: &mut MindMapDocument) -> Ran {
         return Ok(false);
     };
     let steps = clipboard::paste(doc.doc(), &doc.selection, &text, doc.clipboard.as_ref());
+    let range = doc.selection.range();
+    let clusters = |doc: &MindMapDocument, section| {
+        baumhard::util::grapheme_chad::count_grapheme_clusters(&element_text(doc.doc(), section))
+    };
+    let before = range.map(|(section, _, _)| clusters(doc, section));
     if !apply(doc, steps, "paste")? {
         return Ok(false);
     }
-    if let Some((section, start, _)) = doc.selection.range() {
-        let pasted = baumhard::util::grapheme_chad::count_grapheme_clusters(&text);
+    // Counted in the section, not in the pasted text: a paste that joins
+    // a cluster of its neighbor's (a combining mark after a letter) adds
+    // fewer clusters than it holds.
+    if let (Some((section, start, end)), Some(before)) = (range, before) {
+        let kept = before - end.min(before).saturating_sub(start);
+        let pasted = clusters(doc, section).saturating_sub(kept);
         doc.selection.select_range(section, start, start + pasted);
     }
     Ok(true)
@@ -447,6 +457,30 @@ mod tests {
         doc.undo();
         doc.undo();
         assert_eq!(bytes(&doc), original);
+    }
+
+    /// **A pasted range ends where the pasted text does, though it joins
+    /// its neighbor's cluster.** A combining acute pasted at cluster 1 of
+    /// `ab` joins the `a`, so the section still holds two clusters and
+    /// the paste added none: the selected range is empty at 1, not
+    /// `1..2`, which would select the `b` it never pasted. Control: a
+    /// paste of `x` there selects `1..2`, the `x`.
+    #[test]
+    fn test_a_pasted_range_ends_where_the_paste_does_when_it_joins_a_cluster() {
+        let mut doc = load(json!({"format": 1, "name": "join", "nodes": [{
+            "id": 1, "position": [0.0, 0.0], "sections": [{"spans": [{"text": "ab"}]}]
+        }]}));
+        let s = section(&doc, node(&doc, 1), 0);
+        for (text, want) in [("\u{0301}", (1, 1)), ("x", (1, 2))] {
+            doc.selection.select_range(s, 1, 1);
+            doc.clipboard = Some(Clipboard {
+                text: text.to_string(),
+                section: None,
+            });
+            assert_eq!(paste(&mut doc), Ok(true));
+            assert_eq!(doc.selection.range(), Some((s, want.0, want.1)), "{text:?}");
+            doc.undo();
+        }
     }
 
     /// **A section paste whose text is not the copied fragment's pastes
