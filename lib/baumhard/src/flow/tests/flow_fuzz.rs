@@ -1181,7 +1181,7 @@ fn later_faces() -> impl Iterator<Item = AppFont> {
         .map(|(font, _)| *font)
 }
 
-/// `faces()`, then [`later_faces`]: every face a map can pin. `Mandala
+/// `faces()`, then `later_faces()`: every face a map can pin. `Mandala
 /// Emoji` is the first compiled face with no outline at all and no space,
 /// the kind of face unlike the others that gave the R24 findings; the
 /// default face, Inter, the first variable one; and all three are on the

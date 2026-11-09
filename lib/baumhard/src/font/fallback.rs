@@ -4,10 +4,12 @@
 //! draws text that pins no family, and which faces a glyph a span's own
 //! face lacks is looked for in, in what order — the same on every target.
 //!
-//! **The default face** is [`DEFAULT_FACE`], Inter 4.1's variable face,
-//! compiled in. cosmic-text names a face for each generic family
-//! (`Family::SansSerif`, which `Attrs::new()` asks for, `Family::Monospace`
-//! and the rest), and [`new_font_system`] names this one for all of them.
+//! **The default face** is
+//! [`DEFAULT_FACE`](crate::font::fallback::DEFAULT_FACE), Inter 4.1's
+//! variable face, compiled in. cosmic-text names a face for each generic
+//! family (`Family::SansSerif`, which `Attrs::new()` asks for,
+//! `Family::Monospace` and the rest), and `new_font_system` names this
+//! one for all of them.
 //! So a span with no family — an `AppFont::Any` span, an edge label, a
 //! connector's `·` — is drawn in it on every machine and in the browser.
 //! Until #228 those names were cosmic-text's own ("Open Sans", "Noto Sans
@@ -15,12 +17,16 @@
 //! reached the host's DejaVu Sans through the fallback, and in the
 //! browser, or on a host with no fonts, a decorative face or an empty box.
 //!
-//! **The fallback** is one list, [`fallback_families`], which cosmic-text
-//! tries after a span's own face: the default face, then the two ornament
-//! faces ([`ORNAMENT_FALLBACK`]), then the compiled faces of the scripts
-//! no other compiled face writes ([`SCRIPT_FALLBACK`]). It is the common
-//! list of a [`Fallback`] whose script lists are empty, so a run of any
-//! script, on any target, tries the same faces in the same order;
+//! **The fallback** is one list,
+//! [`fallback_families`](crate::font::fallback::fallback_families),
+//! which cosmic-text tries after a span's own face: the default face, then
+//! the two ornament faces
+//! ([`ORNAMENT_FALLBACK`](crate::font::fallback::ORNAMENT_FALLBACK)),
+//! then the compiled faces of the scripts no other compiled face writes
+//! ([`SCRIPT_FALLBACK`](crate::font::fallback::SCRIPT_FALLBACK)). It is
+//! the common list of a [`Fallback`](cosmic_text::Fallback) whose script
+//! lists are empty, so a run of any script, on any target, tries the same
+//! faces in the same order;
 //! cosmic-text's platform lists, which differ between Linux, Windows,
 //! macOS and the browser and name host families, are not consulted. A
 //! glyph none of those faces holds is looked for in every other compiled
