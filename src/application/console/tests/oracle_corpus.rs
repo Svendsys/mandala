@@ -198,7 +198,7 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::TwoSectionNode, "section delete "),
     (Sel::TwoSectionNode, "section edit "),
     (Sel::TwoSectionNode, "section show section="),
-    (Sel::TwoSectionNode, "section align "),
+    (Sel::TwoSectionNode, "section align="),
     (Sel::Node, "node shape="),
     (Sel::Node, "frame "),
     (Sel::Node, "frame direction="),

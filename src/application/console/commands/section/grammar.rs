@@ -28,7 +28,7 @@
 use baumhard::document::element::DocElement;
 
 use crate::application::console::completion::Completion;
-use crate::application::console::spec::{free, Form, Grammar, Key, Slot, Subverb, Vocabulary, Word};
+use crate::application::console::spec::{free, Bare, Form, Grammar, Key, Slot, Subverb, Vocabulary, Word};
 use crate::application::console::ConsoleContext;
 
 /// The `fill` literal `section resize` takes in place of a size:
@@ -41,7 +41,7 @@ const FILL_WORD: &[Word] = &[Word::new(
     "clear the minimum size; the section fits its text",
 )];
 
-/// The alignments `section align` takes.
+/// The alignments `section align=` takes.
 const ALIGN_WORDS: &[Word] = &[
     Word::bare("left"),
     Word::bare("center"),
@@ -75,6 +75,11 @@ const SECTION_OWN_KEYS: &[Key] = &[
         free("text"),
     ),
     Key::new("at", "insertion / split index", free("idx")),
+    Key::new(
+        "align",
+        "how the section's lines sit in its box: left | center | right",
+        Vocabulary::Words(ALIGN_WORDS),
+    ),
     SECTION_KEY,
 ];
 
@@ -107,9 +112,6 @@ const SUBVERBS: &[Subverb] = &[
         Form::slots(&[Slot::req(Vocabulary::Words(FILL_WORD))]).reading(&["section"]),
     ])
     .gated(),
-    Subverb::bare("align", "geometry", "align the section's lines in its box")
-        .taking(&[Form::slots(&[Slot::req(Vocabulary::Words(ALIGN_WORDS))]).reading(&["section"])])
-        .gated(),
     Subverb::bare("show", "readout", "print the per-section properties")
         .taking(&[Form::opt(&["section"])])
         .gated(),
@@ -138,14 +140,15 @@ const SUBVERBS: &[Subverb] = &[
     .gated(),
 ];
 
-/// `section …`. No bare form: every operation names a subverb, which
-/// is why an unknown first word answers with the subverb listing
-/// rather than with a kv rejection.
+/// `section …`. Every operation but the alignment names a subverb; the
+/// alignment is the kv form, `section align=<left|center|right|reset>`,
+/// as the issue spells it (#246). An unknown first word still answers
+/// with the subverb listing.
 pub static SECTION: Grammar = Grammar {
     label: "section",
     subverb_sets: &[SUBVERBS],
     key_sets: &[SECTION_OWN_KEYS],
-    bare: None,
+    bare: Some(Bare::new("fields", &[Form::opt(&["align", "section"])])),
 };
 
 /// The popup for `section=<TAB>`: one row per section of the first

@@ -32,7 +32,6 @@ use glam::Vec2;
 enum Route {
     Move,
     Resize,
-    Align,
     Show,
     Text,
     Edit,
@@ -44,7 +43,6 @@ enum Route {
 const ROUTES: &Routes<Route> = &[
     ("move", Route::Move),
     ("resize", Route::Resize),
-    ("align", Route::Align),
     ("show", Route::Show),
     ("text", Route::Text),
     ("edit", Route::Edit),
@@ -81,14 +79,19 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Ok(pairs) => pairs,
         Err(msg) => return ExecResult::err(msg),
     };
-    let Stop::Matched(subverb) = descent.stop else {
-        return ExecResult::err(usage::no_arguments_message(&grammar::SECTION));
-    };
     let index = match kvs::value(&pairs, "section").map(values::index).transpose() {
         Ok(index) => index,
         Err(msg) => return ExecResult::err(msg),
     };
     let doc = eff.document();
+    let Stop::Matched(subverb) = descent.stop else {
+        let Some(word) = kvs::value(&pairs, "align") else {
+            return ExecResult::err(usage::no_arguments_message(&grammar::SECTION));
+        };
+        let steps = values::or_reset(word, values::align)
+            .and_then(|align| section::set(doc, index, Field::Align(align)));
+        return super::edit(eff, steps, "section align");
+    };
     let (steps, label) = match route::lookup(ROUTES, subverb) {
         Some(Route::Move) => (
             moved(&pairs).and_then(|field| section::set(doc, index, field)),
@@ -102,14 +105,6 @@ fn execute_section(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             (
                 size.and_then(|size| section::set(doc, index, Field::MinSize(size))),
                 "section resize",
-            )
-        }
-        Some(Route::Align) => {
-            let word = descent.slot_value(args).get(0).unwrap_or_default();
-            let align = values::or_reset(word, values::align);
-            (
-                align.and_then(|align| section::set(doc, index, Field::Align(align))),
-                "section align",
             )
         }
         Some(Route::Show) => return show(eff, index),

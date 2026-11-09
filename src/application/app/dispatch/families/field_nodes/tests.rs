@@ -227,7 +227,7 @@ const CASES: &[Case] = &[
     Case {
         name: "section align",
         select: N2,
-        input: Input::Line("section align center"),
+        input: Input::Line("section align=center"),
         edits: &[("[180.0, 40.0], \"spans\"", "[180.0, 40.0], \"align\": \"center\", \"spans\"")],
     },
     Case {
