@@ -33,8 +33,9 @@ const CHILD: &str = "BAUMHARD_FONT_STATE_CHILD";
 /// a bold heading at 74 points, and body text in regular and italic. It
 /// pins no compiled family, so projecting it reads nothing of the compiled
 /// font table: the text #323's lazy registration shaped with the host's
-/// faces alone. It stands in for testament, the map #323 was reported on,
-/// which is a `.mindmap.json` this loader does not read.
+/// faces alone. It is the A of the A-then-B-then-A order, where a map
+/// small enough to compare line by line keeps a failure's message short;
+/// testament itself, the map #323 was reported on, is in `MAPS`.
 const DEFAULT_FAMILY: &str = r#"{"format":1,"name":"default family","nodes":[
   {"id":1,"position":[0,0],"sections":[
     {"spans":[{"text":"Lord God","size":74,"weight":"bold"}]},
@@ -48,36 +49,42 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// The maps compared, by name: the default-family fixture, then the demo
-/// maps (`maps/demos/*.mandala.json`), the shipped maps this loader reads.
+/// The maps compared, by name: the default-family fixture, then every
+/// shipped map (`maps/demos/*.mandala.json`, `maps/*.mandala.json`).
 fn maps() -> Vec<(String, String)> {
     let mut maps = vec![("default family".to_string(), DEFAULT_FAMILY.to_string())];
-    let dir = "maps/demos";
-    let mut found: Vec<PathBuf> = std::fs::read_dir(root().join(dir))
-        .unwrap_or_else(|e| panic!("{dir}: {e}"))
-        .map(|entry| entry.expect("a directory entry").path())
-        .filter(|path| path.to_string_lossy().ends_with(".mandala.json"))
-        .collect();
-    found.sort();
-    for path in found {
-        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        maps.push((
-            format!("{dir}/{}", path.file_name().unwrap_or_default().to_string_lossy()),
-            text,
-        ));
+    for dir in ["maps/demos", "maps"] {
+        let mut found: Vec<PathBuf> = std::fs::read_dir(root().join(dir))
+            .unwrap_or_else(|e| panic!("{dir}: {e}"))
+            .map(|entry| entry.expect("a directory entry").path())
+            .filter(|path| path.to_string_lossy().ends_with(".mandala.json"))
+            .collect();
+        found.sort();
+        for path in found {
+            let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            maps.push((
+                format!("{dir}/{}", path.file_name().unwrap_or_default().to_string_lossy()),
+                text,
+            ));
+        }
     }
     maps
 }
 
-/// What `maps` reads, by name: the fixture and every demo map. A
-/// precondition holds the two to each other, so a demo added, removed or
-/// renamed is named in the failure rather than counted past.
-const MAPS: [&str; 5] = [
+/// What `maps` reads, by name: the fixture and every shipped map,
+/// testament among them. A precondition holds the two to each other, so
+/// a map added, removed or renamed is named in the failure rather than
+/// counted past.
+const MAPS: [&str; 9] = [
     "default family",
     "maps/demos/blake.mandala.json",
     "maps/demos/dickinson.mandala.json",
     "maps/demos/ecclesiastes.mandala.json",
     "maps/demos/frames.mandala.json",
+    "maps/palette_cascade.mandala.json",
+    "maps/stress_long_edges.mandala.json",
+    "maps/testament.mandala.json",
+    "maps/theme_demo.mandala.json",
 ];
 
 /// `maps`, once its names are `MAPS`.
@@ -86,7 +93,7 @@ fn the_maps() -> Vec<(String, String)> {
     let names: Vec<&str> = maps.iter().map(|(name, _)| name.as_str()).collect();
     assert_eq!(
         names, MAPS,
-        "precondition: the maps compared are the fixture and the demo maps"
+        "precondition: the maps compared are the fixture and every shipped map"
     );
     maps
 }
