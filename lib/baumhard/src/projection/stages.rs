@@ -248,7 +248,7 @@ fn settle(
 }
 
 /// A run of `shape` at `origin`, at `opacity`, in `zoom`.
-fn run_data(
+pub(crate) fn run_data(
     shape: RunShape,
     origin: Vec2,
     opacity: f32,

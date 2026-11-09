@@ -118,10 +118,14 @@ node to the node it leads to.
   has none — grown by the path's own gap meets the node's *region*: the
   box round its drawn rectangle and its rings' inks, shaped by its
   `shape` (an ellipse's region is the ellipse in that box). So a path
-  shown on either side of a node stops one gap short of it, as it stops
-  short of its own frames. A glyph is drawn whole or not at all, never
-  clipped. The path's own two nodes never hide it, and a node hides
-  whatever its zoom window and opacity. Hiding changes nothing in the
+  shown on either side of a node stops at least one gap short of it — a
+  gap, and up to one step more where the next glyph falls inside — as it
+  stops short of its own frames. A glyph is drawn whole or not at all,
+  never clipped. The path's own two nodes never hide it. A node hides
+  whatever its zoom window and opacity: at a zoom where it is not drawn,
+  or at opacity 0, the path shows a gap with nothing over it. A path
+  whose two nodes both lie inside another node's region — a container
+  drawn round them — is hidden whole. Hiding changes nothing in the
   document: the glyphs are drawn again when the node moves off the path.
   A path's label is not hidden.
 

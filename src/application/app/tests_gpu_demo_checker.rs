@@ -30,6 +30,8 @@ use baumhard::arena::NodeId;
 use baumhard::document::element::DocElement;
 use baumhard::document::format::load;
 use baumhard::document::ids::Document;
+use baumhard::document::resolve::resolve_node;
+use baumhard::document::values::Shape;
 use baumhard::flow::FILLER_SPAN;
 use baumhard::font::fallback::fallback_families;
 use baumhard::font::fonts::AppFont;
@@ -1038,10 +1040,27 @@ fn test_maps_draw_no_path_through_another_node() {
     );
 }
 
+/// Whether `ink` lies inside a node's region by more than its edge: its
+/// reach box, or for an ellipse the ellipse inscribed in that box — the
+/// point of the ink nearest the ellipse's center strictly inside it.
+fn inside_region(ink: &Ink, reach: &Ink, ellipse: bool) -> bool {
+    if ink.overlap(reach) <= 0.0 {
+        return false;
+    }
+    if !ellipse {
+        return true;
+    }
+    let center = (reach.min + reach.max) * 0.5;
+    let half = (reach.max - reach.min) * 0.5;
+    let nearest = center.clamp(ink.min, ink.max);
+    ((nearest - center) / half).length() < 1.0
+}
+
 /// Nodes hide the glyphs of the paths behind them, and no others (#332),
 /// on every map the connector rules are checked on: no glyph a path's
-/// layer draws lies inside the reach of a node other than its own two —
-/// the box round its frame's inks, or its drawn rectangle — and every
+/// layer draws lies inside the region of a node other than its own two —
+/// the box round its frame's inks, or its drawn rectangle, shaped by its
+/// outline (`inside_region`) — and every
 /// glyph it leaves out lies within its own gap of one, measured as the
 /// projector measures it but from the rasterized inks: a quarter of the
 /// gap more, for the slack a `repeat` path spreads over its gaps, and
@@ -1059,19 +1078,24 @@ fn test_maps_hide_only_the_glyphs_behind_other_nodes() {
         let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
         let doc = load(&text).unwrap_or_else(|e| panic!("{name} must load: {e}"));
         let (paths, frames, _) = drawn_paths(&doc);
-        let reaches: Vec<(NodeId, Ink)> = frames
+        // Each node's reach, and whether its outline is an ellipse, which
+        // hides by the ellipse in that box.
+        let reaches: Vec<(NodeId, Ink, bool)> = frames
             .iter()
             .filter(|(_, inks)| !inks.is_empty())
-            .map(|(node, inks)| (*node, ink_bounds(inks)))
+            .map(|(node, inks)| {
+                let shape = resolve_node(doc.tree(), *node, &mut ()).shape;
+                (*node, ink_bounds(inks), shape == Shape::Ellipse)
+            })
             .collect();
         for p in &paths {
-            let others: Vec<Ink> = reaches
+            let others: Vec<(Ink, bool)> = reaches
                 .iter()
-                .filter(|(node, _)| !p.ends.contains(node))
-                .map(|(_, reach)| *reach)
+                .filter(|(node, _, _)| !p.ends.contains(node))
+                .map(|&(_, reach, ellipse)| (reach, ellipse))
                 .collect();
             for ink in &p.drawn {
-                if let Some(reach) = others.iter().find(|r| ink.overlap(r) > 0.0) {
+                if let Some((reach, _)) = others.iter().find(|(r, ellipse)| inside_region(ink, r, *ellipse)) {
                     faults.push(format!(
                         "{name} {}: a glyph drawn at {:.0?} inside the reach at {:.0?}",
                         p.name,
@@ -1088,7 +1112,7 @@ fn test_maps_hide_only_the_glyphs_behind_other_nodes() {
                 .filter(|i| !p.drawn.iter().any(|d| d.min == i.min && d.max == i.max));
             for ink in left_out {
                 hidden += 1;
-                if !others.iter().any(|r| ink.gap(r) <= margin) {
+                if !others.iter().any(|(r, _)| ink.gap(r) <= margin) {
                     faults.push(format!(
                         "{name} {}: a glyph at {:.0?} left out, no other node within {margin:.2}",
                         p.name,

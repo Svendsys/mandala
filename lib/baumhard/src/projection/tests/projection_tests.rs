@@ -135,7 +135,8 @@ fn test_projection_a_node_dragged_across_two_paths() {
 /// on across another 2000 below it (#332), the projection updated at
 /// each step: each path has glyphs hidden while the node is on it, both
 /// are drawn whole once it is past them, and the layers equal a full
-/// projection of the map where it stops.
+/// projection of the map where it stops — in the test build after every
+/// step too, which the bench does not pay for.
 pub fn do_projection_a_node_dragged_across_two_paths() {
     use crate::projection::state::UnitBody;
     use crate::projection::tests::maps::{ident, kid, two_paths};
@@ -165,6 +166,9 @@ pub fn do_projection_a_node_dragged_across_two_paths() {
         let to = Vec2::new(480.0, -400.0 + step as f32 * 65.0);
         let mutation = single(DocKind::Node, DocMutation::Node(NodeOp::SetPosition(to)));
         p.apply(request(mutation, vec![node], "drag")).unwrap();
+        if cfg!(test) {
+            p.check().unwrap();
+        }
         let now = hidden(&p);
         most = [most[0].max(now[0]), most[1].max(now[1])];
     }

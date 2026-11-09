@@ -78,15 +78,25 @@ fn cell_of(v: f32) -> i32 {
     }
 }
 
-/// The cells `rect` covers, when they are few enough to list.
-pub(crate) fn cells(rect: Rect) -> Option<((i32, i32), (i32, i32))> {
+/// The first and last cells `rect` covers, however many: `None` for a
+/// rectangle that is not finite.
+pub(crate) fn span(rect: Rect) -> Option<((i32, i32), (i32, i32))> {
     if !rect.origin.is_finite() || !rect.size.is_finite() {
         return None;
     }
     let (x0, y0) = (cell_of(rect.origin.x), cell_of(rect.origin.y));
     let (x1, y1) = (cell_of(rect.max().x), cell_of(rect.max().y));
-    let count = (i64::from(x1) - i64::from(x0) + 1) * (i64::from(y1) - i64::from(y0) + 1);
-    (count <= MAX_CELLS).then_some(((x0, y0), (x1, y1)))
+    Some(((x0, y0), (x1, y1)))
+}
+
+/// How many cells the span from `(x0, y0)` to `(x1, y1)` holds.
+pub(crate) fn cell_count((x0, y0): (i32, i32), (x1, y1): (i32, i32)) -> i64 {
+    (i64::from(x1) - i64::from(x0) + 1) * (i64::from(y1) - i64::from(y0) + 1)
+}
+
+/// The cells `rect` covers, when they are few enough to list.
+pub(crate) fn cells(rect: Rect) -> Option<((i32, i32), (i32, i32))> {
+    span(rect).filter(|&(a, b)| cell_count(a, b) <= MAX_CELLS)
 }
 
 impl BodyIndex {
@@ -230,6 +240,45 @@ impl BodyIndex {
             }
             None => self.bodies.keys().copied().for_each(f),
         }
+    }
+
+    /// Whether `self` and `other` hold the same bodies — each rectangle,
+    /// shape and cell — whatever order they were set in: what the oracle
+    /// compares with a full projection's regions (#332). `Err` names the
+    /// first difference. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn same_as(&self, other: &BodyIndex) -> Result<(), String> {
+        use crate::projection::behind::bits;
+        let bodies = |b: &BodyIndex| {
+            let mut v: Vec<_> = b
+                .bodies
+                .iter()
+                .map(|(&n, &(r, shape, large))| (n, bits(r), shape == NodeShape::Ellipse, large))
+                .collect();
+            v.sort_unstable();
+            v
+        };
+        let cells = |b: &BodyIndex| {
+            let mut v: Vec<_> = b
+                .cells
+                .iter()
+                .flat_map(|(&c, list)| list.iter().map(move |&n| (c, n)))
+                .chain(b.large.iter().map(|&n| ((i32::MIN, i32::MIN), n)))
+                .collect();
+            v.sort_unstable();
+            v
+        };
+        if bodies(self) != bodies(other) {
+            return Err(format!(
+                "the bodies differ: kept {:?}, in full {:?}",
+                bodies(self).len(),
+                bodies(other).len()
+            ));
+        }
+        if cells(self) != cells(other) {
+            return Err("the bodies' cells differ".to_string());
+        }
+        Ok(())
     }
 
     /// Whether `rect` overlaps `node`'s body by its shape, inclusively.
