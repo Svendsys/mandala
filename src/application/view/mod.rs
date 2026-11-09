@@ -444,15 +444,11 @@ impl MapView {
     /// Tint `target` as the node a reparent or a connect would land on,
     /// or tint none with `None`; the caller passes only a valid target. A
     /// target that is selected or a source keeps that tint instead.
-    /// Takes effect at the next [`Self::sync`]. Returns whether it
-    /// changed. Native, with the two modes.
+    /// Takes effect at the next [`Self::sync`], which works out whether
+    /// it changed anything. Native, with the two modes.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn set_hover_target(&mut self, target: Option<NodeId>) -> bool {
-        if self.hover_target == target {
-            return false;
-        }
+    pub(crate) fn set_hover_target(&mut self, target: Option<NodeId>) {
         self.hover_target = target;
-        true
     }
 
     /// The node tinted as a reparent's or a connect's target, if any.

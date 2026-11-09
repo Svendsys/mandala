@@ -469,7 +469,8 @@ fn test_the_target_tint_stamps_the_hovered_node_beside_the_selection() {
         "precondition: a carries the selection's tint"
     );
 
-    assert!(view.set_hover_target(Some(b)));
+    view.set_hover_target(Some(b));
+    assert_eq!(view.hover_target(), Some(b));
     let report = view.sync_for_test(&mut doc).expect("the tint changed");
     assert_eq!(
         stamped(&report),
@@ -481,7 +482,8 @@ fn test_the_target_tint_stamps_the_hovered_node_beside_the_selection() {
     }
     assert!(selected(&view, &doc), "the selection's stamp is untouched");
 
-    assert!(view.set_hover_target(None));
+    view.set_hover_target(None);
+    assert_eq!(view.hover_target(), None);
     let report = view.sync_for_test(&mut doc).expect("the tint went");
     assert_eq!(
         stamped(&report),
