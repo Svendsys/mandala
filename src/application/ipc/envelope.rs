@@ -303,12 +303,6 @@ impl Event {
         Event { event: class, data }
     }
 
-    /// The payload, to merge a delta event into a newer one of its
-    /// class (`events::Session::queue`).
-    pub(crate) fn data_mut(&mut self) -> &mut Value {
-        &mut self.data
-    }
-
     /// Best-effort notice that the app is exiting, so a client can
     /// tell "app exited" from "connection died". Native's transports
     /// send it; on the browser the relay does, when the page leaves.
@@ -724,13 +718,13 @@ mod tests {
 
     #[test]
     fn test_event_shapes_match_the_envelope() {
-        let hello = wire(Frame::Event(Event::hello(Some("maps/a.mindmap.json"))));
+        let hello = wire(Frame::Event(Event::hello(Some("maps/a.mandala.json"))));
         assert_eq!(hello["event"], json!("hello"));
         assert_eq!(hello["data"]["protocol"], json!(PROTOCOL_VERSION));
         assert_eq!(hello["data"]["app"], json!("mandala"));
         assert_eq!(hello["data"]["version"], json!(env!("CARGO_PKG_VERSION")));
         assert_eq!(hello["data"]["pid"], json!(std::process::id()));
-        assert_eq!(hello["data"]["map"], json!("maps/a.mindmap.json"));
+        assert_eq!(hello["data"]["map"], json!("maps/a.mandala.json"));
         assert_eq!(
             wire(Frame::Event(Event::hello(None)))["data"]["map"],
             Value::Null,

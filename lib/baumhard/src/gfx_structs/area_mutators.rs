@@ -181,11 +181,9 @@ impl DeltaGlyphArea {
     /// element's authored zoom window to `Default`), with
     /// `ApplyOperation::Assign` as the global mode.
     ///
-    /// Single source of truth for the per-leaf delta shape every
-    /// `tree_builder/*::build_*_mutator_tree` function needs; lifting
-    /// it to baumhard means any consumer (border, connection,
-    /// connection_label, edge_handle, portal — and any future
-    /// renderable element type) shares one definition of "what fields
+    /// Single source of truth for the per-leaf delta shape a mutator
+    /// tree that re-asserts an area needs; living in baumhard means any
+    /// consumer shares one definition of "what fields
     /// need to be re-asserted to keep the leaf in sync with its
     /// source area." Adding a new per-leaf field becomes a one-line
     /// change here, fanning out to every consumer.
@@ -365,9 +363,8 @@ mod tests {
         assert_eq!(target.shape, NodeShape::Ellipse);
     }
 
-    /// Authored zoom-visibility windows survive the round-trip.
-    /// Locks the §B2 latent-bug fix that made `edge_handle.rs`'s
-    /// mutator stop omitting `ZoomVisibility` from its delta.
+    /// Authored zoom-visibility windows survive the round-trip: a
+    /// delta built from an area carries its `ZoomVisibility` (§B2).
     #[test]
     fn full_assign_from_preserves_authored_zoom_window() {
         use crate::core::primitives::Applicable;

@@ -53,7 +53,7 @@
 //! - **`module::name`** where `module` is declared in the workspace:
 //!   the name must exist somewhere — declared as an item, or written
 //!   in some file's code.
-//! - **bare** (`` `pre_clip_positions` ``): the name must exist
+//! - **bare** (`` `app_font_by_family` ``): the name must exist
 //!   somewhere in the same sense, and is read only when it has an
 //!   underscore. A single word is where English, tools, crates and
 //!   stdlib methods live; a two-word name that no file writes and
@@ -977,8 +977,8 @@ fn discriminants_mirror(attrs: &[Attribute]) -> Option<DiscriminantsMirror> {
     name.map(|name| DiscriminantsMirror { name, derives })
 }
 
-/// The last segment of a type path — `SceneConnectionCache` for
-/// `impl<'a> crate::mindmap::scene_cache::SceneConnectionCache<'a>`.
+/// The last segment of a type path — `Projector` for
+/// `impl crate::projection::Projector`.
 /// `None` for a self type that is not a path (a reference, a tuple,
 /// a trait object), whose members no doc comment can qualify by name.
 fn last_path_segment(ty: &syn::Type) -> Option<String> {

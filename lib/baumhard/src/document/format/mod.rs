@@ -48,8 +48,7 @@
 //! saved in an edit (V1-D1) is spelled with them too, and the strictness
 //! gate keeps every index type out of the types this module reads.
 //!
-//! The old `.mindmap.json` format is not read here and has no knowledge
-//! in this module.
+//! This is the only map format the app reads.
 
 #[macro_use]
 mod macros;

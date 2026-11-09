@@ -278,8 +278,10 @@ impl Projector {
         let Some(unit) = self.units.remove(&id) else {
             return;
         };
+        let owner = write::run_owner(id, &unit);
         for slot in unit.slots.iter().chain(unit.retired.iter()) {
             if let Some(glyph) = slot.glyph {
+                out.removed(slot.layer, glyph, owner);
                 self.owners.remove(&(slot.layer, glyph));
                 if remove {
                     write::remove(layers, out, slot.layer, glyph);
@@ -351,6 +353,7 @@ impl Projector {
             }
             for layer in Layer::ALL {
                 if let Some(group) = state.groups[layer.index()] {
+                    out.removed(layer, group, node);
                     self.owners.remove(&(layer, group));
                 }
             }

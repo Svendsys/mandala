@@ -69,13 +69,6 @@ rustc-hash.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 ordered-float = {version = "5.5.0", features = ["serde"]}
-# The loader's unknown-key capture. serde reports a key no field
-# matches by handing its value to `deserialize_ignored_any`, and
-# nothing in `serde` itself says *where* that happened; this wraps a
-# deserializer to answer that. `mindmap::unknown_keys` is the only
-# consumer, and the only crate member that loads `.mindmap.json` is
-# this one — so it stays out of `[workspace.dependencies]` per §13.
-serde_ignored = "0.1.14"
 # Where a `.mandala.json` load went wrong. serde reports *what* was
 # wrong with a value and nothing about *where* in the file it sat;
 # `document::format::load` wraps its deserializer in this to answer
@@ -154,10 +147,11 @@ criterion = { version = "0.8.2", features = ["html_reports"] }
 # included, so that one build serves both — see `lib/mandala_derive/Cargo.toml`.
 # This entry is still where the ask is made, and what `cargo hakari
 # generate` reads it from.
-# `visit` is for `util::source_scan::section_growths_in`, which walks
-# fn bodies as syntax rather than as lines, so a rustfmt-wrapped
-# `node.sections\n    .push(` chain is the same growth as the one-line
-# spelling (#208). Test-only, like the rest of this entry.
+# `visit` is for the scans that walk fn bodies as syntax rather than
+# as lines (`util::source_scan::reattach_sites`, the saved-state scan
+# in `util/tests/saved_state_tests.rs`), so a rustfmt-wrapped call is
+# the same call as its one-line spelling. Test-only, like the rest of
+# this entry.
 syn = { workspace = true, features = ["full", "visit"] }
 # `util::source_scan` excises `#[cfg(test)]` items from a file's text
 # and has to leave the surviving lines *at their own line numbers*, so

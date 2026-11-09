@@ -187,8 +187,8 @@ impl ConsoleFrameLayout {
 }
 
 /// Build the four border strings (top, bottom, left_column,
-/// right_column) for the console frame using the rounded
-/// `BorderGlyphSet` preset: `╭─...─╮`, `│` stacked, `╰─...─╯`.
+/// right_column) for the console frame in rounded box-drawing glyphs:
+/// `╭─...─╮`, `│` stacked, `╰─...─╯`.
 ///
 /// `cols` is the total width of the top/bottom rows in monospace
 /// character cells, including both corners — so `cols >= 2` is
@@ -200,11 +200,36 @@ impl ConsoleFrameLayout {
 /// have `left == right`, so both side strings are the same — the
 /// caller positions them at different x offsets.
 pub fn build_console_border_strings(cols: usize, rows: usize) -> (String, String, String, String) {
-    let glyphs = baumhard::mindmap::border::BorderGlyphSet::box_drawing_rounded();
-    let top = glyphs.top_border(cols);
-    let bottom = glyphs.bottom_border(cols);
-    let side = glyphs.side_border(rows);
+    let top = border_row('╭', '─', '╮', cols);
+    let bottom = border_row('╰', '─', '╯', cols);
+    let side = side_column('│', rows);
     (top, bottom, side.clone(), side)
+}
+
+/// `left`, `cols - 2` copies of `fill`, `right`: one horizontal edge of
+/// the console's rounded frame. Empty below two columns, where there is
+/// no room for both corners.
+fn border_row(left: char, fill: char, right: char, cols: usize) -> String {
+    if cols < 2 {
+        return String::new();
+    }
+    let mut s = String::with_capacity(cols * fill.len_utf8());
+    s.push(left);
+    s.extend(std::iter::repeat_n(fill, cols - 2));
+    s.push(right);
+    s
+}
+
+/// `glyph` on each of `rows` lines: one vertical edge of the frame.
+fn side_column(glyph: char, rows: usize) -> String {
+    let mut s = String::with_capacity(rows * (glyph.len_utf8() + 1));
+    for i in 0..rows {
+        if i > 0 {
+            s.push('\n');
+        }
+        s.push(glyph);
+    }
+    s
 }
 
 /// Compute the screen-space layout for the console overlay from a

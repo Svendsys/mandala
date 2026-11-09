@@ -3,7 +3,7 @@
 //! Colour-space conversion utilities — hex / RGB / HSV.
 //!
 //! These helpers are the single source of truth for "how do we turn a
-//! hex string from a `.mindmap.json` canvas into a float quad" and
+//! hex string into a float quad" and
 //! "how do we convert between HSV and RGB for the color picker."
 //! Keeping them next to the `Color` struct (in `super::color`) makes
 //! the colour-math vocabulary a two-file neighbourhood where a new
@@ -117,7 +117,7 @@ const fn nibble(b: u8) -> Option<u8> {
 /// stale sentence here cannot hide it.
 ///
 /// `const`, which is the point: a palette constant can be *written*
-/// in the notation designers and `.mindmap.json` both speak and
+/// in the notation designers and `.mandala.json` both speak and
 /// still be a compile-time `Color`, with a typo failing the build
 /// rather than resolving to a fallback at run time. `Color`'s `rgba`
 /// field is `pub` so such constants can also be written as struct
@@ -246,7 +246,7 @@ pub fn rgb_to_hsv(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 
 /// Convert HSV → `#RRGGBB` hex string (no alpha). Canonical path for
 /// the color picker commit: quantize an HSV triple into the same hex
-/// string shape stored in `MindEdge.color`.
+/// string shape `.mandala.json` writes colors in.
 pub fn hsv_to_hex(h: f32, s: f32, v: f32) -> String {
     let [r, g, b] = hsv_to_rgb(h, s, v);
     let u = convert_f32_to_u8(&[r, g, b, 1.0]);
@@ -254,25 +254,24 @@ pub fn hsv_to_hex(h: f32, s: f32, v: f32) -> String {
 }
 
 /// Convert a `FloatRgba` quad into a `#RRGGBB` (or `#RRGGBBAA`)
-/// hex string in the same lowercase shape stored in
-/// `MindEdge.color` and `TextRun.color`. Drops the alpha
+/// hex string in the same lowercase shape `.mandala.json` writes
+/// colors in. Drops the alpha
 /// channel only when α >= 1.0 (saturated opaque); otherwise
 /// emits the eight-char form so model-side state survives the
 /// round-trip.
 ///
 /// Forward conversion through `convert_f32_to_u8`, identical to
 /// `hsv_to_hex`'s shape — every model-side `#RRGGBB` site uses
-/// the same quantisation path. Used by the section-mutation
-/// reverse converter (`region_to_text_run`) where a tree-side
-/// `ColorFontRegion.color: FloatRgba` rolls back into the
-/// model's `TextRun.color: String`.
+/// the same quantization path. Used where a tree-side
+/// `ColorFontRegion.color: FloatRgba` rolls back into a `#RRGGBB`
+/// string.
 ///
 /// Lossy on `var(--name)` references — by construction. The
 /// forward path resolves variables before shaping; this reverse
 /// path can't recover the original variable name without an
 /// additional reverse-lookup table. Document this limit at the
 /// reverse-converter call site so authors know what survives a
-/// custom-mutation round-trip.
+/// round-trip through a mutator's JSON.
 pub fn rgba_to_hex(rgba: FloatRgba) -> String {
     let u = convert_f32_to_u8(&rgba);
     if rgba[3] >= 1.0 {

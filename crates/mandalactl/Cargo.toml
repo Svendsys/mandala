@@ -6,7 +6,7 @@ license.workspace = true
 
 # A client for the running app's `--ipc` socket (`format/ipc.md`), and
 # the sibling of `maptool` rather than a mode of it: `maptool` reads
-# `.mindmap.json` files from disk and never talks to a process, this
+# `.mandala.json` files from disk and never talks to a process, this
 # talks to a process and never reads a map. The `[lib]` exists for one
 # reader beyond the binary — the app crate's tests hold `verbs::VERBS`
 # against the registry `describe` renders — and for the integration
@@ -36,7 +36,7 @@ gif = "0.14.2"
 interprocess.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
+tempfile = "3.27.0"
 
 # The relay (`src/bridge/`) and the `--ws` client (`src/client.rs`):
 # `tungstenite` is the WebSocket codec and handshake, blocking `std`

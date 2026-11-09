@@ -5,7 +5,7 @@ Mandala is a Rust mindmap application built on
 [cosmic-text](https://github.com/pop-os/cosmic-text), using the
 **Baumhard** glyph-animation library under
 [`lib/baumhard/`](lib/baumhard/). It runs on both native desktop and
-as a WebAssembly build. `.mindmap.json` files load and render as
+as a WebAssembly build. `.mandala.json` files load and render as
 interactive canvases where every visual element — text, borders,
 connection paths — is laid out as positioned font glyphs.
 
@@ -39,13 +39,13 @@ So the codebase right now contains a lot of unconnected dots that will start to 
 ```sh
 ./test.sh                              # full test suite + wasm32 type-check
 ./build.sh                             # release build (native + wasm)
-./run.sh maps/testament.mindmap.json   # native + trunk serve in parallel
+./run.sh maps/testament.mandala.json   # native + trunk serve in parallel
 ```
 
 For one-off iteration:
 
 ```sh
-cargo run -- maps/testament.mindmap.json   # native only
+cargo run -- maps/testament.mandala.json   # native only
 trunk serve                                 # WASM only (loads via ?map=…)
 ```
 
@@ -61,13 +61,13 @@ whether the app answered.
 cargo build --release -p mandalactl          # target/release/mandalactl
 
 # 1. launch the app with IPC on (the socket is owner-only)
-./target/release/mandala maps/testament.mindmap.json --ipc "$XDG_RUNTIME_DIR/mandala.sock"
+./target/release/mandala maps/testament.mandala.json --ipc "$XDG_RUNTIME_DIR/mandala.sock"
 
 # 2. from another shell
 export MANDALA_IPC="$XDG_RUNTIME_DIR/mandala.sock"
 mandalactl ping                                  # now_ms: 4100.5
 mandalactl scene.find_text Introduction          # where is it, on screen or not?
-mandalactl input.click_node 1.2                  # act on the node
+mandalactl input.click_node 2                    # act on the node
 mandalactl capture.screenshot after.png fit=true width=1920 height=1080
 mandalactl query.selection --json                # the reply envelope, as received
 ```
@@ -114,11 +114,12 @@ turns the same loop into a short captioned GIF for a human to review;
 
 - [`src/application/`](src/application/) — the app shell (event loop,
   document state, rendering pipeline, input handling).
-- [`lib/baumhard/`](lib/baumhard/) — data model, loaders, scene
-  builders, and the tree bridge. Most interesting logic lives here.
-- [`crates/maptool/`](crates/maptool/) — CLI for working with
-  `.mindmap.json` files: `show`, `grep`, `apply`, `export`,
-  `convert --legacy | --portals | --sections`, `verify`.
+- [`lib/baumhard/`](lib/baumhard/) — the document and its one writer,
+  the `.mandala.json` loader and saver, the projector and its glyph
+  layers. Most interesting logic lives here.
+- [`crates/maptool/`](crates/maptool/) — CLI for `.mandala.json` files;
+  its verbs return as clients of the document in V1-E1 (#253), and until
+  then it says so and exits `2`.
 - [`crates/mandalactl/`](crates/mandalactl/) — CLI client for a running
   app's `--ipc` socket (see "Driving the app from a terminal").
 - [`lib/mandala_derive/`](lib/mandala_derive/) — proc-macro support.

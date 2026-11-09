@@ -275,7 +275,7 @@ impl Camera2D {
     /// single cull predicate. The renderer's per-frame cull asks
     /// [`Visibility::is_visible`] of it for every buffer and fill
     /// rect, and the scene introspection
-    /// ([`crate::mindmap::scene_dump`]) reports the verdict itself, so
+    /// (the app's `scene.*` IPC commands) reports the verdict itself, so
     /// what an agent is told is on screen and what is drawn cannot
     /// disagree.
     ///

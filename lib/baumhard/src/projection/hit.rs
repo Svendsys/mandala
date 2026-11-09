@@ -58,6 +58,14 @@ pub(crate) struct BodyIndex {
     /// test that holds a move to its own cells reads. Test builds only.
     #[cfg(test)]
     pub(crate) cell_writes: usize,
+    /// How many cells `within` has visited: what the test that holds a
+    /// rubber band to its own cells reads. Test builds only.
+    #[cfg(test)]
+    pub(crate) within_cells: std::cell::Cell<usize>,
+    /// How many bodies `within` has tried against its rectangle. Test
+    /// builds only.
+    #[cfg(test)]
+    pub(crate) within_tried: std::cell::Cell<usize>,
 }
 
 /// The cell coordinate of `v`, clamped to the grid.
@@ -170,9 +178,64 @@ impl BodyIndex {
         }
         best.map(|(_, node)| node)
     }
+
+    /// Every body that `rect` overlaps by its shape, in ascending node
+    /// id. **Inclusive**: a body whose edge `rect` only touches is in,
+    /// and a zero-area `rect` is a point query that finds every body
+    /// holding the point ([`NodeShape::intersects_local_aabb`]); a body
+    /// of zero area is never in, as it is never hit. A query covering at
+    /// most [`MAX_CELLS`] cells tries only the bodies of those cells and
+    /// the large ones; a larger one tries every body. O(the bodies
+    /// tried), plus a sort of what is found.
+    pub(crate) fn within(&self, rect: Rect) -> Vec<NodeId> {
+        let overlaps = |node: NodeId| {
+            #[cfg(test)]
+            self.within_tried.set(self.within_tried.get() + 1);
+            self.bodies.get(&node).is_some_and(|&(body, shape, _)| {
+                let min = body.origin;
+                shape.intersects_local_aabb(rect.origin - min, rect.max() - min, body.max() - min)
+            })
+        };
+        let mut found: Vec<NodeId> = match cells(rect) {
+            Some(((x0, y0), (x1, y1))) => {
+                let mut tried: Vec<NodeId> = self.large.clone();
+                for x in x0..=x1 {
+                    for y in y0..=y1 {
+                        #[cfg(test)]
+                        self.within_cells.set(self.within_cells.get() + 1);
+                        tried.extend(self.cells.get(&(x, y)).into_iter().flatten());
+                    }
+                }
+                tried.sort_unstable();
+                tried.dedup();
+                tried.retain(|&node| overlaps(node));
+                tried
+            }
+            None => self
+                .bodies
+                .keys()
+                .copied()
+                .filter(|&node| overlaps(node))
+                .collect(),
+        };
+        found.sort_unstable();
+        found
+    }
 }
 
 impl Projector {
+    /// The visible nodes whose bodies `rect`, on the canvas, overlaps:
+    /// what a rubber-band selection covers. A body is the node's drawn
+    /// rectangle (D5) shaped by its outline — the area [`Self::hit`]
+    /// falls back to — and not its frame's rings, which are glyphs set
+    /// outside the outline. Inclusive of edges, in ascending node id; see
+    /// `BodyIndex::within` for the zero-area and zero-size cases. Cost:
+    /// the body index's cells under `rect`, or every body for a
+    /// rectangle spanning more cells than the index lists per body.
+    pub fn nodes_in(&self, rect: Rect) -> Vec<NodeId> {
+        self.bodies.within(rect)
+    }
+
     /// What `point`, on the canvas, hits (#241 §6, ruling B7.1): the first
     /// layer, top-down, whose glyph BVH finds a glyph element there — a
     /// path run only where one of its glyphs is drawn — mapped back

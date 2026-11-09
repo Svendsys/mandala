@@ -62,12 +62,6 @@ impl Renderer {
                         screen_focus: Vec2::new(screen_x, screen_y),
                         factor,
                     });
-                // Zoom invalidates the document-side sample cache:
-                // the effective font size — and therefore sample
-                // spacing along connection paths — is a function of
-                // zoom via
-                // `GlyphConnectionConfig::effective_font_size_pt`.
-                self.connection_geometry_dirty = true;
             }
         }
     }

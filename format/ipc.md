@@ -26,7 +26,7 @@ it. The Rust-side implementation lives under `src/application/ipc/`
 > registry, reply `warnings`, and the `act` family — `act.action`,
 > `act.console`, `act.macro` (IPC-03, #63); the `query` family — `query.document`,
 > `query.selection`, `query.camera`, `query.mode`, `query.status`,
-> `query.animations`, `query.editors`, `query.undo` (IPC-04, #64); the
+> `query.editors`, `query.undo` (IPC-04, #64); the
 > `scene` family — `scene.dump`, `scene.visible_set`,
 > `scene.node_geometry`, `scene.hit_test`, `scene.find_text` (IPC-05,
 > #65); the `input` family (IPC-06, #66); `capture.screenshot` (IPC-07,
@@ -45,7 +45,7 @@ IPC is **opt-in per launch** via a CLI flag, following the existing
 `--keybinds <path>` pattern in `src/main.rs`:
 
 ```sh
-mandala maps/testament.mindmap.json --ipc /run/user/1000/mandala.sock
+mandala maps/testament.mandala.json --ipc /run/user/1000/mandala.sock
 ```
 
 - `--ipc <path>` / `--ipc=<path>` — listen on a Unix domain socket
@@ -158,7 +158,7 @@ agent attaching later while the human watches.
 
 The Windows transport is a **named pipe** at
 `\\.\pipe\mandala-<name>` (the `--ipc` value names the pipe:
-`mandala map.mindmap.json --ipc mandala` serves
+`mandala map.mandala.json --ipc mandala` serves
 `\\.\pipe\mandala-mandala`, and `mandalactl --ipc mandala` finds it),
 with the pipe's security descriptor restricted to its owner — the
 closest Windows analog to a `0600` socket in `$XDG_RUNTIME_DIR`. The
@@ -331,17 +331,15 @@ steps run. The refusal belongs to `act.action`, where the `Action` is
 the whole request. `query.*`, `scene.*`, `input.*`, `act.macro`, `clock.*` and
 `events.*` are at parity, with these per-target shapes: `query.mode`
 reports `drag_state.kind: "None"` (the browser has no drag-state
-machine) and `modals` from the one modal it has, the node text editor;
-`query.editors` reports `null` for the console, the color picker and
-the single-line editor; `query.animations` reports no pause (the pause
-is keyed to native's drags); `query.document` and `scene.dump` declare
+machine) and no open modal; `query.editors` reports `null` for the
+console and the color picker; `query.document` and `scene.dump` declare
 no `to_file`/`overwrite` (no filesystem — a reply over the cap is
 `reply_too_large` with no file alternative, so keep `include` narrow).
 `capture.screenshot` on the browser is the canvas as drawn, at its own
 size, returned inline: see [`capture.screenshot`](#capturescreenshot-ipc-07)
 for the per-target table. `clock.set_mode virtual` and `clock.step`
 work: a step runs the browser's frame — one injected sample, then the
-animation tick — at each virtual instant through the same schedule
+view's sync — at each virtual instant through the same schedule
 native's heartbeat runs (`app/step.rs`), and the page's own frames
 stand still until the clock is real again.
 
@@ -382,8 +380,8 @@ display and no GPU** can run the app at all (IPC-10, #70). Like
 `--ipc` they are native only.
 
 ```sh
-mandala --headless --ipc "$XDG_RUNTIME_DIR/mandala.sock" maps/testament.mindmap.json
-mandala --headless --screenshot out.png maps/testament.mindmap.json     # load, capture, exit 0
+mandala --headless --ipc "$XDG_RUNTIME_DIR/mandala.sock" maps/testament.mandala.json
+mandala --headless --screenshot out.png maps/testament.mandala.json     # load, capture, exit 0
 ```
 
 - `--headless` — run with **no window, no display server and no
@@ -428,8 +426,8 @@ mandala --headless --screenshot out.png maps/testament.mindmap.json     # load, 
   `path`, and its write guards: no symlink at `path` is followed, and an
   existing file there (or its sidecar) is refused unless `--overwrite`
   is given. A one-shot runs on a **virtual clock** (below), so it
-  captures the map at its first instant and an animation cannot keep it
-  from settling. It works with or without `--headless` and `--ipc`; with
+  captures the map at its first instant and nothing time-driven can
+  keep it from settling. It works with or without `--headless` and `--ipc`; with
   a window the window opens, and closes once the capture is written. A
   window's capture is at the size the window has when it is taken; a
   window manager that resizes a new window after its first frame (tiling
@@ -445,7 +443,7 @@ mandala --headless --screenshot out.png maps/testament.mindmap.json     # load, 
 - **The clock starts virtual** (§[`clock`](#clock--determinism-ipc-09)):
   with no one watching, time moves only when `clock.step` moves it, so
   a headless run is a pure function of its commands. Under it, an
-  animation stands still between steps, and an `input.drag`'s paced
+  `input.drag`'s paced
   samples land on the step's heartbeats (`clock.step frames=<n>`), not
   on their own. `clock.set_mode real` gives the headless app real
   time, and with it frames paced at one per 16 ms of wall time — a
@@ -611,7 +609,7 @@ On accept, before reading anything, the server greets:
   "app": "mandala",
   "version": "0.1.0",        // Cargo package version
   "pid": 31337,
-  "map": "maps/testament.mindmap.json"   // null before first load
+  "map": "maps/testament.mandala.json"   // null before first load
 }}
 ```
 
@@ -791,8 +789,8 @@ either take a `"space"` parameter:
 - **`surface`** — physical pixels on the rendered surface, origin
   top-left, y-down. The space of screenshots, sidecar rects, and
   synthetic mouse coordinates (default for `input.*`).
-- **`canvas`** — the document's world space (the space of
-  `MindNode` offsets), as used by the camera. Default for
+- **`canvas`** — the document's world space (the space of node
+  positions), as used by the camera. Default for
   `capture.screenshot region=`.
 
 Conversions go through the same camera math the renderer uses
@@ -835,7 +833,7 @@ rules:
   `source: "ipc"`), which covers auditability without a
   `SourceTier::Ipc` variant that would either duplicate `User` or
   cripple the feature.
-- The threat model of opening a hostile `.mindmap.json` is
+- The threat model of opening a hostile `.mandala.json` is
   **unchanged** by IPC (tiers and gates as in `format/macros.md`).
   IPC adds no remote surface: no TCP, no discovery, no
   auto-connect. The new asset to protect is the socket path itself,
@@ -880,10 +878,10 @@ The full architecture is CODE_CONVENTIONS §3 (amended by IPC-01) and
   `overloaded`, …) wait for room too, which stops it reading:
   pressure lands on the client that is not draining, never on the
   app. *Unsolicited events* the client never paced itself against
-  (`camera_changed`, `animation_*`, …) are instead
+  (`camera_changed`, `selection_changed`, …) are instead
   **coalesced/dropped-oldest by revision** under pressure rather
   than pausing anything — an agent that pauses to think for a few
-  seconds while an animation emits a flood of events must not have
+  seconds while a human pans and emits a flood of events must not have
   its session stalled or torn down. So a slow-reading client loses
   *stale events*, not its session; only a client that stops reading
   *replies* altogether is dropped. The rule is `events`' delivery
@@ -1050,7 +1048,7 @@ PR that implements them.
 |---|---|---|---|
 | *(bootstrap)* | `meta.rs` | IPC-02; registry by IPC-03 | `describe`, `ping` |
 | `act` | `act.rs` | IPC-03 | `act.action`, `act.console`, `act.macro` |
-| `query` | `query.rs` | IPC-04 | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.animations`, `query.editors`, `query.undo` |
+| `query` | `query.rs` | IPC-04 | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.editors`, `query.undo` |
 | `scene` | `scene.rs` | IPC-05 | `scene.dump`, `scene.visible_set`, `scene.node_geometry`, `scene.hit_test`, `scene.find_text` |
 | `input` | `input.rs` | IPC-06 | `input.mouse_move`, `input.mouse_button`, `input.wheel`, `input.key`, `input.text`, `input.touch`, `input.drag`, `input.click_node`, `input.pending` |
 | `capture` | `capture.rs` | IPC-07, IPC-08 | `capture.screenshot`, `capture.record_start`, `capture.record_stop` |
@@ -1089,7 +1087,7 @@ key, a macro or the console) does.
 
 | param | type | required | meaning |
 |---|---|---|---|
-| `action` | string\|object | yes | The `Action`, in the externally tagged form macro `Action` steps deserialize through: a string for a unit variant (`"Undo"`), and a `{"Variant": payload}` object for a payload variant (`{"OpenDocument": "/path/m.mindmap.json"}`). An unknown variant or a mistyped payload is `invalid_params`, naming what serde expected. |
+| `action` | string\|object | yes | The `Action`, in the externally tagged form macro `Action` steps deserialize through: a string for a unit variant (`"Undo"`), and a `{"Variant": payload}` object for a payload variant (`{"OpenDocument": "/path/m.mandala.json"}`). An unknown variant or a mistyped payload is `invalid_params`, naming what serde expected. |
 | `x`, `y` | number | no, together | A pointer position. With it, the cursor stands there for this dispatch only (afterwards it is back where the user's real pointer is, so their next wheel or key acts where they point, not where the agent did), and the dispatch carries what the canonical click hit test (`compute_click_hit`, the one mouse presses use) finds under it, as a mouse handler's `DispatchHit` does. Pointer-driven arms then behave as under a real pointer: `DoubleClickActivate` routes on the hit, and `ZoomIn` / `ZoomOut` / `CreateOrphanNode` use the position. Without it they use the current cursor, and `DoubleClickActivate` reports `unhandled`. One without the other is `invalid_params`. |
 | `space` | string | no | The coordinate space of `x`/`y`: `"canvas"` (default) or `"surface"` ([Coordinate spaces](#coordinate-spaces)). Only valid with `x`/`y`. |
 
@@ -1139,7 +1137,7 @@ side-effect drain, **without** opening the console.
 
 | param | type | required | meaning |
 |---|---|---|---|
-| `line` | string | yes | The line, as typed at the prompt (`"section show"`, `"open maps/a.mindmap.json"`). |
+| `line` | string | yes | The line, as typed at the prompt (`"fps on"`, `"open maps/a.mandala.json"`). |
 
 Result: `output` (array of strings), the verb's output lines, one
 element per line. It is empty for a blank line and for a verb that
@@ -1159,8 +1157,8 @@ itself. So nothing an agent sends writes lines into a console the
 user has open, or leaves its overlay stale. No fake open modal is
 built to scrape. **The full
 side-effect drain still runs**: `ConsoleSideEffect::ReplaceDocument`
-(the document swap for `open` / `new`), `rebuild_all`, and any modal
-handoff, because "behaviorally identical to a human typing it" (§2)
+(the document swap for `open` / `new`), the view's sync, and any
+modal handoff, because "behaviorally identical to a human typing it" (§2)
 requires those effects, not just the return value. What IPC skips is
 the human's half: an open console's scrollback and the command
 history are left alone, by `act.console` and by the `act.action` /
@@ -1197,94 +1195,91 @@ naming the refused step.
 ## `query` — application state (IPC-04)
 
 Read-only views of what the application knows: what a person reads off
-the screen chrome, and the app's mental state. Eight commands:
+the screen chrome, and the app's mental state. Seven commands:
 `query.document`, `query.selection`, `query.camera`, `query.mode`,
-`query.status`, `query.animations`, `query.editors`, `query.undo`.
+`query.status`, `query.editors`, `query.undo`.
 
 **Zero mutation, by construction.** A query reaches the app through
 `observe()` (`&`), and the only reads the execution context offers are
 `&MindMapDocument` and a `&self` projection of the shell state. So a
-query cannot flip `dirty`, push an undo entry, rebuild a scene or ask
-for a frame (the reply's repaint flag is never set, and a query polled
-in a loop costs no frame). A test holds each of those to it.
+query cannot flip `dirty`, push a history entry, re-project the view or
+ask for a frame (the reply's repaint flag is never set, and a query
+polled in a loop costs no frame). A test holds each of those to it.
 
 **No mirror structs.** Each wire form is a projection that sits beside
 the state it exposes (`document/ipc_state.rs`, `app/ipc_state.rs`).
-Where a type is pure serde (`MindMap`, `AnimationTiming`) the
-projection is its own serializer; elsewhere it is an exhaustive `match`
-with no wildcard arm. A new `SelectionState`, `InteractionMode`,
-`DragState`, `ThrottledDrag` or `UndoAction` variant therefore fails
-the build until its wire form is decided and written here. Every
-variant-shaped value is an object whose `kind` is **the variant's own
-name**, with that variant's ids beside it. Where a projection leaves
-state out, this section names the omission.
+The model is the document's own save (`format::save`), so it is the
+`.mandala.json` shape (`format/schema.md`) and nothing else; elsewhere
+a projection is an exhaustive `match` with no wildcard arm. A new
+`InteractionMode` or `DragState` variant therefore fails the build
+until its wire form is decided and written here. Every variant-shaped
+value is an object whose `kind` is **the variant's own name**, with
+that variant's fields beside it. Where a projection leaves state out,
+this section names the omission.
+
+**Elements are named by integer node ids.** A node is `{"node": <id>}`,
+where `<id>` is the integer `id` the node carries in the saved map; a
+part of a node is named from its node: `{"node": <id>, "section":
+<index>}`, `{"node": <id>, "connector": true}`, `{"node": <id>,
+"link": <index>}`. Every command that names an element — the
+selection, `scene.*`, `input.click_node`, the capture sidecar — uses
+this one shape.
 
 **Errors.** Before the app exists every query answers `no_document`.
-After it, the four queries that read the document (`query.document`,
-`query.selection`, `query.animations`, `query.undo`) answer
-`no_document` when its initial load failed. `query.camera`,
-`query.mode`, `query.status` and `query.editors` need no document and
-answer regardless. A query's own parameter failures are
-`invalid_params`, naming the parameter.
+After it, the three queries that read the document (`query.document`,
+`query.selection`, `query.undo`) answer `no_document` when its initial
+load failed. `query.camera`, `query.mode`, `query.status` and
+`query.editors` need no document and answer regardless. A query's own
+parameter failures are `invalid_params`, naming the parameter.
 
 ### `query.document`
 
-The open document: `file_path`, `dirty`, `undo_depth`, `map`, `counts`
-and, on request, the whole model as `mindmap`.
+The open document: `file_path`, `dirty`, `name`, `nodes`, `revision`,
+`history` and, on request, the whole model as `document`.
 
 | param | type | required | meaning |
 |---|---|---|---|
-| `fields` | array | no | Which parts to return, as strings from the list below. Default: every part but `mindmap`, the one whose size is unbounded. Empty, mistyped or unknown words are `invalid_params`. Replies carry the parts in the order below, whatever order they were asked for. |
-| `pointer` | string | no | An RFC 6901 JSON Pointer into the serialized model (`"/nodes/1.2"`, `"/edges/0"`, `"/canvas/background_color"`). The reply's `mindmap` is then the value found there. Implies `fields: ["mindmap"]` when `fields` is omitted, and is `invalid_params` when `fields` lacks `mindmap`. A pointer that resolves to nothing is `not_found`, and is reported before anything is written to `to_file`. Only the selected subtree is serialized: the first one or two tokens (`/nodes/<id>`, `/edges/<index>`, `/palettes/<name>`, …) are resolved against the model's own structures, so polling `/nodes/0/position` costs one node, not the map. The result is exactly what a pointer into the whole serialized model would give. A field the serialized form omits while empty (`palettes`, `custom_mutations`, `macros`) is absent to a pointer too. |
-| `to_file` | string | no | An absolute path. The file sidecar of [Large payloads](#large-payloads): the fields are written there as JSON and the reply is only `path` and `bytes`. Use it when `mindmap` may exceed the 8 MiB reply cap. The model is **streamed** from the app's own structures into the file, so no copy of it is built beside it. The write is **atomic**: the bytes go to a temp file in the same directory (created exclusively and with `O_NOFOLLOW`), are flushed and `fsync`ed, and are then renamed into place. A failure partway (a full disk) removes the temp file and leaves the destination exactly as it was, so an earlier good export is never replaced by truncated JSON. A replaced file takes the default permissions of a new file. |
-| `overwrite` | boolean | no | Only with `to_file`. Allow replacing an existing file; default `false`, where an existing file is `invalid_params`. Without it the file is published with `link(2)`, which fails if the name exists, so a file created in the meantime is not clobbered. A symlink or a directory at the path is `invalid_params` either way, and a symlink is never written through: the temp file is created with `O_NOFOLLOW` and published by `rename(2)`, which replaces the directory entry itself. A missing parent directory is `invalid_params`. |
+| `fields` | array | no | Which parts to return, as strings from the list below. Default: every part but `document`, the one whose size is unbounded. Empty, mistyped or unknown words are `invalid_params`. Replies carry the parts in the order below, whatever order they were asked for. |
+| `pointer` | string | no | An RFC 6901 JSON Pointer into the saved map (`"/name"`, `"/nodes/0"`, `"/palettes"`). The reply's `document` is then the value found there. Implies `fields: ["document"]` when `fields` is omitted, and is `invalid_params` when `fields` lacks `document`. A pointer that resolves to nothing is `not_found`, and is reported before anything is written to `to_file`. The pointer is resolved against one save of the map. |
+| `to_file` | string | no | An absolute path. The file sidecar of [Large payloads](#large-payloads): the fields are written there as JSON and the reply is only `path` and `bytes`. Use it when `document` may exceed the 8 MiB reply cap. The write is **atomic**: the bytes go to a temp file in the same directory (created exclusively and with `O_NOFOLLOW`), are flushed and `fsync`ed, and are then renamed into place. A failure partway (a full disk) removes the temp file and leaves the destination exactly as it was, so an earlier good export is never replaced by truncated JSON. A replaced file takes the default permissions of a new file. Native only. |
+| `overwrite` | boolean | no | Only with `to_file`. Allow replacing an existing file; default `false`, where an existing file is `invalid_params`. Without it the file is published with `link(2)`, which fails if the name exists, so a file created in the meantime is not clobbered. A symlink or a directory at the path is `invalid_params` either way, and a symlink is never written through: the temp file is created with `O_NOFOLLOW` and published by `rename(2)`, which replaces the directory entry itself. A missing parent directory is `invalid_params`. Native only. |
 
 | result field | type | meaning |
 |---|---|---|
 | `file_path` | string | The path the document is bound to; `null` for a document never saved. |
 | `dirty` | boolean | Unsaved changes. |
-| `undo_depth` | integer | Entries on the undo stack (`query.undo` lists them). |
-| `map` | object | `{"name", "version"}` of the loaded map. |
-| `counts` | object | `{"nodes", "edges", "sections", "palettes", "custom_mutations", "macros"}`. `sections` is summed over every node. |
-| `mindmap` | object | The model through its own serde, the `.mindmap.json` shape (`legacy-schema.md`). A save adds the loader's preserved unknown keys; a query does not, because they are the loader's bookkeeping and not part of the model. With `pointer`, the value found there. |
+| `name` | string | The map's name. |
+| `nodes` | integer | How many nodes the map holds. |
+| `revision` | integer | The document's revision: it advances with every change, an undo and a redo included, and restarts when the document is replaced (`document_replaced`). |
+| `history` | object | `{"undo", "redo"}`: how many entries the history holds each way (`query.undo` lists them). |
+| `document` | object | The map in the `.mandala.json` shape a save writes (`format/schema.md`), a change an open transaction holds included. With `pointer`, the value found there. |
 | `path`, `bytes` | string, integer | With `to_file` only, and then the *only* fields: the absolute path written and its size. |
 
-The `mindmap` field round-trips: parsed back as a `MindMap` and
-serialized again it is the value the app serialized, so what an agent
-reads is what the app holds.
+The `document` field round-trips: it is what `save` would write, and
+loading it gives the document the app holds.
 
 ```jsonc
 {"id": 1, "cmd": "query.document"}
 {"id": 1, "ok": true, "result": {
-  "file_path": "maps/testament.mindmap.json", "dirty": false, "undo_depth": 0,
-  "map": {"name": "testament", "version": "1.0"},
-  "counts": {"nodes": 252, "edges": 258, "sections": 254, "palettes": 12, "custom_mutations": 0, "macros": 0}}}
-{"id": 2, "cmd": "query.document", "pointer": "/nodes/0/position"}
-{"id": 2, "ok": true, "result": {"mindmap": {"x": -179.432388, "y": -2413.803223}}}
-{"id": 3, "cmd": "query.document", "fields": ["mindmap"], "to_file": "/tmp/model.json"}
+  "file_path": "maps/testament.mandala.json", "dirty": false, "name": "testament",
+  "nodes": 252, "revision": 0, "history": {"undo": 0, "redo": 0}}}
+{"id": 2, "cmd": "query.document", "pointer": "/name"}
+{"id": 2, "ok": true, "result": {"document": "testament"}}
+{"id": 3, "cmd": "query.document", "fields": ["document"], "to_file": "/tmp/model.json"}
 ```
 
 ### `query.selection`
 
-Params: none. Result: the `SelectionState`, an object whose `kind` is
-`None`, `Single`, `Multi`, `Section`, `MultiSection`, `SectionRange`,
-`Edge`, `EdgeLabel`, `PortalLabel` or `PortalText`, with the variant's
-ids beside it. Lossless: every field of every variant is carried.
+Params: none.
 
-| `kind` | keys beside it |
-|---|---|
-| `None` | — |
-| `Single` | `node_id` |
-| `Multi` | `node_ids` (array) |
-| `Section` | `node_id`, `section_idx` |
-| `MultiSection` | `sections`: array of `{"node_id", "section_idx"}` |
-| `SectionRange` | `node_id`, `section_idx`, `section_span` `{"lo", "hi"}` (inclusive **section indices**), `grapheme_range` `{"start", "end"}` (half-open **grapheme-cluster** offsets into that section's text; the two ranges are different units, see `SelectionState`) |
-| `Edge`, `EdgeLabel` | `edge`: `{"from_id", "to_id", "edge_type"}` |
-| `PortalLabel`, `PortalText` | `edge` (as above), `endpoint_node_id` |
+| result field | type | meaning |
+|---|---|---|
+| `count` | integer | How many elements are selected. |
+| `elements` | array | Each selected element by its name, in the order it was selected: `{"node": <id>}` for a node, `{"node": <id>, "connector": true}` or `{"node": <id>, "link": <index>}` for a path. |
 
 ```jsonc
 {"id": 1, "cmd": "query.selection"}
-{"id": 1, "ok": true, "result": {"kind": "Single", "node_id": "1.2"}}
+{"id": 1, "ok": true, "result": {"count": 1, "elements": [{"node": 2}]}}
 ```
 
 ### `query.camera`
@@ -1312,54 +1307,34 @@ Params: none.
 
 | result field | type | meaning |
 |---|---|---|
-| `interaction_mode` | object | `kind`: `Default`, `Reparent` (`sources`), `Connect` (`source`), `NodeEdit` (`node_id`) or `Resize` (`target`: `{"kind": "Node", "node_id"}` or `{"kind": "Section", "node_id", "section_idx"}`). |
-| `drag_state` | object | `kind`: `None`, `Pending`, `PendingRight`, `Panning`, `SelectingRect` or `Throttled`. `Pending` carries `start_pos` (surface pixels), `hit_node`, `hit_section_idx` and `grabs`, the names of every grab the press recorded, in the order a drag past the threshold resolves them, so the first is the gesture it becomes (`node_resize_handle`, `section_resize_handle`, `edge_label`, `portal_label`, `edge_handle`). `PendingRight` carries `start_pos`, `start_canvas`, `hit_node`, `hit_section_idx`. `Panning` carries its `owner`, which is what ends it: `"button"` with the `button` that holds it (`"left"`, `"right"`, `"middle"`, as `input.mouse_button` spells them) or `"key"` with the `key` name that holds it — each ends on that input's release and no other — or `"toggled"`, a pan armed by a dispatch with no release behind it (`act.action`, `act.console`, `act.macro`), which the next `PanCanvas` ends. `SelectingRect` carries `start_canvas` and `current_canvas`. `Throttled` names its `gesture` (`MovingNode`, `MovingSection`, `SectionResize`, `NodeResize`, `EdgeHandle`, `PortalLabel`, `EdgeLabel`) with what it is acting on (`node_ids`, `node_id`, `section_idx`, `side`, `edge`, `handle`, `endpoint_node_id`). A gesture's pre-drag snapshots, pending delta and throttle are omitted: bookkeeping, not identity. |
-| `modals` | array | Every open modal, in the order the keyboard handler consults them: `console`, `color_picker`, `single_line_edit`, `text_edit`. Keys do not have one owner. The console takes **every** key. The color picker claims **only its own** keys (its commit, cancel and nudge verbs, and its clipboard keys); every other key falls through to the editors. The single-line editor, then the node text editor, take every key that reaches them. `query.editors` has each one's state. |
-| `key_owner` | string | Who receives an *ordinary* key right now: `console`, `single_line_edit`, `text_edit`, or `none` (normal dispatch). Never `color_picker`: with a picker and a text editor both open, a key the picker does not claim goes to `text_edit`, and that is what this field says. Type against `key_owner`, not against the head of `modals`. |
-| `hovered_node` | string | The node id under the pointer; `null` over none. |
+| `interaction_mode` | object | `{"kind": "Default"}`: the one mode while the editing modes are rebuilt on the document's writer (resize by V1-C7, node editing by V1-C8). |
+| `drag_state` | object | `kind`: `None`, `Pending`, `PendingRight`, `Panning` or `SelectingRect`. `Pending` carries `start_pos` (surface pixels) and `hit`, the element the press landed on (`null` over empty canvas). `PendingRight` carries `start_pos`, `start_canvas` and `hit`. `Panning` carries its `owner`, which is what ends it: `"button"` with the `button` that holds it (`"left"`, `"right"`, `"middle"`, as `input.mouse_button` spells them) or `"key"` with the `key` name that holds it — each ends on that input's release and no other — or `"toggled"`, a pan armed by a dispatch with no release behind it (`act.action`, `act.console`, `act.macro`), which the next `PanCanvas` ends. `SelectingRect` carries `start_canvas` and `current_canvas`. |
+| `modals` | array | Every open modal, in the order the keyboard handler consults them: `console`, `color_picker`. The console takes **every** key. The color picker claims **only its own** keys; every other key falls through. `query.editors` has each one's state. |
+| `key_owner` | string | Who receives an *ordinary* key right now: `console`, or `none` (normal dispatch). Never `color_picker`, which claims only its own keys. |
 | `cursor_pos` | object | `{"x", "y"}`: the last known pointer position, in surface pixels. |
 
 ### `query.status`
 
-Params: none. Result: `text` (string), the cyan mode-status line the
-renderer shows (`"editing: 1.2 — section [1 of 3]"`), or `null` when none
-is showing (Default mode). The app already writes this line for a human,
-so an agent reads it instead of re-deriving it.
+Params: none.
 
-### `query.animations`
-
-Params: none. Result: `active` (boolean, whether any animation instance is
-running), `paused` (boolean, whether a tree-mutating drag has suspended
-the tick), `count` (integer) and `animations` (array, oldest-started
-first). Each entry:
-
-| key | meaning |
-|---|---|
-| `id` | The running animation's identity: the `id` the `animation_started` and `animation_completed` events carry for it. It never changes while the animation runs (a drag release shifts `start_ms`, not this), and a re-trigger after the animation ended is a new `id` under the same `(target_id, section_idx, mutation_id)`. An agent that subscribed late, or that recovers from missed events, matches a later `animation_completed` to the entry it holds by this. |
-| `target_id`, `section_idx` | The node animated, and the section when the trigger resolved to one (`null` otherwise). |
-| `mutation_id` | The `CustomMutation` id being animated. |
-| `start_ms`, `elapsed_ms` | The app-clock start and the time since, in whole milliseconds: the clock `ping` and `clock.status` report and the per-frame drain ticks against. In real mode it runs at the wall clock's rate; under `clock.set_mode virtual` it advances only by `clock.step`, so `elapsed_ms`, `phase` and `progress` are a pure function of the step sequence ([`clock`](#clock--determinism-ipc-09)). |
-| `phase` | `delay` before the delay elapses, `running` while it interpolates, `due` once the full envelope has elapsed and the next tick commits it, and `paused` while a tree-mutating drag (a node or section move or resize) has suspended the tick. While paused, `elapsed_ms` and `progress` are frozen at the value the animation resumes from (on release the drain shifts each `start_ms` forward by the pause), and nothing commits until the drag ends. Poll `paused` to tell a stalled animation from a finished one. |
-| `progress` | The linear position through the duration, `0` to `1`, before easing. |
-| `timing` | The mutation's `AnimationTiming` through its own serializer (`duration_ms`, `delay_ms` when set, `easing`). |
-
-The from/to node snapshots and the mutation list are omitted. They are
-the document's own business, and large. `active: false` with an empty
-list is how an agent sees that animations have settled; `active: true`
-with `paused: true` is a drag holding them.
+| result field | type | meaning |
+|---|---|---|
+| `text` | string | The cyan mode-status line the renderer shows, or `null` when none is showing (Default mode). The app already writes this line for a human, so an agent reads it instead of re-deriving it. |
+| `document` | string | The line the document's last refused change left — the busy message an open interactive edit answers another change with — or `null` when the last change was accepted. |
 
 ### `query.editors`
 
-Params: none. Each modal editor's live state, `null` when it is closed,
-and the document's active previews.
+Params: none. Each modal's live state, `null` when it is closed.
 
 | result field | type | meaning |
 |---|---|---|
 | `console` | object | `input`, `cursor` (grapheme index), `history_len`, `history_idx`, `scrollback_len`, `scrollback` (the last 50 lines, each `{"kind": "Input"\|"Output"\|"Error", "text"}`), `completion_count`, `completion_idx`, `scroll_offset`. Omitted: each line's pinned font family, the completion rows, the wheel accumulator. |
-| `color_picker` | object | `mode` (`{"kind": "Standalone"}`, or `{"kind": "Contextual", "handle", "seed_var_ref", "seed_hsv"}` where `handle` is `Edge` (`edge_index`), `Node` (`node_id`, `axis`) or `Section` (`node_id`, `section_idx`, `axis`, `grapheme_range`)), `hue_deg` (`[0, 360)`), `sat` and `val` (`[0, 1]`), `size_scale`, `gesture` (`Move`, `Resize` or `null`), `hover_preview`. Omitted: the cached layout, glyph-measurement caches and wheel placement, which are geometry (`scene.dump` is where what it looks like lives). |
-| `single_line_edit` | object | The edge-label / portal-caption editor: `target` (`{"kind": "EdgeLabel", "edge"}` or `{"kind": "PortalText", "edge", "endpoint_node_id"}`), `buffer`, `cursor_grapheme_pos`, `original` (the target's string when the editor opened; `null` if none). |
-| `text_edit` | object | The node text editor: `node_id`, `section_idx`, `buffer`, `cursor_grapheme_pos`, `selection_anchor` (`null` without a sub-range selection), `exit_to_default_on_close`. Omitted: the buffer's styling regions and the pre-edit snapshot cancel restores from. |
-| `previews` | object | What the scene shows in place of committed model state, never serialized, never undoable, never dirtying: `label_edit` (`edge`, `buffer`), `portal_text_edit` (`edge`, `endpoint_node_id`, `buffer`), `color_picker` (`edge`, `color`), `border` (`kind`: `Nodes`, `Sections`, `CanvasDefault`, `CanvasSectionFrame`, `CanvasSectionFrameFocused`, with its targets; the staged values are omitted) and `rect_select` (the node ids a Shift+drag currently covers). Each is `null` when none is live. An agent whose pixels disagree with `query.document` looks here first. |
+| `color_picker` | object | `mode` (`{"kind": "Standalone"}` or `{"kind": "Contextual", "seed_hsv": {"h", "s", "v"}}`), `hue_deg` (`[0, 360)`), `sat` and `val` (`[0, 1]`), `size_scale`, `gesture` (`Move`, `Resize` or `null`), `hover_preview`. Omitted: the cached layout, glyph-measurement caches and wheel placement, which are geometry (`scene.dump` is where what it looks like lives). |
+
+Both are native: the browser has no console shell and no picker, and
+reports `null` for each, as it reports `{"kind": "None"}` for
+`query.mode`'s `drag_state`. The editors on the map — the text and
+single-line editors — return with V1-C8 (#249).
 
 Cursors are **grapheme-cluster** indices into their buffer, never bytes:
 the unit the editors use, and the one a user counts as characters.
@@ -1370,81 +1345,73 @@ the unit the editors use, and the one a user counts as characters.
 |---|---|---|---|
 | `limit` | integer | no | How many entries to return, newest first. Default 20, at most 1000 (a larger or negative value is `invalid_params`, so the cap is learned rather than silently applied). |
 
-Result: `depth` (integer, the whole stack) and `entries` (array, newest
-first, the order `Undo` takes them). Each entry is `{"kind", "node_ids"?,
-"index"?}`: `kind` is the `UndoAction` variant's name (`MoveNodes`,
-`CustomMutation`, `ReparentNodes`, `DeleteEdge`, `CreateEdge`,
-`EditEdge`, `CreateNode`, `EditNodeText`, `EditNodeStyle`,
-`EditNodeZoom`, `CanvasSnapshot`, `EditNodeAabb`, `DeleteNodes`), with the
-nodes it touches or, for the edge entries, the edge `index`. The
-before-images an entry carries are what undo restores from and are not
-reported.
+| result field | type | meaning |
+|---|---|---|
+| `depth` | integer | How many entries `Undo` can take. |
+| `redo_depth` | integer | How many entries `Redo` can take. |
+| `entries` | array | Newest first, the order `Undo` takes them: `{"label", "source", "revision"}`. `label` is the change's own words, `source` the `ChangeSource` that declared it (`action`, `console`, `ipc`, `input`, `edit`, `verb`), `revision` the revision it made. The journals an entry carries are what undo restores from and are not reported. |
 
 ## `scene` — laid-out scene introspection (IPC-05)
 
-What is *actually on screen*, as text: where each node, section,
-connection, edge label and portal marker is drawn, whether the camera
-shows it, and what text the user reads in it. Five commands:
-`scene.dump`, `scene.visible_set`, `scene.node_geometry`,
-`scene.hit_test`, `scene.find_text`. An agent answers "is node X on
-screen? where? overlapping what? saying what?" from these, without
-pixels.
+What is *actually on screen*, as text: where each node, section, path,
+label and portal end is drawn, whether the camera shows it, and what
+text the user reads in it. Five commands: `scene.dump`,
+`scene.visible_set`, `scene.node_geometry`, `scene.hit_test`,
+`scene.find_text`. An agent answers "is node X on screen? where?
+overlapping what? saying what?" from these, without pixels.
 
-**The source of truth is the drawn trees.** Since the dual-pipeline
-consolidation (#22) every model-derived visual reaches the GPU through
-one `GfxTree` per canvas role, so those trees *are*
-the laid-out scene: positions after layout and in-flight drag offsets,
-sizes after text fitting, zoom windows after cascade, text after run
-coverage. The family reads them through Baumhard's serializer
-(`baumhard::mindmap::scene_dump`), never by re-deriving geometry from
-the model. The model is consulted only for what a tree does not carry:
-a node's own `folded` flag, and the fold that removed a node from the
-scene. Each element is named through the identity index its own hit
-test resolves through (the node tree's id maps, the connection and
-label trees' `EdgeChannelIndex`, the portal tree's `PortalHitIndex`), so
-an element is called here what a click on it is called.
+**The source of truth is the glyph runs.** The projector draws every
+element of the document as glyph runs in the glyph layers the layer
+renderer draws (`baumhard::projection`), so those runs *are* the
+laid-out scene: positions after layout, sizes after text fitting, zoom
+windows after the cascade. Every command measures an element by the
+runs the projector drew for it (`view::inspect::element_bounds`), and
+judges it by those runs at the camera the renderer draws through
+(`view::inspect::element_visibility`). Nothing here re-derives geometry
+from the document or re-implements a visibility rule. The document is
+consulted only for what a run does not carry: a node's own `folded` and
+`hidden` flags, and an element's name.
 
-**Every element carries one placement**, three keys beside its own:
+**Elements are named** from their node, by its integer id ([`query`](#query--application-state-ipc-04)):
+`{"node": 2}` for a node, and below it one key per step, a kind's
+index among its parent's children of that kind, or `true` for a kind
+a parent has at most one of — `{"node": 2, "section": 0}`,
+`{"node": 2, "connector": true}`, `{"node": 2, "link": 1}`, `{"node":
+2, "link": 1, "label": 0}`, `{"node": 2, "link": 1, "portal_end":
+0}`. A click on an element, the selection and the capture sidecar call
+it the same.
+
+**Every element carries one placement**, three keys beside its name:
 
 | key | meaning |
 |---|---|
-| `canvas` | `{"x", "y", "w", "h"}`: the extent the renderer draws for the element, in canvas units, offset by its tree's scene offset: the union of its text stamps (the main glyph and each outline-halo stamp, each a box of the element's render bounds). An area that draws none — a node container, which draws nothing since a node has no fill (V1-B12; the map's one background is the frame's clear color) — is placed by its layout box. For a connection, the union of its glyphs. The hit test resolves against the layout box, which can be smaller than a haloed text's stamps: `scene.hit_test` answers what a click hits. |
+| `canvas` | `{"x", "y", "w", "h"}`: the box the renderer draws the element in, in canvas units: the union of its runs' bounds, its descendants' included. |
 | `surface` | The same rect through the camera, in surface pixels ([Coordinate spaces](#coordinate-spaces)). Not clipped: a rect half off-screen runs past the surface edge. |
-| `visibility` | The renderer's own cull verdict, from the one predicate its per-frame cull calls (`Camera2D::visibility`), asked of each drawn part as the renderer asks it, so "visible" here and "drawn" there cannot disagree: `visible` when any part is drawn (one halo stamp on screen); `outside_zoom_window`, when the camera's zoom falls outside the element's zoom window (no pan brings it back; checked first, so a part both outside its window and off-screen reports this); or `offscreen`, when it is inside its window but misses the viewport (a pan would show it). |
+| `visibility` | The renderer's own cull verdict, asked of the element's runs as the renderer asks it, so "visible" here and "drawn" there cannot disagree: `visible` when any run is drawn; `outside_zoom_window` when the camera's zoom falls outside every run's zoom window (no pan brings it back; checked first); or `offscreen`, when a run is inside its window but none meets the viewport (a pan would show it). |
 
-**Displayed text, not model text.** A section with `text_runs` renders
-only the graphemes its runs cover (`format/text-runs.md`); its `text`
-here is that covered text, concatenated in run order, through the same
-coverage rule the shaper slices spans by
-(`baumhard::font::attrs::displayed_text`). A label being edited reports
-its live buffer with the caret, which is what is drawn.
+**Displayed text, not stored text.** An element's `text` is every span
+below it, concatenated in document order: what its runs draw.
 
-**What is not reported.** A node hidden by a folded ancestor is not in
-the scene (`scene.node_geometry` names the fold). A connection whose
-whole path is clipped inside its endpoint nodes draws no glyph and is
-absent. A portal endpoint with no caption draws only its icon. A role
-tree registered hidden draws nothing and reports nothing. Borders,
-section frames and handles are chrome around the elements above and are
-not reported; `query.mode` and `query.editors` describe the interaction
-state they reflect.
+**What is not reported.** An element that draws no run — a node hidden
+by its own flag or by a folded ancestor, a section with no text — is
+not in the scene (`scene.node_geometry` says which). Frames and their
+rings, caps and handles are drawn around the elements above and are
+not reported on their own; their runs count toward their owner's box.
 
 **Read-only.** Four commands reach the app through `observe()` (`&`).
-`scene.hit_test` needs `drive()` only because a BVH descent memoizes
-subtree AABBs in the trees it walks; it writes nothing else — not the
-document, the selection, the cursor or the camera. No scene command
-asks for a frame. Before the app exists every one answers
+`scene.hit_test` needs `drive()` only because the projector's hit test
+memoizes subtree bounds in the layers it walks; it writes nothing else
+— not the document, the selection, the cursor or the camera. No scene
+command asks for a frame. Before the app exists every one answers
 `no_document`; with the app up but its initial load failed, they answer
 `no_document` saying how to load one. Parameter failures are
 `invalid_params`, naming the parameter.
 
-Elements are listed in draw order: nodes in tree pre-order (parents
-before children, siblings in model order), every other kind in its
-tree's order. Edge identities are `{"from_id", "to_id", "edge_type"}`,
-as everywhere on the wire. Every coordinate is the shortest decimal
-that names its `f32` (`0.1`, not `0.10000000149011612`), inline and in
-a `to_file` sidecar alike. The visibility filter is applied before any
-text is resolved: an element a command drops costs no text walk, and
-`scene.visible_set` resolves none.
+Elements are listed in document order: nodes in tree pre-order
+(parents before children, siblings in order), every other kind in the
+order of the nodes that own it. Every coordinate is the shortest
+decimal that names its `f32` (`0.1`, not `0.10000000149011612`), inline
+and in a `to_file` sidecar alike.
 
 ### `scene.dump`
 
@@ -1452,18 +1419,18 @@ The laid-out scene, by kind.
 
 | param | type | required | meaning |
 |---|---|---|---|
-| `include` | string | no | `"visible"` (default): only what the camera shows. `"all"`: every drawn element with its verdict, so an off-screen one can be found and panned to. With `"visible"`, a node is kept when it or any of its sections is visible, carrying only its visible sections. |
-| `kinds` | array | no | Which kinds to report, as strings: `nodes`, `edges`, `labels`, `portals`. Default: all four. A kind not asked for is absent from the reply and its tree is not walked. Empty or unknown words are `invalid_params`. |
-| `to_file` | string | no | An absolute path: the file sidecar of [Large payloads](#large-payloads), with the same atomic, no-symlink, no-clobber write `query.document` documents. The reply is then only `path` and `bytes`. |
-| `overwrite` | boolean | no | Only with `to_file`, as for `query.document`. |
+| `include` | string | no | `"visible"` (default): only what the camera shows. `"all"`: every drawn element with its verdict, so an off-screen one can be found and panned to. With `"visible"`, a node is kept when it is visible, carrying only its visible sections. |
+| `kinds` | array | no | Which kinds to report, as strings: `nodes`, `paths`, `labels`, `portals`. Default: all four. A kind not asked for is absent from the reply. Empty or unknown words are `invalid_params`. |
+| `to_file` | string | no | An absolute path: the file sidecar of [Large payloads](#large-payloads), with the same atomic, no-symlink, no-clobber write `query.document` documents. The reply is then only `path` and `bytes`. Native only. |
+| `overwrite` | boolean | no | Only with `to_file`, as for `query.document`. Native only. |
 
 | result field | type | meaning |
 |---|---|---|
 | `camera` | object | The camera the verdicts and surface rects were taken at, exactly as [`query.camera`](#querycamera) reports it. |
-| `nodes` | array | `{"node_id", "folded", canvas, surface, visibility, "sections"}` per drawn node. `folded` is the model flag: this node's descendants are hidden; the node itself is drawn. Each section is `{"section_idx", canvas, surface, visibility, "text"}`, in model order; a section the tree builder skips (an empty or non-finite authored size) is absent. |
-| `edges` | array | `{"edge", canvas, surface, visibility, "glyphs", "visible_glyphs"}` per drawn connection: how many glyphs it draws along its path (caps included) and how many of them the camera shows. A portal-mode edge draws no path and appears under `portals`. |
-| `labels` | array | `{"edge", canvas, surface, visibility, "text"}` per drawn edge label. |
-| `portals` | array | `{"edge", "endpoint_node_id", "part", canvas, surface, visibility, "text"}` per drawn portal part: `part` is `icon` (the marker glyph) or `text` (its caption), and `endpoint_node_id` the node it floats above. |
+| `nodes` | array | `{"element", canvas, surface, visibility, "sections"}` per drawn node; each section `{"element", canvas, surface, visibility, "text"}`, in document order. |
+| `paths` | array | `{"element", canvas, surface, visibility}` per drawn connector and link. |
+| `labels` | array | `{"element", canvas, surface, visibility, "text"}` per drawn path label. |
+| `portals` | array | `{"element", canvas, surface, visibility, "text"}` per drawn portal end. |
 | `path`, `bytes` | string, integer | With `to_file` only, and then the *only* fields. |
 
 ```jsonc
@@ -1471,57 +1438,52 @@ The laid-out scene, by kind.
 {"id": 1, "ok": true, "result": {
   "camera": {"center": {"x": 0.0, "y": 0.0}, "zoom": 1.0, "zoom_min": 0.05, "zoom_max": 5.0,
              "surface": {"width": 1280, "height": 720}},
-  "nodes": [{"node_id": "1", "folded": false,
+  "nodes": [{"element": {"node": 1},
              "canvas": {"x": -60.0, "y": -20.0, "w": 120.0, "h": 40.0},
              "surface": {"x": 580.0, "y": 340.0, "w": 120.0, "h": 40.0},
              "visibility": "visible",
-             "sections": [{"section_idx": 0, "canvas": {…}, "surface": {…},
+             "sections": [{"element": {"node": 1, "section": 0}, "canvas": {…}, "surface": {…},
                            "visibility": "visible", "text": "…"}]}]}}
 ```
 
 ### `scene.visible_set`
 
-Params: none. Just the identities of what the camera shows, by kind —
-the default `scene.dump`'s ids, with no text resolved and no rect
+Params: none. Just the names of what the camera shows, by kind — the
+default `scene.dump`'s elements, with no text resolved and no rect
 reported.
 
 | result field | type | meaning |
 |---|---|---|
-| `nodes` | array | Node ids, in draw order. A node is here when it or any of its sections is visible. |
-| `sections` | array | `{"node_id", "section_idx"}` per visible section. |
-| `edges` | array | Edge identities of the visible connections. |
-| `labels` | array | Edge identities of the visible labels. |
-| `portals` | array | `{"edge", "endpoint_node_id", "part"}` per visible portal part. |
+| `nodes` | array | The visible nodes, in document order. |
+| `sections` | array | The visible sections. |
+| `paths` | array | The visible connectors and links. |
+| `labels` | array | The visible path labels. |
+| `portals` | array | The visible portal ends. |
 
 ### `scene.node_geometry`
 
-One node's whole geometry story: what the model says, whether the scene
-draws it, and where.
+One node's whole geometry story: what the document says, whether the
+scene draws it, and where.
 
 | param | type | required | meaning |
 |---|---|---|---|
-| `node_id` | string | yes | The node. One the document does not have is `not_found`. |
+| `node_id` | integer | yes | The node, by its integer id. One the document does not have is `not_found`. |
 
 | result field | type | meaning |
 |---|---|---|
-| `node_id` | string | The node described. |
-| `model` | object | `{"position": {"x", "y"}, "size": {"width", "height"}, "folded"}` as the model holds them: the authored values, before drag offsets and text fitting. |
-| `in_scene` | boolean | Whether the scene draws the node. |
-| `hidden_by` | string | The nearest folded ancestor, whose fold keeps the node out of the scene; `null` when none is folded. |
-| `absent_reason` | string | Why the scene does not draw the node: `folded` (`hidden_by` names the fold) or `not_built` (no scene has been built yet, or the tree builder placed no container for the node); `null` when `in_scene`. |
+| `element` | object | The node described: `{"node": <id>}`. |
+| `model` | object | `{"position": {"x", "y"}, "min_size": {"w", "h"} or null, "folded", "hidden"}` as the document holds them: the authored values, before text fitting. |
+| `in_scene` | boolean | Whether the scene draws the node: `false` for a node hidden by its own flag or a folded ancestor, or one that draws nothing. |
 | `canvas`, `surface`, `visibility` | object, object, string | Only when `in_scene`: the node's placement, as in `scene.dump`. |
 | `sections` | array | Only when `in_scene`: the drawn sections, as in `scene.dump`, visible or not. |
-| `overlaps` | array | Only when `in_scene`: the ids of the other drawn nodes whose canvas boxes share area with this one (boxes that only touch along an edge do not overlap), in draw order. |
+| `overlaps` | array | Only when `in_scene`: the other drawn nodes whose boxes share area with this one (boxes that only touch along an edge do not overlap), in document order. |
 
 ### `scene.hit_test`
 
 What a click at a point would target, through **the canonical click
-ladder** — `compute_click_hit`, the function a mouse press, a release
-and a touch tap run, never a fork of it — and its last rung,
-`edge_under_pointer`, the connection path under the pointer. A test
-holds it to a real click: over every node, label, portal part and
-connection of the fixture, the selection a production click leaves is
-the one this report's ladder names.
+chain** — the projector's hit test and the selectable element it
+resolves to, the functions a mouse press, a release and a touch tap
+run, never a fork of them.
 
 | param | type | required | meaning |
 |---|---|---|---|
@@ -1531,35 +1493,27 @@ the one this report's ladder names.
 | result field | type | meaning |
 |---|---|---|
 | `canvas`, `surface` | object | The point in both spaces, `{"x", "y"}`. |
-| `click_hit` | object | The collapsed hit a press records, which double-click detection compares and `DoubleClickActivate` routes on. `kind` is the variant's name: `Node` (`node_id`, `section_idx` — `null` unless the hit resolved to one section of a multi-section node), `PortalMarker` or `PortalText` (`edge`, `endpoint_node_id`), `EdgeLabel` (`edge`), or `Empty`. |
-| `node` | object | The node rung: `{"node_id", "section_idx"}`, or `null`. |
-| `portal` | object | The portal rung, tried only when no node was hit: `{"edge", "endpoint_node_id", "part"}` (`icon` or `text`), or `null`. |
-| `edge_label` | object | The edge-label rung, tried only when no node or portal was hit: the edge, or `null`. |
-| `edge` | object | The last rung, tried only when the ladder came up empty (`click_hit` is `Empty`), which is the only case a click consults it: the connection path within the click tolerance (`EDGE_HIT_TOLERANCE_PX` surface pixels, scaled to canvas units at the current zoom) of the point, or `null`. |
+| `click_hit` | object | The collapsed hit a press records, which double-click detection compares and `DoubleClickActivate` routes on. `kind` is `Element`, with the `element` a click selects — a node, or a path for a connector, link, cap or label — or `Empty`. |
+| `hit` | object | The projector's hit: `{"element", "node"}` — the element whose glyph is under the point and the node it belongs to — or `null`. |
 
-A plain click selects the highest rung that is not `null`: a node
-(`Single`, or a section in `NodeEdit` on a multi-section node), a portal
-part (`PortalText` / `PortalLabel`), an edge label (`EdgeLabel`), the
-connection (`Edge`), or nothing. What the ladder does not see is what
-runs *before* it in a real click: an open modal editor's claim on the
-pointer and the `Reparent` / `Connect` target modes, which consult only
-the node rung. `query.mode` reports both.
+A plain click selects `click_hit`'s element, or clears the selection
+on `Empty`. What the hit test does not see is what runs *before* it in
+a real click: an open modal's claim on the pointer, which `query.mode`
+reports.
 
 ```jsonc
 {"id": 4, "cmd": "scene.hit_test", "x": 412, "y": 96, "space": "surface"}
 {"id": 4, "ok": true, "result": {
   "canvas": {"x": -228.0, "y": -264.0}, "surface": {"x": 412.0, "y": 96.0},
-  "click_hit": {"kind": "Node", "node_id": "1.2", "section_idx": null},
-  "node": {"node_id": "1.2", "section_idx": null},
-  "portal": null, "edge_label": null, "edge": null}}
+  "click_hit": {"kind": "Element", "element": {"node": 2}},
+  "hit": {"element": {"node": 2, "section": 0}, "node": {"node": 2}}}}
 ```
 
 ### `scene.find_text`
 
-Locate drawn text: the sections, edge labels and portal captions whose
+Locate drawn text: the sections, path labels and portal ends whose
 *displayed* text matches, visible or not, so an agent can find
-something off-screen and pan to it. A portal's icon is a marker glyph,
-not text, and is never matched. A node hidden by a fold displays
+something off-screen and pan to it. A node hidden by a fold draws
 nothing and is not found.
 
 | param | type | required | meaning |
@@ -1568,11 +1522,9 @@ nothing and is not found.
 | `exact` | boolean | no | Match the whole displayed text rather than a substring. Default `false`. |
 | `case_sensitive` | boolean | no | Default `false`: both sides are compared Unicode-lowercased, so `É` finds `é`. |
 
-Result: `matches` (array), in draw order: sections, then labels, then
-portal parts. Each is `{"kind", …ids, "text", canvas, surface,
-visibility}` where `kind` is `section` (`node_id`, `section_idx`),
-`label` (`edge`) or `portal` (`edge`, `endpoint_node_id`, `part`,
-always `text`).
+Result: `matches` (array), in document order. Each is `{"kind",
+"element", "text", canvas, surface, visibility}` where `kind` is
+`section`, `label` or `portal_end`.
 
 ## `input` — synthetic raw input (IPC-06)
 
@@ -1617,10 +1569,10 @@ rubber band reads Shift at the threshold-crossing move.
 **Pacing model (pinned here because `settled` and virtual time
 depend on it).** A gesture whose fidelity depends on events landing
 in *different* frames cannot fire its sub-events in a single drain.
-A drag is the case: `drain_inputs` drives the throttled drag
-(`ThrottledInteraction`) between its moves, and a press, a dozen
-moves and a release run back to back would skip that drain entirely
-and test a path no human hits. So `input.drag` enqueues its samples
+A drag is the case: `drain_inputs` drives the rubber band and the
+view's sync between its moves, and a press, a dozen moves and a
+release run back to back would skip that drain entirely and test a
+path no human hits. So `input.drag` enqueues its samples
 into a bounded **injected-input queue** (cap **1024**; a command that
 would overflow it is refused whole with `overloaded`, and enqueues
 nothing) that the heartbeat drains **one sample per frame**, applied
@@ -1671,8 +1623,7 @@ sent so far has landed.
 
 A `CursorMoved` event: the pointer is now at the position. Hover
 behavior, the drag threshold and an armed drag's update follow from
-it; in the Reparent and Connect modes, the hovered target
-(`query.mode`'s `hovered_node`) updates.
+it.
 
 | param | type | required | meaning |
 |---|---|---|---|
@@ -1682,9 +1633,9 @@ it; in the Reparent and Connect modes, the hovered target
 
 ### `input.mouse_button`
 
-`MouseInput` events: the click ladder on a left press, the drag
-commits and click resolution on a release, the right- and
-middle-button gestures and the bound `MouseGesture`s.
+`MouseInput` events: the click hit chain on a left press, click
+resolution on a release, the right- and middle-button gestures and the
+bound `MouseGesture`s.
 
 | param | type | required | meaning |
 |---|---|---|---|
@@ -1715,9 +1666,9 @@ scrollback.
 ### `input.key`
 
 `KeyboardInput` for one logical key, through the whole keystroke
-ladder: the console, color picker and text editors' steals first,
-then the keybind table in the current context, type-to-edit on a
-selected label, and the macro and custom-mutation fall-through.
+ladder: the console's and the color picker's steals first, then the
+keybind table in the current context, and the macro and edit-binding
+fall-through.
 `act.action` skips all of that; this is the command that drives it.
 
 | param | type | required | meaning |
@@ -1730,13 +1681,11 @@ selected label, and the macro and custom-mutation fall-through.
 
 Type a string: one key tap per grapheme cluster, so `"hello 👋"` is
 seven taps and a ZWJ sequence or a base with its combining marks is
-one. Each reaches whatever has the keyboard — an open text editor or
-the console inserts it at the cursor — and with none open, the
-keybind table, as typing does. A space, a newline (`\n`, `\r\n` or
-`\r`) and a tab arrive as the `Space`, `Enter` and `Tab` keys, as winit
-delivers them, so a newline commits the console line and inserts a
-line break in the node text editor. Modifiers are those the OS
-reports.
+one. Each reaches whatever has the keyboard — an open console inserts
+it at the cursor — and with none open, the keybind table, as typing
+does. A space, a newline (`\n`, `\r\n` or `\r`) and a tab arrive as the
+`Space`, `Enter` and `Tab` keys, as winit delivers them, so a newline
+commits the console line. Modifiers are those the OS reports.
 
 | param | type | required | meaning |
 |---|---|---|---|
@@ -1766,11 +1715,10 @@ long-press is a `started`, a wait, and the finger's next event.
 Sugar for the drag a hand makes, paced one sample per frame: a move
 to `from`, a press, `steps` moves evenly spaced and ending exactly on
 `to`, and a release — `steps + 3` samples. What it drags is what a
-press at `from` arms: a node (moved, with its subtree unless `"alt"`
-is held), a section, a resize handle in Resize mode, a label, the
-canvas (a pan), or with `"shift"` on empty canvas a rubber-band
-select. Where a moved node lands is decided by the throttled drag's
-drains, so it lands where the same gesture by hand would.
+press at `from` arms: with `"shift"` on empty canvas a rubber-band
+select, and otherwise the `LeftDrag` binding (by default a pan of the
+canvas), wherever the press lands. Moving a node, a section, a handle
+or a label returns with V1-C7 (#248).
 
 | param | type | required | meaning |
 |---|---|---|---|
@@ -1786,26 +1734,25 @@ lands.
 
 ### `input.click_node`
 
-Sugar for a move to the center of a node's model AABB
-(`position + size / 2`) — or, with `section`, of that section's AABB
-by the tree builder's own rule (`offset` inside the node, filling the
-node when it has no `size`) — and a click there. It adds no semantics
-of its own: the click is the primitives', so it lands on whatever
-the click ladder finds drawn at that point, which is the node unless
-something is drawn over it, and does what a click there does (a
-second one within the double-click window is a double-click).
+Sugar for a move to the center of the box a node is drawn in — the
+union of its glyph runs' bounds, as `scene.dump` reports it — or, with
+`section`, of that section's box, and a click there. It adds no
+semantics of its own: the click is the primitives', so it lands on
+whatever the click hit chain finds drawn at that point, which is the
+node unless something is drawn over it, and does what a click there
+does (a second one within the double-click window is a double-click).
 
 | param | type | required | meaning |
 |---|---|---|---|
-| `node_id` | string | yes | The node. |
+| `node_id` | integer | yes | The node, by its integer id. A value that is not one is `invalid_params`. |
 | `section` | integer | no | Click this section's center instead. One the node does not have is `invalid_params`. |
 | `button` | string | no | `"left"` (default), `"right"` or `"middle"`. |
 | `mods` | array | no | Modifiers held for the click: `["shift"]` adds the node to the selection, as a Shift+click does. |
 
 Result: `applied`, `pending`, and `x`, `y` (number), the surface point
 clicked. A node the document does not have, one the scene does not
-draw — hidden by a folded ancestor, or outside its
-`min/max_zoom_to_render` window at the current zoom — and one whose
+draw — hidden by its own flag or a folded ancestor, empty, or outside
+its zoom window at the current zoom — and one whose
 center is off the surface (a hand cannot click there; bring it into
 view first) are `not_found`. The aim is checked against what is drawn
 when the command executes, so while injected samples are still
@@ -1848,9 +1795,9 @@ it works identically under a compositor, Xvfb, or with no display at all
 the very prepare / encode pair the window is drawn with, into a texture
 of the surface's own format, and read back; a capture at the default
 parameters therefore holds the pixels the window shows. Before drawing,
-the camera-geometry rebuild the next frame owes (a zoom the client sent
-a moment ago) is run, so the capture shows the current state rather than
-the last frame's.
+the view's sync the next frame owes (a change the client made a moment
+ago) is run, so the capture shows the current state rather than the
+last frame's.
 
 **On the browser** ([Browser](#browser)) the command is served with a
 different engine and a narrower shape, and `describe` declares exactly
@@ -1884,8 +1831,7 @@ and `mandalactl --ws capture.screenshot <path>` writes both
 are not declared there and are refused as stray; `format` and
 `sidecar` are. `rendered`/`skipped`, `width`/`height`/`scale`/`camera`
 and `settled` mean what they mean below, `settled` reading the
-browser's two sources (an animation ticking, injected input queued,
-each in real time). `busy` does not arise; the write guards are the
+browser's one source (injected input queued, in real time). `busy` does not arise; the write guards are the
 client's, which writes on the page's behalf (below).
 
 | param | type | default | meaning |
@@ -1926,12 +1872,10 @@ why:
 | `prepare_failed` | A glyph prepare failed — the glyph atlas has reached the GPU's texture limit, which can be permanent. The same failure the window logs. |
 
 `settled` is whether the app needed no further frame once the capture
-was taken: no animation running, no throttled drag or picker hover
-pending, no injected input queued, no camera geometry waiting to
-rebuild — `needs_continuation()` false, the first two conditions of
-`clock.wait until=settled`, read as that command reads them: under a
-virtual clock an animation standing still between steps and samples
-waiting for one are owed to later instants, not to this capture. A capture taken unsettled may hold a
+was taken: no injected input queued — `needs_continuation()` false, the
+first two conditions of `clock.wait until=settled`, read as that
+command reads them: under a virtual clock samples waiting for a step
+are owed to later instants, not to this capture. A capture taken unsettled may hold a
 frame the next one moves on from. Waiting for the app to settle is
 `clock.wait`'s job (IPC-09), not this command's: `capture.screenshot`
 never defers its reply.
@@ -1958,18 +1902,13 @@ it would not be in any window.
 
 **State after a capture is state before it, because the capture never
 writes it.** The renderer's camera is never moved: the capture draws
-through a camera of its own. A capture framed at another zoom needs
-the zoom-dependent roles (connections, their labels, portals — their
-glyph sizes are clamped in screen points) projected at that zoom, and
-projects them into a scratch scene of the capture's own, drawing one
-frame of that scratch over the live scene's zoom-independent roles;
-the live scene, its connection cache and the window's shaped glyphs
-are read, never written, so `query.camera`, `scene.*` and every hit
-test afterwards answer exactly as before, and nothing is projected
-back. During a node drag the scratch is projected with the drag's
-in-flight offsets — the same ones the window's own frames use — so
-the dragged nodes' connections land in the picture where they are on
-screen. Nothing is redrawn on the window's behalf.
+through a camera of its own. The glyph layers are in canvas space,
+so a capture at any camera — another zoom, another center — is the
+layer renderer drawing the same layers through that camera
+(`LayerRenderer::encode`); nothing is projected for it, and the
+layers, the projector and the window's shaped glyphs are read, never
+written, so `query.camera`, `scene.*` and every hit test afterwards
+answer exactly as before. Nothing is redrawn on the window's behalf.
 
 **Aspect rule.** When `region`'s aspect ratio differs from the
 target's, the capture is **extended, never distorted or
@@ -1989,7 +1928,7 @@ at what it sees:
   "surface": {"width": 1920, "height": 1080, "scale": 1.0},
   "camera": {"center_x": 12.0, "center_y": -340.5, "zoom": 0.75},
   "nodes": [
-    {"id": "1.2.3",
+    {"id": 3,
      "rect": {"x": 401.0, "y": 92.5, "w": 218.0, "h": 64.0},  // image px, pre-clip
      "clipped": false,                     // true when partially outside the target
      "sections": [{"index": 0, "rect": {"x": 401.0, "y": 92.5, "w": 218.0, "h": 30.0}}]}
@@ -1997,16 +1936,18 @@ at what it sees:
 }
 ```
 
+`id` is the node's integer id, as every command names it.
 `document_revision` is the document's revision when the image was
 drawn, the same number `document_changed` events and replies carry, so
 a pixel map can be tied to the model state it shows. `surface` is the
 image (its pixel size and the `scale` it was drawn
 at) and `camera` the same object the reply carries; every `rect` is in
-the image's pixels, through the formula above. Elements suppressed by
-`ZoomVisibility` or folding at capture zoom, and nodes the framing
-leaves outside the image, are absent — the sidecar describes the
-rendered image, not the document (that is `scene.dump`'s job). A node
-or section is present exactly when the renderer drew some part of it.
+the image's pixels, through the formula above: the box the node's glyph
+runs are drawn in. Elements outside their zoom window or folded away
+at capture zoom, and nodes the framing leaves outside the image, are
+absent — the sidecar describes the rendered image, not the document
+(that is `scene.dump`'s job). A node or section is present exactly
+when the renderer drew some part of it.
 
 **Also a console verb.** `screenshot [<path>] [width= height=]
 [scale=] [frame=view|fit|x,y,w,h] [space=] [overwrite=on|off]
@@ -2022,7 +1963,7 @@ capture shows what the window shows.
 
 Frame-sequence recording: PNG frames and a `manifest.json` that says
 when each was taken. A screenshot proves a state; a recording proves a
-*behavior* — an animation's timing, a drag, a hover transition — and the
+*behavior* — a drag, a zoom, a hover transition — and the
 manifest is what lets a tool replay it at the speed it happened.
 **Assembly is not the app's.** The app writes frames; `mandalactl record
 assemble <dir>` (a client-side command, no socket) turns a recording
@@ -2095,7 +2036,7 @@ boundary, so `clock.step ms=1000` at `fps=30` emits exactly 30 and none
 is ever late. A stepped boundary is rounded **up to a whole
 millisecond** (at `fps=30`: 0, 34, 67, 100, … ms), each from its own
 index so nothing accumulates: the virtual clock reads whole
-milliseconds, as every animation stamp does, so a frame taken there
+milliseconds, as every app-clock stamp does, so a frame taken there
 shows exactly the instant its `t_ms` names. The manifest's `pacing` says which: `"realtime"` or
 `"stepped"`, fixed when the recording starts — the clock's mode cannot
 change while one runs. While the loop idles under a virtual clock there
@@ -2107,7 +2048,7 @@ it.
 render and one readback, ticking the `FreezeWatchdog` as a screenshot
 does. The PNG encode is *not* in the frame: raw frames wait in memory
 and are encoded (a) in time the loop would otherwise sleep through —
-only when no animation frame, redraw or queued command is owed, and
+only when no redraw or queued command is owed, and
 only as far as the time before the next boundary reaches, judged from
 the measured cost of an encode (the first, unmeasured, is a probe that
 may be late by its own cost, once), the manifest rewritten after, at most every two seconds (it grows
@@ -2195,12 +2136,12 @@ primitive every capture workflow needs. Design and the per-reader
 disposition: [`work_plans/LLM_IPC.md`](../work_plans/LLM_IPC.md) §D9.
 
 **One clock for what behaves, the wall clock for what measures.**
-Everything the app *does* by time reads the app clock: the animation
-tick, the drag pause on it, double-click and long-press timing, the
-start of an animated `OnClick` trigger or keybound mutation, a
-recording's frame times, `query.animations`, `ping`. Everything that
-*measures* — the FPS overlay, the `FreezeWatchdog`, the drag
-throttle's frame budget, an encode's cost, a `clock.wait` deadline —
+Everything the app *does* by time reads the app clock: double-click
+and long-press timing, a recording's frame times, `ping` (and, when
+V1-D1 (#250) and V1-D2 (#251) bring them back, the animation tick of an
+edit or a presentation). Everything that
+*measures* — the FPS overlay, the `FreezeWatchdog`, an encode's
+cost, a `clock.wait` deadline —
 reads the wall clock in both modes, because a stepped or frozen clock
 would hide a stall rather than time it.
 
@@ -2208,32 +2149,28 @@ would hide a stall rather than time it.
 virtual time starts where real time stood, rounded up to the next
 whole millisecond (so whole-millisecond steps keep every reading
 whole), and real time resumes from where virtual time was left, at the
-wall clock's rate. Nothing is rebased on a switch — an animation's
-start, the last click, a touch, a recording all stay on the one axis
-— so engaging virtual time mid-animation freezes the animation where
-it stands, and the next step resumes it.
+wall clock's rate. Nothing is rebased on a switch — the last click, a
+touch, a recording all stay on the one axis — so engaging virtual time
+mid-gesture freezes the gesture's timing where it stands, and the next
+step resumes it.
 
 **The mode is app state.** It outlives the controller that set it,
 like a recording, so `mandalactl`'s one command per connection can
-drive it. An app left in virtual mode stays there: its animations stand
-still and, with time frozen, two clicks any distance apart in wall time
-are a double-click. `clock.set_mode real`, or the console's `clock
+drive it. An app left in virtual mode stays there: with time frozen, two
+clicks any distance apart in wall time are a double-click. `clock.set_mode real`, or the console's `clock
 real`, gives it back. A launch starts real, except a `--headless` or
 `--screenshot` one, which starts virtual
 ([Headless and one-shot launches](#headless-and-one-shot-launches)).
 
 **What a frame does in each mode.** A frame has an input-driven half —
-the throttled drag and picker hover drains, the rubber band, the
-camera-geometry rebuild — and a time-driven half: one sample of the
-injected-input queue (§`input`), the animation tick, a recording's
-frame. In real mode every event-loop iteration runs both, exactly as
-before this family existed. In virtual mode the loop's own iterations
-run the input-driven half alone (a human's drag still lands; the
-animations stand still), and the time-driven half runs inside
-`clock.step`, at the virtual instants the step names. Under a virtual
-clock a throttled drag drains on every frame it has something pending:
-the throttle trades drain frequency for a real frame budget, and a
-virtual heartbeat has none to protect.
+the rubber band and the view's sync, which hands the document's changes
+to the projector and the layer renderer — and a time-driven half: one
+sample of the injected-input queue (§`input`) and a recording's frame.
+In real mode every event-loop iteration runs both, exactly as before
+this family existed. In virtual mode the loop's own iterations run the
+input-driven half alone (a human's drag still lands), and the
+time-driven half runs inside `clock.step`, at the virtual instants the
+step names.
 
 - **`clock.status`** — no params. Result: `mode` (`"real"` /
   `"virtual"`) and `now_ms` (number), the app clock. Needs no app:
@@ -2262,18 +2199,17 @@ virtual heartbeat has none to protect.
   ms; `ms = m` runs `ceil(m / 16)` heartbeats, 16 ms apart with the last
   landing on `m` **exactly**, so a step never overshoots. Each
   heartbeat is the whole frame — one injected sample, the drains, the
-  animation tick, a recording's frame — run synchronously (deterministic
+  view's sync, a recording's frame — run synchronously (deterministic
   catch-up is the point), and the loop **ticks the `FreezeWatchdog`
   once per heartbeat inside the step**, so the run is watchdog-safe
   *by construction* (a genuinely stuck single heartbeat still trips the
   10 s threshold; the bound is a responsiveness limit, not the safety
-  mechanism). Each heartbeat costs the wall time of the frame it runs —
-  an animation's tick rebuilds the scene, as it does in real time — so a
-  long step over a large animated scene is long main-thread work, and
-  the client's patience must match it (`mandalactl --timeout`); other
+  mechanism). Each heartbeat costs the wall time of the frame it runs,
+  so a long step is long main-thread work, and the client's patience
+  must match it (`mandalactl --timeout`); other
   commands queue behind it. **A running recording's frame boundaries are stopped at
   too**: one that falls between two heartbeats gets a tick of its own,
-  on the boundary exactly — the drains, the tick and the frame, but no
+  on the boundary exactly — the drains, the sync and the frame, but no
   injected sample, so recording a gesture never changes when its
   samples land — and one that falls on a heartbeat is that heartbeat's.
   Result: `now_ms` (the virtual clock after the step) and `frames_run`
@@ -2283,8 +2219,9 @@ virtual heartbeat has none to protect.
   asked for from inside a running one — a `clock step` console line
   typed by an injected key the step itself landed — is `busy`.
 
-- **`clock.wait`** — params: `until` (`"settled"` /
-  `"animations_complete"`), `timeout_ms` (integer, default `10_000`,
+- **`clock.wait`** — params: `until` (`"settled"`; the
+  `"animations_complete"` condition returns with the animations of
+  V1-D1 (#250)), `timeout_ms` (integer, default `10_000`,
   `1..=60_000`; a value outside it is `invalid_params`, as IPC-07 and
   IPC-08 made their bounds; always **wall-clock** milliseconds — the
   deadline is a client-liveness guard, so a frozen virtual clock must
@@ -2319,13 +2256,8 @@ virtual heartbeat has none to protect.
 Wait conditions, defined against the frame (above) and CONCEPTS §5
 "Event loop and `drain_frame`":
 
-- **`animations_complete`** — `MindMapDocument` reports no active
-  animations. Under a virtual clock animations advance only by
-  `clock.step`, so a wait for this with no step to come times out.
 - **`settled`** — at an evaluation point, all of: (a)
-  `needs_continuation()` is false (no throttled drag pending, no
-  picker-hover pending, no dirty connection geometry — and, **in real
-  time**, no active animation); (b) **in real time**, no IPC-injected
+  `needs_continuation()` is false; (b) **in real time**, no IPC-injected
   input remains queued; (c) **no redraw is owed**: every redraw the
   app has asked for — every pixels-affecting command's, and every
   input handler's — has been drawn by a render that ran after it; and
@@ -2336,13 +2268,13 @@ Wait conditions, defined against the frame (above) and CONCEPTS §5
   own commands*. (It is not fenced against a concurrent human — see
   the scope note below.)
 
-  **Under a virtual clock, "final" means "at this instant".** An
-  animation standing still between steps, and injected samples waiting
-  for the heartbeats that land them, are owed to *future* virtual
-  instants only `clock.step` reaches; with time frozen nothing more
-  will happen until it does, so neither keeps the app from settling.
-  That is what makes `clock.step ms=500` → `clock.wait until=settled` →
-  `capture.screenshot` capture an animation exactly 500 ms in.
+  **Under a virtual clock, "final" means "at this instant".**
+  Injected samples waiting for the heartbeats that land them are owed
+  to *future* virtual instants only `clock.step` reaches; with time
+  frozen nothing more will happen until it does, so they do not keep
+  the app from settling. That is what makes `clock.step ms=500` →
+  `clock.wait until=settled` → `capture.screenshot` capture a paced
+  gesture exactly 500 ms in.
 
   **Rendered, not on-screen-presented.** Condition (d) is deliberately
   about the *render* completing, not a swapchain *present*.
@@ -2420,12 +2352,13 @@ that observes behavior and must not become observable behavior.
 script starts, the same document and the same command sequence leave
 the same laid-out scene: `scene.dump` is byte-identical across runs,
 whatever the wall clock did meanwhile and whenever virtual time began
-(`test_the_same_stepped_script_twice_dumps_byte_identical_scenes`
-holds two independently built documents — every `HashMap` in each
-seeded apart — to it). The one `HashMap`-order dependence the hunt for
-this contract found was the inline-macro collision winner, which is
-now the lowest node id in every process (`format/macros.md`). What the
-contract does not cover: `now_ms` itself, whose virtual origin is the
+(`test_the_same_stepped_script_twice_dumps_byte_identical_scenes` holds
+two independently loaded views of one document, each driven through the
+same script of a selection, a pan, a zoom, an edit and its undo, to it:
+the document's arena, the projector's layers and the dump's walk are all
+in document order, so nothing depends on an order a process chooses —
+except, until #323 lands, the font state, which shaping still reads). What the contract
+does not cover: `now_ms` itself, whose virtual origin is the
 real reading at engagement, and anything a concurrent human does.
 
 **Also a console verb.** `clock status`, `clock real`, `clock
@@ -2434,7 +2367,7 @@ same switch and the same step, with the same bounds and refusals in
 the console's words. The console shell is native; the step's schedule
 is not (`app/step.rs`, `CLAUDE.md` "Dual-target status"): the browser
 runs its own frame at each heartbeat — one injected sample, then the
-animation tick — and the `clock` family is served there over the
+view's sync — and the `clock` family is served there over the
 [browser transport](#browser), with the page's own frames standing
 still while the clock is virtual.
 
@@ -2477,14 +2410,15 @@ connection that dies without it is exit `2`.
 
 | counter | where | advances on |
 |---|---|---|
-| `document_revision` | `MindMapDocument::revision()`; every reply, every `document_*` event, the geometry sidecar | every committed model change: each document setter (the one place that sets the unsaved flag also advances it), each undo, each custom mutation, each animation that commits, each `open` / `new`. Never on a query, a screenshot, a preview, a selection or the camera. |
+| `document_revision` | `MindMapDocument::revision()`, the document's own `Document::revision`; every reply, every `document_*` event, the geometry sidecar | every committed change: each apply through the document's one writer, each undo, each redo. Never on a query, a screenshot, a preview, a selection or the camera. A replaced document (`open`, `new`) starts its own at zero, announced by `document_replaced` with the new document's `generation`. |
 | `revision` | the event layer; every reply, every event | once per *observation* in which any event class had something to report — so a zoom or a selection moves it while `document_revision` stays put. |
 
-Both are **monotonic per process**, not per document: `open` and
-`new` carry the document counter on (the replacement is itself one
-more change) and bump a `generation`, so neither number ever reads
-lower than before. Both start at zero, and the first observation of
-a process only records a baseline.
+`revision` is **monotonic per process**. `document_revision` is
+**per document**: `open` and `new` replace the document, whose
+counter starts at zero, and bump the `generation`, so the pair
+`(generation, document_revision)` never reads lower than before. Both
+counters start at zero, and the first observation of a process only
+records a baseline.
 
 An *observation* is the unit: the app is looked at after each
 command (so a reply's counters include that command's own effect)
@@ -2509,19 +2443,16 @@ observation that produced it.
 | `selection_changed` | `selection` (as `query.selection` reports it) | the selection differs |
 | `camera_changed` | `camera` (as `query.camera` reports it) | the camera's center, zoom or surface size differs |
 | `mode_changed` | `mode` (the interaction mode, as `query.mode` reports it under `interaction_mode`) | the interaction mode differs |
-| `animation_started` | `animations`: `[{id, target_id, section_idx, mutation_id}]` | animations began; `id` names the running animation and never changes while it runs, so an animation re-triggered after it ended is a new `id` under the same `(target_id, section_idx, mutation_id)` |
-| `animation_completed` | `animations`, as above | animations committed or ended, by `id`. When one observation holds both the end of an animation and its re-trigger, `animation_completed` is sent first |
 
-`source` says which funnel was driving when the document's revision
-last advanced: `action` (`dispatch_action`: a key binding, a gesture,
-a macro `Action` step), `console` (a console verb), `mutation` (a
-custom mutation, or an animated one committing), `undo`, `input`
-(direct manipulation that reaches the model with no funnel to name:
-a drag, a text-edit commit), or `ipc` — any change made while an
-agent's command was executing. The innermost declaration wins, so an
-undo reached through `Action::Undo` reports `undo`; an agent's
-`act.action` reports `ipc`. An `open` or `new` typed at the console is
-`console`.
+`source` says who declared the newest change the observation saw: the
+`ChangeSource` the document's writer recorded with it — `action` (a key
+binding, a gesture, a macro `Action` step), `console` (a console verb),
+`edit` (an edit), `verb` (a verb), `undo`, `redo`, or `input` (direct
+manipulation, and the default when the app's own handlers changed
+nothing the feed names) — or `ipc`, for any change made while an
+agent's command was executing. An undo reached through `Action::Undo`
+reports `undo`; an agent's `act.action` reports `ipc`. An `open` or
+`new` typed at the console is `console`.
 
 `document_changed` and `document_replaced` both fire for a swap, and
 the swap's `document_revision` is the same in both.
@@ -2533,14 +2464,8 @@ the swap's `document_revision` is the same in both.
   changing the document.
 - **Coalesced per drain.** All an observation window's changes of one
   class are one event, with the final state. A 200-step macro is one
-  `document_changed` carrying the final `document_revision`. The two
-  `animation_*` classes carry *deltas* (what began or ended since the
-  last look), so coalescing them concatenates their `animations`
-  rather than keeping the newest: no start or completion is lost to
-  a later one. A delta is folded into the newest queued event of its
-  class only when no event of the other delta class was queued after
-  it, so a re-trigger never reaches the client ahead of the
-  completion it follows. With `verbose`, every observation is its own event and
+  `document_changed` carrying the final `document_revision`. With
+  `verbose`, every observation is its own event and
   a macro **an agent runs** (`act.macro`) is observed **between its
   steps** as well, so the same macro yields an event per step that
   changed something. A macro a person triggers from the keyboard is
@@ -2555,13 +2480,12 @@ the swap's `document_revision` is the same in both.
   them, so an event can never take the slot a reply needs and only
   replies can make the server pause. When the lane is full or the
   queue has no room, the event stays queued on the main thread and a
-  newer event of its class replaces it (deltas fold instead, see
-  above), so a client that is slow to read loses *stale* events,
+  newer event of its class replaces it, so a client that is slow to
+  read loses *stale* events,
   never its session; the outbound thread wakes the loop when there is
   room. (A queue is capped at 4096 events and
-  drops the oldest, which only a `verbose` subscription, or a client
-  that stops reading while animations alternate between starting and
-  ending, can reach.) Events already in the queue are not recalled.
+  drops the oldest, which only a `verbose` subscription can reach.)
+  Events already in the queue are not recalled.
 - No subscription, no observation between commands: the event loop's
   tap is a branch on the empty subscription set.
 
@@ -2569,8 +2493,8 @@ Reserved event classes: `hello`, `shutdown`, `connection_rejected`
 (the three transport-level classes, never subscription-gated;
 `connection_rejected` is delivered to the refused connection, not the
 controller), `document_changed`, `document_replaced`,
-`selection_changed`, `camera_changed`, `mode_changed`,
-`animation_started`, `animation_completed`. `shutdown` is the
+`selection_changed`, `camera_changed`, `mode_changed`. `shutdown` is
+the
 "app is closing" notice. Widening this list is breaking, like any
 enum-valued field (see
 [Handshake and versioning](#handshake-and-versioning)).

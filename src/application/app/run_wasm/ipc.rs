@@ -21,7 +21,7 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::application::ipc::browser::socket::BrowserIpc;
@@ -37,7 +37,6 @@ pub(super) struct IpcHost {
     pub(super) input: Rc<RefCell<Option<WasmInputState>>>,
     pub(super) renderer: Rc<RefCell<Option<Renderer>>>,
     pub(super) keybinds: Rc<ResolvedKeybinds>,
-    pub(super) suppress_keys: Rc<Cell<bool>>,
     /// `None` when the page was opened without `?ipc=`: IPC is off,
     /// and every pump returns at once.
     pub(super) ipc: Rc<RefCell<Option<BrowserIpc>>>,
@@ -57,18 +56,35 @@ impl IpcHost {
             log::warn!("ipc: a pump was asked for inside a pump; skipped");
             return;
         };
-        let Some(ipc) = ipc_borrow.as_mut() else {
-            return;
-        };
         let mut input_borrow = self.input.borrow_mut();
         let mut renderer_borrow = self.renderer.borrow_mut();
+        if let Some(ipc) = ipc_borrow.as_mut() {
+            Self::pump_into(ipc, &self.keybinds, &mut input_borrow, &mut renderer_borrow);
+        }
+        // The change records the view synced have now been seen by the
+        // one observer that reads them, or there is none: drop them, as
+        // native's loop does once per iteration (`pump::clear_feed`), so
+        // the feed holds one frame's records, never the session's.
+        if let Some(view) = input_borrow.as_mut().and_then(|input| input.view.as_mut()) {
+            view.clear_feed();
+        }
+    }
+
+    /// One pump of `ipc` over the cells: the commands it holds run, a
+    /// pending `clock.wait` is evaluated, and the events the app's
+    /// changes owe are queued.
+    fn pump_into(
+        ipc: &mut BrowserIpc,
+        keybinds: &ResolvedKeybinds,
+        input_borrow: &mut Option<WasmInputState>,
+        renderer_borrow: &mut Option<Renderer>,
+    ) {
         match (input_borrow.as_mut(), renderer_borrow.as_mut()) {
             (Some(input), Some(renderer)) => {
                 let mut borrowed = Borrowed {
                     input,
                     renderer,
-                    keybinds: &self.keybinds,
-                    suppress_keys: &self.suppress_keys,
+                    keybinds,
                 };
                 let settling = borrowed.settling();
                 let mut target = IpcCommandTarget::new(&mut borrowed);

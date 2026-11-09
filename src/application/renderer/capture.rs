@@ -14,10 +14,9 @@
 //! staging it re-uploads every frame anyway (the text prepares, the
 //! glyph-run instances and the glyphon viewport), so the next window frame is
 //! exactly the frame it would have been. A capture at another zoom
-//! draws its zoom-dependent canvas roles from a set of the capture's
-//! own ([`Renderer::rebuild_capture_canvas_buffers`],
-//! [`CanvasSource::Composed`]) rather than re-projecting the window's,
-//! which is what keeps that sentence true of the live set as well.
+//! draws the same glyph layers through its own camera: nothing the map
+//! draws depends on the camera (design §12.4), so there is nothing to
+//! project again for it.
 //!
 //! **The target is the frames' own format.** Every pipeline is built
 //! for the renderer's `format` — the sRGB one the window's surface
@@ -44,7 +43,6 @@ use baumhard::gfx_structs::camera::Camera2D;
 use web_time::Instant;
 
 use super::render::{FrameSkip, ModalLayer};
-use super::scene_shape_cache::CanvasSource;
 use super::Renderer;
 
 /// How long a capture waits for the GPU to finish one band of its frame
@@ -169,11 +167,8 @@ impl Renderer {
 
     /// Draw one frame through `camera` into an offscreen texture of
     /// `camera.viewport_size` pixels and read it back, with or without
-    /// the open modal as `modal` says, and with the tree-rendered canvas
-    /// roles read from the set `canvas` names: the live one for a frame
-    /// at the window's zoom, the composition
-    /// [`Renderer::rebuild_capture_canvas_buffers`] just laid out for a
-    /// frame at another.
+    /// the open modal as `modal` says. The glyph layers are drawn
+    /// through `camera` whatever it frames (`LayerRenderer::encode`).
     ///
     /// Refreshes the screen-space overlays the way `process()` does
     /// before its render — the mode-status line and the FPS readout
@@ -193,7 +188,6 @@ impl Renderer {
         &mut self,
         camera: &Camera2D,
         modal: ModalLayer,
-        canvas: CanvasSource,
         progress: &mut dyn FnMut(),
     ) -> Result<CapturedPixels, CaptureFailure> {
         if !self.should_render {
@@ -214,7 +208,7 @@ impl Renderer {
         }
         self.rebuild_mode_status_overlay_if_needed();
         let prepared = self
-            .prepare_frame(camera, modal, canvas)
+            .prepare_frame(camera, modal)
             .map_err(CaptureFailure::Skipped)?;
 
         let extent = wgpu::Extent3d {

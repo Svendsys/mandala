@@ -45,7 +45,7 @@ fn execute_detached(
     execute(request, None, session)
 }
 
-const MAP: &str = "maps/fixture.mindmap.json";
+const MAP: &str = "maps/fixture.mandala.json";
 
 /// How long any single expected frame may take. Generous: a loaded CI
 /// runner is slow, and a timeout here only ever means a failure.
@@ -629,11 +629,11 @@ fn test_ipc_loopback_hello_reports_the_published_map() {
     assert_eq!(hello["data"]["map"], Value::Null, "null when no file is bound");
     drop(second);
 
-    harness.server().publish_map(Some("other.mindmap.json"));
+    harness.server().publish_map(Some("other.mandala.json"));
     let (_third, hello) = Client::attach(&harness.path);
     assert_eq!(
         hello["data"]["map"],
-        json!("other.mindmap.json"),
+        json!("other.mandala.json"),
         "a load reaches the next greeting"
     );
 }
@@ -902,10 +902,7 @@ fn test_ipc_loopback_a_change_the_user_made_is_reported_as_theirs() {
     // What `about_to_wait` does between the input drain and the IPC
     // drain while something is subscribed.
     assert!(harness.server().is_subscribed());
-    app.doc
-        .with_source(crate::application::document::ChangeSource::Action, |doc| {
-            doc.mark_dirty()
-        });
+    app.change();
     app.camera.zoom = 2.0;
     let now = crate::application::ipc::CommandTarget::observed(&app).expect("observable");
     harness.server().observe(&now);
@@ -1002,7 +999,7 @@ fn test_events_a_full_queue_holds_them_back_and_a_newer_one_replaces_an_older() 
         .session
         .baseline(&crate::application::ipc::CommandTarget::observed(&app).expect("observable"));
     for _ in 0..3 {
-        app.doc.mark_dirty();
+        app.change();
         server.observe(&crate::application::ipc::CommandTarget::observed(&app).expect("observable"));
         server.deliver_events();
     }
@@ -1048,7 +1045,7 @@ fn test_events_wait_behind_a_reply_the_controller_has_not_taken() {
     server
         .session
         .baseline(&crate::application::ipc::CommandTarget::observed(&app).expect("observable"));
-    app.doc.mark_dirty();
+    app.change();
     server.observe(&crate::application::ipc::CommandTarget::observed(&app).expect("observable"));
     server.stalled = Some(Outbound::Frame(Frame::Reply(
         crate::application::ipc::envelope::Reply::ok(json!(9), json!({})),

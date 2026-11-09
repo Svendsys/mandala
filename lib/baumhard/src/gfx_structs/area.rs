@@ -68,14 +68,6 @@ pub struct GlyphArea {
     /// test. Default [`NodeShape::Rectangle`], the whole bounding box.
     /// Nothing draws it — an area draws its text and nothing behind
     /// it (V1-B12).
-    ///
-    /// Round-trip fidelity for unknown-spelling shapes is owned by
-    /// the format layer (`NodeStyle.shape: String` in
-    /// `crate::mindmap::model::node`), *not* by this field: the
-    /// string-to-enum conversion in
-    /// [`NodeShape::from_style_string`](crate::gfx_structs::shape::NodeShape::from_style_string)
-    /// collapses unknowns to `Rectangle`, but the original string
-    /// is preserved on the `MindNode` and rewritten on save.
     #[serde(default)]
     pub shape: NodeShape,
     /// Optional `[min, max]` window on `camera.zoom` controlling
@@ -98,8 +90,7 @@ pub struct GlyphArea {
 /// identity. Written out rather than derived: the destructuring names
 /// every field, so a field added to `GlyphArea` does not compile here
 /// until it is either compared or ignored by name — the renderer's
-/// overlay cache rests on `==` seeing every field it should
-/// (`renderer::scene_shape_cache`).
+/// overlay rebuilds rest on `==` seeing every field it should.
 impl PartialEq for GlyphArea {
     fn eq(&self, other: &Self) -> bool {
         let GlyphArea {
@@ -158,8 +149,8 @@ impl GlyphArea {
     /// both `==` and `hash` unmoved — which is exactly what a
     /// color-picker hover produces. Anything folding "would a rebuild of this area
     /// draw differently?" into one integer must call this instead;
-    /// the canvas-role dispatchers in `scene_rebuild` do, to decide
-    /// whether the registered tree is already correct.
+    /// the overlay dispatchers do, to decide whether the registered
+    /// tree is already correct.
     ///
     /// Floats go in as `to_bits`, so `-0.0` and `0.0` are distinct
     /// values here while `==` calls them equal. That is the safe
@@ -172,7 +163,8 @@ impl GlyphArea {
     /// consumer that skips work on a hash match therefore skips
     /// re-stamping hit boxes too, so it owes its own proof that its
     /// builder writes none — see
-    /// `test_border_and_portal_areas_carry_no_hitbox`.
+    /// `test_border_and_portal_areas_carry_no_hitbox` (gone), deleted
+    ///    with the old builders.
     ///
     /// Cost: O(text bytes + region count); no allocation. The body
     /// destructures `self`, so a field added to this struct will not
@@ -451,11 +443,10 @@ impl GlyphArea {
     /// that is the point. The scale becomes a `cosmic_text::Metrics`
     /// term, where zero trips an `assert!` that aborts the process
     /// and a huge value asks the rasterizer for a glyph the atlas
-    /// cannot hold. The document loader screens the numbers it can
-    /// see (`mindmap::model::validate`), but it only sees *authored
-    /// geometry* — a `CustomMutation` payload carried by the same
-    /// file writes here later, on a click, and so do console verbs,
-    /// macros, and IPC. Clamping at the field rather than at each
+    /// cannot hold. The document's loader and writer screen the
+    /// numbers they can see (`document::bounds`), but a glyph mutation
+    /// writes here without passing either, and so may the chrome, the
+    /// overlays and anything later. Clamping at the field rather than at each
     /// caller is what makes the invariant hold for writers that do
     /// not exist yet.
     ///

@@ -17,7 +17,7 @@ use super::context::InputContext;
 pub struct ResolvedKeybinds {
     binds: Vec<(Action, KeyBind)>,
     /// Parsed `(KeyBind, mutation_id)` pairs from
-    /// `KeybindConfig::custom_mutation_bindings`. Checked after the
+    /// `KeybindConfig::edit_bindings`. Checked after the
     /// built-in `action_for` lookup in the event loop — a key combo
     /// bound to both a built-in action and a custom mutation
     /// resolves to the built-in action (action_for runs first).
@@ -93,6 +93,7 @@ impl ResolvedKeybinds {
     /// gesture sub-actions: the empty-canvas branch of
     /// `DoubleClickActivate` only fires `CreateOrphanNodeAndEdit` when
     /// the user has enabled it via any binding.
+    #[cfg(test)]
     pub fn has_any_binding_for(&self, action: Action) -> bool {
         self.binds.iter().any(|(a, _)| *a == action)
     }
@@ -164,7 +165,7 @@ impl ResolvedKeybinds {
 
     /// Return the macro id bound to the given key event, if any.
     /// Resolved AFTER built-in `action_for` and BEFORE
-    /// `custom_mutation_for` — macros override custom mutations on
+    /// `edit_for` — macros override custom mutations on
     /// the same combo, so a user replacing a single-mutation
     /// shortcut with a multi-step macro just adds the macro entry
     /// without un-binding the mutation.
@@ -180,7 +181,7 @@ impl ResolvedKeybinds {
     /// Return the custom-mutation id bound to the given key event,
     /// if any. Called after `action_for` returns `None` — built-in
     /// actions win on a collision.
-    pub fn custom_mutation_for(&self, key: &str, ctrl: bool, shift: bool, alt: bool) -> Option<&str> {
+    pub fn edit_for(&self, key: &str, ctrl: bool, shift: bool, alt: bool) -> Option<&str> {
         for (bind, id) in &self.custom_binds {
             if bind.matches(key, ctrl, shift, alt) {
                 return Some(id.as_str());
@@ -196,13 +197,13 @@ impl ResolvedKeybinds {
     /// path.
     ///
     /// Test-gated with its sibling
-    /// [`Self::remove_custom_mutation_binding`]: custom-mutation
+    /// [`Self::remove_edit_binding`]: custom-mutation
     /// bindings are established at resolve time from the config
     /// files and nothing edits them at runtime yet, so the pair's
     /// only callers are the tests that pin replace-and-return
     /// semantics for the console verb that will.
     #[cfg(test)]
-    pub fn set_custom_mutation_binding(
+    pub fn set_edit_binding(
         &mut self,
         combo_string: &str,
         mutation_id: String,
@@ -223,9 +224,9 @@ impl ResolvedKeybinds {
 
     /// Remove the custom-mutation binding for the given combo.
     /// Returns the removed mutation id, if one was bound. Test-gated
-    /// — see [`Self::set_custom_mutation_binding`].
+    /// — see [`Self::set_edit_binding`].
     #[cfg(test)]
-    pub fn remove_custom_mutation_binding(&mut self, combo_string: &str) -> Result<Option<String>, String> {
+    pub fn remove_edit_binding(&mut self, combo_string: &str) -> Result<Option<String>, String> {
         let bind = KeyBind::parse(combo_string)?;
         let mut prev = None;
         self.custom_binds.retain(|(b, id)| {

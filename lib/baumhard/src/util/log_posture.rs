@@ -8,7 +8,7 @@
 //!    area is one or more lowercase words joined by `::`, a space or
 //!    a hyphen — `"macros: …"`, `"font::attrs: …"`, `"console
 //!    history: …"`, `"type-to-edit: …"`. A function name
-//!    (`"apply_custom_mutation: …"`) passes this reader, because
+//!    (`"submit_region: …"`) passes this reader, because
 //!    telling a function from a subsystem is a judgment the reader
 //!    cannot make; a CamelCase `Action` name, a `{placeholder}` where
 //!    the area should be, and a message with no prefix at all do not.
@@ -330,8 +330,9 @@ mod tests {
     use crate::util::unwrap_posture::SHIPPED_ROOTS;
 
     /// The least number of shipped invocations the gate accepts as a
-    /// whole tree, against roughly 200 today.
-    const INVOCATION_FLOOR: usize = 180;
+    /// whole tree, against roughly 150 today (about 200 until V1-C3
+    /// deleted the old model's sites with it).
+    const INVOCATION_FLOOR: usize = 130;
 
     /// Directories the gate must have read at least one invocation
     /// from. The three of the five `SHIPPED_ROOTS` that hold any
@@ -430,15 +431,16 @@ fn f(path: &std::path::Path, msg: &str) {
         }
 
         let report = report_for_files(&files);
-        // Floor just under the roughly 200 shipped invocations the
-        // workspace holds today: a reader that dropped whole files or
-        // stopped matching lands here before it can hollow out the
-        // check. Raise it as the tree grows; lower it only with the
-        // removal that explains why.
+        // Floor just under the roughly 150 shipped invocations the
+        // workspace holds today (lowered with V1-C3's deletion of the
+        // old model): a reader that dropped whole files or stopped
+        // matching lands here before it can hollow out the check. Raise
+        // it as the tree grows; lower it only with the removal that
+        // explains why.
         assert!(
             report.invocations >= INVOCATION_FLOOR,
             "the reader found only {} shipped `warn!` / `error!` invocations where roughly \
-             200 exist; it has lost part of the surface it checks — if sites were removed on \
+             150 exist; it has lost part of the surface it checks — if sites were removed on \
              purpose, lower `INVOCATION_FLOOR` with them",
             report.invocations
         );

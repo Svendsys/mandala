@@ -122,7 +122,7 @@ fn test_clone_preserves_depth_first_pre_order() {
     assert_eq!(by_walk, expected, "and the cloned structure must match");
 }
 
-/// A scene tree's depth is set by the `.mindmap.json` it came from,
+/// A scene tree's depth is set by the `.mandala.json` it came from,
 /// and a long `parent_id` chain is legal, so this walk inherits
 /// whatever depth the caller hands it. The recursive form exhausted
 /// the stack and killed the process with `SIGABRT` — not a panic, so

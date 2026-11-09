@@ -27,7 +27,7 @@ pub struct GlyphLine {
     ///
     /// The flag rides on the wire — `GlyphLine` is a
     /// `ModelDelta`/`GlyphMatrix` payload, so a hand-authored
-    /// `.mindmap.json` mutation can set it (see `format/mutations.md`).
+    /// JSON mutation can set it (see `format/mutations.md`).
     pub ignore_initial_space: bool,
 }
 
@@ -382,7 +382,7 @@ impl GlyphLine {
             // insert is shorter than the run it starts on and another
             // run follows — `overriding_insert(0, one_cluster)` on any
             // multi-run line, which `GlyphModelCommand::RudeInsert`
-            // hands straight to a `.mindmap.json` author.
+            // hands straight to a JSON author.
             *idx_comp_drain_end = comp_index;
             return true;
         } else if e_idx_head > end {

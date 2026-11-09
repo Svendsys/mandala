@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `open <path>` — replace the current mindmap with one loaded from disk.
+//! `open <path>` — replace the current map with one loaded from disk.
 //!
 //! Refuses to load over a dirty document so unsaved work is never
 //! silently discarded — the user has to `save` (or `save <path>`)
-//! first. The dispatcher consumes `effects.replace_document`,
-//! swaps the app's document, drops the cached `mindmap_tree`, and
-//! clears any open modal-editor state.
+//! first — and refuses a path that is not a `.mandala.json`, naming the
+//! extension it wanted (`document::extension_refusal`). The dispatcher
+//! consumes the `ReplaceDocument` effect: it installs the document and
+//! projects it whole (`view::MapView::load`). The new document keeps the
+//! current one's history limit, which `settings.json` set (D18).
 
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
@@ -27,7 +29,7 @@ pub static GRAMMAR: Grammar = Grammar {
 pub const COMMAND: Command = Command {
     name: "open",
     aliases: &[],
-    summary: "Open a mindmap file, replacing the current one",
+    summary: "Open a .mandala.json map, replacing the current one",
     applicable: always,
     grammar: &GRAMMAR,
     synonyms: &["load", "file"],
@@ -43,29 +45,26 @@ fn execute_open(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Some(p) => p.to_string(),
         None => return ExecResult::err(usage::no_arguments_message(&GRAMMAR)),
     };
-    if eff.document().dirty {
+    if eff.document().is_dirty() {
         return ExecResult::err("unsaved changes; save before opening another map");
     }
-    match MindMapDocument::load(&path) {
+    match MindMapDocument::load(&path, eff.document().history_limit()) {
         Ok(doc) => {
             eff.side_effect = Some(super::super::ConsoleSideEffect::ReplaceDocument(Box::new(doc)));
             ExecResult::ok_msg(format!("opened {}", path))
         }
-        // The loader's message verbatim, prefixed with the path it
-        // was asked for. `MindMapDocument::load` reports nothing on
-        // its own — every caller is a different surface, and this
-        // one is the console overlay.
-        Err(e) => ExecResult::err(format!("open {}: {}", path, e)),
+        // The loader's message verbatim, prefixed with the verb.
+        // `MindMapDocument::load` reports nothing on its own — every
+        // caller is a different surface, and this one is the console.
+        Err(e) => ExecResult::err(format!("open: {e}")),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::console::parser::Args;
     use crate::application::console::tests::fixtures::assert_exec_err_contains;
     use crate::application::console::ConsoleSideEffect;
-    use crate::application::document::tests_common::{load_test_doc, test_map_path};
     use baumhard::util::test_temp::TempDir;
 
     /// Run `open <path>` against `doc`, returning the result and any
@@ -79,63 +78,74 @@ mod tests {
         (result, side)
     }
 
+    /// A map on disk to open: a blank one saved at `name` in `dir`.
+    fn a_saved_map(dir: &TempDir, name: &str) -> String {
+        let path = dir.join(name).to_string_lossy().to_string();
+        MindMapDocument::new_blank(None, 50)
+            .save_to(&path)
+            .expect("a blank map saves");
+        path
+    }
+
     /// A rejected `open` puts the loader's own message in the console
-    /// overlay and leaves the current document alone.
-    ///
-    /// This surface was already correct before the startup placard
-    /// landed — #107 named it as the thing startup should have been
-    /// doing. It was also unpinned, and reporting has since moved out
-    /// of `MindMapDocument::load` and into the callers, so it is
-    /// pinned here: a caller that forgot to report would now be
-    /// silent rather than double-reporting.
+    /// and leaves the current document alone.
     #[test]
     fn test_open_of_a_rejected_map_reports_the_loader_message() {
         let dir = TempDir::new("console-open-rejected");
-        let path = dir.join("broken.mindmap.json");
+        let path = dir.join("broken.mandala.json");
         std::fs::write(&path, "{ this is not json").expect("seed the broken map");
         let path_str = path.to_string_lossy().to_string();
 
-        let mut doc = load_test_doc();
-        let name_before = doc.mindmap.name.clone();
+        let mut doc = MindMapDocument::new_blank(None, 50);
         let (result, side) = run_open(&path_str, &mut doc);
-
-        // The path the user typed, and the loader's own words.
-        assert_exec_err_contains(result, "Failed to parse mindmap JSON");
-        let (result, _) = run_open(&path_str, &mut doc);
-        assert_exec_err_contains(result, &path_str);
-
+        match result {
+            ExecResult::Err(message) => assert!(message.contains("broken.mandala.json"), "{message}"),
+            other => panic!("a broken map must be refused: {other:?}"),
+        }
         assert!(side.is_none(), "a rejected open must not replace the document");
-        assert_eq!(doc.mindmap.name, name_before);
+    }
+
+    /// A path that is not a `.mandala.json` is refused by name, before
+    /// anything is read — even a file that is a map.
+    #[test]
+    fn test_open_refuses_another_extension_naming_the_one_it_wants() {
+        let dir = TempDir::new("console-open-extension");
+        let good = a_saved_map(&dir, "map.mandala.json");
+        let other = dir.join("map.json");
+        std::fs::copy(&good, &other).expect("the same bytes under another name");
+
+        let mut doc = MindMapDocument::new_blank(None, 50);
+        let (result, side) = run_open(&other.to_string_lossy(), &mut doc);
+        assert_exec_err_contains(result, ".mandala.json");
+        assert!(side.is_none());
+        // Control: the same bytes under the map extension open.
+        let (result, side) = run_open(&good, &mut doc);
+        assert!(matches!(result, ExecResult::Ok(_)), "{result:?}");
+        assert!(side.is_some());
     }
 
     /// The dirty guard is the only thing between a typo'd `open` and
-    /// losing unsaved work, and it is checked before the loader runs:
-    /// a dirty document is refused even when the path names a map
-    /// that would have loaded cleanly.
+    /// losing unsaved work, and it is checked before the loader runs: a
+    /// dirty document is refused even when the path names a map that
+    /// would have loaded cleanly.
     ///
-    /// Fails when: the `dirty` check is removed, or moved below the
-    /// `MindMapDocument::load` call — the second shape still refuses,
-    /// but only for paths that happen to parse, so a broken map would
-    /// report the loader's message instead of the unsaved-work one.
-    /// Using the testament map as the argument is what makes that
-    /// distinction reachable.
-    ///
-    /// Negative control: clearing `dirty` on the same document and
-    /// repeating the same call succeeds, which pins the rejection on
-    /// the flag rather than on the path or the document.
+    /// Negative control: saving the same document (clean again) and
+    /// repeating the same call succeeds, which pins the rejection on the
+    /// dirty state rather than on the path or the document.
     #[test]
     fn test_open_on_a_dirty_document_is_refused_before_the_load() {
-        let path = test_map_path().to_string_lossy().to_string();
-        let mut doc = load_test_doc();
-        doc.dirty = true;
-        let name_before = doc.mindmap.name.clone();
+        let dir = TempDir::new("console-open-dirty");
+        let path = a_saved_map(&dir, "other.mandala.json");
+        let mut doc = MindMapDocument::new_blank(None, 50);
+        doc.create_root_for_test();
+        assert!(doc.is_dirty());
 
         let (result, side) = run_open(&path, &mut doc);
         assert_exec_err_contains(result, "unsaved changes");
         assert!(side.is_none(), "a refused open must not replace the document");
-        assert_eq!(doc.mindmap.name, name_before);
 
-        doc.dirty = false;
+        doc.save_to(&dir.join("mine.mandala.json").to_string_lossy())
+            .expect("the dirty document saves");
         let (result, side) = run_open(&path, &mut doc);
         assert!(
             matches!(result, ExecResult::Ok(_)),
@@ -144,22 +154,18 @@ mod tests {
         assert!(side.is_some(), "control: a clean open must replace the document");
     }
 
-    /// The happy path still swaps the document in. Pairs with the
-    /// rejection test so "reports the error" cannot be satisfied by
-    /// a verb that never succeeds.
+    /// The opened document keeps the current one's history limit — the
+    /// limit `settings.json` set at startup.
     #[test]
-    fn test_open_of_a_valid_map_replaces_the_document() {
-        let path = test_map_path().to_string_lossy().to_string();
-        let mut doc = MindMapDocument::new_blank(None);
-        let (result, side) = run_open(&path, &mut doc);
-
-        assert!(
-            matches!(result, ExecResult::Ok(_)),
-            "the testament map must open: {result:?}"
-        );
-        assert!(
-            matches!(side, Some(ConsoleSideEffect::ReplaceDocument(_))),
-            "a successful open must hand the dispatcher a replacement document"
-        );
+    fn test_open_keeps_the_history_limit() {
+        let dir = TempDir::new("console-open-limit");
+        let path = a_saved_map(&dir, "limit.mandala.json");
+        let mut doc = MindMapDocument::new_blank(None, 7);
+        let (_, side) = run_open(&path, &mut doc);
+        let Some(ConsoleSideEffect::ReplaceDocument(opened)) = side else {
+            panic!("the open replaces the document");
+        };
+        assert_eq!(opened.history_limit(), 7);
+        assert_eq!(opened.file_path.as_deref(), Some(path.as_str()));
     }
 }

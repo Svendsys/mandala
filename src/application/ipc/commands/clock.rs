@@ -92,15 +92,13 @@ pub(super) const FAMILY: Family = Family {
         },
         CommandSpec {
             name: "clock.wait",
-            summary: "Reply once the app is settled, or its animations complete; other commands keep running \
-                      meanwhile.",
+            summary: "Reply once the app is settled; other commands keep running meanwhile.",
             params: &[
                 ParamSpec::new(
                     "until",
                     ParamType::String,
                     true,
-                    "\"settled\" (the rendered scene is the final consequence of every command sent so far) or \
-                     \"animations_complete\".",
+                    "\"settled\": the rendered scene is the final consequence of every command sent so far.",
                 ),
                 ParamSpec::new(
                     "timeout_ms",
@@ -314,6 +312,7 @@ mod tests {
         fn observed(&self) -> Option<Observed<'_>> {
             Some(Observed {
                 document: Some(&self.doc),
+                changes: &[],
                 camera: &self.camera,
                 mode: &self.mode,
             })
@@ -323,9 +322,6 @@ mod tests {
         }
         fn document(&self) -> Option<&MindMapDocument> {
             Some(&self.doc)
-        }
-        fn animation_pause(&self) -> Option<u64> {
-            None
         }
         fn shell_state(&self, _: ShellState) -> Value {
             panic!("a clock command must not read the shell state");
@@ -522,7 +518,7 @@ mod tests {
             "the reply is held back"
         );
         let busy = run_held(
-            r#"{"id":"w2","cmd":"clock.wait","until":"animations_complete"}"#,
+            r#"{"id":"w2","cmd":"clock.wait","until":"settled"}"#,
             &mut app,
             &mut session,
         )
@@ -531,7 +527,6 @@ mod tests {
         assert_eq!(busy["error"]["code"], json!("busy"));
 
         let quiet = Settling {
-            animations_active: false,
             continuing: false,
             redraw_owed: false,
             virtual_clock: false,

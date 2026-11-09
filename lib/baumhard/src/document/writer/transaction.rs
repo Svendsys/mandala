@@ -244,6 +244,20 @@ impl Document {
         })
     }
 
+    /// Whether `tx` names the transaction open now. A handle is **stale**
+    /// once its transaction ended by a route other than its own
+    /// [`Self::commit`] or [`Self::cancel`], which consume it: an
+    /// [`Self::undo`] or a [`Self::redo`] cancels an interactive
+    /// transaction or finishes and commits an animated one (ruling R36),
+    /// and an [`Self::apply`] or [`Self::begin`] finishes an animated one
+    /// first (D28). Every call with a stale handle is refused
+    /// ([`ApplyError::TransactionClosed`]); this is how its holder learns
+    /// it went stale without making one. A handle of another document is
+    /// never open here. O(1).
+    pub fn is_open(&self, tx: &Transaction) -> bool {
+        self.open_for(tx).is_ok()
+    }
+
     /// End `tx`, reverting its stage and its base calls, newest first,
     /// and discarding their journals: the document is as it was when the
     /// transaction began. Nothing for a `tx` that is not the open one.

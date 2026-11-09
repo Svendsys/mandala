@@ -8,8 +8,7 @@
 //! length-and-nibble parsing lives in
 //! [`crate::util::color_conversion::hex_to_rgba`] — that primitive
 //! has no cosmic-text dependency and stays usable from non-font
-//! callers (e.g. background-fill resolution in
-//! `mindmap::tree_builder::node`).
+//! callers.
 
 use crate::font::color::cosmic_color_from_rgba;
 use crate::util::color_conversion::hex_to_rgba;

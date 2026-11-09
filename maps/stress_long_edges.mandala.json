@@ -1,0 +1,1217 @@
+{
+  "format": 1,
+  "name": "stress-balanced-121n-124e",
+  "background": "#0a0a0a",
+  "nodes": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n0", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#30b082", "spans": [{"text": "·"}]}]}
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "position": [-320.0, 200.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n1", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b03080", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 3,
+      "parent": 2,
+      "position": [-1280.0, 400.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n4", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#3080b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 4,
+      "parent": 3,
+      "position": [-4160.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n13", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 5,
+      "parent": 4,
+      "position": [-12800.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n40", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"},
+      "links": [{"to": 121, "kind": "line", "color": "#aa88cc"}, {"to": 120, "kind": "line", "color": "#aa88cc"}, {"to": 119, "kind": "line", "color": "#aa88cc"}]
+    },
+    {
+      "id": 6,
+      "parent": 4,
+      "position": [-12480.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n41", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"},
+      "links": [{"to": 121, "kind": "line", "color": "#aa88cc"}]
+    },
+    {
+      "id": 7,
+      "parent": 4,
+      "position": [-12160.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n42", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 8,
+      "parent": 3,
+      "position": [-3840.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n14", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 9,
+      "parent": 8,
+      "position": [-11840.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n43", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 10,
+      "parent": 8,
+      "position": [-11520.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n44", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 11,
+      "parent": 8,
+      "position": [-11200.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n45", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 12,
+      "parent": 3,
+      "position": [-3520.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n15", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 13,
+      "parent": 12,
+      "position": [-10880.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n46", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 14,
+      "parent": 12,
+      "position": [-10560.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n47", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 15,
+      "parent": 12,
+      "position": [-10240.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n48", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 16,
+      "parent": 2,
+      "position": [-960.0, 400.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n5", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#3080b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 17,
+      "parent": 16,
+      "position": [-3200.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n16", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 18,
+      "parent": 17,
+      "position": [-9920.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n49", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 19,
+      "parent": 17,
+      "position": [-9600.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n50", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 20,
+      "parent": 17,
+      "position": [-9280.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n51", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 21,
+      "parent": 16,
+      "position": [-2880.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n17", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 22,
+      "parent": 21,
+      "position": [-8960.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n52", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 23,
+      "parent": 21,
+      "position": [-8640.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n53", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 24,
+      "parent": 21,
+      "position": [-8320.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n54", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 25,
+      "parent": 16,
+      "position": [-2560.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n18", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 26,
+      "parent": 25,
+      "position": [-8000.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n55", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 27,
+      "parent": 25,
+      "position": [-7680.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n56", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 28,
+      "parent": 25,
+      "position": [-7360.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n57", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 29,
+      "parent": 2,
+      "position": [-640.0, 400.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n6", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#3080b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 30,
+      "parent": 29,
+      "position": [-2240.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n19", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 31,
+      "parent": 30,
+      "position": [-7040.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n58", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 32,
+      "parent": 30,
+      "position": [-6720.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n59", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 33,
+      "parent": 30,
+      "position": [-6400.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n60", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 34,
+      "parent": 29,
+      "position": [-1920.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n20", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 35,
+      "parent": 34,
+      "position": [-6080.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n61", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 36,
+      "parent": 34,
+      "position": [-5760.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n62", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 37,
+      "parent": 34,
+      "position": [-5440.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n63", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 38,
+      "parent": 29,
+      "position": [-1600.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n21", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 39,
+      "parent": 38,
+      "position": [-5120.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n64", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 40,
+      "parent": 38,
+      "position": [-4800.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n65", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 41,
+      "parent": 38,
+      "position": [-4480.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n66", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 42,
+      "parent": 1,
+      "position": [0.0, 200.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n2", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b03080", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 43,
+      "parent": 42,
+      "position": [-320.0, 400.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n7", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#3080b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 44,
+      "parent": 43,
+      "position": [-1280.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n22", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 45,
+      "parent": 44,
+      "position": [-4160.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n67", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 46,
+      "parent": 44,
+      "position": [-3840.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n68", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 47,
+      "parent": 44,
+      "position": [-3520.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n69", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 48,
+      "parent": 43,
+      "position": [-960.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n23", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 49,
+      "parent": 48,
+      "position": [-3200.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n70", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 50,
+      "parent": 48,
+      "position": [-2880.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n71", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 51,
+      "parent": 48,
+      "position": [-2560.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n72", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 52,
+      "parent": 43,
+      "position": [-640.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n24", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 53,
+      "parent": 52,
+      "position": [-2240.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n73", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 54,
+      "parent": 52,
+      "position": [-1920.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n74", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 55,
+      "parent": 52,
+      "position": [-1600.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n75", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 56,
+      "parent": 42,
+      "position": [0.0, 400.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n8", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#3080b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 57,
+      "parent": 56,
+      "position": [-320.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n25", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 58,
+      "parent": 57,
+      "position": [-1280.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n76", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 59,
+      "parent": 57,
+      "position": [-960.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n77", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 60,
+      "parent": 57,
+      "position": [-640.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n78", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 61,
+      "parent": 56,
+      "position": [0.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n26", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 62,
+      "parent": 61,
+      "position": [-320.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n79", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 63,
+      "parent": 61,
+      "position": [0.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n80", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 64,
+      "parent": 61,
+      "position": [320.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n81", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 65,
+      "parent": 56,
+      "position": [320.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n27", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 66,
+      "parent": 65,
+      "position": [640.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n82", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 67,
+      "parent": 65,
+      "position": [960.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n83", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 68,
+      "parent": 65,
+      "position": [1280.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n84", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 69,
+      "parent": 42,
+      "position": [320.0, 400.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n9", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#3080b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 70,
+      "parent": 69,
+      "position": [640.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n28", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 71,
+      "parent": 70,
+      "position": [1600.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n85", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 72,
+      "parent": 70,
+      "position": [1920.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n86", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 73,
+      "parent": 70,
+      "position": [2240.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n87", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 74,
+      "parent": 69,
+      "position": [960.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n29", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 75,
+      "parent": 74,
+      "position": [2560.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n88", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 76,
+      "parent": 74,
+      "position": [2880.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n89", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 77,
+      "parent": 74,
+      "position": [3200.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n90", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 78,
+      "parent": 69,
+      "position": [1280.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n30", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 79,
+      "parent": 78,
+      "position": [3520.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n91", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 80,
+      "parent": 78,
+      "position": [3840.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n92", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 81,
+      "parent": 78,
+      "position": [4160.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n93", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 82,
+      "parent": 1,
+      "position": [320.0, 200.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n3", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b03080", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 83,
+      "parent": 82,
+      "position": [640.0, 400.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n10", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#3080b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 84,
+      "parent": 83,
+      "position": [1600.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n31", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 85,
+      "parent": 84,
+      "position": [4480.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n94", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 86,
+      "parent": 84,
+      "position": [4800.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n95", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 87,
+      "parent": 84,
+      "position": [5120.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n96", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 88,
+      "parent": 83,
+      "position": [1920.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n32", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 89,
+      "parent": 88,
+      "position": [5440.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n97", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 90,
+      "parent": 88,
+      "position": [5760.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n98", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 91,
+      "parent": 88,
+      "position": [6080.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n99", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 92,
+      "parent": 83,
+      "position": [2240.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n33", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 93,
+      "parent": 92,
+      "position": [6400.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n100", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 94,
+      "parent": 92,
+      "position": [6720.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n101", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 95,
+      "parent": 92,
+      "position": [7040.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n102", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 96,
+      "parent": 82,
+      "position": [960.0, 400.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n11", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#3080b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 97,
+      "parent": 96,
+      "position": [2560.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n34", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 98,
+      "parent": 97,
+      "position": [7360.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n103", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 99,
+      "parent": 97,
+      "position": [7680.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n104", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 100,
+      "parent": 97,
+      "position": [8000.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n105", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 101,
+      "parent": 96,
+      "position": [2880.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n35", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 102,
+      "parent": 101,
+      "position": [8320.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n106", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 103,
+      "parent": 101,
+      "position": [8640.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n107", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 104,
+      "parent": 101,
+      "position": [8960.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n108", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 105,
+      "parent": 96,
+      "position": [3200.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n36", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 106,
+      "parent": 105,
+      "position": [9280.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n109", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 107,
+      "parent": 105,
+      "position": [9600.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n110", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 108,
+      "parent": 105,
+      "position": [9920.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n111", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 109,
+      "parent": 82,
+      "position": [1280.0, 400.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n12", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#3080b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 110,
+      "parent": 109,
+      "position": [3520.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n37", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 111,
+      "parent": 110,
+      "position": [10240.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n112", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 112,
+      "parent": 110,
+      "position": [10560.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n113", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 113,
+      "parent": 110,
+      "position": [10880.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n114", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 114,
+      "parent": 109,
+      "position": [3840.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n38", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 115,
+      "parent": 114,
+      "position": [11200.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n115", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 116,
+      "parent": 114,
+      "position": [11520.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n116", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 117,
+      "parent": 114,
+      "position": [11840.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n117", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 118,
+      "parent": 109,
+      "position": [4160.0, 600.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n39", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#b08030", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 119,
+      "parent": 118,
+      "position": [12160.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n118", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 120,
+      "parent": 118,
+      "position": [12480.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n119", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    },
+    {
+      "id": 121,
+      "parent": 118,
+      "position": [12800.0, 800.0],
+      "min_size": [240.0, 60.0],
+      "color": "#ffffff",
+      "sections": [{"spans": [{"text": "n120", "size": 18.0, "color": "#ffffff"}]}],
+      "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.23333333, "color": "#8030b0", "spans": [{"text": "·"}]}]},
+      "connector": {"color": "#4a7a9c"}
+    }
+  ]
+}

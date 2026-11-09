@@ -5,8 +5,9 @@
 //! Owns the mutation engine — trees, mutators, the walker, predicates
 //! and the declarative builder DSL, generic over the element type and
 //! the mutation payload — and its glyph instantiation, the `GfxTree`
-//! that underpins every glyph layout, plus the mindmap model and scene
-//! builder and the shader entry points.
+//! that underpins every glyph layout, plus the document and its one
+//! writer, the `.mandala.json` format, the projector that draws a
+//! document as glyph layers, and the shader entry points.
 //!
 //! Prescriptive rules (mutation-not-rebuild, arena discipline,
 //! benchmark-reuse, no-unsafe) live in
@@ -60,18 +61,14 @@ pub mod flow;
 /// Font loading, shaping, and glyph-metric lookups backed by
 /// cosmic-text. Owns the long-lived font cache.
 pub mod font;
-/// On-disk format primitives — the JSON loader facade for
-/// non-mindmap configs (keybinds, user macros, embedded widget
-/// specs). The mindmap format itself lives under
-/// [`mindmap::loader`].
+/// On-disk format primitives — the JSON loader facade for the configs
+/// that are not maps (keybinds, user macros, embedded widget specs). The
+/// map format itself lives under [`document::format`].
 pub mod format;
 /// GPU-facing structs, the engine's glyph instantiation:
 /// `GfxElement`, `GfxMutation` / `GfxMutator`, `GlyphArea`,
 /// `GfxTree` / `GfxMutatorTree`, and the glyph spatial queries.
 pub mod gfx_structs;
-/// `.mindmap.json` data model, loaders, scene/tree builders, and
-/// the `CustomMutation` carrier.
-pub mod mindmap;
 /// Projection: the document into glyph layers, forward only, with work
 /// proportional to what changed (design §12).
 pub mod projection;

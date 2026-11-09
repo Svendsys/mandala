@@ -34,7 +34,7 @@
 //!
 //! Built on [`crate::util::source_scan`]'s walkers so "which files
 //! are a test-gated tree" is answered once, there — a
-//! `#[cfg(test)] mod tests;` tree like `mindmap/tree_builder`'s
+//! `#[cfg(test)] mod tests;` tree like `projection/tests`'s
 //! carries no bench obligation and is excluded by the same resolver
 //! every other repo-as-subject scan uses. Test-only and
 //! native-only, for the same reasons `source_scan` is.
@@ -270,8 +270,7 @@ pub(crate) fn duplicate_bench_ids(entries: &[BenchEntry]) -> Vec<String> {
 /// `tests/` directory of `lib/baumhard/src`, not reached through a
 /// `#[cfg(test)] mod` declaration. Inside them every inline `mod` is
 /// read, `cfg(test)`-gated ones included, since a gated module of a
-/// tests tree (`shape_tests::log_routing`) is one of the shapes the
-/// census counts. A wrapper is a fn whose body is one call of a
+/// tests tree is one of the shapes the census counts. A wrapper is a fn whose body is one call of a
 /// function named `do_*`, as a statement or as the tail; anything
 /// more is plain.
 ///
@@ -549,98 +548,8 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
             CannotCompileIntoTheLibrary,
         ),
         (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_from_style_string_log_routing_is_pinned",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
             "flow/tests/outline_tests.rs",
             "test_flow_path_walks_forward_without_searching",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_check_accepts_the_modeled_shape",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_check_rejects_a_block_initializer",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_check_rejects_a_block_tail",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_check_rejects_a_cfg_stripped_arm",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_check_rejects_a_cfg_stripped_macro",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_check_rejects_a_computed_level",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_check_rejects_a_condition_wrapped_around_the_match",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_check_rejects_a_different_scrutinee",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_check_rejects_a_flag_wrapped_around_the_match",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_check_rejects_a_missing_reporting_arm",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_check_rejects_a_reporting_silent_arm",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_check_rejects_an_added_log_call",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_check_rejects_swapped_macros",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_selection_accepts_one_unattributed_inherent_impl",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_selection_rejects_a_second_candidate",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_selection_rejects_a_trait_impl",
-            CannotCompileIntoTheLibrary,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_log_routing_selection_rejects_an_attributed_impl",
             CannotCompileIntoTheLibrary,
         ),
         (
@@ -741,11 +650,6 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         (
             "gfx_structs/tests/region_params_tests.rs",
             "test_prime_y",
-            DrivesAPanic,
-        ),
-        (
-            "gfx_structs/tests/shape_tests.rs",
-            "test_shape_section_rejects_a_duplicated_heading",
             DrivesAPanic,
         ),
         (
@@ -861,16 +765,6 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         (
             "util/tests/arena_utils_tests.rs",
             "test_clone_preserves_depth_first_pre_order",
-            Unconverted,
-        ),
-        (
-            "mindmap/scene_dump/tests/scene_dump_tests.rs",
-            "test_scene_dump_serializes_flat",
-            Unconverted,
-        ),
-        (
-            "mindmap/scene_dump/tests/scene_dump_tests.rs",
-            "test_scene_rect_overlap_and_union",
             Unconverted,
         ),
         (

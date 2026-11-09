@@ -11,6 +11,7 @@ use crate::arena::NodeId;
 use crate::document::element::DocKind;
 use crate::document::mutation::ops::{DocMutation, NodeOp};
 use crate::document::tests::writer_support::{request, single};
+use crate::flow::Rect;
 use crate::gfx_structs::run::RunShape;
 use crate::projection::tests::maps::{ident, kid, kids, load_map, node};
 use crate::projection::tests::support::Projected;
@@ -264,4 +265,175 @@ fn test_projection_a_click_inside_a_nested_body_hits_the_innermost_node() {
         .hit(&mut p.layers, Vec2::new(580.0, 380.0))
         .expect("the outer body holds it");
     assert_eq!(hit.node, outer, "outside the inner body, the outer node");
+}
+
+/// A small deterministic generator for the rubber-band oracle: the same
+/// maps and rectangles on every run.
+struct Lcg(u64);
+
+impl Lcg {
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        self.0 >> 33
+    }
+
+    /// A whole number in `0..n`.
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+
+    /// A canvas coordinate in `lo..hi`, on a whole unit so that edges can
+    /// meet exactly.
+    fn coord(&mut self, lo: i64, hi: i64) -> f32 {
+        (lo + self.below((hi - lo) as u64) as i64) as f32
+    }
+}
+
+/// What a rubber band over `rect` must find, worked out with no index:
+/// every node the generator made, tested against the rectangle and the
+/// shape the generator gave it. Inclusive of edges.
+fn covered_by_brute_force(bodies: &[(NodeId, Rect, bool)], rect: Rect) -> Vec<NodeId> {
+    let mut out: Vec<NodeId> = bodies
+        .iter()
+        .filter(|(_, body, ellipse)| {
+            let (min, max) = (rect.origin, rect.max());
+            let (bmin, bmax) = (body.origin, body.max());
+            if body.size.x <= 0.0 || body.size.y <= 0.0 {
+                return false;
+            }
+            if max.x < bmin.x || min.x > bmax.x || max.y < bmin.y || min.y > bmax.y {
+                return false;
+            }
+            if !ellipse {
+                return true;
+            }
+            // The point of the rectangle nearest the ellipse's center,
+            // inside the ellipse or on it.
+            let c = body.origin + body.size * 0.5;
+            let r = body.size * 0.5;
+            let q = Vec2::new(c.x.clamp(min.x, max.x), c.y.clamp(min.y, max.y));
+            let d = (q - c) / r;
+            d.x * d.x + d.y * d.y <= 1.0
+        })
+        .map(|(id, ..)| *id)
+        .collect();
+    out.sort_unstable();
+    out
+}
+
+/// A random map of `count` nodes, some ellipses, some large enough to
+/// leave the cell grid, and every node's body as the generator made it.
+fn random_bodies(rng: &mut Lcg, count: u32) -> (Projected, Vec<(NodeId, Rect, bool)>) {
+    let mut made = Vec::new();
+    let nodes: Vec<_> = (1..=count)
+        .map(|i| {
+            let at = Vec2::new(rng.coord(-3000, 3000), rng.coord(-3000, 3000));
+            let size = if rng.below(10) == 0 {
+                Vec2::new(rng.coord(2500, 5000), rng.coord(2500, 5000))
+            } else {
+                Vec2::new(rng.coord(1, 600), rng.coord(1, 600))
+            };
+            let ellipse = rng.below(3) == 0;
+            made.push((i, at, size, ellipse));
+            let mut fields = json!({"position": [at.x, at.y], "min_size": [size.x, size.y]});
+            if ellipse {
+                fields["shape"] = json!("ellipse");
+            }
+            node(i, None, fields)
+        })
+        .collect();
+    let doc = load_map(json!({ "nodes": nodes }));
+    let bodies = made
+        .into_iter()
+        .map(|(i, at, size, ellipse)| (ident(&doc, i), Rect::new(at, size), ellipse))
+        .collect();
+    (Projected::new(doc), bodies)
+}
+
+/// `Projector::nodes_in` is an index over the bodies and must answer as
+/// a scan of every body would: over random maps and random rectangles,
+/// rectangles that only touch a body's edge, and zero-area rectangles at
+/// a body's corner and inside it.
+#[test]
+fn test_projection_nodes_in_agrees_with_a_scan_of_every_body() {
+    let mut rng = Lcg(0x5eed);
+    let mut asked = 0;
+    let mut found_any = 0;
+    for _ in 0..12 {
+        let (p, bodies) = random_bodies(&mut rng, 40);
+        for &(id, body, _) in &bodies {
+            assert_eq!(
+                p.projector.node_rect(id),
+                Some(body),
+                "the body is the generator's"
+            );
+        }
+        let mut rects = Vec::new();
+        for _ in 0..40 {
+            let at = Vec2::new(rng.coord(-4000, 4000), rng.coord(-4000, 4000));
+            let size = Vec2::new(rng.coord(0, 3000), rng.coord(0, 3000));
+            rects.push(Rect::new(at, size));
+        }
+        for &(_, body, _) in bodies.iter().take(8) {
+            // Ending exactly on the body's left edge, starting exactly on
+            // its right, and the two zero-area points.
+            rects.push(Rect::new(
+                body.origin - Vec2::new(50.0, 0.0),
+                Vec2::new(50.0, 10.0),
+            ));
+            rects.push(Rect::new(
+                Vec2::new(body.max().x, body.origin.y),
+                Vec2::new(40.0, 40.0),
+            ));
+            rects.push(Rect::new(body.origin, Vec2::ZERO));
+            rects.push(Rect::new(body.origin + body.size * 0.5, Vec2::ZERO));
+        }
+        for rect in rects {
+            let want = covered_by_brute_force(&bodies, rect);
+            assert_eq!(p.projector.nodes_in(rect), want, "a rubber band over {rect:?}");
+            asked += 1;
+            found_any += usize::from(!want.is_empty());
+        }
+    }
+    assert!(
+        found_any > asked / 4 && found_any < asked,
+        "the corpus must hold both hits and misses: {found_any} of {asked}"
+    );
+}
+
+/// A rubber band visits only the cells it covers and tries only the
+/// bodies listed there: over a grid of a hundred far-apart nodes, a band
+/// around one tries that one, not the hundred.
+#[test]
+fn test_projection_nodes_in_visits_only_the_cells_it_covers() {
+    let nodes: Vec<_> = (0..100u32)
+        .map(|i| {
+            node(
+                i + 1,
+                None,
+                json!({
+                    "position": [(i % 10) as f32 * 1000.0, (i / 10) as f32 * 1000.0],
+                    "min_size": [100.0, 100.0]
+                }),
+            )
+        })
+        .collect();
+    let doc = load_map(json!({ "nodes": nodes }));
+    let target = ident(&doc, 34);
+    let p = Projected::new(doc);
+    // Node 34 is at (3000, 3000); the band runs from (2990, 2990) to
+    // (3120, 3120), which cells 11 and 12 cover each way at 256 units.
+    let rect = Rect::new(Vec2::new(2990.0, 2990.0), Vec2::new(130.0, 130.0));
+    p.projector.bodies.within_cells.set(0);
+    p.projector.bodies.within_tried.set(0);
+    assert_eq!(p.projector.nodes_in(rect), vec![target]);
+    assert_eq!(p.projector.bodies.within_cells.get(), 4, "the band's four cells");
+    assert_eq!(
+        p.projector.bodies.within_tried.get(),
+        1,
+        "the one body listed in them, of a hundred"
+    );
 }
