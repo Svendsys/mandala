@@ -159,6 +159,9 @@ const N3: Select = Select::Node(3);
 const N1_COLOR: &str = r#"      "color": "var(fg)",
 "#;
 const N1_FRAME: &str = r#""frame": {"fit": "repeat", "rings": [{"spans": [{"text": "─"}]}]}"#;
+/// Node 2's rounded outline.
+const N2_SHAPE: &str = r#"      "shape": {"rectangle": {"radius": 25}},
+"#;
 const N3_SECTIONS: &str = r#""sections": [{"spans": [{"text": "plain"}]}],"#;
 const N3_ZOOM: &str = r#"      "zoom": {"min": 0.25},
 "#;
@@ -192,6 +195,12 @@ const CASES: &[Case] = &[
                 "      \"shape\": \"ellipse\",\n      \"palette\": \"warm\",\n      \"zoom\": {\"min\": 0.25},\n      \"folded\": true,\n      \"hidden\": true,\n      \"opacity\": 0.5,\n",
             ),
         ],
+    },
+    Case {
+        name: "node shape=rectangle squares a rounded node",
+        select: N2,
+        input: Input::Line("node shape=rectangle"),
+        edits: &[(N2_SHAPE, "      \"shape\": {\"rectangle\": {\"radius\": 0}},\n")],
     },
     Case {
         name: "node radius",
@@ -398,7 +407,7 @@ const CASES: &[Case] = &[
         name: "zoom both bounds",
         select: N2,
         input: Input::Line("zoom min=0.5 max=2"),
-        edits: &[("      \"min_size\": [200.0, 60.0],\n", "      \"min_size\": [200.0, 60.0],\n      \"zoom\": {\"min\": 0.5, \"max\": 2.0},\n")],
+        edits: &[(N2_SHAPE, "      \"shape\": {\"rectangle\": {\"radius\": 25}},\n      \"zoom\": {\"min\": 0.5, \"max\": 2.0},\n")],
     },
     Case {
         name: "zoom keeps the other bound",

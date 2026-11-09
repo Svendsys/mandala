@@ -166,7 +166,7 @@ pub const COMPLETION_EXPECTED: &[&str] = &[
     "section= [which section of the selected node]",
     "0 [\"Per-section frame: a…\"] ; 1 [\"Per-section frame: d…\"] ; 2 [\"Per-section frame: r…\"]",
     "left ; center ; right ; reset [inherit]",
-    "rectangle [corners rounded by `radius`, or `rectangle:<0-100>`] ; ellipse [the ellipse inscribed in the node]",
+    "rectangle [sharp corners; `radius=` or `rectangle:<0-100>` rounds them] ; ellipse [the ellipse inscribed in the node]",
     "on [show the frame; a node with none gets one] ; off [hide the frame] ; ring [add, set or delete a ring] ; preview [show frame fields without an edit] ; commit [make the preview one undo entry] ; cancel [revert the preview] ; start= [where the text starts; or <edge>:<at>] ; direction= [which way the text runs: cw | ccw] ; fit= [what the rings' text does round the outline] ; gap= [the space between rings] ; inset= [the first ring's distance from the outline] ; span= [how much of its half each line of a ring covers: natural | whole | 0-1] ; sides= [the ornament in the breaks between a ring's lines, or false] ; spacing= [the space a repeat ring adds between glyphs]",
     "cw [clockwise] ; ccw [counter-clockwise] ; reset [inherit]",
     "once [the text once; `once:<filler>` fills the rest] ; repeat [the text repeated round the outline] ; spread [the text once, spread to the ends] ; fit [the text once, scaled to fit; `fit:<min>,<max>`] ; reset [inherit]",

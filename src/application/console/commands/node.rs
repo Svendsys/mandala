@@ -34,7 +34,10 @@ const SUBVERBS: &[Subverb] = &[
 ];
 
 const SHAPES: &[Word] = &[
-    Word::new("rectangle", "corners rounded by `radius`, or `rectangle:<0-100>`"),
+    Word::new(
+        "rectangle",
+        "sharp corners; `radius=` or `rectangle:<0-100>` rounds them",
+    ),
     Word::new("ellipse", "the ellipse inscribed in the node"),
 ];
 const BOOLS: &[Word] = &[Word::bare("true"), Word::bare("false")];
