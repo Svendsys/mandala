@@ -13,26 +13,24 @@
 //! other. Here each glyph's ink is a box of its own, and the gaps are
 //! measured between boxes:
 //!
-//! - **The pitch is the pattern's own**, whichever way the path runs:
-//!   two consecutive inks' centers are as far apart along the path as the
-//!   font sets them on a line — the first's half width and right bearing,
-//!   every space's advance between them, the second's left bearing and
-//!   half width — plus `spacing` for each step. So the connectors of one
-//!   style keep one pitch, level, steep or round a bend (rule 5), and a
-//!   round glyph one gap.
+//! - **The gaps are the pattern's own, ink to ink**, whichever way the
+//!   path runs: two consecutive inks are as far apart, box to box, as the
+//!   font sets them on a line — the first's right bearing, every space's
+//!   advance between them, the second's left bearing — plus `spacing` for
+//!   each step. Each ink is placed where its box lies that far from the
+//!   one before it, so a wide glyph such as `~` steps further along a level
+//!   stretch than down a steep one, and the gaps read even round a bend.
 //! - **The count is whole.** As many inks as bring every gap nearest its
-//!   natural one, and the difference spread over them all: each gap,
-//!   the ends' too, grows or shrinks by the same amount. So the pitch is
-//!   within half a glyph's share of its natural one, whatever the path's
-//!   length.
+//!   natural one, and the difference spread over them all: each gap, the
+//!   ends' too, grows or shrinks by the same amount, the slack. It is
+//!   solved for, so the inks fill the path from end gap to end gap.
 //! - **The ends are measured.** The gap from the first ink to the boxes
 //!   at the start ([`PathEnd::inks`], a frame's inks or a node's box) is
-//!   held to the gap its inks are laid at — the median of the gaps
-//!   between neighbors, box to box, as the path bends them: the path
-//!   starts where its end sits, and where the boxes lie further back or
-//!   further on than the path's start, the glyphs move back or on to keep
-//!   the gap — back at most [`PathEnd::back`], along the path's first
-//!   direction. Likewise at the far end. An end held out
+//!   the end gap, the mean of the pattern's natural gaps plus the slack:
+//!   the path starts where its end sits, and where the boxes lie further
+//!   back or further on than the path's start, the glyph moves back or on
+//!   to keep the gap — back at most [`PathEnd::back`], along the path's
+//!   first direction. Likewise at the far end. An end held out
 //!   ([`PathEnd::hold`]) keeps its first ink that far out instead.
 //!
 //! Nothing is reversed: an ornament has no reading direction (ruling
@@ -48,11 +46,16 @@ use crate::flow::place::{
 };
 use crate::flow::shape::{Ink, ShapedRun};
 
-/// How many rounds the ends are measured and moved in. Each round moves
-/// an end by what its gap missed by; the gap moves with it one for one
-/// where the boxes face the path, so a round or two settles it, and the
-/// rest only take up a turn the path makes near its end.
-const END_ROUNDS: usize = 8;
+/// How many times an ink's place is refined from its first guess, along
+/// the secant of its gap. Fixed, so that a place moves smoothly with the
+/// gap asked of it, and the whole run's reach with the slack: what the
+/// slack is solved by. On a straight stretch the first guess is exact.
+const REFINE: usize = 4;
+
+/// The most rounds the slack is solved in. Each round moves it by what
+/// the run fell short by over its gaps, which is exact on a straight path,
+/// so a round or two settles it.
+const SLACK_ROUNDS: usize = 16;
 
 /// What a [`place_pitched`] placement keeps its glyphs clear of at one
 /// end of its path.
@@ -84,10 +87,16 @@ struct Mark {
     gap: f32,
 }
 
-/// The gap between two canvas boxes: `0` where they meet or overlap.
-pub(crate) fn box_gap(a: &Rect, b: &Rect) -> f32 {
-    let d = (b.origin - a.max()).max(a.origin - b.max()).max(Vec2::ZERO);
-    d.length()
+/// The gap between two canvas boxes, signed: how far apart they are
+/// where they are apart, and less than 0 by the least they overlap by
+/// where they overlap. Continuous, and growing as they move apart.
+fn signed_gap(a: &Rect, b: &Rect) -> f32 {
+    let d = (b.origin - a.max()).max(a.origin - b.max());
+    if d.x > 0.0 || d.y > 0.0 {
+        d.max(Vec2::ZERO).length()
+    } else {
+        d.max_element()
+    }
 }
 
 /// The pattern's inked clusters, in order, each with the natural gap
@@ -152,24 +161,25 @@ pub fn pattern_gap(run: &ShapedRun, spacing: f32) -> Option<(f32, f32)> {
 
 /// Place `run` along the open `path` as whole glyphs, evenly gapped from
 /// end to end (see the module docs): the pattern's inked clusters
-/// repeated in order, as many as bring every gap nearest the pattern's
-/// own, both end gaps measured to `ends`. The count is taken again for
-/// the room the measured ends leave, and the ends measured again for a
-/// count that changed; a count that would change a second time is not
-/// taken, so the glyphs are always laid at a count their ends were
-/// measured for. `spacing` is added to every step, as a `repeat` walk
-/// adds it; one that is not finite or not positive adds nothing.
+/// repeated in order, each ink placed where its box lies its natural gap
+/// plus the slack from the one before it, box to box; as many as bring
+/// the slack nearest 0, and the slack solved for so that both end gaps,
+/// measured to `ends`, are the mean natural gap plus the slack too.
+/// `spacing` is added to every natural gap, as a `repeat` walk adds it;
+/// one that is not finite or not positive adds nothing.
 ///
 /// A run with no ink — text, or only spaces — has no pitch, and is
 /// placed empty: [`place_on_open`](crate::flow::place_on_open) lays it.
-/// So is a path that is not finite, and one too short to hold one ink.
-/// Never more than [`MAX_PLACED_GLYPHS`] glyphs; a placement held to it
-/// is `truncated`, its gaps spread over the inks it holds.
+/// So is a path that is not finite, and one too short to hold one ink
+/// with no gap at all. Never more than [`MAX_PLACED_GLYPHS`] glyphs; a
+/// placement held to it is `truncated`, its gaps spread over the inks it
+/// holds.
 ///
-/// Cost: O(clusters) to read the pattern, and a few rounds of O(inks) path
-/// lookups and O(`ends`' boxes) gap measures; the path is a table per
-/// curve, as [`place_on_open`](crate::flow::place_on_open)'s. Allocates
-/// the placement and one scratch vector of positions.
+/// Cost: O(clusters) to read the pattern; O(inks) path lookups to count
+/// the inks, and as many again for each of a few rounds of the slack for
+/// each of the two counts nearest, each ink [`REFINE`] gap measures; and
+/// O(`ends`' boxes) per end measure. Allocates the placement and one
+/// scratch vector of positions.
 pub fn place_pitched(
     run: &ShapedRun,
     path: &(impl AsRef<[Curve]> + ?Sized),
@@ -183,6 +193,8 @@ pub fn place_pitched(
     }
     let count = marks.len();
     let end_gap = marks.iter().map(|m| m.gap).sum::<f32>() / count as f32;
+    // The least slack: no gap below 0.
+    let floor = -marks.iter().map(|m| m.gap).fold(end_gap, f32::min);
     let arc = ArcPath::open(path, (0.25 * run.line_height).max(MIN_TABLE_SPACING));
     let length = arc.length();
     if !length.is_finite() || length <= 0.0 {
@@ -198,7 +210,8 @@ pub fn place_pitched(
         .map_or(Vec2::X, |c| c.derivative(1.0))
         .try_normalize()
         .unwrap_or(Vec2::X);
-    // A point `s` along the path, run on straight past either end.
+    // A point `s` along the path, and the way it runs there, run on
+    // straight past either end.
     let at = |s: f32| -> (Vec2, Vec2) {
         if s < 0.0 {
             (arc.at(0.0).0 + start_dir * s, start_dir)
@@ -209,9 +222,119 @@ pub fn place_pitched(
         }
     };
     let mark_of = |k: usize| &marks[k % count];
-    let width = |k: usize| {
+    let size_of = |k: usize| {
         let ink = &mark_of(k).ink;
-        ink.max.x - ink.min.x
+        ink.max - ink.min
+    };
+    let ink_box = |k: usize, s: f32| {
+        let size = size_of(k);
+        Rect::new(at(s).0 - size * 0.5, size)
+    };
+    // How far along `dir` two boxes' centers lie for the boxes to be
+    // `want` apart, box to box, their sizes summed `sizes`: apart across
+    // one axis, as far on as that takes; apart across both, where the
+    // distance between their corners is `want`.
+    let apart_by = |sizes: Vec2, dir: Vec2, want: f32| -> f32 {
+        let (half, d, want) = (sizes * 0.5, dir.abs(), want.max(0.0));
+        let across = |h: f32, d: f32, other: f32, other_d: f32| {
+            let t = (h + want) / d;
+            (d > 1e-6 && t * other_d <= other).then_some(t)
+        };
+        across(half.x, d.x, half.y, d.y)
+            .or_else(|| across(half.y, d.y, half.x, d.x))
+            .unwrap_or_else(|| {
+                let p = d.dot(half);
+                p + (p * p - half.length_squared() + want * want).max(0.0).sqrt()
+            })
+    };
+    // How far from an ink's center its box's edge lies along `dir`.
+    let edge = |k: usize, dir: Vec2| {
+        let half = size_of(k) * 0.5;
+        let along = |h: f32, d: f32| {
+            if d.abs() > 1e-6 {
+                h / d.abs()
+            } else {
+                f32::INFINITY
+            }
+        };
+        along(half.x, dir.x)
+            .min(along(half.y, dir.y))
+            .min(half.max_element())
+    };
+    let nearest = |b: &Rect, inks: &[Rect]| {
+        inks.iter()
+            .map(|i| signed_gap(b, i))
+            .fold(f32::INFINITY, f32::min)
+    };
+    // The place at which `gap`, growing with the place, is `want`: from
+    // `guess`, refined [`REFINE`] times along the secant.
+    let solve = |gap: &dyn Fn(f32) -> f32, want: f32, guess: f32| -> f32 {
+        let (mut s, mut miss, mut slope) = (guess, gap(guess) - want, 1.0_f32);
+        for _ in 0..REFINE {
+            let next = s - miss / slope;
+            let missed = gap(next) - want;
+            if (next - s).abs() > 1e-6 {
+                slope = ((missed - miss) / (next - s)).clamp(0.05, 2.0);
+            }
+            (s, miss) = (next, missed);
+        }
+        s
+    };
+    let backs = ends.map(|e| if e.back > 0.0 { e.back } else { 0.0 });
+    let holds = ends.map(|e| if e.hold > 0.0 { e.hold } else { f32::NEG_INFINITY });
+    // Where the first ink sits for an end gap of `gap`: that far from the
+    // start's boxes, its ink back from the start at most its `back`, its
+    // center at least its `hold` on.
+    let first_at = |gap: f32| -> f32 {
+        let reach = edge(0, start_dir);
+        let s = if ends[0].inks.is_empty() {
+            reach + gap
+        } else {
+            solve(&|s| nearest(&ink_box(0, s), ends[0].inks), gap, reach + gap)
+        };
+        s.max(reach - backs[0]).max(holds[0])
+    };
+    // Where ink `k` sits as the last, for an end gap of `gap`; likewise.
+    let last_at = |k: usize, gap: f32| -> f32 {
+        let reach = edge(k, end_dir);
+        let back = if ends[1].inks.is_empty() {
+            reach + gap
+        } else {
+            solve(
+                &|u| nearest(&ink_box(k, length - u), ends[1].inks),
+                gap,
+                reach + gap,
+            )
+        };
+        length - back.max(reach - backs[1]).max(holds[1])
+    };
+    // Where ink `k + 1` sits, `want` on from ink `k` at `s`, box to box:
+    // where the path runs straight on, exactly its edges and the gap on;
+    // where it turns, that refined. Kept in `f64`, as the places add up:
+    // thousands of `f32` steps along a long path drift by whole points,
+    // and the slack is solved to a thousandth.
+    let next_at = |k: usize, s: f64, want: f32| -> f64 {
+        let (here, dir) = (ink_box(k, s as f32), at(s as f32).1);
+        let guess = s + f64::from(apart_by(size_of(k) + size_of(k + 1), dir, want));
+        if at(guess as f32).1.dot(dir) > 1.0 - 1e-5 {
+            return guess;
+        }
+        let gap = |t: f32| signed_gap(&here, &ink_box(k + 1, t));
+        f64::from(solve(&gap, want, guess as f32)).max(s)
+    };
+    // The places of `n` inks at `slack`, into `centers`, and how far the
+    // last falls short of where its end gap puts it: falling as the slack
+    // grows.
+    let short = |n: usize, slack: f32, centers: &mut Vec<f32>| -> f32 {
+        centers.clear();
+        let mut s = f64::from(first_at(end_gap + slack));
+        for k in 0..n {
+            if k > 0 {
+                s = next_at(k - 1, s, mark_of(k - 1).gap + slack);
+            }
+            centers.push(s as f32);
+        }
+        (f64::from(last_at(n - 1, end_gap + slack)) - s) as f32
     };
     // The most inks a placement holds: whole clusters, within the cap.
     let widest = marks
@@ -220,160 +343,61 @@ pub fn place_pitched(
         .max()
         .unwrap_or(1);
     let cap = MAX_PLACED_GLYPHS / widest.max(1);
-    // How many inks `room` holds: as many as fit at their natural gaps, or
-    // one more, whichever needs the smaller change of gap — and whether
-    // the cap held it. `used` is the length the inks fitted take so, the
-    // end gaps included; `more`, one more's.
-    let count_in = |room: f32| -> (usize, bool) {
-        let (mut used, mut fitted) = (2.0 * end_gap, 0usize);
-        let more = loop {
-            let between = if fitted > 0 { mark_of(fitted - 1).gap } else { 0.0 };
-            let more = used + width(fitted) + between;
-            if more > room || fitted >= cap {
-                break more;
-            }
-            used = more;
-            fitted += 1;
-        };
-        let change = |n: usize, need: f32| (room - need) / (n + 1) as f32;
-        let n = if fitted == 0 {
-            // One ink, if the room holds it with its end gaps no less than 0.
-            usize::from(change(1, more) + end_gap >= 0.0)
-        } else if fitted < cap && change(fitted + 1, more).abs() < change(fitted, used).abs() {
-            fitted + 1
-        } else {
-            fitted
-        };
-        (n, fitted >= cap)
-    };
-    // The length `n` inks take at their natural gaps, the ends' included.
-    // Summed in `f64`, as `lay` steps: thousands of `f32` steps along a
-    // long path drift by whole points, and a hair's move of an end would
-    // then move the far end's glyph by one.
-    let natural = |n: usize| {
-        2.0 * f64::from(end_gap)
-            + (0..n).map(|k| f64::from(width(k))).sum::<f64>()
-            + (0..n.saturating_sub(1))
-                .map(|k| f64::from(mark_of(k).gap))
-                .sum::<f64>()
-    };
-    // Each of `n` inks' centers along the path, between `from` and `to`,
-    // every gap its natural one and the slack spread over them all, the
-    // ends' too: one pitch whichever way the path runs.
-    let lay = |n: usize, from: f32, to: f32, centers: &mut Vec<f32>| {
-        centers.resize(n, 0.0);
-        let delta = (f64::from(to - from) - natural(n)) / (n + 1) as f64;
-        let mut s = f64::from(from) + f64::from(end_gap) + delta;
-        for (k, center) in centers.iter_mut().enumerate() {
-            *center = (s + 0.5 * f64::from(width(k))) as f32;
-            s += f64::from(width(k)) + f64::from(mark_of(k).gap) + delta;
-        }
-        (f64::from(end_gap) + delta) as f32
-    };
-    let ink_box = |k: usize, s: f32| {
-        let ink = &mark_of(k).ink;
-        let size = ink.max - ink.min;
-        Rect::new(at(s).0 - size * 0.5, size)
-    };
-    let nearest = |b: &Rect, inks: &[Rect]| inks.iter().map(|i| box_gap(b, i)).fold(f32::INFINITY, f32::min);
-    // The gap the inks are laid at, as their boxes are apart where the
-    // path bends them: the median of the gaps between neighbors.
-    let laid_gap = |centers: &[f32]| {
-        let mut gaps: Vec<f32> = centers
-            .windows(2)
-            .enumerate()
-            .map(|(k, w)| box_gap(&ink_box(k, w[0]), &ink_box(k + 1, w[1])))
-            .collect();
-        gaps.sort_by(f32::total_cmp);
-        gaps.get(gaps.len() / 2).copied()
-    };
-    let backs = ends.map(|e| if e.back > 0.0 { e.back } else { 0.0 });
-    let holds = ends.map(|e| if e.hold > 0.0 { e.hold } else { 0.0 });
-    let (mut from, mut to) = (0.0_f32, length);
-    let (mut n, mut capped) = count_in(length);
+    // How many inks fit at their natural gaps: each placed until one
+    // passes where it would sit as the last.
+    let lasts: Vec<f32> = (0..count).map(|k| last_at(k, end_gap)).collect();
+    let mut fitted = 0;
+    let mut s = f64::from(first_at(end_gap));
+    while fitted < cap && s <= f64::from(lasts[fitted % count]) {
+        s = next_at(fitted, s, mark_of(fitted).gap);
+        fitted += 1;
+    }
+    // The slack that lays `n` inks from end gap to end gap, if any does.
     let mut centers: Vec<f32> = Vec::new();
-    // The ends measured, a few rounds; then the count again for the room
-    // they left, and the ends again if it changed — once.
-    for pass in 0..2 {
-        if n == 0 {
-            return PlacedRun::default();
+    let mut slack_for = |n: usize| -> Option<f32> {
+        if short(n, floor, &mut centers) < 0.0 {
+            return None;
         }
-        // The ends that came nearest their gaps: a frame's inks lie apart,
-        // so the gap to the nearest jumps as a glyph passes from one to the
-        // next, and the rounds may then step back and forth over it.
-        let mut best: Option<(f32, f32, f32)> = None;
-        for round in 0..END_ROUNDS {
-            let laid = lay(n, from, to, &mut centers);
-            let (laid_from, laid_to) = (from, to);
-            let (first, last) = (centers[0], centers[n - 1]);
-            let want = laid_gap(&centers).unwrap_or(laid);
-            // After the first round, half of what each end missed by.
-            let share = if round == 0 { 1.0 } else { 0.5 };
-            let mut missed = 0.0;
-            // A held end's glyph lies at its hold, or further out where its
-            // frame's inks reach past it.
-            let reach = [holds[0] - first, last - (length - holds[1])];
-            if !ends[0].inks.is_empty() {
-                let gap = nearest(&ink_box(0, first), ends[0].inks);
-                if gap.is_finite() && (holds[0] <= 0.0 || gap < want) {
-                    missed += (gap - want).abs();
-                    from = (from + share * (want - gap)).max(-backs[0] - laid);
-                }
+        let (mut lo, mut hi) = (floor, f32::INFINITY);
+        let mut slack = 0.0_f32.max(floor);
+        // The slack that came nearest: where the path turns, an ink's
+        // place is measured to the canvas's own precision, which far out
+        // on a long path is a few thousandths a step.
+        let mut best = (f32::INFINITY, slack);
+        for _ in 0..SLACK_ROUNDS {
+            let missed = short(n, slack, &mut centers);
+            if missed.abs() < best.0 {
+                best = (missed.abs(), slack);
             }
-            if !ends[1].inks.is_empty() {
-                let gap = nearest(&ink_box(n - 1, last), ends[1].inks);
-                if gap.is_finite() && (holds[1] <= 0.0 || gap < want) {
-                    missed += (gap - want).abs();
-                    to = (to - share * (want - gap)).min(length + backs[1] + laid);
-                }
-            }
-            if holds[0] > 0.0 {
-                missed += reach[0].max(0.0);
-                from = from.max(laid_from + reach[0]);
-            }
-            if holds[1] > 0.0 {
-                missed += reach[1].max(0.0);
-                to = to.min(laid_to - reach[1]);
-            }
-            if best.is_none_or(|b| missed < b.0) {
-                best = Some((missed, laid_from, laid_to));
-            }
-            if missed <= 0.01 * want.max(0.01)
-                && (from - laid_from).abs() <= 1e-3
-                && (to - laid_to).abs() <= 1e-3
-            {
+            if missed.abs() <= 1e-3 {
                 break;
             }
-        }
-        if let Some((_, f, t)) = best {
-            (from, to) = (f, t);
-        }
-        // No end's ink past its limit, into the node: the end moved back
-        // as far as it reached past, twice, the gaps' share moving with it.
-        for _ in 0..2 {
-            lay(n, from, to, &mut centers);
-            // How far an ink reaches along the path's end direction.
-            let half = |k: usize, dir: Vec2| {
-                let size = mark_of(k).ink.max - mark_of(k).ink.min;
-                0.5 * (dir.x.abs() * size.x + dir.y.abs() * size.y)
+            if missed > 0.0 {
+                lo = slack;
+            } else {
+                hi = slack;
+            }
+            // Each gap, and the two ends, take an equal share.
+            let step = slack + missed / (n + 1) as f32;
+            slack = if step > lo && step < hi {
+                step
+            } else if hi.is_finite() {
+                0.5 * (lo + hi)
+            } else {
+                lo + 2.0 * (lo - floor).max(1.0)
             };
-            let over = [
-                -backs[0] - (centers[0] - half(0, start_dir)),
-                centers[n - 1] + half(n - 1, end_dir) - (length + backs[1]),
-            ];
-            from += over[0].max(0.0);
-            to -= over[1].max(0.0);
         }
-        let recount = count_in(to - from);
-        if recount.0 == n || pass == 1 {
-            break;
-        }
-        (n, capped) = recount;
-    }
-    if n == 0 {
+        Some(best.1)
+    };
+    let best = [fitted, fitted + 1]
+        .into_iter()
+        .filter(|&n| n > 0 && n <= cap)
+        .filter_map(|n| slack_for(n).map(|slack| (n, slack)))
+        .min_by(|a, b| a.1.abs().total_cmp(&b.1.abs()));
+    let Some((n, slack)) = best else {
         return PlacedRun::default();
-    }
-    lay(n, from, to, &mut centers);
+    };
+    short(n, slack, &mut centers);
     let baseline = run.baseline();
     let mut glyphs = Vec::with_capacity(n * run.glyphs.len().min(4));
     for (k, &s) in centers.iter().enumerate() {
@@ -389,6 +413,6 @@ pub fn place_pitched(
     }
     PlacedRun {
         glyphs,
-        truncated: capped,
+        truncated: fitted >= cap,
     }
 }

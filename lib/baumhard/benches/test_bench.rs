@@ -2154,8 +2154,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_pitched_holds_the_nearer_whole_count_evenly", |b| {
         b.iter(do_flow_pitched_holds_the_nearer_whole_count_evenly)
     });
-    c.bench_function("flow_pitched_keeps_one_pitch_in_every_direction", |b| {
-        b.iter(do_flow_pitched_keeps_one_pitch_in_every_direction)
+    c.bench_function("flow_pitched_keeps_one_ink_gap_in_every_direction", |b| {
+        b.iter(do_flow_pitched_keeps_one_ink_gap_in_every_direction)
     });
     c.bench_function("flow_pitched_measures_each_end_to_the_boxes_beside_it", |b| {
         b.iter(do_flow_pitched_measures_each_end_to_the_boxes_beside_it)

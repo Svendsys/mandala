@@ -105,49 +105,57 @@ pub fn do_flow_pitched_holds_the_nearer_whole_count_evenly() {
 }
 
 #[test]
-fn test_flow_pitched_keeps_one_pitch_in_every_direction() {
-    do_flow_pitched_keeps_one_pitch_in_every_direction();
+fn test_flow_pitched_keeps_one_ink_gap_in_every_direction() {
+    do_flow_pitched_keeps_one_ink_gap_in_every_direction();
 }
 
-/// A pattern keeps one pitch whichever way the path runs (rule 5): a
-/// dash, its ink 4 wide and 1 tall, is laid across and down 103 units as
-/// the same 17 inks, their centers the same distance apart — not stacked
-/// by its height down the path, as a box step would set them (§6.2), at
-/// 1 + 2 a step where across it takes 4 + 2.
-pub fn do_flow_pitched_keeps_one_pitch_in_every_direction() {
+/// The distance between two boxes where they are apart, `0` where they
+/// meet.
+fn box_apart(a: &Rect, b: &Rect) -> f32 {
+    (b.origin - a.max())
+        .max(a.origin - b.max())
+        .max(Vec2::ZERO)
+        .length()
+}
+
+/// A pattern keeps one ink gap whichever way the path runs (rule 5, as
+/// ruled on #326): a dash, its ink 4 wide and 1 tall with a natural gap
+/// of 2, is laid 103 units across, down and on the diagonal, every two
+/// neighbors' boxes the same distance apart. So its centers step 4 + 2
+/// across and 1 + 2 down: across 17 dashes, `17·4 + 18·g = 103` at
+/// `g = 1.944`, nearer 2 than 16 at 2.294; down 34, `34·1 + 35·g = 103`
+/// at `g = 1.971`, nearer than 33 at 2.059.
+pub fn do_flow_pitched_keeps_one_ink_gap_in_every_direction() {
     let mut run = dot();
     run.glyphs[0].ink = Some(Ink {
         min: Vec2::new(1.0, -3.0),
         max: Vec2::new(5.0, -2.0),
     });
-    let pitch = |to: Vec2| {
-        let placed = place_pitched(&run, &Curve::Line(Vec2::ZERO, to), 0.0, [NO_END; 2]);
-        let boxes = inks(&run, &placed);
-        let steps: Vec<f32> = boxes
-            .windows(2)
-            .map(|p| p[0].center().distance(p[1].center()))
-            .collect();
-        (boxes.len(), steps.iter().sum::<f32>() / steps.len() as f32)
+    let laid = |to: Vec2| {
+        let path = Curve::Line(Vec2::ZERO, to);
+        let boxes = inks(&run, &place_pitched(&run, &path, 0.0, [NO_END; 2]));
+        let gaps: Vec<f32> = boxes.windows(2).map(|p| box_apart(&p[0], &p[1])).collect();
+        (boxes, gaps)
     };
-    let across = pitch(Vec2::new(103.0, 0.0));
-    let down = pitch(Vec2::new(0.0, 103.0));
-    assert_eq!(
-        across.0, 17,
-        "across, 17 dashes: 16 take 98 at their own gap of 2, 17 take 104"
-    );
-    assert_eq!(down.0, across.0, "as many dashes down as across");
-    close(
-        down.1,
-        across.1,
-        1e-3,
-        "the pitch down the path, against across it",
-    );
-    close(
-        across.1,
-        6.0 - 1.0 / 18.0,
-        1e-3,
-        "the pitch across: a dash and a gap, less a share of the 1 too many",
-    );
+    for (to, count, gap) in [
+        (Vec2::new(103.0, 0.0), 17, 2.0 - 1.0 / 18.0),
+        (Vec2::new(0.0, 103.0), 34, 2.0 - 1.0 / 35.0),
+        (Vec2::new(103.0, 103.0) / 2.0_f32.sqrt(), 0, 0.0),
+    ] {
+        let (boxes, gaps) = laid(to);
+        if count > 0 {
+            assert_eq!(boxes.len(), count, "the nearer whole count toward {to}");
+            close(gaps[0], gap, 1e-3, &format!("the gap toward {to}"));
+        }
+        for g in &gaps {
+            close(*g, gaps[0], 1e-3, &format!("every ink gap toward {to}"));
+        }
+        assert!(
+            (gaps[0] - 2.0).abs() < 0.2,
+            "the gap toward {to} is the dash's own 2, and its share of the slack: {}",
+            gaps[0]
+        );
+    }
 }
 
 #[test]
