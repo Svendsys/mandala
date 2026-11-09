@@ -213,6 +213,51 @@ pub fn do_flow_pitched_measures_each_end_to_the_boxes_beside_it() {
 }
 
 #[test]
+fn test_flow_pitched_measures_the_far_end_of_a_long_path() {
+    do_flow_pitched_measures_the_far_end_of_a_long_path();
+}
+
+/// A path some 26 000 long holds thousands of inks, and its far end's gap
+/// is measured to the box past it as a short path's is: within 2% of the
+/// gap the inks are laid at, at every one of twenty lengths. Laid by
+/// thousands of `f32` steps, the far end drifted by whole points, and a
+/// hair's move of the end moved its glyph by one, so the measure never
+/// settled (#296: `stress_long_edges`' long links).
+pub fn do_flow_pitched_measures_the_far_end_of_a_long_path() {
+    let run = dot();
+    for k in 0..20 {
+        let length = 26_000.0 + 37.3 * k as f32;
+        let path = Curve::Line(Vec2::ZERO, Vec2::new(length, 0.0));
+        let end = [Rect::new(Vec2::new(length + 1.0, -10.0), Vec2::new(20.0, 20.0))];
+        let ends = [
+            NO_END,
+            PathEnd {
+                inks: &end,
+                back: 5.0,
+                hold: 0.0,
+            },
+        ];
+        let boxes = inks(&run, &place_pitched(&run, &path, 0.0, ends));
+        assert!(
+            boxes.len() > 4000,
+            "precondition: thousands of inks ({})",
+            boxes.len()
+        );
+        let near: Vec<f32> = boxes[boxes.len() - 20..]
+            .windows(2)
+            .map(|p| apart(&p[0], &p[1]))
+            .collect();
+        let mean = near.iter().sum::<f32>() / near.len() as f32;
+        close(
+            apart(&boxes[boxes.len() - 1], &end[0]),
+            mean,
+            0.02 * mean,
+            &format!("the far end's gap on a path {length} long"),
+        );
+    }
+}
+
+#[test]
 fn test_flow_pitched_lays_no_text_and_no_empty_path() {
     do_flow_pitched_lays_no_text_and_no_empty_path();
 }

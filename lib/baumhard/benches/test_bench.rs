@@ -2160,6 +2160,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_pitched_measures_each_end_to_the_boxes_beside_it", |b| {
         b.iter(do_flow_pitched_measures_each_end_to_the_boxes_beside_it)
     });
+    c.bench_function("flow_pitched_measures_the_far_end_of_a_long_path", |b| {
+        b.iter(do_flow_pitched_measures_the_far_end_of_a_long_path)
+    });
     c.bench_function("flow_pitched_lays_no_text_and_no_empty_path", |b| {
         b.iter(do_flow_pitched_lays_no_text_and_no_empty_path)
     });

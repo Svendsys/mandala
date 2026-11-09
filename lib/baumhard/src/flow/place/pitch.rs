@@ -247,23 +247,28 @@ pub fn place_pitched(
         (n, fitted >= cap)
     };
     // The length `n` inks take at their natural gaps, the ends' included.
+    // Summed in `f64`, as `lay` steps: thousands of `f32` steps along a
+    // long path drift by whole points, and a hair's move of an end would
+    // then move the far end's glyph by one.
     let natural = |n: usize| {
-        2.0 * end_gap
-            + (0..n).map(width).sum::<f32>()
-            + (0..n.saturating_sub(1)).map(|k| mark_of(k).gap).sum::<f32>()
+        2.0 * f64::from(end_gap)
+            + (0..n).map(|k| f64::from(width(k))).sum::<f64>()
+            + (0..n.saturating_sub(1))
+                .map(|k| f64::from(mark_of(k).gap))
+                .sum::<f64>()
     };
     // Each of `n` inks' centers along the path, between `from` and `to`,
     // every gap its natural one and the slack spread over them all, the
     // ends' too: one pitch whichever way the path runs.
     let lay = |n: usize, from: f32, to: f32, centers: &mut Vec<f32>| {
         centers.resize(n, 0.0);
-        let delta = ((to - from) - natural(n)) / (n + 1) as f32;
-        let mut s = from + end_gap + delta;
+        let delta = (f64::from(to - from) - natural(n)) / (n + 1) as f64;
+        let mut s = f64::from(from) + f64::from(end_gap) + delta;
         for (k, center) in centers.iter_mut().enumerate() {
-            *center = s + 0.5 * width(k);
-            s += width(k) + mark_of(k).gap + delta;
+            *center = (s + 0.5 * f64::from(width(k))) as f32;
+            s += f64::from(width(k)) + f64::from(mark_of(k).gap) + delta;
         }
-        end_gap + delta
+        (f64::from(end_gap) + delta) as f32
     };
     let ink_box = |k: usize, s: f32| {
         let ink = &mark_of(k).ink;
