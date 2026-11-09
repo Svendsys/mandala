@@ -421,6 +421,41 @@ fn test_projection_paths_that_share_a_side_leave_one_point_fanned() {
         (most - SPLAY_CAP.to_degrees()).abs() < 0.01,
         "the outermost at the cap: {most}°"
     );
+    // At the cap the turn alone no longer clears them: each path is held
+    // straight on past the point, its first glyphs as far out as clears
+    // its neighbor's. Within that reach no two neighbors' glyphs are
+    // nearer than their own gap allows.
+    let own = median(
+        seven
+            .iter()
+            .flat_map(|b| b.1.windows(2).map(|w| gap(&w[0], &w[1])))
+            .collect(),
+    );
+    let connector = kid(&wide.doc, ident(&wide.doc, 10), DocKind::Connector);
+    let Some(UnitBody::Line(first)) = wide.projector.units.get(&connector).map(|u| &u.body) else {
+        panic!("the first branch is a drawn line");
+    };
+    let (hold, lead) = (first.fans[0].1, first.attach[0].map_or(0.0, |a| a.lead));
+    assert!(hold > 0.0, "precondition: a fan at the cap is held out: {hold}");
+    let point = seven[0].0[0].point(0.0);
+    let near = |b: &(Vec<Curve>, Vec<Rect>)| -> Vec<Rect> {
+        b.1.iter()
+            .filter(|r| r.center().distance(point) <= hold + lead)
+            .copied()
+            .collect()
+    };
+    for k in 0..6 {
+        let (a, b) = (near(&seven[k]), near(&seven[k + 1]));
+        let nearest = a
+            .iter()
+            .flat_map(|x| b.iter().map(move |y| gap(x, y)))
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            !a.is_empty() && !b.is_empty() && nearest >= 0.8 * own,
+            "branches {k} and {} have glyphs {nearest} apart near the point, their own gap {own}",
+            k + 1
+        );
+    }
     wide.check().unwrap();
 }
 
