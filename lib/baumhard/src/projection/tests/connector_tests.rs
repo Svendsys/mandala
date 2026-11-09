@@ -15,8 +15,8 @@ use crate::document::element::DocKind;
 use crate::document::values::Anchor;
 use crate::flow::{Curve, Rect};
 use crate::projection::geometry::{
-    held_apart, near_lanes, path_through, side_point, side_toward, untangle, Lane, CLEARANCE, SPLAY_CAP,
-    UNTANGLE_GRIDS, UNTANGLE_ROUNDS,
+    held_apart, near_pairs, path_through, side_point, side_toward, untangle, Lane, CLEARANCE, SPLAY_CAP,
+    UNTANGLE_GRIDDED, UNTANGLE_GRIDS, UNTANGLE_ROUNDS,
 };
 use crate::projection::state::{Placed, UnitBody};
 use crate::projection::tests::maps::{ident, kid, load_map, node, text_section};
@@ -717,11 +717,11 @@ fn test_projection_portal_ends_that_face_one_way_are_held_apart() {
     p.check().unwrap();
 }
 
-/// The pairs of `samples` nearer than [`CLEARANCE`] times the wider of
-/// their `widths`, each pair measured point by point: what
-/// [`near_lanes`] answers from one grid.
-fn near_pairwise(samples: &[Vec<Vec2>], widths: &[f32]) -> Vec<bool> {
-    let mut near = vec![false; samples.len()];
+/// The pairs of `samples`, each `(lower, higher)`, nearer than
+/// [`CLEARANCE`] times the wider of their `widths`, each pair measured
+/// point by point: what [`near_pairs`] answers from one grid.
+fn near_pairwise(samples: &[Vec<Vec2>], widths: &[f32]) -> rustc_hash::FxHashSet<(usize, usize)> {
+    let mut pairs = rustc_hash::FxHashSet::default();
     for k in 0..samples.len() {
         for j in k + 1..samples.len() {
             let need = CLEARANCE * widths[k].max(widths[j]);
@@ -729,31 +729,35 @@ fn near_pairwise(samples: &[Vec<Vec2>], widths: &[f32]) -> Vec<bool> {
                 .iter()
                 .any(|p| samples[j].iter().any(|q| q.distance(*p) < need));
             if close {
-                near[k] = true;
-                near[j] = true;
+                pairs.insert((k, j));
             }
         }
     }
-    near
+    pairs
 }
 
-#[test]
-fn test_projection_near_lanes_finds_the_pairs_measured_point_by_point() {
-    // Lanes of scattered points and of differing widths, some crowded and
-    // some apart: one grid for them all finds the lanes too near another
-    // exactly as measuring each pair point by point does. The failing
-    // input is a grid as wide as one lane's own distance, which misses a
-    // pair held apart by the wider of the two.
-    let mut seed = 0x9e37_79b9_u32;
-    let mut next = move || {
+/// A small deterministic source of numbers in `0..100`.
+fn scatter(mut seed: u32) -> impl FnMut() -> f32 {
+    move || {
         seed ^= seed << 13;
         seed ^= seed >> 17;
         seed ^= seed << 5;
         (seed % 10_000) as f32 / 100.0
-    };
-    let mut some_near = 0;
-    let mut some_clear = 0;
-    for _ in 0..200 {
+    }
+}
+
+#[test]
+fn test_projection_near_pairs_finds_the_pairs_measured_point_by_point() {
+    // Lanes of scattered points and of differing widths, some crowded and
+    // some apart, some of them fresh: one grid of the fresh lanes' points,
+    // and the pairs of two lanes not fresh carried from before, find the
+    // near pairs exactly as measuring each pair point by point does. The
+    // failing inputs are a grid as wide as one lane's own distance, which
+    // misses a pair held apart by the wider of the two, and a pair of a
+    // fresh lane carried rather than measured.
+    let mut next = scatter(0x9e37_79b9);
+    let (mut some_near, mut some_clear, mut some_carried) = (0, 0, 0);
+    for _ in 0..300 {
         let lanes = 2 + (next() as usize) % 7;
         let samples: Vec<Vec<Vec2>> = (0..lanes)
             .map(|_| {
@@ -763,43 +767,218 @@ fn test_projection_near_lanes_finds_the_pairs_measured_point_by_point() {
             })
             .collect();
         let widths: Vec<f32> = (0..lanes).map(|_| 0.5 + next() * 0.08).collect();
-        let (got, want) = (near_lanes(&samples, &widths), near_pairwise(&samples, &widths));
-        assert_eq!(got, want, "lanes {samples:?}, widths {widths:?}");
-        some_near += want.iter().filter(|&&n| n).count();
-        some_clear += want.iter().filter(|&&n| !n).count();
+        let want = near_pairwise(&samples, &widths);
+        let all = vec![true; lanes];
+        assert_eq!(
+            near_pairs(&samples, &widths, &all, &Default::default()),
+            want,
+            "every lane fresh: lanes {samples:?}, widths {widths:?}"
+        );
+        // Some lanes moved since `before` was measured, at their old
+        // places: what is carried is only what they could not change.
+        let fresh: Vec<bool> = (0..lanes).map(|_| next() < 50.0).collect();
+        let moved: Vec<Vec<Vec2>> = samples
+            .iter()
+            .zip(&fresh)
+            .map(|(points, &f)| {
+                if f {
+                    points
+                        .iter()
+                        .map(|p| *p + Vec2::new(next() - 50.0, 0.0))
+                        .collect()
+                } else {
+                    points.clone()
+                }
+            })
+            .collect();
+        let before = near_pairwise(&moved, &widths);
+        some_carried += before.iter().filter(|&&(k, j)| !fresh[k] && !fresh[j]).count();
+        assert_eq!(
+            near_pairs(&samples, &widths, &fresh, &before),
+            want,
+            "fresh {fresh:?}: lanes {samples:?}, widths {widths:?}"
+        );
+        some_near += want.len();
+        some_clear += lanes * (lanes - 1) / 2 - want.len();
     }
     assert!(
-        some_near > 0 && some_clear > 0,
-        "precondition: lanes both near and clear: {some_near}, {some_clear}"
+        some_near > 0 && some_clear > 0 && some_carried > 0,
+        "precondition: pairs near ({some_near}), clear ({some_clear}) and carried ({some_carried})"
     );
 }
 
-#[test]
-fn test_projection_untangle_measures_a_junction_once_a_round() {
-    // Twenty paths from one point to a row, crowded where they leave it:
-    // each round of untangling measures the junction's lanes in one grid,
-    // not one for each pair of them — 190 a round here, the square of the
-    // junction's size, which a wide row of children multiplied into
-    // seconds of projection under the fuzzer.
-    let lanes: Vec<Lane> = (0..20)
+/// [`untangle`] as it reads, each round measuring every pair of lanes
+/// afresh: what the rounds that measure only the halved lanes again
+/// answer.
+fn untangle_afresh(lanes: &[Lane]) -> Vec<f32> {
+    let mut handles = vec![1.0_f32; lanes.len()];
+    if lanes.len() < 2 {
+        return handles;
+    }
+    let widths: Vec<f32> = lanes.iter().map(|lane| lane.width).collect();
+    let mut best = (usize::MAX, handles.clone());
+    for _ in 0..UNTANGLE_ROUNDS {
+        let samples: Vec<Vec<Vec2>> = lanes
+            .iter()
+            .zip(&handles)
+            .map(|(lane, &h)| {
+                let curves = if lane.straight {
+                    vec![Curve::Line(lane.start.0, lane.end.0)]
+                } else {
+                    path_through(lane.start, lane.end, &lane.via, h)
+                };
+                let step = (0.25 * lane.width).max(1e-2);
+                let skip = CLEARANCE * lane.hold.max(lane.width);
+                points_along(&curves, step, skip)
+            })
+            .collect();
+        let mut near = vec![false; lanes.len()];
+        for (k, j) in near_pairwise(&samples, &widths) {
+            near[k] = true;
+            near[j] = true;
+        }
+        let count = near.iter().filter(|&&n| n).count();
+        if count <= best.0 {
+            best = (count, handles.clone());
+        }
+        if count == 0 {
+            break;
+        }
+        for (h, _) in handles.iter_mut().zip(&near).filter(|(_, &n)| n) {
+            *h = (*h * 0.5).max(1.0 / 4096.0);
+        }
+    }
+    best.1
+}
+
+/// Points along `curves` at most `step` apart, from `skip` along on, as
+/// the untangling samples them.
+fn points_along(curves: &[Curve], step: f32, skip: f32) -> Vec<Vec2> {
+    let mut out = Vec::new();
+    let mut along = 0.0_f32;
+    for curve in curves {
+        let (a, d) = (curve.point(0.0), curve.point(1.0));
+        let reach = match *curve {
+            Curve::Cubic(_, b, c, _) => a.distance(b) + b.distance(c) + c.distance(d),
+            Curve::Quadratic(_, b, _) => a.distance(b) + b.distance(d),
+            Curve::Line(..) => a.distance(d),
+        };
+        if !reach.is_finite() {
+            continue;
+        }
+        let n = ((reach / step).ceil() as usize).clamp(1, 1 << 16);
+        let mut last = a;
+        for i in 0..n {
+            let p = curve.point(i as f32 / n as f32);
+            along += p.distance(last);
+            last = p;
+            if along >= skip {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// `count` paths from one point down to a row `wide` across, `straight`
+/// as the flag says: the lanes of a junction.
+fn row_lanes(count: usize, wide: f32, straight: impl Fn(usize) -> bool) -> Vec<Lane> {
+    (0..count)
         .map(|k| Lane {
             start: (Vec2::ZERO, Vec2::Y, 4.0),
             hold: 0.0,
-            end: (Vec2::new(k as f32 * 6.0 - 57.0, 400.0), -Vec2::Y, 4.0),
+            end: (
+                Vec2::new(k as f32 * wide / count as f32 - 0.5 * wide, 400.0),
+                -Vec2::Y,
+                4.0,
+            ),
             via: Vec::new(),
             width: 3.0,
-            straight: false,
+            straight: straight(k),
         })
-        .collect();
-    UNTANGLE_GRIDS.with(|count| count.set(0));
-    let handles = untangle(&lanes);
-    let grids = UNTANGLE_GRIDS.with(std::cell::Cell::get);
+        .collect()
+}
+
+#[test]
+fn test_projection_untangle_answers_as_measuring_every_pair_each_round() {
+    // Rows narrow and wide, some paths straight, two lying on one line
+    // from the junction so that they never clear: measuring again only
+    // the lanes a round halved finds the handles that measuring every
+    // pair afresh each round finds.
+    for (count, wide) in [(3, 30.0), (7, 60.0), (12, 300.0), (20, 120.0)] {
+        let mut lanes = row_lanes(count, wide, |k| k % 5 == 3);
+        lanes[1].end.0 = lanes[0].end.0 * 0.5;
+        assert_eq!(
+            untangle(&lanes),
+            untangle_afresh(&lanes),
+            "{count} paths {wide} wide"
+        );
+    }
+}
+
+/// `count` paths fanned out of one point, held out `hold`, to a row
+/// `wide` across and 600 below: the lanes of a junction at its cap.
+fn fanned_lanes(count: usize, wide: f32, hold: f32) -> Vec<Lane> {
+    (0..count)
+        .map(|k| {
+            let turn = (k as f32 / (count - 1) as f32 - 0.5) * 2.0 * SPLAY_CAP;
+            Lane {
+                start: (Vec2::ZERO, Vec2::from_angle(-turn).rotate(Vec2::Y), 4.0 + hold),
+                hold,
+                end: (
+                    Vec2::new(k as f32 * wide / (count - 1) as f32 - 0.5 * wide, 600.0),
+                    -Vec2::Y,
+                    4.0,
+                ),
+                via: Vec::new(),
+                width: 3.0,
+                straight: false,
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn test_projection_untangle_measures_again_only_what_it_moved() {
+    // Eight paths fanned to a wide row, all clear of each other but two
+    // whose far ends lie on one line from the point, so that every round
+    // runs and halves those two alone: a round after the first grids and
+    // measures again only the lanes it halved, so the whole untangling
+    // grids no more points than the first round and that pair's own
+    // untangling between them — not every lane's, every round.
+    let mut lanes = fanned_lanes(8, 1600.0, 40.0);
+    lanes[1].end.0 = lanes[0].end.0 * 0.5;
+    lanes[1].start.1 = lanes[0].start.1;
+    let pair: Vec<Lane> = lanes.iter().take(2).cloned().collect();
+    let gridded = |lanes: &[Lane]| {
+        UNTANGLE_GRIDS.with(|count| count.set(0));
+        UNTANGLE_GRIDDED.with(|count| count.set(0));
+        let handles = untangle(lanes);
+        (
+            handles,
+            UNTANGLE_GRIDS.with(std::cell::Cell::get),
+            UNTANGLE_GRIDDED.with(std::cell::Cell::get),
+        )
+    };
+    let (pair_handles, pair_rounds, pair_points) = gridded(&pair);
+    let (handles, rounds, points) = gridded(&lanes);
     assert!(
-        handles.iter().any(|&h| h < 1.0),
-        "precondition: the lanes are crowded, so rounds run: {handles:?}"
+        rounds == UNTANGLE_ROUNDS && pair_rounds == UNTANGLE_ROUNDS,
+        "precondition: every round runs: {rounds}, {pair_rounds}"
     );
     assert!(
-        (1..=UNTANGLE_ROUNDS).contains(&grids),
-        "{grids} grids for at most {UNTANGLE_ROUNDS} rounds"
+        handles[2..].iter().all(|&h| h == 1.0) && handles[..2] == pair_handles[..],
+        "precondition: the pair alone is halved: {handles:?}"
+    );
+    let first: usize = lanes[2..]
+        .iter()
+        .map(|lane| {
+            let curves = path_through(lane.start, lane.end, &lane.via, 1.0);
+            points_along(&curves, 0.25 * lane.width, CLEARANCE * lane.hold.max(lane.width)).len()
+        })
+        .sum();
+    assert!(
+        points == first + pair_points,
+        "{points} points gridded: the six clear lanes' {first} once, and the pair's {pair_points}"
     );
 }
