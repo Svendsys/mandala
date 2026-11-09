@@ -50,6 +50,22 @@ impl InteractionMode {
             InteractionMode::Default => &[],
         }
     }
+
+    /// What the status line says while the mode is active, as on
+    /// `main`: `reparent: 2 sources — click a target node`. `None` for
+    /// the default mode. Derived from the mode, so nothing else that
+    /// writes the status line can erase it while the mode lasts.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn status_line(&self) -> Option<String> {
+        let verb = match self {
+            InteractionMode::Reparent { .. } => "reparent",
+            InteractionMode::Connect { .. } => "connect",
+            InteractionMode::Default => return None,
+        };
+        let n = self.sources().len();
+        let plural = if n == 1 { "" } else { "s" };
+        Some(format!("{verb}: {n} source{plural} \u{2014} click a target node"))
+    }
 }
 
 #[cfg(test)]

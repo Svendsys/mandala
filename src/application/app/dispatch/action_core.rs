@@ -51,13 +51,11 @@ pub(in crate::application::app) fn dispatch_compatible(
             *core.interaction_mode = InteractionMode::Default;
             // A post-Esc click is not paired with a pre-Esc one.
             *core.last_click = None;
-            // A refusal's status line, and a reparent's or a connect's
-            // tints and status line, go at the next frame's sync.
+            // A refusal's status line goes at the next frame's sync; a
+            // mode's tints and line follow the mode there.
             if let Some(doc) = core.document.as_deref_mut() {
-                doc.set_status(None);
+                doc.dismiss_status();
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            families::structure::leave(core);
             DispatchOutcome::Handled
         }
         Action::Undo | Action::Redo => {

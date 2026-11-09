@@ -503,3 +503,69 @@ fn test_each_mode_shows_its_status_line_and_tints_its_sources() {
     assert!(sources(init).is_empty());
     assert_eq!(init.interaction_mode, InteractionMode::Default);
 }
+
+/// **A mode's status line lasts as long as the mode, whatever else
+/// writes the document's status line meanwhile** (review 5821011650,
+/// probe P3). In reparent mode, `CreateOrphanNode`, `Undo` and a
+/// `DeleteSelection` are each accepted, and an accepted change clears the
+/// document's line; the mode's line stays, because the view derives it
+/// from the mode. A decline in the mode (a connector alone) is the
+/// document's line, under the mode's: once the mode ends, the decline
+/// shows, so it did not replace the mode's line for good either.
+///
+/// Control: the line is the mode's before anything else runs, so a line
+/// that was never drawn cannot pass.
+#[test]
+fn test_a_modes_status_line_outlasts_the_changes_made_in_the_mode() {
+    let Some(mut app) = headless_app(&fixture("structure")) else {
+        return;
+    };
+    let init = &mut app.init;
+    frame(init);
+    let (n2, n3, n6) = (node(init, 2), node(init, 3), node(init, 6));
+    let mode_line = "reparent: 1 source \u{2014} click a target node";
+    let line = |init: &mut InitState| {
+        frame(init);
+        init.renderer.mode_status_text().map(str::to_string)
+    };
+    select(init, vec![n6]);
+    assert_eq!(act(init, json!("EnterReparentMode")), "handled");
+    assert_eq!(
+        line(init).as_deref(),
+        Some(mode_line),
+        "control: the mode's line is drawn"
+    );
+
+    let reply = ipc(
+        init,
+        json!({"id": 1, "cmd": "act.action", "action": "CreateOrphanNode", "x": 100.0, "y": 900.0}),
+    );
+    assert_eq!(reply["result"]["outcome"], "handled", "{reply}");
+    assert_eq!(line(init).as_deref(), Some(mode_line), "after an accepted change");
+    assert_eq!(act(init, json!("Undo")), "handled");
+    assert_eq!(line(init).as_deref(), Some(mode_line), "after an undo");
+    select(init, vec![n3]);
+    assert_eq!(act(init, json!("DeleteSelection")), "handled");
+    assert_eq!(line(init).as_deref(), Some(mode_line), "after a delete");
+    assert!(
+        matches!(init.interaction_mode, InteractionMode::Reparent { .. }),
+        "precondition: all of it in the mode"
+    );
+
+    let connector = child(init, n2, DocKind::Connector, 0);
+    select(init, vec![connector]);
+    act(init, json!("DeleteSelection"));
+    assert_eq!(
+        document(init).status(),
+        Some(CONNECTOR_STATUS),
+        "the decline is the document's"
+    );
+    assert_eq!(line(init).as_deref(), Some(mode_line), "under the mode's line");
+    act(init, json!({"ReparentToTarget": null}));
+    assert_eq!(init.interaction_mode, InteractionMode::Default);
+    assert_eq!(
+        line(init).as_deref(),
+        Some(CONNECTOR_STATUS),
+        "the mode over, the decline shows"
+    );
+}

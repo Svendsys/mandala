@@ -83,9 +83,9 @@ pub struct MindMapDocument {
     /// The one open transaction (D28), or `None`. Opened by
     /// [`Self::begin`]; V1-C7 and V1-C8 stage into it and end it.
     transaction: Option<Transaction>,
-    /// The status line: what the last refusal or decline left, until the
-    /// next change the writer accepts, or what an active mode says.
-    status: Option<String>,
+    /// The status line the last refusal or decline left, until the next
+    /// change the writer accepts.
+    status: Option<&'static str>,
     /// What Copy and Cut last took from this map (`clipboard`). Kept with
     /// the document because a copied section names its theme and faces.
     pub clipboard: Option<crate::application::clipboard::Clipboard>,
@@ -280,17 +280,16 @@ impl MindMapDocument {
         }
     }
 
-    /// The status line: what a refusal or a decline left, if the writer
-    /// has accepted nothing since, or what a mode set. O(1).
-    pub fn status(&self) -> Option<&str> {
-        self.status.as_deref()
+    /// The status line a refusal or a decline left, if the writer has
+    /// accepted nothing since. O(1).
+    pub fn status(&self) -> Option<&'static str> {
+        self.status
     }
 
-    /// Show `line` on the status line, or clear it with `None`: what a
-    /// mode says while it is active (`main`'s "reparent: 2 sources —
-    /// click a target node"). The next accepted change clears it too.
-    pub fn set_status(&mut self, line: Option<String>) {
-        self.status = line;
+    /// Dismiss the status line a refusal or a decline left: what
+    /// `ExitMode` does. O(1).
+    pub fn dismiss_status(&mut self) {
+        self.status = None;
     }
 
     /// The one report of a refused change (D28): a `warn!` naming the
@@ -303,7 +302,7 @@ impl MindMapDocument {
             baumhard::util::log::excerpt(label)
         );
         if *error == ApplyError::TransactionOpen {
-            self.status = Some(TRANSACTION_OPEN_STATUS.to_string());
+            self.status = Some(TRANSACTION_OPEN_STATUS);
         }
     }
 
@@ -312,7 +311,7 @@ impl MindMapDocument {
     /// status line, as a refusal does. Logged at `debug!`.
     pub fn decline(&mut self, why: &'static str) {
         log::debug!("document: declined: {why}");
-        self.status = Some(why.to_string());
+        self.status = Some(why);
     }
 
     /// Undo the newest history entry. With a transaction open, the

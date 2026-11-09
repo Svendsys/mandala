@@ -509,6 +509,7 @@ fn test_the_target_tint_stamps_the_hovered_node_beside_the_selection() {
 #[test]
 fn test_the_source_tint_replaces_the_selections_on_the_sources_only() {
     use super::overlay::{SELECTION_HIGHLIGHT, SOURCE_HIGHLIGHT};
+    use crate::application::app::InteractionMode;
     let mut doc = testament();
     let mut view = MapView::for_test(&doc);
     let (a, b) = two_drawn_roots(&doc, &view);
@@ -524,7 +525,7 @@ fn test_the_source_tint_replaces_the_selections_on_the_sources_only() {
         "precondition: a is selected"
     );
 
-    view.set_sources(vec![a]);
+    view.follow_mode(&InteractionMode::Reparent { sources: vec![a] });
     view.sync_for_test(&mut doc).expect("the source tint changed");
     assert!(
         tinted(&view, &doc, a, SOURCE_HIGHLIGHT),
@@ -535,7 +536,7 @@ fn test_the_source_tint_replaces_the_selections_on_the_sources_only() {
         "b keeps the selection's"
     );
 
-    view.set_sources(Vec::new());
+    view.follow_mode(&InteractionMode::Default);
     view.sync_for_test(&mut doc).expect("the source tint went");
     assert!(
         tinted(&view, &doc, a, SELECTION_HIGHLIGHT),

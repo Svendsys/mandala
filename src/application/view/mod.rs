@@ -121,6 +121,12 @@ pub(crate) struct MapView {
     /// The nodes a reparent or a connect moves or links, while either
     /// mode is active.
     source_targets: Vec<NodeId>,
+    /// The mode last followed ([`Self::follow_mode`]). Native, with the
+    /// two modes.
+    #[cfg(not(target_arch = "wasm32"))]
+    mode: crate::application::app::InteractionMode,
+    /// The active mode's status line, drawn over the document's.
+    mode_line: Option<String>,
     /// What a rubber band covers while one is out — the highlight's
     /// targets, not a preview of any document change: the highlight
     /// follows them instead of the selection, whose highlight stands down
@@ -201,6 +207,9 @@ impl MapView {
             hover_target: None,
             sources: Overlay::tint(SOURCE_HIGHLIGHT),
             source_targets: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            mode: Default::default(),
+            mode_line: None,
             band_targets: None,
             feed: Vec::new(),
             shown_status: None,
@@ -312,15 +321,17 @@ impl MapView {
         Ok(journal.close(&self.chrome))
     }
 
-    /// Hand the document's status line to the renderer when it is not the
-    /// one last shown. Returns whether it changed.
+    /// Hand the status line to the renderer when it is not the one last
+    /// shown: the active mode's (`follow_mode`), or else the document's.
+    /// Returns whether it changed.
     fn show_status(&mut self, doc: &MindMapDocument, renderer: &mut Renderer) -> bool {
-        let status = doc.status();
+        let status = self.mode_line.as_deref().or(doc.status());
         if status == self.shown_status.as_deref() {
             return false;
         }
-        self.shown_status = status.map(str::to_string);
-        renderer.set_mode_status_text(status.map(str::to_string));
+        let status = status.map(str::to_string);
+        renderer.set_mode_status_text(status.clone());
+        self.shown_status = status;
         true
     }
 
@@ -382,13 +393,25 @@ impl MapView {
         Some(Pass { changes, stamps })
     }
 
-    /// Tint `sources` as the nodes a reparent or a connect moves or links,
-    /// in place of the selection's tint, or tint none with an empty list.
-    /// Takes effect at the next [`Self::sync`]. Native, with the two
-    /// modes.
+    /// Follow the interaction mode: a reparent's or a connect's sources
+    /// wear the source tint in place of the selection's, and its status
+    /// line (`InteractionMode::status_line`) is drawn over the
+    /// document's; any other mode has neither, and no target tint. Both
+    /// are derived from the mode, so no document change can erase them
+    /// while it lasts. Takes effect at the next [`Self::sync`]; the frame
+    /// calls it before its sync, whatever changed the mode. O(1) when the
+    /// mode is the one last followed. Native, with the two modes.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn set_sources(&mut self, sources: Vec<NodeId>) {
-        self.source_targets = sources;
+    pub(crate) fn follow_mode(&mut self, mode: &crate::application::app::InteractionMode) {
+        if self.mode == *mode {
+            return;
+        }
+        self.mode = mode.clone();
+        self.source_targets = mode.sources().to_vec();
+        self.mode_line = mode.status_line();
+        if self.source_targets.is_empty() {
+            self.hover_target = None;
+        }
     }
 
     /// The nodes tinted as a mode's sources.
