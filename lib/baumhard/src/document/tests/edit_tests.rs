@@ -424,6 +424,47 @@ fn test_an_animation_and_its_delay_are_at_most_a_minute() {
     assert_eq!(path, "edits[0].animate.ms");
 }
 
+/// **A reach, a target, an easing and a snap are named as the file
+/// spells them** (review of #331): each `spelling` reads back as itself.
+///
+/// Control: spelled as `Debug` spells them (`SelfNode`), none read.
+#[test]
+fn test_each_spelling_reads_back_as_itself() {
+    use crate::document::edit::{Easing, Reach, Target};
+    use crate::engine::interpolate::Snap;
+    use Reach::*;
+    for reach in [SelfNode, Children, Descendants, Subtree, Parent, Siblings] {
+        let json = format!(
+            r#"{{"id":"e","name":"E","reach":"{}","target":"node","mutations":[]}}"#,
+            reach.spelling()
+        );
+        assert_eq!(edit(&json).reach, reach);
+    }
+    use Target::*;
+    for target in [Node, Sections, Spans, Frame, Rings, Connector, Links, Labels] {
+        let json = format!(
+            r#"{{"id":"e","name":"E","reach":"self","target":"{}","mutations":[]}}"#,
+            target.spelling()
+        );
+        assert_eq!(edit(&json).target, target);
+    }
+    use Easing::*;
+    for (easing, snap) in [
+        (Linear, Snap::Start),
+        (EaseIn, Snap::End),
+        (EaseOut, Snap::Start),
+        (EaseInOut, Snap::End),
+    ] {
+        let json = format!(
+            r#"{{"id":"e","name":"E","reach":"self","target":"node","mutations":[],"animate":{{"ms":1,"easing":"{}","snap":"{}"}}}}"#,
+            easing.spelling(),
+            snap.spelling()
+        );
+        let animate = edit(&json).animate.expect("animated");
+        assert_eq!((animate.easing, animate.snap), (easing, snap));
+    }
+}
+
 #[test]
 fn test_an_omitted_snap_reads_as_end() {
     use crate::engine::interpolate::Snap;

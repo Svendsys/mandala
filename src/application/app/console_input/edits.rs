@@ -7,7 +7,7 @@
 //! (`dispatch::families::edits::run_edit`), on the app clock.
 
 use baumhard::arena::NodeId;
-use baumhard::document::edit::{EditDef, Reach, Target};
+use baumhard::document::edit::EditDef;
 use baumhard::document::ids::{Document, NodeIdent};
 use baumhard::document::writer::ChangeSource;
 use baumhard::engine::anchor::Anchors;
@@ -65,7 +65,7 @@ pub(super) fn take(ctx: &mut InputHandlerContext<'_>, line: &EditLine) -> ExecRe
                 let mut lines = vec![
                     format!("{} — {}", def.id, def.name),
                     format!("  from the {} tier", tier.name()),
-                    format!("  {} · {}", reach_name(def.reach), target_name(def.target)),
+                    format!("  {} · {}", def.reach.spelling(), def.target.spelling()),
                 ];
                 if !def.description.is_empty() {
                     lines.push(format!("  {}", def.description));
@@ -121,8 +121,8 @@ fn inspect(
         format!("{} — {} ({})", def.id, def.name, tier.name()),
         format!(
             "reach: {} · target: {}",
-            reach_name(def.reach),
-            target_name(def.target)
+            def.reach.spelling(),
+            def.target.spelling()
         ),
         if elements.is_empty() {
             "reached: none — select a node".to_string()
@@ -184,21 +184,10 @@ fn element_name(doc: &Document, id: NodeId) -> String {
 
 /// How an edit animates, in words.
 fn animation(def: &EditDef) -> String {
-    use baumhard::document::edit::Easing;
-    use baumhard::engine::interpolate::Snap;
     let Some(a) = def.animate else {
         return "instant".to_string();
     };
-    let easing = match a.easing {
-        Easing::Linear => "linear",
-        Easing::EaseIn => "ease_in",
-        Easing::EaseOut => "ease_out",
-        Easing::EaseInOut => "ease_in_out",
-    };
-    let snap = match a.snap {
-        Snap::Start => "start",
-        Snap::End => "end",
-    };
+    let (easing, snap) = (a.easing.spelling(), a.snap.spelling());
     let delay = if a.delay_ms > 0 {
         format!(" after {} ms", a.delay_ms)
     } else {
@@ -208,32 +197,6 @@ fn animation(def: &EditDef) -> String {
         "animates over {} ms{delay}, {easing}, snapping at the {snap}",
         a.ms
     )
-}
-
-/// A reach as the file spells it.
-fn reach_name(reach: Reach) -> &'static str {
-    match reach {
-        Reach::SelfNode => "self",
-        Reach::Children => "children",
-        Reach::Descendants => "descendants",
-        Reach::Subtree => "subtree",
-        Reach::Parent => "parent",
-        Reach::Siblings => "siblings",
-    }
-}
-
-/// A target as the file spells it.
-fn target_name(target: Target) -> &'static str {
-    match target {
-        Target::Node => "node",
-        Target::Sections => "sections",
-        Target::Spans => "spans",
-        Target::Frame => "frame",
-        Target::Rings => "rings",
-        Target::Connector => "connector",
-        Target::Links => "links",
-        Target::Labels => "labels",
-    }
 }
 
 #[cfg(test)]

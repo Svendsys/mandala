@@ -403,6 +403,44 @@ impl EditDef {
     }
 }
 
+/// How an edits file spells `dto`: the name its `serde` form writes. One
+/// spelling, the file's, for every place that names a reach, a target,
+/// an easing or a snap to a person. O(1).
+fn spelled<D: serde::Serialize>(dto: D) -> String {
+    match serde_json::to_value(dto) {
+        Ok(serde_json::Value::String(name)) => name,
+        other => format!("{other:?}"),
+    }
+}
+
+impl Reach {
+    /// As an edits file spells it: `self`, `children`, … O(1).
+    pub fn spelling(self) -> String {
+        spelled(ReachDto::from(self))
+    }
+}
+
+impl Target {
+    /// As an edits file spells it: `node`, `sections`, … O(1).
+    pub fn spelling(self) -> String {
+        spelled(TargetDto::from(self))
+    }
+}
+
+impl Easing {
+    /// As an edits file spells it: `linear`, `ease_in`, … O(1).
+    pub fn spelling(self) -> String {
+        spelled(EasingDto::from(self))
+    }
+}
+
+impl Snap {
+    /// As an edit's `animate.snap` spells it: `start` or `end`. O(1).
+    pub fn spelling(self) -> String {
+        spelled(SnapDto::from(self))
+    }
+}
+
 impl From<ReachDto> for Reach {
     fn from(dto: ReachDto) -> Self {
         match dto {
