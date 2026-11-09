@@ -23,6 +23,9 @@ pub mod readable_tests;
 /// The exact work removals of #309, each pinned by its counter.
 #[cfg(test)]
 mod removal_tests;
+/// A size-only reshape lays the run's shaping out again (#304).
+#[cfg(test)]
+mod reshape_tests;
 /// A `Repeat` ring's work budget: past it, and what it holds back.
 #[cfg(test)]
 mod ring_budget_tests;

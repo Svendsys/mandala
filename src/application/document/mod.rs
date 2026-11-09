@@ -83,9 +83,12 @@ pub struct MindMapDocument {
     /// The one open transaction (D28), or `None`. Opened by
     /// [`Self::begin`]; V1-C7 and V1-C8 stage into it and end it.
     transaction: Option<Transaction>,
-    /// The status line the last refusal left, until the next change the
-    /// writer accepts.
+    /// The status line the last refusal or decline left, until the next
+    /// change the writer accepts.
     status: Option<&'static str>,
+    /// What Copy and Cut last took from this map (`clipboard`). Kept with
+    /// the document because a copied section names its theme and faces.
+    pub clipboard: Option<crate::application::clipboard::Clipboard>,
     /// Whether this is [`Self::load_failure_placard`]'s document.
     load_failure: bool,
     /// Which document of the process this is ([`Self::generation`]).
@@ -106,6 +109,7 @@ impl MindMapDocument {
             selection: Selection::new(),
             transaction: None,
             status: None,
+            clipboard: None,
             load_failure: false,
             generation: NEXT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
@@ -234,13 +238,6 @@ impl MindMapDocument {
     /// declared by `source`, as one history entry. A refusal is
     /// reported ([`Self::report_refusal`]) and returned; an accepted
     /// change clears the status line.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the editing families V1-C4..C8, D1 and D3 apply through it"
-        )
-    )]
     pub fn apply(&mut self, req: EditRequest, source: ChangeSource) -> Result<Revision, ApplyError> {
         let label = req.label.clone();
         match self.doc.apply(req, source) {
@@ -283,10 +280,16 @@ impl MindMapDocument {
         }
     }
 
-    /// The status line a refusal left, if the writer has accepted nothing
-    /// since. O(1).
+    /// The status line a refusal or a decline left, if the writer has
+    /// accepted nothing since. O(1).
     pub fn status(&self) -> Option<&'static str> {
         self.status
+    }
+
+    /// Dismiss the status line a refusal or a decline left: what
+    /// `ExitMode` does. O(1).
+    pub fn dismiss_status(&mut self) {
+        self.status = None;
     }
 
     /// The one report of a refused change (D28): a `warn!` naming the
@@ -301,6 +304,14 @@ impl MindMapDocument {
         if *error == ApplyError::TransactionOpen {
             self.status = Some(TRANSACTION_OPEN_STATUS);
         }
+    }
+
+    /// Decline an action that has nothing to ask the writer for — a
+    /// connector alone, which cannot be deleted — and say `why` on the
+    /// status line, as a refusal does. Logged at `debug!`.
+    pub fn decline(&mut self, why: &'static str) {
+        log::debug!("document: declined: {why}");
+        self.status = Some(why);
     }
 
     /// Undo the newest history entry. With a transaction open, the
@@ -383,7 +394,7 @@ impl MindMapDocument {
 
     /// Apply `req` through the writer exactly as [`Self::apply`] does,
     /// for the tests that drive the history without an editing family
-    /// (the families that build requests arrive in V1-C4..C8).
+    /// (the families build their own requests from the selection).
     #[cfg(test)]
     pub(crate) fn apply_for_test(&mut self, req: EditRequest) -> Result<Revision, ApplyError> {
         self.apply(req, ChangeSource::Action)

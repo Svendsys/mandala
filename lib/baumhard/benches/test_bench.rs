@@ -50,6 +50,7 @@ use baumhard::font::tests::metric_cache_tests::*;
 use baumhard::font::tests::metrics_tests::*;
 use baumhard::font::tests::name_rules_tests::*;
 use baumhard::font::tests::ornament_tests::*;
+use baumhard::font::tests::shape_work_tests::*;
 use baumhard::gfx_structs::tests::area_tests::*;
 use baumhard::gfx_structs::tests::builder_tests::*;
 use baumhard::gfx_structs::tests::bvh_descent_tests::*;
@@ -1140,6 +1141,59 @@ fn criterion_benchmark(c: &mut Criterion) {
         "each_ornament_fallback_names_its_faces_family_at_every_weight",
         |b| b.iter(do_each_ornament_fallback_names_its_faces_family_at_every_weight),
     );
+    // The patched font fallback (#304): every oracle text, and a long
+    // word of each, shaped in five faces with both merges; and one word
+    // of letters pinned to a face that holds none of them, shaped with
+    // the published merge at two lengths and with the linear one at
+    // three, after a warm-up.
+    c.bench_function("the_fallback_merge_lays_out_what_the_published_merge_did", |b| {
+        b.iter(do_the_fallback_merge_lays_out_what_the_published_merge_did)
+    });
+    c.bench_function(
+        "a_word_its_face_lacks_costs_fallback_work_linear_in_its_length",
+        |b| b.iter(do_a_word_its_face_lacks_costs_fallback_work_linear_in_its_length),
+    );
+    // A code point no face draws, in a font system of its own built for
+    // each call: asked of its faces once, then kept; a face loaded into
+    // such a font system draws what none drew; and a hundred of them in a
+    // run of the global font system, shaped with their answer kept.
+    c.bench_function("a_code_point_no_face_draws_is_asked_of_the_faces_once", |b| {
+        b.iter(do_a_code_point_no_face_draws_is_asked_of_the_faces_once)
+    });
+    c.bench_function("a_face_added_to_the_database_draws_what_no_face_drew", |b| {
+        b.iter(do_a_face_added_to_the_database_draws_what_no_face_drew)
+    });
+    // The seeded random differential: 300 random texts, faces, weights
+    // and slants, each shaped with both merges.
+    c.bench_function("a_seeded_random_differential_finds_no_merge_divergence", |b| {
+        b.iter(do_a_seeded_random_differential_finds_no_merge_divergence)
+    });
+    // The outline cache keeps each entry for its font system: one glyph
+    // id of one face id measured in two font systems of their own, twice
+    // each.
+    c.bench_function("two_font_systems_never_answer_each_others_outlines", |b| {
+        b.iter(do_two_font_systems_never_answer_each_others_outlines)
+    });
+    // The patched merge's and early stop's guards, on fixtures built of
+    // shaped glyphs (and a font system with no faces).
+    c.bench_function(
+        "a_run_the_merge_cannot_reason_about_is_merged_as_published",
+        |b| b.iter(do_a_run_the_merge_cannot_reason_about_is_merged_as_published),
+    );
+    c.bench_function(
+        "a_fallback_the_merge_cannot_reason_about_is_merged_as_published",
+        |b| b.iter(do_a_fallback_the_merge_cannot_reason_about_is_merged_as_published),
+    );
+    c.bench_function("the_early_stop_needs_every_missing_entry_matched", |b| {
+        b.iter(do_the_early_stop_needs_every_missing_entry_matched)
+    });
+    c.bench_function(
+        "the_early_stop_leaves_a_cluster_of_several_code_points_to_the_faces",
+        |b| b.iter(do_the_early_stop_leaves_a_cluster_of_several_code_points_to_the_faces),
+    );
+    c.bench_function("a_hundred_contiguous_undrawn_code_points_cost_one_shaping", |b| {
+        b.iter(do_a_hundred_contiguous_undrawn_code_points_cost_one_shaping)
+    });
     c.bench_function("measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing", |b| {
         b.iter(do_measure_glyph_ink_bounds_tibetan_svasti_has_sidebearing)
     });
@@ -1821,6 +1875,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("writer_makes_one_entry_of_a_request_with_many_anchors", |b| {
         b.iter(do_writer_makes_one_entry_of_a_request_with_many_anchors)
     });
+    c.bench_function("document_reads_nothing_a_change_removed", |b| {
+        b.iter(do_document_reads_nothing_a_change_removed)
+    });
     c.bench_function("writer_dirty_is_the_saved_state_not_a_count", |b| {
         b.iter(do_writer_dirty_is_the_saved_state_not_a_count)
     });
@@ -1918,6 +1975,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("document_compose_reparents", |b| {
         b.iter(do_document_compose_reparents)
+    });
+    c.bench_function("document_compose_removes_elements", |b| {
+        b.iter(do_document_compose_removes_elements)
+    });
+    c.bench_function("document_compose_connects", |b| {
+        b.iter(do_document_compose_connects)
+    });
+    c.bench_function("document_compose_replaces_spans", |b| {
+        b.iter(do_document_compose_replaces_spans)
     });
     c.bench_function("document_compose_switches_link_kind", |b| {
         b.iter(do_document_compose_switches_link_kind)

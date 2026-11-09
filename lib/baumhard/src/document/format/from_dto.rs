@@ -699,16 +699,11 @@ impl Builder {
         key: &'static str,
         color: &crate::document::format::spelling::ColorDto,
     ) -> LoadResult<ColorRef> {
-        use crate::document::format::spelling::{ColorDto, PaletteFieldDto};
-        use crate::document::values::PaletteField;
+        use crate::document::format::spelling::ColorDto;
         self.key(key, |b| match color {
             ColorDto::Hex(hex) => Ok(ColorRef::Rgba(Rgba(hex.0))),
             ColorDto::Var(name) => b.var(name).map(ColorRef::Var),
-            ColorDto::Palette(field) => Ok(ColorRef::Palette(match field {
-                PaletteFieldDto::Frame => PaletteField::Frame,
-                PaletteFieldDto::Text => PaletteField::Text,
-                PaletteFieldDto::Title => PaletteField::Title,
-            })),
+            ColorDto::Palette(field) => Ok(ColorRef::Palette((*field).into())),
         })
     }
 

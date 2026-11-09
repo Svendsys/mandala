@@ -14,9 +14,10 @@
 
 use crate::application::platform::window::{CursorIcon, PhysicalPosition};
 
+use super::dispatch::families::structure::valid_reparent_target;
 use super::input_context::InputHandlerContext;
 use super::shell::Shell;
-use super::{ClickHit, DragState, HeldInput};
+use super::{ClickHit, DragState, HeldInput, InteractionMode};
 use crate::application::common::RenderDecree;
 use crate::application::keybinds::MouseGesture;
 use crate::application::platform::input::MouseButton;
@@ -48,9 +49,29 @@ pub(super) fn handle_cursor_moved(
             shell.set_cursor(icon);
             *ctx.cursor_icon_last = icon;
         }
+        follow_target(ctx, cursor);
     }
 
     advance_drag_state(ctx, prev_pos, cursor);
+}
+
+/// In reparent or connect mode, tint the node under the cursor when the
+/// mode could land on it — for a reparent, not a source nor one below a
+/// source. The next frame's sync stamps it (`MapView::set_hover_target`).
+fn follow_target(ctx: &mut InputHandlerContext<'_>, cursor: (f64, f64)) {
+    let sources = ctx.interaction_mode.sources();
+    let (Some(doc), Some(view)) = (ctx.document.as_ref(), ctx.view.as_mut()) else {
+        return;
+    };
+    let target = if sources.is_empty() {
+        None
+    } else {
+        let canvas_pos = ctx.renderer.screen_to_canvas(cursor.0 as f32, cursor.1 as f32);
+        let reparenting = matches!(ctx.interaction_mode, InteractionMode::Reparent { .. });
+        view.node_at(canvas_pos)
+            .filter(|&node| !reparenting || valid_reparent_target(doc.doc(), sources, node))
+    };
+    view.set_hover_target(target);
 }
 
 /// Whether the cursor at `cursor` (surface pixels) is over a node whose

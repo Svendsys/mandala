@@ -61,14 +61,11 @@ pub(super) fn surface_of(renderer: &Renderer, point: Point) -> Surface {
 /// The funnel's verdict in the protocol's vocabulary. A refusal keeps
 /// its reason, which `act.action` returns (#194). One body for both
 /// targets' command targets, so the browser's `act.action` reports a
-/// refusal the way native's does — once it has one: `Refused` is
-/// native-only, as its constructors are, so the browser's match has no
-/// arm for it until a browser arm declines for a stated reason.
+/// refusal the way native's does.
 pub(super) fn action_outcome(outcome: DispatchOutcome) -> ActionOutcome {
     match outcome {
         DispatchOutcome::Handled => ActionOutcome::Handled,
         DispatchOutcome::Unhandled => ActionOutcome::Unhandled,
-        #[cfg(not(target_arch = "wasm32"))]
         DispatchOutcome::Refused(reason) => ActionOutcome::Refused(reason),
     }
 }

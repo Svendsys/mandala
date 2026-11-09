@@ -2,25 +2,24 @@
 
 //! Per-`(face, font_size_pt, grapheme)` measured glyph metrics.
 //!
-//! Replaces the static `MONOSPACE_ADVANCE_RATIO = 0.6` /
-//! `BORDER_APPROX_CHAR_WIDTH_FRAC = 0.6` approximations that the
-//! border-rail math used for "how wide is one cluster". Those
-//! approximations were calibrated against LiberationSans light
-//! box-drawing chars; on every other glyph (`◆`, `━`, `┃`, `=`,
-//! `#`, etc.) and on every other face the approximation diverged
-//! from what cosmic-text actually shaped, producing the
-//! alignment + tiling defects a ring of glyphs shows when its
-//! measurements disagree.
+//! Replaces the static 0.6-of-the-font-size approximations
+//! (`MONOSPACE_ADVANCE_RATIO`, and the old border model's char-width
+//! fraction) that the border-rail math used for "how wide is one
+//! cluster". Those approximations were calibrated against
+//! LiberationSans light box-drawing chars; on every other glyph
+//! (`◆`, `━`, `┃`, `=`, `#`, etc.) and on every other face the
+//! approximation diverged from what cosmic-text actually shaped,
+//! producing the alignment and tiling defects a ring of glyphs shows
+//! when its measurements disagree.
 //!
 //! The fix is structural: a callsite that asks "how wide will this
 //! glyph end up?" or "how tall will this row of glyphs be?" with a
 //! face in scope routes through this cache, which returns the
 //! value cosmic-text actually uses when shaping. Callers with no
-//! face, and the border-extent estimates that skip the face by
-//! choice (background padding, the clip AABB), still use the
-//! face-independent estimates — `metrics::monospace_advance` and
-//! the border's `BORDER_APPROX_CHAR_WIDTH_FRAC` — so this is the
-//! measured answer where a face is asked for, not every answer.
+//! face, and estimates that skip the face by choice, use a
+//! face-independent estimate such as `metrics::monospace_advance`
+//! instead, so this is the measured answer where a face is asked
+//! for, not every answer.
 //!
 //! ## Cache discipline
 //!
@@ -236,8 +235,8 @@ pub fn glyph_advance(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> f32
         return v;
     }
     // Miss: warm the font lazy-statics BEFORE acquiring so a
-    // `Some(face)` pin lookup under the guard can't re-enter
-    // `load_fonts` (see `ensure_warm`), then acquire through the
+    // `Some(face)` lookup under the guard can't re-enter the lock to
+    // build `FAMILY_INDEX` (see `ensure_warm`), then acquire through the
     // helper (the lock is private; there is no raw `.write()`) and
     // shape. A caller that already holds the guard panics here at once,
     // naming both sites, rather than waiting on itself.
@@ -300,8 +299,8 @@ pub fn glyph_ink(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> InkExte
     if let Some(v) = probe(&INK_EXTENT_CACHE, face, size_pt, grapheme) {
         return v;
     }
-    // Warm before acquiring (see `ensure_warm`) so a `Some(face)` pin
-    // lookup under the guard can't re-enter `load_fonts`.
+    // Warm before acquiring (see `ensure_warm`) so a `Some(face)`
+    // lookup under the guard can't re-enter the lock.
     ensure_warm();
     let mut guard = acquire_font_system_write("metric_cache::glyph_ink");
     glyph_ink_with(&mut guard, face, size_pt, grapheme)

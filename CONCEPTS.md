@@ -1239,6 +1239,25 @@ holds the glyph still draws it; an unpinned span's default family is a
 host face where the host has it (#228). See `format/fonts.md`
 "Ornament fallback".
 
+**The shaper is patched** (#304, `vendor/cosmic-text`). cosmic-text
+0.19.0 is vendored and every crate's `cosmic-text` is pointed at it by
+the root manifest's `[patch.crates-io]` (and the fuzz crate's, and the
+wasm32 probe's), so the app, glyphon and baumhard share one copy. The
+patch, marked `MANDALA PATCH` in its `src/shape.rs`: the font
+fallback's merge of a fallback face's glyphs is linear in the run (the
+published one was quadratic in a run the first face lacks: one 262 KB
+span took 596 s to project, #243); a code point no face draws is asked
+of the faces once per font system, and a run holding it then tries no
+fallback face for it; a line can take another's shaping at other sizes
+(`BufferLine::adopt_shape`), so a rescale lays out without shaping; and
+the shaper counts its work per thread (`cosmic_text::shape_work`:
+shapings, bytes shaped, fallback rounds, merge steps, coverage probes),
+which is how tests show cost without a clock. `set_reference_merge`
+selects the published merge on a thread, for the tests that hold the
+patch to it glyph for glyph. `util::manifests` holds the patch table to
+its rule: the members' version, a path in the repository, the same in
+every workspace that builds baumhard.
+
 `lib/baumhard/src/font/`. Two bridges, one
 shared private resolver, both live in `attrs.rs`:
 
@@ -1592,7 +1611,14 @@ element.
   its `span` then lays along its halves.
   Text too long is cut to the longest prefix, in reading order, that
   fits — a right-to-left run keeps its beginning — and never
-  overlaps.
+  overlaps. A rescale — `Fit`'s probes, R27's sizing of a frame's
+  lines — shapes nothing (#304): the rescaled buffer takes the run's
+  shaping and is only laid out at the new size, glyph for glyph what
+  shaping it again lays out (`flow::shape::resized_buffer`); only a
+  filler, or text holding a tab, is shaped again. An ornament's inks
+  are read off its outlines once per glyph and size, and kept
+  (`fonts::cached_outline_bounds`, per thread, used under the font
+  lock's guard).
 - **Hit mapping.** Every glyph names its span and its bytes of that
   span's text (`GlyphMetrics`, `ShapedBox::glyph_spans`); a filler
   glyph names `FILLER_SPAN`. No paragraph separator is drawn. A box
@@ -1681,6 +1707,16 @@ the layers to learn what the document is, and nothing flows back.
   holds the index to it, comparing the incremental layers with a full
   projection after every edit of a corpus of generated maps and the
   format's fixtures.
+- **One shaping per key** (`projection::shapes`, #304, ruling B7.4).
+  The projector's shaping cache holds, by full shape key (texts, styles
+  with sizes in points, and a box's minimum size and alignment, over the
+  font system's face set), weak references to the key and the shaping
+  some unit holds: N units with one key make one shaping and share its
+  `Arc`, and hold one key `Arc` (a unit whose key is found takes the
+  entry's), so a share lasts as long as any sharer. The cache keeps nothing alive, neither a shaping nor a key and
+  its text, and holds at most about twice as many entries as there are
+  live shapings, a dead one two weak pointers. A hit reads no font, so
+  it takes no lock.
 - **`Hit`** (`Projector::hit`): the layers top-down through each one's
   glyph BVH — a path run only where one of its glyphs is drawn — to the
   element and, through the run's glyph-to-span mapping, the span; then
@@ -1894,11 +1930,16 @@ on `InitState`.
 
 ### `InteractionMode`
 
-What the user is doing at the canvas level. One variant today,
-`Default` — a click selects, a drag pans, Shift+drag draws a rubber
-band. The resize and node-edit modes return with V1-C7 (#248) and
-V1-C8 (#249), and reparent and connect with V1-C4 (#245); until then
-their Actions answer `unhandled`, naming their owner.
+What the user is doing at the canvas level. `Default` — a click
+selects, a drag pans, Shift+drag draws a rubber band — and the two
+target-picking modes, `Reparent` and `Connect` (native), which hold
+their source nodes: the sources wear the view's source tint in place
+of the selection's, the status line says what the mode does (as on
+`main`), the pointer's valid target is tinted with the view's target
+overlay, and the next click moves the sources under it or links them
+to it. The resize and node-edit modes return with V1-C7
+(#248) and V1-C8 (#249); until then their Actions answer `unhandled`,
+naming their owner.
 
 `src/application/app/interaction_mode.rs`.
 
@@ -2938,14 +2979,19 @@ on-disk file can raise its own tier.
 ### Clipboard
 
 The OS clipboard layer: native backed by `arboard`, WASM stubbed
-pending async-clipboard integration. It carries plain text.
+pending async-clipboard integration. It carries plain text. Beside it,
+the document holds the app's own clipboard: the text the OS was given,
+and, for a copied section, its spans and style, which a paste uses
+while the OS still holds that text. On the browser, the app's
+clipboard is the only one.
 
-`src/application/clipboard.rs`. What a copy, a cut and a paste do with
-the selection is V1-C4's (#245): the Actions answer `unhandled`, naming
-it, until then. Failures on native are silent by construction — an
-interactive path must not panic, and a clipboard that is merely
-unavailable is not worth a log line per keystroke — and the WASM stubs
-say so at `log::debug!`.
+`src/application/clipboard.rs`: what a copy, a cut and a paste take
+from and give to each kind of selected element — a section, part of
+one, a node, a path, a label, a portal end — each cut and paste one
+request on the document's writer. Failures on native are silent by
+construction — an interactive path must not panic, and a clipboard
+that is merely unavailable is not worth a log line per keystroke — and
+the WASM stubs say so at `log::debug!`.
 
 ### `mandalactl` CLI
 

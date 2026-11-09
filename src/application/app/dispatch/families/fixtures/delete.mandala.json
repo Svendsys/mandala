@@ -1,0 +1,28 @@
+{
+  "format": 1,
+  "name": "Structure",
+  "nodes": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "sections": [{"spans": [{"text": "A"}]}]
+    },
+    {
+      "id": 3,
+      "parent": 1,
+      "position": [300.0, 200.0],
+      "sections": [{"spans": [{"text": "C"}]}]
+    },
+    {
+      "id": 5,
+      "position": [0.0, 400.0],
+      "sections": [{"spans": [{"text": "E"}]}],
+      "links": [{"to": 3, "kind": "line"}]
+    },
+    {
+      "id": 6,
+      "position": [0.0, 600.0],
+      "sections": [{"spans": [{"text": "F"}]}]
+    }
+  ]
+}

@@ -678,34 +678,29 @@ mod tests {
     /// iteration order a process chooses: the document's arena, the
     /// projector's layers and the dump's walk are all in document order.
     ///
+    /// Nothing is projected first, and nothing needs to be: shaping is a
+    /// function of the document, the font database and the settings
+    /// alone (#323). Between the two runs every other shipped map is
+    /// projected, the shaping that, before #323, moved testament's bold
+    /// "Lord God" by 2.24 canvas units: the second run must dump what the
+    /// first did whatever was shaped in between, here or on another
+    /// thread. That a map lays out alike first in a fresh process is
+    /// `lib/baumhard/tests/font_state.rs`'s to hold.
+    ///
+    /// **Not this suite's #323 gate.** With the lazy registration #323
+    /// removed planted again, this test is red only where its first run
+    /// is the first shaping its process makes, as when it is run alone. In
+    /// the whole test binary, other tests on other threads have registered
+    /// the compiled faces before it runs, so both runs shape with them and
+    /// it passes (review 5821569167). The deterministic #323 gate inside
+    /// `./test.sh` is `lib/baumhard/tests/font_state.rs`, which lays each
+    /// map in a child process of its own.
+    ///
     /// Controls: consecutive steps dump differently, so each comparison
     /// is of a reading that depends on the script; and the dumps hold the
     /// map, not two empty replies.
-    ///
-    /// **Weakened until #323 (V1-B21) lands, and order-sensitive until
-    /// then.** Shaping is not yet a function of the document alone:
-    /// projecting a map that names other families (any of `maps/demos/`)
-    /// changes how a later testament load measures a bold span ("Lord
-    /// God": 377.77 against 375.53 canvas units), in one thread and
-    /// across threads. So every shipped map is projected once first, to
-    /// settle the faces those maps name. That does not close the race:
-    /// libtest runs other tests on other threads between the two runs,
-    /// and one that shapes a family no shipped map names can still move
-    /// the font state mid-comparison. A red run of this test is read as
-    /// #323, not as a regression, until #323 reverts the priming.
     #[test]
     fn test_the_same_stepped_script_twice_dumps_byte_identical_scenes() {
-        for dir in ["maps", "maps/demos"] {
-            let root = baumhard::util::doc_fixtures::repo_path(dir);
-            for entry in std::fs::read_dir(&root).expect("the maps list") {
-                let path = entry.expect("an entry").path();
-                if path.to_string_lossy().ends_with(".mandala.json") {
-                    let doc = MindMapDocument::load(path.to_str().expect("UTF-8"), 50)
-                        .expect("a shipped map loads");
-                    let _settled = MapView::for_test(&doc);
-                }
-            }
-        }
         let all = Kinds {
             nodes: true,
             paths: true,
@@ -740,6 +735,38 @@ mod tests {
             dumps
         };
         let first = run();
+        let mut between = Vec::new();
+        for dir in ["maps/demos", "maps"] {
+            let root = baumhard::util::doc_fixtures::repo_path(dir);
+            for entry in std::fs::read_dir(&root).expect("the maps list") {
+                let path = entry.expect("an entry").path();
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                if name.ends_with(".mandala.json") && name != "testament.mandala.json" {
+                    let doc = MindMapDocument::load(path.to_str().expect("UTF-8"), 50)
+                        .expect("a shipped map loads");
+                    let _projected = MapView::for_test(&doc);
+                    between.push(name);
+                }
+            }
+        }
+        between.sort();
+        assert_eq!(
+            between,
+            [
+                "blake.mandala.json",
+                "dickinson.mandala.json",
+                "ecclesiastes.mandala.json",
+                "frames.mandala.json",
+                "palette_cascade.mandala.json",
+                "stress_long_edges.mandala.json",
+                "theme_demo.mandala.json",
+            ],
+            "precondition: every other shipped map is projected between the runs"
+        );
         let second = run();
         assert!(
             first[0].len() > 10_000,

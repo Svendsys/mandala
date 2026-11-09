@@ -79,7 +79,7 @@ use crate::application::document::MindMapDocument;
 use crate::application::renderer::{LayerRenderer, Renderer};
 
 use self::chrome::{ChromeBuilder, PassChanges};
-use self::overlay::{Overlay, OverlayJournals, SELECTION_HIGHLIGHT};
+use self::overlay::{Overlay, OverlayJournals, SELECTION_HIGHLIGHT, SOURCE_HIGHLIGHT, TARGET_HIGHLIGHT};
 
 /// The view of one open map. See the [module docs](self).
 pub(crate) struct MapView {
@@ -109,6 +109,24 @@ pub(crate) struct MapView {
     /// The selection tint, stamped on the selection — or, while a rubber
     /// band is out, on what it covers (`band_targets`).
     highlight: Overlay,
+    /// The reparent and connect target tint, stamped on
+    /// [`Self::hover_target`].
+    hover: Overlay,
+    /// The node a reparent or a connect would land on, while the pointer
+    /// is over a valid one in either mode.
+    hover_target: Option<NodeId>,
+    /// The tint of a reparent's or a connect's sources, stamped on
+    /// [`Self::source_targets`] in place of the selection's.
+    sources: Overlay,
+    /// The nodes a reparent or a connect moves or links, while either
+    /// mode is active.
+    source_targets: Vec<NodeId>,
+    /// The mode last followed ([`Self::follow_mode`]). Native, with the
+    /// two modes.
+    #[cfg(not(target_arch = "wasm32"))]
+    mode: crate::application::app::InteractionMode,
+    /// The active mode's status line, drawn over the document's.
+    mode_line: Option<String>,
     /// What a rubber band covers while one is out — the highlight's
     /// targets, not a preview of any document change: the highlight
     /// follows them instead of the selection, whose highlight stands down
@@ -123,7 +141,7 @@ pub(crate) struct MapView {
     /// The document's status line ([`MindMapDocument::status`]) as the
     /// renderer was last told it, so a sync hands it over only when it
     /// changed.
-    shown_status: Option<&'static str>,
+    shown_status: Option<String>,
 }
 
 impl MapView {
@@ -185,6 +203,13 @@ impl MapView {
             #[cfg(not(target_arch = "wasm32"))]
             band_rect: None,
             highlight: Overlay::tint(SELECTION_HIGHLIGHT),
+            hover: Overlay::tint(TARGET_HIGHLIGHT),
+            hover_target: None,
+            sources: Overlay::tint(SOURCE_HIGHLIGHT),
+            source_targets: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            mode: Default::default(),
+            mode_line: None,
             band_targets: None,
             feed: Vec::new(),
             shown_status: None,
@@ -231,7 +256,8 @@ impl MapView {
             .as_ref()
             .into_iter()
             .flat_map(LayerRenderer::journals_of);
-        renderer.apply_layer_journals(&self.layers, projected.chain(pass.stamps.journals()));
+        let stamped = pass.stamps.iter().flat_map(OverlayJournals::journals);
+        renderer.apply_layer_journals(&self.layers, projected.chain(stamped));
         if let Some(changes) = &pass.changes {
             renderer.set_background(resolve_background(doc.doc().tree(), &mut ()).0);
             if let Some(journal) = self.follow_chrome(changes, doc) {
@@ -295,15 +321,17 @@ impl MapView {
         Ok(journal.close(&self.chrome))
     }
 
-    /// Hand the document's status line to the renderer when it is not the
-    /// one last shown. Returns whether it changed.
+    /// Hand the status line to the renderer when it is not the one last
+    /// shown: the active mode's (`follow_mode`), or else the document's.
+    /// Returns whether it changed.
     fn show_status(&mut self, doc: &MindMapDocument, renderer: &mut Renderer) -> bool {
-        let status = doc.status();
-        if status == self.shown_status {
+        let status = self.mode_line.as_deref().or(doc.status());
+        if status == self.shown_status.as_deref() {
             return false;
         }
+        let status = status.map(str::to_string);
+        renderer.set_mode_status_text(status.clone());
         self.shown_status = status;
-        renderer.set_mode_status_text(status.map(str::to_string));
         true
     }
 
@@ -318,22 +346,80 @@ impl MapView {
             self.projector
                 .update(doc.doc(), &records, &mut self.layers, &mut fonts)
         });
-        let targets: Vec<NodeId> = match &self.band_targets {
+        // One tint per node, by construction: a mode's sources wear their
+        // own instead of the selection's, and the target tint goes only on
+        // a node that wears neither, so no two overlays stamp one run.
+        let MapView {
+            highlight,
+            hover,
+            hover_target,
+            sources,
+            source_targets,
+            band_targets,
+            projector,
+            layers,
+            ..
+        } = self;
+        let mut targets: Vec<NodeId> = match band_targets {
             Some(covered) => covered.clone(),
             None => doc.selection.iter().collect(),
         };
-        if changes.is_none() && targets == self.highlight.targets() {
+        targets.retain(|target| !source_targets.contains(target));
+        let hovered: Option<NodeId> =
+            hover_target.filter(|target| !targets.contains(target) && !source_targets.contains(target));
+        let mut overlays: [(&mut Overlay, &[NodeId]); 3] = [
+            (hover, hovered.as_slice()),
+            (sources, source_targets.as_slice()),
+            (highlight, &targets),
+        ];
+        if changes.is_none() && overlays.iter().all(|(overlay, want)| overlay.targets() == *want) {
             return None;
         }
-        let stamps = self.highlight.update(
-            &targets,
-            changes.as_ref(),
-            doc.doc(),
-            &self.projector,
-            &mut self.layers,
-        );
+        // Every overlay's targets that leave are cleared before any
+        // overlay stamps the ones that came, so a node that passes from
+        // one overlay to another in this pass ends with the second's tint.
+        let mut stamps = Vec::with_capacity(2 * overlays.len());
+        for (overlay, want) in &mut overlays {
+            let kept: Vec<NodeId> = overlay
+                .targets()
+                .iter()
+                .copied()
+                .filter(|t| want.contains(t))
+                .collect();
+            stamps.push(overlay.update(&kept, changes.as_ref(), doc.doc(), projector, layers));
+        }
+        for (overlay, want) in &mut overlays {
+            stamps.push(overlay.update(want, None, doc.doc(), projector, layers));
+        }
         self.feed.extend(records);
         Some(Pass { changes, stamps })
+    }
+
+    /// Follow the interaction mode: a reparent's or a connect's sources
+    /// wear the source tint in place of the selection's, and its status
+    /// line (`InteractionMode::status_line`) is drawn over the
+    /// document's; any other mode has neither, and no target tint. Both
+    /// are derived from the mode, so no document change can erase them
+    /// while it lasts. Takes effect at the next [`Self::sync`]; the frame
+    /// calls it before its sync, whatever changed the mode. O(1) when the
+    /// mode is the one last followed. Native, with the two modes.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn follow_mode(&mut self, mode: &crate::application::app::InteractionMode) {
+        if self.mode == *mode {
+            return;
+        }
+        self.mode = mode.clone();
+        self.source_targets = mode.sources().to_vec();
+        self.mode_line = mode.status_line();
+        if self.source_targets.is_empty() {
+            self.hover_target = None;
+        }
+    }
+
+    /// The nodes tinted as a mode's sources.
+    #[cfg(test)]
+    pub(crate) fn sources(&self) -> &[NodeId] {
+        &self.source_targets
     }
 
     /// Discard a pass's journals once the renderer has applied them.
@@ -341,7 +427,34 @@ impl MapView {
         if let Some(changes) = pass.changes {
             changes.discard(&mut self.layers);
         }
-        pass.stamps.discard(&mut self.layers);
+        for stamps in pass.stamps {
+            stamps.discard(&mut self.layers);
+        }
+    }
+
+    /// The node whose body holds `point`, on the canvas — a path or a
+    /// label drawn over it does not stand in for it
+    /// (`Projector::node_at`): what a reparent or a connect lands on.
+    /// Native, with the two modes.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn node_at(&self, point: Vec2) -> Option<NodeId> {
+        self.projector.node_at(point)
+    }
+
+    /// Tint `target` as the node a reparent or a connect would land on,
+    /// or tint none with `None`; the caller passes only a valid target. A
+    /// target that is selected or a source keeps that tint instead.
+    /// Takes effect at the next [`Self::sync`], which works out whether
+    /// it changed anything. Native, with the two modes.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn set_hover_target(&mut self, target: Option<NodeId>) {
+        self.hover_target = target;
+    }
+
+    /// The node tinted as a reparent's or a connect's target, if any.
+    #[cfg(test)]
+    pub(crate) fn hover_target(&self) -> Option<NodeId> {
+        self.hover_target
     }
 
     /// A view of `doc` with no renderer behind it, for the tests that
@@ -376,7 +489,8 @@ impl MapView {
         });
         let stamped = pass
             .stamps
-            .journals()
+            .iter()
+            .flat_map(OverlayJournals::journals)
             .flat_map(|(layer, journal)| journal.touched().map(move |(id, _)| (layer, id)))
             .collect();
         let chrome = match &pass.changes {
@@ -548,8 +662,8 @@ impl MapView {
 struct Pass {
     /// What the projector wrote, when the document changed.
     changes: Option<LayerChanges>,
-    /// What the overlay re-stamped.
-    stamps: OverlayJournals,
+    /// What the overlays cleared, then what they stamped.
+    stamps: Vec<OverlayJournals>,
 }
 
 /// What [`MapView::sync_for_test`] saw a pass write.

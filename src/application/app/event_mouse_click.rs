@@ -16,7 +16,7 @@ use super::console_input::save_console_history;
 use super::dispatch::cross_dispatch::{click_selection, view_ctx};
 use super::dispatch::families::verbs;
 use super::input_context::InputHandlerContext;
-use super::{compute_click_hit, is_double_click, ClickHit, DragState, HeldInput, LastClick};
+use super::{compute_click_hit, is_double_click, ClickHit, DragState, HeldInput, InteractionMode, LastClick};
 use crate::application::console::ConsoleState;
 use crate::application::keybinds::MouseGesture;
 
@@ -93,6 +93,14 @@ pub(super) fn handle_mouse_input(
                 }
             }
         }
+        // In reparent or connect mode the left click picks the target: the
+        // press is swallowed, and the release dispatches the confirmation
+        // with the node under the cursor.
+        MouseButton::Left if !ctx.interaction_mode.sources().is_empty() => {
+            if state == ElementState::Released {
+                pick_target(ctx);
+            }
+        }
         MouseButton::Left => match state {
             ElementState::Pressed => handle_left_press(ctx),
             ElementState::Released => handle_left_release(ctx),
@@ -114,6 +122,28 @@ fn gesture_action(
         ctx.modifiers.shift_key(),
         ctx.modifiers.alt_key(),
     )
+}
+
+/// A click in reparent or connect mode: `ReparentToTarget` or
+/// `ConnectToTarget` with the integer id of the node under the cursor,
+/// `None` over empty canvas. The click pairs with no later one.
+fn pick_target(ctx: &mut InputHandlerContext<'_>) {
+    let canvas_pos = ctx
+        .renderer
+        .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
+    let target = match (ctx.document.as_ref(), ctx.view.as_ref()) {
+        (Some(doc), Some(view)) => view
+            .node_at(canvas_pos)
+            .and_then(|node| crate::application::view::inspect::ident_of(doc.doc(), node))
+            .map(|ident| ident.0),
+        _ => None,
+    };
+    let action = match ctx.interaction_mode {
+        InteractionMode::Reparent { .. } => crate::application::keybinds::Action::ReparentToTarget(target),
+        _ => crate::application::keybinds::Action::ConnectToTarget(target),
+    };
+    let _ = super::dispatch::dispatch_action(action, ctx, None);
+    *ctx.last_click = None;
 }
 
 /// What the cursor is over, in canvas space, and what a click there hits.

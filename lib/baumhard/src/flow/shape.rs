@@ -538,6 +538,11 @@ thread_local! {
     /// Test counter (R24.2): how many times [`new_buffer`] has laid text
     /// out again with its tabs as spaces on this thread.
     pub(crate) static TABS_RELAID: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test hook (#304): while set on a thread, [`reshape`] shapes a
+    /// size-only rescale again rather than laying out the run's shaping
+    /// at the new size ([`resized_buffer`]): the reference the
+    /// resized buffer is held to.
+    pub(crate) static RESHAPE_BY_SHAPING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// The lines of `buffer` the last-resort check finds failing: what a test
@@ -560,13 +565,17 @@ fn hooked_tab(line: &str, glyph: &LayoutGlyph) -> bool {
 }
 
 /// A buffer at `metrics` holding `rich`, shaped and laid out unwrapped.
+///
+/// The buffer starts empty (cosmic-text's `new_empty`), not as its `new`
+/// makes one: that shapes an empty line, and its ellipsis in the default
+/// family, for `set_rich_text` to throw away (#304).
 fn filled_buffer(
     fs: &mut FontSystem,
     rich: Vec<(&str, Attrs<'_>)>,
     metrics: Metrics,
     align: Option<Align>,
 ) -> Buffer {
-    let mut buffer = Buffer::new(fs, metrics);
+    let mut buffer = Buffer::new_empty(metrics);
     buffer.set_wrap(Wrap::None);
     buffer.set_size(None, None);
     let defaults = Attrs::new().metrics(metrics);
@@ -888,13 +897,10 @@ fn word_breaks(text: &str, out: &mut Vec<usize>) {
 ///
 /// Spans' sizes must be in points ([`point_size`](crate::flow::point_size)).
 ///
-/// **Precondition: call [`fonts::init`](crate::font::fonts::init) before
-/// the lease first takes the lock.** Resolving a span's face reads the
-/// compiled font table, whose first read registers the fonts under the
-/// font lock; with the table still cold, that read would re-enter the
-/// lock the lease holds and panic. The app initializes at startup; any
-/// other caller (a tool, a fuzz target) does it once before its first
-/// lease or guard.
+/// The faces it shapes with are the font system's whole set from the
+/// first shaping on, whether or not [`fonts::init`](crate::font::fonts::init)
+/// ran first (#323), so the run is a function of the spans, the scale and
+/// the font database alone.
 ///
 /// Cost: one cosmic-text buffer and one shaping pass over the text,
 /// under the lock `fs` holds (an acquire first when it holds none,
@@ -942,15 +948,27 @@ fn run_from_assembly(assembly: Assembly<'_>, fs: &mut FontSystem) -> ShapedRun {
 /// shaping (kerning, joining, bidi order) nor the filler's depends on
 /// the other: the text's glyphs, and their indices, are those of `run`.
 ///
-/// Cost: one shaping pass over the run's text and the filler; one
-/// `String` per drawn stretch (the stretch's text is copied out of the
-/// old buffer), and the piece table and glyph list.
+/// **A size-only reshape shapes nothing** (#304): with no filler, the
+/// new buffer takes `run`'s shaping, its glyphs' sizes read from the
+/// scaled attributes ([`resized_buffer`]), and is only laid out — which
+/// is what shaping it again would make, since shaping is in units of the
+/// em. A run whose text holds a tab, or that already carries a filler,
+/// is shaped again, as before.
+///
+/// Returns the run, and whether it was shaped: `false` where it took
+/// `run`'s shaping and was only laid out. What a frame counts for a
+/// reshape is read from that (`halves::resizing_steps`), so the count and
+/// the work cannot part.
+///
+/// Cost: with a filler, one shaping pass over the run's text and the
+/// filler; without one, one layout pass and no shaping. Either way the
+/// piece table and glyph list, and attributes per drawn stretch.
 pub(crate) fn reshape(
     run: &ShapedRun,
     factor: f32,
     filler: Option<(&str, &ResolvedText)>,
     fs: &mut FontSystem,
-) -> ShapedRun {
+) -> (ShapedRun, bool) {
     // The filler's text and family name outlive the attribute list that
     // borrows them.
     // The filler is one line, so no paragraph separator in it is drawn.
@@ -1036,7 +1054,14 @@ pub(crate) fn reshape(
             line_break: 0,
         });
     }
-    let buffer = new_buffer(fs, rich, font_size, line_height, None);
+    let resized = (filler_text.is_empty() || filler.is_none())
+        .then(|| resized_buffer(fs, &run.buffer, &rich, font_size, line_height))
+        .flatten();
+    let shaped = resized.is_none();
+    let buffer = match resized {
+        Some(buffer) => buffer,
+        None => new_buffer(fs, rich, font_size, line_height, None),
+    };
     let glyphs = glyph_metrics(&buffer, &pieces, fs);
     let run = ShapedRun {
         buffer: Arc::new(buffer),
@@ -1046,8 +1071,72 @@ pub(crate) fn reshape(
     };
     #[cfg(test)]
     crate::flow::place::halves::SHAPED_STEPS
-        .with(|count| count.set(count.get() + crate::flow::place::halves::shaping_steps(&run)));
-    run
+        .with(|count| count.set(count.get() + crate::flow::place::halves::resizing_steps(&run, shaped)));
+    (run, shaped)
+}
+
+/// Whether [`reshape`] tries to lay `run` out at another size from its
+/// own shaping, given no filler (#304): it is one line, and its text holds
+/// no tab, whose last-resort check [`new_buffer`] makes after shaping.
+/// The reshape's gate ([`resized_buffer`]), and what a bound read before
+/// a reshape predicts of it (`halves::build_steps`,
+/// `halves::overshoot_steps`); what a frame counts once it has run is the
+/// reshape's own report, so the count never rests on this.
+pub(crate) fn resizes(run: &ShapedRun) -> bool {
+    resizes_buffer(&run.buffer)
+}
+
+/// [`resizes`], of the buffer a run was shaped into.
+fn resizes_buffer(buffer: &Buffer) -> bool {
+    matches!(buffer.lines.as_slice(), [line] if !line.text().contains('\t'))
+}
+
+/// `rich`, the stretches of `shaped`'s one line with their attributes
+/// rescaled, laid out at their new sizes in a buffer that takes `shaped`'s
+/// shaping instead of shaping them again
+/// ([`BufferLine::adopt_shape`](cosmic_text::BufferLine::adopt_shape)):
+/// glyph for glyph what [`new_buffer`] would lay out, since the
+/// attributes differ from the ones `shaped` was shaped with only in their
+/// metrics, and shaping is in units of the em.
+///
+/// `None`, to be shaped instead, where [`resizes`] says no, or when the
+/// line will not take the shaping. In test builds, also while
+/// `RESHAPE_BY_SHAPING` is set.
+///
+/// Cost: one layout pass; no shaping.
+fn resized_buffer(
+    fs: &mut FontSystem,
+    shaped: &Buffer,
+    rich: &[(&str, Attrs<'_>)],
+    font_size: f32,
+    line_height: f32,
+) -> Option<Buffer> {
+    #[cfg(test)]
+    if RESHAPE_BY_SHAPING.with(std::cell::Cell::get) {
+        return None;
+    }
+    if !resizes_buffer(shaped) {
+        return None;
+    }
+    let [from] = shaped.lines.as_slice() else {
+        return None;
+    };
+    let font_size = font_size.max(MIN_FONT_SIZE_PT);
+    let line_height = line_height.max(MIN_FONT_SIZE_PT * LINE_HEIGHT_FACTOR);
+    let metrics = Metrics::new(font_size, line_height);
+    let mut buffer = Buffer::new_empty(metrics);
+    buffer.set_wrap(Wrap::None);
+    buffer.set_size(None, None);
+    let defaults = Attrs::new().metrics(metrics);
+    buffer.set_rich_text(rich.iter().cloned(), &defaults, SHAPING_ADVANCED, None);
+    let [line] = buffer.lines.as_mut_slice() else {
+        return None;
+    };
+    if !line.adopt_shape(from) {
+        return None;
+    }
+    buffer.shape_until_scroll(fs, false);
+    Some(buffer)
 }
 
 /// `attrs` with its size and line height times `factor`, clamped to
@@ -1081,9 +1170,7 @@ fn usable_min_size(min: Vec2) -> Vec2 {
 /// non-negative length: a `NaN`, infinite or negative axis asks for
 /// nothing.
 ///
-/// Spans' sizes must be in points ([`point_size`](crate::flow::point_size)),
-/// and [`fonts::init`](crate::font::fonts::init) must have run before the
-/// lease first took the lock, as for [`shape_run`].
+/// Spans' sizes must be in points ([`point_size`](crate::flow::point_size)).
 ///
 /// Cost: one cosmic-text buffer, shaped once and laid out twice (once
 /// unbounded to measure, once at the box's width to align — the second

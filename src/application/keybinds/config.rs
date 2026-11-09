@@ -43,17 +43,9 @@ keybind_surface! {
         /// Redo the history entry undone last.
         Redo => redo = ["Ctrl+Shift+Z", "Ctrl+Y"],
         /// Enter reparent mode on the current selection.
-        ///
-        /// Unbound until V1-C4 (#245) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Ctrl+P"]`.
-        EnterReparentMode => enter_reparent_mode = [],
+        EnterReparentMode => enter_reparent_mode = ["Ctrl+P"],
         /// Enter connect mode on the current selection.
-        ///
-        /// Unbound until V1-C4 (#245) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Ctrl+D"]`.
-        EnterConnectMode => enter_connect_mode = [],
+        EnterConnectMode => enter_connect_mode = ["Ctrl+D"],
         /// Enter resize mode on the current selection.
         ///
         /// Unbound until V1-C7 (#248) rebuilds it on the one writer
@@ -72,26 +64,14 @@ keybind_surface! {
         /// as `["Ctrl+RightDrag"]`.
         FastResizeStart => fast_resize_start = [],
         /// Delete the current selection.
-        ///
-        /// Unbound until V1-C4 (#245) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Delete"]`.
-        DeleteSelection => delete_selection = [],
+        DeleteSelection => delete_selection = ["Delete"],
         /// Leave the active interaction mode. Also cancels an active
         /// border preview first — see [`Action::ExitMode`].
         ExitMode => exit_mode = ["Escape"],
         /// Create an unattached node at the cursor.
-        ///
-        /// Unbound until V1-C4 (#245) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Ctrl+N"]`.
-        CreateOrphanNode => create_orphan_node = [],
+        CreateOrphanNode => create_orphan_node = ["Ctrl+N"],
         /// Detach every selected node from its parent.
-        ///
-        /// Unbound until V1-C4 (#245) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Ctrl+O"]`.
-        OrphanSelection => orphan_selection = [],
+        OrphanSelection => orphan_selection = ["Ctrl+O"],
         /// The umbrella "edit the selection" action.
         ///
         /// Unbound until V1-C8 (#249) rebuilds it on the one writer
@@ -130,23 +110,11 @@ keybind_surface! {
         /// Quit the app. Unbound: it does not ask about unsaved changes.
         Quit => quit = [],
         /// Copy the focused component's clipboard representation.
-        ///
-        /// Unbound until V1-C4 (#245) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Ctrl+C", "Copy"]`.
-        Copy => copy = [],
+        Copy => copy = ["Ctrl+C", "Copy"],
         /// Paste the clipboard into the focused component.
-        ///
-        /// Unbound until V1-C4 (#245) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Ctrl+V", "Paste"]`.
-        Paste => paste = [],
+        Paste => paste = ["Ctrl+V", "Paste"],
         /// Cut: copy, then clear.
-        ///
-        /// Unbound until V1-C4 (#245) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Ctrl+X", "Cut"]`.
-        Cut => cut = [],
+        Cut => cut = ["Ctrl+X", "Cut"],
 
         // ── Console ──────────────────────────────────────────────
         /// Close the console (dismiss the completion popup first).

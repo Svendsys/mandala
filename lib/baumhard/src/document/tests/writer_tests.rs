@@ -271,6 +271,43 @@ pub fn do_writer_makes_one_entry_of_a_request_with_many_anchors() {
 }
 
 #[test]
+fn test_document_reads_nothing_a_change_removed() {
+    do_document_reads_nothing_a_change_removed();
+}
+
+/// **What a change removed, the document does not read** (review
+/// 5821011650): after `b`'s subtree is deleted, `get`, `children`,
+/// `parent`, `depth` and `owning_node` answer for `b`, its section and
+/// its child `c` as for an id the tree never held. Control: the arena
+/// still holds them — the journal keeps them for its undo — so the
+/// answers are the tree's, not the arena's; and after the undo every
+/// read is back.
+pub fn do_document_reads_nothing_a_change_removed() {
+    let (mut doc, ids) = built();
+    assert_eq!(doc.parent(ids.c), Some(ids.b), "precondition: c is under b");
+    let steps = delete(&doc, &[ids.b]).unwrap();
+    doc.apply(EditRequest::new(steps, "delete"), ChangeSource::Action)
+        .unwrap();
+    for gone in [ids.b, ids.b_section, ids.c] {
+        assert!(
+            doc.tree().get(gone).is_some(),
+            "control: the arena still holds {gone}"
+        );
+        assert_eq!(doc.get(gone), None, "{gone} is not read");
+        assert_eq!(doc.children(gone).count(), 0);
+        assert_eq!(doc.parent(gone), None);
+        assert_eq!(doc.depth(gone), 0);
+        assert_eq!(doc.owning_node(gone), None);
+    }
+    doc.undo().unwrap();
+    assert!(doc.get(ids.b).is_some_and(|e| e.kind() == DocKind::Node));
+    assert_eq!(doc.parent(ids.c), Some(ids.b));
+    assert_eq!(doc.owning_node(ids.b_section), Some(ids.b));
+    assert_eq!(doc.depth(ids.c), 2);
+    assert!(doc.children(ids.b).count() > 0);
+}
+
+#[test]
 fn test_writer_dirty_is_the_saved_state_not_a_count() {
     do_writer_dirty_is_the_saved_state_not_a_count();
 }

@@ -1148,6 +1148,11 @@ mod tests {
         // the `panic!` itself, and the sweep matches on the statement
         // — so the site is spelled the way the code spells it.
         ("panic!", "lib/baumhard/src/font/fonts.rs", true, ""),
+        // The compiled font table's read of the ids the font system's
+        // build recorded. Spelled with its receiver: a bare `get` is
+        // called all over the file, and no other call of it ends the
+        // process.
+        ("COMPILED_IDS.get", "lib/baumhard/src/font/fonts.rs", true, ""),
         (
             "web_sys::window",
             "src/application/app/startup_load.rs",

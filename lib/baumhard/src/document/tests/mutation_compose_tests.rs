@@ -16,8 +16,8 @@ use crate::arena::NodeId;
 use crate::document::element::{DocElement, DocKind, SectionData, SpanData, TextStyle};
 use crate::document::ids::{Document, NodeIdent};
 use crate::document::mutation::compose::{
-    add_section, create_child, create_root, delete, delete_text, insert_text, merge_steps, remove_links,
-    reparent, set_link_kind, split_section, style_range, tops_counting,
+    add_section, connect, create_child, create_root, delete, delete_text, insert_text, merge_steps, remove,
+    remove_links, reparent, replace_spans, set_link_kind, split_section, style_range, tops_counting,
 };
 use crate::document::mutation::error::MutationError;
 use crate::document::mutation::ops::TextOp;
@@ -245,6 +245,201 @@ pub fn do_document_compose_reparents() {
         Err(MutationError::Tree(TreeError::Cycle { .. }))
     ));
     assert_eq!(snapshot(doc.tree()), before, "the connector step is undone too");
+}
+
+#[test]
+fn test_document_compose_removes_elements() {
+    do_document_compose_removes_elements();
+}
+
+/// `remove` takes sections, links and labels out with their subtrees, one
+/// step per kind, an element named twice once. What the shape rules need
+/// stays: a connector or a portal end removed fails the request. A node
+/// is `delete`'s, and an element of another kind than the one named is
+/// refused.
+pub fn do_document_compose_removes_elements() {
+    let (mut doc, ids) = built();
+    let mut steps = remove(&doc, DocKind::Label, &[ids.b_label, ids.line_label, ids.b_label]).unwrap();
+    assert_eq!(steps.len(), 1, "one step for the kind");
+    steps.extend(remove(&doc, DocKind::Section, &[ids.a_title]).unwrap());
+    steps.extend(remove(&doc, DocKind::Link, &[ids.line, ids.portal]).unwrap());
+    apply(&mut doc, steps);
+    for gone in [
+        ids.b_label,
+        ids.line_label,
+        ids.a_title,
+        ids.a_title_span,
+        ids.line,
+        ids.portal,
+    ] {
+        assert!(!doc.tree().contains(gone), "{gone} is removed");
+    }
+    assert_eq!(children_of(&doc, ids.a, DocKind::Section), vec![ids.a_body]);
+    assert!(
+        doc.tree().contains(ids.b_connector),
+        "the label's connector stays"
+    );
+
+    // The last section goes too: a node may hold none.
+    let steps = remove(&doc, DocKind::Section, &[ids.a_body, ids.b_section]).unwrap();
+    apply(&mut doc, steps);
+    assert!(children_of(&doc, ids.a, DocKind::Section).is_empty());
+
+    for (kind, element) in [
+        (DocKind::Connector, ids.c_connector),
+        (DocKind::PortalEnd, ids.portal_target),
+    ] {
+        // Judged once the request has run; the writer undoes it.
+        let (mut doc, _) = built();
+        let steps = remove(&doc, kind, &[element]).unwrap();
+        assert!(
+            matches!(run(&mut doc, steps), Err(MutationError::Shape(_))),
+            "a {kind:?} its parent needs is refused"
+        );
+    }
+
+    let (doc, ids) = built();
+    assert!(matches!(
+        remove(&doc, DocKind::Node, &[ids.d]),
+        Err(MutationError::NotA { .. })
+    ));
+    assert!(
+        matches!(remove(&doc, DocKind::Node, &[]), Err(MutationError::NotA { .. })),
+        "a node is refused with no elements too"
+    );
+    assert!(matches!(
+        remove(&doc, DocKind::Section, &[ids.b_label]),
+        Err(MutationError::NotA { .. })
+    ));
+    assert!(remove(&doc, DocKind::Label, &[]).unwrap().is_empty());
+}
+
+#[test]
+fn test_document_compose_connects() {
+    do_document_compose_connects();
+}
+
+/// The line links from `from` to `to`.
+fn lines_to(doc: &Document, from: NodeId, to: NodeId) -> usize {
+    children_of(doc, from, DocKind::Link)
+        .into_iter()
+        .filter(|&l| {
+            matches!(doc.get(l), Some(DocElement::Link(link)) if link.to == to && link.kind == LinkKind::Line)
+        })
+        .count()
+}
+
+/// `connect` gives each source a line link to the target, with nothing
+/// set, after its other links. The target among the sources is skipped,
+/// and so is a source that already holds a line link to it: `a` has one
+/// to `c`, so of `a`, `b`, `d` and `c` itself only `b` and `d` get one,
+/// and connecting again adds nothing. A portal to the target is not a
+/// line link: `a`'s portal to `d` does not stop a line from `a` to `d`.
+pub fn do_document_compose_connects() {
+    let (mut doc, ids) = built();
+    let steps = connect(&doc, &[ids.a, ids.b, ids.d, ids.c, ids.b], ids.c).unwrap();
+    assert_eq!(steps.len(), 1);
+    apply(&mut doc, steps);
+    assert_eq!(lines_to(&doc, ids.a, ids.c), 1, "a's own line, not a second");
+    assert_eq!(lines_to(&doc, ids.b, ids.c), 1);
+    assert_eq!(lines_to(&doc, ids.d, ids.c), 1);
+    assert!(children_of(&doc, ids.c, DocKind::Link).is_empty(), "no self-link");
+    let new = *children_of(&doc, ids.d, DocKind::Link).last().unwrap();
+    let Some(DocElement::Link(link)) = doc.get(new) else { panic!("a link") };
+    assert_eq!(link.path.flow, Default::default());
+    assert!(link.path.control_points.is_empty() && link.path.visible);
+    assert!(doc.children(new).next().is_none(), "no spans, caps or label");
+
+    assert!(
+        connect(&doc, &[ids.b, ids.d, ids.c], ids.c).unwrap().is_empty(),
+        "nothing twice"
+    );
+
+    let steps = connect(&doc, &[ids.a], ids.d).unwrap();
+    apply(&mut doc, steps);
+    assert_eq!(lines_to(&doc, ids.a, ids.d), 1, "beside the portal to d");
+
+    assert!(matches!(
+        connect(&doc, &[ids.a], ids.a_title),
+        Err(MutationError::NotA {
+            expected: "a node",
+            ..
+        })
+    ));
+    assert!(matches!(
+        connect(&doc, &[ids.line], ids.c),
+        Err(MutationError::NotA {
+            expected: "a node",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn test_document_compose_replaces_spans() {
+    do_document_compose_replaces_spans();
+}
+
+/// `replace_spans` leaves every owner with exactly the spans given, in
+/// order, styles and all — sections of two nodes in one request — and an
+/// empty list leaves them with none. Owners of two kinds are refused.
+pub fn do_document_compose_replaces_spans() {
+    let (mut doc, ids) = built();
+    let new = [
+        SpanData {
+            text: FAMILY.to_string(),
+            style: italic(Some(true)),
+            link: None,
+        },
+        SpanData {
+            text: MARKED.to_string(),
+            style: TextStyle::default(),
+            link: None,
+        },
+    ];
+    let owners = [ids.a_title, ids.a_body, ids.b_section];
+    let steps = replace_spans(&doc, &owners, &new).unwrap();
+    assert_eq!(steps.len(), 3, "the removal and one insert per span");
+    apply(&mut doc, steps);
+    for owner in owners {
+        assert_eq!(
+            spans(&doc, owner),
+            vec![(FAMILY.to_string(), Some(true)), (MARKED.to_string(), None)],
+            "{owner} holds the new spans"
+        );
+    }
+    assert!(!doc.tree().contains(ids.b_span), "the old spans are gone");
+
+    let steps = replace_spans(&doc, &[ids.a_title, ids.b_section], &[]).unwrap();
+    apply(&mut doc, steps);
+    assert!(spans(&doc, ids.a_title).is_empty() && spans(&doc, ids.b_section).is_empty());
+    assert_eq!(
+        spans(&doc, ids.a_body).len(),
+        2,
+        "an owner not named keeps its spans"
+    );
+
+    assert!(matches!(
+        replace_spans(&doc, &[ids.a_body, ids.b_label], &new),
+        Err(MutationError::NotA { .. })
+    ));
+    for owner in [ids.a, ids.portal] {
+        assert!(
+            matches!(
+                replace_spans(&doc, &[owner], &new),
+                Err(MutationError::NotA {
+                    expected: "an element that holds spans",
+                    ..
+                })
+            ),
+            "{owner} holds no spans"
+        );
+    }
+    assert!(
+        replace_spans(&doc, &[ids.line_label, ids.b_label], &[]).is_ok(),
+        "control: labels do"
+    );
+    assert!(replace_spans(&doc, &[], &new).unwrap().is_empty());
 }
 
 #[test]
@@ -576,8 +771,8 @@ fn test_document_compose_trims_a_deep_selection_once_per_ancestor() {
 /// selection (§20 rule 11, R14.5), counted in steps, not timed.
 ///
 /// - Every node of a `DEEP` chain, deepest first: the top is the one
-///   top, in at most two climbs' worth of the chain (membership and
-///   nesting).
+///   top, in one climb's worth of the chain. (Whether each is in the
+///   tree is `Document::get`'s O(1) question, not a climb.)
 /// - A chain of 2,000 with 2,000 leaves at its bottom, the chain's top
 ///   and every leaf selected: each leaf is nested, found by a climb that
 ///   stops at the bottom of the chain after the first, so the steps are
@@ -588,7 +783,7 @@ pub fn do_document_compose_trims_a_deep_selection_once_per_ancestor() {
     let deepest_first: Vec<NodeId> = nodes.iter().rev().copied().collect();
     let (tops, climbed) = tops_counting(&doc, &deepest_first);
     assert_eq!(tops.unwrap(), vec![nodes[0]]);
-    assert!(climbed <= 2 * DEEP + 2, "{climbed} steps for {DEEP} nodes");
+    assert!(climbed <= DEEP + 2, "{climbed} steps for {DEEP} nodes");
 
     const SIDE: usize = 2_000;
     let mut builder = DocumentBuilder::new();
@@ -605,7 +800,7 @@ pub fn do_document_compose_trims_a_deep_selection_once_per_ancestor() {
     let (tops, climbed) = tops_counting(&doc, &selection);
     assert_eq!(tops.unwrap(), vec![spine[0]]);
     assert!(
-        climbed <= 4 * SIDE,
+        climbed <= 2 * SIDE + 2,
         "{climbed} steps for {SIDE} ancestors and {SIDE} leaves"
     );
 

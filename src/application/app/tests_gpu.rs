@@ -155,10 +155,10 @@ impl Drop for TempFile {
 /// puts them back.
 ///
 /// Controls, before anything is edited: `Undo` over an empty history is
-/// unhandled and changes nothing, and `DeleteSelection` — an editing
-/// Action whose family is rebuilt by a later step — is unhandled and
-/// changes nothing either, so a funnel that still edited through a
-/// deleted path, or one that reported every Action handled, fails here.
+/// unhandled and changes nothing, and `DeleteSelection` with nothing
+/// selected is unhandled and changes nothing either, so a funnel that
+/// edited with no target, or one that reported every Action handled,
+/// fails here.
 /// After the edit, the bytes differ from the baseline and the new node
 /// draws, so an undo that did nothing cannot pass by agreeing with a
 /// baseline it never left.
@@ -179,7 +179,7 @@ fn test_undo_and_redo_through_act_action_reach_the_document_and_the_layers() {
     let reply = action(init, "DeleteSelection");
     assert_eq!(
         reply["result"]["outcome"], "unhandled",
-        "a removed editing Action is unhandled: {reply}"
+        "a delete of nothing is unhandled: {reply}"
     );
     assert_eq!(document_bytes(init), baseline, "the controls changed nothing");
     assert!(!document(init).is_dirty(), "and dirtied nothing");
