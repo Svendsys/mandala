@@ -48,6 +48,11 @@ pub enum ProjectionInput {
     /// never its frame's whole row, and an edit of one ring re-places the
     /// rings outside it alone (the review of #317).
     Inner(NodeId),
+    /// The box a node's paths attach to (#296): the box round its drawn
+    /// rings' inks, or its drawn rectangle where it draws none. Marked when
+    /// a ring's ink box changed, or a ring left; a node with no ring marks
+    /// its [`Self::Geometry`] instead, which the paths read too.
+    Reach(NodeId),
 }
 
 /// The stage of a unit's projection a dependency belongs to: what has to

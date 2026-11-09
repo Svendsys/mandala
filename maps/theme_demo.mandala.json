@@ -42,7 +42,7 @@
       "color": "var(fg)",
       "sections": [{"spans": [{"text": "colors follow the theme", "size": 22.0, "color": "var(fg)"}]}],
       "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.25, "color": "var(accent)", "spans": [{"text": "·"}]}]},
-      "connector": {"color": "var(edge)", "anchors": ["auto", "right"]}
+      "connector": {"color": "var(edge)", "anchors": ["auto", "top"]}
     },
     {
       "id": 3,
@@ -52,7 +52,7 @@
       "color": "var(fg)",
       "sections": [{"spans": [{"text": "edges follow the theme", "size": 22.0, "color": "var(fg)"}]}],
       "frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.25, "color": "var(accent)", "spans": [{"text": "·"}]}]},
-      "connector": {"color": "var(edge)", "anchors": ["auto", "left"]}
+      "connector": {"color": "var(edge)", "anchors": ["auto", "top"]}
     },
     {
       "id": 4,

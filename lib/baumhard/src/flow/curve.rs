@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Open paths: the curve a connector or a line link runs along.
+//! Open paths: the curves a connector or a line link runs along.
 //!
-//! A connector or link has 0, 1 or 2 control points
-//! ([`MAX_CONTROL_POINTS`](crate::document::bounds::MAX_CONTROL_POINTS)),
-//! so its path is a line, a quadratic Bézier or a cubic Bézier. Where
-//! the ends sit and which side of a node they attach to is the
-//! projection's to resolve; this module takes the resolved curve.
+//! An open path is one curve — a line, a quadratic or a cubic Bézier —
+//! or a chain of them, each starting where the one before it ends: the
+//! projection draws a connector as cubics through its control points
+//! (#296). Where the ends sit and which side of a node they attach to is
+//! the projection's to resolve; this module takes the resolved curves,
+//! as a slice (`&[Curve]`), or as one curve, which is a chain of one.
 
 use glam::Vec2;
 
@@ -21,20 +22,26 @@ pub enum Curve {
     Cubic(Vec2, Vec2, Vec2, Vec2),
 }
 
-impl Curve {
-    /// The curve built from its two ends and `control_points`, the
-    /// shape a connector stores (0, 1 or 2 points). More than two is
-    /// invalid ([`check_control_points`](crate::document::bounds::check_control_points)
-    /// refuses it at load), so `None`. O(1).
-    pub fn from_points(start: Vec2, control_points: &[Vec2], end: Vec2) -> Option<Curve> {
-        match *control_points {
-            [] => Some(Curve::Line(start, end)),
-            [c] => Some(Curve::Quadratic(start, c, end)),
-            [c1, c2] => Some(Curve::Cubic(start, c1, c2, end)),
-            _ => None,
-        }
+/// One curve is a chain of one: every function that walks an open path
+/// takes `impl AsRef<[Curve]>`, so a lone curve and a chain are passed
+/// alike.
+impl AsRef<[Curve]> for Curve {
+    fn as_ref(&self) -> &[Curve] {
+        std::slice::from_ref(self)
     }
+}
 
+/// The point at `t` in `0.0..=1.0` of the chain `curves`, each curve one
+/// even share of `t`: the middle of a two-curve chain is where its curves
+/// meet. `None` for an empty chain. O(1).
+pub fn chain_point(curves: &[Curve], t: f32) -> Option<Vec2> {
+    let last = curves.len().checked_sub(1)?;
+    let at = t.clamp(0.0, 1.0) * curves.len() as f32;
+    let index = (at.floor() as usize).min(last);
+    Some(curves[index].point(at - index as f32))
+}
+
+impl Curve {
     /// The point at parameter `t` in `0.0..=1.0`. O(1).
     pub fn point(&self, t: f32) -> Vec2 {
         let u = 1.0 - t;

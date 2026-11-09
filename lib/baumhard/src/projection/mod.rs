@@ -53,8 +53,12 @@
 //!    marked.
 //! 3. **Phase A:** nodes carry their inherited facts down, top-down;
 //!    sections resolve and shape; nodes measure. **Phase B:** sections
-//!    and rings place. **Phase C:** connectors, links, labels and portal
-//!    ends. A piece of work runs at most once per phase.
+//!    and rings place. **Phase C:** connectors and links resolve, and
+//!    each connector and line link finds where it leaves its two nodes —
+//!    every one of them before any is laid, since the paths that leave
+//!    one side of a node are fanned together (#296); then connectors,
+//!    links, labels and portal ends are laid. A piece of work runs at
+//!    most once per phase.
 //! 4. **Emit.** Every run whose new data differs from what the projector
 //!    last wrote — its own state, never the live element, which overlays
 //!    may have written (#241 amendment 2) — is set, inserted, removed or
@@ -133,6 +137,11 @@ pub struct Projector {
     /// Each label a unit projects, and that unit: what
     /// [`Projector::label_pos`] reads.
     pub(crate) label_hosts: FxHashMap<NodeId, NodeId>,
+    /// Each junction — a node's side, or a node's portal ends — and the
+    /// drawn paths with an end in it (#296): what is fanned together. A
+    /// set, so a path joins and leaves in O(1); `refan` orders the
+    /// members itself, with a total tie-break on their ids.
+    pub(crate) junctions: FxHashMap<state::JunctionKey, rustc_hash::FxHashSet<NodeId>>,
     /// One shaping per key, for every unit whose key is equal
     /// ([`shapes`]).
     pub(crate) shapes: shapes::ShapeCache,
@@ -250,10 +259,11 @@ impl Projector {
         Some((origin, &state.flow.as_ref()?.shaped))
     }
 
-    /// A drawn connector's or line link's curve. O(1).
-    pub fn curve(&self, path: NodeId) -> Option<Curve> {
+    /// A drawn connector's or line link's curves, each starting where the
+    /// one before it ends: `None` until it is placed. O(1).
+    pub fn curve(&self, path: NodeId) -> Option<&[Curve]> {
         match &self.units.get(&path)?.body {
-            UnitBody::Line(line) if line.drawn => line.curve,
+            UnitBody::Line(line) if line.drawn && !line.path.is_empty() => Some(&line.path),
             _ => None,
         }
     }
@@ -290,8 +300,8 @@ pub trait Geometry {
     fn node_rect(&self, node: NodeId) -> Option<Rect>;
     /// A section's canvas top-left and shaping.
     fn section_box(&self, section: NodeId) -> Option<(Vec2, &Arc<ShapedBox>)>;
-    /// A drawn connector's or line link's curve.
-    fn curve(&self, path: NodeId) -> Option<Curve>;
+    /// A drawn connector's or line link's curves.
+    fn curve(&self, path: NodeId) -> Option<&[Curve]>;
     /// Where a drawn label centers.
     fn label_pos(&self, label: NodeId) -> Option<Vec2>;
     /// The visible nodes whose drawn rectangles `rect` meets, insides
@@ -306,7 +316,7 @@ impl Geometry for Projector {
     fn section_box(&self, section: NodeId) -> Option<(Vec2, &Arc<ShapedBox>)> {
         Projector::section_box(self, section)
     }
-    fn curve(&self, path: NodeId) -> Option<Curve> {
+    fn curve(&self, path: NodeId) -> Option<&[Curve]> {
         Projector::curve(self, path)
     }
     fn label_pos(&self, label: NodeId) -> Option<Vec2> {

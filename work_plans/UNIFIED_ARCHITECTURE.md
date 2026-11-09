@@ -58,6 +58,7 @@ develops it.
 | D31 | **A saved node is a block, one line per key** (owner, #236 Q2 option B, R20). After the two-space pretty-printed header, each node is `    {`, then one line per key it has (six spaces, `"key": value` in compact form, in schema order), then `    }`. A value never spans two lines, so a changed key is one changed line, and edits to keys of one node that are not on adjacent lines merge cleanly. Two edits to neighboring keys, or an edit to a node's last key while another branch appends a key after it, are one git conflict, as for any line-based text. The layout lives in the saver's writer alone. | §7.1 |
 | D32 | **New ids start above every id the map names** (amends §5.2's id rule; owner, #236 Q3 option B, R20). The counter is still not saved. At load it starts one above the highest node id and above every node id a verb or presentation target names, so a verb or presentation can never be silently retargeted to a new node after a reload. The named ids come from one hook, `ids::idents_named_by`, which V1-D1 to V1-D3 (#250–#252) extend when definitions gain targets. | §5.2, §7.2 |
 | D33 | **Path text is readable** (owner, #291; rulings R25, R25.1, R26, R27, R28, R31, R32, R33, R33.1, R34). Every path flow reads left to right or top to bottom. The owner, on the README samples: "In the sample images, the words are always backwards at the bottom. It's impossible to read basically. Can we instead try to make the text always straight forward?" Asked whether to keep the old look as an option: "Readable always, no option (Recommended)". **A frame's text is two lines along the outline's diagonal halves** (R27, R32, R33, R33.1, R34): a ring in `once`, `spread` or `fit` is parted into two lines as R27 parts it — the owner: "Couldn't it be formatted smarter like, defining lines for each halve, rather than one line that must be fitted to both" — and `fit` sizes it against the level parts of the outline (R27, R28); each line then follows its half of the outline split on the diagonal, the first from the top-left over the top and down the right side, the second down the left side and along the bottom, glyphs upright, so every steep run reads down — the owner: "It should follow the path of its halve, this should be adjustable in the solution". Each line is tracked evenly by its letters' inks (R31's pairwise rule, R32); `span` sets how far along its half it reaches, from its font's own gap at `natural` to the whole half at `whole`; each junction is a break of two word gaps, and `sides` sets an ornament in it (R33.1). **A pattern and a connector read stretch by stretch** (R25, R25.1, R26): on a `repeat` ring and on every connector, a leftward or upward stretch's glyphs are placed in reverse, so a loop reads like a seal, and a word is never torn across two stretches. It is the only behavior, with no field and no option. | §6.2, §6.4 |
+| D34 | **Connector geometry** (owner, #296, answered on #326). Control points are points the path passes through, at most 8, each an offset from its place along the line between the ends (amends §5.6's "0, 1 or 2 Bézier control points"); a path may instead be `straight`, one segment between its ends' side midpoints, with no control points; at a shared side it keeps the direction it leaves in, and the others fan round it, each path held out as its own neighbors need and never past a quarter of its chord (#326 review); two straight paths that leave a side in exactly one direction cannot be told apart and overlap, a question put to the owner. A connector's `repeat` ornament is whole glyphs with every gap between two inks the same, box to box, whichever way the path runs (amends §6.2/§6.4's box-step walk that cut its last copy). The paths that leave one side of a node fan from its midpoint and keep clear of each other along their whole length, so an insert or a remove there lays that side's paths again, and a drag that keeps their order lays the one dragged (amends the ruling that a connector never reads its parent's row, B7.5 on #241). | §5.6, §6.4, §12.3 |
 
 ---
 
@@ -561,8 +562,10 @@ V1); this is the shape.
   frame's), text defaults.
 - **Span:** `text`, `font?`, `size?`, `color?`, `weight?`, `italic?`,
   `link?`.
-- **Connector / Link (line):** `anchors`, `control_points` (0, 1 or
-  2: a line, a quadratic or a cubic Bézier), `fit`, `spacing?`,
+- **Connector / Link (line):** `anchors`, `control_points` (points
+  the path passes through, at most 8, D34), `straight` (one segment
+  between the ends' side midpoints, with no control points, D34), `fit`,
+  `spacing?`,
   `size?`, `color?`, `content?` (drawn when the path has no spans),
   `visible`, `zoom?`; a Link also has `to: NodeRef` and `kind`. A
   Connector is always a line (D22).
@@ -873,7 +876,7 @@ When a flow's text is shorter or longer than its path:
 | Mode | Behavior | Frames | Connectors |
 |---|---|---|---|
 | `once { filler? }` | Text placed once from the start; the rest of the path gets the filler span repeated, or nothing. On a frame: two lines at the declared size along the diagonal halves (§6.2 step 6), cut only where a half cannot hold its line; the filler is the frame's `sides` when `sides` is unset | ✓ | ✓ |
-| `repeat` | Text repeated until the path is full. Along a connector the last repetition is cut at a grapheme boundary; around a frame the ring holds a whole number of repetitions, evenly spaced, and closes without a seam (rulings R29, R31) | ✓ | ✓ (default — a `─` pattern) |
+| `repeat` | Text repeated until the path is full. Along a connector an ornament (text with ink and no letter) is a whole number of glyphs, every gap between two inks the same box to box whichever way the path runs, the end gaps among them (D34), and text with letters is cut at a grapheme boundary; around a frame the ring holds a whole number of repetitions, evenly spaced, and closes without a seam (rulings R29, R31) | ✓ | ✓ (default — a `─` pattern) |
 | `spread` | Text placed once with extra spacing distributed so it ends exactly at the path's end. On a frame: as `once`; how far each line reaches is its `span` | ✓ | ✓ |
 | `fit { min, max }` | Font size **and** spacing are scaled so the text fills the path exactly once (algorithm below). On a frame: one size for both lines, the largest at which each fits its level span (§6.2 step 5), laid along the diagonal halves (step 6) | ✓ (default) | ✓ |
 
@@ -1761,6 +1764,12 @@ Typical chains:
 - Structural insert / remove / move → the subtree is projected,
   unprojected or re-placed; depth-dependent palette reads in a moved
   subtree are re-resolved.
+- A path added to, removed from or moved off one side of a node → that
+  side's paths are fanned again and laid again (D34); a drag that keeps
+  their order lays the one dragged alone. The side itself is fanned and
+  untangled again, whole, on every update that marks it: every frame of
+  such a drag re-fans and re-samples all of the side's paths, though
+  only the dragged one is laid.
 
 ### §12.4 Zoom and pan
 

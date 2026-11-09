@@ -39,6 +39,12 @@ impl Rect {
         self.origin + self.size
     }
 
+    /// The smallest rectangle holding both. O(1).
+    pub fn union(&self, other: &Rect) -> Rect {
+        let origin = self.origin.min(other.origin);
+        Rect::new(origin, self.max().max(other.max()) - origin)
+    }
+
     /// The rectangle grown by `d` on every side, about the same center.
     /// A negative `d` shrinks it, and a side shrunk past zero stays at
     /// zero, centered. O(1).

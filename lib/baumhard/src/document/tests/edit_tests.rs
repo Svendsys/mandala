@@ -939,7 +939,7 @@ impl crate::projection::Geometry for Counted {
     fn section_box(&self, _: NodeId) -> Option<(Vec2, &std::sync::Arc<crate::flow::ShapedBox>)> {
         None
     }
-    fn curve(&self, _: NodeId) -> Option<crate::flow::Curve> {
+    fn curve(&self, _: NodeId) -> Option<&[crate::flow::Curve]> {
         None
     }
     fn label_pos(&self, _: NodeId) -> Option<Vec2> {

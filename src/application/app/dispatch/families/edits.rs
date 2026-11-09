@@ -83,7 +83,7 @@ impl Geometry for Undrawn {
     fn section_box(&self, _: NodeId) -> Option<(Vec2, &Arc<ShapedBox>)> {
         None
     }
-    fn curve(&self, _: NodeId) -> Option<Curve> {
+    fn curve(&self, _: NodeId) -> Option<&[Curve]> {
         None
     }
     fn label_pos(&self, _: NodeId) -> Option<Vec2> {

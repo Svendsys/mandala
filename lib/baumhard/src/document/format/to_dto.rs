@@ -852,6 +852,7 @@ impl<'a> Saver<'a> {
             content: flow.content,
             anchors: anchors(&connector.path),
             control_points: control_points(&connector.path),
+            straight: connector.path.straight.then_some(true),
             visible: (!connector.path.visible).then_some(false),
             zoom: Self::zoom(connector.path.zoom),
             spans,
@@ -957,6 +958,7 @@ impl<'a> Saver<'a> {
             content: None,
             anchors: None,
             control_points: Vec::new(),
+            straight: None,
             visible: None,
             zoom: None,
             spans: Rows::default(),
@@ -976,6 +978,7 @@ impl<'a> Saver<'a> {
                 dto.content = flow.content;
                 dto.anchors = anchors(&link.path);
                 dto.control_points = control_points(&link.path);
+                dto.straight = link.path.straight.then_some(true);
                 dto.visible = (!link.path.visible).then_some(false);
                 dto.zoom = Self::zoom(link.path.zoom);
                 dto.spans = spans;
@@ -1231,6 +1234,7 @@ fn default_path() -> PathData {
         flow: FlowStyle::default(),
         anchors: (Anchor::Auto, Anchor::Auto),
         control_points: Vec::new(),
+        straight: false,
         visible: true,
         zoom: None,
     }

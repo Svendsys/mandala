@@ -373,6 +373,7 @@ pub fn do_format_full_fixture_reads_as_written() {
             flow: Default::default(),
             anchors: (Anchor::Auto, Anchor::Auto),
             control_points: Vec::new(),
+            straight: false,
             visible: true,
             zoom: None,
         },

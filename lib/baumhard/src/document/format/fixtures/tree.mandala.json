@@ -58,7 +58,7 @@
       "parent": 1,
       "position": [320.0, -80.0],
       "sections": [{"spans": [{"text": "the heaven"}]}],
-      "links": [{"to": 4, "kind": "line", "control_points": [[400.0, 0.0]]}]
+      "links": [{"to": 4, "kind": "line", "control_points": [[0.0, -40.0]]}]
     },
     {
       "id": 5,

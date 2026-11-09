@@ -98,10 +98,10 @@ pub(crate) fn units_in_order(tree: &Tree<DocElement>, node: NodeId) -> impl Iter
 fn body_for(tree: &Tree<DocElement>, id: NodeId) -> Option<UnitBody> {
     Some(match element(tree, id)? {
         DocElement::Section(_) => UnitBody::Section(SectionState::default()),
-        DocElement::Ring(_) => UnitBody::Ring(RingState {
+        DocElement::Ring(_) => UnitBody::Ring(Box::new(RingState {
             frame: tree.node(id)?.parent(),
             ..RingState::default()
-        }),
+        })),
         DocElement::Connector(_) => UnitBody::Line(Box::default()),
         DocElement::Link(link) => match link.kind {
             LinkKind::Line => UnitBody::Line(Box::<LineState>::default()),
@@ -275,6 +275,7 @@ impl Projector {
         out: &mut LayerBuilders,
         work: &mut PhaseWork,
     ) {
+        self.leave_junctions(id, work);
         let Some(unit) = self.units.remove(&id) else {
             return;
         };
@@ -288,7 +289,7 @@ impl Projector {
                 }
             }
         }
-        for stage in [Stage::Resolve, Stage::Shape, Stage::Place] {
+        for stage in [Stage::Geometry, Stage::Resolve, Stage::Shape, Stage::Place] {
             self.deps.clear(Dependent::new(id, stage));
         }
         // The labels it projected, and no others: O(its labels).
@@ -308,6 +309,10 @@ impl Projector {
             }
         }
         self.mark(work, ProjectionInput::Geometry(id));
+        // A ring that left no longer bounds what its node's paths reach.
+        if matches!(unit.body, UnitBody::Ring(_)) {
+            self.mark(work, ProjectionInput::Reach(unit.node));
+        }
     }
 
     /// Take the node `top` and every projected node below it out of the
@@ -553,8 +558,10 @@ impl Projector {
     ///   read changed ([`OwnFields`]: a section's minimum size and
     ///   alignment, a path's visibility, a link's target and kind);
     ///   otherwise what changed is geometry — a section's offset, read by
-    ///   its box (`Geometry`), or a path's anchors, control points and
-    ///   zoom window, read when it is placed (`Place`).
+    ///   its box (`Geometry`); a line's anchors, read where it finds its
+    ///   ends (`Geometry`), and its control points and zoom window, read
+    ///   when it is laid, which its ends queue; a portal's zoom window, read
+    ///   when it is placed (`Place`).
     fn touch_stage(&self, el: &DocElement, id: NodeId, unit: NodeId) -> Stage {
         if id != unit {
             return match el.kind() {
@@ -569,7 +576,7 @@ impl Projector {
             return Stage::Resolve;
         }
         match projected.body {
-            UnitBody::Section(_) => Stage::Geometry,
+            UnitBody::Section(_) | UnitBody::Line(_) => Stage::Geometry,
             _ => Stage::Place,
         }
     }
