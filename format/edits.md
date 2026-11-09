@@ -229,7 +229,11 @@ names. A handler that declines says why, and the refusal names the edit.
 | `cascade` | each node's descendants as a top-down tree, rows below their parents |
 
 A handler places what is drawn: a hidden node, or one under a fold, is
-left where it is.
+left where it is, and takes no place in the layout — a flower of
+twelve children with one hidden has eleven petals, and a cascade row
+leaves no gap for it. A position a layout computes past the canvas
+bound (a magnitude of 1e9) is pinned at the bound; the edit is not
+refused.
 
 ## Animate
 

@@ -798,6 +798,29 @@ fn test_nested_anchors_compose_as_the_outer_then_the_inner() {
     }
 }
 
+/// **A layout at the edge of the canvas pins what it would place past
+/// it** (review of #331), as `main`'s layouts did: a flower round a
+/// node near `MAX_CANVAS_COORD` puts its right-hand petals at the bound,
+/// and the edit runs.
+///
+/// Control: unclamped, the position past the bound refused the whole
+/// edit.
+#[test]
+fn test_a_layout_pins_at_the_canvas_bound() {
+    use crate::document::bounds::MAX_CANVAS_COORD;
+    let edge = FAMILY.replacen("[0,0]", "[999999950,0]", 1);
+    let mut doc = load(&edge).unwrap();
+    let one = n(&doc, 1);
+    let flower = edit(r#"{"id":"f","name":"F","reach":"self","target":"node","handler":"flower"}"#);
+    run(&mut doc, &flower, &[one]).expect("the flower runs");
+    let xs: Vec<f32> = [2, 3, 4].iter().map(|&i| node(&doc, i).1.position.x).collect();
+    assert!(xs.iter().all(|x| *x <= MAX_CANVAS_COORD), "{xs:?}");
+    assert!(
+        xs.contains(&MAX_CANVAS_COORD),
+        "a petal pinned at the bound: {xs:?}"
+    );
+}
+
 #[test]
 fn test_a_node_that_is_not_drawn_is_left_in_place() {
     let mut doc = load(FAMILY).unwrap();

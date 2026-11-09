@@ -28,7 +28,13 @@
 //!
 //! `flower` and `cascade` are ported from `main`'s
 //! `document/mutations/flower_layout.rs` and `tree_cascade.rs`: the same
-//! placement, now emitted as one `NodeOp::SetPosition` per node, each
+//! placement for a family that is wholly drawn — angles, radius, rows
+//! and gaps, breadth-first order — with one difference where it is not.
+//! `main` gave every child a slot, an undrawn one included; here a
+//! child with no rectangle has no size to lay out by (D5), so it takes
+//! no slot: one hidden child of twelve makes an eleven-petal flower, and
+//! a cascade row without it. Each placement is emitted as one
+//! `NodeOp::SetPosition` per node, each
 //! its own walk: a walk applies one mutator per sibling key, and sibling
 //! nodes commonly share one, so one walk could not place them apart
 //! (ruling on #250).
@@ -44,6 +50,7 @@
 //! ```
 
 use crate::arena::NodeId;
+use crate::document::bounds::clamp_canvas_coord;
 use crate::document::element::{DocElement, DocKind};
 use crate::document::ids::Document;
 use crate::document::mutation::ops::{DocMutation, DocMutatorTree, NodeOp};
@@ -204,11 +211,17 @@ fn position_for(doc: &Document, node: NodeId, drawn: Rect, origin: Vec2) -> Vec2
 /// anchored at each node, in the order they were placed. One walk per
 /// node, because a walk applies one mutator per sibling key and sibling
 /// nodes commonly share one (all on channel 0), so no single walk could
-/// tell them apart (ruling on #250). O(the planned nodes).
+/// tell them apart (ruling on #250). Each position is clamped to the
+/// canvas bound ([`clamp_canvas_coord`]), as `main`'s layouts clamped
+/// theirs: a layout near the edge of the canvas computes a position
+/// past it from positions inside it, and has no author to refuse, so
+/// the node is pinned at the edge rather than the whole edit refused.
+/// O(the planned nodes).
 fn positions(planned: Vec<(NodeId, Vec2)>) -> Walks {
     planned
         .into_iter()
         .map(|(node, at)| {
+            let at = Vec2::new(clamp_canvas_coord(at.x), clamp_canvas_coord(at.y));
             let set = Mutator::new(
                 DocMutation::Node(NodeOp::SetPosition(at)),
                 BranchKey::new(DocKind::Node, 0),
