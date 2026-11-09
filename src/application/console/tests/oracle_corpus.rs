@@ -207,13 +207,6 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::None, "record start frame="),
     (Sel::None, "clock "),
     (Sel::None, "clock step "),
-    // font families: the compiled set, the same on every machine since
-    // #228, so pinned like every other vocabulary — whole, and narrowed
-    // to a family, to the default face, and to the script faces.
-    (Sel::Node, "font set "),
-    (Sel::Node, "font set Ga"),
-    (Sel::Node, "font set in"),
-    (Sel::Node, "font set no"),
 ];
 
 /// The one outcome whose tail this machine chose rather than the
