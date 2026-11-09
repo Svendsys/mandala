@@ -62,7 +62,7 @@
 use log::warn;
 use serde::{Deserialize, Serialize};
 
-use super::action::{Action, ColorAxis, FontSlot, ZoomBound};
+use super::action::{Action, ColorAxis, FontSlot, FramePreviewTarget, ZoomBound};
 use super::bind::KeyBind;
 
 /// One binding for a parametric Action — a key combo plus the
@@ -153,7 +153,7 @@ macro_rules! impl_arg_value_via_from_str {
     };
 }
 
-impl_arg_value_via_from_str!(ColorAxis, FontSlot, ZoomBound);
+impl_arg_value_via_from_str!(ColorAxis, FramePreviewTarget, FontSlot, ZoomBound);
 
 /// Resolve every binding for one parametric variant.
 ///

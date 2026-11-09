@@ -543,10 +543,11 @@ keybind_surface! {
         /// `var(name)`, `palette(field)`) or `reset`. Maps to
         /// [`Action::SetColor`].
         SetColor { axis, value } => set_color,
-        /// `args = [field, value]`: the frame field previewed, as
-        /// `frame preview <field>=<value>` names it. Maps to
-        /// [`Action::SetFramePreview`].
-        SetFramePreview { field, value } => set_frame_preview,
+        /// `args = [target_kind, field, value]` where `target_kind` is
+        /// `node|defaults` ([`super::FramePreviewTarget`]) and `field`
+        /// and `value` are as `frame preview <field>=<value>` names them.
+        /// Maps to [`Action::SetFramePreview`].
+        SetFramePreview { target_kind, field, value } => set_frame_preview,
         /// The selected path's kind: `cross_link|parent_child`.
         SetEdgeType(edge_type) => set_edge_type,
         /// How the selected link is drawn: `line|portal`.

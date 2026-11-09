@@ -633,12 +633,12 @@ fn test_wasm_compatibility_label_edit_primitives_are_native_only() {
 // asked us to remove) fails one of these tests.
 
 /// `Action::SetFramePreview` round-trips through the JSON
-/// config: its two args are the field previewed and its value.
+/// config: its args are the frame previewed, the field and its value.
 #[test]
 fn test_set_frame_preview_keybind_round_trips_through_json() {
     let json = r#"{
         "set_frame_preview": [
-            { "combo": "Ctrl+H", "args": ["fit", "repeat"] }
+            { "combo": "Ctrl+H", "args": ["defaults", "fit", "repeat"] }
         ]
     }"#;
     let cfg = KeybindConfig::from_json(json).unwrap();
@@ -647,6 +647,7 @@ fn test_set_frame_preview_keybind_round_trips_through_json() {
     assert_eq!(
         r.action_for_context(InputContext::Document, "h", true, false, false),
         Some(Action::SetFramePreview {
+            target_kind: crate::application::keybinds::FramePreviewTarget::Defaults,
             field: "fit".into(),
             value: "repeat".into(),
         })
@@ -2370,8 +2371,9 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         ),
         (
             "set_frame_preview",
-            &["start", "top"],
+            &["node", "start", "top"],
             Action::SetFramePreview {
+                target_kind: crate::application::keybinds::FramePreviewTarget::Node,
                 field: "start".into(),
                 value: "top".into(),
             },

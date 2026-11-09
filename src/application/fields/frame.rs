@@ -29,6 +29,7 @@ use super::section::plain;
 use super::style::frame_of;
 use super::{selected, values, Groups, Steps};
 use crate::application::document::{Interaction, MindMapDocument};
+use crate::application::keybinds::FramePreviewTarget;
 use crate::application::view::inspect::children_of_kind;
 
 /// The glyphs [`cycle`] steps a frame's first ring through, in order,
@@ -324,18 +325,38 @@ pub(crate) fn delete_ring(doc: &MindMapDocument, index: usize) -> Steps {
 /// The label of a frame preview's stage and of the entry its commit makes.
 pub(crate) const PREVIEW_LABEL: &str = "frame preview";
 
-/// Stage `fields` on the selected nodes' frames as the preview: opening
-/// the preview's transaction first when none is open (D28: refused
-/// while another interaction holds the document). A second preview
-/// replaces the first, as a stage replaces a stage.
+/// Stage `fields` — each a frame field's key and its value — on the frame
+/// `target` names, as the preview: the selected nodes' frames, or the
+/// map's default frame, whose defaults are replaced with those fields
+/// changed (`map::defaults`, `frame.<key>`). The preview's transaction
+/// is opened first when none is open (D28: refused while another
+/// interaction holds the document). A second preview replaces the
+/// first, as a stage replaces a stage.
 pub(crate) fn preview(
     doc: &mut MindMapDocument,
-    fields: &[FrameField],
+    target: FramePreviewTarget,
+    fields: &[(&str, &str)],
     source: baumhard::document::writer::ChangeSource,
 ) -> Result<(), super::Refused> {
     use baumhard::document::writer::transaction::TransactionKind;
     use baumhard::document::writer::EditRequest;
-    let steps = set(doc, fields).map_err(super::Refused::Because)?;
+    let steps = match target {
+        FramePreviewTarget::Node => fields
+            .iter()
+            .map(|(key, value)| FrameField::read(key, value))
+            .collect::<Result<Vec<_>, _>>()
+            .and_then(|fields| set(doc, &fields)),
+        FramePreviewTarget::Defaults => {
+            let keys: Vec<String> = fields.iter().map(|(key, _)| format!("frame.{key}")).collect();
+            let changes: Vec<(&str, &str)> = keys
+                .iter()
+                .zip(fields)
+                .map(|(key, (_, value))| (key.as_str(), *value))
+                .collect();
+            super::map::defaults(doc, &changes)
+        }
+    }
+    .map_err(super::Refused::Because)?;
     let began = match doc.open_interaction() {
         None if doc.begin(source, TransactionKind::Interactive, Interaction::FramePreview) => true,
         Some(Interaction::FramePreview) => false,

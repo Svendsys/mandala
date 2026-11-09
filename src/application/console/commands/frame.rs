@@ -33,6 +33,7 @@ use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::Interaction;
 use crate::application::fields::frame::{self, FrameField, RingFields};
 use crate::application::fields::values;
+use crate::application::keybinds::FramePreviewTarget;
 
 const RESET: &[Word] = &[Word::new("reset", "inherit")];
 const STARTS: &[Word] = &[
@@ -59,8 +60,20 @@ const FITS: &[Word] = &[
     Word::new("reset", "inherit"),
 ];
 
-/// The frame field keys, which `frame` and `frame preview` read.
+/// What `frame preview target=` takes.
+const TARGETS: &[Word] = &[
+    Word::new("node", "the selected nodes' frames (the default)"),
+    Word::new("defaults", "the map's default frame, which every frame inherits"),
+];
+
+/// The frame field keys, which `frame` and `frame preview` read, and the
+/// preview's target.
 const KEYS: &[Key] = &[
+    Key::new(
+        "target",
+        "which frame a preview shows: node | defaults",
+        Vocabulary::Words(TARGETS),
+    ),
     Key::new(
         "start",
         "where the text starts; or <edge>:<at>",
@@ -117,14 +130,12 @@ pub static RING: Grammar = Grammar {
     )),
 };
 
-const FIELDS: &[&str] = &["start", "direction", "fit", "gap", "inset"];
-
 const SUBVERBS: &[Subverb] = &[
     Subverb::bare("on", "visibility", "show the frame; a node with none gets one"),
     Subverb::bare("off", "visibility", "hide the frame"),
     Subverb::nested("ring", "rings", "add, set or delete a ring", &RING),
     Subverb::bare("preview", "preview", "show frame fields without an edit")
-        .taking(&[Form::opt(FIELDS)])
+        .taking(&[Form::opt(&frame::FIELD_KEYS), Form::opt(&["target"])])
         .gated(),
     Subverb::bare("commit", "preview", "make the preview one undo entry"),
     Subverb::bare("cancel", "preview", "revert the preview"),
@@ -134,7 +145,7 @@ pub static GRAMMAR: Grammar = Grammar {
     label: "frame",
     subverb_sets: &[SUBVERBS],
     key_sets: &[KEYS],
-    bare: Some(Bare::new("fields", &[Form::opt(FIELDS)])),
+    bare: Some(Bare::new("fields", &[Form::opt(&frame::FIELD_KEYS)])),
 };
 
 /// Which handler each declared subverb runs (`spec::route`).
@@ -204,14 +215,28 @@ fn execute_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             super::edit(eff, steps, "frame off")
         }
         Some(Route::Preview) => {
-            let staged = fields(&pairs)
-                .map_err(crate::application::fields::Refused::Because)
-                .and_then(|fields| match fields.is_empty() {
-                    true => Err(crate::application::fields::Refused::Because(
-                        usage::subverb_usage(descent.level, subverb),
-                    )),
-                    false => frame::preview(doc, &fields, baumhard::document::writer::ChangeSource::Console),
-                });
+            use crate::application::fields::Refused;
+            let target = match kvs::value(&pairs, "target") {
+                None | Some("node") => Ok(FramePreviewTarget::Node),
+                Some("defaults") => Ok(FramePreviewTarget::Defaults),
+                Some(other) => Err(Refused::Because(format!(
+                    "frame preview: '{other}' is not a target: `node` or `defaults`"
+                ))),
+            };
+            let fields: Vec<(&str, &str)> = pairs
+                .iter()
+                .filter(|pair| pair.key.name != "target")
+                .map(|pair| (pair.key.name, pair.value))
+                .collect();
+            let staged = target.and_then(|target| match fields.is_empty() {
+                true => Err(Refused::Because(usage::subverb_usage(descent.level, subverb))),
+                false => frame::preview(
+                    doc,
+                    target,
+                    &fields,
+                    baumhard::document::writer::ChangeSource::Console,
+                ),
+            });
             match staged {
                 Ok(()) => ExecResult::ok_msg(
                     "frame preview: staged; `frame commit` keeps it, `frame cancel` reverts it",

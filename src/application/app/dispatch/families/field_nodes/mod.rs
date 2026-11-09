@@ -78,10 +78,11 @@ pub(in crate::application::app) fn run(action: &Action, doc: &mut MindMapDocumen
     let result = match action {
         Action::CommitFramePreview => return answer(Ok(doc.commit(Interaction::FramePreview).is_some())),
         Action::CancelFramePreview => return answer(Ok(doc.cancel(Interaction::FramePreview))),
-        Action::SetFramePreview { field, value } => frame::FrameField::read(field, value)
-            .map_err(Refused::Because)
-            .and_then(|field| frame::preview(doc, &[field], ChangeSource::Action))
-            .map(|()| true),
+        Action::SetFramePreview {
+            target_kind,
+            field,
+            value,
+        } => frame::preview(doc, *target_kind, &[(field, value)], ChangeSource::Action).map(|()| true),
         other => {
             let (steps, label) = steps(other, doc);
             fields::apply(doc, steps, label, ChangeSource::Action)

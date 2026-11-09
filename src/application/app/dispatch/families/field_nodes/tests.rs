@@ -24,7 +24,7 @@ use crate::application::app::dispatch::cross_dispatch::DispatchOutcome;
 use crate::application::console::parser::{parse, Args, ParseResult};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::MindMapDocument;
-use crate::application::keybinds::{Action, ColorAxis, FontSlot, ZoomBound};
+use crate::application::keybinds::{Action, ColorAxis, FontSlot, FramePreviewTarget, ZoomBound};
 use crate::application::view::inspect::children_of_kind;
 
 /// The fixture every case starts from.
@@ -799,6 +799,7 @@ fn test_a_frame_preview_cancels_to_nothing_and_commits_as_one_entry() {
     doc.undo();
 
     let set_preview = |field: &str, value: &str| Action::SetFramePreview {
+        target_kind: FramePreviewTarget::Node,
         field: field.into(),
         value: value.into(),
     };
@@ -942,6 +943,7 @@ fn test_a_refused_preview_leaves_nothing_locked_and_keeps_the_stage_before() {
     let staged = bytes(&doc);
     assert!(run_line(&mut doc, "frame preview gap=-1").is_err());
     let inset = Action::SetFramePreview {
+        target_kind: FramePreviewTarget::Node,
         field: "inset".into(),
         value: "-3".into(),
     };
@@ -953,5 +955,47 @@ fn test_a_refused_preview_leaves_nothing_locked_and_keeps_the_stage_before() {
     assert_eq!(bytes(&doc), staged, "the stage before them stands");
     assert_eq!(doc.open_interaction(), Some(Interaction::FramePreview));
     run_line(&mut doc, "frame cancel").expect("cancels");
+    assert_eq!(bytes(&doc), FIXTURE);
+}
+
+/// **A preview of the map's default frame is the same transaction**:
+/// `frame preview target=defaults` stages the defaults replaced with the
+/// frame field changed, which cancels to the bytes before it with no
+/// entry, and `SetFramePreview` with `defaults` commits as one entry
+/// that one undo takes back. No selection is needed. Control: while
+/// staged the bytes differ, so the cancel's comparison can fail.
+#[test]
+fn test_a_default_frame_preview_cancels_to_nothing_and_commits_as_one_entry() {
+    let mut doc = fixture();
+    let entries = doc.doc().history().count();
+    run_line(&mut doc, "frame preview target=defaults fit=spread").expect("stages");
+    assert!(
+        bytes(&doc).contains("\"fit\": \"spread\""),
+        "control: the default frame previews"
+    );
+    run_line(&mut doc, "frame cancel").expect("cancels");
+    assert_eq!(bytes(&doc), FIXTURE, "cancelled: byte for byte");
+    assert_eq!(doc.doc().history().count(), entries);
+
+    let gap = Action::SetFramePreview {
+        target_kind: FramePreviewTarget::Defaults,
+        field: "gap".into(),
+        value: "3".into(),
+    };
+    assert_eq!(run(&gap, &mut doc), DispatchOutcome::Handled);
+    assert_eq!(
+        run(&Action::CommitFramePreview, &mut doc),
+        DispatchOutcome::Handled
+    );
+    assert_eq!(
+        bytes(&doc),
+        expected(&[(
+            "      \"size\": 14.0\n    }\n",
+            "      \"size\": 14.0\n    },\n    \"frame\": {\n      \"gap\": 3.0\n    }\n"
+        )]),
+        "the default frame's gap"
+    );
+    assert_eq!(doc.doc().history().count(), entries + 1, "committed: one entry");
+    doc.undo();
     assert_eq!(bytes(&doc), FIXTURE);
 }

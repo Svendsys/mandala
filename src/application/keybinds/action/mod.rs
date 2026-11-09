@@ -39,6 +39,21 @@ pub enum ColorAxis {
     Ring,
 }
 
+/// Which frame a [`Action::SetFramePreview`] previews: the selected
+/// nodes' frames, or the map's default frame (`Defaults.frame`), which
+/// every frame that sets nothing of its own inherits — `main`'s
+/// `canvas-border`. A keybind spells it in kebab case. Sections have no
+/// frame (D8), so `main`'s section targets have no counterpart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, IntoStaticStr, EnumString)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
+pub enum FramePreviewTarget {
+    /// The selected nodes' frames.
+    Node,
+    /// The map's default frame.
+    Defaults,
+}
+
 /// Which text field a [`Action::SetFont`] sets: the `size|weight|italic`
 /// kv key of the `font` console verb's grammar. The family is its own
 /// Action, [`Action::SetFontFamily`], since its value is a name.
@@ -639,13 +654,18 @@ pub enum Action {
     /// key toggles it.
     #[action(context = Document, wasm = Compatible)]
     ToggleFrameVisible,
-    /// Preview one field of the selected nodes' frames without making
-    /// it an edit: an open interactive transaction (D28) whose stage is
-    /// the preview, which [`Self::CommitFramePreview`] makes one undo
-    /// entry and [`Self::CancelFramePreview`] reverts. A second preview
-    /// replaces the first.
+    /// Preview one field of the frame `target_kind` names
+    /// ([`FramePreviewTarget`]) without making it an edit: an open
+    /// interactive transaction (D28) whose stage is the preview, which
+    /// [`Self::CommitFramePreview`] makes one undo entry and
+    /// [`Self::CancelFramePreview`] reverts. A second preview replaces
+    /// the first.
     #[action(context = Document, wasm = Compatible)]
-    SetFramePreview { field: String, value: String },
+    SetFramePreview {
+        target_kind: FramePreviewTarget,
+        field: String,
+        value: String,
+    },
     /// Commit the open frame preview. Nothing when none is open.
     #[action(context = Document, wasm = Compatible)]
     CommitFramePreview,
