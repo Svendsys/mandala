@@ -117,10 +117,10 @@ fn execute_zoom(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             Ok(value) => Some(value),
             Err(msg) => return ExecResult::err(msg),
         };
-        if pair.key.name == "min" {
-            change.min = value;
-        } else {
-            change.max = value;
+        match pair.key.name {
+            "min" => change.min = value,
+            "max" => change.max = value,
+            other => log::error!("zoom: engine admitted unread key '{other}'"),
         }
     }
     let steps = style::zoom(eff.document(), change);

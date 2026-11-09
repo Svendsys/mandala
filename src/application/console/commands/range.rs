@@ -71,15 +71,22 @@ fn execute_range(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     let doc = eff.document();
     let ops = pairs
         .iter()
-        .map(|pair| {
+        .filter_map(|pair| {
             let value = pair.value;
-            Ok(match pair.key.name {
-                "color" => TextOp::SetColor(values::color(doc.doc(), value)?),
-                "font" => TextOp::SetFont(values::font(value)?),
-                "size" => TextOp::SetSize(values::or_reset(value, values::number)?.map(FontSize::Pt)),
-                "weight" => TextOp::SetWeight(values::or_reset(value, values::weight)?),
-                _ => TextOp::SetItalic(values::or_reset(value, values::boolean)?),
-            })
+            let op = match pair.key.name {
+                "color" => values::color(doc.doc(), value).map(TextOp::SetColor),
+                "font" => values::font(value).map(TextOp::SetFont),
+                "size" => {
+                    values::or_reset(value, values::number).map(|v| TextOp::SetSize(v.map(FontSize::Pt)))
+                }
+                "weight" => values::or_reset(value, values::weight).map(TextOp::SetWeight),
+                "italic" => values::or_reset(value, values::boolean).map(TextOp::SetItalic),
+                other => {
+                    log::error!("range: engine admitted unread key '{other}'");
+                    return None;
+                }
+            };
+            Some(op)
         })
         .collect::<Result<Vec<TextOp>, String>>();
     let steps = ops.and_then(|ops| {

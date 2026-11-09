@@ -192,7 +192,8 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             "family" => font.family = Some(values::font(value)?),
             "size" => font.size = Some(values::or_reset(value, values::number)?),
             "weight" => font.weight = Some(values::or_reset(value, values::weight)?),
-            _ => font.italic = Some(values::or_reset(value, values::boolean)?),
+            "italic" => font.italic = Some(values::or_reset(value, values::boolean)?),
+            other => log::error!("font: engine admitted unread key '{other}'"),
         }
         Ok::<_, String>(font)
     });
