@@ -1381,12 +1381,23 @@ impl Projector {
 
     /// Phase C, between the ends and the lays: fan the junction `key` once
     /// (#296, rule 4). The paths that leave one side of a node are ordered
-    /// by their turn toward their other ends and given their turns and
-    /// holds ([`geometry::fan`]); the portal ends with no `border_t` at a
-    /// node, ordered round its outline, are held apart there
-    /// ([`geometry::held_apart`]). Each member whose value changed is
-    /// queued to be laid again, and no other: a drag that keeps the order
-    /// lays the dragged path alone. O(the members, log them).
+    /// by their turn toward their other ends (a straight path by its own
+    /// direction), given their turns and holds ([`geometry::fan`]), and
+    /// untangled along their whole length ([`geometry::untangle`]); the
+    /// portal ends with no `border_t` at a node, ordered round its
+    /// outline, are held apart there ([`geometry::held_apart`]). Each
+    /// member whose value changed is queued to be laid again, and no
+    /// other: a drag that keeps the order lays the dragged path alone.
+    ///
+    /// Cost: a side is fanned and untangled whole on every update that
+    /// marks it — every frame of a drag of one of its paths' far ends
+    /// re-fans and re-untangles all of its siblings, though it lays only
+    /// the one dragged. The fan is O(the members, log them); `untangle`
+    /// samples every member's whole curve every quarter of its width in
+    /// its first round, and in each of at most [`UNTANGLE_ROUNDS`] after
+    /// it, the members it halved. Portal ends: O(the members, log them).
+    ///
+    /// [`UNTANGLE_ROUNDS`]: geometry::UNTANGLE_ROUNDS
     fn refan(&mut self, key: JunctionKey, work: &mut PhaseWork) {
         let Some(members) = self.junctions.get(&key) else {
             return;

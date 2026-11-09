@@ -1766,7 +1766,10 @@ Typical chains:
   subtree are re-resolved.
 - A path added to, removed from or moved off one side of a node → that
   side's paths are fanned again and laid again (D34); a drag that keeps
-  their order lays the one dragged alone.
+  their order lays the one dragged alone. The side itself is fanned and
+  untangled again, whole, on every update that marks it: every frame of
+  such a drag re-fans and re-samples all of the side's paths, though
+  only the dragged one is laid.
 
 ### §12.4 Zoom and pan
 
