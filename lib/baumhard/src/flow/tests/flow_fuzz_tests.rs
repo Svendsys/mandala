@@ -1672,9 +1672,9 @@ fn test_flow_the_whole_text_owed_a_fit_is_measured_at_the_size_floor() {
 /// not cut it ([`sides_in_time`]).
 ///
 /// Control: with `𓀀` replaced by `⸻`, which no compiled face holds, red
-/// on every machine since #228 (before it, where no host face held it
-/// either: on CI, and with `FONTCONFIG_FILE` naming a config of one empty
-/// font directory).
+/// where no host face holds it either (on CI, and here with
+/// `FONTCONFIG_FILE` naming a config of one empty font directory, which
+/// leaves the compiled faces alone).
 ///
 /// [`ORNAMENT_GLYPHS`]: crate::flow::tests::flow_fuzz::ORNAMENT_GLYPHS
 /// [`LONG_ORNAMENT_BYTES`]: crate::flow::tests::flow_fuzz::LONG_ORNAMENT_BYTES

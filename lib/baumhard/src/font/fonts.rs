@@ -47,21 +47,30 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
 /// The font system [`FONT_SYSTEM`] holds, built complete before it is put
 /// in the lock (#323): every compiled-in face, each static
 /// [`fallback::fallback_families`] face at every weight
-/// ([`fallback::register_every_weight`], #297), and nothing else — no
-/// host face (#228). The compiled faces' ids go to `COMPILED_IDS`, which
-/// [`COMPILED_FONT_ID_MAP`] reads.
+/// ([`fallback::register_every_weight`], #297), and on native, after
+/// them, the host's installed faces, less any that bears a compiled
+/// family's name ([`remove_shadowing_faces`], ruling R30.1). The compiled
+/// faces' ids go to `COMPILED_IDS`, which [`COMPILED_FONT_ID_MAP`] reads.
 ///
 /// So the set of faces anything is shaped with is the same from the first
-/// shaping on, whoever takes the lock first and whatever it shapes, and
-/// the same on every machine and in the browser: it is built from an
-/// empty database and reads nothing of the host. Until #228 the native
-/// build began from cosmic-text's `FontSystem::new`, which indexes the
-/// host's fonts, so a map's text that pinned no family was drawn in
-/// whatever the machine had installed.
+/// shaping on, whoever takes the lock first and whatever it shapes. And
+/// the faces a map's text is drawn in do not depend on the host where the
+/// compiled faces hold it (#228): text that names no family asks for the
+/// default face by name, every generic family naming it; the fallback
+/// list names compiled faces alone; the compiled faces are loaded first,
+/// so they keep the lower ids every tie in cosmic-text's last pass is
+/// broken by; and no host face can answer for a compiled family's name.
+/// The host's faces draw what no compiled face holds — on native, as a
+/// last resort, and named by a map once #329 lands. The browser has no
+/// host faces. Until #228 the native build began from cosmic-text's
+/// `FontSystem::new`, which loaded the host's fonts first and named no
+/// compiled face for the generic families, so text that pinned no family
+/// was drawn in whatever the machine had installed.
 ///
 /// It takes no lock: the value is not yet in one. Cost: one
 /// `load_font_source` call per entry in [`FONT_SOURCES`], eight database
-/// inserts per static fallback face, and [`fallback::new_font_system`].
+/// inserts per static fallback face, the host's font scan on native and
+/// one walk over every face it adds, and [`fallback::new_font_system`].
 fn complete_font_system() -> FontSystem {
     let mut db = cosmic_text::fontdb::Database::new();
     let mut compiled_font_id_map = FxHashMap::default();
@@ -90,10 +99,51 @@ fn complete_font_system() -> FontSystem {
             }
         }
     }
+    // The host's faces, after every compiled one (#228). The browser has
+    // none to load.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        db.load_system_fonts();
+        remove_shadowing_faces(&mut db, &compiled_font_id_map);
+    }
     let font_system = fallback::new_font_system(db);
     FACE_SET_GENERATION.fetch_add(1, Ordering::Release);
     let _ = COMPILED_IDS.set(compiled_font_id_map);
     font_system
+}
+
+/// Remove from `db` every face that is not compiled in and bears a
+/// compiled family's name (ruling R30.1 on #278).
+///
+/// cosmic-text resolves a family by name, and fontdb's query picks the
+/// best weight and slant among every face of that name: a host's Inter
+/// Variable Italic would take every italic span of default text from the
+/// compiled upright face, and a host's Galatia SIL at a weight the
+/// compiled one lacks would take a span pinned to it. With them gone, the
+/// default face and every pin name the compiled faces on every machine.
+/// The host's other families stay. Cost: one walk over every face in the
+/// database, and one removal per shadowing face.
+#[cfg(not(target_arch = "wasm32"))]
+fn remove_shadowing_faces(
+    db: &mut cosmic_text::fontdb::Database,
+    compiled: &FxHashMap<AppFont, TinyVec<[ID; 8]>>,
+) {
+    let compiled_ids: Vec<ID> = compiled.values().flat_map(|ids| ids.iter().copied()).collect();
+    let names: Vec<String> = compiled_ids
+        .iter()
+        .filter_map(|id| db.face(*id))
+        .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
+        .collect();
+    let shadowing: Vec<(ID, String)> = db
+        .faces()
+        .filter(|face| !compiled_ids.contains(&face.id))
+        .filter(|face| face.families.iter().any(|(name, _)| names.contains(name)))
+        .map(|face| (face.id, face.post_script_name.clone()))
+        .collect();
+    for (id, name) in shadowing {
+        debug!("removed {name}: it bears a compiled family's name");
+        db.remove_face(id);
+    }
 }
 
 /// The compiled faces' ids, as [`complete_font_system`] registered them.
@@ -274,11 +324,13 @@ static FAMILY_INDEX: OnceLock<Vec<(String, AppFont)>> = OnceLock::new();
 ///
 /// The reverse lookup (`app_font_by_family`) maps each unique
 /// family name to the first `AppFont` whose face advertises that
-/// name. The font system holds the compiled faces alone, on every
-/// target (#228), so every face is one of them; a face that were not
-/// would be left out with a `warn!`, never attributed to `AppFont::Any`,
-/// which has no name a map could store. Sorting is alphabetical so a UI
-/// list is stable.
+/// name. A face that is not compiled in — on native, a host's installed
+/// face (#228) — is attributed to `AppFont::Any`, so `font list` and the
+/// console's completion offer it; a map cannot store `Any` yet (the
+/// loader refuses it), which #329 changes. No host face bears a compiled
+/// family's name (`remove_shadowing_faces`), so a compiled family always
+/// resolves to its compiled face. The browser has no host faces. Sorting
+/// is alphabetical so a UI list is stable.
 fn build_family_index() -> Vec<(String, AppFont)> {
     // The compiled faces' ids, which come with the font system's build
     // and take no lock (#323).
@@ -305,14 +357,7 @@ fn build_family_index() -> Vec<(String, AppFont)> {
             );
             continue;
         }
-        let Some(attributed) = id_to_app_font.get(&face.id).copied() else {
-            log::warn!(
-                "build_family_index: face id {:?} ({:?}) is not a compiled face; skipping",
-                face.id,
-                face.families.first().map(|(n, _)| n.as_str()).unwrap_or("?"),
-            );
-            continue;
-        };
+        let attributed = id_to_app_font.get(&face.id).copied().unwrap_or(AppFont::Any);
         for (family, _lang) in face.families.iter() {
             if family.is_empty() {
                 continue;

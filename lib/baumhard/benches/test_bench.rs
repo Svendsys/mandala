@@ -1121,9 +1121,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         "only_the_default_face_is_variable_and_its_pin_spans_its_axis",
         |b| b.iter(do_only_the_default_face_is_variable_and_its_pin_spans_its_axis),
     );
-    c.bench_function("the_font_system_holds_the_compiled_faces_alone", |b| {
-        b.iter(do_the_font_system_holds_the_compiled_faces_alone)
-    });
+    c.bench_function(
+        "no_host_face_bears_a_compiled_name_or_comes_before_a_compiled_face",
+        |b| b.iter(do_no_host_face_bears_a_compiled_name_or_comes_before_a_compiled_face),
+    );
     c.bench_function(
         "no_compiled_family_has_a_slant_at_a_weight_its_other_slant_lacks",
         |b| b.iter(do_no_compiled_family_has_a_slant_at_a_weight_its_other_slant_lacks),

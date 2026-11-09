@@ -38,9 +38,10 @@ pub const ACCENT_COLOR: Color = Color::rgba(0x7f, 0xc3, 0xa5, 0xff);
 // ---- glyph constants -------------------------------------------------
 //
 // Every glyph here is drawn in the default family, so each must be held
-// by the default face or `Mandala Ornaments` (#228): the font system
-// holds the compiled faces alone, and a glyph neither holds is drawn as
-// a `.notdef` box or in a decorative face.
+// by the default face or `Mandala Ornaments` (#228), so the console
+// looks the same on every machine: a glyph neither holds is drawn in
+// whatever face the host has, as a `.notdef` box where it has none, or
+// in a decorative face.
 // `renderer::tests::test_every_chrome_glyph_is_drawn_by_the_default_or_an_ornament_face`
 // holds them to it.
 

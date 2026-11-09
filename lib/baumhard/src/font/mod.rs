@@ -22,7 +22,7 @@ pub mod color;
 /// text that pins no family is drawn in ([`fallback::DEFAULT_FACE`]), the
 /// one list of compiled faces a glyph a span's face lacks falls back to
 /// ([`fallback::fallback_families`]), and the font system built over the
-/// compiled faces alone.
+/// compiled faces, the host's after them on native.
 pub mod fallback;
 /// Compiled-in font table, shared `FONT_SYSTEM`, cosmic-text editor
 /// factories, and the text-measurement primitives.

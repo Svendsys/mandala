@@ -18,13 +18,14 @@
 //! process starts with nothing shaped; the fresh-process comparison runs
 //! each map again in a child process of its own.
 //!
-//! Until #228 the native font system began from the host's installed
-//! fonts, and the default family was a name no compiled face bore, so
+//! Until #228 the default family was a name no compiled face bore, so
 //! text that pinned no family was drawn in whatever the machine had:
 //! DejaVu Sans on a Linux desktop, a decorative face or `.notdef` boxes
-//! on a host with none and in the browser. The host comparison runs every
-//! map in child processes whose fontconfig names an empty font directory,
-//! or one planted with copies of compiled faces, against this process.
+//! on a host with none and in the browser. The host's fonts are still
+//! loaded on native, after the compiled faces, for what no compiled face
+//! holds. The host comparison runs every map in child processes whose
+//! fontconfig names an empty font directory, or one planted with copies
+//! of compiled faces, against this process.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -316,9 +317,11 @@ impl Drop for Scratch {
 }
 
 /// What `HOSTS` reports in this process: `HOST faces` (what the host's
-/// font index holds, [`host_faces`]), `STRAYS n`, `DEFAULT faults` (the
-/// fixture's glyphs drawn in another face than the default face, or as a
-/// `.notdef`), then `MAP name digest` for every shipped map.
+/// font index holds, [`host_faces`]), `SHADOWS faces` (the font
+/// system's faces that are not compiled in and bear a compiled family's
+/// name), `DEFAULT faults` (the fixture's glyphs drawn in another face
+/// than the default face, or as a `.notdef`), then `MAP name digest` for
+/// every shipped map.
 fn host_report() -> Vec<String> {
     use baumhard::font::fallback::DEFAULT_FACE;
     use baumhard::font::fonts::COMPILED_FONT_ID_MAP;
@@ -327,16 +330,21 @@ fn host_report() -> Vec<String> {
         .flat_map(|ids| ids.iter().copied())
         .collect();
     let default = &COMPILED_FONT_ID_MAP[&DEFAULT_FACE.0];
-    let strays = {
+    let shadows = {
         let mut fonts = FontSystemLease::new("tests/font_state::hosts");
-        let names: Vec<String> = fonts
-            .fonts()
-            .db()
+        let db = fonts.fonts().db();
+        let names: Vec<String> = compiled
+            .iter()
+            .filter_map(|id| db.face(*id))
+            .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
+            .collect();
+        let shadows: Vec<String> = db
             .faces()
             .filter(|face| !compiled.contains(&face.id))
+            .filter(|face| face.families.iter().any(|(name, _)| names.contains(name)))
             .map(|face| face.post_script_name.clone())
             .collect();
-        names
+        shadows
     };
     let doc = load(DEFAULT_FAMILY).expect("precondition: the fixture loads");
     let mut layers = GlyphLayers::new();
@@ -369,7 +377,7 @@ fn host_report() -> Vec<String> {
     );
     let mut report = vec![
         format!("HOST {:?}", host_faces()),
-        format!("STRAYS {strays:?}"),
+        format!("SHADOWS {shadows:?}"),
         format!("DEFAULT {faults:?}"),
     ];
     for (name, text) in the_maps() {
@@ -380,12 +388,14 @@ fn host_report() -> Vec<String> {
 
 #[test]
 fn test_every_shipped_map_lays_out_alike_whatever_the_host_has_installed() {
-    // #228: the font system holds the compiled faces and nothing of the
-    // host, so a map lays out alike on a host with no fonts at all, on one
-    // that has installed copies of compiled faces under their own names
-    // (Inter, the default face, among them: what would shadow the default
-    // face were the host's fonts indexed), and on this machine, whatever
-    // it has. Each host is a child process whose fontconfig names one
+    // #228: the font system loads the host's fonts after the compiled
+    // faces and drops any that bears a compiled family's name, and text
+    // that names no family asks for the compiled default face by name, so
+    // a map lays out alike on a host with no fonts at all, on one that has
+    // installed copies of compiled faces under their own names (Inter,
+    // the default face, and Galatia SIL among them: what would shadow the
+    // default face and a pin were they kept), and on this machine,
+    // whatever it has. Each host is a child process whose fontconfig names one
     // directory, empty or planted, and whose home is empty; every glyph of
     // the default-family fixture is the default face's in each. The
     // hosts are an adversary only where fontdb reads `FONTCONFIG_FILE`
@@ -393,10 +403,12 @@ fn test_every_shipped_map_lays_out_alike_whatever_the_host_has_installed() {
     // first reports what the host's own font index holds, and the test
     // requires the planted faces and nothing else, and nothing for the
     // empty host: a target where the fixture cannot be built fails here
-    // as unproven rather than passing. Control: with the host's fonts
-    // indexed again (`db.load_system_fonts()` in `complete_font_system`),
-    // red on the planted host's strays and on its fixture drawn in the
-    // planted copy of Inter.
+    // as unproven rather than passing. Controls: with the shadowing faces
+    // kept (no `remove_shadowing_faces`), red on the planted host's
+    // shadows (and, with Inter's italic face planted beside it, on the
+    // fixture's italic text drawn in it); with the host's fonts loaded
+    // before the compiled ones, red on the layouts, this machine's ids
+    // no longer the hosts'.
     if let Ok(what) = std::env::var(CHILD) {
         if what == HOSTS {
             for line in host_report() {
@@ -476,7 +488,10 @@ fn test_every_shipped_map_lays_out_alike_whatever_the_host_has_installed() {
         "precondition: each child's host font index holds what its fontconfig names, \
          or the hosts are no adversary on this target"
     );
-    assert_eq!(here[1], "STRAYS []", "this process: faces not compiled in");
+    assert_eq!(
+        here[1], "SHADOWS []",
+        "this process: host faces bearing a compiled name"
+    );
     assert_eq!(
         here[2], "DEFAULT []",
         "this process: default text not in the default face"
@@ -487,7 +502,10 @@ fn test_every_shipped_map_lays_out_alike_whatever_the_host_has_installed() {
             here.len(),
             "precondition: the {host} host reports every map"
         );
-        assert_eq!(report[1], "STRAYS []", "the {host} host: faces not compiled in");
+        assert_eq!(
+            report[1], "SHADOWS []",
+            "the {host} host: host faces bearing a compiled name"
+        );
         assert_eq!(
             report[2], "DEFAULT []",
             "the {host} host: default text not in the default face"

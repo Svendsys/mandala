@@ -658,27 +658,29 @@ pub fn do_only_the_default_face_is_variable_and_its_pin_spans_its_axis() {
 }
 
 #[test]
-fn test_the_font_system_holds_the_compiled_faces_alone() {
-    do_the_font_system_holds_the_compiled_faces_alone();
+fn test_no_host_face_bears_a_compiled_name_or_comes_before_a_compiled_face() {
+    do_no_host_face_bears_a_compiled_name_or_comes_before_a_compiled_face();
 }
 
-/// #228: the font system is built from the compiled faces and nothing of
-/// the host, so every face in it is a compiled one, on every machine, and
-/// a pin can be met by no face but its family's compiled ones (what ruling
-/// R30.1 once removed host faces for). The default face is named for every
-/// generic family, so text that pins none asks for it by name. The reader
-/// is held first to a list of compiled faces with Galatia SIL's left out,
-/// which it must find. `font_state`'s host test runs the same build under
-/// a host with no fonts and one with planted fonts.
-pub fn do_the_font_system_holds_the_compiled_faces_alone() {
+/// #228: on native the font system holds the host's installed faces too,
+/// after the compiled ones, so the faces text is drawn in where the
+/// compiled faces hold it do not depend on the host:
+/// - no face that is not compiled bears a compiled family's name
+///   (ruling R30.1, `remove_shadowing_faces`), so a pin, and the default
+///   face, name the compiled faces alone;
+/// - every compiled face's id comes before every other face's, so a tie
+///   in cosmic-text's last pass, which goes by id among equal weights,
+///   falls to a compiled face;
+/// - the default face is named for every generic family, so text that
+///   pins none asks for it by name.
+///
+/// The reader is held first to a list of compiled faces with Galatia
+/// SIL's left out, which it must name. `font_state`'s host test plants
+/// copies of compiled faces on a host of its own, which the first point
+/// must remove. Control: the host's fonts loaded before the compiled
+/// ones, red on the second point wherever the host has a font.
+pub fn do_no_host_face_bears_a_compiled_name_or_comes_before_a_compiled_face() {
     use cosmic_text::fontdb::Family;
-    let strays = |fs: &cosmic_text::FontSystem, compiled: &[cosmic_text::fontdb::ID]| -> Vec<String> {
-        fs.db()
-            .faces()
-            .filter(|face| !compiled.contains(&face.id))
-            .map(|face| face.post_script_name.clone())
-            .collect()
-    };
     fonts::init();
     let compiled: Vec<cosmic_text::fontdb::ID> = fonts::COMPILED_FONT_ID_MAP
         .values()
@@ -690,11 +692,30 @@ pub fn do_the_font_system_holds_the_compiled_faces_alone() {
         .filter(|id| !galatia.contains(id))
         .copied()
         .collect();
+    // Faces not in `among` that bear a family name a face in `among` bears.
+    let shadows = |fs: &cosmic_text::FontSystem, among: &[cosmic_text::fontdb::ID]| -> Vec<String> {
+        let names: Vec<String> = among
+            .iter()
+            .filter_map(|id| fs.db().face(*id))
+            .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
+            .collect();
+        fs.db()
+            .faces()
+            .filter(|face| !among.contains(&face.id))
+            .filter(|face| face.families.iter().any(|(name, _)| names.contains(name)))
+            .map(|face| face.post_script_name.clone())
+            .collect()
+    };
     let fs = acquire_font_system_write("fonts_tests::do_*");
-    let (control, strays, total, generic) = (
-        strays(&fs, &without_galatia),
-        strays(&fs, &compiled),
-        fs.db().len(),
+    let last_compiled = compiled.iter().max().copied();
+    let (control, shadowing, before, generic) = (
+        shadows(&fs, &without_galatia),
+        shadows(&fs, &compiled),
+        fs.db()
+            .faces()
+            .filter(|face| !compiled.contains(&face.id) && Some(face.id) < last_compiled)
+            .map(|face| face.post_script_name.clone())
+            .collect::<Vec<_>>(),
         [
             Family::SansSerif,
             Family::Serif,
@@ -707,13 +728,22 @@ pub fn do_the_font_system_holds_the_compiled_faces_alone() {
     drop(fs);
     assert!(
         control.iter().any(|name| name == "GalatiaSIL"),
-        "control: a face left out is found ({control:?})"
+        "control: a face of a family left out is found ({control:?})"
     );
     assert!(
-        total >= 50,
-        "precondition: the compiled faces are loaded ({total})"
+        compiled.len() >= 50,
+        "precondition: the compiled faces are loaded"
     );
-    assert_eq!(strays, Vec::<String>::new(), "faces not compiled in");
+    assert_eq!(
+        shadowing,
+        Vec::<String>::new(),
+        "faces not compiled in that bear a compiled name"
+    );
+    assert_eq!(
+        before,
+        Vec::<String>::new(),
+        "faces not compiled in, numbered before a compiled one"
+    );
     for name in generic {
         assert_eq!(name, DEFAULT_FACE.1, "a generic family names the default face");
     }

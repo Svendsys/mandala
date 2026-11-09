@@ -7,8 +7,10 @@
 //!
 //! Follows the `do_*()` / `test_*()` split from §T2.2 — every `do_*`
 //! body is benchmarkable from `benches/test_bench.rs`. Every body shapes
-//! with the global font system, which holds the compiled faces alone
-//! (#228), never a `FontSystem::new()`, which indexes the host's fonts.
+//! with the global font system, the one the app shapes with (#228),
+//! never a `FontSystem::new()` of its own, which loads the host's fonts
+//! ahead of the compiled ones and names no compiled face for the generic
+//! families.
 
 use cosmic_text::{Attrs, Color, Family};
 

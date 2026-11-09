@@ -29,9 +29,13 @@
 //! faces in the same order;
 //! cosmic-text's platform lists, which differ between Linux, Windows,
 //! macOS and the browser and name host families, are not consulted. A
-//! glyph none of those faces holds is looked for in every other compiled
-//! face, as cosmic-text does after its lists: nearest in weight first,
-//! and in the order the build lists them among equals.
+//! glyph none of those faces holds is looked for in every other face, as
+//! cosmic-text does after its lists: nearest in weight first, and among
+//! equals in the order the faces were loaded — the compiled faces in the
+//! order the build lists them, then, on native, the host's (#228). So a
+//! host face draws a glyph no compiled face holds; and one only a
+//! decorative compiled face holds, at another weight than the span's, a
+//! host face of the span's own weight can draw first.
 //!
 //! The ornament faces hold no code point the default face holds
 //! (`scripts/ornament_fonts.sh`, held by `font::tests::ornament_tests`),
@@ -139,12 +143,12 @@ impl Fallback for CompiledFallback {
     }
 }
 
-/// The font system over `db`, which holds the compiled faces and nothing
-/// else: [`DEFAULT_FACE`]'s family named for every generic family, and
-/// [`CompiledFallback`]'s lists. Nothing of the host is read — not its
-/// fonts, not its locale — so the font system is the same on every
-/// machine and in the browser. Cost: one walk over the database's faces,
-/// which cosmic-text makes to list the monospaced ones.
+/// The font system over `db`, which holds the compiled faces first and,
+/// on native, the host's after them: [`DEFAULT_FACE`]'s family named for
+/// every generic family, and [`CompiledFallback`]'s lists. The host's
+/// locale is not read, nor its platform's fallback lists. Cost: one walk
+/// over the database's faces, which cosmic-text makes to list the
+/// monospaced ones.
 pub(crate) fn new_font_system(mut db: Database) -> FontSystem {
     let family = DEFAULT_FACE.1;
     db.set_sans_serif_family(family);

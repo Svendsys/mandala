@@ -1237,10 +1237,11 @@ fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
 /// **Every glyph of the app's own chrome is drawn by the default face or
 /// `Mandala Ornaments`** (#228): the console's prompt, cursor, gutter,
 /// completion marker and frame, the rubber band's corners and dashes,
-/// and the `body` presets. Each is drawn in the default family, and the
-/// font system holds the compiled faces alone, so a glyph neither face
-/// holds is drawn as a `.notdef` box or in a decorative face the app
-/// never chose (`▌` and `═` in `African`). Each is shaped as the chrome
+/// and the `body` presets. Each is drawn in the default family, so its
+/// look must not depend on the machine: a glyph neither face holds is
+/// drawn in whatever face the host has, as a `.notdef` box where it has
+/// none and in the browser, or in a decorative face the app never chose
+/// (`▌` and `═` in `African`). Each is shaped as the chrome
 /// shapes it, with no family, and every glyph must be the default face's
 /// or the ornament face's, and not a `.notdef`.
 ///

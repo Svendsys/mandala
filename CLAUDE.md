@@ -158,9 +158,9 @@ the parity trajectory (or why none is owed):
   the canvas as drawn, at its own size, and `describe` declares
   exactly the parameters each target takes. Recording stays native;
   `describe` says so. Since #228 the default family is a compiled face
-  (Inter) and the font system holds the compiled faces alone on every
-  target, so a browser frame draws a map's text in the faces native
-  draws it in (`format/fonts.md`).
+  (Inter) and the fallback lists compiled faces alone, ahead of the
+  host's, so a browser frame draws a map's text in the faces native
+  draws it in wherever the compiled faces hold it (`format/fonts.md`).
 - **Headless and one-shot launches** (`--headless`, `--size`,
   `--adapter`, `--screenshot`; `src/application/app/run_headless.rs`,
   `app/pump.rs`, `app/shell.rs`, `renderer/adapter.rs`; IPC-10/#70) —

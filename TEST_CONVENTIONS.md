@@ -814,9 +814,9 @@ What they hold, in short (each module's docs are the full list):
   every weight from 100 to 900, and the default face, first in the
   fallback, is variable across all of them (#228), so a span the matcher
   would let slip past its pin to another face of that weight does so on
-  every machine; the font system holds the compiled faces alone, so the
-  suite's sweep and the fuzz targets see the same faces wherever they
-  run. The generator's face list, `faces()`, never changes length: a
+  every machine. The host's faces come after every compiled one and none
+  bears a compiled family's name, so what the sweep and the fuzz targets
+  pin is drawn in the same faces wherever they run. The generator's face list, `faces()`, never changes length: a
   choice picks a face modulo it, so a face added moves every committed
   structured seed and finding to another face, and silently, since each
   still passes. Faces it lacks that a map can pin, the ornament
@@ -914,11 +914,14 @@ among thin ones (`long_ornament`, R50.3), the ornament cut
 until a frame of no text beside it fits, and then the frame's text, to
 leave their shaping and inking room within the per-input bound below
 (`sides_in_time`, `framed`). A glyph no compiled face holds shapes as a
-`.notdef`, weighed 2,200 steps, so a fixture names glyphs the compiled
+host face holds it, or as a `.notdef`, weighed 2,200 steps, where none
+does — on CI, which has few host faces — so a harness counts what it
+shapes on the host it runs on, and a fixture names glyphs the compiled
 faces hold: the default face's (#228), and the ornament fallback's
-(`∙ ◈ ✦ ❦`, the box-drawing `─ ━ │ ┃ ╭ ╮ ╯ ╰` and `🌸`, `format/fonts.md`
-"Fallback"). The font system holds the compiled faces alone, so what a
-harness counts is the same on every host, CI's included. A counted step costs at
+(`format/fonts.md` "Fallback"), which come before any host face. To see
+what CI sees, point `FONTCONFIG_FILE` at a config whose one `<dir>` is
+empty: the host's faces are then not loaded, and the compiled ones
+alone remain. A counted step costs at
 most `ASAN_STEP_NANOS`, 32.3 µs — the most measured, 21.5 µs, times
 1.5 — under the ASan build (`flow_fuzz.rs` says how it was measured).
 An input's worst case is the sum of its frames' work at that cost, and

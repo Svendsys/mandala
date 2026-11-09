@@ -386,9 +386,10 @@ fn allowed_faces(fs: &glyphon::FontSystem, fonts: &[AppFont]) -> Vec<glyphon::fo
 /// is drawn in a compiled face of a family the map pins, or in a face of
 /// the fallback — the default face, an ornament face, a script face —
 /// and none is a `.notdef`. So the four README images show the same
-/// glyphs on every install and in the browser. The font system holds the
-/// compiled faces alone (#228), so the first half, a glyph in a face not
-/// compiled in, now guards that.
+/// glyphs on every install and in the browser. On native the font system
+/// holds the host's faces too, after the compiled ones (#228), so the
+/// first half, a glyph in a face not compiled in, guards that no demo
+/// glyph reaches one.
 ///
 /// The halves past "compiled" are what keep the property from passing on
 /// any host: a glyph no listed face holds is drawn as the first face's

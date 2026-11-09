@@ -821,22 +821,44 @@ fn test_a_font_this_build_has_no_face_for_is_refused() {
 }
 
 #[test]
-fn test_every_listed_family_is_a_face_the_file_can_name() {
+fn test_a_listed_family_loads_if_compiled_and_is_refused_if_only_installed() {
     // Every family the font listing offers (`font list`, the console's
-    // completion, a `console_font`) is a compiled face a map can name and
-    // load: the font system holds the compiled faces alone (#228), so no
-    // family resolves to the fallback face, `AppFont::Any`, which has no
-    // name a file could write back. Until #228 an installed system font
-    // was listed on native, and refused here.
-    let families: Vec<&str> = crate::font::fonts::loaded_families_iter().collect();
-    assert!(
-        families.len() >= 50,
-        "precondition: the families are listed ({})",
-        families.len()
-    );
-    for family in families {
+    // completion, a `console_font`) is either a compiled face, which a map
+    // can name and load, or, on native, an installed system font (#228),
+    // attributed to the fallback face `AppFont::Any`, which has no name a
+    // file could write back: the loader refuses it until #329 lets a map
+    // name an installed family. A host with no installed family has
+    // nothing for the second arm, and says so.
+    use crate::font::fonts::{app_font_by_family, loaded_families_iter, AppFont};
+    let (mut compiled, mut installed) = (0, 0);
+    for family in loaded_families_iter() {
         let map = map_of(&format!(r#","font":{}"#, serde_json::to_string(family).unwrap()));
-        assert!(load(&map).is_ok(), "the listed family {family:?} does not load");
+        match app_font_by_family(family) {
+            Some(AppFont::Any) => {
+                installed += 1;
+                rejects(
+                    &map,
+                    "nodes[0].font",
+                    LoadErrorKind::UnknownFont {
+                        family: family.to_string(),
+                    },
+                );
+            }
+            Some(_) => {
+                compiled += 1;
+                assert!(load(&map).is_ok(), "the compiled family {family:?} does not load");
+            }
+            None => panic!("the listed family {family:?} resolves to no face"),
+        }
+    }
+    assert!(
+        compiled >= 50,
+        "precondition: the compiled families are listed ({compiled})"
+    );
+    if installed == 0 {
+        crate::util::test_skip::note_skipped(
+            "format_reject_tests: no installed family on this host, so the refusal of one is unproven",
+        );
     }
 }
 

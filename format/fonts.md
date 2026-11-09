@@ -1,18 +1,21 @@
 # Fonts
 
 Mandala bundles every font it ships with, so the binary renders any
-saved map without external assets, and what is compiled in is *all*
-that is available, on every target: the same faces on native and in
-the browser (CODE_CONVENTIONS §4), and a map that looks the same
-wherever it is opened.
+saved map without external assets: the same faces on native and in the
+browser (CODE_CONVENTIONS §4), and a map that looks the same wherever
+it is opened.
 
 The font system (`baumhard::font::fonts`' `FONT_SYSTEM`) is built from
-the compiled faces and nothing else (#228). It reads nothing of the
-host — not its installed fonts, not its fontconfig, not its locale — so
-a machine with a hundred families installed, a container with none, and
-the browser all shape a map's text in the same faces. `font list`,
-`font set <family>` and the completion popup offer the compiled
-families, and only those.
+the compiled faces first. On native it then loads the host's installed
+fonts, after every compiled face, and drops any that bears a compiled
+family's name (below); the browser has none to load. The host's locale
+and cosmic-text's per-platform fallback lists are not read. So text in
+the default family, and text a map pins to a compiled family, are drawn
+in the same faces on a machine with a hundred families installed, in a
+container with none, and in the browser, wherever the compiled faces
+hold the characters (#228). The host's fonts serve what no compiled
+face holds, and are offered by `font list` and the console's
+completion; a map naming one is #329.
 
 ## The default face
 
@@ -21,9 +24,9 @@ no `font`, every edge label, the connector's `·` — is drawn in the
 **default face**: **Inter** 4.1, the variable face (`Inter Variable`,
 `lib/baumhard/src/font/fonts/inter-font/`, `fallback::DEFAULT_FACE`).
 cosmic-text resolves an unpinned span through its generic families
-(`Family::SansSerif` for `Attrs::new()`, `Family::Monospace` for the
-`AttrsList` bridge), and the font system names the default face for all
-of them.
+(`Family::SansSerif` for `Attrs::new()`, which every path asks for), and
+the font system names the default face for all of them, so a host's
+fonts never answer for the default family.
 
 Until #228 those generic names were cosmic-text's own, "Open Sans" and
 "Noto Sans Mono", which no compiled face bears. On a Linux desktop the
@@ -59,9 +62,12 @@ without one inherits its element's, and so on up to the map's defaults.
 Each name resolves through `baumhard::font::fonts::app_font_by_family`
 to the build-time `AppFont` enum, and the loader refuses a name that
 resolves to no compiled-in face (`LoadErrorKind::UnknownFont`), so a map
-names only families that load, and draw, the same on every target. A
-span that names none is drawn in the default face, which the file need
-not name.
+names only families that load, and draw, the same on every target. An
+installed family resolves to the fallback face `AppFont::Any`, which has
+no name a file could write back, and is refused the same way until #329
+lets a map name one, and tells its reader what to install or pick in its
+place when the family is missing. A span that names none is drawn in the
+default face, which the file need not name.
 
 ## Weight within a pinned family
 
@@ -91,11 +97,15 @@ no resolving: the matcher keeps a pinned face whatever its slant. A
 character no compiled face of the family holds is still drawn in a
 fallback face, as it must be.
 
-Ruling R30.1 removed from the font system every host face that bore a
-compiled family's name — the Noto Sans Hebrew a Debian desktop installs,
-met before the compiled one. With no host face in the font system there
-is nothing left to remove, and a pin names the compiled faces on every
-machine by construction.
+**Compiled families are authoritative by name too** (ruling R30.1).
+cosmic-text resolves a family by name, and among every face of that
+name fontdb picks the best weight and slant: a host's Inter Variable
+Italic would take every italic span of default text from the compiled
+upright face, and the Noto Sans Hebrew a Debian desktop installs would
+answer for the compiled one. So once the host's faces are loaded,
+every one that bears a compiled family's name is removed
+(`remove_shadowing_faces`). A pin, and the default family, then name the
+compiled faces on every machine. The host's other families stay.
 
 ## Fallback
 
@@ -114,8 +124,9 @@ A script's face is listed when another compiled face holds that script
 too: Public Pixel holds Hebrew letters, so without the entry a run of
 Hebrew would be drawn in whichever of the two the last pass (below)
 meets first — today Noto Sans Hebrew, which sorts first by name at the
-same weight, but a face that sorts earlier would take it. Noto Sans Devanagari, Noto Serif Tibetan and Noto Sans
-Egyptian Hieroglyphs are each the only compiled face of their script,
+same weight, but a face that sorts earlier would take it. Noto Sans
+Devanagari, Noto Serif Tibetan and Noto Sans Egyptian Hieroglyphs are
+each the only compiled face of their script,
 which the last pass reaches at any weight; each is listed when a second
 compiled face holds its script.
 
@@ -140,12 +151,17 @@ How it holds:
   the same faces in the same order. cosmic-text's platform lists, which
   differ between Linux, Windows, macOS and the browser and name host
   families, are not consulted. A character none of the listed faces
-  holds is looked for in every other compiled face, nearest in weight
-  first, and in the order the build lists them among equals; one no
-  compiled face holds is drawn as the span face's `.notdef` box. Every
-  path asks for one of the generic families the default face is named
-  for, never `Family::Monospace`, on which cosmic-text tries every
-  monospaced face before the list.
+  holds is looked for in every other face, nearest in weight first, and
+  among equals in the order the faces were loaded: the compiled faces in
+  the order the build lists them, then, on native, the host's. So a host
+  face draws a character no compiled face holds; one only a decorative
+  compiled face holds, at another weight than the span's, a host face of
+  the span's weight can draw first, which is why every glyph the app and
+  its built-in styles draw is held by a listed face. One no face holds
+  is drawn as the span face's `.notdef` box. Every path asks for one of
+  the generic families the default face is named for, never
+  `Family::Monospace`, on which cosmic-text tries every monospaced face
+  before the list.
 - **At every weight.** cosmic-text matches a fallback family only at the
   exact weight a span asks for, or within a variable face's axis. The
   default face's axis spans every weight; each static fallback face is
@@ -168,27 +184,27 @@ belongs in a named constant, which
 `renderer::tests::test_every_chrome_glyph_is_drawn_by_the_default_or_an_ornament_face`
 holds to the default face or `Mandala Ornaments`. A code point the
 default face holds is not added: the default face draws it, and the
-test that holds the ornament faces apart from it refuses it. The two licenses cannot share
-one font file, which is why there are two ornament faces. Each face's
+test that holds the ornament faces apart from it refuses it. The two
+licenses cannot share one font file, which is why there are two ornament faces. Each face's
 `info.txt` and `misc/` record its source and license.
 
 ## What no compiled face draws
 
-A character outside every compiled face is drawn as a `.notdef` box, on
-every target. Since #228 that includes native: the scripts no compiled
-face writes — Arabic, Armenian, Georgian, Thai and the other scripts of
-South and Southeast Asia but Devanagari and Tibetan, Chinese, Japanese
-and Korean — and every emoji but `🌸`, which a desktop used to draw in
-its installed fonts. The browser never could. A script or symbol is
-supported by compiling a face for it in, which then draws it the same
-everywhere.
+A character outside every compiled face is drawn on native in a host
+face that holds it — the scripts no compiled face writes (Arabic,
+Armenian, Georgian, Thai and the other scripts of South and Southeast
+Asia but Devanagari and Tibetan, Chinese, Japanese and Korean) and every
+emoji but `🌸` — and as a `.notdef` box where none does, and in the
+browser, which has no host faces. A script or symbol is drawn the same
+everywhere by compiling a face for it in.
 
 ## Console
 
 The `font` console verb is rebuilt on the document's one writer by
 V1-C5 (#246); until then it refuses, naming its owner. Its family
 completion is live: when the cursor sits in the family slot of
-`font set ...`, the popup shows every compiled family whose name starts
-with the typed prefix (case-insensitive), each candidate row pre-shaped
-in that very face. A `console_font` that names no compiled family
-falls back to the default face with a `warn!`.
+`font set ...`, the popup shows every family whose name starts with the
+typed prefix (case-insensitive) — the compiled ones, and on native the
+host's — each candidate row pre-shaped in that very face. A
+`console_font` that names no compiled family is drawn in the default
+face, with a `warn!` when it names no loaded family at all.
