@@ -36,6 +36,8 @@ pub(crate) mod section;
 pub(crate) mod style;
 pub(crate) mod values;
 
+use std::hash::Hash;
+
 use baumhard::arena::NodeId;
 use baumhard::document::element::DocKind;
 use baumhard::document::ids::Document;
@@ -44,6 +46,7 @@ use baumhard::document::mutation::ops::DocMutation;
 use baumhard::document::mutation::step::DocStep;
 use baumhard::document::writer::error::ApplyError;
 use baumhard::document::writer::{ChangeSource, EditRequest};
+use rustc_hash::FxHashMap;
 
 use crate::application::document::selection::kind_of;
 use crate::application::document::{MindMapDocument, TRANSACTION_OPEN_STATUS};
@@ -102,34 +105,56 @@ pub(crate) fn selected(doc: &MindMapDocument, kind: DocKind) -> Vec<NodeId> {
         .collect()
 }
 
-/// Elements, each with the mutations it receives, grouped by kind and
-/// mutations in the order each group was first met.
-#[derive(Default)]
-pub(crate) struct Groups(Vec<(DocKind, Vec<DocMutation>, Vec<NodeId>)>);
+/// Elements grouped by what they receive: one group per element kind
+/// and key, each with the mutations that key stands for, in the order
+/// each group was first met. The caller keys an edit whose mutations
+/// depend only on the element's kind with `()`, and one whose value
+/// depends on the element — a zoom window, a toggled flag — with that
+/// value, so equal keys of one kind always mean equal mutations.
+pub(crate) struct Groups<K> {
+    index: FxHashMap<(DocKind, K), usize>,
+    groups: Vec<(DocKind, Vec<DocMutation>, Vec<NodeId>)>,
+}
 
-impl Groups {
-    /// Give `id`, an element of `doc`, `mutations`. Nothing for an id the
-    /// document does not hold, or no mutations. O(the groups).
-    pub(crate) fn add(&mut self, doc: &Document, id: NodeId, mutations: Vec<DocMutation>) {
+impl<K> Default for Groups<K> {
+    fn default() -> Self {
+        Groups {
+            index: FxHashMap::default(),
+            groups: Vec::new(),
+        }
+    }
+}
+
+impl<K: Hash + Eq> Groups<K> {
+    /// Give `id`, an element of `doc`, the mutations `key` stands for:
+    /// `mutations` makes them, once, for the first element of its group.
+    /// Nothing for an id the document does not hold. O(1) amortized, so a
+    /// selection is grouped in time linear in its size.
+    pub(crate) fn add(
+        &mut self,
+        doc: &Document,
+        id: NodeId,
+        key: K,
+        mutations: impl FnOnce() -> Vec<DocMutation>,
+    ) {
         let Some(kind) = kind_of(doc, id) else { return };
-        if mutations.is_empty() {
-            return;
-        }
-        match self.0.iter_mut().find(|(k, m, _)| *k == kind && *m == mutations) {
-            Some((_, _, ids)) => ids.push(id),
-            None => self.0.push((kind, mutations, vec![id])),
-        }
+        let groups = &mut self.groups;
+        let at = *self.index.entry((kind, key)).or_insert_with(|| {
+            groups.push((kind, mutations(), Vec::new()));
+            groups.len() - 1
+        });
+        self.groups[at].2.push(id);
     }
 
     /// Whether no element was added.
     pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.groups.iter().all(|(_, mutations, _)| mutations.is_empty())
     }
 
-    /// One walk per group ([`compose::set`]).
+    /// One walk per group with mutations ([`compose::set`]).
     pub(crate) fn steps(self, doc: &Document) -> Steps {
         let mut steps = Vec::new();
-        for (kind, mutations, ids) in self.0 {
+        for (kind, mutations, ids) in self.groups {
             steps.extend(compose::set(doc, kind, mutations, &ids).map_err(|e| e.to_string())?);
         }
         Ok(steps)

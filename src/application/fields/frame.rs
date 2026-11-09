@@ -201,11 +201,9 @@ pub(crate) fn toggle(doc: &MindMapDocument) -> Steps {
     let mut groups = Groups::default();
     for frame in framed {
         let shown = resolve_frame(d.tree(), frame, &mut ()).visible;
-        groups.add(
-            d,
-            frame,
-            vec![DocMutation::Frame(FrameOp::SetVisible(Some(!shown)))],
-        );
+        groups.add(d, frame, !shown, || {
+            vec![DocMutation::Frame(FrameOp::SetVisible(Some(!shown)))]
+        });
     }
     let mut steps = groups.steps(d)?;
     steps.extend(frame_the(d, &bare, None)?);

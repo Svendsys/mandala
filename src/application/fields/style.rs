@@ -78,18 +78,18 @@ pub(crate) fn color(doc: &MindMapDocument, axis: ColorAxis, color: Option<ColorR
         let Some(kind) = kind_of(d, id) else { continue };
         match (kind, axis) {
             (DocKind::Connector | DocKind::Link, ColorAxis::Text | ColorAxis::Border) => {
-                groups.add(d, id, vec![DocMutation::Path(PathOp::SetColor(color))])
+                groups.add(d, id, (), || vec![DocMutation::Path(PathOp::SetColor(color))])
             }
-            (DocKind::PortalEnd, ColorAxis::Text | ColorAxis::Border) => {
-                groups.add(d, id, vec![DocMutation::PortalEnd(PortalEndOp::SetColor(color))])
-            }
+            (DocKind::PortalEnd, ColorAxis::Text | ColorAxis::Border) => groups.add(d, id, (), || {
+                vec![DocMutation::PortalEnd(PortalEndOp::SetColor(color))]
+            }),
             (DocKind::Label | DocKind::CapStart | DocKind::CapEnd, ColorAxis::Text | ColorAxis::Border)
             | (DocKind::Node | DocKind::Section | DocKind::Span, ColorAxis::Text)
             | (DocKind::Frame | DocKind::Ring, ColorAxis::Border)
-            | (DocKind::Ring, ColorAxis::Ring) => groups.add(d, id, text(kind).into_iter().collect()),
+            | (DocKind::Ring, ColorAxis::Ring) => groups.add(d, id, (), || text(kind).into_iter().collect()),
             (DocKind::Node, ColorAxis::Border) => {
                 if let Some(frame) = frame_of(d, id) {
-                    groups.add(d, frame, text(DocKind::Frame).into_iter().collect());
+                    groups.add(d, frame, (), || text(DocKind::Frame).into_iter().collect());
                 }
             }
             (DocKind::Node | DocKind::Frame, ColorAxis::Ring) => {
@@ -102,7 +102,7 @@ pub(crate) fn color(doc: &MindMapDocument, axis: ColorAxis, color: Option<ColorR
                     .into_iter()
                     .flat_map(|frame| children_of_kind(d, frame, DocKind::Ring))
                 {
-                    groups.add(d, ring, text(DocKind::Ring).into_iter().collect());
+                    groups.add(d, ring, (), || text(DocKind::Ring).into_iter().collect());
                 }
             }
             _ => {}
@@ -159,14 +159,14 @@ pub(crate) fn font(doc: &MindMapDocument, font: Font) -> Steps {
                     DocKind::PortalEnd => DocMutation::PortalEnd(PortalEndOp::SetSize(size)),
                     _ => DocMutation::Path(PathOp::SetSize(size)),
                 });
-                groups.add(d, id, size.into_iter().collect());
+                groups.add(d, id, (), || size.into_iter().collect());
                 let spans: Vec<DocMutation> = font
                     .ops(false)
                     .into_iter()
                     .filter_map(|op| text_op(DocKind::Span, op))
                     .collect();
                 for span in children_of_kind(d, id, DocKind::Span) {
-                    groups.add(d, span, spans.clone());
+                    groups.add(d, span, (), || spans.clone());
                 }
             }
             DocKind::Node
@@ -174,14 +174,12 @@ pub(crate) fn font(doc: &MindMapDocument, font: Font) -> Steps {
             | DocKind::Span
             | DocKind::Label
             | DocKind::CapStart
-            | DocKind::CapEnd => groups.add(
-                d,
-                id,
+            | DocKind::CapEnd => groups.add(d, id, (), || {
                 font.ops(true)
                     .into_iter()
                     .filter_map(|op| text_op(kind, op))
-                    .collect(),
-            ),
+                    .collect()
+            }),
             _ => {}
         }
     }
@@ -248,11 +246,15 @@ pub(crate) fn zoom(doc: &MindMapDocument, change: Zoom) -> Steps {
             max: change.max.unwrap_or(old.max),
         };
         let window = (window.min.is_some() || window.max.is_some()).then_some(window);
-        let mutation = match kind {
-            Some(DocKind::Node) => DocMutation::Node(NodeOp::SetZoom(window)),
-            _ => DocMutation::Path(PathOp::SetZoom(window)),
-        };
-        groups.add(d, id, vec![mutation]);
+        // Keyed by the window's bits: elements whose windows are equal
+        // share a walk.
+        let bits = window.map(|w| (w.min.map(f32::to_bits), w.max.map(f32::to_bits)));
+        groups.add(d, id, bits, || {
+            vec![match kind {
+                Some(DocKind::Node) => DocMutation::Node(NodeOp::SetZoom(window)),
+                _ => DocMutation::Path(PathOp::SetZoom(window)),
+            }]
+        });
     }
     if groups.is_empty() {
         return Err("zoom: select a node, a connector or a link".to_string());

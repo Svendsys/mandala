@@ -873,3 +873,28 @@ fn test_font_family_takes_what_the_loader_takes() {
         DispatchOutcome::Unhandled
     );
 }
+
+/// **Elements that receive the same thing are one walk; elements that
+/// receive different things are one walk each.** Two nodes given one
+/// color are one step; two nodes whose zoom windows come out different
+/// — node 3 keeps its own `min` — are two, and two whose windows come
+/// out equal are one again. Control: a grouping that never merged would
+/// give the color two steps.
+#[test]
+fn test_a_field_edit_is_one_walk_per_distinct_value() {
+    use crate::application::fields::style;
+    use baumhard::document::values::{ColorRef, Rgba};
+    let mut doc = fixture();
+    select(&mut doc, Select::Nodes(&[1, 3]));
+    let red = Some(ColorRef::Rgba(Rgba::opaque(255, 0, 0)));
+    let steps = style::color(&doc, ColorAxis::Text, red).expect("the color builds");
+    assert_eq!(steps.len(), 1, "two nodes, one color: one walk");
+    let steps = style::zoom(&doc, style::Zoom::bound(ZoomBound::Max, Some(4.0))).expect("the zoom builds");
+    assert_eq!(
+        steps.len(),
+        2,
+        "two windows: node 1's opens below, node 3's keeps 0.25"
+    );
+    let steps = style::zoom(&doc, style::Zoom::CLEAR).expect("the clear builds");
+    assert_eq!(steps.len(), 1, "two equal windows: one walk");
+}
