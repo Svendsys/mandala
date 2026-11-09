@@ -385,10 +385,10 @@ pub fn set(
 }
 
 /// Insert a copy of `subtree` under every one of `parents`, each an
-/// element of `parent_kind`, after its other children of the subtree's
-/// kind: a frame under nodes, a ring after a frame's rings. Whether a
-/// parent may hold it — a node holds one frame — is judged once the
-/// request has run.
+/// element of `parent_kind`, after every child the parent has
+/// (`Placement::Last`): a frame under nodes, a ring after a frame's
+/// rings. Whether a parent may hold it — a node holds one frame — is
+/// judged once the request has run.
 ///
 /// Errors: [`MutationError::NotA`] for a parent that is not of
 /// `parent_kind`. One step, or none for no parents.

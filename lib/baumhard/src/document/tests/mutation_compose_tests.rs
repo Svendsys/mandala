@@ -787,6 +787,8 @@ pub fn do_document_compose_sets_inserts_and_adds_a_section_with_spans() {
     let visible = DocMutation::Frame(FrameOp::SetVisible(Some(false)));
     let steps = set(&doc, DocKind::Frame, vec![visible], &[ids.frame]).unwrap();
     apply(&mut doc, steps);
+    let Some(DocElement::Frame(data)) = doc.get(ids.frame) else { panic!("a frame") };
+    assert_eq!(data.style.visible, Some(false), "a frame set too");
 
     let steps = add_section(
         &doc,
