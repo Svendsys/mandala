@@ -55,7 +55,6 @@ use crate::engine::tree::Tree;
 use crate::font::fonts::AppFont;
 use glam::Vec2;
 use rustc_hash::FxHashSet;
-use std::cell::RefCell;
 
 /// Judge `mutator` against `doc` before it is applied. See the module
 /// docs for what is checked; the first refusal is returned, naming the
@@ -98,9 +97,6 @@ struct Validator<'d> {
     path: Vec<usize>,
     /// The subtree path, inside an insert.
     subtree: Option<Vec<usize>>,
-    /// Which elements are in the document's tree, remembered across the
-    /// whole walk so no element's depth is paid twice (§20 rule 11).
-    members: RefCell<Membership>,
 }
 
 impl<'d> Validator<'d> {
@@ -110,7 +106,6 @@ impl<'d> Validator<'d> {
             presentation,
             path: Vec::new(),
             subtree: None,
-            members: RefCell::new(Membership::default()),
         }
     }
 
@@ -136,12 +131,6 @@ impl<'d> Validator<'d> {
             what,
             index,
         }
-    }
-
-    /// Whether `id` is an element of the document's tree, not of a
-    /// subtree a journal holds detached. Amortized O(1) per question.
-    fn in_tree(&self, id: NodeId) -> bool {
-        self.members.borrow_mut().contains(self.doc.tree(), id)
     }
 
     /// Judge every mutator of `mutator`, in pre-order, keeping the path
@@ -696,9 +685,7 @@ impl<'d> Validator<'d> {
             }
             DocElement::Connector(connector) => self.path_data(&connector.path),
             DocElement::Link(link) => {
-                if self.doc.get(link.to).map(DocElement::kind) != Some(DocKind::Node)
-                    || !self.in_tree(link.to)
-                {
+                if self.doc.get(link.to).map(DocElement::kind) != Some(DocKind::Node) {
                     return Err(MutationError::LinkTarget {
                         at: self.at(),
                         to: link.to,
@@ -785,7 +772,7 @@ impl<'d> Validator<'d> {
                     return refuse(self, StructureRule::MoveNotANode);
                 }
                 let destination = self.doc.get(*to).map(DocElement::kind);
-                if !matches!(destination, Some(DocKind::Node | DocKind::Map)) || !self.in_tree(*to) {
+                if !matches!(destination, Some(DocKind::Node | DocKind::Map)) {
                     return refuse(self, StructureRule::MoveDestination);
                 }
                 Ok(())

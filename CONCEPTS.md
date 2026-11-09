@@ -1910,11 +1910,16 @@ on `InitState`.
 
 ### `InteractionMode`
 
-What the user is doing at the canvas level. One variant today,
-`Default` — a click selects, a drag pans, Shift+drag draws a rubber
-band. The resize and node-edit modes return with V1-C7 (#248) and
-V1-C8 (#249), and reparent and connect with V1-C4 (#245); until then
-their Actions answer `unhandled`, naming their owner.
+What the user is doing at the canvas level. `Default` — a click
+selects, a drag pans, Shift+drag draws a rubber band — and the two
+target-picking modes, `Reparent` and `Connect` (native), which hold
+their source nodes: the sources wear the view's source tint in place
+of the selection's, the status line says what the mode does (as on
+`main`), the pointer's valid target is tinted with the view's target
+overlay, and the next click moves the sources under it or links them
+to it. The resize and node-edit modes return with V1-C7
+(#248) and V1-C8 (#249); until then their Actions answer `unhandled`,
+naming their owner.
 
 `src/application/app/interaction_mode.rs`.
 
@@ -2954,14 +2959,19 @@ on-disk file can raise its own tier.
 ### Clipboard
 
 The OS clipboard layer: native backed by `arboard`, WASM stubbed
-pending async-clipboard integration. It carries plain text.
+pending async-clipboard integration. It carries plain text. Beside it,
+the document holds the app's own clipboard: the text the OS was given,
+and, for a copied section, its spans and style, which a paste uses
+while the OS still holds that text. On the browser, the app's
+clipboard is the only one.
 
-`src/application/clipboard.rs`. What a copy, a cut and a paste do with
-the selection is V1-C4's (#245): the Actions answer `unhandled`, naming
-it, until then. Failures on native are silent by construction — an
-interactive path must not panic, and a clipboard that is merely
-unavailable is not worth a log line per keystroke — and the WASM stubs
-say so at `log::debug!`.
+`src/application/clipboard.rs`: what a copy, a cut and a paste take
+from and give to each kind of selected element — a section, part of
+one, a node, a path, a label, a portal end — each cut and paste one
+request on the document's writer. Failures on native are silent by
+construction — an interactive path must not panic, and a clipboard
+that is merely unavailable is not worth a log line per keystroke — and
+the WASM stubs say so at `log::debug!`.
 
 ### `mandalactl` CLI
 

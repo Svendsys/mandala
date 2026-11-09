@@ -112,7 +112,8 @@ pub enum ZoomBound {
 ///
 /// **The Actions that edit the map are owned by the issues that
 /// rebuild them on the one writer** (`app::dispatch::families`: V1-C4
-/// to V1-C8, D1 and D3). Until its owner lands, each answers
+/// to V1-C8, D1 and D3); V1-C4's structure Actions have landed. Until
+/// its owner lands, each other one answers
 /// `unhandled` with a `debug!` naming the owner; the variants stay so a
 /// user's keybinds and macros naming them still load. Their docs say
 /// what each is for and name the owner.
@@ -160,43 +161,46 @@ pub enum Action {
     /// Redo the history entry undone last (`Document::redo`).
     #[action(context = Document, wasm = Compatible)]
     Redo,
-    /// Enter reparent mode for the currently selected nodes.
-    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
+    /// Enter reparent mode for the currently selected nodes: the
+    /// pointer's valid target is tinted, and the next click ends it
+    /// ([`Self::ReparentToTarget`]). `unhandled` with no node selected.
     #[action(context = Document, wasm = NativeOnly)]
     EnterReparentMode,
-    /// Enter connect mode for the currently selected node.
-    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
+    /// Enter connect mode for the currently selected nodes: the next
+    /// click ends it ([`Self::ConnectToTarget`]). `unhandled` with no
+    /// node selected.
     #[action(context = Document, wasm = NativeOnly)]
     EnterConnectMode,
-    /// Confirm a reparent onto a target node, whose id the payload
-    /// carries (`None`: an empty-canvas click, which promotes the
-    /// sources to roots). Destructive, so the macro privilege gate
-    /// (`SourceTier::allows_action`) denies it to every tier but the
-    /// user's.
-    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
+    /// Confirm a reparent onto a target node, whose integer id the
+    /// payload carries (`None`: an empty-canvas click, which promotes the
+    /// sources to roots), and leave the mode. A target that is a source
+    /// or below one is refused, on the status line. Destructive, so the
+    /// macro privilege gate (`SourceTier::allows_action`) denies it to
+    /// every tier but the user's.
     #[action(context = Document, wasm = NativeOnly, destructive)]
-    ReparentToTarget(Option<String>),
-    /// Confirm a connect onto a target node, whose id the payload
-    /// carries (`None`: an empty-canvas click, which leaves connect mode
-    /// with no connector made). Destructive, as
-    /// [`Self::ReparentToTarget`] is.
-    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
+    ReparentToTarget(Option<u32>),
+    /// Confirm a connect onto a target node, whose integer id the
+    /// payload carries, and leave the mode: each source gets a line link
+    /// to it, unless it is the target or already has one (`None`: an
+    /// empty-canvas click, which leaves connect mode with no link made).
+    /// Destructive, as [`Self::ReparentToTarget`] is.
     #[action(context = Document, wasm = NativeOnly, destructive)]
-    ConnectToTarget(Option<String>),
-    /// Delete the current selection.
-    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
+    ConnectToTarget(Option<u32>),
+    /// Delete the current selection: nodes with their subtrees, sections,
+    /// links and labels. A connector alone is not deleted, and the
+    /// status line says so.
     #[action(context = Document, wasm = Compatible, destructive)]
     DeleteSelection,
     /// Leave the active interaction mode for `Default`, and dismiss a
     /// refusal's status line. Both targets.
     #[action(context = Document, wasm = Compatible)]
     ExitMode,
-    /// Create a new unattached (orphan) node at the cursor position.
-    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
+    /// Create a new unattached (orphan) node where a pointer dispatch
+    /// landed, or at the viewport's center from a key, and select it.
     #[action(context = Document, wasm = Compatible, destructive)]
     CreateOrphanNode,
-    /// Detach every currently selected node from its parent.
-    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
+    /// Detach every currently selected node from its parent, keeping it
+    /// where it is on the canvas.
     #[action(context = Document, wasm = Compatible, destructive)]
     OrphanSelection,
     /// Edit the selection's text with its existing text, the cursor at
@@ -251,17 +255,17 @@ pub enum Action {
     Quit,
     /// Copy the selection's clipboard representation. On the browser
     /// the OS clipboard is a stub (`clipboard::write_clipboard`;
-    /// `CLAUDE.md` "Dual-target status").
-    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
+    /// `CLAUDE.md` "Dual-target status"), and the app's own clipboard
+    /// holds the copy (`application::clipboard`).
     #[action(context = Document, wasm = Compatible, destructive)]
     Copy,
     /// Paste the system clipboard's text into the selection. On the
-    /// browser `clipboard::read_clipboard` returns `None`.
-    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
+    /// browser `clipboard::read_clipboard` returns `None`, and the app's
+    /// own clipboard is pasted.
     #[action(context = Document, wasm = Compatible, destructive)]
     Paste,
-    /// Cut: copy, then clear, the selection's clipboard representation.
-    /// Answers `unhandled` until V1-C4 (#245) rebuilds it.
+    /// Cut: copy, then clear, the selection's clipboard representation,
+    /// as one undo entry.
     #[action(context = Document, wasm = Compatible, destructive)]
     Cut,
     /// Enter resize mode on the selected node or section: its handles

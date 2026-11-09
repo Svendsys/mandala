@@ -361,7 +361,7 @@ impl Tracker {
         if moded {
             push(
                 Class::ModeChanged,
-                object(json!({ "mode": now.mode.to_ipc_json() })),
+                object(json!({ "mode": now.mode.to_ipc_json(now.document.map(MindMapDocument::doc)) })),
             );
         }
         seen.generation = generation;

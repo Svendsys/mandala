@@ -1874,6 +1874,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("writer_makes_one_entry_of_a_request_with_many_anchors", |b| {
         b.iter(do_writer_makes_one_entry_of_a_request_with_many_anchors)
     });
+    c.bench_function("document_reads_nothing_a_change_removed", |b| {
+        b.iter(do_document_reads_nothing_a_change_removed)
+    });
     c.bench_function("writer_dirty_is_the_saved_state_not_a_count", |b| {
         b.iter(do_writer_dirty_is_the_saved_state_not_a_count)
     });
@@ -1971,6 +1974,15 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("document_compose_reparents", |b| {
         b.iter(do_document_compose_reparents)
+    });
+    c.bench_function("document_compose_removes_elements", |b| {
+        b.iter(do_document_compose_removes_elements)
+    });
+    c.bench_function("document_compose_connects", |b| {
+        b.iter(do_document_compose_connects)
+    });
+    c.bench_function("document_compose_replaces_spans", |b| {
+        b.iter(do_document_compose_replaces_spans)
     });
     c.bench_function("document_compose_switches_link_kind", |b| {
         b.iter(do_document_compose_switches_link_kind)

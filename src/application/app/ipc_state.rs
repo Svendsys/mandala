@@ -60,10 +60,25 @@ pub(super) fn no_drag_state_json() -> Value {
 
 impl InteractionMode {
     /// The mode as `query.mode` reports it: `kind` is the variant's
-    /// name. Lossless.
-    pub(in crate::application) fn to_ipc_json(&self) -> Value {
+    /// name, a target-picking mode's sources beside it, by integer id
+    /// (`null` for one `doc` does not hold, or with no `doc`). Lossless.
+    pub(in crate::application) fn to_ipc_json(
+        &self,
+        doc: Option<&baumhard::document::ids::Document>,
+    ) -> Value {
+        let ids = |sources: &[baumhard::arena::NodeId]| -> Vec<Value> {
+            sources
+                .iter()
+                .map(|&node| {
+                    doc.and_then(|doc| crate::application::view::inspect::ident_of(doc, node))
+                        .map_or(Value::Null, |ident| json!(ident.0))
+                })
+                .collect()
+        };
         match self {
             InteractionMode::Default => json!({ "kind": "Default" }),
+            InteractionMode::Reparent { sources } => json!({ "kind": "Reparent", "sources": ids(sources) }),
+            InteractionMode::Connect { sources } => json!({ "kind": "Connect", "sources": ids(sources) }),
         }
     }
 }
@@ -247,13 +262,14 @@ fn key_routing(open: OpenModals) -> (Vec<&'static str>, &'static str) {
 /// **surface** pixels.
 pub(super) fn mode_to_ipc_json(
     mode: &InteractionMode,
+    doc: Option<&baumhard::document::ids::Document>,
     drag: Value,
     open: OpenModals,
     cursor_pos: (f64, f64),
 ) -> Value {
     let (modals, key_owner) = key_routing(open);
     json!({
-        "interaction_mode": mode.to_ipc_json(),
+        "interaction_mode": mode.to_ipc_json(doc),
         "drag_state": drag,
         "modals": modals,
         "key_owner": key_owner,

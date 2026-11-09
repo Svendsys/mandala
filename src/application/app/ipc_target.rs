@@ -182,6 +182,7 @@ impl CommandTarget for IpcCommandTarget<'_> {
             ShellState::Camera => camera_json(self.init.renderer.camera()),
             ShellState::Mode => ipc_state::mode_to_ipc_json(
                 &self.init.interaction_mode,
+                self.init.document.as_ref().map(MindMapDocument::doc),
                 self.init.drag_state.to_ipc_json(self.init.document.as_ref()),
                 self.open_modals(),
                 self.init.cursor_pos,

@@ -8,7 +8,7 @@
 //!
 //! | File | Family | Owner |
 //! |---|---|---|
-//! | [`structure`] | create, delete, reparent, orphan, connect, clipboard | V1-C4 (#245) |
+//! | [`structure`] | create, delete, reparent, orphan, connect, clipboard | V1-C4 (#245), rebuilt |
 //! | [`field_nodes`] | node, section, frame, theme and defaults fields; selection-wide style | V1-C5 (#246) |
 //! | [`field_paths`] | connector, link, label and portal fields | V1-C6 (#247) |
 //! | [`transactions`] | drags, resizes, the color picker, handle chrome | V1-C7 (#248) |
@@ -19,7 +19,9 @@
 //! Presentations (V1-D2, #251) have no Action and no dispatch entry of
 //! their own: verbs start them.
 //!
-//! Until its owner lands, each family answers its Actions
+//! [`structure`] has landed: its Actions run ([`structure::dispatch`]),
+//! asked first on both targets. Until its owner lands, each other family
+//! answers its Actions
 //! [`DispatchOutcome::Unhandled`] with a `debug!` naming the owner
 //! ([`unhandled`]) — the only temporary scaffolding the cut-over allows,
 //! which V1-E3 (#255) audits. The Action variants stay, so a user's
@@ -55,9 +57,9 @@ impl Family {
     }
 }
 
-/// Every family that owns Actions, in the table's order.
-pub(in crate::application::app) const FAMILIES: [&Family; 5] = [
-    &structure::FAMILY,
+/// Every family whose Actions still answer `Unhandled`, in the table's
+/// order.
+pub(in crate::application::app) const FAMILIES: [&Family; 4] = [
     &field_nodes::FAMILY,
     &field_paths::FAMILY,
     &transactions::FAMILY,
@@ -121,6 +123,17 @@ mod tests {
         ActionKind::OpenDocument,
         ActionKind::SaveDocumentAs,
         ActionKind::NewDocumentAt,
+        // The structure family, rebuilt (`structure::dispatch`).
+        ActionKind::DeleteSelection,
+        ActionKind::CreateOrphanNode,
+        ActionKind::OrphanSelection,
+        ActionKind::EnterReparentMode,
+        ActionKind::EnterConnectMode,
+        ActionKind::ReparentToTarget,
+        ActionKind::ConnectToTarget,
+        ActionKind::Copy,
+        ActionKind::Cut,
+        ActionKind::Paste,
     ];
 
     /// Every Action is the app's, the console modal's, or owned by
@@ -143,14 +156,11 @@ mod tests {
     }
 
     /// A family's Action is answered `Unhandled`, and an Action of the
-    /// app's is left to the app (the control: a family that claimed
-    /// everything would answer `Undo`).
+    /// app's — a rebuilt family's among them — is left to the app (the
+    /// control: a family that claimed everything would answer `Undo`).
     #[test]
     fn test_a_familys_action_is_unhandled_and_the_apps_is_not_claimed() {
-        assert_eq!(
-            dispatch(&Action::DeleteSelection),
-            Some(DispatchOutcome::Unhandled)
-        );
+        assert_eq!(dispatch(&Action::DeleteSelection), None);
         assert_eq!(
             dispatch(&Action::CycleFrameContent),
             Some(DispatchOutcome::Unhandled)
