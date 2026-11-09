@@ -20,9 +20,9 @@ use baumhard::document::element::{
 };
 use baumhard::document::ids::Document;
 use baumhard::document::mutation::compose;
-use baumhard::document::mutation::ops::{DocMutation, FrameOp, RingOp, TextOp};
+use baumhard::document::mutation::ops::{DocMutation, FrameOp, LayoutOp, RingOp, TextOp};
 use baumhard::document::resolve::resolve_frame;
-use baumhard::document::values::{Direction, FitMode, FontSize, StartPoint};
+use baumhard::document::values::{ColorRef, Direction, FitMode, FontSize, LineSpan, Sides, StartPoint};
 use baumhard::engine::structure::Subtree;
 
 use super::section::plain;
@@ -45,17 +45,37 @@ pub(crate) enum FrameField {
     Fit(Option<FitMode>),
     Gap(Option<f32>),
     Inset(Option<f32>),
+    /// How much of its half each line of a two-line ring covers (#291).
+    Span(Option<LineSpan>),
+    /// The ornament in the breaks between a ring's lines (#291).
+    Sides(Option<Sides>),
+    /// The space a `repeat` ring adds between glyph steps (#291).
+    Spacing(Option<f32>),
 }
 
-/// The frame field keys, in the order help lists them.
-pub(crate) const FIELD_KEYS: [&str; 5] = ["start", "direction", "fit", "gap", "inset"];
+/// The frame field keys, in the order help lists them: the frame's own,
+/// then how its rings are laid (#291), which they inherit.
+pub(crate) const FIELD_KEYS: [&str; 8] = [
+    "start",
+    "direction",
+    "fit",
+    "gap",
+    "inset",
+    "span",
+    "sides",
+    "spacing",
+];
 
 impl FrameField {
     /// The field `key` names, holding `value` read in its spelling
-    /// ([`values`]), or `reset` to inherit.
-    pub(crate) fn read(key: &str, value: &str) -> Result<FrameField, String> {
+    /// ([`values`]) — a color in `sides` as `doc` reads one — or `reset`
+    /// to inherit.
+    pub(crate) fn read(doc: &Document, key: &str, value: &str) -> Result<FrameField, String> {
         use values::or_reset;
         let field = match key {
+            "span" => FrameField::Span(or_reset(value, values::line_span)?),
+            "sides" => FrameField::Sides(or_reset(value, |text| values::sides(doc, text))?),
+            "spacing" => FrameField::Spacing(or_reset(value, values::number)?),
             "start" => FrameField::Start(or_reset(value, values::start)?),
             "direction" => FrameField::Direction(or_reset(value, values::direction)?),
             "fit" => FrameField::Fit(or_reset(value, values::fit)?),
@@ -79,6 +99,9 @@ impl FrameField {
             FrameField::Fit(fit) => FrameOp::SetFit(fit.clone()),
             FrameField::Gap(gap) => FrameOp::SetGap(*gap),
             FrameField::Inset(inset) => FrameOp::SetInset(*inset),
+            FrameField::Span(span) => FrameOp::Layout(LayoutOp::SetSpan(*span)),
+            FrameField::Sides(sides) => FrameOp::Layout(LayoutOp::SetSides(sides.clone())),
+            FrameField::Spacing(spacing) => FrameOp::Layout(LayoutOp::SetSpacing(*spacing)),
         }
     }
 }
@@ -302,6 +325,8 @@ pub(crate) struct RingFields {
     pub size: Option<Option<f32>>,
     /// Its fit, over the frame's; `None` inside inherits.
     pub fit: Option<Option<FitMode>>,
+    /// Its text color, its own; `None` inside inherits the frame's.
+    pub color: Option<Option<ColorRef>>,
 }
 
 /// The steps that set `fields` on ring `index` of each selected node's
@@ -320,10 +345,13 @@ pub(crate) fn set_ring(doc: &MindMapDocument, index: usize, fields: &RingFields)
             .map(|size| RingOp::Text(TextOp::SetSize(size.map(FontSize::Rel)))),
     );
     ops.extend(fields.fit.clone().map(RingOp::SetFit));
+    ops.extend(fields.color.map(|color| RingOp::Text(TextOp::SetColor(color))));
     let ops = ops.into_iter().map(DocMutation::Ring).collect();
     steps.extend(compose::set(d, DocKind::Ring, ops, &rings).map_err(|e| e.to_string())?);
     if steps.is_empty() {
-        return Err(format!("frame ring {index}: give text=, size=, fit= or delete"));
+        return Err(format!(
+            "frame ring {index}: give text=, size=, fit=, color= or delete"
+        ));
     }
     Ok(steps)
 }
@@ -354,7 +382,7 @@ pub(crate) fn preview(
     let steps = match target {
         FramePreviewTarget::Node => fields
             .iter()
-            .map(|(key, value)| FrameField::read(key, value))
+            .map(|(key, value)| FrameField::read(doc.doc(), key, value))
             .collect::<Result<Vec<_>, _>>()
             .and_then(|fields| set(doc, &fields)),
         FramePreviewTarget::Defaults => {

@@ -52,6 +52,12 @@ const DIRECTIONS: &[Word] = &[
     Word::new("ccw", "counter-clockwise"),
     Word::new("reset", "inherit"),
 ];
+const SPANS: &[Word] = &[
+    Word::new("natural", "each line at its own width"),
+    Word::new("whole", "each line across its whole half"),
+    Word::new("reset", "inherit"),
+];
+const SIDES: &[Word] = &[Word::new("false", "no ornament"), Word::new("reset", "inherit")];
 const FITS: &[Word] = &[
     Word::new("once", "the text once; `once:<filler>` fills the rest"),
     Word::new("repeat", "the text repeated round the outline"),
@@ -95,6 +101,21 @@ const KEYS: &[Key] = &[
         "the first ring's distance from the outline",
         free_words("px", RESET),
     ),
+    Key::new(
+        "span",
+        "how much of its half each line of a ring covers: natural | whole | 0-1",
+        free_words("0-1", SPANS),
+    ),
+    Key::new(
+        "sides",
+        "the ornament in the breaks between a ring's lines, or false",
+        free_words("ornament", SIDES),
+    ),
+    Key::new(
+        "spacing",
+        "the space a repeat ring adds between glyphs",
+        free_words("px", RESET),
+    ),
 ];
 
 /// The ring keys `frame ring` reads.
@@ -109,6 +130,11 @@ const RING_KEYS: &[Key] = &[
         "fit",
         "the ring's fit, over the frame's",
         free_words("mode", FITS),
+    ),
+    Key::new(
+        "color",
+        "the ring's own color, over the frame's",
+        super::color::COLOR_VOCAB,
     ),
 ];
 
@@ -125,7 +151,7 @@ pub static RING: Grammar = Grammar {
         &[
             Form::slots(&[Slot::req(Vocabulary::Words(ADD))]).reading(&["text", "size"]),
             Form::slots(&[Slot::req(free("i")), Slot::opt(Vocabulary::Words(DELETE))])
-                .reading(&["text", "size", "fit"]),
+                .reading(&["text", "size", "fit", "color"]),
         ],
     )),
 };
@@ -200,7 +226,8 @@ fn execute_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Stop::Matched(subverb) => subverb,
         _ if pairs.is_empty() => return ExecResult::err(usage::no_arguments_message(&GRAMMAR)),
         _ => {
-            let steps = fields(&pairs).and_then(|fields| frame::set(eff.document(), &fields));
+            let steps =
+                fields(eff.document().doc(), &pairs).and_then(|fields| frame::set(eff.document(), &fields));
             return super::edit(eff, steps, "frame");
         }
     };
@@ -260,10 +287,10 @@ fn execute_frame(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
 }
 
 /// The frame fields a line's keys set.
-fn fields(pairs: &[Pair]) -> Result<Vec<FrameField>, String> {
+fn fields(doc: &baumhard::document::ids::Document, pairs: &[Pair]) -> Result<Vec<FrameField>, String> {
     pairs
         .iter()
-        .map(|pair| FrameField::read(pair.key.name, pair.value))
+        .map(|pair| FrameField::read(doc, pair.key.name, pair.value))
         .collect()
 }
 
@@ -295,11 +322,15 @@ fn ring(eff: &mut ConsoleEffects, first: Option<&str>, second: Option<&str>, pai
                     let fit = kvs::value(pairs, "fit")
                         .map(|v| values::or_reset(v, values::fit))
                         .transpose();
+                    let color = kvs::value(pairs, "color")
+                        .map(|v| values::color(doc.doc(), v))
+                        .transpose();
                     let ring = size.and_then(|size| {
                         Ok(RingFields {
                             text: kvs::value(pairs, "text").map(str::to_string),
                             size,
                             fit: fit?,
+                            color: color?,
                         })
                     });
                     (

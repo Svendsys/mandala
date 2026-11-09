@@ -140,10 +140,10 @@ fn text(
 }
 
 /// Set ring-layout field `field` of `layout`. `Ok(false)` for another.
-fn layout(layout: &mut RingLayoutStyle, field: &str, value: &str) -> Result<bool, String> {
+fn layout(doc: &Document, layout: &mut RingLayoutStyle, field: &str, value: &str) -> Result<bool, String> {
     match field {
         "span" => layout.span = or_reset(value, values::line_span)?,
-        "sides" => layout.sides = or_reset(value, values::sides)?,
+        "sides" => layout.sides = or_reset(value, |text| values::sides(doc, text))?,
         "spacing" => layout.spacing = or_reset(value, values::number)?,
         _ => return Ok(false),
     }
@@ -197,7 +197,7 @@ pub(crate) fn set_default(
                 "gap" => f.gap = num(value)?,
                 "inset" => f.inset = num(value)?,
                 _ => {
-                    if !layout(&mut f.ring_layout, field, value)? {
+                    if !layout(doc, &mut f.ring_layout, field, value)? {
                         return text(doc, &mut f.text, field, value, true)?
                             .then_some(())
                             .ok_or_else(unknown);
@@ -213,7 +213,10 @@ pub(crate) fn set_default(
                     r.fit = or_reset(value, values::fit)?;
                     true
                 }
-                _ => layout(&mut r.ring_layout, field, value)? || text(doc, &mut r.text, field, value, true)?,
+                _ => {
+                    layout(doc, &mut r.ring_layout, field, value)?
+                        || text(doc, &mut r.text, field, value, true)?
+                }
             }
         }
         "connector" => flow(doc, &mut defaults.connector, field, value)?,

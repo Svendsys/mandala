@@ -271,6 +271,27 @@ const CASES: &[Case] = &[
         )],
     },
     Case {
+        name: "frame ring layout fields",
+        select: N1,
+        input: Input::Line("frame span=natural sides=✦ spacing=2"),
+        edits: &[(
+            "{\"fit\": \"repeat\", \"rings\"",
+            "{\"fit\": \"repeat\", \"span\": \"natural\", \"sides\": \"✦\", \"spacing\": 2.0, \"rings\"",
+        )],
+    },
+    Case {
+        name: "frame sides off",
+        select: N1,
+        input: Input::Line("frame sides=false"),
+        edits: &[("{\"fit\": \"repeat\", \"rings\"", "{\"fit\": \"repeat\", \"sides\": false, \"rings\"")],
+    },
+    Case {
+        name: "frame ring color",
+        select: N1,
+        input: Input::Line("frame ring 0 color=#ff0000"),
+        edits: &[("\"rings\": [{\"spans\"", "\"rings\": [{\"color\": \"#ff0000\", \"spans\"")],
+    },
+    Case {
         name: "frame start at an edge",
         select: N1,
         input: Input::Line("frame start=left:0.25 fit=fit:0.5,1.5"),
@@ -476,6 +497,27 @@ const CASES: &[Case] = &[
             value: "3".into(),
         }),
         edits: &[("{\"fit\": \"repeat\", \"rings\"", "{\"fit\": \"repeat\", \"inset\": 3.0, \"rings\"")],
+    },
+    Case {
+        name: "SetFrameField span",
+        select: N1,
+        input: Input::Act(|| Action::SetFrameField {
+            field: "span".into(),
+            value: "0.5".into(),
+        }),
+        edits: &[("{\"fit\": \"repeat\", \"rings\"", "{\"fit\": \"repeat\", \"span\": 0.5, \"rings\"")],
+    },
+    Case {
+        name: "SetFrameField sides with a color",
+        select: N1,
+        input: Input::Act(|| Action::SetFrameField {
+            field: "sides".into(),
+            value: r#"{"content": "·", "color": "var(accent)"}"#.into(),
+        }),
+        edits: &[(
+            "{\"fit\": \"repeat\", \"rings\"",
+            "{\"fit\": \"repeat\", \"sides\": {\"content\": \"·\", \"color\": \"var(accent)\"}, \"rings\"",
+        )],
     },
     Case {
         name: "CycleFrameContent",

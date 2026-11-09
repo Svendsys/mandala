@@ -4,16 +4,15 @@
 //! — a console line, a keybind's argument — rather than from a map:
 //! `format::color` and `format::font` beside them in [`super`], and here
 //! the start points, edges, directions, alignments, shapes, weights,
-//! line spans and fit modes.
+//! line spans, sides and fit modes.
 //!
 //! Each reads the very spelling type the loader reads
 //! (`format::spelling`, `format::dto`) and holds the value to the same
 //! bound, so a typed value is accepted exactly when a file's is: a name
 //! the file gains is a name the console takes, with no second table to
-//! keep in step. A spelling the file writes as a JSON string is read
-//! from the bare text (`top-left`, `bold`, `whole`); one it writes as a
-//! number or an object is read from the text as JSON (`700`, `0.5`,
-//! `{"edge": "left", "at": 0.25}`).
+//! keep in step. Text that is JSON is read as JSON (`700`, `0.5`,
+//! `false`, `{"edge": "left", "at": 0.25}`); any other text is read as
+//! the JSON string it would be (`top-left`, `bold`, `whole`, `✦`).
 //!
 //! Each is `None` for anything the file refuses. Cost: the text's
 //! length.
@@ -22,19 +21,25 @@ use serde::Deserialize;
 
 use crate::document::bounds;
 use crate::document::format::dto::{AlignDto, DirectionDto};
-use crate::document::format::spelling::{EdgeDto, FitDto, LineSpanDto, ShapeDto, StartDto, WeightDto};
+use crate::document::format::spelling::{
+    EdgeDto, FitDto, LineSpanDto, ShapeDto, SidesDto, StartDto, WeightDto,
+};
+use crate::document::ids::Document;
 use crate::document::values::{
-    Align, Direction, Edge, FitMode, LineSpan, Percent, Shape, StartPoint, Weight,
+    Align, Direction, Edge, FitMode, LineSpan, Percent, Shape, Sides, StartPoint, Weight,
 };
 
-/// `text` as a value of the file's spelling type `T`: the bare text as a
-/// JSON string, else the text as JSON.
+/// `text` as a value of the file's spelling type `T`: the text as JSON
+/// when it is JSON (`700`, `false`, an object), else the bare text as a
+/// JSON string (`bold`, `top-left`, `✦`) — one rule, so `false` is the
+/// value and never the word.
 fn read<T: for<'de> Deserialize<'de>>(text: &str) -> Option<T> {
     use serde::de::{value::Error, IntoDeserializer};
+    if serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok() {
+        return serde_json::from_str(text).ok();
+    }
     let as_string: serde::de::value::StrDeserializer<'_, Error> = text.into_deserializer();
-    T::deserialize(as_string)
-        .ok()
-        .or_else(|| serde_json::from_str(text).ok())
+    T::deserialize(as_string).ok()
 }
 
 impl From<EdgeDto> for Edge {
@@ -143,5 +148,25 @@ pub fn fit(text: &str) -> Option<FitMode> {
             let (min, max) = bounds::check_fit(range.min, range.max).ok()?;
             FitMode::Fit { min, max }
         }
+    })
+}
+
+/// The ornament in a frame ring's breaks: `false` for none, its text
+/// (`✦`), or `{"content": …, "color": …}` with a color as `doc` reads one.
+/// `true` is refused, as the file refuses it, and so is empty content.
+pub fn sides(doc: &Document, text: &str) -> Option<Sides> {
+    Some(match read::<SidesDto>(text)? {
+        SidesDto::Off => Sides::Off,
+        SidesDto::Text(content) => Sides::On {
+            content: bounds::check_ornament(&content).ok()?.to_owned(),
+            color: None,
+        },
+        SidesDto::Object(object) => Sides::On {
+            content: bounds::check_ornament(&object.content).ok()?.to_owned(),
+            color: match object.color {
+                Some(color) => Some(super::color_of(doc, color)?),
+                None => None,
+            },
+        },
     })
 }

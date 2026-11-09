@@ -69,7 +69,7 @@ pub(crate) mod to_dto;
 mod writer;
 
 pub use error::{LoadError, LoadErrorKind, NodeContext, SaveError, SaveErrorKind, TextPosition};
-pub use read::{align, direction, edge, fit, line_span, shape, start, weight};
+pub use read::{align, direction, edge, fit, line_span, shape, sides, start, weight};
 
 use crate::document::format::context::{dto_excerpt, offset_in, peek_excerpt, peek_id, position_at};
 use crate::document::format::dto::{MapHeaderDto, NodeDto};
@@ -745,11 +745,20 @@ pub fn save_to(doc: &Document, out: &mut impl std::io::Write) -> Result<(), Save
 ///
 /// Cost: the text's length, and a search of the theme's variables.
 pub fn color(doc: &Document, text: &str) -> Option<crate::document::values::ColorRef> {
-    use crate::document::values::{ColorRef, Rgba, VarId};
     use serde::de::{value::Error, IntoDeserializer};
     use serde::Deserialize;
     let deserializer: serde::de::value::StrDeserializer<'_, Error> = text.into_deserializer();
-    Some(match spelling::ColorDto::deserialize(deserializer).ok()? {
+    color_of(doc, spelling::ColorDto::deserialize(deserializer).ok()?)
+}
+
+/// The color `dto` spells in `doc`, as the loader reads it: a variable by
+/// name among `doc`'s theme's. `None` for a variable the theme lacks.
+pub(crate) fn color_of(
+    doc: &Document,
+    dto: spelling::ColorDto<'_>,
+) -> Option<crate::document::values::ColorRef> {
+    use crate::document::values::{ColorRef, Rgba, VarId};
+    Some(match dto {
         spelling::ColorDto::Hex(hex) => ColorRef::Rgba(Rgba(hex.0)),
         spelling::ColorDto::Var(name) => {
             let variables = &doc.theme().variables;

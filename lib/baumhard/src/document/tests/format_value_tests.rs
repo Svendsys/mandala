@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! `format::start`, `edge`, `direction`, `align`, `shape`, `weight`,
-//! `line_span` and `fit`: the file's spellings of single values, read
+//! `line_span`, `sides` and `fit`: the file's spellings of single values, read
 //! from typed text (`format/read.rs`). Each is held to the loader
 //! itself: a spelling reads to the value a map carrying it at that key
 //! loads with, and one the loader refuses reads to nothing.
@@ -13,7 +13,8 @@ use crate::document::format::{self, load};
 use crate::document::ids::Document;
 
 /// A one-node map with `value` at `key` of `place` — the node, its
-/// section, its span or its frame — and every other key left out.
+/// section, its span or its frame — and every other key left out, under
+/// a theme with one variable, `accent`.
 fn map_with(place: &str, key: &str, value: Value) -> Result<Document, format::LoadError> {
     let mut node = serde_json::json!({
         "id": 1, "position": [0.0, 0.0],
@@ -26,7 +27,8 @@ fn map_with(place: &str, key: &str, value: Value) -> Result<Document, format::Lo
         "span" => node["sections"][0]["spans"][0][key] = value,
         _ => node["frame"][key] = value,
     }
-    load(&serde_json::json!({"format": 1, "name": "v", "nodes": [node]}).to_string())
+    let theme = serde_json::json!({"active": "d", "variants": {"d": {"accent": "#102030"}}});
+    load(&serde_json::json!({"format": 1, "name": "v", "theme": theme, "nodes": [node]}).to_string())
 }
 
 /// What a person types, as the JSON a file holds for it: JSON as it is,
@@ -171,7 +173,26 @@ fn test_format_value_readers_read_what_the_loader_reads() {
             },
         ),
     ];
-    for (accepted, refused) in counts {
+    let themed = load(
+        r##"{"format": 1, "name": "t", "theme": {"active": "d", "variants": {"d": {"accent": "#102030"}}}}"##,
+    )
+    .expect("a themed map loads");
+    let sides = hold(
+        "frame",
+        "sides",
+        &[
+            "✦",
+            "false",
+            r##"{"content": "·", "color": "#102030"}"##,
+            r##"{"content": "·", "color": "var(accent)"}"##,
+            r##"{"content": "·", "color": "var(nope)"}"##,
+            "true",
+            r#"{"content": ""}"#,
+        ],
+        |text| format::sides(&themed, text),
+        frame(|s| s.ring_layout.sides.clone()),
+    );
+    for (accepted, refused) in counts.into_iter().chain([sides]) {
         assert!(
             accepted > 1 && refused > 0,
             "control: both kinds met ({accepted}, {refused})"

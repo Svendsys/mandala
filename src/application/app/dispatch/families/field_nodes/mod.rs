@@ -121,7 +121,7 @@ fn steps(action: &Action, doc: &MindMapDocument) -> (Steps, &'static str) {
         ),
         Action::ClearZoom => (style::zoom(doc, style::Zoom::CLEAR), "zoom"),
         Action::SetFrameField { field, value } => (
-            frame::FrameField::read(field, value).and_then(|field| frame::set(doc, &[field])),
+            frame::FrameField::read(doc.doc(), field, value).and_then(|field| frame::set(doc, &[field])),
             "frame",
         ),
         Action::CycleFrameContent => (frame::cycle(doc), "frame cycle"),

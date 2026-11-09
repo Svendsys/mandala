@@ -174,16 +174,13 @@ pub(crate) fn line_span(text: &str) -> Result<LineSpan, String> {
         .ok_or_else(|| format!("'{text}' is not a span: `natural`, `whole` or a number from 0 to 1"))
 }
 
-/// The ornament in a ring's breaks: its text, or `false` for none.
-pub(crate) fn sides(text: &str) -> Result<Sides, String> {
-    match text {
-        "false" => Ok(Sides::Off),
-        "" => Err("an ornament is not empty: give its text, or `false`".to_string()),
-        content => Ok(Sides::On {
-            content: content.to_string(),
-            color: None,
-        }),
-    }
+/// The ornament in a ring's breaks as the file spells it
+/// (`format::sides`): its text, `false` for none, or
+/// `{"content": …, "color": …}` with a color of `doc`'s.
+pub(crate) fn sides(doc: &Document, text: &str) -> Result<Sides, String> {
+    format::sides(doc, text).ok_or_else(|| {
+        format!("'{text}' is not sides: an ornament's text, `false`, or {{\"content\": …, \"color\": …}}")
+    })
 }
 
 /// A zoom bound: a positive number, or `unset`.
