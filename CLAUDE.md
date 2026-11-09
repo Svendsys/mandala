@@ -240,11 +240,14 @@ the parity trajectory (or why none is owed):
   `app/dispatch/families/structure.rs`, `app/event_mouse_click.rs`,
   `app/event_cursor_moved.rs`) — native-only, as on `main`: the click
   that picks the target and the hover that tints it come from native's
-  pointer handlers, so the browser answers the four Actions
-  `unhandled`, and never shows their source tint or status line. Every other structure Action — create, delete, orphan,
-  copy, cut, paste — runs on both targets, and so does the overlay
-  the target tint is stamped by (`view::overlay`). Parity is the
-  browser's click route recognizing the two modes, not yet scheduled.
+  pointer handlers. The four Actions are `wasm = NativeOnly`, so over
+  IPC the browser refuses them `unsupported` (`describe` reports them
+  unsupported, and `act.action` refuses them by name), and it never
+  shows their source tint or status line. Every other structure Action
+  — create, delete, orphan, copy, cut, paste — runs on both targets,
+  and so does the overlay the target tint is stamped by
+  (`view::overlay`). Parity is the browser's click route recognizing
+  the two modes, not yet scheduled.
 - **`fps` console verb** — native because the console shell is; the
   render-side FPS plumbing compiles on both targets and browsers
   expose frame timing via DevTools (CONCEPTS §5 "FPS overlay").

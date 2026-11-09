@@ -2932,10 +2932,10 @@ clipboard is the only one.
 `src/application/clipboard.rs`: what a copy, a cut and a paste take
 from and give to each kind of selected element — a section, part of
 one, a node, a path, a label, a portal end — each cut and paste one
-request on the document's writer. Failures on native are silent by construction — an
-interactive path must not panic, and a clipboard that is merely
-unavailable is not worth a log line per keystroke — and the WASM stubs
-say so at `log::debug!`.
+request on the document's writer. Failures on native are silent by
+construction — an interactive path must not panic, and a clipboard
+that is merely unavailable is not worth a log line per keystroke — and
+the WASM stubs say so at `log::debug!`.
 
 ### `mandalactl` CLI
 
