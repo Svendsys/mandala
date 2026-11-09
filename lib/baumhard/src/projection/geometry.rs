@@ -95,12 +95,42 @@ pub(crate) struct FanMember {
     pub(crate) fixed: Option<f32>,
 }
 
-/// How far a fan of `members` with no straight path among them holds its
-/// first glyphs out ([`fan`]): what its turns' order is read from, before
-/// there is an order. O(members).
+/// How far a fan of `members` holds its first glyphs out when none of
+/// them is straight ([`fan`]): the hold its turns' order is read from,
+/// which needs no order. No fan is laid. O(members); no allocation.
 pub(crate) fn fan_hold(members: &[FanMember]) -> f32 {
-    let free: Vec<FanMember> = members.iter().map(|m| FanMember { fixed: None, ..*m }).collect();
-    fan(&free).first().map_or(0.0, |f| f.1)
+    if members.len() < 2 {
+        return 0.0;
+    }
+    let (widest, clear) = widest_spread_and_clear(members);
+    held_out(
+        widest.min(2.0 * SPLAY_CAP / (members.len() - 1) as f32),
+        widest,
+        clear,
+    )
+}
+
+/// The widest spread and the widest clear of `members`. O(members).
+fn widest_spread_and_clear(members: &[FanMember]) -> (f32, f32) {
+    members.iter().fold((0.0_f32, 0.0_f32), |(spread, clear), m| {
+        (spread.max(m.spread), clear.max(m.clear))
+    })
+}
+
+/// How far neighbors `step` apart are held out to clear each other by
+/// `clear`: nowhere at the widest spread or wider, else the clear over
+/// twice the sine of half the step. 0 where that is not finite. O(1).
+fn held_out(step: f32, widest: f32, clear: f32) -> f32 {
+    let hold = if step < widest {
+        clear / (2.0 * (0.5 * step).sin())
+    } else {
+        0.0
+    };
+    if hold.is_finite() {
+        hold
+    } else {
+        0.0
+    }
 }
 
 /// The turns and holds of the paths that leave one point of a side, in
@@ -134,20 +164,8 @@ pub(crate) fn fan(members: &[FanMember]) -> Vec<(f32, f32)> {
         return members.iter().map(|m| (m.fixed.unwrap_or(0.0), 0.0)).collect();
     }
     let last = (members.len() - 1) as f32;
-    let widest = members.iter().map(|m| m.spread).fold(0.0_f32, f32::max);
-    let clear = members.iter().map(|m| m.clear).fold(0.0_f32, f32::max);
-    let held = |step: f32| {
-        let hold = if step < widest {
-            clear / (2.0 * (0.5 * step).sin())
-        } else {
-            0.0
-        };
-        if hold.is_finite() {
-            hold
-        } else {
-            0.0
-        }
-    };
+    let (widest, clear) = widest_spread_and_clear(members);
+    let held = |step: f32| held_out(step, widest, clear);
     if members.iter().all(|m| m.fixed.is_none()) {
         let step = widest.min(2.0 * SPLAY_CAP / last);
         let hold = held(step);
