@@ -73,17 +73,17 @@ pub const MAX_SPAN_CHARS: u32 = 64;
 /// R45.1, R46.3): the most a frame of the lightest text — one face, no
 /// glyph that no face holds, a short side ornament — may hold and still
 /// be laid, to the whole of its budget and its overshoot past it
-/// (`frame_work_steps`), within [`INPUT_STEPS`]: 150 glyphs, 3,000 glyph
-/// steps each of budget and some 65 more of shaping, inking and lays,
-/// 462,949 steps, 14.95 s at [`ASAN_STEP_NANOS`] a step.
+/// (`frame_work_steps`), within [`INPUT_STEPS`]: 152 glyphs, 3,000 glyph
+/// steps each of budget and some 48 more of shaping, inking and lays,
+/// 463,355 steps, 14.97 s at [`ASAN_STEP_NANOS`] a step (150 until #304
+/// counted a reshape at a size as no shaping, some 65 a glyph more).
 /// `test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout`
 /// holds it to that: the most, and no more. A heavier text — glyphs in
-/// many faces, or in none, which the shaper searches every face for —
-/// is cut further ([`framed`]). A longer text's frame is laid from as
+/// many faces — or a heavier ornament is cut further ([`framed`]). A longer text's frame is laid from as
 /// much of it as fits: the engine places the whole of a real text,
 /// bounded by its glyphs; a fuzz input is held to what it can lay
 /// inside the timeout.
-pub const MAX_FRAME_GLYPHS: usize = 150;
+pub const MAX_FRAME_GLYPHS: usize = 152;
 
 /// The most glyphs a `Repeat` ring the harnesses lay lays (rulings
 /// B17.2a, B17.2b): the most whose budget, its overshoot past it for a
@@ -159,15 +159,16 @@ pub const FUZZ_TIMEOUT_SECONDS: u64 = 20;
 /// point — and for a machine busy with something else.
 ///
 /// That quarter is not derived from the frames' weights, which would not
-/// fit it: a frame counts each glyph no face holds at
-/// `SHAPE_NOTDEF_STEPS`, 2,200 steps, the cost of a `.notdef` shaped
-/// alone, by which a 4,096-byte raw input of some 1,365 private-use
-/// characters would shape for some 48 s. The shaper's fallback is paid
-/// once a shaped segment rather than once a glyph — some 6 ms, and 0.15
-/// to 0.3 ms a `.notdef` past the first, in a debug build (review
-/// 5739829769) — so such an input shapes in well under a second, and the
-/// weight overcounts a run of `.notdef`s by up to some 30×: safe for a
-/// frame's bound, and #304's to rework.
+/// fit it: a frame counts a pass of the shaper through every face,
+/// `SHAPE_NOTDEF_STEPS`, 2,200 steps, for each segment of glyphs no face
+/// holds and each distinct one (#304), by which a 4,096-byte raw input of
+/// some 1,365 distinct private-use characters would shape for some 48 s.
+/// The weight bounds a pass; a pass for one code point shapes it alone in
+/// each face, once a font system, and the published shaper's fallback,
+/// which shaped the whole segment in each face, was measured at some
+/// 6 ms a segment, and 0.15 to 0.3 ms a `.notdef` past the first, in a
+/// debug build (review 5739829769). Until #304 a frame counted the pass
+/// for every `.notdef`, a run of them some 30× over.
 pub const INPUT_WORK_MICROS: u64 = FUZZ_TIMEOUT_SECONDS * 1_000_000 / 4 * 3;
 
 /// What a counted glyph step of a frame's work costs under the ASan fuzz
@@ -1305,7 +1306,8 @@ pub fn sides_in_time(
 /// from a hairline to an em dash, an underscore with no side bearings
 /// and an Egyptian hieroglyph, each held and inked by a compiled face, so that it shapes alike on
 /// every host — and one, U+FFFE, a noncharacter no face holds on any
-/// host, as a map's ornament may hold glyphs no face does: a `.notdef` weighs 2,200 glyph steps to shape
+/// host, as a map's ornament may hold glyphs no face does: a segment of
+/// `.notdef`s, and each distinct one, weighs 2,200 glyph steps a shaping
 /// (`SHAPE_NOTDEF_STEPS`), which [`sides_in_time`] cuts the ornament for.
 /// (At e402949d it drew `❧`, `⸻` and `﷽`, which no compiled face holds:
 /// held by a host face here and not on CI, so the long ornaments CI drew
@@ -1338,13 +1340,14 @@ pub const LONG_ORNAMENT_BYTES: usize = 200;
 /// the overshoot counts the ornament's shaping and inking twice beside
 /// the text's, its faces and `.notdef`s included (`build_steps`). At
 /// 16 pt in the compiled faces alone, [`MAX_FRAME_GLYPHS`] glyphs of one
-/// face beside a 4-glyph ornament take 462,949 steps, within the 464,396
-/// of [`INPUT_STEPS`]; beside 200 `|`s, which add 9,016 more to shape
-/// and ink, 471,965, past it, so the text is halved to 75 glyphs, whose
-/// budget is the 400,000-step floor: 417,090. A text of one glyph beside
+/// face beside a 4-glyph ornament take 463,355 steps, within the 464,396
+/// of [`INPUT_STEPS`]; beside 200 `|`s, which add 6,700 more to shape
+/// and ink, 470,055, past it, so the text is halved to 76 glyphs, whose
+/// budget is the 400,000-step floor: 411,669. A text of one glyph beside
 /// the heaviest long ornament the compiled faces hold, 200 `|`s, takes
-/// 412,280, with host faces or without; a frame of no text beside fifty
-/// `.notdef`s, 624,221, so the ornament is cut first.
+/// 409,308, with host faces or without; a frame of no text beside fifty
+/// U+FFFE, a segment of one code point no face holds, 412,498, and beside
+/// fifty distinct noncharacters 488,550, so that ornament is cut first.
 pub fn long_ornament(choices: &mut Choices<'_>, layout: RingLayout) -> RingLayout {
     if !choices.one_in(4) {
         return layout;

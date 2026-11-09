@@ -464,12 +464,12 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         ),
         (
             "flow/tests/halves_tests.rs",
-            "test_flow_halves_no_frame_of_the_sweep_takes_more_than_66000_glyph_steps",
+            "test_flow_halves_no_frame_of_the_sweep_takes_more_than_46000_glyph_steps",
             CannotCompileIntoTheLibrary,
         ),
         (
             "flow/tests/halves_tests.rs",
-            "test_flow_halves_the_budget_is_six_times_the_sweeps_worst_frame",
+            "test_flow_halves_the_budget_is_nine_times_the_sweeps_worst_frame",
             CannotCompileIntoTheLibrary,
         ),
         (

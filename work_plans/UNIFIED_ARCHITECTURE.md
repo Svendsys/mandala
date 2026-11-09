@@ -815,15 +815,18 @@ line (cosmic-text gives each glyph's advance), then placed:
      most; the size held is kept rather than built again. A clearance
      search lays each line once for each part of its half it tries.
      And a frame's work takes at most its budget of glyph steps:
-     `STEPS_PER_GLYPH` (3,000, five times the most a glyph of the aspect
+     `STEPS_PER_GLYPH` (3,000, nine times the most a glyph of the aspect
      sweep's frames takes) a glyph of its text, cut at a cluster to
-     `MAX_PLACED_GLYPHS`, and at least `TRACK_BUDGET` (400,000, six
+     `MAX_PLACED_GLYPHS`, and at least `TRACK_BUDGET` (400,000, nine
      times the sweep's worst frame; rulings R44.2, R47.1, amending
-     R43.3), so at most 3,000 × 65,536 — a bound per glyph, not a limit
-     on a text's length. A step is a unit of all of a frame's work, each
-     kind weighted to about one `track` step's time (ruling R46.1): its
-     tracking and side lays, its shaping and inking, its touch checks
-     and R27's walks. The budget is read before every lay, build and
+     R43.3, and #304), so at most 3,000 × 65,536 — a bound per glyph,
+     not a limit on a text's length. A step is a unit of all of a
+     frame's work, each kind weighted to about one `track` step's time
+     (ruling R46.1): its tracking and side lays, its shaping and inking,
+     its touch checks and R27's walks, each counted as it runs (#304): a
+     reshape at a size shapes nothing, a segment of `.notdef`s and each
+     distinct one is a pass of the shaper through every face, and an
+     inking reads each distinct glyph once. The budget is read before every lay, build and
      reshape and before each copy of a side ornament, which is laid only
      while the frame can afford it and its arc's touch check after, at
      `touch_looks` looks a box of the classes of height the check holds

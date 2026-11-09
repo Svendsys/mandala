@@ -1052,6 +1052,8 @@ pub(crate) fn reshape(
     let resized = (filler_text.is_empty() || filler.is_none())
         .then(|| resized_buffer(fs, &run.buffer, &rich, font_size, line_height))
         .flatten();
+    #[cfg(test)]
+    let shaped = resized.is_none();
     let buffer = match resized {
         Some(buffer) => buffer,
         None => new_buffer(fs, rich, font_size, line_height, None),
@@ -1064,9 +1066,30 @@ pub(crate) fn reshape(
         pieces,
     };
     #[cfg(test)]
-    crate::flow::place::halves::SHAPED_STEPS
-        .with(|count| count.set(count.get() + crate::flow::place::halves::shaping_steps(&run)));
+    crate::flow::place::halves::SHAPED_STEPS.with(|count| {
+        let steps = if shaped {
+            crate::flow::place::halves::shaping_steps(&run)
+        } else {
+            crate::flow::place::halves::resizing_steps(&run)
+        };
+        count.set(count.get() + steps);
+    });
     run
+}
+
+/// Whether a reshape of `run` to another size with no filler shapes
+/// nothing (#304): it is one line, so it holds no filler, and its text
+/// holds no tab, whose last-resort check is made after shaping. Such a
+/// line holds the very text it was shaped from, so it takes its own
+/// shaping ([`resized_buffer`]). What a frame counts for the reshape
+/// rests on it (`halves::resizing_steps`).
+pub(crate) fn resizes(run: &ShapedRun) -> bool {
+    resizes_buffer(&run.buffer)
+}
+
+/// [`resizes`], of the buffer a run was shaped into.
+fn resizes_buffer(buffer: &Buffer) -> bool {
+    matches!(buffer.lines.as_slice(), [line] if !line.text().contains('\t'))
 }
 
 /// `rich`, the stretches of `shaped`'s one line with their attributes
@@ -1078,9 +1101,10 @@ pub(crate) fn reshape(
 /// metrics, and shaping is in units of the em.
 ///
 /// `None`, to be shaped instead, when `shaped` is not one line (it holds
-/// a filler), when the text holds a tab (whose last-resort check
-/// [`new_buffer`] makes after shaping), or when the line will not take
-/// the shaping. In test builds, also while `RESHAPE_BY_SHAPING` is set.
+/// a filler) or its text holds a tab (whose last-resort check
+/// [`new_buffer`] makes after shaping), as [`resizes`] says, or when the
+/// line will not take the shaping. In test builds, also while
+/// `RESHAPE_BY_SHAPING` is set.
 ///
 /// Cost: one layout pass; no shaping.
 fn resized_buffer(
@@ -1097,7 +1121,7 @@ fn resized_buffer(
     let [from] = shaped.lines.as_slice() else {
         return None;
     };
-    if rich.iter().any(|(text, _)| text.contains('\t')) {
+    if !resizes_buffer(shaped) {
         return None;
     }
     let font_size = font_size.max(MIN_FONT_SIZE_PT);

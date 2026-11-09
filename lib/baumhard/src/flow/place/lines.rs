@@ -614,7 +614,7 @@ fn fit_reshape(
         #[cfg(test)]
         super::halves::note_reshape();
         let reshaped = reshape(run, scale, None, fs.fonts());
-        work.shaped(&reshaped);
+        work.resized(run);
         reshaped
     };
     let mut reshaped = (scale != 1.0).then(|| shaped(scale, fs));

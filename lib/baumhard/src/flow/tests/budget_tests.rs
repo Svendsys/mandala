@@ -587,3 +587,40 @@ fn test_flow_budget_a_filler_past_a_spent_budget_places_a_handful() {
         "{spent} filler copies placed at a budget of 1, a handful at most"
     );
 }
+
+/// #304, from the B9 review: a frame whose text and side ornament each
+/// hold about a hundred glyphs no face holds is laid whole, without
+/// reaching its budget, both its side arcs laid. A build shapes the
+/// ornament alone and the text again beside it (`side_run`); each run's
+/// `.notdef`s are a segment of one code point, counted two passes of the
+/// shaper through every face (`halves::SHAPE_NOTDEF_STEPS`,
+/// `undrawn_passes`). R27's sizing reshapes the text at a size, which
+/// shapes nothing (`halves::resizing_steps`). It spends 34,803 glyph steps
+/// of its 400,000.
+///
+/// Control: with each `.notdef` counted a pass again, as before #304, it
+/// spends 667,977, past its budget, and leaves both side arcs empty.
+#[test]
+fn test_flow_budget_a_hundred_notdefs_are_not_cut_for_budget() {
+    let text = format!("one {} two", "\u{FFFE}".repeat(100));
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(400.0, 300.0)), Shape::Ellipse);
+    let fit = FitMode::Fit { min: 0.5, max: 2.0 };
+    let layout = RingLayout {
+        sides: Some(("\u{FFFE}".repeat(100), Rgba::opaque(0, 0, 0))),
+        ..RingLayout::whole()
+    };
+    let (run, _, trace) = frame_with(&text, POINTS, &shape, &fit, &layout, false);
+    let notdefs = run.layout_glyphs().filter(|glyph| glyph.glyph_id == 0).count();
+    assert!(
+        notdefs >= 100,
+        "precondition: the text's hundred noncharacters are glyphs no face holds ({notdefs})"
+    );
+    assert!(
+        trace.spent > 0 && trace.spent < trace.budget.saturating_sub(trace.reserve) && trace.unheld.sides.is_empty(),
+        "a frame of a hundred `.notdef`s took {} glyph steps of its budget's {} (less {} held back), its sides left {:?}: cut for budget",
+        trace.spent,
+        trace.budget,
+        trace.reserve,
+        trace.unheld.sides
+    );
+}

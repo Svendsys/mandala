@@ -1283,9 +1283,15 @@ pub(crate) fn the_sweep() -> &'static SweepWork {
 /// (ruling R44.3), against a bound of 50,000. Since ruling R46 a step is
 /// a unit of all of a frame's work — its shaping, inking, touch sweeps
 /// and R27's walks besides its tracking — and the worst, the quatrain
-/// inward round the 50:1 ellipse, `Fit`, takes 59,468: the bound is
-/// restated in the new unit, some 10% over that (ruling R47.1).
-pub const SWEEP_MOST_STEPS: usize = 66_000;
+/// inward round the 50:1 ellipse, `Fit`, took 59,468, against a bound
+/// of 66,000, some 10% over that (ruling R47.1). Since #304 a reshape at
+/// a size shapes nothing and an inking reads each distinct glyph once,
+/// and each is counted so (`halves::resizing_steps`,
+/// `halves::inking_steps`): that frame takes 35,520, and the worst, the
+/// quatrain outward round the 600 × 12 rectangle, `Once` at span ½ with
+/// sides, 41,814, most of it tracking and side lays. The bound is some
+/// 10% over that.
+pub const SWEEP_MOST_STEPS: usize = 46_000;
 
 /// The most path lookups a glyph step of a frame may take on the mean,
 /// over the aspect sweep's placements and the demo maps' frames, every
@@ -1298,7 +1304,8 @@ pub const MOST_STEP_LOOKUPS: usize = 64;
 
 /// R43.2: no frame of the aspect sweep takes more than
 /// [`SWEEP_MOST_STEPS`] glyph steps (`Trace::spent`, all of a frame's
-/// work counted since ruling R46; the bound restated by R47.1).
+/// work counted since ruling R46; the bound restated by R47.1, and by
+/// #304).
 ///
 /// Controls: with ends that overlap short by the boxes' distance alone,
 /// not their overlap's depth too, the worst frame takes 67,730; with a
@@ -1306,7 +1313,7 @@ pub const MOST_STEP_LOOKUPS: usize = 64;
 /// 62,264 (both at R44, in tracking steps alone). (No `do_*` twin: it
 /// reads test counters.)
 #[test]
-fn test_flow_halves_no_frame_of_the_sweep_takes_more_than_66000_glyph_steps() {
+fn test_flow_halves_no_frame_of_the_sweep_takes_more_than_46000_glyph_steps() {
     let work = the_sweep();
     assert!(
         work.frames > 300,
@@ -1321,20 +1328,24 @@ fn test_flow_halves_no_frame_of_the_sweep_takes_more_than_66000_glyph_steps() {
     );
 }
 
-/// R43.3, as R47.1 restates it: the frame's [`TRACK_BUDGET`] is at
-/// least six times the sweep's worst frame, so the budget cuts only
+/// R43.3, as R47.1 and #304 restate it: the frame's [`TRACK_BUDGET`] is
+/// at least nine times the sweep's worst frame, so the budget cuts only
 /// pathological inputs, never real text. It was ten times while a step
 /// counted tracking alone; since ruling R46 it counts all of a frame's
-/// work, the constant is unchanged (R45's per-input bound rests on it),
-/// and the margin is the one measured: 400,000 over 59,468, ×6.7.
+/// work, the constant unchanged (R45's per-input bound rests on it), and
+/// R47.1 measured 400,000 over 59,468, ×6.7, most of the loss in shaping
+/// every reshape again. Since #304 a reshape at a size shapes nothing,
+/// and is counted so: 400,000 over 41,814, ×9.6.
 ///
-/// Controls: with the budget a tenth of what it is, red; with a
+/// Controls: with the budget a tenth of what it is, red; with a size-only
+/// reshape counted as a shaping again, the sweep's worst frame takes
+/// 55,840, ×7.2, red; with a
 /// junction's step never aimed by what its last round gave, the worst
 /// frame took 42,219, and with a line's lay never warm-started from its
 /// last 41,734 (at R44, in tracking steps alone). (No `do_*` twin: it
 /// reads test counters.)
 #[test]
-fn test_flow_halves_the_budget_is_six_times_the_sweeps_worst_frame() {
+fn test_flow_halves_the_budget_is_nine_times_the_sweeps_worst_frame() {
     use crate::flow::place::halves::TRACK_BUDGET;
     let work = the_sweep();
     assert!(
@@ -1342,8 +1353,8 @@ fn test_flow_halves_the_budget_is_six_times_the_sweeps_worst_frame() {
         "precondition: the sweep's frames are counted"
     );
     assert!(
-        work.most_spent * 6 <= TRACK_BUDGET,
-        "the aspect sweep's worst frame took {} glyph steps: the budget's {TRACK_BUDGET} is ×{:.1} that, at least ×6",
+        work.most_spent * 9 <= TRACK_BUDGET,
+        "the aspect sweep's worst frame took {} glyph steps: the budget's {TRACK_BUDGET} is ×{:.1} that, at least ×9",
         work.most_spent,
         TRACK_BUDGET as f64 / work.most_spent as f64
     );
@@ -1351,8 +1362,8 @@ fn test_flow_halves_the_budget_is_six_times_the_sweeps_worst_frame() {
 
 /// R43.3: a frame's tracking budget is 400,000 glyph steps — ten times
 /// the aspect sweep's worst frame rounded up while a step counted
-/// tracking alone, six times since all of a frame's work is counted
-/// (rulings R46, R47.1) — not the 2^21 it was while
+/// tracking alone, six times once all of a frame's work was counted
+/// (rulings R46, R47.1), nine since #304 — not the 2^21 it was while
 /// a real frame took 306,098 — so that a pathological input's frame,
 /// laid to the budget at a glyph step's cost, finishes well inside the
 /// fuzzers' 20 s timeout. Control: with the budget 2^21 again, red.
@@ -3620,13 +3631,16 @@ fn test_flow_halves_a_frames_shaping_inking_and_tracking_are_all_counted() {
 /// R44.2: a frame's budget is 3,000 glyph steps a glyph of its text, at
 /// least 400,000 — ten times the most a frame of the aspect sweep took
 /// a glyph, rounded up, while a step counted tracking alone — and, as
-/// R47.1 restates it now that a step counts all of a frame's work (R46),
-/// at least five times the sweep's most a glyph: 3,000 over 599, ×5.0
-/// (597 at d7242d38; on the frame's band curve 604 with the slide's stop
-/// at a step in its line's end removed, ruling B15.3 — the Ecclesiastes
-/// line inward round the 50:1 ellipse, `Fit`, both times). Control: with
-/// the sweep's most a glyph past 600, red — as it is with that stop
-/// removed. (No `do_*` twin: it reads test counters.)
+/// #304 restates it, at least eight times the sweep's most a glyph:
+/// 3,000 over 335, ×9.0. R47.1, once a step counted all of a frame's
+/// work (R46), held it to five: 3,000 over 599, ×5.0 (597 at d7242d38;
+/// on the frame's band curve 604 with the slide's stop at a step in its
+/// line's end removed, ruling B15.3 — the Ecclesiastes line inward round
+/// the 50:1 ellipse, `Fit`, both times), most of the loss in shaping
+/// every reshape again, which a reshape at a size no longer does.
+/// Control: with the sweep's most a glyph past 375, red — as it is with a
+/// size-only reshape counted as a shaping again, 561 a glyph. (No `do_*`
+/// twin: it reads test counters.)
 #[test]
 fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
     use crate::flow::place::halves::{frame_budget, STEPS_PER_GLYPH};
@@ -3635,8 +3649,8 @@ fn test_flow_halves_a_frames_budget_is_3000_glyph_steps_a_glyph() {
     assert_eq!(frame_budget(1_000), 3_000_000, "a long frame's budget");
     let work = the_sweep();
     assert!(
-        work.most_per_glyph > 0 && work.most_per_glyph * 5 <= STEPS_PER_GLYPH,
-        "the aspect sweep: {} glyph steps a glyph at most: the budget's {STEPS_PER_GLYPH} a glyph is ×{:.1} that, at least ×5",
+        work.most_per_glyph > 0 && work.most_per_glyph * 8 <= STEPS_PER_GLYPH,
+        "the aspect sweep: {} glyph steps a glyph at most: the budget's {STEPS_PER_GLYPH} a glyph is ×{:.1} that, at least ×8",
         work.most_per_glyph,
         STEPS_PER_GLYPH as f64 / work.most_per_glyph.max(1) as f64
     );
