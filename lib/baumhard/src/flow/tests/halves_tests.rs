@@ -198,27 +198,15 @@ fn inks(run: &ShapedRun, placed: &PlacedRun) -> Vec<Option<(Vec2, Vec2)>> {
     })
 }
 
-/// Whether the rasterizer draws a pixel of each glyph of `run`, as the
-/// renderer asks for its image — read here from the rasterizer, not
-/// through the engine's own reading of it (#333).
+/// Whether the rasterizer draws a pixel of each glyph of `run`
+/// ([`raster_box`](crate::flow::tests::support::raster_box)), at its own
+/// size: what a frame test reads must not lean on the size
+/// `glyph_draws` asks at (#333).
 fn rasterized(run: &ShapedRun) -> Vec<bool> {
     with_fonts(|fs| {
         let fs = fs.fonts();
-        let mut cache = SwashCache::new();
         run.layout_glyphs()
-            .map(|laid| {
-                let (key, _, _) = cosmic_text::CacheKey::new(
-                    laid.font_id,
-                    laid.glyph_id,
-                    laid.font_size,
-                    (0.0, 0.0),
-                    laid.font_weight,
-                    laid.cache_key_flags,
-                );
-                cache
-                    .get_image_uncached(fs, key)
-                    .is_some_and(|image| image.placement.width > 0 && image.placement.height > 0)
-            })
+            .map(|laid| crate::flow::tests::support::raster_box(fs, laid, laid.font_size).is_some())
             .collect()
     })
 }
@@ -2257,7 +2245,9 @@ fn test_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance() {
 /// nothing else, which has no letter to lay and draws nothing. And it
 /// opens no gap of the line's tracking: in `aaaa`, U+10FFFD, `aaaa`, laid
 /// `Spread`, the letters either side of it are as far apart, ink to ink,
-/// as two neighbors are, and its advance more.
+/// as two neighbors are, and its advance more. And at either end of a
+/// line, once or three times, it takes no room: the inks of `a time to
+/// every purpose` lie where they lie without it.
 ///
 /// Precondition: the text holds glyphs that are no space and that the
 /// rasterizer draws nothing for — where no host face maps U+10FFFD.
@@ -2268,7 +2258,12 @@ fn test_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance() {
 /// ("its drawn inks' most reach toward the outline lies -0.30978584 past
 /// its offset"). Control: such a glyph owing the line's gap as a space
 /// does, red: the letters either side of it 72.42 further apart than two
-/// neighbors, the gap of 62.92 and its advance of 9.51.
+/// neighbors, the gap of 62.92 and its advance of 9.51. Controls for the
+/// ends: the lines parted on the run as shaped, not with such a glyph read
+/// as a space, red before the line ("moves its inks, 5.0475383 at the
+/// most": its advance shifts the line), and with the cases before it
+/// left out, past it three times ("641.19684 at the most": its advances
+/// part the lines elsewhere).
 pub fn do_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance() {
     let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(820.0, 330.0)), Shape::Ellipse);
     let top = StartPoint {
@@ -2365,6 +2360,41 @@ pub fn do_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance() {
         across[0],
         across[0] - tracked
     );
+    // At either end of a line it takes no room, as a space there takes
+    // none: the text's inks lie where they lie without it, before its
+    // first letter and past its last, once or three times.
+    const PLAIN: &str = "a time to every purpose";
+    let lay = |text: &str| {
+        let (run, placed, _) = frame_with(
+            text,
+            30.0,
+            &shape,
+            &FitMode::Once { filler: None },
+            &RingLayout::whole(),
+            true,
+        );
+        let boxes = inks(&run, &placed);
+        boxes.into_iter().flatten().collect::<Vec<(Vec2, Vec2)>>()
+    };
+    let plain = lay(PLAIN);
+    for (end, text) in [
+        ("before", format!("\u{10FFFD}{PLAIN}")),
+        ("before", format!("\u{10FFFD}\u{10FFFD}\u{10FFFD}{PLAIN}")),
+        ("past", format!("{PLAIN}\u{10FFFD}")),
+        ("past", format!("{PLAIN}\u{10FFFD}\u{10FFFD}\u{10FFFD}")),
+    ] {
+        let ended = lay(&text);
+        assert_eq!(ended.len(), plain.len(), "{text:?}: the same inks laid");
+        let moved = ended
+            .iter()
+            .zip(&plain)
+            .map(|(a, b)| (center(*a) - center(*b)).length())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            moved <= 1e-3,
+            "{text:?}: a glyph that draws nothing {end} the line moves its inks, {moved} at the most"
+        );
+    }
 }
 
 #[test]
@@ -3516,6 +3546,14 @@ fn test_flow_halves_a_frames_text_is_cut_to_the_cap_at_a_cluster() {
     let mut run = clustered(&starts.map(|s| (6.0, s)), 20.0);
     for blank in [3, 7] {
         run.glyphs[blank].blank = true;
+    }
+    // Inked, as a frame's text is where it is cut: a letter has ink, a
+    // space none (#333).
+    for glyph in run.glyphs.iter_mut().filter(|g| !g.blank) {
+        glyph.ink = Some(crate::flow::Ink {
+            min: Vec2::new(1.0, -4.0),
+            max: Vec2::new(5.0, 0.0),
+        });
     }
     for (left, kept, cut) in [
         (5, 0..3, true),

@@ -344,24 +344,6 @@ pub fn do_flow_shape_run_measures_an_ornaments_ink() {
 #[cfg(test)]
 const UNDRAWN: char = '\u{378}';
 
-/// Whether the rasterizer draws a pixel of `laid`, as the renderer asks
-/// for its image: its face, id, size, weight and flags, at its pen. Read
-/// here from the rasterizer, not through the engine's own reading of it.
-#[cfg(test)]
-fn rasterizes(fs: &mut crate::font::FontSystem, laid: &crate::font::LayoutGlyph) -> bool {
-    let (key, _, _) = cosmic_text::CacheKey::new(
-        laid.font_id,
-        laid.glyph_id,
-        laid.font_size,
-        (0.0, 0.0),
-        laid.font_weight,
-        laid.cache_key_flags,
-    );
-    crate::font::SwashCache::new()
-        .get_image_uncached(fs, key)
-        .is_some_and(|image| image.placement.width > 0 && image.placement.height > 0)
-}
-
 /// A glyph no face draws has no ink (#333), as the rasterizer draws
 /// nothing for it, and its advance is kept: shaped in a font system of
 /// the compiled faces alone, as a host with no fonts has it, U+0378 falls
@@ -429,7 +411,12 @@ fn test_flow_shape_a_glyph_no_face_draws_has_no_ink() {
     let ornament_inked = crate::flow::inked(&ornament, &mut fs);
     let text_inked = crate::flow::inked(&text, &mut fs);
     let laid: Vec<_> = ornament.layout_glyphs().cloned().collect();
-    let drawn: Vec<bool> = laid.iter().map(|laid| rasterizes(&mut fs, laid)).collect();
+    // At each glyph's own size: what this test reads must not lean on the
+    // size `glyph_draws` asks at.
+    let drawn: Vec<bool> = laid
+        .iter()
+        .map(|laid| crate::flow::tests::support::raster_box(&mut fs, laid, laid.font_size).is_some())
+        .collect();
     assert_eq!(
         drawn,
         [true, false, true],

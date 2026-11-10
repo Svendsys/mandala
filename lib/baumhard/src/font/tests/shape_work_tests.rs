@@ -732,6 +732,119 @@ pub fn do_whether_a_glyph_draws_is_read_once_whatever_its_size() {
     assert_eq!(reads, 1, "{reads} rasterizations for three sizes");
 }
 
+#[test]
+fn test_whether_a_glyph_draws_is_asked_again_where_the_first_size_draws_nothing() {
+    do_whether_a_glyph_draws_is_asked_again_where_the_first_size_draws_nothing();
+}
+
+/// Where the rasterizer draws nothing for a glyph at `DRAWS_SIZE`, it is
+/// asked again at `DRAWS_SIZE_AGAIN` before the glyph is taken to draw
+/// nothing (#333, review 5834654837), and nowhere else: a glyph drawn at
+/// the first size is asked once; one drawn at no size twice, and draws
+/// nothing; and one drawn only from 100 pixels per em up — a bitmap of
+/// six pixels in a 109-pixel strike, which the rasterizer scales to
+/// `⌊6 · 16 / 109⌋ = 0` pixels at 16 and to 14 at 256 — twice, and
+/// draws. The rasterizer's answers here are the test's own: no compiled
+/// or host face holds such a bitmap
+/// (`test_whether_a_glyph_draws_is_the_rasterizers_answer_at_every_size`).
+///
+/// Control: the second ask dropped, red: "a glyph drawn at no size is
+/// asked twice" (once), and with that assertion stepped past, the small
+/// bitmap "draws: false".
+pub fn do_whether_a_glyph_draws_is_asked_again_where_the_first_size_draws_nothing() {
+    use crate::font::fonts::{draws_at, DRAWS_SIZE, DRAWS_SIZE_AGAIN};
+    let ask = |drawn_from: f32| {
+        let mut asked = Vec::new();
+        let draws = draws_at(|size| {
+            asked.push(size);
+            size >= drawn_from
+        });
+        (draws, asked)
+    };
+    assert_eq!(
+        ask(1.0),
+        (true, vec![DRAWS_SIZE]),
+        "a glyph drawn at 16 is asked once"
+    );
+    assert_eq!(
+        ask(f32::INFINITY),
+        (false, vec![DRAWS_SIZE, DRAWS_SIZE_AGAIN]),
+        "a glyph drawn at no size is asked twice"
+    );
+    let (draws, asked) = ask(100.0);
+    assert_eq!(
+        asked,
+        [DRAWS_SIZE, DRAWS_SIZE_AGAIN],
+        "a small bitmap is asked again"
+    );
+    assert!(draws, "a bitmap too small for 16 pixels per em draws: {draws}");
+}
+
+#[test]
+fn test_two_font_systems_never_answer_each_others_draws() {
+    do_two_font_systems_never_answer_each_others_draws();
+}
+
+/// `glyph_draws`'s cache keeps each answer for its font system (#333,
+/// review 5834654837), as the outline cache keeps an outline
+/// (`do_two_font_systems_never_answer_each_others_outlines`): glyph 1 of
+/// the first face of a font system holding MandalaEmoji alone is its
+/// bitmap 🌸, which draws, and glyph 1 of the first face of one holding
+/// Galatia SIL alone, the same face id, is its `.null`, which draws
+/// nothing. Each is answered from its own font system, the first time
+/// and from its entry the next. Preconditions: the two faces have the
+/// same id, and neither glyph has an outline.
+///
+/// Control: the key without the font system's instance number, red on
+/// the second answer ("glyph 1 of Galatia SIL draws nothing: true").
+pub fn do_two_font_systems_never_answer_each_others_draws() {
+    use crate::font::fonts::{draw_reads, face_glyph_draws};
+    use cosmic_text::{CacheKey, CacheKeyFlags, SwashCache};
+    let mut emoji = private_font_system(&[AppFont::MandalaEmoji]);
+    let mut latin = private_font_system(&[AppFont::GalatiaSIL]);
+    let first_face = |fs: &FontSystem| fs.db().faces().next().map(|face| face.id);
+    let id = first_face(&emoji).expect("precondition: the emoji face is loaded");
+    assert_eq!(
+        Some(id),
+        first_face(&latin),
+        "precondition: the two font systems give their faces one id"
+    );
+    let mut cache = SwashCache::new();
+    let weight = cosmic_text::fontdb::Weight::NORMAL;
+    for fs in [&mut emoji, &mut latin] {
+        let (key, _, _) = CacheKey::new(id, 1, 16.0, (0.0, 0.0), weight, CacheKeyFlags::empty());
+        assert!(
+            cache
+                .get_outline_commands_uncached(fs, key)
+                .is_none_or(|commands| commands.is_empty()),
+            "precondition: glyph 1 has no outline"
+        );
+    }
+    let glyph = (id, 1, weight, CacheKeyFlags::empty());
+    let mut ask = |fs: &mut FontSystem| {
+        let before = draw_reads();
+        let draws = face_glyph_draws(fs, &mut cache, glyph);
+        (draws, draw_reads() - before)
+    };
+    let first = ask(&mut emoji);
+    let other = ask(&mut latin);
+    let (first_again, other_again) = (ask(&mut emoji), ask(&mut latin));
+    assert!(
+        first.0 && first.1 > 0,
+        "glyph 1 of MandalaEmoji, its 🌸, draws: {first:?}"
+    );
+    assert!(
+        !other.0 && other.1 > 0,
+        "glyph 1 of Galatia SIL draws nothing: {}",
+        other.0
+    );
+    assert_eq!(
+        (first_again, other_again),
+        ((first.0, 0), (other.0, 0)),
+        "each is answered from its own entry the next time"
+    );
+}
+
 /// The random differential's fragments, by kind: Latin and its
 /// ligatures, combining marks, Hebrew and Arabic with their marks,
 /// Devanagari, Tamil, Malayalam, Khmer, Myanmar, Tibetan, Thai, Hangul
@@ -872,4 +985,99 @@ fn test_the_shape_work_bodies_repeat() {
         do_the_early_stop_needs_every_missing_entry_matched();
         do_the_early_stop_leaves_a_cluster_of_several_code_points_to_the_faces();
     }
+}
+
+/// Whether a glyph with no outline draws, as `glyph_draws` answers it at
+/// its first size and its second, is the rasterizer's answer at a spread
+/// of sizes, 4, 16, 128 and 1,024 pixels per em — it draws at one of them
+/// — for every glyph with no outline of every compiled face, and of every
+/// face the host has (#333, review 5834654837): the premise
+/// `DRAWS_SIZE` rests on, that whether a glyph draws does not turn on
+/// its size where a reader sees it. Each face is read in a font system of
+/// its own kind, so no shaping elsewhere waits on the shared font lock.
+///
+/// Where `MANDALA_REQUIRE_FONTCONFIG_HOSTS` is set (CI, the gate) the
+/// host must have faces to read; elsewhere a host with none reads the
+/// compiled faces alone, with a note.
+///
+/// Control: no face here holds a bitmap too small for 16 pixels per em
+/// (the review's scan of Noto Color Emoji's 3,976 glyphs and
+/// MandalaEmoji's found none), so the second ask's control is the
+/// synthetic one,
+/// `test_whether_a_glyph_draws_is_asked_again_where_the_first_size_draws_nothing`,
+/// and the truncation arithmetic it states. Here: `glyph_draws`
+/// answering `false` for every glyph with no outline, red on every bitmap
+/// ("3943 of 9844: MandalaEmoji-Regular glyph 1: drawn first at Some(4.0)
+/// pixels per em, glyph_draws false", and Noto Color Emoji's).
+/// (No `do_*` twin: it reads every glyph of every face.)
+#[test]
+fn test_whether_a_glyph_draws_is_the_rasterizers_answer_at_every_size() {
+    use crate::font::fonts::{compiled_font_system, face_glyph_draws, outline_bounds};
+    use cosmic_text::{CacheKey, CacheKeyFlags, SwashCache};
+    crate::font::fonts::init();
+    let mut hosts = {
+        let mut db = cosmic_text::fontdb::Database::new();
+        db.load_system_fonts();
+        crate::font::fallback::new_font_system(db)
+    };
+    let host_faces = hosts.db().faces().count();
+    if host_faces == 0 {
+        assert!(
+            std::env::var_os("MANDALA_REQUIRE_FONTCONFIG_HOSTS").is_none(),
+            "precondition: the host has faces to read"
+        );
+        crate::util::test_skip::note_skipped(
+            "test_whether_a_glyph_draws_is_the_rasterizers_answer_at_every_size: no host faces, the compiled ones read alone",
+        );
+    }
+    let weight = cosmic_text::fontdb::Weight::NORMAL;
+    let flags = CacheKeyFlags::empty();
+    let mut cache = SwashCache::new();
+    let mut faults = Vec::new();
+    let (mut read, mut bitmaps) = (0usize, 0usize);
+    for fs in [&mut compiled_font_system(), &mut hosts] {
+        let faces: Vec<(cosmic_text::fontdb::ID, String)> = fs
+            .db()
+            .faces()
+            .map(|face| (face.id, face.post_script_name.clone()))
+            .collect();
+        for (id, name) in faces {
+            let Some(font) = fs.get_font(id, weight) else {
+                continue;
+            };
+            let glyphs = font.as_swash().metrics(&[]).glyph_count;
+            for glyph in 0..glyphs {
+                let key = |size: f32| CacheKey::new(id, glyph, size, (0.0, 0.0), weight, flags).0;
+                let outline = cache
+                    .get_outline_commands_uncached(fs, key(16.0))
+                    .and_then(|commands| outline_bounds(&commands));
+                if outline.is_some() {
+                    continue;
+                }
+                read += 1;
+                let answer = face_glyph_draws(fs, &mut cache, (id, glyph, weight, flags));
+                let drawn_at = [4.0, 16.0, 128.0, 1024.0].into_iter().find(|&size| {
+                    cache
+                        .get_image_uncached(fs, key(size))
+                        .is_some_and(|image| image.placement.width > 0 && image.placement.height > 0)
+                });
+                bitmaps += usize::from(drawn_at.is_some());
+                if answer != drawn_at.is_some() {
+                    faults.push(format!(
+                        "{name} glyph {glyph}: drawn first at {drawn_at:?} pixels per em, glyph_draws {answer}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        read > 0 && bitmaps > 0,
+        "precondition: glyphs with no outline are read, some of them drawn ({read}, {bitmaps})"
+    );
+    assert!(
+        faults.is_empty(),
+        "{} of {read}:\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
 }

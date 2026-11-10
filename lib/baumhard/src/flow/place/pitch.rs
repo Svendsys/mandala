@@ -41,6 +41,7 @@ use glam::Vec2;
 use crate::flow::curve::Curve;
 use crate::flow::outline::Rect;
 use crate::flow::path::ArcPath;
+use crate::flow::place::halves::resolved;
 use crate::flow::place::{
     cluster_ink, clusters_of, Cluster, PlacedGlyph, PlacedRun, MAX_PLACED_GLYPHS, MIN_TABLE_SPACING,
 };
@@ -50,12 +51,26 @@ use crate::flow::shape::{Ink, ShapedRun};
 /// the secant of its gap. Fixed, so that a place moves smoothly with the
 /// gap asked of it, and the whole run's reach with the slack: what the
 /// slack is solved by. On a straight stretch the first guess is exact.
-const REFINE: usize = 4;
+pub(crate) const REFINE: usize = 4;
 
 /// The most rounds the slack is solved in. Each round moves it by what
 /// the run fell short by over its gaps, which is exact on a straight path,
-/// so a round or two settles it.
-const SLACK_ROUNDS: usize = 16;
+/// so a round or two settles it. A round that leaves the slack where it
+/// was stops it, as does a bracket closed to adjacent floats; and on a
+/// path whose float steps are wider than the pattern's gaps, a round the
+/// lay does not answer ([`STALLED`]), the third at the latest (#333).
+pub(crate) const SLACK_ROUNDS: usize = 16;
+
+/// How near its end gap, in points, the slack lays the last ink, at the
+/// least: what a round is solved to, but where the path's positions are
+/// wider apart than this ([`resolved`]).
+const SLACK_TOLERANCE: f32 = 1e-3;
+
+/// The least share of what a round's move of the slack asks of the lay —
+/// that move over each of its gaps — that the lay must move by for the
+/// solve to go on: below it, the lay does not answer the slack (#333). On
+/// a straight path it moves by all of it.
+const STALLED: f32 = 1e-3;
 
 /// What a [`place_pitched`] placement keeps its glyphs clear of at one
 /// end of its path.
@@ -364,18 +379,42 @@ pub fn place_pitched(
         // place is measured to the canvas's own precision, which far out
         // on a long path is a few thousandths a step.
         let mut best = (f32::INFINITY, slack);
+        // A miss is met to the float steps of the path's positions.
+        let tolerance = resolved(SLACK_TOLERANCE, length);
+        let mut last: Option<(f32, f32)> = None;
         for _ in 0..SLACK_ROUNDS {
             let missed = short(n, slack, &mut centers);
             if missed.abs() < best.0 {
                 best = (missed.abs(), slack);
             }
-            if missed.abs() <= 1e-3 {
+            if missed.abs() <= tolerance {
                 break;
             }
+            // A round that left the slack where it was leaves every round
+            // after it the same. So does, on a path whose float steps are
+            // wider than the pattern's own gaps — where its floats cannot
+            // resolve them — one that moved the slack and moved the lay by
+            // less than a thousandth of what the move asked of its `n + 1`
+            // gaps: no ink moves with the slack there (#333). On a path
+            // the floats resolve, a lay that does not answer one move may
+            // answer a later, larger one, and the solve goes on.
+            if let Some((was_slack, was_missed)) = last {
+                let moved = slack - was_slack;
+                let unresolved = resolved(0.0, length) > end_gap;
+                let unanswered = (missed - was_missed).abs() < STALLED * ((n + 1) as f32 * moved).abs();
+                if moved == 0.0 || (unresolved && unanswered) {
+                    break;
+                }
+            }
+            last = Some((slack, missed));
             if missed > 0.0 {
                 lo = slack;
             } else {
                 hi = slack;
+            }
+            // A bracket closed to adjacent floats holds no other slack.
+            if hi.is_finite() && lo.next_up() >= hi {
+                break;
             }
             // Each gap, and the two ends, take an equal share.
             let step = slack + missed / (n + 1) as f32;

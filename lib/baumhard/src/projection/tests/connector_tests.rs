@@ -317,7 +317,6 @@ fn undrawn_frames() -> Projected {
 /// engine's own reading of it; an undrawn one's, what a glyph with no
 /// outline was inked as before #333, its advance by its run's line height.
 fn rasterized_ring(p: &mut Projected, node: NodeId) -> (Vec<Rect>, Vec<Rect>) {
-    let mut cache = crate::font::SwashCache::new();
     let fs = p.fonts.fonts();
     let (mut drawn, mut undrawn) = (Vec::new(), Vec::new());
     for u in &p.projector.nodes[&node].units {
@@ -334,25 +333,11 @@ fn rasterized_ring(p: &mut Projected, node: NodeId) -> (Vec<Rect>, Vec<Rect>) {
             if metrics.blank {
                 continue;
             }
-            let (key, _, _) = cosmic_text::CacheKey::new(
-                laid.font_id,
-                laid.glyph_id,
-                laid.font_size,
-                (0.0, 0.0),
-                laid.font_weight,
-                laid.cache_key_flags,
-            );
-            let pen = g.pos
-                + Vec2::new(0.0, run.baseline())
-                + Vec2::new(laid.font_size * laid.x_offset, -laid.font_size * laid.y_offset);
-            match cache.get_image_uncached(fs, key) {
-                Some(image) if image.placement.width > 0 && image.placement.height > 0 => {
-                    let p = image.placement;
-                    drawn.push(Rect::new(
-                        pen + Vec2::new(p.left as f32, -p.top as f32),
-                        Vec2::new(p.width as f32, p.height as f32),
-                    ));
-                }
+            let pen = g.pos + Vec2::new(0.0, run.baseline());
+            // At the glyph's own size: its image's box is compared with
+            // the ink the projector keeps of it, laid at that size.
+            match crate::flow::tests::support::raster_box(fs, laid, laid.font_size) {
+                Some((min, max)) => drawn.push(Rect::new(pen + min, max - min)),
                 _ => undrawn.push(Rect::new(g.pos, Vec2::new(metrics.advance, run.line_height))),
             }
         }

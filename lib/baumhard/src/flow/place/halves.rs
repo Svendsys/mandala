@@ -194,7 +194,7 @@ const RESOLUTION_STEPS: f32 = 2.0;
 /// and a solve that waits for it runs out its rounds and keeps a worse
 /// answer than the one it had (a slide left a line a float step too
 /// long for its part, read as pressed; ruling R43).
-fn resolved(tolerance: f32, at: f32) -> f32 {
+pub(super) fn resolved(tolerance: f32, at: f32) -> f32 {
     let step = at.abs() * f32::EPSILON;
     if step.is_finite() {
         tolerance.max(RESOLUTION_STEPS * step)
@@ -753,7 +753,8 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
 /// lines at each end of the size window and at each of up to
 /// `SOLVE_ROUNDS` sizes between, each a walk of its clusters
 /// ([`CLUSTERS_A_STEP`] a step) — and its reshape at that size
-/// ([`predicted_resizing_steps`]) — one build's shaping and inking
+/// ([`predicted_resizing_steps`]) — the inking its lines are parted on
+/// (`parting_run`, #333; [`inking_steps`]), one build's shaping and inking
 /// ([`build_steps`]), and a lay of each line ([`OVERSHOOT_TRACKS`]
 /// `track`s of every glyph), which the touch checks that end the frame
 /// fall within. A budget is read before each build, each reshape of
@@ -790,6 +791,7 @@ pub(crate) fn overshoot_steps(
         .saturating_add(walk)
         .saturating_add(r27)
         .saturating_add(build_steps(text, ornament))
+        .saturating_add(inking_steps(text))
         .saturating_add(OVERSHOOT_TRACKS.saturating_mul(text.glyphs.len() + TRACK_CALL_STEPS))
 }
 
@@ -6247,9 +6249,34 @@ fn gaps_of(clusters: &[Cluster]) -> (usize, usize) {
     (letters, letters.saturating_sub(1) + between)
 }
 
-/// `clusters` without their trailing spaces.
+/// `run` with every glyph that draws nothing read as a space
+/// ([`GlyphMetrics::blank`]), as [`inked`] finds it (#333): what a frame's
+/// lines are parted on, so that their ends leave such a glyph out as they
+/// leave a space out. Its glyphs, and their indices, are `run`'s.
+///
+/// Cost: [`inked`]'s.
+fn parting_run(run: &ShapedRun, fs: &mut FontSystem) -> ShapedRun {
+    let mut out = inked(run, fs);
+    // By cluster, which reads its first glyph's: one that draws nothing
+    // only where none of its glyphs draws — a variation selector before
+    // a keycap is one cluster with it.
+    let mut start = 0;
+    while start < out.glyphs.len() {
+        let end = (start + 1..out.glyphs.len())
+            .find(|&k| out.glyphs[k].grapheme_start)
+            .unwrap_or(out.glyphs.len());
+        if out.glyphs[start..end].iter().all(|g| g.ink.is_none()) {
+            out.glyphs[start].blank = true;
+        }
+        start = end;
+    }
+    out
+}
+
+/// `clusters` (inked) without their trailing spaces, nor a trailing glyph
+/// that draws nothing (#333).
 fn trimmed(clusters: &[Cluster]) -> &[Cluster] {
-    let end = clusters.iter().rposition(|c| !c.blank).map_or(0, |i| i + 1);
+    let end = clusters.iter().rposition(inks).map_or(0, |i| i + 1);
     &clusters[..end]
 }
 
@@ -6371,13 +6398,19 @@ pub(super) fn place_halves(
         }
         placed
     };
+    // A glyph that draws nothing takes no room at a line's end (#333):
+    // the lines are parted on the run with each such glyph read as a
+    // space, so a line's ends leave it out as they leave a space out, and
+    // it weighs on neither line's length. Laid, the lines are the run's.
+    work.inked(run);
+    let parting = parting_run(run, fs.fonts());
     // What a `Fit` frame reads of R27: its size, its parting and its cuts
     // (ruling R43: not where it centers each line, which the halves lay
     // again). A `Once` or `Spread` frame parts its lines itself, below.
     let mut natural_trace = Trace::default();
     let (fitted, natural) = if sized {
         frame_lines(
-            run,
+            &parting,
             &level,
             fit,
             outward,
@@ -6430,7 +6463,7 @@ pub(super) fn place_halves(
         (base, specs)
     } else {
         lay.work.walked(run.glyphs.len());
-        let specs = line_partition(run, &halves.level)
+        let specs = line_partition(&parting, &halves.level)
             .into_iter()
             .enumerate()
             .filter(|(_, range)| !range.is_empty())

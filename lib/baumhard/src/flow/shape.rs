@@ -153,14 +153,20 @@ pub struct GlyphMetrics {
     pub letter: bool,
     /// Where the glyph's ink lies, measured from its outline (#291,
     /// ruling R31): what placement steps an ornament's glyphs by, so a
-    /// ring's gaps are the gaps a reader sees. Measured only in a run
-    /// that is an ornament — no glyph a [`letter`](Self::letter) — since
-    /// text keeps its line-height boxes (ruling R9.2); `None` there.
-    /// Measured as the rasterizer draws the glyph (`shape::drawn_ink`, #333): a
-    /// glyph with no outline that is drawn all the same, a bitmap emoji,
-    /// is inked as its box, its advance by the line height; one that
-    /// draws nothing — a space, a `.notdef` whose outline is empty — has
-    /// no ink, `None`, and takes up its advance and nothing else.
+    /// ring's gaps are the gaps a reader sees. Measured at shaping only in
+    /// a run that is an ornament — no glyph a [`letter`](Self::letter) —
+    /// since text keeps its line-height boxes (ruling R9.2); a text run is
+    /// inked where its ink is read (`flow::inked`). Measured as the
+    /// rasterizer draws the glyph (`shape::drawn_ink`, #333): a glyph with
+    /// no outline that is drawn all the same, a bitmap emoji, is inked as
+    /// its box, its advance by the line height.
+    ///
+    /// `None` means one of two things, which the run tells apart, not
+    /// the glyph: in a run that is measured — an ornament as shaped, or
+    /// any run `flow::inked` returns — the glyph draws nothing (a space,
+    /// a `.notdef` whose outline is empty) and takes up its advance and
+    /// nothing else; in a text run as shaped, or a run placement returns
+    /// (a run's ink being an ornament's own), it was not measured.
     pub ink: Option<Ink>,
 }
 

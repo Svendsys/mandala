@@ -1275,39 +1275,56 @@ pub fn measure_glyph_ink_bounds(
 /// a bitmap emoji, from one that draws nothing: a `.notdef` whose outline
 /// is empty, a face that is not loaded (#333).
 ///
-/// Asked at the glyph's face, id, weight and flags, at [`DRAWS_SIZE`] and
-/// no sub-pixel offset, whatever size it is laid at: whether a glyph
-/// draws is a property of its face's data — a color outline with a layer
-/// that has area, a bitmap in some strike — not of the size or the place
-/// it is drawn at, while an image's area grows as its size's square. So a
-/// glyph is rasterized once, small, however many sizes a frame probes it
+/// Asked at the glyph's face, id, weight and flags, whatever size it is
+/// laid at ([`face_glyph_draws`]): whether a glyph draws is a property of
+/// its face's data — a color outline with a layer that has area, a bitmap
+/// in some strike — while an image's area grows as its size's square. So
+/// a glyph is rasterized small, once, however many sizes a frame probes it
 /// at, never at the size it is laid at: a bitmap emoji in a frame at
 /// 4,096 points would be an image 4,096 pixels square.
 ///
 /// Cost: one lookup in a per-thread cache, kept as the outline cache is
-/// (`cached_outline_bounds`); on a miss, one rasterization of the glyph at
-/// [`DRAWS_SIZE`].
+/// (`cached_outline_bounds`); on a miss, [`draws_at`]'s rasterizations.
 pub fn glyph_draws(
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
     glyph: &cosmic_text::LayoutGlyph,
 ) -> bool {
-    let (key, _, _) = CacheKey::new(
-        glyph.font_id,
-        glyph.glyph_id,
-        DRAWS_SIZE,
-        (0.0, 0.0),
-        glyph.font_weight,
-        glyph.cache_key_flags,
-    );
-    let entry = (font_system.instance(), key);
+    face_glyph_draws(
+        font_system,
+        swash_cache,
+        (
+            glyph.font_id,
+            glyph.glyph_id,
+            glyph.font_weight,
+            glyph.cache_key_flags,
+        ),
+    )
+}
+
+/// [`glyph_draws`] of glyph `glyph_id` of face `font_id`, at `weight`
+/// with `flags`: kept per thread by its font system
+/// ([`FontSystem::instance`]) and the rasterizer's key at
+/// [`DRAWS_SIZE`], as the outline cache keeps an outline.
+///
+/// Cost: one hash lookup; on a miss, [`draws_at`]'s rasterizations, and
+/// the whole cache let go first if it holds [`OUTLINE_CACHE_ENTRIES`].
+pub(crate) fn face_glyph_draws(
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    (font_id, glyph_id, weight, flags): (ID, u16, cosmic_text::fontdb::Weight, CacheKeyFlags),
+) -> bool {
+    let key_at = |size: f32| CacheKey::new(font_id, glyph_id, size, (0.0, 0.0), weight, flags).0;
+    let entry = (font_system.instance(), key_at(DRAWS_SIZE));
     if let Some(draws) = DRAWS.with(|cache| cache.borrow().get(&entry).copied()) {
         return draws;
     }
-    DRAW_READS.with(|reads| reads.set(reads.get() + 1));
-    let draws = swash_cache
-        .get_image_uncached(font_system, key)
-        .is_some_and(|image| image.placement.width > 0 && image.placement.height > 0);
+    let draws = draws_at(|size| {
+        DRAW_READS.with(|reads| reads.set(reads.get() + 1));
+        swash_cache
+            .get_image_uncached(font_system, key_at(size))
+            .is_some_and(|image| image.placement.width > 0 && image.placement.height > 0)
+    });
     DRAWS.with(|cache| {
         let mut cache = cache.borrow_mut();
         if cache.len() >= OUTLINE_CACHE_ENTRIES {
@@ -1318,10 +1335,34 @@ pub fn glyph_draws(
     draws
 }
 
-/// The size, in pixels per em, [`glyph_draws`] asks the rasterizer at:
-/// small, so its image is a few hundred pixels, and large enough that a
-/// layer or a bitmap with area covers one.
+/// Whether a glyph draws, `draws(size)` the rasterizer's answer at a size
+/// in pixels per em: at [`DRAWS_SIZE`], and where nothing is drawn there,
+/// at [`DRAWS_SIZE_AGAIN`] before the glyph is taken to draw nothing.
+///
+/// The second ask is for a color bitmap too small for the first: the
+/// rasterizer scales a strike's bitmap `w` pixels wide to
+/// `⌊w · size / ppem⌋`, so at 16 pixels per em one narrower or shorter
+/// than a sixteenth of its strike's size (under 7 pixels of a 109-pixel
+/// strike) is an image of no pixels, though it is drawn at the sizes a
+/// reader sees it at; at 256, only one under a 256th of its strike's
+/// size, which no bitmap that is drawn is. An outline with area is
+/// drawn at either. A glyph that draws nothing — what a `false` answers
+/// — is an empty outline or no image at all, which costs the rasterizer
+/// nothing at either size; one that draws is asked once.
+///
+/// Cost: one ask, or two where the first answers `false`.
+pub(crate) fn draws_at(mut draws: impl FnMut(f32) -> bool) -> bool {
+    draws(DRAWS_SIZE) || draws(DRAWS_SIZE_AGAIN)
+}
+
+/// The size, in pixels per em, [`glyph_draws`] asks the rasterizer at
+/// first ([`draws_at`]): small, so its image is a few hundred pixels.
 pub const DRAWS_SIZE: f32 = 16.0;
+
+/// The size [`glyph_draws`] asks again at where [`DRAWS_SIZE`] draws
+/// nothing ([`draws_at`]): one at which a bitmap too small to cover a
+/// pixel at [`DRAWS_SIZE`] covers one.
+pub const DRAWS_SIZE_AGAIN: f32 = 256.0;
 
 /// The ink of one laid-out glyph: the bounding box of its outline, as
 /// its `(min, max)` corners relative to its pen on the baseline, in

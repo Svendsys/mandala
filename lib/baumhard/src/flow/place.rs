@@ -130,7 +130,7 @@ pub use pitch::{pattern_gap, place_pitched, PathEnd};
 
 pub(crate) mod halves;
 mod lines;
-mod pitch;
+pub(crate) mod pitch;
 pub(crate) mod ring;
 pub(crate) use lines::{frame_halves, place_lines};
 use ring::{RingLoss, RingWork};

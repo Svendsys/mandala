@@ -57,6 +57,7 @@ use crate::flow::place::{
     frame_halves, place_on_closed_capped, setup_table_samples, size_factor, Trace, INK_TOLERANCE,
     MIN_TABLE_SPACING,
 };
+use crate::flow::tests::support::raster_box;
 use crate::flow::{
     offset, outline, place_at_point, place_on_open, place_pitched, shape_box, shape_run, Curve, FlowSpan,
     Outline, PathEnd, PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
@@ -521,22 +522,10 @@ pub(crate) fn check_raw(bytes: &[u8], fits: &[FitMode], bounded: bool) -> Result
             placed,
             owes_whole(&run, &fit, curve_room(&curve)),
             "along a line",
-            &mut fs,
         )?;
     }
-    check_pitched(
-        &run,
-        &[Curve::Line(Vec2::ZERO, Vec2::new(200.0, 0.0))],
-        1.0,
-        &mut fs,
-    )?;
-    check_placement(
-        &run,
-        &place_at_point(&run, Vec2::ZERO),
-        false,
-        "at a point",
-        &mut fs,
-    )
+    check_pitched(&run, &[Curve::Line(Vec2::ZERO, Vec2::new(200.0, 0.0))], 1.0)?;
+    check_placement(&run, &place_at_point(&run, Vec2::ZERO), false, "at a point")
 }
 
 /// `run` laid as whole glyphs along `path` and on along a line past its
@@ -544,12 +533,7 @@ pub(crate) fn check_raw(bytes: &[u8], fits: &[FitMode], bounded: bool) -> Result
 /// start's half a line height back from the path's start: the
 /// placement's properties ([`check_placement`]). It draws no choice of
 /// its own, so a committed seed draws what it drew before.
-fn check_pitched(
-    run: &ShapedRun,
-    path: &[Curve],
-    spacing: f32,
-    fs: &mut FontSystemLease,
-) -> Result<(), String> {
+fn check_pitched(run: &ShapedRun, path: &[Curve], spacing: f32) -> Result<(), String> {
     let (Some(first), Some(last)) = (path.first(), path.last()) else {
         return Ok(());
     };
@@ -580,15 +564,19 @@ fn check_pitched(
     PITCHED_LOOKUPS.with(|count| {
         count.set(count.get() + crate::flow::path::PATH_LOOKUPS.with(std::cell::Cell::get) - before)
     });
-    check_placement(run, &placed, false, "as whole glyphs", fs)
+    #[cfg(test)]
+    PITCHED_GLYPHS.with(|count| count.set(count.get() + placed.glyphs.len()));
+    check_placement(run, &placed, false, "as whole glyphs")
 }
 
 #[cfg(test)]
 thread_local! {
     /// Test counter (#333): the path lookups the whole-glyph placements
     /// [`check_pitched`] lays on this thread have made, so that a test of
-    /// another placement's work can leave them out of its count.
+    /// another placement's work can hold the two apart.
     pub(crate) static PITCHED_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#333): the glyphs those placements placed.
+    pub(crate) static PITCHED_GLYPHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The layouts a frame drawn in layout `drawn` is laid in: `drawn`, and
@@ -705,7 +693,14 @@ fn frames_round_a_rectangle(
         // reported (ruling R35.2).
         let whole = owes_whole(&frame_run, fit, frame_room(&path)) && trace.cut_apart.is_empty();
         apart(&trace, "around a rectangle")?;
-        check_placed(&frame_spans, &frame_run, placed, whole, "around a rectangle", fs)?;
+        check_frame_placed(
+            &frame_spans,
+            &frame_run,
+            placed,
+            (whole, &trace),
+            "around a rectangle",
+            fs,
+        )?;
     }
     if bounded {
         work.within_the_timeout()?;
@@ -1156,7 +1151,14 @@ fn check_generated_pinning(
                             })
                             .and_then(|()| apart(&trace, "around an outline"))
                             .and_then(|()| {
-                                check_placed(&frame_spans, &run, placed, whole, "around an outline", &mut fs)
+                                check_frame_placed(
+                                    &frame_spans,
+                                    &run,
+                                    placed,
+                                    (whole, &trace),
+                                    "around an outline",
+                                    &mut fs,
+                                )
                             });
                         checked
                             .map_err(|why| format!("{why}, laid {layout:?}, {} spans", frame_texts.len()))?;
@@ -1177,15 +1179,14 @@ fn check_generated_pinning(
                     // `Spread` and `Fit` solve the gap; the spacing does not
                     // enter (ruling R6, reading 7).
                     let whole = owes_whole(&run, &fit, curve_room(&curve));
-                    check_placed(&spans, &run, placed, whole, "along a curve", &mut fs)
-                        .and_then(|()| check_pitched(&run, &[curve], spacing, &mut fs))
+                    check_placed(&spans, &run, placed, whole, "along a curve")
+                        .and_then(|()| check_pitched(&run, &[curve], spacing))
                 }
                 _ => check_placement(
                     &run,
                     &place_at_point(&run, any_vec2(choices)),
                     false,
                     "at a point",
-                    &mut fs,
                 ),
             }
         }
@@ -1670,6 +1671,31 @@ fn check_placed(
     (replaced, placed): (Option<ShapedRun>, PlacedRun),
     whole: bool,
     what: &str,
+) -> Result<(), String> {
+    let refers_to = match &replaced {
+        Some(new) => {
+            check_run(spans, new, &format!("{what}: the run placement made"))?;
+            new
+        }
+        None => run,
+    };
+    check_placement(refers_to, &placed, whole, what)
+}
+
+/// [`check_placed`] for a frame laid as `trace` traced it: where its
+/// natural length fits (`whole`), a glyph the rasterizer draws nothing
+/// for may be left unplaced where its line lays no ink round it — before
+/// its line's first ink or past its last, as a line's outer spaces are,
+/// or in a line of nothing that draws, which is not laid (#333) — and
+/// nowhere else: never between two inks of one line, which places it.
+/// `fs` is read only for a glyph that is not placed, and the glyphs
+/// beside it.
+pub(crate) fn check_frame_placed(
+    spans: &[FlowSpan<'_>],
+    run: &ShapedRun,
+    (replaced, placed): (Option<ShapedRun>, PlacedRun),
+    (whole, trace): (bool, &Trace),
+    what: &str,
     fs: &mut FontSystemLease,
 ) -> Result<(), String> {
     let refers_to = match &replaced {
@@ -1679,7 +1705,54 @@ fn check_placed(
         }
         None => run,
     };
-    check_placement(refers_to, &placed, whole, what, fs)
+    check_frame_placement(refers_to, &placed, (whole, trace), what, fs)
+}
+
+/// [`check_placement`] of a frame's placement, with
+/// [`check_frame_placed`]'s excuse.
+pub(crate) fn check_frame_placement(
+    run: &ShapedRun,
+    placed: &PlacedRun,
+    (whole, trace): (bool, &Trace),
+    what: &str,
+    fs: &mut FontSystemLease,
+) -> Result<(), String> {
+    // Each glyph's traced line, by glyph index.
+    let mut line_of: Vec<Option<usize>> = vec![None; run.glyphs.len()];
+    for (k, line) in trace.lines.iter().enumerate() {
+        let ends = line.glyphs.start.min(placed.glyphs.len())..line.glyphs.end.min(placed.glyphs.len());
+        for g in &placed.glyphs[ends] {
+            if let Some(slot) = line_of.get_mut(g.glyph as usize) {
+                *slot = Some(k);
+            }
+        }
+    }
+    let laid: Vec<crate::font::LayoutGlyph> = run.layout_glyphs().cloned().collect();
+    let mut known: Vec<Option<bool>> = vec![None; run.glyphs.len()];
+    // Whether glyph `k` draws: a space never; else the rasterizer's
+    // answer at 16 pixels per em, as `raster_box` explains.
+    let mut draws = |k: usize, fs: &mut FontSystemLease| -> bool {
+        if run.glyphs[k].blank {
+            return false;
+        }
+        *known[k].get_or_insert_with(|| {
+            laid.get(k)
+                .is_none_or(|laid| raster_box(fs.fonts(), laid, 16.0).is_some())
+        })
+    };
+    let n = run.glyphs.len();
+    let mut excused = |k: usize| {
+        if draws(k, fs) {
+            return false;
+        }
+        let before = (0..k).rev().find(|&i| draws(i, fs));
+        let after = (k + 1..n).find(|&i| draws(i, fs));
+        match (before, after) {
+            (Some(a), Some(b)) => line_of[a].is_none() || line_of[a] != line_of[b],
+            _ => true,
+        }
+    };
+    check_placement_excusing(run, placed, whole, what, &mut excused)
 }
 
 /// No two of a frame's inks touch (rulings R38.1, R44.2): never overlap
@@ -1752,18 +1825,21 @@ fn frame_room(outline: &Outline) -> f32 {
 /// Every placed glyph is finite, names a glyph of `run`, and there are
 /// at most [`MAX_PLACED_GLYPHS`]. With `whole` — a `Spread` or `Fit`
 /// whose natural length fits its path (`owes_whole`) — nothing is cut:
-/// every glyph of the run that draws (not a space, not a filler's, and
-/// not one the rasterizer draws nothing for, which a line of them alone
-/// does not lay, #333) is placed, and the placement is not truncated. A
-/// gap solved past every `f32` that the walk then cut silently is caught
-/// here. `fs` is read only for a glyph that is not placed: whether the
-/// rasterizer draws it.
-pub fn check_placement(
+/// every glyph of the run that draws (not a space, not a filler's) is
+/// placed, and the placement is not truncated. A gap solved past every
+/// `f32` that the walk then cut silently is caught here.
+pub fn check_placement(run: &ShapedRun, placed: &PlacedRun, whole: bool, what: &str) -> Result<(), String> {
+    check_placement_excusing(run, placed, whole, what, &mut |_| false)
+}
+
+/// [`check_placement`], a glyph that is not a space nor a filler's left
+/// unplaced where `excused` says it may be.
+fn check_placement_excusing(
     run: &ShapedRun,
     placed: &PlacedRun,
     whole: bool,
     what: &str,
-    fs: &mut FontSystemLease,
+    excused: &mut dyn FnMut(usize) -> bool,
 ) -> Result<(), String> {
     if whole {
         if placed.truncated {
@@ -1775,13 +1851,9 @@ pub fn check_placement(
                 *seen = true;
             }
         }
-        let laid: Vec<_> = run.layout_glyphs().collect();
         if let Some(missing) = (0..run.glyphs.len()).find(|&k| {
             let g = &run.glyphs[k];
-            !drawn[k]
-                && !g.blank
-                && g.span != FILLER_SPAN
-                && laid.get(k).is_none_or(|laid| rasterizes(laid, fs))
+            !drawn[k] && !g.blank && g.span != FILLER_SPAN && !excused(k)
         }) {
             return Err(format!(
                 "{what}: its natural length fits, and glyph {missing} was not placed"
@@ -1804,25 +1876,6 @@ pub fn check_placement(
         }
     }
     Ok(())
-}
-
-/// Whether the rasterizer draws a pixel of `laid`, as the renderer asks
-/// for its image: read from the rasterizer, not through the flow's own
-/// reading of it (#333). At 16 pixels per em, whatever its size: whether
-/// a glyph draws does not turn on its size, and its image at a frame's
-/// largest would be thousands of pixels square.
-fn rasterizes(laid: &crate::font::LayoutGlyph, fs: &mut FontSystemLease) -> bool {
-    let (key, _, _) = cosmic_text::CacheKey::new(
-        laid.font_id,
-        laid.glyph_id,
-        16.0,
-        (0.0, 0.0),
-        laid.font_weight,
-        laid.cache_key_flags,
-    );
-    crate::font::SwashCache::new()
-        .get_image_uncached(fs.fonts(), key)
-        .is_some_and(|image| image.placement.width > 0 && image.placement.height > 0)
 }
 
 /// The properties of a shaped box: a finite, non-negative size at least
