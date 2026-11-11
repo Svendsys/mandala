@@ -1566,7 +1566,7 @@ const ORNAMENT: Bounded = Bounded::Length {
 /// structure's, which `corrupt` drives; the counts of palettes, theme
 /// variables and variants, verbs, edits and presentations are left to
 /// load_raw).
-pub static BOUNDED_FIELDS: [BoundedField; 113] = [
+pub static BOUNDED_FIELDS: [BoundedField; 115] = [
     BoundedField {
         name: "position x",
         needs: Needs::Nothing,
@@ -2476,6 +2476,22 @@ pub static BOUNDED_FIELDS: [BoundedField; 113] = [
         key: "ring",
         template: r##"{"sides": {"content": "#"}}"##,
         path: ".ring.sides.content",
+        value: ORNAMENT,
+    },
+    BoundedField {
+        name: "ring vertical",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r##"{"rings": [{"vertical": "#"}]}"##,
+        path: ".frame.rings[0].vertical",
+        value: ORNAMENT,
+    },
+    BoundedField {
+        name: "ring corner",
+        needs: Needs::Nothing,
+        key: "frame",
+        template: r##"{"rings": [{"corners": ["┌", "┐", "#", "└"]}]}"##,
+        path: ".frame.rings[0].corners[2]",
         value: ORNAMENT,
     },
 ];

@@ -207,6 +207,24 @@ pub fn offset(o: &Outline, d: f32) -> Outline {
     }
 }
 
+/// `o` moved outward by `d` (inward for a negative `d`) with its corners
+/// kept: a rounded rectangle's rectangle grows by `d` on every side and
+/// its radius stays, so a sharp rectangle grows into a sharp rectangle;
+/// an ellipse grows as [`offset`] grows it. Where a directional ring runs
+/// (#324): its corners are where its sides' strokes meet, as a box's are.
+/// The radius stays within half the grown rectangle's shorter side, and
+/// shrinking stops at an empty rectangle. O(1).
+pub fn offset_keeping_corners(o: &Outline, d: f32) -> Outline {
+    match *o {
+        Outline::RoundedRect { rect, .. } => {
+            let grown = rect.grown(d);
+            let radius = o.corner_radius().clamp(0.0, grown.size.x.min(grown.size.y) * 0.5);
+            Outline::RoundedRect { rect: grown, radius }
+        }
+        Outline::Ellipse { .. } => offset(o, d),
+    }
+}
+
 /// How far outside the outline ring *k* runs, where *k* is the length
 /// of `inner_line_heights`, the line heights of the rings inside it,
 /// innermost first: `inset + Σ inner_line_heights + k · gap` (#239 §5).

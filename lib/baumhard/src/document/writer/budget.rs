@@ -17,8 +17,8 @@
 //! the same way. Neither is ever recounted by a walk after load.
 
 use crate::document::element::{
-    DefaultsData, DocElement, FlowStyle, FrameData, FrameStyle, MapData, PaletteData, PortalEndData,
-    PortalEndStyle, RingData, RingLayoutStyle, RingStyle, SpanData, ThemeData, ThemeVariant,
+    DefaultsData, DirectionalGlyphs, DocElement, FlowStyle, FrameData, FrameStyle, MapData, PaletteData,
+    PortalEndData, PortalEndStyle, RingData, RingLayoutStyle, RingStyle, SpanData, ThemeData, ThemeVariant,
 };
 use crate::document::values::{FitMode, LinkTarget, Sides};
 
@@ -96,7 +96,11 @@ pub fn text_bytes(element: &DocElement) -> u64 {
                 }
         }
         DocElement::Frame(FrameData { style }) => frame_style(style),
-        DocElement::Ring(RingData { channel: _, style }) => ring_style(style),
+        DocElement::Ring(RingData {
+            channel: _,
+            style,
+            directional,
+        }) => ring_style(style) + directional.as_deref().map_or(0, directional_glyphs),
         DocElement::Connector(connector) => flow(&connector.path.flow),
         DocElement::Link(link) => flow(&link.path.flow),
         DocElement::PortalEnd(PortalEndData { end: _, style }) => portal_end_style(style),
@@ -154,6 +158,12 @@ fn ring_style(style: &RingStyle) -> u64 {
         text: _,
     } = style;
     fit(mode) + ring_layout_style(ring_layout)
+}
+
+/// A ring's glyphs by direction (#324): their texts.
+fn directional_glyphs(glyphs: &DirectionalGlyphs) -> u64 {
+    let DirectionalGlyphs { vertical, corners } = glyphs;
+    vertical.as_deref().map_or(0, len) + corners.iter().flatten().map(|c| len(c)).sum::<u64>()
 }
 
 /// A ring's layout: its `sides` ornament's text (#291).

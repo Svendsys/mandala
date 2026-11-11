@@ -62,8 +62,11 @@ const FORBIDDEN: &[&str] = &["mindmap", "gfx_structs", "parent_id", "edge_type",
 /// The `String`-holding fields #235 allows on document elements, as
 /// `Type.field` (a tuple field by its index, an enum's by its variant),
 /// and a frame's sides ornament, which #291 adds beside the `once`
-/// filler it stands in for on a frame.
+/// filler it stands in for on a frame, and a ring's glyphs by direction,
+/// which #324 adds beside its spans: text it draws, as they are.
 const ALLOWED_STRINGS: &[&str] = &[
+    "DirectionalGlyphs.corners",
+    "DirectionalGlyphs.vertical",
     "FitMode::Once.filler",
     "FlowStyle.content",
     "LinkTarget::Url.0",
@@ -2210,9 +2213,9 @@ hidden_items!();
     fn test_the_text_budget_counts_every_string_the_document_allows() {
         use crate::document::element::PathData;
         use crate::document::element::{
-            ConnectorData, DefaultsData, DocElement, FlowStyle, FrameData, FrameStyle, LinkData, MapData,
-            PaletteData, PortalEndData, PortalEndStyle, RingData, RingLayoutStyle, RingStyle, SpanData,
-            ThemeData, ThemeVariant,
+            ConnectorData, DefaultsData, DirectionalGlyphs, DocElement, FlowStyle, FrameData, FrameStyle,
+            LinkData, MapData, PaletteData, PortalEndData, PortalEndStyle, RingData, RingLayoutStyle,
+            RingStyle, SpanData, ThemeData, ThemeVariant,
         };
         use crate::document::values::{Anchor, FitMode, LinkKind, LinkTarget, Sides};
         use crate::document::writer::budget::text_bytes;
@@ -2267,6 +2270,7 @@ hidden_items!();
                             fit: filler(),
                             ..RingStyle::default()
                         },
+                        ..RingData::default()
                     }),
                     DocElement::Connector(ConnectorData { path: flow(fills()) }),
                     link(flow(fills())),
@@ -2329,11 +2333,26 @@ hidden_items!();
                                 ring_layout: layout(),
                                 ..RingStyle::default()
                             },
+                            ..RingData::default()
                         }),
                         defaults(&|d| d.frame.ring_layout = layout()),
                         defaults(&|d| d.ring.ring_layout = layout()),
                     ]
                 }
+                "DirectionalGlyphs.vertical" => vec![DocElement::Ring(RingData {
+                    directional: Some(Box::new(DirectionalGlyphs {
+                        vertical: Some(TEXT.to_string()),
+                        corners: None,
+                    })),
+                    ..RingData::default()
+                })],
+                "DirectionalGlyphs.corners" => vec![DocElement::Ring(RingData {
+                    directional: Some(Box::new(DirectionalGlyphs {
+                        vertical: None,
+                        corners: Some([TEXT.to_string(), String::new(), String::new(), String::new()]),
+                    })),
+                    ..RingData::default()
+                })],
                 "SpanData.text" => vec![DocElement::Span(SpanData {
                     text: TEXT.to_string(),
                     ..SpanData::default()

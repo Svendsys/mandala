@@ -576,6 +576,8 @@ key is unset when absent; the built-in values that then apply are
 | `weight` | [weight](#weight) | no | unset | |
 | `italic` | boolean | no | unset | |
 | `spans` | array of [spans](#span) | no | `[]` | |
+| `vertical` | string | no | unset | On a `repeat` ring, the text laid where the outline runs steep: its [directional](#directional-ring) glyph, in the ring's text style. Unset, the spans are laid there too. A ring in another mode ignores it. |
+| `corners` | array of 4 strings | no | unset | On a `repeat` ring, the texts laid where the outline turns as a box does, clockwise from the top left: top left, top right, bottom right, bottom left ([directional ring](#directional-ring)). A ring in another mode ignores it. |
 
 ### Connector
 
@@ -833,6 +835,52 @@ writes `0` as `"natural"` and `1` as `"whole"`. A `repeat` ring has no
 lines and ignores it. Between two states of an animation it moves
 along the straight line from one to the other, as a ring's `spacing`
 does.
+
+### Directional ring
+
+A `repeat` ring with a [`vertical`](#ring) text or [`corners`](#ring)
+lays its glyphs by the way the outline runs where they lie, since
+glyphs are never rotated (#324): its spans where the outline runs
+level, its `vertical` text where it runs steep, and a corner where it
+turns from one to the other as a box does. Round a rectangle,
+`"spans": [{"text": "─"}], "vertical": "│", "corners": ["┌", "┐",
+"┘", "└"]` reads as a box. Each text must have something to draw and
+be at most 256 bytes long, as [sides](#sides) must.
+
+- **Where it turns.** A node's outline turns one way all round, and
+  runs at 45° from level at four points: the corners of a rectangle,
+  the middles of a rounded one's corner arcs, the points of an ellipse
+  where its tangent runs at 45°. Those part the ring into four runs:
+  over the top and along the bottom, level; down the two sides, steep.
+  The choice changes at those four points and nowhere else, so it
+  cannot flicker along a curve. **The hysteresis:** a run shorter than
+  three line heights — the tips of a flat ellipse, the top of a tall
+  one — is no run of its own; its neighbors take it, parted where the
+  outline faces straight out, and no corner is laid at its ends.
+- **Corners.** A corner is laid at a point where two runs meet if the
+  outline turns there through 45° or more within the corner's own
+  reach (half its ink's diagonal either side): a rectangle's corner,
+  or a rounded one's whose radius is about the corner's size. It is
+  set as a line of text sets glyphs of one face: on the baseline of
+  the level text, its box centered on the box of the vertical text, so
+  a box-drawing corner's strokes run on in its neighbors'. Round a
+  curve wider than the corner, the runs meet with no corner between
+  them.
+- **Spacing.** Each run holds whole glyphs, every gap between two inks
+  the same: the spans' own gap, as a line sets two of them, with the
+  ring's `spacing`; the vertical text is set that same gap apart. A
+  level run measures its gaps across, left to right, and a steep run
+  down, so round a curve its glyphs step as the curve does. The gaps
+  at a run's ends, to the corner beside it or the neighbor run's last
+  glyph, are the same gap. A run holds as many glyphs as leave no gap
+  wider than that, and presses what is left evenly into its gaps, so
+  box-drawing strokes never part.
+- **Where it runs.** A directional ring keeps the outline's corners as
+  it grows out by its `inset` and `gap`: round a sharp rectangle its
+  path is a sharp rectangle, so its corners are where its sides meet.
+- `start` and `direction` do not apply: its runs are laid clockwise
+  from the top left. An outline too small to hold two runs lays the
+  ring as a ring of its spans alone.
 
 ### Sides
 

@@ -116,6 +116,7 @@ use std::ops::Range;
 use glam::Vec2;
 use rustc_hash::FxHashMap;
 
+use crate::document::element::DirectionalGlyphs;
 use crate::document::resolve::{ResolvedRing, ResolvedText};
 use crate::document::values::{Direction, FitMode, LineSpan, Rgba, StartPoint};
 use crate::flow::curve::Curve;
@@ -128,6 +129,7 @@ use crate::font::FontSystem;
 
 pub use pitch::{pattern_gap, place_pitched, PathEnd};
 
+pub(crate) mod directional;
 pub(crate) mod halves;
 mod lines;
 pub(crate) mod pitch;
@@ -293,6 +295,10 @@ pub struct RingLayout {
     /// R31): `0.0` sets the ornament's copies as far apart as the font
     /// and the ring's slack do. A two-line ring ignores it.
     pub spacing: f32,
+    /// What a `repeat` ring lays where its outline runs steep and where
+    /// it turns (#324, `format/schema.md` "Directional ring"): neither set, it is a ring of its
+    /// text alone. A two-line ring ignores it.
+    pub directional: DirectionalGlyphs,
 }
 
 impl RingLayout {
@@ -303,6 +309,7 @@ impl RingLayout {
             span: LineSpan::WHOLE,
             sides: None,
             spacing: 0.0,
+            directional: DirectionalGlyphs::default(),
         }
     }
 
@@ -316,12 +323,14 @@ impl RingLayout {
     }
 
     /// The layout a resolved ring says: its span, its sides' text and
-    /// color, its spacing. O(1), and a clone of the sides' text.
+    /// color, its spacing, its glyphs by direction. O(1), and a clone of
+    /// their texts.
     pub fn of(ring: &ResolvedRing) -> Self {
         RingLayout {
             span: ring.span,
             sides: ring.sides.as_ref().map(|s| (s.content.clone(), s.color)),
             spacing: ring.spacing,
+            directional: ring.directional.clone(),
         }
     }
 }
@@ -2673,7 +2682,7 @@ fn lay_on_closed(
     flow: &ResolvedText,
     fs: &mut FontSystemLease,
     ring_cap: usize,
-    trace: Option<&mut Trace>,
+    mut trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
     if !matches!(fit, FitMode::Repeat) {
         // A frame whose outline is too large for its length to be an
@@ -2701,6 +2710,20 @@ fn lay_on_closed(
             return (replaced, placed);
         }
         return halves::place_halves(run, path, fit, layout, outward, flow, fs, trace);
+    }
+    if layout.directional.is_set() {
+        if let Some(laid) = directional::place_directional(
+            run,
+            path,
+            layout,
+            outward,
+            flow,
+            fs,
+            ring_cap,
+            trace.as_deref_mut(),
+        ) {
+            return laid;
+        }
     }
     let spacing = table_spacing(run, fit, flow);
     let arc = ArcPath::closed(path, start, direction, spacing);

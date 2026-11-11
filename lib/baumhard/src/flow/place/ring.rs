@@ -249,7 +249,7 @@ pub(crate) fn run_on_reads(from: f32, length: f32, h: f32) -> usize {
 }
 
 /// Glyph steps for `reads` reads of a path.
-fn steps_of(reads: usize) -> usize {
+pub(super) fn steps_of(reads: usize) -> usize {
     reads.div_ceil(READS_A_STEP)
 }
 
@@ -349,6 +349,9 @@ pub(crate) struct RingWork {
     /// back for by ([`run_on_reads`]).
     length: f32,
     line_height: f32,
+    /// The glyph steps of work it counts past its reads and its glyphs:
+    /// a directional ring's shaping of its glyphs by direction (#324).
+    took: Cell<usize>,
     /// The glyphs its walks have set, and the glyph steps held back for
     /// phase 2 over those its first walk set: its work on them, and its
     /// run on past where its walk would end were it stopped now.
@@ -401,6 +404,7 @@ impl RingWork {
             budget: frame_budget(glyphs),
             length,
             line_height,
+            took: Cell::new(0),
             set: Cell::new(0),
             reserve: Cell::new(0),
             run_on: Cell::new(steps_of(run_on_reads(0.0, length, line_height))),
@@ -429,12 +433,19 @@ impl RingWork {
     }
 
     /// The glyph steps taken along `path`: its setup, its path's table,
-    /// its reads and the glyphs it has set.
+    /// its reads, the glyphs it has set and the work it took apart.
     pub(crate) fn spent(&self, path: &ArcPath) -> usize {
         RING_STEPS
             .saturating_add(table_steps(self.tables))
             .saturating_add(steps_of(path.reads().saturating_sub(self.from)))
             .saturating_add(self.set.get().div_ceil(GLYPHS_A_STEP))
+            .saturating_add(self.took.get())
+    }
+
+    /// Count `steps` glyph steps of work the ring did past its reads and
+    /// its glyphs (#324).
+    pub(crate) fn took(&self, steps: usize) {
+        self.took.set(self.took.get().saturating_add(steps));
     }
 
     /// Count `glyphs` glyphs set: laid by a walk, or by phase 2 handled

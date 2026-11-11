@@ -29,7 +29,9 @@
 //! knows.
 
 use crate::document::bounds::{clamp_canvas_coord, clamp_font_size_pt, clamp_rel_size};
-use crate::document::element::{DefaultsData, DocElement, DocKind, PaletteGroup, TextStyle};
+use crate::document::element::{
+    DefaultsData, DirectionalGlyphs, DocElement, DocKind, PaletteGroup, RingData, TextStyle,
+};
 use crate::document::mutation::inherited::DocInherited;
 use crate::document::values::{
     Align, Anchor, ColorRef, Direction, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteId,
@@ -245,6 +247,12 @@ pub enum RingOp {
     SetChannel(usize),
     /// Change its text style, which its spans inherit.
     Text(TextOp),
+    /// Set the text it lays where its outline runs steep (#324); `None`
+    /// lays its spans there.
+    SetVertical(Option<String>),
+    /// Set the texts it lays at its outline's four turns, clockwise from
+    /// the top left (#324); `None` lays none.
+    SetCorners(Option<[String; 4]>),
 }
 
 /// A change to a path: a connector or a link.
@@ -516,6 +524,8 @@ impl Mutation<DocElement> for DocMutation {
                 RingOp::Layout(op) => apply_layout(op, &mut ring.style.ring_layout),
                 RingOp::SetChannel(channel) => ring.channel = *channel,
                 RingOp::Text(op) => apply_text(op, &mut ring.style.text, kind, inherited),
+                RingOp::SetVertical(vertical) => edit_directional(ring, |d| d.vertical.clone_from(vertical)),
+                RingOp::SetCorners(corners) => edit_directional(ring, |d| d.corners.clone_from(corners)),
             },
             (DocMutation::Path(op), DocElement::Connector(connector)) => apply_path(op, &mut connector.path),
             (DocMutation::Path(op), DocElement::Link(link)) => apply_path(op, &mut link.path),
@@ -586,6 +596,15 @@ fn relative(style: &TextStyle, kind: DocKind, inherited: &DocInherited, f: impl 
 
 /// Apply `op` to a frame's or a ring's layout. O(1), or the length of
 /// the ornament a `SetSides` carries.
+/// Change `ring`'s glyphs by direction with `edit`, from none set when it
+/// has none; left with neither set, it holds none, the one spelling of
+/// that (#324).
+fn edit_directional(ring: &mut RingData, edit: impl FnOnce(&mut DirectionalGlyphs)) {
+    let mut glyphs = ring.directional.take().unwrap_or_default();
+    edit(&mut glyphs);
+    ring.directional = glyphs.is_set().then_some(glyphs);
+}
+
 fn apply_layout(op: &LayoutOp, layout: &mut crate::document::element::RingLayoutStyle) {
     match op {
         LayoutOp::SetSpan(span) => layout.span = *span,

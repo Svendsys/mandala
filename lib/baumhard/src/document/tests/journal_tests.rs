@@ -373,6 +373,7 @@ pub fn do_document_interpolation_follows_the_listed_fields() {
                 ring_layout: l,
                 ..RingStyle::default()
             },
+            ..RingData::default()
         })
     };
     let (end, _) = halves(&ring(layout(0.25, 0.0, "·")), &ring(layout(0.75, 8.0, "·")));

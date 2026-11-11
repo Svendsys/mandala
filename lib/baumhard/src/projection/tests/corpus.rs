@@ -545,6 +545,13 @@ pub fn edit_named(
                 "Ring::SetFit" => RingOp::SetFit(c.one_in(2).then(|| fit(c))),
                 "Ring::Layout" => RingOp::Layout(layout_op(c)),
                 "Ring::SetChannel" => RingOp::SetChannel(c.below(3) as usize),
+                "Ring::SetVertical" => {
+                    RingOp::SetVertical(c.one_in(2).then(|| c.pick(&["│", "┃", ":"]).to_string()))
+                }
+                "Ring::SetCorners" => RingOp::SetCorners(
+                    c.one_in(2)
+                        .then(|| (*c.pick(&[["┌", "┐", "┘", "└"], ["◆", "◇", "◆", "◇"]])).map(str::to_owned)),
+                ),
                 _ => RingOp::Text(text_op(c, true).1),
             };
             single(K::Ring, DocMutation::Ring(op), vec![ring])
@@ -708,7 +715,7 @@ pub fn edit_named(
             let ring = Subtree {
                 root: DocElement::Ring(RingData {
                     channel: r.channel,
-                    style: Default::default(),
+                    ..RingData::default()
                 }),
                 children: vec![Subtree::leaf(DocElement::Span(SpanData {
                     text: words(c, 2),
@@ -882,6 +889,8 @@ pub const EDITS: &[&str] = &[
     "Ring::Layout",
     "Ring::SetChannel",
     "Ring::Text",
+    "Ring::SetVertical",
+    "Ring::SetCorners",
     "Path::SetFit",
     "Path::SetSpacing",
     "Path::SetSize",

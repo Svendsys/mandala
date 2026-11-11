@@ -208,6 +208,7 @@ fn test_projection_a_ring_edit_re_places_only_the_rings_outside_it() {
     let ring = DocElement::Ring(RingData {
         channel: 3,
         style: Default::default(),
+        ..RingData::default()
     });
     let insert = StructOp::Insert {
         subtree: Subtree::leaf(ring),

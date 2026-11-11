@@ -103,7 +103,7 @@
 use crate::arena::NodeId;
 use crate::document::defaults::{BuiltInPath, BUILT_IN, DEFAULT_BACKGROUND};
 use crate::document::element::{
-    DefaultsData, DocElement, DocKind, FlowStyle, PaletteGroup, TextStyle, ThemeData,
+    DefaultsData, DirectionalGlyphs, DocElement, DocKind, FlowStyle, PaletteGroup, TextStyle, ThemeData,
 };
 use crate::document::ids::{defaults, owning_node, palette, theme};
 use crate::document::values::{
@@ -288,6 +288,11 @@ pub struct ResolvedRing {
     pub sides: Option<ResolvedSides>,
     /// The space added between every two glyph steps when it repeats.
     pub spacing: f32,
+    /// What it lays where its outline runs steep and where it turns, when
+    /// it repeats (#324): its own, each text held to
+    /// [`check_ornament`](crate::document::bounds::check_ornament) — one
+    /// that is not resolves to none, as a sides ornament does.
+    pub directional: DirectionalGlyphs,
 }
 
 /// A ring's sides ornament, resolved: one copy's text and its color.
@@ -1044,9 +1049,17 @@ pub fn resolve_ring_in(
     rec: &mut impl ReadRecorder,
 ) -> ResolvedRing {
     let mut inputs = Inputs::with_binding(tree, rec, owning_node(tree, ring), binding);
-    let own = match inputs.style(ring) {
-        Some(DocElement::Ring(ring)) => Some(&ring.style),
-        _ => None,
+    let (own, directional) = match inputs.style(ring) {
+        Some(DocElement::Ring(ring)) => (Some(&ring.style), ring.directional.as_deref()),
+        _ => (None, None),
+    };
+    // Held to `check_ornament` as the sides are, below.
+    let drawn = |text: &String| crate::document::bounds::check_ornament(text).is_ok();
+    let directional = DirectionalGlyphs {
+        vertical: directional.and_then(|d| d.vertical.clone()).filter(drawn),
+        corners: directional
+            .and_then(|d| d.corners.clone())
+            .filter(|corners| corners.iter().all(drawn)),
     };
     let mut fit = own.and_then(|s| s.fit.as_ref());
     let mut span = own.and_then(|s| s.ring_layout.span);
@@ -1108,6 +1121,7 @@ pub fn resolve_ring_in(
         span: span.unwrap_or(built_in.span),
         sides,
         spacing: spacing.unwrap_or(built_in.spacing),
+        directional,
     }
 }
 

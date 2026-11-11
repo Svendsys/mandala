@@ -79,7 +79,7 @@ pub const DEFAULT_FACE: (AppFont, &str) = (AppFont::InterVariable, "Inter Variab
 /// face, with the family name each face stores.
 ///
 /// - **Mandala Ornaments**: DejaVu Sans 2.37 subset to `∙ ◈ ✦ ❦` and the
-///   box-drawing `─ ━ │ ┃ ╭ ╮ ╯ ╰` (Bitstream Vera and Arev licenses).
+///   box-drawing `─ ━ │ ┃ ┌ ┐ └ ┘ ┏ ┓ ┗ ┛ ╭ ╮ ╯ ╰` (Bitstream Vera and Arev licenses).
 /// - **Mandala Emoji**: Noto Color Emoji 2.047 subset to `🌸` (OFL 1.1).
 ///
 /// Two faces, because cosmic-text tries one face of a fallback family: a
