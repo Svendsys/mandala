@@ -2890,6 +2890,89 @@ pub fn do_flow_halves_an_outline_whose_halves_are_not_numbers_keeps_r27s_lines()
 }
 
 #[test]
+fn test_flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_glyph_at_a_line_end() {
+    do_flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_glyph_at_a_line_end();
+}
+
+/// A frame that keeps R27's placement, round an outline whose halves
+/// cannot be measured, parts its lines as every frame does (#333): a
+/// glyph the rasterizer draws nothing for — U+10FFFD, at Galatia SIL's
+/// `.notdef` — takes no room at a line's end, as a space there takes
+/// none. Before `a time to every purpose under the heaven` and past it,
+/// once and three times, `Spread` and `Fit` round the rounded rectangle
+/// 8.9e37 on a side: no such glyph is laid, and each line holds the
+/// text it holds without them. Its positions are not compared: at
+/// 4.5e37 from the origin an `f32` steps by some 5e30, which no advance
+/// moves. Precondition: the halves are not a number, and the text holds
+/// a glyph that draws nothing. Control: R27's placement laid from the
+/// run as shaped, not the run its lines are parted on, red: the glyphs
+/// before the line are laid ("lays 1 glyph that draws nothing").
+pub fn do_flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_glyph_at_a_line_end() {
+    const PLAIN: &str = "a time to every purpose under the heaven";
+    const UNDRAWN: char = '\u{10FFFD}';
+    let shape = Outline::RoundedRect {
+        rect: Rect::new(Vec2::splat(-4.4540537e37), Vec2::splat(8.908107e37)),
+        radius: 4.4540537e37,
+    };
+    let (junctions, _, length) = halves_seam(&shape);
+    assert!(
+        !length.is_finite() || junctions.iter().any(|(a, b)| !a.is_finite() || !b.is_finite()),
+        "precondition: the halves are not a number"
+    );
+    // Each line's glyphs, as the bytes of the plain text they start at
+    // (`None` before it): `before` undrawn glyphs, four bytes each, come
+    // first.
+    let lines = |text: &str, fit: &FitMode, before: usize| {
+        let (run, placed, trace) = frame_with(text, 18.0, &shape, fit, &RingLayout::whole(), true);
+        let drawn = rasterized(&run);
+        let undrawn: Vec<usize> = (0..run.glyphs.len())
+            .filter(|&k| !run.glyphs[k].blank && !drawn[k])
+            .collect();
+        let laid_undrawn = placed
+            .glyphs
+            .iter()
+            .filter(|g| undrawn.contains(&(g.glyph as usize)))
+            .count();
+        let held: Vec<Vec<Option<usize>>> = trace
+            .lines
+            .iter()
+            .map(|line| {
+                placed.glyphs[line.glyphs.clone()]
+                    .iter()
+                    .map(|g| run.glyphs[g.glyph as usize].bytes.start.checked_sub(4 * before))
+                    .collect()
+            })
+            .collect();
+        (undrawn.len(), laid_undrawn, held)
+    };
+    for fit in [FitMode::Spread, FitMode::Fit { min: 1.0, max: 1.0 }] {
+        let (_, _, plain) = lines(PLAIN, &fit, 0);
+        assert!(
+            plain.iter().filter(|line| !line.is_empty()).count() == 2,
+            "precondition: {fit:?}: the text is laid in two lines ({plain:?})"
+        );
+        for count in [1, 3] {
+            let undrawn: String = std::iter::repeat_n(UNDRAWN, count).collect();
+            for (before, text) in [
+                (count, format!("{undrawn}{PLAIN}")),
+                (0, format!("{PLAIN}{undrawn}")),
+            ] {
+                let (held, laid, ended) = lines(&text, &fit, before);
+                assert_eq!(
+                    held, count,
+                    "precondition: {text:?}: the text holds {count} glyphs that draw nothing"
+                );
+                assert_eq!(laid, 0, "{fit:?}: {text:?} lays {laid} glyph that draws nothing");
+                assert_eq!(
+                    ended, plain,
+                    "{fit:?}: {text:?}: each line holds the plain text's"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn test_flow_halves_a_side_that_would_touch_is_left_out() {
     do_flow_halves_a_side_that_would_touch_is_left_out();
 }

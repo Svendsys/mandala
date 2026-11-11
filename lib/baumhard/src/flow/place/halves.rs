@@ -6380,24 +6380,6 @@ pub(super) fn place_halves(
     // budget is first read, so within what the frame may take past it
     // ([`overshoot_steps`]).
     work.tabled(level.iter().map(|(path, _)| path));
-    // R27's placement, laid in full only for a frame that keeps it.
-    let keep_r27 = |trace: Option<&mut Trace>,
-                    fs: &mut FontSystemLease,
-                    work: &Work,
-                    level: &[(ArcPath, Range<f32>); 2]| {
-        let mut natural_trace = Trace::default();
-        let placed = place_lines_in(run, level, fit, outward, flow, fs, Some(&mut natural_trace), work);
-        if let Some(trace) = trace {
-            *trace = natural_trace;
-            trace.spent = work.spent.get();
-            trace.tables = work.tables();
-            trace.budget = work.budget.get();
-            trace.reserve = work.reserve();
-            trace.glyphs = work.glyphs.get();
-            trace.looks = work.looks.get();
-        }
-        placed
-    };
     // A glyph that draws nothing takes no room at a line's end (#333):
     // the lines are parted on the run with each such glyph read as a
     // space, so a line's ends leave it out as they leave a space out, and
@@ -6428,9 +6410,6 @@ pub(super) fn place_halves(
             },
         )
     };
-    if sized && natural_trace.lines.is_empty() {
-        return keep_r27(trace, fs, &work, &level);
-    }
     let halves = Halves::new(outline, level);
     // An outline whose halves cannot be measured — one with a side that
     // is not a number — keeps R27's placement, which holds every
@@ -6442,7 +6421,30 @@ pub(super) fn place_halves(
         (halves.apexes[0], halves.apexes[1]),
     ];
     if !(halves.length.is_finite() && ends.iter().all(|(a, b)| a.is_finite() && b.is_finite())) {
-        return keep_r27(trace, fs, &work, &halves.level);
+        // Laid from the parting run, whose glyphs and their indices are
+        // `run`'s, so that a glyph that draws nothing takes no room at a
+        // line's end here either (#333).
+        let mut kept = Trace::default();
+        let placed = place_lines_in(
+            &parting,
+            &halves.level,
+            fit,
+            outward,
+            flow,
+            fs,
+            Some(&mut kept),
+            &work,
+        );
+        if let Some(trace) = trace {
+            *trace = kept;
+            trace.spent = work.spent.get();
+            trace.tables = work.tables();
+            trace.budget = work.budget.get();
+            trace.reserve = work.reserve();
+            trace.glyphs = work.glyphs.get();
+            trace.looks = work.looks.get();
+        }
+        return placed;
     }
     let lay = Layout::new(&halves, outward, work, Vec::new());
 

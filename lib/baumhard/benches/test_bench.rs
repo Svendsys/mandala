@@ -2508,6 +2508,12 @@ fn criterion_benchmark(c: &mut Criterion) {
         "flow_halves_an_outline_whose_halves_are_not_numbers_keeps_r27s_lines",
         |b| b.iter(do_flow_halves_an_outline_whose_halves_are_not_numbers_keeps_r27s_lines),
     );
+    c.bench_function(
+        "flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_glyph_at_a_line_end",
+        |b| {
+            b.iter(do_flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_glyph_at_a_line_end)
+        },
+    );
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //
     c.bench_function("engine_walk_aligns_mutators_by_channel", |b| {
