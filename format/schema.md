@@ -853,34 +853,45 @@ be at most 256 bytes long, as [sides](#sides) must.
   where its tangent runs at 45°. Those part the ring into four runs:
   over the top and along the bottom, level; down the two sides, steep.
   The choice changes at those four points and nowhere else, so it
-  cannot flicker along a curve. **The hysteresis:** a run shorter than
-  three line heights — the tips of a flat ellipse, the top of a tall
-  one — is no run of its own; its neighbors take it, parted where the
-  outline faces straight out, and no corner is laid at its ends.
-- **Corners.** A corner is laid at a point where two runs meet if the
-  outline turns there through 45° or more within the corner's own
-  reach (half its ink's diagonal either side): a rectangle's corner,
-  or a rounded one's whose radius is about the corner's size. It is
-  set as a line of text sets glyphs of one face: on the baseline of
-  the level text, its box centered on the box of the vertical text, so
-  a box-drawing corner's strokes run on in its neighbors'. Round a
-  curve wider than the corner, the runs meet with no corner between
-  them.
+  cannot flicker along a curve. A point **turns as a box does** where
+  the outline turns through 45° or more within half a line height of
+  it: a rectangle's corner, or a rounded one's whose radius is about a
+  glyph's size.
+- **The hysteresis.** A run shorter than three line heights that ends
+  on a curve — the tips of a flat ellipse, the top of a tall one — is
+  no run of its own; its neighbors take it, parted where the outline
+  faces straight out, and no corner is laid at its ends. A side between
+  two turns of a box is a side however short.
+- **Corners.** A corner is laid where two runs meet at a turn of a box.
+  It is set as a line of text sets glyphs of one face: on the baseline
+  of the level text set on the outline's top or bottom, its box
+  centered on the box of the vertical text set on its side, so a
+  box-drawing corner's strokes run on in its neighbors'. Round a curve
+  wider than that, the runs meet with no corner between them.
 - **Spacing.** Each run holds whole glyphs, every gap between two inks
   the same: the spans' own gap, as a line sets two of them, with the
   ring's `spacing`; the vertical text is set that same gap apart. A
-  level run measures its gaps across, left to right, and a steep run
-  down, so round a curve its glyphs step as the curve does. The gaps
-  at a run's ends, to the corner beside it or the neighbor run's last
-  glyph, are the same gap. A run holds as many glyphs as leave no gap
-  wider than that, and presses what is left evenly into its gaps, so
-  box-drawing strokes never part.
+  level run sets its glyphs side by side, measuring its gaps across, and
+  pushes each up off the top or down off the bottom by half its height;
+  a steep run stacks them, measuring down, and pushes each out to the
+  side by half its width; so round a curve its glyphs step as the curve
+  does. A side of a box lies straight along the outline's side. The
+  gaps at a run's ends to the corners beside it are the same gap; two
+  runs that meet with no corner each end where the outline turns,
+  stepping there as the curve does. A run holds as many glyphs as leave
+  no gap wider than its own, and presses what is left evenly into its
+  gaps, so box-drawing strokes never part.
 - **Where it runs.** A directional ring keeps the outline's corners as
   it grows out by its `inset` and `gap`: round a sharp rectangle its
   path is a sharp rectangle, so its corners are where its sides meet.
+- **What it holds.** At most as many glyphs as any placement
+  (`MAX_PLACED_GLYPHS`): its corners first, then a share for each run
+  by what it holds, so a ring held to it is still laid all round, and
+  says so.
 - `start` and `direction` do not apply: its runs are laid clockwise
   from the top left. An outline too small to hold two runs lays the
-  ring as a ring of its spans alone.
+  ring as a ring of its spans alone; spans with nothing to draw lay its
+  `vertical` text all round.
 
 ### Sides
 

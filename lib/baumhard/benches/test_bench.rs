@@ -2202,9 +2202,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_directional_changes_its_choice_four_times_round", |b| {
         b.iter(do_flow_directional_changes_its_choice_four_times_round)
     });
-    c.bench_function("flow_directional_hysteresis_leaves_out_a_short_run", |b| {
-        b.iter(do_flow_directional_hysteresis_leaves_out_a_short_run)
-    });
+    c.bench_function(
+        "flow_directional_hysteresis_holds_a_curve_to_three_lines_and_a_box_to_none",
+        |b| b.iter(do_flow_directional_hysteresis_holds_a_curve_to_three_lines_and_a_box_to_none),
+    );
     c.bench_function(
         "flow_directional_lays_corners_only_where_it_turns_as_a_box",
         |b| b.iter(do_flow_directional_lays_corners_only_where_it_turns_as_a_box),
@@ -2212,6 +2213,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_directional_spaces_each_run_evenly_and_never_apart", |b| {
         b.iter(do_flow_directional_spaces_each_run_evenly_and_never_apart)
     });
+    c.bench_function(
+        "flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing",
+        |b| b.iter(do_flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing),
+    );
     c.bench_function("flow_pitched_holds_the_nearer_whole_count_evenly", |b| {
         b.iter(do_flow_pitched_holds_the_nearer_whole_count_evenly)
     });

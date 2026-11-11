@@ -594,8 +594,6 @@ fn relative(style: &TextStyle, kind: DocKind, inherited: &DocInherited, f: impl 
     }
 }
 
-/// Apply `op` to a frame's or a ring's layout. O(1), or the length of
-/// the ornament a `SetSides` carries.
 /// Change `ring`'s glyphs by direction with `edit`, from none set when it
 /// has none; left with neither set, it holds none, the one spelling of
 /// that (#324).
@@ -605,6 +603,8 @@ fn edit_directional(ring: &mut RingData, edit: impl FnOnce(&mut DirectionalGlyph
     ring.directional = glyphs.is_set().then_some(glyphs);
 }
 
+/// Apply `op` to a frame's or a ring's layout. O(1), or the length of
+/// the ornament a `SetSides` carries.
 fn apply_layout(op: &LayoutOp, layout: &mut crate::document::element::RingLayoutStyle) {
     match op {
         LayoutOp::SetSpan(span) => layout.span = *span,

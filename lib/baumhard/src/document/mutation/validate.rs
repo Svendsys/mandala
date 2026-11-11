@@ -612,12 +612,20 @@ impl<'d> Validator<'d> {
         vertical.map_or(Ok(()), |text| self.bound("ring.vertical", check_ornament(text)))
     }
 
-    /// A ring's corners (#324): each an ornament's.
+    /// A ring's corners (#324): each an ornament's, a refusal naming
+    /// which.
     fn corners(&self, corners: Option<&[String; 4]>) -> Result<(), MutationError> {
+        const FIELDS: [&str; 4] = [
+            "ring.corners[0]",
+            "ring.corners[1]",
+            "ring.corners[2]",
+            "ring.corners[3]",
+        ];
         corners
             .into_iter()
             .flatten()
-            .try_for_each(|corner| self.bound("ring.corners", check_ornament(corner)))
+            .zip(FIELDS)
+            .try_for_each(|(corner, field)| self.bound(field, check_ornament(corner)))
     }
 
     fn label_style(&self, style: &LabelStyle) -> Result<(), MutationError> {

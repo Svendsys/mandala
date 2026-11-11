@@ -55,7 +55,17 @@ fn glyphs((_, v, corners): (&str, &str, [&str; 4]), with_corners: bool) -> Direc
 /// ink: a filler glyph's part read from the bytes the vertical text and
 /// the corners occupy in the line they were shaped into, a space apart.
 fn lay(set: (&str, &str, [&str; 4]), with_corners: bool, path: &Outline) -> (Vec<Laid>, Trace, ShapedRun) {
-    let text = style(POINTS);
+    lay_at(set, with_corners, path, POINTS)
+}
+
+/// [`lay`], its text at `points`.
+fn lay_at(
+    set: (&str, &str, [&str; 4]),
+    with_corners: bool,
+    path: &Outline,
+    points: f32,
+) -> (Vec<Laid>, Trace, ShapedRun) {
+    let text = style(points);
     let directional = glyphs(set, with_corners);
     let layout = RingLayout {
         directional: directional.clone(),
@@ -139,74 +149,98 @@ fn test_flow_directional_lays_a_box() {
 }
 
 /// A ring of light box-drawing glyphs round a sharp rectangle reads as a
-/// box: every glyph of its spans along the top or the bottom, every
-/// vertical one down a side, each corner once at its own corner, and each
-/// corner's strokes run on in its neighbors' — its ink's edge on the
-/// level glyphs' ink, across, and on the vertical glyphs', along.
+/// box, and so does one round a rectangle rounded no wider than a glyph:
+/// every glyph of its spans along the top or the bottom, every vertical
+/// one down a side, each corner once at its own corner, and each corner's
+/// strokes run on in its neighbors' — its ink's outer edges on the level
+/// glyphs' row and on the vertical glyphs' column.
 pub fn do_flow_directional_lays_a_box() {
-    let path = outlines()[0].1;
-    let (laid, _, _) = lay(LIGHT, true, &path);
-    let of = |part: Part| laid.iter().filter(move |l| l.part == part);
-    assert!(
-        of(Part::Level).count() >= 40,
-        "precondition: the top and the bottom are laid"
-    );
-    assert!(of(Part::Steep).count() >= 8, "precondition: the sides are laid");
-    let rect = path.rect();
-    let center = rect.center();
-    for l in of(Part::Level) {
-        assert!(
-            (l.ink.center().y - center.y).abs() > rect.size.y * 0.5,
-            "a level glyph off the top and the bottom: {l:?}"
-        );
+    for set in [LIGHT, HEAVY, ("─", "│", ["╭", "╮", "╯", "╰"])] {
+        lays_a_box(set);
     }
-    for l in of(Part::Steep) {
-        assert!(
-            (l.ink.center().x - center.x).abs() > rect.size.x * 0.5,
-            "a vertical glyph off the sides: {l:?}"
-        );
-    }
-    let level = of(Part::Level).next().expect("a level glyph").ink;
-    let steep = of(Part::Steep).next().expect("a vertical glyph").ink;
-    for (i, sign) in [
-        (0, Vec2::new(-1.0, -1.0)),
-        (1, Vec2::new(1.0, -1.0)),
-        (2, Vec2::new(1.0, 1.0)),
-        (3, Vec2::new(-1.0, 1.0)),
+}
+
+/// [`do_flow_directional_lays_a_box`] in `set`.
+fn lays_a_box(set: (&str, &str, [&str; 4])) {
+    let rect = Rect::new(Vec2::new(-150.0, -70.0), Vec2::new(300.0, 140.0));
+    // Sharp, and rounded at radii about a corner's reach, where the row
+    // and the column a corner joins are read on its arc if not on its
+    // sides.
+    // At two sizes and insets, the second the owner's fixture's, where a
+    // side's last vertical glyph once ran on past its corner.
+    for (radius, points, inset) in [
+        (0.0, POINTS, 6.0),
+        (10.0, POINTS, 6.0),
+        (14.0, POINTS, 6.0),
+        (0.0, 16.8, 8.0),
+        (14.0, 16.8, 8.0),
     ] {
-        let corners: Vec<&Laid> = of(Part::Corner(i)).collect();
-        assert_eq!(corners.len(), 1, "corner {i} laid once");
-        let ink = corners[0].ink;
-        let d = ink.center() - center;
+        let path = offset_keeping_corners(&Outline::RoundedRect { rect, radius }, inset);
+        let (laid, _, _) = lay_at(set, true, &path, points);
+        let of = |part: Part| laid.iter().filter(move |l| l.part == part);
         assert!(
-            d.x * sign.x > 0.0 && d.y * sign.y > 0.0,
-            "corner {i} at its own corner: {ink:?}"
+            of(Part::Level).count() >= 40,
+            "precondition: the top and the bottom are laid (radius {radius})"
         );
-        // Its horizontal stroke is the level glyphs' row: its ink's edge
-        // on the outside is theirs, across.
-        let (outer, row_outer) = if sign.y < 0.0 {
-            (ink.origin.y, level_row(&laid, true))
-        } else {
-            (ink.max().y, level_row(&laid, false))
-        };
         assert!(
-            (outer - row_outer).abs() < 0.01,
-            "corner {i}'s stroke on the row: {outer} vs {row_outer}"
+            of(Part::Steep).count() >= 8,
+            "precondition: the sides are laid (radius {radius})"
         );
-        let (side, column_outer) = if sign.x < 0.0 {
-            (ink.origin.x, steep_column(&laid, true))
-        } else {
-            (ink.max().x, steep_column(&laid, false))
-        };
-        assert!(
-            (side - column_outer).abs() < 0.01,
-            "corner {i}'s stroke on the column: {side} vs {column_outer}"
-        );
+        let grown = path.rect();
+        let center = grown.center();
+        for l in of(Part::Level) {
+            assert!(
+                (l.ink.center().y - center.y).abs() > grown.size.y * 0.5,
+                "a level glyph off the top and the bottom (radius {radius}): {l:?}"
+            );
+        }
+        // Every vertical glyph down a side, between the rows: none past
+        // the top or the bottom row's outer edge.
+        let (top, bottom) = (level_row(&laid, true), level_row(&laid, false));
+        for l in of(Part::Steep) {
+            assert!(
+                (l.ink.center().x - center.x).abs() > grown.size.x * 0.5,
+                "a vertical glyph off the sides (radius {radius}): {l:?}"
+            );
+            assert!(
+                l.ink.origin.y >= top - 0.01 && l.ink.max().y <= bottom + 0.01,
+                "a vertical glyph past the rows {top}..{bottom} (radius {radius}): {l:?}"
+            );
+        }
+        for (i, sign) in [
+            (0, Vec2::new(-1.0, -1.0)),
+            (1, Vec2::new(1.0, -1.0)),
+            (2, Vec2::new(1.0, 1.0)),
+            (3, Vec2::new(-1.0, 1.0)),
+        ] {
+            let corners: Vec<&Laid> = of(Part::Corner(i)).collect();
+            assert_eq!(corners.len(), 1, "corner {i} laid once (radius {radius})");
+            let ink = corners[0].ink;
+            let d = ink.center() - center;
+            assert!(
+                d.x * sign.x > 0.0 && d.y * sign.y > 0.0,
+                "corner {i} at its own corner (radius {radius}): {ink:?}"
+            );
+            let (outer, row_outer) = if sign.y < 0.0 {
+                (ink.origin.y, level_row(&laid, true))
+            } else {
+                (ink.max().y, level_row(&laid, false))
+            };
+            assert!(
+                (outer - row_outer).abs() < 0.01,
+                "corner {i}'s stroke on the row (radius {radius}): {outer} vs {row_outer}"
+            );
+            let (side, column_outer) = if sign.x < 0.0 {
+                (ink.origin.x, steep_column(&laid, true))
+            } else {
+                (ink.max().x, steep_column(&laid, false))
+            };
+            assert!(
+                (side - column_outer).abs() < 0.01,
+                "corner {i}'s stroke on the column (radius {radius}): {side} vs {column_outer}"
+            );
+        }
     }
-    assert!(
-        level.size.x > level.size.y && steep.size.y > steep.size.x,
-        "precondition: the strokes lie their ways"
-    );
 }
 
 /// The outer edge of the level glyphs' inks along the top (or bottom).
@@ -235,7 +269,7 @@ fn steep_column(laid: &[Laid], left: bool) -> f32 {
     }
 }
 
-/// The heavy one.
+/// The heavy box-drawing set.
 const HEAVY: (&str, &str, [&str; 4]) = ("━", "┃", ["┏", "┓", "┛", "┗"]);
 
 /// Whether the outline runs level — within 45° of horizontal — at the
@@ -273,24 +307,52 @@ fn level_at(path: &Outline, p: Vec2) -> (bool, f32) {
     (normal.y.abs() >= normal.x.abs(), normal.y.abs() - normal.x.abs())
 }
 
-/// The gaps between consecutive inks of one part along `axis`, in the
-/// order laid, starting a new run wherever the part changes.
-fn gaps(laid: &[Laid], part: Part, axis: impl Fn(&Laid, &Laid) -> f32) -> Vec<Vec<f32>> {
-    let mut runs: Vec<Vec<f32>> = Vec::new();
-    let mut last: Option<&Laid> = None;
+/// The runs of a placement: its glyphs split wherever the part changes,
+/// in the order laid, each with its part.
+fn runs_of(laid: &[Laid]) -> Vec<(Part, Vec<Rect>)> {
+    let mut runs: Vec<(Part, Vec<Rect>)> = Vec::new();
     for l in laid {
-        if l.part != part {
-            last = None;
-            continue;
+        match runs.last_mut() {
+            Some((part, inks)) if *part == l.part => inks.push(l.ink),
+            _ => runs.push((l.part, vec![l.ink])),
         }
-        match (last, runs.last_mut()) {
-            (Some(prev), Some(run)) => run.push(axis(prev, l)),
-            _ => runs.push(Vec::new()),
-        }
-        last = Some(l);
     }
-    runs.retain(|r| !r.is_empty());
     runs
+}
+
+/// The gap from ink `a` to ink `b` along `axis`, the way a run reads:
+/// signed, below 0 by how much they overlap.
+fn axis_gap(axis: Vec2, a: &Rect, b: &Rect) -> f32 {
+    let span = |r: &Rect| {
+        let (p, q) = (axis.dot(r.origin), axis.dot(r.max()));
+        (p.min(q), p.max(q))
+    };
+    span(b).0 - span(a).1
+}
+
+/// The way a run of `part` reads at the ink `first` of it, round
+/// `center`: rightward over the top, down the right side, leftward along
+/// the bottom, up the left side.
+fn axis_of(part: Part, first: &Rect, center: Vec2) -> Vec2 {
+    let d = first.center() - center;
+    match part {
+        Part::Level if d.y < 0.0 => Vec2::X,
+        Part::Level => Vec2::NEG_X,
+        _ if d.x > 0.0 => Vec2::Y,
+        _ => Vec2::NEG_Y,
+    }
+}
+
+/// The spans' own gap as a line sets two of the glyph: the font's, below
+/// 0 where the face overhangs its advance.
+fn natural_gap(run: &ShapedRun) -> f32 {
+    let h = run
+        .glyphs
+        .iter()
+        .find(|g| g.span != FILLER_SPAN)
+        .expect("a spans glyph");
+    let ink = h.ink.expect("ink");
+    (h.advance - ink.max.x) + ink.min.x
 }
 
 #[test]
@@ -349,46 +411,77 @@ pub fn do_flow_directional_changes_its_choice_four_times_round() {
     }
 }
 
+/// The line height the rings are laid at: a span of `POINTS` points.
+const LINE: f32 = POINTS * crate::flow::LINE_HEIGHT_FACTOR;
+
 #[test]
-fn test_flow_directional_hysteresis_leaves_out_a_short_run() {
-    do_flow_directional_hysteresis_leaves_out_a_short_run();
+fn test_flow_directional_hysteresis_holds_a_curve_to_three_lines_and_a_box_to_none() {
+    do_flow_directional_hysteresis_holds_a_curve_to_three_lines_and_a_box_to_none();
 }
 
-/// A run shorter than three line heights is no run of its own: a flat
-/// ellipse lays its spans all round, a tall one its vertical text, with
-/// no corner at either.
-pub fn do_flow_directional_hysteresis_leaves_out_a_short_run() {
-    // A flat ellipse: its steep tips are each shorter than three line
-    // heights, so they make no run, and the level runs meet there with
-    // no corner between them.
-    let flat = offset_keeping_corners(
-        &Outline::Ellipse {
-            rect: Rect::new(Vec2::new(-300.0, -12.0), Vec2::new(600.0, 24.0)),
-        },
-        0.0,
-    );
-    let (laid, _, _) = lay(LIGHT, true, &flat);
-    assert!(
-        laid.iter().filter(|l| l.part == Part::Level).count() > 50,
-        "precondition: laid"
-    );
-    assert!(
-        laid.iter().all(|l| l.part == Part::Level),
-        "a flat ellipse's tips lay no vertical glyph and no corner"
-    );
-    // A tall one: its level tips make no run.
-    let tall = Outline::Ellipse {
-        rect: Rect::new(Vec2::new(-12.0, -300.0), Vec2::new(24.0, 600.0)),
-    };
-    let (laid, _, _) = lay(LIGHT, true, &tall);
-    assert!(
-        laid.iter().filter(|l| l.part == Part::Steep).count() > 20,
-        "precondition: laid"
-    );
-    assert!(
-        laid.iter().all(|l| l.part == Part::Steep),
-        "a tall ellipse's tips lay no level glyph and no corner"
-    );
+/// The hysteresis, on both sides of its threshold. A steep run that ends
+/// on curves is a run only from three line heights: a rectangle rounded
+/// wider than a glyph whose sides, arcs to their 45° points included, are
+/// 2.9 line heights lays no vertical glyph there, and one of 3.1 does. A
+/// side of a box is a side however short: a sharp rectangle with sides of
+/// 2.9 line heights, or of 1.6, keeps its sides' runs and its four
+/// corners, so it still reads as a box.
+pub fn do_flow_directional_hysteresis_holds_a_curve_to_three_lines_and_a_box_to_none() {
+    let steep = |laid: &[Laid]| laid.iter().filter(|l| l.part == Part::Steep).count();
+    let corners = |laid: &[Laid]| laid.iter().filter(|l| matches!(l.part, Part::Corner(_))).count();
+    // A radius of 30: the outline turns 37° within half a line of its
+    // 45° points, so no turn of it is a box's; its steep run is its
+    // straight side and a quarter of each arc, `h − 2r + πr/2`.
+    let radius = 30.0;
+    let arcs = std::f32::consts::FRAC_PI_2 * radius;
+    for (lines, holds) in [(2.9, false), (3.1, true)] {
+        let height = lines * LINE - arcs + 2.0 * radius;
+        let path = Outline::RoundedRect {
+            rect: Rect::new(Vec2::new(-150.0, -height * 0.5), Vec2::new(300.0, height)),
+            radius,
+        };
+        let (laid, _, _) = lay(LIGHT, true, &path);
+        assert!(
+            laid.iter().filter(|l| l.part == Part::Level).count() > 40,
+            "precondition: laid ({lines} lines)"
+        );
+        assert_eq!(corners(&laid), 0, "precondition: a curve's turns are no box's");
+        assert_eq!(
+            steep(&laid) > 0,
+            holds,
+            "sides of {lines} line heights round curves lay vertical glyphs: {holds}"
+        );
+    }
+    for lines in [1.6, 2.9] {
+        let height = lines * LINE;
+        let path = Outline::RoundedRect {
+            rect: Rect::new(Vec2::new(-150.0, -height * 0.5), Vec2::new(300.0, height)),
+            radius: 0.0,
+        };
+        let (laid, _, _) = lay(LIGHT, true, &path);
+        assert_eq!(
+            corners(&laid),
+            4,
+            "a box of sides {lines} line heights keeps its corners"
+        );
+        // Its sides are drawn: a corner's vertical stroke, or a vertical
+        // glyph, reaches past the middle of each side's half.
+        let grown = path.rect();
+        for right in [false, true] {
+            let x = if right { grown.max().x } else { grown.origin.x };
+            let drawn = laid
+                .iter()
+                .filter(|l| l.part != Part::Level && (l.ink.center().x - x).abs() < LINE)
+                .map(|l| l.ink.size.y)
+                .sum::<f32>();
+            assert!(
+                drawn >= grown.size.y * 0.75,
+                "the {} side of a box of {lines} line heights is drawn: {drawn} of {}",
+                if right { "right" } else { "left" },
+                grown.size.y
+            );
+        }
+    }
 }
 
 #[test]
@@ -397,8 +490,8 @@ fn test_flow_directional_lays_corners_only_where_it_turns_as_a_box() {
 }
 
 /// A corner is laid where the outline turns as a box does — a sharp
-/// rectangle's corners, and arcs narrower than the corner — and not round
-/// a rounded rectangle's wider arcs or an ellipse.
+/// rectangle's corners, and arcs narrower than a glyph — and not round a
+/// rounded rectangle's wider arcs or an ellipse.
 pub fn do_flow_directional_lays_corners_only_where_it_turns_as_a_box() {
     for set in [LIGHT, HEAVY] {
         let [rectangle, rounded, ellipse] = outlines();
@@ -417,7 +510,7 @@ pub fn do_flow_directional_lays_corners_only_where_it_turns_as_a_box() {
         assert_eq!(
             corners(&rounded.1),
             0,
-            "a rounded rectangle's arcs, wider than a corner, are no box's turn"
+            "a rounded rectangle's arcs, wider than a glyph, are no box's turn"
         );
         assert_eq!(corners(&ellipse.1), 0, "an ellipse turns round a curve");
         let tight = offset_keeping_corners(
@@ -430,7 +523,7 @@ pub fn do_flow_directional_lays_corners_only_where_it_turns_as_a_box() {
         assert_eq!(
             corners(&tight),
             4,
-            "corners round arcs narrower than a corner are a box's"
+            "corners round arcs narrower than a glyph are a box's"
         );
     }
 }
@@ -440,80 +533,260 @@ fn test_flow_directional_spaces_each_run_evenly_and_never_apart() {
     do_flow_directional_spaces_each_run_evenly_and_never_apart();
 }
 
-/// Each run's gaps, along the way it reads, are one gap, and none is
-/// looser than the font sets two of its spans' glyph: box-drawing strokes
-/// never part.
+#[test]
+fn test_flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing() {
+    do_flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing();
+}
+
+/// Spans with nothing to draw lay the vertical text all round: over the
+/// top and along the bottom as down the sides.
+pub fn do_flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing() {
+    let (_, path) = &outlines()[0];
+    let (laid, _, _) = lay((" ", LIGHT.1, LIGHT.2), false, path);
+    assert!(!laid.is_empty(), "precondition: the ring is laid");
+    assert!(
+        laid.iter().all(|l| l.part == Part::Steep),
+        "only the vertical text is laid: {laid:?}"
+    );
+    let rect = path.rect();
+    let (center, size) = (rect.center(), rect.size);
+    let over = |l: &&Laid, top: bool| {
+        let d = l.ink.center() - center;
+        d.x.abs() < 0.4 * size.x
+            && (if top {
+                d.y < -0.4 * size.y
+            } else {
+                d.y > 0.4 * size.y
+            })
+    };
+    for top in [true, false] {
+        assert!(
+            laid.iter().filter(|l| over(l, top)).count() > 10,
+            "the vertical text laid along the {}: {laid:?}",
+            if top { "top" } else { "bottom" }
+        );
+    }
+}
+
+/// Each run's gaps, along the way it reads, are one gap, none looser than
+/// the font sets two of its spans' glyph, so box-drawing strokes never
+/// part — round the rectangle, the gaps from each corner to the runs
+/// beside it the same gap; round the rounded rectangle and the ellipse,
+/// where the runs meet with no corner, the gaps from each run's ends to
+/// where the outline turns the same gap.
 pub fn do_flow_directional_spaces_each_run_evenly_and_never_apart() {
     for set in [LIGHT, HEAVY] {
-        let path = outlines()[0].1;
-        let (laid, _, run) = lay(set, true, &path);
-        // As a line sets two of the spans' glyph: the font's own gap,
-        // below 0 where the face overhangs its advance.
-        let h = run
-            .glyphs
-            .iter()
-            .find(|g| g.span != FILLER_SPAN)
-            .expect("a spans glyph");
-        let ink = h.ink.expect("ink");
-        let natural = (h.advance - ink.max.x) + ink.min.x;
-        let across = |a: &Laid, b: &Laid| {
-            let (a, b) = (a.ink, b.ink);
-            (b.origin.x - a.max().x).max(a.origin.x - b.max().x)
-        };
-        let down = |a: &Laid, b: &Laid| {
-            let (a, b) = (a.ink, b.ink);
-            (b.origin.y - a.max().y).max(a.origin.y - b.max().y)
-        };
-        for (part, axis) in [
-            (Part::Level, &across as &dyn Fn(&Laid, &Laid) -> f32),
-            (Part::Steep, &down),
-        ] {
-            let runs = gaps(&laid, part, axis);
-            assert_eq!(runs.len(), 2, "precondition: two runs of {part:?}");
-            for gaps in runs {
+        for (name, path) in outlines() {
+            let (laid, _, run) = lay(set, true, &path);
+            let natural = natural_gap(&run);
+            let center = path.rect().center();
+            let runs = runs_of(&laid);
+            assert!(runs.len() >= 4, "precondition: {name} is laid in runs");
+            for (k, (part, inks)) in runs.iter().enumerate() {
+                if matches!(part, Part::Corner(_)) {
+                    continue;
+                }
+                let axis = axis_of(*part, &inks[0], center);
+                let gaps: Vec<f32> = inks.windows(2).map(|w| axis_gap(axis, &w[0], &w[1])).collect();
                 let (lo, hi) = gaps
                     .iter()
                     .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), &g| {
                         (lo.min(g), hi.max(g))
                     });
-                assert!(hi - lo < 0.01, "{part:?}: a run's gaps are one gap: {gaps:?}");
+                // Round a bend an ink's place is refined a fixed number of
+                // times (`pitch::REFINE`), to some hundredths of a point.
+                let even = if name == "rectangle" { 0.01 } else { 0.1 };
                 assert!(
-                    hi <= natural + 0.01,
-                    "{part:?}: no gap looser than the font's ({natural}): {gaps:?}"
+                    gaps.is_empty() || hi - lo < even,
+                    "{name}, {part:?}: a run's gaps are one gap: {gaps:?}"
                 );
+                assert!(
+                    gaps.is_empty() || hi <= natural + 0.01,
+                    "{name}, {part:?}: no gap looser than the font's ({natural}): {gaps:?}"
+                );
+                // What lies before it: a corner, at the same gap, or the
+                // last run's last ink, no looser.
+                let (before_part, before) = &runs[(k + runs.len() - 1) % runs.len()];
+                let before = before.last().expect("a run holds an ink");
+                let end = axis_gap(axis, before, &inks[0]);
+                if matches!(before_part, Part::Corner(_)) {
+                    assert!(
+                        gaps.is_empty() || (end - lo).abs() < even,
+                        "{name}, {part:?}: the corner's gap is the run's: {end} vs {gaps:?}"
+                    );
+                }
+                let (after_part, after) = &runs[(k + 1) % runs.len()];
+                if matches!(after_part, Part::Corner(_)) {
+                    let end = axis_gap(axis, inks.last().expect("an ink"), &after[0]);
+                    assert!(
+                        gaps.is_empty() || (end - lo).abs() < even,
+                        "{name}, {part:?}: the gap to the next corner is the run's: {end} vs {gaps:?}"
+                    );
+                }
+                // With nothing beside them, its ends are the run's gap from
+                // where the outline turns: its supports at 45° either side
+                // of the way it faces.
+                let out = Vec2::new(axis.y, -axis.x);
+                let turn = |d: Vec2| Rect::new(path.support(d), Vec2::ZERO);
+                let bare = [
+                    (!matches!(before_part, Part::Corner(_)))
+                        .then(|| axis_gap(axis, &turn(out - axis), &inks[0])),
+                    (!matches!(after_part, Part::Corner(_)))
+                        .then(|| axis_gap(axis, inks.last().expect("an ink"), &turn(out + axis))),
+                ];
+                for end in bare.into_iter().flatten() {
+                    assert!(
+                        gaps.is_empty() || (end - lo).abs() < even,
+                        "{name}, {part:?}: the gap to where it turns is the run's: {end} vs {gaps:?}"
+                    );
+                }
             }
         }
     }
 }
 
-/// The budget: it reads the frame's test seams, so it is no bench body.
+/// The budget and the cap: they read the frame's test seams and the flow
+/// fuzzer's own checks, so they are no bench bodies.
 #[cfg(test)]
-mod budget {
+mod held {
     use super::*;
+    use crate::flow::place::place_on_closed_capped;
     use crate::flow::place::ring::RingLoss;
+    use crate::flow::place::setup_table_samples;
+    use crate::flow::tests::flow_fuzz::InputWork;
+
+    /// A big rectangle, whose ring at [`LIGHT`]'s 16 points is some 420 glyphs
+    /// and over ten thousand glyph steps.
+    fn big() -> Outline {
+        Outline::RoundedRect {
+            rect: Rect::new(Vec2::new(-1500.0, -700.0), Vec2::new(3000.0, 1400.0)),
+            radius: 0.0,
+        }
+    }
+
+    /// `set`'s ring round `path` at most `cap` glyphs: the placement, the
+    /// trace, and the flow fuzzer's own check of a ring.
+    fn capped(
+        set: (&str, &str, [&str; 4]),
+        with_corners: bool,
+        path: &Outline,
+        cap: usize,
+    ) -> (Vec<Laid>, PlacedRun, Trace, Result<(), String>) {
+        let text = style(POINTS);
+        let layout = RingLayout {
+            directional: glyphs(set, with_corners),
+            ..RingLayout::whole()
+        };
+        let mut trace = Trace::default();
+        let (input, replaced, placed) = with_fonts(|fs| {
+            let input = real_run(set.0, &text, fs);
+            let (replaced, placed) = place_on_closed_capped(
+                &input,
+                path,
+                StartPoint {
+                    edge: Edge::Top,
+                    at: 0.0,
+                },
+                Direction::Clockwise,
+                &FitMode::Repeat,
+                &layout,
+                true,
+                &text,
+                fs,
+                cap,
+                Some(&mut trace),
+            );
+            (input.clone(), replaced.unwrap_or(input), placed)
+        });
+        let tables = setup_table_samples(&input, path, &FitMode::Repeat, &text);
+        let checked = InputWork::default().ring(&input, cap, tables, &placed, &trace, "a directional ring");
+        (
+            parts(&replaced, &placed, set, with_corners),
+            placed,
+            trace,
+            checked,
+        )
+    }
+
+    #[test]
+    fn test_flow_directional_holds_to_its_cap_and_says_so() {
+        // The rectangle's ring holds some 420 glyphs; each cap holds it
+        // short, and it is laid all round within it.
+        for with_corners in [true, false] {
+            for cap in [3, 10, 40, 154] {
+                let (_, placed, trace, checked) = capped(LIGHT, with_corners, &big(), cap);
+                assert!(
+                    placed.glyphs.len() <= cap,
+                    "{} glyphs past the cap of {cap} (corners {with_corners})",
+                    placed.glyphs.len()
+                );
+                assert_eq!(
+                    trace.ring,
+                    Some(RingLoss::Short),
+                    "a ring its cap holds says so (cap {cap})"
+                );
+                assert_eq!(checked, Ok(()), "the flow fuzzer's check of a ring (cap {cap})");
+            }
+        }
+        // At a cap that holds every run some ink, every side is drawn.
+        let (laid, _, _, _) = capped(LIGHT, false, &big(), 154);
+        let center = big().rect().center();
+        for (dir, what) in [
+            (Vec2::NEG_Y, "top"),
+            (Vec2::X, "right"),
+            (Vec2::Y, "bottom"),
+            (Vec2::NEG_X, "left"),
+        ] {
+            assert!(
+                laid.iter()
+                    .any(|l| (l.ink.center() - center).normalize().dot(dir) > 0.9),
+                "a ring its cap holds is laid on its {what} too"
+            );
+        }
+    }
 
     #[test]
     fn test_flow_directional_holds_to_its_budget() {
         use crate::flow::place::halves::{BUDGET_OVERRIDE, PAST_BUDGET};
-        let path = outlines()[2].1;
-        let (_, trace, _) = lay(LIGHT, false, &path);
-        assert!(trace.budget > 0 && trace.spent > 0, "precondition: counted");
+        // An ellipse, whose runs read its path at every ink: a box's sides
+        // are straight, and read nothing.
+        let path = Outline::Ellipse { rect: big().rect() };
+        let (whole, trace, _) = lay(LIGHT, true, &path);
         assert!(trace.spent <= trace.budget, "an ordinary ring within its budget");
         assert_eq!(trace.ring, None, "an ordinary ring is not stopped");
+        // A budget past the setup but short of the ring: what is held back
+        // for its lays keeps it within, to the step.
         PAST_BUDGET.with(|past| past.set(0));
         BUDGET_OVERRIDE.with(|b| b.set(Some(trace.spent / 2)));
-        let (laid, short, _) = lay(LIGHT, false, &path);
+        let (laid, short, _) = lay(LIGHT, true, &path);
         BUDGET_OVERRIDE.with(|b| b.set(None));
+        let past = PAST_BUDGET.with(std::cell::Cell::get);
+        assert_eq!(past, 0, "a budget past the setup is never passed");
         assert_eq!(
             short.ring,
             Some(RingLoss::Short),
             "a spent budget is reported, never silent"
         );
-        assert!(!laid.is_empty(), "the runs laid as far as their counts got");
-        let past = PAST_BUDGET.with(std::cell::Cell::get);
         assert!(
-            past < 2_000,
-            "at most a setup and one ink past its budget: {past}"
+            laid.len() < whole.len(),
+            "precondition: the budget stopped the ring"
+        );
+        // A budget its setup alone spends: no run is laid past it.
+        BUDGET_OVERRIDE.with(|b| b.set(Some(1)));
+        let (bare, setup, _) = lay(LIGHT, true, &path);
+        BUDGET_OVERRIDE.with(|b| b.set(None));
+        assert!(
+            trace.spent > 2 * setup.spent,
+            "precondition: the ring's work, {} steps, is more than twice its setup's, {}, \
+             so half of it is past the setup",
+            trace.spent,
+            setup.spent
+        );
+        assert_eq!(setup.ring, Some(RingLoss::Short), "a spent budget is reported");
+        assert_eq!(
+            bare.iter().filter(|l| !matches!(l.part, Part::Corner(_))).count(),
+            0,
+            "nothing is laid past a budget its setup spends but its corners"
         );
     }
 }

@@ -2664,3 +2664,21 @@ fn test_the_frame_placement_property_excuses_only_a_glyph_its_line_lays_no_ink_r
     );
     assert_eq!(lone_held, Ok(()), "a line of nothing that draws is not owed");
 }
+
+/// The flow_structured finding of #324's smoke run: a directional ring
+/// round an outline whose four turns, located on its path, do not fall
+/// in order along it — the path's floats do not tell them apart — so a
+/// short run's middle was held between a turn and one before it, and
+/// `f32::clamp` panicked on bounds out of order. Such an outline has no
+/// runs to lay and is laid as a ring of its spans alone. 296 bytes, as
+/// found.
+///
+/// Control: with the turns' order not checked, red ("min > max, or
+/// either was NaN").
+#[test]
+fn test_flow_structured_finding_a_directional_ring_whose_turns_fall_out_of_order_replays() {
+    let found = include_bytes!("fuzz_findings/structured_directional_ring_whose_turns_fall_out_of_order");
+    if let Err(why) = crate::flow::tests::flow_fuzz::check_flow_structured(found) {
+        panic!("the fuzzer's input: {why}");
+    }
+}

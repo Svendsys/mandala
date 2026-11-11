@@ -2349,7 +2349,16 @@ hidden_items!();
                 "DirectionalGlyphs.corners" => vec![DocElement::Ring(RingData {
                     directional: Some(Box::new(DirectionalGlyphs {
                         vertical: None,
-                        corners: Some([TEXT.to_string(), String::new(), String::new(), String::new()]),
+                        corners: Some({
+                            // Split across all four, so a count that
+                            // leaves one out falls short.
+                            let quarter = TEXT.len() / 4;
+                            let cut = |k: usize| {
+                                let end = if k == 3 { TEXT.len() } else { (k + 1) * quarter };
+                                TEXT[k * quarter..end].to_string()
+                            };
+                            [cut(0), cut(1), cut(2), cut(3)]
+                        }),
                     })),
                     ..RingData::default()
                 })],

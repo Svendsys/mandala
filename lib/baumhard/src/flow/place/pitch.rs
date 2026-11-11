@@ -72,6 +72,57 @@ const SLACK_TOLERANCE: f32 = 1e-3;
 /// a straight path it moves by all of it.
 const STALLED: f32 = 1e-3;
 
+/// The most strides a bracketed solve ([`Track::bracketed`]) takes out
+/// from its first guess, each twice the last, to bracket the place it
+/// seeks: from a point, past 10⁹ points.
+pub(crate) const BRACKET_STRIDES: usize = 32;
+
+/// The rounds a bracketed solve bisects its bracket in.
+pub(crate) const BRACKET_ROUNDS: usize = 32;
+
+/// The place at which `gap`, growing with the place, is `want`: bracketed
+/// from `guess` in strides doubling from a point ([`BRACKET_STRIDES`]),
+/// then bisected [`BRACKET_ROUNDS`] times. Where no stride brackets it,
+/// the end of the strides that came nearest.
+///
+/// Cost: at most `2 + BRACKET_STRIDES + BRACKET_ROUNDS` calls of `gap`.
+fn bisect(gap: &dyn Fn(f32) -> f32, want: f32, guess: f32) -> f32 {
+    let below = |t: f32| gap(t) < want;
+    let (mut lo, mut hi) = (guess, guess);
+    let mut stride = 1.0_f32;
+    if below(guess) {
+        for _ in 0..BRACKET_STRIDES {
+            hi = guess + stride;
+            if !below(hi) {
+                break;
+            }
+            lo = hi;
+            stride *= 2.0;
+        }
+    } else {
+        for _ in 0..BRACKET_STRIDES {
+            lo = guess - stride;
+            if below(lo) {
+                break;
+            }
+            hi = lo;
+            stride *= 2.0;
+        }
+    }
+    for _ in 0..BRACKET_ROUNDS {
+        let mid = 0.5 * (lo + hi);
+        if mid <= lo || mid >= hi {
+            break;
+        }
+        if below(mid) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    hi
+}
+
 /// What the last [`place_pitched`] on this thread solved its slack to,
 /// for the count of inks it laid. Test-only: what holds the solve's stops
 /// (#333).
@@ -245,6 +296,15 @@ pub(super) trait Track {
     /// pressed together rather than parted. Otherwise the one whose slack
     /// is nearest 0.
     fn tight(&self) -> bool {
+        false
+    }
+    /// Whether an ink's place is found by bisection, its gap bracketed
+    /// round its first guess ([`BRACKET_STRIDES`], [`BRACKET_ROUNDS`]),
+    /// rather than refined [`REFINE`] times along the secant: for a track
+    /// whose gaps grow with the place all along it, where the secant,
+    /// round a bend that slows the gap's growth, can step back past where
+    /// it began.
+    fn bracketed(&self) -> bool {
         false
     }
     /// How far from the center of an ink of `size` its box's edge lies
@@ -432,7 +492,8 @@ pub(super) fn glyphs_at(
 /// makes, and before each round of the slack, with the count it lays. A
 /// `false` stops the lay there — the count found so far, the slack
 /// nearest so far — and the lay is then laid once at them, unasked: what
-/// a caller with a budget holds back for. `None` where no count of inks
+/// a caller with a budget holds back for; a `false` before the first ink
+/// lays none. `None` then, and where no count of inks
 /// fits from end gap to end gap at the floor — a track too short for one
 /// ink — and for `marks` empty.
 ///
@@ -490,8 +551,12 @@ pub(super) fn pitch(
             .fold(f32::INFINITY, f32::min)
     };
     // The place at which `gap`, growing with the place, is `want`: from
-    // `guess`, refined [`REFINE`] times along the secant.
+    // `guess`, refined [`REFINE`] times along the secant, or bracketed and
+    // bisected.
     let solve = |gap: &dyn Fn(f32) -> f32, want: f32, guess: f32| -> f32 {
+        if track.bracketed() {
+            return bisect(gap, want, guess);
+        }
         let (mut s, mut miss, mut slope) = (guess, gap(guess) - want, 1.0_f32);
         for _ in 0..REFINE {
             let next = s - miss / slope;
@@ -539,7 +604,9 @@ pub(super) fn pitch(
     let next_at = |k: usize, s: f64, want: f32| -> f64 {
         let (here, dir) = (ink_box(k, s as f32), track.at(s as f32).1);
         let guess = s + f64::from(apart_by(size_of(k) + size_of(k + 1), dir, want));
-        if track.at(guess as f32).1.dot(dir) > 1.0 - 1e-5 {
+        // Box to box, where the track runs straight on the guess is the
+        // place; a bracketed track's gap is not box to box, and is solved.
+        if !track.bracketed() && track.at(guess as f32).1.dot(dir) > 1.0 - 1e-5 {
             return guess;
         }
         let gap = |t: f32| track.gap(&here, &ink_box(k + 1, t));
@@ -564,7 +631,14 @@ pub(super) fn pitch(
     let lasts: Vec<f32> = (0..count).map(|k| last_at(k, end_gap)).collect();
     let mut fitted = 0;
     let mut s = f64::from(first_at(end_gap));
-    while fitted < cap && s <= f64::from(lasts[fitted % count]) && go(fitted + 1) {
+    while fitted < cap && s <= f64::from(lasts[fitted % count]) {
+        if !go(fitted + 1) {
+            // Stopped before its first ink, it lays none.
+            if fitted == 0 {
+                return None;
+            }
+            break;
+        }
         s = next_at(fitted, s, mark_of(fitted).gap);
         fitted += 1;
     }

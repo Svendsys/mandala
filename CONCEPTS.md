@@ -1604,15 +1604,16 @@ element.
     box does, so `─ │ ┌ ┐ ┘ └` round a rectangle reads as a box. The
     outline is parted at its four diagonal support points
     (`Outline::support`), where it turns through 45°, into two level and
-    two steep runs — a run shorter than three line heights left to its
-    neighbors (the readable rule's hysteresis) — and each run is laid
-    whole between the corners beside it as a connector's pattern is
+    two steep runs — a run shorter than three line heights that ends on
+    a curve left to its neighbors (the readable rule's hysteresis), a
+    side of a box kept however short — and each run is laid whole
+    between the corners beside it as a connector's pattern is
     (`place_pitched`'s core, `pitch::pitch`), its gaps measured along the
     way it reads, the spans' own gap all round, never looser. A corner
     is set cell to cell with its neighbors, on the level text's baseline
-    and centered on the vertical text's box, and only where the outline
-    turns through 45° within its reach; round a wider curve the runs meet
-    with none. Its path keeps a sharp rectangle sharp
+    and centered on the vertical text's box, only where the outline turns
+    through 45° within half a line height; round a wider curve the runs
+    meet with none. Its path keeps a sharp rectangle sharp
     (`offset_keeping_corners`).
 
   Either way a placement lists its glyphs in text order; only positions
