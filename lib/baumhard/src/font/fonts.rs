@@ -1276,7 +1276,7 @@ pub fn measure_glyph_ink_bounds(
 /// is empty, a face that is not loaded (#333).
 ///
 /// Asked at the glyph's face, id, weight and flags, whatever size it is
-/// laid at ([`face_glyph_draws`]): whether a glyph draws is a property of
+/// laid at (`face_glyph_draws`): whether a glyph draws is a property of
 /// its face's data — a color outline with a layer that has area, a bitmap
 /// in some strike — while an image's area grows as its size's square. So
 /// a glyph is rasterized small, once, however many sizes a frame probes it
@@ -1284,7 +1284,7 @@ pub fn measure_glyph_ink_bounds(
 /// 4,096 points would be an image 4,096 pixels square.
 ///
 /// Cost: one lookup in a per-thread cache, kept as the outline cache is
-/// (`cached_outline_bounds`); on a miss, [`draws_at`]'s rasterizations.
+/// (`cached_outline_bounds`); on a miss, `draws_at`'s rasterizations.
 pub fn glyph_draws(
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
@@ -1356,11 +1356,11 @@ pub(crate) fn draws_at(mut draws: impl FnMut(f32) -> bool) -> bool {
 }
 
 /// The size, in pixels per em, [`glyph_draws`] asks the rasterizer at
-/// first ([`draws_at`]): small, so its image is a few hundred pixels.
+/// first (`draws_at`): small, so its image is a few hundred pixels.
 pub const DRAWS_SIZE: f32 = 16.0;
 
 /// The size [`glyph_draws`] asks again at where [`DRAWS_SIZE`] draws
-/// nothing ([`draws_at`]): one at which a bitmap too small to cover a
+/// nothing (`draws_at`): one at which a bitmap too small to cover a
 /// pixel at [`DRAWS_SIZE`] covers one.
 pub const DRAWS_SIZE_AGAIN: f32 = 256.0;
 
