@@ -57,6 +57,7 @@ use crate::flow::place::{
     frame_halves, place_on_closed_capped, setup_table_samples, size_factor, Trace, INK_TOLERANCE,
     MIN_TABLE_SPACING,
 };
+use crate::flow::tests::support::raster_box;
 use crate::flow::{
     offset, outline, place_at_point, place_on_open, place_pitched, shape_box, shape_run, Curve, FlowSpan,
     Outline, PathEnd, PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
@@ -556,12 +557,26 @@ fn check_pitched(run: &ShapedRun, path: &[Curve], spacing: f32) -> Result<(), St
             hold: run.line_height,
         },
     ];
-    check_placement(
-        run,
-        &place_pitched(run, &chain, spacing, ends),
-        false,
-        "as whole glyphs",
-    )
+    #[cfg(test)]
+    let before = crate::flow::path::PATH_LOOKUPS.with(std::cell::Cell::get);
+    let placed = place_pitched(run, &chain, spacing, ends);
+    #[cfg(test)]
+    PITCHED_LOOKUPS.with(|count| {
+        count.set(count.get() + crate::flow::path::PATH_LOOKUPS.with(std::cell::Cell::get) - before)
+    });
+    #[cfg(test)]
+    PITCHED_GLYPHS.with(|count| count.set(count.get() + placed.glyphs.len()));
+    check_placement(run, &placed, false, "as whole glyphs")
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test counter (#333): the path lookups the whole-glyph placements
+    /// [`check_pitched`] lays on this thread have made, so that a test of
+    /// another placement's work can hold the two apart.
+    pub(crate) static PITCHED_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#333): the glyphs those placements placed.
+    pub(crate) static PITCHED_GLYPHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The layouts a frame drawn in layout `drawn` is laid in: `drawn`, and
@@ -678,7 +693,14 @@ fn frames_round_a_rectangle(
         // reported (ruling R35.2).
         let whole = owes_whole(&frame_run, fit, frame_room(&path)) && trace.cut_apart.is_empty();
         apart(&trace, "around a rectangle")?;
-        check_placed(&frame_spans, &frame_run, placed, whole, "around a rectangle")?;
+        check_frame_placed(
+            &frame_spans,
+            &frame_run,
+            placed,
+            (whole, &trace),
+            "around a rectangle",
+            fs,
+        )?;
     }
     if bounded {
         work.within_the_timeout()?;
@@ -1129,7 +1151,14 @@ fn check_generated_pinning(
                             })
                             .and_then(|()| apart(&trace, "around an outline"))
                             .and_then(|()| {
-                                check_placed(&frame_spans, &run, placed, whole, "around an outline")
+                                check_frame_placed(
+                                    &frame_spans,
+                                    &run,
+                                    placed,
+                                    (whole, &trace),
+                                    "around an outline",
+                                    &mut fs,
+                                )
                             });
                         checked
                             .map_err(|why| format!("{why}, laid {layout:?}, {} spans", frame_texts.len()))?;
@@ -1653,6 +1682,84 @@ fn check_placed(
     check_placement(refers_to, &placed, whole, what)
 }
 
+/// [`check_placed`] for a frame laid as `trace` traced it: where its
+/// natural length fits (`whole`), a glyph the rasterizer draws nothing
+/// for may be left unplaced where its line lays no ink round it — before
+/// its line's first ink or past its last, as a line's outer spaces are,
+/// or in a line of nothing that draws, which is not laid (#333) — and
+/// nowhere else: never between two inks of one line, which places it.
+/// `fs` is read only for a glyph that is not placed, and the glyphs
+/// beside it.
+pub(crate) fn check_frame_placed(
+    spans: &[FlowSpan<'_>],
+    run: &ShapedRun,
+    (replaced, placed): (Option<ShapedRun>, PlacedRun),
+    (whole, trace): (bool, &Trace),
+    what: &str,
+    fs: &mut FontSystemLease,
+) -> Result<(), String> {
+    let refers_to = match &replaced {
+        Some(new) => {
+            check_run(spans, new, &format!("{what}: the run placement made"))?;
+            new
+        }
+        None => run,
+    };
+    check_frame_placement(refers_to, &placed, (whole, trace), what, fs)
+}
+
+/// [`check_placement`] of a frame's placement, with
+/// [`check_frame_placed`]'s excuse.
+pub(crate) fn check_frame_placement(
+    run: &ShapedRun,
+    placed: &PlacedRun,
+    (whole, trace): (bool, &Trace),
+    what: &str,
+    fs: &mut FontSystemLease,
+) -> Result<(), String> {
+    // Each glyph's traced line, by glyph index.
+    let mut line_of: Vec<Option<usize>> = vec![None; run.glyphs.len()];
+    for (k, line) in trace.lines.iter().enumerate() {
+        let ends = line.glyphs.start.min(placed.glyphs.len())..line.glyphs.end.min(placed.glyphs.len());
+        for g in &placed.glyphs[ends] {
+            if let Some(slot) = line_of.get_mut(g.glyph as usize) {
+                *slot = Some(k);
+            }
+        }
+    }
+    let laid: Vec<crate::font::LayoutGlyph> = run.layout_glyphs().cloned().collect();
+    let mut known: Vec<Option<bool>> = vec![None; run.glyphs.len()];
+    // Whether glyph `k` draws: a space never; else the rasterizer's
+    // answer, asked at the sizes the engine asks it at (`fonts::draws_at`:
+    // 16 pixels per em, then 256 where nothing is drawn at 16), so that
+    // "draws" means here what it means to the engine. Asked directly, not
+    // through `fonts::glyph_draws`' cache; at those sizes, not the
+    // glyph's own, because an image at a frame's largest size would be
+    // thousands of pixels square.
+    let mut draws = |k: usize, fs: &mut FontSystemLease| -> bool {
+        if run.glyphs[k].blank {
+            return false;
+        }
+        *known[k].get_or_insert_with(|| {
+            laid.get(k)
+                .is_none_or(|laid| fonts::draws_at(|size| raster_box(fs.fonts(), laid, size).is_some()))
+        })
+    };
+    let n = run.glyphs.len();
+    let mut excused = |k: usize| {
+        if draws(k, fs) {
+            return false;
+        }
+        let before = (0..k).rev().find(|&i| draws(i, fs));
+        let after = (k + 1..n).find(|&i| draws(i, fs));
+        match (before, after) {
+            (Some(a), Some(b)) => line_of[a].is_none() || line_of[a] != line_of[b],
+            _ => true,
+        }
+    };
+    check_placement_excusing(run, placed, whole, what, &mut excused)
+}
+
 /// No two of a frame's inks touch (rulings R38.1, R44.2): never overlap
 /// wins over never cut, a spent budget included. What its junctions and
 /// sides leave unheld is reported in the trace, never silent.
@@ -1727,6 +1834,18 @@ fn frame_room(outline: &Outline) -> f32 {
 /// placed, and the placement is not truncated. A gap solved past every
 /// `f32` that the walk then cut silently is caught here.
 pub fn check_placement(run: &ShapedRun, placed: &PlacedRun, whole: bool, what: &str) -> Result<(), String> {
+    check_placement_excusing(run, placed, whole, what, &mut |_| false)
+}
+
+/// [`check_placement`], a glyph that is not a space nor a filler's left
+/// unplaced where `excused` says it may be.
+fn check_placement_excusing(
+    run: &ShapedRun,
+    placed: &PlacedRun,
+    whole: bool,
+    what: &str,
+    excused: &mut dyn FnMut(usize) -> bool,
+) -> Result<(), String> {
     if whole {
         if placed.truncated {
             return Err(format!("{what}: its natural length fits, and it was cut"));
@@ -1737,12 +1856,10 @@ pub fn check_placement(run: &ShapedRun, placed: &PlacedRun, whole: bool, what: &
                 *seen = true;
             }
         }
-        if let Some(missing) = run
-            .glyphs
-            .iter()
-            .zip(&drawn)
-            .position(|(g, seen)| !seen && !g.blank && g.span != FILLER_SPAN)
-        {
+        if let Some(missing) = (0..run.glyphs.len()).find(|&k| {
+            let g = &run.glyphs[k];
+            !drawn[k] && !g.blank && g.span != FILLER_SPAN && !excused(k)
+        }) {
             return Err(format!(
                 "{what}: its natural length fits, and glyph {missing} was not placed"
             ));

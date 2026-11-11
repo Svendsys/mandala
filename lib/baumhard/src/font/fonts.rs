@@ -75,6 +75,42 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
 /// inserts per static fallback face, the host's font scan on native and
 /// one walk over every face it adds, and [`fallback::new_font_system`].
 fn complete_font_system() -> FontSystem {
+    let (db, compiled_font_id_map) = compiled_database();
+    // The host's faces, after every compiled one (#228). The browser has
+    // none to load.
+    #[cfg(not(target_arch = "wasm32"))]
+    let db = {
+        let mut db = db;
+        db.load_system_fonts();
+        remove_shadowing_faces(&mut db, &compiled_font_id_map);
+        db
+    };
+    let font_system = fallback::new_font_system(db);
+    FACE_SET_GENERATION.fetch_add(1, Ordering::Release);
+    let _ = COMPILED_IDS.set(compiled_font_id_map);
+    font_system
+}
+
+/// A font system of the compiled faces alone, built as [`FONT_SYSTEM`]'s
+/// is but with no host face: what the browser has, and a host with no
+/// fonts installed. Its compiled faces' ids are the font system's own,
+/// since both databases are built in the same order. A test's, so a
+/// shaping that falls past every compiled face meets no host face
+/// (#333).
+#[cfg(test)]
+pub(crate) fn compiled_font_system() -> FontSystem {
+    fallback::new_font_system(compiled_database().0)
+}
+
+/// A database of every compiled-in face, each static
+/// [`fallback::fallback_families`] face at every weight
+/// ([`fallback::register_every_weight`], #297), and each compiled face's
+/// ids. Cost: one `load_font_source` call per entry in [`FONT_SOURCES`],
+/// and eight database inserts per static fallback face.
+fn compiled_database() -> (
+    cosmic_text::fontdb::Database,
+    FxHashMap<AppFont, TinyVec<[ID; 8]>>,
+) {
     let mut db = cosmic_text::fontdb::Database::new();
     let mut compiled_font_id_map = FxHashMap::default();
     // In `FONT_DATA`'s order, which the build sorts, rather than
@@ -102,17 +138,7 @@ fn complete_font_system() -> FontSystem {
             }
         }
     }
-    // The host's faces, after every compiled one (#228). The browser has
-    // none to load.
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        db.load_system_fonts();
-        remove_shadowing_faces(&mut db, &compiled_font_id_map);
-    }
-    let font_system = fallback::new_font_system(db);
-    FACE_SET_GENERATION.fetch_add(1, Ordering::Release);
-    let _ = COMPILED_IDS.set(compiled_font_id_map);
-    font_system
+    (db, compiled_font_id_map)
 }
 
 /// Remove from `db` every face that is not compiled in and bears a
@@ -1242,12 +1268,108 @@ pub fn measure_glyph_ink_bounds(
     out
 }
 
+/// Whether the rasterizer draws anything for a laid-out glyph: whether
+/// the image the renderer asks for it — its color outline, else its color
+/// bitmap, else its outline (`SwashCache::get_image_uncached`) — covers a
+/// pixel. What tells a glyph with no outline that is drawn all the same,
+/// a bitmap emoji, from one that draws nothing: a `.notdef` whose outline
+/// is empty, a face that is not loaded (#333).
+///
+/// Asked at the glyph's face, id, weight and flags, whatever size it is
+/// laid at (`face_glyph_draws`): whether a glyph draws is a property of
+/// its face's data — a color outline with a layer that has area, a bitmap
+/// in some strike — while an image's area grows as its size's square. So
+/// a glyph is rasterized small, once, however many sizes a frame probes it
+/// at, never at the size it is laid at: a bitmap emoji in a frame at
+/// 4,096 points would be an image 4,096 pixels square.
+///
+/// Cost: one lookup in a per-thread cache, kept as the outline cache is
+/// (`cached_outline_bounds`); on a miss, `draws_at`'s rasterizations.
+pub fn glyph_draws(
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    glyph: &cosmic_text::LayoutGlyph,
+) -> bool {
+    face_glyph_draws(
+        font_system,
+        swash_cache,
+        (
+            glyph.font_id,
+            glyph.glyph_id,
+            glyph.font_weight,
+            glyph.cache_key_flags,
+        ),
+    )
+}
+
+/// [`glyph_draws`] of glyph `glyph_id` of face `font_id`, at `weight`
+/// with `flags`: kept per thread by its font system
+/// ([`FontSystem::instance`]) and the rasterizer's key at
+/// [`DRAWS_SIZE`], as the outline cache keeps an outline.
+///
+/// Cost: one hash lookup; on a miss, [`draws_at`]'s rasterizations, and
+/// the whole cache let go first if it holds [`OUTLINE_CACHE_ENTRIES`].
+pub(crate) fn face_glyph_draws(
+    font_system: &mut FontSystem,
+    swash_cache: &mut SwashCache,
+    (font_id, glyph_id, weight, flags): (ID, u16, cosmic_text::fontdb::Weight, CacheKeyFlags),
+) -> bool {
+    let key_at = |size: f32| CacheKey::new(font_id, glyph_id, size, (0.0, 0.0), weight, flags).0;
+    let entry = (font_system.instance(), key_at(DRAWS_SIZE));
+    if let Some(draws) = DRAWS.with(|cache| cache.borrow().get(&entry).copied()) {
+        return draws;
+    }
+    let draws = draws_at(|size| {
+        DRAW_READS.with(|reads| reads.set(reads.get() + 1));
+        swash_cache
+            .get_image_uncached(font_system, key_at(size))
+            .is_some_and(|image| image.placement.width > 0 && image.placement.height > 0)
+    });
+    DRAWS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= OUTLINE_CACHE_ENTRIES {
+            cache.clear();
+        }
+        cache.insert(entry, draws);
+    });
+    draws
+}
+
+/// Whether a glyph draws, `draws(size)` the rasterizer's answer at a size
+/// in pixels per em: at [`DRAWS_SIZE`], and where nothing is drawn there,
+/// at [`DRAWS_SIZE_AGAIN`] before the glyph is taken to draw nothing.
+///
+/// The second ask is for a color bitmap too small for the first: the
+/// rasterizer scales a strike's bitmap `w` pixels wide to
+/// `⌊w · size / ppem⌋`, so at 16 pixels per em one narrower or shorter
+/// than a sixteenth of its strike's size (under 7 pixels of a 109-pixel
+/// strike) is an image of no pixels, though it is drawn at the sizes a
+/// reader sees it at; at 256, only one under a 256th of its strike's
+/// size, which no bitmap that is drawn is. An outline with area is
+/// drawn at either. A glyph that draws nothing — what a `false` answers
+/// — is an empty outline or no image at all, which costs the rasterizer
+/// nothing at either size; one that draws is asked once.
+///
+/// Cost: one ask, or two where the first answers `false`.
+pub(crate) fn draws_at(mut draws: impl FnMut(f32) -> bool) -> bool {
+    draws(DRAWS_SIZE) || draws(DRAWS_SIZE_AGAIN)
+}
+
+/// The size, in pixels per em, [`glyph_draws`] asks the rasterizer at
+/// first (`draws_at`): small, so its image is a few hundred pixels.
+pub const DRAWS_SIZE: f32 = 16.0;
+
+/// The size [`glyph_draws`] asks again at where [`DRAWS_SIZE`] draws
+/// nothing (`draws_at`): one at which a bitmap too small to cover a
+/// pixel at [`DRAWS_SIZE`] covers one.
+pub const DRAWS_SIZE_AGAIN: f32 = 256.0;
+
 /// The ink of one laid-out glyph: the bounding box of its outline, as
 /// its `(min, max)` corners relative to its pen on the baseline, in
 /// points at its size, `y` pointing down — where a renderer drawing it
 /// at that pen puts its ink, the shaper's offsets included. `None` for
 /// a glyph with no outline: a space, a bitmap-only emoji, a face that
-/// is not loaded.
+/// is not loaded ([`glyph_draws`] tells which of these is drawn).
 ///
 /// Measured from the outline, not a rasterization: unhinted, so it is
 /// linear in size and a measure at one size scales to another, and
@@ -1346,6 +1468,20 @@ thread_local! {
     static OUTLINE_BOUNDS: std::cell::RefCell<OutlineEntries> = std::cell::RefCell::default();
     /// Outlines read on this thread: the cache's misses.
     static OUTLINE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Whether each glyph is drawn ([`glyph_draws`], #333), by its font
+    /// system and its rasterizer's key, kept as [`OUTLINE_BOUNDS`] is.
+    static DRAWS: std::cell::RefCell<rustc_hash::FxHashMap<(u64, CacheKey), bool>> =
+        std::cell::RefCell::default();
+    /// Glyphs rasterized on this thread to learn whether they draw: the
+    /// misses of [`glyph_draws`]'s cache.
+    static DRAW_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many glyphs [`glyph_draws`] has rasterized on this thread (its
+/// cache's misses): a work counter, so a test reads what asking cost by
+/// difference, never by a clock.
+pub fn draw_reads() -> u64 {
+    DRAW_READS.with(std::cell::Cell::get)
 }
 
 /// How many outlines have been read off their faces on this thread

@@ -1198,6 +1198,16 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("two_font_systems_never_answer_each_others_outlines", |b| {
         b.iter(do_two_font_systems_never_answer_each_others_outlines)
     });
+    c.bench_function("whether_a_glyph_draws_is_read_once_whatever_its_size", |b| {
+        b.iter(do_whether_a_glyph_draws_is_read_once_whatever_its_size)
+    });
+    c.bench_function(
+        "whether_a_glyph_draws_is_asked_again_where_the_first_size_draws_nothing",
+        |b| b.iter(do_whether_a_glyph_draws_is_asked_again_where_the_first_size_draws_nothing),
+    );
+    c.bench_function("two_font_systems_never_answer_each_others_draws", |b| {
+        b.iter(do_two_font_systems_never_answer_each_others_draws)
+    });
     // The patched merge's and early stop's guards, on fixtures built of
     // shaped glyphs (and a font system with no faces).
     c.bench_function(
@@ -2113,6 +2123,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_fit_fills_a_steep_line_with_an_ornament", |b| {
         b.iter(do_flow_fit_fills_a_steep_line_with_an_ornament)
     });
+    c.bench_function(
+        "flow_an_ornament_steps_a_glyph_that_draws_nothing_by_its_advance",
+        |b| b.iter(do_flow_an_ornament_steps_a_glyph_that_draws_nothing_by_its_advance),
+    );
     c.bench_function("flow_fit_clamped_at_max_spreads_the_rest", |b| {
         b.iter(do_flow_fit_clamped_at_max_spreads_the_rest)
     });
@@ -2449,6 +2463,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_halves_a_glyph_with_no_outline_is_laid", |b| {
         b.iter(do_flow_halves_a_glyph_with_no_outline_is_laid)
     });
+    c.bench_function(
+        "flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance",
+        |b| b.iter(do_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance),
+    );
     c.bench_function("flow_halves_spread_and_once_and_inward", |b| {
         b.iter(do_flow_halves_spread_and_once_and_inward)
     });
@@ -2489,6 +2507,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function(
         "flow_halves_an_outline_whose_halves_are_not_numbers_keeps_r27s_lines",
         |b| b.iter(do_flow_halves_an_outline_whose_halves_are_not_numbers_keeps_r27s_lines),
+    );
+    c.bench_function(
+        "flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_glyph_at_a_line_end",
+        |b| {
+            b.iter(do_flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_glyph_at_a_line_end)
+        },
     );
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //

@@ -812,10 +812,13 @@ impl Projector {
         };
         let line_height = placed.as_ref().map_or(0.0, |p| p.run.line_height);
         let extent = (inner.0 + line_height, inner.1 + 1);
-        // Its inks, what its node's paths stop at (#296): a text ring's
-        // run, which placement returns with no ink, inked once a shaping.
+        // Its inks, what its node's paths stop at (#296): an ornament's
+        // run as shaped carries them from its shaping, whatever `None`s
+        // it holds — glyphs that draw nothing (#333); any other run — a
+        // text ring's, which carries none, or one placement returned —
+        // is inked once a shaping.
         let inked = placed.as_ref().map(|p| {
-            if p.run.glyphs.iter().all(|g| g.blank || g.ink.is_some()) {
+            if Arc::ptr_eq(&p.run, &p.input) && !p.run.glyphs.iter().any(|g| g.letter) {
                 return p.run.clone();
             }
             match was_inked {
@@ -1811,19 +1814,18 @@ pub(crate) fn own_opacity(opacity: f32) -> f32 {
 }
 
 /// The canvas box of each glyph of `placed` that draws, by `run`'s
-/// metrics: its ink, or where none was measured its box, its advance by
-/// its line height. A space draws nothing. O(its glyphs).
+/// metrics, inked ([`inked_run`]): its ink. A space draws nothing, nor a
+/// glyph with no ink, which the rasterizer draws nothing for (#333).
+/// O(its glyphs).
 fn placed_inks<'a>(run: &'a ShapedRun, placed: &'a PlacedRun) -> impl Iterator<Item = Rect> + 'a {
     let baseline = run.baseline();
     placed.glyphs.iter().filter_map(move |g| {
         let metrics = run.glyphs.get(g.glyph as usize)?;
-        if metrics.blank {
-            return None;
-        }
-        Some(match metrics.ink {
-            Some(ink) => Rect::new(g.pos + Vec2::new(0.0, baseline) + ink.min, ink.max - ink.min),
-            None => Rect::new(g.pos, Vec2::new(metrics.advance, run.line_height)),
-        })
+        let ink = metrics.ink.filter(|_| !metrics.blank)?;
+        Some(Rect::new(
+            g.pos + Vec2::new(0.0, baseline) + ink.min,
+            ink.max - ink.min,
+        ))
     })
 }
 
