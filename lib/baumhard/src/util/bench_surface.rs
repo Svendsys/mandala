@@ -363,6 +363,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
     use PlainShape::*;
     &[
         (
+            "flow/tests/pitch_tests.rs",
+            "test_flow_pitched_solves_past_a_round_the_lay_does_not_answer",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
             "flow/tests/halves_tests.rs",
             "test_flow_halves_an_ordinary_frame_lays_each_line_a_few_times",
             CannotCompileIntoTheLibrary,

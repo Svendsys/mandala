@@ -2247,7 +2247,10 @@ fn test_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance() {
 /// `Spread`, the letters either side of it are as far apart, ink to ink,
 /// as two neighbors are, and its advance more. And at either end of a
 /// line, once or three times, it takes no room: the inks of `a time to
-/// every purpose` lie where they lie without it.
+/// every purpose` lie where they lie without it, and so do those of a
+/// text too long for a `Fit` frame of 160 × 80, 120 × 60 or 90 × 50
+/// even at its least size, whose lines are parted again on the text
+/// reshaped there.
 ///
 /// Precondition: the text holds glyphs that are no space and that the
 /// rasterizer draws nothing for — where no host face maps U+10FFFD.
@@ -2263,7 +2266,10 @@ fn test_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance() {
 /// as a space, red before the line ("moves its inks, 5.0475383 at the
 /// most": its advance shifts the line), and with the cases before it
 /// left out, past it three times ("641.19684 at the most": its advances
-/// part the lines elsewhere).
+/// part the lines elsewhere). Control for the overflowing `Fit` frames:
+/// the lines parted again on the reshaped run as shaped, not with such a
+/// glyph read as a space as the run was parted, red at 160 × 80 before
+/// the line ("moves its inks, 3.1060786 at the most").
 pub fn do_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance() {
     let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(820.0, 330.0)), Shape::Ellipse);
     let top = StartPoint {
@@ -2362,38 +2368,59 @@ pub fn do_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance() {
     );
     // At either end of a line it takes no room, as a space there takes
     // none: the text's inks lie where they lie without it, before its
-    // first letter and past its last, once or three times.
-    const PLAIN: &str = "a time to every purpose";
-    let lay = |text: &str| {
-        let (run, placed, _) = frame_with(
-            text,
-            30.0,
-            &shape,
-            &FitMode::Once { filler: None },
-            &RingLayout::whole(),
-            true,
-        );
-        let boxes = inks(&run, &placed);
-        boxes.into_iter().flatten().collect::<Vec<(Vec2, Vec2)>>()
+    // first letter and past its last, once or three times. In a frame
+    // its text fits, and in `Fit` frames too small for it even at their
+    // least size, whose lines are laid from the text reshaped and parted
+    // again there.
+    let once = FitMode::Once { filler: None };
+    let fitting = ((820.0, 330.0), shape, once, "a time to every purpose");
+    const OVERFLOWING: &str = "a time to every purpose under the heaven and a season for all";
+    let small = |w: f32, h: f32| {
+        (
+            (w, h),
+            outline(Rect::new(Vec2::ZERO, Vec2::new(w, h)), Shape::Ellipse),
+            FIT,
+            OVERFLOWING,
+        )
     };
-    let plain = lay(PLAIN);
-    for (end, text) in [
-        ("before", format!("\u{10FFFD}{PLAIN}")),
-        ("before", format!("\u{10FFFD}\u{10FFFD}\u{10FFFD}{PLAIN}")),
-        ("past", format!("{PLAIN}\u{10FFFD}")),
-        ("past", format!("{PLAIN}\u{10FFFD}\u{10FFFD}\u{10FFFD}")),
-    ] {
-        let ended = lay(&text);
-        assert_eq!(ended.len(), plain.len(), "{text:?}: the same inks laid");
-        let moved = ended
-            .iter()
-            .zip(&plain)
-            .map(|(a, b)| (center(*a) - center(*b)).length())
-            .fold(0.0_f32, f32::max);
-        assert!(
-            moved <= 1e-3,
-            "{text:?}: a glyph that draws nothing {end} the line moves its inks, {moved} at the most"
+    for (size, shape, fit, plain_text) in [fitting, small(160.0, 80.0), small(120.0, 60.0), small(90.0, 50.0)]
+    {
+        let lay = |text: &str| {
+            let (run, placed, _) = frame_with(text, 30.0, &shape, &fit, &RingLayout::whole(), true);
+            let boxes = inks(&run, &placed);
+            (
+                boxes.into_iter().flatten().collect::<Vec<(Vec2, Vec2)>>(),
+                placed.truncated,
+            )
+        };
+        let (plain, cut) = lay(plain_text);
+        assert_eq!(
+            cut,
+            fit == FIT,
+            "precondition: {plain_text:?} round {size:?} ({fit:?}) is cut only where it overflows"
         );
+        for (end, text) in [
+            ("before", format!("\u{10FFFD}{plain_text}")),
+            ("before", format!("\u{10FFFD}\u{10FFFD}\u{10FFFD}{plain_text}")),
+            ("past", format!("{plain_text}\u{10FFFD}")),
+            ("past", format!("{plain_text}\u{10FFFD}\u{10FFFD}\u{10FFFD}")),
+        ] {
+            let (ended, _) = lay(&text);
+            assert_eq!(
+                ended.len(),
+                plain.len(),
+                "{text:?} round {size:?} ({fit:?}): the same inks laid"
+            );
+            let moved = ended
+                .iter()
+                .zip(&plain)
+                .map(|(a, b)| (center(*a) - center(*b)).length())
+                .fold(0.0_f32, f32::max);
+            assert!(
+                moved <= 1e-3,
+                "{text:?} round {size:?} ({fit:?}): a glyph that draws nothing {end} the line moves its inks, {moved} at the most"
+            );
+        }
     }
 }
 

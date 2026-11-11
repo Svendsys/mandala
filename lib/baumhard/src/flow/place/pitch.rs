@@ -72,6 +72,32 @@ const SLACK_TOLERANCE: f32 = 1e-3;
 /// a straight path it moves by all of it.
 const STALLED: f32 = 1e-3;
 
+/// What the last [`place_pitched`] on this thread solved its slack to,
+/// for the count of inks it laid. Test-only: what holds the solve's stops
+/// (#333).
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Solved {
+    /// The count of inks laid.
+    pub count: usize,
+    /// The slack they were laid at.
+    pub slack: f32,
+    /// How far the last ink fell short there of where its end gap puts
+    /// it.
+    pub missed: f32,
+    /// How many of the count's rounds moved the slack and the lay did not
+    /// answer ([`STALLED`]), on any path: the solve stops at the first of
+    /// them only on a path whose float steps are wider than the pattern's
+    /// gaps.
+    pub unanswered: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The last [`place_pitched`]'s [`Solved`] on this thread.
+    pub(crate) static SOLVED: std::cell::Cell<Option<Solved>> = const { std::cell::Cell::new(None) };
+}
+
 /// What a [`place_pitched`] placement keeps its glyphs clear of at one
 /// end of its path.
 #[derive(Clone, Copy, Debug)]
@@ -369,6 +395,8 @@ pub fn place_pitched(
     }
     // The slack that lays `n` inks from end gap to end gap, if any does.
     let mut centers: Vec<f32> = Vec::new();
+    #[cfg(test)]
+    let mut unanswered_for: Vec<(usize, usize)> = Vec::new();
     let mut slack_for = |n: usize| -> Option<f32> {
         if short(n, floor, &mut centers) < 0.0 {
             return None;
@@ -382,6 +410,8 @@ pub fn place_pitched(
         // A miss is met to the float steps of the path's positions.
         let tolerance = resolved(SLACK_TOLERANCE, length);
         let mut last: Option<(f32, f32)> = None;
+        #[cfg(test)]
+        let mut unanswered_rounds = 0;
         for _ in 0..SLACK_ROUNDS {
             let missed = short(n, slack, &mut centers);
             if missed.abs() < best.0 {
@@ -396,12 +426,19 @@ pub fn place_pitched(
             // resolve them — one that moved the slack and moved the lay by
             // less than a thousandth of what the move asked of its `n + 1`
             // gaps: no ink moves with the slack there (#333). On a path
-            // the floats resolve, a lay that does not answer one move may
-            // answer a later, larger one, and the solve goes on.
+            // the floats resolve, where a curve steps each ink's place by
+            // the canvas's float steps, a lay that does not answer one
+            // move may answer the next, which lands across a step the
+            // first did not reach, and the solve goes on
+            // (`test_flow_pitched_solves_past_a_round_the_lay_does_not_answer`).
             if let Some((was_slack, was_missed)) = last {
                 let moved = slack - was_slack;
                 let unresolved = resolved(0.0, length) > end_gap;
                 let unanswered = (missed - was_missed).abs() < STALLED * ((n + 1) as f32 * moved).abs();
+                #[cfg(test)]
+                {
+                    unanswered_rounds += usize::from(unanswered);
+                }
                 if moved == 0.0 || (unresolved && unanswered) {
                     break;
                 }
@@ -426,6 +463,8 @@ pub fn place_pitched(
                 lo + 2.0 * (lo - floor).max(1.0)
             };
         }
+        #[cfg(test)]
+        unanswered_for.push((n, unanswered_rounds));
         Some(best.1)
     };
     let best = [fitted, fitted + 1]
@@ -436,7 +475,19 @@ pub fn place_pitched(
     let Some((n, slack)) = best else {
         return PlacedRun::default();
     };
-    short(n, slack, &mut centers);
+    let _missed = short(n, slack, &mut centers);
+    #[cfg(test)]
+    SOLVED.with(|solved| {
+        solved.set(Some(Solved {
+            count: n,
+            slack,
+            missed: _missed,
+            unanswered: unanswered_for
+                .iter()
+                .find(|(count, _)| *count == n)
+                .map_or(0, |&(_, k)| k),
+        }))
+    });
     let baseline = run.baseline();
     let mut glyphs = Vec::with_capacity(n * run.glyphs.len().min(4));
     for (k, &s) in centers.iter().enumerate() {

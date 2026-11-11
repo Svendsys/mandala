@@ -1730,14 +1730,19 @@ pub(crate) fn check_frame_placement(
     let laid: Vec<crate::font::LayoutGlyph> = run.layout_glyphs().cloned().collect();
     let mut known: Vec<Option<bool>> = vec![None; run.glyphs.len()];
     // Whether glyph `k` draws: a space never; else the rasterizer's
-    // answer at 16 pixels per em, as `raster_box` explains.
+    // answer, asked at the sizes the engine asks it at (`fonts::draws_at`:
+    // 16 pixels per em, then 256 where nothing is drawn at 16), so that
+    // "draws" means here what it means to the engine. Asked directly, not
+    // through `fonts::glyph_draws`' cache; at those sizes, not the
+    // glyph's own, because an image at a frame's largest size would be
+    // thousands of pixels square.
     let mut draws = |k: usize, fs: &mut FontSystemLease| -> bool {
         if run.glyphs[k].blank {
             return false;
         }
         *known[k].get_or_insert_with(|| {
             laid.get(k)
-                .is_none_or(|laid| raster_box(fs.fonts(), laid, 16.0).is_some())
+                .is_none_or(|laid| fonts::draws_at(|size| raster_box(fs.fonts(), laid, size).is_some()))
         })
     };
     let n = run.glyphs.len();
