@@ -1045,20 +1045,44 @@ fn test_a_spread_across_the_canvas_places_every_glyph() {
 /// the input lays the cap, and is an ornament (no `STEPS_TAKEN` for most
 /// glyphs, which an ornament takes by its ink). Control: with either
 /// stop removed, the lookups pass their bound.
+///
+/// Since #333 a face draws one of its glyphs with no outline, a host's
+/// color emoji, which is inked as its box, and the whole-glyph placement
+/// the replay lays beside the walk (`place_pitched`) lays it 65,536 times
+/// along the same path, whose floats cannot see its slack either: its
+/// solve stops by its third round there, and it is held to a bound of
+/// its own, the walk's count leaving it out. Control: the slack's rounds
+/// without their stops, the loop before #333, red: "the whole-glyph
+/// placement: 8181179 path lookups for 65536 glyphs placed, at most
+/// 3145788".
 #[test]
 fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solving_them() {
     use crate::flow::path::PATH_LOOKUPS;
     use crate::flow::place::{GLYPHS_PLACED, MAX_RUN_ON_STEPS, STEPS_TAKEN};
     use crate::flow::MAX_PLACED_GLYPHS;
     let found = include_bytes!("fuzz_findings/repeat_of_an_ornament_along_a_cubic_its_floats_cannot_resolve");
-    for counter in [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS] {
+    use crate::flow::place::pitch::{REFINE, SLACK_ROUNDS};
+    use crate::flow::tests::flow_fuzz::{PITCHED_GLYPHS, PITCHED_LOOKUPS};
+    let counters = [
+        &STEPS_TAKEN,
+        &GLYPHS_PLACED,
+        &PATH_LOOKUPS,
+        &PITCHED_LOOKUPS,
+        &PITCHED_GLYPHS,
+    ];
+    for counter in counters {
         counter.with(|count| count.set(0));
     }
     if let Err(why) = check_flow_structured_as_found(found) {
         panic!("the fuzzer's input: {why}");
     }
-    let [steps, placed, lookups] =
-        [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS].map(|counter| counter.with(std::cell::Cell::get));
+    let [steps, placed, lookups, pitched, pitched_glyphs] =
+        counters.map(|counter| counter.with(std::cell::Cell::get));
+    // The walk's: the whole-glyph placement the replay lays beside it is
+    // a placement of its own, held to its own bound below (#296), and
+    // lays this input's glyphs too where a face draws one of them with no
+    // outline, a bitmap, and inks it as its box (#333).
+    let lookups = lookups - pitched;
     assert!(
         placed + 64 > MAX_PLACED_GLYPHS && steps < placed / 4 + MAX_RUN_ON_STEPS,
         "precondition: the input lays the cap of an ornament ({placed} glyphs, {steps} box steps)"
@@ -1068,6 +1092,20 @@ fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solvi
     assert!(
         lookups <= 24 * placed + 8 * MAX_RUN_ON_STEPS,
         "{lookups} path lookups for {placed} glyphs placed"
+    );
+    // The whole-glyph placement stops solving its slack too (#333): an
+    // ink is placed in `4 + REFINE` lookups a lay at most — its point, its
+    // direction, its guess, and its gap's first measure and refinements —
+    // and it is laid once to count the inks, once at the least slack, in
+    // the slack's rounds, which stop by the third where the floats cannot
+    // see the slack (the first move answered, the second not), and once
+    // as kept; each lay's two ends a solve of `1 + REFINE` measures each.
+    let rounds = SLACK_ROUNDS.min(3);
+    let lays = 1 + 1 + rounds + 1;
+    let bound = (4 + REFINE) * lays * pitched_glyphs + 2 * (1 + REFINE) * lays;
+    assert!(
+        pitched_glyphs > 0 && pitched <= bound,
+        "the whole-glyph placement: {pitched} path lookups for {pitched_glyphs} glyphs placed, at most {bound}"
     );
 }
 
@@ -2560,4 +2598,69 @@ fn test_flow_structured_finding_a_letter_owed_nothing_is_held_touching_or_just_p
             panic!("{what}: {why}");
         }
     }
+}
+
+/// The frame placement property's excuse (#333, review 5834654837): a
+/// glyph the rasterizer draws nothing for may be left unplaced only where
+/// its line lays no ink round it. In a frame of `aaaa`, U+10FFFD, `aaaa`,
+/// laid `Spread`, it is placed between two inks of its line, and the
+/// placement holds; with its `PlacedGlyph` dropped, the property finds it
+/// ("glyph 4 was not placed"). In a frame whose second line is U+10FFFD
+/// three times and nothing that draws, the line is not laid, and the
+/// placement holds with its glyphs unplaced. Precondition: U+10FFFD draws
+/// nothing here, and its line's glyphs are not placed.
+///
+/// Control: the excuse as it was, every glyph that draws nothing
+/// excused wherever it is, red: the dropped glyph passes ("the dropped
+/// glyph between two inks is found").
+#[test]
+fn test_the_frame_placement_property_excuses_only_a_glyph_its_line_lays_no_ink_round() {
+    use crate::document::values::{FitMode, Percent, Shape};
+    use crate::flow::tests::flow_fuzz::check_frame_placement;
+    use crate::flow::tests::halves_tests::frame_with;
+    use crate::flow::{outline, Rect, RingLayout};
+    let shape = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(400.0, 200.0)),
+        Shape::Rectangle {
+            radius: Percent::new(30),
+        },
+    );
+    let lay = |text: &str| frame_with(text, 24.0, &shape, &FitMode::Spread, &RingLayout::whole(), true);
+    // Laid first: a frame's lay takes the font lock, which the checks
+    // below hold.
+    let (run, placed, trace) = lay("aaaa\u{10FFFD}aaaa");
+    let (run2, placed2, trace2) = lay("aaaa aaaa\n\u{10FFFD}\u{10FFFD}\u{10FFFD}");
+    let undrawn = run
+        .glyphs
+        .iter()
+        .position(|g| g.bytes.start == 4)
+        .expect("U+10FFFD is shaped");
+    let laid = run.layout_glyphs().nth(undrawn).cloned().expect("it is laid out");
+    let mut lease = crate::font::fonts::FontSystemLease::new("flow fuzz tests");
+    let draws = crate::flow::tests::support::raster_box(lease.fonts(), &laid, 16.0).is_some();
+    let held = check_frame_placement(&run, &placed, (true, &trace), "between inks", &mut lease);
+    let mut dropped = placed.clone();
+    dropped.glyphs.retain(|g| g.glyph as usize != undrawn);
+    let found = check_frame_placement(&run, &dropped, (true, &trace), "between inks", &mut lease);
+    let lone: Vec<usize> = (0..run2.glyphs.len())
+        .filter(|&k| !run2.glyphs[k].blank && run2.glyphs[k].bytes.start >= 10)
+        .collect();
+    let unplaced = lone
+        .iter()
+        .all(|&k| placed2.glyphs.iter().all(|g| g.glyph as usize != k));
+    let lone_held = check_frame_placement(&run2, &placed2, (true, &trace2), "a line of nothing", &mut lease);
+    drop(lease);
+    assert!(!draws, "precondition: U+10FFFD draws nothing here");
+    assert_eq!(held, Ok(()), "the placement holds");
+    assert!(
+        found
+            .as_ref()
+            .is_err_and(|why| why.contains(&format!("glyph {undrawn} was not placed"))),
+        "the dropped glyph between two inks is found: {found:?}"
+    );
+    assert!(
+        lone.len() == 3 && unplaced,
+        "precondition: the second line's three glyphs are not placed ({lone:?})"
+    );
+    assert_eq!(lone_held, Ok(()), "a line of nothing that draws is not owed");
 }

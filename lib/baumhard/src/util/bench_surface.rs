@@ -363,6 +363,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
     use PlainShape::*;
     &[
         (
+            "flow/tests/pitch_tests.rs",
+            "test_flow_pitched_solves_past_a_round_the_lay_does_not_answer",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
             "flow/tests/halves_tests.rs",
             "test_flow_halves_an_ordinary_frame_lays_each_line_a_few_times",
             CannotCompileIntoTheLibrary,
@@ -653,6 +658,16 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
         (
             "flow/tests/shape_tests.rs",
             "test_flow_shaping_without_init_sees_every_compiled_face",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/shape_tests.rs",
+            "test_flow_shape_a_glyph_no_face_draws_has_no_ink",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "font/tests/shape_work_tests.rs",
+            "test_whether_a_glyph_draws_is_the_rasterizers_answer_at_every_size",
             CannotCompileIntoTheLibrary,
         ),
         (
