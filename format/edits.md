@@ -225,7 +225,7 @@ names. A handler that declines says why, and the refusal names the edit.
 
 | Handler | Lays out |
 |---|---|
-| `flower` | each node's child nodes on a circle round it, the first at the top |
+| `flower` | each node's child nodes round it at one radius, evenly spaced, clockwise: on the full circle, the first at the top, or on a fan where the circle is blocked |
 | `cascade` | each node's descendants as a top-down tree, rows below their parents |
 
 A layout places no node over another drawn node — a sibling, the

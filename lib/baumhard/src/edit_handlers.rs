@@ -183,8 +183,9 @@ const CHORD_PIECE: f32 = 256.0;
 const MAX_CHORD_PIECES: f32 = 64.0;
 
 /// `flower`: each node's child nodes round it at one radius, evenly
-/// spaced, the first at the top, clockwise — on the full circle where it
-/// is clear, else on the widest fan that is (owner, on #250). The base
+/// spaced, clockwise in sibling order — on the full circle, the first at
+/// the top, where that is clear, else on the widest fan that is, the
+/// first at its counter-clockwise end (owner, on #250). The base
 /// radius clears the parent's half-span and the largest child's, plus
 /// [`RADIAL_PADDING`].
 ///
