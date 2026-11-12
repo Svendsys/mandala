@@ -51,7 +51,7 @@ mod shape;
 mod span;
 
 pub use curve::{chain_point, Curve};
-pub use outline::{offset, outline, ring_offset, Outline, Rect};
+pub use outline::{offset, offset_keeping_corners, outline, ring_offset, Outline, Rect};
 /// The arc-length walk, for the projection's single-point questions — a
 /// label at a fraction of its curve, a portal end at a fraction of its
 /// outline (V1-B7) — answered by the walk placement itself uses.

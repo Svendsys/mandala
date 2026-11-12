@@ -116,7 +116,7 @@ system's fallback is one list, the same on every target
 | Family | Holds | Source | License |
 |--------|-------|--------|---------|
 | `Inter Variable` | the default face (above) | Inter 4.1 | SIL Open Font License 1.1 |
-| `Mandala Ornaments` | `∙ ◈ ✦ ❦`; the box-drawing `─ ━ │ ┃ ┄ ┆ ═ ╭ ╮ ╯ ╰`; the chrome's `❯ ▌ ▏ ▸ ∼ ⋯` (with `❮ ∽`, their mirrored forms) | DejaVu Sans 2.37 | Bitstream Vera and Arev; DejaVu's changes public domain |
+| `Mandala Ornaments` | `∙ ◈ ✦ ❦`; the box-drawing `─ ━ │ ┃ ┄ ┆ ┌ ┐ └ ┘ ┏ ┓ ┗ ┛ ═ ╭ ╮ ╯ ╰`; the chrome's `❯ ▌ ▏ ▸ ∼ ⋯` (with `❮ ∽`, their mirrored forms) | DejaVu Sans 2.37 | Bitstream Vera and Arev; DejaVu's changes public domain |
 | `Mandala Emoji` | `🌸` | Noto Color Emoji 2.047 (its color bitmap) | SIL Open Font License 1.1 |
 | `Noto Sans Hebrew`, `Noto Sans Devanagari`, `Noto Serif Tibetan`, `Noto Sans Egyptian Hieroglyphs` | their scripts | Noto | SIL Open Font License 1.1 |
 
@@ -128,7 +128,8 @@ Public Pixel, which holds Hebrew letters.
 
 The two ornament faces hold the ornaments the demo maps draw (sides,
 `repeat` rings), the built-in portal end's `◈`, the box-drawing
-characters of testament's custom sides, and the glyphs of the app's own
+characters of testament's custom sides and of the maps' directional
+rings' corners, and the glyphs of the app's own
 chrome: the console's frame, prompt, cursor, gutter and completion
 marker, the rubber band's corners and dashes, and the `body` presets —
 **and no code point the default face holds** (#228). So a letter, digit,

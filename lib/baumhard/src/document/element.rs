@@ -377,6 +377,34 @@ pub struct RingData {
     pub channel: usize,
     /// Its style.
     pub style: RingStyle,
+    /// What a `repeat` ring draws where its outline runs steep and where
+    /// it turns (#324): its own, never inherited, as its spans are. `None`
+    /// when neither is set, the one spelling of that, so that a ring of
+    /// its spans alone costs a pointer and not its texts' room.
+    pub directional: Option<Box<DirectionalGlyphs>>,
+}
+
+/// A `repeat` ring's glyphs by direction (#324): its spans run where its
+/// outline is level, `vertical` where it is steep, and a corner where it
+/// turns from one to the other (`format/schema.md` "Directional ring").
+/// Both unset is a ring of its spans alone. Each text is an ornament's,
+/// held to [`check_ornament`](crate::document::bounds::check_ornament).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DirectionalGlyphs {
+    /// The text laid where the outline runs steep: unset, its spans are.
+    pub vertical: Option<String>,
+    /// The texts laid at the outline's four turns, clockwise from the top
+    /// left: top left, top right, bottom right, bottom left. Unset, the
+    /// runs meet with no corner between them.
+    pub corners: Option<[String; 4]>,
+}
+
+impl DirectionalGlyphs {
+    /// Whether the ring lays any glyph by direction: a `vertical` or
+    /// `corners` set. O(1).
+    pub fn is_set(&self) -> bool {
+        self.vertical.is_some() || self.corners.is_some()
+    }
 }
 
 /// What a connector and a link share: the path between two nodes.

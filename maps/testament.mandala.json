@@ -2316,7 +2316,7 @@
       "min_size": [697.84, 110.0],
       "palette": "rainbow",
       "sections": [{"spans": [{"text": "Border Toolkit", "size": 28.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(creative-toolkit demo: every glyph is authorable)", "size": 28.0, "color": "#ffffff"}]}],
-      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "•"}]}]}
+      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "━"}], "vertical": "┃", "corners": ["◆", "◆", "◆", "◆"]}]}
     },
     {
       "id": 245,
@@ -2351,7 +2351,7 @@
       "position": [-113.12, 12360.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Custom corners", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n◆ ◇ ◇ ◆", "size": 20.0, "color": "#ffffff"}]}],
-      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "·"}]}]},
+      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "─"}], "vertical": "│", "corners": ["◆", "◇", "◆", "◇"]}]},
       "connector": {"color": "#cf2341"}
     },
     {
@@ -2360,7 +2360,7 @@
       "position": [326.88, 12360.0],
       "min_size": [360.0, 110.0],
       "sections": [{"spans": [{"text": "Palette-cycled", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\nrainbow per glyph", "size": 20.0, "color": "#ffffff"}]}],
-      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "·"}]}]},
+      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "─"}], "vertical": "│", "corners": ["┌", "┐", "┘", "└"]}]},
       "connector": {"color": "#cf2341"}
     },
     {
@@ -2378,7 +2378,7 @@
       "position": [1206.88, 12360.0],
       "min_size": [378.29, 110.0],
       "sections": [{"spans": [{"text": "Heavy chars + diamonds", "size": 20.0, "color": "#ffffff", "weight": "bold"}, {"text": "\npreset=custom, sides=━┃, corners=◆", "size": 20.0, "color": "#ffffff"}]}],
-      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "•"}]}]},
+      "frame": {"inset": 9.0, "rings": [{"fit": "repeat", "size": 0.16363636, "spans": [{"text": "━"}], "vertical": "┃", "corners": ["◆", "◆", "◆", "◆"]}]},
       "connector": {"color": "#cf2341"}
     },
     {
@@ -2387,7 +2387,7 @@
       "position": [1665.16, 12360.0],
       "min_size": [465.8, 270.0],
       "sections": [{"min_size": [420.0, 90.0], "spans": [{"text": "Per-section frame: atomic", "size": 18.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(enter NodeEdit to see frames)", "size": 18.0, "color": "#ffffff"}]}, {"offset": [0.0, 90.0], "min_size": [420.0, 90.0], "spans": [{"text": "Per-section frame: double", "size": 18.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(enter NodeEdit to see frame)", "size": 18.0, "color": "#ffffff"}]}, {"offset": [0.0, 180.0], "min_size": [420.0, 90.0], "spans": [{"text": "Per-section frame: rounded + summer palette", "size": 18.0, "color": "#ffffff", "weight": "bold"}, {"text": "\n(enter NodeEdit to see frame)", "size": 18.0, "color": "#ffffff"}]}],
-      "frame": {"inset": 8.0, "rings": [{"fit": "repeat", "size": 0.05925926, "spans": [{"text": "·"}]}]},
+      "frame": {"inset": 8.0, "rings": [{"fit": "repeat", "size": 0.05925926, "spans": [{"text": "─"}], "vertical": "│", "corners": ["┌", "┐", "┘", "└"]}]},
       "connector": {"color": "#cf2341"}
     }
   ]

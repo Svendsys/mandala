@@ -34,6 +34,7 @@ use baumhard::engine::tests::routing_tests::*;
 use baumhard::engine::tests::sorted_tests::*;
 use baumhard::engine::tests::structure_tests::*;
 use baumhard::engine::tests::walker_tests::*;
+use baumhard::flow::tests::directional_tests::*;
 use baumhard::flow::tests::fit_tests::*;
 use baumhard::flow::tests::halves_tests::*;
 use baumhard::flow::tests::lines_tests::*;
@@ -2192,6 +2193,30 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_path_measures_past_the_root_of_the_largest_f32", |b| {
         b.iter(do_flow_path_measures_past_the_root_of_the_largest_f32)
     });
+    c.bench_function("flow_directional_lays_a_box", |b| {
+        b.iter(do_flow_directional_lays_a_box)
+    });
+    c.bench_function("flow_directional_chooses_by_the_way_the_outline_runs", |b| {
+        b.iter(do_flow_directional_chooses_by_the_way_the_outline_runs)
+    });
+    c.bench_function("flow_directional_changes_its_choice_four_times_round", |b| {
+        b.iter(do_flow_directional_changes_its_choice_four_times_round)
+    });
+    c.bench_function(
+        "flow_directional_hysteresis_holds_a_curve_to_three_lines_and_a_box_to_none",
+        |b| b.iter(do_flow_directional_hysteresis_holds_a_curve_to_three_lines_and_a_box_to_none),
+    );
+    c.bench_function(
+        "flow_directional_lays_corners_only_where_it_turns_as_a_box",
+        |b| b.iter(do_flow_directional_lays_corners_only_where_it_turns_as_a_box),
+    );
+    c.bench_function("flow_directional_spaces_each_run_evenly_and_never_apart", |b| {
+        b.iter(do_flow_directional_spaces_each_run_evenly_and_never_apart)
+    });
+    c.bench_function(
+        "flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing",
+        |b| b.iter(do_flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing),
+    );
     c.bench_function("flow_pitched_holds_the_nearer_whole_count_evenly", |b| {
         b.iter(do_flow_pitched_holds_the_nearer_whole_count_evenly)
     });

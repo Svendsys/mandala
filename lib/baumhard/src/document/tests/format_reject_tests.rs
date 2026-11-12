@@ -1793,6 +1793,72 @@ fn test_a_frame_rings_layout_is_held_to_its_bounds() {
 }
 
 #[test]
+fn test_a_rings_glyphs_by_direction_are_held_to_an_ornaments_bounds() {
+    // #324: a ring's `vertical` and each of its four `corners` must have
+    // something to draw and be at most 256 bytes long, as sides must, at
+    // its own path; the corners are four, no more and no fewer, and
+    // neither key is a frame's or a default's.
+    rejects_bound(
+        &map_of(r#","frame":{"rings":[{"vertical":" "}]}"#),
+        "nodes[0].frame.rings[0].vertical",
+        BoundError::EmptyText,
+    );
+    rejects_bound(
+        &map_of(r#","frame":{"rings":[{"corners":["┌","\u200b","┘","└"]}]}"#),
+        "nodes[0].frame.rings[0].corners[1]",
+        BoundError::EmptyText,
+    );
+    rejects_bound(
+        &map_of(&format!(
+            r#","frame":{{"rings":[{{"corners":["┌","┐","┘","{}"]}}]}}"#,
+            "x".repeat(257)
+        )),
+        "nodes[0].frame.rings[0].corners[3]",
+        BoundError::TooLong { len: 257, max: 256 },
+    );
+    rejects_at(
+        &map_of(r#","frame":{"rings":[{"corners":["┌","┐","┘"]}]}"#),
+        "nodes[0].frame.rings[0].corners",
+    );
+    rejects_at(
+        &map_of(r#","frame":{"rings":[{"corners":["┌","┐","┘","└","┌"]}]}"#),
+        "nodes[0].frame.rings[0].corners",
+    );
+    rejects_as_invalid(
+        &map_of(r#","frame":{"rings":[{"vertical":null}]}"#),
+        "nodes[0].frame.rings[0].vertical",
+    );
+    rejects(
+        &map_of(r#","frame":{"vertical":"│"}"#),
+        "nodes[0].frame.vertical",
+        LoadErrorKind::UnknownKey {
+            key: "vertical".to_string(),
+        },
+    );
+    rejects(
+        &map_with(r#","defaults":{"ring":{"corners":["┌","┐","┘","└"]}}"#, ""),
+        "defaults.ring.corners",
+        LoadErrorKind::UnknownKey {
+            key: "corners".to_string(),
+        },
+    );
+    // Each at its bound is read, and saved back as written.
+    let json = map_of(&format!(
+        r#","frame":{{"rings":[{{"fit":"repeat","spans":[{{"text":"─"}}],"vertical":"{}","corners":["┌","┐","┘","└"]}}]}}"#,
+        "x".repeat(256)
+    ));
+    let doc = load(&json).expect("a ring's glyphs by direction at their bound load");
+    let saved = crate::document::format::save(&doc).expect("saves");
+    assert!(
+        saved.contains(&format!(
+            r#""vertical": "{}", "corners": ["┌", "┐", "┘", "└"]"#,
+            "x".repeat(256)
+        )),
+        "saved as written: {saved}"
+    );
+}
+
+#[test]
 fn test_the_fill_keys_are_refused_as_unknown() {
     // V1-B12: a map has one background, and nothing in it has a fill.
     // Each key that held one is refused as unknown, like any other key

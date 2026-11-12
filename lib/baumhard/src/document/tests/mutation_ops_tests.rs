@@ -14,10 +14,10 @@
 
 use crate::document::bounds::{MAX_CANVAS_COORD, MAX_FONT_SIZE_PT, MIN_FONT_SIZE_PT, MIN_REL_SIZE};
 use crate::document::element::{
-    CapData, ConnectorData, DefaultsData, DocElement, FlowStyle, FrameData, FrameStyle, LabelData,
-    LabelStyle, LinkData, MapData, NodeData, NodeStyle, PaletteData, PathData, PortalEndData, PortalEndStyle,
-    RingData, RingLayoutStyle, RingStyle, SectionData, SpanData, TextStyle, ThemeData, ThemeVariant,
-    Triggers,
+    CapData, ConnectorData, DefaultsData, DirectionalGlyphs, DocElement, FlowStyle, FrameData, FrameStyle,
+    LabelData, LabelStyle, LinkData, MapData, NodeData, NodeStyle, PaletteData, PathData, PortalEndData,
+    PortalEndStyle, RingData, RingLayoutStyle, RingStyle, SectionData, SpanData, TextStyle, ThemeData,
+    ThemeVariant, Triggers,
 };
 use crate::document::ids::NodeIdent;
 use crate::document::mutation::inherited::{inherited_seed, DocInherited};
@@ -136,6 +136,10 @@ fn rich_ring() -> DocElement {
             },
             text: rich_text(FontSize::Rel(0.07)),
         },
+        directional: Some(Box::new(DirectionalGlyphs {
+            vertical: Some("│".into()),
+            corners: Some(["┌".into(), "┐".into(), "┘".into(), "└".into()]),
+        })),
     })
 }
 
@@ -671,6 +675,71 @@ pub fn do_document_frame_and_ring_ops_write_their_field() {
         DocMutation::Ring(RingOp::Text(TextOp::SetSize(Some(FontSize::Rel(0.1))))),
         &s,
         |e| ring(e).style.text.size = Some(FontSize::Rel(0.1)),
+    );
+    case(
+        "SetVertical",
+        &r,
+        DocMutation::Ring(RingOp::SetVertical(Some("┃".into()))),
+        &s,
+        |e| {
+            ring(e).directional = Some(Box::new(DirectionalGlyphs {
+                vertical: Some("┃".into()),
+                corners: Some(["┌".into(), "┐".into(), "┘".into(), "└".into()]),
+            }))
+        },
+    );
+    case(
+        "SetVertical none",
+        &r,
+        DocMutation::Ring(RingOp::SetVertical(None)),
+        &s,
+        |e| {
+            ring(e).directional = Some(Box::new(DirectionalGlyphs {
+                vertical: None,
+                corners: Some(["┌".into(), "┐".into(), "┘".into(), "└".into()]),
+            }))
+        },
+    );
+    let heavy = ["┏", "┓", "┛", "┗"].map(String::from);
+    case(
+        "SetCorners",
+        &r,
+        DocMutation::Ring(RingOp::SetCorners(Some(heavy.clone()))),
+        &s,
+        |e| {
+            ring(e).directional = Some(Box::new(DirectionalGlyphs {
+                vertical: Some("│".into()),
+                corners: Some(heavy.clone()),
+            }))
+        },
+    );
+    case(
+        "SetCorners none",
+        &r,
+        DocMutation::Ring(RingOp::SetCorners(None)),
+        &s,
+        |e| {
+            ring(e).directional = Some(Box::new(DirectionalGlyphs {
+                vertical: Some("│".into()),
+                corners: None,
+            }))
+        },
+    );
+    // Neither left set is none at all, as the loader reads a ring with
+    // neither: the one spelling of it.
+    let lone = DocElement::Ring(RingData {
+        directional: Some(Box::new(DirectionalGlyphs {
+            vertical: Some("│".into()),
+            corners: None,
+        })),
+        ..RingData::default()
+    });
+    case(
+        "SetVertical, the last one",
+        &lone,
+        DocMutation::Ring(RingOp::SetVertical(None)),
+        &s,
+        |e| ring(e).directional = None,
     );
 }
 

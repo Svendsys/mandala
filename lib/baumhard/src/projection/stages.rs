@@ -23,9 +23,9 @@ use crate::document::values::{Align, FitMode, FontSize};
 use crate::engine::tree::Tree;
 use crate::flow::inked as inked_run;
 use crate::flow::{
-    chain_point, offset as offset_outline, outline, pattern_gap, place_at_point, place_on_closed,
-    place_on_open, place_pitched, shape_box, shape_run, FlowSpan, PathEnd, PlacedRun, Rect, RingLayout,
-    ShapedRun,
+    chain_point, offset as offset_outline, offset_keeping_corners, outline, pattern_gap, place_at_point,
+    place_on_closed, place_on_open, place_pitched, shape_box, shape_run, FlowSpan, PathEnd, PlacedRun, Rect,
+    RingLayout, ShapedRun,
 };
 use crate::font::fonts::FontSystemLease;
 use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
@@ -786,11 +786,13 @@ impl Projector {
         self.deps.record(Dependent::new(id, Stage::Place), &reads);
         let placed = match (frame.visible, input, text) {
             (true, Some(input), Some(text)) => {
-                let path = offset_outline(&node_outline, clearance(frame.inset, frame.gap, inner));
-                let layout = RingLayout {
-                    span: ring.span,
-                    sides: ring.sides.as_ref().map(|s| (s.content.clone(), s.color)),
-                    spacing: ring.spacing,
+                let layout = RingLayout::of(&ring);
+                let grown = clearance(frame.inset, frame.gap, inner);
+                // A directional ring keeps its outline's corners (#324).
+                let path = if layout.directional.is_set() && matches!(ring.fit, FitMode::Repeat) {
+                    offset_keeping_corners(&node_outline, grown)
+                } else {
+                    offset_outline(&node_outline, grown)
                 };
                 let params = (&path, frame.start, frame.direction, &ring.fit, &layout, &text);
                 let (replaced, placed) = memo::placed(&input, &params, || {

@@ -10,6 +10,7 @@
 
 use glam::Vec2;
 
+use crate::document::element::DirectionalGlyphs;
 use crate::document::resolve::{ResolvedRing, ResolvedSides};
 use crate::document::values::{Direction, Edge, FitMode, LineSpan, Percent, Rgba, Shape, StartPoint};
 use crate::flow::path::ArcPath;
@@ -1249,11 +1250,15 @@ fn test_flow_halves_a_resolved_ring_lays_as_it_says() {
     do_flow_halves_a_resolved_ring_lays_as_it_says();
 }
 
-/// A resolved ring's span, sides and spacing are the layout it is
-/// placed with (`RingLayout::of`): each field to its own, and no sides
-/// to none.
+/// A resolved ring's span, sides, spacing and glyphs by direction are
+/// the layout it is placed with (`RingLayout::of`): each field to its
+/// own, and no sides to none.
 pub fn do_flow_halves_a_resolved_ring_lays_as_it_says() {
     let color = Rgba::opaque(1, 2, 3);
+    let directional = DirectionalGlyphs {
+        vertical: Some("│".to_owned()),
+        corners: Some(["┌", "┐", "┘", "└"].map(str::to_owned)),
+    };
     let ring = ResolvedRing {
         fit: FitMode::Repeat,
         span: LineSpan::new(0.25).unwrap_or(LineSpan::WHOLE),
@@ -1262,6 +1267,7 @@ pub fn do_flow_halves_a_resolved_ring_lays_as_it_says() {
             color,
         }),
         spacing: 3.0,
+        directional: directional.clone(),
     };
     assert_eq!(
         RingLayout::of(&ring),
@@ -1269,6 +1275,7 @@ pub fn do_flow_halves_a_resolved_ring_lays_as_it_says() {
             span: LineSpan::new(0.25).unwrap_or(LineSpan::WHOLE),
             sides: Some(("¤".to_owned(), color)),
             spacing: 3.0,
+            directional,
         }
     );
     let bare = ResolvedRing { sides: None, ..ring };

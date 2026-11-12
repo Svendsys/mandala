@@ -218,9 +218,10 @@ fn classify(before: &DocElement, after: &DocElement) -> Touched {
             let RingData {
                 channel,
                 style: ring_style,
+                directional,
             } = a;
             Touched {
-                style: ring_style != &b.style,
+                style: ring_style != &b.style || directional != &b.directional,
                 row: channel != &b.channel,
                 ..Touched::default()
             }
