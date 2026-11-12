@@ -854,9 +854,11 @@ be at most 256 bytes long, as [sides](#sides) must.
   over the top and along the bottom, level; down the two sides, steep.
   The choice changes at those four points and nowhere else, so it
   cannot flicker along a curve. A point **turns as a box does** where
-  the outline turns through 45° or more within half a line height of
-  it: a rectangle's corner, or a rounded one's whose radius is about a
-  glyph's size.
+  a corner set there would lie on the outline: where the corner of its
+  box — its two sides run straight on to meet — lies within half a line
+  height of the outline's turn. A rectangle's corner does, and a
+  rounded one's whose radius is up to about a glyph's size; a wider
+  arc's does not, nor a flat ellipse's tip, however fast it turns.
 - **The hysteresis.** A run shorter than three line heights that ends
   on a curve — the tips of a flat ellipse, the top of a tall one — is
   no run of its own; its neighbors take it, parted where the outline
@@ -875,8 +877,9 @@ be at most 256 bytes long, as [sides](#sides) must.
   pushes each up off the top or down off the bottom by half its height;
   a steep run stacks them, measuring down, and pushes each out to the
   side by half its width; so round a curve its glyphs step as the curve
-  does. A side of a box lies straight along the outline's side. The
-  gaps at a run's ends to the corners beside it are the same gap; two
+  does. A side of a box lies straight along the outline's side, from
+  its box's corner to the next. The gaps at a run's ends to the
+  corners beside it are the same gap; two
   runs that meet with no corner each end where the outline turns,
   stepping there as the curve does. A run holds as many glyphs as leave
   no gap wider than its own, and presses what is left evenly into its
@@ -885,13 +888,17 @@ be at most 256 bytes long, as [sides](#sides) must.
   it grows out by its `inset` and `gap`: round a sharp rectangle its
   path is a sharp rectangle, so its corners are where its sides meet.
 - **What it holds.** At most as many glyphs as any placement
-  (`MAX_PLACED_GLYPHS`): its corners first, then a share for each run
-  by what it holds, so a ring held to it is still laid all round, and
-  says so.
+  (`MAX_PLACED_GLYPHS`): its four corners first, all of them or none,
+  then a share for each run by what it holds, a run that lays less
+  passing the rest on, so a ring held to it is still laid all round,
+  and says so. A side too short to keep its two corners apart sets no
+  corner.
 - `start` and `direction` do not apply: its runs are laid clockwise
   from the top left. An outline too small to hold two runs lays the
-  ring as a ring of its spans alone; spans with nothing to draw lay its
-  `vertical` text all round.
+  ring as a ring of its spans alone. Spans with nothing to draw lay its
+  `vertical` text all round, at its own gap with the ring's `spacing`;
+  with no `vertical` either, its corners alone, each set as its own
+  ink sits.
 
 ### Sides
 

@@ -17,9 +17,12 @@
 //! the ring's spans, the two sides steep, laid with its `vertical` text.
 //! The threshold is the readable rule's ([`VERTICAL_EPSILON`], 45°), and
 //! the choice cannot flicker: it changes at those four points and nowhere
-//! else. A point **turns as a box does** ([`turns_as_a_box`]) where the
-//! path turns through 45° within half a line height of it: a sharp
-//! corner, or an arc no wider than a glyph. **The hysteresis** is the
+//! else. A point **turns as a box does** ([`turns_as_a_box`]) where a
+//! corner set there would lie on the outline: where its box's corner,
+//! its two sides run straight on to meet, lies within half a line height
+//! of the outline's turn — a sharp corner, or an arc about a glyph wide;
+//! not a wider arc, nor a flat ellipse's tip, however fast it turns.
+//! **The hysteresis** is the
 //! readable rule's too ([`VERTICAL_MIN_LINES`]): a run shorter than three
 //! line heights that ends on a curve — the tips of a flat ellipse, the
 //! top of a tall one — is no run of its own; its two neighbors take it,
@@ -35,7 +38,9 @@
 //! each read where its side runs straight — so a box-drawing corner's two
 //! strokes run on in its neighbors' strokes, as the face draws them on a
 //! grid, and a `◆` sits where the face sets it on a line of `━`. Round a
-//! curve wider than that, the runs meet with no corner.
+//! curve wider than that, the runs meet with no corner. A ring with no
+//! text to run beside its corners sets each as its own ink sits; a side
+//! too short to keep its two corners apart sets none.
 //!
 //! **Each run is laid whole**, as a connector's pattern is between its
 //! ends ([`pitch`]): whole glyphs, every gap between two inks the same,
@@ -48,7 +53,8 @@
 //! inks as leave no gap looser than its own, and presses what is left
 //! evenly into its gaps. Its inks are pushed off the outline straight
 //! across the way it reads, as a line sits on its row; a side of a box
-//! lies straight along the outline's side.
+//! lies straight along the outline's side, from its box's corner to the
+//! next.
 //!
 //! **Where it is drawn.** Its path keeps the outline's corners as they
 //! are: the projection grows a sharp rectangle by the ring's offset into
@@ -56,11 +62,14 @@
 //! where its runs' strokes meet.
 //!
 //! **What it holds and costs.** At most its cap of glyphs (ruling
-//! B17.2a): its corners first, a corner the cap cannot hold left out,
-//! then each run a share of what is left by what it holds, so a ring
-//! its cap holds is still laid all round. Its work is counted and held
+//! B17.2a): its four corners first, all of them or none, then each run a
+//! share of what is left by what it holds, a run that lays less passing
+//! the rest on, and a run its share cut laid again with what the others
+//! left spare — so a ring its cap holds is still laid all round, and one
+//! its cap would hold whole is laid whole. Its work is counted and held
 //! to the ring's budget as a `repeat` ring's is ([`RingWork`], #310): its
-//! path's reads, the glyphs it sets and its shaping, scaled by the glyphs
+//! path's reads (a side of a box's included, each of its places counted
+//! as one), the glyphs it sets and its shaping, scaled by the glyphs
 //! its runs will hold. Each run's count and each round of its spacing
 //! reads the budget first, and holds back what the run's last lays take
 //! ([`LAYS_HELD`]); once it is spent no further run is laid. A ring its
@@ -76,7 +85,7 @@ use super::pitch::{glyphs_at, natural_marks, pitch, Mark, PathEnd, Track, BRACKE
 use super::ring::{ring_glyphs, steps_of, RingLoss, RingWork};
 use super::{
     cluster_ink, clusters_of, support, table_spacing, Cluster, PlacedGlyph, PlacedRun, Trace,
-    MAX_PLACED_GLYPHS, VERTICAL_EPSILON, VERTICAL_MIN_LINES,
+    MAX_PLACED_GLYPHS, VERTICAL_MIN_LINES,
 };
 use crate::document::element::DirectionalGlyphs;
 use crate::document::resolve::ResolvedText;
@@ -88,6 +97,8 @@ use crate::font::fonts::FontSystemLease;
 
 #[cfg(doc)]
 use super::pitch::place_pitched;
+#[cfg(doc)]
+use super::VERTICAL_EPSILON;
 #[cfg(doc)]
 use crate::flow::outline::offset_keeping_corners;
 
@@ -169,14 +180,14 @@ pub(crate) struct Run {
 /// than two runs are runs: an outline too small to turn on, which is laid
 /// as a ring of its spans alone.
 ///
-/// A turn is a box's ([`turns_as_a_box`]) where the path turns through 45°
-/// or more within half a line height of it. A run shorter than
+/// A turn is a box's ([`turns_as_a_box`]) where a corner set there would
+/// lie on the outline. A run shorter than
 /// [`VERTICAL_MIN_LINES`] line heights is a run all the same where both
 /// its ends are: a short side of a box is a side, and a sharp turn cannot
 /// flicker. One that ends on a curve is not.
 ///
-/// Cost: eight support points located on the path, and two path lookups
-/// a turn.
+/// Cost: eight support points located on the path, and three support
+/// points a turn.
 pub(crate) fn runs(arc: &ArcPath, outline: &Outline, line_height: f32, corners: bool) -> Option<Vec<Run>> {
     let length = arc.length();
     if !length.is_finite() || length <= 0.0 {
@@ -198,7 +209,7 @@ pub(crate) fn runs(arc: &ArcPath, outline: &Outline, line_height: f32, corners: 
     if !(0..4).all(|i| turns[i] <= ends(i) && faces[i].is_finite()) {
         return None;
     }
-    let boxed: [bool; 4] = std::array::from_fn(|i| turns_as_a_box(arc, base + turns[i], line_height));
+    let boxed: [bool; 4] = std::array::from_fn(|i| turns_as_a_box(outline, i, line_height));
     let long: [bool; 4] = std::array::from_fn(|i| {
         ends(i) - turns[i] >= VERTICAL_MIN_LINES * line_height || (boxed[i] && boxed[(i + 1) % 4])
     });
@@ -259,15 +270,29 @@ pub(crate) fn runs(arc: &ArcPath, outline: &Outline, line_height: f32, corners: 
     )
 }
 
-/// Whether `arc` turns as a box does at `s`: through 45° or more
-/// ([`VERTICAL_EPSILON`]) between half a line height before it and half a
-/// line height after — a sharp corner, or an arc no wider than a glyph.
-/// Round a wider curve it turns less.
+/// Where `outline`'s two sides at turn `turn` (`0` the top left,
+/// clockwise) meet, each run straight on from where it faces straight
+/// out: the corner of its box. Where a corner there is set, and where a
+/// side of a box runs to.
 ///
-/// Cost: two path lookups.
-fn turns_as_a_box(arc: &ArcPath, s: f32, line_height: f32) -> bool {
-    let reach = 0.5 * line_height;
-    arc.at(s - reach).1.dot(arc.at(s + reach).1) <= VERTICAL_EPSILON
+/// Cost: two support points.
+fn corner_point(outline: &Outline, turn: usize) -> Vec2 {
+    let t = TURNS[turn];
+    Vec2::new(
+        outline.support(Vec2::new(t.x, 0.0)).x,
+        outline.support(Vec2::new(0.0, t.y)).y,
+    )
+}
+
+/// Whether `outline` turns as a box does at turn `turn`: where its box's
+/// corner there ([`corner_point`]) lies within half a line height of the
+/// outline, at its turn — a sharp corner, or one rounded about a glyph
+/// wide. Round a wider curve, or at the tip of a flat ellipse, a corner
+/// set there would lie off the outline.
+///
+/// Cost: three support points.
+fn turns_as_a_box(outline: &Outline, turn: usize, line_height: f32) -> bool {
+    corner_point(outline, turn).distance(outline.support(TURNS[turn])) <= 0.5 * line_height
 }
 
 /// The way each side's run reads along the canvas, clockwise from the
@@ -291,9 +316,9 @@ struct RunPath<'p> {
     from: f32,
     length: f32,
     sign: f32,
-    /// For a side of a box, where it starts on the outline's side: it
-    /// runs straight from there, its length the side's, however its
-    /// corners are rounded, and runs on straight past either end.
+    /// For a side of a box, where it starts: its box's corner, from which
+    /// it runs straight along the outline's side to the next, however its
+    /// corners are rounded, and on straight past either end.
     line: Option<Vec2>,
     axis: Vec2,
     magnitude: f32,
@@ -309,7 +334,11 @@ impl Track for RunPath<'_> {
 
     fn at(&self, s: f32) -> (Vec2, Vec2) {
         match self.line {
-            Some(origin) => (origin + self.axis * s, self.axis),
+            Some(origin) => {
+                // Read as a path is, and counted with its reads.
+                self.arc.read();
+                (origin + self.axis * s, self.axis)
+            }
             None => self.arc.at(self.from + s),
         }
     }
@@ -341,7 +370,8 @@ impl Track for RunPath<'_> {
     }
 
     fn bracketed(&self) -> bool {
-        true
+        // A side of a box runs straight: its gaps are box to box.
+        self.line.is_none()
     }
 
     fn reach(&self, size: Vec2, _dir: Vec2) -> f32 {
@@ -515,7 +545,7 @@ fn corner(
 /// ring's own text style — and the placement; `None` where the outline is
 /// too small for two runs, which the caller lays as a ring of its spans
 /// alone, before anything is shaped. Spans with no ink lay the vertical
-/// text all round.
+/// text all round, or, with none, the corners alone.
 ///
 /// Cost: one reshape of the run, and an inking where it holds a letter;
 /// eight support points located; per run, a pitched lay
@@ -562,6 +592,7 @@ pub(super) fn place_directional(
     // The ring's gap: its spans', as a line sets two of them; spans with
     // no ink lay the vertical text all round, at its own.
     let (level, level_clusters) = if level.is_empty() {
+        steep = natural_marks(m, &parts.steep, layout.spacing);
         (steep.clone(), &parts.steep)
     } else {
         let gap = level.iter().map(|mark| mark.gap).sum::<f32>() / level.len() as f32;
@@ -629,83 +660,63 @@ pub(super) fn place_directional(
     let sign = if outward { 1.0 } else { -1.0 };
     let baseline = combined.baseline();
 
-    // Its corners first, within its cap: one the cap cannot hold is left
-    // out, and the ring is short.
-    let mut room = cap;
-    let corners: Vec<Option<Corner>> = runs
+    // Its corners first: set as its runs' texts are, or, with no text to
+    // run beside, as their own ink sits.
+    let mut corners: Vec<Option<Corner>> = runs
         .iter()
         .map(|r| {
             let turn = r.corner?;
             let unit = units[turn].as_ref()?;
-            let (level, steep) = (level.first()?, steep.first()?);
-            let count = glyph_count(unit);
-            if count > room {
-                capped = true;
-                return None;
-            }
-            room -= count;
-            Some(corner(
-                path,
-                turn,
-                unit,
-                (&level.ink, &steep.ink, steep_clusters[steep.cluster].advance),
-                sign,
-                baseline,
-                m,
-            ))
+            let beside = match (level.first(), steep.first()) {
+                (Some(level), Some(steep)) => (&level.ink, &steep.ink, steep_clusters[steep.cluster].advance),
+                _ => (&unit.ink, &unit.ink, unit.advance),
+            };
+            Some(corner(path, turn, unit, beside, sign, baseline, m))
         })
         .collect();
-    // What the cap leaves its runs: each what it needs and what the others
-    // leave spare, or, where the cap holds them, a share by what each
-    // needs, so a ring its cap holds is still laid all round.
-    let share = |k: usize, laid: usize| {
-        let share = if need <= room {
-            room - (need - needs[k])
-        } else {
-            (room as f64 * needs[k] as f64 / need as f64) as usize
-        };
-        share.min(room.saturating_sub(laid))
+    // All of them or none: none where its cap cannot hold them all, and
+    // the ring is short, or where a side too short to part them would
+    // set two over each other.
+    let set = corners.iter().flatten();
+    let mut set_glyphs: usize = set.clone().map(|c| c.glyphs.len()).sum();
+    let apart = |a: &Rect, b: &Rect| {
+        let (lo, hi) = (a.origin.max(b.origin), a.max().min(b.max()));
+        hi.x <= lo.x || hi.y <= lo.y
     };
-    let mut laid_by_runs = 0usize;
-
-    let mut placed: Vec<PlacedGlyph> = Vec::new();
-    let mut truncated = false;
+    let overlap = set
+        .clone()
+        .enumerate()
+        .any(|(i, a)| set.clone().skip(i + 1).any(|b| !apart(&a.ink, &b.ink)));
+    if set_glyphs > cap || overlap {
+        capped |= set_glyphs > cap;
+        corners.iter_mut().for_each(|c| *c = None);
+        set_glyphs = 0;
+    }
+    work.set(set_glyphs);
+    let room = cap - set_glyphs;
+    // What the cap leaves its runs: each a share of what is left by what
+    // it needs against what the runs still to be laid need, so a run that
+    // lays less than its share passes the rest on, and a ring its cap
+    // holds is still laid all round.
+    let share = |k: usize, laid: usize| {
+        let left = room.saturating_sub(laid);
+        let rest: usize = needs[k..].iter().copied().fold(0, usize::saturating_add);
+        if rest == 0 {
+            return left;
+        }
+        ((left as f64 * needs[k] as f64 / rest as f64).ceil() as usize).min(left)
+    };
     let count = runs.len();
-    for (k, r) in runs.iter().enumerate() {
-        if let Some(c) = &corners[k] {
-            placed.extend_from_slice(&c.glyphs);
-            work.set(c.glyphs.len());
-        }
+    // Lay run `k` at most `inks` inks: its glyphs, and whether its cap
+    // cut it. `None` where it lays none.
+    let lay_run = |k: usize, inks: usize| -> Option<(Vec<PlacedGlyph>, bool)> {
+        let r = &runs[k];
         let (marks, clusters) = of(r.kind);
-        // A ring its budget stopped lays no run after the one it stopped.
-        if marks.is_empty() || stopped.get() {
-            continue;
-        }
-        let inks = share(k, laid_by_runs) / widest(clusters);
-        if inks == 0 {
-            capped = true;
-            continue;
-        }
-        // An end with nothing beside it is measured to where the run
-        // ends, along the way it reads.
-        let point = |s: f32| Rect::new(arc.at(s).0, Vec2::ZERO);
-        let start_inks = [corners[k].as_ref().map_or_else(|| point(r.from), |c| c.ink)];
-        let next = (k + 1) % count;
-        let end_inks = [corners[next]
-            .as_ref()
-            .map_or_else(|| point(r.from + r.length), |c| c.ink)];
-        let ends = [&start_inks[..], &end_inks[..]].map(|inks| PathEnd {
-            inks,
-            back: 0.0,
-            hold: 0.0,
-        });
-        // A side of a box: the stretch of the outline's side between the
-        // run's ends, each brought straight across onto it.
+        // A side of a box: the outline's side from its box's corner to the
+        // next.
         let axis = AXES[r.side];
         let line = r.straight.then(|| {
-            let face = FACES[r.side];
-            let onto = |p: Vec2| p + face * (face.dot(path.support(face)) - face.dot(p));
-            let (from, to) = (onto(arc.at(r.from).0), onto(arc.at(r.from + r.length).0));
+            let (from, to) = (corner_point(path, r.side), corner_point(path, (r.side + 1) % 4));
             (from, axis.dot(to - from))
         });
         let length = line.map_or(r.length, |(_, length)| length);
@@ -719,6 +730,17 @@ pub(super) fn place_directional(
             magnitude,
             inside: eps.min(0.5 * length),
         };
+        // An end with nothing beside it is measured to where the run
+        // ends, along the way it reads.
+        let point = |s: f32| Rect::new(track.at(s).0, Vec2::ZERO);
+        let start_inks = [corners[k].as_ref().map_or_else(|| point(0.0), |c| c.ink)];
+        let next = (k + 1) % count;
+        let end_inks = [corners[next].as_ref().map_or_else(|| point(length), |c| c.ink)];
+        let ends = [&start_inks[..], &end_inks[..]].map(|inks| PathEnd {
+            inks,
+            back: 0.0,
+            hold: 0.0,
+        });
         let go = |inks: usize| {
             let held = LAYS_HELD.saturating_mul(lay_steps(inks));
             let ok = work.spent(&arc).saturating_add(held) < budget;
@@ -732,10 +754,7 @@ pub(super) fn place_directional(
             .iter()
             .map(|mark| -(mark.size().dot(track.axis).abs() + mark.gap))
             .fold(0.0, f32::min);
-        let Some(pitched) = pitch(&track, marks, inks, floor, ends, &go) else {
-            continue;
-        };
-        truncated |= pitched.truncated;
+        let pitched = pitch(&track, marks, inks, floor, ends, &go)?;
         let centers: Vec<(usize, Vec2)> = pitched
             .centers
             .iter()
@@ -747,7 +766,48 @@ pub(super) fn place_directional(
             .collect();
         let laid = glyphs_at(m, clusters, marks, &centers);
         work.set(laid.len());
-        laid_by_runs += laid.len();
+        Some((laid, pitched.truncated))
+    };
+    let mut by_run: Vec<(Vec<PlacedGlyph>, bool)> = vec![(Vec::new(), false); count];
+    let mut laid_by_runs = 0usize;
+    for k in 0..count {
+        let (marks, clusters) = of(runs[k].kind);
+        // A ring its budget stopped lays no run after the one it stopped.
+        if marks.is_empty() || stopped.get() {
+            continue;
+        }
+        let inks = share(k, laid_by_runs) / widest(clusters);
+        if inks == 0 {
+            capped = true;
+            continue;
+        }
+        if let Some(laid) = lay_run(k, inks) {
+            laid_by_runs += laid.0.len();
+            by_run[k] = laid;
+        }
+    }
+    // What the shares left spare, to a run its share cut, laid again: a
+    // share by what each run needs can fall a glyph short of what one
+    // holds where the cap would hold the whole ring.
+    for k in 0..count {
+        let spare = room.saturating_sub(laid_by_runs);
+        let (laid, cut) = &by_run[k];
+        if !cut || spare == 0 || stopped.get() {
+            continue;
+        }
+        let had = laid.len();
+        let inks = (had + spare) / widest(of(runs[k].kind).1);
+        if let Some(again) = lay_run(k, inks) {
+            laid_by_runs = laid_by_runs - had + again.0.len();
+            by_run[k] = again;
+        }
+    }
+    let truncated = by_run.iter().any(|(_, cut)| *cut);
+    let mut placed: Vec<PlacedGlyph> = Vec::new();
+    for (corner, (laid, _)) in corners.iter().zip(by_run) {
+        if let Some(c) = corner {
+            placed.extend_from_slice(&c.glyphs);
+        }
         placed.extend(laid);
     }
     if stopped.get() || capped || truncated {

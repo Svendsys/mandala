@@ -12,6 +12,7 @@ use glam::Vec2;
 
 use crate::document::element::DirectionalGlyphs;
 use crate::document::values::{Direction, Edge, FitMode, StartPoint};
+use crate::flow::path::ArcPath;
 use crate::flow::place::{place_on_closed_traced, Trace};
 use crate::flow::tests::support::{real_run, style, with_fonts};
 use crate::flow::{
@@ -92,6 +93,69 @@ fn lay_at(
         (replaced.unwrap_or(input), placed)
     });
     (parts(&run, &placed, set, with_corners), trace, run)
+}
+
+/// A ring of `spans` laid round `path` with `layout`, at [`POINTS`]: the
+/// run the placement refers to, and the placement.
+fn lay_layout(spans: &str, layout: &RingLayout, path: &Outline) -> (ShapedRun, PlacedRun) {
+    let text = style(POINTS);
+    with_fonts(|fs| {
+        let input = real_run(spans, &text, fs);
+        let (replaced, placed) = place_on_closed_traced(
+            &input,
+            path,
+            StartPoint {
+                edge: Edge::Top,
+                at: 0.0,
+            },
+            Direction::Clockwise,
+            &FitMode::Repeat,
+            layout,
+            true,
+            &text,
+            fs,
+            None,
+        );
+        (replaced.unwrap_or(input), placed)
+    })
+}
+
+/// Flat ellipses, grown by 6 as a ring's inset grows them: wide and tall,
+/// so flat that round their tips they turn through 45° within a line.
+fn flat_ellipses() -> [(&'static str, Outline); 3] {
+    [(300.0, 60.0), (600.0, 24.0), (60.0, 300.0)].map(|(w, h)| {
+        let rect = Rect::new(Vec2::new(-w * 0.5, -h * 0.5), Vec2::new(w, h));
+        let name = if w > h {
+            "a wide flat ellipse"
+        } else {
+            "a tall flat ellipse"
+        };
+        (name, offset_keeping_corners(&Outline::Ellipse { rect }, 6.0))
+    })
+}
+
+/// How far the ink farthest off `path` lies from it.
+fn farthest(path: &Outline, laid: &[Laid]) -> f32 {
+    let arc = ArcPath::closed(
+        path,
+        StartPoint {
+            edge: Edge::Top,
+            at: 0.0,
+        },
+        Direction::Clockwise,
+        1.0,
+    );
+    let points: Vec<Vec2> = (0..4096)
+        .map(|k| arc.at(arc.length() * k as f32 / 4096.0).0)
+        .collect();
+    laid.iter()
+        .map(|l| {
+            points
+                .iter()
+                .map(|&p| (l.ink.origin - p).max(p - l.ink.max()).max(Vec2::ZERO).length())
+                .fold(f32::INFINITY, f32::min)
+        })
+        .fold(0.0, f32::max)
 }
 
 /// Each placed glyph's part and ink.
@@ -425,12 +489,13 @@ fn test_flow_directional_hysteresis_holds_a_curve_to_three_lines_and_a_box_to_no
 /// 2.9 line heights lays no vertical glyph there, and one of 3.1 does. A
 /// side of a box is a side however short: a sharp rectangle with sides of
 /// 2.9 line heights, or of 1.6, keeps its sides' runs and its four
-/// corners, so it still reads as a box.
+/// corners, so it still reads as a box. A flat ellipse's tips, however
+/// fast they turn, are a curve's: no runs, its ring along its curve.
 pub fn do_flow_directional_hysteresis_holds_a_curve_to_three_lines_and_a_box_to_none() {
     let steep = |laid: &[Laid]| laid.iter().filter(|l| l.part == Part::Steep).count();
     let corners = |laid: &[Laid]| laid.iter().filter(|l| matches!(l.part, Part::Corner(_))).count();
-    // A radius of 30: the outline turns 37° within half a line of its
-    // 45° points, so no turn of it is a box's; its steep run is its
+    // A radius of 30: its box's corners lie 12.4 off its turns, more than
+    // half a line, so no turn of it is a box's; its steep run is its
     // straight side and a quarter of each arc, `h − 2r + πr/2`.
     let radius = 30.0;
     let arcs = std::f32::consts::FRAC_PI_2 * radius;
@@ -482,6 +547,20 @@ pub fn do_flow_directional_hysteresis_holds_a_curve_to_three_lines_and_a_box_to_
             );
         }
     }
+    for (name, path) in flat_ellipses() {
+        let (laid, _, _) = lay(LIGHT, true, &path);
+        let wide = path.rect().size.x > path.rect().size.y;
+        let across = if wide { Part::Steep } else { Part::Level };
+        assert!(laid.len() > 10, "precondition: {name} is laid");
+        assert_eq!(corners(&laid), 0, "{name}'s tips are no box's turns");
+        assert_eq!(
+            laid.iter().filter(|l| l.part == across).count(),
+            0,
+            "{name}'s tips are no runs of their own"
+        );
+        let off = farthest(&path, &laid);
+        assert!(off <= POINTS, "{name}'s ring lies along it: an ink {off} off");
+    }
 }
 
 #[test]
@@ -491,7 +570,8 @@ fn test_flow_directional_lays_corners_only_where_it_turns_as_a_box() {
 
 /// A corner is laid where the outline turns as a box does — a sharp
 /// rectangle's corners, and arcs narrower than a glyph — and not round a
-/// rounded rectangle's wider arcs or an ellipse.
+/// rounded rectangle's wider arcs or an ellipse, flat or not, where it
+/// would lie off the outline.
 pub fn do_flow_directional_lays_corners_only_where_it_turns_as_a_box() {
     for set in [LIGHT, HEAVY] {
         let [rectangle, rounded, ellipse] = outlines();
@@ -513,6 +593,17 @@ pub fn do_flow_directional_lays_corners_only_where_it_turns_as_a_box() {
             "a rounded rectangle's arcs, wider than a glyph, are no box's turn"
         );
         assert_eq!(corners(&ellipse.1), 0, "an ellipse turns round a curve");
+        for (name, path) in flat_ellipses() {
+            let (laid, _, _) = lay(set, true, &path);
+            assert!(laid.len() > 10, "precondition: {name} is laid");
+            let off = farthest(&path, &laid);
+            assert!(off <= POINTS, "no ink off {name}: {off} off");
+            assert_eq!(
+                laid.iter().filter(|l| matches!(l.part, Part::Corner(_))).count(),
+                0,
+                "{name} turns round a curve at its tips, however fast"
+            );
+        }
         let tight = offset_keeping_corners(
             &Outline::RoundedRect {
                 rect: Rect::new(Vec2::new(-150.0, -70.0), Vec2::new(300.0, 140.0)),
@@ -525,6 +616,14 @@ pub fn do_flow_directional_lays_corners_only_where_it_turns_as_a_box() {
             4,
             "corners round arcs narrower than a glyph are a box's"
         );
+        // A side too short to keep its two corners apart sets none.
+        for (w, h) in [(300.0, 10.0), (4.0, 300.0), (10.0, 10.0)] {
+            let path = Outline::RoundedRect {
+                rect: Rect::new(Vec2::new(-w * 0.5, -h * 0.5), Vec2::new(w, h)),
+                radius: 0.0,
+            };
+            assert_eq!(corners(&path), 0, "a {w} by {h} box sets no corner over another");
+        }
     }
 }
 
@@ -539,7 +638,9 @@ fn test_flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothin
 }
 
 /// Spans with nothing to draw lay the vertical text all round: over the
-/// top and along the bottom as down the sides.
+/// top and along the bottom as down the sides, its gaps with the ring's
+/// `spacing`. With no vertical text either, the corners alone are laid,
+/// one at each of the box's corners.
 pub fn do_flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing() {
     let (_, path) = &outlines()[0];
     let (laid, _, _) = lay((" ", LIGHT.1, LIGHT.2), false, path);
@@ -566,80 +667,143 @@ pub fn do_flow_directional_lays_its_vertical_all_round_where_its_spans_draw_noth
             if top { "top" } else { "bottom" }
         );
     }
+    // Its gaps take the ring's spacing.
+    let laid_at = |spacing: f32| {
+        let layout = RingLayout {
+            directional: glyphs((" ", LIGHT.1, LIGHT.2), false),
+            spacing,
+            ..RingLayout::whole()
+        };
+        lay_layout(" ", &layout, path).1.glyphs.len()
+    };
+    let (close, spaced) = (laid_at(0.0), laid_at(10.0));
+    assert!(
+        spaced * 3 < close * 2,
+        "a spacing of 10 sets the vertical text apart: {spaced} glyphs, against {close} at 0"
+    );
+    // No vertical text: the corners alone.
+    let layout = RingLayout {
+        directional: DirectionalGlyphs {
+            vertical: None,
+            corners: Some(LIGHT.2.map(str::to_owned)),
+        },
+        ..RingLayout::whole()
+    };
+    let (_, placed) = lay_layout(" ", &layout, path);
+    assert_eq!(
+        placed.glyphs.len(),
+        4,
+        "with no text to run beside, its four corners"
+    );
+    let box_corners = [
+        rect.origin,
+        Vec2::new(rect.max().x, rect.origin.y),
+        rect.max(),
+        Vec2::new(rect.origin.x, rect.max().y),
+    ];
+    let mut at: Vec<usize> = placed
+        .glyphs
+        .iter()
+        .map(|g| {
+            (0..4)
+                .min_by(|&a, &b| {
+                    g.pos
+                        .distance(box_corners[a])
+                        .total_cmp(&g.pos.distance(box_corners[b]))
+                })
+                .expect("four corners")
+        })
+        .collect();
+    at.sort_unstable();
+    assert_eq!(at, [0, 1, 2, 3], "one corner at each of the box's corners");
+    for g in &placed.glyphs {
+        let near = box_corners
+            .iter()
+            .map(|&c| g.pos.distance(c))
+            .fold(f32::INFINITY, f32::min);
+        assert!(near < 2.0 * LINE, "a corner beside its box's corner: {near} off");
+    }
 }
 
 /// Each run's gaps, along the way it reads, are one gap, none looser than
 /// the font sets two of its spans' glyph, so box-drawing strokes never
-/// part — round the rectangle, the gaps from each corner to the runs
-/// beside it the same gap; round the rounded rectangle and the ellipse,
-/// where the runs meet with no corner, the gaps from each run's ends to
-/// where the outline turns the same gap.
+/// part — and so are the gaps at its ends: to the corner beside it, round
+/// a box, sharp, rounded up to about a glyph or with short sides; to
+/// where the outline turns, round a rounded rectangle's wider arcs and
+/// an ellipse, where the runs meet with no corner.
 pub fn do_flow_directional_spaces_each_run_evenly_and_never_apart() {
+    let rect = Rect::new(Vec2::new(-150.0, -70.0), Vec2::new(300.0, 140.0));
+    let mut fixtures: Vec<(String, Outline, bool)> = outlines()
+        .into_iter()
+        .map(|(name, path)| (name.to_owned(), path, name == "rectangle"))
+        .collect();
+    // Rounded up to and past about a glyph: all but the last a box's.
+    for radius in [10.0, 16.0, 20.0, 24.0] {
+        let path = offset_keeping_corners(&Outline::RoundedRect { rect, radius }, 6.0);
+        fixtures.push((format!("radius {radius}"), path, radius <= 20.0));
+    }
+    let short = Rect::new(Vec2::new(-150.0, -20.0), Vec2::new(300.0, 40.0));
+    let short = offset_keeping_corners(
+        &Outline::RoundedRect {
+            rect: short,
+            radius: 0.0,
+        },
+        6.0,
+    );
+    fixtures.push(("short sides".to_owned(), short, true));
     for set in [LIGHT, HEAVY] {
-        for (name, path) in outlines() {
-            let (laid, _, run) = lay(set, true, &path);
+        for (name, path, boxed) in &fixtures {
+            let boxed = *boxed;
+            let (laid, _, run) = lay(set, true, path);
             let natural = natural_gap(&run);
             let center = path.rect().center();
             let runs = runs_of(&laid);
             assert!(runs.len() >= 4, "precondition: {name} is laid in runs");
+            let corners = laid.iter().filter(|l| matches!(l.part, Part::Corner(_))).count();
+            assert_eq!(corners == 4, boxed, "precondition: {name} is a box: {boxed}");
             for (k, (part, inks)) in runs.iter().enumerate() {
                 if matches!(part, Part::Corner(_)) {
                     continue;
                 }
                 let axis = axis_of(*part, &inks[0], center);
+                let (before_part, before) = &runs[(k + runs.len() - 1) % runs.len()];
+                let (after_part, after) = &runs[(k + 1) % runs.len()];
+                let (first, last) = (&inks[0], inks.last().expect("a run holds an ink"));
+                // Its ends: to a corner beside it, or, with nothing beside
+                // it, to where the outline turns, its supports at 45°
+                // either side of the way it faces.
+                let out = Vec2::new(axis.y, -axis.x);
+                let turn = |d: Vec2| Rect::new(path.support(d), Vec2::ZERO);
+                let ends = [
+                    if matches!(before_part, Part::Corner(_)) {
+                        axis_gap(axis, before.last().expect("a corner's ink"), first)
+                    } else {
+                        axis_gap(axis, &turn(out - axis), first)
+                    },
+                    if matches!(after_part, Part::Corner(_)) {
+                        axis_gap(axis, last, &after[0])
+                    } else {
+                        axis_gap(axis, last, &turn(out + axis))
+                    },
+                ];
                 let gaps: Vec<f32> = inks.windows(2).map(|w| axis_gap(axis, &w[0], &w[1])).collect();
-                let (lo, hi) = gaps
+                let all: Vec<f32> = gaps.iter().chain(&ends).copied().collect();
+                let (lo, hi) = all
                     .iter()
                     .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), &g| {
                         (lo.min(g), hi.max(g))
                     });
-                // Round a bend an ink's place is refined a fixed number of
-                // times (`pitch::REFINE`), to some hundredths of a point.
-                let even = if name == "rectangle" { 0.01 } else { 0.1 };
+                // A box's sides are straight, its places exact; round a
+                // bend an ink's place is solved to some hundredths.
+                let even = if boxed { 0.01 } else { 0.1 };
                 assert!(
-                    gaps.is_empty() || hi - lo < even,
-                    "{name}, {part:?}: a run's gaps are one gap: {gaps:?}"
+                    hi - lo < even,
+                    "{name}, {part:?}: a run's gaps, and its ends', are one gap: {gaps:?}, ends {ends:?}"
                 );
                 assert!(
-                    gaps.is_empty() || hi <= natural + 0.01,
-                    "{name}, {part:?}: no gap looser than the font's ({natural}): {gaps:?}"
+                    hi <= natural + 0.01,
+                    "{name}, {part:?}: no gap looser than the font's ({natural}): {gaps:?}, ends {ends:?}"
                 );
-                // What lies before it: a corner, at the same gap, or the
-                // last run's last ink, no looser.
-                let (before_part, before) = &runs[(k + runs.len() - 1) % runs.len()];
-                let before = before.last().expect("a run holds an ink");
-                let end = axis_gap(axis, before, &inks[0]);
-                if matches!(before_part, Part::Corner(_)) {
-                    assert!(
-                        gaps.is_empty() || (end - lo).abs() < even,
-                        "{name}, {part:?}: the corner's gap is the run's: {end} vs {gaps:?}"
-                    );
-                }
-                let (after_part, after) = &runs[(k + 1) % runs.len()];
-                if matches!(after_part, Part::Corner(_)) {
-                    let end = axis_gap(axis, inks.last().expect("an ink"), &after[0]);
-                    assert!(
-                        gaps.is_empty() || (end - lo).abs() < even,
-                        "{name}, {part:?}: the gap to the next corner is the run's: {end} vs {gaps:?}"
-                    );
-                }
-                // With nothing beside them, its ends are the run's gap from
-                // where the outline turns: its supports at 45° either side
-                // of the way it faces.
-                let out = Vec2::new(axis.y, -axis.x);
-                let turn = |d: Vec2| Rect::new(path.support(d), Vec2::ZERO);
-                let bare = [
-                    (!matches!(before_part, Part::Corner(_)))
-                        .then(|| axis_gap(axis, &turn(out - axis), &inks[0])),
-                    (!matches!(after_part, Part::Corner(_)))
-                        .then(|| axis_gap(axis, inks.last().expect("an ink"), &turn(out + axis))),
-                ];
-                for end in bare.into_iter().flatten() {
-                    assert!(
-                        gaps.is_empty() || (end - lo).abs() < even,
-                        "{name}, {part:?}: the gap to where it turns is the run's: {end} vs {gaps:?}"
-                    );
-                }
             }
         }
     }
@@ -728,6 +892,38 @@ mod held {
                 assert_eq!(checked, Ok(()), "the flow fuzzer's check of a ring (cap {cap})");
             }
         }
+        // Its corners are all set or none: a cap of 3 holds none of four.
+        let (laid, _, _, _) = capped(LIGHT, true, &big(), 3);
+        assert_eq!(
+            laid.iter().filter(|l| matches!(l.part, Part::Corner(_))).count(),
+            0,
+            "a cap that cannot hold all four corners holds none"
+        );
+        // A cap that holds the whole ring lays it whole, and it is not
+        // short: a run that lays less than its share passes the rest on.
+        let rect = big().rect();
+        for (with_corners, path) in [
+            (true, big()),
+            (false, big()),
+            (true, Outline::RoundedRect { rect, radius: 200.0 }),
+            (true, Outline::Ellipse { rect }),
+        ] {
+            let (whole, _, _) = lay(LIGHT, with_corners, &path);
+            for cap in [whole.len(), whole.len() + 1] {
+                let (laid, _, trace, checked) = capped(LIGHT, with_corners, &path, cap);
+                assert_eq!(
+                    laid.len(),
+                    whole.len(),
+                    "a cap of {cap} holds the whole ring of {} (corners {with_corners})",
+                    whole.len()
+                );
+                assert_eq!(
+                    trace.ring, None,
+                    "a ring its cap holds whole is not short (cap {cap})"
+                );
+                assert_eq!(checked, Ok(()), "the flow fuzzer's check of a ring (cap {cap})");
+            }
+        }
         // At a cap that holds every run some ink, every side is drawn.
         let (laid, _, _, _) = capped(LIGHT, false, &big(), 154);
         let center = big().rect().center();
@@ -747,10 +943,17 @@ mod held {
 
     #[test]
     fn test_flow_directional_holds_to_its_budget() {
+        // An ellipse, whose runs read its path at every ink, and a box,
+        // whose sides are straight lines, each counted as a read.
+        for path in [Outline::Ellipse { rect: big().rect() }, big()] {
+            held_to_its_budget(path);
+        }
+    }
+
+    /// A ring round `path` held to its budget: never past it once it
+    /// covers its setup, and nothing laid past its setup.
+    fn held_to_its_budget(path: Outline) {
         use crate::flow::place::halves::{BUDGET_OVERRIDE, PAST_BUDGET};
-        // An ellipse, whose runs read its path at every ink: a box's sides
-        // are straight, and read nothing.
-        let path = Outline::Ellipse { rect: big().rect() };
         let (whole, trace, _) = lay(LIGHT, true, &path);
         assert!(trace.spent <= trace.budget, "an ordinary ring within its budget");
         assert_eq!(trace.ring, None, "an ordinary ring is not stopped");

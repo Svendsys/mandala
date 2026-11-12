@@ -1611,10 +1611,12 @@ element.
     (`place_pitched`'s core, `pitch::pitch`), its gaps measured along the
     way it reads, the spans' own gap all round, never looser. A corner
     is set cell to cell with its neighbors, on the level text's baseline
-    and centered on the vertical text's box, only where the outline turns
-    through 45° within half a line height; round a wider curve the runs
-    meet with none. Its path keeps a sharp rectangle sharp
-    (`offset_keeping_corners`).
+    and centered on the vertical text's box, only where it would lie on
+    the outline: where the box's corner, its sides run straight on, lies
+    within half a line height of the outline's turn; round a wider curve,
+    or a flat ellipse's tips, the runs meet with none. A side of a box
+    runs straight from corner to corner. Its path keeps a sharp rectangle
+    sharp (`offset_keeping_corners`).
 
   Either way a placement lists its glyphs in text order; only positions
   move. One placement places at most `MAX_PLACED_GLYPHS`, 65,536
