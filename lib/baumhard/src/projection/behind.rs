@@ -16,7 +16,8 @@
 //!
 //! A node hides a path only where it is drawn wherever the path is: at an
 //! opacity above 0, in a zoom window that holds the path's
-//! ([`drawn_wherever`]; the owner's answer on #334). Zoom windows are
+//! ([`drawn_wherever`](crate::projection::behind::drawn_wherever); the
+//! owner's answer on #334). Zoom windows are
 //! evaluated when drawing (§12.4) and a run's glyphs share one window, so
 //! a glyph cannot be hidden only while the node shows, and a gap with
 //! nothing over it reads as a break in the path. A path whose two nodes
