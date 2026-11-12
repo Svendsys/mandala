@@ -858,7 +858,7 @@ be at most 256 bytes long, as [sides](#sides) must.
   box — its two sides run straight on to meet — lies within half a line
   height of the outline's turn. A rectangle's corner does, and a
   rounded one's whose radius is up to about a glyph's size; a wider
-  arc's does not, nor a flat ellipse's tip, however fast it turns.
+  arc's does not, nor an ellipse's taller than about a line.
 - **The hysteresis.** A run shorter than three line heights that ends
   on a curve — the tips of a flat ellipse, the top of a tall one — is
   no run of its own; its neighbors take it, parted where the outline
@@ -898,7 +898,7 @@ be at most 256 bytes long, as [sides](#sides) must.
   ring as a ring of its spans alone. Spans with nothing to draw lay its
   `vertical` text all round, at its own gap with the ring's `spacing`;
   with no `vertical` either, its corners alone, each set as its own
-  ink sits.
+  ink sits, where it turns as a box; round a curve, nothing.
 
 ### Sides
 

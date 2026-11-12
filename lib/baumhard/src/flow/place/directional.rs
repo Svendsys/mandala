@@ -21,7 +21,7 @@
 //! corner set there would lie on the outline: where its box's corner,
 //! its two sides run straight on to meet, lies within half a line height
 //! of the outline's turn — a sharp corner, or an arc about a glyph wide;
-//! not a wider arc, nor a flat ellipse's tip, however fast it turns.
+//! not a wider arc, nor the tip of an ellipse taller than about a line.
 //! **The hysteresis** is the
 //! readable rule's too ([`VERTICAL_MIN_LINES`]): a run shorter than three
 //! line heights that ends on a curve — the tips of a flat ellipse, the
@@ -287,8 +287,8 @@ fn corner_point(outline: &Outline, turn: usize) -> Vec2 {
 /// Whether `outline` turns as a box does at turn `turn`: where its box's
 /// corner there ([`corner_point`]) lies within half a line height of the
 /// outline, at its turn — a sharp corner, or one rounded about a glyph
-/// wide. Round a wider curve, or at the tip of a flat ellipse, a corner
-/// set there would lie off the outline.
+/// wide. Round a wider curve, or at the tip of an ellipse taller than
+/// about a line, a corner set there would lie off the outline.
 ///
 /// Cost: three support points.
 fn turns_as_a_box(outline: &Outline, turn: usize, line_height: f32) -> bool {
@@ -736,9 +736,13 @@ pub(super) fn place_directional(
         let start_inks = [corners[k].as_ref().map_or_else(|| point(0.0), |c| c.ink)];
         let next = (k + 1) % count;
         let end_inks = [corners[next].as_ref().map_or_else(|| point(length), |c| c.ink)];
+        // Its gap to what ends it, along the way it reads, is all that
+        // holds an end ink: the gaps are tight, an overlap, and round a
+        // curve that overlap sets the ink nearer the run's end along the
+        // path than half its extent.
         let ends = [&start_inks[..], &end_inks[..]].map(|inks| PathEnd {
             inks,
-            back: 0.0,
+            back: f32::INFINITY,
             hold: 0.0,
         });
         let go = |inks: usize| {
@@ -797,7 +801,9 @@ pub(super) fn place_directional(
         }
         let had = laid.len();
         let inks = (had + spare) / widest(of(runs[k].kind).1);
-        if let Some(again) = lay_run(k, inks) {
+        // Kept only where it lays more: a budget spent in it lays the
+        // count found so far, which may be fewer.
+        if let Some(again) = lay_run(k, inks).filter(|again| again.0.len() > had) {
             laid_by_runs = laid_by_runs - had + again.0.len();
             by_run[k] = again;
         }

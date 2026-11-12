@@ -1613,8 +1613,8 @@ element.
     is set cell to cell with its neighbors, on the level text's baseline
     and centered on the vertical text's box, only where it would lie on
     the outline: where the box's corner, its sides run straight on, lies
-    within half a line height of the outline's turn; round a wider curve,
-    or a flat ellipse's tips, the runs meet with none. A side of a box
+    within half a line height of the outline's turn; round a wider curve
+    the runs meet with none. A side of a box
     runs straight from corner to corner. Its path keeps a sharp rectangle
     sharp (`offset_keeping_corners`).
 

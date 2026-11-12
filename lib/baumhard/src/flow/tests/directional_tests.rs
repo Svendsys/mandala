@@ -489,8 +489,8 @@ fn test_flow_directional_hysteresis_holds_a_curve_to_three_lines_and_a_box_to_no
 /// 2.9 line heights lays no vertical glyph there, and one of 3.1 does. A
 /// side of a box is a side however short: a sharp rectangle with sides of
 /// 2.9 line heights, or of 1.6, keeps its sides' runs and its four
-/// corners, so it still reads as a box. A flat ellipse's tips, however
-/// fast they turn, are a curve's: no runs, its ring along its curve.
+/// corners, so it still reads as a box. A flat ellipse's tips, taller
+/// than a line, are a curve's: no runs, its ring along its curve.
 pub fn do_flow_directional_hysteresis_holds_a_curve_to_three_lines_and_a_box_to_none() {
     let steep = |laid: &[Laid]| laid.iter().filter(|l| l.part == Part::Steep).count();
     let corners = |laid: &[Laid]| laid.iter().filter(|l| matches!(l.part, Part::Corner(_))).count();
@@ -601,7 +601,7 @@ pub fn do_flow_directional_lays_corners_only_where_it_turns_as_a_box() {
             assert_eq!(
                 laid.iter().filter(|l| matches!(l.part, Part::Corner(_))).count(),
                 0,
-                "{name} turns round a curve at its tips, however fast"
+                "{name} turns round a curve at its tips"
             );
         }
         let tight = offset_keeping_corners(
@@ -640,7 +640,7 @@ fn test_flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothin
 /// Spans with nothing to draw lay the vertical text all round: over the
 /// top and along the bottom as down the sides, its gaps with the ring's
 /// `spacing`. With no vertical text either, the corners alone are laid,
-/// one at each of the box's corners.
+/// one at each of the box's corners, and round a curve nothing.
 pub fn do_flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing() {
     let (_, path) = &outlines()[0];
     let (laid, _, _) = lay((" ", LIGHT.1, LIGHT.2), false, path);
@@ -695,6 +695,11 @@ pub fn do_flow_directional_lays_its_vertical_all_round_where_its_spans_draw_noth
         4,
         "with no text to run beside, its four corners"
     );
+    // Round a curve it turns as no box does: nothing.
+    for (name, curve) in outlines().into_iter().skip(1) {
+        let (_, placed) = lay_layout(" ", &layout, &curve);
+        assert_eq!(placed.glyphs.len(), 0, "corners alone round the {name}: none");
+    }
     let box_corners = [
         rect.origin,
         Vec2::new(rect.max().x, rect.origin.y),
@@ -737,8 +742,9 @@ pub fn do_flow_directional_spaces_each_run_evenly_and_never_apart() {
         .into_iter()
         .map(|(name, path)| (name.to_owned(), path, name == "rectangle"))
         .collect();
-    // Rounded up to and past about a glyph: all but the last a box's.
-    for radius in [10.0, 16.0, 20.0, 24.0] {
+    // Rounded up to and past about a glyph, the first three a box's, and
+    // round wider curves whose arms run short.
+    for radius in [10.0, 16.0, 20.0, 24.0, 27.0, 29.0, 30.0, 32.0, 35.0, 40.0] {
         let path = offset_keeping_corners(&Outline::RoundedRect { rect, radius }, 6.0);
         fixtures.push((format!("radius {radius}"), path, radius <= 20.0));
     }
@@ -794,8 +800,8 @@ pub fn do_flow_directional_spaces_each_run_evenly_and_never_apart() {
                         (lo.min(g), hi.max(g))
                     });
                 // A box's sides are straight, its places exact; round a
-                // bend an ink's place is solved to some hundredths.
-                let even = if boxed { 0.01 } else { 0.1 };
+                // bend an ink's place is bisected to well under that.
+                let even = 0.01;
                 assert!(
                     hi - lo < even,
                     "{name}, {part:?}: a run's gaps, and its ends', are one gap: {gaps:?}, ends {ends:?}"
@@ -939,6 +945,39 @@ mod held {
                 "a ring its cap holds is laid on its {what} too"
             );
         }
+    }
+
+    #[test]
+    fn test_flow_directional_lays_no_less_for_more_budget() {
+        use crate::flow::place::halves::BUDGET_OVERRIDE;
+        // A cap that cuts the ring, and budgets from its setup's to its
+        // whole: a run its share cut is laid again only where it lays
+        // more, so more budget never lays fewer glyphs.
+        let path = Outline::RoundedRect {
+            rect: big().rect(),
+            radius: 200.0,
+        };
+        let (whole, trace, _) = lay(LIGHT, true, &path);
+        let cap = whole.len() - 1;
+        BUDGET_OVERRIDE.with(|b| b.set(Some(1)));
+        let (_, setup, _) = lay(LIGHT, true, &path);
+        let mut was = 0;
+        for step in 0..=40 {
+            let budget = setup.spent + (trace.spent - setup.spent) * step / 40;
+            BUDGET_OVERRIDE.with(|b| b.set(Some(budget)));
+            let (laid, _, _, _) = capped(LIGHT, true, &path, cap);
+            assert!(
+                laid.len() >= was,
+                "a budget of {budget} lays {} glyphs, fewer than the {was} a smaller one laid",
+                laid.len()
+            );
+            was = laid.len();
+        }
+        BUDGET_OVERRIDE.with(|b| b.set(None));
+        assert_eq!(
+            was, cap,
+            "precondition: the whole budget lays the ring to its cap"
+        );
     }
 
     #[test]
