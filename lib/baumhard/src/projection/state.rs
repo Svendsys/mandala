@@ -204,6 +204,13 @@ pub(crate) struct SectionState {
     pub(crate) flow: Option<BoxFlow>,
     /// Its box within its node: its offset and its shaped size.
     pub(crate) local: Option<Rect>,
+    /// The box round its laid-out glyphs' cells, from its box's top-left
+    /// ([`ShapedBox::text_box`](crate::flow::ShapedBox::text_box)), as
+    /// last shaped.
+    pub(crate) text: Option<Rect>,
+    /// That box on the canvas, as last placed: what its node's region is
+    /// made of (#332).
+    pub(crate) drawn: Option<Rect>,
 }
 
 /// What a ring keeps.

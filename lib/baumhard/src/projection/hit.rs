@@ -125,6 +125,11 @@ impl BodyIndex {
         self.bodies.insert(node, (rect, shape, large));
     }
 
+    /// `node`'s body: its rectangle and shape. O(1).
+    pub(crate) fn get(&self, node: NodeId) -> Option<(Rect, NodeShape)> {
+        self.bodies.get(&node).map(|&(rect, shape, _)| (rect, shape))
+    }
+
     /// Take `node`'s body out. O(its cells, and the bodies sharing them).
     pub(crate) fn remove(&mut self, node: NodeId) {
         let Some((rect, _, large)) = self.bodies.remove(&node) else {
@@ -248,7 +253,7 @@ impl BodyIndex {
     /// first difference. Test builds only.
     #[cfg(test)]
     pub(crate) fn same_as(&self, other: &BodyIndex) -> Result<(), String> {
-        use crate::projection::behind::bits;
+        use crate::projection::behind::{bits, first_difference};
         let bodies = |b: &BodyIndex| {
             let mut v: Vec<_> = b
                 .bodies
@@ -268,17 +273,12 @@ impl BodyIndex {
             v.sort_unstable();
             v
         };
-        if bodies(self) != bodies(other) {
-            return Err(format!(
-                "the bodies differ: kept {:?}, in full {:?}",
-                bodies(self).len(),
-                bodies(other).len()
-            ));
-        }
-        if cells(self) != cells(other) {
-            return Err("the bodies' cells differ".to_string());
-        }
-        Ok(())
+        first_difference(
+            "bodies (node, rect bits, ellipse, large)",
+            &bodies(self),
+            &bodies(other),
+        )?;
+        first_difference("bodies' cells (cell, node)", &cells(self), &cells(other))
     }
 
     /// Whether `rect` overlaps `node`'s body by its shape, inclusively.

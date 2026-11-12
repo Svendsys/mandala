@@ -75,11 +75,11 @@ pub(crate) struct PhaseWork {
     fans: FxHashSet<JunctionKey>,
     /// Phase C, once the junctions are fanned: paths to lay.
     lay: Vec<NodeId>,
-    /// Phase D, once every path is laid and every reach is final: the
-    /// elements whose geometry or reach was marked — the nodes among them
-    /// are what hides the paths' glyphs — and the paths to hide glyphs of
-    /// (#332).
-    reaches: FxHashSet<NodeId>,
+    /// Phase D, once every path is laid and every ring and section placed:
+    /// the elements whose region may have moved — whose geometry or reach
+    /// was marked, and the nodes a section of which was placed elsewhere or
+    /// dropped — and the paths to hide glyphs of (#332).
+    pub(crate) reaches: FxHashSet<NodeId>,
     hide: Vec<NodeId>,
     /// The phase running.
     phase: u8,
@@ -519,6 +519,7 @@ impl Projector {
             return;
         };
         shaped_box(&mut state.flow, key, &mut self.shapes, fonts);
+        state.text = state.flow.as_ref().and_then(|f| f.shaped.text_box());
         unit.slots[0].element = Some(id);
         unit.slots[0].spans = ids;
         self.queue(work, Dependent::new(id, Stage::Geometry));
@@ -598,7 +599,7 @@ impl Projector {
 
     /// Phase B for a section: its run at its node's position plus its
     /// offset, in its node's opacity and zoom window.
-    fn section_place(&mut self, id: NodeId, _work: &mut PhaseWork) {
+    fn section_place(&mut self, id: NodeId, work: &mut PhaseWork) {
         let Some(unit) = self.units.get(&id) else {
             return;
         };
@@ -616,7 +617,7 @@ impl Projector {
         let Some(unit) = self.units.get_mut(&id) else {
             return;
         };
-        let UnitBody::Section(state) = &unit.body else {
+        let UnitBody::Section(state) = &mut unit.body else {
             return;
         };
         let want = match (&state.flow, state.local) {
@@ -628,6 +629,16 @@ impl Projector {
             ),
             _ => None,
         };
+        // Where its text is drawn, what its node's region is made of: its
+        // node finds the paths behind it again when that moved (#332).
+        let drawn = state
+            .local
+            .zip(state.text)
+            .map(|(local, text)| Rect::new(origin + local.origin + text.origin, text.size));
+        if state.drawn != drawn {
+            state.drawn = drawn;
+            work.reaches.insert(node);
+        }
         unit.slots[0].want = want;
     }
 

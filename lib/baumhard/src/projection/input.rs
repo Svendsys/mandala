@@ -53,6 +53,10 @@ pub enum ProjectionInput {
     /// a ring's ink box changed, or a ring left; a node with no ring marks
     /// its [`Self::Geometry`] instead, which the paths read too.
     Reach(NodeId),
+    /// The region a node hides paths' glyphs by (#332): the box round its
+    /// sections' text and its rings' inks, and its outline. Marked when it
+    /// changed, once every ring is placed.
+    Region(NodeId),
 }
 
 /// The stage of a unit's projection a dependency belongs to: what has to

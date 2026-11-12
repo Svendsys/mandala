@@ -6,18 +6,21 @@
 //! A glyph of a path's body or caps is left out of its run where its box
 //! — its ink, or its advance by its line height where it has none —
 //! grown by the path's own gap meets the **region** of a visible node the
-//! path does not end at: the box round the node's drawn rectangle and its
-//! rings' inks (the reach of #296, with the rectangle always in it),
-//! shaped by its outline. So a path shown on either side of a node stops
+//! path does not end at ([`Projector::region`]): the box round what the
+//! node draws, its sections' glyph cells and its rings' inks, shaped by
+//! its outline where it draws rings — not its drawn rectangle (the
+//! owner's answer on #334). So a path shown on either side of a node stops
 //! at least one gap short of it, as it stops one gap short of its own
 //! frames. A glyph is drawn whole or not at all, never clipped. Its label
 //! and portal ends are not paths' glyphs and are not hidden.
 //!
-//! Two consequences, each pinned by a test while the owner's questions
-//! on #334 are open: a node hides whatever its zoom window and opacity —
-//! zoom windows are evaluated when drawing (§12.4), and a run's glyphs
-//! share one window — and a path whose two nodes both lie inside a third
-//! node's region is hidden whole.
+//! A node hides a path only where it is drawn wherever the path is: at an
+//! opacity above 0, in a zoom window that holds the path's
+//! ([`drawn_wherever`]; the owner's answer on #334). Zoom windows are
+//! evaluated when drawing (§12.4) and a run's glyphs share one window, so
+//! a glyph cannot be hidden only while the node shows, and a gap with
+//! nothing over it reads as a break in the path. A path whose two nodes
+//! lie inside the box round a third node's ring is hidden whole.
 //!
 //! Hiding is a view decision: the document keeps the path, the
 //! projection keeps every glyph as laid (`LineState::laid`), and a glyph
@@ -29,14 +32,16 @@
 //! moved: every visible node's region (a [`BodyIndex`]), and where each
 //! drawn path's glyphs are
 //! ([`PathCells`](crate::projection::behind::PathCells)). A path's hide
-//! stage, run once every path is laid and every ring placed, tries each
-//! of its glyphs against the regions in that glyph's cells, and records
-//! reading the geometry and reach of each node it meets. So a node that
-//! moves, is reshaped or leaves marks exactly the paths with a glyph its
-//! old region met, through the dependency index. Each node whose geometry
-//! or reach was marked is then set again in the region index, and finds
-//! the paths with a glyph its new region meets in the paths' index, in the
-//! cells that region covers. A path laid again is hidden again.
+//! stage, run once every path is laid and every ring and section placed,
+//! tries each of its glyphs against the regions in that glyph's cells,
+//! and records reading the region, opacity and zoom window of each node it
+//! meets. Each node whose region may have moved — its geometry or reach
+//! marked, a section of it placed elsewhere or dropped — has its region
+//! found again; if it changed, it is set again in the region index, its
+//! [`ProjectionInput::Region`] is marked, which marks exactly the paths
+//! with a glyph its old region met, and it finds the paths with a glyph
+//! its new region meets in the paths' index, in the cells that region
+//! covers. A path laid again is hidden again.
 //!
 //! A path is hidden again **whole**: the paths a moved node meets are the
 //! unit of work, not the glyphs near it. So each frame of a drag across a
@@ -46,8 +51,10 @@
 use rustc_hash::FxHashMap;
 
 use crate::arena::NodeId;
+use crate::document::values::ZoomWindow;
 use crate::flow::{PlacedRun, Rect};
 use crate::gfx_structs::run::RunShape;
+use crate::gfx_structs::shape::NodeShape;
 use crate::projection::geometry::node_shape;
 use crate::projection::hit::{cell_count, cells, span};
 use crate::projection::input::{Dependent, ProjectionInput, Stage};
@@ -193,12 +200,8 @@ impl PathCells {
             v.sort_unstable();
             v
         };
-        if sets(self) != sets(other) {
-            return Err("the path cells differ".to_string());
-        }
-        if large(self) != large(other) {
-            return Err("the large paths differ".to_string());
-        }
+        first_difference("cells (path, cell, box bits)", &sets(self), &sets(other))?;
+        first_difference("large paths (path, box bits)", &large(self), &large(other))?;
         for (path, of) in &self.of {
             for (k, &(cell, at)) in of.iter().enumerate() {
                 let entry = self.cells.get(&cell).and_then(|l| l.get(at as usize));
@@ -209,6 +212,32 @@ impl PathCells {
         }
         Ok(())
     }
+}
+
+/// `Ok` when `kept` and `full`, two sorted lists of what an index holds,
+/// are equal; else `Err` naming `what` and the first entry they differ at,
+/// as each holds it there. Test builds only.
+#[cfg(test)]
+pub(crate) fn first_difference<T: PartialEq + std::fmt::Debug>(
+    what: &str,
+    kept: &[T],
+    full: &[T],
+) -> Result<(), String> {
+    if kept == full {
+        return Ok(());
+    }
+    let at = kept
+        .iter()
+        .zip(full)
+        .position(|(a, b)| a != b)
+        .unwrap_or(kept.len().min(full.len()));
+    Err(format!(
+        "{what} differ first at entry {at}: kept {:?}, in full {:?} ({} kept, {} in full)",
+        kept.get(at),
+        full.get(at),
+        kept.len(),
+        full.len()
+    ))
 }
 
 /// A rectangle's four floats, by their bits: what the oracle's set
@@ -224,38 +253,69 @@ pub(crate) fn bits(r: Rect) -> [u32; 4] {
 }
 
 impl Projector {
-    /// Phase D for an element whose geometry or reach was marked: a
-    /// visible node's region set again in the region index, and the
-    /// paths with a glyph the new region meets queued to be hidden again
-    /// — those its old region met read its geometry, and were marked with
-    /// it. Anything else leaves the index: a node no longer visible, or
-    /// an element that is no node, which was never in it. O(the region's
-    /// cells in both indices).
-    pub(crate) fn rehide(&mut self, id: NodeId, work: &mut PhaseWork) {
-        let Some((rect, shape)) = self.nodes.get(&id).map(|n| (n.rect, n.shape)) else {
-            self.regions.remove(id);
-            return;
+    /// The region `node` hides paths' glyphs by (#332): the box round
+    /// what it draws — its sections' text, each glyph's cell, and its
+    /// rings' inks — shaped by its outline where it draws rings, which run
+    /// round that outline, and a rectangle where it draws text alone.
+    /// `None` for a node that draws nothing, or nothing of any area: it
+    /// hides nothing. O(its units).
+    pub(crate) fn region(&self, node: NodeId) -> Option<(Rect, NodeShape)> {
+        let n = self.nodes.get(&node)?;
+        let (mut text, mut inks): (Option<Rect>, Option<Rect>) = (None, None);
+        let join = |a: Option<Rect>, b: Option<Rect>| match (a, b) {
+            (Some(a), Some(b)) => Some(a.union(&b)),
+            (a, b) => a.or(b),
         };
-        let region = self.reach(id).map_or(rect, |reach| reach.union(&rect));
-        if region.size.x <= 0.0 || region.size.y <= 0.0 {
-            // A region of no area hides nothing, as a body of none is never
-            // hit; it is kept out, as a full projection, which never marks
-            // a node measured at nothing, keeps it out.
-            self.regions.remove(id);
+        for u in &n.units {
+            match self.units.get(u).map(|u| &u.body) {
+                Some(UnitBody::Ring(ring)) => inks = join(inks, ring.ink),
+                Some(UnitBody::Section(section)) => text = join(text, section.drawn),
+                _ => {}
+            }
+        }
+        let shape = if inks.is_some() {
+            node_shape(n.shape)
+        } else {
+            NodeShape::Rectangle
+        };
+        join(text, inks)
+            .filter(|r| r.size.x > 0.0 && r.size.y > 0.0)
+            .map(|r| (r, shape))
+    }
+
+    /// Phase D for an element whose region may have moved — a node whose
+    /// geometry or reach was marked, or one a section of which was placed
+    /// elsewhere or dropped: its region set again in the region index if it
+    /// changed, the paths that met the old one marked through
+    /// [`ProjectionInput::Region`], which they read, and those with a glyph
+    /// the new one meets queued to be hidden again. A node no longer
+    /// visible, or one that now draws nothing, leaves the index; an element
+    /// that is no node was never in it. O(its units, and the new region's
+    /// cells in the paths' index).
+    pub(crate) fn rehide(&mut self, id: NodeId, work: &mut PhaseWork) {
+        let region = self.region(id);
+        if self.regions.get(id) == region {
             return;
         }
-        self.regions.set(id, region, node_shape(shape));
-        self.path_cells.each_meeting(region, |path| {
-            self.queue(work, Dependent::new(path, Stage::Hide));
-        });
+        match region {
+            Some((rect, shape)) => self.regions.set(id, rect, shape),
+            None => self.regions.remove(id),
+        }
+        self.mark(work, ProjectionInput::Region(id));
+        if let Some((rect, _)) = region {
+            self.path_cells.each_meeting(rect, |path| {
+                self.queue(work, Dependent::new(path, Stage::Hide));
+            });
+        }
     }
 
     /// Phase D for a drawn connector or line link: its body's and caps'
     /// runs as laid, less every glyph whose box, grown by the path's gap,
-    /// meets the region of a node it does not end at. Records reading the
-    /// geometry and reach of each such node, and sets where its glyphs
-    /// are. A path not drawn has nothing hidden, and leaves the paths'
-    /// index.
+    /// meets the region of a node it does not end at that is drawn wherever
+    /// the path is — at an opacity above 0, in a zoom window that holds the
+    /// path's ([`drawn_wherever`]). Records reading the region, opacity and
+    /// zoom window of each node it meets, and sets where its glyphs are. A
+    /// path not drawn has nothing hidden, and leaves the paths' index.
     ///
     /// Cost: O(its glyphs, and the regions in each glyph's cells).
     pub(crate) fn hide(&mut self, id: NodeId) {
@@ -284,9 +344,17 @@ impl Projector {
                 boxes.push(grown);
                 let mut hidden = false;
                 self.regions.each_within(grown, |node| {
-                    if node != from && node != to {
-                        reads.push(ProjectionInput::Geometry(node));
-                        reads.push(ProjectionInput::Reach(node));
+                    if node == from || node == to {
+                        return;
+                    }
+                    reads.push(ProjectionInput::Region(node));
+                    reads.push(ProjectionInput::Opacity(node));
+                    reads.push(ProjectionInput::Visibility(node));
+                    if self
+                        .nodes
+                        .get(&node)
+                        .is_some_and(|n| n.opacity > 0.0 && drawn_wherever(n.zoom, run.zoom()))
+                    {
                         hidden = true;
                     }
                 });
@@ -330,4 +398,28 @@ impl Projector {
             line.laid = Default::default();
         }
     }
+}
+
+/// Whether a node in the zoom window `node` is drawn at every zoom a path
+/// in `path` is: `node` holds `path`, an open bound holding any. A node
+/// that is not hides nothing of the path (the owner's answer on #334): a
+/// run has one zoom window, so a glyph cannot be hidden only while the
+/// node shows, and a gap at a zoom where nothing is drawn over it reads
+/// as a break in the path. O(1).
+pub(crate) fn drawn_wherever(node: Option<ZoomWindow>, path: Option<ZoomWindow>) -> bool {
+    let Some(node) = node else {
+        return true;
+    };
+    let path = path.unwrap_or(ZoomWindow { min: None, max: None });
+    let low = match (node.min, path.min) {
+        (None, _) => true,
+        (Some(_), None) => false,
+        (Some(n), Some(p)) => n <= p,
+    };
+    let high = match (node.max, path.max) {
+        (None, _) => true,
+        (Some(_), None) => false,
+        (Some(n), Some(p)) => n >= p,
+    };
+    low && high
 }

@@ -70,15 +70,23 @@ pub const ON_P: Vec2 = Vec2::new(480.0, -10.0);
 /// Where the blocker stands across path Q, the connector of node 5.
 pub const ON_Q: Vec2 = Vec2::new(480.0, 1990.0);
 
-/// A blocker and two paths (#332): two straight connectors 900 long, P from node 1 to node 2 along
-/// y = 20 and Q from node 4 to node 5 along y = 2020, eight cells of the
-/// grid apart; and node 3, 60 by 60 and of `blocker`'s fields, which
-/// ends neither, at `at`. `path` is merged into both connectors.
+/// The blocker's text: one line, 30 points, whose glyphs' cells are
+/// what it hides by (#332).
+pub fn blocker_text() -> Value {
+    json!([{"size": 30.0, "spans": [{"text": "HIDE"}]}])
+}
+
+/// A blocker and two paths (#332): two straight connectors 900 long, P
+/// from node 1 to node 2 along y = 20 and Q from node 4 to node 5 along
+/// y = 2020, eight cells of the grid apart; and node 3 at `at`, which
+/// ends neither: [`blocker_text`] in a box at least 60 by 60, and
+/// `blocker`'s fields merged over that. `path` is merged into both
+/// connectors.
 pub fn two_paths(at: Vec2, blocker: Value, path: Value) -> Document {
     let box_ = json!({"min_size": [100.0, 40.0]});
     let connector = merged(json!({"straight": true}), path);
     let blocker = merged(
-        json!({"min_size": [60.0, 60.0], "position": [at.x, at.y]}),
+        json!({"min_size": [60.0, 60.0], "position": [at.x, at.y], "sections": blocker_text()}),
         blocker,
     );
     let at = |x: f32, y: f32, mut fields: Value| {

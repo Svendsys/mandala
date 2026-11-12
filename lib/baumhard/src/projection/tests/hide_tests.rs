@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Nodes hide the paths behind them (#332): a connector's glyph is left
-//! out where it would come within its own gap of a node it does not end
-//! at, and comes back when the node moves away; a move re-hides only the
-//! paths whose glyphs the node's old or new region meets. Glyph inks are
-//! read from the runs' metrics here, not through the projector's own
-//! reading of them, and every test ends on the oracle.
+//! out where it would come within its own gap of what a node it does not
+//! end at draws — its text and its rings — and comes back when the node
+//! moves away; a move re-hides only the paths whose glyphs the node's old
+//! or new region meets. Glyph cells and inks are read from the runs'
+//! layouts and metrics here, not through the projector's own reading of
+//! them, and every test ends on the oracle.
 
 use glam::Vec2;
 use rustc_hash::FxHashSet;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::arena::NodeId;
 use crate::document::element::DocKind;
@@ -18,7 +19,9 @@ use crate::document::tests::writer_support::{request, single};
 use crate::flow::{Curve, Rect};
 use crate::gfx_structs::run::{GlyphRunData, RunShape};
 use crate::projection::state::UnitBody;
-use crate::projection::tests::maps::{ident, kid, load_map, merged, node, two_paths, AWAY, ON_P, ON_Q};
+use crate::projection::tests::maps::{
+    blocker_text, ident, kid, load_map, merged, node, two_paths, AWAY, ON_P, ON_Q,
+};
 use crate::projection::tests::support::Projected;
 use crate::projection::{Layer, Projector, Stage};
 
@@ -39,16 +42,74 @@ fn inks(run: &GlyphRunData) -> Vec<Rect> {
         .collect()
 }
 
+/// The canvas cell of each laid-out glyph of a box run: its advance by
+/// its line's height, from the run's origin.
+fn cells(run: &GlyphRunData) -> Vec<Rect> {
+    let RunShape::Box(shaped) = run.shaped() else {
+        panic!("a box run");
+    };
+    shaped
+        .buffer
+        .layout_runs()
+        .flat_map(|line| {
+            let (top, height) = (line.line_top, line.line_height);
+            line.glyphs
+                .iter()
+                .filter(|g| g.w > 0.0)
+                .map(move |g| Rect::new(Vec2::new(g.x, top), Vec2::new(g.w, height)))
+                .collect::<Vec<_>>()
+        })
+        .map(|r| Rect::new(run.origin() + r.origin, r.size))
+        .collect()
+}
+
+/// The box round `boxes`, `None` for none.
+fn bounds(boxes: &[Rect]) -> Option<Rect> {
+    boxes.iter().copied().reduce(|a, b| a.union(&b))
+}
+
+/// The run each glyph element of `unit` holds in `layer`.
+fn runs(p: &Projected, unit: NodeId, layer: Layer) -> Vec<GlyphRunData> {
+    p.projector
+        .glyphs_of(unit)
+        .into_iter()
+        .filter(|(l, _)| *l == layer)
+        .filter_map(|(l, glyph)| p.layers.tree(l).arena()[glyph].get().glyph_run().cloned())
+        .collect()
+}
+
+/// What `node` draws, as its layers hold it: the box round its text's
+/// glyph cells, and the box round its rings' inks.
+fn drawn_by(p: &Projected, node: NodeId) -> (Option<Rect>, Option<Rect>) {
+    let units = &p.projector.nodes[&node].units;
+    let text: Vec<Rect> = units
+        .iter()
+        .flat_map(|&u| runs(p, u, Layer::Sections))
+        .flat_map(|r| cells(&r))
+        .collect();
+    let rings: Vec<Rect> = units
+        .iter()
+        .flat_map(|&u| runs(p, u, Layer::Frames))
+        .flat_map(|r| inks(&r))
+        .collect();
+    (bounds(&text), bounds(&rings))
+}
+
+/// The box round everything `node` draws: what it hides by.
+fn region_of(p: &Projected, node: u32) -> Rect {
+    let (text, rings) = drawn_by(p, ident(&p.doc, node));
+    match (text, rings) {
+        (Some(a), Some(b)) => a.union(&b),
+        (a, b) => a.or(b).expect("the node draws something"),
+    }
+}
+
 /// The run of `element` the connections layer holds.
 fn drawn(p: &Projected, element: NodeId) -> GlyphRunData {
-    let (layer, glyph) = p
-        .projector
-        .glyphs_of(element)
+    runs(p, element, Layer::Connections)
         .into_iter()
-        .find(|(l, _)| *l == Layer::Connections)
-        .expect("the path's body is drawn");
-    let tree = p.layers.tree(layer);
-    tree.arena()[glyph].get().glyph_run().expect("a run").clone()
+        .next()
+        .expect("the path's body is drawn")
 }
 
 /// Whether `a` and `b` meet, edges included.
@@ -96,6 +157,11 @@ fn move_to(p: &mut Projected, id: u32, to: Vec2) {
     p.apply(request(mutation, vec![node], "move")).unwrap();
 }
 
+/// The connector of node `id`.
+fn path_of(p: &Projected, id: u32) -> NodeId {
+    kid(&p.doc, ident(&p.doc, id), DocKind::Connector)
+}
+
 /// How many of `path`'s laid glyphs its layer leaves out, having held
 /// that they are the ones within its gap of `region`: every glyph drawn
 /// is one laid, and keeps clear of the region by its gap; every glyph
@@ -127,33 +193,72 @@ fn hides_exactly(p: &Projected, path: NodeId, region: Rect) -> usize {
     hidden.len()
 }
 
+/// How many of `path`'s laid glyphs its layer leaves out.
+fn left_out(p: &Projected, path: NodeId) -> usize {
+    inks(p.projector.laid(path).expect("laid")).len() - inks(&drawn(p, path)).len()
+}
+
+/// A ring of middle dots `size` of the node's shorter side, 4 out.
+fn dotted(size: f32) -> Value {
+    json!({"inset": 4.0, "rings": [{"fit": "repeat", "size": size, "spans": [{"text": "·"}]}]})
+}
+
 /// A connector across a node it does not end at draws no glyph within its
-/// own gap of the node, and every other glyph, on both sides of it.
+/// own gap of what the node draws, and every other glyph, on both sides of
+/// it.
 ///
 /// Control: with `hide` leaving every glyph in, red on the drawn glyph
 /// within the gap.
 #[test]
 fn test_projection_a_node_hides_the_glyphs_of_a_path_behind_it() {
     let mut p = Projected::new(two_paths(ON_P, json!({}), json!({})));
-    let path = kid(&p.doc, ident(&p.doc, 2), DocKind::Connector);
-    let blocker = p.projector.node_rect(ident(&p.doc, 3)).unwrap();
-    let behind = hides_exactly(&p, path, blocker);
+    let path = path_of(&p, 2);
+    let region = region_of(&p, 3);
+    let behind = hides_exactly(&p, path, region);
     assert!(
         behind >= 3,
         "precondition: the path runs behind the node, {behind} glyphs"
     );
     let shown = inks(&drawn(&p, path));
-    for (side, x) in [("left", blocker.origin.x), ("right", blocker.max().x)] {
+    for (side, x) in [("left", region.origin.x), ("right", region.max().x)] {
         assert!(
             shown.iter().any(|i| (i.center().x < x) == (side == "left")),
             "the path is drawn on the node's {side}"
         );
     }
-    let other = kid(&p.doc, ident(&p.doc, 5), DocKind::Connector);
     assert_eq!(
-        inks(&drawn(&p, other)).len(),
-        inks(p.projector.laid(other).unwrap()).len(),
+        left_out(&p, path_of(&p, 5)),
+        0,
         "the path the node is not on is drawn whole"
+    );
+    p.check().unwrap();
+}
+
+/// A node hides by what it draws, not by its rectangle (the owner's answer
+/// on #334): a path across the empty part of a node's box, clear of its
+/// text, is drawn whole — the frames demo's "half" node, its text centered
+/// in a section authored much wider.
+///
+/// Control: with the region the node's drawn rectangle, red on the glyphs
+/// left out.
+#[test]
+fn test_projection_a_node_hides_by_what_it_draws_not_its_rectangle() {
+    // A box 400 by 300 from y = -100, its text at its top-left, ending
+    // some 60 above the path along y = 20.
+    let wide = json!({"min_size": [400.0, 300.0]});
+    let mut p = Projected::new(two_paths(Vec2::new(300.0, -100.0), wide, json!({})));
+    let path = path_of(&p, 2);
+    let rect = p.projector.node_rect(ident(&p.doc, 3)).unwrap();
+    let gap = own_gap(&p.projector, path);
+    let laid = inks(p.projector.laid(path).unwrap());
+    assert!(
+        laid.iter().any(|i| meet(&i.grown(gap), &rect)),
+        "precondition: the path crosses the node's rectangle"
+    );
+    assert_eq!(
+        hides_exactly(&p, path, region_of(&p, 3)),
+        0,
+        "the path is drawn whole"
     );
     p.check().unwrap();
 }
@@ -162,23 +267,18 @@ fn test_projection_a_node_hides_the_glyphs_of_a_path_behind_it() {
 /// laid again: the hide stage is a view over the placement. Only the path
 /// its old region met is hidden again.
 ///
-/// Control: with `hide` recording no reads, red on the oracle and the
-/// glyphs shown — nothing marks the path when the node leaves it.
+/// Control: with `hide` recording no reads, red on the glyphs shown —
+/// nothing marks the path when the node leaves it.
 #[test]
 fn test_projection_a_node_moved_off_a_path_shows_its_glyphs_again() {
     let mut p = Projected::new(two_paths(ON_P, json!({}), json!({})));
-    let path = kid(&p.doc, ident(&p.doc, 2), DocKind::Connector);
-    let before = inks(&drawn(&p, path)).len();
+    let path = path_of(&p, 2);
+    let before = left_out(&p, path);
     move_to(&mut p, 3, AWAY);
-    let laid = inks(p.projector.laid(path).unwrap()).len();
-    assert!(
-        before < laid,
-        "precondition: the node hid glyphs, {before} of {laid} drawn"
-    );
-    assert_eq!(inks(&drawn(&p, path)).len(), laid, "every glyph is drawn again");
-    let again = hidden_again(&p);
+    assert!(before > 0, "precondition: the node hid glyphs, {before}");
+    assert_eq!(left_out(&p, path), 0, "every glyph is drawn again");
     assert_eq!(
-        again,
+        hidden_again(&p),
         [path].into_iter().collect(),
         "only the path it left is hidden again"
     );
@@ -203,25 +303,20 @@ fn test_projection_a_node_moved_off_a_path_shows_its_glyphs_again() {
 #[test]
 fn test_projection_a_node_moved_onto_a_path_rehides_only_the_paths_it_meets() {
     let mut p = Projected::new(two_paths(AWAY, json!({}), json!({})));
-    let (one, two) = (
-        kid(&p.doc, ident(&p.doc, 2), DocKind::Connector),
-        kid(&p.doc, ident(&p.doc, 5), DocKind::Connector),
-    );
+    let (one, two) = (path_of(&p, 2), path_of(&p, 5));
     move_to(&mut p, 3, ON_P);
-    let blocker = p.projector.node_rect(ident(&p.doc, 3)).unwrap();
     assert!(
-        hides_exactly(&p, one, blocker) >= 3,
+        hides_exactly(&p, one, region_of(&p, 3)) >= 3,
         "the path it moved onto is hidden"
     );
     assert_eq!(hidden_again(&p), [one].into_iter().collect(), "onto P: P alone");
     p.check().unwrap();
     move_to(&mut p, 3, ON_Q);
-    let blocker = p.projector.node_rect(ident(&p.doc, 3)).unwrap();
     assert!(
-        hides_exactly(&p, two, blocker) >= 3,
+        hides_exactly(&p, two, region_of(&p, 3)) >= 3,
         "the path it moved onto is hidden"
     );
-    assert_eq!(hides_exactly(&p, one, blocker), 0, "the path it left is whole");
+    assert_eq!(left_out(&p, one), 0, "the path it left is whole");
     assert_eq!(
         hidden_again(&p),
         [one, two].into_iter().collect(),
@@ -230,29 +325,77 @@ fn test_projection_a_node_moved_onto_a_path_rehides_only_the_paths_it_meets() {
     p.check().unwrap();
 }
 
-/// A path's own end nodes never hide it: its end glyphs and its caps sit
-/// within its gap of the frames they stop at, and are drawn.
+/// A node's text, edited shorter in a box its minimum size keeps as wide,
+/// no longer hides the glyphs past its last letter: the region follows
+/// the text, not the box, through the section's placement.
+///
+/// Control: with `section_place` not noting its node when its text moved,
+/// red on the glyphs left out.
+#[test]
+fn test_projection_a_nodes_text_shortened_shows_the_path_past_it() {
+    use crate::document::mutation::ops::SpanOp;
+    let long = json!({"min_size": [500.0, 60.0], "sections": [{"size": 30.0, "spans": [{"text": "HIDE HIDE HIDE HIDE"}]}]});
+    let mut p = Projected::new(two_paths(Vec2::new(250.0, -10.0), long, json!({})));
+    let path = path_of(&p, 2);
+    let before = hides_exactly(&p, path, region_of(&p, 3));
+    let section = kid(&p.doc, ident(&p.doc, 3), DocKind::Section);
+    let span = kid(&p.doc, section, DocKind::Span);
+    let edit = single(DocKind::Span, DocMutation::Span(SpanOp::SetText("H".into())));
+    p.apply(request(edit, vec![span], "shorten")).unwrap();
+    let after = hides_exactly(&p, path, region_of(&p, 3));
+    assert!(
+        after >= 1 && after * 4 < before,
+        "the glyphs past the last letter are drawn again: {before} hidden, then {after}"
+    );
+    p.check().unwrap();
+}
+
+/// A node whose text is deleted, and which draws nothing else, hides
+/// nothing: the section that left takes its part of the region with it,
+/// though the node's rectangle, held by its minimum size, stays as it was.
+///
+/// Control: with `drop_unit` not noting the node, red on the glyphs left
+/// out.
+#[test]
+fn test_projection_a_node_whose_text_is_deleted_shows_the_path() {
+    use crate::document::mutation::compose::remove;
+    use crate::document::writer::EditRequest;
+    let wide = json!({"min_size": [120.0, 60.0]});
+    let mut p = Projected::new(two_paths(ON_P, wide, json!({})));
+    let path = path_of(&p, 2);
+    assert!(left_out(&p, path) > 0, "precondition: the node hides glyphs");
+    let section = kid(&p.doc, ident(&p.doc, 3), DocKind::Section);
+    let steps = remove(&p.doc, DocKind::Section, &[section]).unwrap();
+    p.apply(EditRequest::new(steps, "delete the text")).unwrap();
+    assert_eq!(left_out(&p, path), 0, "every glyph is drawn again");
+    p.check().unwrap();
+}
+
+/// A path's own end nodes never hide it: with a ring round each, its end
+/// glyphs and its caps sit within its gap of the inks they stop at, and
+/// are drawn.
 ///
 /// Control: with `hide` not sparing the ends, red on the glyphs drawn.
 #[test]
 fn test_projection_a_paths_own_ends_never_hide_it() {
-    let caps = json!({"cap_start": {"spans": [{"text": "◆"}]}, "cap_end": {"spans": [{"text": "◆"}]}});
-    let mut p = Projected::new(two_paths(AWAY, json!({}), caps));
-    let path = kid(&p.doc, ident(&p.doc, 2), DocKind::Connector);
+    let end = merged(json!({"min_size": [100.0, 40.0]}), json!({"frame": dotted(0.25)}));
+    let caps = json!({"straight": true, "cap_start": {"spans": [{"text": "◆"}]}, "cap_end": {"spans": [{"text": "◆"}]}});
+    let doc = load_map(json!({"nodes": [
+        node(1, None, end.clone()),
+        node(2, Some(1), merged(merged(end, json!({"position": [1000.0, 0.0]})), json!({"connector": caps}))),
+    ]}));
+    let mut p = Projected::new(doc);
+    let path = path_of(&p, 2);
     let gap = own_gap(&p.projector, path);
-    let ends = [ident(&p.doc, 1), ident(&p.doc, 2)].map(|n| p.projector.node_rect(n).unwrap());
+    let ends = [1, 2].map(|n| region_of(&p, n));
     let laid = inks(p.projector.laid(path).unwrap());
     for (k, end) in ends.iter().enumerate() {
         assert!(
             laid.iter().any(|i| meet(&i.grown(gap * 1.25), end)),
-            "precondition: its end glyph comes within its gap of end {k}, as rule 5 sets it (0.8 to 1.2 gaps)"
+            "precondition: its end glyph comes within its gap of end {k}'s ring, as rule 5 sets it (0.8 to 1.2 gaps)"
         );
     }
-    assert_eq!(
-        inks(&drawn(&p, path)).len(),
-        laid.len(),
-        "every glyph of the body is drawn"
-    );
+    assert_eq!(left_out(&p, path), 0, "every glyph of the body is drawn");
     let Some(UnitBody::Line(line)) = p.projector.units.get(&path).map(|u| &u.body) else {
         panic!("a line");
     };
@@ -260,7 +403,7 @@ fn test_projection_a_paths_own_ends_never_hide_it() {
         let cap = line.laid[k].as_ref().expect("a cap is laid");
         assert!(
             ends.iter().any(|end| inks(cap).iter().any(|i| meet(i, end))),
-            "precondition: cap {k} sits on its end's frame"
+            "precondition: cap {k} sits on its end's ring"
         );
         assert_eq!(
             p.projector.units[&path].slots[k].want.as_ref(),
@@ -271,63 +414,62 @@ fn test_projection_a_paths_own_ends_never_hide_it() {
     p.check().unwrap();
 }
 
-/// A node's region is the box round its rectangle and its rings' inks: a
-/// path that passes over its ring and clear of its rectangle is hidden
-/// there.
+/// A node's rings hide as its text does: a path clear of its text by more
+/// than its gap but over its ring is hidden there.
 ///
-/// Control: with the region the node's rectangle alone, red on the glyphs
-/// hidden.
+/// Control: with the region its text alone, red on the glyphs hidden.
 #[test]
 fn test_projection_a_nodes_ring_hides_a_path_as_its_text_does() {
-    // The blocker's rectangle runs from y = 26 down, past the gap of the
-    // path along y = 20; its ring of dots, 6 further out, reaches over it.
-    let ring = json!({"inset": 4.0, "rings": [{"fit": "repeat", "size": 0.25, "spans": [{"text": "·"}]}]});
-    let doc = two_paths(Vec2::new(480.0, 26.0), json!({"frame": ring}), json!({}));
-    let blocker = ident(&doc, 3);
-    let mut p = Projected::new(doc);
-    let path = kid(&p.doc, ident(&p.doc, 2), DocKind::Connector);
-    let rect = p.projector.node_rect(blocker).unwrap();
+    // The blocker's text runs from y = 26 down, past the gap of the path
+    // along y = 20; its ring of dots, a little further out, reaches over it.
+    let doc = two_paths(Vec2::new(480.0, 26.0), json!({"frame": dotted(0.25)}), json!({}));
+    let p = Projected::new(doc);
+    let path = path_of(&p, 2);
+    let (text, rings) = drawn_by(&p, ident(&p.doc, 3));
+    let (text, rings) = (text.unwrap(), rings.expect("the ring is drawn"));
     let gap = own_gap(&p.projector, path);
     let laid = inks(p.projector.laid(path).unwrap());
     assert!(
-        !laid.iter().any(|i| meet(&i.grown(gap), &rect)),
-        "precondition: the path keeps its gap from the rectangle"
+        !laid.iter().any(|i| meet(&i.grown(gap), &text)),
+        "precondition: the path keeps its gap from the text"
     );
-    let reach = p.projector.reach(blocker).unwrap();
     assert!(
-        reach.origin.y < rect.origin.y,
-        "precondition: the ring reaches above the rectangle"
+        rings.origin.y < text.origin.y,
+        "precondition: the ring reaches above the text"
     );
-    assert!(hides_exactly(&p, path, reach) >= 1, "the ring hides the path");
-    p.check().unwrap();
+    assert!(
+        hides_exactly(&p, path, text.union(&rings)) >= 1,
+        "the ring hides the path"
+    );
 }
 
-/// An ellipse hides by its outline, from both sides: a circle centered
-/// on a diagonal path hides the glyphs that come within the path's gap of
-/// the circle, and draws those inside its box but clear of the circle,
-/// where the diagonal crosses the box's corners. The circle is tested here
-/// on its own terms: the nearest point of each grown ink to its center,
-/// inside its radius or out.
+/// An ellipse hides by its outline, from both sides: a ringed circle
+/// centered on a diagonal path hides the glyphs that come within the
+/// path's gap of the ellipse in its rings' box, and draws those inside
+/// that box but clear of the ellipse, where the diagonal crosses the
+/// box's corners. The ellipse is tested here on its own terms: the
+/// nearest point of each grown ink to its center, inside its radii or out.
 ///
 /// Controls: with the region shaped as a rectangle, red on the glyphs
-/// drawn in the corners; with no region set for an ellipse, red on the
-/// glyphs hidden inside it.
+/// drawn in the corners; with no region for an ellipse, red on the glyphs
+/// hidden inside it.
 #[test]
 fn test_projection_an_ellipse_hides_by_its_outline() {
-    let circle = json!({"min_size": [120.0, 120.0], "shape": "ellipse"});
+    let circle =
+        json!({"min_size": [120.0, 120.0], "shape": "ellipse", "sections": [], "frame": dotted(0.05)});
     let doc = load_map(json!({"nodes": [
         node(1, None, json!({"min_size": [100.0, 40.0]})),
         node(2, Some(1), json!({"position": [900.0, 900.0], "min_size": [100.0, 40.0], "connector": {"straight": true}})),
         node(3, None, merged(json!({"position": [AWAY.x, AWAY.y]}), circle)),
     ]}));
     let mut p = Projected::new(doc);
-    let path = kid(&p.doc, ident(&p.doc, 2), DocKind::Connector);
+    let path = path_of(&p, 2);
     let Some(&[Curve::Line(a, b)]) = p.projector.curve(path) else {
         panic!("a straight path");
     };
     move_to(&mut p, 3, (a + b) * 0.5 - Vec2::splat(60.0));
-    let rect = p.projector.node_rect(ident(&p.doc, 3)).unwrap();
-    let (center, half) = (rect.center(), rect.size * 0.5);
+    let rings = region_of(&p, 3);
+    let (center, half) = (rings.center(), rings.size * 0.5);
     let gap = own_gap(&p.projector, path);
     let drawn = inks(&drawn(&p, path));
     let (mut inside, mut corner) = (0, 0);
@@ -339,26 +481,115 @@ fn test_projection_an_ellipse_hides_by_its_outline() {
             inside += 1;
             assert!(
                 !drawn.contains(&ink),
-                "a glyph at {} inside the circle is drawn",
+                "a glyph at {} inside the ellipse is drawn",
                 ink.center()
             );
-        } else if reach >= 1.05 && meet(&grown, &rect) {
+        } else if reach >= 1.05 && meet(&grown, &rings) {
             corner += 1;
             assert!(
                 drawn.contains(&ink),
-                "a glyph at {} past the circle, in its box, is left out",
+                "a glyph at {} past the ellipse, in its box, is left out",
                 ink.center()
             );
         }
     }
     assert!(
         inside >= 3,
-        "precondition: the path runs through the circle, {inside} glyphs"
+        "precondition: the path runs through the ellipse, {inside} glyphs"
     );
     assert!(
         corner >= 1,
         "precondition: the path crosses the box's corners, {corner} glyphs"
     );
+    p.check().unwrap();
+}
+
+/// A container — a node whose box holds a path's two nodes — hides the
+/// path by what it draws: one that draws nothing hides nothing, so the path
+/// is drawn whole; one with a ring round it hides the path whole, since the
+/// box round its ring holds it.
+///
+/// Controls: with the region the node's drawn rectangle, red on the
+/// glyphs left out by the empty container; with `hide` leaving every
+/// glyph in, red on the glyphs drawn inside the ringed one.
+#[test]
+fn test_projection_a_container_hides_by_what_it_draws() {
+    for (frame, whole) in [(Value::Null, true), (dotted(0.01), false)] {
+        let mut container = json!({"position": [-200.0, -280.0], "min_size": [1600.0, 600.0]});
+        if !frame.is_null() {
+            container["frame"] = frame;
+        }
+        let doc = load_map(json!({"nodes": [
+            node(1, None, json!({"min_size": [100.0, 40.0]})),
+            node(2, Some(1), json!({"position": [1000.0, 0.0], "min_size": [100.0, 40.0], "connector": {"straight": true}})),
+            node(3, None, container),
+        ]}));
+        let mut p = Projected::new(doc);
+        let path = path_of(&p, 2);
+        let laid = inks(p.projector.laid(path).unwrap()).len();
+        assert!(laid >= 100, "precondition: the path is laid, {laid} glyphs");
+        let drawn = inks(&drawn(&p, path)).len();
+        if whole {
+            assert_eq!(drawn, laid, "a container that draws nothing hides nothing");
+        } else {
+            assert_eq!(drawn, 0, "a ringed container hides the path inside it whole");
+        }
+        p.check().unwrap();
+    }
+}
+
+/// A node hides a path only where it is drawn wherever the path is (the
+/// owner's answer on #334): at opacity 0, or in a zoom window that does
+/// not hold the path's, it hides nothing — a run has one zoom window, so
+/// a glyph cannot be hidden only while the node shows. Half transparent,
+/// or in a window holding the path's, it hides. And an opacity set to 0
+/// shows the glyphs it hid.
+///
+/// Controls: with `hide` heeding neither opacity nor zoom, red on the
+/// nodes that hide nothing; with no window held, red on the window that
+/// holds the path's; with `hide` not reading the node's opacity, red on
+/// the glyphs shown when it is set to 0.
+#[test]
+fn test_projection_a_node_hides_only_where_it_is_drawn() {
+    let cases = [
+        (json!({"opacity": 0.0}), json!({}), false),
+        (json!({"zoom": {"min": 50.0}}), json!({}), false),
+        (
+            json!({"zoom": {"min": 0.5}}),
+            json!({"zoom": {"min": 0.1}}),
+            false,
+        ),
+        (json!({"opacity": 0.5}), json!({}), true),
+        (
+            json!({"zoom": {"min": 0.1}}),
+            json!({"zoom": {"min": 0.5, "max": 20.0}}),
+            true,
+        ),
+    ];
+    for (blocker, path_fields, hides) in cases {
+        let mut p = Projected::new(two_paths(ON_P, blocker.clone(), path_fields.clone()));
+        let path = path_of(&p, 2);
+        if hides {
+            assert!(
+                hides_exactly(&p, path, region_of(&p, 3)) >= 3,
+                "a node of {blocker} hides a path of {path_fields}"
+            );
+        } else {
+            assert_eq!(
+                left_out(&p, path),
+                0,
+                "a node of {blocker} hides nothing of a path of {path_fields}"
+            );
+        }
+        p.check().unwrap();
+    }
+    let mut p = Projected::new(two_paths(ON_P, json!({}), json!({})));
+    let path = path_of(&p, 2);
+    assert!(left_out(&p, path) > 0, "precondition: the node hides glyphs");
+    let mutation = single(DocKind::Node, DocMutation::Node(NodeOp::SetOpacity(0.0)));
+    p.apply(request(mutation, vec![ident(&p.doc, 3)], "fade"))
+        .unwrap();
+    assert_eq!(left_out(&p, path), 0, "a node faded to nothing shows the path");
     p.check().unwrap();
 }
 
@@ -369,61 +600,13 @@ fn test_projection_an_ellipse_hides_by_its_outline() {
 #[test]
 fn test_projection_a_node_hidden_shows_the_path_behind_it() {
     let mut p = Projected::new(two_paths(ON_P, json!({}), json!({})));
-    let path = kid(&p.doc, ident(&p.doc, 2), DocKind::Connector);
-    let blocker = ident(&p.doc, 3);
-    let laid = inks(p.projector.laid(path).unwrap()).len();
-    assert!(
-        inks(&drawn(&p, path)).len() < laid,
-        "precondition: the node hides glyphs"
-    );
+    let path = path_of(&p, 2);
+    assert!(left_out(&p, path) > 0, "precondition: the node hides glyphs");
     let mutation = single(DocKind::Node, DocMutation::Node(NodeOp::SetHidden(true)));
-    p.apply(request(mutation, vec![blocker], "hide")).unwrap();
-    assert_eq!(inks(&drawn(&p, path)).len(), laid, "every glyph is drawn again");
+    p.apply(request(mutation, vec![ident(&p.doc, 3)], "hide"))
+        .unwrap();
+    assert_eq!(left_out(&p, path), 0, "every glyph is drawn again");
     p.check().unwrap();
-}
-
-/// A path whose two nodes both lie inside a third node's region is hidden
-/// whole: the region is the box round the node's rectangle and rings, and
-/// a container's empty inside is in it. This pins the rule as built while
-/// the owner's question 1 on #334 (hide by the box, or by what the node
-/// draws) is open.
-///
-/// Control: with `hide` leaving every glyph in, red on the glyphs drawn.
-#[test]
-fn test_projection_a_path_inside_another_nodes_region_is_hidden_whole() {
-    let doc = load_map(json!({"nodes": [
-        node(1, None, json!({"min_size": [100.0, 40.0]})),
-        node(2, Some(1), json!({"position": [1000.0, 0.0], "min_size": [100.0, 40.0], "connector": {"straight": true}})),
-        node(3, None, json!({"position": [-200.0, -280.0], "min_size": [1600.0, 600.0]})),
-    ]}));
-    let mut p = Projected::new(doc);
-    let path = kid(&p.doc, ident(&p.doc, 2), DocKind::Connector);
-    let laid = inks(p.projector.laid(path).unwrap()).len();
-    assert!(laid >= 100, "precondition: the path is laid, {laid} glyphs");
-    assert_eq!(inks(&drawn(&p, path)).len(), 0, "no glyph of the path is drawn");
-    p.check().unwrap();
-}
-
-/// A node hides the path behind it whatever its opacity and its zoom
-/// window: at opacity 0, and when it renders only zoomed far in. A run has
-/// one zoom window, so a glyph cannot be hidden only while the node shows.
-/// This pins the rule as built while the owner's question 3 on #334 is
-/// open.
-///
-/// Control: with `hide` sparing a node at opacity 0 or with a zoom window,
-/// red on each.
-#[test]
-fn test_projection_a_node_hides_whatever_its_opacity_and_zoom() {
-    for blocker in [json!({"opacity": 0.0}), json!({"zoom": {"min": 50.0}})] {
-        let mut p = Projected::new(two_paths(ON_P, blocker.clone(), json!({})));
-        let path = kid(&p.doc, ident(&p.doc, 2), DocKind::Connector);
-        let rect = p.projector.node_rect(ident(&p.doc, 3)).unwrap();
-        assert!(
-            hides_exactly(&p, path, rect) >= 3,
-            "a node of {blocker} hides the path"
-        );
-        p.check().unwrap();
-    }
 }
 
 /// A path dropped with its node leaves the paths' index, and a node
@@ -467,10 +650,10 @@ fn test_projection_paths_that_share_a_hubs_cells_are_hidden_one_by_one() {
         child(2, -300.0),
         child(3, 0.0),
         child(4, 300.0),
-        node(5, None, json!({"position": [AWAY.x, AWAY.y], "min_size": [60.0, 60.0]})),
+        node(5, None, json!({"position": [AWAY.x, AWAY.y], "min_size": [60.0, 60.0], "sections": blocker_text()})),
     ]}));
     let mut p = Projected::new(doc);
-    let middle = kid(&p.doc, ident(&p.doc, 3), DocKind::Connector);
+    let middle = path_of(&p, 3);
     move_to(&mut p, 5, ON_P);
     assert!(
         hidden_again(&p).contains(&middle),
@@ -483,16 +666,18 @@ fn test_projection_paths_that_share_a_hubs_cells_are_hidden_one_by_one() {
 
 /// A node whose region spans more grid cells than hold any path glyph
 /// finds the paths it meets by scanning those cells, not by walking its
-/// own: moved onto P, a node 3000 wide hides it.
+/// own: a ringed node 3000 wide, moved onto P, hides it.
 ///
 /// Control: with the scan finding nothing, red on the glyphs hidden.
 #[test]
 fn test_projection_a_node_wider_than_the_paths_cells_finds_them_by_scanning() {
-    let wide = json!({"min_size": [3000.0, 3000.0]});
+    let wide = json!({"min_size": [3000.0, 3000.0], "sections": [], "frame": dotted(0.01)});
     let mut p = Projected::new(two_paths(Vec2::new(-1000.0, 3000.0), wide, json!({})));
-    let path = kid(&p.doc, ident(&p.doc, 2), DocKind::Connector);
+    let path = path_of(&p, 2);
     move_to(&mut p, 3, Vec2::new(-1000.0, 10.0));
-    let rect = p.projector.node_rect(ident(&p.doc, 3)).unwrap();
-    assert!(hides_exactly(&p, path, rect) >= 3, "the wide node hides the path");
+    assert!(
+        hides_exactly(&p, path, region_of(&p, 3)) >= 3,
+        "the wide node hides the path"
+    );
     p.check().unwrap();
 }

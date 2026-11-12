@@ -310,6 +310,9 @@ impl Projector {
             }
         }
         self.mark(work, ProjectionInput::Geometry(id));
+        // A ring or a section that left no longer makes its node's region
+        // (#332).
+        work.reaches.insert(unit.node);
         // A ring that left no longer bounds what its node's paths reach.
         if matches!(unit.body, UnitBody::Ring(_)) {
             self.mark(work, ProjectionInput::Reach(unit.node));

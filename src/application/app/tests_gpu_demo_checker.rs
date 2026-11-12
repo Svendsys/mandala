@@ -1056,20 +1056,94 @@ fn inside_region(ink: &Ink, reach: &Ink, ellipse: bool) -> bool {
     ((nearest - center) / half).length() < 1.0
 }
 
+/// Every node's region (#332), as its layers draw it: the box round its
+/// sections' glyph cells — each laid-out glyph's advance by its line's
+/// height — and its rings' rasterized inks, and whether it is an ellipse,
+/// which only a node that draws rings hides by. A node that draws nothing,
+/// or is drawn at opacity 0 or only in a zoom window, has none.
+fn regions(doc: &Document) -> std::collections::HashMap<NodeId, (Ink, bool)> {
+    let mut layers = GlyphLayers::new();
+    let projector = with_fonts(|fs| Projector::project_full(doc, &mut layers, fs));
+    let tree = doc.tree();
+    let node_of = |mut id: NodeId| loop {
+        if matches!(doc.get(id), Some(DocElement::Node(_))) {
+            return Some(id);
+        }
+        id = tree.node(id).and_then(|n| n.parent())?;
+    };
+    let mut boxes: std::collections::HashMap<NodeId, (Option<Ink>, Option<Ink>)> = Default::default();
+    let join = |a: Option<Ink>, b: Ink| {
+        Some(a.map_or(b, |a| Ink {
+            min: a.min.min(b.min),
+            max: a.max.max(b.max),
+        }))
+    };
+    let mut swash = SwashCache::new();
+    with_fonts(|fs| {
+        let fsys = fs.fonts();
+        for layer in [Layer::Sections, Layer::Frames] {
+            let t = layers.tree(layer);
+            for glyph in t.root().descendants(t.arena()) {
+                let Some(run) = t.arena()[glyph].get().glyph_run() else {
+                    continue;
+                };
+                let Some(node) = projector.element_of(layer, glyph).and_then(node_of) else {
+                    continue;
+                };
+                let entry = boxes.entry(node).or_default();
+                match run.shaped() {
+                    RunShape::Box(shaped) => {
+                        for line in shaped.buffer.layout_runs() {
+                            for g in line.glyphs.iter().filter(|g| g.w > 0.0) {
+                                let min = run.origin() + Vec2::new(g.x, line.line_top);
+                                let cell = Ink {
+                                    min,
+                                    max: min + Vec2::new(g.w, line.line_height),
+                                };
+                                entry.0 = join(entry.0, cell);
+                            }
+                        }
+                    }
+                    RunShape::Path { .. } => {
+                        for ink in read(run, fsys, &mut swash).into_iter().filter_map(|g| g.0) {
+                            entry.1 = join(entry.1, ink);
+                        }
+                    }
+                }
+            }
+        }
+    });
+    boxes
+        .into_iter()
+        .filter(|(node, _)| match doc.get(*node) {
+            Some(DocElement::Node(data)) => data.opacity > 0.0 && data.zoom.is_none(),
+            _ => false,
+        })
+        .filter_map(|(node, (text, rings))| {
+            let ellipse = rings.is_some() && resolve_node(tree, node, &mut ()).shape == Shape::Ellipse;
+            let region = match (text, rings) {
+                (Some(t), Some(r)) => join(Some(t), r),
+                (t, r) => t.or(r),
+            }?;
+            Some((node, (region, ellipse)))
+        })
+        .collect()
+}
+
 /// Nodes hide the glyphs of the paths behind them, and no others (#332),
 /// on every map the connector rules are checked on: no glyph a path's
 /// layer draws lies inside the region of a node other than its own two —
-/// the box round its frame's inks, or its drawn rectangle, shaped by its
-/// outline (`inside_region`) — and every
-/// glyph it leaves out lies within its own gap of one, measured as the
-/// projector measures it but from the rasterized inks: a quarter of the
-/// gap more, for the slack a `repeat` path spreads over its gaps, and
-/// half a point for the raster.
+/// the box round what it draws, its text's cells and its rings' inks,
+/// shaped by its outline where it draws rings (`regions`,
+/// `inside_region`) — and every glyph it leaves out lies within its own
+/// gap of one, measured as the projector measures it but from the
+/// rasterized inks: a quarter of the gap more, for the slack a `repeat`
+/// path spreads over its gaps, and half a point for the raster.
 ///
-/// Controls: with a node's region its drawn rectangle alone, red on the
-/// glyphs drawn inside its rings' reach on `stress_long_edges`; with the
-/// margin three gaps, red on the glyphs left out that no node is near;
-/// with `hide` leaving every glyph in, red on the precondition.
+/// Controls: with a node's region its text alone, red on the glyphs drawn
+/// inside its rings on `stress_long_edges`; with the margin three gaps,
+/// red on the glyphs left out that no node is near; with `hide` leaving
+/// every glyph in, red on the precondition.
 #[test]
 fn test_maps_hide_only_the_glyphs_behind_other_nodes() {
     let mut faults: Vec<String> = Vec::new();
@@ -1077,16 +1151,10 @@ fn test_maps_hide_only_the_glyphs_behind_other_nodes() {
     for (name, path) in connector_maps() {
         let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
         let doc = load(&text).unwrap_or_else(|e| panic!("{name} must load: {e}"));
-        let (paths, frames, _) = drawn_paths(&doc);
-        // Each node's reach, and whether its outline is an ellipse, which
-        // hides by the ellipse in that box.
-        let reaches: Vec<(NodeId, Ink, bool)> = frames
-            .iter()
-            .filter(|(_, inks)| !inks.is_empty())
-            .map(|(node, inks)| {
-                let shape = resolve_node(doc.tree(), *node, &mut ()).shape;
-                (*node, ink_bounds(inks), shape == Shape::Ellipse)
-            })
+        let (paths, _, _) = drawn_paths(&doc);
+        let reaches: Vec<(NodeId, Ink, bool)> = regions(&doc)
+            .into_iter()
+            .map(|(node, (region, ellipse))| (node, region, ellipse))
             .collect();
         for p in &paths {
             let others: Vec<(Ink, bool)> = reaches
@@ -1097,7 +1165,7 @@ fn test_maps_hide_only_the_glyphs_behind_other_nodes() {
             for ink in &p.drawn {
                 if let Some((reach, _)) = others.iter().find(|(r, ellipse)| inside_region(ink, r, *ellipse)) {
                     faults.push(format!(
-                        "{name} {}: a glyph drawn at {:.0?} inside the reach at {:.0?}",
+                        "{name} {}: a glyph drawn at {:.0?} inside the region at {:.0?}",
                         p.name,
                         ink.center(),
                         reach.min

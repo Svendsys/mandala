@@ -1705,21 +1705,24 @@ the layers to learn what the document is, and nothing flows back.
   node's contents take priority over every path that does not end at
   it: once every path is laid (`Stage::Hide`, its own phase), a glyph of
   a path's body or caps whose box, grown by the path's gap, meets the
-  node's **region** — its reach round its drawn rectangle, shaped by its
-  outline — is left out of the run its layer holds, whole. It is a view
+  node's **region** — the box round what it draws, its text's glyph cells
+  and its rings' inks, shaped by its outline where it draws rings — is
+  left out of the run its layer holds, whole, when the node is drawn
+  wherever the path is (opacity above 0, a zoom window holding the
+  path's). It is a view
   decision: the document keeps the path, the projector keeps the run as
   laid (`Projector::laid`), and the glyph comes back when the node moves
   off. Two indices on the hit grid keep it incremental: the regions
   (`Projector::regions`) and where each path's glyphs are
-  (`Projector::path_cells`). A path's hide records reading the geometry
-  and reach of each node it met, so a node that moves off marks it; a
-  node whose geometry or reach was marked finds, in the path cells, the
-  paths its new region meets.
+  (`Projector::path_cells`). A path's hide records reading the `Region`,
+  opacity and zoom window of each node it met, so a node whose region
+  changes marks it; that node then finds, in the path cells, the paths its
+  new region meets.
 - **Captured dependencies.** Every read of another element's state goes
   through a recorder into the dependency index (`projection::Input`:
   the resolvers' `document::resolve::Input`s, and the projection's own
-  `Geometry`, `Size`, `Visibility`, `Opacity`, `Parent`, `Inner` and
-  `Reach` of an element), keyed by the stage that read it. The change
+  `Geometry`, `Size`, `Visibility`, `Opacity`, `Parent`, `Inner`,
+  `Reach` and `Region` of an element), keyed by the stage that read it. The change
   records' `inputs` and `rows` (ruling B7.2) seed it, and a touched
   element seeds only the stage its unclassified fields feed: a label, a
   portal end or a cap its unit's placement, a section's offset its box,
