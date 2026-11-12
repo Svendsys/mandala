@@ -898,6 +898,21 @@ pub(crate) struct RingDto<'a> {
     /// Its spans.
     #[serde(borrow, default, skip_serializing_if = "Rows::is_empty")]
     pub spans: Rows<'a, SpanDto<'a>>,
+    /// The text a `repeat` ring lays where its outline runs steep (#324).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub vertical: Option<Cow<'a, str>>,
+    /// The texts a `repeat` ring lays at its outline's four turns,
+    /// clockwise from the top left (#324).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub corners: Option<[Cow<'a, str>; 4]>,
 }
 
 /// A node's frame.

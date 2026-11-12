@@ -47,6 +47,7 @@
 use glam::Vec2;
 
 use crate::document::bounds;
+use crate::document::element::DirectionalGlyphs;
 use crate::document::resolve::ResolvedText;
 use crate::document::values::{
     Align, Direction, Edge, FitMode, FontSize, LineSpan, Percent, Rgba, Shape, StartPoint, Weight,
@@ -1054,6 +1055,14 @@ fn check_generated_pinning(
                     // layout (`laid_layouts`): two committed findings run on
                     // past the draw.
                     let drawn_texts = mixed_sizes(choices, &texts, &styles, scale, faces);
+                    // Its glyphs by direction (#324), drawn last of all, so
+                    // an input that ends before them lays none, as every
+                    // input did before them; the layout as found is laid
+                    // as it was (`laid_layouts`).
+                    let mut layouts = layouts;
+                    if let Some(drawn) = layouts.last_mut() {
+                        drawn.directional = directional(choices);
+                    }
                     let mut laid_texts = vec![drawn_texts];
                     if !bounded && laid_texts[0].0 != texts {
                         laid_texts.push((texts.clone(), styles.clone()));
@@ -1332,7 +1341,47 @@ pub fn ring_layout(choices: &mut Choices<'_>) -> RingLayout {
     } else {
         0.0
     };
-    RingLayout { span, sides, spacing }
+    RingLayout {
+        span,
+        sides,
+        spacing,
+        ..RingLayout::whole()
+    }
+}
+
+/// A ring's glyphs by direction from choices (#324): a vertical text
+/// and four corners, each one time in two, each a short ornament from
+/// the structured alphabet that
+/// [`check_ornament`](bounds::check_ornament) passes. Zero choices draw
+/// none.
+pub fn directional(choices: &mut Choices<'_>) -> DirectionalGlyphs {
+    let ornament = |choices: &mut Choices<'_>| -> Option<String> {
+        let text: String = (0..1 + choices.below(MAX_ORNAMENT_CHARS))
+            .map(|_| {
+                if choices.one_in(8) {
+                    char::from_u32(choices.below(0x11_0000)).unwrap_or('\u{FFFD}')
+                } else {
+                    *choices.pick(&INTERESTING)
+                }
+            })
+            .collect();
+        bounds::check_ornament(&text).ok().map(str::to_owned)
+    };
+    let vertical = if choices.one_in(2) {
+        ornament(choices)
+    } else {
+        None
+    };
+    let corners = if choices.one_in(2) {
+        let drawn: Vec<Option<String>> = (0..4).map(|_| ornament(choices)).collect();
+        drawn
+            .into_iter()
+            .collect::<Option<Vec<String>>>()
+            .and_then(|corners| <[String; 4]>::try_from(corners).ok())
+    } else {
+        None
+    };
+    DirectionalGlyphs { vertical, corners }
 }
 
 /// `layout` with its sides cut, and their ornament shaped alone in

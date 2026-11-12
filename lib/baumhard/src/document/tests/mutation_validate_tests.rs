@@ -169,6 +169,8 @@ pub fn do_document_validate_refuses_every_literal_out_of_bounds() {
         (DocKind::Ring, DocMutation::Ring(RingOp::Layout(LayoutOp::SetSpacing(Some(f32::NAN)))), DocMutation::Ring(RingOp::Layout(LayoutOp::SetSpacing(Some(6.0)))), "ring.spacing"),
         (DocKind::Frame, DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSides(sides("")))), DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSides(sides("✦")))), "frame.sides"),
         (DocKind::Ring, DocMutation::Ring(RingOp::Layout(LayoutOp::SetSides(sides("")))), DocMutation::Ring(RingOp::Layout(LayoutOp::SetSides(sides("·")))), "ring.sides"),
+        (DocKind::Ring, DocMutation::Ring(RingOp::SetVertical(Some(" \u{200B}".into()))), DocMutation::Ring(RingOp::SetVertical(Some("│".into()))), "ring.vertical"),
+        (DocKind::Ring, DocMutation::Ring(RingOp::SetCorners(Some(["┌", "┐", &"─".repeat(86), "└"].map(String::from)))), DocMutation::Ring(RingOp::SetCorners(Some(["┌", "┐", &"─".repeat(85), "└"].map(String::from)))), "ring.corners[2]"),
         (DocKind::Link, DocMutation::Path(PathOp::SetSpacing(Some(-1.0))), DocMutation::Path(PathOp::SetSpacing(Some(0.0))), "path.spacing"),
         (DocKind::Link, DocMutation::Path(PathOp::SetSize(Some(5000.0))), DocMutation::Path(PathOp::SetSize(Some(MAX_FONT_SIZE_PT))), "path.size"),
         (DocKind::Link, DocMutation::Path(PathOp::SetControlPoints(points(9))), DocMutation::Path(PathOp::SetControlPoints(points(8))), "path.control_points"),

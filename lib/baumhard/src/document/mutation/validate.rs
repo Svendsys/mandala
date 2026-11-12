@@ -261,6 +261,8 @@ impl<'d> Validator<'d> {
                 RingOp::Layout(op) => self.layout_op("ring", op),
                 RingOp::SetChannel(channel) => self.bound("ring.channel", check_channel(*channel)),
                 RingOp::Text(op) => self.text_op(op, Unit::of_tier(DocKind::Ring)),
+                RingOp::SetVertical(vertical) => self.vertical(vertical.as_deref()),
+                RingOp::SetCorners(corners) => self.corners(corners.as_ref()),
             },
             DocMutation::Path(op) => self.path_op(op),
             DocMutation::Link(LinkOp::SetKind(link_kind)) => self.kind_switch(tree, id, *link_kind),
@@ -605,6 +607,27 @@ impl<'d> Validator<'d> {
         self.color(color.as_ref())
     }
 
+    /// A ring's vertical text (#324): an ornament's, as its sides are.
+    fn vertical(&self, vertical: Option<&str>) -> Result<(), MutationError> {
+        vertical.map_or(Ok(()), |text| self.bound("ring.vertical", check_ornament(text)))
+    }
+
+    /// A ring's corners (#324): each an ornament's, a refusal naming
+    /// which.
+    fn corners(&self, corners: Option<&[String; 4]>) -> Result<(), MutationError> {
+        const FIELDS: [&str; 4] = [
+            "ring.corners[0]",
+            "ring.corners[1]",
+            "ring.corners[2]",
+            "ring.corners[3]",
+        ];
+        corners
+            .into_iter()
+            .flatten()
+            .zip(FIELDS)
+            .try_for_each(|(corner, field)| self.bound(field, check_ornament(corner)))
+    }
+
     fn label_style(&self, style: &LabelStyle) -> Result<(), MutationError> {
         self.unit_interval("label.t", style.t)?;
         self.canvas_scalar("label.offset", style.offset)?;
@@ -687,7 +710,10 @@ impl<'d> Validator<'d> {
                 self.bound("ring.channel", check_channel(ring.channel))?;
                 self.fit("ring.fit", ring.style.fit.as_ref())?;
                 self.layout("ring", &ring.style.ring_layout)?;
-                self.text_style(&ring.style.text, Unit::of_tier(DocKind::Ring))
+                self.text_style(&ring.style.text, Unit::of_tier(DocKind::Ring))?;
+                let directional = ring.directional.as_deref();
+                self.vertical(directional.and_then(|d| d.vertical.as_deref()))?;
+                self.corners(directional.and_then(|d| d.corners.as_ref()))
             }
             DocElement::Connector(connector) => self.path_data(&connector.path),
             DocElement::Link(link) => {

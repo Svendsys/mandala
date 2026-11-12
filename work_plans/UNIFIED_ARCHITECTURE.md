@@ -631,7 +631,10 @@ line (cosmic-text gives each glyph's advance), then placed:
    than across it — on a level step straight up or down, as far as
    clears the outline along the normal, so the offset keeps the
    spacing. Ring *k* is placed on the outline offset outward
-   by `inset + Σ(thickness of rings < k) + k · gap`.
+   by `inset + Σ(thickness of rings < k) + k · gap`. A directional ring
+   (§6.4) is offset with its outline's corners kept
+   (`offset_keeping_corners`): a sharp rectangle grows into a sharp
+   rectangle, so its corners are where its sides meet.
 4. **Every stretch reads left to right or top to bottom** (D33, #291).
    This step places a `repeat` ring and every connector; a frame's
    text is two lines instead (step 5). An ornament, with no letter or
@@ -1000,6 +1003,44 @@ the curve: `GlyphMetrics::ink`); text keeps its boxes (step 2). Then:
 Every two consecutive inks are so as far apart, measured box to box,
 wherever the ring runs: as far as the font sets them on a line, plus
 the spacing. `Fit` predicts an ornament's length the same way.
+
+**A directional ring** (#324). A `repeat` ring with a `vertical` text
+or `corners` lays its spans where the outline runs level, its
+`vertical` text where it runs steep, and a corner where it turns as a
+box does, so `─ │ ┌ ┐ ┘ └` round a rectangle reads as a box — the
+owner's option (c) on #322. Glyphs stay upright (D9); this replaces
+step 4's walk and lay for such a ring (`format/schema.md`, "Directional
+ring"):
+
+- **Runs.** The outline is parted at its four diagonal support points,
+  where it runs at 45°, into four runs: the top and the bottom level,
+  the two sides steep. The choice changes there and nowhere else.
+- **A box's turn.** A turn is a box's where a corner set there would lie
+  on the outline: where the corner its two sides meet at, run straight
+  on, lies within half a line height of the outline's turn — a sharp
+  corner, or an arc up to about a glyph wide; not a wider arc, nor an
+  ellipse's tip taller than about a line. A side between two box turns
+  runs straight, from its box's corner to the next.
+- **Hysteresis.** A run shorter than three line heights that ends on a
+  curve is no run of its own: its neighbors take it, parted where the
+  outline faces straight out. A side between two box turns is a side
+  however short.
+- **Corners.** Set at box turns only, cell to cell with their neighbors
+  — on the level text's baseline, centered on the vertical text's box —
+  and all four or none: none where the cap cannot hold them all, or
+  where a side too short to part them would set two over each other.
+- **Spacing.** Each run lays whole glyphs, its gaps measured along the
+  way it reads, every gap the spans' own as a line sets two of them
+  plus `spacing`, the end gaps — to a corner, or to where the outline
+  turns — included. A run holds as many glyphs as leave no gap looser
+  than that, and presses what is left evenly into its gaps: never
+  looser, so box-drawing strokes never part.
+- **Cap and budget.** Its corners first, then each run a share of what
+  the cap leaves by what it needs, a run that lays less passing the
+  rest on, and a run its share cut laid again where that lays more. Its
+  work — its reshape, its path's reads and the glyphs it sets — is
+  budgeted as a `repeat` ring's (#310); a ring its budget stops, or its
+  cap holds, says so (`RingLoss::Short`).
 
 **A frame's lines** (ruling R27; §6.2 step 5). The modes act on the
 two lines, each against its own span, with no gap below zero between

@@ -314,7 +314,7 @@ enum Breaks {
 /// a run into two lines and a box where D26 does not, and would strand
 /// the glyphs after it outside the piece table. So shaping never hands
 /// one to cosmic-text, except the `\n` a box breaks at (ruling R9.5).
-fn is_paragraph_separator(ch: char) -> bool {
+pub(crate) fn is_paragraph_separator(ch: char) -> bool {
     matches!(
         ch,
         '\n' | '\r' | '\u{1C}' | '\u{1D}' | '\u{1E}' | '\u{85}' | '\u{2029}'

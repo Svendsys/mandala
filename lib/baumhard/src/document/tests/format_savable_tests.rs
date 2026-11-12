@@ -379,6 +379,7 @@ fn test_a_size_in_the_wrong_unit_has_no_spelling() {
                 },
                 ..RingStyle::default()
             },
+            ..RingData::default()
         }),
     );
     refuses(

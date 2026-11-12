@@ -47,6 +47,7 @@ fn map_with(edit: impl FnOnce(&mut DocumentBuilder, NodeId, NodeId, NodeId)) -> 
         DocElement::Ring(RingData {
             channel: 0,
             style: RingStyle::default(),
+            ..RingData::default()
         }),
     );
     edit(&mut builder, node, section, ring);
@@ -197,6 +198,7 @@ fn test_a_span_in_a_ring_sets_no_size_for_files_and_edits() {
                     root: DocElement::Ring(RingData {
                         channel: 1,
                         style: RingStyle::default(),
+                        ..RingData::default()
                     }),
                     children: vec![Subtree::leaf(DocElement::Span(span(size)))],
                 },

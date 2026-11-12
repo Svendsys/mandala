@@ -19,8 +19,8 @@
 use crate::arena::NodeId;
 use crate::document::bounds;
 use crate::document::element::{
-    CapData, ConnectorData, DocElement, DocKind, FrameData, LabelData, LinkData, NodeData, NodeStyle,
-    PathData, PortalEndData, RingData, RingStyle, SectionData, SpanData, TextStyle, Triggers,
+    CapData, ConnectorData, DirectionalGlyphs, DocElement, DocKind, FrameData, LabelData, LinkData, NodeData,
+    NodeStyle, PathData, PortalEndData, RingData, RingStyle, SectionData, SpanData, TextStyle, Triggers,
 };
 use crate::document::format::dto::{
     AnchorDto, CapDto, FrameDto, LabelDto, LinkDto, LinkTargetDto, NodeDto, PathDto, PortalEndDto, RingDto,
@@ -233,6 +233,7 @@ impl Builder {
         };
         let ring_layout = self.ring_layout(layout_in!(dto))?;
         let text = self.text_style(text_in!(dto), Unit::of_tier(DocKind::Ring))?;
+        let directional = self.directional(dto)?;
         let data = DocElement::Ring(RingData {
             channel,
             style: RingStyle {
@@ -240,9 +241,37 @@ impl Builder {
                 ring_layout,
                 text,
             },
+            directional,
         });
         self.element(frame, data, |b, ring| b.spans(ring, &dto.spans))
             .map(|_| ())
+    }
+
+    /// A ring's glyphs by direction (#324): its `vertical` text and its
+    /// four `corners`, each an ornament's
+    /// ([`check_ornament`](bounds::check_ornament)); a corner that is not
+    /// one is refused at `corners[i]`.
+    fn directional(&mut self, dto: &RingDto) -> LoadResult<Option<Box<DirectionalGlyphs>>> {
+        let vertical = match &dto.vertical {
+            Some(text) => Some(self.bounded("vertical", bounds::check_ornament(text))?.to_owned()),
+            None => None,
+        };
+        let corners = match &dto.corners {
+            Some(corners) => Some(self.key("corners", |b| {
+                let mut out: [String; 4] = Default::default();
+                for (index, (corner, text)) in out.iter_mut().zip(corners).enumerate() {
+                    *corner = b
+                        .at(Seg::Index(index), |b| {
+                            b.bounded_here(bounds::check_ornament(text))
+                        })?
+                        .to_owned();
+                }
+                Ok(out)
+            })?),
+            None => None,
+        };
+        let glyphs = DirectionalGlyphs { vertical, corners };
+        Ok(glyphs.is_set().then(|| Box::new(glyphs)))
     }
 
     /// A connector: the path, then what is on it.
