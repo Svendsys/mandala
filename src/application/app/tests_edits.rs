@@ -397,20 +397,79 @@ fn overlaps_after(
     found
 }
 
-/// **Testament's Ishmael flower lays no son over another node** (owner,
-/// on #250): on `main`'s placement Hadad and Massa landed on Hagar,
-/// Ishmael's mother. Read through the real projection.
+/// Whether the segment from `a` to `b` passes through the inside of
+/// `rect` (an edge or a corner touched does not count).
+fn crosses(a: Vec2, b: Vec2, rect: &baumhard::flow::Rect) -> bool {
+    let d = b - a;
+    let (mut t0, mut t1) = (0.0_f32, 1.0_f32);
+    for (p, dp, lo, hi) in [
+        (a.x, d.x, rect.origin.x, rect.max().x),
+        (a.y, d.y, rect.origin.y, rect.max().y),
+    ] {
+        if dp == 0.0 {
+            if !(lo < p && p < hi) {
+                return false;
+            }
+            continue;
+        }
+        let (u, v) = ((lo - p) / dp, (hi - p) / dp);
+        t0 = t0.max(u.min(v));
+        t1 = t1.min(u.max(v));
+    }
+    t0 < t1
+}
+
+/// **Testament's Ishmael flower is one fan, clear of Hagar** (owner, on
+/// #250: a partial arc round Ishmael, about r = 270). On `main`'s
+/// placement Hadad and Massa landed on Hagar, Ishmael's mother, below
+/// him; a full circle cannot clear her at any radius, since she blocks
+/// directions from 46° to 133°. Read through the real projection: all
+/// twelve sons sit on one circle round Ishmael, evenly spaced in sibling
+/// order, none overlapping another drawn node, and no straight line from
+/// Ishmael to a son passes through Hagar.
 ///
-/// Control: `main`'s placement went red here.
+/// Control: with only the per-petal search, the sons' radii differed by
+/// hundreds of units.
 #[test]
-fn test_ishmael_flower_lays_no_son_over_another_node() {
+fn test_ishmael_flower_is_one_fan_clear_of_hagar() {
     let (mut doc, mut view) = setup();
-    let ishmael = doc
-        .doc()
-        .node_by_ident(baumhard::document::ids::NodeIdent(52))
-        .expect("Ishmael");
+    let ident = |i| {
+        doc.doc()
+            .node_by_ident(baumhard::document::ids::NodeIdent(i))
+            .expect("the node")
+    };
+    let (ishmael, hagar) = (ident(52), ident(51));
     let found = overlaps_after(&mut doc, &mut view, "flower", &[ishmael]);
     assert!(found.is_empty(), "{} overlaps: {found:?}", found.len());
+    let geometry = view.projector();
+    let rect = |n| baumhard::projection::Geometry::node_rect(geometry, n).expect("drawn");
+    let center = rect(ishmael).center();
+    let d = doc.doc();
+    let sons: Vec<Vec2> = d
+        .children(ishmael)
+        .filter(|&c| d.get(c).is_some_and(|e| e.kind() == DocKind::Node))
+        .map(|c| rect(c).center())
+        .collect();
+    assert_eq!(sons.len(), 12, "precondition: twelve sons drawn");
+    let radii: Vec<f32> = sons.iter().map(|s| (*s - center).length()).collect();
+    let (lo, hi) = radii
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(lo, hi), r| (lo.min(*r), hi.max(*r)));
+    assert!(hi - lo < 0.5, "one circle: radii {radii:?}");
+    let angles: Vec<f32> = sons.iter().map(|s| (*s - center).to_angle()).collect();
+    let steps: Vec<f32> = angles
+        .windows(2)
+        .map(|w| (w[1] - w[0]).rem_euclid(std::f32::consts::TAU))
+        .collect();
+    let (slo, shi) = steps
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(lo, hi), s| (lo.min(*s), hi.max(*s)));
+    assert!(shi - slo < 1e-3, "evenly spaced: steps {steps:?}");
+    let hagar = rect(hagar);
+    for son in &sons {
+        assert!(!crosses(center, *son, &hagar), "the line to {son} crosses Hagar");
+    }
+    eprintln!("Ishmael's fan: radius {lo:.1}, step {:.1}°", slo.to_degrees());
 }
 
 /// **Over the whole of testament at once, neither layout lays a node over

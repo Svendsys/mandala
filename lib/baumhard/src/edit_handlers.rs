@@ -33,9 +33,14 @@
 //!
 //! - **A placed node never overlaps another drawn node** (owner, on
 //!   #250): not a sibling, not the parent, not anything else on the map.
-//!   A petal moves outward along its ray, and a cascade row down as a
-//!   whole, keeping its spacing, trying at each depth straight below,
-//!   then right and left by growing steps
+//!   A flower keeps its shape: one radius and one spacing for every
+//!   petal, on the full circle where that is clear and else on the
+//!   widest clear fan, its chords clear of other nodes too (the order
+//!   and its bounds are on [`flower`](crate::edit_handlers::flower));
+//!   only when no such arrangement is clear does each petal move outward
+//!   along its own ray. A cascade row moves down as a whole, keeping its
+//!   spacing, trying at each depth straight below, then right and left
+//!   by growing steps
 //!   ([`MAX_SIDE_STEPS`](crate::edit_handlers::MAX_SIDE_STEPS)). The
 //!   distances tried are [`probes`](crate::edit_handlers::probes):
 //!   [`MAX_CLEAR_STEPS`](crate::edit_handlers::MAX_CLEAR_STEPS) steps of
@@ -149,18 +154,70 @@ pub fn probes() -> impl Iterator<Item = f32> {
 /// depth, before it steps down again.
 pub const MAX_SIDE_STEPS: u32 = 16;
 
-/// `flower`: each node's child nodes on a circle round it, the first at
-/// the top, clockwise. The radius clears the parent's half-span and the
-/// largest child's, plus [`RADIAL_PADDING`]. A petal that would overlap
-/// another drawn node — a sibling already placed, the parent, anything
-/// else on the map — moves outward along its ray, by [`probes`], until
-/// it is clear (see `Clear`). Parents are placed before their children,
-/// in tree order, and a node one flower moves is the center of its own
-/// where it is moved to, so nested nodes compose.
+/// How many radii a regular flower tries, from the base radius out,
+/// [`FLOWER_RADIUS_STEP`] apart.
+pub const FLOWER_RADII: u32 = 32;
+
+/// The step between the radii a regular flower tries.
+pub const FLOWER_RADIUS_STEP: f32 = 20.0;
+
+/// How many rotations of the full circle a flower tries at a radius:
+/// the first petal at the top, then turned by an eighth of the spacing
+/// between petals at a time.
+pub const FLOWER_ROTATIONS: u32 = 8;
+
+/// The directions a fan of petals is centered on, from the top
+/// clockwise, evenly round the parent: twelve, one every 30°.
+pub const FAN_DIRECTIONS: u32 = 12;
+
+/// How much narrower each fan a flower tries is than the one before,
+/// from the span of the full circle down: 30°.
+pub const FAN_NARROWING: f32 = std::f32::consts::FRAC_PI_6;
+
+/// The longest piece of a petal's chord read from the body index at
+/// once: one of its cells, so each read covers a few cells.
+const CHORD_PIECE: f32 = 256.0;
+
+/// The most pieces a chord is read in; a longer chord's pieces are
+/// longer.
+const MAX_CHORD_PIECES: f32 = 64.0;
+
+/// `flower`: each node's child nodes round it at one radius, evenly
+/// spaced, the first at the top, clockwise — on the full circle where it
+/// is clear, else on the widest fan that is (owner, on #250). The base
+/// radius clears the parent's half-span and the largest child's, plus
+/// [`RADIAL_PADDING`].
 ///
-/// Cost: per petal at most the [`probes`] (83), each a query of the
-/// projector's body index over the cells the petal covers and a lookup
-/// of this run's placements. Nothing is proportional to the map.
+/// A **regular** arrangement is one radius and one spacing for every
+/// petal. It is taken when no petal overlaps a drawn node, a petal
+/// already placed or another of its own, and no petal's chord — the
+/// straight line from the parent's center to the petal's — crosses a
+/// drawn node or a placed petal (see `Clear`). They are tried in this
+/// order:
+///
+/// 1. each radius from the base out, [`FLOWER_RADII`] of them,
+///    [`FLOWER_RADIUS_STEP`] apart;
+/// 2. at each radius, the full circle at [`FLOWER_ROTATIONS`] rotations;
+/// 3. then fans: the full circle's span less [`FAN_NARROWING`], less
+///    twice that, and so on while a span is left, each centered in turn
+///    on [`FAN_DIRECTIONS`] directions from the top, clockwise, its
+///    petals evenly from end to end.
+///
+/// So the smallest radius that has a clear arrangement wins, and at
+/// that radius the full circle, then the widest fan. When none is
+/// clear, each petal moves outward along its own ray, by [`probes`],
+/// until it is clear of the drawn nodes and the petals before it.
+///
+/// Parents are placed before their children, in tree order, and a node
+/// one flower moves is the center of its own where it is moved to, so
+/// nested nodes compose.
+///
+/// Cost: per family at most [`FLOWER_RADII`] × ([`FLOWER_ROTATIONS`] +
+/// [`FAN_DIRECTIONS`] × 11) arrangements, each stopping at its first
+/// failing petal; a petal is a query of the projector's body index over
+/// its cells, a lookup of this run's placements, and its chord read a
+/// cell-sized piece at a time. Then, only if none is clear, at most the
+/// [`probes`] per petal. Nothing is proportional to the map.
 pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Result<Walks, String> {
     let families: Vec<Family> = in_tree_order(doc.tree(), nodes, false)
         .into_iter()
@@ -183,20 +240,136 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
             .fold(0.0_f32, f32::max);
         let radius = parent_span + child_span + RADIAL_PADDING;
         let center = origin + rect.size / 2.0;
-        let n = children.len() as f32;
-        for (i, (child, r)) in children.iter().enumerate() {
-            let ray = Vec2::from_angle(START_ANGLE + i as f32 * std::f32::consts::TAU / n);
-            let along = |d: f32| center + d * ray - r.size / 2.0;
-            let at = probes()
-                .map(|d| along(radius + d))
-                .find(|&o| clear.is_clear(Rect::new(o, r.size)))
-                .unwrap_or_else(|| along(radius));
-            clear.add(Rect::new(at, r.size));
-            placed.insert(*child, at);
-            planned.push((*child, position_for(doc, *child, *r, at)));
+        let laid: Vec<Rect> = match regular_flower(&clear, parent, center, radius, &children) {
+            Some(laid) => {
+                for ((child, _), petal) in children.iter().zip(&laid) {
+                    clear.add(*child, *petal);
+                }
+                laid
+            }
+            None => {
+                let n = children.len() as f32;
+                let mut laid = Vec::with_capacity(children.len());
+                for (i, (child, r)) in children.iter().enumerate() {
+                    let ray = Vec2::from_angle(START_ANGLE + i as f32 * std::f32::consts::TAU / n);
+                    let along = |d: f32| center + d * ray - r.size / 2.0;
+                    let at = probes()
+                        .map(|d| along(radius + d))
+                        .find(|&o| clear.is_clear(Rect::new(o, r.size)))
+                        .unwrap_or_else(|| along(radius));
+                    let petal = Rect::new(at, r.size);
+                    clear.add(*child, petal);
+                    laid.push(petal);
+                }
+                laid
+            }
+        };
+        for ((child, r), petal) in children.iter().zip(laid) {
+            placed.insert(*child, petal.origin);
+            planned.push((*child, position_for(doc, *child, *r, petal.origin)));
         }
     }
     Ok(positions(planned))
+}
+
+/// The first regular arrangement of `children` round `center` that is
+/// clear, in [`flower`]'s order: the petals' rectangles, in sibling
+/// order, or `None`.
+fn regular_flower(
+    clear: &Clear<'_>,
+    parent: NodeId,
+    center: Vec2,
+    radius: f32,
+    children: &[(NodeId, Rect)],
+) -> Option<Vec<Rect>> {
+    use std::f32::consts::TAU;
+    let n = children.len();
+    let spacing = TAU / n as f32;
+    // A fan's span, from end petal to end petal: the full circle's, less
+    // a narrowing at a time. One petal has no fan but the circle.
+    let full = spacing * (n.saturating_sub(1)) as f32;
+    let spans = (1..)
+        .map(move |m| full - m as f32 * FAN_NARROWING)
+        .take_while(move |span| n > 1 && *span > 0.0);
+    // Each arrangement as its first petal's angle and the step to the next.
+    let arrangements = (0..FLOWER_ROTATIONS)
+        .map(move |j| {
+            (
+                START_ANGLE + j as f32 * spacing / FLOWER_ROTATIONS as f32,
+                spacing,
+            )
+        })
+        .chain(spans.flat_map(move |span| {
+            (0..FAN_DIRECTIONS).map(move |d| {
+                let middle = START_ANGLE + d as f32 * TAU / FAN_DIRECTIONS as f32;
+                (middle - span / 2.0, span / (n - 1) as f32)
+            })
+        }));
+    let arrangements: Vec<(f32, f32)> = arrangements.collect();
+    (0..FLOWER_RADII)
+        .map(|k| radius + k as f32 * FLOWER_RADIUS_STEP)
+        .find_map(|r| {
+            arrangements
+                .iter()
+                .find_map(|&(first, step)| arrangement(clear, parent, center, r, first, step, children))
+        })
+}
+
+/// `children` at radius `r` round `center`, the first at angle `first`,
+/// each next `step` on: their rectangles, when no petal meets a drawn
+/// node, a placed one or another of these, and no chord crosses one;
+/// else `None`, at the first that fails.
+fn arrangement(
+    clear: &Clear<'_>,
+    parent: NodeId,
+    center: Vec2,
+    r: f32,
+    first: f32,
+    step: f32,
+    children: &[(NodeId, Rect)],
+) -> Option<Vec<Rect>> {
+    let mut laid: Vec<Rect> = Vec::with_capacity(children.len());
+    for (i, (_, drawn)) in children.iter().enumerate() {
+        let at = center + r * Vec2::from_angle(first + i as f32 * step) - drawn.size / 2.0;
+        let petal = Rect::new(at, drawn.size);
+        if !clear.is_clear(petal) || laid.iter().any(|other| meets(other, &petal)) {
+            return None;
+        }
+        laid.push(petal);
+    }
+    for (i, petal) in laid.iter().enumerate() {
+        let to = petal.center();
+        let crosses_own = laid
+            .iter()
+            .enumerate()
+            .any(|(j, other)| j != i && segment_meets(center, to, other));
+        if crosses_own || !clear.chord_clear(center, to, parent) {
+            return None;
+        }
+    }
+    Some(laid)
+}
+
+/// Whether the segment from `a` to `b` passes through the inside of
+/// `rect`: touching its edge or corner does not count. O(1).
+fn segment_meets(a: Vec2, b: Vec2, rect: &Rect) -> bool {
+    let d = b - a;
+    let (mut t0, mut t1) = (0.0_f32, 1.0_f32);
+    for (p, dp, lo, hi) in [
+        (a.x, d.x, rect.origin.x, rect.max().x),
+        (a.y, d.y, rect.origin.y, rect.max().y),
+    ] {
+        if dp == 0.0 {
+            if !(lo < p && p < hi) {
+                return false;
+            }
+            continue;
+        }
+        let (u, v) = ((lo - p) / dp, (hi - p) / dp);
+        t0 = t0.max(u.min(v));
+        t1 = t1.min(u.max(v));
+    }
+    t0 < t1
 }
 
 /// `cascade`: each node's descendants as a top-down tree — each row
@@ -270,7 +443,7 @@ pub fn cascade(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Res
             .find(|&(dx, y)| at(dx, y).iter().all(|&laid| clear.is_clear(laid)))
             .unwrap_or((0.0, top));
         for ((child, r), laid) in row.iter().zip(at(dx, y)) {
-            clear.add(laid);
+            clear.add(*child, laid);
             placed.insert(*child, laid.origin);
             planned.push((*child, position_for(doc, *child, *r, laid.origin)));
         }
@@ -314,10 +487,11 @@ struct Clear<'g> {
     /// The nodes this run moves, whose drawn rectangles are where they
     /// were, not where they go.
     moved: FxHashSet<NodeId>,
-    /// The placed rectangles filed under each cell they cover.
-    cells: FxHashMap<(i32, i32), Vec<Rect>>,
+    /// The placed rectangles, with their nodes, filed under each cell
+    /// they cover.
+    cells: FxHashMap<(i32, i32), Vec<(NodeId, Rect)>>,
     /// Every placed rectangle, for a query too large for the cells.
-    placed: Vec<Rect>,
+    placed: Vec<(NodeId, Rect)>,
 }
 
 /// Whether the insides of `a` and `b` meet. O(1).
@@ -360,32 +534,64 @@ impl<'g> Clear<'g> {
         }
     }
 
-    /// File a placed `rect`. O(its cells).
-    fn add(&mut self, rect: Rect) {
+    /// File `node`, placed at `rect`. O(its cells).
+    fn add(&mut self, node: NodeId, rect: Rect) {
         if let Some(cells) = cells_of(rect) {
             for cell in cells {
-                self.cells.entry(cell).or_default().push(rect);
+                self.cells.entry(cell).or_default().push((node, rect));
             }
         }
-        self.placed.push(rect);
+        self.placed.push((node, rect));
+    }
+
+    /// The placed rectangles that may meet `area`: those filed under its
+    /// cells, or all of them for an area too large for the cells.
+    fn placed_near(&self, area: Rect) -> Box<dyn Iterator<Item = &(NodeId, Rect)> + '_> {
+        match cells_of(area) {
+            Some(cells) => Box::new(cells.filter_map(|cell| self.cells.get(&cell)).flatten()),
+            None => Box::new(self.placed.iter()),
+        }
     }
 
     /// Whether `rect` is clear of every drawn node this run does not
     /// move and of every rectangle it has placed. O(the body index's
     /// cells under `rect`, and this run's placements in them).
     fn is_clear(&self, rect: Rect) -> bool {
-        let placed = match cells_of(rect) {
-            Some(cells) => cells
-                .filter_map(|cell| self.cells.get(&cell))
-                .any(|filed| filed.iter().any(|other| meets(&rect, other))),
-            None => self.placed.iter().any(|other| meets(&rect, other)),
-        };
-        !placed
+        !self.placed_near(rect).any(|(_, other)| meets(&rect, other))
             && self
                 .geometry
                 .nodes_meeting(rect)
                 .iter()
                 .all(|node| self.moved.contains(node))
+    }
+
+    /// Whether the chord from `from` to `to` crosses no drawn node this
+    /// run does not move and no rectangle it has placed, `parent` apart
+    /// (the chord starts inside it). Read a piece at a time, each piece
+    /// at most [`CHORD_PIECE`] long, so each read covers a few cells.
+    /// O(the chord's length over a cell, at most [`MAX_CHORD_PIECES`]
+    /// pieces), each a query of the body index and of the placements.
+    fn chord_clear(&self, from: Vec2, to: Vec2, parent: NodeId) -> bool {
+        let pieces = ((to - from).length() / CHORD_PIECE)
+            .ceil()
+            .clamp(1.0, MAX_CHORD_PIECES) as u32;
+        (0..pieces).all(|k| {
+            let a = from.lerp(to, k as f32 / pieces as f32);
+            let b = from.lerp(to, (k + 1) as f32 / pieces as f32);
+            let area = Rect::new(a.min(b), (b - a).abs());
+            let crosses_placed = self
+                .placed_near(area)
+                .any(|&(node, other)| node != parent && segment_meets(a, b, &other));
+            let crosses_drawn = self.geometry.nodes_meeting(area).into_iter().any(|node| {
+                node != parent
+                    && !self.moved.contains(&node)
+                    && self
+                        .geometry
+                        .node_rect(node)
+                        .is_some_and(|drawn| segment_meets(a, b, &drawn))
+            });
+            !crosses_placed && !crosses_drawn
+        })
     }
 }
 

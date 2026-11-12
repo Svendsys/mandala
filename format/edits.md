@@ -235,8 +235,17 @@ to twice the canvas bound (about 19 more). Past the drawn nodes a probe
 meets nothing, so a clear place is found unless a drawn node reaches
 across all of them; then the node stays where it belongs.
 
-- A petal that would overlap moves outward along its ray, by those
-  distances.
+- A flower keeps its shape: every petal at one radius, evenly spaced.
+  It tries each radius from the base out, 32 of them 20 units apart.
+  At each radius it tries the full circle, turned by an eighth of the
+  petals' spacing at a time; then fans 30°, 60°, … narrower than the
+  full circle, each centered in turn on twelve directions from the top.
+  The first that is clear is taken: no petal over a drawn node, a placed
+  petal or another petal, and no straight line from the parent to a
+  petal through any of them. A flower whose parent sits close above
+  another node so becomes a fan that leaves a gap where that node is.
+  Only when no such arrangement is clear does each petal move outward
+  along its own ray, by those distances.
 - A cascade row moves as a whole and keeps its spacing. It tries each
   of those depths below where it belongs. At each depth it tries
   straight below first, then 40 units right, 40 left, 80 right, 80

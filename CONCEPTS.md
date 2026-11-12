@@ -1513,7 +1513,8 @@ it (`Target`), keeps those a filter passes, and changes each once:
   that reads `&Document` and the projector's drawn rectangles
   (`projection::Geometry`) and returns its walks, one per write; it
   cannot write, the type says so. A layout places no node over another
-  drawn node; a node moved by hand goes where it is put.
+  drawn node — a flower on one circle, or a fan where the full circle is
+  blocked; a node moved by hand goes where it is put.
 
 An edit is written with **names** (`var(accent)`, a palette, a font, a
 verb) and resolved against the open map each time it runs, because the

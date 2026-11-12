@@ -688,12 +688,13 @@ fn test_a_nested_anchor_is_walked_only_from_the_outer_one() {
 }
 
 /// A map of node 1 at the origin with children 2, 3 and 4, node 5
-/// under node 2, and node 6 under node 5.
+/// under node 2, and node 6 under node 5, those two drawn well below the
+/// family.
 const FAMILY: &str = r#"{"format":1,"name":"t","nodes":[
 {"id":1,"position":[0,0]},
 {"id":2,"parent":1,"position":[10,10]},
-{"id":5,"parent":2,"position":[20,20]},
-{"id":6,"parent":5,"position":[30,30]},
+{"id":5,"parent":2,"position":[20,1000]},
+{"id":6,"parent":5,"position":[30,1100]},
 {"id":3,"parent":1,"channel":1,"position":[10,10]},
 {"id":4,"parent":1,"channel":2,"position":[10,10]}]}"#;
 
@@ -730,7 +731,7 @@ fn test_flower_puts_the_children_on_a_circle_round_their_parent() {
     );
     assert!((centers[0] - centers[1]).length() > 1.0 && (centers[1] - centers[2]).length() > 1.0);
     // Node 5 is not node 1's child: left where it was.
-    assert_eq!(node(&doc, 5).1.position, Vec2::new(20.0, 20.0));
+    assert_eq!(node(&doc, 5).1.position, Vec2::new(20.0, 1000.0));
     assert_eq!(doc.history().count(), 1);
 }
 
