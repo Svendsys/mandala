@@ -1225,7 +1225,8 @@ const LABEL_FIXTURE: &str = r#"{"format": 1, "name": "a label under a node", "no
 /// map, so the hidden direction is held on a fixture built here — a
 /// label under a third node's text — rather than on a demo map changed to
 /// carry one. And a path's own label, drawn, wins over its line (#340):
-/// no glyph the path draws comes within its own gap of the label's text
+/// no glyph the path's body draws (its caps, read as their own elements,
+/// are not held here) comes within its own gap of the label's text
 /// cells — three quarters of it, for the raster — and a glyph left out
 /// near no other node lies within the margin of its own label; some label
 /// on these maps is drawn on its own path (testament's).

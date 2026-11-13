@@ -19,9 +19,11 @@
 //! is hidden whole where the box round its text meets such a region (the
 //! owner's answer on #334), its own two nodes sparing it as they spare its
 //! glyphs; a portal end is never hidden. A label drawn is text, which wins
-//! over its own line: the path's glyphs within its gap of the box round
-//! the label's text are left out too, and the path carries on past it
-//! (#340). A label hidden hides nothing of its path. Both are the path's
+//! over its own line: the glyphs of the path's body within its gap of the
+//! box round the label's text are left out too, and the path carries on
+//! past it (#340). Its caps are kept: a cap is the path's direction
+//! marker, not line, so a label at the path's end does not take its arrow.
+//! A label hidden hides nothing of its path. Both are the path's
 //! own state, so a label moved, re-texted or removed, or the path's gap
 //! changed, lays the path again and hides it again: nothing else reads it.
 //!
@@ -381,13 +383,13 @@ impl Projector {
     /// the path is — at an opacity above 0, in a zoom window that holds the
     /// path's ([`drawn_wherever`]) — and its label as laid, left out whole
     /// where the box round its text meets such a region. A label drawn is
-    /// text, which wins over the line: the path's own glyphs whose boxes,
-    /// grown by its gap, meet the box round the label's text are left out
-    /// too (#340), so the path stops one gap short of its label on each
-    /// side; a label hidden hides nothing of its path. Records reading
-    /// the region, opacity and zoom window of each node it meets, and sets
-    /// where its glyphs and its label are. A path not drawn has nothing
-    /// hidden, and leaves the paths' index.
+    /// text, which wins over the line: the glyphs of the path's body whose
+    /// boxes, grown by its gap, meet the box round the label's text are
+    /// left out too (#340), so the path stops one gap short of its label
+    /// on each side; its caps are kept, and a label hidden hides nothing
+    /// of its path. Records reading the region, opacity and zoom window of
+    /// each node it meets, and sets where its glyphs and its label are. A
+    /// path not drawn has nothing hidden, and leaves the paths' index.
     ///
     /// Cost: O(its glyphs and its label's, and the regions in each glyph's
     /// cells and its label's).
@@ -436,8 +438,9 @@ impl Projector {
         let label_hidden = label.is_some_and(|(text, zoom)| behind(text, zoom));
         let own_label = label.filter(|_| !label_hidden).map(|(text, _)| text);
         boxes.extend(label.map(|(text, _)| text));
-        // What each slot wants now: a run whose glyphs left out are the
-        // same as before keeps its `Arc`s, so it is written nothing.
+        // What each slot held: a run whose glyphs left out are the same as
+        // before keeps its placed `Arc`, as `settle` keeps it, so it is
+        // written nothing.
         let before: [Option<GlyphRunData>; 4] = std::array::from_fn(|k| {
             self.units
                 .get(&id)
@@ -451,6 +454,9 @@ impl Projector {
                 RunShape::Path { run: shaped, placed } => (shaped, placed),
                 RunShape::Box(_) => return (!label_hidden).then_some(run),
             };
+            // Only the body gives way to its own label: a cap is the path's
+            // direction marker, not line, and is kept under it.
+            let own_label = own_label.filter(|_| k == 0);
             let mut shown = Vec::with_capacity(placed.glyphs.len());
             for g in &placed.glyphs {
                 let Some(ink) = glyph_ink(shaped, g) else {
@@ -468,27 +474,14 @@ impl Projector {
             if shown.len() == placed.glyphs.len() {
                 return Some(run);
             }
-            if let Some(prev) = &before[k] {
-                if let RunShape::Path {
-                    run: was_run,
-                    placed: was,
-                } = prev.shaped()
-                {
-                    let same = std::sync::Arc::ptr_eq(was_run, shaped)
-                        && was.glyphs == shown
-                        && was.truncated == placed.truncated
-                        && prev.origin() == run.origin()
-                        && prev.opacity() == run.opacity()
-                        && prev.zoom() == run.zoom();
-                    if same {
-                        return Some(prev.clone());
-                    }
-                }
-            }
-            let placed = std::sync::Arc::new(PlacedRun {
+            let placed = PlacedRun {
                 glyphs: shown,
                 truncated: placed.truncated,
-            });
+            };
+            let placed = match before[k].as_ref().map(|r| r.shaped()) {
+                Some(RunShape::Path { placed: was, .. }) if **was == placed => was.clone(),
+                _ => std::sync::Arc::new(placed),
+            };
             run_data(
                 RunShape::Path {
                     run: shaped.clone(),
