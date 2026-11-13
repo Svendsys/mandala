@@ -813,7 +813,9 @@ fn test_ipc_loopback_shutdown_reaches_a_controller_paused_mid_burst() {
 ///   held back, together with `shutdown`. However the writer groups the
 ///   `describe` replies before them, the batch carrying `shutdown` also
 ///   carries tens of kilobytes of pings — never `shutdown` alone, which
-///   any room left in the pipe would take at once.
+///   any room left in the pipe would take at once. That rests on the
+///   sizes of the replies, so the test measures one of each first and
+///   fails on the spot if they no longer give it.
 /// - The client reads nothing until the exit is under way, then reads one
 ///   `describe` reply at a time and gives the exit a moment to finish
 ///   after each. A server that lets go once its last write is handed over
@@ -828,16 +830,83 @@ fn test_ipc_loopback_a_client_behind_at_exit_reads_everything_then_the_end() {
     // reply, and how long it stays away once it has.
     const GRACE: Duration = Duration::from_millis(100);
     const AWAY: Duration = Duration::from_millis(500);
-    // A server that waits for the pipe to take its last write finishes
-    // only after every grace has run out, so they must leave it well
-    // inside its own exit deadline; it never finishes before `AWAY`.
-    const _: () = assert!(GRACE.as_millis() * DESCRIBES as u128 * 2 <= SHUTDOWN_FLUSH.as_millis());
+    // The least the batch carrying `shutdown` may hold. A server that let
+    // go too early failed this test on Windows 40 runs out of 40 when the
+    // smaller of that batch's two possible shapes (below) was about 32 KB,
+    // and only 22 out of 30 when it was about 24 KB: a smaller batch can
+    // fit in the room the pipe has left, and then nothing is pending when
+    // the server lets go.
+    const LEAST_LAST_BATCH: usize = 30 << 10;
+    // The exit's clock starts before the client reads anything, and a
+    // server that waits for the pipe to take its last write finishes only
+    // after every grace has run out: together they must leave it well
+    // inside its own exit deadline. It never finishes before `AWAY`.
+    const _: () = assert!(
+        (READER_PAUSE.as_millis() + GRACE.as_millis() * DESCRIBES as u128) * 2 <= SHUTDOWN_FLUSH.as_millis()
+    );
     const _: () = assert!(DESCRIBES + PINGS + 2 < OUTBOUND_QUEUE_CAP);
 
     let harness = Harness::running("ipc-behind-at-exit");
     let (mut client, _) = Client::attach(&harness.path);
     // The longest id the protocol takes is 256 bytes serialized.
     let ping_id = |n: usize| format!("ping-{n:03}-{}", "x".repeat(240));
+
+    // What the scenario relies on, measured on one reply of each kind
+    // rather than assumed, so a change in their size fails here, loudly,
+    // instead of quietly letting `shutdown` travel in a batch small enough
+    // to fit.
+    let mut round_trip = |request: &str| {
+        client.send(request);
+        let mut line = String::new();
+        client
+            .reader
+            .read_line(&mut line)
+            .expect("a frame within the timeout");
+        line
+    };
+    // Id 0, as short as the burst's shortest: the bound on the last batch
+    // below wants the least a `describe` reply can be.
+    let describe = round_trip(r#"{"id":0,"cmd":"describe"}"#).len();
+    let ping_line = round_trip(&format!("{{\"id\":\"{}\",\"cmd\":\"ping\"}}", ping_id(999)));
+    // A ping reply's size moves with its `now_ms`, the app clock's
+    // milliseconds as an `f64` in its shortest form. The clock has run for
+    // more than a millisecond by now and stays far below 1e16 ms, where the
+    // form turns to an exponent, so it is a decimal from `1.0` (three
+    // bytes) to 17 significant digits and a point (18). The rest of the
+    // reply is the same for every ping.
+    let ping_reply: Value = serde_json::from_str(&ping_line).expect("the ping reply is JSON");
+    let now_ms = serde_json::to_string(&ping_reply["result"]["now_ms"])
+        .expect("serializes")
+        .len();
+    let ping_fixed = ping_line.len() - now_ms;
+    let (ping_least, ping_most) = (ping_fixed + "1.0".len(), ping_fixed + 18);
+    let goodbye = Frame::Event(crate::application::ipc::envelope::Event::shutdown())
+        .encode(crate::application::ipc::envelope::OUTBOUND_FRAME_CAP)
+        .expect("the event fits a frame")
+        .len();
+    // The writer cuts a batch once it holds `WRITE_BATCH_BYTES` or more. A
+    // `describe` reply is under that, so `describe` replies go out in
+    // pairs, and the batch carrying `shutdown` begins either at the first
+    // ping (every ping, then `shutdown`) or at the last `describe` reply
+    // (the pings that batch did not take, then `shutdown`). Both shapes
+    // are smallest when the pings are.
+    let cut = connection::WRITE_BATCH_BYTES;
+    assert!(
+        describe < cut && PINGS * ping_most < cut,
+        "a `describe` reply ({describe} bytes) and the pings (up to {PINGS} × {ping_most} bytes) \
+         must each stay under a write batch ({cut} bytes)"
+    );
+    let from_first_ping = PINGS * ping_least + goodbye;
+    // The last `describe` reply's batch takes pings until it reaches the
+    // cut, so it takes less than `cut - describe` plus one ping more.
+    let from_last_describe = (describe + PINGS * ping_least).saturating_sub(cut + ping_most) + goodbye;
+    assert!(
+        from_first_ping.min(from_last_describe) >= LEAST_LAST_BATCH,
+        "the batch carrying `shutdown` could be as small as {from_first_ping} or \
+         {from_last_describe} bytes, under {LEAST_LAST_BATCH}: a `describe` reply is {describe} \
+         bytes, a ping reply at least {ping_least}"
+    );
+
     let mut burst = String::new();
     for id in 0..DESCRIBES {
         burst.push_str(&format!("{{\"id\":{id},\"cmd\":\"describe\"}}\n"));

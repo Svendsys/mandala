@@ -35,7 +35,7 @@ use crate::application::ipc::envelope::{
 /// write. Large enough that a burst of replies goes out in a handful of
 /// syscalls; small enough that a batch is not a second unbounded
 /// buffer beside the queue.
-const WRITE_BATCH_BYTES: usize = 64 << 10;
+pub(super) const WRITE_BATCH_BYTES: usize = 64 << 10;
 
 /// Pause after a failed `accept()` before trying again, so a
 /// persistent failure (descriptor exhaustion) cannot spin a core.
