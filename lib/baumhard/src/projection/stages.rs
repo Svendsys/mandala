@@ -79,7 +79,7 @@ pub(crate) struct PhaseWork {
     /// the elements whose region may have moved — whose geometry or reach
     /// was marked, and the nodes a section of which was placed elsewhere or
     /// dropped — and the paths to hide glyphs of (#332).
-    pub(crate) reaches: FxHashSet<NodeId>,
+    regions_moved: FxHashSet<NodeId>,
     hide: Vec<NodeId>,
     /// The phase running.
     phase: u8,
@@ -107,6 +107,13 @@ pub(crate) struct PhaseWork {
 }
 
 impl PhaseWork {
+    /// Note that `id`'s region may have moved, for phase D to find again
+    /// (#332): a node, or an element whose geometry or reach was marked,
+    /// which phase D finds no region of. O(1).
+    pub(crate) fn note_region(&mut self, id: NodeId) {
+        self.regions_moved.insert(id);
+    }
+
     /// Take `dep` off the queue: whether it was on it. A piece of work
     /// taken is logged as run.
     fn take(&mut self, dep: Dependent) -> bool {
@@ -360,7 +367,7 @@ impl Projector {
     /// Mark every piece of work that read `input`. O(those).
     pub(crate) fn mark(&self, work: &mut PhaseWork, input: ProjectionInput) {
         if let ProjectionInput::Geometry(id) | ProjectionInput::Reach(id) = input {
-            work.reaches.insert(id);
+            work.note_region(id);
         }
         for &dep in self.deps.dependents(&input) {
             self.queue(work, dep);
@@ -426,7 +433,7 @@ impl Projector {
             }
         }
         work.phase = HIDE;
-        for id in std::mem::take(&mut work.reaches) {
+        for id in std::mem::take(&mut work.regions_moved) {
             self.rehide(id, work);
         }
         while let Some(id) = work.hide.pop() {
@@ -637,7 +644,7 @@ impl Projector {
             .map(|(local, text)| Rect::new(origin + local.origin + text.origin, text.size));
         if state.drawn != drawn {
             state.drawn = drawn;
-            work.reaches.insert(node);
+            work.note_region(node);
         }
         unit.slots[0].want = want;
     }

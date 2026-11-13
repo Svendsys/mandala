@@ -1705,15 +1705,15 @@ the layers to learn what the document is, and nothing flows back.
   node's contents take priority over every path that does not end at
   it: once every path is laid (`Stage::Hide`, its own phase), a glyph of
   a path's body or caps whose box, grown by the path's gap, meets the
-  node's **region** — the box round what it draws, its text's glyph cells
-  and its rings' inks, shaped by its outline where it draws rings — is
+  node's **region** — what it draws, in two parts: the box round its
+  text's glyph cells, and the box round its rings' inks by its outline — is
   left out of the run its layer holds, whole, when the node is drawn
   wherever the path is (opacity above 0, a zoom window holding the
   path's). It is a view
   decision: the document keeps the path, the projector keeps the run as
   laid (`Projector::laid`), and the glyph comes back when the node moves
-  off. Two indices on the hit grid keep it incremental: the regions
-  (`Projector::regions`) and where each path's glyphs are
+  off. Indices on the hit grid keep it incremental: the regions, a body
+  index for each part (`Projector::regions`), and where each path's glyphs are
   (`Projector::path_cells`). A path's hide records reading the `Region`,
   opacity and zoom window of each node it met, so a node whose region
   changes marks it; that node then finds, in the path cells, the paths its

@@ -31,7 +31,7 @@ use baumhard::document::element::DocElement;
 use baumhard::document::format::load;
 use baumhard::document::ids::Document;
 use baumhard::document::resolve::resolve_node;
-use baumhard::document::values::Shape;
+use baumhard::document::values::{Shape, ZoomWindow};
 use baumhard::flow::FILLER_SPAN;
 use baumhard::font::fallback::fallback_families;
 use baumhard::font::fonts::AppFont;
@@ -488,6 +488,8 @@ struct DrawnPath {
     /// Whether it is one straight segment, which leaves and arrives along
     /// its own line rather than its sides' normals.
     straight: bool,
+    /// The zoom window its body renders in.
+    zoom: Option<ZoomWindow>,
 }
 
 /// Every node's frame inks, by node: its rings', or for a node that
@@ -561,6 +563,7 @@ fn drawn_paths(doc: &Document) -> (Vec<DrawnPath>, Frames, f32) {
                             name: format!("{}>{}", ident(ends[0]), ident(ends[1])),
                             inks: projector.laid(element).map_or_else(|| inks.clone(), &mut inks_of),
                             drawn: inks,
+                            zoom: run.zoom(),
                             curves: projector.curve(element).map(<[_]>::to_vec).unwrap_or_default(),
                             style,
                             ends,
@@ -1056,12 +1059,32 @@ fn inside_region(ink: &Ink, reach: &Ink, ellipse: bool) -> bool {
     ((nearest - center) / half).length() < 1.0
 }
 
-/// Every node's region (#332), as its layers draw it: the box round its
-/// sections' glyph cells — each laid-out glyph's advance by its line's
-/// height — and its rings' rasterized inks, and whether it is an ellipse,
-/// which only a node that draws rings hides by. A node that draws nothing,
-/// or is drawn at opacity 0 or only in a zoom window, has none.
-fn regions(doc: &Document) -> std::collections::HashMap<NodeId, (Ink, bool)> {
+/// Whether a zoom window `node` holds `path`: every zoom `path` renders
+/// at, `node` renders at too — an open bound holds any. Stated here on its
+/// own, apart from the projector's.
+fn holds(node: Option<ZoomWindow>, path: Option<ZoomWindow>) -> bool {
+    let Some(node) = node else { return true };
+    let path = path.unwrap_or(ZoomWindow { min: None, max: None });
+    let low = node.min.is_none_or(|n| path.min.is_some_and(|p| n <= p));
+    let high = node.max.is_none_or(|n| path.max.is_some_and(|p| n >= p));
+    low && high
+}
+
+/// A node's region (#332) as its layers draw it, in two parts — the box
+/// round its sections' glyph cells, each laid-out glyph's advance by its
+/// line's height, no glyph of whitespace; and the box round its rings'
+/// rasterized inks, and whether that part is an ellipse — with the node's
+/// opacity carried down the tree from its own and its ancestors', and its
+/// zoom window.
+struct Region {
+    text: Option<Ink>,
+    rings: Option<(Ink, bool)>,
+    opacity: f32,
+    zoom: Option<ZoomWindow>,
+}
+
+/// Every node's region that has a part.
+fn regions(doc: &Document) -> std::collections::HashMap<NodeId, Region> {
     let mut layers = GlyphLayers::new();
     let projector = with_fonts(|fs| Projector::project_full(doc, &mut layers, fs));
     let tree = doc.tree();
@@ -1094,7 +1117,12 @@ fn regions(doc: &Document) -> std::collections::HashMap<NodeId, (Ink, bool)> {
                 match run.shaped() {
                     RunShape::Box(shaped) => {
                         for line in shaped.buffer.layout_runs() {
-                            for g in line.glyphs.iter().filter(|g| g.w > 0.0) {
+                            let text = line.text;
+                            for g in line
+                                .glyphs
+                                .iter()
+                                .filter(|g| g.w > 0.0 && !text[g.start..g.end].trim().is_empty())
+                            {
                                 let min = run.origin() + Vec2::new(g.x, line.line_top);
                                 let cell = Ink {
                                     min,
@@ -1113,30 +1141,46 @@ fn regions(doc: &Document) -> std::collections::HashMap<NodeId, (Ink, bool)> {
             }
         }
     });
+    // A node's opacity times every ancestor's, carried down from the root.
+    let opacity = |node: NodeId| {
+        let mut product = 1.0f32;
+        let mut at = Some(node);
+        while let Some(id) = at {
+            if let Some(DocElement::Node(data)) = doc.get(id) {
+                product *= data.opacity.clamp(0.0, 1.0);
+            }
+            at = tree.node(id).and_then(|n| n.parent());
+        }
+        product
+    };
     boxes
         .into_iter()
-        .filter(|(node, _)| match doc.get(*node) {
-            Some(DocElement::Node(data)) => data.opacity > 0.0 && data.zoom.is_none(),
-            _ => false,
-        })
-        .filter_map(|(node, (text, rings))| {
-            let ellipse = rings.is_some() && resolve_node(tree, node, &mut ()).shape == Shape::Ellipse;
-            let region = match (text, rings) {
-                (Some(t), Some(r)) => join(Some(t), r),
-                (t, r) => t.or(r),
-            }?;
-            Some((node, (region, ellipse)))
+        .filter(|(_, (text, rings))| text.is_some() || rings.is_some())
+        .map(|(node, (text, rings))| {
+            let ellipse = resolve_node(tree, node, &mut ()).shape == Shape::Ellipse;
+            let zoom = match doc.get(node) {
+                Some(DocElement::Node(data)) => data.zoom,
+                _ => None,
+            };
+            let region = Region {
+                text,
+                rings: rings.map(|r| (r, ellipse)),
+                opacity: opacity(node),
+                zoom,
+            };
+            (node, region)
         })
         .collect()
 }
 
 /// Nodes hide the glyphs of the paths behind them, and no others (#332),
 /// on every map the connector rules are checked on: no glyph a path's
-/// layer draws lies inside the region of a node other than its own two —
-/// the box round what it draws, its text's cells and its rings' inks,
-/// shaped by its outline where it draws rings (`regions`,
-/// `inside_region`) — and every glyph it leaves out lies within its own
-/// gap of one, measured as the projector measures it but from the
+/// layer draws lies inside the region of a node other than its own two
+/// that is drawn wherever the path is — opacity above 0, carried down the
+/// tree, and a zoom window that `holds` the path's — the box round its
+/// text's cells, or the box round its rings' inks by its outline
+/// (`regions`, `inside_region`); and every glyph it leaves out lies within
+/// its own gap of one, measured as the projector measures it but from the
 /// rasterized inks: a quarter of the gap more, for the slack a `repeat`
 /// path spreads over its gaps, and half a point for the raster.
 ///
@@ -1152,15 +1196,12 @@ fn test_maps_hide_only_the_glyphs_behind_other_nodes() {
         let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
         let doc = load(&text).unwrap_or_else(|e| panic!("{name} must load: {e}"));
         let (paths, _, _) = drawn_paths(&doc);
-        let reaches: Vec<(NodeId, Ink, bool)> = regions(&doc)
-            .into_iter()
-            .map(|(node, (region, ellipse))| (node, region, ellipse))
-            .collect();
+        let regions = regions(&doc);
         for p in &paths {
-            let others: Vec<(Ink, bool)> = reaches
+            let others: Vec<(Ink, bool)> = regions
                 .iter()
-                .filter(|(node, _, _)| !p.ends.contains(node))
-                .map(|&(_, reach, ellipse)| (reach, ellipse))
+                .filter(|(node, r)| !p.ends.contains(node) && r.opacity > 0.0 && holds(r.zoom, p.zoom))
+                .flat_map(|(_, r)| r.text.map(|t| (t, false)).into_iter().chain(r.rings))
                 .collect();
             for ink in &p.drawn {
                 if let Some((reach, _)) = others.iter().find(|(r, ellipse)| inside_region(ink, r, *ellipse)) {

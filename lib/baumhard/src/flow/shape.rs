@@ -279,14 +279,23 @@ pub struct ShapedBox {
 }
 
 impl ShapedBox {
-    /// The box round its laid-out glyphs, each its advance by its line's
-    /// height, from the box's top-left: where its text is drawn, which an
-    /// aligned or minimum-sized box may hold a good deal of empty space
-    /// round. `None` for a box with no glyph. O(its glyphs).
+    /// The box round the laid-out glyphs it draws, each its advance by its
+    /// line's height, from the box's top-left: where its text is drawn,
+    /// which an aligned or minimum-sized box may hold a good deal of empty
+    /// space round. A glyph of no advance, or of a cluster that is all
+    /// whitespace, draws nothing and is left out, so spaces before and
+    /// after the text do not widen it. `None` for a box that draws no
+    /// glyph. O(its glyphs).
     pub fn text_box(&self) -> Option<Rect> {
         let mut out: Option<Rect> = None;
         for line in self.buffer.layout_runs() {
-            for glyph in line.glyphs.iter().filter(|g| g.w > 0.0) {
+            let drawn = |g: &&LayoutGlyph| {
+                g.w > 0.0
+                    && line.text.get(g.start..g.end).is_some_and(|cluster| {
+                        grapheme_chad::first_non_whitespace_grapheme(cluster).is_some()
+                    })
+            };
+            for glyph in line.glyphs.iter().filter(drawn) {
                 let cell = Rect::new(
                     Vec2::new(glyph.x, line.line_top),
                     Vec2::new(glyph.w, line.line_height),

@@ -2273,6 +2273,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_flow_box_keeps_a_larger_minimum)
     });
     c.bench_function("flow_box_aligns_lines", |b| b.iter(do_flow_box_aligns_lines));
+    c.bench_function("flow_text_box_holds_the_drawn_glyphs", |b| {
+        b.iter(do_flow_text_box_holds_the_drawn_glyphs)
+    });
     c.bench_function("flow_box_reads_a_bad_minimum_as_none", |b| {
         b.iter(do_flow_box_reads_a_bad_minimum_as_none)
     });

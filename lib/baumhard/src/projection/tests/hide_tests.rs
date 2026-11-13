@@ -42,8 +42,9 @@ fn inks(run: &GlyphRunData) -> Vec<Rect> {
         .collect()
 }
 
-/// The canvas cell of each laid-out glyph of a box run: its advance by
-/// its line's height, from the run's origin.
+/// The canvas cell of each laid-out glyph a box run draws: its advance
+/// by its line's height, from the run's origin; a glyph of whitespace
+/// draws nothing.
 fn cells(run: &GlyphRunData) -> Vec<Rect> {
     let RunShape::Box(shaped) = run.shaped() else {
         panic!("a box run");
@@ -52,10 +53,10 @@ fn cells(run: &GlyphRunData) -> Vec<Rect> {
         .buffer
         .layout_runs()
         .flat_map(|line| {
-            let (top, height) = (line.line_top, line.line_height);
+            let (top, height, text) = (line.line_top, line.line_height, line.text);
             line.glyphs
                 .iter()
-                .filter(|g| g.w > 0.0)
+                .filter(move |g| g.w > 0.0 && !text[g.start..g.end].trim().is_empty())
                 .map(move |g| Rect::new(Vec2::new(g.x, top), Vec2::new(g.w, height)))
                 .collect::<Vec<_>>()
         })
@@ -236,11 +237,14 @@ fn test_projection_a_node_hides_the_glyphs_of_a_path_behind_it() {
 
 /// A node hides by what it draws, not by its rectangle (the owner's answer
 /// on #334): a path across the empty part of a node's box, clear of its
-/// text, is drawn whole — the frames demo's "half" node, its text centered
-/// in a section authored much wider.
+/// text, is drawn whole — a node `min_size` far larger than its text, at
+/// its top-left — and a path across a section authored much wider than
+/// its text and centered, as the frames demo's "half" is, is hidden by
+/// the text alone and drawn over the box's empty sides.
 ///
-/// Control: with the region the node's drawn rectangle, red on the glyphs
-/// left out.
+/// Controls: with the region the node's drawn rectangle, red on the
+/// glyphs left out; with a box's text measured from its left, not as
+/// aligned, red on the glyphs drawn over the centered text.
 #[test]
 fn test_projection_a_node_hides_by_what_it_draws_not_its_rectangle() {
     // A box 400 by 300 from y = -100, its text at its top-left, ending
@@ -260,6 +264,67 @@ fn test_projection_a_node_hides_by_what_it_draws_not_its_rectangle() {
         0,
         "the path is drawn whole"
     );
+    p.check().unwrap();
+    // A section 400 wide from x = 300, its text centered in it, across
+    // the path.
+    let centered = json!({"sections": [{"min_size": [400.0, 40.0], "align": "center", "size": 30.0, "spans": [{"text": "HIDE"}]}]});
+    let mut p = Projected::new(two_paths(Vec2::new(300.0, 0.0), centered, json!({})));
+    let path = path_of(&p, 2);
+    let text = region_of(&p, 3);
+    assert!(
+        text.origin.x > 400.0 && text.max().x < 600.0,
+        "precondition: the text is centered in its box, {text:?}"
+    );
+    assert!(
+        hides_exactly(&p, path, text) >= 3,
+        "the centered text hides the path"
+    );
+    let shown = inks(&drawn(&p, path));
+    for (side, range) in [("left", 310.0..390.0), ("right", 610.0..690.0)] {
+        assert!(
+            shown.iter().any(|i| range.contains(&i.center().x)),
+            "the path is drawn over the box's empty {side} side"
+        );
+    }
+    p.check().unwrap();
+}
+
+/// A ringed ellipse whose text fills its box hides by its text's box,
+/// corners and all, and by the ellipse of its rings: the text's corner
+/// cells, outside the ellipse, hide as the rest of its text does.
+///
+/// Control: with the whole region shaped as the ellipse, as one box,
+/// red on the glyphs drawn over the text's corners.
+#[test]
+fn test_projection_an_ellipses_text_hides_to_its_corners() {
+    // Fit-to-text: the ellipse is inscribed in the text's box, and its
+    // thin ring a little outside it. The path runs 3 below the text's top.
+    let fitted = json!({"shape": "ellipse", "min_size": [0.0, 0.0], "sections": [{"size": 30.0, "spans": [{"text": "HIDE HIDE HIDE HIDE"}]}], "frame": dotted(0.05)});
+    let mut p = Projected::new(two_paths(Vec2::new(300.0, 17.0), fitted, json!({})));
+    let path = path_of(&p, 2);
+    let (text, rings) = drawn_by(&p, ident(&p.doc, 3));
+    let (text, rings) = (text.unwrap(), rings.expect("the ring is drawn"));
+    let gap = own_gap(&p.projector, path);
+    let (center, half) = (rings.center(), rings.size * 0.5);
+    let corners = inks(p.projector.laid(path).unwrap())
+        .into_iter()
+        .filter(|i| {
+            let grown = i.grown(gap);
+            let nearest = center.clamp(grown.origin, grown.max());
+            meet(&grown, &text) && ((nearest - center) / half).length() >= 1.05
+        })
+        .count();
+    assert!(
+        corners >= 2,
+        "precondition: the path meets the text's corners outside the ellipse, {corners} glyphs"
+    );
+    for ink in inks(&drawn(&p, path)) {
+        assert!(
+            !meet(&ink.grown(gap * 0.95), &text),
+            "a drawn glyph at {} within the gap {gap} of the text at {text:?}",
+            ink.center()
+        );
+    }
     p.check().unwrap();
 }
 
@@ -542,13 +607,18 @@ fn test_projection_a_container_hides_by_what_it_draws() {
 /// owner's answer on #334): at opacity 0, or in a zoom window that does
 /// not hold the path's, it hides nothing — a run has one zoom window, so
 /// a glyph cannot be hidden only while the node shows. Half transparent,
-/// or in a window holding the path's, it hides. And an opacity set to 0
-/// shows the glyphs it hid.
+/// or in a window holding the path's, it hides.
+///
+/// Both bounds of "holds" are tried. The node's opacity set to 0 shows
+/// the glyphs it hid; its zoom window set to one that does not hold the
+/// path's shows them, and taken away hides them again.
 ///
 /// Controls: with `hide` heeding neither opacity nor zoom, red on the
 /// nodes that hide nothing; with no window held, red on the window that
-/// holds the path's; with `hide` not reading the node's opacity, red on
-/// the glyphs shown when it is set to 0.
+/// holds the path's; with `drawn_wherever`'s `max` side reading `min`,
+/// red on a `max` case; with `hide` not reading the node's opacity, red
+/// on the glyphs shown when it is set to 0; with `hide` not reading its
+/// visibility, red on the glyphs shown when its zoom window is set.
 #[test]
 fn test_projection_a_node_hides_only_where_it_is_drawn() {
     let cases = [
@@ -563,6 +633,17 @@ fn test_projection_a_node_hides_only_where_it_is_drawn() {
         (
             json!({"zoom": {"min": 0.1}}),
             json!({"zoom": {"min": 0.5, "max": 20.0}}),
+            true,
+        ),
+        (json!({"zoom": {"max": 5.0}}), json!({}), false),
+        (
+            json!({"zoom": {"max": 5.0}}),
+            json!({"zoom": {"max": 10.0}}),
+            false,
+        ),
+        (
+            json!({"zoom": {"max": 10.0}}),
+            json!({"zoom": {"max": 5.0}}),
             true,
         ),
     ];
@@ -591,6 +672,23 @@ fn test_projection_a_node_hides_only_where_it_is_drawn() {
         .unwrap();
     assert_eq!(left_out(&p, path), 0, "a node faded to nothing shows the path");
     p.check().unwrap();
+    // The zoom half: a window set that does not hold the path's shows it,
+    // and the window taken away hides it again.
+    let mut p = Projected::new(two_paths(ON_P, json!({}), json!({})));
+    let path = path_of(&p, 2);
+    let hidden = left_out(&p, path);
+    assert!(hidden > 0, "precondition: the node hides glyphs");
+    let window = crate::document::values::ZoomWindow {
+        min: Some(50.0),
+        max: None,
+    };
+    for (zoom, want) in [(Some(window), 0), (None, hidden)] {
+        let mutation = single(DocKind::Node, DocMutation::Node(NodeOp::SetZoom(zoom)));
+        p.apply(request(mutation, vec![ident(&p.doc, 3)], "zoom"))
+            .unwrap();
+        assert_eq!(left_out(&p, path), want, "with the node's zoom window {zoom:?}");
+        p.check().unwrap();
+    }
 }
 
 /// A node that stops being drawn — hidden — shows the glyphs it hid.

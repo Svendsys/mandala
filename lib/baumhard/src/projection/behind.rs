@@ -6,10 +6,11 @@
 //! A glyph of a path's body or caps is left out of its run where its box
 //! — its ink, or its advance by its line height where it has none —
 //! grown by the path's own gap meets the **region** of a visible node the
-//! path does not end at ([`Projector::region`]): the box round what the
-//! node draws, its sections' glyph cells and its rings' inks, shaped by
-//! its outline where it draws rings — not its drawn rectangle (the
-//! owner's answer on #334). So a path shown on either side of a node stops
+//! path does not end at ([`Projector::region`]): what the node draws, in
+//! two parts — the box round its sections' glyph cells, a rectangle, and
+//! the box round its rings' inks, shaped by its outline — not its drawn
+//! rectangle (the owner's answer on #334). So a path shown on either side
+//! of a node stops
 //! at least one gap short of it, as it stops one gap short of its own
 //! frames. A glyph is drawn whole or not at all, never clipped. Its label
 //! and portal ends are not paths' glyphs and are not hidden.
@@ -21,7 +22,7 @@
 //! evaluated when drawing (§12.4) and a run's glyphs share one window, so
 //! a glyph cannot be hidden only while the node shows, and a gap with
 //! nothing over it reads as a break in the path. A path whose two nodes
-//! lie inside the box round a third node's ring is hidden whole.
+//! lie inside a third node's ringed region is hidden whole.
 //!
 //! Hiding is a view decision: the document keeps the path, the
 //! projection keeps every glyph as laid (`LineState::laid`), and a glyph
@@ -30,7 +31,9 @@
 //! # What runs again
 //!
 //! Two indices on the body index's grid keep this proportional to what
-//! moved: every visible node's region (a [`BodyIndex`]), and where each
+//! moved: every visible node's region
+//! ([`Regions`](crate::projection::behind::Regions), a [`BodyIndex`] for
+//! each part), and where each
 //! drawn path's glyphs are
 //! ([`PathCells`](crate::projection::behind::PathCells)). A path's hide
 //! stage, run once every path is laid and every ring and section placed,
@@ -57,7 +60,7 @@ use crate::flow::{PlacedRun, Rect};
 use crate::gfx_structs::run::RunShape;
 use crate::gfx_structs::shape::NodeShape;
 use crate::projection::geometry::node_shape;
-use crate::projection::hit::{cell_count, cells, span};
+use crate::projection::hit::{cell_count, cells, span, BodyIndex};
 use crate::projection::input::{Dependent, ProjectionInput, Stage};
 use crate::projection::stages::{gap_and_size, glyph_ink, run_data, PhaseWork};
 use crate::projection::state::UnitBody;
@@ -253,15 +256,75 @@ pub(crate) fn bits(r: Rect) -> [u32; 4] {
     ]
 }
 
+/// A node's region (#332), in its two parts: the box round its text, a
+/// rectangle, and the box round its rings' inks with the shape of its
+/// outline, which they run round. Either is `None` where the node draws
+/// none of it, or none of any area.
+pub(crate) type Region = (Option<Rect>, Option<(Rect, NodeShape)>);
+
+/// Every visible node's region, each part in a body index of its own: the
+/// text part as a rectangle, the rings part by the node's outline — so
+/// the corners of an ellipse's text, outside the ellipse, hide as the rest
+/// of its text does, and the empty corners of its rings' box do not.
+#[derive(Debug, Default)]
+pub(crate) struct Regions {
+    /// Each node's text part.
+    text: BodyIndex,
+    /// Each node's rings part.
+    rings: BodyIndex,
+}
+
+impl Regions {
+    /// `node`'s region as the index holds it. O(1).
+    pub(crate) fn get(&self, node: NodeId) -> Region {
+        (self.text.get(node).map(|(r, _)| r), self.rings.get(node))
+    }
+
+    /// Set `node`'s region: each part set, or taken out where it is
+    /// `None`. O(the cells of the old and new parts).
+    pub(crate) fn set(&mut self, node: NodeId, (text, rings): Region) {
+        match text {
+            Some(rect) => self.text.set(node, rect, NodeShape::Rectangle),
+            None => self.text.remove(node),
+        }
+        match rings {
+            Some((rect, shape)) => self.rings.set(node, rect, shape),
+            None => self.rings.remove(node),
+        }
+    }
+
+    /// Each node with a part of its region `rect` overlaps by that part's
+    /// shape, passed to `f` — once for each part and each cell it is found
+    /// in ([`BodyIndex::each_within`]). O(the bodies tried in both parts).
+    pub(crate) fn each_within(&self, rect: Rect, mut f: impl FnMut(NodeId)) {
+        self.text.each_within(rect, &mut f);
+        self.rings.each_within(rect, f);
+    }
+
+    /// Whether `self` and `other` hold the same regions, part by part:
+    /// what the oracle compares with a full projection's. `Err` names the
+    /// part and the first entry they differ at. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn same_as(&self, other: &Regions) -> Result<(), String> {
+        self.text
+            .same_as(&other.text)
+            .map_err(|d| format!("text part: {d}"))?;
+        self.rings
+            .same_as(&other.rings)
+            .map_err(|d| format!("rings part: {d}"))
+    }
+}
+
 impl Projector {
-    /// The region `node` hides paths' glyphs by (#332): the box round
-    /// what it draws — its sections' text, each glyph's cell, and its
-    /// rings' inks — shaped by its outline where it draws rings, which run
-    /// round that outline, and a rectangle where it draws text alone.
-    /// `None` for a node that draws nothing, or nothing of any area: it
-    /// hides nothing. O(its units).
-    pub(crate) fn region(&self, node: NodeId) -> Option<(Rect, NodeShape)> {
-        let n = self.nodes.get(&node)?;
+    /// The region `node` hides paths' glyphs by (#332), in its two parts:
+    /// the box round its sections' text, each glyph's cell, as a rectangle;
+    /// and the box round its rings' inks, shaped by its outline, which the
+    /// rings run round. A part the node draws nothing of, or nothing of any
+    /// area, is `None`; a node with neither hides nothing. O(its units).
+    pub(crate) fn region(&self, node: NodeId) -> Region {
+        let Some(n) = self.nodes.get(&node) else {
+            return (None, None);
+        };
         let (mut text, mut inks): (Option<Rect>, Option<Rect>) = (None, None);
         let join = |a: Option<Rect>, b: Option<Rect>| match (a, b) {
             (Some(a), Some(b)) => Some(a.union(&b)),
@@ -274,14 +337,8 @@ impl Projector {
                 _ => {}
             }
         }
-        let shape = if inks.is_some() {
-            node_shape(n.shape)
-        } else {
-            NodeShape::Rectangle
-        };
-        join(text, inks)
-            .filter(|r| r.size.x > 0.0 && r.size.y > 0.0)
-            .map(|r| (r, shape))
+        let some = |r: Option<Rect>| r.filter(|r| r.size.x > 0.0 && r.size.y > 0.0);
+        (some(text), some(inks).map(|r| (r, node_shape(n.shape))))
     }
 
     /// Phase D for an element whose region may have moved — a node whose
@@ -298,12 +355,9 @@ impl Projector {
         if self.regions.get(id) == region {
             return;
         }
-        match region {
-            Some((rect, shape)) => self.regions.set(id, rect, shape),
-            None => self.regions.remove(id),
-        }
+        self.regions.set(id, region);
         self.mark(work, ProjectionInput::Region(id));
-        if let Some((rect, _)) = region {
+        for rect in [region.0, region.1.map(|(r, _)| r)].into_iter().flatten() {
             self.path_cells.each_meeting(rect, |path| {
                 self.queue(work, Dependent::new(path, Stage::Hide));
             });

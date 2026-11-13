@@ -139,9 +139,10 @@ pub struct Projector {
     pub(crate) deps: DepIndex,
     /// The visible nodes' bodies, for the hit test.
     pub(crate) bodies: BodyIndex,
-    /// The visible nodes' regions, their reaches round their rectangles:
+    /// The visible nodes' regions — the box round each one's text, and the
+    /// box round its rings' inks by its outline (`Projector::region`):
     /// what hides a path's glyphs (#332).
-    pub(crate) regions: BodyIndex,
+    pub(crate) regions: behind::Regions,
     /// Where each drawn connector's and line link's glyphs are: what a
     /// node's region finds the paths it hides by (#332).
     pub(crate) path_cells: behind::PathCells,
