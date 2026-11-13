@@ -646,19 +646,21 @@ thread_local! {
 }
 
 /// How many [`pieces`] the segment from `a` to `b` is read in, so that
-/// none is longer than [`LINE_PIECE`]: its length over that, rounded up,
-/// and at least one. Not finite for a segment that is not. O(1).
+/// each is about a [`LINE_PIECE`] or shorter: its length over that,
+/// rounded up, and at least one. Not finite for a segment that is not.
+/// O(1).
 fn piece_count(a: Vec2, b: Vec2) -> f32 {
     ((b - a).length() / LINE_PIECE).ceil().max(1.0)
 }
 
 /// The segment from `a` to `b` in `count` pieces of equal length, in
-/// order. In [`piece_count`] pieces, each is at most a [`LINE_PIECE`]
-/// long, so its box covers at most four cells of the body index's grid;
-/// a stretch [`MAX_LINE_PIECES`] [`LINE_PIECE`]s long, in that many, gives
-/// pieces a [`LINE_PIECE`] long up to rounding, each under at most four
-/// of `Clear`'s 512-unit cells. O(1) per piece; the caller bounds
-/// `count`.
+/// order. In [`piece_count`] pieces, each is about a [`LINE_PIECE`] long
+/// or shorter, so its box covers at most four cells of the body index's
+/// grid; a stretch [`MAX_LINE_PIECES`] [`LINE_PIECE`]s long, in that
+/// many, gives pieces about a [`LINE_PIECE`] long, each under at most
+/// four of `Clear`'s 512-unit cells. "About": `lerp` places each piece's
+/// ends on its own, so a piece can come out a rounding error longer.
+/// O(1) per piece; the caller bounds `count`.
 fn pieces(a: Vec2, b: Vec2, count: u32) -> impl Iterator<Item = (Vec2, Vec2)> {
     (0..count).map(move |k| {
         (

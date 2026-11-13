@@ -1803,10 +1803,12 @@ fn test_a_layouts_work_does_not_grow_with_the_map() {
 /// line's pieces is pinned where it acts, by
 /// `test_a_line_is_read_in_at_most_64_pieces_and_a_longer_one_not_at_all`.)
 ///
-/// Control: reading every line whole from the parent's center, its
+/// Controls: reading every line whole from the parent's center, its
 /// pieces clamped to 64, made each piece of the wide parent's lines
 /// cover more cells than the index lists a body under, so each scanned
-/// every body, and the far nodes were scanned.
+/// every body, and the far nodes were scanned; with `meeting` counting
+/// none of the bodies it tries, the precondition that the index was
+/// asked failed.
 #[test]
 fn test_a_blocked_flowers_work_does_not_grow_with_the_map() {
     use crate::projection::tests::maps::{load_map, node};
@@ -1846,6 +1848,7 @@ fn test_a_blocked_flowers_work_does_not_grow_with_the_map() {
             "{width}: precondition: every arrangement was tried ({} questions)",
             near.0
         );
+        assert!(near.1 > 0, "{width}: precondition: the index was asked");
         assert_eq!(
             near, far,
             "{width}: (questions, bodies scanned) with the far nodes and without"
