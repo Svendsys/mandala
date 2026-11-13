@@ -1776,8 +1776,9 @@ Typical chains:
   text, and the box round its rings' inks by its outline) met, which read
   it, and the paths whose glyphs or labels its new region meets, found
   through an index of where each path's glyphs and label are, hide again
-  what is behind it (#332); none is laid again. A path laid again hides again, trying
-  each of its glyphs against the regions of that glyph's cells.
+  what is behind it (#332); none is laid again. A path laid again hides
+  again, trying each of its glyphs, and its label's text, against the
+  regions of their cells.
 
 ### §12.4 Zoom and pan
 

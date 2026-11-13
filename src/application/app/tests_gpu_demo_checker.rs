@@ -490,6 +490,35 @@ struct DrawnPath {
     straight: bool,
     /// The zoom window its body renders in.
     zoom: Option<ZoomWindow>,
+    /// Its label as laid, if it has one: the box round its text's cells
+    /// (`text_cells`), and whether the labels layer draws it.
+    label: Option<(Ink, bool)>,
+}
+
+/// The box round the cells of the glyphs a box run draws, each its
+/// advance by its line's height, no glyph of whitespace; `None` for a run
+/// that draws none, or a path run.
+fn text_cells(run: &GlyphRunData) -> Option<Ink> {
+    let RunShape::Box(shaped) = run.shaped() else {
+        return None;
+    };
+    let mut out: Option<Ink> = None;
+    for line in shaped.buffer.layout_runs() {
+        let text = line.text;
+        for g in line
+            .glyphs
+            .iter()
+            .filter(|g| g.w > 0.0 && !text[g.start..g.end].trim().is_empty())
+        {
+            let min = run.origin() + Vec2::new(g.x, line.line_top);
+            let max = min + Vec2::new(g.w, line.line_height);
+            out = Some(out.map_or(Ink { min, max }, |a| Ink {
+                min: a.min.min(min),
+                max: a.max.max(max),
+            }));
+        }
+    }
+    out
 }
 
 /// Every node's frame inks, by node: its rings', or for a node that
@@ -564,6 +593,13 @@ fn drawn_paths(doc: &Document) -> (Vec<DrawnPath>, Frames, f32) {
                             inks: projector.laid(element).map_or_else(|| inks.clone(), &mut inks_of),
                             drawn: inks,
                             zoom: run.zoom(),
+                            label: projector.laid_label(element).and_then(text_cells).map(|text| {
+                                let drawn = projector
+                                    .glyphs_of(element)
+                                    .iter()
+                                    .any(|(layer, _)| *layer == Layer::Labels);
+                                (text, drawn)
+                            }),
                             curves: projector.curve(element).map(<[_]>::to_vec).unwrap_or_default(),
                             style,
                             ends,
@@ -1115,21 +1151,9 @@ fn regions(doc: &Document) -> std::collections::HashMap<NodeId, Region> {
                 };
                 let entry = boxes.entry(node).or_default();
                 match run.shaped() {
-                    RunShape::Box(shaped) => {
-                        for line in shaped.buffer.layout_runs() {
-                            let text = line.text;
-                            for g in line
-                                .glyphs
-                                .iter()
-                                .filter(|g| g.w > 0.0 && !text[g.start..g.end].trim().is_empty())
-                            {
-                                let min = run.origin() + Vec2::new(g.x, line.line_top);
-                                let cell = Ink {
-                                    min,
-                                    max: min + Vec2::new(g.w, line.line_height),
-                                };
-                                entry.0 = join(entry.0, cell);
-                            }
+                    RunShape::Box(_) => {
+                        if let Some(cells) = text_cells(run) {
+                            entry.0 = join(entry.0, cells);
                         }
                     }
                     RunShape::Path { .. } => {
@@ -1173,6 +1197,16 @@ fn regions(doc: &Document) -> std::collections::HashMap<NodeId, Region> {
         .collect()
 }
 
+/// A fixture for the labels' hidden direction, which no shipped map
+/// exercises: Alpha's connector to Omega carries a label at its middle,
+/// and a third node, Over, sits on it.
+const LABEL_FIXTURE: &str = r#"{"format": 1, "name": "a label under a node", "nodes": [
+    {"id": 1, "position": [0.0, 0.0], "sections": [{"size": 24, "spans": [{"text": "Alpha"}]}]},
+    {"id": 2, "parent": 1, "position": [800.0, 0.0], "sections": [{"size": 24, "spans": [{"text": "Omega"}]}],
+     "connector": {"straight": true, "label": {"t": 0.5, "spans": [{"text": "a label on the path"}]}}},
+    {"id": 3, "position": [360.0, -6.0], "sections": [{"size": 24, "spans": [{"text": "Over"}]}]}
+]}"#;
+
 /// Nodes hide the glyphs of the paths behind them, and no others (#332),
 /// on every map the connector rules are checked on: no glyph a path's
 /// layer draws lies inside the region of a node other than its own two
@@ -1184,16 +1218,34 @@ fn regions(doc: &Document) -> std::collections::HashMap<NodeId, Region> {
 /// rasterized inks: a quarter of the gap more, for the slack a `repeat`
 /// path spreads over its gaps, and half a point for the raster.
 ///
+///
+/// A path's label is held the same way: no label the labels layer draws
+/// has its text's cells (`text_cells`) inside such a region, and every
+/// label laid and not drawn meets one, within half a point for the
+/// raster. Testament draws labels and hides none, as does every shipped
+/// map, so the hidden direction is held on a fixture built here — a
+/// label under a third node's text — rather than on a demo map changed to
+/// carry one.
+///
 /// Controls: with a node's region its text alone, red on the glyphs drawn
 /// inside its rings on `stress_long_edges`; with the margin three gaps,
 /// red on the glyphs left out that no node is near; with `hide` leaving
-/// every glyph in, red on the precondition.
+/// every glyph in, red on the precondition; with a label never hidden, red
+/// on the fixture's label drawn inside the region; with every label hidden,
+/// red on testament's labels left out with no node there.
 #[test]
 fn test_maps_hide_only_the_glyphs_behind_other_nodes() {
     let mut faults: Vec<String> = Vec::new();
-    let mut hidden = 0;
-    for (name, path) in connector_maps() {
-        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+    let (mut hidden, mut labels, mut labels_behind) = (0, 0, 0);
+    let mut maps: Vec<(String, String)> = connector_maps()
+        .into_iter()
+        .map(|(name, path)| {
+            let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+            (name, text)
+        })
+        .collect();
+    maps.push(("a label under a node".to_string(), LABEL_FIXTURE.to_string()));
+    for (name, text) in maps {
         let doc = load(&text).unwrap_or_else(|e| panic!("{name} must load: {e}"));
         let (paths, _, _) = drawn_paths(&doc);
         let regions = regions(&doc);
@@ -1229,9 +1281,33 @@ fn test_maps_hide_only_the_glyphs_behind_other_nodes() {
                     ));
                 }
             }
+            if let Some((text, drawn)) = p.label {
+                labels += 1;
+                let inside = others
+                    .iter()
+                    .any(|(r, ellipse)| inside_region(&text, r, *ellipse));
+                let near = others.iter().any(|(r, _)| text.gap(r) <= 0.5);
+                if drawn && inside {
+                    faults.push(format!(
+                        "{name} {}: its label drawn inside a node's region",
+                        p.name
+                    ));
+                }
+                if inside || !drawn {
+                    labels_behind += 1;
+                }
+                if !drawn && !near {
+                    faults.push(format!(
+                        "{name} {}: its label left out, no other node there",
+                        p.name
+                    ));
+                }
+            }
         }
     }
     assert!(hidden > 0, "precondition: some path runs behind a node");
+    assert!(labels > 0, "precondition: some path has a label");
+    assert!(labels_behind > 0, "precondition: some label is behind a node");
     assert!(
         faults.is_empty(),
         "{} faults:\n{}",

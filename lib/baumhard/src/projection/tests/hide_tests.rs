@@ -2,11 +2,12 @@
 
 //! Nodes hide the paths behind them (#332): a connector's glyph is left
 //! out where it would come within its own gap of what a node it does not
-//! end at draws — its text and its rings — and comes back when the node
-//! moves away; a move re-hides only the paths whose glyphs the node's old
-//! or new region meets. Glyph cells and inks are read from the runs'
-//! layouts and metrics here, not through the projector's own reading of
-//! them, and every test ends on the oracle.
+//! end at draws — its text and its rings — and its label, whole, where
+//! the box round the label's text meets it; both come back when the node
+//! moves away, and a move re-hides only the paths whose glyphs or label
+//! the node's old or new region meets. Glyph cells and inks are read from
+//! the runs' layouts and metrics here, not through the projector's own
+//! reading of them, and every test ends on the oracle.
 
 use glam::Vec2;
 use rustc_hash::FxHashSet;
@@ -780,15 +781,26 @@ fn test_projection_a_node_wider_than_the_paths_cells_finds_them_by_scanning() {
     p.check().unwrap();
 }
 
-/// A path's label as laid, and the box round its text's glyph cells as
-/// the label's run holds them.
-fn label_of(p: &Projected, path: NodeId) -> (GlyphRunData, Rect) {
+/// The box round a path's label's text's glyph cells, as laid.
+fn label_of(p: &Projected, path: NodeId) -> Rect {
     let Some(UnitBody::Line(line)) = p.projector.units.get(&path).map(|u| &u.body) else {
         panic!("{path:?} is a line");
     };
-    let run = line.laid[3].clone().expect("the label is laid");
-    let text = bounds(&cells(&run)).expect("the label draws text");
-    (run, text)
+    let run = line.laid[3].as_ref().expect("the label is laid");
+    bounds(&cells(run)).expect("the label draws text")
+}
+
+/// The box a path's label's run spans as laid: its shaped box, spaces
+/// and all.
+fn label_box_of(p: &Projected, path: NodeId) -> Rect {
+    let Some(UnitBody::Line(line)) = p.projector.units.get(&path).map(|u| &u.body) else {
+        panic!("{path:?} is a line");
+    };
+    let run = line.laid[3].as_ref().expect("the label is laid");
+    let RunShape::Box(shaped) = run.shaped() else {
+        panic!("a box run");
+    };
+    Rect::new(run.origin(), shaped.size)
 }
 
 /// Whether the labels layer draws `path`'s label.
@@ -815,7 +827,7 @@ fn test_projection_a_label_over_another_node_is_hidden_whole() {
         labeled("LABEL", 0.5, 0.0),
     ));
     let path = path_of(&p, 2);
-    let (_, label) = label_of(&p, path);
+    let label = label_of(&p, path);
     assert!(
         meet(&label, &region_of(&p, 3)),
         "precondition: the label meets the blocker's text, {label:?}"
@@ -842,7 +854,7 @@ fn test_projection_a_label_shows_and_hides_as_a_node_moves() {
     let start = Vec2::new(250.0, -50.0);
     let mut p = Projected::new(two_paths(start, json!({}), labeled("LABEL", 0.2, 40.0)));
     let path = path_of(&p, 2);
-    let (_, label) = label_of(&p, path);
+    let label = label_of(&p, path);
     assert_eq!(
         left_out(&p, path),
         0,
@@ -878,11 +890,132 @@ fn test_projection_a_label_over_its_own_end_is_drawn() {
     ]}));
     let mut p = Projected::new(doc);
     let path = path_of(&p, 2);
-    let (_, label) = label_of(&p, path);
+    let label = label_of(&p, path);
     assert!(
         meet(&label, &region_of(&p, 1)),
         "precondition: the label meets its start node's text, {label:?}"
     );
     assert!(label_drawn(&p, path), "the label over its own end is drawn");
+    p.check().unwrap();
+}
+
+/// A label is hidden only by a node drawn wherever the label is, as a
+/// path's glyphs are: a blocker over P's label at opacity 0, or in a zoom
+/// window that does not hold the path's, leaves it drawn; half
+/// transparent, or in a window that holds the path's, it hides it. Both
+/// bounds of "holds" are tried.
+///
+/// Control: with the label hidden by any region it meets, whatever its
+/// node's opacity and zoom window, red on the label not drawn.
+#[test]
+fn test_projection_a_label_is_hidden_only_where_its_node_is_drawn() {
+    let cases = [
+        (json!({"opacity": 0.0}), json!({}), false),
+        (json!({"opacity": 0.5}), json!({}), true),
+        (json!({"zoom": {"min": 50.0}}), json!({}), false),
+        (json!({"zoom": {"max": 5.0}}), json!({}), false),
+        (
+            json!({"zoom": {"max": 5.0}}),
+            json!({"zoom": {"max": 10.0}}),
+            false,
+        ),
+        (
+            json!({"zoom": {"max": 10.0}}),
+            json!({"zoom": {"max": 5.0}}),
+            true,
+        ),
+    ];
+    for (blocker, path_fields, hides) in cases {
+        let fields = merged(path_fields.clone(), labeled("LABEL", 0.5, 0.0));
+        let mut p = Projected::new(two_paths(Vec2::new(520.0, 0.0), blocker.clone(), fields));
+        let path = path_of(&p, 2);
+        assert!(
+            meet(&label_of(&p, path), &region_of(&p, 3)),
+            "precondition: the label meets the blocker's text"
+        );
+        assert_eq!(
+            label_drawn(&p, path),
+            !hides,
+            "the label under a node of {blocker}, on a path of {path_fields}"
+        );
+        p.check().unwrap();
+    }
+}
+
+/// A node over a label alone — clear of the path's glyphs — hides it and
+/// shows it as its opacity and its zoom window change: set to opacity 0
+/// the label is drawn, back to 1 it is hidden; given a zoom window that
+/// does not hold the path's it is drawn, the window taken away it is
+/// hidden. The oracle agrees after each step.
+///
+/// Control: with the label reading its node's region but not its opacity
+/// and visibility, red on the label still hidden at opacity 0.
+#[test]
+fn test_projection_a_label_follows_its_nodes_opacity_and_zoom() {
+    use crate::document::values::ZoomWindow;
+    let start = Vec2::new(250.0, -50.0);
+    let mut p = Projected::new(two_paths(start, json!({}), labeled("LABEL", 0.2, 40.0)));
+    let path = path_of(&p, 2);
+    let blocker = ident(&p.doc, 3);
+    assert_eq!(
+        left_out(&p, path),
+        0,
+        "precondition: the node is clear of the path's glyphs"
+    );
+    assert!(!label_drawn(&p, path), "precondition: the label is hidden");
+    let window = ZoomWindow {
+        min: Some(50.0),
+        max: None,
+    };
+    let steps = [
+        ("opacity 0", NodeOp::SetOpacity(0.0), true),
+        ("opacity 1", NodeOp::SetOpacity(1.0), false),
+        (
+            "a window that does not hold the path's",
+            NodeOp::SetZoom(Some(window)),
+            true,
+        ),
+        ("no window", NodeOp::SetZoom(None), false),
+    ];
+    for (step, op, drawn) in steps {
+        let mutation = single(DocKind::Node, DocMutation::Node(op));
+        p.apply(request(mutation, vec![blocker], step)).unwrap();
+        assert_eq!(label_drawn(&p, path), drawn, "the label with its node at {step}");
+        p.check().unwrap();
+    }
+}
+
+/// A label is hidden by the box round its text alone — not grown by the
+/// path's gap, as a glyph's is, nor its shaped box with the spaces it
+/// carries: a label with trailing spaces, its text clear of a node's text
+/// by less than the path's gap and its spaces over the node, is drawn.
+///
+/// Controls: with the label's text box grown by the gap, red on the label
+/// not drawn; with the label's whole shaped box, red on the label not
+/// drawn.
+#[test]
+fn test_projection_a_label_touching_nothing_is_drawn() {
+    let mut p = Projected::new(two_paths(AWAY, json!({}), labeled("LABEL     ", 0.5, 0.0)));
+    let path = path_of(&p, 2);
+    let label = label_of(&p, path);
+    // The blocker's text starts at its node's corner: put it a point past
+    // the label's last letter, across the label's line.
+    move_to(&mut p, 3, Vec2::new(label.max().x + 1.0, label.origin.y - 10.0));
+    let region = region_of(&p, 3);
+    let clear = region.origin.x - label.max().x;
+    let gap = own_gap(&p.projector, path);
+    assert!(
+        clear > 0.0 && clear < gap,
+        "precondition: the label's text is clear of the node by less than the gap, {clear} of {gap}"
+    );
+    assert!(
+        meet(&label_box_of(&p, path), &region),
+        "precondition: the label's spaces reach over the node"
+    );
+    assert!(
+        region.origin.y < label.max().y && label.origin.y < region.max().y,
+        "precondition: the node is across the label's line"
+    );
+    assert!(label_drawn(&p, path), "the label touching nothing is drawn");
     p.check().unwrap();
 }

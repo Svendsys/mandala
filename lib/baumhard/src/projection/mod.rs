@@ -141,10 +141,10 @@ pub struct Projector {
     pub(crate) bodies: BodyIndex,
     /// The visible nodes' regions — the box round each one's text, and the
     /// box round its rings' inks by its outline (`Projector::region`):
-    /// what hides a path's glyphs (#332).
+    /// what hides a path's glyphs and its label (#332).
     pub(crate) regions: behind::Regions,
-    /// Where each drawn connector's and line link's glyphs are: what a
-    /// node's region finds the paths it hides by (#332).
+    /// Where each drawn connector's and line link's glyphs and label are:
+    /// what a node's region finds the paths it hides by (#332).
     pub(crate) path_cells: behind::PathCells,
     /// Each label a unit projects, and that unit: what
     /// [`Projector::label_pos`] reads.
@@ -286,6 +286,17 @@ impl Projector {
     pub fn laid(&self, path: NodeId) -> Option<&GlyphRunData> {
         match &self.units.get(&path)?.body {
             UnitBody::Line(line) if line.drawn => line.laid[0].as_ref(),
+            _ => None,
+        }
+    }
+
+    /// A drawn connector's or line link's label run as laid: the run its
+    /// labels layer holds, unless a node it does not end at hides it
+    /// (#332). `None` for a path with no label, or until it is placed.
+    /// O(1).
+    pub fn laid_label(&self, path: NodeId) -> Option<&GlyphRunData> {
+        match &self.units.get(&path)?.body {
+            UnitBody::Line(line) if line.drawn => line.laid[3].as_ref(),
             _ => None,
         }
     }

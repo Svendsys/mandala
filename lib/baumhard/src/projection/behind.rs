@@ -35,24 +35,24 @@
 //! Two indices on the body index's grid keep this proportional to what
 //! moved: every visible node's region
 //! ([`Regions`](crate::projection::behind::Regions), a [`BodyIndex`] for
-//! each part), and where each
-//! drawn path's glyphs are
+//! each part), and where each drawn path's glyphs and label are
 //! ([`PathCells`](crate::projection::behind::PathCells)). A path's hide
 //! stage, run once every path is laid and every ring and section placed,
-//! tries each of its glyphs against the regions in that glyph's cells,
-//! and records reading the region, opacity and zoom window of each node it
-//! meets. Each node whose region may have moved — its geometry or reach
-//! marked, a section of it placed elsewhere or dropped — has its region
-//! found again; if it changed, it is set again in the region index, its
-//! [`ProjectionInput::Region`] is marked, which marks exactly the paths
-//! with a glyph its old region met, and it finds the paths with a glyph
-//! its new region meets in the paths' index, in the cells that region
-//! covers. A path laid again is hidden again.
+//! tries each of its glyphs, and its label's text, against the regions in
+//! their cells, and records reading the region, opacity and zoom window of
+//! each node it meets. Each node whose region may have moved — its
+//! geometry or reach marked, a section of it placed elsewhere or dropped —
+//! has its region found again; if it changed, it is set again in the
+//! region index, its [`ProjectionInput::Region`] is marked, which marks
+//! exactly the paths with a glyph or a label its old region met, and it
+//! finds the paths with a glyph or a label its new region meets in the
+//! paths' index, in the cells that region covers. A path laid again is
+//! hidden again.
 //!
 //! A path is hidden again **whole**: the paths a moved node meets are the
 //! unit of work, not the glyphs near it. So each frame of a drag across a
-//! long edge tries and indexes every glyph of that edge again — O(the
-//! edge's length), not O(the glyphs under the node).
+//! long edge tries and indexes every glyph of that edge, and its label,
+//! again — O(the edge's length), not O(the glyphs under the node).
 
 use rustc_hash::FxHashMap;
 
@@ -71,11 +71,12 @@ use crate::projection::Projector;
 /// A grid cell, as the body index numbers them.
 type Cell = (i32, i32);
 
-/// Where each drawn connector's and line link's glyphs are (#332): the
-/// cells of the body index's grid that its glyphs' boxes, grown by its
-/// gap, cover, and in each cell the box round those of its glyphs there.
-/// A path is set whole each time it is hidden again, and a node's region
-/// finds it through the cells the region covers.
+/// Where each drawn connector's and line link's glyphs and label are
+/// (#332): the cells of the body index's grid that its glyphs' boxes,
+/// grown by its gap, and its label's text box, not grown, cover, and in
+/// each cell the box round those of them there. A path is set whole each
+/// time it is hidden again, and a node's region finds it through the
+/// cells the region covers.
 ///
 /// Each cell's entry names its place in its path's list, and each place
 /// in a path's list names its entry's index in the cell — the dependency
@@ -348,10 +349,10 @@ impl Projector {
     /// elsewhere or dropped: its region set again in the region index if it
     /// changed, the paths that met the old one marked through
     /// [`ProjectionInput::Region`], which they read, and those with a glyph
-    /// the new one meets queued to be hidden again. A node no longer
-    /// visible, or one that now draws nothing, leaves the index; an element
-    /// that is no node was never in it. O(its units, and the new region's
-    /// cells in the paths' index).
+    /// or a label the new one meets queued to be hidden again. A node no
+    /// longer visible, or one that now draws nothing, leaves the index; an
+    /// element that is no node was never in it. O(its units, and the new
+    /// region's cells in the paths' index).
     pub(crate) fn rehide(&mut self, id: NodeId, work: &mut PhaseWork) {
         let region = self.region(id);
         if self.regions.get(id) == region {
