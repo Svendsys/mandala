@@ -790,6 +790,101 @@ fn test_ipc_loopback_shutdown_reaches_a_controller_paused_mid_burst() {
     join_within(exiting, "the shutdown");
 }
 
+/// A client still behind when the app exits reads every reply,
+/// `shutdown`, then the end of the stream (#343).
+///
+/// The failing input is a server that lets go of the connection while its
+/// last write is still waiting for the client to make room. On the pipe
+/// that write is the driver's until it completes, and its completion is
+/// taken off the I/O completion port by the runtime; a runtime dropped
+/// first left it there, the instance and its handle leaked, and the
+/// client, having read every byte, waited out its timeout for the end of
+/// the stream. (In an exiting process the write is canceled instead, and
+/// `shutdown` with it.) The intermittent failure of the test above was
+/// the same leak, hit only when its last write completed during the
+/// teardown.
+///
+/// The scenario is built so the last write is large, and so the client is
+/// not reading when the server lets go:
+///
+/// - Many `describe` replies, more than the pipe holds, so the writer is
+///   held back by the client from the start and the rest queues.
+/// - Then pings with long ids, which reach the writer only once it is
+///   held back, together with `shutdown`. However the writer groups the
+///   `describe` replies before them, the batch carrying `shutdown` also
+///   carries tens of kilobytes of pings — never `shutdown` alone, which
+///   any room left in the pipe would take at once.
+/// - The client reads nothing until the exit is under way, then reads one
+///   `describe` reply at a time and gives the exit a moment to finish
+///   after each. A server that lets go once its last write is handed over
+///   finishes during such a pause, with that write still waiting, and the
+///   client pauses longer before it reads on. One that waits for the pipe
+///   to take the write cannot finish then.
+#[test]
+fn test_ipc_loopback_a_client_behind_at_exit_reads_everything_then_the_end() {
+    const DESCRIBES: usize = 16;
+    const PINGS: usize = 210;
+    // How long the client gives the exit to finish after each `describe`
+    // reply, and how long it stays away once it has.
+    const GRACE: Duration = Duration::from_millis(100);
+    const AWAY: Duration = Duration::from_millis(500);
+    // A server that waits for the pipe to take its last write finishes
+    // only after every grace has run out, so they must leave it well
+    // inside its own exit deadline; it never finishes before `AWAY`.
+    const _: () = assert!(GRACE.as_millis() * DESCRIBES as u128 * 2 <= SHUTDOWN_FLUSH.as_millis());
+    const _: () = assert!(DESCRIBES + PINGS + 2 < OUTBOUND_QUEUE_CAP);
+
+    let harness = Harness::running("ipc-behind-at-exit");
+    let (mut client, _) = Client::attach(&harness.path);
+    // The longest id the protocol takes is 256 bytes serialized.
+    let ping_id = |n: usize| format!("ping-{n:03}-{}", "x".repeat(240));
+    let mut burst = String::new();
+    for id in 0..DESCRIBES {
+        burst.push_str(&format!("{{\"id\":{id},\"cmd\":\"describe\"}}\n"));
+    }
+    for n in 0..PINGS {
+        burst.push_str(&format!("{{\"id\":\"{}\",\"cmd\":\"ping\"}}\n", ping_id(n)));
+    }
+    client
+        .writer
+        .write_all(burst.as_bytes())
+        .expect("write the burst");
+    // Everything is executed and queued; the writer is held back.
+    thread::sleep(READER_PAUSE);
+
+    let exiting = thread::spawn(move || harness.shutdown());
+    thread::sleep(READER_PAUSE);
+    let mut finished = false;
+    let mut stayed_away = false;
+    for id in 0..DESCRIBES {
+        let reply = client.next();
+        assert_eq!(reply["id"], json!(id), "replies arrive in order, none skipped");
+        let grace = Instant::now() + GRACE;
+        while !finished && Instant::now() < grace {
+            finished = exiting.is_finished();
+            thread::sleep(Duration::from_millis(1));
+        }
+        if finished && !stayed_away {
+            thread::sleep(AWAY);
+            stayed_away = true;
+        }
+    }
+    for n in 0..PINGS {
+        assert_eq!(
+            client.next()["id"],
+            json!(ping_id(n)),
+            "replies arrive in order, none skipped"
+        );
+    }
+    assert_eq!(
+        client.next(),
+        json!({ "event": "shutdown", "data": {} }),
+        "a client behind at exit still hears that the app exited"
+    );
+    client.assert_at_eof("the connection closes after `shutdown`");
+    join_within(exiting, "the shutdown");
+}
+
 #[test]
 fn test_controller_offer_pauses_on_a_full_queue_and_reports_a_closed_one() {
     let (outbound, frames) = mpsc::sync_channel::<Outbound>(1);
