@@ -764,41 +764,49 @@ fn angle_of(center: Vec2, point: Vec2) -> f32 {
 }
 
 /// Whether the straight line from `a` to `b` passes through the inside
-/// of `rect` where it is outside `skip`: sampled at a hundredth of a unit,
-/// an oracle independent of the handlers' clipping.
+/// of `rect` where it is outside `skip`: sampled in f64 at a hundredth of
+/// a unit, an oracle independent of the handlers' f32 clipping.
 fn sampled_crossing(a: Vec2, b: Vec2, rect: &crate::flow::Rect, skip: &[crate::flow::Rect]) -> bool {
-    let inside = |r: &crate::flow::Rect, p: Vec2| {
-        r.origin.x < p.x && p.x < r.max().x && r.origin.y < p.y && p.y < r.max().y
+    let wide = |v: Vec2| (f64::from(v.x), f64::from(v.y));
+    let inside = |r: &crate::flow::Rect, (x, y): (f64, f64)| {
+        let (lo, hi) = (wide(r.origin), wide(r.max()));
+        lo.0 < x && x < hi.0 && lo.1 < y && y < hi.1
     };
-    let samples = ((b - a).length() * 100.0).ceil() as usize;
+    let ((ax, ay), (bx, by)) = (wide(a), wide(b));
+    let samples = ((bx - ax).hypot(by - ay) * 100.0).ceil() as usize;
     (0..=samples).any(|k| {
-        let p = a.lerp(b, k as f32 / samples as f32);
+        let t = k as f64 / samples as f64;
+        let p = (ax + (bx - ax) * t, ay + (by - ay) * t);
         inside(rect, p) && !skip.iter().any(|s| inside(s, p))
     })
 }
 
-/// FAMILY as it was before the circle test moved its grandchildren:
-/// node 5 at `[20,20]` and node 6 at `[30,30]`, overlapping node 1's
-/// lower right and lying across the lines at 30° and 150°.
+/// FAMILY with its grandchildren on node 1's lower right: node 5 at
+/// `[20,22]` and node 6 at `[30,26]`, each edge whole units from every
+/// petal and line it decides, so no rounding of an angle changes the
+/// answer.
 fn family_on_its_lines() -> String {
     FAMILY
         .replace(
             r#"{"id":5,"parent":2,"position":[20,1000]}"#,
-            r#"{"id":5,"parent":2,"position":[20,20]}"#,
+            r#"{"id":5,"parent":2,"position":[20,22]}"#,
         )
         .replace(
             r#"{"id":6,"parent":5,"position":[30,1100]}"#,
-            r#"{"id":6,"parent":5,"position":[30,30]}"#,
+            r#"{"id":6,"parent":5,"position":[30,26]}"#,
         )
 }
 
 /// **A flower fans away from nodes on its lines** (review of #331). On
-/// FAMILY with nodes 5 and 6 where they were, the full circle's petals
-/// are all clear, but its lines at 30° and 150° cross nodes 5 and 6
-/// outside node 1. The flower is the widest fan whose lines are clear: a
-/// 180° fan centered on the top, its first son at the counter-clockwise
-/// end (180°), each next 90° on clockwise, and no line from node 1 to a
-/// son crosses node 5 or 6 where it runs outside node 1 and the son.
+/// FAMILY with nodes 5 and 6 on node 1's lower right, every rotation of
+/// the full circle has its petals clear, but its line into the lower
+/// right (between 30° and 120°) crosses node 5 or 6 outside node 1; so
+/// does every 210° fan's. The flower is the widest fan whose lines are
+/// clear: a 180° fan centered on the top, its first son at the
+/// counter-clockwise end (180°), each next 90° on clockwise, and no line
+/// from node 1 to a son crosses node 5 or 6 where it runs outside node 1
+/// and the son (an f64 sampled oracle). Every edge that decides it is at
+/// least two units clear.
 ///
 /// Controls: with the line check off, the full circle was taken; with
 /// the fan reversed, the first son was at the clockwise end and the
@@ -842,6 +850,55 @@ fn test_flower_fans_away_from_nodes_on_its_lines() {
             );
         }
     }
+}
+
+/// **A petal's line counts only outside its parent and the petal**
+/// (review of #331). A 10 × 10 node sits inside node 1, across the line
+/// to the top petal by five units each side, and five units below node
+/// 1's top edge, where that line leaves it. The line's part outside node
+/// 1 is clear, so the full circle is taken unturned, its first son at the
+/// top — though the whole line from node 1's center runs through the
+/// small node (asserted as a precondition, by the f64 sampled oracle).
+///
+/// Control: reading each line whole from node 1's center refused the
+/// unturned circle.
+#[test]
+fn test_a_line_counts_only_outside_its_parent_and_the_petal() {
+    use crate::flow::Rect;
+    let text = format!(
+        r#"{},{{"id":7,"channel":1,"position":[45,5]}}]}}"#,
+        FAMILY.strip_suffix("]}").expect("FAMILY ends its list")
+    );
+    let mut doc = load(&text).unwrap();
+    let mut geometry = Boxes::of(&doc);
+    let inner = Rect::new(Vec2::new(45.0, 5.0), Vec2::splat(10.0));
+    geometry.0.insert(n(&doc, 7), inner);
+    let center = Vec2::new(50.0, 20.0);
+    let size = Vec2::new(100.0, 40.0);
+    let parent = Rect::new(Vec2::ZERO, size);
+    let top = center - Vec2::new(0.0, 140.0);
+    assert!(
+        sampled_crossing(center, top, &inner, &[]),
+        "precondition: the whole line runs through it"
+    );
+    assert!(
+        !sampled_crossing(center, top, &inner, &[parent, Rect::new(top - size / 2.0, size)]),
+        "precondition: its part outside node 1 does not"
+    );
+    let request = edit(r#"{"id":"f","name":"F","reach":"self","target":"node","handler":"flower"}"#)
+        .request(&doc, &geometry, &registry(), &[n(&doc, 1)])
+        .unwrap();
+    doc.apply(request, ChangeSource::Edit).unwrap();
+    let sons: Vec<Vec2> = [2, 3, 4]
+        .iter()
+        .map(|&i| node(&doc, i).1.position + size / 2.0)
+        .collect();
+    assert_eq!(
+        angle_of(center, sons[0]),
+        -90.0,
+        "the first at the top: the circle unturned"
+    );
+    assert_eq!(steps_between(center, &sons), [120.0, 120.0], "the full circle");
 }
 
 /// **A petal's line must not cross its own siblings** (review of #331).
@@ -1170,22 +1227,22 @@ fn test_a_blocked_cascade_row_moves_whole_sideways_before_down() {
     assert!(overlaps(&doc, &moved).is_empty());
 }
 
-/// [`Boxes`], counting every question a layout asks of it.
-struct Counted(Boxes, std::cell::Cell<usize>);
+/// Any geometry, counting every question a layout asks of it.
+struct Counting<'g>(&'g dyn crate::projection::Geometry, std::cell::Cell<usize>);
 
-impl crate::projection::Geometry for Counted {
+impl crate::projection::Geometry for Counting<'_> {
     fn node_rect(&self, node: NodeId) -> Option<crate::flow::Rect> {
         self.1.set(self.1.get() + 1);
         self.0.node_rect(node)
     }
-    fn section_box(&self, _: NodeId) -> Option<(Vec2, &std::sync::Arc<crate::flow::ShapedBox>)> {
-        None
+    fn section_box(&self, section: NodeId) -> Option<(Vec2, &std::sync::Arc<crate::flow::ShapedBox>)> {
+        self.0.section_box(section)
     }
-    fn curve(&self, _: NodeId) -> Option<&[crate::flow::Curve]> {
-        None
+    fn curve(&self, path: NodeId) -> Option<&[crate::flow::Curve]> {
+        self.0.curve(path)
     }
-    fn label_pos(&self, _: NodeId) -> Option<Vec2> {
-        None
+    fn label_pos(&self, label: NodeId) -> Option<Vec2> {
+        self.0.label_pos(label)
     }
     fn nodes_meeting(&self, rect: crate::flow::Rect) -> Vec<NodeId> {
         self.1.set(self.1.get() + 1);
@@ -1218,7 +1275,8 @@ fn test_a_layouts_work_does_not_grow_with_the_map() {
         ));
         let asked = |text: &str| {
             let doc = load(text).unwrap();
-            let geometry = Counted(Boxes::of(&doc), std::cell::Cell::new(0));
+            let boxes = Boxes::of(&doc);
+            let geometry = Counting(&boxes, std::cell::Cell::new(0));
             assert!(geometry.node_rect(n(&doc, 1)).is_some());
             geometry.1.set(0);
             def.request(&doc, &geometry, &registry(), &[n(&doc, 1)]).unwrap();
@@ -1230,51 +1288,23 @@ fn test_a_layouts_work_does_not_grow_with_the_map() {
     }
 }
 
-/// **A rectangle too large to count, or not finite, is filed under no
-/// cell and never overflows the count** (review of #331): a child drawn
-/// across the whole float range, and one drawn with an infinite size,
-/// are laid out without panicking.
-///
-/// Control: counting cells as a product of the two axes' spans
-/// overflowed `i64` on the first child, and the layout panicked.
-/// Any geometry, counting every question a layout asks of it.
-struct Counting<'g>(&'g dyn crate::projection::Geometry, std::cell::Cell<usize>);
-
-impl crate::projection::Geometry for Counting<'_> {
-    fn node_rect(&self, node: NodeId) -> Option<crate::flow::Rect> {
-        self.1.set(self.1.get() + 1);
-        self.0.node_rect(node)
-    }
-    fn section_box(&self, section: NodeId) -> Option<(Vec2, &std::sync::Arc<crate::flow::ShapedBox>)> {
-        self.0.section_box(section)
-    }
-    fn curve(&self, path: NodeId) -> Option<&[crate::flow::Curve]> {
-        self.0.curve(path)
-    }
-    fn label_pos(&self, label: NodeId) -> Option<Vec2> {
-        self.0.label_pos(label)
-    }
-    fn nodes_meeting(&self, rect: crate::flow::Rect) -> Vec<NodeId> {
-        self.1.set(self.1.get() + 1);
-        self.0.nodes_meeting(rect)
-    }
-}
-
-/// **A blocked flower's work grows with neither the map nor its parent's
-/// size** (review of #331). Node 1 has twelve sons and a thin frame round
-/// it that every son's line crosses, so every regular arrangement is
-/// tried and fails; the sons then step out on their own rays. Through
-/// the real projector, the questions asked and the bodies its index
-/// scans to answer them are the same with 2,000 more nodes far away as
-/// without them — for a parent of its own size, and for one 400,000
-/// wide, whose lines are too long to read in pieces of one cell.
+/// **A blocked flower's work does not grow with the map** (review of
+/// #331). Node 1 has twelve sons and a thin frame round it that every
+/// son's line crosses, so every regular arrangement is tried and fails;
+/// the sons then step out on their own rays. Through the real projector,
+/// the questions asked and the bodies its index scans to answer them are
+/// the same with 2,000 more nodes far away as without them — for a
+/// parent of its own size, and for one 400,000 wide, whose long lines
+/// are never read a piece wider than the index's cells. (The cap on a
+/// line's pieces is pinned where it acts, by
+/// `test_a_line_is_read_in_at_most_64_pieces_and_a_longer_one_not_at_all`.)
 ///
 /// Control: reading every line whole from the parent's center, its
 /// pieces clamped to 64, made each piece of the wide parent's lines
 /// cover more cells than the index lists a body under, so each scanned
 /// every body, and the far nodes were scanned.
 #[test]
-fn test_a_blocked_flowers_work_grows_with_neither_the_map_nor_its_parent() {
+fn test_a_blocked_flowers_work_does_not_grow_with_the_map() {
     use crate::projection::tests::maps::{load_map, node};
     use crate::projection::tests::support::Projected;
     use serde_json::json;
@@ -1319,6 +1349,51 @@ fn test_a_blocked_flowers_work_grows_with_neither_the_map_nor_its_parent() {
     }
 }
 
+/// **A line is read in at most 64 pieces, and a longer one not at all**
+/// (review of #331). One son straight above node 1 on an otherwise clear
+/// map, so its line runs from node 1's top edge to the son's bottom one:
+/// a line of 64 pieces of `LINE_PIECE` is read in exactly 64 questions,
+/// after the one about the petal, and the arrangement is taken; a line of
+/// 65 pieces is not read — the petal's question is the only one — and
+/// the arrangement is refused.
+///
+/// Controls: with the refusal removed, the 65-piece line was read in 65
+/// pieces; clamped to 64 pieces instead of refused, it was read in 64.
+#[test]
+fn test_a_line_is_read_in_at_most_64_pieces_and_a_longer_one_not_at_all() {
+    use crate::edit_handlers::{arrangement, Clear, LINE_PIECE, MAX_LINE_PIECES};
+    use crate::flow::Rect;
+    let doc = load(FAMILY).unwrap();
+    let boxes = Boxes::of(&doc);
+    let geometry = Counting(&boxes, std::cell::Cell::new(0));
+    let size = Vec2::new(100.0, 40.0);
+    let sons = [(n(&doc, 2), Rect::new(Vec2::ZERO, size))];
+    // Node 1's other sons sit on it; they are not what is measured.
+    let moved = [sons[0], (n(&doc, 3), sons[0].1), (n(&doc, 4), sons[0].1)];
+    let clear = Clear::new(&geometry, moved.iter());
+    let parent = (n(&doc, 1), Rect::new(Vec2::ZERO, size));
+    let center = Vec2::new(50.0, 20.0);
+    let up = -std::f32::consts::FRAC_PI_2;
+    // The line runs from y = 0 to the petal's bottom, `r - 40` long.
+    let pieces = MAX_LINE_PIECES as f32;
+    for (length, questions, taken) in [
+        ((pieces - 0.5) * LINE_PIECE, 1 + MAX_LINE_PIECES as usize, true),
+        ((pieces + 0.5) * LINE_PIECE, 1, false),
+    ] {
+        geometry.1.set(0);
+        let laid = arrangement(&clear, parent, center, length + 40.0, up, 0.0, &sons);
+        assert_eq!(laid.is_some(), taken, "a line {length} long");
+        assert_eq!(geometry.1.get(), questions, "questions for a line {length} long");
+    }
+}
+
+/// **A rectangle too large to count, or not finite, is filed under no
+/// cell and never overflows the count** (review of #331): a child drawn
+/// across the whole float range, and one drawn with an infinite size,
+/// are laid out without panicking.
+///
+/// Control: counting cells as a product of the two axes' spans
+/// overflowed `i64` on the first child, and the layout panicked.
 #[test]
 fn test_a_layout_survives_a_rectangle_too_large_to_count() {
     let doc = load(FAMILY).unwrap();
