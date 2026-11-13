@@ -58,12 +58,14 @@ pub(crate) struct BodyIndex {
     /// test that holds a move to its own cells reads. Test builds only.
     #[cfg(test)]
     pub(crate) cell_writes: usize,
-    /// How many cells `within` has visited: what the test that holds a
-    /// rubber band to its own cells reads. Test builds only.
+    /// How many cells `within` and `meeting` (their shared `query`) have
+    /// visited: what the test that holds a rubber band to its own cells
+    /// reads. Test builds only.
     #[cfg(test)]
     pub(crate) within_cells: std::cell::Cell<usize>,
-    /// How many bodies `within` has tried against its rectangle. Test
-    /// builds only.
+    /// How many bodies `within` and `meeting` (their shared `query`) have
+    /// tried against their rectangles, in the cells' branch and the
+    /// every-body branch alike. Test builds only.
     #[cfg(test)]
     pub(crate) within_tried: std::cell::Cell<usize>,
 }
@@ -262,7 +264,8 @@ impl Projector {
     /// The visible nodes whose drawn rectangles `rect` meets: their
     /// insides overlap, so a shared edge does not count, and the outline
     /// shape is not consulted. In ascending node id. Cost: the body
-    /// index's cells under `rect`, as [`Self::nodes_in`].
+    /// index's cells under `rect`, or every body for a rectangle spanning
+    /// more cells than the index lists per body, as [`Self::nodes_in`].
     pub fn nodes_meeting(&self, rect: Rect) -> Vec<NodeId> {
         self.bodies.meeting(rect)
     }

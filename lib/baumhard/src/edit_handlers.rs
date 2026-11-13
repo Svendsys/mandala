@@ -35,7 +35,7 @@
 //!   #250): not a sibling, not the parent, not anything else on the map.
 //!   A flower keeps its shape: one radius and one spacing for every
 //!   petal, on the full circle where that is clear and else on the
-//!   widest clear fan, its chords clear of other nodes too (the order
+//!   widest clear fan, its lines clear of other nodes too (the order
 //!   and its bounds are on [`flower`](crate::edit_handlers::flower));
 //!   only when no such arrangement is clear does each petal move outward
 //!   along its own ray. A cascade row moves down as a whole, keeping its
@@ -185,12 +185,12 @@ pub const FAN_NARROWING: f32 = std::f32::consts::TAU / FAN_SPANS as f32;
 /// this run's placements in `Clear` has 512-unit cells of its own). A
 /// piece's box then covers at most four cells of either grid, so no read
 /// falls to the index's scan of every body.
-pub const CHORD_PIECE: f32 = 256.0;
+pub const LINE_PIECE: f32 = 256.0;
 
 /// The most pieces a petal's line is read in. A line longer than this
-/// many [`CHORD_PIECE`]s outside the parent and the petal (16,384 units)
+/// many [`LINE_PIECE`]s outside the parent and the petal (16,384 units)
 /// is not read, and an arrangement with one is not taken.
-pub const MAX_CHORD_PIECES: u32 = 64;
+pub const MAX_LINE_PIECES: u32 = 64;
 
 /// `flower`: each node's child nodes round it at one radius, evenly
 /// spaced, clockwise in sibling order — on the full circle, the first at
@@ -235,7 +235,7 @@ pub const MAX_CHORD_PIECES: u32 = 64;
 /// - O(n²) comparisons of its petals and lines with each other;
 /// - per petal, one query of the projector's body index over the
 ///   petal's cells, and a lookup of this run's placements there;
-/// - per line, at most [`MAX_CHORD_PIECES`] queries of the body index,
+/// - per line, at most [`MAX_LINE_PIECES`] queries of the body index,
 ///   each over at most four cells, a `node_rect` for each node one finds,
 ///   and as many lookups of the placements.
 ///
@@ -663,15 +663,15 @@ impl<'g> Clear<'g> {
     /// Whether the segment from `a` to `b` — a petal's line, outside its
     /// parent and itself — crosses no drawn node this run does not move
     /// and no rectangle it has placed, `parent` apart. Read a
-    /// [`CHORD_PIECE`] at a time, so each read covers at most four cells;
-    /// a segment of more than [`MAX_CHORD_PIECES`] pieces is not read, and
-    /// counts as crossing. O(the segment's length over [`CHORD_PIECE`],
-    /// at most [`MAX_CHORD_PIECES`] pieces), each a query of the body index
+    /// [`LINE_PIECE`] at a time, so each read covers at most four cells;
+    /// a segment of more than [`MAX_LINE_PIECES`] pieces is not read, and
+    /// counts as crossing. O(the segment's length over [`LINE_PIECE`],
+    /// at most [`MAX_LINE_PIECES`] pieces), each a query of the body index
     /// over at most four cells, a `node_rect` per node it finds, and a
     /// lookup of the placements.
     fn line_clear(&self, a: Vec2, b: Vec2, parent: NodeId) -> bool {
-        let pieces = ((b - a).length() / CHORD_PIECE).ceil();
-        if !pieces.is_finite() || pieces > MAX_CHORD_PIECES as f32 {
+        let pieces = ((b - a).length() / LINE_PIECE).ceil();
+        if !pieces.is_finite() || pieces > MAX_LINE_PIECES as f32 {
             return false;
         }
         let pieces = (pieces as u32).max(1);

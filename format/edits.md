@@ -247,7 +247,10 @@ across all of them; then the node stays where it belongs.
   outline; the straight line stands for it.) The lines checked are this
   flower's own. A petal is not checked against the parent's own
   connector from its parent, nor against the lines of families laid out
-  earlier in the same run. A flower whose parent sits close above
+  earlier in the same run. A line longer than 16,384 units outside the
+  parent and the petal is not checked, and an arrangement with one is
+  not taken, so a flower round a very large parent falls to the
+  per-petal search below. A flower whose parent sits close above
   another node so becomes a fan that leaves a gap where that node is.
   Only when no such arrangement is clear does each petal move outward
   along its own ray, by those distances.
