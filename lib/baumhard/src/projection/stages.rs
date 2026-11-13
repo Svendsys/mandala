@@ -1444,8 +1444,8 @@ impl Projector {
     /// differ. Fewer rounds when the members too near in every round to
     /// come are certain, from the samples no halving moves, to be as many
     /// as the fewest so far; members that meet only along curves a halving
-    /// moves take every round (#346). Portal ends: O(the members, log
-    /// them).
+    /// moves may take every round, while they stay too near (#346). Portal
+    /// ends: O(the members, log them).
     ///
     /// [`UNTANGLE_ROUNDS`]: geometry::UNTANGLE_ROUNDS
     fn refan(&mut self, key: JunctionKey, work: &mut PhaseWork) {

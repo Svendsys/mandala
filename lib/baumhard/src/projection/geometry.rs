@@ -492,7 +492,8 @@ pub(crate) struct Lane {
 /// fewest so far (`always_near`) — two paths that arrive at one point
 /// along one lead, say. What is kept is what all the rounds would keep.
 /// Paths that meet only along the curves a halving moves give no such
-/// certainty, and take every round.
+/// certainty, and may take every round: all of them while they stay too
+/// near, fewer when a halving parts them.
 ///
 /// Cost: at most [`UNTANGLE_ROUNDS`] rounds. The first samples every
 /// lane's curves, each to at most the sampling's cap (`sample`), and each
@@ -503,6 +504,12 @@ pub(crate) struct Lane {
 pub(crate) fn untangle(lanes: &[Lane]) -> Vec<f32> {
     let mut handles = vec![1.0_f32; lanes.len()];
     if lanes.len() < 2 {
+        return handles;
+    }
+    // Once the fuzz harness's ceiling has cut a check short, what is laid
+    // out is discarded: no samples are taken for it.
+    #[cfg(any(test, fuzzing))]
+    if UNTANGLE_CUT.with(std::cell::Cell::get) {
         return handles;
     }
     let widths: Vec<f32> = lanes.iter().map(|lane| lane.width).collect();
@@ -533,15 +540,30 @@ pub(crate) fn untangle(lanes: &[Lane]) -> Vec<f32> {
     let mut pairs = rustc_hash::FxHashSet::default();
     let mut best = (usize::MAX, handles.clone());
     let mut always: Option<usize> = None;
+    // The samples this round took, for the fuzz harness's ceiling.
+    #[cfg(any(test, fuzzing))]
+    let mut taken: usize = samples.iter().map(Vec::len).sum();
     for round in 0..UNTANGLE_ROUNDS {
         if round > 0 {
+            #[cfg(any(test, fuzzing))]
+            {
+                taken = 0;
+            }
             for (k, lane) in lanes.iter().enumerate().filter(|&(k, _)| fresh[k]) {
                 grid.remove(k, &samples[k]);
                 samples[k] = lay(lane, handles[k]);
                 #[cfg(test)]
                 UNTANGLE_GRIDDED.with(|count| count.set(count.get() + samples[k].len()));
+                #[cfg(any(test, fuzzing))]
+                {
+                    taken += samples[k].len();
+                }
                 grid.insert(k, &samples[k]);
             }
+        }
+        #[cfg(any(test, fuzzing))]
+        if !within_ceiling(taken) {
+            break;
         }
         #[cfg(test)]
         UNTANGLE_GRIDS.with(|count| count.set(count.get() + 1));
@@ -948,6 +970,41 @@ pub(crate) fn near_pairs(
         grid.insert(k, points.as_ref());
     }
     grid.near_pairs(samples, fresh, before)
+}
+
+#[cfg(any(test, fuzzing))]
+thread_local! {
+    /// The fuzz harness's ceiling on the samples [`untangle`] takes on
+    /// this thread, and how many are left of it: `None`, as it is unless a
+    /// harness sets it, for no ceiling. A round that would take more than
+    /// is left takes none, and [`untangle`] takes no further rounds and
+    /// sets [`UNTANGLE_CUT`]. Test and fuzz builds only (`cfg(test)`, and
+    /// the `cfg(fuzzing)` `cargo fuzz` builds with): a shipped build has
+    /// no ceiling and reads none.
+    pub(crate) static UNTANGLE_CEILING: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// Whether [`UNTANGLE_CEILING`] has cut an [`untangle`] short on this
+    /// thread since it was last cleared: what was laid out then is not
+    /// what the map lays out. Test and fuzz builds only.
+    pub(crate) static UNTANGLE_CUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether [`UNTANGLE_CEILING`] leaves room for a round that takes
+/// `points` samples, taking them from it; when it does not, it is spent
+/// and [`UNTANGLE_CUT`] set. Test and fuzz builds only. O(1).
+#[cfg(any(test, fuzzing))]
+fn within_ceiling(points: usize) -> bool {
+    UNTANGLE_CEILING.with(|ceiling| match ceiling.get() {
+        None => true,
+        Some(left) if points <= left => {
+            ceiling.set(Some(left - points));
+            true
+        }
+        Some(_) => {
+            ceiling.set(Some(0));
+            UNTANGLE_CUT.with(|cut| cut.set(true));
+            false
+        }
+    })
 }
 
 #[cfg(test)]

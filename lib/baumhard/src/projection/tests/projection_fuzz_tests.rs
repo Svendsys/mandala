@@ -8,12 +8,14 @@
 use serde_json::json;
 
 use crate::projection::tests::maps::{load_map, node};
-use crate::projection::tests::projection_fuzz::{projection_counts, within_bound, EXTENT, MAX_UNITS};
+use crate::projection::tests::projection_fuzz::{
+    check_projects, projection_counts, within_bound, EXTENT, MAX_UNITS, MAX_UNTANGLE_SAMPLES,
+};
 use crate::util::tests::choices::Choices;
 
 #[test]
 fn test_most_structured_loader_maps_are_projected() {
-    let (projected0, skipped0) = projection_counts();
+    let (projected0, skipped0, _) = projection_counts();
     let mut loaded = 0;
     for seed in 0..120 {
         let mut c = Choices::seeded(0x0B7_0000 + seed);
@@ -27,7 +29,7 @@ fn test_most_structured_loader_maps_are_projected() {
         }
     }
     // The counts are this thread's: exactly what this sweep added.
-    let (projected, skipped) = projection_counts();
+    let (projected, skipped, _) = projection_counts();
     let (projected, skipped) = (projected - projected0, skipped - skipped0);
     assert!(loaded > 20, "the sweep loads maps: {loaded}");
     assert!(projected > 0, "some loaded maps are projected");
@@ -77,4 +79,101 @@ fn test_the_projection_bound_refuses_far_coordinates_a_second_text_ring_and_too_
         most - 1
     );
     assert!(!within_bound(&chain(most + 1)), "one connector more is outside");
+}
+
+/// `copies` of the first seed's map (`line_link_beside_connector_1`) side
+/// by side, 3,000 apart, each with a second line link: a node 5,182.7
+/// above its two children, with a line link at the default link size to
+/// each, beside their connectors.
+fn seed_copies(copies: u32) -> crate::document::ids::Document {
+    let mut nodes = Vec::new();
+    for k in 0..copies {
+        let (x, id) = (3000.0 * k as f64 - 3000.0, 10 * k + 10);
+        nodes.push(json!({"id": id, "position": [x, 5182.7446],
+            "links": [{"to": id + 3, "kind": "line"}, {"to": id + 7, "kind": "line"}]}));
+        nodes.push(json!({"id": id + 7, "parent": id, "position": [x, 0.0],
+            "sections": [{"channel": 2, "spans": [{"text": "\u{fe0f}\u{20e3}", "size": 12.5}]}, {"channel": 3}, {"channel": 3}]}));
+        nodes.push(
+            json!({"id": id + 3, "parent": id, "position": [x, 0.0], "sections": [], "frame": {"rings": []},
+            "connector": {"spans": []}, "links": [{"to": id, "kind": "portal"}]}),
+        );
+    }
+    load_map(json!({"defaults": {"link": {"size": 0.5}}, "nodes": nodes}))
+}
+
+/// What `check_projects` did with `doc`: whether it projected it, and
+/// whether it abandoned it as cut short, and the samples `untangle` took.
+fn checked(doc: &crate::document::ids::Document) -> (bool, bool, usize) {
+    use crate::projection::geometry::UNTANGLE_GRIDDED;
+    let (projected0, _, cut0) = projection_counts();
+    UNTANGLE_GRIDDED.with(|c| c.set(0));
+    check_projects(doc).unwrap();
+    let (projected, _, cut) = projection_counts();
+    (
+        projected > projected0,
+        cut > cut0,
+        UNTANGLE_GRIDDED.with(std::cell::Cell::get),
+    )
+}
+
+#[test]
+fn test_a_map_whose_untangling_reaches_the_ceiling_is_abandoned_and_counted() {
+    // One copy of the first seed's map with a second line link takes
+    // fewer samples in a check than `MAX_UNTANGLE_SAMPLES`, and is
+    // projected and checked; two take more, and the check is abandoned
+    // when they reach it, counted as cut short and not as projected, and
+    // no more samples are taken than the ceiling and the one round that
+    // reached it — here at most nine curves at the sampling's cap (#346).
+    // The failing inputs are a ceiling half as high, which abandons the
+    // one copy, and samples never taken from it, which projects the two.
+    for doc in [seed_copies(1), seed_copies(2)] {
+        assert!(within_bound(&doc), "precondition: inside the coordinate bound");
+    }
+    let (projected, cut, taken) = checked(&seed_copies(1));
+    assert!(
+        projected && !cut && taken <= MAX_UNTANGLE_SAMPLES,
+        "one copy: projected {projected}, cut {cut}, {taken} samples"
+    );
+    let (projected, cut, taken) = checked(&seed_copies(2));
+    assert!(
+        !projected && cut && taken <= MAX_UNTANGLE_SAMPLES + 9 * 65_536,
+        "two copies: projected {projected}, cut {cut}, {taken} samples"
+    );
+}
+
+#[test]
+fn test_the_untangle_ceiling_is_unset_but_for_a_check() {
+    // A test that does not set the harness's ceiling untangles in full:
+    // unset on a fresh thread, and unset again once a check is done.
+    // The failing input is the ceiling left set after a check.
+    use crate::projection::geometry::UNTANGLE_CEILING;
+    assert_eq!(
+        UNTANGLE_CEILING.with(std::cell::Cell::get),
+        None,
+        "unset on a fresh thread"
+    );
+    checked(&seed_copies(2));
+    assert_eq!(
+        UNTANGLE_CEILING.with(std::cell::Cell::get),
+        None,
+        "unset after a check"
+    );
+}
+
+#[test]
+fn test_both_seeds_of_the_untangling_timeout_are_projected_in_full() {
+    // The two loader seeds this ceiling was made for (#346), each a line
+    // link beside a connector: checked in full, not cut short.
+    let dir = crate::util::doc_fixtures::repo_path("fuzz/seeds/load_structured");
+    for seed in ["line_link_beside_connector_1", "line_link_beside_connector_2"] {
+        let bytes = std::fs::read(dir.join(seed)).unwrap();
+        let (projected0, _, cut0) = projection_counts();
+        crate::document::tests::format_fuzz::check_structured(&bytes).unwrap();
+        let (projected, _, cut) = projection_counts();
+        assert_eq!(
+            (projected - projected0, cut - cut0),
+            (1, 0),
+            "{seed}: projected, not cut"
+        );
+    }
 }
