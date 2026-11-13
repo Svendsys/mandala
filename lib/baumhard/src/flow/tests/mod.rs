@@ -8,6 +8,8 @@
 /// A frame's work budget: past it, and `untouched`'s share of it.
 #[cfg(test)]
 mod budget_tests;
+/// Directional rings (#324).
+pub mod directional_tests;
 pub mod fit_tests;
 /// TextFlow's fuzz properties, which the `fuzz/` targets call
 /// (TEST_CONVENTIONS §T14).

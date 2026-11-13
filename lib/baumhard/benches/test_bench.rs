@@ -34,6 +34,7 @@ use baumhard::engine::tests::routing_tests::*;
 use baumhard::engine::tests::sorted_tests::*;
 use baumhard::engine::tests::structure_tests::*;
 use baumhard::engine::tests::walker_tests::*;
+use baumhard::flow::tests::directional_tests::*;
 use baumhard::flow::tests::fit_tests::*;
 use baumhard::flow::tests::halves_tests::*;
 use baumhard::flow::tests::lines_tests::*;
@@ -1198,6 +1199,16 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("two_font_systems_never_answer_each_others_outlines", |b| {
         b.iter(do_two_font_systems_never_answer_each_others_outlines)
     });
+    c.bench_function("whether_a_glyph_draws_is_read_once_whatever_its_size", |b| {
+        b.iter(do_whether_a_glyph_draws_is_read_once_whatever_its_size)
+    });
+    c.bench_function(
+        "whether_a_glyph_draws_is_asked_again_where_the_first_size_draws_nothing",
+        |b| b.iter(do_whether_a_glyph_draws_is_asked_again_where_the_first_size_draws_nothing),
+    );
+    c.bench_function("two_font_systems_never_answer_each_others_draws", |b| {
+        b.iter(do_two_font_systems_never_answer_each_others_draws)
+    });
     // The patched merge's and early stop's guards, on fixtures built of
     // shaped glyphs (and a font system with no faces).
     c.bench_function(
@@ -2116,6 +2127,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_fit_fills_a_steep_line_with_an_ornament", |b| {
         b.iter(do_flow_fit_fills_a_steep_line_with_an_ornament)
     });
+    c.bench_function(
+        "flow_an_ornament_steps_a_glyph_that_draws_nothing_by_its_advance",
+        |b| b.iter(do_flow_an_ornament_steps_a_glyph_that_draws_nothing_by_its_advance),
+    );
     c.bench_function("flow_fit_clamped_at_max_spreads_the_rest", |b| {
         b.iter(do_flow_fit_clamped_at_max_spreads_the_rest)
     });
@@ -2181,6 +2196,30 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_path_measures_past_the_root_of_the_largest_f32", |b| {
         b.iter(do_flow_path_measures_past_the_root_of_the_largest_f32)
     });
+    c.bench_function("flow_directional_lays_a_box", |b| {
+        b.iter(do_flow_directional_lays_a_box)
+    });
+    c.bench_function("flow_directional_chooses_by_the_way_the_outline_runs", |b| {
+        b.iter(do_flow_directional_chooses_by_the_way_the_outline_runs)
+    });
+    c.bench_function("flow_directional_changes_its_choice_four_times_round", |b| {
+        b.iter(do_flow_directional_changes_its_choice_four_times_round)
+    });
+    c.bench_function(
+        "flow_directional_hysteresis_holds_a_curve_to_three_lines_and_a_box_to_none",
+        |b| b.iter(do_flow_directional_hysteresis_holds_a_curve_to_three_lines_and_a_box_to_none),
+    );
+    c.bench_function(
+        "flow_directional_lays_corners_only_where_it_turns_as_a_box",
+        |b| b.iter(do_flow_directional_lays_corners_only_where_it_turns_as_a_box),
+    );
+    c.bench_function("flow_directional_spaces_each_run_evenly_and_never_apart", |b| {
+        b.iter(do_flow_directional_spaces_each_run_evenly_and_never_apart)
+    });
+    c.bench_function(
+        "flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing",
+        |b| b.iter(do_flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing),
+    );
     c.bench_function("flow_pitched_holds_the_nearer_whole_count_evenly", |b| {
         b.iter(do_flow_pitched_holds_the_nearer_whole_count_evenly)
     });
@@ -2455,6 +2494,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_halves_a_glyph_with_no_outline_is_laid", |b| {
         b.iter(do_flow_halves_a_glyph_with_no_outline_is_laid)
     });
+    c.bench_function(
+        "flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance",
+        |b| b.iter(do_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance),
+    );
     c.bench_function("flow_halves_spread_and_once_and_inward", |b| {
         b.iter(do_flow_halves_spread_and_once_and_inward)
     });
@@ -2495,6 +2538,12 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function(
         "flow_halves_an_outline_whose_halves_are_not_numbers_keeps_r27s_lines",
         |b| b.iter(do_flow_halves_an_outline_whose_halves_are_not_numbers_keeps_r27s_lines),
+    );
+    c.bench_function(
+        "flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_glyph_at_a_line_end",
+        |b| {
+            b.iter(do_flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_glyph_at_a_line_end)
+        },
     );
     // the engine over a non-glyph element: the walker matrix, inherited
     // state, and the builder //

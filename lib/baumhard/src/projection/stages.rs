@@ -23,9 +23,9 @@ use crate::document::values::{Align, FitMode, FontSize};
 use crate::engine::tree::Tree;
 use crate::flow::inked as inked_run;
 use crate::flow::{
-    chain_point, offset as offset_outline, outline, pattern_gap, place_at_point, place_on_closed,
-    place_on_open, place_pitched, shape_box, shape_run, FlowSpan, PathEnd, PlacedGlyph, PlacedRun, Rect,
-    RingLayout, ShapedRun,
+    chain_point, offset as offset_outline, offset_keeping_corners, outline, pattern_gap, place_at_point,
+    place_on_closed, place_on_open, place_pitched, shape_box, shape_run, FlowSpan, PathEnd, PlacedGlyph,
+    PlacedRun, Rect, RingLayout, ShapedRun,
 };
 use crate::font::fonts::FontSystemLease;
 use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
@@ -826,11 +826,13 @@ impl Projector {
         self.deps.record(Dependent::new(id, Stage::Place), &reads);
         let placed = match (frame.visible, input, text) {
             (true, Some(input), Some(text)) => {
-                let path = offset_outline(&node_outline, clearance(frame.inset, frame.gap, inner));
-                let layout = RingLayout {
-                    span: ring.span,
-                    sides: ring.sides.as_ref().map(|s| (s.content.clone(), s.color)),
-                    spacing: ring.spacing,
+                let layout = RingLayout::of(&ring);
+                let grown = clearance(frame.inset, frame.gap, inner);
+                // A directional ring keeps its outline's corners (#324).
+                let path = if layout.directional.is_set() && matches!(ring.fit, FitMode::Repeat) {
+                    offset_keeping_corners(&node_outline, grown)
+                } else {
+                    offset_outline(&node_outline, grown)
                 };
                 let params = (&path, frame.start, frame.direction, &ring.fit, &layout, &text);
                 let (replaced, placed) = memo::placed(&input, &params, || {
@@ -852,10 +854,13 @@ impl Projector {
         };
         let line_height = placed.as_ref().map_or(0.0, |p| p.run.line_height);
         let extent = (inner.0 + line_height, inner.1 + 1);
-        // Its inks, what its node's paths stop at (#296): a text ring's
-        // run, which placement returns with no ink, inked once a shaping.
+        // Its inks, what its node's paths stop at (#296): an ornament's
+        // run as shaped carries them from its shaping, whatever `None`s
+        // it holds — glyphs that draw nothing (#333); any other run — a
+        // text ring's, which carries none, or one placement returned —
+        // is inked once a shaping.
         let inked = placed.as_ref().map(|p| {
-            if p.run.glyphs.iter().all(|g| g.blank || g.ink.is_some()) {
+            if Arc::ptr_eq(&p.run, &p.input) && !p.run.glyphs.iter().any(|g| g.letter) {
                 return p.run.clone();
             }
             match was_inked {
@@ -1859,26 +1864,33 @@ pub(crate) fn own_opacity(opacity: f32) -> f32 {
 }
 
 /// The canvas box of each glyph of `placed` that draws, by `run`'s
-/// metrics ([`glyph_ink`]). O(its glyphs).
+/// metrics, inked ([`inked_run`]): its ink. A space draws nothing, nor a
+/// glyph with no ink, which the rasterizer draws nothing for (#333).
+/// O(its glyphs).
 fn placed_inks<'a>(run: &'a ShapedRun, placed: &'a PlacedRun) -> impl Iterator<Item = Rect> + 'a {
-    placed.glyphs.iter().filter_map(move |g| glyph_ink(run, g))
+    placed.glyphs.iter().filter_map(move |g| glyph_ink(run, g, true))
 }
 
-/// The canvas box of the placed glyph `g` of `run`, by the run's
-/// metrics: its ink, or where none was measured its box, its advance by
-/// its line height. `None` for a space, which draws nothing. O(1).
-pub(crate) fn glyph_ink(run: &ShapedRun, g: &PlacedGlyph) -> Option<Rect> {
+/// The canvas box of the placed glyph `g` of `run`, by the run's metrics:
+/// its ink. `None` for a space, and, in a run that is `measured` — an
+/// ornament as shaped, or any run [`inked_run`] returns — for a glyph with
+/// no ink, which the rasterizer draws nothing for (#333). In a run that is
+/// not — a text as shaped, or a run placement returned — `None` ink means
+/// unmeasured, and the glyph's box is its advance by its line height
+/// ([`GlyphMetrics::ink`](crate::flow::GlyphMetrics::ink)). O(1).
+pub(crate) fn glyph_ink(run: &ShapedRun, g: &PlacedGlyph, measured: bool) -> Option<Rect> {
     let metrics = run.glyphs.get(g.glyph as usize)?;
     if metrics.blank {
         return None;
     }
-    Some(match metrics.ink {
-        Some(ink) => Rect::new(
+    match metrics.ink {
+        Some(ink) => Some(Rect::new(
             g.pos + Vec2::new(0.0, run.baseline()) + ink.min,
             ink.max - ink.min,
-        ),
-        None => Rect::new(g.pos, Vec2::new(metrics.advance, run.line_height)),
-    })
+        )),
+        None if measured => None,
+        None => Some(Rect::new(g.pos, Vec2::new(metrics.advance, run.line_height))),
+    }
 }
 
 /// A cap of a line, resolved: its element, its spans' ids, and their

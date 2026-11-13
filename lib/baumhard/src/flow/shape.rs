@@ -70,7 +70,7 @@ use crate::document::values::Align;
 use crate::flow::span::{span_attrs, FlowSpan, LINE_HEIGHT_FACTOR};
 use crate::flow::Rect;
 use crate::font::fonts::{
-    clamp_font_metric, glyph_outline_ink, pinned_family, AppFont, FontSystemLease, PinnedFamily,
+    clamp_font_metric, glyph_draws, glyph_outline_ink, pinned_family, AppFont, FontSystemLease, PinnedFamily,
     MIN_FONT_SIZE_PT,
 };
 use crate::font::{Attrs, Buffer, FontSystem, LayoutGlyph, Metrics, SwashCache, Wrap, SHAPING_ADVANCED};
@@ -154,10 +154,20 @@ pub struct GlyphMetrics {
     pub letter: bool,
     /// Where the glyph's ink lies, measured from its outline (#291,
     /// ruling R31): what placement steps an ornament's glyphs by, so a
-    /// ring's gaps are the gaps a reader sees. Measured only in a run
-    /// that is an ornament — no glyph a [`letter`](Self::letter) — since
-    /// text keeps its line-height boxes (ruling R9.2); `None` there, and
-    /// for a glyph with no outline (a space, a bitmap-only emoji).
+    /// ring's gaps are the gaps a reader sees. Measured at shaping only in
+    /// a run that is an ornament — no glyph a [`letter`](Self::letter) —
+    /// since text keeps its line-height boxes (ruling R9.2); a text run is
+    /// inked where its ink is read (`flow::inked`). Measured as the
+    /// rasterizer draws the glyph (`shape::drawn_ink`, #333): a glyph with
+    /// no outline that is drawn all the same, a bitmap emoji, is inked as
+    /// its box, its advance by the line height.
+    ///
+    /// `None` means one of two things, which the run tells apart, not
+    /// the glyph: in a run that is measured — an ornament as shaped, or
+    /// any run `flow::inked` returns — the glyph draws nothing (a space,
+    /// a `.notdef` whose outline is empty) and takes up its advance and
+    /// nothing else; in a text run as shaped, or a run placement returns
+    /// (a run's ink being an ornament's own), it was not measured.
     pub ink: Option<Ink>,
 }
 
@@ -251,13 +261,19 @@ impl ShapedRun {
     ///
     /// Cost: O(glyphs).
     pub fn baseline(&self) -> f32 {
-        let ascent = self.glyphs.iter().map(|g| g.ascent).fold(0.0_f32, f32::max);
-        let descent = self.glyphs.iter().map(|g| g.descent).fold(0.0_f32, f32::max);
-        if self.glyphs.is_empty() {
-            return 0.0;
-        }
-        (self.line_height - (ascent + descent)) / 2.0 + ascent
+        baseline_of(&self.glyphs, self.line_height)
     }
+}
+
+/// [`ShapedRun::baseline`] of a run of `glyphs` and line height
+/// `line_height`. Cost: O(glyphs).
+fn baseline_of(glyphs: &[GlyphMetrics], line_height: f32) -> f32 {
+    let ascent = glyphs.iter().map(|g| g.ascent).fold(0.0_f32, f32::max);
+    let descent = glyphs.iter().map(|g| g.descent).fold(0.0_f32, f32::max);
+    if glyphs.is_empty() {
+        return 0.0;
+    }
+    (line_height - (ascent + descent)) / 2.0 + ascent
 }
 
 /// A flow shaped as a block of lines, for box layout.
@@ -328,7 +344,7 @@ enum Breaks {
 /// a run into two lines and a box where D26 does not, and would strand
 /// the glyphs after it outside the piece table. So shaping never hands
 /// one to cosmic-text, except the `\n` a box breaks at (ruling R9.5).
-fn is_paragraph_separator(ch: char) -> bool {
+pub(crate) fn is_paragraph_separator(ch: char) -> bool {
     matches!(
         ch,
         '\n' | '\r' | '\u{1C}' | '\u{1D}' | '\u{1E}' | '\u{85}' | '\u{2029}'
@@ -794,7 +810,12 @@ const UNKNOWN_FACE_EXTENT: (f32, f32) = (0.8, 0.2);
 /// its cluster starts and word breaks), one binary search per glyph into
 /// the piece table and one into the line's cluster starts, one more per
 /// cluster into its word breaks, and one font lookup per change of face.
-fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<GlyphMetrics> {
+fn glyph_metrics(
+    buffer: &Buffer,
+    pieces: &[Piece],
+    line_height: f32,
+    fs: &mut FontSystem,
+) -> Vec<GlyphMetrics> {
     let mut out = Vec::new();
     // The last glyph whose face was looked up, and that face's ascent
     // and descent per unit of size: consecutive glyphs mostly share one.
@@ -871,24 +892,54 @@ fn glyph_metrics(buffer: &Buffer, pieces: &[Piece], fs: &mut FontSystem) -> Vec<
         }
     }
     if !out.iter().any(|glyph| glyph.letter) {
-        measure_ink(buffer, &mut out, fs);
+        measure_ink(buffer, &mut out, line_height, fs);
     }
     out
 }
 
 /// Every glyph's [`GlyphMetrics::ink`], into `glyphs` (which lists the
-/// buffer's glyphs in [`ShapedRun::layout_glyphs`]'s order), but a
-/// space's, which has none to keep apart.
+/// buffer's glyphs in [`ShapedRun::layout_glyphs`]'s order, on a line
+/// `line_height` high), but a space's, which has none to keep apart: as
+/// [`drawn_ink`] inks it.
 ///
-/// Cost: one outline scale per glyph that is not a space, and one
-/// scaler context for the run.
-fn measure_ink(buffer: &Buffer, glyphs: &mut [GlyphMetrics], fs: &mut FontSystem) {
+/// Cost: one outline scale per glyph that is not a space, one
+/// rasterization per distinct glyph with no outline
+/// ([`glyph_draws`]'s), and one scaler context for the run.
+fn measure_ink(buffer: &Buffer, glyphs: &mut [GlyphMetrics], line_height: f32, fs: &mut FontSystem) {
     let mut cache = SwashCache::new();
+    let baseline = baseline_of(glyphs, line_height);
     let laid = buffer.layout_runs().flat_map(|run| visual(run.glyphs, run.rtl));
     for (metrics, laid) in glyphs.iter_mut().zip(laid) {
         if !metrics.blank {
-            metrics.ink = glyph_outline_ink(fs, &mut cache, laid).map(|(min, max)| Ink { min, max });
+            let outline = glyph_outline_ink(fs, &mut cache, laid);
+            metrics.ink = drawn_ink(outline, metrics.advance, (baseline, line_height), || {
+                glyph_draws(fs, &mut cache, laid)
+            });
         }
+    }
+}
+
+/// A glyph's ink as the rasterizer draws it (#333), from its outline's
+/// ink (`outline`, [`glyph_outline_ink`]): that ink, where it has an
+/// outline; where it has none but is drawn all the same (`draws`, asked
+/// only then) — a bitmap emoji — its box, its `advance` by the line's
+/// height, `baseline` below the line's top; and where nothing is drawn — a
+/// `.notdef` whose outline is empty, a face that is not loaded — none, as
+/// a space has none: it takes up its advance and nothing else.
+///
+/// Cost: O(1), and `draws` where there is no outline.
+pub(crate) fn drawn_ink(
+    outline: Option<(Vec2, Vec2)>,
+    advance: f32,
+    (baseline, line_height): (f32, f32),
+    draws: impl FnOnce() -> bool,
+) -> Option<Ink> {
+    match outline {
+        Some((min, max)) => Some(Ink { min, max }),
+        None => draws().then(|| Ink {
+            min: Vec2::new(0.0, -baseline),
+            max: Vec2::new(advance.max(0.0), line_height - baseline),
+        }),
     }
 }
 
@@ -938,7 +989,12 @@ fn word_breaks(text: &str, out: &mut Vec<usize>) {
 /// [`FontSystemLease::fonts`]); one family-name lookup and `String` per
 /// span; one grapheme walk; the piece table and glyph list.
 pub fn shape_run(spans: &[FlowSpan<'_>], scale: f32, fs: &mut FontSystemLease) -> ShapedRun {
-    let fs = fs.fonts();
+    shape_run_in(spans, scale, fs.fonts())
+}
+
+/// [`shape_run`] in the font system `fs`, whichever it is: a test's own,
+/// built with no host face (#333), as well as the shared one.
+pub(crate) fn shape_run_in(spans: &[FlowSpan<'_>], scale: f32, fs: &mut FontSystem) -> ShapedRun {
     let families = families_of(spans.iter().map(|span| span.style), fs);
     let untabbed = untabbed(spans, &families, scale, fs);
     let spans = with_untabbed(spans, &untabbed);
@@ -955,7 +1011,7 @@ pub fn shape_run(spans: &[FlowSpan<'_>], scale: f32, fs: &mut FontSystemLease) -
 fn run_from_assembly(assembly: Assembly<'_>, fs: &mut FontSystem) -> ShapedRun {
     let line_height = assembly.line_height;
     let buffer = new_buffer(fs, assembly.rich, assembly.font_size, line_height, None);
-    let glyphs = glyph_metrics(&buffer, &assembly.pieces, fs);
+    let glyphs = glyph_metrics(&buffer, &assembly.pieces, line_height, fs);
     ShapedRun {
         buffer: Arc::new(buffer),
         glyphs,
@@ -1093,7 +1149,7 @@ pub(crate) fn reshape(
         Some(buffer) => buffer,
         None => new_buffer(fs, rich, font_size, line_height, None),
     };
-    let glyphs = glyph_metrics(&buffer, &pieces, fs);
+    let glyphs = glyph_metrics(&buffer, &pieces, line_height, fs);
     let run = ShapedRun {
         buffer: Arc::new(buffer),
         glyphs,

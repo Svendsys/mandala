@@ -759,6 +759,7 @@ impl<'a> Saver<'a> {
         };
         let text = self.text(&ring.style.text, Unit::of_tier(DocKind::Ring))?;
         let layout = self.layout(&ring.style.ring_layout)?;
+        let directional = ring.directional.as_deref();
         Ok(RingDto {
             channel: channel_of(ring.channel),
             fit: Self::fit(&ring.style.fit),
@@ -771,6 +772,10 @@ impl<'a> Saver<'a> {
             weight: text.weight,
             italic: text.italic,
             spans: self.spans(id)?,
+            vertical: directional.and_then(|d| d.vertical.as_deref()).map(Cow::Borrowed),
+            corners: directional
+                .and_then(|d| d.corners.as_ref())
+                .map(|corners| corners.each_ref().map(|c| Cow::Borrowed(c.as_str()))),
         })
     }
 

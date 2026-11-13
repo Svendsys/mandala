@@ -44,6 +44,8 @@
 //! `start` and `direction` do not apply: a text frame always reads over
 //! the top and then along the bottom.
 
+use rustc_hash::FxHashSet;
+
 use super::halves::Work;
 use super::*;
 use crate::document::values::Edge;
@@ -138,6 +140,45 @@ fn part(clusters: &[Cluster], spans: [f32; 2]) -> [Range<usize>; 2] {
         }
     }
     best.map_or_else(|| [trim(0..n), n..n], |(_, lines)| lines)
+}
+
+/// Mark `clusters` blank where the text they hold is blank in the run
+/// the lines were parted on (#333). `clusters` are those of `glyphs`, a
+/// reshape of `parting`, and `parted` are `parting`'s clusters.
+///
+/// A frame parts its lines on its run with each glyph that draws nothing
+/// read as a space, so a line's ends leave such a glyph out. A reshape
+/// is a fresh shaping, where that glyph is no space: a line parted again
+/// on the reshape, or filled again at `Fit`'s least size
+/// ([`Lines::fill_top`]), would give it room at the line's ends. A
+/// cluster is marked only where every one of its glyphs starts at a
+/// character that a blank cluster of `parted` holds; the filler's
+/// glyphs, which `parting` does not hold, stay as shaped. Only the
+/// parting reads the mark: a line is laid level
+/// ([`PathWalk::level_len`]), and a level step does not read it.
+///
+/// Cost: O(glyphs) of both runs, and a set of `parting`'s blank
+/// characters.
+fn parted_as(
+    clusters: &mut [Cluster],
+    glyphs: &[GlyphMetrics],
+    parted: &[Cluster],
+    parting: &[GlyphMetrics],
+) {
+    let blank: FxHashSet<(usize, usize)> = parted
+        .iter()
+        .filter(|cluster| cluster.blank)
+        .flat_map(|cluster| parting[cluster.glyphs.clone()].iter())
+        .map(|glyph| (glyph.span, glyph.bytes.start))
+        .collect();
+    if blank.is_empty() {
+        return;
+    }
+    for cluster in clusters {
+        cluster.blank |= glyphs[cluster.glyphs.clone()]
+            .iter()
+            .all(|glyph| blank.contains(&(glyph.span, glyph.bytes.start)));
+    }
 }
 
 /// What a frame's lines lay: their run and clusters, and how, and the
@@ -492,7 +533,9 @@ fn lay_lines(
     };
     let laid_run = placed_run.as_ref().unwrap_or(run);
     let clusters = if placed_run.is_some() {
-        clusters_of(&laid_run.glyphs, 0..laid_run.glyphs.len())
+        let mut laid = clusters_of(&laid_run.glyphs, 0..laid_run.glyphs.len());
+        parted_as(&mut laid, &laid_run.glyphs, &clusters, &run.glyphs);
+        laid
     } else {
         clusters
     };

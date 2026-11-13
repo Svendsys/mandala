@@ -10,6 +10,7 @@
 
 use glam::Vec2;
 
+use crate::document::element::DirectionalGlyphs;
 use crate::document::resolve::{ResolvedRing, ResolvedSides};
 use crate::document::values::{Direction, Edge, FitMode, LineSpan, Percent, Rgba, Shape, StartPoint};
 use crate::flow::path::ArcPath;
@@ -198,6 +199,19 @@ fn inks(run: &ShapedRun, placed: &PlacedRun) -> Vec<Option<(Vec2, Vec2)>> {
     })
 }
 
+/// Whether the rasterizer draws a pixel of each glyph of `run`
+/// ([`raster_box`](crate::flow::tests::support::raster_box)), at its own
+/// size: what a frame test reads must not lean on the size
+/// `glyph_draws` asks at (#333).
+fn rasterized(run: &ShapedRun) -> Vec<bool> {
+    with_fonts(|fs| {
+        let fs = fs.fonts();
+        run.layout_glyphs()
+            .map(|laid| crate::flow::tests::support::raster_box(fs, laid, laid.font_size).is_some())
+            .collect()
+    })
+}
+
 /// The distance between two boxes, 0 where they meet.
 fn gap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> f32 {
     (b.0 - a.1).max(a.0 - b.1).max(Vec2::ZERO).length()
@@ -302,7 +316,9 @@ pub(crate) type BandMeasure = (f32, (f32, f32), usize, usize, f32);
 /// inward, where the outline under an anchor is thinner across than
 /// twice the offset, no curve inside it lies at the offset from it all
 /// round, and the band curve folds over the outline's far side. A glyph
-/// with no outline to measure is inked as its box, as the engine inks it.
+/// with no outline that the rasterizer draws all the same is inked as its
+/// box, and one it draws nothing for has no ink, as the engine inks them
+/// (#333).
 ///
 /// And the most any ink not folded reaches toward the outline from its
 /// anchor, as the engine models an ink's reach: the support, along the
@@ -318,16 +334,19 @@ pub(crate) fn band_residual(
     offset: f32,
     x_per_pt: &dyn Fn(usize) -> f32,
 ) -> BandMeasure {
-    // A glyph with no outline to measure — a `.notdef` or a bitmap, as a
-    // side ornament no compiled face holds is drawn — inked as its box,
-    // its advance by the line height, as the engine inks it.
+    // A glyph with no outline that is drawn all the same — a bitmap —
+    // inked as its box, its advance by the line height, and one that
+    // draws nothing — a `.notdef` whose outline is empty — not at all, as
+    // the engine inks them (#333).
+    let drawn = rasterized(run);
     let inks: Vec<Option<(Vec2, Vec2)>> = inks(run, placed)
         .into_iter()
         .zip(&placed.glyphs)
         .map(|(ink, g)| {
             let glyph = &run.glyphs[g.glyph as usize];
             ink.or_else(|| {
-                (!glyph.blank).then(|| (g.pos, g.pos + Vec2::new(glyph.advance.max(0.0), run.line_height)))
+                (!glyph.blank && drawn[g.glyph as usize])
+                    .then(|| (g.pos, g.pos + Vec2::new(glyph.advance.max(0.0), run.line_height)))
             })
         })
         .collect();
@@ -411,7 +430,6 @@ pub(crate) fn folded(path: &ArcPath, p: Vec2, offset: f32) -> bool {
 /// How near the most any ink of a frame laid outward reaches toward the
 /// outline must lie to its offset, in points (#308, ruling B15.1): a
 /// hundredth, what the engine solves the offset to (`OFFSET_TOLERANCE`).
-#[cfg(test)]
 pub(crate) const REACH_TOLERANCE: f32 = 0.01;
 
 /// The most a glyph's anchor may lie off its frame's band curve, and the
@@ -1232,11 +1250,15 @@ fn test_flow_halves_a_resolved_ring_lays_as_it_says() {
     do_flow_halves_a_resolved_ring_lays_as_it_says();
 }
 
-/// A resolved ring's span, sides and spacing are the layout it is
-/// placed with (`RingLayout::of`): each field to its own, and no sides
-/// to none.
+/// A resolved ring's span, sides, spacing and glyphs by direction are
+/// the layout it is placed with (`RingLayout::of`): each field to its
+/// own, and no sides to none.
 pub fn do_flow_halves_a_resolved_ring_lays_as_it_says() {
     let color = Rgba::opaque(1, 2, 3);
+    let directional = DirectionalGlyphs {
+        vertical: Some("│".to_owned()),
+        corners: Some(["┌", "┐", "┘", "└"].map(str::to_owned)),
+    };
     let ring = ResolvedRing {
         fit: FitMode::Repeat,
         span: LineSpan::new(0.25).unwrap_or(LineSpan::WHOLE),
@@ -1245,6 +1267,7 @@ pub fn do_flow_halves_a_resolved_ring_lays_as_it_says() {
             color,
         }),
         spacing: 3.0,
+        directional: directional.clone(),
     };
     assert_eq!(
         RingLayout::of(&ring),
@@ -1252,6 +1275,7 @@ pub fn do_flow_halves_a_resolved_ring_lays_as_it_says() {
             span: LineSpan::new(0.25).unwrap_or(LineSpan::WHOLE),
             sides: Some(("¤".to_owned(), color)),
             spacing: 3.0,
+            directional,
         }
     );
     let bare = ResolvedRing { sides: None, ..ring };
@@ -2213,6 +2237,201 @@ fn laid_without_outlines(text: &str, shape: &Outline) {
 }
 
 #[test]
+fn test_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance() {
+    do_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance();
+}
+
+/// A frame's glyph that the rasterizer draws nothing for — U+10FFFD, the
+/// last private-use code point, which no compiled face maps, at Galatia
+/// SIL's `.notdef`, whose outline is empty — has no ink (#333), and its
+/// line lays it by its advance alone: nothing is cut, and every glyph
+/// that draws is laid; the band curve lies as near the outline as lets
+/// every drawn ink clear it, the most any of them reaches toward the
+/// outline its offset to within `REACH_TOLERANCE` (`band_residual`),
+/// and every anchor lies on it. In a line of words, and beside a line of
+/// nothing else, which has no letter to lay and draws nothing. And it
+/// opens no gap of the line's tracking: in `aaaa`, U+10FFFD, `aaaa`, laid
+/// `Spread`, the letters either side of it are as far apart, ink to ink,
+/// as two neighbors are, and its advance more. And at either end of a
+/// line, once or three times, it takes no room: the inks of `a time to
+/// every purpose` lie where they lie without it, and so do those of a
+/// text too long for a `Fit` frame of 160 × 80, 120 × 60 or 90 × 50
+/// even at its least size, whose lines are parted again on the text
+/// reshaped there.
+///
+/// Precondition: the text holds glyphs that are no space and that the
+/// rasterizer draws nothing for — where no host face maps U+10FFFD.
+/// Control: such a glyph inked as its box, its advance by the line
+/// height, as a glyph with no outline was before #333, red: the box
+/// reaches further toward the outline than any letter and the band curve
+/// is set by it, the drawn inks' most reach 0.31 short of the offset
+/// ("its drawn inks' most reach toward the outline lies -0.30978584 past
+/// its offset"). Control: such a glyph owing the line's gap as a space
+/// does, red: the letters either side of it 72.42 further apart than two
+/// neighbors, the gap of 62.92 and its advance of 9.51. Controls for the
+/// ends: the lines parted on the run as shaped, not with such a glyph read
+/// as a space, red before the line ("moves its inks, 5.0475383 at the
+/// most": its advance shifts the line), and with the cases before it
+/// left out, past it three times ("641.19684 at the most": its advances
+/// part the lines elsewhere). Control for the overflowing `Fit` frames:
+/// the lines parted again on the reshaped run as shaped, not with such a
+/// glyph read as a space as the run was parted, red at 160 × 80 before
+/// the line ("moves its inks, 3.1060786 at the most").
+pub fn do_flow_halves_a_glyph_that_draws_nothing_is_laid_by_its_advance() {
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::new(820.0, 330.0)), Shape::Ellipse);
+    let top = StartPoint {
+        edge: Edge::Top,
+        at: 0.0,
+    };
+    let path = ArcPath::closed(&shape, top, Direction::Clockwise, MIN_TABLE_SPACING);
+    for text in [
+        "a time \u{10FFFD} to every purpose \u{10FFFD}\u{10FFFD} under the heaven",
+        "a time to every purpose under the heaven\n\u{10FFFD}\u{10FFFD}\u{10FFFD}",
+    ] {
+        let (run, placed, trace) = frame_with(
+            text,
+            30.0,
+            &shape,
+            &FitMode::Once { filler: None },
+            &RingLayout::whole(),
+            true,
+        );
+        let drawn = rasterized(&run);
+        let undrawn = run
+            .glyphs
+            .iter()
+            .zip(&drawn)
+            .filter(|(glyph, drawn)| !glyph.blank && !**drawn)
+            .count();
+        assert!(
+            undrawn > 0,
+            "precondition: {text:?}: the text holds a glyph that draws nothing"
+        );
+        assert!(!placed.truncated, "{text:?}: nothing cut");
+        let laid = |k: usize| placed.glyphs.iter().any(|g| g.glyph as usize == k);
+        let unlaid: Vec<usize> = (0..run.glyphs.len())
+            .filter(|&k| !run.glyphs[k].blank && drawn[k] && !laid(k))
+            .collect();
+        assert!(
+            unlaid.is_empty(),
+            "{text:?}: every glyph that draws is laid, not {unlaid:?}"
+        );
+        let offset = trace.offset.expect("a frame on its halves has a band curve");
+        let (off, _, measured, fold, past) =
+            band_residual(&run, &placed, &path, offset, &|_| x_height_per_point());
+        assert!(
+            measured > 0 && off <= BAND_RESIDUAL && fold == 0,
+            "{text:?}: {measured} anchors, the most {off} off its band curve, {fold} where it folds"
+        );
+        assert!(
+            past.abs() <= REACH_TOLERANCE,
+            "{text:?}: its drawn inks' most reach toward the outline lies {past} past its offset, within {REACH_TOLERANCE}"
+        );
+    }
+    // Its advance alone, no gap of the line's tracking: two letters either
+    // side of it are as far apart, ink to ink, as two neighbors are, and
+    // its advance more.
+    let text = "aaaa\u{10FFFD}aaaa";
+    let (run, placed, _) = frame_with(text, 30.0, &shape, &FitMode::Spread, &RingLayout::whole(), true);
+    let undrawn = run
+        .glyphs
+        .iter()
+        .position(|g| g.bytes.start == 4)
+        .expect("U+10FFFD is shaped");
+    let advance = run.glyphs[undrawn].advance;
+    let boxes = inks(&run, &placed);
+    let lettered: Vec<(u32, (Vec2, Vec2))> = placed
+        .glyphs
+        .iter()
+        .zip(&boxes)
+        .filter_map(|(g, ink)| ink.map(|ink| (g.glyph, ink)))
+        .collect();
+    assert_eq!(
+        lettered.len(),
+        8,
+        "precondition: {text:?}: eight letters laid in one line"
+    );
+    let gaps: Vec<(bool, f32)> = lettered
+        .windows(2)
+        .map(|w| {
+            (
+                (w[0].0 as usize) < undrawn && undrawn < (w[1].0 as usize),
+                gap(w[0].1, w[1].1),
+            )
+        })
+        .collect();
+    let neighbors: Vec<f32> = gaps.iter().filter(|g| !g.0).map(|g| g.1).collect();
+    let across: Vec<f32> = gaps.iter().filter(|g| g.0).map(|g| g.1).collect();
+    let tracked = neighbors.iter().sum::<f32>() / neighbors.len() as f32;
+    assert!(
+        advance > 0.0 && across.len() == 1 && tracked > 1.0,
+        "precondition: {text:?}: U+10FFFD has an advance ({advance}) and lies between two letters, tracked {tracked} apart ({gaps:?})"
+    );
+    assert!(
+        (across[0] - tracked - advance).abs() <= 0.1,
+        "{text:?}: the letters either side of U+10FFFD are {} apart, their neighbors {tracked}: {} more, not its advance {advance}",
+        across[0],
+        across[0] - tracked
+    );
+    // At either end of a line it takes no room, as a space there takes
+    // none: the text's inks lie where they lie without it, before its
+    // first letter and past its last, once or three times. In a frame
+    // its text fits, and in `Fit` frames too small for it even at their
+    // least size, whose lines are laid from the text reshaped and parted
+    // again there.
+    let once = FitMode::Once { filler: None };
+    let fitting = ((820.0, 330.0), shape, once, "a time to every purpose");
+    const OVERFLOWING: &str = "a time to every purpose under the heaven and a season for all";
+    let small = |w: f32, h: f32| {
+        (
+            (w, h),
+            outline(Rect::new(Vec2::ZERO, Vec2::new(w, h)), Shape::Ellipse),
+            FIT,
+            OVERFLOWING,
+        )
+    };
+    for (size, shape, fit, plain_text) in [fitting, small(160.0, 80.0), small(120.0, 60.0), small(90.0, 50.0)]
+    {
+        let lay = |text: &str| {
+            let (run, placed, _) = frame_with(text, 30.0, &shape, &fit, &RingLayout::whole(), true);
+            let boxes = inks(&run, &placed);
+            (
+                boxes.into_iter().flatten().collect::<Vec<(Vec2, Vec2)>>(),
+                placed.truncated,
+            )
+        };
+        let (plain, cut) = lay(plain_text);
+        assert_eq!(
+            cut,
+            fit == FIT,
+            "precondition: {plain_text:?} round {size:?} ({fit:?}) is cut only where it overflows"
+        );
+        for (end, text) in [
+            ("before", format!("\u{10FFFD}{plain_text}")),
+            ("before", format!("\u{10FFFD}\u{10FFFD}\u{10FFFD}{plain_text}")),
+            ("past", format!("{plain_text}\u{10FFFD}")),
+            ("past", format!("{plain_text}\u{10FFFD}\u{10FFFD}\u{10FFFD}")),
+        ] {
+            let (ended, _) = lay(&text);
+            assert_eq!(
+                ended.len(),
+                plain.len(),
+                "{text:?} round {size:?} ({fit:?}): the same inks laid"
+            );
+            let moved = ended
+                .iter()
+                .zip(&plain)
+                .map(|(a, b)| (center(*a) - center(*b)).length())
+                .fold(0.0_f32, f32::max);
+            assert!(
+                moved <= 1e-3,
+                "{text:?} round {size:?} ({fit:?}): a glyph that draws nothing {end} the line moves its inks, {moved} at the most"
+            );
+        }
+    }
+}
+
+#[test]
 fn test_flow_halves_spread_and_once_and_inward() {
     do_flow_halves_spread_and_once_and_inward();
 }
@@ -2674,6 +2893,89 @@ pub fn do_flow_halves_an_outline_whose_halves_are_not_numbers_keeps_r27s_lines()
             "{fit:?}: every position finite"
         );
         assert!(trace.unheld.is_empty(), "{fit:?}: nothing reported unheld");
+    }
+}
+
+#[test]
+fn test_flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_glyph_at_a_line_end() {
+    do_flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_glyph_at_a_line_end();
+}
+
+/// A frame that keeps R27's placement, round an outline whose halves
+/// cannot be measured, parts its lines as every frame does (#333): a
+/// glyph the rasterizer draws nothing for — U+10FFFD, at Galatia SIL's
+/// `.notdef` — takes no room at a line's end, as a space there takes
+/// none. Before `a time to every purpose under the heaven` and past it,
+/// once and three times, `Spread` and `Fit` round the rounded rectangle
+/// 8.9e37 on a side: no such glyph is laid, and each line holds the
+/// text it holds without them. Its positions are not compared: at
+/// 4.5e37 from the origin an `f32` steps by some 5e30, which no advance
+/// moves. Precondition: the halves are not a number, and the text holds
+/// a glyph that draws nothing. Control: R27's placement laid from the
+/// run as shaped, not the run its lines are parted on, red: the glyphs
+/// before the line are laid ("lays 1 glyph that draws nothing").
+pub fn do_flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_glyph_at_a_line_end() {
+    const PLAIN: &str = "a time to every purpose under the heaven";
+    const UNDRAWN: char = '\u{10FFFD}';
+    let shape = Outline::RoundedRect {
+        rect: Rect::new(Vec2::splat(-4.4540537e37), Vec2::splat(8.908107e37)),
+        radius: 4.4540537e37,
+    };
+    let (junctions, _, length) = halves_seam(&shape);
+    assert!(
+        !length.is_finite() || junctions.iter().any(|(a, b)| !a.is_finite() || !b.is_finite()),
+        "precondition: the halves are not a number"
+    );
+    // Each line's glyphs, as the bytes of the plain text they start at
+    // (`None` before it): `before` undrawn glyphs, four bytes each, come
+    // first.
+    let lines = |text: &str, fit: &FitMode, before: usize| {
+        let (run, placed, trace) = frame_with(text, 18.0, &shape, fit, &RingLayout::whole(), true);
+        let drawn = rasterized(&run);
+        let undrawn: Vec<usize> = (0..run.glyphs.len())
+            .filter(|&k| !run.glyphs[k].blank && !drawn[k])
+            .collect();
+        let laid_undrawn = placed
+            .glyphs
+            .iter()
+            .filter(|g| undrawn.contains(&(g.glyph as usize)))
+            .count();
+        let held: Vec<Vec<Option<usize>>> = trace
+            .lines
+            .iter()
+            .map(|line| {
+                placed.glyphs[line.glyphs.clone()]
+                    .iter()
+                    .map(|g| run.glyphs[g.glyph as usize].bytes.start.checked_sub(4 * before))
+                    .collect()
+            })
+            .collect();
+        (undrawn.len(), laid_undrawn, held)
+    };
+    for fit in [FitMode::Spread, FitMode::Fit { min: 1.0, max: 1.0 }] {
+        let (_, _, plain) = lines(PLAIN, &fit, 0);
+        assert!(
+            plain.iter().filter(|line| !line.is_empty()).count() == 2,
+            "precondition: {fit:?}: the text is laid in two lines ({plain:?})"
+        );
+        for count in [1, 3] {
+            let undrawn: String = std::iter::repeat_n(UNDRAWN, count).collect();
+            for (before, text) in [
+                (count, format!("{undrawn}{PLAIN}")),
+                (0, format!("{PLAIN}{undrawn}")),
+            ] {
+                let (held, laid, ended) = lines(&text, &fit, before);
+                assert_eq!(
+                    held, count,
+                    "precondition: {text:?}: the text holds {count} glyphs that draw nothing"
+                );
+                assert_eq!(laid, 0, "{fit:?}: {text:?} lays {laid} glyph that draws nothing");
+                assert_eq!(
+                    ended, plain,
+                    "{fit:?}: {text:?}: each line holds the plain text's"
+                );
+            }
+        }
     }
 }
 
@@ -3361,6 +3663,14 @@ fn test_flow_halves_a_frames_text_is_cut_to_the_cap_at_a_cluster() {
     let mut run = clustered(&starts.map(|s| (6.0, s)), 20.0);
     for blank in [3, 7] {
         run.glyphs[blank].blank = true;
+    }
+    // Inked, as a frame's text is where it is cut: a letter has ink, a
+    // space none (#333).
+    for glyph in run.glyphs.iter_mut().filter(|g| !g.blank) {
+        glyph.ink = Some(crate::flow::Ink {
+            min: Vec2::new(1.0, -4.0),
+            max: Vec2::new(5.0, 0.0),
+        });
     }
     for (left, kept, cut) in [
         (5, 0..3, true),

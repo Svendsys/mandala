@@ -120,6 +120,49 @@ pub fn do_flow_fit_fills_a_steep_line_with_an_ornament() {
 }
 
 #[test]
+fn test_flow_an_ornament_steps_a_glyph_that_draws_nothing_by_its_advance() {
+    do_flow_an_ornament_steps_a_glyph_that_draws_nothing_by_its_advance();
+}
+
+/// An ornament's glyph that draws nothing has no ink (#333), and its walk
+/// steps it by its advance, as it steps a space (ruling R31): down a
+/// vertical line, a dot, a glyph 30 wide that draws nothing and a dot,
+/// `Once` with no spacing, set the second dot's ink below the first's by
+/// the first's right bearing, 4, the glyph's advance, 30, and the second's
+/// left bearing, 4: 38, and the glyph is placed. Each dot is 10 wide, its
+/// ink the 2 × 2 square 4 in from its pen, on a line 40 high.
+///
+/// Control: the glyph inked as its box, its advance by the line height,
+/// as a glyph with no outline was before #333, red: the dots 48 apart, the
+/// box's 40 stepped down the line in place of the advance.
+pub fn do_flow_an_ornament_steps_a_glyph_that_draws_nothing_by_its_advance() {
+    let mut run = synthetic(&[10.0, 30.0, 10.0], 40.0);
+    for (k, glyph) in run.glyphs.iter_mut().enumerate() {
+        glyph.letter = false;
+        glyph.ink = (k != 1).then_some(crate::flow::Ink {
+            min: Vec2::new(4.0, -12.0),
+            max: Vec2::new(6.0, -10.0),
+        });
+    }
+    let down = Curve::Line(Vec2::ZERO, Vec2::new(0.0, 400.0));
+    let placed = on_line(&run, down, &FitMode::Once { filler: None }, 0.0);
+    assert_eq!(placed.glyphs.len(), 3, "every glyph is placed: {placed:?}");
+    let ink_y = |k: usize| {
+        let g = placed.glyphs[k];
+        let ink = run.glyphs[g.glyph as usize].ink.expect("a dot is inked");
+        let pen = g.pos.y + run.baseline();
+        (pen + ink.min.y, pen + ink.max.y)
+    };
+    let (first, second) = (ink_y(0), ink_y(2));
+    close(
+        second.0 - first.1,
+        38.0,
+        1e-3,
+        "the dots' inks apart down the line",
+    );
+}
+
+#[test]
 fn test_flow_fit_clamped_at_max_spreads_the_rest() {
     do_flow_fit_clamped_at_max_spreads_the_rest();
 }

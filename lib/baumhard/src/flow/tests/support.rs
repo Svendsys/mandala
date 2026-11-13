@@ -150,3 +150,33 @@ pub(crate) fn close(a: f32, b: f32, tolerance: f32, what: &str) {
         "{what}: {a} vs {b} (tolerance {tolerance})"
     );
 }
+
+/// The box of the image the rasterizer draws of `laid` at `size` pixels
+/// per em, as the renderer asks for it — its face, glyph, weight and
+/// flags, at no sub-pixel offset — as its `(min, max)` corners relative
+/// to its pen on the baseline, `y` pointing down, the shaper's offsets
+/// included at `size`; `None` where it covers no pixel. Read from the
+/// rasterizer, not through the flow's own reading of it
+/// (`fonts::glyph_draws`), so a test of what draws does not agree with
+/// itself (#333). Each caller says why it asks at the size it does.
+pub(crate) fn raster_box(
+    fs: &mut crate::font::FontSystem,
+    laid: &crate::font::LayoutGlyph,
+    size: f32,
+) -> Option<(Vec2, Vec2)> {
+    let (key, _, _) = cosmic_text::CacheKey::new(
+        laid.font_id,
+        laid.glyph_id,
+        size,
+        (0.0, 0.0),
+        laid.font_weight,
+        laid.cache_key_flags,
+    );
+    let image = crate::font::SwashCache::new().get_image_uncached(fs, key)?;
+    let p = image.placement;
+    (p.width > 0 && p.height > 0).then(|| {
+        let offset = Vec2::new(size * laid.x_offset, -size * laid.y_offset);
+        let min = Vec2::new(p.left as f32, -p.top as f32) + offset;
+        (min, min + Vec2::new(p.width as f32, p.height as f32))
+    })
+}

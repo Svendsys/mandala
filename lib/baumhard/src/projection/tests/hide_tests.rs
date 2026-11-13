@@ -1019,3 +1019,32 @@ fn test_projection_a_label_touching_nothing_is_drawn() {
     assert!(label_drawn(&p, path), "the label touching nothing is drawn");
     p.check().unwrap();
 }
+
+/// A text path's glyphs hide behind a node as an ornament's do, though
+/// their inks are not read at shaping: a letter with no ink measured is
+/// its advance by the line height, not a glyph that draws nothing (#333
+/// keeps "no ink, draws nothing" to runs whose inks were read).
+///
+/// Control: with every run taken as measured, red on the text path drawn
+/// whole across the node.
+#[test]
+fn test_projection_a_text_path_hides_behind_a_node() {
+    let text = json!({"fit": "repeat", "spans": [{"text": "words along a path "}]});
+    let mut p = Projected::new(two_paths(ON_P, json!({}), text));
+    let path = path_of(&p, 2);
+    let count = |run: Option<&GlyphRunData>| run.map_or(0, |r| r.shaped().glyph_count());
+    let laid = count(p.projector.laid(path));
+    let shown = count(Some(&drawn(&p, path)));
+    assert!(laid >= 20, "precondition: the text path is laid, {laid} glyphs");
+    assert!(
+        shown < laid,
+        "the text path's glyphs behind the node are hidden: {shown} of {laid} drawn"
+    );
+    let other = path_of(&p, 5);
+    assert_eq!(
+        count(Some(&drawn(&p, other))),
+        count(p.projector.laid(other)),
+        "the text path clear of the node is drawn whole"
+    );
+    p.check().unwrap();
+}

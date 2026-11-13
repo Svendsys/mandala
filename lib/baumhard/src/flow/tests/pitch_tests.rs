@@ -290,3 +290,63 @@ pub fn do_flow_pitched_lays_no_text_and_no_empty_path() {
         "a path of no length holds nothing"
     );
 }
+
+/// On a path whose floats resolve the pattern's gaps, a round of the slack
+/// that the lay does not answer does not stop the solve (#333): a curve
+/// steps each ink's place by the float steps of the canvas, so a move of
+/// the slack too small to cross one leaves the lay where it was, and a
+/// later move, landing across one, does move it. Along a cubic arch some
+/// 1 120 across and 314 high, the solve for 208 inks meets such a round
+/// and goes on past it, to a slack at which the last ink lies within the
+/// solve's tolerance, 1e-3, of where its end gap puts it.
+///
+/// Control: the stop for a round the lay does not answer taken on every
+/// path, not only where the path's float steps are wider than the
+/// pattern's gaps, red: the solve stops at that round, its last ink
+/// 3.4e-3 short ("208 inks laid at a slack of 0.012420217, the last
+/// 0.0034179688 short of its end gap").
+///
+/// Not a `do_*` body: it reads what the solve reached through a
+/// test-only record (`pitch::SOLVED`), which a bench build does not
+/// compile.
+#[test]
+fn test_flow_pitched_solves_past_a_round_the_lay_does_not_answer() {
+    use crate::flow::place::pitch::SOLVED;
+    // The arch: how far across, and how high its control points stand.
+    // Exact: the round the lay does not answer falls where the canvas's
+    // float steps fall.
+    let (across, high) = (1120.6_f32, 313.76797_f32);
+    let run = dot();
+    let path = Curve::Cubic(
+        Vec2::ZERO,
+        Vec2::new(0.0, high),
+        Vec2::new(across, high),
+        Vec2::new(across, 0.0),
+    );
+    // A Bézier is no longer than its control polygon.
+    let longest = across + 2.0 * high;
+    assert!(
+        2.0 * longest * f32::EPSILON < GAP,
+        "precondition: the path's float steps, {} at the most, are narrower than the pattern's gap {GAP}",
+        longest * f32::EPSILON
+    );
+    SOLVED.with(|solved| solved.set(None));
+    let placed = place_pitched(&run, &path, 0.0, [NO_END; 2]);
+    let solved = SOLVED.with(std::cell::Cell::get).expect("the pattern is laid");
+    assert_eq!(
+        placed.glyphs.len(),
+        solved.count,
+        "precondition: one glyph an ink"
+    );
+    assert!(
+        solved.unanswered > 0,
+        "precondition: the solve met a round the lay did not answer ({solved:?})"
+    );
+    assert!(
+        solved.missed.abs() <= 1e-3,
+        "{} inks laid at a slack of {}, the last {} short of its end gap",
+        solved.count,
+        solved.slack,
+        solved.missed
+    );
+}

@@ -160,6 +160,7 @@ fn ring(
                 },
                 ..RingStyle::default()
             },
+            ..RingData::default()
         }),
         children: spans
             .into_iter()

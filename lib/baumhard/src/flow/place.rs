@@ -116,6 +116,7 @@ use std::ops::Range;
 use glam::Vec2;
 use rustc_hash::FxHashMap;
 
+use crate::document::element::DirectionalGlyphs;
 use crate::document::resolve::{ResolvedRing, ResolvedText};
 use crate::document::values::{Direction, FitMode, LineSpan, Rgba, StartPoint};
 use crate::flow::curve::Curve;
@@ -128,9 +129,10 @@ use crate::font::FontSystem;
 
 pub use pitch::{pattern_gap, place_pitched, PathEnd};
 
+pub(crate) mod directional;
 pub(crate) mod halves;
 mod lines;
-mod pitch;
+pub(crate) mod pitch;
 pub(crate) mod ring;
 pub(crate) use lines::{frame_halves, place_lines};
 use ring::{RingLoss, RingWork};
@@ -293,6 +295,10 @@ pub struct RingLayout {
     /// R31): `0.0` sets the ornament's copies as far apart as the font
     /// and the ring's slack do. A two-line ring ignores it.
     pub spacing: f32,
+    /// What a `repeat` ring lays where its outline runs steep and where
+    /// it turns (#324, `format/schema.md` "Directional ring"): neither set, it is a ring of its
+    /// text alone. A two-line ring ignores it.
+    pub directional: DirectionalGlyphs,
 }
 
 impl RingLayout {
@@ -303,6 +309,7 @@ impl RingLayout {
             span: LineSpan::WHOLE,
             sides: None,
             spacing: 0.0,
+            directional: DirectionalGlyphs::default(),
         }
     }
 
@@ -316,12 +323,14 @@ impl RingLayout {
     }
 
     /// The layout a resolved ring says: its span, its sides' text and
-    /// color, its spacing. O(1), and a clone of the sides' text.
+    /// color, its spacing, its glyphs by direction. O(1), and a clone of
+    /// their texts.
     pub fn of(ring: &ResolvedRing) -> Self {
         RingLayout {
             span: ring.span,
             sides: ring.sides.as_ref().map(|s| (s.content.clone(), s.color)),
             spacing: ring.spacing,
+            directional: ring.directional.clone(),
         }
     }
 }
@@ -1016,27 +1025,25 @@ impl PathWalk<'_> {
     /// wherever the path runs steep, and a glyph-and-space ornament would
     /// open a gap at every turn of a ring. In text a space keeps its line
     /// height, which is what parts two words stacked on a steep side. An
-    /// ornament's glyph with no outline to measure is inked as its box.
+    /// ornament's glyph that draws nothing has no ink either (#333,
+    /// [`GlyphMetrics::ink`]), and steps its advance as a space does.
     fn body(&self, advance: f32, ink: Option<Ink>, blank: bool, h: f32) -> Body {
         if !self.ornament || self.level {
             return Body::Boxed { w: advance, h };
         }
-        if blank {
-            let middle = Vec2::new(advance * 0.5, 0.0);
-            return Body::Inked {
-                advance,
-                ink: Ink {
-                    min: middle,
-                    max: middle,
-                },
-            };
+        match ink.filter(|_| !blank) {
+            Some(ink) => Body::Inked { advance, ink },
+            None => {
+                let middle = Vec2::new(advance * 0.5, 0.0);
+                Body::Inked {
+                    advance,
+                    ink: Ink {
+                        min: middle,
+                        max: middle,
+                    },
+                }
+            }
         }
-        // A glyph with no outline to measure is inked as its box.
-        let ink = ink.unwrap_or(Ink {
-            min: Vec2::new(0.0, -self.baseline),
-            max: Vec2::new(advance, h - self.baseline),
-        });
-        Body::Inked { advance, ink }
     }
 
     /// [`body`](Self::body) for `cluster` as shaped.
@@ -2675,7 +2682,7 @@ fn lay_on_closed(
     flow: &ResolvedText,
     fs: &mut FontSystemLease,
     ring_cap: usize,
-    trace: Option<&mut Trace>,
+    mut trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
     if !matches!(fit, FitMode::Repeat) {
         // A frame whose outline is too large for its length to be an
@@ -2703,6 +2710,20 @@ fn lay_on_closed(
             return (replaced, placed);
         }
         return halves::place_halves(run, path, fit, layout, outward, flow, fs, trace);
+    }
+    if layout.directional.is_set() {
+        if let Some(laid) = directional::place_directional(
+            run,
+            path,
+            layout,
+            outward,
+            flow,
+            fs,
+            ring_cap,
+            trace.as_deref_mut(),
+        ) {
+            return laid;
+        }
     }
     let spacing = table_spacing(run, fit, flow);
     let arc = ArcPath::closed(path, start, direction, spacing);
