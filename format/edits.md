@@ -244,16 +244,18 @@ across all of them; then the node stays where it belongs.
   petal or another petal, and no petal's line through any of them — the
   straight line from the parent's center to the petal's, where it runs
   outside the two. (A connector is drawn as a curve from the parent's
-  outline; the straight line stands for it.) The lines checked are this
-  flower's own. A petal is not checked against the parent's own
-  connector from its parent, nor against the lines of families laid out
-  earlier in the same run. A line longer than 16,384 units outside the
+  outline; the straight line stands for it.) Nor may a petal sit on its
+  parent's own connector from its parent — the straight line between
+  their centers, where it runs outside the two — or on a line of a
+  family laid out earlier in the same run. A line longer than 16,384 units outside the
   parent and the petal is not checked, and an arrangement with one is
   not taken, so a flower round a very large parent falls to the
   per-petal search below. A flower whose parent sits close above
   another node so becomes a fan that leaves a gap where that node is.
   Only when no such arrangement is clear does each petal move outward
-  along its own ray, by those distances.
+  along its own ray, by those distances, until it is clear of drawn
+  nodes, placed petals, its parent's connector and earlier families'
+  lines.
 - A cascade row moves as a whole and keeps its spacing. It tries each
   of those depths below where it belongs. At each depth it tries
   straight below first, then 40 units right, 40 left, 80 right, 80

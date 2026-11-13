@@ -901,6 +901,106 @@ fn test_a_line_counts_only_outside_its_parent_and_the_petal() {
     assert_eq!(steps_between(center, &sons), [120.0, 120.0], "the full circle");
 }
 
+/// **No petal sits on its parent's own connector** (owner, on #331). Node
+/// 2 hangs from node 1, a thousand units straight above it, and has three
+/// sons drawn far away. The full circle unturned, and turned by 15°, puts
+/// the first son on the straight line from node 1 to node 2 (asserted for
+/// the unturned circle, by the f64 sampled oracle); turned by 30°, it is
+/// clear, so the flower is the full circle with its first son at −60°,
+/// and no son meets that line where it runs outside nodes 1 and 2.
+///
+/// Control: without the parent's connector kept, the first son sat on it,
+/// at the top.
+#[test]
+fn test_no_petal_sits_on_its_parents_own_connector() {
+    let text = r#"{"format":1,"name":"t","nodes":[
+{"id":1,"position":[0,-1000]},
+{"id":2,"parent":1,"position":[0,0]},
+{"id":3,"parent":2,"position":[3000,3000]},
+{"id":4,"parent":2,"channel":1,"position":[3000,3000]},
+{"id":5,"parent":2,"channel":2,"position":[3000,3000]}]}"#;
+    let mut doc = load(text).unwrap();
+    let two = n(&doc, 2);
+    let size = Vec2::new(100.0, 40.0);
+    let rect = |at: Vec2| crate::flow::Rect::new(at, size);
+    let (grand, parent) = (rect(Vec2::new(0.0, -1000.0)), rect(Vec2::ZERO));
+    let (from, center) = (grand.center(), parent.center());
+    let top = rect(center - Vec2::new(0.0, 140.0) - size / 2.0);
+    assert!(
+        sampled_crossing(from, center, &top, &[grand, parent]),
+        "precondition: the unturned circle's first son sits on the connector"
+    );
+    let flower = edit(r#"{"id":"f","name":"F","reach":"self","target":"node","handler":"flower"}"#);
+    run(&mut doc, &flower, &[two]).unwrap();
+    let sons: Vec<Vec2> = [3, 4, 5]
+        .iter()
+        .map(|&i| node(&doc, i).1.position + size / 2.0)
+        .collect();
+    for son in &sons {
+        assert!(
+            ((*son - center).length() - 140.0).abs() < 1e-3,
+            "{son} at the base radius"
+        );
+        assert!(
+            !sampled_crossing(from, center, &rect(*son - size / 2.0), &[grand, parent]),
+            "the son at {son} sits on node 2's connector"
+        );
+    }
+    assert_eq!(angle_of(center, sons[0]), -60.0, "the circle turned by 30°");
+    assert_eq!(steps_between(center, &sons), [120.0, 120.0], "the full circle");
+}
+
+/// **A family keeps clear of the lines of a family placed before it in
+/// the same run** (owner, on #331). Node 1 and node 10 are flowered
+/// together, node 1's family first. Run on its own, node 10's flower puts
+/// a son on one of node 1's lines (asserted as a precondition: a separate
+/// run is not the same run); run together, no son of node 10 meets a line
+/// from node 1 to its sons where it runs outside them (the f64 sampled
+/// oracle), and node 10's first son is at −30°.
+///
+/// Control: without the placed family's lines kept, node 10's son sat on
+/// node 1's line.
+#[test]
+fn test_a_family_keeps_clear_of_lines_placed_before_it() {
+    let def = edit(r#"{"id":"f","name":"F","reach":"self","target":"node","handler":"flower"}"#);
+    let size = Vec2::new(100.0, 40.0);
+    let rect = |at: Vec2| crate::flow::Rect::new(at, size);
+    let text = format!(
+        r#"{},{{"id":10,"channel":1,"position":[-240,-40]}},{{"id":11,"parent":10,"position":[-240,-40]}},{{"id":12,"parent":10,"channel":1,"position":[-240,-40]}},{{"id":13,"parent":10,"channel":2,"position":[-240,-40]}}]}}"#,
+        FAMILY.strip_suffix("]}").expect("FAMILY ends its list")
+    );
+    let one_center = Vec2::new(50.0, 20.0);
+    let on_a_line = |doc: &Document| {
+        let lines: Vec<Vec2> = [2, 3, 4].iter().map(|&i| node(doc, i).1.position).collect();
+        [11, 12, 13].iter().any(|&j| {
+            let son = rect(node(doc, j).1.position);
+            lines
+                .iter()
+                .any(|&at| sampled_crossing(one_center, at + size / 2.0, &son, &[rect(Vec2::ZERO), rect(at)]))
+        })
+    };
+    let mut apart = load(&text).unwrap();
+    let (one, ten) = (n(&apart, 1), n(&apart, 10));
+    run(&mut apart, &def, &[one]).unwrap();
+    run(&mut apart, &def, &[ten]).unwrap();
+    assert!(
+        on_a_line(&apart),
+        "precondition: on its own, node 10's flower sits on node 1's line"
+    );
+
+    let mut together = load(&text).unwrap();
+    run(&mut together, &def, &[one, ten]).unwrap();
+    assert!(
+        !on_a_line(&together),
+        "together, node 10's sons keep clear of node 1's lines"
+    );
+    let ten_center = Vec2::new(-190.0, -20.0);
+    assert_eq!(
+        angle_of(ten_center, node(&together, 11).1.position + size / 2.0),
+        -30.0
+    );
+}
+
 /// **A petal's line must not cross its own siblings** (review of #331).
 /// Two sons 600 wide at radius 700, 20° apart from the top: they do not
 /// overlap, but the line to the first, straight up, runs through the

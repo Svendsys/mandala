@@ -35,7 +35,9 @@
 //!   #250): not a sibling, not the parent, not anything else on the map.
 //!   A flower keeps its shape: one radius and one spacing for every
 //!   petal, on the full circle where that is clear and else on the
-//!   widest clear fan, its lines clear of other nodes too (the order
+//!   widest clear fan, its lines clear of other nodes too, and no petal
+//!   on its parent's own connector or on a line laid earlier in the run
+//!   (the order
 //!   and its bounds are on [`flower`](crate::edit_handlers::flower));
 //!   only when no such arrangement is clear does each petal move outward
 //!   along its own ray. A cascade row moves down as a whole, keeping its
@@ -204,11 +206,11 @@ pub const MAX_LINE_PIECES: u32 = 64;
 /// already placed or another of its own, and no petal's line — the
 /// straight line from the parent's center to the petal's, where it runs
 /// outside the two — crosses a drawn node, a placed petal or another of
-/// its own (see `Clear`). The lines checked are this flower's own: a
-/// petal is not checked against its parent's connector from the
-/// grandparent, nor against the lines of families placed earlier in the
-/// same run (both go through `Clear::is_clear`, where a check against
-/// such segments would be added). They are tried in this order:
+/// its own (see `Clear`). A petal also meets no **segment a run keeps**
+/// (owner, on #331): its parent's own connector from the grandparent —
+/// the straight line from the grandparent's center to the parent's,
+/// where it runs outside the two — and the lines of every family placed
+/// earlier in the same run. They are tried in this order:
 ///
 /// 1. each radius from the base out, [`FLOWER_RADII`] of them,
 ///    [`FLOWER_RADIUS_STEP`] apart;
@@ -221,7 +223,9 @@ pub const MAX_LINE_PIECES: u32 = 64;
 /// So the smallest radius that has a clear arrangement wins, and at
 /// that radius the full circle, then the widest fan. When none is
 /// clear, each petal moves outward along its own ray, by [`probes`],
-/// until it is clear of the drawn nodes and the petals before it.
+/// until it is clear of the drawn nodes, the petals before it and the
+/// segments the run keeps. Once a family is placed, its lines join those
+/// segments, for the families after it.
 ///
 /// Parents are placed before their children, in tree order, and a node
 /// one flower moves is the center of its own where it is moved to, so
@@ -234,7 +238,12 @@ pub const MAX_LINE_PIECES: u32 = 64;
 ///
 /// - O(n²) comparisons of its petals and lines with each other;
 /// - per petal, one query of the projector's body index over the
-///   petal's cells, and a lookup of this run's placements there;
+///   petal's cells, and a lookup of this run's placements and kept
+///   segments there (`Clear::is_clear`). The kept segments grow with the
+///   selection — one per family's parent and one per placed petal — and
+///   are filed in `Clear`'s 512-unit cells, so a petal reads only those
+///   near it, plus any too long to file (past 64 of those cells), which
+///   every petal tests;
 /// - per line, at most [`MAX_LINE_PIECES`] queries of the body index,
 ///   each over at most four cells, a `node_rect` for each node one finds,
 ///   and as many lookups of the placements.
@@ -270,6 +279,18 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
         let radius = parent_span + child_span + RADIAL_PADDING;
         let center = origin + rect.size / 2.0;
         let outline = Rect::new(origin, rect.size);
+        // The parent's own connector from the grandparent, as placed or
+        // as drawn: a segment none of its petals may meet.
+        let grandparent = doc
+            .parent(parent)
+            .filter(|&up| doc.get(up).is_some_and(|e| e.kind() == DocKind::Node));
+        if let Some(drawn) = grandparent.and_then(|up| geometry.node_rect(up)) {
+            let at = grandparent.and_then(|up| placed.get(&up).copied());
+            let grand = Rect::new(at.unwrap_or(drawn.origin), drawn.size);
+            if let Some((a, b)) = line(grand.center(), &grand, &outline) {
+                clear.keep_segment(a, b);
+            }
+        }
         let laid: Vec<Rect> = match regular_flower(&clear, (parent, outline), center, radius, &children) {
             Some(laid) => {
                 for ((child, _), petal) in children.iter().zip(&laid) {
@@ -294,6 +315,12 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
                 laid
             }
         };
+        // This family's lines, which the families after it keep clear of.
+        for petal in &laid {
+            if let Some((a, b)) = line(center, &outline, petal) {
+                clear.keep_segment(a, b);
+            }
+        }
         for ((child, r), petal) in children.iter().zip(laid) {
             placed.insert(*child, petal.origin);
             planned.push((*child, position_for(doc, *child, *r, petal.origin)));
@@ -556,10 +583,14 @@ const MAX_CELLS: i64 = 64;
 
 /// What a layout keeps its nodes clear of: every drawn node it does not
 /// move, as the projector's body index has it
-/// ([`Geometry::nodes_meeting`]), and every rectangle this run has
-/// placed, filed in a small grid of its own. Two rectangles are clear
-/// when their insides do not meet; a shared edge is clear. Holds only
-/// the moved set and the placements: nothing of the map is copied.
+/// ([`Geometry::nodes_meeting`]); every rectangle this run has placed;
+/// and the segments a flower keeps — each parent's connector from its
+/// own parent, and each placed family's lines — the last two filed in a
+/// small grid of its own. Two rectangles are clear when their insides
+/// do not meet, and a segment and a rectangle when the segment does not
+/// pass through the rectangle's inside; a shared edge is clear. Holds
+/// only the moved set, the placements and the kept segments: nothing of
+/// the map is copied.
 pub(crate) struct Clear<'g> {
     /// Where the map is drawn.
     geometry: &'g dyn Geometry,
@@ -571,6 +602,13 @@ pub(crate) struct Clear<'g> {
     cells: FxHashMap<(i32, i32), Vec<(NodeId, Rect)>>,
     /// Every placed rectangle, for a query too large for the cells.
     placed: Vec<(NodeId, Rect)>,
+    /// The kept segments filed under each cell their box covers.
+    segment_cells: FxHashMap<(i32, i32), Vec<(Vec2, Vec2)>>,
+    /// The kept segments whose box covers more than [`MAX_CELLS`] cells,
+    /// tested on every query.
+    wide_segments: Vec<(Vec2, Vec2)>,
+    /// Every kept segment, for a query too large for the cells.
+    segments: Vec<(Vec2, Vec2)>,
 }
 
 /// Whether the insides of `a` and `b` meet. O(1).
@@ -613,7 +651,41 @@ impl<'g> Clear<'g> {
             moved: moved.map(|(node, _)| *node).collect(),
             cells: FxHashMap::default(),
             placed: Vec::new(),
+            segment_cells: FxHashMap::default(),
+            wide_segments: Vec::new(),
+            segments: Vec::new(),
         }
+    }
+
+    /// Keep the segment from `a` to `b`: no petal placed after may meet
+    /// it. Filed under the cells of its box, or, past [`MAX_CELLS`] of
+    /// them, kept apart and tested on every query. O(its cells).
+    fn keep_segment(&mut self, a: Vec2, b: Vec2) {
+        match cells_of(Rect::new(a.min(b), (b - a).abs())) {
+            Some(cells) => {
+                for cell in cells {
+                    self.segment_cells.entry(cell).or_default().push((a, b));
+                }
+            }
+            None => self.wide_segments.push((a, b)),
+        }
+        self.segments.push((a, b));
+    }
+
+    /// Whether `rect` meets a kept segment. O(the segments filed under
+    /// `rect`'s cells, or every kept segment for a rectangle too large for
+    /// them, plus the wide ones), stopping at the first.
+    fn meets_segment(&self, rect: Rect) -> bool {
+        let through = |&(a, b): &(Vec2, Vec2)| segment_meets(a, b, &rect);
+        let filed = match cells_of(rect) {
+            Some(mut cells) => cells.any(|cell| {
+                self.segment_cells
+                    .get(&cell)
+                    .is_some_and(|near| near.iter().any(through))
+            }),
+            None => self.segments.iter().any(through),
+        };
+        filed || self.wide_segments.iter().any(through)
     }
 
     /// File `node`, placed at `rect`. O(its cells).
@@ -649,10 +721,13 @@ impl<'g> Clear<'g> {
     }
 
     /// Whether `rect` is clear of every drawn node this run does not
-    /// move and of every rectangle it has placed. O(the body index's
-    /// cells under `rect`, and this run's placements in them).
+    /// move, of every rectangle it has placed and of every segment it
+    /// keeps. O(the body index's cells under `rect`, and this run's
+    /// placements and kept segments in them, plus the kept segments too
+    /// wide to file).
     fn is_clear(&self, rect: Rect) -> bool {
         !self.any_placed(rect, |_, other| meets(&rect, other))
+            && !self.meets_segment(rect)
             && self
                 .geometry
                 .nodes_meeting(rect)
