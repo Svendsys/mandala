@@ -908,7 +908,7 @@ fn test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_g
 /// Lagrange's identity now, `a owed² − cross²`. And where the boxes are
 /// nearer than owed and their gap closes before it opens, its root's
 /// denominator `b + √(b² − a c)` was the same difference: 0.046 off at
-/// 8.900045. Each held to [`line_root_in_f64`], an oracle in `f64` from
+/// 8.900045. Each held to `line_root_in_f64`, an oracle in `f64` from
 /// the gap's definition alone: the finding, a root where both axes are
 /// apart and the identity's cross term is not nothing, the gap that
 /// closes first, and 4,000 seeded cases drawn as `check_line_root` draws
