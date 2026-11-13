@@ -23,7 +23,9 @@
 //! The arena's one allocation is its `Vec` of slots, which
 //! `arena::tests::in_place_tests::do_arena_operations_in_place` also
 //! holds to its capacity in the unit suite; this binary is the stronger
-//! form, counting every allocation the operations could make, wherever.
+//! form, counting every allocation the operations make on their thread,
+//! wherever in the call stack. The arena spawns no thread, so that is
+//! every allocation they make.
 
 use allocation_counter::measure;
 use baumhard::arena::tests::in_place_tests::{every_operation_in_place, in_place_fixture};
