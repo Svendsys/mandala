@@ -2682,3 +2682,33 @@ fn test_flow_structured_finding_a_directional_ring_whose_turns_fall_out_of_order
         panic!("the fuzzer's input: {why}");
     }
 }
+
+/// The flow_structured finding of #347's CI fuzz run (job 132083191219,
+/// #348): the tangent line's root in closed form held to its bisection
+/// (`check_line_root`) for two inks one axis 11.04 apart and 0.012 owed,
+/// where the closed form's discriminant was a difference of two near
+/// equals in `f32`, and its root was 6.8e-4 from the bisection's, past
+/// the property's bound of 2.5e-4. The discriminant is taken by
+/// Lagrange's identity now. The line itself is held to an oracle in `f64`
+/// by `test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap`.
+/// The input has reached this line only since #336, whose directional
+/// glyphs are drawn from the choices before it; `line_root` is older. 202
+/// bytes, as found.
+///
+/// Control: with the discriminant `b² − a c`, red ("owed 0.012: the
+/// closed form steps -15.051204, the bisection -15.051884").
+#[test]
+fn test_flow_structured_finding_a_line_root_owed_little_of_a_wide_gap_replays() {
+    let found = include_bytes!("fuzz_findings/structured_line_root_owed_little_of_a_wide_gap");
+    for (what, checked) in [
+        (
+            "fuzzed",
+            crate::flow::tests::flow_fuzz::check_flow_structured(found),
+        ),
+        ("as found", check_flow_structured_as_found(found)),
+    ] {
+        if let Err(why) = checked {
+            panic!("{what}: {why}");
+        }
+    }
+}
