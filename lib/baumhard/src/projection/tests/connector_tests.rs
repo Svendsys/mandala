@@ -16,7 +16,7 @@ use crate::document::values::Anchor;
 use crate::flow::{Curve, Rect};
 use crate::projection::geometry::{
     held_apart, near_pairs, path_through, sample, side_point, side_toward, untangle, Lane, CLEARANCE,
-    SPLAY_CAP, UNTANGLE_GRIDDED, UNTANGLE_GRIDS, UNTANGLE_ROUNDS, UNTANGLE_SCRATCH,
+    SPLAY_CAP, UNTANGLE_GRIDDED, UNTANGLE_GRIDS, UNTANGLE_MEASURED, UNTANGLE_ROUNDS, UNTANGLE_SCRATCH,
 };
 use crate::projection::state::{Placed, UnitBody};
 use crate::projection::tests::maps::{ident, kid, load_map, node, text_section};
@@ -1314,6 +1314,50 @@ fn test_projection_untangle_measures_again_only_what_it_moved() {
         points == first + pair_points,
         "{points} points gridded: the six clear lanes' {first} once, and the pair's {pair_points}"
     );
+}
+
+#[test]
+fn test_projection_untangle_work_does_not_grow_with_how_thin_a_lane_is() {
+    // A wide path and two thin ones beside it, straight and 2,000 long,
+    // none near another: the wide one 5 from the first thin one, which is
+    // 1 from the second. The thin ones are an eighth as wide as the wide
+    // one, a sixty-fourth, a thousandth: the thinner they are, the more
+    // points they are sampled in, to the sampling's cap of 65,536 a curve,
+    // ten times the wide lane's and more. Yet a point is measured against
+    // at most the 54 points a wider lane puts in the nine fine cells round
+    // it, six to a cell — not against every point in the coarse cells as
+    // wide as the wide path's distance, which the thin lanes' own points
+    // fill (#346: a link a twenty-fourth as wide as the connector beside
+    // it timed the loader's fuzz target out). The failing inputs are the
+    // coarse cells alone, and the fine cells as wide as the coarse ones.
+    for thinner in [8.0, 64.0, 1024.0] {
+        let lane = |x: f32, width: f32| Lane {
+            start: (Vec2::new(x, 0.0), Vec2::Y, 4.0),
+            hold: 0.0,
+            end: (Vec2::new(x, 2000.0), -Vec2::Y, 4.0),
+            via: Vec::new(),
+            width,
+            straight: true,
+        };
+        let lanes = [lane(0.0, 3.0), lane(5.0, 3.0 / thinner), lane(6.0, 3.0 / thinner)];
+        UNTANGLE_GRIDS.with(|c| c.set(0));
+        UNTANGLE_GRIDDED.with(|c| c.set(0));
+        UNTANGLE_MEASURED.with(|c| c.set(0));
+        let handles = untangle(&lanes);
+        let (rounds, gridded, measured) = (
+            UNTANGLE_GRIDS.with(std::cell::Cell::get),
+            UNTANGLE_GRIDDED.with(std::cell::Cell::get),
+            UNTANGLE_MEASURED.with(std::cell::Cell::get),
+        );
+        assert!(
+            rounds == 1 && handles == [1.0; 3] && gridded > 10 * 2000 * 4 / 3,
+            "precondition: {thinner}: one round, all clear, the thin lanes finely sampled: {rounds}, {handles:?}, {gridded}"
+        );
+        assert!(
+            measured <= 54 * gridded,
+            "{thinner}: {measured} points measured for {gridded} gridded"
+        );
+    }
 }
 
 #[test]

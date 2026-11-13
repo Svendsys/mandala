@@ -204,6 +204,22 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
                         .any(|(key, value)| key == "frame" && value.matches("{}").count() >= 3000)
             }
             "random_tree_1024" => nodes.len() == 1024,
+            // A line link from a node to its own child, beside the child's
+            // connector to it, the two of very different widths (#346):
+            // each timed the fuzz target out while untangling them.
+            n if n.starts_with("line_link_beside_connector_") => {
+                got.outcome == "none: loaded"
+                    && nodes.iter().any(|node| {
+                        node.links.iter().zip(&node.link_tails).any(|(&to, tail)| {
+                            !tail.contains(r#""kind""#)
+                                && nodes.iter().any(|child| {
+                                    child.id == to
+                                        && child.parent == Some(node.id)
+                                        && child.content.iter().any(|(key, _)| key == "connector")
+                                })
+                        })
+                    })
+            }
             // A map with a background that loads (V1-B12): a literal,
             // and a theme variable. `check_generated` draws the
             // background, after its own steps, so it is read from there.

@@ -1438,7 +1438,9 @@ impl Projector {
     /// the one dragged. The fan is O(the members, log them); `untangle`
     /// samples every member's whole curve every quarter of its width in
     /// its first round, and in each of at most [`UNTANGLE_ROUNDS`] after
-    /// it, the members it halved. Portal ends: O(the members, log them).
+    /// it, the members it halved, each sample measured against a few of
+    /// each member near it, however their widths differ (#346). Portal
+    /// ends: O(the members, log them).
     ///
     /// [`UNTANGLE_ROUNDS`]: geometry::UNTANGLE_ROUNDS
     fn refan(&mut self, key: JunctionKey, work: &mut PhaseWork) {
