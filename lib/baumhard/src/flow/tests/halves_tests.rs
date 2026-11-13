@@ -852,6 +852,164 @@ pub fn do_flow_halves_closed_form_roots_are_the_first_at_what_is_owed() {
     }
 }
 
+/// The step along `dir` from two inks' centers `delta` apart, their half
+/// sizes summing to `reach`, after which their boxes are `owed` apart —
+/// on where they are nearer, back (a negative) where further: the first
+/// such step, found in `f64` by a scan of 20,000 steps and a bisection of
+/// the one that crosses, from the gap's definition alone. An oracle for
+/// the tangent line's root that shares no arithmetic with it.
+fn line_root_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f64 {
+    let (dx, dy, wx, wy) = (delta.x as f64, delta.y as f64, dir.x as f64, dir.y as f64);
+    let (rx, ry, owed) = (reach.x as f64, reach.y as f64, owed as f64);
+    let gap = |d: f64| {
+        let x = ((dx + wx * d).abs() - rx).max(0.0);
+        let y = ((dy + wy * d).abs() - ry).max(0.0);
+        x.hypot(y)
+    };
+    let near = |d: f64| gap(d) < owed || (gap(d) <= owed && owed <= 0.0);
+    let on = near(0.0);
+    let sign = if on { 1.0 } else { -1.0 };
+    // Past every edge a step can cross, four times over.
+    let span = 4.0 * (dx.abs() + dy.abs() + rx + ry + owed + 1.0) / wx.hypot(wy);
+    let mut before = 0.0;
+    for i in 1..=20_000 {
+        let d = sign * span * i as f64 / 20_000.0;
+        if near(d) != on {
+            let (mut inside, mut outside) = (before, d);
+            for _ in 0..200 {
+                let middle = 0.5 * (inside + outside);
+                if near(middle) == on {
+                    inside = middle;
+                } else {
+                    outside = middle;
+                }
+            }
+            return outside;
+        }
+        before = d;
+    }
+    f64::NAN
+}
+
+/// #348: the tangent line's root in closed form (`line_root`) is the
+/// first step at which two inks' boxes are what is owed apart, to five
+/// millionths of the scale it is read at (its step, what is owed and the
+/// reach), where little is owed of a wide gap. Its quadratic's
+/// discriminant `b² − a c` is a difference of two near equals there —
+/// on the flow_structured finding, one axis 11.04 apart and 0.012 owed,
+/// both 65.53 and their difference 7.7e-5 — and was taken in `f32`, its
+/// root 6.8e-4 from the line's (2.7e-5 of its scale), past the
+/// property's bound on its bisection (`check_line_root`); it is taken by
+/// Lagrange's identity now, `a owed² − cross²`. And where the boxes are
+/// nearer than owed and their gap closes before it opens, its root's
+/// denominator `b + √(b² − a c)` was the same difference: 0.046 off at
+/// 8.900045. Each held to [`line_root_in_f64`], an oracle in `f64` from
+/// the gap's definition alone: the finding, a root where both axes are
+/// apart and the identity's cross term is not nothing, the gap that
+/// closes first, and 4,000 seeded cases drawn as `check_line_root` draws
+/// them, half of them owed a twentieth of a point at most. Precondition:
+/// the sweep steps back at least 200 times where less than a hundredth of
+/// the gap is owed (244 here), the case it is there to hold.
+///
+/// Controls: with `b² − a c` for the discriminant where the boxes are
+/// further than owed, red on the finding ("the closed form steps
+/// -15.051204"), on both axes apart ("-22.493431") and on the sweep
+/// ("seed 7: … the closed form steps -10.538687"); with `−c / (b + √disc)`
+/// for every root where they are nearer, red on the gap that closes
+/// first ("the closed form steps 8.946237").
+#[test]
+fn test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap() {
+    use crate::flow::place::halves::line_root_seam;
+    use crate::util::tests::choices::Choices;
+    // How far the closed form may be from the oracle, of the scale it is
+    // read at: its step, what is owed, and the reach.
+    let held = |what: &str, delta: Vec2, dir: Vec2, reach: Vec2, owed: f32| -> Result<(), String> {
+        let (closed, _) = line_root_seam(delta, dir, reach, owed);
+        let truth = line_root_in_f64(delta, dir, reach, owed);
+        let scale = truth.abs() + owed as f64 + reach.max_element() as f64;
+        let ok = if truth.is_finite() {
+            (closed as f64 - truth).abs() <= 5e-6 * scale
+        } else {
+            !closed.is_finite()
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(format!(
+                "{what}: inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}: \
+                 the closed form steps {closed}, the line's root is {truth}"
+            ))
+        }
+    };
+    // The finding's line, from the choices `check_line_root` drew for it.
+    let unit = |k: u32| k as f32 / 1000.0;
+    let angle = unit(532) * std::f32::consts::TAU;
+    let finding = (
+        Vec2::new(unit(79) - 0.5, unit(548) - 0.5) * 40.0,
+        Vec2::new(angle.cos(), angle.sin()) * (0.25 + 2.0 * unit(249)),
+        Vec2::new(unit(483), unit(823)) * 12.0,
+        unit(1) * 12.0,
+    );
+    assert!(
+        finding.0 == Vec2::new(-16.84, 1.9199991)
+            && finding.1 == Vec2::new(-0.73293155, -0.14938316)
+            && finding.2 == Vec2::new(5.796, 9.876)
+            && finding.3 == 0.012,
+        "precondition: the line is the finding's ({finding:?})"
+    );
+    let cases = [
+        ("the finding", finding),
+        // Both axes apart where the root falls, their gaps not in
+        // proportion: the identity's cross term is not nothing.
+        (
+            "both axes apart",
+            (
+                Vec2::new(-20.0, -16.505),
+                Vec2::new(-0.8, -0.6),
+                Vec2::new(2.0, 3.0),
+                0.01,
+            ),
+        ),
+        // Nearer than owed, the gap closing on one axis before the other
+        // opens it again.
+        (
+            "a gap that closes first",
+            (
+                Vec2::new(10.0, 1.1),
+                Vec2::new(-1.0, 1.0),
+                Vec2::new(1.0, 1.0),
+                9.0006,
+            ),
+        ),
+    ];
+    for (what, (delta, dir, reach, owed)) in cases {
+        if let Err(why) = held(what, delta, dir, reach, owed) {
+            panic!("{why}");
+        }
+    }
+    let mut wide = 0;
+    for seed in 0..4_000 {
+        let c = &mut Choices::seeded(seed);
+        let unit = |c: &mut Choices<'_>| c.below(1001) as f32 / 1000.0;
+        let delta = Vec2::new(unit(c) - 0.5, unit(c) - 0.5) * 40.0;
+        let angle = unit(c) * std::f32::consts::TAU;
+        let dir = Vec2::new(angle.cos(), angle.sin()) * (0.25 + 2.0 * unit(c));
+        let reach = Vec2::new(unit(c), unit(c)) * 12.0;
+        let owed = unit(c) * if seed % 2 == 0 { 12.0 } else { 0.05 };
+        let gap = (delta.abs() - reach).max(Vec2::ZERO).length();
+        if line_root_in_f64(delta, dir, reach, owed) < 0.0 && owed < 0.01 * gap {
+            wide += 1;
+        }
+        if let Err(why) = held(&format!("seed {seed}"), delta, dir, reach, owed) {
+            panic!("{why}");
+        }
+    }
+    assert!(
+        wide >= 200,
+        "precondition: the sweep steps back {wide} times where less than a hundredth of the gap is owed"
+    );
+}
+
 /// Ruling B16.2d: [`do_flow_halves_a_side_arc_is_filled_from_its_model_lays`]
 /// fills both arcs, its letters set from the band curve's form on its
 /// model lays, in at most 12 path lookups a side glyph placed (#309's
