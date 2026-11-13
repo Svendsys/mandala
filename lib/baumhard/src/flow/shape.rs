@@ -68,6 +68,7 @@ use glam::Vec2;
 use crate::document::resolve::ResolvedText;
 use crate::document::values::Align;
 use crate::flow::span::{span_attrs, FlowSpan, LINE_HEIGHT_FACTOR};
+use crate::flow::Rect;
 use crate::font::fonts::{
     clamp_font_metric, glyph_draws, glyph_outline_ink, pinned_family, AppFont, FontSystemLease, PinnedFamily,
     MIN_FONT_SIZE_PT,
@@ -291,6 +292,35 @@ pub struct ShapedBox {
     /// span its cluster starts in and its cluster as bytes of that
     /// span's text: how a hit on a glyph finds its span.
     pub glyph_spans: Vec<(usize /* span */, Range<usize> /* bytes */)>,
+}
+
+impl ShapedBox {
+    /// The box round the laid-out glyphs it draws, each its advance by its
+    /// line's height, from the box's top-left: where its text is drawn,
+    /// which an aligned or minimum-sized box may hold a good deal of empty
+    /// space round. A glyph of no advance, or of a cluster that is all
+    /// whitespace, draws nothing and is left out, so spaces before and
+    /// after the text do not widen it. `None` for a box that draws no
+    /// glyph. O(its glyphs).
+    pub fn text_box(&self) -> Option<Rect> {
+        let mut out: Option<Rect> = None;
+        for line in self.buffer.layout_runs() {
+            let drawn = |g: &&LayoutGlyph| {
+                g.w > 0.0
+                    && line.text.get(g.start..g.end).is_some_and(|cluster| {
+                        grapheme_chad::first_non_whitespace_grapheme(cluster).is_some()
+                    })
+            };
+            for glyph in line.glyphs.iter().filter(drawn) {
+                let cell = Rect::new(
+                    Vec2::new(glyph.x, line.line_top),
+                    Vec2::new(glyph.w, line.line_height),
+                );
+                out = Some(out.map_or(cell, |r| r.union(&cell)));
+            }
+        }
+        out
+    }
 }
 
 /// What becomes of a flow's paragraph separators

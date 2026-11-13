@@ -276,6 +276,7 @@ impl Projector {
         work: &mut PhaseWork,
     ) {
         self.leave_junctions(id, work);
+        self.unhide(id);
         let Some(unit) = self.units.remove(&id) else {
             return;
         };
@@ -309,6 +310,9 @@ impl Projector {
             }
         }
         self.mark(work, ProjectionInput::Geometry(id));
+        // A ring or a section that left no longer makes its node's region
+        // (#332).
+        work.note_region(unit.node);
         // A ring that left no longer bounds what its node's paths reach.
         if matches!(unit.body, UnitBody::Ring(_)) {
             self.mark(work, ProjectionInput::Reach(unit.node));

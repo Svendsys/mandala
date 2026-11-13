@@ -112,8 +112,9 @@ impl Projected {
     /// The oracle (#241): the layers as kept up to date equal a full
     /// projection of the document as it now stands, and so does what the
     /// projector says of each node's drawn rectangle — and what its
-    /// consumers read of it (`consumers_agree`). `Err` names the
-    /// first difference.
+    /// consumers read of it (`consumers_agree`) — and, in the test build,
+    /// the two indices that decide which glyphs nodes hide (#332). `Err`
+    /// names the first difference.
     pub fn check(&mut self) -> Result<(), String> {
         let mut fresh = GlyphLayers::new();
         // The full projection may share the shapings of equal keys
@@ -147,6 +148,20 @@ impl Projected {
                 full.units.len(),
                 self.projector.units.len()
             ));
+        }
+        // What decides which glyphs nodes hide (#332): a stale entry in
+        // either index never draws wrong, only re-hides needlessly, so the
+        // layers alone would not show it.
+        #[cfg(test)]
+        {
+            self.projector
+                .regions
+                .same_as(&full.regions)
+                .map_err(|d| format!("regions: {d}"))?;
+            self.projector
+                .path_cells
+                .same_as(&full.path_cells)
+                .map_err(|d| format!("path cells: {d}"))?;
         }
         self.consumers_agree(&full, &mut fresh)
     }

@@ -1875,6 +1875,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("projection_nodes_in_bands_over_a_grid", |b| {
         b.iter(do_projection_nodes_in_bands_over_a_grid)
     });
+    c.bench_function("projection_a_node_dragged_across_two_paths", |b| {
+        b.iter(do_projection_a_node_dragged_across_two_paths)
+    });
     c.bench_function("projection_deep_chain_projects_edits_hides_moves_and_hits", |b| {
         b.iter(do_projection_deep_chain_projects_edits_hides_moves_and_hits)
     });
@@ -2309,6 +2312,9 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_flow_box_keeps_a_larger_minimum)
     });
     c.bench_function("flow_box_aligns_lines", |b| b.iter(do_flow_box_aligns_lines));
+    c.bench_function("flow_text_box_holds_the_drawn_glyphs", |b| {
+        b.iter(do_flow_text_box_holds_the_drawn_glyphs)
+    });
     c.bench_function("flow_box_reads_a_bad_minimum_as_none", |b| {
         b.iter(do_flow_box_reads_a_bad_minimum_as_none)
     });

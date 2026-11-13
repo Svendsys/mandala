@@ -689,6 +689,69 @@ pub fn do_flow_box_aligns_lines() {
     close(first_x(Align::Right), 100.0, 1e-3, "right");
 }
 
+#[test]
+fn test_flow_text_box_holds_the_drawn_glyphs() {
+    do_flow_text_box_holds_the_drawn_glyphs();
+}
+
+/// `ShapedBox::text_box` (#332) is the box round the glyphs a box draws,
+/// read against the boxes' natural sizes, which shaping measures apart
+/// from it: empty text and text of spaces draw nothing; one line is its
+/// natural size at the box's corner; a line centered in a box 100 wider
+/// starts 50 in and is as wide as it is alone; two lines are as wide as
+/// the wider and two lines tall; and spaces round a word do not widen it.
+pub fn do_flow_text_box_holds_the_drawn_glyphs() {
+    let natural = |text: &str| boxed(text, None, Align::Left).size;
+    let line = 20.0 * LINE_HEIGHT_FACTOR;
+    assert_eq!(boxed("", None, Align::Left).text_box(), None, "empty text");
+    assert_eq!(boxed("    ", None, Align::Left).text_box(), None, "spaces only");
+
+    let one = boxed("ab", None, Align::Left).text_box().expect("one line");
+    close(one.origin.x, 0.0, 1e-3, "one line at the left");
+    close(one.origin.y, 0.0, 1e-3, "one line at the top");
+    close(one.size.x, natural("ab").x, 1e-3, "one line's width");
+    close(one.size.y, line, 1e-3, "one line's height");
+
+    let wide = natural("ab").x + 100.0;
+    let centered = boxed("ab", Some(Vec2::new(wide, 0.0)), Align::Center)
+        .text_box()
+        .expect("a centered line");
+    close(
+        centered.origin.x,
+        50.0,
+        1e-3,
+        "a centered line starts half the slack in",
+    );
+    close(centered.size.x, natural("ab").x, 1e-3, "a centered line's width");
+
+    let two = boxed("ab\nwide", None, Align::Left)
+        .text_box()
+        .expect("two lines");
+    close(
+        two.size.x,
+        natural("wide").x,
+        1e-3,
+        "two lines are as wide as the wider",
+    );
+    close(two.size.y, 2.0 * line, 1e-3, "two lines tall");
+
+    let spaced = boxed("  ab  ", None, Align::Left)
+        .text_box()
+        .expect("a spaced word");
+    close(
+        spaced.size.x,
+        natural("ab").x,
+        1e-2,
+        "spaces round a word do not widen it",
+    );
+    close(
+        spaced.origin.x,
+        natural("  ab").x - natural("ab").x,
+        1e-2,
+        "the word starts past its leading spaces",
+    );
+}
+
 /// A `Rel` size reaching shaping is a caller error (#239 amendment 2,
 /// ruling R6 reading 8): a debug build refuses it at once, and a release
 /// build shapes at the minimum size. Plain `#[test]`: it drives a panic

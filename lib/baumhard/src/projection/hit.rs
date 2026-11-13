@@ -78,15 +78,25 @@ fn cell_of(v: f32) -> i32 {
     }
 }
 
-/// The cells `rect` covers, when they are few enough to list.
-fn cells(rect: Rect) -> Option<((i32, i32), (i32, i32))> {
+/// The first and last cells `rect` covers, however many: `None` for a
+/// rectangle that is not finite.
+pub(crate) fn span(rect: Rect) -> Option<((i32, i32), (i32, i32))> {
     if !rect.origin.is_finite() || !rect.size.is_finite() {
         return None;
     }
     let (x0, y0) = (cell_of(rect.origin.x), cell_of(rect.origin.y));
     let (x1, y1) = (cell_of(rect.max().x), cell_of(rect.max().y));
-    let count = (i64::from(x1) - i64::from(x0) + 1) * (i64::from(y1) - i64::from(y0) + 1);
-    (count <= MAX_CELLS).then_some(((x0, y0), (x1, y1)))
+    Some(((x0, y0), (x1, y1)))
+}
+
+/// How many cells the span from `(x0, y0)` to `(x1, y1)` holds.
+pub(crate) fn cell_count((x0, y0): (i32, i32), (x1, y1): (i32, i32)) -> i64 {
+    (i64::from(x1) - i64::from(x0) + 1) * (i64::from(y1) - i64::from(y0) + 1)
+}
+
+/// The cells `rect` covers, when they are few enough to list.
+pub(crate) fn cells(rect: Rect) -> Option<((i32, i32), (i32, i32))> {
+    span(rect).filter(|&(a, b)| cell_count(a, b) <= MAX_CELLS)
 }
 
 impl BodyIndex {
@@ -113,6 +123,11 @@ impl BodyIndex {
             }
         };
         self.bodies.insert(node, (rect, shape, large));
+    }
+
+    /// `node`'s body: its rectangle and shape. O(1).
+    pub(crate) fn get(&self, node: NodeId) -> Option<(Rect, NodeShape)> {
+        self.bodies.get(&node).map(|&(rect, shape, _)| (rect, shape))
     }
 
     /// Take `node`'s body out. O(its cells, and the bodies sharing them).
@@ -188,38 +203,92 @@ impl BodyIndex {
     /// the large ones; a larger one tries every body. O(the bodies
     /// tried), plus a sort of what is found.
     pub(crate) fn within(&self, rect: Rect) -> Vec<NodeId> {
-        let overlaps = |node: NodeId| {
-            #[cfg(test)]
-            self.within_tried.set(self.within_tried.get() + 1);
-            self.bodies.get(&node).is_some_and(|&(body, shape, _)| {
-                let min = body.origin;
-                shape.intersects_local_aabb(rect.origin - min, rect.max() - min, body.max() - min)
-            })
-        };
-        let mut found: Vec<NodeId> = match cells(rect) {
+        let mut found = Vec::new();
+        self.candidates(rect, |node| found.push(node));
+        found.sort_unstable();
+        found.dedup();
+        found.retain(|&node| self.overlaps(node, rect));
+        found
+    }
+
+    /// Each body [`Self::within`] finds, passed to `f` as it is found and
+    /// nothing collected: a body in more than one of the cells tried is
+    /// passed once for each, in no set order. For a caller that asks of
+    /// one small box after another (#332). O(the bodies tried).
+    pub(crate) fn each_within(&self, rect: Rect, mut f: impl FnMut(NodeId)) {
+        self.candidates(rect, |node| {
+            if self.overlaps(node, rect) {
+                f(node);
+            }
+        });
+    }
+
+    /// The bodies `rect`'s cells hold, and the large ones — or every
+    /// body, for a `rect` spanning more than [`MAX_CELLS`] cells — passed
+    /// to `f`, a body in more than one of those cells once for each.
+    fn candidates(&self, rect: Rect, mut f: impl FnMut(NodeId)) {
+        match cells(rect) {
             Some(((x0, y0), (x1, y1))) => {
-                let mut tried: Vec<NodeId> = self.large.clone();
+                self.large.iter().copied().for_each(&mut f);
                 for x in x0..=x1 {
                     for y in y0..=y1 {
                         #[cfg(test)]
                         self.within_cells.set(self.within_cells.get() + 1);
-                        tried.extend(self.cells.get(&(x, y)).into_iter().flatten());
+                        self.cells
+                            .get(&(x, y))
+                            .into_iter()
+                            .flatten()
+                            .copied()
+                            .for_each(&mut f);
                     }
                 }
-                tried.sort_unstable();
-                tried.dedup();
-                tried.retain(|&node| overlaps(node));
-                tried
             }
-            None => self
+            None => self.bodies.keys().copied().for_each(f),
+        }
+    }
+
+    /// Whether `self` and `other` hold the same bodies — each rectangle,
+    /// shape and cell — whatever order they were set in: what the oracle
+    /// compares with a full projection's regions (#332). `Err` names the
+    /// first difference. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn same_as(&self, other: &BodyIndex) -> Result<(), String> {
+        use crate::projection::behind::{bits, first_difference};
+        let bodies = |b: &BodyIndex| {
+            let mut v: Vec<_> = b
                 .bodies
-                .keys()
-                .copied()
-                .filter(|&node| overlaps(node))
-                .collect(),
+                .iter()
+                .map(|(&n, &(r, shape, large))| (n, bits(r), shape == NodeShape::Ellipse, large))
+                .collect();
+            v.sort_unstable();
+            v
         };
-        found.sort_unstable();
-        found
+        let cells = |b: &BodyIndex| {
+            let mut v: Vec<_> = b
+                .cells
+                .iter()
+                .flat_map(|(&c, list)| list.iter().map(move |&n| (c, n)))
+                .chain(b.large.iter().map(|&n| ((i32::MIN, i32::MIN), n)))
+                .collect();
+            v.sort_unstable();
+            v
+        };
+        first_difference(
+            "bodies (node, rect bits, ellipse, large)",
+            &bodies(self),
+            &bodies(other),
+        )?;
+        first_difference("bodies' cells (cell, node)", &cells(self), &cells(other))
+    }
+
+    /// Whether `rect` overlaps `node`'s body by its shape, inclusively.
+    fn overlaps(&self, node: NodeId, rect: Rect) -> bool {
+        #[cfg(test)]
+        self.within_tried.set(self.within_tried.get() + 1);
+        self.bodies.get(&node).is_some_and(|&(body, shape, _)| {
+            let min = body.origin;
+            shape.intersects_local_aabb(rect.origin - min, rect.max() - min, body.max() - min)
+        })
     }
 }
 

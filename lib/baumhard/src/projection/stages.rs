@@ -24,8 +24,8 @@ use crate::engine::tree::Tree;
 use crate::flow::inked as inked_run;
 use crate::flow::{
     chain_point, offset as offset_outline, offset_keeping_corners, outline, pattern_gap, place_at_point,
-    place_on_closed, place_on_open, place_pitched, shape_box, shape_run, FlowSpan, PathEnd, PlacedRun, Rect,
-    RingLayout, ShapedRun,
+    place_on_closed, place_on_open, place_pitched, shape_box, shape_run, FlowSpan, PathEnd, PlacedGlyph,
+    PlacedRun, Rect, RingLayout, ShapedRun,
 };
 use crate::font::fonts::FontSystemLease;
 use crate::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
@@ -33,8 +33,8 @@ use crate::projection::geometry::{self, drawn_rect, label_center, points, reach}
 use crate::projection::input::{Dependent, ProjectionInput, Reads, Stage};
 use crate::projection::shapes::ShapeCache;
 use crate::projection::state::{
-    Attach, BoxFlow, BoxKey, EndState, Fanned, JunctionKey, LabelState, OwnFields, PathFlow, Placed,
-    PortalAt, RingResolved, RunFlow, RunKey, UnitBody,
+    Attach, BoxFlow, BoxKey, EndState, Fanned, JunctionKey, LabelState, LineState, OwnFields, PathFlow,
+    Placed, PortalAt, RingResolved, RunFlow, RunKey, UnitBody,
 };
 use crate::projection::structure::element;
 use crate::projection::Projector;
@@ -47,7 +47,8 @@ const PLACE: u8 = 3;
 const PATHS: u8 = 4;
 const FANS: u8 = 5;
 const LAY: u8 = 6;
-const DONE: u8 = 7;
+const HIDE: u8 = 7;
+const DONE: u8 = 8;
 
 /// One update's worklists, and what its structural step left for the
 /// write.
@@ -74,6 +75,12 @@ pub(crate) struct PhaseWork {
     fans: FxHashSet<JunctionKey>,
     /// Phase C, once the junctions are fanned: paths to lay.
     lay: Vec<NodeId>,
+    /// Phase D, once every path is laid and every ring and section placed:
+    /// the elements whose region may have moved — whose geometry or reach
+    /// was marked, and the nodes a section of which was placed elsewhere or
+    /// dropped — and the paths to hide glyphs of (#332).
+    regions_moved: FxHashSet<NodeId>,
+    hide: Vec<NodeId>,
     /// The phase running.
     phase: u8,
     /// The nodes this update created state for.
@@ -100,6 +107,13 @@ pub(crate) struct PhaseWork {
 }
 
 impl PhaseWork {
+    /// Note that `id`'s region may have moved, for phase D to find again
+    /// (#332): a node, or an element whose geometry or reach was marked,
+    /// which phase D finds no region of. O(1).
+    pub(crate) fn note_region(&mut self, id: NodeId) {
+        self.regions_moved.insert(id);
+    }
+
     /// Take `dep` off the queue: whether it was on it. A piece of work
     /// taken is logged as run.
     fn take(&mut self, dep: Dependent) -> bool {
@@ -241,7 +255,7 @@ fn settle(
 }
 
 /// A run of `shape` at `origin`, at `opacity`, in `zoom`.
-fn run_data(
+pub(crate) fn run_data(
     shape: RunShape,
     origin: Vec2,
     opacity: f32,
@@ -308,6 +322,7 @@ impl Projector {
             Stage::Geometry if path => PATHS,
             Stage::Geometry => MEASURE,
             Stage::Place if path => LAY,
+            Stage::Hide => HIDE,
             _ => match body {
                 Some(UnitBody::Section(_)) if dep.stage == Stage::Resolve => SECTIONS,
                 Some(UnitBody::Section(_)) | Some(UnitBody::Ring(_)) => PLACE,
@@ -344,12 +359,16 @@ impl Projector {
                 _ => work.to_place.push(dep.unit),
             },
             PATHS => work.paths.push(dep.unit),
-            _ => work.lay.push(dep.unit),
+            LAY => work.lay.push(dep.unit),
+            _ => work.hide.push(dep.unit),
         }
     }
 
     /// Mark every piece of work that read `input`. O(those).
     pub(crate) fn mark(&self, work: &mut PhaseWork, input: ProjectionInput) {
+        if let ProjectionInput::Geometry(id) | ProjectionInput::Reach(id) = input {
+            work.note_region(id);
+        }
         for &dep in self.deps.dependents(&input) {
             self.queue(work, dep);
         }
@@ -410,6 +429,16 @@ impl Projector {
         while let Some(id) = work.lay.pop() {
             if work.take(Dependent::new(id, Stage::Place)) {
                 self.path_place(tree, id, fonts);
+                self.queue(work, Dependent::new(id, Stage::Hide));
+            }
+        }
+        work.phase = HIDE;
+        for id in std::mem::take(&mut work.regions_moved) {
+            self.rehide(id, work);
+        }
+        while let Some(id) = work.hide.pop() {
+            if work.take(Dependent::new(id, Stage::Hide)) {
+                self.hide(id);
             }
         }
         work.phase = DONE;
@@ -497,6 +526,7 @@ impl Projector {
             return;
         };
         shaped_box(&mut state.flow, key, &mut self.shapes, fonts);
+        state.text = state.flow.as_ref().and_then(|f| f.shaped.text_box());
         unit.slots[0].element = Some(id);
         unit.slots[0].spans = ids;
         self.queue(work, Dependent::new(id, Stage::Geometry));
@@ -576,7 +606,7 @@ impl Projector {
 
     /// Phase B for a section: its run at its node's position plus its
     /// offset, in its node's opacity and zoom window.
-    fn section_place(&mut self, id: NodeId, _work: &mut PhaseWork) {
+    fn section_place(&mut self, id: NodeId, work: &mut PhaseWork) {
         let Some(unit) = self.units.get(&id) else {
             return;
         };
@@ -594,7 +624,7 @@ impl Projector {
         let Some(unit) = self.units.get_mut(&id) else {
             return;
         };
-        let UnitBody::Section(state) = &unit.body else {
+        let UnitBody::Section(state) = &mut unit.body else {
             return;
         };
         let want = match (&state.flow, state.local) {
@@ -606,6 +636,16 @@ impl Projector {
             ),
             _ => None,
         };
+        // Where its text is drawn, what its node's region is made of: its
+        // node finds the paths behind it again when that moved (#332).
+        let drawn = state
+            .local
+            .zip(state.text)
+            .map(|(local, text)| Rect::new(origin + local.origin + text.origin, text.size));
+        if state.drawn != drawn {
+            state.drawn = drawn;
+            work.note_region(node);
+        }
         unit.slots[0].want = want;
     }
 
@@ -920,6 +960,7 @@ impl Projector {
         let was_portal = matches!(self.units.get(&id).map(|u| &u.body), Some(UnitBody::Portal(_)));
         if !drawn || was_portal != portal {
             self.leave_junctions(id, work);
+            self.unhide(id);
         }
         // A link that switched kind takes on the other kind's slots, and
         // its old kind's labels leave the label index.
@@ -1256,10 +1297,7 @@ impl Projector {
         // How far apart two paths' first glyphs must leave one point to
         // clear each other by this one's own gap, and how far its first two
         // glyphs reach, which leave along its side before it bends.
-        let (gap, size) = line.flows[0].flow.as_ref().map_or((0.0, 0.0), |f| {
-            let spacing = line.resolved.as_ref().map_or(0.0, |(r, _)| r.spacing);
-            pattern_gap(&f.shaped, spacing).unwrap_or((spacing, f.shaped.line_height))
-        });
+        let (gap, size) = gap_and_size(line);
         // Two first glyphs leave the point side by side or across a slope,
         // where an upright box reaches as far as its diagonal.
         let diagonal = size * std::f32::consts::SQRT_2;
@@ -1341,7 +1379,7 @@ impl Projector {
     /// The box `node`'s paths attach to (#296): the box round its drawn
     /// rings' inks, or its drawn rectangle where it draws no ring. `None`
     /// for a node not drawn. O(its units).
-    fn reach(&self, node: NodeId) -> Option<Rect> {
+    pub(crate) fn reach(&self, node: NodeId) -> Option<Rect> {
         let n = self.nodes.get(&node)?;
         let rings = n
             .units
@@ -1601,7 +1639,7 @@ impl Projector {
         };
         line.path = curves;
         for (k, placed) in placed.iter_mut().enumerate() {
-            unit.slots[k].want = placed.as_ref().and_then(|p| {
+            line.laid[k] = placed.as_ref().and_then(|p| {
                 run_data(
                     RunShape::Path {
                         run: p.run.clone(),
@@ -1619,7 +1657,7 @@ impl Projector {
             line.label.offset = label.offset;
         }
         line.label.center = label_center_at;
-        unit.slots[3].want = match (label_center_at, label_size) {
+        line.laid[3] = match (label_center_at, label_size) {
             (Some(center), Some((shaped, size))) => {
                 run_data(RunShape::Box(shaped), center - size * 0.5, opacity, path.zoom)
             }
@@ -1805,6 +1843,16 @@ impl Projector {
     }
 }
 
+/// A line's own gap between two glyphs, and its glyphs' size: its
+/// ornament's, or its `spacing` and line height for a text it cannot
+/// measure. `(0, 0)` before its body is shaped. O(1).
+pub(crate) fn gap_and_size(line: &LineState) -> (f32, f32) {
+    line.flows[0].flow.as_ref().map_or((0.0, 0.0), |f| {
+        let spacing = line.resolved.as_ref().map_or(0.0, |(r, _)| r.spacing);
+        pattern_gap(&f.shaped, spacing).unwrap_or((spacing, f.shaped.line_height))
+    })
+}
+
 /// A node's own opacity as its carry reads it: clamped to `0..=1`, and
 /// `1` for a value that is not finite.
 pub(crate) fn own_opacity(opacity: f32) -> f32 {
@@ -1828,6 +1876,28 @@ fn placed_inks<'a>(run: &'a ShapedRun, placed: &'a PlacedRun) -> impl Iterator<I
             g.pos + Vec2::new(0.0, baseline) + ink.min,
             ink.max - ink.min,
         ))
+    })
+}
+
+/// The canvas box the hide stage tries the placed glyph `g` of a path's
+/// `run` by (#332): its ink where its ink was read, and otherwise its
+/// advance by its line height — for a text path's glyphs, and a path's
+/// whose placement rescaled or filled its run, whose inks are not read
+/// ([`GlyphMetrics::ink`](crate::flow::GlyphMetrics::ink)). `None` for a
+/// space. A glyph that draws nothing in a run whose inks were read (#333)
+/// gets that box too, and is tried and indexed, which changes nothing
+/// drawn. O(1).
+pub(crate) fn glyph_ink(run: &ShapedRun, g: &PlacedGlyph) -> Option<Rect> {
+    let metrics = run.glyphs.get(g.glyph as usize)?;
+    if metrics.blank {
+        return None;
+    }
+    Some(match metrics.ink {
+        Some(ink) => Rect::new(
+            g.pos + Vec2::new(0.0, run.baseline()) + ink.min,
+            ink.max - ink.min,
+        ),
+        None => Rect::new(g.pos, Vec2::new(metrics.advance, run.line_height)),
     })
 }
 
