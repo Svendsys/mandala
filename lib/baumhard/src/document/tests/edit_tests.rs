@@ -729,10 +729,251 @@ fn test_flower_puts_the_children_on_a_circle_round_their_parent() {
         (centers[0] - (center - Vec2::new(0.0, radius))).length() < 1e-3,
         "the first at the top"
     );
-    assert!((centers[0] - centers[1]).length() > 1.0 && (centers[1] - centers[2]).length() > 1.0);
+    // Clockwise in sibling order: each next son 120° on, a positive step
+    // on the canvas, whose y points down.
+    assert_eq!(
+        steps_between(center, &centers),
+        [120.0, 120.0],
+        "clockwise, evenly"
+    );
     // Node 5 is not node 1's child: left where it was.
     assert_eq!(node(&doc, 5).1.position, Vec2::new(20.0, 1000.0));
     assert_eq!(doc.history().count(), 1);
+}
+
+/// The angle of each of `points` round `center`, in degrees (0 is right,
+/// 90 down), and the signed step from each to the next, wrapped to
+/// (−180, 180] and rounded to a hundredth: positive is clockwise on the
+/// canvas.
+fn steps_between(center: Vec2, points: &[Vec2]) -> Vec<f32> {
+    points
+        .windows(2)
+        .map(|w| {
+            let step = ((w[1] - center).to_angle() - (w[0] - center).to_angle()).to_degrees();
+            let wrapped = (step + 180.0).rem_euclid(360.0) - 180.0;
+            let wrapped = if wrapped == -180.0 { 180.0 } else { wrapped };
+            (wrapped * 100.0).round() / 100.0
+        })
+        .collect()
+}
+
+/// The angle of `point` round `center`, in degrees, rounded to a
+/// hundredth.
+fn angle_of(center: Vec2, point: Vec2) -> f32 {
+    ((point - center).to_angle().to_degrees() * 100.0).round() / 100.0
+}
+
+/// Whether the straight line from `a` to `b` passes through the inside
+/// of `rect` where it is outside `skip`: sampled at a hundredth of a unit,
+/// an oracle independent of the handlers' clipping.
+fn sampled_crossing(a: Vec2, b: Vec2, rect: &crate::flow::Rect, skip: &[crate::flow::Rect]) -> bool {
+    let inside = |r: &crate::flow::Rect, p: Vec2| {
+        r.origin.x < p.x && p.x < r.max().x && r.origin.y < p.y && p.y < r.max().y
+    };
+    let samples = ((b - a).length() * 100.0).ceil() as usize;
+    (0..=samples).any(|k| {
+        let p = a.lerp(b, k as f32 / samples as f32);
+        inside(rect, p) && !skip.iter().any(|s| inside(s, p))
+    })
+}
+
+/// FAMILY as it was before the circle test moved its grandchildren:
+/// node 5 at `[20,20]` and node 6 at `[30,30]`, overlapping node 1's
+/// lower right and lying across the lines at 30° and 150°.
+fn family_on_its_lines() -> String {
+    FAMILY
+        .replace(
+            r#"{"id":5,"parent":2,"position":[20,1000]}"#,
+            r#"{"id":5,"parent":2,"position":[20,20]}"#,
+        )
+        .replace(
+            r#"{"id":6,"parent":5,"position":[30,1100]}"#,
+            r#"{"id":6,"parent":5,"position":[30,30]}"#,
+        )
+}
+
+/// **A flower fans away from nodes on its lines** (review of #331). On
+/// FAMILY with nodes 5 and 6 where they were, the full circle's petals
+/// are all clear, but its lines at 30° and 150° cross nodes 5 and 6
+/// outside node 1. The flower is the widest fan whose lines are clear: a
+/// 180° fan centered on the top, its first son at the counter-clockwise
+/// end (180°), each next 90° on clockwise, and no line from node 1 to a
+/// son crosses node 5 or 6 where it runs outside node 1 and the son.
+///
+/// Controls: with the line check off, the full circle was taken; with
+/// the fan reversed, the first son was at the clockwise end and the
+/// steps were negative.
+#[test]
+fn test_flower_fans_away_from_nodes_on_its_lines() {
+    let mut doc = load(&family_on_its_lines()).unwrap();
+    let one = n(&doc, 1);
+    let flower = edit(r#"{"id":"f","name":"F","reach":"self","target":"node","handler":"flower"}"#);
+    run(&mut doc, &flower, &[one]).unwrap();
+    let center = Vec2::new(50.0, 20.0);
+    let size = Vec2::new(100.0, 40.0);
+    let sons: Vec<Vec2> = [2, 3, 4]
+        .iter()
+        .map(|&i| node(&doc, i).1.position + size / 2.0)
+        .collect();
+    for son in &sons {
+        assert!(
+            ((*son - center).length() - 140.0).abs() < 1e-3,
+            "{son} at the base radius"
+        );
+    }
+    assert_eq!(
+        angle_of(center, sons[0]),
+        180.0,
+        "the first at the counter-clockwise end"
+    );
+    assert_eq!(
+        steps_between(center, &sons),
+        [90.0, 90.0],
+        "clockwise, evenly: a 180° fan"
+    );
+    let rect = |at: Vec2| crate::flow::Rect::new(at, size);
+    let parent = rect(Vec2::ZERO);
+    for son in &sons {
+        for blocker in [5, 6] {
+            let on = rect(node(&doc, blocker).1.position);
+            assert!(
+                !sampled_crossing(center, *son, &on, &[parent, rect(*son - size / 2.0)]),
+                "the line to {son} crosses node {blocker}"
+            );
+        }
+    }
+}
+
+/// **A petal's line must not cross its own siblings** (review of #331).
+/// Two sons 600 wide at radius 700, 20° apart from the top: they do not
+/// overlap, but the line to the first, straight up, runs through the
+/// second, so the arrangement is not taken. 90° apart, it is.
+///
+/// Control: with the check against the arrangement's own petals off,
+/// the 20° arrangement was taken.
+#[test]
+fn test_a_petals_line_must_not_cross_its_own_siblings() {
+    use crate::edit_handlers::{arrangement, Clear};
+    use crate::flow::Rect;
+    let doc = load(FAMILY).unwrap();
+    let geometry = Boxes::of(&doc);
+    let wide = |i| (n(&doc, i), Rect::new(Vec2::ZERO, Vec2::new(600.0, 40.0)));
+    let sons = [wide(2), wide(3)];
+    // Node 4, FAMILY's third son, sits on node 1; it moves with the others.
+    let moved = [wide(2), wide(3), wide(4)];
+    let clear = Clear::new(&geometry, moved.iter());
+    let parent = (n(&doc, 1), Rect::new(Vec2::ZERO, Vec2::new(100.0, 40.0)));
+    let center = Vec2::new(50.0, 20.0);
+    let up = -std::f32::consts::FRAC_PI_2;
+    let tight = arrangement(&clear, parent, center, 700.0, up, 20f32.to_radians(), &sons);
+    assert!(tight.is_none(), "the line to the first runs through the second");
+    let laid = arrangement(&clear, parent, center, 700.0, up, 90f32.to_radians(), &sons)
+        .expect("control: 90° apart, nothing crosses");
+    assert_eq!(laid.len(), 2);
+}
+
+/// **A flower tries the circle's rotations before any fan** (review of
+/// #331). A node sits where FAMILY's first son would go at the top, and
+/// the next two rotations still meet it; the fourth, 45° on, is clear,
+/// so the flower is the full circle at the base radius, turned by 45°,
+/// each next son 120° on clockwise.
+///
+/// Controls: with no rotations, a fan was taken; with the circle
+/// reversed, the steps were negative.
+#[test]
+fn test_a_flower_turns_the_circle_before_it_fans() {
+    let blocked = format!(
+        r#"{},{{"id":7,"channel":1,"position":[0,-140]}}]}}"#,
+        FAMILY.strip_suffix("]}").expect("FAMILY ends its list")
+    );
+    let mut doc = load(&blocked).unwrap();
+    let one = n(&doc, 1);
+    let flower = edit(r#"{"id":"f","name":"F","reach":"self","target":"node","handler":"flower"}"#);
+    run(&mut doc, &flower, &[one]).unwrap();
+    let center = Vec2::new(50.0, 20.0);
+    let sons: Vec<Vec2> = [2, 3, 4]
+        .iter()
+        .map(|&i| node(&doc, i).1.position + Vec2::new(50.0, 20.0))
+        .collect();
+    for son in &sons {
+        assert!(
+            ((*son - center).length() - 140.0).abs() < 1e-3,
+            "{son} at the base radius"
+        );
+    }
+    assert_eq!(
+        angle_of(center, sons[0]),
+        -45.0,
+        "turned by three eighths of 120°"
+    );
+    assert_eq!(
+        steps_between(center, &sons),
+        [120.0, 120.0],
+        "the full circle, clockwise"
+    );
+}
+
+/// **A flower takes the smallest radius first** (review of #331). Two
+/// small nodes block every rotation of the full circle at the base
+/// radius (140), while the full circle is clear one step out (160); a
+/// 210° fan is clear at 140, and it is taken.
+///
+/// Control: with each arrangement tried over every radius before the
+/// next arrangement, the circle at 160 was taken.
+#[test]
+fn test_a_flower_takes_the_smallest_radius_first() {
+    use crate::edit_handlers::{arrangement, regular_flower, Clear, FLOWER_RADIUS_STEP};
+    use crate::flow::Rect;
+    let text = format!(
+        r#"{},{{"id":7,"channel":1,"position":[0,0]}},{{"id":8,"channel":2,"position":[0,0]}}]}}"#,
+        FAMILY.strip_suffix("]}").expect("FAMILY ends its list")
+    );
+    let doc = load(&text).unwrap();
+    let mut geometry = Boxes::of(&doc);
+    geometry.0.insert(
+        n(&doc, 7),
+        Rect::new(Vec2::new(85.0, -110.0), Vec2::new(15.0, 10.0)),
+    );
+    geometry.0.insert(
+        n(&doc, 8),
+        Rect::new(Vec2::new(0.0, 120.0), Vec2::new(60.0, 20.0)),
+    );
+    let sons: Vec<(NodeId, Rect)> = [2, 3, 4]
+        .iter()
+        .map(|&i| (n(&doc, i), Rect::new(Vec2::ZERO, Vec2::new(100.0, 40.0))))
+        .collect();
+    let clear = Clear::new(&geometry, sons.iter());
+    let parent = (n(&doc, 1), Rect::new(Vec2::ZERO, Vec2::new(100.0, 40.0)));
+    let center = Vec2::new(50.0, 20.0);
+    let circle = |r: f32, turn: f32| {
+        arrangement(
+            &clear,
+            parent,
+            center,
+            r,
+            -std::f32::consts::FRAC_PI_2 + turn,
+            std::f32::consts::TAU / 3.0,
+            &sons,
+        )
+    };
+    assert!(
+        (0..8).all(|j| circle(140.0, j as f32 * std::f32::consts::TAU / 24.0).is_none()),
+        "precondition: no rotation of the circle is clear at 140"
+    );
+    assert!(
+        circle(140.0 + FLOWER_RADIUS_STEP, 0.0).is_some(),
+        "precondition: the circle is clear at 160"
+    );
+    let laid = regular_flower(&clear, parent, center, 140.0, &sons).expect("a clear arrangement");
+    let at: Vec<Vec2> = laid.iter().map(|petal| petal.center()).collect();
+    for petal in &at {
+        assert!(
+            ((*petal - center).length() - 140.0).abs() < 1e-3,
+            "{petal} at 140, not 160"
+        );
+    }
+    assert_eq!(angle_of(center, at[0]), -45.0);
+    assert_eq!(steps_between(center, &at), [105.0, 105.0], "a 210° fan");
 }
 
 #[test]
@@ -996,6 +1237,88 @@ fn test_a_layouts_work_does_not_grow_with_the_map() {
 ///
 /// Control: counting cells as a product of the two axes' spans
 /// overflowed `i64` on the first child, and the layout panicked.
+/// Any geometry, counting every question a layout asks of it.
+struct Counting<'g>(&'g dyn crate::projection::Geometry, std::cell::Cell<usize>);
+
+impl crate::projection::Geometry for Counting<'_> {
+    fn node_rect(&self, node: NodeId) -> Option<crate::flow::Rect> {
+        self.1.set(self.1.get() + 1);
+        self.0.node_rect(node)
+    }
+    fn section_box(&self, section: NodeId) -> Option<(Vec2, &std::sync::Arc<crate::flow::ShapedBox>)> {
+        self.0.section_box(section)
+    }
+    fn curve(&self, path: NodeId) -> Option<&[crate::flow::Curve]> {
+        self.0.curve(path)
+    }
+    fn label_pos(&self, label: NodeId) -> Option<Vec2> {
+        self.0.label_pos(label)
+    }
+    fn nodes_meeting(&self, rect: crate::flow::Rect) -> Vec<NodeId> {
+        self.1.set(self.1.get() + 1);
+        self.0.nodes_meeting(rect)
+    }
+}
+
+/// **A blocked flower's work grows with neither the map nor its parent's
+/// size** (review of #331). Node 1 has twelve sons and a thin frame round
+/// it that every son's line crosses, so every regular arrangement is
+/// tried and fails; the sons then step out on their own rays. Through
+/// the real projector, the questions asked and the bodies its index
+/// scans to answer them are the same with 2,000 more nodes far away as
+/// without them — for a parent of its own size, and for one 400,000
+/// wide, whose lines are too long to read in pieces of one cell.
+///
+/// Control: reading every line whole from the parent's center, its
+/// pieces clamped to 64, made each piece of the wide parent's lines
+/// cover more cells than the index lists a body under, so each scanned
+/// every body, and the far nodes were scanned.
+#[test]
+fn test_a_blocked_flowers_work_grows_with_neither_the_map_nor_its_parent() {
+    use crate::projection::tests::maps::{load_map, node};
+    use crate::projection::tests::support::Projected;
+    use serde_json::json;
+    let def = edit(r#"{"id":"f","name":"F","reach":"self","target":"node","handler":"flower"}"#);
+    for width in [100.0_f64, 400_000.0] {
+        let work = |far: u32| {
+            let mut nodes = vec![node(1, None, json!({"min_size": [width, 40.0]}))];
+            nodes.extend((2..=13).map(|i| node(i, Some(1), json!({"min_size": [100.0, 40.0]}))));
+            // The frame: four bars 20 units outside node 1, which every
+            // line from it to a son crosses.
+            let bar = |id: u32, at: [f64; 2], size: [f64; 2]| {
+                node(id, None, json!({"channel": id, "position": at, "min_size": size}))
+            };
+            nodes.push(bar(20, [-24.0, -24.0], [width + 48.0, 4.0]));
+            nodes.push(bar(21, [-24.0, 60.0], [width + 48.0, 4.0]));
+            nodes.push(bar(22, [-24.0, -24.0], [4.0, 88.0]));
+            nodes.push(bar(23, [width + 20.0, -24.0], [4.0, 88.0]));
+            nodes.extend((0..far).map(|k| {
+                node(
+                    100 + k,
+                    None,
+                    json!({"channel": 100 + k, "position": [3.0e6 + f64::from(k) * 300.0, 0.0]}),
+                )
+            }));
+            let p = Projected::new(load_map(json!({ "nodes": nodes })));
+            let counting = Counting(&p.projector, std::cell::Cell::new(0));
+            let before = p.projector.bodies.within_tried.get();
+            def.request(&p.doc, &counting, &registry(), &[n(&p.doc, 1)])
+                .unwrap();
+            (counting.1.get(), p.projector.bodies.within_tried.get() - before)
+        };
+        let (near, far) = (work(0), work(2_000));
+        assert!(
+            near.0 > 4_480,
+            "{width}: precondition: every arrangement was tried ({} questions)",
+            near.0
+        );
+        assert_eq!(
+            near, far,
+            "{width}: (questions, bodies scanned) with the far nodes and without"
+        );
+    }
+}
+
 #[test]
 fn test_a_layout_survives_a_rectangle_too_large_to_count() {
     let doc = load(FAMILY).unwrap();

@@ -170,17 +170,27 @@ pub const FLOWER_ROTATIONS: u32 = 8;
 /// clockwise, evenly round the parent: twelve, one every 30°.
 pub const FAN_DIRECTIONS: u32 = 12;
 
-/// How much narrower each fan a flower tries is than the one before,
-/// from the span of the full circle down: 30°.
-pub const FAN_NARROWING: f32 = std::f32::consts::FRAC_PI_6;
+/// The parts of a full turn a fan narrows by: each fan a flower tries is
+/// one part ([`FAN_NARROWING`]) narrower than the one before, from the
+/// span of the full circle down, so there are fewer than this many fans
+/// per direction — at most `FAN_SPANS - 1`.
+pub const FAN_SPANS: u32 = 12;
 
-/// The longest piece of a petal's chord read from the body index at
-/// once: one of its cells, so each read covers a few cells.
-const CHORD_PIECE: f32 = 256.0;
+/// How much narrower each fan a flower tries is than the one before: a
+/// turn over [`FAN_SPANS`], 30°.
+pub const FAN_NARROWING: f32 = std::f32::consts::TAU / FAN_SPANS as f32;
 
-/// The most pieces a chord is read in; a longer chord's pieces are
-/// longer.
-const MAX_CHORD_PIECES: f32 = 64.0;
+/// The longest piece of a petal's line read from the projector's body
+/// index at once: one of the **index's** cells (256 units; the grid of
+/// this run's placements in `Clear` has 512-unit cells of its own). A
+/// piece's box then covers at most four cells of either grid, so no read
+/// falls to the index's scan of every body.
+pub const CHORD_PIECE: f32 = 256.0;
+
+/// The most pieces a petal's line is read in. A line longer than this
+/// many [`CHORD_PIECE`]s outside the parent and the petal (16,384 units)
+/// is not read, and an arrangement with one is not taken.
+pub const MAX_CHORD_PIECES: u32 = 64;
 
 /// `flower`: each node's child nodes round it at one radius, evenly
 /// spaced, clockwise in sibling order — on the full circle, the first at
@@ -191,10 +201,14 @@ const MAX_CHORD_PIECES: f32 = 64.0;
 ///
 /// A **regular** arrangement is one radius and one spacing for every
 /// petal. It is taken when no petal overlaps a drawn node, a petal
-/// already placed or another of its own, and no petal's chord — the
-/// straight line from the parent's center to the petal's — crosses a
-/// drawn node or a placed petal (see `Clear`). They are tried in this
-/// order:
+/// already placed or another of its own, and no petal's line — the
+/// straight line from the parent's center to the petal's, where it runs
+/// outside the two — crosses a drawn node, a placed petal or another of
+/// its own (see `Clear`). The lines checked are this flower's own: a
+/// petal is not checked against its parent's connector from the
+/// grandparent, nor against the lines of families placed earlier in the
+/// same run (both go through `Clear::is_clear`, where a check against
+/// such segments would be added). They are tried in this order:
 ///
 /// 1. each radius from the base out, [`FLOWER_RADII`] of them,
 ///    [`FLOWER_RADIUS_STEP`] apart;
@@ -213,12 +227,26 @@ const MAX_CHORD_PIECES: f32 = 64.0;
 /// one flower moves is the center of its own where it is moved to, so
 /// nested nodes compose.
 ///
-/// Cost: per family at most [`FLOWER_RADII`] × ([`FLOWER_ROTATIONS`] +
-/// [`FAN_DIRECTIONS`] × 11) arrangements, each stopping at its first
-/// failing petal; a petal is a query of the projector's body index over
-/// its cells, a lookup of this run's placements, and its chord read a
-/// cell-sized piece at a time. Then, only if none is clear, at most the
-/// [`probes`] per petal. Nothing is proportional to the map.
+/// Cost, for a family of `n` children: at most [`FLOWER_RADII`] ×
+/// ([`FLOWER_ROTATIONS`] + [`FAN_DIRECTIONS`] × (`FAN_SPANS` − 1))
+/// arrangements, 4,480 with the constants as they are. One arrangement
+/// (`arrangement`) costs, at most:
+///
+/// - O(n²) comparisons of its petals and lines with each other;
+/// - per petal, one query of the projector's body index over the
+///   petal's cells, and a lookup of this run's placements there;
+/// - per line, at most [`MAX_CHORD_PIECES`] queries of the body index,
+///   each over at most four cells, a `node_rect` for each node one finds,
+///   and as many lookups of the placements.
+///
+/// It stops at the first petal or line that fails. So a family of twelve
+/// whose every arrangement fails at its last line costs at most about
+/// 4,480 × 12 × 65 ≈ 3.5 million queries, none of them a scan of every
+/// body. Then, only if none is clear, at most the [`probes`] per petal.
+/// One exception is the petal itself: a petal larger than the index's
+/// cell limit (64 cells of 256 units) is checked by the index's scan of
+/// every body (`BodyIndex::query`). Nothing else is proportional to the
+/// map.
 pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Result<Walks, String> {
     let families: Vec<Family> = in_tree_order(doc.tree(), nodes, false)
         .into_iter()
@@ -241,7 +269,8 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
             .fold(0.0_f32, f32::max);
         let radius = parent_span + child_span + RADIAL_PADDING;
         let center = origin + rect.size / 2.0;
-        let laid: Vec<Rect> = match regular_flower(&clear, parent, center, radius, &children) {
+        let outline = Rect::new(origin, rect.size);
+        let laid: Vec<Rect> = match regular_flower(&clear, (parent, outline), center, radius, &children) {
             Some(laid) => {
                 for ((child, _), petal) in children.iter().zip(&laid) {
                     clear.add(*child, *petal);
@@ -275,10 +304,14 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
 
 /// The first regular arrangement of `children` round `center` that is
 /// clear, in [`flower`]'s order: the petals' rectangles, in sibling
-/// order, or `None`.
-fn regular_flower(
+/// order, or `None`. `parent` is the parent and where it is drawn.
+///
+/// Cost: at most [`FLOWER_RADII`] × ([`FLOWER_ROTATIONS`] +
+/// [`FAN_DIRECTIONS`] × (`FAN_SPANS` − 1)) calls of `arrangement`, and
+/// a list of the arrangements, built once.
+pub(crate) fn regular_flower(
     clear: &Clear<'_>,
-    parent: NodeId,
+    parent: (NodeId, Rect),
     center: Vec2,
     radius: f32,
     children: &[(NodeId, Rect)],
@@ -287,9 +320,10 @@ fn regular_flower(
     let n = children.len();
     let spacing = TAU / n as f32;
     // A fan's span, from end petal to end petal: the full circle's, less
-    // a narrowing at a time. One petal has no fan but the circle.
+    // a narrowing at a time, fewer than `FAN_SPANS` of them. One petal has
+    // no fan but the circle.
     let full = spacing * (n.saturating_sub(1)) as f32;
-    let spans = (1..)
+    let spans = (1..FAN_SPANS)
         .map(move |m| full - m as f32 * FAN_NARROWING)
         .take_while(move |span| n > 1 && *span > 0.0);
     // Each arrangement as its first petal's angle and the step to the next.
@@ -317,12 +351,18 @@ fn regular_flower(
 }
 
 /// `children` at radius `r` round `center`, the first at angle `first`,
-/// each next `step` on: their rectangles, when no petal meets a drawn
-/// node, a placed one or another of these, and no chord crosses one;
-/// else `None`, at the first that fails.
-fn arrangement(
+/// each next `step` on (a positive step runs clockwise on the canvas,
+/// whose y points down): their rectangles, when no petal meets a drawn
+/// node, a placed one or another of these, and no petal's line (`line`)
+/// crosses one; else `None`, at the first that fails. `parent` is the
+/// parent and where it is drawn.
+///
+/// Cost: O(n²) comparisons among the `n` petals and their lines; per
+/// petal a `Clear::is_clear`, per line a `Clear::line_clear`. It stops
+/// at the first that fails.
+pub(crate) fn arrangement(
     clear: &Clear<'_>,
-    parent: NodeId,
+    parent: (NodeId, Rect),
     center: Vec2,
     r: f32,
     first: f32,
@@ -339,16 +379,54 @@ fn arrangement(
         laid.push(petal);
     }
     for (i, petal) in laid.iter().enumerate() {
-        let to = petal.center();
+        let Some((a, b)) = line(center, &parent.1, petal) else {
+            continue;
+        };
         let crosses_own = laid
             .iter()
             .enumerate()
-            .any(|(j, other)| j != i && segment_meets(center, to, other));
-        if crosses_own || !clear.chord_clear(center, to, parent) {
+            .any(|(j, other)| j != i && segment_meets(a, b, other));
+        if crosses_own || !clear.line_clear(a, b, parent.0) {
             return None;
         }
     }
     Some(laid)
+}
+
+/// A petal's line: the straight line from `center`, inside `parent`, to
+/// the center of `petal`, where it runs outside the two — from where it
+/// leaves the parent to where it enters the petal — or `None` when none
+/// of it does. What is inside the parent or the petal is theirs, and
+/// reading only the rest keeps a line as short as the gap between them,
+/// however large either is. O(1).
+fn line(center: Vec2, parent: &Rect, petal: &Rect) -> Option<(Vec2, Vec2)> {
+    let to = petal.center();
+    let d = to - center;
+    let t0 = leaves(center, d, parent);
+    let t1 = 1.0 - leaves(to, -d, petal);
+    (t0 < t1).then(|| (center + d * t0, center + d * t1))
+}
+
+/// How far along `d`, as a fraction of it, a walk from `p` stays inside
+/// `rect` (edges included): `0` when `p` is outside, `1` when the walk
+/// never leaves within `d`. O(1).
+fn leaves(p: Vec2, d: Vec2, rect: &Rect) -> f32 {
+    let inside = rect.origin.x <= p.x && p.x <= rect.max().x && rect.origin.y <= p.y && p.y <= rect.max().y;
+    if !inside {
+        return 0.0;
+    }
+    let axis = |p: f32, d: f32, lo: f32, hi: f32| {
+        if d > 0.0 {
+            (hi - p) / d
+        } else if d < 0.0 {
+            (lo - p) / d
+        } else {
+            f32::INFINITY
+        }
+    };
+    axis(p.x, d.x, rect.origin.x, rect.max().x)
+        .min(axis(p.y, d.y, rect.origin.y, rect.max().y))
+        .clamp(0.0, 1.0)
 }
 
 /// Whether the segment from `a` to `b` passes through the inside of
@@ -482,7 +560,7 @@ const MAX_CELLS: i64 = 64;
 /// placed, filed in a small grid of its own. Two rectangles are clear
 /// when their insides do not meet; a shared edge is clear. Holds only
 /// the moved set and the placements: nothing of the map is copied.
-struct Clear<'g> {
+pub(crate) struct Clear<'g> {
     /// Where the map is drawn.
     geometry: &'g dyn Geometry,
     /// The nodes this run moves, whose drawn rectangles are where they
@@ -526,7 +604,10 @@ fn cells_of(rect: Rect) -> Option<impl Iterator<Item = (i32, i32)>> {
 impl<'g> Clear<'g> {
     /// Nothing placed yet; the nodes of `moved` are skipped where the
     /// projector has them. O(moved).
-    fn new<'a>(geometry: &'g dyn Geometry, moved: impl Iterator<Item = &'a (NodeId, Rect)>) -> Self {
+    pub(crate) fn new<'a>(
+        geometry: &'g dyn Geometry,
+        moved: impl Iterator<Item = &'a (NodeId, Rect)>,
+    ) -> Self {
         Clear {
             geometry,
             moved: moved.map(|(node, _)| *node).collect(),
@@ -545,12 +626,25 @@ impl<'g> Clear<'g> {
         self.placed.push((node, rect));
     }
 
-    /// The placed rectangles that may meet `area`: those filed under its
-    /// cells, or all of them for an area too large for the cells.
-    fn placed_near(&self, area: Rect) -> Box<dyn Iterator<Item = &(NodeId, Rect)> + '_> {
+    /// Whether `hit` holds for any placed rectangle that may meet
+    /// `area`: those filed under its cells, or every one for an area too
+    /// large for them (an area past [`MAX_CELLS`] of 512-unit cells, which
+    /// a petal larger than that is). O(the placements filed under `area`'s
+    /// cells, or every placement for such an area), stopping at the first
+    /// hit.
+    fn any_placed(&self, area: Rect, mut hit: impl FnMut(NodeId, &Rect) -> bool) -> bool {
         match cells_of(area) {
-            Some(cells) => Box::new(cells.filter_map(|cell| self.cells.get(&cell)).flatten()),
-            None => Box::new(self.placed.iter()),
+            Some(cells) => {
+                for cell in cells {
+                    if let Some(filed) = self.cells.get(&cell) {
+                        if filed.iter().any(|(node, rect)| hit(*node, rect)) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+            None => self.placed.iter().any(|(node, rect)| hit(*node, rect)),
         }
     }
 
@@ -558,7 +652,7 @@ impl<'g> Clear<'g> {
     /// move and of every rectangle it has placed. O(the body index's
     /// cells under `rect`, and this run's placements in them).
     fn is_clear(&self, rect: Rect) -> bool {
-        !self.placed_near(rect).any(|(_, other)| meets(&rect, other))
+        !self.any_placed(rect, |_, other| meets(&rect, other))
             && self
                 .geometry
                 .nodes_meeting(rect)
@@ -566,30 +660,35 @@ impl<'g> Clear<'g> {
                 .all(|node| self.moved.contains(node))
     }
 
-    /// Whether the chord from `from` to `to` crosses no drawn node this
-    /// run does not move and no rectangle it has placed, `parent` apart
-    /// (the chord starts inside it). Read a piece at a time, each piece
-    /// at most [`CHORD_PIECE`] long, so each read covers a few cells.
-    /// O(the chord's length over a cell, at most [`MAX_CHORD_PIECES`]
-    /// pieces), each a query of the body index and of the placements.
-    fn chord_clear(&self, from: Vec2, to: Vec2, parent: NodeId) -> bool {
-        let pieces = ((to - from).length() / CHORD_PIECE)
-            .ceil()
-            .clamp(1.0, MAX_CHORD_PIECES) as u32;
+    /// Whether the segment from `a` to `b` — a petal's line, outside its
+    /// parent and itself — crosses no drawn node this run does not move
+    /// and no rectangle it has placed, `parent` apart. Read a
+    /// [`CHORD_PIECE`] at a time, so each read covers at most four cells;
+    /// a segment of more than [`MAX_CHORD_PIECES`] pieces is not read, and
+    /// counts as crossing. O(the segment's length over [`CHORD_PIECE`],
+    /// at most [`MAX_CHORD_PIECES`] pieces), each a query of the body index
+    /// over at most four cells, a `node_rect` per node it finds, and a
+    /// lookup of the placements.
+    fn line_clear(&self, a: Vec2, b: Vec2, parent: NodeId) -> bool {
+        let pieces = ((b - a).length() / CHORD_PIECE).ceil();
+        if !pieces.is_finite() || pieces > MAX_CHORD_PIECES as f32 {
+            return false;
+        }
+        let pieces = (pieces as u32).max(1);
         (0..pieces).all(|k| {
-            let a = from.lerp(to, k as f32 / pieces as f32);
-            let b = from.lerp(to, (k + 1) as f32 / pieces as f32);
-            let area = Rect::new(a.min(b), (b - a).abs());
-            let crosses_placed = self
-                .placed_near(area)
-                .any(|&(node, other)| node != parent && segment_meets(a, b, &other));
+            let from = a.lerp(b, k as f32 / pieces as f32);
+            let to = a.lerp(b, (k + 1) as f32 / pieces as f32);
+            let area = Rect::new(from.min(to), (to - from).abs());
+            let crosses_placed = self.any_placed(area, |node, other| {
+                node != parent && segment_meets(from, to, other)
+            });
             let crosses_drawn = self.geometry.nodes_meeting(area).into_iter().any(|node| {
                 node != parent
                     && !self.moved.contains(&node)
                     && self
                         .geometry
                         .node_rect(node)
-                        .is_some_and(|drawn| segment_meets(a, b, &drawn))
+                        .is_some_and(|drawn| segment_meets(from, to, &drawn))
             });
             !crosses_placed && !crosses_drawn
         })

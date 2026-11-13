@@ -241,8 +241,13 @@ across all of them; then the node stays where it belongs.
   petals' spacing at a time; then fans 30°, 60°, … narrower than the
   full circle, each centered in turn on twelve directions from the top.
   The first that is clear is taken: no petal over a drawn node, a placed
-  petal or another petal, and no straight line from the parent to a
-  petal through any of them. A flower whose parent sits close above
+  petal or another petal, and no petal's line through any of them — the
+  straight line from the parent's center to the petal's, where it runs
+  outside the two. (A connector is drawn as a curve from the parent's
+  outline; the straight line stands for it.) The lines checked are this
+  flower's own. A petal is not checked against the parent's own
+  connector from its parent, nor against the lines of families laid out
+  earlier in the same run. A flower whose parent sits close above
   another node so becomes a fan that leaves a gap where that node is.
   Only when no such arrangement is clear does each petal move outward
   along its own ray, by those distances.
