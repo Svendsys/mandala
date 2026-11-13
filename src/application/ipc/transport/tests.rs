@@ -808,24 +808,30 @@ fn test_ipc_loopback_shutdown_reaches_a_controller_paused_mid_burst() {
 /// not reading when the server lets go:
 ///
 /// - Many `describe` replies, more than the pipe holds, so the writer is
-///   held back by the client from the start and the rest queues.
-/// - Then pings with long ids, which reach the writer only once it is
-///   held back, together with `shutdown`. However the writer groups the
+///   held back by the client from the start and the rest queues. Each is
+///   under a write batch and two are over one, so they go out in pairs.
+/// - Then small replies, which reach the writer only once it is held
+///   back, together with `shutdown`. However the writer paired the
 ///   `describe` replies before them, the batch carrying `shutdown` also
-///   carries tens of kilobytes of pings — never `shutdown` alone, which
-///   any room left in the pipe would take at once. That rests on the
-///   sizes of the replies, so the test measures one of each first and
-///   fails on the spot if they no longer give it.
+///   carries tens of kilobytes of them — never `shutdown` alone, which any
+///   room left in the pipe would take at once. How many there are is
+///   worked out from the sizes of the replies, measured on one of each
+///   first; the test fails on the spot if they no longer give it.
 /// - The client reads nothing until the exit is under way, then reads one
 ///   `describe` reply at a time and gives the exit a moment to finish
 ///   after each. A server that lets go once its last write is handed over
 ///   finishes during such a pause, with that write still waiting, and the
 ///   client pauses longer before it reads on. One that waits for the pipe
 ///   to take the write cannot finish then.
+///
+/// Every reply here is the same bytes each time it is asked for: a small
+/// one is a `ping` refused for a parameter it does not take, not a `ping`
+/// answered, whose `now_ms` changes length from one reply to the next
+/// (#350). Ids of one kind all have one width. So one reply of each kind
+/// measures the whole burst exactly, and the arithmetic below is exact.
 #[test]
 fn test_ipc_loopback_a_client_behind_at_exit_reads_everything_then_the_end() {
     const DESCRIBES: usize = 16;
-    const PINGS: usize = 210;
     // How long the client gives the exit to finish after each `describe`
     // reply, and how long it stays away once it has.
     const GRACE: Duration = Duration::from_millis(100);
@@ -837,6 +843,8 @@ fn test_ipc_loopback_a_client_behind_at_exit_reads_everything_then_the_end() {
     // fit in the room the pipe has left, and then nothing is pending when
     // the server lets go.
     const LEAST_LAST_BATCH: usize = 30 << 10;
+    // How far under a write batch the small replies together stay.
+    const SPARE: usize = 2 << 10;
     // The exit's clock starts before the client reads anything, and a
     // server that waits for the pipe to take its last write finishes only
     // after every grace has run out: together they must leave it well
@@ -844,17 +852,17 @@ fn test_ipc_loopback_a_client_behind_at_exit_reads_everything_then_the_end() {
     const _: () = assert!(
         (READER_PAUSE.as_millis() + GRACE.as_millis() * DESCRIBES as u128) * 2 <= SHUTDOWN_FLUSH.as_millis()
     );
-    const _: () = assert!(DESCRIBES + PINGS + 2 < OUTBOUND_QUEUE_CAP);
 
     let harness = Harness::running("ipc-behind-at-exit");
     let (mut client, _) = Client::attach(&harness.path);
-    // The longest id the protocol takes is 256 bytes serialized.
-    let ping_id = |n: usize| format!("ping-{n:03}-{}", "x".repeat(240));
+    let describe_id = |n: usize| format!("describe-{n:02}");
+    let describe = |n: usize| format!(r#"{{"id":"{}","cmd":"describe"}}"#, describe_id(n));
+    // The longest id the protocol takes is 256 bytes serialized; a long
+    // one keeps the small replies few enough to all fit the outbound
+    // queue at once.
+    let small_id = |n: usize| format!("small-{n:03}-{}", "x".repeat(240));
+    let small = |n: usize| format!(r#"{{"id":"{}","cmd":"ping","pad":true}}"#, small_id(n));
 
-    // What the scenario relies on, measured on one reply of each kind
-    // rather than assumed, so a change in their size fails here, loudly,
-    // instead of quietly letting `shutdown` travel in a batch small enough
-    // to fit.
     let mut round_trip = |request: &str| {
         client.send(request);
         let mut line = String::new();
@@ -862,57 +870,43 @@ fn test_ipc_loopback_a_client_behind_at_exit_reads_everything_then_the_end() {
             .reader
             .read_line(&mut line)
             .expect("a frame within the timeout");
-        line
+        line.len()
     };
-    // Id 0, as short as the burst's shortest: the bound on the last batch
-    // below wants the least a `describe` reply can be.
-    let describe = round_trip(r#"{"id":0,"cmd":"describe"}"#).len();
-    let ping_line = round_trip(&format!("{{\"id\":\"{}\",\"cmd\":\"ping\"}}", ping_id(999)));
-    // A ping reply's size moves with its `now_ms`, the app clock's
-    // milliseconds as an `f64` in its shortest form. The clock has run for
-    // more than a millisecond by now and stays far below 1e16 ms, where the
-    // form turns to an exponent, so it is a decimal from `1.0` (three
-    // bytes) to 17 significant digits and a point (18). The rest of the
-    // reply is the same for every ping.
-    let ping_reply: Value = serde_json::from_str(&ping_line).expect("the ping reply is JSON");
-    let now_ms = serde_json::to_string(&ping_reply["result"]["now_ms"])
-        .expect("serializes")
-        .len();
-    let ping_fixed = ping_line.len() - now_ms;
-    let (ping_least, ping_most) = (ping_fixed + "1.0".len(), ping_fixed + 18);
+    let describe_len = round_trip(&describe(99));
+    let small_len = round_trip(&small(999));
     let goodbye = Frame::Event(crate::application::ipc::envelope::Event::shutdown())
         .encode(crate::application::ipc::envelope::OUTBOUND_FRAME_CAP)
         .expect("the event fits a frame")
         .len();
-    // The writer cuts a batch once it holds `WRITE_BATCH_BYTES` or more. A
-    // `describe` reply is under that, so `describe` replies go out in
-    // pairs, and the batch carrying `shutdown` begins either at the first
-    // ping (every ping, then `shutdown`) or at the last `describe` reply
-    // (the pings that batch did not take, then `shutdown`). Both shapes
-    // are smallest when the pings are.
+    // The writer cuts a batch once it holds `WRITE_BATCH_BYTES` or more, so
+    // `describe` replies go out in pairs, and the batch carrying `shutdown`
+    // begins either at the first small reply (every small reply, then
+    // `shutdown`) or at the last `describe` reply (as many small replies
+    // as take it to the cut, then the rest of them, with `shutdown`).
     let cut = connection::WRITE_BATCH_BYTES;
     assert!(
-        describe < cut && PINGS * ping_most < cut,
-        "a `describe` reply ({describe} bytes) and the pings (up to {PINGS} × {ping_most} bytes) \
-         must each stay under a write batch ({cut} bytes)"
+        describe_len < cut && 2 * describe_len >= cut,
+        "a `describe` reply ({describe_len} bytes) must be under a write batch ({cut} bytes) \
+         and two of them over it"
     );
-    let from_first_ping = PINGS * ping_least + goodbye;
-    // The last `describe` reply's batch takes pings until it reaches the
-    // cut, so it takes less than `cut - describe` plus one ping more.
-    let from_last_describe = (describe + PINGS * ping_least).saturating_sub(cut + ping_most) + goodbye;
+    let smalls = (cut - SPARE) / small_len;
+    let riding = (cut - describe_len).div_ceil(small_len);
+    let from_last_describe = smalls.saturating_sub(riding) * small_len + goodbye;
     assert!(
-        from_first_ping.min(from_last_describe) >= LEAST_LAST_BATCH,
-        "the batch carrying `shutdown` could be as small as {from_first_ping} or \
-         {from_last_describe} bytes, under {LEAST_LAST_BATCH}: a `describe` reply is {describe} \
-         bytes, a ping reply at least {ping_least}"
+        from_last_describe >= LEAST_LAST_BATCH && DESCRIBES + smalls + 2 < OUTBOUND_QUEUE_CAP,
+        "{smalls} small replies of {small_len} bytes after `describe` replies of {describe_len} \
+         bytes leave the batch carrying `shutdown` as small as {from_last_describe} bytes, under \
+         {LEAST_LAST_BATCH}, or overfill the outbound queue ({OUTBOUND_QUEUE_CAP})"
     );
 
     let mut burst = String::new();
-    for id in 0..DESCRIBES {
-        burst.push_str(&format!("{{\"id\":{id},\"cmd\":\"describe\"}}\n"));
+    for n in 0..DESCRIBES {
+        burst.push_str(&describe(n));
+        burst.push('\n');
     }
-    for n in 0..PINGS {
-        burst.push_str(&format!("{{\"id\":\"{}\",\"cmd\":\"ping\"}}\n", ping_id(n)));
+    for n in 0..smalls {
+        burst.push_str(&small(n));
+        burst.push('\n');
     }
     client
         .writer
@@ -925,9 +919,13 @@ fn test_ipc_loopback_a_client_behind_at_exit_reads_everything_then_the_end() {
     thread::sleep(READER_PAUSE);
     let mut finished = false;
     let mut stayed_away = false;
-    for id in 0..DESCRIBES {
+    for n in 0..DESCRIBES {
         let reply = client.next();
-        assert_eq!(reply["id"], json!(id), "replies arrive in order, none skipped");
+        assert_eq!(
+            reply["id"],
+            json!(describe_id(n)),
+            "replies arrive in order, none skipped"
+        );
         let grace = Instant::now() + GRACE;
         while !finished && Instant::now() < grace {
             finished = exiting.is_finished();
@@ -938,12 +936,14 @@ fn test_ipc_loopback_a_client_behind_at_exit_reads_everything_then_the_end() {
             stayed_away = true;
         }
     }
-    for n in 0..PINGS {
+    for n in 0..smalls {
+        let reply = client.next();
         assert_eq!(
-            client.next()["id"],
-            json!(ping_id(n)),
+            reply["id"],
+            json!(small_id(n)),
             "replies arrive in order, none skipped"
         );
+        assert_eq!(reply["error"]["code"], json!("invalid_params"));
     }
     assert_eq!(
         client.next(),
