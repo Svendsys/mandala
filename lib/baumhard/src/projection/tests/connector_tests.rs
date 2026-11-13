@@ -1318,8 +1318,8 @@ fn test_projection_untangle_measures_again_only_what_it_moved() {
 }
 
 /// [`untangle`] of `lanes`, and what it did: its rounds, the samples it
-/// gridded, the points it measured another lane's against, and the
-/// points of another lane it measured them against.
+/// gridded, the points it measured another lane's against, and the points
+/// of another lane it measured them against.
 fn untangle_counted(lanes: &[Lane]) -> (Vec<f32>, [usize; 4]) {
     for counter in [
         &UNTANGLE_GRIDS,
@@ -1376,6 +1376,12 @@ fn test_projection_untangle_work_does_not_grow_with_how_thin_a_lane_is() {
             assert!(
                 rounds == 1 && handles == [1.0; 3] && gridded > 10 * 2000 * 4 / 3,
                 "precondition: {turn}, {thinner}: one round, all clear, the thin lanes finely sampled: {rounds}, {handles:?}, {gridded}"
+            );
+            // The thin lanes run beside the wide one, so their points are
+            // measured against it, and counted.
+            assert!(
+                close > 0 && measured > 0,
+                "precondition: {turn}, {thinner}: points measured: {close}, {measured}"
             );
             assert!(
                 measured <= 22 * close && close <= 2 * gridded,
@@ -1548,8 +1554,9 @@ fn test_projection_untangle_stops_when_no_round_can_part_its_paths() {
     let mut next = scatter(3 * 7919);
     let (mut stopped, mut parted) = (0, 0);
     for case in 0..200 {
-        // As in `test_projection_untangle_answers_as_measuring_every_pair_each_round`,
-        // some paths arriving at one shared end along one lead.
+        // Junctions drawn as in the test of `untangle` against every pair
+        // measured afresh, some paths arriving at one shared end along one
+        // lead.
         let shared = Vec2::new((next() - 50.0) * 4.0, 25.0);
         let count = 2 + (next() as usize) % 6;
         let lanes: Vec<Lane> = (0..count)

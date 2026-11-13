@@ -644,17 +644,17 @@ fn always_near(lanes: &[Lane], widths: &[f32], taken: &[Vec<Vec2>]) -> usize {
 /// speed over its samples, three times its control polygon over their
 /// count, so three of its steps, or of its polygon over the sampling's
 /// cap, whichever is more. A handle reaches no further than at its full
-/// share, so the polygon at full handles, twice over and the chord, bounds
-/// it at any share. A margin for rounding is kept back too, a few units
-/// in the last place of each sample's distance and of each point's
+/// share, so the polygon at full handles, twice over and the chord,
+/// bounds it at any share. A margin for rounding is kept back too, a few
+/// units in the last place of each sample's distance and of each point's
 /// coordinates. Lanes near the length where the condition decides need
 /// more than the chord alone
 /// (`test_projection_a_lanes_fixed_samples_are_in_every_round`), but none
 /// found needs all three steps or the rounding margin: they are what the
 /// argument above shows, kept because a lane that loses its last lead's
 /// samples to them is only measured for more rounds, while one that keeps
-/// a sample some round does not take would change what is drawn.
-/// O(the leads' samples, and the curves).
+/// a sample some round does not take would change what is drawn. O(the
+/// leads' samples, and the curves).
 pub(crate) fn fixed_samples(lane: &Lane) -> Vec<Vec2> {
     let (step, skip) = (0.25 * lane.width, CLEARANCE * lane.hold.max(lane.width));
     let curves = path_through(lane.start, lane.end, &lane.via, 1.0);
@@ -964,8 +964,8 @@ fn around((x, y): CellKey) -> impl Iterator<Item = CellKey> {
 /// pairs of two lanes not fresh, those in `before` ([`NearGrid`], built
 /// for the one question).
 ///
-/// Cost: O(the points) to grid them, and what
-/// [`NearGrid::near_pairs`] costs.
+/// Cost: O(the points) to grid them, and what [`NearGrid::near_pairs`]
+/// costs.
 pub(crate) fn near_pairs(
     samples: &[impl AsRef<[Vec2]>],
     widths: &[f32],
@@ -982,13 +982,13 @@ pub(crate) fn near_pairs(
 #[cfg(any(test, fuzzing))]
 thread_local! {
     /// The fuzz harness's ceiling on the samples [`untangle`] takes on
-    /// this thread, and how many are left of it: `None`, as it is unless a
-    /// harness sets it, for no ceiling. A lane whose samples would take
-    /// more than is left is not gridded, and [`untangle`] grids no further
-    /// lane, takes no further round, and sets [`UNTANGLE_CUT`]: so it
-    /// samples at most the ceiling and one lane. Test and fuzz builds only (`cfg(test)`, and
-    /// the `cfg(fuzzing)` `cargo fuzz` builds with): a shipped build has
-    /// no ceiling and reads none.
+    /// this thread, and how many are left of it: `None`, as it is unless
+    /// a harness sets it, for no ceiling. A lane whose samples would take
+    /// more than is left is not gridded, and [`untangle`] grids no
+    /// further lane, takes no further round, and sets [`UNTANGLE_CUT`]:
+    /// so it samples at most the ceiling and one lane. Test and fuzz
+    /// builds only (`cfg(test)`, and the `cfg(fuzzing)` `cargo fuzz`
+    /// builds with): a shipped build has no ceiling and reads none.
     pub(crate) static UNTANGLE_CEILING: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     /// Whether [`UNTANGLE_CEILING`] has cut an [`untangle`] short on this
     /// thread since it was last cleared: what was laid out then is not

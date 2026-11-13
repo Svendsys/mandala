@@ -125,18 +125,20 @@ fn test_a_map_whose_untangling_reaches_the_ceiling_is_abandoned_and_counted() {
     // no more samples are taken than the ceiling and the one lane that
     // reached it — here at most three curves at the sampling's cap (#346).
     // The failing inputs are a ceiling half as high, which abandons the
-    // one copy, and samples never taken from it, which projects the two.
+    // one copy; samples never taken from it, which projects the two; and
+    // samples not counted, which a cut, more than the ceiling sampled,
+    // cannot be.
     for doc in [seed_copies(1), seed_copies(2)] {
         assert!(within_bound(&doc), "precondition: inside the coordinate bound");
     }
     let (projected, cut, taken) = checked(&seed_copies(1));
     assert!(
-        projected && !cut && taken <= MAX_UNTANGLE_SAMPLES,
+        projected && !cut && 0 < taken && taken <= MAX_UNTANGLE_SAMPLES,
         "one copy: projected {projected}, cut {cut}, {taken} samples"
     );
     let (projected, cut, taken) = checked(&seed_copies(2));
     assert!(
-        !projected && cut && taken <= MAX_UNTANGLE_SAMPLES + 3 * 65_536,
+        !projected && cut && MAX_UNTANGLE_SAMPLES < taken && taken <= MAX_UNTANGLE_SAMPLES + 3 * 65_536,
         "two copies: projected {projected}, cut {cut}, {taken} samples"
     );
 }
@@ -174,8 +176,10 @@ fn test_the_untangle_ceiling_is_overshot_by_one_lane_at_most() {
     // A junction of 128 thin straight paths, each sampled at the cap, so
     // that its first round alone would take four times the ceiling: under
     // the ceiling, `untangle` takes at most the ceiling and the one lane
-    // that reaches it, and marks the check. The failing input is the
-    // ceiling taken from once a round, after every lane of it is sampled.
+    // that reaches it — more than the ceiling, which is what cuts it — and
+    // marks the check. The failing inputs are the ceiling taken from once
+    // a round, after every lane of it is sampled, and samples not
+    // counted.
     use crate::projection::geometry::{untangle, Lane, UNTANGLE_SAMPLED};
     use glam::Vec2;
     let lanes: Vec<Lane> = (0..128)
@@ -196,7 +200,7 @@ fn test_the_untangle_ceiling_is_overshot_by_one_lane_at_most() {
         "precondition: cut, and one round four times the ceiling"
     );
     assert!(
-        sampled <= MAX_UNTANGLE_SAMPLES + 65_536,
+        MAX_UNTANGLE_SAMPLES < sampled && sampled <= MAX_UNTANGLE_SAMPLES + 65_536,
         "{sampled} samples taken under a ceiling of {MAX_UNTANGLE_SAMPLES}"
     );
 }

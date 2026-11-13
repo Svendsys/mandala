@@ -23,30 +23,29 @@
 //!   transaction stages, undos and redos — the oracle checked after each.
 //!
 //! **The bound** (ruling B7.3). The engine bounds each placement (R41)
-//! and each frame's work (its budget), never a whole map, so a hostile map
-//! can ask for more work than a fuzz input's time (#316). Where the
+//! and each frame's work (its budget), never a whole map, so a hostile
+//! map can ask for more work than a fuzz input's time (#316). Where the
 //! engine's bound lies past the timeout the harness bounds what it feeds
 //! (TEST_CONVENTIONS §T14): a map is projected here when it holds at most
 //! one ring with text, of at most
-//! [`MAX_FRAME_GLYPHS`](crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS) characters — the
-//! flow harnesses' one frame an input — and every coordinate a path or an
-//! outline is drawn from is within
+//! [`MAX_FRAME_GLYPHS`](crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS)
+//! characters — the flow harnesses' one frame an input — and every
+//! coordinate a path or an outline is drawn from is within
 //! [`EXTENT`](crate::projection::tests::projection_fuzz::EXTENT); and it
 //! draws at most
 //! [`MAX_UNITS`](crate::projection::tests::projection_fuzz::MAX_UNITS)
-//! sections, rings, connectors and links. The coordinates bound how long a
-//! path is in map units, not how many glyphs or samples it takes: those go
-//! by its length over its size, and a link at the smallest sizes a few
+//! sections, rings, connectors and links. The coordinates bound how long
+//! a path is in map units, not how many glyphs or samples it takes: those
+//! go by its length over its size, and a link at the smallest sizes a few
 //! thousand units long reaches the cap of a placement (R41) and of a
 //! curve's samples in `untangle`. What one such path costs is bounded by
 //! those caps — its glyphs at a placement's, and in `untangle` at most
 //! `UNTANGLE_ROUNDS` rounds of each of its curves sampled to the cap, one
 //! round where its nearness is certain from samples no halving moves
-//! (#346) — not by this bound. Each is shaped and placed in
-//! every full projection the check makes, so the work grows with their
-//! count: libFuzzer reported a 4,000-node chain with a link on every
-//! node, 8,000 paths, as a slow unit of 16 to 18 s against its 20 s
-//! timeout.
+//! (#346) — not by this bound. Each is shaped and placed in every full
+//! projection the check makes, so the work grows with their count:
+//! libFuzzer reported a 4,000-node chain with a link on every node, 8,000
+//! paths, as a slow unit of 16 to 18 s against its 20 s timeout.
 //!
 //! **The untangling ceiling** (#346). What `untangle` samples cannot be
 //! told before the paths are laid out — a path's width comes from its
@@ -60,13 +59,13 @@
 //! `untangle` takes from it what each lane samples, and when a lane's
 //! samples would take more than is left it grids no further lane and
 //! takes no further round, and no samples at all after that in the check,
-//! and marks the check. A marked
-//! check is abandoned: what it found is not this map's, so nothing is
-//! asserted of it, and it is counted as cut short. The ceiling and the
-//! mark are compiled into test and fuzz builds only (`cfg(test)`,
-//! `cfg(fuzzing)`). So one check's work in `untangle` is at most the
-//! ceiling and the one lane that reaches it; the rest of the check is
-//! bounded by the coordinate bound above and the engine's own caps.
+//! and marks the check. A marked check is abandoned: what it found is not
+//! this map's, so nothing is asserted of it, and it is counted as cut
+//! short. The ceiling and the mark are compiled into test and fuzz builds
+//! only (`cfg(test)`, `cfg(fuzzing)`). So one check's work in `untangle`
+//! is at most the ceiling and the one lane that reaches it; the rest of
+//! the check is bounded by the coordinate bound above and the engine's
+//! own caps.
 
 use std::cell::Cell;
 
@@ -95,10 +94,10 @@ pub const MAX_UNITS: usize = 2048;
 /// The most samples `untangle` may take in one check of a map, every
 /// projection of the check together: past it the check is abandoned and
 /// the map counted as cut short (see the module docs). Chosen from
-/// counts: the two seeds this bound was made for, each a line link
-/// beside a connector (`line_link_beside_connector_*`), take 769,760 and
-/// 461,832 in a check and are projected; the input that timed the target
-/// out took 9,326,695 (#346).
+/// counts: the two seeds this bound was made for, each a line link beside
+/// a connector (`line_link_beside_connector_*`), take 769,760 and 461,832
+/// in a check and are projected; the input that timed the target out took
+/// 9,326,695 (#346).
 pub const MAX_UNTANGLE_SAMPLES: usize = 2_000_000;
 
 thread_local! {
@@ -221,9 +220,9 @@ pub(crate) fn under_ceiling<R>(check: impl FnOnce() -> R) -> (R, bool) {
     (checked, UNTANGLE_CUT.with(Cell::get))
 }
 
-/// [`check_projects`] once the map is inside the bound, under the
-/// ceiling it sets: abandoned, with `Ok`, as soon as its first projection
-/// is cut short.
+/// [`check_projects`] once the map is inside the bound, under the ceiling
+/// it sets: abandoned, with `Ok`, as soon as its first projection is cut
+/// short.
 fn check_within_ceiling(doc: &Document) -> Result<(), String> {
     // In the test build the loader suites' maps, up to a hundred thousand
     // nodes, are projected sharing the shapings of equal keys as the
