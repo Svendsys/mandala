@@ -204,7 +204,13 @@ shipped the Unix transport):
 - **Closing.** A connection that ended in order (after `shutdown`, a
   `connection_rejected`, or a client that left) is closed without
   discarding anything: what the client has not read yet stays
-  readable, as a socket's buffer drains after `shutdown`. A connection
+  readable, as a socket's buffer drains after `shutdown`. After
+  `shutdown` the server lets go only once the pipe has taken every
+  byte it wrote (within the same bound a graceful exit gives the
+  event), so the app exiting cannot cancel the tail of its output, and
+  a client that has read everything then reads the end of the stream:
+  a read that returns no bytes, then the closed pipe, which a
+  byte-stream client reads as the end of the stream too. A connection
   the server gives up on — a write stalled past the stalled-write
   timeout, or a hang-up — is *disconnected*, which discards its unread
   output and fails the client's own pending writes, so a client that

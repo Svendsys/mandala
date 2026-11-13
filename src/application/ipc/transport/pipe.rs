@@ -65,22 +65,29 @@
 //!
 //! **Every wait ends.** The acceptor's wait for a client ends when the
 //! server closes its endpoint ([`BoundPipe::close`], also on drop). A
-//! write ends after [`STALLED_WRITE_TIMEOUT`] without progress, or at a
-//! hang-up. A read waits on the client for as long as it stays — an
+//! write, and the wait for the pipe to take the last one, ends after
+//! [`STALLED_WRITE_TIMEOUT`] without progress, or at a hang-up. A read waits on the client for as long as it stays — an
 //! idle controller is a legal one — and ends at a hang-up, which the
 //! server sends on every exit, graceful or not. A refusal ends when the
 //! refused client leaves or after [`REJECT_GRACE`], whichever is first,
 //! and always with a disconnect.
 //!
 //! **Closing.** A connection that ended in order (after the `shutdown`
-//! event, or a client that left) is closed by dropping the instance:
-//! what the client has not read yet stays readable, as on a socket
-//! after `shutdown`. One that failed — a stalled or broken write, or a
-//! hang-up — is disconnected first, which discards it.
+//! event, or a client that left) is closed by dropping the instance,
+//! once the pipe has taken its last write ([`last_write_taken`]): what
+//! the client has not read yet stays readable, as on a socket after
+//! `shutdown`. Until the pipe has taken it, a write is only queued in
+//! the driver, where an exiting process would cancel it, so the writer
+//! does not finish — and a graceful exit does not learn the `shutdown`
+//! event is out — before then. One that failed — a stalled or broken
+//! write, or a hang-up — is disconnected first, which discards it. The
+//! instance's handle is closed when the driver has seen its last
+//! operation complete, which needs a runtime still reading completions:
+//! hence one runtime for the life of the process ([`io_runtime`]).
 
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use interprocess::os::windows::named_pipe::{pipe_mode, PipeListenerOptions};
@@ -105,13 +112,11 @@ pub(super) const SDDL: &str = "D:P(A;;GA;;;OW)";
 /// task, never the next accept.
 const REJECT_GRACE: Duration = Duration::from_secs(1);
 
-/// The pipe this process serves. Holding it keeps the I/O runtime alive
-/// for as long as the server is; closing it, or dropping it, stops the
+/// The pipe this process serves. Closing it, or dropping it, stops the
 /// acceptor.
 pub(super) struct BoundPipe {
     path: PathBuf,
     stop: watch::Sender<bool>,
-    _runtime: Arc<Runtime>,
 }
 
 impl BoundPipe {
@@ -134,8 +139,8 @@ impl Drop for BoundPipe {
     }
 }
 
-/// Create the pipe `--ipc <name>` names, owner-only, and the runtime
-/// its I/O runs on.
+/// Create the pipe `--ipc <name>` names, owner-only, on the process's
+/// pipe I/O runtime ([`io_runtime`]).
 ///
 /// Every failure is a message naming the pipe and the remedy, for the
 /// one startup `expect` (CODE_CONVENTIONS §9).
@@ -144,13 +149,7 @@ pub(super) fn bind(name: &Path) -> Result<(PipeAcceptor, BoundPipe), String> {
         .to_str()
         .ok_or_else(|| format!("`--ipc {}`: a pipe name must be valid Unicode", name.display()))?;
     let path = pipe_path(name)?;
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .thread_name("mandala-ipc-io")
-        .enable_all()
-        .build()
-        .map(Arc::new)
-        .map_err(|e| format!("cannot start the IPC I/O runtime for {path}: {e}"))?;
+    let runtime = io_runtime().map_err(|e| format!("cannot start the IPC I/O runtime for {path}: {e}"))?;
     let descriptor = owner_only()
         .map_err(|e| format!("cannot build the owner-only security descriptor for {path}: {e}"))?;
     // Creates the pipe, with the descriptor and the first-instance flag.
@@ -161,12 +160,12 @@ pub(super) fn bind(name: &Path) -> Result<(PipeAcceptor, BoundPipe), String> {
         .map_err(|e| create_error(&path, &e))?;
     // The instance the acceptor waits on, created under that descriptor
     // while `first` still holds the pipe open.
-    let listening = create_instance(&runtime, &path)
+    let listening = create_instance(runtime, &path)
         .map_err(|e| format!("cannot create a waiting instance of the pipe {path}: {e}"))?;
     drop(first);
     let (stop, stopped) = watch::channel(false);
     let acceptor = PipeAcceptor {
-        runtime: Arc::clone(&runtime),
+        runtime,
         path: path.clone(),
         listening,
         stopped,
@@ -176,9 +175,40 @@ pub(super) fn bind(name: &Path) -> Result<(PipeAcceptor, BoundPipe), String> {
         BoundPipe {
             path: PathBuf::from(path),
             stop,
-            _runtime: runtime,
         },
     ))
+}
+
+/// The runtime every pipe's I/O runs on: one per process, made by the
+/// first `bind` and never dropped.
+///
+/// **Why it must outlive every instance.** A write on a tokio pipe
+/// instance returns once the bytes are handed to the driver (mio), which
+/// issues the overlapped `WriteFile` and keeps the instance's state, and
+/// its handle, alive until that write's completion is taken off the
+/// completion port. Dropping the instance cancels a pending read but not
+/// a pending write, so a connection that ends in order with its last
+/// write still waiting for the client to make room is released only
+/// when the runtime dequeues that completion. A runtime dropped before
+/// then — as one owned by the server was, a few milliseconds after a
+/// graceful exit — leaves the completion queued on a port nobody reads:
+/// the instance and its handle leak, and the client, having read every
+/// byte, waits for an end of stream that never comes (#343). The runtime
+/// therefore lives as long as the process, which ends every handle it
+/// holds when it exits.
+fn io_runtime() -> io::Result<&'static Runtime> {
+    static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+    if let Some(runtime) = RUNTIME.get() {
+        return Ok(runtime);
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .thread_name("mandala-ipc-io")
+        .enable_all()
+        .build()?;
+    // Two first binds at once (tests do it) both build one; the one that
+    // loses is dropped here, before any pipe was made on it.
+    Ok(RUNTIME.get_or_init(|| runtime))
 }
 
 /// The security descriptor [`SDDL`] spells.
@@ -223,7 +253,7 @@ fn create_error(path: &str, error: &io::Error) -> String {
 /// The acceptor's end of the pipe: one instance waiting for a client.
 /// Each accept hands that instance over and leaves a fresh one waiting.
 pub(super) struct PipeAcceptor {
-    runtime: Arc<Runtime>,
+    runtime: &'static Runtime,
     path: String,
     listening: NamedPipeServer,
     /// Flips (or closes) when the server closes its endpoint.
@@ -253,7 +283,7 @@ impl Listen for PipeAcceptor {
         };
         // The next instance is made before this one is handed over, so
         // the pipe is never without a waiting instance or a handle.
-        let next = create_instance(&self.runtime, &self.path);
+        let next = create_instance(self.runtime, &self.path);
         if let Err(e) = connected {
             // A client that came and went before the connect completed.
             // The instance is replaced rather than reused: a fresh one
@@ -270,7 +300,7 @@ impl Listen for PipeAcceptor {
             Ok(next) => {
                 let pipe = std::mem::replace(&mut self.listening, next);
                 Ok(Some(PipeConn {
-                    runtime: Arc::clone(&self.runtime),
+                    runtime: self.runtime,
                     pipe,
                 }))
             }
@@ -286,13 +316,13 @@ impl Listen for PipeAcceptor {
 
 /// One connected pipe instance, not yet split.
 pub(super) struct PipeConn {
-    runtime: Arc<Runtime>,
+    runtime: &'static Runtime,
     pipe: NamedPipeServer,
 }
 
 /// What a connection's three handles share.
 struct Shared {
-    runtime: Arc<Runtime>,
+    runtime: &'static Runtime,
     pipe: NamedPipeServer,
     /// Set when the connection is to end: by a hang-up, or by the
     /// writer as it closes. The reader returns end-of-file on it, and a
@@ -460,16 +490,63 @@ impl Outlet for PipeWriter {
     }
 
     fn close(self) {
-        let PipeWriter { shared, hung, failed } = self;
+        let PipeWriter {
+            shared,
+            mut hung,
+            failed,
+        } = self;
+        // An orderly end waits for the pipe to take the last write first:
+        // until it has, the bytes are the driver's, not the pipe's, and a
+        // process that exits now cancels them — the `shutdown` event
+        // among them. On a failure that wait does not happen, or ends
+        // the connection too.
+        let failed = failed
+            || *hung.borrow()
+            || shared
+                .runtime
+                .block_on(last_write_taken(&shared.pipe, &mut hung))
+                .is_err();
         // A failed write, or a hang-up: nothing more is owed to this
         // client, and a write still pending would keep the instance —
         // and the client blocked on its own writes — alive forever.
-        if failed || *hung.borrow() {
+        if failed {
             let _ = shared.pipe.disconnect();
         }
         // Ends the reader's pending read, so the instance closes and the
         // controller is retired — what `shutdown(Both)` does on Unix.
         shared.hung.send_replace(true);
+    }
+}
+
+/// Wait until the pipe has taken the last write handed to the driver, or
+/// fail: on a hang-up, after [`STALLED_WRITE_TIMEOUT`] without the
+/// client making room, or when the write failed.
+///
+/// A tokio write returns once its bytes are queued in the driver, which
+/// writes them with an overlapped `WriteFile` that completes when the
+/// pipe has taken them all. Nothing reports that completion but the
+/// driver refusing the next write (`WouldBlock`) while it is pending, so
+/// the probe is a write: a zero-length one, issued only once the last
+/// write is done. It is the last thing this connection writes, and a
+/// client reads it as what it is promised next — a `ReadFile` on a pipe
+/// that returns no bytes means the other end wrote zero bytes, which a
+/// byte-stream client reads as the end of the stream, as it reads the
+/// close that follows. Readiness alone would not do: it is one flag for
+/// both directions, so a read completing at the wrong instant could
+/// leave it standing for a write still pending.
+async fn last_write_taken(pipe: &NamedPipeServer, hung: &mut watch::Receiver<bool>) -> io::Result<()> {
+    tokio::select! {
+        biased;
+        _ = hung.wait_for(|hung| *hung) => {
+            Err(io::Error::new(ErrorKind::ConnectionAborted, "the connection was hung up"))
+        }
+        taken = tokio::time::timeout(STALLED_WRITE_TIMEOUT, write_some(pipe, &[])) => match taken {
+            Err(_elapsed) => Err(io::Error::new(
+                ErrorKind::TimedOut,
+                "the client made no room for the last output within the stalled-write timeout",
+            )),
+            Ok(taken) => taken.map(drop),
+        },
     }
 }
 

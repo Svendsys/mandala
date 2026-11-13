@@ -77,7 +77,10 @@ pub(super) trait Outlet: Send + 'static {
 
     /// End the connection after the last write, waking a reader still
     /// blocked on it. What was written in order still reaches the
-    /// client.
+    /// client: by the time this returns from an orderly end, the last
+    /// write is the kernel's, not this process's, so an exit that
+    /// follows cannot cancel it — on the pipe this waits for it
+    /// (bounded as a write is), on the socket `send` already did.
     fn close(self);
 }
 
@@ -227,9 +230,10 @@ struct Writer<W: Outlet> {
     /// them.
     events_queued: Arc<AtomicUsize>,
     link: Arc<Link>,
-    /// Never sent on. Its drop as [`Writer::run`] returns is the
-    /// signal: the main thread's receiver disconnects, which is how a
-    /// graceful exit learns the `shutdown` event has been written.
+    /// Never sent on. Its drop as [`Writer::run`] returns — after
+    /// [`Outlet::close`] — is the signal: the main thread's receiver
+    /// disconnects, which is how a graceful exit learns the `shutdown`
+    /// event has been written and is past the reach of the exit.
     _flushed: Sender<()>,
 }
 
