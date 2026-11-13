@@ -19,8 +19,9 @@
 // privacy (ruling R39 on #238): a `*mut` handed out of `document/`
 // cannot be dereferenced in this crate, and `util::document_surface`
 // refuses one in any signature or type that reaches past `document/`,
-// crates downstream included. The counting allocator's `unsafe` lives
-// in `cap`, outside the crate.
+// crates downstream included. The test suite's counting allocators
+// keep their `unsafe` in `cap` and `allocation-counter`, outside the
+// crate.
 #![forbid(unsafe_code)]
 // CODE_CONVENTIONS §9 closes with "Bare `unwrap()` outside tests is
 // a bug", and this is the half of that rule an editor can tell you

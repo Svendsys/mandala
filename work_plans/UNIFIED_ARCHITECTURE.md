@@ -1811,6 +1811,15 @@ Typical chains:
   untangled again, whole, on every update that marks it: every frame of
   such a drag re-fans and re-samples all of the side's paths, though
   only the dragged one is laid.
+- A node moved, reshaped, re-ringed, re-texted (its text edited, its
+  font changed), hidden or shown, or its opacity or zoom window changed
+  → the paths whose glyphs or labels its old region (the box round its
+  text, and the box round its rings' inks by its outline) met, which read
+  it, and the paths whose glyphs or labels its new region meets, found
+  through an index of where each path's glyphs and label are, hide again
+  what is behind it (#332); none is laid again. A path laid again hides
+  again, trying each of its glyphs, and its label's text, against the
+  regions of their cells.
 
 ### §12.4 Zoom and pan
 

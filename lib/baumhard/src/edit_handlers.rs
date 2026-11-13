@@ -266,7 +266,7 @@ pub const MAX_LINE_PIECES: u32 = 64;
 /// body. Then, only if none is clear, at most the [`probes`] per petal.
 /// One exception is the petal itself: a petal larger than the index's
 /// cell limit (64 cells of 256 units) is checked by the index's scan of
-/// every body (`BodyIndex::query`), and one larger than `Clear`'s (64
+/// every body (`BodyIndex::candidates`), and one larger than `Clear`'s (64
 /// cells of 512 units) reads every placement of this run, and the kept
 /// pieces along its outline or through every cell that holds one,
 /// whichever is fewer (`Clear::meets_segment`). Nothing else is

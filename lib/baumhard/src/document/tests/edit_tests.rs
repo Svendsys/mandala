@@ -1835,10 +1835,10 @@ fn test_a_blocked_flowers_work_does_not_grow_with_the_map() {
             }));
             let p = Projected::new(load_map(json!({ "nodes": nodes })));
             let counting = Counting(&p.projector, std::cell::Cell::new(0));
-            let before = p.projector.bodies.within_tried.get();
+            let before = p.projector.bodies.meeting_tried.get();
             def.request(&p.doc, &counting, &registry(), &[n(&p.doc, 1)])
                 .unwrap();
-            (counting.1.get(), p.projector.bodies.within_tried.get() - before)
+            (counting.1.get(), p.projector.bodies.meeting_tried.get() - before)
         };
         let (near, far) = (work(0), work(2_000));
         assert!(

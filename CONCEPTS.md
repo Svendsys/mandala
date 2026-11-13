@@ -1738,7 +1738,8 @@ the layers to learn what the document is, and nothing flows back.
   sections, measure, then sections' and rings' placement, then paths —
   and of the paths, every one's ends (`Geometry`) before any is laid
   (`Place`), because the paths that leave one side of a node are fanned
-  together (#296).
+  together (#296), and every path laid before any node hides its glyphs
+  (`Hide`, #332).
 - **Connector geometry** (#296, `projection/geometry.rs`). A path
   attaches to its node's **reach** — the box round its drawn rings'
   inks, or its drawn rectangle — at the midpoint of the side its
@@ -1754,11 +1755,29 @@ the layers to learn what the document is, and nothing flows back.
   found, and only the paths whose fan changed are laid again. Portal
   ends with no `border_t` that face one way at a node are held apart
   along its outline (`geometry::held_apart`).
+- **Nodes hide the paths behind them** (#332, `projection/behind.rs`). A
+  node's contents take priority over every path that does not end at
+  it: once every path is laid (`Stage::Hide`, its own phase), a glyph of
+  a path's body or caps whose box, grown by the path's gap, meets the
+  node's **region** — what it draws, in two parts: the box round its
+  text's glyph cells, and the box round its rings' inks by its outline — is
+  left out of the run its layer holds, whole — and the path's label,
+  whole, where the box round its text meets that region — when the node is drawn
+  wherever the path is (opacity above 0, a zoom window holding the
+  path's). It is a view
+  decision: the document keeps the path, the projector keeps the run as
+  laid (`Projector::laid`), and the glyph comes back when the node moves
+  off. Indices on the hit grid keep it incremental: the regions, a body
+  index for each part (`Projector::regions`), and where each path's glyphs are
+  (`Projector::path_cells`). A path's hide records reading the `Region`,
+  opacity and zoom window of each node it met, so a node whose region
+  changes marks it; that node then finds, in the path cells, the paths its
+  new region meets.
 - **Captured dependencies.** Every read of another element's state goes
   through a recorder into the dependency index (`projection::Input`:
   the resolvers' `document::resolve::Input`s, and the projection's own
-  `Geometry`, `Size`, `Visibility`, `Opacity`, `Parent`, `Inner` and
-  `Reach` of an element), keyed by the stage that read it. The change
+  `Geometry`, `Size`, `Visibility`, `Opacity`, `Parent`, `Inner`,
+  `Reach` and `Region` of an element), keyed by the stage that read it. The change
   records' `inputs` and `rows` (ruling B7.2) seed it, and a touched
   element seeds only the stage its unclassified fields feed: a label, a
   portal end or a cap its unit's placement, a section's offset its box,
@@ -1786,7 +1805,7 @@ the layers to learn what the document is, and nothing flows back.
   the smallest visible node whose body holds the point by its shape
   (ruling B7.1); else nothing.
 - **Read API** (`Projector::node_rect`, `section_box`, `curve`,
-  `label_pos`, and the `Geometry` trait): derived geometry for the
+  `label_pos`, `laid`, and the `Geometry` trait): derived geometry for the
   consumers that act on where things are drawn, served from projection
   state.
 

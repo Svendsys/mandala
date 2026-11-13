@@ -85,9 +85,11 @@ const GROUPS: u64 = 4;
 /// Sweep slice `group` of the generated corpus, and require that it
 /// applied every edit the generator draws, transaction stages and
 /// undo and redo among them, so no slice holds a vocabulary the oracle
-/// never saw applied.
+/// never saw applied — and that some of its paths run behind a node, so
+/// the oracle holds the glyphs nodes hide (#332) as well.
 fn sweep_group(group: u64) {
     let mut covered = FxHashMap::default();
+    let mut behind = 0;
     let mut turn = (group as usize) * 7;
     let per = DOCUMENTS / GROUPS;
     for seed in group * per..(group + 1) * per {
@@ -99,6 +101,7 @@ fn sweep_group(group: u64) {
             "seed {seed}: a corpus document has fifty nodes or more ({nodes})"
         );
         let mut p = Projected::new_shared(doc);
+        behind += hiding(&p.projector);
         sweep(
             &format!("seed {seed}"),
             &mut p,
@@ -124,6 +127,25 @@ fn sweep_group(group: u64) {
         .copied()
         .collect();
     assert!(missing.is_empty(), "group {group} never applied {missing:?}");
+    assert!(
+        behind > 0,
+        "precondition: group {group}'s documents run some path behind a node"
+    );
+}
+
+/// How many drawn paths' bodies have glyphs a node hides (#332).
+fn hiding(projector: &crate::projection::Projector) -> usize {
+    let count = |run: Option<&crate::gfx_structs::run::GlyphRunData>| run.map(|r| r.shaped().glyph_count());
+    projector
+        .units
+        .values()
+        .filter(|u| match &u.body {
+            crate::projection::state::UnitBody::Line(line) => {
+                count(line.laid[0].as_ref()) != count(u.slots[0].want.as_ref())
+            }
+            _ => false,
+        })
+        .count()
 }
 
 #[test]

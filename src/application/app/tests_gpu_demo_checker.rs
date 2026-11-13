@@ -30,6 +30,8 @@ use baumhard::arena::NodeId;
 use baumhard::document::element::DocElement;
 use baumhard::document::format::load;
 use baumhard::document::ids::Document;
+use baumhard::document::resolve::resolve_node;
+use baumhard::document::values::{Shape, ZoomWindow};
 use baumhard::flow::FILLER_SPAN;
 use baumhard::font::fallback::fallback_families;
 use baumhard::font::fonts::AppFont;
@@ -473,25 +475,59 @@ fn connector_maps() -> Vec<(String, std::path::PathBuf)> {
 }
 
 /// A drawn connector or line link as the real projector drew it (#296):
-/// its body's inks in order, its curves, its body's first glyph's face and
-/// size, and at each end the node it attaches to.
+/// its body's inks in order as laid, its curves, its body's first glyph's
+/// face and size, and at each end the node it attaches to; and the inks
+/// its layer holds, those the nodes it does not end at leave out (#332).
 struct DrawnPath {
     name: String,
     inks: Vec<Ink>,
+    drawn: Vec<Ink>,
     curves: Vec<baumhard::flow::Curve>,
     style: String,
     ends: [NodeId; 2],
     /// Whether it is one straight segment, which leaves and arrives along
     /// its own line rather than its sides' normals.
     straight: bool,
+    /// The zoom window its body renders in.
+    zoom: Option<ZoomWindow>,
+    /// Its label as laid, if it has one: the box round its text's cells
+    /// (`text_cells`), and whether the labels layer draws it.
+    label: Option<(Ink, bool)>,
+}
+
+/// The box round the cells of the glyphs a box run draws, each its
+/// advance by its line's height, no glyph of whitespace; `None` for a run
+/// that draws none, or a path run.
+fn text_cells(run: &GlyphRunData) -> Option<Ink> {
+    let RunShape::Box(shaped) = run.shaped() else {
+        return None;
+    };
+    let mut out: Option<Ink> = None;
+    for line in shaped.buffer.layout_runs() {
+        let text = line.text;
+        for g in line
+            .glyphs
+            .iter()
+            .filter(|g| g.w > 0.0 && !text[g.start..g.end].trim().is_empty())
+        {
+            let min = run.origin() + Vec2::new(g.x, line.line_top);
+            let max = min + Vec2::new(g.w, line.line_height);
+            out = Some(out.map_or(Ink { min, max }, |a| Ink {
+                min: a.min.min(min),
+                max: a.max.max(max),
+            }));
+        }
+    }
+    out
 }
 
 /// Every node's frame inks, by node: its rings', or for a node that
 /// draws none its drawn rectangle — every node's, a path's end or not.
 type Frames = std::collections::HashMap<NodeId, Vec<Ink>>;
 
-/// Every connector and line link of `doc` and the inks of every node's
-/// frame, through the projector the app draws with
+/// Every connector and line link of `doc` — its inks as laid, and as its
+/// layer draws them — and the inks of every node's frame, through the
+/// projector the app draws with
 /// (`Projector::project_full`) and each glyph's rasterized ink (`read`);
 /// and the zoom of the camera that frames the rings and the paths' ends.
 fn drawn_paths(doc: &Document) -> (Vec<DrawnPath>, Frames, f32) {
@@ -519,10 +555,13 @@ fn drawn_paths(doc: &Document) -> (Vec<DrawnPath>, Frames, f32) {
                 let Some(element) = projector.element_of(layer, glyph) else {
                     continue;
                 };
-                let inks: Vec<Ink> = read(run, fsys, &mut swash)
-                    .into_iter()
-                    .filter_map(|g| g.0)
-                    .collect();
+                let mut inks_of = |run: &GlyphRunData| -> Vec<Ink> {
+                    read(run, fsys, &mut swash)
+                        .into_iter()
+                        .filter_map(|g| g.0)
+                        .collect()
+                };
+                let inks = inks_of(run);
                 match (layer, doc.get(element)) {
                     (Layer::Frames, _) => {
                         if let Some(node) = node_of(element) {
@@ -551,7 +590,16 @@ fn drawn_paths(doc: &Document) -> (Vec<DrawnPath>, Frames, f32) {
                         };
                         paths.push(DrawnPath {
                             name: format!("{}>{}", ident(ends[0]), ident(ends[1])),
-                            inks,
+                            inks: projector.laid(element).map_or_else(|| inks.clone(), &mut inks_of),
+                            drawn: inks,
+                            zoom: run.zoom(),
+                            label: projector.laid_label(element).and_then(text_cells).map(|text| {
+                                let drawn = projector
+                                    .glyphs_of(element)
+                                    .iter()
+                                    .any(|(layer, _)| *layer == Layer::Labels);
+                                (text, drawn)
+                            }),
                             curves: projector.curve(element).map(<[_]>::to_vec).unwrap_or_default(),
                             style,
                             ends,
@@ -975,8 +1023,10 @@ fn test_maps_hold_the_connector_rules() {
 /// answer on #326, which fixes the maps rather than routing round a
 /// node): no glyph of a path lies inside the reach — the box round the
 /// frame's inks, or the drawn rectangle — of a node other than its own
-/// two, on the demo maps, testament and theme_demo. `stress_long_edges`
-/// is left out: its long edges cross the rows they span by design.
+/// two, on the demo maps, testament and theme_demo — each path as laid,
+/// before any node hides its glyphs (#332), since this holds the maps'
+/// layout. `stress_long_edges` is left out: its long edges cross the
+/// rows they span by design.
 ///
 /// Controls: with Border Toolkit's children back in the two rows they had,
 /// the second row straight under the first, red on testament: the paths
@@ -1024,6 +1074,242 @@ fn test_maps_draw_no_path_through_another_node() {
     assert!(
         faults.is_empty(),
         "{} paths pass through another node:\n{}",
+        faults.len(),
+        faults.join("\n")
+    );
+}
+
+/// Whether `ink` lies inside a node's region by more than its edge: its
+/// reach box, or for an ellipse the ellipse inscribed in that box — the
+/// point of the ink nearest the ellipse's center strictly inside it.
+fn inside_region(ink: &Ink, reach: &Ink, ellipse: bool) -> bool {
+    if ink.overlap(reach) <= 0.0 {
+        return false;
+    }
+    if !ellipse {
+        return true;
+    }
+    let center = (reach.min + reach.max) * 0.5;
+    let half = (reach.max - reach.min) * 0.5;
+    let nearest = center.clamp(ink.min, ink.max);
+    ((nearest - center) / half).length() < 1.0
+}
+
+/// Whether a zoom window `node` holds `path`: every zoom `path` renders
+/// at, `node` renders at too — an open bound holds any. Stated here on its
+/// own, apart from the projector's.
+fn holds(node: Option<ZoomWindow>, path: Option<ZoomWindow>) -> bool {
+    let Some(node) = node else { return true };
+    let path = path.unwrap_or(ZoomWindow { min: None, max: None });
+    let low = node.min.is_none_or(|n| path.min.is_some_and(|p| n <= p));
+    let high = node.max.is_none_or(|n| path.max.is_some_and(|p| n >= p));
+    low && high
+}
+
+/// A node's region (#332) as its layers draw it, in two parts — the box
+/// round its sections' glyph cells, each laid-out glyph's advance by its
+/// line's height, no glyph of whitespace; and the box round its rings'
+/// rasterized inks, and whether that part is an ellipse — with the node's
+/// opacity carried down the tree from its own and its ancestors', and its
+/// zoom window.
+struct Region {
+    text: Option<Ink>,
+    rings: Option<(Ink, bool)>,
+    opacity: f32,
+    zoom: Option<ZoomWindow>,
+}
+
+/// Every node's region that has a part.
+fn regions(doc: &Document) -> std::collections::HashMap<NodeId, Region> {
+    let mut layers = GlyphLayers::new();
+    let projector = with_fonts(|fs| Projector::project_full(doc, &mut layers, fs));
+    let tree = doc.tree();
+    let node_of = |mut id: NodeId| loop {
+        if matches!(doc.get(id), Some(DocElement::Node(_))) {
+            return Some(id);
+        }
+        id = tree.node(id).and_then(|n| n.parent())?;
+    };
+    let mut boxes: std::collections::HashMap<NodeId, (Option<Ink>, Option<Ink>)> = Default::default();
+    let join = |a: Option<Ink>, b: Ink| {
+        Some(a.map_or(b, |a| Ink {
+            min: a.min.min(b.min),
+            max: a.max.max(b.max),
+        }))
+    };
+    let mut swash = SwashCache::new();
+    with_fonts(|fs| {
+        let fsys = fs.fonts();
+        for layer in [Layer::Sections, Layer::Frames] {
+            let t = layers.tree(layer);
+            for glyph in t.root().descendants(t.arena()) {
+                let Some(run) = t.arena()[glyph].get().glyph_run() else {
+                    continue;
+                };
+                let Some(node) = projector.element_of(layer, glyph).and_then(node_of) else {
+                    continue;
+                };
+                let entry = boxes.entry(node).or_default();
+                match run.shaped() {
+                    RunShape::Box(_) => {
+                        if let Some(cells) = text_cells(run) {
+                            entry.0 = join(entry.0, cells);
+                        }
+                    }
+                    RunShape::Path { .. } => {
+                        for ink in read(run, fsys, &mut swash).into_iter().filter_map(|g| g.0) {
+                            entry.1 = join(entry.1, ink);
+                        }
+                    }
+                }
+            }
+        }
+    });
+    // A node's opacity times every ancestor's, carried down from the root.
+    let opacity = |node: NodeId| {
+        let mut product = 1.0f32;
+        let mut at = Some(node);
+        while let Some(id) = at {
+            if let Some(DocElement::Node(data)) = doc.get(id) {
+                product *= data.opacity.clamp(0.0, 1.0);
+            }
+            at = tree.node(id).and_then(|n| n.parent());
+        }
+        product
+    };
+    boxes
+        .into_iter()
+        .filter(|(_, (text, rings))| text.is_some() || rings.is_some())
+        .map(|(node, (text, rings))| {
+            let ellipse = resolve_node(tree, node, &mut ()).shape == Shape::Ellipse;
+            let zoom = match doc.get(node) {
+                Some(DocElement::Node(data)) => data.zoom,
+                _ => None,
+            };
+            let region = Region {
+                text,
+                rings: rings.map(|r| (r, ellipse)),
+                opacity: opacity(node),
+                zoom,
+            };
+            (node, region)
+        })
+        .collect()
+}
+
+/// A fixture for the labels' hidden direction, which no shipped map
+/// exercises: Alpha's connector to Omega carries a label at its middle,
+/// and a third node, Over, sits on it.
+const LABEL_FIXTURE: &str = r#"{"format": 1, "name": "a label under a node", "nodes": [
+    {"id": 1, "position": [0.0, 0.0], "sections": [{"size": 24, "spans": [{"text": "Alpha"}]}]},
+    {"id": 2, "parent": 1, "position": [800.0, 0.0], "sections": [{"size": 24, "spans": [{"text": "Omega"}]}],
+     "connector": {"straight": true, "label": {"t": 0.5, "spans": [{"text": "a label on the path"}]}}},
+    {"id": 3, "position": [360.0, -6.0], "sections": [{"size": 24, "spans": [{"text": "Over"}]}]}
+]}"#;
+
+/// Nodes hide the glyphs of the paths behind them, and no others (#332),
+/// on every map the connector rules are checked on: no glyph a path's
+/// layer draws lies inside the region of a node other than its own two
+/// that is drawn wherever the path is — opacity above 0, carried down the
+/// tree, and a zoom window that `holds` the path's — the box round its
+/// text's cells, or the box round its rings' inks by its outline
+/// (`regions`, `inside_region`); and every glyph it leaves out lies within
+/// its own gap of one, measured as the projector measures it but from the
+/// rasterized inks: a quarter of the gap more, for the slack a `repeat`
+/// path spreads over its gaps, and half a point for the raster.
+///
+/// A path's label is held the same way: no label the labels layer draws
+/// has its text's cells (`text_cells`) inside such a region, and every
+/// label laid and not drawn meets one, within half a point for the
+/// raster. Testament draws labels and hides none, as does every shipped
+/// map, so the hidden direction is held on a fixture built here — a
+/// label under a third node's text — rather than on a demo map changed to
+/// carry one.
+///
+/// Controls: with a node's region its text alone, red on the glyphs drawn
+/// inside its rings on `stress_long_edges`; with the margin three gaps,
+/// red on the glyphs left out that no node is near; with `hide` leaving
+/// every glyph in, red on the precondition; with a label never hidden, red
+/// on the fixture's label drawn inside the region; with every label hidden,
+/// red on testament's labels left out with no node there.
+#[test]
+fn test_maps_hide_only_the_glyphs_behind_other_nodes() {
+    let mut faults: Vec<String> = Vec::new();
+    let (mut hidden, mut labels, mut labels_behind) = (0, 0, 0);
+    let mut maps: Vec<(String, String)> = connector_maps()
+        .into_iter()
+        .map(|(name, path)| {
+            let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+            (name, text)
+        })
+        .collect();
+    maps.push(("a label under a node".to_string(), LABEL_FIXTURE.to_string()));
+    for (name, text) in maps {
+        let doc = load(&text).unwrap_or_else(|e| panic!("{name} must load: {e}"));
+        let (paths, _, _) = drawn_paths(&doc);
+        let regions = regions(&doc);
+        for p in &paths {
+            let others: Vec<(Ink, bool)> = regions
+                .iter()
+                .filter(|(node, r)| !p.ends.contains(node) && r.opacity > 0.0 && holds(r.zoom, p.zoom))
+                .flat_map(|(_, r)| r.text.map(|t| (t, false)).into_iter().chain(r.rings))
+                .collect();
+            for ink in &p.drawn {
+                if let Some((reach, _)) = others.iter().find(|(r, ellipse)| inside_region(ink, r, *ellipse)) {
+                    faults.push(format!(
+                        "{name} {}: a glyph drawn at {:.0?} inside the region at {:.0?}",
+                        p.name,
+                        ink.center(),
+                        reach.min
+                    ));
+                }
+            }
+            let own = median(p.inks.windows(2).map(|w| w[0].gap(&w[1])).collect());
+            let margin = own * 1.25 + 0.5;
+            let left_out = p
+                .inks
+                .iter()
+                .filter(|i| !p.drawn.iter().any(|d| d.min == i.min && d.max == i.max));
+            for ink in left_out {
+                hidden += 1;
+                if !others.iter().any(|(r, _)| ink.gap(r) <= margin) {
+                    faults.push(format!(
+                        "{name} {}: a glyph at {:.0?} left out, no other node within {margin:.2}",
+                        p.name,
+                        ink.center()
+                    ));
+                }
+            }
+            if let Some((text, drawn)) = p.label {
+                labels += 1;
+                let inside = others
+                    .iter()
+                    .any(|(r, ellipse)| inside_region(&text, r, *ellipse));
+                let near = others.iter().any(|(r, _)| text.gap(r) <= 0.5);
+                if drawn && inside {
+                    faults.push(format!(
+                        "{name} {}: its label drawn inside a node's region",
+                        p.name
+                    ));
+                }
+                if inside || !drawn {
+                    labels_behind += 1;
+                }
+                if !drawn && !near {
+                    faults.push(format!(
+                        "{name} {}: its label left out, no other node there",
+                        p.name
+                    ));
+                }
+            }
+        }
+    }
+    assert!(hidden > 0, "precondition: some path runs behind a node");
+    assert!(labels > 0, "precondition: some path has a label");
+    assert!(labels_behind > 0, "precondition: some label is behind a node");
+    assert!(
+        faults.is_empty(),
+        "{} faults:\n{}",
         faults.len(),
         faults.join("\n")
     );

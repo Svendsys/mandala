@@ -204,6 +204,13 @@ pub(crate) struct SectionState {
     pub(crate) flow: Option<BoxFlow>,
     /// Its box within its node: its offset and its shaped size.
     pub(crate) local: Option<Rect>,
+    /// The box round its laid-out glyphs' cells, from its box's top-left
+    /// ([`ShapedBox::text_box`](crate::flow::ShapedBox::text_box)), as
+    /// last shaped.
+    pub(crate) text: Option<Rect>,
+    /// That box on the canvas, as last placed: what its node's region is
+    /// made of (#332).
+    pub(crate) drawn: Option<Rect>,
 }
 
 /// What a ring keeps.
@@ -275,6 +282,11 @@ pub(crate) struct LineState {
     pub(crate) straight: bool,
     /// Its curves, once placed: empty until then.
     pub(crate) path: Vec<Curve>,
+    /// Its body's, its caps' and its label's runs as laid, every glyph:
+    /// what its slots want but for the glyphs — and the label, whole — the
+    /// nodes it does not end at hide, which its hide stage leaves out
+    /// (#332).
+    pub(crate) laid: [Option<GlyphRunData>; 4],
 }
 
 /// How one end of a path leaves its junction (#296), as the junction's

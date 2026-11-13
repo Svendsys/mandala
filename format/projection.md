@@ -112,6 +112,30 @@ node to the node it leads to.
   rectangle: the end glyph moves back past the side's midpoint, through
   the rings and never into the rectangle, or on, to keep it. Any other
   path is walked by its fit mode from its start.
+- **Behind a node.** A node's contents take priority over every path
+  that does not end at it. A glyph of a path's body or caps is not drawn
+  where its box — its ink where its ink was read, and otherwise its
+  advance by the line height: a text path's glyphs, and those of a path
+  whose placement rescaled or filled its run — grown by the path's own
+  gap meets the node's *region*, in two parts: the box round its
+  sections' glyphs (each its advance by its line's height, and no glyph
+  of whitespace), a rectangle; and the box round its rings' inks, shaped
+  by its `shape` (an ellipse's is the ellipse in that box). Not its
+  drawn rectangle: a box wider than its
+  text, or a `min_size`, hides nothing past the text, and a node that
+  draws nothing hides nothing. So a path shown on either side of a node
+  stops at least one gap short of it — a gap, and up to one step more
+  where the next glyph falls inside — as it stops short of its own
+  frames. A glyph is drawn whole or not at all, never clipped. The path's
+  own two nodes never hide it. A node hides a path only if it is drawn
+  wherever the path is: a node at opacity 0, or whose zoom window does
+  not hold the path's, hides nothing of it. A path whose two nodes both
+  lie inside another node's ringed region — a ringed container drawn
+  round them — is hidden whole. Hiding changes nothing in the document:
+  the glyphs are drawn again when the node moves off the path. A path's
+  label is hidden whole — never cut, nor slid along the path — where the
+  box round its text meets the region of a node the path does not end
+  at, drawn wherever the label is; a portal end is never hidden.
 
 **Caps** are centered on the path's start (`cap_start`) and end
 (`cap_end`).
