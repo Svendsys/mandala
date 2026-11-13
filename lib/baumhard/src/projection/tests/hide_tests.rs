@@ -1021,12 +1021,10 @@ fn test_projection_a_label_touching_nothing_is_drawn() {
 }
 
 /// A text path's glyphs hide behind a node as an ornament's do, though
-/// their inks are not read at shaping: a letter with no ink measured is
-/// its advance by the line height, not a glyph that draws nothing (#333
-/// keeps "no ink, draws nothing" to runs whose inks were read).
+/// their inks are not read: each is its advance by the line height.
 ///
-/// Control: with every run taken as measured, red on the text path drawn
-/// whole across the node.
+/// Control: with `glyph_ink` giving a glyph whose ink was not read no
+/// box, red on the text path drawn whole across the node.
 #[test]
 fn test_projection_a_text_path_hides_behind_a_node() {
     let text = json!({"fit": "repeat", "spans": [{"text": "words along a path "}]});
