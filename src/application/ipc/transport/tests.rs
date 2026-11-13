@@ -272,7 +272,8 @@ impl Client {
         self.writer.write_all(b"\n").expect("write");
     }
 
-    fn next(&mut self) -> Value {
+    /// The next frame as it came off the wire, newline included.
+    fn next_line(&mut self) -> String {
         let mut line = String::new();
         let n = self
             .reader
@@ -282,6 +283,11 @@ impl Client {
             n > 0,
             "the server closed the connection where a frame was expected"
         );
+        line
+    }
+
+    fn next(&mut self) -> Value {
+        let line = self.next_line();
         serde_json::from_str(&line).unwrap_or_else(|e| panic!("frame is not JSON ({e}): {line:?}"))
     }
 
@@ -807,105 +813,135 @@ fn test_ipc_loopback_shutdown_reaches_a_controller_paused_mid_burst() {
 /// The scenario is built so the last write is large, and so the client is
 /// not reading when the server lets go:
 ///
-/// - Many `describe` replies, more than the pipe holds, so the writer is
-///   held back by the client from the start and the rest queues. Each is
-///   under a write batch and two are over one, so they go out in pairs.
+/// - Big replies, more than the pipe holds, so the writer is held back by
+///   the client and the rest queues. Each is under a write batch and two
+///   are over one. The first ones may go out singly, before the writer
+///   is held back; from then on they go out in pairs, so the last big
+///   reply either ends a pair or starts a batch, and the batch carrying
+///   `shutdown` has two possible shapes (below).
 /// - Then small replies, which reach the writer only once it is held
-///   back, together with `shutdown`. However the writer paired the
-///   `describe` replies before them, the batch carrying `shutdown` also
-///   carries tens of kilobytes of them — never `shutdown` alone, which any
-///   room left in the pipe would take at once. How many there are is
-///   worked out from the sizes of the replies, measured on one of each
-///   first; the test fails on the spot if they no longer give it.
+///   back, together with `shutdown`. In either shape the batch carrying
+///   `shutdown` also carries tens of kilobytes of them — never `shutdown`
+///   alone, which any room left in the pipe would take at once.
 /// - The client reads nothing until the exit is under way, then reads one
-///   `describe` reply at a time and gives the exit a moment to finish
-///   after each. A server that lets go once its last write is handed over
+///   big reply at a time and gives the exit a moment to finish after
+///   each. A server that lets go once its last write is handed over
 ///   finishes during such a pause, with that write still waiting, and the
 ///   client pauses longer before it reads on. One that waits for the pipe
 ///   to take the write cannot finish then.
 ///
-/// Every reply here is the same bytes each time it is asked for: a small
-/// one is a `ping` refused for a parameter it does not take, not a `ping`
-/// answered, whose `now_ms` changes length from one reply to the next
-/// (#350). Ids of one kind all have one width. So one reply of each kind
-/// measures the whole burst exactly, and the arithmetic below is exact.
+/// **The test sizes every reply itself.** Each one is a `describe` refused
+/// for a `command` that is not a string, and the refusal echoes the value,
+/// so its size is the padding the test chose plus a fixed envelope: no
+/// clock, revision or warning in it, nothing that varies from run to run
+/// (#350), and nothing that grows or shrinks with the command table. The
+/// ids of one kind all have one width, one reply of each kind is measured
+/// first, and every reply in the burst is checked against its kind's
+/// size, so the arithmetic below is exact and its premise is checked
+/// rather than assumed. With a big reply of about 48 KiB and a small one
+/// of about 650 bytes, each assert is far from its edge: a big reply has
+/// about 16 KiB to grow before it fills a batch and 16 KiB to shrink
+/// before two stop filling one, and the smaller shape of the last batch
+/// is about 18 KiB over its floor. A change to the refusal's wording
+/// moves these by tens of bytes.
 #[test]
 fn test_ipc_loopback_a_client_behind_at_exit_reads_everything_then_the_end() {
-    const DESCRIBES: usize = 16;
-    // How long the client gives the exit to finish after each `describe`
-    // reply, and how long it stays away once it has.
+    use crate::application::ipc::envelope::{Event, INBOUND_LINE_CAP, OUTBOUND_FRAME_CAP};
+
+    const BIGS: usize = 16;
+    // The padding each kind of reply echoes.
+    const BIG_PAD: usize = 48 << 10;
+    const SMALL_PAD: usize = 512;
+    // How long the client gives the exit to finish after each big reply,
+    // and how long it stays away once it has.
     const GRACE: Duration = Duration::from_millis(100);
     const AWAY: Duration = Duration::from_millis(500);
     // The least the batch carrying `shutdown` may hold. A server that let
     // go too early failed this test on Windows 40 runs out of 40 when the
-    // smaller of that batch's two possible shapes (below) was about 32 KB,
-    // and only 22 out of 30 when it was about 24 KB: a smaller batch can
-    // fit in the room the pipe has left, and then nothing is pending when
-    // the server lets go.
+    // smaller of that batch's two shapes was about 32 KB, and only 22 out
+    // of 30 when it was about 24 KB: a smaller batch can fit in the room
+    // the pipe has left, and then nothing is pending when the server lets
+    // go.
     const LEAST_LAST_BATCH: usize = 30 << 10;
-    // How far under a write batch the small replies together stay.
-    const SPARE: usize = 2 << 10;
+    // A big request and its reply are far inside the protocol's caps.
+    const _: () = assert!(4 * BIG_PAD <= INBOUND_LINE_CAP && 4 * BIG_PAD <= OUTBOUND_FRAME_CAP);
     // The exit's clock starts before the client reads anything, and a
     // server that waits for the pipe to take its last write finishes only
     // after every grace has run out: together they must leave it well
     // inside its own exit deadline. It never finishes before `AWAY`.
     const _: () = assert!(
-        (READER_PAUSE.as_millis() + GRACE.as_millis() * DESCRIBES as u128) * 2 <= SHUTDOWN_FLUSH.as_millis()
+        (READER_PAUSE.as_millis() + GRACE.as_millis() * BIGS as u128) * 2 <= SHUTDOWN_FLUSH.as_millis()
     );
 
     let harness = Harness::running("ipc-behind-at-exit");
     let (mut client, _) = Client::attach(&harness.path);
-    let describe_id = |n: usize| format!("describe-{n:02}");
-    let describe = |n: usize| format!(r#"{{"id":"{}","cmd":"describe"}}"#, describe_id(n));
-    // The longest id the protocol takes is 256 bytes serialized; a long
-    // one keeps the small replies few enough to all fit the outbound
-    // queue at once.
-    let small_id = |n: usize| format!("small-{n:03}-{}", "x".repeat(240));
-    let small = |n: usize| format!(r#"{{"id":"{}","cmd":"ping","pad":true}}"#, small_id(n));
-
-    let mut round_trip = |request: &str| {
-        client.send(request);
-        let mut line = String::new();
-        client
-            .reader
-            .read_line(&mut line)
-            .expect("a frame within the timeout");
-        line.len()
+    let refused = |id: &str, pad: usize| {
+        format!(
+            r#"{{"id":"{id}","cmd":"describe","command":["{}"]}}"#,
+            "x".repeat(pad)
+        )
     };
-    let describe_len = round_trip(&describe(99));
-    let small_len = round_trip(&small(999));
-    let goodbye = Frame::Event(crate::application::ipc::envelope::Event::shutdown())
-        .encode(crate::application::ipc::envelope::OUTBOUND_FRAME_CAP)
+    let big_id = |n: usize| format!("big-{n:02}");
+    let small_id = |n: usize| format!("small-{n:03}");
+    // Read the next reply: it must be the refusal `id` expects, `len`
+    // bytes long when a length is given, and the length is returned.
+    fn refusal(client: &mut Client, id: &str, len: Option<usize>) -> usize {
+        let line = client.next_line();
+        let reply: Value = serde_json::from_str(&line).expect("the reply is JSON");
+        assert_eq!(reply["id"], json!(id), "replies arrive in order, none skipped");
+        assert_eq!(
+            reply["error"]["code"],
+            json!("invalid_params"),
+            "every reply here is a refusal, whose size the test chose"
+        );
+        if let Some(len) = len {
+            assert_eq!(
+                line.len(),
+                len,
+                "reply {id} is not the size its kind measured, so the batches are not the ones worked out"
+            );
+        }
+        line.len()
+    }
+
+    client.send(&refused(&big_id(99), BIG_PAD));
+    let big_len = refusal(&mut client, &big_id(99), None);
+    client.send(&refused(&small_id(999), SMALL_PAD));
+    let small_len = refusal(&mut client, &small_id(999), None);
+    let goodbye = Frame::Event(Event::shutdown())
+        .encode(OUTBOUND_FRAME_CAP)
         .expect("the event fits a frame")
         .len();
-    // The writer cuts a batch once it holds `WRITE_BATCH_BYTES` or more, so
-    // `describe` replies go out in pairs, and the batch carrying `shutdown`
-    // begins either at the first small reply (every small reply, then
-    // `shutdown`) or at the last `describe` reply (as many small replies
-    // as take it to the cut, then the rest of them, with `shutdown`).
+    // The writer cuts a batch once it holds `WRITE_BATCH_BYTES` or more,
+    // or when the queue is empty. The batch carrying `shutdown` begins
+    // either at the first small reply (when the last big reply ends a
+    // pair: every small reply, then `shutdown`) or at the last big reply
+    // (as many small replies as take it to the cut, then the rest, with
+    // `shutdown`). The small replies stay strictly under the cut, so the
+    // first shape is never cut before `shutdown`, and they all fit the
+    // outbound queue with the big ones and `shutdown`.
     let cut = connection::WRITE_BATCH_BYTES;
     assert!(
-        describe_len < cut && 2 * describe_len >= cut,
-        "a `describe` reply ({describe_len} bytes) must be under a write batch ({cut} bytes) \
-         and two of them over it"
+        big_len < cut && 2 * big_len >= cut,
+        "a big reply ({big_len} bytes) must be under a write batch ({cut} bytes) and two of them over it"
     );
-    let smalls = (cut - SPARE) / small_len;
-    let riding = (cut - describe_len).div_ceil(small_len);
-    let from_last_describe = smalls.saturating_sub(riding) * small_len + goodbye;
+    let smalls = ((cut - 1) / small_len).min(OUTBOUND_QUEUE_CAP - BIGS - 1);
+    let riding = (cut - big_len).div_ceil(small_len);
+    let from_last_big = smalls.saturating_sub(riding) * small_len + goodbye;
     assert!(
-        from_last_describe >= LEAST_LAST_BATCH && DESCRIBES + smalls + 2 < OUTBOUND_QUEUE_CAP,
-        "{smalls} small replies of {small_len} bytes after `describe` replies of {describe_len} \
-         bytes leave the batch carrying `shutdown` as small as {from_last_describe} bytes, under \
-         {LEAST_LAST_BATCH}, or overfill the outbound queue ({OUTBOUND_QUEUE_CAP})"
+        from_last_big >= LEAST_LAST_BATCH,
+        "the batch carrying `shutdown` could be as small as {from_last_big} bytes, under \
+         {LEAST_LAST_BATCH}: {smalls} small replies of {small_len} bytes, {riding} of them riding \
+         with the last big reply of {big_len}"
     );
 
     let mut burst = String::new();
-    for n in 0..DESCRIBES {
-        burst.push_str(&describe(n));
+    for n in 0..BIGS {
+        burst.push_str(&refused(&big_id(n), BIG_PAD));
         burst.push('\n');
     }
     for n in 0..smalls {
-        burst.push_str(&small(n));
+        burst.push_str(&refused(&small_id(n), SMALL_PAD));
         burst.push('\n');
     }
     client
@@ -919,13 +955,8 @@ fn test_ipc_loopback_a_client_behind_at_exit_reads_everything_then_the_end() {
     thread::sleep(READER_PAUSE);
     let mut finished = false;
     let mut stayed_away = false;
-    for n in 0..DESCRIBES {
-        let reply = client.next();
-        assert_eq!(
-            reply["id"],
-            json!(describe_id(n)),
-            "replies arrive in order, none skipped"
-        );
+    for n in 0..BIGS {
+        refusal(&mut client, &big_id(n), Some(big_len));
         let grace = Instant::now() + GRACE;
         while !finished && Instant::now() < grace {
             finished = exiting.is_finished();
@@ -937,13 +968,7 @@ fn test_ipc_loopback_a_client_behind_at_exit_reads_everything_then_the_end() {
         }
     }
     for n in 0..smalls {
-        let reply = client.next();
-        assert_eq!(
-            reply["id"],
-            json!(small_id(n)),
-            "replies arrive in order, none skipped"
-        );
-        assert_eq!(reply["error"]["code"], json!("invalid_params"));
+        refusal(&mut client, &small_id(n), Some(small_len));
     }
     assert_eq!(
         client.next(),
