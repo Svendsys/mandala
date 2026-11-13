@@ -66,11 +66,12 @@
 //! **Every wait ends.** The acceptor's wait for a client ends when the
 //! server closes its endpoint ([`BoundPipe::close`], also on drop). A
 //! write, and the wait for the pipe to take the last one, ends after
-//! [`STALLED_WRITE_TIMEOUT`] without progress, or at a hang-up. A read waits on the client for as long as it stays — an
-//! idle controller is a legal one — and ends at a hang-up, which the
-//! server sends on every exit, graceful or not. A refusal ends when the
-//! refused client leaves or after [`REJECT_GRACE`], whichever is first,
-//! and always with a disconnect.
+//! [`STALLED_WRITE_TIMEOUT`] without progress, or at a hang-up. A read
+//! waits on the client for as long as it stays — an idle controller is
+//! a legal one — and ends at a hang-up, which the server sends on every
+//! exit, graceful or not. A refusal ends when the refused client leaves
+//! or after [`REJECT_GRACE`], whichever is first, and always with a
+//! disconnect.
 //!
 //! **Closing.** A connection that ended in order (after the `shutdown`
 //! event, or a client that left) is closed by dropping the instance,
@@ -80,8 +81,11 @@
 //! the driver, where an exiting process would cancel it, so the writer
 //! does not finish — and a graceful exit does not learn the `shutdown`
 //! event is out — before then. One that failed — a stalled or broken
-//! write, or a hang-up — is disconnected first, which discards it. The
-//! instance's handle is closed when the driver has seen its last
+//! write, or a hang-up — is disconnected first, which discards what the
+//! client has not read. A graceful exit whose bound runs out while the
+//! writer still waits for the last write hangs up, so a client that far
+//! behind loses its unread output, `shutdown` among it
+//! (`format/ipc.md` §Windows, "Closing"). The instance's handle is closed when the driver has seen its last
 //! operation complete, which needs a runtime still reading completions:
 //! hence one runtime for the life of the process ([`io_runtime`]).
 
@@ -182,20 +186,38 @@ pub(super) fn bind(name: &Path) -> Result<(PipeAcceptor, BoundPipe), String> {
 /// The runtime every pipe's I/O runs on: one per process, made by the
 /// first `bind` and never dropped.
 ///
-/// **Why it must outlive every instance.** A write on a tokio pipe
-/// instance returns once the bytes are handed to the driver (mio), which
-/// issues the overlapped `WriteFile` and keeps the instance's state, and
-/// its handle, alive until that write's completion is taken off the
-/// completion port. Dropping the instance cancels a pending read but not
-/// a pending write, so a connection that ends in order with its last
-/// write still waiting for the client to make room is released only
-/// when the runtime dequeues that completion. A runtime dropped before
-/// then — as one owned by the server was, a few milliseconds after a
-/// graceful exit — leaves the completion queued on a port nobody reads:
-/// the instance and its handle leak, and the client, having read every
-/// byte, waits for an end of stream that never comes (#343). The runtime
-/// therefore lives as long as the process, which ends every handle it
-/// holds when it exits.
+/// **Why it must outlive every instance.** mio keeps a pipe instance's
+/// state, and its handle, alive while any overlapped operation on it is
+/// in flight, until that operation's completion is taken off the
+/// completion port. Dropping the instance cancels a pending read or
+/// connect, but the cancellation completes later, asynchronously, and a
+/// pending write is not canceled at all. A runtime dropped before such a
+/// completion arrives leaves it queued on a port nobody reads — the
+/// driver's last drain takes only what has already arrived — and the
+/// instance and its handle leak.
+///
+/// That is how #343 failed: the runtime, owned by the server, went a few
+/// milliseconds after a graceful exit while the last write still waited
+/// for the client to make room, and the client, having read every byte,
+/// waited for an end of stream that never came. [`last_write_taken`] now
+/// keeps an orderly close from letting go before that write is done, but
+/// three operations are still in flight when an instance is let go, and
+/// a dying runtime could strand any of them:
+///
+/// - the zero-length probe [`last_write_taken`] ends with;
+/// - the reader's pending read, which dropping the instance cancels;
+/// - on [`BoundPipe::close`], the waiting instance's pending
+///   `ConnectNamedPipe`, also canceled by its drop. Stranding that one
+///   leaks a handle on the pipe *name*, so a later `bind` of the same
+///   name, which insists on creating the first instance, could be
+///   refused.
+///
+/// The second alone is why a runtime per server would not do, even with
+/// [`last_write_taken`]: every connection has a read in flight when it
+/// ends. Draining the port before dropping the runtime would not do
+/// either — neither tokio nor mio says which operations are in flight,
+/// and a write's completion waits on the client. So the runtime lives as
+/// long as the process, which ends every handle it holds when it exits.
 fn io_runtime() -> io::Result<&'static Runtime> {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
     if let Some(runtime) = RUNTIME.get() {
