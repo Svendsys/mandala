@@ -285,9 +285,26 @@ impl Client {
         serde_json::from_str(&line).unwrap_or_else(|e| panic!("frame is not JSON ({e}): {line:?}"))
     }
 
-    fn at_eof(&mut self) -> bool {
+    /// Assert that the next read is the end of the stream, naming what
+    /// was read instead when it is not: a frame after the last one, or
+    /// the error — its kind, the raw OS code and how long the read took,
+    /// so a read the client's own timeout ended is told apart from one
+    /// the transport failed.
+    #[track_caller]
+    fn assert_at_eof(&mut self, what: &str) {
         let mut line = String::new();
-        matches!(self.reader.read_line(&mut line), Ok(0))
+        let started = Instant::now();
+        match self.reader.read_line(&mut line) {
+            Ok(0) => {}
+            Ok(n) => panic!("{what}: read {n} more bytes where the end of the stream was expected: {line:?}"),
+            Err(e) => panic!(
+                "{what}: the read failed where the end of the stream was expected, after {:?}: {e} \
+                 (kind {:?}, OS error {:?})",
+                started.elapsed(),
+                e.kind(),
+                e.raw_os_error()
+            ),
+        }
     }
 }
 
@@ -412,10 +429,7 @@ fn test_ipc_loopback_refuses_a_second_client_immediately() {
         second.next(),
         json!({ "event": "connection_rejected", "data": { "reason": "busy" } })
     );
-    assert!(
-        second.at_eof(),
-        "a refused connection is closed after its one frame"
-    );
+    second.assert_at_eof("a refused connection is closed after its one frame");
 
     first.send(r#"{"id":1,"cmd":"ping"}"#);
     assert_eq!(first.next()["id"], json!(1), "the controller is undisturbed");
@@ -484,7 +498,7 @@ fn test_ipc_loopback_half_close_still_gets_every_reply() {
     for id in 0..3 {
         assert_eq!(client.next()["id"], json!(id));
     }
-    assert!(client.at_eof(), "the server closes once every reply is written");
+    client.assert_at_eof("the server closes once every reply is written");
 }
 
 /// A client that closes its connection right after a final line it
@@ -648,7 +662,7 @@ fn test_ipc_loopback_shutdown_says_so_and_removes_the_socket() {
     let path = harness.path.clone();
     harness.shutdown();
     assert_eq!(client.next(), json!({ "event": "shutdown", "data": {} }));
-    assert!(client.at_eof(), "the connection closes after `shutdown`");
+    client.assert_at_eof("the connection closes after `shutdown`");
     #[cfg(unix)]
     assert!(!path.exists(), "a graceful exit removes the socket file");
     #[cfg(windows)]
@@ -772,7 +786,7 @@ fn test_ipc_loopback_shutdown_reaches_a_controller_paused_mid_burst() {
         answered += 1;
     }
     assert!(answered > 0, "the burst was under way when the app exited");
-    assert!(client.at_eof(), "the connection closes after `shutdown`");
+    client.assert_at_eof("the connection closes after `shutdown`");
     join_within(exiting, "the shutdown");
 }
 
