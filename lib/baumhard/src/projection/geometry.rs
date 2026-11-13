@@ -519,13 +519,27 @@ pub(crate) fn untangle(lanes: &[Lane]) -> Vec<f32> {
         } else {
             path_through(lane.start, lane.end, &lane.via, h)
         };
-        sample(&curves, 0.25 * lane.width, CLEARANCE * lane.hold.max(lane.width))
+        let taken = sample(&curves, 0.25 * lane.width, CLEARANCE * lane.hold.max(lane.width));
+        #[cfg(test)]
+        UNTANGLE_SAMPLED.with(|count| count.set(count.get() + taken.len()));
+        taken
     };
-    let mut samples: Vec<Vec<Vec2>> = lanes
-        .iter()
-        .zip(&handles)
-        .map(|(lane, &h)| lay(lane, h))
-        .collect();
+    // Whether the fuzz harness's ceiling leaves room for a lane's samples,
+    // taken from it lane by lane, before they are gridded: past it, no
+    // further lane is gridded and no further round taken. Always, in a
+    // shipped build, which has no ceiling.
+    #[cfg(any(test, fuzzing))]
+    let within = |taken: &Vec<Vec2>| within_ceiling(taken.len());
+    #[cfg(not(any(test, fuzzing)))]
+    let within = |_: &Vec<Vec2>| true;
+    let mut samples: Vec<Vec<Vec2>> = Vec::with_capacity(lanes.len());
+    for (lane, &h) in lanes.iter().zip(&handles) {
+        let taken = lay(lane, h);
+        if !within(&taken) {
+            return handles;
+        }
+        samples.push(taken);
+    }
     // A round measures again only the lanes whose curves the last one
     // changed, against every lane's points, which stay in one grid from
     // round to round: two lanes neither of which changed are as near, or
@@ -540,30 +554,23 @@ pub(crate) fn untangle(lanes: &[Lane]) -> Vec<f32> {
     let mut pairs = rustc_hash::FxHashSet::default();
     let mut best = (usize::MAX, handles.clone());
     let mut always: Option<usize> = None;
-    // The samples this round took, for the fuzz harness's ceiling.
-    #[cfg(any(test, fuzzing))]
-    let mut taken: usize = samples.iter().map(Vec::len).sum();
     for round in 0..UNTANGLE_ROUNDS {
         if round > 0 {
-            #[cfg(any(test, fuzzing))]
-            {
-                taken = 0;
-            }
+            let mut cut = false;
             for (k, lane) in lanes.iter().enumerate().filter(|&(k, _)| fresh[k]) {
                 grid.remove(k, &samples[k]);
                 samples[k] = lay(lane, handles[k]);
+                if !within(&samples[k]) {
+                    cut = true;
+                    break;
+                }
                 #[cfg(test)]
                 UNTANGLE_GRIDDED.with(|count| count.set(count.get() + samples[k].len()));
-                #[cfg(any(test, fuzzing))]
-                {
-                    taken += samples[k].len();
-                }
                 grid.insert(k, &samples[k]);
             }
-        }
-        #[cfg(any(test, fuzzing))]
-        if !within_ceiling(taken) {
-            break;
+            if cut {
+                break;
+            }
         }
         #[cfg(test)]
         UNTANGLE_GRIDS.with(|count| count.set(count.get() + 1));
@@ -976,9 +983,10 @@ pub(crate) fn near_pairs(
 thread_local! {
     /// The fuzz harness's ceiling on the samples [`untangle`] takes on
     /// this thread, and how many are left of it: `None`, as it is unless a
-    /// harness sets it, for no ceiling. A round that would take more than
-    /// is left takes none, and [`untangle`] takes no further rounds and
-    /// sets [`UNTANGLE_CUT`]. Test and fuzz builds only (`cfg(test)`, and
+    /// harness sets it, for no ceiling. A lane whose samples would take
+    /// more than is left is not gridded, and [`untangle`] grids no further
+    /// lane, takes no further round, and sets [`UNTANGLE_CUT`]: so it
+    /// samples at most the ceiling and one lane. Test and fuzz builds only (`cfg(test)`, and
     /// the `cfg(fuzzing)` `cargo fuzz` builds with): a shipped build has
     /// no ceiling and reads none.
     pub(crate) static UNTANGLE_CEILING: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
@@ -988,9 +996,9 @@ thread_local! {
     pub(crate) static UNTANGLE_CUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Whether [`UNTANGLE_CEILING`] leaves room for a round that takes
-/// `points` samples, taking them from it; when it does not, it is spent
-/// and [`UNTANGLE_CUT`] set. Test and fuzz builds only. O(1).
+/// Whether [`UNTANGLE_CEILING`] leaves room for a lane's `points`
+/// samples, taking them from it; when it does not, it is spent and
+/// [`UNTANGLE_CUT`] set. Test and fuzz builds only. O(1).
 #[cfg(any(test, fuzzing))]
 fn within_ceiling(points: usize) -> bool {
     UNTANGLE_CEILING.with(|ceiling| match ceiling.get() {
@@ -1016,6 +1024,9 @@ thread_local! {
     /// grid on this thread: every lane's once, and after that a lane's
     /// again only when its curve changed.
     pub(crate) static UNTANGLE_GRIDDED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter: the samples [`untangle`] has taken on this thread,
+    /// gridded or not.
+    pub(crate) static UNTANGLE_SAMPLED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test counter: the entries of the tables [`NearGrid::near_pairs`]
     /// has allocated on this thread to know which pairs it has found.
     pub(crate) static UNTANGLE_SCRATCH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

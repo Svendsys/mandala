@@ -57,14 +57,15 @@
 //! measures it: it sets `projection::geometry::UNTANGLE_CEILING` to
 //! [`MAX_UNTANGLE_SAMPLES`](crate::projection::tests::projection_fuzz::MAX_UNTANGLE_SAMPLES)
 //! samples for the whole check, every projection of it together;
-//! `untangle` takes from it what each round samples, and when a round
-//! would take more than is left it takes no further rounds, and no
-//! samples at all after that in the check, and marks the check. A marked
+//! `untangle` takes from it what each lane samples, and when a lane's
+//! samples would take more than is left it grids no further lane and
+//! takes no further round, and no samples at all after that in the check,
+//! and marks the check. A marked
 //! check is abandoned: what it found is not this map's, so nothing is
 //! asserted of it, and it is counted as cut short. The ceiling and the
 //! mark are compiled into test and fuzz builds only (`cfg(test)`,
 //! `cfg(fuzzing)`). So one check's work in `untangle` is at most the
-//! ceiling and the one round that reaches it; the rest of the check is
+//! ceiling and the one lane that reaches it; the rest of the check is
 //! bounded by the coordinate bound above and the engine's own caps.
 
 use std::cell::Cell;
@@ -181,14 +182,10 @@ pub fn check_projects(doc: &Document) -> Result<(), String> {
     }
     #[cfg(any(test, fuzzing))]
     {
-        use crate::projection::geometry::{UNTANGLE_CEILING, UNTANGLE_CUT};
-        UNTANGLE_CEILING.with(|ceiling| ceiling.set(Some(MAX_UNTANGLE_SAMPLES)));
-        UNTANGLE_CUT.with(|cut| cut.set(false));
-        let checked = check_within_ceiling(doc);
-        UNTANGLE_CEILING.with(|ceiling| ceiling.set(None));
+        let (checked, cut) = under_ceiling(|| check_within_ceiling(doc));
         // Cut short, the map was not laid out as it lays out: whatever the
         // check found, it is not this map's, and is not reported.
-        if UNTANGLE_CUT.with(|cut| cut.replace(false)) {
+        if cut {
             CUT.with(|n| n.set(n.get() + 1));
             return Ok(());
         }
@@ -200,6 +197,28 @@ pub fn check_projects(doc: &Document) -> Result<(), String> {
         PROJECTED.with(|n| n.set(n.get() + 1));
         check_within_ceiling(doc)
     }
+}
+
+/// `check` under the untangling ceiling, [`MAX_UNTANGLE_SAMPLES`], and
+/// whether the ceiling cut it short. The ceiling and the mark are clear
+/// again however `check` ends, by return or by panic. Test and fuzz
+/// builds only. O(`check`).
+#[cfg(any(test, fuzzing))]
+pub(crate) fn under_ceiling<R>(check: impl FnOnce() -> R) -> (R, bool) {
+    use crate::projection::geometry::{UNTANGLE_CEILING, UNTANGLE_CUT};
+    /// Clears the ceiling and the mark when it goes.
+    struct Clear;
+    impl Drop for Clear {
+        fn drop(&mut self) {
+            UNTANGLE_CEILING.with(|ceiling| ceiling.set(None));
+            UNTANGLE_CUT.with(|cut| cut.set(false));
+        }
+    }
+    let _clear = Clear;
+    UNTANGLE_CEILING.with(|ceiling| ceiling.set(Some(MAX_UNTANGLE_SAMPLES)));
+    UNTANGLE_CUT.with(|cut| cut.set(false));
+    let checked = check();
+    (checked, UNTANGLE_CUT.with(Cell::get))
 }
 
 /// [`check_projects`] once the map is inside the bound, under the

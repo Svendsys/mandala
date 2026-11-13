@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::projection::tests::maps::{load_map, node};
 use crate::projection::tests::projection_fuzz::{
-    check_projects, projection_counts, within_bound, EXTENT, MAX_UNITS, MAX_UNTANGLE_SAMPLES,
+    check_projects, projection_counts, under_ceiling, within_bound, EXTENT, MAX_UNITS, MAX_UNTANGLE_SAMPLES,
 };
 use crate::util::tests::choices::Choices;
 
@@ -104,15 +104,15 @@ fn seed_copies(copies: u32) -> crate::document::ids::Document {
 /// What `check_projects` did with `doc`: whether it projected it, and
 /// whether it abandoned it as cut short, and the samples `untangle` took.
 fn checked(doc: &crate::document::ids::Document) -> (bool, bool, usize) {
-    use crate::projection::geometry::UNTANGLE_GRIDDED;
+    use crate::projection::geometry::UNTANGLE_SAMPLED;
     let (projected0, _, cut0) = projection_counts();
-    UNTANGLE_GRIDDED.with(|c| c.set(0));
+    UNTANGLE_SAMPLED.with(|c| c.set(0));
     check_projects(doc).unwrap();
     let (projected, _, cut) = projection_counts();
     (
         projected > projected0,
         cut > cut0,
-        UNTANGLE_GRIDDED.with(std::cell::Cell::get),
+        UNTANGLE_SAMPLED.with(std::cell::Cell::get),
     )
 }
 
@@ -122,8 +122,8 @@ fn test_a_map_whose_untangling_reaches_the_ceiling_is_abandoned_and_counted() {
     // fewer samples in a check than `MAX_UNTANGLE_SAMPLES`, and is
     // projected and checked; two take more, and the check is abandoned
     // when they reach it, counted as cut short and not as projected, and
-    // no more samples are taken than the ceiling and the one round that
-    // reached it — here at most nine curves at the sampling's cap (#346).
+    // no more samples are taken than the ceiling and the one lane that
+    // reached it — here at most three curves at the sampling's cap (#346).
     // The failing inputs are a ceiling half as high, which abandons the
     // one copy, and samples never taken from it, which projects the two.
     for doc in [seed_copies(1), seed_copies(2)] {
@@ -136,7 +136,7 @@ fn test_a_map_whose_untangling_reaches_the_ceiling_is_abandoned_and_counted() {
     );
     let (projected, cut, taken) = checked(&seed_copies(2));
     assert!(
-        !projected && cut && taken <= MAX_UNTANGLE_SAMPLES + 9 * 65_536,
+        !projected && cut && taken <= MAX_UNTANGLE_SAMPLES + 3 * 65_536,
         "two copies: projected {projected}, cut {cut}, {taken} samples"
     );
 }
@@ -144,19 +144,60 @@ fn test_a_map_whose_untangling_reaches_the_ceiling_is_abandoned_and_counted() {
 #[test]
 fn test_the_untangle_ceiling_is_unset_but_for_a_check() {
     // A test that does not set the harness's ceiling untangles in full:
-    // unset on a fresh thread, and unset again once a check is done.
-    // The failing input is the ceiling left set after a check.
-    use crate::projection::geometry::UNTANGLE_CEILING;
-    assert_eq!(
-        UNTANGLE_CEILING.with(std::cell::Cell::get),
-        None,
-        "unset on a fresh thread"
+    // unset on a fresh thread, unset and unmarked again once a check is
+    // done — one cut short, and one that panics. The failing inputs are
+    // the ceiling left set after a check, and the ceiling and the mark
+    // cleared only when a check returns.
+    use crate::projection::geometry::{UNTANGLE_CEILING, UNTANGLE_CUT};
+    let clear = || {
+        (
+            UNTANGLE_CEILING.with(std::cell::Cell::get),
+            UNTANGLE_CUT.with(std::cell::Cell::get),
+        )
+    };
+    assert_eq!(clear(), (None, false), "unset on a fresh thread");
+    let (_, cut, _) = checked(&seed_copies(2));
+    assert!(cut, "precondition: the check was cut short");
+    assert_eq!(clear(), (None, false), "unset after a check cut short");
+    let panicked = std::panic::catch_unwind(|| {
+        under_ceiling(|| {
+            UNTANGLE_CUT.with(|cut| cut.set(true));
+            panic!("a check that panics");
+        })
+    });
+    assert!(panicked.is_err(), "precondition: the check panicked");
+    assert_eq!(clear(), (None, false), "unset after a check that panicked");
+}
+
+#[test]
+fn test_the_untangle_ceiling_is_overshot_by_one_lane_at_most() {
+    // A junction of 128 thin straight paths, each sampled at the cap, so
+    // that its first round alone would take four times the ceiling: under
+    // the ceiling, `untangle` takes at most the ceiling and the one lane
+    // that reaches it, and marks the check. The failing input is the
+    // ceiling taken from once a round, after every lane of it is sampled.
+    use crate::projection::geometry::{untangle, Lane, UNTANGLE_SAMPLED};
+    use glam::Vec2;
+    let lanes: Vec<Lane> = (0..128)
+        .map(|k| Lane {
+            start: (Vec2::new(k as f32, 0.0), Vec2::Y, 0.0),
+            hold: 0.0,
+            end: (Vec2::new(k as f32, 2000.0), -Vec2::Y, 0.0),
+            via: Vec::new(),
+            width: 0.01,
+            straight: true,
+        })
+        .collect();
+    UNTANGLE_SAMPLED.with(|c| c.set(0));
+    let (_, cut) = under_ceiling(|| untangle(&lanes));
+    let sampled = UNTANGLE_SAMPLED.with(std::cell::Cell::get);
+    assert!(
+        cut && 128 * 65_536 > 4 * MAX_UNTANGLE_SAMPLES,
+        "precondition: cut, and one round four times the ceiling"
     );
-    checked(&seed_copies(2));
-    assert_eq!(
-        UNTANGLE_CEILING.with(std::cell::Cell::get),
-        None,
-        "unset after a check"
+    assert!(
+        sampled <= MAX_UNTANGLE_SAMPLES + 65_536,
+        "{sampled} samples taken under a ceiling of {MAX_UNTANGLE_SAMPLES}"
     );
 }
 
