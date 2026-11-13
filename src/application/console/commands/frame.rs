@@ -123,7 +123,11 @@ const KEYS: &[Key] = &[
 
 /// The ring keys `frame ring` reads.
 const RING_KEYS: &[Key] = &[
-    Key::new("text", "the ring's text, one span", free("text")),
+    Key::new(
+        "text",
+        "the ring's text, one span; on a light, heavy or double box, its sides and corners follow",
+        free("text"),
+    ),
     Key::new(
         "size",
         "font size, a fraction of the node's shorter side",

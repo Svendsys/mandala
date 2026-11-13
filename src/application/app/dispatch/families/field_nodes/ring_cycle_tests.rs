@@ -23,10 +23,11 @@ use crate::application::app::dispatch::cross_dispatch::DispatchOutcome;
 use crate::application::document::MindMapDocument;
 use crate::application::keybinds::Action;
 
-/// Four nodes: one with no frame; one with the light ring the cycle made
+/// Five nodes: one with no frame; one with the light ring the cycle made
 /// before #338 (spans alone); one with an author's heavy ring whose
-/// corners are diamonds, sized and colored; and one with a frame of no
-/// ring.
+/// corners are diamonds, sized and colored; one with a frame of no ring;
+/// and one with a frame of two rings, a heavy ring of spans alone inside
+/// the light box.
 const FIXTURE: &str = r##"{
   "format": 1,
   "name": "Ring cycle",
@@ -53,10 +54,20 @@ const FIXTURE: &str = r##"{
       "position": [300.0, 300.0],
       "sections": [{"spans": [{"text": "ringless"}]}],
       "frame": {"fit": "repeat"}
+    },
+    {
+      "id": 5,
+      "position": [600.0, 0.0],
+      "sections": [{"spans": [{"text": "two rings"}]}],
+      "frame": {"fit": "repeat", "rings": [{"spans": [{"text": "━"}]}, {"spans": [{"text": "─"}], "vertical": "│", "corners": ["┌", "┐", "┘", "└"]}]}
     }
   ]
 }
 "##;
+
+/// Node 5's two rings, as the fixture spells them: a heavy ring of
+/// spans alone, then the light box.
+const N5_RINGS: &str = r#""rings": [{"spans": [{"text": "━"}]}, {"spans": [{"text": "─"}], "vertical": "│", "corners": ["┌", "┐", "┘", "└"]}]"#;
 
 /// Node 2's frame, as the fixture spells it.
 const N2_FRAME: &str = r#""frame": {"fit": "repeat", "rings": [{"spans": [{"text": "─"}]}]}"#;
@@ -247,5 +258,78 @@ fn test_a_new_text_takes_a_boxs_keys_along_and_leaves_an_authors_alone() {
     )]);
     holds(&mut doc, "an author's ring", &want, |doc| {
         run_line(doc, "frame ring 0 text=*").expect("applies");
+    });
+}
+
+/// **Several frames cycled at once each take the set after their own,
+/// in one edit that one undo takes back whole.** Nodes 1 to 4 selected
+/// together, one `CycleFrameContent`: the bare node gets the light box,
+/// node 2's light ring the heavy box, node 3's author's heavy ring the
+/// double box, and node 4's ringless frame the light box.
+///
+/// Controls: every selected ring sent to the set after the *first*
+/// ring's — red at "four frames: the saved document"; a journal's revert
+/// writing back its newest entry alone — red at "four frames: one undo
+/// gives back the ring before it, whole".
+#[test]
+fn test_frames_cycled_together_each_take_the_set_after_their_own() {
+    let light_ring = r#"{"spans": [{"text": "─"}], "vertical": "│", "corners": ["┌", "┐", "┘", "└"]}"#;
+    let want = edited(&[
+        (
+            r#""sections": [{"spans": [{"text": "bare"}]}]"#,
+            &format!(
+                "\"sections\": [{{\"spans\": [{{\"text\": \"bare\"}}]}}],\n      \"frame\": {{\"fit\": \"repeat\", \"rings\": [{light_ring}]}}"
+            ),
+        ),
+        (N2_FRAME, &n2_frame("━", "┃", ["┏", "┓", "┛", "┗"])),
+        (
+            N3_RING,
+            r##"{"fit": "repeat", "size": 0.16, "color": "#ff0000", "spans": [{"text": "═"}], "vertical": "║", "corners": ["╔", "╗", "╝", "╚"]}"##,
+        ),
+        (
+            r#""frame": {"fit": "repeat"}"#,
+            &format!("\"frame\": {{\"fit\": \"repeat\", \"rings\": [{light_ring}]}}"),
+        ),
+    ]);
+    let mut doc = fixture();
+    let nodes = [1, 2, 3, 4].map(|ident| doc.doc().node_by_ident(NodeIdent(ident)).expect("the node"));
+    doc.selection.set(nodes.to_vec());
+    holds(&mut doc, "four frames", &want, cycle);
+}
+
+/// **The cycle changes a frame's first ring alone; `frame ring 1 text=`
+/// takes the box keys of the second ring along.** Node 5's heavy ring of
+/// spans alone steps to the double box and its second ring, the light
+/// box, stays as it is; then `frame ring 1 text=═` makes that second ring
+/// the double box, and `text=*` takes its keys off.
+///
+/// Controls: the cycle changing every ring of a frame — red at "ring 0
+/// only: the saved document"; `text=` reading whether ring 0, not the
+/// ring it sets, is a box — red at "ring 1 to another box".
+#[test]
+fn test_the_cycle_changes_the_first_ring_alone_and_ring_one_takes_its_keys_along() {
+    let mut doc = fixture();
+    select(&mut doc, 5);
+    let cycled = edited(&[(
+        N5_RINGS,
+        r#""rings": [{"spans": [{"text": "═"}], "vertical": "║", "corners": ["╔", "╗", "╝", "╚"]}, {"spans": [{"text": "─"}], "vertical": "│", "corners": ["┌", "┐", "┘", "└"]}]"#,
+    )]);
+    holds(&mut doc, "ring 0 only", &cycled, cycle);
+
+    let mut doc = fixture();
+    select(&mut doc, 5);
+    let doubled = edited(&[(
+        N5_RINGS,
+        r#""rings": [{"spans": [{"text": "━"}]}, {"spans": [{"text": "═"}], "vertical": "║", "corners": ["╔", "╗", "╝", "╚"]}]"#,
+    )]);
+    holds(&mut doc, "ring 1 to another box", &doubled, |doc| {
+        run_line(doc, "frame ring 1 text=═").expect("applies");
+    });
+    let off = edited(&[(
+        N5_RINGS,
+        r#""rings": [{"spans": [{"text": "━"}]}, {"spans": [{"text": "*"}]}]"#,
+    )]);
+    holds(&mut doc, "ring 1 off a box", &off, |doc| {
+        run_line(doc, "frame ring 1 text=*").expect("applies");
     });
 }

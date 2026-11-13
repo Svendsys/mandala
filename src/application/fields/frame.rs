@@ -8,7 +8,11 @@
 //! **Box-drawing glyphs are ring content** (D8): there are no presets.
 //! What [`cycle`] sets is a ring's ordinary keys — its spans, its
 //! `vertical` and its `corners` (#324, #338) — which the map saves and
-//! the console edits like any other. A node with no frame that is given
+//! the console edits like any other. The cycle does not touch a ring's
+//! fit: on a `repeat` ring the three keys read as a box; a ring in
+//! another mode keeps them but draws its spans alone, as
+//! `format/schema.md` "Directional ring" has it, until it is made
+//! `repeat`. A node with no frame that is given
 //! one — by `frame on`, by [`toggle`], by [`cycle`] — gets a frame of
 //! one ring of [`CYCLE`]'s first set, the light box, repeated around the
 //! outline (`fit: repeat`); a ring added to it (`frame ring add`) brings
@@ -39,7 +43,9 @@ use crate::application::view::inspect::children_of_kind;
 /// spans, laid where the outline runs level, its `vertical`, laid where
 /// it runs steep, and its four `corners`, clockwise from the top left,
 /// laid where it turns as a box does (`format/schema.md` "Directional
-/// ring"). Round a rectangle a ring of one set reads as a closed box.
+/// ring"). Round a rectangle a `repeat` ring of one set reads as a
+/// closed box; a ring in another mode keeps the keys but draws its spans
+/// alone.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct BoxGlyphs {
     /// The text of its one span.
@@ -345,7 +351,11 @@ pub(crate) fn toggle(doc: &MindMapDocument) -> Steps {
 /// node with no frame, one ring of the first. The ring takes the whole
 /// set: its spans, its `vertical` and its four `corners`, replacing
 /// whatever it held in them, an author's own included, so no key of the
-/// set it leaves is left behind (#338). Its other keys are kept.
+/// set it leaves is left behind (#338). Its other keys are kept, its
+/// fit among them: on a `repeat` ring the set reads as a box; a ring in
+/// another mode keeps the keys but draws its spans alone. Only each
+/// frame's first ring changes; each takes the set after its own, however
+/// many frames are selected, in one edit.
 pub(crate) fn cycle(doc: &MindMapDocument) -> Steps {
     let (framed, bare) = split(doc)?;
     let d = doc.doc();

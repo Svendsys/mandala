@@ -647,7 +647,9 @@ pub enum Action {
     /// Make the first ring of each selected node's frame the next box
     /// of light `─ │ ┌ ┐ ┘ └`, heavy `━ ┃ ┏ ┓ ┛ ┗` and double
     /// `═ ║ ╔ ╗ ╝ ╚`, wrapping: its spans, `vertical` and `corners`
-    /// together (#338). A node with no frame gets one with one light
+    /// together (#338). Its fit is not touched: on a `repeat` ring the
+    /// keys read as a box; a ring in another mode keeps them but draws
+    /// its spans alone. A node with no frame gets one with one light
     /// ring. No payload, so one key cycles it.
     #[action(context = Document, wasm = Compatible)]
     CycleFrameContent,
