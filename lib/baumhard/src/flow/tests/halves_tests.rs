@@ -912,16 +912,24 @@ fn test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_g
 /// the gap's definition alone: the finding, a root where both axes are
 /// apart and the identity's cross term is not nothing, the gap that
 /// closes first, and 4,000 seeded cases drawn as `check_line_root` draws
-/// them, half of them owed a twentieth of a point at most. Precondition:
-/// the sweep steps back at least 200 times where less than a hundredth of
-/// the gap is owed (244 here), the case it is there to hold.
+/// them, half of them owed a twentieth of a point at most; and 4,000
+/// near-side lines that sweep seldom reaches where it fails, each one
+/// axis apart and closing while the other, a tenth as far apart at most,
+/// opens at least as fast, owed their gap and 1e-6 to 1e-1 of it more.
+/// Preconditions: the first sweep steps back at least 200 times where
+/// less than a hundredth of the gap is owed (244 here), and the second
+/// finds at least 3,900 roots where the gap closes before it opens, on
+/// the stretch before the closing axis's boxes meet (3,993 here): the
+/// cases each is there to hold.
 ///
 /// Controls: with `b² − a c` for the discriminant where the boxes are
 /// further than owed, red on the finding ("the closed form steps
 /// -15.051204"), on both axes apart ("-22.493431") and on the sweep
 /// ("seed 7: … the closed form steps -10.538687"); with `−c / (b + √disc)`
 /// for every root where they are nearer, red on the gap that closes
-/// first ("the closed form steps 8.946237").
+/// first ("the closed form steps 8.946237") and, with that case skipped,
+/// on the near-side sweep ("near side, seed 0: … the closed form steps
+/// 22.876034, the line's root is 22.8076041…").
 pub fn do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap() {
     use crate::flow::place::halves::line_root_seam;
     use crate::util::tests::choices::Choices;
@@ -1011,6 +1019,40 @@ pub fn do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide
     assert!(
         wide >= 200,
         "precondition: the sweep steps back {wide} times where less than a hundredth of the gap is owed"
+    );
+    // The near side, which the draws above seldom reach where it fails:
+    // one axis `fx` apart and closing at `wx`, the other `fy` apart, a
+    // tenth of it at most, and opening at least as fast, so the gap falls
+    // before it rises (`b < 0`) and rises back to what is owed — a little
+    // past it, by 1e-6 to 1e-1 of it — before the closing axis's boxes
+    // meet, at `fx / wx`: in the stretch whose quadratic has that `b`.
+    let mut closing = 0;
+    for seed in 0..4_000 {
+        let c = &mut Choices::seeded(1 << 20 | seed);
+        let unit = |c: &mut Choices<'_>| c.below(1001) as f32 / 1000.0;
+        let reach = Vec2::new(0.5 + 11.5 * unit(c), 0.5 + 11.5 * unit(c));
+        let fx = 1.0 + 19.0 * unit(c);
+        let fy = 0.1 * fx * unit(c);
+        let wx = 0.25 + 0.75 * unit(c);
+        let wy = wx * (1.0 + unit(c));
+        let (sx, sy) = (
+            if c.one_in(2) { 1.0 } else { -1.0 },
+            if c.one_in(2) { 1.0 } else { -1.0 },
+        );
+        let delta = Vec2::new(sx * (reach.x + fx), sy * (reach.y + fy));
+        let dir = Vec2::new(-sx * wx, sy * wy);
+        let owed = Vec2::new(fx, fy).length() * (1.0 + 10f32.powf(-6.0 + 5.0 * unit(c)));
+        let truth = line_root_in_f64(delta, dir, reach, owed);
+        if truth > 0.0 && truth < (fx / wx) as f64 {
+            closing += 1;
+        }
+        if let Err(why) = held(&format!("near side, seed {seed}"), delta, dir, reach, owed) {
+            panic!("{why}");
+        }
+    }
+    assert!(
+        closing >= 3_900,
+        "precondition: the near-side sweep finds {closing} roots where the gap closes before it opens"
     );
 }
 
