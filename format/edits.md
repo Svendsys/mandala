@@ -258,7 +258,7 @@ across all of them; then the node stays where it belongs.
   drawn — and every family laid out after it keeps clear of them all,
   not only of its own parent's connector. Only these are kept: a
   connector neither of whose ends the run flowers is not avoided. A
-  kept line or connector longer than 16,384 units is kept only in its
+  kept line or connector longer than 32,768 units is kept only in its
   two end stretches of 16,384 units, beside the nodes it joins, so a
   later family's petal may sit on its middle; a family's own parent's
   connector is kept whole while its petals are laid, however long.
@@ -275,12 +275,15 @@ across all of them; then the node stays where it belongs.
 What is drawn is asked of the projector's index of drawn rectangles, a
 query at a time. A run keeps only the nodes it moves, the rectangles
 it has placed and the lines and connectors above, each kept line in
-pieces of at most 256 units — at most 128 of them, its two end
-stretches — filed in cells of 512 units, so a petal reads only what is
-kept near it, and the run's work follows the families it lays out, not
-the size of the map. A petal larger than 64 of those cells reads,
-instead, along its outline or through the cells that hold kept pieces,
-whichever is fewer.
+pieces of about 256 units — at most 128 of them: the whole line up to
+32,768 units, else 64 in each of its two end stretches — filed in
+cells of 512 units, so a petal reads only what is kept near it, and the
+run's work follows the families it lays out, not the size of the map.
+Near it may be a crowd: kept lines, unlike placed rectangles, may
+overlap, so every line and connector the run keeps that converges on
+one node is filed in the cells beside it, and a petal there reads them
+all. A petal larger than 64 of those cells reads, instead, along its
+outline or through the cells that hold kept pieces, whichever is fewer.
 A node moved by hand, or by a `set_position` or `nudge`, goes where it
 is put, overlap or not.
 

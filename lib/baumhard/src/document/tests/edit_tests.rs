@@ -1183,14 +1183,21 @@ fn test_a_familys_own_connector_is_whole_however_far_out() {
     );
 }
 
-/// **A kept segment longer than 16,384 units is kept only at its ends**
+/// **A kept segment longer than 32,768 units is kept only at its ends**
 /// (review of #331). A kept segment 40,000 units long, straight up the
 /// canvas: a petal across it 200 units from either end is refused, and
-/// one across its middle is taken (each petal meets it, asserted by the
-/// f64 sampled oracle).
+/// one across its middle is taken. One 20,000 units long, whose end
+/// stretches of 16,384 would overlap, is kept whole: a petal across its
+/// middle is refused. (Each petal meets its segment, asserted by the f64
+/// sampled oracle.)
 ///
-/// Controls: kept whole, the middle petal was refused; kept without its
-/// end stretches, the end petals were taken.
+/// Controls: kept whole, the 40,000-unit segment's middle petal was
+/// refused; kept without its end stretches, its end petals were taken;
+/// with the 20,000-unit segment not kept, its middle petal was taken.
+/// (Kept in end stretches past 16,384 units, as before, the two stretches
+/// overlap and cover it, so its middle petal is refused all the same:
+/// what that threshold got wrong, the overlap kept twice, is pinned by
+/// `test_a_kept_segment_is_at_most_128_pieces`.)
 #[test]
 fn test_a_long_kept_segment_is_kept_only_at_its_ends() {
     use crate::edit_handlers::{arrangement, Clear};
@@ -1199,19 +1206,105 @@ fn test_a_long_kept_segment_is_kept_only_at_its_ends() {
     let geometry = Boxes::of(&doc);
     let size = Vec2::new(100.0, 40.0);
     let sons = [(n(&doc, 2), Rect::new(Vec2::ZERO, size))];
-    let mut clear = Clear::new(&geometry, sons.iter());
-    let (a, b) = (Vec2::new(50.0, -40_000.0), Vec2::ZERO + Vec2::new(50.0, 0.0));
-    clear.keep_segment(a, b);
-    for (y, taken) in [(-200.0, false), (-39_800.0, false), (-20_000.0, true)] {
-        // The petal 250 units left of the parent's center, across the
-        // segment at height `y`.
-        let center = Vec2::new(310.0, y);
-        let parent = (n(&doc, 1), Rect::new(center - size / 2.0, size));
-        let petal = Rect::new(Vec2::new(10.0, y - 20.0), size);
-        assert!(sampled_crossing(a, b, &petal, &[]), "precondition: {y} meets it");
-        let laid = arrangement(&clear, parent, center, 250.0, std::f32::consts::PI, 0.0, &sons);
-        assert_eq!(laid.is_some(), taken, "a petal across it at {y}");
+    for (length, petals) in [
+        (
+            40_000.0,
+            &[(-200.0, false), (-39_800.0, false), (-20_000.0, true)][..],
+        ),
+        (20_000.0, &[(-10_000.0, false)][..]),
+    ] {
+        let mut clear = Clear::new(&geometry, sons.iter());
+        let (a, b) = (Vec2::new(50.0, -length), Vec2::new(50.0, 0.0));
+        clear.keep_segment(a, b);
+        for &(y, taken) in petals {
+            // The petal 250 units left of the parent's center, across the
+            // segment at height `y`.
+            let center = Vec2::new(310.0, y);
+            let parent = (n(&doc, 1), Rect::new(center - size / 2.0, size));
+            let petal = Rect::new(Vec2::new(10.0, y - 20.0), size);
+            assert!(
+                sampled_crossing(a, b, &petal, &[]),
+                "precondition: {y} meets the {length}-unit segment"
+            );
+            let laid = arrangement(&clear, parent, center, 250.0, std::f32::consts::PI, 0.0, &sons);
+            assert_eq!(
+                laid.is_some(),
+                taken,
+                "a petal across the {length}-unit segment at {y}"
+            );
+        }
     }
+}
+
+/// **A kept segment is at most 128 pieces** (review of #331). Two
+/// thousand segments from 16,000 to 116,000 units long, in as many
+/// directions and places: each of at most 32,768 units is kept whole, in
+/// as many pieces as `LINE_PIECE`s cover it, and each longer in exactly
+/// 128, 64 in each end stretch.
+///
+/// Controls: with each end stretch's count taken from its rounded
+/// length, a segment was kept in 130 pieces; kept in end stretches past
+/// 16,384 units, a segment under 32,768 was kept in 128, its overlap
+/// twice.
+#[test]
+fn test_a_kept_segment_is_at_most_128_pieces() {
+    use crate::edit_handlers::{Clear, PIECES_KEPT};
+    let doc = load(FAMILY).unwrap();
+    let geometry = Boxes::of(&doc);
+    let mut clear = Clear::new(&geometry, std::iter::empty());
+    for k in 0..2000_u32 {
+        let length = 16_000.0 + 50.0 * k as f32;
+        let a = Vec2::new(
+            (k * 7919 % 100_000) as f32 - 50_000.0,
+            (k * 104_729 % 100_000) as f32 - 50_000.0,
+        );
+        let b = a + length * Vec2::from_angle(0.7 * k as f32);
+        let before = PIECES_KEPT.with(|kept| kept.get());
+        clear.keep_segment(a, b);
+        let kept = PIECES_KEPT.with(|kept| kept.get()) - before;
+        let whole = ((b - a).length() / crate::edit_handlers::LINE_PIECE).ceil() as usize;
+        assert_eq!(kept, whole.min(128), "{a} to {b}");
+    }
+}
+
+/// **A connector this run placed the parent of is kept once** (review of
+/// #331). Node 1's only son, node 2, has three sons. Flowered at nodes 1
+/// and 2 in one run, node 1's line to node 2 is node 2's connector, and
+/// the run keeps as many pieces as a flower at node 2 alone, run after
+/// one at node 1 — node 1's line kept once as node 2's connector, then
+/// node 2's lines — with node 2's sons placed alike (asserted).
+///
+/// Control: with the connector filed whether or not the run placed the
+/// parent, the run kept its pieces twice.
+#[test]
+fn test_a_connector_this_run_placed_the_parent_of_is_kept_once() {
+    use crate::edit_handlers::PIECES_KEPT;
+    let text = r#"{"format":1,"name":"t","nodes":[
+{"id":1,"position":[0,0]},
+{"id":2,"parent":1,"position":[3000,3000]},
+{"id":3,"parent":2,"position":[3000,3000]},
+{"id":4,"parent":2,"channel":1,"position":[3000,3000]},
+{"id":5,"parent":2,"channel":2,"position":[3000,3000]}]}"#;
+    // The pieces a flower at `idents` keeps, on `doc`, applied.
+    let kept = |doc: &mut Document, idents: &[u32]| {
+        let anchors: Vec<NodeId> = idents.iter().map(|&i| n(doc, i)).collect();
+        let before = PIECES_KEPT.with(|kept| kept.get());
+        let request = flower_def()
+            .request(doc, &Boxes::of(doc), &registry(), &anchors)
+            .unwrap();
+        let kept = PIECES_KEPT.with(|kept| kept.get()) - before;
+        doc.apply(request, ChangeSource::Edit).unwrap();
+        kept
+    };
+    let mut together = load(text).unwrap();
+    let both = kept(&mut together, &[1, 2]);
+    let mut apart = load(text).unwrap();
+    let line = kept(&mut apart, &[1]);
+    let alone = kept(&mut apart, &[2]);
+    assert!(line > 0, "precondition: node 1's line is kept");
+    let sons = |doc: &Document| [3, 4, 5].map(|i| node(doc, i).1.position);
+    assert_eq!(sons(&together), sons(&apart), "precondition: node 2's sons alike");
+    assert_eq!(both, alone, "the run's pieces, and node 2's after node 1's");
 }
 
 /// **A petal too large for the cells keeps clear of the kept segments**
