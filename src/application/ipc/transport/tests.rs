@@ -285,9 +285,26 @@ impl Client {
         serde_json::from_str(&line).unwrap_or_else(|e| panic!("frame is not JSON ({e}): {line:?}"))
     }
 
-    fn at_eof(&mut self) -> bool {
+    /// Assert that the next read is the end of the stream, naming what
+    /// was read instead when it is not: a frame after the last one, or
+    /// the error — its kind, the raw OS code and how long the read took,
+    /// so a read the client's own timeout ended is told apart from one
+    /// the transport failed.
+    #[track_caller]
+    fn assert_at_eof(&mut self, what: &str) {
         let mut line = String::new();
-        matches!(self.reader.read_line(&mut line), Ok(0))
+        let started = Instant::now();
+        match self.reader.read_line(&mut line) {
+            Ok(0) => {}
+            Ok(n) => panic!("{what}: read {n} more bytes where the end of the stream was expected: {line:?}"),
+            Err(e) => panic!(
+                "{what}: the read failed where the end of the stream was expected, after {:?}: {e} \
+                 (kind {:?}, OS error {:?})",
+                started.elapsed(),
+                e.kind(),
+                e.raw_os_error()
+            ),
+        }
     }
 }
 
@@ -412,10 +429,7 @@ fn test_ipc_loopback_refuses_a_second_client_immediately() {
         second.next(),
         json!({ "event": "connection_rejected", "data": { "reason": "busy" } })
     );
-    assert!(
-        second.at_eof(),
-        "a refused connection is closed after its one frame"
-    );
+    second.assert_at_eof("a refused connection is closed after its one frame");
 
     first.send(r#"{"id":1,"cmd":"ping"}"#);
     assert_eq!(first.next()["id"], json!(1), "the controller is undisturbed");
@@ -484,7 +498,7 @@ fn test_ipc_loopback_half_close_still_gets_every_reply() {
     for id in 0..3 {
         assert_eq!(client.next()["id"], json!(id));
     }
-    assert!(client.at_eof(), "the server closes once every reply is written");
+    client.assert_at_eof("the server closes once every reply is written");
 }
 
 /// A client that closes its connection right after a final line it
@@ -648,7 +662,7 @@ fn test_ipc_loopback_shutdown_says_so_and_removes_the_socket() {
     let path = harness.path.clone();
     harness.shutdown();
     assert_eq!(client.next(), json!({ "event": "shutdown", "data": {} }));
-    assert!(client.at_eof(), "the connection closes after `shutdown`");
+    client.assert_at_eof("the connection closes after `shutdown`");
     #[cfg(unix)]
     assert!(!path.exists(), "a graceful exit removes the socket file");
     #[cfg(windows)]
@@ -772,7 +786,171 @@ fn test_ipc_loopback_shutdown_reaches_a_controller_paused_mid_burst() {
         answered += 1;
     }
     assert!(answered > 0, "the burst was under way when the app exited");
-    assert!(client.at_eof(), "the connection closes after `shutdown`");
+    client.assert_at_eof("the connection closes after `shutdown`");
+    join_within(exiting, "the shutdown");
+}
+
+/// A client still behind when the app exits reads every reply,
+/// `shutdown`, then the end of the stream (#343).
+///
+/// The failing input is a server that lets go of the connection while its
+/// last write is still waiting for the client to make room. On the pipe
+/// that write is the driver's until it completes, and its completion is
+/// taken off the I/O completion port by the runtime; a runtime dropped
+/// first left it there, the instance and its handle leaked, and the
+/// client, having read every byte, waited out its timeout for the end of
+/// the stream. (In an exiting process the write is canceled instead, and
+/// `shutdown` with it.) The intermittent failure of the test above was
+/// the same leak, hit only when its last write completed during the
+/// teardown.
+///
+/// The scenario is built so the last write is large, and so the client is
+/// not reading when the server lets go:
+///
+/// - Many `describe` replies, more than the pipe holds, so the writer is
+///   held back by the client from the start and the rest queues.
+/// - Then pings with long ids, which reach the writer only once it is
+///   held back, together with `shutdown`. However the writer groups the
+///   `describe` replies before them, the batch carrying `shutdown` also
+///   carries tens of kilobytes of pings — never `shutdown` alone, which
+///   any room left in the pipe would take at once. That rests on the
+///   sizes of the replies, so the test measures one of each first and
+///   fails on the spot if they no longer give it.
+/// - The client reads nothing until the exit is under way, then reads one
+///   `describe` reply at a time and gives the exit a moment to finish
+///   after each. A server that lets go once its last write is handed over
+///   finishes during such a pause, with that write still waiting, and the
+///   client pauses longer before it reads on. One that waits for the pipe
+///   to take the write cannot finish then.
+#[test]
+fn test_ipc_loopback_a_client_behind_at_exit_reads_everything_then_the_end() {
+    const DESCRIBES: usize = 16;
+    const PINGS: usize = 210;
+    // How long the client gives the exit to finish after each `describe`
+    // reply, and how long it stays away once it has.
+    const GRACE: Duration = Duration::from_millis(100);
+    const AWAY: Duration = Duration::from_millis(500);
+    // The least the batch carrying `shutdown` may hold. A server that let
+    // go too early failed this test on Windows 40 runs out of 40 when the
+    // smaller of that batch's two possible shapes (below) was about 32 KB,
+    // and only 22 out of 30 when it was about 24 KB: a smaller batch can
+    // fit in the room the pipe has left, and then nothing is pending when
+    // the server lets go.
+    const LEAST_LAST_BATCH: usize = 30 << 10;
+    // The exit's clock starts before the client reads anything, and a
+    // server that waits for the pipe to take its last write finishes only
+    // after every grace has run out: together they must leave it well
+    // inside its own exit deadline. It never finishes before `AWAY`.
+    const _: () = assert!(
+        (READER_PAUSE.as_millis() + GRACE.as_millis() * DESCRIBES as u128) * 2 <= SHUTDOWN_FLUSH.as_millis()
+    );
+    const _: () = assert!(DESCRIBES + PINGS + 2 < OUTBOUND_QUEUE_CAP);
+
+    let harness = Harness::running("ipc-behind-at-exit");
+    let (mut client, _) = Client::attach(&harness.path);
+    // The longest id the protocol takes is 256 bytes serialized.
+    let ping_id = |n: usize| format!("ping-{n:03}-{}", "x".repeat(240));
+
+    // What the scenario relies on, measured on one reply of each kind
+    // rather than assumed, so a change in their size fails here, loudly,
+    // instead of quietly letting `shutdown` travel in a batch small enough
+    // to fit.
+    let mut round_trip = |request: &str| {
+        client.send(request);
+        let mut line = String::new();
+        client
+            .reader
+            .read_line(&mut line)
+            .expect("a frame within the timeout");
+        line
+    };
+    // Id 0, as short as the burst's shortest: the bound on the last batch
+    // below wants the least a `describe` reply can be.
+    let describe = round_trip(r#"{"id":0,"cmd":"describe"}"#).len();
+    let ping_line = round_trip(&format!("{{\"id\":\"{}\",\"cmd\":\"ping\"}}", ping_id(999)));
+    // A ping reply's size moves with its `now_ms`, the app clock's
+    // milliseconds as an `f64` in its shortest form. The clock has run for
+    // more than a millisecond by now and stays far below 1e16 ms, where the
+    // form turns to an exponent, so it is a decimal from `1.0` (three
+    // bytes) to 17 significant digits and a point (18). The rest of the
+    // reply is the same for every ping.
+    let ping_reply: Value = serde_json::from_str(&ping_line).expect("the ping reply is JSON");
+    let now_ms = serde_json::to_string(&ping_reply["result"]["now_ms"])
+        .expect("serializes")
+        .len();
+    let ping_fixed = ping_line.len() - now_ms;
+    let (ping_least, ping_most) = (ping_fixed + "1.0".len(), ping_fixed + 18);
+    let goodbye = Frame::Event(crate::application::ipc::envelope::Event::shutdown())
+        .encode(crate::application::ipc::envelope::OUTBOUND_FRAME_CAP)
+        .expect("the event fits a frame")
+        .len();
+    // The writer cuts a batch once it holds `WRITE_BATCH_BYTES` or more. A
+    // `describe` reply is under that, so `describe` replies go out in
+    // pairs, and the batch carrying `shutdown` begins either at the first
+    // ping (every ping, then `shutdown`) or at the last `describe` reply
+    // (the pings that batch did not take, then `shutdown`). Both shapes
+    // are smallest when the pings are.
+    let cut = connection::WRITE_BATCH_BYTES;
+    assert!(
+        describe < cut && PINGS * ping_most < cut,
+        "a `describe` reply ({describe} bytes) and the pings (up to {PINGS} × {ping_most} bytes) \
+         must each stay under a write batch ({cut} bytes)"
+    );
+    let from_first_ping = PINGS * ping_least + goodbye;
+    // The last `describe` reply's batch takes pings until it reaches the
+    // cut, so it takes less than `cut - describe` plus one ping more.
+    let from_last_describe = (describe + PINGS * ping_least).saturating_sub(cut + ping_most) + goodbye;
+    assert!(
+        from_first_ping.min(from_last_describe) >= LEAST_LAST_BATCH,
+        "the batch carrying `shutdown` could be as small as {from_first_ping} or \
+         {from_last_describe} bytes, under {LEAST_LAST_BATCH}: a `describe` reply is {describe} \
+         bytes, a ping reply at least {ping_least}"
+    );
+
+    let mut burst = String::new();
+    for id in 0..DESCRIBES {
+        burst.push_str(&format!("{{\"id\":{id},\"cmd\":\"describe\"}}\n"));
+    }
+    for n in 0..PINGS {
+        burst.push_str(&format!("{{\"id\":\"{}\",\"cmd\":\"ping\"}}\n", ping_id(n)));
+    }
+    client
+        .writer
+        .write_all(burst.as_bytes())
+        .expect("write the burst");
+    // Everything is executed and queued; the writer is held back.
+    thread::sleep(READER_PAUSE);
+
+    let exiting = thread::spawn(move || harness.shutdown());
+    thread::sleep(READER_PAUSE);
+    let mut finished = false;
+    let mut stayed_away = false;
+    for id in 0..DESCRIBES {
+        let reply = client.next();
+        assert_eq!(reply["id"], json!(id), "replies arrive in order, none skipped");
+        let grace = Instant::now() + GRACE;
+        while !finished && Instant::now() < grace {
+            finished = exiting.is_finished();
+            thread::sleep(Duration::from_millis(1));
+        }
+        if finished && !stayed_away {
+            thread::sleep(AWAY);
+            stayed_away = true;
+        }
+    }
+    for n in 0..PINGS {
+        assert_eq!(
+            client.next()["id"],
+            json!(ping_id(n)),
+            "replies arrive in order, none skipped"
+        );
+    }
+    assert_eq!(
+        client.next(),
+        json!({ "event": "shutdown", "data": {} }),
+        "a client behind at exit still hears that the app exited"
+    );
+    client.assert_at_eof("the connection closes after `shutdown`");
     join_within(exiting, "the shutdown");
 }
 
