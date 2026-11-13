@@ -184,3 +184,6 @@ fn answer(result: Result<bool, Refused>) -> DispatchOutcome {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod ring_cycle_tests;

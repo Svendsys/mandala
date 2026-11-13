@@ -116,7 +116,7 @@ system's fallback is one list, the same on every target
 | Family | Holds | Source | License |
 |--------|-------|--------|---------|
 | `Inter Variable` | the default face (above) | Inter 4.1 | SIL Open Font License 1.1 |
-| `Mandala Ornaments` | `∙ ◈ ✦ ❦`; the box-drawing `─ ━ │ ┃ ┄ ┆ ┌ ┐ └ ┘ ┏ ┓ ┗ ┛ ═ ╭ ╮ ╯ ╰`; the chrome's `❯ ▌ ▏ ▸ ∼ ⋯` (with `❮ ∽`, their mirrored forms) | DejaVu Sans 2.37 | Bitstream Vera and Arev; DejaVu's changes public domain |
+| `Mandala Ornaments` | `∙ ◈ ✦ ❦`; the box-drawing `─ ━ │ ┃ ┄ ┆ ┌ ┐ └ ┘ ┏ ┓ ┗ ┛ ═ ║ ╔ ╗ ╝ ╚ ╭ ╮ ╯ ╰`; the chrome's `❯ ▌ ▏ ▸ ∼ ⋯` (with `❮ ∽`, their mirrored forms) | DejaVu Sans 2.37 | Bitstream Vera and Arev; DejaVu's changes public domain |
 | `Mandala Emoji` | `🌸` | Noto Color Emoji 2.047 (its color bitmap) | SIL Open Font License 1.1 |
 | `Noto Sans Hebrew`, `Noto Sans Devanagari`, `Noto Serif Tibetan`, `Noto Sans Egyptian Hieroglyphs` | their scripts | Noto | SIL Open Font License 1.1 |
 

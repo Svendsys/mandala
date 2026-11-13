@@ -644,14 +644,16 @@ pub enum Action {
     /// variants that would catch a misspelling at load.
     #[action(context = Document, wasm = Compatible)]
     SetFrameField { field: String, value: String },
-    /// Replace the first ring's text of each selected node's frame with
-    /// the next of `─`, `━`, `═`, wrapping; a node with no frame gets
-    /// one with one ring. No payload, so one key cycles it.
+    /// Make the first ring of each selected node's frame the next box
+    /// of light `─ │ ┌ ┐ ┘ └`, heavy `━ ┃ ┏ ┓ ┛ ┗` and double
+    /// `═ ║ ╔ ╗ ╝ ╚`, wrapping: its spans, `vertical` and `corners`
+    /// together (#338). A node with no frame gets one with one light
+    /// ring. No payload, so one key cycles it.
     #[action(context = Document, wasm = Compatible)]
     CycleFrameContent,
     /// Show or hide each selected node's frame, each node on its own; a
-    /// node with no frame gets one with one `─` ring. No payload, so one
-    /// key toggles it.
+    /// node with no frame gets one with one light `─ │ ┌ ┐ ┘ └` ring.
+    /// No payload, so one key toggles it.
     #[action(context = Document, wasm = Compatible)]
     ToggleFrameVisible,
     /// Preview one field of the frame `target_kind` names

@@ -64,15 +64,16 @@ FONTTOOLS_VERSION=4.68.0
 # ∙ ◈ ✦ ❦: the ornaments of the demo maps' sides, rings and connectors,
 # and the built-in portal-end glyph (`document::defaults::BUILT_IN`);
 # ─ ━ │ ┃ ╭ ╮ ╯ ╰: the console's frame and testament's custom sides;
-# ┌ ┐ └ ┘ ┏ ┓ ┗ ┛: the corners of the maps' directional rings (#324); and
-# the rest of the app's chrome: the console's prompt `❯`, cursor `▌`,
-# gutter `▏` and completion marker `▸`, the rubber band's dashed edges
-# `┄ ┆`, and the `body` presets' `═ ∼ ⋯`; with `∽` and `❮`, the mirrored
-# forms of `∼` and `❯`, which pyftsubset keeps beside them so a
+# ┌ ┐ └ ┘ ┏ ┓ ┗ ┛: the corners of the maps' directional rings (#324);
+# ║ ╔ ╗ ╝ ╚: the double box the app's frame cycle sets (#338), beside its
+# `═`; and the rest of the app's chrome: the console's prompt `❯`, cursor
+# `▌`, gutter `▏` and completion marker `▸`, the rubber band's dashed
+# edges `┄ ┆`, and the `body` presets' `═ ∼ ⋯`; with `∽` and `❮`, the
+# mirrored forms of `∼` and `❯`, which pyftsubset keeps beside them so a
 # right-to-left run can mirror them. The default face holds none of
 # them; it holds the space, `+ ~ ·` and `♪`, which this face held until
 # #228, and draws them.
-ORNAMENTS=U+2219,U+223C,U+223D,U+22EF,U+2500,U+2501,U+2502,U+2503,U+2504,U+2506,U+250C,U+250F,U+2510,U+2513,U+2514,U+2517,U+2518,U+251B,U+2550,U+256D,U+256E,U+256F,U+2570,U+258C,U+258F,U+25B8,U+25C8,U+2726,U+2766,U+276E,U+276F
+ORNAMENTS=U+2219,U+223C,U+223D,U+22EF,U+2500,U+2501,U+2502,U+2503,U+2504,U+2506,U+250C,U+250F,U+2510,U+2513,U+2514,U+2517,U+2518,U+251B,U+2550,U+2551,U+2554,U+2557,U+255A,U+255D,U+256D,U+256E,U+256F,U+2570,U+258C,U+258F,U+25B8,U+25C8,U+2726,U+2766,U+276E,U+276F
 # 🌸, the emoji of the frames demo.
 EMOJI=U+1F338
 

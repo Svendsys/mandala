@@ -5,12 +5,15 @@
 //! request, so one undo entry; a preview is a transaction (§9).
 //!
 //! - `frame on | off` shows or hides each frame; `on` gives a node with
-//!   no frame one ring of `─` repeated around it;
+//!   no frame one ring of the light box, `─ │ ┌ ┐ ┘ └`, repeated around
+//!   it;
 //! - `frame start=… direction=… fit=… gap=… inset=…` sets frame fields;
 //! - `frame ring add [text=…] [size=…]` adds a ring outside the others,
 //!   holding its text as one span; `frame ring <i> text=… | size=… |
-//!   fit=…` sets ring `i`'s (innermost first), and `frame ring <i>
-//!   delete` removes it;
+//!   fit=…` sets ring `i`'s (innermost first) — a `text=` on a ring that
+//!   is exactly one of the cycle's boxes takes its `vertical` and
+//!   `corners` along, to the box of the new text or off (#338) — and
+//!   `frame ring <i> delete` removes it;
 //! - `frame preview <keys>` shows the fields without making an edit;
 //!   `frame commit` makes the preview one undo entry, and `frame cancel`
 //!   (or `ExitMode`) reverts it.
