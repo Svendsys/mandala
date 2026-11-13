@@ -175,6 +175,15 @@ proc-macro2 = { workspace = true, features = ["span-locations"] }
 # (CONVENTIONS.md), so it comes from here. Test-only: no shipped build
 # links it.
 cap = { version = "0.1.2", features = ["stats"] }
+# The allocator `tests/arena_alloc.rs` holds the arena's operations to
+# zero bytes with. Unlike `cap`, which counts every thread in the
+# process — what a peak wants — it counts only the thread inside
+# `allocation_counter::measure`, so libtest's own threads cannot land in
+# a zero-byte count (#341). It comes from a crate for `cap`'s reason: its
+# `GlobalAlloc` impl is `unsafe`. Its `#[global_allocator]` is declared
+# in the crate, so only a test binary that names it links it.
+# Test-only: no shipped build links it.
+allocation-counter = "0.8.1"
 
 [[bench]]
 name = "test_bench"
