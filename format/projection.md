@@ -114,14 +114,14 @@ node to the node it leads to.
   path is walked by its fit mode from its start.
 - **Behind a node.** A node's contents take priority over every path
   that does not end at it. A glyph of a path's body or caps is not drawn
-  where its box — its ink; a glyph with none, which draws nothing, has no
-  box, but a text path's glyphs, whose inks are not read, are each their
-  advance by the line height — grown by the path's own gap meets the
-  node's *region*, in two parts: the box round its sections' glyphs
-  (each its advance by its line's height, and no glyph of whitespace), a
-  rectangle; and the box
-  round its rings' inks, shaped by its `shape` (an ellipse's is the
-  ellipse in that box). Not its drawn rectangle: a box wider than its
+  where its box — its ink where its ink was read, and otherwise its
+  advance by the line height: a text path's glyphs, and those of a path
+  whose placement rescaled or filled its run — grown by the path's own
+  gap meets the node's *region*, in two parts: the box round its
+  sections' glyphs (each its advance by its line's height, and no glyph
+  of whitespace), a rectangle; and the box round its rings' inks, shaped
+  by its `shape` (an ellipse's is the ellipse in that box). Not its
+  drawn rectangle: a box wider than its
   text, or a `min_size`, hides nothing past the text, and a node that
   draws nothing hides nothing. So a path shown on either side of a node
   stops at least one gap short of it — a gap, and up to one step more

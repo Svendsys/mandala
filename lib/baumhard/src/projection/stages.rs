@@ -1868,29 +1868,37 @@ pub(crate) fn own_opacity(opacity: f32) -> f32 {
 /// glyph with no ink, which the rasterizer draws nothing for (#333).
 /// O(its glyphs).
 fn placed_inks<'a>(run: &'a ShapedRun, placed: &'a PlacedRun) -> impl Iterator<Item = Rect> + 'a {
-    placed.glyphs.iter().filter_map(move |g| glyph_ink(run, g, true))
+    let baseline = run.baseline();
+    placed.glyphs.iter().filter_map(move |g| {
+        let metrics = run.glyphs.get(g.glyph as usize)?;
+        let ink = metrics.ink.filter(|_| !metrics.blank)?;
+        Some(Rect::new(
+            g.pos + Vec2::new(0.0, baseline) + ink.min,
+            ink.max - ink.min,
+        ))
+    })
 }
 
-/// The canvas box of the placed glyph `g` of `run`, by the run's metrics:
-/// its ink. `None` for a space, and, in a run that is `measured` — an
-/// ornament as shaped, or any run [`inked_run`] returns — for a glyph with
-/// no ink, which the rasterizer draws nothing for (#333). In a run that is
-/// not — a text as shaped, or a run placement returned — `None` ink means
-/// unmeasured, and the glyph's box is its advance by its line height
-/// ([`GlyphMetrics::ink`](crate::flow::GlyphMetrics::ink)). O(1).
-pub(crate) fn glyph_ink(run: &ShapedRun, g: &PlacedGlyph, measured: bool) -> Option<Rect> {
+/// The canvas box the hide stage tries the placed glyph `g` of a path's
+/// `run` by (#332): its ink where its ink was read, and otherwise its
+/// advance by its line height — for a text path's glyphs, and a path's
+/// whose placement rescaled or filled its run, whose inks are not read
+/// ([`GlyphMetrics::ink`](crate::flow::GlyphMetrics::ink)). `None` for a
+/// space. A glyph that draws nothing in a run whose inks were read (#333)
+/// gets that box too, and is tried and indexed, which changes nothing
+/// drawn. O(1).
+pub(crate) fn glyph_ink(run: &ShapedRun, g: &PlacedGlyph) -> Option<Rect> {
     let metrics = run.glyphs.get(g.glyph as usize)?;
     if metrics.blank {
         return None;
     }
-    match metrics.ink {
-        Some(ink) => Some(Rect::new(
+    Some(match metrics.ink {
+        Some(ink) => Rect::new(
             g.pos + Vec2::new(0.0, run.baseline()) + ink.min,
             ink.max - ink.min,
-        )),
-        None if measured => None,
-        None => Some(Rect::new(g.pos, Vec2::new(metrics.advance, run.line_height))),
-    }
+        ),
+        None => Rect::new(g.pos, Vec2::new(metrics.advance, run.line_height)),
+    })
 }
 
 /// A cap of a line, resolved: its element, its spans' ids, and their

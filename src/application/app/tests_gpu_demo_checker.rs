@@ -1218,7 +1218,6 @@ const LABEL_FIXTURE: &str = r#"{"format": 1, "name": "a label under a node", "no
 /// rasterized inks: a quarter of the gap more, for the slack a `repeat`
 /// path spreads over its gaps, and half a point for the raster.
 ///
-///
 /// A path's label is held the same way: no label the labels layer draws
 /// has its text's cells (`text_cells`) inside such a region, and every
 /// label laid and not drawn meets one, within half a point for the

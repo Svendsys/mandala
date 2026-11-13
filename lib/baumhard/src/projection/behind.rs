@@ -4,10 +4,10 @@
 //! priority over every connector and line link that does not end at it.
 //!
 //! A glyph of a path's body or caps is left out of its run where its box
-//! — its ink ([`glyph_ink`](crate::projection::stages::glyph_ink)): a
-//! glyph with none draws nothing (#333) and has no box, but a text path's
-//! glyphs, whose inks are not read, are each their advance by the line
-//! height — grown by the path's own gap meets the **region** of a visible
+//! ([`glyph_ink`](crate::projection::stages::glyph_ink)) — its ink where
+//! its ink was read, and otherwise its advance by the line height: a text
+//! path's glyphs, and those of a path whose placement rescaled or filled
+//! its run — grown by the path's own gap meets the **region** of a visible
 //! node the path does not end at ([`Projector::region`]): what the node
 //! draws, in
 //! two parts — the box round its sections' glyph cells, a rectangle, and
@@ -62,7 +62,7 @@ use rustc_hash::FxHashMap;
 use crate::arena::NodeId;
 use crate::document::values::ZoomWindow;
 use crate::flow::{PlacedRun, Rect};
-use crate::gfx_structs::run::{GlyphRunData, RunShape};
+use crate::gfx_structs::run::RunShape;
 use crate::gfx_structs::shape::NodeShape;
 use crate::projection::geometry::node_shape;
 use crate::projection::hit::{cell_count, cells, span, BodyIndex};
@@ -415,21 +415,8 @@ impl Projector {
             });
             hidden
         };
-        // Whether each of its body's and caps' runs as laid is measured — an
-        // ornament as shaped, its inks read at shaping, where a glyph with
-        // none draws nothing (#333) — or a text, or a run placement
-        // returned, whose glyphs' inks were not read.
-        let measured: [bool; 4] = std::array::from_fn(|k| {
-            line.flows
-                .get(k)
-                .and_then(|f| f.placed.as_ref())
-                .is_some_and(|p| {
-                    std::sync::Arc::ptr_eq(&p.run, &p.input) && !p.run.glyphs.iter().any(|g| g.letter)
-                })
-        });
-        let laid = line.laid.clone();
-        let wants: [Option<GlyphRunData>; 4] = std::array::from_fn(|k| {
-            let run = laid[k].clone()?;
+        let wants = line.laid.clone().map(|laid| {
+            let run = laid?;
             let (shaped, placed) = match run.shaped() {
                 RunShape::Path { run: shaped, placed } => (shaped, placed),
                 // The label: hidden whole where the box round its text
@@ -445,7 +432,7 @@ impl Projector {
             };
             let mut shown = Vec::with_capacity(placed.glyphs.len());
             for g in &placed.glyphs {
-                let Some(ink) = glyph_ink(shaped, g, measured[k]) else {
+                let Some(ink) = glyph_ink(shaped, g) else {
                     shown.push(*g);
                     continue;
                 };
