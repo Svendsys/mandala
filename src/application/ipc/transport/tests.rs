@@ -912,6 +912,11 @@ fn test_ipc_loopback_a_client_behind_at_exit_reads_everything_then_the_end() {
         .encode(OUTBOUND_FRAME_CAP)
         .expect("the event fits a frame")
         .len();
+    assert!(
+        big_len > BIG_PAD && small_len > SMALL_PAD,
+        "a refusal no longer echoes its whole `command` value ({big_len} bytes for {BIG_PAD} of padding): \
+         this test sizes its replies through that echo, so it needs another way to pad them"
+    );
     // The writer cuts a batch once it holds `WRITE_BATCH_BYTES` or more,
     // or when the queue is empty. The batch carrying `shutdown` begins
     // either at the first small reply (when the last big reply ends a
