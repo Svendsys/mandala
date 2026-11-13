@@ -397,36 +397,20 @@ fn overlaps_after(
     found
 }
 
-/// Whether the segment from `a` to `b` passes through the inside of
-/// `rect` (an edge or a corner touched does not count).
-fn crosses(a: Vec2, b: Vec2, rect: &baumhard::flow::Rect) -> bool {
-    let d = b - a;
-    let (mut t0, mut t1) = (0.0_f32, 1.0_f32);
-    for (p, dp, lo, hi) in [
-        (a.x, d.x, rect.origin.x, rect.max().x),
-        (a.y, d.y, rect.origin.y, rect.max().y),
-    ] {
-        if dp == 0.0 {
-            if !(lo < p && p < hi) {
-                return false;
-            }
-            continue;
-        }
-        let (u, v) = ((lo - p) / dp, (hi - p) / dp);
-        t0 = t0.max(u.min(v));
-        t1 = t1.min(u.max(v));
-    }
-    t0 < t1
-}
-
-/// **Testament's Ishmael flower is one fan, clear of Hagar** (owner, on
-/// #250: a partial arc round Ishmael, about r = 270). On `main`'s
-/// placement Hadad and Massa landed on Hagar, Ishmael's mother, below
-/// him; a full circle cannot clear her at any radius, since she blocks
-/// directions from 46° to 133°. Read through the real projection: all
-/// twelve sons sit on one circle round Ishmael, evenly spaced in sibling
-/// order, none overlapping another drawn node, and no straight line from
-/// Ishmael to a son passes through Hagar.
+/// **Testament's Ishmael flower is one fan, its gap toward Hagar, and
+/// its connectors as drawn clear of every node** (owner, on #250: a
+/// partial arc round Ishmael). On `main`'s placement Hadad and Massa
+/// landed on Hagar, Ishmael's mother, below him; she blocks the
+/// directions from 46° to 133°, so no full circle clears her. Read
+/// through the real projection:
+///
+/// - all twelve sons sit on one circle round Ishmael, radius 293.7;
+/// - each next son is 21.8° on, clockwise on the canvas, in sibling
+///   order — a 240° fan, its first son (Nebaioth) at 150° and its last
+///   at 30°, so its gap is centered straight down, toward Hagar;
+/// - no son overlaps another drawn node;
+/// - each son's connector as drawn (`Geometry::curve`), sampled point by
+///   point, passes through neither Hagar nor another son.
 ///
 /// Control: with only the per-petal search, the sons' radii differed by
 /// hundreds of units.
@@ -445,31 +429,71 @@ fn test_ishmael_flower_is_one_fan_clear_of_hagar() {
     let rect = |n| baumhard::projection::Geometry::node_rect(geometry, n).expect("drawn");
     let center = rect(ishmael).center();
     let d = doc.doc();
-    let sons: Vec<Vec2> = d
+    let sons: Vec<NodeId> = d
         .children(ishmael)
         .filter(|&c| d.get(c).is_some_and(|e| e.kind() == DocKind::Node))
-        .map(|c| rect(c).center())
         .collect();
     assert_eq!(sons.len(), 12, "precondition: twelve sons drawn");
-    let radii: Vec<f32> = sons.iter().map(|s| (*s - center).length()).collect();
-    let (lo, hi) = radii
-        .iter()
-        .fold((f32::MAX, f32::MIN), |(lo, hi), r| (lo.min(*r), hi.max(*r)));
-    assert!(hi - lo < 0.5, "one circle: radii {radii:?}");
-    let angles: Vec<f32> = sons.iter().map(|s| (*s - center).to_angle()).collect();
-    let steps: Vec<f32> = angles
-        .windows(2)
-        .map(|w| (w[1] - w[0]).rem_euclid(std::f32::consts::TAU))
-        .collect();
-    let (slo, shi) = steps
-        .iter()
-        .fold((f32::MAX, f32::MIN), |(lo, hi), s| (lo.min(*s), hi.max(*s)));
-    assert!(shi - slo < 1e-3, "evenly spaced: steps {steps:?}");
-    let hagar = rect(hagar);
-    for son in &sons {
-        assert!(!crosses(center, *son, &hagar), "the line to {son} crosses Hagar");
+    let at: Vec<Vec2> = sons.iter().map(|&s| rect(s).center()).collect();
+    for son in &at {
+        assert!(
+            ((*son - center).length() - 293.7).abs() < 0.1,
+            "{son} at radius 293.7"
+        );
     }
-    eprintln!("Ishmael's fan: radius {lo:.1}, step {:.1}°", slo.to_degrees());
+    let degrees = |v: Vec2| v.to_angle().to_degrees();
+    for pair in at.windows(2) {
+        let step = degrees(pair[1] - center) - degrees(pair[0] - center);
+        let step = (step + 180.0).rem_euclid(360.0) - 180.0;
+        assert!(
+            (step - 240.0 / 11.0).abs() < 0.05,
+            "each next 21.8° on, clockwise: {step}"
+        );
+    }
+    assert!(
+        (degrees(at[0] - center) - 150.0).abs() < 0.05,
+        "the first at 150°"
+    );
+    assert!((degrees(at[11] - center) - 30.0).abs() < 0.05, "the last at 30°");
+    let toward_hagar = degrees(rect(hagar).center() - center);
+    assert!(
+        (toward_hagar - 90.0).abs() < 15.0,
+        "precondition: Hagar is below him ({toward_hagar}°), where the gap is"
+    );
+
+    // The connectors as drawn, sampled finely: an oracle that shares
+    // nothing with the handler's straight lines.
+    let inside = |r: &baumhard::flow::Rect, p: Vec2| {
+        r.origin.x < p.x && p.x < r.max().x && r.origin.y < p.y && p.y < r.max().y
+    };
+    let mut sampled = 0;
+    for (i, &son) in sons.iter().enumerate() {
+        let connector = d
+            .children(son)
+            .find(|&c| d.get(c).is_some_and(|e| e.kind() == DocKind::Connector))
+            .expect("each son has a connector");
+        let curves =
+            baumhard::projection::Geometry::curve(geometry, connector).expect("the connector is drawn");
+        for curve in curves {
+            for k in 0..=400 {
+                let p = curve.point(k as f32 / 400.0);
+                sampled += 1;
+                assert!(
+                    !inside(&rect(hagar), p),
+                    "son {i}'s connector passes through Hagar at {p}"
+                );
+                for (j, &other) in sons.iter().enumerate() {
+                    if j != i {
+                        assert!(
+                            !inside(&rect(other), p),
+                            "son {i}'s connector passes through son {j} at {p}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(sampled > 0, "precondition: the connectors are sampled");
 }
 
 /// **Over the whole of testament at once, neither layout lays a node over
