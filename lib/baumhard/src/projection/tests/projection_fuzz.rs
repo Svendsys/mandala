@@ -30,10 +30,16 @@
 //! [`MAX_FRAME_GLYPHS`](crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS) characters — the
 //! flow harnesses' one frame an input — and every coordinate a path or an
 //! outline is drawn from is within
-//! [`EXTENT`](crate::projection::tests::projection_fuzz::EXTENT), so no path is long enough
-//! for a placement near the cap; and it draws at most
+//! [`EXTENT`](crate::projection::tests::projection_fuzz::EXTENT); and it
+//! draws at most
 //! [`MAX_UNITS`](crate::projection::tests::projection_fuzz::MAX_UNITS)
-//! sections, rings, connectors and links. Each is shaped and placed in
+//! sections, rings, connectors and links. The coordinates bound how long a
+//! path is in map units, not how many glyphs or samples it takes: those go
+//! by its length over its size, and a link at the smallest sizes a few
+//! thousand units long reaches the cap of a placement (R41) and of a
+//! curve's samples in `untangle`. What one such path costs is bounded by
+//! those caps, and by `untangle` taking no round that cannot do better
+//! (#346), not by this bound. Each is shaped and placed in
 //! every full projection the check makes, so the work grows with their
 //! count: libFuzzer reported a 4,000-node chain with a link on every
 //! node, 8,000 paths, as a slow unit of 16 to 18 s against its 20 s

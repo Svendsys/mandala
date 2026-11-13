@@ -486,11 +486,17 @@ pub(crate) struct Lane {
 /// two paths whose far ends lie on one line from the junction meet
 /// however straight they run, and keep the curves they had.
 ///
+/// The rounds stop as soon as no later round could keep fewer paths too
+/// near: when the paths too near another in every round to come are as
+/// many as the fewest so far (`always_near`) — two paths that arrive at
+/// one point along one line, say, which no halving parts. What is kept is
+/// what all the rounds would keep.
+///
 /// Cost: O(each lane's length over its width) samples, gridded, in the
 /// first round, and in each after it those of the lanes it halved alone;
-/// each round measures the samples of every lane it changed, and of the
-/// thinner lane of each pair with one, against at most a few of the
-/// other lane's each ([`NearGrid`]).
+/// each round measures the samples of every lane it changed against the
+/// points of each lane near them ([`NearGrid`]); and once, the samples
+/// that no halving moves (`always_near`).
 pub(crate) fn untangle(lanes: &[Lane]) -> Vec<f32> {
     let mut handles = vec![1.0_f32; lanes.len()];
     if lanes.len() < 2 {
@@ -516,19 +522,26 @@ pub(crate) fn untangle(lanes: &[Lane]) -> Vec<f32> {
     // as clear, as they were ([`NearGrid`]).
     let mut grid = NearGrid::new(&widths);
     for (k, points) in samples.iter().enumerate() {
+        #[cfg(test)]
+        UNTANGLE_GRIDDED.with(|count| count.set(count.get() + points.len()));
         grid.insert(k, points);
     }
     let mut fresh = vec![true; lanes.len()];
     let mut pairs = rustc_hash::FxHashSet::default();
     let mut best = (usize::MAX, handles.clone());
+    let mut always: Option<usize> = None;
     for round in 0..UNTANGLE_ROUNDS {
         if round > 0 {
             for (k, lane) in lanes.iter().enumerate().filter(|&(k, _)| fresh[k]) {
                 grid.remove(k, &samples[k]);
                 samples[k] = lay(lane, handles[k]);
+                #[cfg(test)]
+                UNTANGLE_GRIDDED.with(|count| count.set(count.get() + samples[k].len()));
                 grid.insert(k, &samples[k]);
             }
         }
+        #[cfg(test)]
+        UNTANGLE_GRIDS.with(|count| count.set(count.get() + 1));
         pairs = grid.near_pairs(&samples, &fresh, &pairs);
         let mut near = vec![false; lanes.len()];
         for &(k, j) in &pairs {
@@ -539,7 +552,7 @@ pub(crate) fn untangle(lanes: &[Lane]) -> Vec<f32> {
         if count < best.0 {
             best = (count, handles.clone());
         }
-        if count == 0 {
+        if count == 0 || *always.get_or_insert_with(|| always_near(lanes, &widths)) >= best.0 {
             break;
         }
         for (k, h) in handles.iter_mut().enumerate() {
@@ -557,6 +570,82 @@ pub(crate) fn untangle(lanes: &[Lane]) -> Vec<f32> {
     best.1
 }
 
+/// How many of `lanes` come too near another in every round of
+/// [`untangle`], whatever their handles: those with samples that no
+/// halving moves (`fixed_samples`) nearer another's such samples than
+/// [`CLEARANCE`] times the wider of their `widths`. A round can keep
+/// fewer paths too near than this no more than any other. O(those
+/// samples), measured as a round measures.
+fn always_near(lanes: &[Lane], widths: &[f32]) -> usize {
+    let fixed: Vec<Vec<Vec2>> = lanes.iter().map(fixed_samples).collect();
+    let mut near = vec![false; lanes.len()];
+    for (k, j) in near_pairs(&fixed, widths, &vec![true; lanes.len()], &Default::default()) {
+        near[k] = true;
+        near[j] = true;
+    }
+    near.iter().filter(|&&n| n).count()
+}
+
+/// The samples of `lane` that [`untangle`] takes in every round, whatever
+/// its handles, each exactly as a round takes it: a straight lane's
+/// every one; and a curved lane's along its two leads, which run straight
+/// whatever its handles (`path_through`) — the first lead's from where a
+/// round's are taken on, and the last lead's when the curves before it
+/// reach so far that a round takes them all.
+///
+/// The curves before the last lead start and end where they do whatever
+/// the handles; only their control points move. A round's distance along
+/// a curve, summed from its samples, is at least the curve's chord less
+/// how far its last sample falls short of its end: at most its greatest
+/// speed over its samples, three times its control polygon over their
+/// count, so three of its steps, or of its polygon over the sampling's
+/// cap, whichever is more. A handle reaches no further than at its full
+/// share, so the polygon at full handles, twice over and the chord, bounds
+/// it at any share. What rounding can take off the sum is kept back too:
+/// a few units in the last place of each sample's distance, and of each
+/// point's coordinates. O(the leads' samples, and the curves).
+fn fixed_samples(lane: &Lane) -> Vec<Vec2> {
+    let (step, skip) = (0.25 * lane.width, CLEARANCE * lane.hold.max(lane.width));
+    if lane.straight {
+        return sample(&[Curve::Line(lane.start.0, lane.end.0)], step, skip);
+    }
+    let curves = path_through(lane.start, lane.end, &lane.via, 1.0);
+    let mut fixed = Vec::new();
+    if let Some(first @ Curve::Line(..)) = curves.first() {
+        fixed.extend(sample(&[*first], step, skip));
+    }
+    let Some((last @ Curve::Line(..), before)) = curves.split_last() else {
+        return fixed;
+    };
+    let step = step.max(1e-2);
+    // Per curve before the last lead: its chord, how far a round's sum
+    // along it can fall short of that, and how many samples it is summed
+    // from, at most.
+    let (mut chord, mut short, mut count) = (0.0_f32, 0.0_f32, 0.0_f32);
+    for curve in before {
+        let (a, d) = (curve.point(0.0), curve.point(1.0));
+        let (polygon, size) = match *curve {
+            Curve::Cubic(_, b, c, _) => (
+                2.0 * (a.distance(b) + c.distance(d)) + a.distance(d),
+                a.abs().max(b.abs()).max(c.abs()).max(d.abs()).max_element(),
+            ),
+            _ => (a.distance(d), a.abs().max(d.abs()).max_element()),
+        };
+        let samples = (polygon / step).ceil().clamp(1.0, SAMPLE_CAP as f32);
+        chord += a.distance(d);
+        short += 3.0 * step.max(polygon / SAMPLE_CAP as f32) + 16.0 * f32::EPSILON * size;
+        count += samples;
+    }
+    let rounding = (count + 16.0) * f32::EPSILON;
+    if !before.is_empty() && rounding < 0.5 && (1.0 - rounding) * chord - short >= skip {
+        fixed.extend(sample(&[*last], step, 0.0));
+    }
+    fixed
+}
+
+/// The most points [`sample`] takes along one curve.
+const SAMPLE_CAP: usize = 1 << 16;
+
 /// Points along `curves` at most `step` apart, from `skip` along on.
 pub(crate) fn sample(curves: &[Curve], step: f32, skip: f32) -> Vec<Vec2> {
     let step = step.max(1e-2);
@@ -572,7 +661,7 @@ pub(crate) fn sample(curves: &[Curve], step: f32, skip: f32) -> Vec<Vec2> {
         if !reach.is_finite() {
             continue;
         }
-        let n = ((reach / step).ceil() as usize).clamp(1, 1 << 16);
+        let n = ((reach / step).ceil() as usize).clamp(1, SAMPLE_CAP);
         let mut last = a;
         for i in 0..n {
             let p = curve.point(i as f32 / n as f32);
@@ -610,22 +699,26 @@ fn runs(points: &[Vec2], side: f32, mut put: impl FnMut(CellKey, &[Vec2])) {
 
 /// Every lane's points of a junction, in **coarse** cells as wide as the
 /// widest distance two lanes must keep ([`CLEARANCE`] times the widest
-/// width), each holding its points by lane, so the lanes that may come
-/// near a lane are those with points in the cells round its own. It is
+/// width), each holding its points by lane: the lanes that may come near a
+/// point are those with points in the nine coarse cells round it. It is
 /// kept from round to round of [`untangle`], a lane's points taken out and
 /// put back as its curve changes.
 ///
-/// A pair is measured from the points of its thinner lane, each against
-/// the wider lane's points in the nine **fine** cells round it: cells of
-/// the wider lane's own distance, [`CLEARANCE`] times its width, which is
-/// the distance the pair must keep. A lane sampled every quarter of its
-/// width puts at most six points in a fine cell of its own each time it
-/// crosses one, so a point is measured against a few points of each lane
-/// near it, however much thinner it is than the widest lane of the
-/// junction. A lane's fine cells are filled the first time a pair needs
-/// them, and emptied when its points change. Measured in the coarse cells
-/// alone, a lane a twenty-fourth as wide as another measured each of its
-/// points against hundreds of its own, and of every lane beside it (#346).
+/// Where two lanes meet in a coarse cell, the thinner one's points there
+/// are measured against the wider one's in the nine **fine** cells round
+/// each: cells of the wider lane's own distance, [`CLEARANCE`] times its
+/// width, which is the distance the pair must keep. A lane sampled every
+/// quarter of its width along a straight line puts at most six points in
+/// a fine cell of its own each time it crosses one along an axis, and at
+/// most eight across a diagonal; where a curve slows its samples, even in
+/// its parameter, bunch closer, and a cell holds more. So a point is
+/// measured against the few points each lane near it has there, however
+/// much thinner it is than the widest lane of the junction, and against
+/// no lane that is not near it. A lane's fine cells are filled the first
+/// time a pair needs them, and emptied when its points change. Measured
+/// in the coarse cells alone, a lane a twenty-fourth as wide as another
+/// measured each of its points against hundreds of its own, and of every
+/// lane beside it (#346).
 struct NearGrid<'a> {
     widths: &'a [f32],
     /// The side of a coarse cell.
@@ -651,8 +744,6 @@ impl<'a> NearGrid<'a> {
 
     /// Put lane `lane`'s `points` in. O(points).
     fn insert(&mut self, lane: usize, points: &[Vec2]) {
-        #[cfg(test)]
-        UNTANGLE_GRIDDED.with(|count| count.set(count.get() + points.len()));
         let cells = &mut self.cells;
         runs(points, self.cell, |at, run| {
             cells
@@ -687,67 +778,75 @@ impl<'a> NearGrid<'a> {
     /// fresh, those in `before`, whose points have not moved since it was
     /// measured.
     ///
-    /// Cost: per fresh lane, its coarse cells and the eight round each,
-    /// and per lane with points there, the points of the thinner of the
-    /// two in those cells, each against the wider one's points in the
-    /// nine fine cells round it, and those fine cells filled if they are
-    /// not; one stamp a lane.
+    /// Cost: per fresh lane, each of its coarse cells once, the lanes in
+    /// the nine round it, and per such lane the thinner one's points there
+    /// ([`Self::near_at`]); one stamp a lane.
     fn near_pairs(
         &self,
         samples: &[Vec<Vec2>],
         fresh: &[bool],
         before: &rustc_hash::FxHashSet<(usize, usize)>,
     ) -> rustc_hash::FxHashSet<(usize, usize)> {
-        #[cfg(test)]
-        UNTANGLE_GRIDS.with(|count| count.set(count.get() + 1));
         let mut pairs: rustc_hash::FxHashSet<(usize, usize)> = before
             .iter()
             .copied()
             .filter(|&(k, j)| !fresh[k] && !fresh[j])
             .collect();
-        // The fresh lane each lane was last measured against: a pair
-        // carried from `before` is of two lanes not fresh, so never met in
-        // the loop below, and a pair of two fresh lanes is measured from
-        // the lower one, nearness being symmetric. One stamp a lane, not a
-        // table of pairs.
+        // The fresh lane each lane was last found near: a pair carried from
+        // `before` is of two lanes not fresh, so never met in the loop
+        // below, and a pair of two fresh lanes is measured from the lower
+        // one, nearness being symmetric. One stamp a lane, not a table of
+        // pairs.
         let mut seen = vec![usize::MAX; samples.len()];
         #[cfg(test)]
         UNTANGLE_SCRATCH.with(|count| count.set(count.get() + seen.len()));
         for (k, points) in samples.iter().enumerate().filter(|&(k, _)| fresh[k]) {
-            // The coarse cells round `k`'s points: a point of another lane
-            // near one of them lies in one, a coarse cell being at least
-            // any distance two lanes must keep.
-            let mut around: FxHashSet<CellKey> = FxHashSet::default();
-            runs(points, self.cell, |(x, y), _| {
-                for dx in -1..=1 {
-                    for dy in -1..=1 {
-                        around.insert((x + dx, y + dy));
+            let mut visited: FxHashSet<CellKey> = FxHashSet::default();
+            // The cells of a thinner lane's points measured against `k`'s
+            // already, each once.
+            let mut measured: FxHashSet<(usize, CellKey)> = FxHashSet::default();
+            let mut lanes: Vec<usize> = Vec::new();
+            runs(points, self.cell, |at, _| {
+                if !visited.insert(at) {
+                    return;
+                }
+                // The lanes that may come near `k`'s points in `at`: those
+                // with points in the nine cells round it.
+                lanes.clear();
+                for (x, y) in around(at) {
+                    for &j in self.cells.get(&(x, y)).into_iter().flat_map(|held| held.keys()) {
+                        if j != k && !(fresh[j] && j < k) && seen[j] != k && !lanes.contains(&j) {
+                            lanes.push(j);
+                        }
                     }
                 }
-            });
-            for at in &around {
-                for &j in self.cells.get(at).into_iter().flat_map(|lanes| lanes.keys()) {
-                    if j == k || (fresh[j] && j < k) || seen[j] == k {
-                        continue;
-                    }
-                    seen[j] = k;
-                    if self.near(samples, &around, k, j) {
+                for &j in &lanes {
+                    if self.near_at(samples, at, k, j, &mut measured) {
+                        seen[j] = k;
                         pairs.insert((k.min(j), k.max(j)));
                     }
                 }
-            }
+            });
         }
         pairs
     }
 
-    /// Whether fresh lane `k` and lane `j` come nearer each other than
-    /// [`CLEARANCE`] times the wider of their widths: the thinner lane's
-    /// points — `k`'s own, or `j`'s in the coarse cells `around` `k` —
-    /// each against the wider lane's points in the nine fine cells round
-    /// it, consecutive points in one fine cell looking them up once.
-    /// O(those points and the few in each one's fine cells, and the wider
-    /// lane's points if its fine cells are not yet filled).
-    fn near(&self, samples: &[Vec<Vec2>], around: &FxHashSet<CellKey>, k: usize, j: usize) -> bool {
+    /// Whether fresh lane `k`'s points in coarse cell `at` come nearer
+    /// lane `j`'s than [`CLEARANCE`] times the wider of their widths: the
+    /// thinner lane's points — `k`'s in `at`, or `j`'s in the nine cells
+    /// round it but those `measured` against `k` already, which it adds
+    /// to — each against the wider lane's points in the nine fine cells
+    /// round it, consecutive points in one fine cell looking them up once.
+    /// O(those points and the points in each one's fine cells, and the
+    /// wider lane's points if its fine cells are not yet filled).
+    fn near_at(
+        &self,
+        samples: &[Vec<Vec2>],
+        at: CellKey,
+        k: usize,
+        j: usize,
+        measured: &mut FxHashSet<(usize, CellKey)>,
+    ) -> bool {
         let need = CLEARANCE * self.widths[k].max(self.widths[j]);
         // The wider lane, whose fine cell is at least `need`: on equal
         // widths either, and of a width that is not a number the other.
@@ -766,15 +865,13 @@ impl<'a> NearGrid<'a> {
         });
         let mut nearby: (Option<CellKey>, Vec<&Vec<Vec2>>) = (None, Vec::with_capacity(9));
         let mut close = |p: Vec2| {
-            let (x, y) = cell_of(p, side);
-            if nearby.0 != Some((x, y)) {
-                nearby.0 = Some((x, y));
+            #[cfg(test)]
+            UNTANGLE_CLOSE.with(|count| count.set(count.get() + 1));
+            let cell = cell_of(p, side);
+            if nearby.0 != Some(cell) {
+                nearby.0 = Some(cell);
                 nearby.1.clear();
-                for dx in -1..=1 {
-                    for dy in -1..=1 {
-                        nearby.1.extend(fine.get(&(x + dx, y + dy)));
-                    }
-                }
+                nearby.1.extend(around(cell).filter_map(|c| fine.get(&c)));
             }
             nearby.1.iter().copied().flatten().any(|q| {
                 #[cfg(test)]
@@ -782,16 +879,22 @@ impl<'a> NearGrid<'a> {
                 q.distance(p) < need
             })
         };
+        let points = |lane: usize, cell: CellKey| self.cells.get(&cell).and_then(|held| held.get(&lane));
         if wider == j {
-            samples[k].iter().any(|&p| close(p))
+            points(k, at).into_iter().flatten().any(|&p| close(p))
         } else {
-            around
-                .iter()
-                .filter_map(|at| self.cells.get(at)?.get(&j))
+            around(at)
+                .filter(|&cell| measured.insert((j, cell)))
+                .filter_map(|cell| points(j, cell))
                 .flatten()
                 .any(|&p| close(p))
         }
     }
+}
+
+/// The nine cells round `at`, `at` among them.
+fn around((x, y): CellKey) -> impl Iterator<Item = CellKey> {
+    (-1..=1).flat_map(move |dx| (-1..=1).map(move |dy| (x + dx, y + dy)))
 }
 
 /// The pairs of lanes, each `(lower, higher)`, whose points `samples`
@@ -800,9 +903,8 @@ impl<'a> NearGrid<'a> {
 /// pairs of two lanes not fresh, those in `before` ([`NearGrid`], built
 /// for the one question).
 ///
-/// Cost: O(the points) to grid them, and per fresh point the points in
-/// the nine cells round it.
-#[cfg(test)]
+/// Cost: O(the points) to grid them, and what
+/// [`NearGrid::near_pairs`] costs.
 pub(crate) fn near_pairs(
     samples: &[Vec<Vec2>],
     widths: &[f32],
@@ -818,13 +920,12 @@ pub(crate) fn near_pairs(
 
 #[cfg(test)]
 thread_local! {
-    /// Test counter: the rounds of measuring a junction's lanes on this
-    /// thread ([`NearGrid::near_pairs`]), one for each round of
-    /// [`untangle`].
+    /// Test counter: the rounds of [`untangle`] on this thread, each
+    /// measuring a junction's lanes ([`NearGrid::near_pairs`]).
     pub(crate) static UNTANGLE_GRIDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Test counter: the points put in a [`NearGrid`] on this thread:
-    /// every lane's once, and after that a lane's again only when its
-    /// curve changed.
+    /// Test counter: the samples [`untangle`]'s rounds have put in their
+    /// grid on this thread: every lane's once, and after that a lane's
+    /// again only when its curve changed.
     pub(crate) static UNTANGLE_GRIDDED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test counter: the entries of the tables [`NearGrid::near_pairs`]
     /// has allocated on this thread to know which pairs it has found.
@@ -832,6 +933,9 @@ thread_local! {
     /// Test counter: the points [`NearGrid::near_pairs`] has measured
     /// another point against on this thread.
     pub(crate) static UNTANGLE_MEASURED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter: the points [`NearGrid::near_pairs`] has measured
+    /// against another lane on this thread, each time it did.
+    pub(crate) static UNTANGLE_CLOSE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `size` in points, for shaping: a relative size — a fraction of the
