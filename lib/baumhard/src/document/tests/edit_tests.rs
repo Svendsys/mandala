@@ -1001,6 +1001,317 @@ fn test_a_family_keeps_clear_of_lines_placed_before_it() {
     );
 }
 
+/// The flower edit, run on its own.
+fn flower_def() -> EditDef {
+    edit(r#"{"id":"f","name":"F","reach":"self","target":"node","handler":"flower"}"#)
+}
+
+/// **The connector is taken from where this run placed the grandparent**
+/// (review of #331). Node 1 is flowered with node 3, its grandson: node 2,
+/// node 1's only son, moves to node 1's top, from 860 units above it, and
+/// node 3's sons are laid round node 3 after it. The connector from node
+/// 2's new place to node 3 runs through the petal the unturned circle puts
+/// at 150°, and the one from where node 2 is drawn does not (both
+/// asserted, by the f64 sampled oracle); no son of node 3 meets the
+/// connector from node 2's new place.
+///
+/// Control: with the grandparent taken where it is drawn, the unturned
+/// circle was taken and its 150° son sat on node 2's new connector.
+#[test]
+fn test_a_connector_runs_from_where_the_run_placed_the_grandparent() {
+    let text = r#"{"format":1,"name":"t","nodes":[
+{"id":1,"position":[0,0]},
+{"id":2,"parent":1,"position":[0,-1000]},
+{"id":3,"parent":2,"position":[866,-640]},
+{"id":4,"parent":3,"position":[3000,3000]},
+{"id":5,"parent":3,"channel":1,"position":[3000,3000]},
+{"id":6,"parent":3,"channel":2,"position":[3000,3000]}]}"#;
+    let mut doc = load(text).unwrap();
+    let size = Vec2::new(100.0, 40.0);
+    let rect = |at: Vec2| crate::flow::Rect::new(at, size);
+    let (moved, drawn, three) = (
+        rect(Vec2::new(0.0, -140.0)),
+        rect(Vec2::new(0.0, -1000.0)),
+        rect(Vec2::new(866.0, -640.0)),
+    );
+    let center = three.center();
+    let at_150 = rect(center + 140.0 * Vec2::from_angle(150_f32.to_radians()) - size / 2.0);
+    assert!(
+        sampled_crossing(moved.center(), center, &at_150, &[moved, three]),
+        "precondition: the unturned circle's 150° son sits on the new connector"
+    );
+    assert!(
+        !sampled_crossing(drawn.center(), center, &at_150, &[drawn, three]),
+        "precondition: and not on the drawn one"
+    );
+    let anchors = [n(&doc, 1), n(&doc, 3)];
+    run(&mut doc, &flower_def(), &anchors).unwrap();
+    assert!(
+        (node(&doc, 2).1.position - moved.origin).length() < 1e-3,
+        "node 2 at node 1's top"
+    );
+    for son in [4, 5, 6] {
+        let at = rect(node(&doc, son).1.position);
+        assert!(
+            !sampled_crossing(moved.center(), center, &at, &[moved, three]),
+            "node {son} at {} sits on node 3's connector",
+            at.origin
+        );
+    }
+}
+
+/// **A family keeps clear of the lines its per-petal fallback laid**
+/// (review of #331). A closed frame of four bars round node 1 crosses
+/// every line from it, so no regular arrangement of its one son is clear
+/// and the son goes on its own ray, at the top, its line through the top
+/// bar (asserted: no regular arrangement takes such a line). Node 30 is
+/// flowered after it: its unturned circle's 30° son sits on that line
+/// (asserted, by the f64 sampled oracle), and no son of node 30 meets it.
+///
+/// Control: with the fallback's lines not kept, the unturned circle was
+/// taken and its 30° son sat on node 1's line.
+#[test]
+fn test_a_family_keeps_clear_of_lines_its_fallback_laid() {
+    use crate::flow::Rect;
+    let text = r#"{"format":1,"name":"t","nodes":[
+{"id":1,"position":[0,0]},
+{"id":2,"parent":1,"position":[3000,3000]},
+{"id":20,"channel":20,"position":[-24,-24]},
+{"id":21,"channel":21,"position":[-24,60]},
+{"id":22,"channel":22,"position":[-24,-24]},
+{"id":23,"channel":23,"position":[120,-24]},
+{"id":30,"channel":30,"position":[-121,-140]},
+{"id":31,"parent":30,"position":[3000,3000]},
+{"id":32,"parent":30,"channel":1,"position":[3000,3000]},
+{"id":33,"parent":30,"channel":2,"position":[3000,3000]}]}"#;
+    let mut doc = load(text).unwrap();
+    let mut geometry = Boxes::of(&doc);
+    for (id, at, size) in [
+        (20, [-24.0, -24.0], [148.0, 4.0]),
+        (21, [-24.0, 60.0], [148.0, 4.0]),
+        (22, [-24.0, -24.0], [4.0, 88.0]),
+        (23, [120.0, -24.0], [4.0, 88.0]),
+    ] {
+        geometry.0.insert(n(&doc, id), Rect::new(at.into(), size.into()));
+    }
+    let top_bar = geometry.0[&n(&doc, 20)];
+    let size = Vec2::new(100.0, 40.0);
+    let rect = |at: Vec2| Rect::new(at, size);
+    let one = rect(Vec2::ZERO);
+    let center = Vec2::new(-71.0, -120.0);
+    let at_30 = rect(center + 140.0 * Vec2::from_angle(30_f32.to_radians()) - size / 2.0);
+    let son = rect(Vec2::new(0.0, -140.0));
+    assert!(
+        sampled_crossing(one.center(), son.center(), &at_30, &[one, son]),
+        "precondition: the unturned circle's 30° son sits on node 1's line"
+    );
+    let anchors = [n(&doc, 1), n(&doc, 30)];
+    let request = flower_def()
+        .request(&doc, &geometry, &registry(), &anchors)
+        .unwrap();
+    doc.apply(request, ChangeSource::Edit).unwrap();
+    assert_eq!(node(&doc, 2).1.position, son.origin, "node 1's son at the top");
+    assert!(
+        sampled_crossing(one.center(), son.center(), &top_bar, &[one, son]),
+        "precondition: node 1's line runs through the top bar: the fallback's"
+    );
+    for id in [31, 32, 33] {
+        let at = rect(node(&doc, id).1.position);
+        assert!(
+            !sampled_crossing(one.center(), son.center(), &at, &[one, son]),
+            "node {id} at {} sits on node 1's line",
+            at.origin
+        );
+    }
+}
+
+/// **A family's own connector is whole, however far out a petal meets it**
+/// (owner, on #331). Node 2 hangs from node 1, 100,000 units to its right
+/// and 500 up, so the connector leaves node 2 almost level, rising a unit
+/// in 200. Node 2's one son is 40,000 units square: the unturned circle
+/// puts it straight above node 2, where it meets the connector about
+/// 18,000 units out — past the first 16,384 units from node 2, the end
+/// stretch a kept segment keeps (both asserted, by the f64 sampled
+/// oracle), and its line is 70 units long, so the arrangement is otherwise
+/// clear. The son does not meet the connector.
+///
+/// Control: with the family's own connector kept like the others, in its
+/// end stretches only, the son sat on it, straight above node 2.
+#[test]
+fn test_a_familys_own_connector_is_whole_however_far_out() {
+    use crate::edit_handlers::{LINE_PIECE, MAX_LINE_PIECES};
+    use crate::flow::Rect;
+    let text = r#"{"format":1,"name":"t","nodes":[
+{"id":1,"position":[100000,-500]},
+{"id":2,"parent":1,"position":[0,0]},
+{"id":3,"parent":2,"position":[3000,3000]}]}"#;
+    let mut doc = load(text).unwrap();
+    let mut geometry = Boxes::of(&doc);
+    let square = Vec2::splat(40_000.0);
+    geometry
+        .0
+        .insert(n(&doc, 3), Rect::new(Vec2::splat(3000.0), square));
+    let size = Vec2::new(100.0, 40.0);
+    let (grand, parent) = (
+        Rect::new(Vec2::new(100_000.0, -500.0), size),
+        Rect::new(Vec2::ZERO, size),
+    );
+    let (from, center) = (grand.center(), parent.center());
+    let radius = 50.0 + 20_000.0 + crate::edit_handlers::RADIAL_PADDING;
+    let top = Rect::new(center - Vec2::new(0.0, radius) - square / 2.0, square);
+    assert!(
+        sampled_crossing(from, center, &top, &[grand, parent]),
+        "precondition: the unturned son meets the connector"
+    );
+    // Where the connector leaves node 2, on its right edge, and the end
+    // of the stretch kept beside it.
+    let leaves = center + (from - center) * (50.0 / (from.x - center.x));
+    let stretch = leaves + (from - center).normalize() * (MAX_LINE_PIECES as f32 * LINE_PIECE);
+    assert!(
+        !sampled_crossing(leaves, stretch, &top, &[]),
+        "precondition: and not in its end stretch"
+    );
+    let request = flower_def()
+        .request(&doc, &geometry, &registry(), &[n(&doc, 2)])
+        .unwrap();
+    doc.apply(request, ChangeSource::Edit).unwrap();
+    let son = Rect::new(node(&doc, 3).1.position, square);
+    assert!(
+        !sampled_crossing(from, center, &son, &[grand, parent]),
+        "the son at {} meets node 2's connector",
+        son.origin
+    );
+}
+
+/// **A kept segment longer than 16,384 units is kept only at its ends**
+/// (review of #331). A kept segment 40,000 units long, straight up the
+/// canvas: a petal across it 200 units from either end is refused, and
+/// one across its middle is taken (each petal meets it, asserted by the
+/// f64 sampled oracle).
+///
+/// Controls: kept whole, the middle petal was refused; kept without its
+/// end stretches, the end petals were taken.
+#[test]
+fn test_a_long_kept_segment_is_kept_only_at_its_ends() {
+    use crate::edit_handlers::{arrangement, Clear};
+    use crate::flow::Rect;
+    let doc = load(FAMILY).unwrap();
+    let geometry = Boxes::of(&doc);
+    let size = Vec2::new(100.0, 40.0);
+    let sons = [(n(&doc, 2), Rect::new(Vec2::ZERO, size))];
+    let mut clear = Clear::new(&geometry, sons.iter());
+    let (a, b) = (Vec2::new(50.0, -40_000.0), Vec2::ZERO + Vec2::new(50.0, 0.0));
+    clear.keep_segment(a, b);
+    for (y, taken) in [(-200.0, false), (-39_800.0, false), (-20_000.0, true)] {
+        // The petal 250 units left of the parent's center, across the
+        // segment at height `y`.
+        let center = Vec2::new(310.0, y);
+        let parent = (n(&doc, 1), Rect::new(center - size / 2.0, size));
+        let petal = Rect::new(Vec2::new(10.0, y - 20.0), size);
+        assert!(sampled_crossing(a, b, &petal, &[]), "precondition: {y} meets it");
+        let laid = arrangement(&clear, parent, center, 250.0, std::f32::consts::PI, 0.0, &sons);
+        assert_eq!(laid.is_some(), taken, "a petal across it at {y}");
+    }
+}
+
+/// **A petal too large for the cells keeps clear of the kept segments**
+/// (review of #331). A son 5,000 units square, more than 64 of the run's
+/// 512-unit cells, laid across a kept segment whose ends are outside it,
+/// is refused — read through the cells that hold kept pieces when they
+/// are fewer than its outline's pieces, and along its outline when a
+/// hundred far segments make them more — and, with only the far segments
+/// kept, taken.
+///
+/// Controls: with the oversized petal testing no kept segment, both
+/// crossings were taken; with each of its two reads returning nothing in
+/// turn, the crossing that read was taken.
+#[test]
+fn test_an_oversized_petal_keeps_clear_of_kept_segments() {
+    use crate::edit_handlers::{arrangement, Clear};
+    use crate::flow::Rect;
+    let doc = load(FAMILY).unwrap();
+    let geometry = Boxes::of(&doc);
+    let sons = [(n(&doc, 2), Rect::new(Vec2::ZERO, Vec2::splat(5000.0)))];
+    let center = Vec2::new(500.0, -3500.0);
+    let parent = (
+        n(&doc, 1),
+        Rect::new(center - Vec2::new(50.0, 20.0), Vec2::new(100.0, 40.0)),
+    );
+    let up = -std::f32::consts::FRAC_PI_2;
+    let far = |clear: &mut Clear| {
+        for k in 0..100 {
+            let x = 1.0e6 + 1024.0 * k as f32;
+            clear.keep_segment(Vec2::new(x, 0.0), Vec2::new(x + 10.0, 0.0));
+        }
+    };
+    for (crossing, far_too, taken) in [(true, false, false), (true, true, false), (false, true, true)] {
+        let mut clear = Clear::new(&geometry, sons.iter());
+        if crossing {
+            clear.keep_segment(Vec2::new(50.0, -12_000.0), Vec2::new(50.0, -500.0));
+        }
+        if far_too {
+            far(&mut clear);
+        }
+        let laid = arrangement(&clear, parent, center, 3000.0, up, 0.0, &sons);
+        assert_eq!(
+            laid.is_some(),
+            taken,
+            "crossing kept: {crossing}, far segments kept: {far_too}"
+        );
+    }
+}
+
+/// **A family's work on the kept segments does not grow with the families
+/// before it** (review of #331). Units of a node with a grandparent 40,000
+/// units above it, its first son and their sons, each unit 5,120 units
+/// (ten of the run's cells) right of the last, are flowered at each node
+/// and its first son: the kept segment pieces tested for the last unit
+/// are as many after twenty units as after two, and more than none.
+///
+/// Control: with a kept segment longer than 16,384 units tested by every
+/// petal, as the wide segments were, the last unit tested more after
+/// twenty units.
+#[test]
+fn test_a_familys_segment_work_does_not_grow_with_the_run() {
+    use crate::edit_handlers::SEGMENT_TESTS;
+    let tested = |units: u32| {
+        let mut nodes = Vec::new();
+        for k in 0..units {
+            let (x, id) = (5120 * k, 100 + 10 * k);
+            nodes.push(format!(r#"{{"id":{id},"position":[{x},-40000]}}"#));
+            nodes.push(format!(r#"{{"id":{},"parent":{id},"position":[{x},0]}}"#, id + 1));
+            for (son, parent, channel) in [(2, 1, 0), (5, 2, 0), (6, 2, 1), (7, 2, 2), (3, 1, 1), (4, 1, 2)] {
+                nodes.push(format!(
+                    r#"{{"id":{},"parent":{},"channel":{channel},"position":[{},3000]}}"#,
+                    id + son,
+                    id + parent,
+                    x + 3000
+                ));
+            }
+        }
+        let doc = load(&format!(
+            r#"{{"format":1,"name":"t","nodes":[{}]}}"#,
+            nodes.join(",")
+        ))
+        .unwrap();
+        let anchors: Vec<NodeId> = (0..units)
+            .flat_map(|k| [n(&doc, 101 + 10 * k), n(&doc, 102 + 10 * k)])
+            .collect();
+        let before = SEGMENT_TESTS.with(|tests| tests.get());
+        flower_def()
+            .request(&doc, &Boxes::of(&doc), &registry(), &anchors)
+            .unwrap();
+        SEGMENT_TESTS.with(|tests| tests.get()) - before
+    };
+    let last = |units: u32| tested(units) - tested(units - 1);
+    let (few, many) = (last(3), last(21));
+    assert!(few > 0, "precondition: a unit tests kept pieces");
+    assert_eq!(
+        few, many,
+        "the last unit's tests after two units and after twenty"
+    );
+}
+
 /// **A petal's line must not cross its own siblings** (review of #331).
 /// Two sons 600 wide at radius 700, 20° apart from the top: they do not
 /// overlap, but the line to the first, straight up, runs through the

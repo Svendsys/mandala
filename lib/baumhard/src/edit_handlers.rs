@@ -36,10 +36,10 @@
 //!   A flower keeps its shape: one radius and one spacing for every
 //!   petal, on the full circle where that is clear and else on the
 //!   widest clear fan, its lines clear of other nodes too, and no petal
-//!   on its parent's own connector or on a line laid earlier in the run
-//!   (the order
-//!   and its bounds are on [`flower`](crate::edit_handlers::flower));
-//!   only when no such arrangement is clear does each petal move outward
+//!   on its parent's own connector or on a line or connector the run
+//!   keeps for the families laid before it (the order, what is kept and
+//!   the bounds are on [`flower`](crate::edit_handlers::flower)); only
+//!   when no such arrangement is clear does each petal move outward
 //!   along its own ray. A cascade row moves down as a whole, keeping its
 //!   spacing, trying at each depth straight below, then right and left
 //!   by growing steps
@@ -50,9 +50,10 @@
 //!   steps out to twice the canvas bound, where every probe past the
 //!   drawn nodes meets nothing. What is drawn is asked of the projector's
 //!   body index (`Geometry::nodes_meeting`), never scanned: a run keeps
-//!   only the set of nodes it moves and the rectangles it has placed, so
-//!   its cost follows the families it moves, not the map. Only a layout
-//!   keeps clear: a node moved by hand goes where it is put.
+//!   only the set of nodes it moves, the rectangles it has placed and
+//!   the segments it keeps, so its cost follows the families it moves,
+//!   not the map. Only a layout keeps clear: a node moved by hand goes
+//!   where it is put.
 //! - A child with no rectangle has no size to lay out by (D5), so it
 //!   takes no slot: one hidden child of twelve makes an eleven-petal
 //!   flower, and a cascade row without it. `main` gave it one.
@@ -206,11 +207,20 @@ pub const MAX_LINE_PIECES: u32 = 64;
 /// already placed or another of its own, and no petal's line — the
 /// straight line from the parent's center to the petal's, where it runs
 /// outside the two — crosses a drawn node, a placed petal or another of
-/// its own (see `Clear`). A petal also meets no **segment a run keeps**
-/// (owner, on #331): its parent's own connector from the grandparent —
-/// the straight line from the grandparent's center to the parent's,
-/// where it runs outside the two — and the lines of every family placed
-/// earlier in the same run. They are tried in this order:
+/// its own (see `Clear`). Nor does a petal meet its parent's own
+/// connector from the grandparent (owner, on #331) — the straight line
+/// from the grandparent's center to the parent's, where it runs outside
+/// the two, the grandparent where this run placed it or else where it is
+/// drawn — which is held whole while the family is laid, however long;
+/// nor any **segment the run keeps**. Once a family is laid, the run
+/// keeps its lines and its parent's connector for every family after it,
+/// so a later family keeps clear of every earlier family's parent's
+/// connector too, not only of its own. Only these are kept: a connector
+/// neither of whose ends the run flowers is never avoided. A kept
+/// segment longer than [`MAX_LINE_PIECES`] × [`LINE_PIECE`] (16,384
+/// units) is kept only in its two end stretches of that length, beside
+/// the nodes it joins; its middle is not kept. The arrangements are
+/// tried in this order:
 ///
 /// 1. each radius from the base out, [`FLOWER_RADII`] of them,
 ///    [`FLOWER_RADIUS_STEP`] apart;
@@ -223,9 +233,8 @@ pub const MAX_LINE_PIECES: u32 = 64;
 /// So the smallest radius that has a clear arrangement wins, and at
 /// that radius the full circle, then the widest fan. When none is
 /// clear, each petal moves outward along its own ray, by [`probes`],
-/// until it is clear of the drawn nodes, the petals before it and the
-/// segments the run keeps. Once a family is placed, its lines join those
-/// segments, for the families after it.
+/// until it is clear of the drawn nodes, the petals before it, its
+/// parent's connector and the segments the run keeps.
 ///
 /// Parents are placed before their children, in tree order, and a node
 /// one flower moves is the center of its own where it is moved to, so
@@ -238,12 +247,14 @@ pub const MAX_LINE_PIECES: u32 = 64;
 ///
 /// - O(n²) comparisons of its petals and lines with each other;
 /// - per petal, one query of the projector's body index over the
-///   petal's cells, and a lookup of this run's placements and kept
-///   segments there (`Clear::is_clear`). The kept segments grow with the
-///   selection — one per family's parent and one per placed petal — and
-///   are filed in `Clear`'s 512-unit cells, so a petal reads only those
-///   near it, plus any too long to file (past 64 of those cells), which
-///   every petal tests;
+///   petal's cells, a test of its parent's connector, and a lookup of
+///   this run's placements and kept segment pieces there
+///   (`Clear::is_clear`). A kept segment is at most 2 ×
+///   [`MAX_LINE_PIECES`] pieces of at most [`LINE_PIECE`], each filed
+///   under at most four of `Clear`'s 512-unit cells, so a petal reads
+///   only the pieces kept near it — though segments, unlike placed
+///   rectangles, may overlap, so those converging on one node crowd the
+///   cells beside it;
 /// - per line, at most [`MAX_LINE_PIECES`] queries of the body index,
 ///   each over at most four cells, a `node_rect` for each node one finds,
 ///   and as many lookups of the placements.
@@ -254,8 +265,11 @@ pub const MAX_LINE_PIECES: u32 = 64;
 /// body. Then, only if none is clear, at most the [`probes`] per petal.
 /// One exception is the petal itself: a petal larger than the index's
 /// cell limit (64 cells of 256 units) is checked by the index's scan of
-/// every body (`BodyIndex::query`). Nothing else is proportional to the
-/// map.
+/// every body (`BodyIndex::query`), and one larger than `Clear`'s (64
+/// cells of 512 units) reads every placement of this run, and the kept
+/// pieces along its outline or through every cell that holds one,
+/// whichever is fewer (`Clear::meets_segment`). Nothing else is
+/// proportional to the map.
 pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Result<Walks, String> {
     let families: Vec<Family> = in_tree_order(doc.tree(), nodes, false)
         .into_iter()
@@ -279,18 +293,17 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
         let radius = parent_span + child_span + RADIAL_PADDING;
         let center = origin + rect.size / 2.0;
         let outline = Rect::new(origin, rect.size);
-        // The parent's own connector from the grandparent, as placed or
-        // as drawn: a segment none of its petals may meet.
+        // The parent's own connector from the grandparent, the
+        // grandparent as placed in this run or as drawn: a segment none of
+        // its petals may meet, held whole while they are laid.
         let grandparent = doc
             .parent(parent)
             .filter(|&up| doc.get(up).is_some_and(|e| e.kind() == DocKind::Node));
-        if let Some(drawn) = grandparent.and_then(|up| geometry.node_rect(up)) {
-            let at = grandparent.and_then(|up| placed.get(&up).copied());
-            let grand = Rect::new(at.unwrap_or(drawn.origin), drawn.size);
-            if let Some((a, b)) = line(grand.center(), &grand, &outline) {
-                clear.keep_segment(a, b);
-            }
-        }
+        clear.own = grandparent.and_then(|up| {
+            let drawn = geometry.node_rect(up)?;
+            let grand = Rect::new(placed.get(&up).copied().unwrap_or(drawn.origin), drawn.size);
+            line(grand.center(), &grand, &outline)
+        });
         let laid: Vec<Rect> = match regular_flower(&clear, (parent, outline), center, radius, &children) {
             Some(laid) => {
                 for ((child, _), petal) in children.iter().zip(&laid) {
@@ -315,7 +328,14 @@ pub fn flower(doc: &Document, geometry: &dyn Geometry, nodes: &[NodeId]) -> Resu
                 laid
             }
         };
-        // This family's lines, which the families after it keep clear of.
+        // For the families after it: the parent's connector — unless this
+        // run placed the parent, when its grandparent's family's lines
+        // already hold it — and this family's lines.
+        if let Some((a, b)) = clear.own.take() {
+            if !placed.contains_key(&parent) {
+                clear.keep_segment(a, b);
+            }
+        }
         for petal in &laid {
             if let Some((a, b)) = line(center, &outline, petal) {
                 clear.keep_segment(a, b);
@@ -584,8 +604,11 @@ const MAX_CELLS: i64 = 64;
 /// What a layout keeps its nodes clear of: every drawn node it does not
 /// move, as the projector's body index has it
 /// ([`Geometry::nodes_meeting`]); every rectangle this run has placed;
-/// and the segments a flower keeps — each parent's connector from its
-/// own parent, and each placed family's lines — the last two filed in a
+/// the connector of the family being laid, whole; and the segments a
+/// flower keeps for the families after — each laid family's parent's
+/// connector from its own parent, and its lines, so a later family
+/// avoids every one of them — a segment past 16,384 units in its two end
+/// stretches only. The placements and the kept segments are filed in a
 /// small grid of its own. Two rectangles are clear when their insides
 /// do not meet, and a segment and a rectangle when the segment does not
 /// pass through the rectangle's inside; a shared edge is clear. Holds
@@ -602,13 +625,39 @@ pub(crate) struct Clear<'g> {
     cells: FxHashMap<(i32, i32), Vec<(NodeId, Rect)>>,
     /// Every placed rectangle, for a query too large for the cells.
     placed: Vec<(NodeId, Rect)>,
-    /// The kept segments filed under each cell their box covers.
+    /// The kept segments, in pieces of at most [`LINE_PIECE`], each piece
+    /// filed under the cells its box covers (at most four).
     segment_cells: FxHashMap<(i32, i32), Vec<(Vec2, Vec2)>>,
-    /// The kept segments whose box covers more than [`MAX_CELLS`] cells,
-    /// tested on every query.
-    wide_segments: Vec<(Vec2, Vec2)>,
-    /// Every kept segment, for a query too large for the cells.
-    segments: Vec<(Vec2, Vec2)>,
+    /// The connector of the family being laid, from its grandparent to its
+    /// parent, held whole: its petals meet no part of it, however long.
+    own: Option<(Vec2, Vec2)>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many kept segment pieces `Clear` has tested against a
+    /// rectangle, on this thread: what the test that holds a family's
+    /// work to its own neighborhood reads. Test builds only.
+    pub(crate) static SEGMENT_TESTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The pieces of the segment from `a` to `b`, in order, each at most
+/// [`LINE_PIECE`] long, so each piece's box covers at most four cells of
+/// the body index's grid or of `Clear`'s. O(1) per piece; the caller
+/// bounds how many by the segment's length.
+fn pieces(a: Vec2, b: Vec2) -> impl Iterator<Item = (Vec2, Vec2)> {
+    let count = ((b - a).length() / LINE_PIECE).ceil().max(1.0) as u32;
+    (0..count).map(move |k| {
+        (
+            a.lerp(b, k as f32 / count as f32),
+            a.lerp(b, (k + 1) as f32 / count as f32),
+        )
+    })
+}
+
+/// The box of the segment from `a` to `b`. O(1).
+fn box_of(a: Vec2, b: Vec2) -> Rect {
+    Rect::new(a.min(b), (b - a).abs())
 }
 
 /// Whether the insides of `a` and `b` meet. O(1).
@@ -652,40 +701,90 @@ impl<'g> Clear<'g> {
             cells: FxHashMap::default(),
             placed: Vec::new(),
             segment_cells: FxHashMap::default(),
-            wide_segments: Vec::new(),
-            segments: Vec::new(),
+            own: None,
         }
     }
 
-    /// Keep the segment from `a` to `b`: no petal placed after may meet
-    /// it. Filed under the cells of its box, or, past [`MAX_CELLS`] of
-    /// them, kept apart and tested on every query. O(its cells).
-    fn keep_segment(&mut self, a: Vec2, b: Vec2) {
-        match cells_of(Rect::new(a.min(b), (b - a).abs())) {
-            Some(cells) => {
-                for cell in cells {
-                    self.segment_cells.entry(cell).or_default().push((a, b));
+    /// Keep the segment from `a` to `b` for the petals placed after: walked
+    /// in [`pieces`], each filed under the cells its box covers. A segment
+    /// longer than [`MAX_LINE_PIECES`] × [`LINE_PIECE`] (16,384 units) is
+    /// kept only in its two end stretches of that length, next to the two
+    /// nodes it joins; its middle is not kept. O(its pieces): at most
+    /// 2 × [`MAX_LINE_PIECES`], each filed under at most four cells.
+    pub(crate) fn keep_segment(&mut self, a: Vec2, b: Vec2) {
+        let length = (b - a).length();
+        if !length.is_finite() {
+            return;
+        }
+        let reach = MAX_LINE_PIECES as f32 * LINE_PIECE;
+        let stretches = if length <= reach {
+            [Some((a, b)), None]
+        } else {
+            let end = (b - a) * (reach / length);
+            [Some((a, a + end)), Some((b - end, b))]
+        };
+        for (from, to) in stretches.into_iter().flatten() {
+            for piece in pieces(from, to) {
+                for cell in cells_of(box_of(piece.0, piece.1)).into_iter().flatten() {
+                    self.segment_cells.entry(cell).or_default().push(piece);
                 }
             }
-            None => self.wide_segments.push((a, b)),
         }
-        self.segments.push((a, b));
     }
 
-    /// Whether `rect` meets a kept segment. O(the segments filed under
-    /// `rect`'s cells, or every kept segment for a rectangle too large for
-    /// them, plus the wide ones), stopping at the first.
+    /// Whether `rect` meets the family's own connector, or a kept segment
+    /// piece filed under one of its cells. A rectangle too large for the
+    /// cells (a petal past [`MAX_CELLS`] of them) is read along its outline
+    /// instead, a [`LINE_PIECE`] at a time — a kept segment that meets its
+    /// inside without crossing its outline would lie wholly inside it,
+    /// with an end on a node's outline that the rectangle then covers,
+    /// which `is_clear` refuses anyway — or, when that outline has more
+    /// pieces than there are cells holding kept pieces, through those cells
+    /// that lie under it. O(the pieces filed under `rect`'s cells), and for
+    /// a rectangle too large for them O(the fewer of its outline's pieces
+    /// and the cells holding kept pieces), stopping at the first.
     fn meets_segment(&self, rect: Rect) -> bool {
-        let through = |&(a, b): &(Vec2, Vec2)| segment_meets(a, b, &rect);
-        let filed = match cells_of(rect) {
-            Some(mut cells) => cells.any(|cell| {
-                self.segment_cells
-                    .get(&cell)
-                    .is_some_and(|near| near.iter().any(through))
-            }),
-            None => self.segments.iter().any(through),
+        if self.own.is_some_and(|(a, b)| segment_meets(a, b, &rect)) {
+            return true;
+        }
+        let through = |&(a, b): &(Vec2, Vec2)| {
+            #[cfg(test)]
+            SEGMENT_TESTS.with(|tests| tests.set(tests.get() + 1));
+            segment_meets(a, b, &rect)
         };
-        filed || self.wide_segments.iter().any(through)
+        let filed = |cell: (i32, i32)| {
+            self.segment_cells
+                .get(&cell)
+                .is_some_and(|near| near.iter().any(through))
+        };
+        match cells_of(rect) {
+            Some(mut cells) => cells.any(filed),
+            None if rect.origin.is_finite() && rect.size.is_finite() => {
+                // Whichever is fewer: the pieces of the outline, or the
+                // cells that hold kept pieces at all, those under `rect`.
+                let outline = 2.0 * (rect.size.x + rect.size.y) / LINE_PIECE;
+                if outline <= self.segment_cells.len() as f32 {
+                    let (min, max) = (rect.origin, rect.max());
+                    let corners = [min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y), min];
+                    corners.windows(2).any(|edge| {
+                        pieces(edge[0], edge[1])
+                            .any(|(p, q)| cells_of(box_of(p, q)).into_iter().flatten().any(filed))
+                    })
+                } else {
+                    let cell = |v: f32| (v / CELL).floor();
+                    let (lo, hi) = (rect.origin, rect.max());
+                    self.segment_cells.iter().any(|(&(x, y), near)| {
+                        let (x, y) = (x as f32, y as f32);
+                        cell(lo.x) <= x
+                            && x <= cell(hi.x)
+                            && cell(lo.y) <= y
+                            && y <= cell(hi.y)
+                            && near.iter().any(through)
+                    })
+                }
+            }
+            None => false,
+        }
     }
 
     /// File `node`, placed at `rect`. O(its cells).
@@ -721,10 +820,10 @@ impl<'g> Clear<'g> {
     }
 
     /// Whether `rect` is clear of every drawn node this run does not
-    /// move, of every rectangle it has placed and of every segment it
-    /// keeps. O(the body index's cells under `rect`, and this run's
-    /// placements and kept segments in them, plus the kept segments too
-    /// wide to file).
+    /// move, of every rectangle it has placed, of the family's own
+    /// connector and of every segment it keeps. O(the body index's cells
+    /// under `rect`, and this run's placements and kept segment pieces in
+    /// them; see `meets_segment` for a rectangle too large for the cells).
     fn is_clear(&self, rect: Rect) -> bool {
         !self.any_placed(rect, |_, other| meets(&rect, other))
             && !self.meets_segment(rect)
@@ -745,15 +844,12 @@ impl<'g> Clear<'g> {
     /// over at most four cells, a `node_rect` per node it finds, and a
     /// lookup of the placements.
     fn line_clear(&self, a: Vec2, b: Vec2, parent: NodeId) -> bool {
-        let pieces = ((b - a).length() / LINE_PIECE).ceil();
-        if !pieces.is_finite() || pieces > MAX_LINE_PIECES as f32 {
+        let count = ((b - a).length() / LINE_PIECE).ceil();
+        if !count.is_finite() || count > MAX_LINE_PIECES as f32 {
             return false;
         }
-        let pieces = (pieces as u32).max(1);
-        (0..pieces).all(|k| {
-            let from = a.lerp(b, k as f32 / pieces as f32);
-            let to = a.lerp(b, (k + 1) as f32 / pieces as f32);
-            let area = Rect::new(from.min(to), (to - from).abs());
+        pieces(a, b).all(|(from, to)| {
+            let area = box_of(from, to);
             let crosses_placed = self.any_placed(area, |node, other| {
                 node != parent && segment_meets(from, to, other)
             });
