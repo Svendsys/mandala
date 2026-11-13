@@ -15,9 +15,9 @@ use crate::document::element::DocKind;
 use crate::document::values::Anchor;
 use crate::flow::{Curve, Rect};
 use crate::projection::geometry::{
-    held_apart, near_pairs, path_through, sample, side_point, side_toward, untangle, Lane, CLEARANCE,
-    SPLAY_CAP, UNTANGLE_CLOSE, UNTANGLE_GRIDDED, UNTANGLE_GRIDS, UNTANGLE_MEASURED, UNTANGLE_ROUNDS,
-    UNTANGLE_SCRATCH,
+    fixed_samples, held_apart, near_pairs, path_through, sample, side_point, side_toward, untangle, Lane,
+    CLEARANCE, SPLAY_CAP, UNTANGLE_CLOSE, UNTANGLE_GRIDDED, UNTANGLE_GRIDS, UNTANGLE_LISTED,
+    UNTANGLE_MEASURED, UNTANGLE_ROUNDS, UNTANGLE_SCRATCH,
 };
 use crate::projection::state::{Placed, UnitBody};
 use crate::projection::tests::maps::{ident, kid, load_map, node, text_section};
@@ -1393,10 +1393,14 @@ fn test_projection_untangle_measures_a_point_only_against_lanes_near_it() {
     // junction and part within some of them. A point is measured against
     // a lane at most once, and only against a lane with points in the
     // nine coarse cells round it — cells as wide as the widest path's
-    // distance — however many paths the junction has. The failing input
-    // is each pair measured over the whole of one lane once the two share
-    // any coarse cells, which measures every point of a path against
-    // every other path of the junction, the paths squared.
+    // distance — however many paths the junction has; and the lanes near
+    // each cell of a path are listed in one step for each lane read in
+    // the nine cells round it, whatever the lanes listed already (on
+    // #347). The failing inputs are each pair measured over the whole of
+    // one lane once the two share any coarse cells, which measures every
+    // point of a path against every other path of the junction, the paths
+    // squared; and the list searched for each lane before it is added,
+    // the lanes of a cell squared, and a crowded junction's cubed.
     for count in [4, 16, 32] {
         let lane = |x: f32, width: f32| Lane {
             start: (Vec2::ZERO, Vec2::Y, 4.0),
@@ -1409,7 +1413,9 @@ fn test_projection_untangle_measures_a_point_only_against_lanes_near_it() {
         let lanes: Vec<Lane> = std::iter::once(lane(-400.0, 3.0))
             .chain((0..count).map(|k| lane(k as f32 * 40.0, 0.1)))
             .collect();
+        UNTANGLE_LISTED.with(|c| c.set(0));
         let (handles, [rounds, _, close, _]) = untangle_counted(&lanes);
+        let listed = UNTANGLE_LISTED.with(std::cell::Cell::get);
         assert!(
             rounds == 1 && handles.iter().all(|&h| h == 1.0) && close > 0,
             "precondition: {count} paths: one round, all clear, the junction measured: {rounds}, {close}"
@@ -1453,6 +1459,27 @@ fn test_projection_untangle_measures_a_point_only_against_lanes_near_it() {
         assert!(
             close <= near,
             "{count} paths: {close} points measured against a lane, of {near} with the lane near them"
+        );
+        // Every lane is fresh in the one round: each reads, for each of its
+        // cells, the lanes in the nine round it.
+        let read: usize = samples
+            .iter()
+            .map(|points| {
+                let cells: rustc_hash::FxHashSet<(i64, i64)> = points.iter().map(|&p| cell(p)).collect();
+                cells
+                    .iter()
+                    .map(|&(x, y)| {
+                        (-1..=1)
+                            .flat_map(|dx| (-1..=1).map(move |dy| (x + dx, y + dy)))
+                            .map(|at| held.get(&at).map_or(0, |lanes| lanes.len()))
+                            .sum::<usize>()
+                    })
+                    .sum::<usize>()
+            })
+            .sum();
+        assert_eq!(
+            listed, read,
+            "{count} paths: steps listing the lanes near each cell"
         );
     }
 }
@@ -1568,6 +1595,123 @@ fn test_projection_untangle_stops_when_no_round_can_part_its_paths() {
     assert!(
         stopped > 0 && parted > 0,
         "precondition: junctions stopped early ({stopped}) and junctions parted by halving ({parted})"
+    );
+}
+
+#[test]
+fn test_projection_a_lanes_fixed_samples_are_in_every_round() {
+    // What the stop rests on: every sample `fixed_samples` reads is one
+    // that every round of `untangle` takes, bit for bit, at every share of
+    // the handles a round can give, 1 down to 1/4096. Curved lanes drawn
+    // at random, their length near the distance a round's samples start
+    // from, where whether the last lead's are taken is decided: widths
+    // from a hundredth to 40, held out up to ten widths, through 0 to 2
+    // points, leads of any length, far from the origin and near it. The
+    // failing input is the last lead's samples read whenever the chord of
+    // the curves before it reaches that distance (#346, on #347).
+    let mut next = scatter(0x1234_5678);
+    let offsets = [0.0_f32, 1.0e3, 1.0e5, 1.0e6, 4.0e6, 1.6e7];
+    let (mut with_last, mut without_last) = (0, 0);
+    for case in 0..20_000 {
+        let at = Vec2::new(
+            offsets[next() as usize % offsets.len()],
+            offsets[next() as usize % offsets.len()],
+        );
+        let width = [0.01_f32, 0.05, 0.144, 1.0, 3.457, 40.0][next() as usize % 6];
+        let hold = [0.0, 0.5, 2.0, 10.0][next() as usize % 4] * width;
+        let skip = CLEARANCE * hold.max(width);
+        let length = skip * (0.5 + next() / 10.0);
+        let turn = |n: f32| Vec2::from_angle((n - 50.0) * 0.0628);
+        let via = match next() as usize % 4 {
+            0 => Vec::new(),
+            1 => vec![Vec2::ZERO],
+            2 => vec![Vec2::new(next() - 50.0, next() - 50.0) * length / 50.0],
+            _ => vec![
+                Vec2::new(next() - 50.0, 0.0) * length / 10.0,
+                Vec2::new(0.0, next() - 50.0) * length / 10.0,
+            ],
+        };
+        let lane = Lane {
+            start: (at, turn(next()).rotate(Vec2::Y), next() * length / 100.0),
+            hold,
+            end: (
+                at + turn(next()).rotate(Vec2::Y) * length,
+                turn(next()).rotate(-Vec2::Y),
+                next() * length / 100.0,
+            ),
+            via,
+            width,
+            straight: false,
+        };
+        let fixed = fixed_samples(&lane);
+        let curves = path_through(lane.start, lane.end, &lane.via, 1.0);
+        let first = match curves.first() {
+            Some(lead @ Curve::Line(..)) => sample(&[*lead], 0.25 * width, skip).len(),
+            _ => 0,
+        };
+        if matches!(curves.last(), Some(Curve::Line(..))) {
+            if fixed.len() > first {
+                with_last += 1;
+            } else {
+                without_last += 1;
+            }
+        }
+        for k in 0..=12 {
+            let taken: rustc_hash::FxHashSet<(u32, u32)> = sample(
+                &path_through(lane.start, lane.end, &lane.via, 0.5_f32.powi(k)),
+                0.25 * width,
+                skip,
+            )
+            .iter()
+            .map(|p| (p.x.to_bits(), p.y.to_bits()))
+            .collect();
+            assert!(
+                fixed
+                    .iter()
+                    .all(|p| taken.contains(&(p.x.to_bits(), p.y.to_bits()))),
+                "case {case}: a fixed sample not taken at share 2^-{k}: {lane:?}"
+            );
+        }
+    }
+    assert!(
+        with_last > 0 && without_last > 0,
+        "precondition: last leads read ({with_last}) and not ({without_last})"
+    );
+}
+
+#[test]
+fn test_projection_untangle_takes_every_round_on_two_paths_that_meet_along_their_curves() {
+    // Two curved paths leaving one point the same way, held out past
+    // their first lead, to far ends on one line from it, the near one a
+    // link at the default size: they meet through their curves in every
+    // round, and through no sample a halving cannot move, so `untangle`
+    // takes every round, each sampling the thin path's curve again at the
+    // sampling's cap (on #347). What holds for such a junction is the
+    // bound: at most `UNTANGLE_ROUNDS` rounds, each sampling each lane's
+    // curves at most to the cap — not one round, as for the seeds' pair,
+    // whose paths meet along a lead.
+    let lane = |width: f32, end: f32| Lane {
+        start: (Vec2::ZERO, Vec2::Y, 44.0),
+        hold: 40.0,
+        end: (Vec2::new(0.0, end), -Vec2::Y, 2.0 * width),
+        via: Vec::new(),
+        width,
+        straight: false,
+    };
+    let lanes = [lane(3.457, 5000.0), lane(0.144, 2500.0)];
+    let curves: usize = lanes
+        .iter()
+        .map(|l| path_through(l.start, l.end, &l.via, 1.0).len())
+        .sum();
+    let (handles, [rounds, gridded, _, _]) = untangle_counted(&lanes);
+    assert_eq!(handles, [1.0, 1.0], "the first round's curves kept");
+    assert!(
+        rounds == UNTANGLE_ROUNDS && gridded > (UNTANGLE_ROUNDS - 1) * 65_536,
+        "every round, the thin path at the cap each: {rounds} rounds, {gridded} points gridded"
+    );
+    assert!(
+        gridded <= UNTANGLE_ROUNDS * 65_536 * curves,
+        "{gridded} points gridded, past {UNTANGLE_ROUNDS} rounds of {curves} curves at the cap"
     );
 }
 

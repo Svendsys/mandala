@@ -38,8 +38,10 @@
 //! by its length over its size, and a link at the smallest sizes a few
 //! thousand units long reaches the cap of a placement (R41) and of a
 //! curve's samples in `untangle`. What one such path costs is bounded by
-//! those caps, and by `untangle` taking no round that cannot do better
-//! (#346), not by this bound. Each is shaped and placed in
+//! those caps — its glyphs at a placement's, and in `untangle` at most
+//! `UNTANGLE_ROUNDS` rounds of each of its curves sampled to the cap, one
+//! round where its nearness is certain from samples no halving moves
+//! (#346) — not by this bound. Each is shaped and placed in
 //! every full projection the check makes, so the work grows with their
 //! count: libFuzzer reported a 4,000-node chain with a link on every
 //! node, 8,000 paths, as a slow unit of 16 to 18 s against its 20 s
