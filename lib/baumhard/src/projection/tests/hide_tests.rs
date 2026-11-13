@@ -779,3 +779,110 @@ fn test_projection_a_node_wider_than_the_paths_cells_finds_them_by_scanning() {
     );
     p.check().unwrap();
 }
+
+/// A path's label as laid, and the box round its text's glyph cells as
+/// the label's run holds them.
+fn label_of(p: &Projected, path: NodeId) -> (GlyphRunData, Rect) {
+    let Some(UnitBody::Line(line)) = p.projector.units.get(&path).map(|u| &u.body) else {
+        panic!("{path:?} is a line");
+    };
+    let run = line.laid[3].clone().expect("the label is laid");
+    let text = bounds(&cells(&run)).expect("the label draws text");
+    (run, text)
+}
+
+/// Whether the labels layer draws `path`'s label.
+fn label_drawn(p: &Projected, path: NodeId) -> bool {
+    !runs(p, path, Layer::Labels).is_empty()
+}
+
+/// A path's label, `text` at `t` along it, `offset` off it.
+fn labeled(text: &str, t: f32, offset: f32) -> Value {
+    json!({"label": {"t": t, "offset": offset, "spans": [{"text": text}]}})
+}
+
+/// A path's label that meets the region of a node the path does not end
+/// at is hidden whole (the owner's answer on #334): the label of P, at its
+/// middle, under the blocker's text, is not drawn; Q's, clear of every
+/// node, is.
+///
+/// Control: with `hide` never hiding a label, red on the label drawn.
+#[test]
+fn test_projection_a_label_over_another_node_is_hidden_whole() {
+    let mut p = Projected::new(two_paths(
+        Vec2::new(520.0, 0.0),
+        json!({}),
+        labeled("LABEL", 0.5, 0.0),
+    ));
+    let path = path_of(&p, 2);
+    let (_, label) = label_of(&p, path);
+    assert!(
+        meet(&label, &region_of(&p, 3)),
+        "precondition: the label meets the blocker's text, {label:?}"
+    );
+    assert!(!label_drawn(&p, path), "the label behind the node is not drawn");
+    assert!(
+        label_drawn(&p, path_of(&p, 5)),
+        "the label clear of every node is drawn"
+    );
+    p.check().unwrap();
+}
+
+/// A node moved off a label shows it again, and moved back onto it hides
+/// it again, each time through the path's hide stage alone and with the
+/// oracle agreeing: the label is found through the paths' index and read
+/// through `Region`, as the path's glyphs are.
+///
+/// Control: with the label's box kept out of the paths' index, red on the
+/// label drawn once the node is back on it.
+#[test]
+fn test_projection_a_label_shows_and_hides_as_a_node_moves() {
+    // The label sits 40 above P, and the node over it, clear of the path's
+    // glyphs: only the label brings the node and the path together.
+    let start = Vec2::new(250.0, -50.0);
+    let mut p = Projected::new(two_paths(start, json!({}), labeled("LABEL", 0.2, 40.0)));
+    let path = path_of(&p, 2);
+    let (_, label) = label_of(&p, path);
+    assert_eq!(
+        left_out(&p, path),
+        0,
+        "precondition: the node is clear of the path's glyphs"
+    );
+    assert!(
+        meet(&label, &region_of(&p, 3)),
+        "precondition: the label is under the node"
+    );
+    assert!(!label_drawn(&p, path), "precondition: the label is hidden");
+    for (at, drawn) in [(Vec2::new(250.0, -400.0), true), (start, false)] {
+        move_to(&mut p, 3, at);
+        assert_eq!(label_drawn(&p, path), drawn, "the label with the node at {at}");
+        assert!(
+            hidden_again(&p).contains(&path),
+            "the path is hidden again with the node at {at}"
+        );
+        p.check().unwrap();
+    }
+}
+
+/// A path's label over one of its own two nodes is never hidden by it: a
+/// label at the very start of a path, over the text of the node it starts
+/// at, is drawn.
+///
+/// Control: with `hide` not sparing the ends, red on the label not drawn.
+#[test]
+fn test_projection_a_label_over_its_own_end_is_drawn() {
+    let end = json!({"sections": blocker_text()});
+    let doc = load_map(json!({"nodes": [
+        node(1, None, end.clone()),
+        node(2, Some(1), merged(merged(end, json!({"position": [1000.0, 0.0]})), json!({"connector": merged(json!({"straight": true}), labeled("LABEL", 0.0, 0.0))}))),
+    ]}));
+    let mut p = Projected::new(doc);
+    let path = path_of(&p, 2);
+    let (_, label) = label_of(&p, path);
+    assert!(
+        meet(&label, &region_of(&p, 1)),
+        "precondition: the label meets its start node's text, {label:?}"
+    );
+    assert!(label_drawn(&p, path), "the label over its own end is drawn");
+    p.check().unwrap();
+}

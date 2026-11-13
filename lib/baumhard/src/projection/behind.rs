@@ -13,7 +13,9 @@
 //! of a node stops
 //! at least one gap short of it, as it stops one gap short of its own
 //! frames. A glyph is drawn whole or not at all, never clipped. Its label
-//! and portal ends are not paths' glyphs and are not hidden.
+//! is hidden whole where the box round its text meets such a region (the
+//! owner's answer on #334), its own two nodes sparing it as they spare its
+//! glyphs; a portal end is never hidden.
 //!
 //! A node hides a path only where it is drawn wherever the path is: at an
 //! opacity above 0, in a zoom window that holds the path's
@@ -368,11 +370,14 @@ impl Projector {
     /// runs as laid, less every glyph whose box, grown by the path's gap,
     /// meets the region of a node it does not end at that is drawn wherever
     /// the path is — at an opacity above 0, in a zoom window that holds the
-    /// path's ([`drawn_wherever`]). Records reading the region, opacity and
-    /// zoom window of each node it meets, and sets where its glyphs are. A
-    /// path not drawn has nothing hidden, and leaves the paths' index.
+    /// path's ([`drawn_wherever`]) — and its label as laid, left out whole
+    /// where the box round its text meets such a region. Records reading
+    /// the region, opacity and zoom window of each node it meets, and sets
+    /// where its glyphs and its label are. A path not drawn has nothing
+    /// hidden, and leaves the paths' index.
     ///
-    /// Cost: O(its glyphs, and the regions in each glyph's cells).
+    /// Cost: O(its glyphs and its label's, and the regions in each glyph's
+    /// cells and its label's).
     pub(crate) fn hide(&mut self, id: NodeId) {
         let Some(UnitBody::Line(line)) = self.units.get(&id).map(|u| &u.body) else {
             return;
@@ -384,10 +389,42 @@ impl Projector {
         let gap = gap_and_size(line).0.max(0.0);
         let mut reads = Vec::new();
         let mut boxes = Vec::new();
+        // Whether `rect`, of a run in `zoom`, meets the region of a node the
+        // path does not end at that is drawn wherever the run is; each node
+        // met is read.
+        let mut behind = |rect: Rect, zoom: Option<ZoomWindow>| {
+            let mut hidden = false;
+            self.regions.each_within(rect, |node| {
+                if node == from || node == to {
+                    return;
+                }
+                reads.push(ProjectionInput::Region(node));
+                reads.push(ProjectionInput::Opacity(node));
+                reads.push(ProjectionInput::Visibility(node));
+                if self
+                    .nodes
+                    .get(&node)
+                    .is_some_and(|n| n.opacity > 0.0 && drawn_wherever(n.zoom, zoom))
+                {
+                    hidden = true;
+                }
+            });
+            hidden
+        };
         let wants = line.laid.clone().map(|laid| {
             let run = laid?;
-            let RunShape::Path { run: shaped, placed } = run.shaped() else {
-                return Some(run);
+            let (shaped, placed) = match run.shaped() {
+                RunShape::Path { run: shaped, placed } => (shaped, placed),
+                // The label: hidden whole where the box round its text
+                // meets a node's region (the owner's answer on #334).
+                RunShape::Box(label) => {
+                    let Some(text) = label.text_box() else {
+                        return Some(run);
+                    };
+                    let drawn = Rect::new(run.origin() + text.origin, text.size);
+                    boxes.push(drawn);
+                    return (!behind(drawn, run.zoom())).then_some(run);
+                }
             };
             let mut shown = Vec::with_capacity(placed.glyphs.len());
             for g in &placed.glyphs {
@@ -397,23 +434,7 @@ impl Projector {
                 };
                 let grown = ink.grown(gap);
                 boxes.push(grown);
-                let mut hidden = false;
-                self.regions.each_within(grown, |node| {
-                    if node == from || node == to {
-                        return;
-                    }
-                    reads.push(ProjectionInput::Region(node));
-                    reads.push(ProjectionInput::Opacity(node));
-                    reads.push(ProjectionInput::Visibility(node));
-                    if self
-                        .nodes
-                        .get(&node)
-                        .is_some_and(|n| n.opacity > 0.0 && drawn_wherever(n.zoom, run.zoom()))
-                    {
-                        hidden = true;
-                    }
-                });
-                if !hidden {
+                if !behind(grown, run.zoom()) {
                     shown.push(*g);
                 }
             }

@@ -1652,7 +1652,7 @@ impl Projector {
             line.label.offset = label.offset;
         }
         line.label.center = label_center_at;
-        unit.slots[3].want = match (label_center_at, label_size) {
+        line.laid[3] = match (label_center_at, label_size) {
             (Some(center), Some((shaped, size))) => {
                 run_data(RunShape::Box(shaped), center - size * 0.5, opacity, path.zoom)
             }

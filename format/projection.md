@@ -131,7 +131,9 @@ node to the node it leads to.
   lie inside another node's ringed region — a ringed container drawn
   round them — is hidden whole. Hiding changes nothing in the document:
   the glyphs are drawn again when the node moves off the path. A path's
-  label is not hidden.
+  label is hidden whole — never cut, nor slid along the path — where the
+  box round its text meets the region of a node the path does not end
+  at, drawn wherever the label is; a portal end is never hidden.
 
 **Caps** are centered on the path's start (`cap_start`) and end
 (`cap_end`).

@@ -1707,7 +1707,8 @@ the layers to learn what the document is, and nothing flows back.
   a path's body or caps whose box, grown by the path's gap, meets the
   node's **region** — what it draws, in two parts: the box round its
   text's glyph cells, and the box round its rings' inks by its outline — is
-  left out of the run its layer holds, whole, when the node is drawn
+  left out of the run its layer holds, whole — and the path's label,
+  whole, where the box round its text meets that region — when the node is drawn
   wherever the path is (opacity above 0, a zoom window holding the
   path's). It is a view
   decision: the document keeps the path, the projector keeps the run as

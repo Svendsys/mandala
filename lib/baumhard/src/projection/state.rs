@@ -282,10 +282,11 @@ pub(crate) struct LineState {
     pub(crate) straight: bool,
     /// Its curves, once placed: empty until then.
     pub(crate) path: Vec<Curve>,
-    /// Its body's and its caps' runs as laid, every glyph: what its slots
-    /// want but for the glyphs the nodes it does not end at hide, which
-    /// its hide stage leaves out (#332).
-    pub(crate) laid: [Option<GlyphRunData>; 3],
+    /// Its body's, its caps' and its label's runs as laid, every glyph:
+    /// what its slots want but for the glyphs — and the label, whole — the
+    /// nodes it does not end at hide, which its hide stage leaves out
+    /// (#332).
+    pub(crate) laid: [Option<GlyphRunData>; 4],
 }
 
 /// How one end of a path leaves its junction (#296), as the junction's
