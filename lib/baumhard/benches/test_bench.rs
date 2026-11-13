@@ -2463,6 +2463,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         "flow_halves_closed_form_roots_are_the_first_at_what_is_owed",
         |b| b.iter(do_flow_halves_closed_form_roots_are_the_first_at_what_is_owed),
     );
+    c.bench_function(
+        "flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap",
+        |b| b.iter(do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap),
+    );
     c.bench_function("flow_halves_a_side_arc_is_filled_from_its_model_lays", |b| {
         b.iter(do_flow_halves_a_side_arc_is_filled_from_its_model_lays)
     });

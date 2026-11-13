@@ -891,6 +891,11 @@ fn line_root_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f64 {
     f64::NAN
 }
 
+#[test]
+fn test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap() {
+    do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap();
+}
+
 /// #348: the tangent line's root in closed form (`line_root`) is the
 /// first step at which two inks' boxes are what is owed apart, to five
 /// millionths of the scale it is read at (its step, what is owed and the
@@ -917,8 +922,7 @@ fn line_root_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f64 {
 /// ("seed 7: … the closed form steps -10.538687"); with `−c / (b + √disc)`
 /// for every root where they are nearer, red on the gap that closes
 /// first ("the closed form steps 8.946237").
-#[test]
-fn test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap() {
+pub fn do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap() {
     use crate::flow::place::halves::line_root_seam;
     use crate::util::tests::choices::Choices;
     // How far the closed form may be from the oracle, of the scale it is
