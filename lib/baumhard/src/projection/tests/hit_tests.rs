@@ -179,21 +179,58 @@ fn drawn_at(p: &mut Projected, layer: Layer, point: Vec2) -> bool {
     p.layers.tree_mut(layer).descendant_at(point).is_some()
 }
 
+/// A label drawn over a connection is hit before it: the labels layer is
+/// above the connections layer. A path's own glyphs stop short of its own
+/// label (#340), so the connection under the label is another path's: a
+/// straight connector run up and down through the label's center.
 #[test]
-fn test_projection_a_label_over_its_connection_is_hit_before_it() {
+fn test_projection_a_label_over_a_connection_is_hit_before_it() {
     // Node 2 under node 1, far to its right, so its connector runs level
     // between them and its label sits on it, half-way.
-    let doc = load_map(json!({"nodes": [
+    let nodes = vec![
         node(1, None, json!({"sections": [{"spans": [{"text": "from"}]}]})),
-        node(2, Some(1), json!({
-            "position": [600.0, 0.0],
-            "sections": [{"spans": [{"text": "to"}]}],
-            "connector": {"label": {"t": 0.5, "spans": [{"text": "WWWW"}]}}
-        })),
-    ]}));
-    let two = ident(&doc, 2);
-    let connector = kid(&doc, two, DocKind::Connector);
-    let label = kid(&doc, connector, DocKind::Label);
+        node(
+            2,
+            Some(1),
+            json!({
+                "position": [600.0, 0.0],
+                "sections": [{"spans": [{"text": "to"}]}],
+                "connector": {"label": {"t": 0.5, "spans": [{"text": "WWWW"}]}}
+            }),
+        ),
+    ];
+    let level = Projected::new(load_map(json!({ "nodes": nodes.clone() })));
+    let (two, connector) = (
+        ident(&level.doc, 2),
+        kid(&level.doc, ident(&level.doc, 2), DocKind::Connector),
+    );
+    let at = level
+        .projector
+        .label_pos(kid(&level.doc, connector, DocKind::Label))
+        .expect("the label is placed");
+    // Node 4 under node 3, straight below it through the label's center.
+    let mut nodes = nodes;
+    nodes.push(node(
+        3,
+        None,
+        json!({"position": [at.x - 5.0, at.y - 300.0], "min_size": [10.0, 10.0]}),
+    ));
+    nodes.push(node(
+        4,
+        Some(3),
+        json!({
+            "position": [at.x - 5.0, at.y + 300.0],
+            "min_size": [10.0, 10.0],
+            "connector": {"straight": true}
+        }),
+    ));
+    let doc = load_map(json!({ "nodes": nodes }));
+    assert_eq!(ident(&doc, 2), two, "precondition: the labeled path is the same");
+    let label = kid(
+        &doc,
+        kid(&doc, ident(&doc, 2), DocKind::Connector),
+        DocKind::Label,
+    );
     let mut p = Projected::new(doc);
     let center = p.projector.label_pos(label).expect("the label is placed");
     // A point both layers draw a glyph at: the label's glyphs lie on the
