@@ -39,16 +39,14 @@ pub use selection::Selection;
 
 use std::path::Path;
 
-use baumhard::document::format::{self, LoadError};
+use baumhard::document::format::file::MAP_EXTENSION;
+use baumhard::document::format;
 use baumhard::document::ids::Document;
 use baumhard::document::writer::error::ApplyError;
 use baumhard::document::writer::feed::ChangeRecord;
 use baumhard::document::writer::transaction::{Transaction, TransactionKind};
 use baumhard::document::writer::{ChangeSource, EditRequest, Revision};
 use log::{info, warn};
-
-/// The one file extension a map is read from and written to (D19).
-pub const MAP_EXTENSION: &str = ".mandala.json";
 
 /// The status line a change refused by an open interactive transaction
 /// shows (D28). Short, because it is a status line.
@@ -66,22 +64,6 @@ pub enum Interaction {
     /// An interaction the tests open, which nothing else stages into.
     #[cfg(test)]
     Test,
-}
-
-/// Whether `path` names a map: it ends in [`MAP_EXTENSION`]. A path that
-/// does not is refused by every surface that opens or saves one, with
-/// [`extension_refusal`]'s words.
-pub fn has_map_extension(path: &str) -> bool {
-    path.ends_with(MAP_EXTENSION)
-}
-
-/// The message a path without [`MAP_EXTENSION`] is refused with: it names
-/// the extension it wanted and, through `excerpt`, the path's tail.
-pub fn extension_refusal(path: &str) -> String {
-    format!(
-        "{}: not a map; a map's file name ends in `{MAP_EXTENSION}`",
-        baumhard::util::log::tilde_path(Path::new(path))
-    )
 }
 
 /// The open map. See the [module docs](self).
@@ -131,8 +113,8 @@ impl MindMapDocument {
         }
     }
 
-    /// Read the map at `path`: refused unless it ends in
-    /// [`MAP_EXTENSION`], then read and loaded by
+    /// Read the map at `path` through [`format::file::read`]: refused
+    /// unless it ends in [`MAP_EXTENSION`], then read and loaded by
     /// [`format::load_from_bytes`]. The browser has no files (its read
     /// fails and says so) and loads through [`Self::from_json_str`].
     ///
@@ -140,16 +122,7 @@ impl MindMapDocument {
     /// surface that asked — the console `open` verb prints it, startup
     /// draws it on the canvas through [`Self::load_failure_placard`].
     pub fn load(path: &str, history_limit: usize) -> Result<Self, String> {
-        if !has_map_extension(path) {
-            return Err(extension_refusal(path));
-        }
-        let bytes = std::fs::read(path).map_err(|e| {
-            format!(
-                "{}: could not read: {e}",
-                baumhard::util::log::tilde_path(Path::new(path))
-            )
-        })?;
-        let doc = format::load_from_bytes(&bytes).map_err(|e| load_message(path, &e))?;
+        let doc = format::file::read(path)?;
         log_loaded(&doc);
         Ok(Self::new(doc, Some(path.to_string()), history_limit))
     }
@@ -415,16 +388,14 @@ impl MindMapDocument {
         self.doc.save_json().map_err(|e| e.to_string())
     }
 
-    /// Write the map to `path` — refused unless it ends in
-    /// [`MAP_EXTENSION`] — through a temporary file beside it and a
-    /// rename, so a failed write never leaves half a map where a whole one
-    /// was; then record the saved state and bind the document to `path`.
+    /// Write the map to `path` through [`format::file::write`] — refused
+    /// unless it ends in [`MAP_EXTENSION`], then written to a temporary
+    /// file beside it and renamed, so a failed write never leaves half a
+    /// map where a whole one was; then record the saved state and bind the
+    /// document to `path`.
     pub fn save_to(&mut self, path: &str) -> Result<(), String> {
-        if !has_map_extension(path) {
-            return Err(extension_refusal(path));
-        }
         let text = self.save_json()?;
-        write_atomically(Path::new(path), text.as_bytes())?;
+        format::file::write(path, &text)?;
         self.doc.mark_saved();
         self.file_path = Some(path.to_string());
         info!(
@@ -485,12 +456,6 @@ impl MindMapDocument {
     }
 }
 
-/// The loader's error for `path`, its message prefixed by where it was
-/// read from: most of the loader's messages do not name the file.
-fn load_message(path: &str, error: &LoadError) -> String {
-    format!("{}: {error}", baumhard::util::log::tilde_path(Path::new(path)))
-}
-
 /// A document of `value`, a map the app builds itself and so knows to be
 /// valid: a load that refuses it is a bug in that map, logged, and
 /// answered with the empty map.
@@ -509,30 +474,4 @@ fn document_of(value: serde_json::Value) -> Document {
 /// release entirely (CODE_CONVENTIONS §9).
 fn log_loaded(doc: &Document) {
     info!("document: loaded map {:?}", doc.name());
-}
-
-/// Write `bytes` to `path` through a temporary file in the same
-/// directory and a rename over `path`.
-fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    use std::io::Write;
-    let shown = || baumhard::util::log::tilde_path(path);
-    let dir = path
-        .parent()
-        .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let name = path
-        .file_name()
-        .ok_or_else(|| format!("{}: not a file name", shown()))?;
-    let mut temp = dir.join(name);
-    temp.as_mut_os_string().push(".saving");
-    let written = (|| {
-        let mut file = std::fs::File::create(&temp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        std::fs::rename(&temp, path)
-    })();
-    written.map_err(|e| {
-        let _ = std::fs::remove_file(&temp);
-        format!("{}: could not write: {e}", shown())
-    })
 }
