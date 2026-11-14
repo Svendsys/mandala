@@ -41,7 +41,7 @@ use std::path::Path;
 
 use baumhard::document::format::file;
 use baumhard::document::ids::Document;
-use baumhard::util::guarded_file::{publish, real_file, PublishRefusal};
+use baumhard::util::guarded_file::{publish, real_file, shown_path, PublishRefusal};
 use baumhard::util::log::{collapse_home_in, tilde_path};
 use regex::{Regex, RegexBuilder};
 
@@ -68,16 +68,20 @@ Commands:
                                 '[portal → #<id>]'.
   grep <map> <pattern> [-i]     Print every line of text the regex
                                 <pattern> matches, as
-                                '#<id> <element>: <line>': the spans of
-                                sections, frame rings, connectors and
-                                line links (and their caps and labels)
-                                and portal ends (and their labels), and
-                                the 'content' a connector, line link or
-                                portal end sets of its own. The element
-                                is named by its path below the node
-                                ('sections[0]', 'links[1].ends[0]',
-                                'connector.content'). An empty section
-                                is one empty line. -i matches
+                                '#<id> <element>: <line>'. Searched: the
+                                spans of sections, frame rings,
+                                connectors and line links (and their
+                                caps and labels) and portal ends (and
+                                their labels); the 'content' a
+                                connector, line link or portal end sets
+                                of its own; a frame's or ring's 'sides'
+                                ornament; and a ring's 'vertical' and
+                                'corners'. Not searched: what the map's
+                                defaults set. The element is named by
+                                its path below the node ('sections[0]',
+                                'links[1].ends[0]', 'connector.content',
+                                'frame.rings[0].corners[1]'). An empty
+                                section is one empty line. -i matches
                                 case-insensitively. No match exits 1.
   export <map> [out.md]         Write the node tree as Markdown: the first
                                 line of each node's section text is a
@@ -255,29 +259,45 @@ fn export(args: &[String]) -> Result<String, CliError> {
             )))
         }
     };
-    if let Some(path) = out.filter(|path| file::has_map_extension(path)) {
-        return Err(CliError::Usage(format!(
-            "export: {}: names a map; the Markdown goes to a file of its own",
-            tilde_path(Path::new(path))
-        )));
+    // The output is resolved first — a path named on maptool's own
+    // command line is written through a symlink to its real file, as a
+    // map's save is — and the "not a map" rule is held to the file
+    // written as well as to the name typed (amendment E1.1), so a link
+    // cannot carry the Markdown over a map.
+    let real = match out {
+        None => None,
+        Some(path) => Some(real_file(Path::new(path)).map_err(|refusal| failed("export", refusal))?),
+    };
+    if let (Some(path), Some(real)) = (out, &real) {
+        if file::has_map_extension(path) {
+            return Err(CliError::Usage(format!(
+                "export: {}: names a map; the Markdown goes to a file of its own",
+                tilde_path(Path::new(path))
+            )));
+        }
+        if file::has_map_extension(&real.to_string_lossy()) {
+            return Err(CliError::Usage(format!(
+                "export: {}: links to `{}`, a map; the Markdown goes to a file of its own",
+                tilde_path(Path::new(path)),
+                collapse_home_in(&shown_path(real))
+            )));
+        }
     }
     let markdown = export::markdown(&read(map)?);
-    match out {
+    match real {
         None => Ok(markdown),
-        // A path named on maptool's own command line saves through a
-        // symlink to its real file, as a map's save does (`real_file`).
-        Some(path) => real_file(Path::new(path))
-            .and_then(|real| {
-                publish(&real, true, |out| {
-                    out.write_all(markdown.as_bytes()).map_err(|e| e.to_string())
-                })
-            })
-            .map(|_| String::new())
-            .map_err(|refusal| {
-                let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
-                CliError::Failed(collapse_home_in(&format!("export: {message}")))
-            }),
+        Some(real) => publish(&real, true, |out| {
+            out.write_all(markdown.as_bytes()).map_err(|e| e.to_string())
+        })
+        .map(|_| String::new())
+        .map_err(|refusal| failed("export", refusal)),
     }
+}
+
+/// A refusal of the guarded writer as `verb`'s failure, home folded.
+fn failed(verb: &str, refusal: PublishRefusal) -> CliError {
+    let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
+    CliError::Failed(collapse_home_in(&format!("{verb}: {message}")))
 }
 
 /// `apply <map> <pattern> [-i] [--dry-run] -- <cmd> [args...]`.

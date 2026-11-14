@@ -18,10 +18,17 @@
 //! **Why here.** The app and `maptool` are two processes that can save
 //! one map at the same moment, so the map writer needs the same
 //! guarantees, and one implementation of them is kept: this one, in the
-//! crate both depend on. A path the user names themselves — a map they
-//! save, `maptool`'s output — is first resolved to its real file
-//! (`real_file`), so a map kept behind a symlink stays saveable; a path
-//! a remote caller names is not, and a symlink there is refused.
+//! crate both depend on.
+//!
+//! **Two ways to name the file.** `publish` itself never writes through
+//! a symlink: a link at the path is refused. A map's save and
+//! `maptool`'s outputs instead resolve a link to its real file first
+//! (`real_file`), so a map kept behind a symlink stays saveable, and
+//! hold the extension rule to that real file — a map's save writes only
+//! into a `.mandala.json` (`format::file::write`), `maptool export`
+//! never into one. The map's save is reachable over IPC, so that rule,
+//! not a refusal of links, is what keeps a remote caller from writing
+//! map bytes into a file that is not a map (amendment E1.1).
 //!
 //! The browser has no files, and no process id for the temp file's
 //! name: there, `publish` refuses
@@ -211,47 +218,76 @@ pub fn publish(
     Ok(bytes)
 }
 
-/// The real file a path the **user names themselves** stands for: the
-/// path itself when it is not a symlink (or does not exist yet, so it is
-/// created), else the file at the end of its chain of links. A write
-/// published there with [`publish`] goes *through* the link to its
-/// target, atomically, and leaves the link a link.
+/// The real file a path names: the path itself when it is not a symlink
+/// (or does not exist yet, so it is created), else the file at the end
+/// of its chain of links. A write published there with [`publish`] goes
+/// *through* the link to its target, atomically, and leaves the link a
+/// link.
 ///
-/// For the paths a person types on their own command line or picks to
-/// save to — a map's save, `maptool`'s `-i` and `export`, where a map
-/// kept behind a symlink (a dotfile setup, a synced folder) must stay
-/// saveable. Never for a path a remote caller names: [`publish`] alone
-/// refuses a symlink there, and that refusal is what keeps an IPC
-/// caller from writing outside where it was told to.
+/// For the paths a map's save and `maptool`'s outputs are written to,
+/// where a map kept behind a symlink (a dotfile setup, a synced folder)
+/// must stay saveable. A map's save is reachable over IPC too
+/// (`act.console` with `save <path>`, `SaveDocumentAs`), so a caller of
+/// this function owes the rule that keeps a remote caller in bounds on
+/// the *resolved* path: a map's save requires the real file to be a
+/// `.mandala.json` as well (`format::file::write`, amendment E1.1), and
+/// `maptool export` refuses a real file that is a map. [`publish`]
+/// alone, for every other caller-chosen path, refuses a symlink
+/// outright.
 ///
-/// Refused, naming the path and where it leads: a link whose chain
-/// ends nowhere, or at something that is not a regular file. In the
-/// browser, which has no files, the path is returned as it is and
-/// [`publish`] refuses it.
+/// Refused, naming the path and where its link leads: a chain that ends
+/// nowhere ("does not exist"), one that cannot be resolved — a loop
+/// says so, in the system's own words — and one that ends at something
+/// that is not a regular file. In the browser, which has no files, the
+/// path is returned as it is and [`publish`] refuses it.
 ///
-/// Cost: one `symlink_metadata`, and for a link one `canonicalize` (a
-/// walk of its chain) and one `metadata`.
+/// Cost: one `symlink_metadata`, and for a link one `read_link`, one
+/// `canonicalize` (a walk of its chain) and one `metadata`.
 pub fn real_file(path: &Path) -> Result<std::path::PathBuf, PublishRefusal> {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => {
-            let leads = std::fs::read_link(path)
-                .map(|to| to.display().to_string())
-                .unwrap_or_else(|e| format!("somewhere unreadable ({e})"));
-            let shown = path.display();
-            let real = std::fs::canonicalize(path).map_err(|_| {
-                PublishRefusal::Invalid(format!(
-                    "`{shown}` is a symlink to `{leads}`, which does not exist"
-                ))
-            })?;
-            match std::fs::metadata(&real) {
-                Ok(meta) if meta.is_file() => Ok(real),
-                _ => Err(PublishRefusal::Invalid(format!(
-                    "`{shown}` is a symlink to `{}`, which is not a regular file",
-                    real.display()
-                ))),
+    let is_link = std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
+    if !is_link {
+        return Ok(path.to_path_buf());
+    }
+    let shown = path.display();
+    let leads = std::fs::read_link(path)
+        .map(|to| to.display().to_string())
+        .unwrap_or_else(|e| format!("somewhere unreadable ({e})"));
+    let real = std::fs::canonicalize(path).map_err(|e| {
+        PublishRefusal::Invalid(match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                format!("`{shown}` is a symlink to `{leads}`, which does not exist")
             }
-        }
-        _ => Ok(path.to_path_buf()),
+            _ => format!("`{shown}` is a symlink to `{leads}`, which cannot be resolved: {e}"),
+        })
+    })?;
+    match std::fs::metadata(&real) {
+        Ok(meta) if meta.is_file() => Ok(real),
+        Ok(meta) => Err(PublishRefusal::Invalid(format!(
+            "`{shown}` is a symlink to `{leads}`, which leads to `{}`, {}, not a regular file",
+            shown_path(&real),
+            if meta.is_dir() {
+                "a directory"
+            } else {
+                "something else"
+            }
+        ))),
+        Err(e) => Err(PublishRefusal::Invalid(format!(
+            "`{shown}` is a symlink to `{leads}`, which cannot be read: {e}"
+        ))),
+    }
+}
+
+/// `path` as a message shows it: on Windows a resolved path is
+/// verbatim (`\\?\C:\…`), and the prefix only the system needs is
+/// dropped, so the user reads the path they know. Cost: one `String`.
+pub fn shown_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => rest.to_string(),
+        None => text,
     }
 }
 
@@ -407,5 +443,26 @@ mod tests {
         ));
         assert_eq!(names_in(&dir), Vec::<String>::new());
         std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// A verbatim Windows path loses the prefix only the system needs,
+    /// a UNC one keeps its `\\server`, and any other path is shown as it
+    /// is.
+    ///
+    /// Control: returning the display unchanged fails the first two.
+    #[test]
+    fn test_shown_path_drops_only_the_verbatim_prefix() {
+        assert_eq!(
+            shown_path(Path::new(r"\\?\C:\maps\m.mandala.json")),
+            r"C:\maps\m.mandala.json"
+        );
+        assert_eq!(
+            shown_path(Path::new(r"\\?\UNC\server\maps\m.mandala.json")),
+            r"\\server\maps\m.mandala.json"
+        );
+        assert_eq!(
+            shown_path(Path::new("/home/u/m.mandala.json")),
+            "/home/u/m.mandala.json"
+        );
     }
 }

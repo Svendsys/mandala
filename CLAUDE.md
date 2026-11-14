@@ -62,14 +62,15 @@ draws them.
   concepts. Read this before changing the data model.
 - **`crates/maptool/`** — CLI tool for `.mandala.json` files, a client
   of the same `Document` the app edits: `show` (the node tree), `grep`
-  (span text and own `content` by regex), `export` (Markdown), `verify`
-  (the loader's verdict, with its JSON path, plus warnings for what
-  loads but is probably a mistake) and `apply` (pipe matching sections'
-  text through a command, as one `EditRequest` through
-  `Document::apply`; `-i` writes the map back through
-  `util::guarded_file`, `--dry-run` prints what `-i` would change on
-  disk). There is no `convert`: no older format remains to convert
-  from.
+  (by regex, every string a map draws as glyphs: spans, own `content`,
+  frame ornaments), `export` (Markdown), `verify` (the loader's
+  verdict, with its JSON path, plus warnings for what loads but is
+  probably a mistake) and `apply` (pipe matching sections' text through
+  a command, as one `EditRequest` through `Document::apply`; `-i`
+  writes the map back as the app's save does — through a link to its
+  real file, which must itself be a `.mandala.json` — and `--dry-run`
+  prints what `-i` would change on disk). There is no `convert`: no
+  older format remains to convert from.
 - **`crates/mandalactl/`** — CLI client for a *running* app's `--ipc`
   socket: one invocation, one command, JSON or `path: value` lines on
   stdout, exit code `0` / `1` (the app said no) / `2` (could not reach

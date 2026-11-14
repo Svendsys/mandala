@@ -130,8 +130,9 @@ pub fn rewrite(doc: &mut Document, changed: &[Target], label: &str) -> Result<()
 /// What `--dry-run` prints: a unified diff, with no context lines
 /// (`diff -U0`), from `before` — the map's bytes as they are on disk —
 /// to `after`, the text `-i` would write in their place; empty when the
-/// two are equal. Both headers name `name`, the map's path as given, so
-/// the diff applies with `patch -p0`.
+/// two are equal. Both headers name `name`, the map's path as given, and
+/// end it with a tab as GNU `diff -u` does, so `patch -p0` applies the
+/// diff to a path that holds a space.
 ///
 /// When the two have as many lines, they correspond one to one — the
 /// case of a file in the saver's layout, where `apply` changes only the
@@ -148,7 +149,7 @@ pub fn diff(name: &str, before: &str, after: &str) -> String {
     }
     let old: Vec<&str> = before.split_inclusive('\n').collect();
     let new: Vec<&str> = after.split_inclusive('\n').collect();
-    let mut out = format!("--- {name}\n+++ {name}\n");
+    let mut out = format!("--- {name}\t\n+++ {name}\t\n");
     if old.len() != new.len() {
         hunk(&mut out, &old, 0, &new, 0);
         return out;
@@ -282,7 +283,7 @@ mod tests {
         let after = "a\nB\nc\nD\nE\n";
         assert_eq!(
             diff("/tmp/m.mandala.json", before, after),
-            "--- /tmp/m.mandala.json\n+++ /tmp/m.mandala.json\n@@ -2 +2 @@\n-b\n+B\n@@ -4,2 +4,2 @@\n-d\n-e\n+D\n+E\n"
+            "--- /tmp/m.mandala.json\t\n+++ /tmp/m.mandala.json\t\n@@ -2 +2 @@\n-b\n+B\n@@ -4,2 +4,2 @@\n-d\n-e\n+D\n+E\n"
         );
         assert_eq!(diff("m", before, before), "");
     }
@@ -296,7 +297,36 @@ mod tests {
     fn test_apply_diff_reports_a_change_of_shape() {
         assert_eq!(
             diff("m", "{\"a\": 1}\n", "{\n  \"a\": 2\n}\n"),
-            "--- m\n+++ m\n@@ -1 +1,3 @@\n-{\"a\": 1}\n+{\n+  \"a\": 2\n+}\n"
+            "--- m\t\n+++ m\t\n@@ -1 +1,3 @@\n-{\"a\": 1}\n+{\n+  \"a\": 2\n+}\n"
+        );
+    }
+
+    /// A path that holds a space is ended by a tab in both headers, so
+    /// `patch -p0` reads the whole name.
+    ///
+    /// Control: headers with no tab fail it.
+    #[test]
+    fn test_apply_diff_ends_the_name_with_a_tab() {
+        let out = diff("my map.mandala.json", "a\n", "b\n");
+        assert!(
+            out.starts_with("--- my map.mandala.json\t\n+++ my map.mandala.json\t\n@@ -1 +1 @@\n"),
+            "{out:?}"
+        );
+    }
+
+    /// A last line with no line break is marked as `diff` marks it, on
+    /// the side that lacks it: the file on disk, or the text `-i` writes.
+    ///
+    /// Control: a bare line break in place of the marker fails both.
+    #[test]
+    fn test_apply_diff_marks_a_missing_final_line_break() {
+        assert_eq!(
+            diff("m", "a\nb", "a\nB\n"),
+            "--- m\t\n+++ m\t\n@@ -2 +2 @@\n-b\n\\ No newline at end of file\n+B\n"
+        );
+        assert_eq!(
+            diff("m", "a\nb\n", "a\nB"),
+            "--- m\t\n+++ m\t\n@@ -2 +2 @@\n-b\n+B\n\\ No newline at end of file\n"
         );
     }
 

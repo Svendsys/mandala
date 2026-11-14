@@ -397,6 +397,29 @@ fn test_export_refuses_to_write_over_a_map() {
     assert_eq!(std::fs::read(&map).unwrap(), before);
 }
 
+/// An `<out.md>` that is a link to a map is refused naming both, and the
+/// map is not touched: the "not a map" rule holds for the file written.
+///
+/// Control: checking only the name typed lets the export through, and
+/// the map holds Markdown.
+#[cfg(unix)]
+#[test]
+fn test_export_refuses_an_output_that_links_to_a_map() {
+    let dir = TempDir::new("maptool-export-link-to-map");
+    let map = copy(&dir, "tree");
+    let before = std::fs::read(&map).unwrap();
+    let link = dir.join("out.md");
+    std::os::unix::fs::symlink(&map, &link).unwrap();
+    let run = maptool(&["export", arg(&map), arg(&link)]);
+    assert_eq!(run.status, 2, "{}", run.stderr);
+    assert!(
+        run.stderr.contains("out.md: links to `") && run.stderr.contains("tree.mandala.json`, a map"),
+        "{}",
+        run.stderr
+    );
+    assert_eq!(std::fs::read(&map).unwrap(), before);
+}
+
 /// An `<out.md>` that is a symlink is written through to its file, and
 /// stays a link: the same rule as a map's save, for a path named on
 /// maptool's own command line. A new output file is simply created.
@@ -495,7 +518,7 @@ fn test_apply_dry_run_prints_the_diff_and_writes_nothing() {
     assert_eq!(
         run.stdout,
         format!(
-            "--- {0}\n+++ {0}\n\
+            "--- {0}\t\n+++ {0}\t\n\
              @@ -60 +60 @@\n\
              -      \"sections\": [{{\"spans\": [{{\"text\": \"the heaven\"}}]}}],\n\
              +      \"sections\": [{{\"spans\": [{{\"text\": \"THE HEAVEN\"}}]}}],\n\
@@ -520,8 +543,8 @@ fn test_apply_dry_run_previews_the_write_on_a_map_in_another_layout() {
     let run = maptool(&["apply", arg(&map), "low", "--dry-run", "--", "tr", "a-z", "A-Z"]);
     assert_eq!(run.status, 0, "{}", run.stderr);
     let mut lines = run.stdout.lines();
-    assert_eq!(lines.next(), Some(format!("--- {}", arg(&map)).as_str()));
-    assert_eq!(lines.next(), Some(format!("+++ {}", arg(&map)).as_str()));
+    assert_eq!(lines.next(), Some(format!("--- {}\t", arg(&map)).as_str()));
+    assert_eq!(lines.next(), Some(format!("+++ {}\t", arg(&map)).as_str()));
     let hunk = lines.next().unwrap_or("");
     assert!(hunk.starts_with("@@ -1 +1,"), "{}", run.stdout);
     assert_eq!(lines.next(), Some(format!("-{one_line}").as_str()));
@@ -584,6 +607,32 @@ fn test_apply_matches_case_insensitively_with_the_pattern_flag_and_passes_stderr
     );
     assert!(run.stderr.contains("note-from-the-command"), "{}", run.stderr);
     assert!(run.stdout.contains(r#""THE EARTH""#), "{}", run.stdout);
+}
+
+/// The reviewer's repro: `apply -i` on a link named like a map that
+/// leads to a file that is not one is refused, naming both, before any
+/// command runs, and the file it leads to is not written.
+///
+/// Control: checking the name typed alone lets `-i` write the map into
+/// `notamap.txt`.
+#[cfg(unix)]
+#[test]
+fn test_apply_in_place_refuses_a_link_to_a_file_that_is_not_a_map() {
+    let dir = TempDir::new("maptool-apply-sneaky");
+    let other = dir.join("notamap.txt");
+    std::fs::copy(fixture("tree"), &other).expect("the fixture copies");
+    let before = std::fs::read(&other).unwrap();
+    let link = dir.join("sneaky.mandala.json");
+    std::os::unix::fs::symlink(&other, &link).unwrap();
+    let run = maptool(&["apply", arg(&link), "^the earth", "-i", "--", "tr", "a-z", "A-Z"]);
+    assert_eq!(run.status, 1, "{}", run.stderr);
+    assert!(
+        run.stderr.contains("sneaky.mandala.json: links to `")
+            && run.stderr.contains("notamap.txt`, which is not a map"),
+        "{}",
+        run.stderr
+    );
+    assert_eq!(std::fs::read(&other).unwrap(), before);
 }
 
 /// With neither flag the changed map goes to stdout — the same text `-i`
@@ -732,6 +781,8 @@ fn test_help_lists_exactly_the_five_verbs() {
         "For each section with a line the regex <pattern> matches",
         "is waited for with no time limit",
         "the 'content' a connector, line link or portal end sets of its own",
+        "a frame's or ring's 'sides' ornament; and a ring's 'vertical' and 'corners'",
+        "Not searched: what the map's defaults set",
     ] {
         assert!(help.contains(owed), "--help says {owed:?}: {help}");
     }

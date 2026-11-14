@@ -1,27 +1,33 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! `grep`: every line of text a regex matches, wherever a map holds
-//! text — the spans of sections, frame rings, connectors and line links
-//! with their caps and labels, and portal ends with theirs; and the
-//! `content` a connector, a line link or a portal end sets of its own,
-//! which is what it draws when it has no spans (amendment E1.1 on #253).
+//! a string it draws as glyphs (amendment E1.1 on #253, §4 and its
+//! second addendum):
+//!
+//! - the spans of sections, frame rings, connectors and line links with
+//!   their caps and labels, and portal ends with theirs;
+//! - the `content` a connector, a line link or a portal end sets of its
+//!   own, which is what it draws when it has no spans;
+//! - a frame's or a ring's `sides` ornament, and a ring's `vertical` and
+//!   `corners` texts.
 //!
 //! An element's spans are concatenated into its text, which is matched
-//! line by line, as its own `content` is. A hit prints as
+//! line by line, as each string is. A hit prints as
 //! `#<id> <element>: <line>`, the element named as a load error's path
-//! names it below its node (`sections[0]`, `frame.rings[1]`,
-//! `links[2].ends[0].label`, `connector.content`). Hits come in the
-//! file's order: nodes in pre-order, and within a node in
+//! names it below its node (`sections[0]`, `links[2].ends[0].label`,
+//! `connector.content`, `frame.rings[0].corners[1]`). Hits come in the
+//! file's order: nodes in pre-order; within a node in
 //! [`text_owners`]'s order, an element's `content` right after its
-//! spans. A defaults' or the built-in `content` is not the element's own
-//! and is not searched.
+//! spans; then the frame's [`ornaments`]. A string the map's defaults or
+//! the built-in values give is not the element's own and is not
+//! searched.
 
 use std::fmt::Write as _;
 
 use baumhard::document::ids::Document;
 use regex::Regex;
 
-use crate::map::{ident, lines, own_content, text_into, text_owners, Nodes};
+use crate::map::{ident, lines, ornaments, own_content, text_into, text_owners, Nodes};
 
 /// Every line `regex` matches, one `#<id> <element>: <line>\n` each, and
 /// how many there are.
@@ -45,6 +51,12 @@ pub fn grep(doc: &Document, regex: &Regex) -> (String, usize) {
                     let _ = writeln!(out, "#{id} {place}.content: {line}");
                     hits += 1;
                 }
+            }
+        });
+        ornaments(doc, node, |place, text| {
+            for line in lines(text).filter(|line| regex.is_match(line)) {
+                let _ = writeln!(out, "#{id} {place}: {line}");
+                hits += 1;
             }
         });
     }
@@ -122,5 +134,38 @@ mod tests {
             grep(&doc, &Regex::new("^$").unwrap()),
             ("#1 sections[1]: \n".to_string(), 1)
         );
+    }
+
+    /// A frame's ornaments are searched and named by their paths: the
+    /// frame's `sides` as a bare string, a ring's colored `sides` by its
+    /// `content`, a ring's `vertical` and each matching corner. A
+    /// default's `sides` is not the frame's own and is not searched.
+    ///
+    /// Control: dropping any one of the three searches (sides, vertical,
+    /// corners) fails the comparison.
+    #[test]
+    fn test_grep_finds_the_frames_ornaments() {
+        let doc = format::load(
+            r##"{"format": 1, "name": "m",
+              "defaults": {"frame": {"sides": "x default side"}},
+              "nodes": [
+              {"id": 3, "position": [0, 0],
+               "frame": {"sides": "x frame side", "rings": [
+                 {"spans": [{"text": "ring"}]},
+                 {"channel": 1, "fit": "repeat", "sides": {"content": "x ring side", "color": "#ffffff"},
+                  "vertical": "x vert", "corners": ["x c0", "no", "x c2", "no"]}]}}
+            ]}"##,
+        )
+        .unwrap();
+        let (out, hits) = grep(&doc, &Regex::new("^x").unwrap());
+        assert_eq!(
+            out,
+            "#3 frame.sides: x frame side\n\
+             #3 frame.rings[1].sides.content: x ring side\n\
+             #3 frame.rings[1].vertical: x vert\n\
+             #3 frame.rings[1].corners[0]: x c0\n\
+             #3 frame.rings[1].corners[2]: x c2\n"
+        );
+        assert_eq!(hits, 5);
     }
 }

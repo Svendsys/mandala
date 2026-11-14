@@ -269,6 +269,52 @@ fn test_a_pan_through_act_action_applies_nothing_to_the_layers() {
     );
 }
 
+/// **A save driven over IPC cannot write map bytes into a file that is
+/// not a map** (amendment E1.1, second addendum): `save <path>` through
+/// `act.console`, where the path is a link named like a map that leads
+/// to `notamap.txt`, is refused naming both, and the file it leads to,
+/// the document's binding and its unsaved change are all as they were.
+///
+/// Control: checking the extension on the name typed alone lets the
+/// save through, and `notamap.txt` holds the map.
+#[cfg(unix)]
+#[test]
+fn test_an_ipc_save_through_a_link_to_a_file_that_is_not_a_map_is_refused() {
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    init.document.as_mut().expect("document").create_root_for_test();
+    frame(init);
+    assert!(
+        document(init).is_dirty(),
+        "precondition: the edit dirtied the map"
+    );
+    let bound = document(init).file_path.clone();
+    let dir = baumhard::util::test_temp::TempDir::new("gpu-ipc-save-link");
+    let other = dir.join("notamap.txt");
+    std::fs::write(&other, "notes").expect("the plain file is written");
+    let link = dir.join("sneaky.mandala.json");
+    std::os::unix::fs::symlink(&other, &link).expect("the link is made");
+    let line = format!("save {}", link.to_str().expect("a UTF-8 path"));
+    let (reply, _) = act(init, json!({"id": 7, "cmd": "act.console", "line": line}));
+    assert_eq!(reply["ok"], false, "the save is refused: {reply}");
+    assert!(
+        reply["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("sneaky.mandala.json: links to `")
+                && m.contains("notamap.txt`, which is not a map")),
+        "the refusal names both paths: {reply}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&other).expect("reads"),
+        "notes",
+        "nothing was written through the link"
+    );
+    assert_eq!(document(init).file_path, bound, "the binding is as it was");
+    assert!(document(init).is_dirty(), "the unsaved change is still unsaved");
+}
+
 /// **`act.console` through the whole side-effect drain.** The dirty
 /// guard — the one thing between a typo'd `open` and lost work —
 /// refuses `open` and `new` over an unsaved change, through the same

@@ -16,7 +16,7 @@ use std::fmt;
 use baumhard::arena::NodeId;
 use baumhard::document::element::{DocElement, DocKind, LinkData};
 use baumhard::document::ids::Document;
-use baumhard::document::values::LinkKind;
+use baumhard::document::values::{LinkKind, Sides};
 
 /// The nodes of a document in depth-first pre-order — the order the file
 /// lists them — each with its depth: `0` for a top-level node.
@@ -284,4 +284,85 @@ fn portal_owners(doc: &Document, link: usize, portal: NodeId, f: &mut impl FnMut
 /// The kind of the link `id`, if it is one.
 fn link_kind(doc: &Document, id: NodeId) -> Option<LinkKind> {
     link(doc, id).map(|link| link.kind)
+}
+
+/// A string of a node's frame that is drawn as glyphs but held by no
+/// span: a side ornament's text, a ring's `vertical` text, one of its
+/// four `corners`. Named as a load error's path names it below the node.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Ornament {
+    /// The frame's `sides`: `frame.sides`, or `frame.sides.content` when
+    /// the ornament has a color of its own (and so is an object).
+    FrameSides {
+        /// Whether it is written as an object with a `color`.
+        colored: bool,
+    },
+    /// A ring's `sides`, as the frame's.
+    RingSides {
+        /// The ring's place among the frame's rings.
+        ring: usize,
+        /// Whether it is written as an object with a `color`.
+        colored: bool,
+    },
+    /// `frame.rings[ring].vertical`.
+    Vertical(usize),
+    /// `frame.rings[ring].corners[corner]`.
+    Corner(usize, usize),
+}
+
+impl fmt::Display for Ornament {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let content = |colored: bool| if colored { ".content" } else { "" };
+        match self {
+            Ornament::FrameSides { colored } => write!(f, "frame.sides{}", content(*colored)),
+            Ornament::RingSides { ring, colored } => {
+                write!(f, "frame.rings[{ring}].sides{}", content(*colored))
+            }
+            Ornament::Vertical(ring) => write!(f, "frame.rings[{ring}].vertical"),
+            Ornament::Corner(ring, corner) => write!(f, "frame.rings[{ring}].corners[{corner}]"),
+        }
+    }
+}
+
+/// Call `f` with every [`Ornament`] string of `node`'s frame, in the
+/// order the file lists them: the frame's `sides`, then each ring's
+/// `sides`, `vertical` and `corners`. A default's ornament is not the
+/// frame's own and is not visited. O(the frame's rings); no allocation.
+pub fn ornaments(doc: &Document, node: NodeId, mut f: impl FnMut(Ornament, &str)) {
+    let Some(frame) = doc.children(node).find(|&id| is(doc, id, DocKind::Frame)) else {
+        return;
+    };
+    if let Some(DocElement::Frame(data)) = doc.get(frame) {
+        if let Some(Sides::On { content, color }) = &data.style.ring_layout.sides {
+            f(
+                Ornament::FrameSides {
+                    colored: color.is_some(),
+                },
+                content,
+            );
+        }
+    }
+    let rings = doc.children(frame).filter(|&id| is(doc, id, DocKind::Ring));
+    for (n, ring) in rings.enumerate() {
+        let Some(DocElement::Ring(data)) = doc.get(ring) else {
+            continue;
+        };
+        if let Some(Sides::On { content, color }) = &data.style.ring_layout.sides {
+            f(
+                Ornament::RingSides {
+                    ring: n,
+                    colored: color.is_some(),
+                },
+                content,
+            );
+        }
+        if let Some(directional) = &data.directional {
+            if let Some(vertical) = &directional.vertical {
+                f(Ornament::Vertical(n), vertical);
+            }
+            for (i, corner) in directional.corners.iter().flatten().enumerate() {
+                f(Ornament::Corner(n, i), corner);
+            }
+        }
+    }
 }
