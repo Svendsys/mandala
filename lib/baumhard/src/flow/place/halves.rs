@@ -1834,12 +1834,13 @@ thread_local! {
     /// a model lay's share, and their path reads ([`Work::read`]).
     #[cfg(test)]
     pub(crate) static SIDE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Test counter (#313): the most glyph steps a lay of a side
-    /// ornament's copies left its frame past what its budget held for the
-    /// touch check of them, on this thread ([`SideOrnament::laid`]): none,
-    /// since each lay is held back for before it is laid.
+    /// Test counter (#313): the nearest a lay of a side ornament's copies
+    /// has left its frame to what its budget holds for the touch check of
+    /// them, on this thread ([`SideOrnament::laid`]): how far past it, in
+    /// glyph steps, below none where short of it — never past, since each
+    /// lay is held back for before it is laid. `None` before any lay.
     #[cfg(test)]
-    pub(crate) static SIDE_CROSSED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static SIDE_EDGE: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
     /// Test counter (#313): the most path reads one cluster of a side
     /// ornament's lay has taken on this thread, what
     /// [`SIDE_CLUSTER_READS`] bounds.
@@ -3877,9 +3878,9 @@ impl<'a> SideOrnament<'a> {
     }
 
     /// Note in a test that a lay of the arc's copies, bringing it to
-    /// `copies`, is counted (#313): how far it left the frame past what its
-    /// budget held for their touch check ([`SIDE_CROSSED`]) — what
-    /// [`affords`](Self::affords) holds back the lay for, so none.
+    /// `copies`, is counted (#313): how near it left the frame to what its
+    /// budget holds for their touch check ([`SIDE_EDGE`]) — never past it,
+    /// which is what [`affords`](Self::affords) holds the lay back for.
     #[cfg_attr(not(test), allow(unused_variables))]
     fn laid(&self, copies: usize) {
         #[cfg(test)]
@@ -3889,13 +3890,14 @@ impl<'a> SideOrnament<'a> {
                 .get()
                 .saturating_add(copies.saturating_mul(self.per_copy));
             let work = self.work;
-            let past = work
+            let held = work
                 .spent
                 .get()
                 .saturating_add(work.reserve.get())
-                .saturating_add(check_steps(boxes, self.classes.get()))
-                .saturating_sub(work.budget.get());
-            SIDE_CROSSED.with(|most| most.set(most.get().max(past)));
+                .saturating_add(check_steps(boxes, self.classes.get()));
+            let edge = i64::try_from(held).unwrap_or(i64::MAX)
+                - i64::try_from(work.budget.get()).unwrap_or(i64::MAX);
+            SIDE_EDGE.with(|most| most.set(Some(most.get().map_or(edge, |was| was.max(edge)))));
         }
     }
 

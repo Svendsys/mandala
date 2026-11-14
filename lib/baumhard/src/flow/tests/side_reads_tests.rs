@@ -11,7 +11,7 @@ use glam::Vec2;
 
 use crate::document::values::{FitMode, LineSpan, Percent, Rgba, Shape};
 use crate::flow::place::halves::{
-    overshoot_steps, BUDGET_OVERRIDE, MOST_SIDE_CLUSTER_READS, PAST_BUDGET, SIDE_CLUSTER_READS, SIDE_CROSSED,
+    overshoot_steps, BUDGET_OVERRIDE, MOST_SIDE_CLUSTER_READS, PAST_BUDGET, SIDE_CLUSTER_READS, SIDE_EDGE,
     SIDE_READS, SIDE_STEPS, SIDE_STEP_LOOKUPS,
 };
 use crate::flow::place::ring::READS_A_STEP;
@@ -86,9 +86,10 @@ struct Laid {
     steps: usize,
     lookups: usize,
     most: usize,
-    /// The most glyph steps a lay of its sides left it past what its
-    /// budget held for their touch check ([`SIDE_CROSSED`]).
-    crossed: usize,
+    /// The nearest a lay of its sides left it to what its budget holds for
+    /// their touch check ([`SIDE_EDGE`]): how far past, below none where
+    /// short of it; `None` where none was laid.
+    edge: Option<i64>,
     sides: Vec<(usize, SideLoss)>,
     placed: PlacedRun,
 }
@@ -109,23 +110,18 @@ fn frame(sides: &str, shape: &Outline, budget: Option<usize>) -> Laid {
         let tables = crate::flow::place::setup_table_samples(&run, shape, &fit, &flow);
         overshoot_steps(&run, ornament.as_ref(), false, tables)
     });
-    let counters = [
-        &SIDE_READS,
-        &SIDE_STEPS,
-        &MOST_SIDE_CLUSTER_READS,
-        &PAST_BUDGET,
-        &SIDE_CROSSED,
-    ];
+    let counters = [&SIDE_READS, &SIDE_STEPS, &MOST_SIDE_CLUSTER_READS, &PAST_BUDGET];
     for counter in counters {
         counter.with(|count| count.set(0));
     }
+    SIDE_EDGE.with(|edge| edge.set(None));
     let (_, lookups_before) = SIDE_STEP_LOOKUPS.with(std::cell::Cell::get);
     let lay = || frame_with(TEXT, POINTS, shape, &fit, &layout, true);
     let (_, placed, trace): (_, PlacedRun, Trace) = match budget {
         Some(budget) => with_seam(&BUDGET_OVERRIDE, budget, lay),
         None => lay(),
     };
-    let [reads, steps, most, past, crossed] = counters.map(|counter| counter.with(std::cell::Cell::get));
+    let [reads, steps, most, past] = counters.map(|counter| counter.with(std::cell::Cell::get));
     Laid {
         what: String::new(),
         far: false,
@@ -137,7 +133,7 @@ fn frame(sides: &str, shape: &Outline, budget: Option<usize>) -> Laid {
         steps,
         lookups: SIDE_STEP_LOOKUPS.with(std::cell::Cell::get).1 - lookups_before,
         most,
-        crossed,
+        edge: SIDE_EDGE.with(std::cell::Cell::get),
         sides: trace.unheld.sides,
         placed,
     }
@@ -197,6 +193,13 @@ fn test_flow_side_reads_a_far_out_frame_takes_its_overshoot_at_most() {
             .any(|f| f.far && !f.sides.is_empty() && f.spent * 2 >= f.budget),
         "precondition: a frame far out spends its budget partway through its sides"
     );
+    // A lay that the next one's hold stopped left the frame within that
+    // hold of the edge: the edge is measured, not left at its start.
+    let nearest = frames.iter().filter_map(|f| f.edge).max();
+    assert!(
+        nearest.is_some_and(|edge| edge >= -EDGE_NEAR),
+        "precondition: some frame's sides' lays come within {EDGE_NEAR} glyph steps of what its budget holds for their check ({nearest:?})"
+    );
     let mut broken = Vec::new();
     for case in cases {
         let own = case.last().expect("every case lays its frame at its own budget");
@@ -207,10 +210,10 @@ fn test_flow_side_reads_a_far_out_frame_takes_its_overshoot_at_most() {
                     f.what, f.past, f.budget, f.spent, f.allowed
                 ));
             }
-            if f.crossed > 0 {
+            if f.edge.is_some_and(|edge| edge > 0) {
                 broken.push(format!(
-                    "{}: a lay of its sides left it {} glyph steps past what its budget held for their check (crossed)",
-                    f.what, f.crossed
+                    "{}: a lay of its sides left it {:?} glyph steps past what its budget holds for their check (crossed)",
+                    f.what, f.edge
                 ));
             }
             if f.placed.glyphs.len() < own.placed.glyphs.len() && f.sides.is_empty() {
@@ -280,6 +283,12 @@ fn test_flow_side_reads_counted_steps_stand_to_their_reads_within_a_band() {
         broken.join("\n")
     );
 }
+
+/// How near what its budget holds for their touch check some frame's
+/// sides' lays come in the grid (#313): within a copy's hold of it, where
+/// the hold of the next copy of a floor's row stopped it — 2 glyph steps,
+/// the nearest the grid's frames come.
+const EDGE_NEAR: i64 = 1_000;
 
 /// The fewest path reads a counted step of a side ornament's lays takes in
 /// a frame far from the origin (#313): the band's floor, below the 5.3 to
