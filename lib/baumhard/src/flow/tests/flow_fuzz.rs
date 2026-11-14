@@ -46,7 +46,7 @@
 //! point's `at` is in `0..=1`, sizes are in points — because placement
 //! receives those from a loaded document, never raw.
 
-use glam::Vec2;
+use glam::{DVec2, Vec2};
 
 use crate::document::bounds;
 use crate::document::element::DirectionalGlyphs;
@@ -1505,7 +1505,9 @@ fn check_generated_pinning(
                         if fit == FitMode::Repeat {
                             FAR_REPEATS.with(|n| n.set(n.get() + 1));
                         }
-                        curves.push((far_curve(at, length, line), fit));
+                        let far = far_curve(at, length, line);
+                        LAST_FAR_CURVE.with(|last| last.set(Some((far, curve_room(&far)))));
+                        curves.push((far, fit));
                     }
                     for (curve, fit) in &curves {
                         let mut work = InputWork::default();
@@ -1946,6 +1948,10 @@ thread_local! {
     /// on this thread ([`far_out`]).
     pub(crate) static FAR_FRAMES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static FAR_REPEATS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The far-out path the structured generator drew last on this
+    /// thread, and the room its oracle gave a run along it.
+    pub(crate) static LAST_FAR_CURVE: std::cell::Cell<Option<(Curve, f32)>> =
+        const { std::cell::Cell::new(None) };
 }
 
 /// The side ornaments a far-out frame is given where its layout draws none
@@ -1971,7 +1977,9 @@ pub fn far_out(choices: &mut Choices<'_>) -> Option<(Vec2, f32)> {
 }
 
 /// A path `length` long from `at` (#313): a line, or a cubic that bends
-/// one way and back.
+/// one way and back. As long as `at`'s floats can make it: where `length`
+/// is below their spacing, its control points round onto `at` and it is
+/// shorter, down to no length at all.
 fn far_curve(at: Vec2, length: f32, line: bool) -> Curve {
     if line {
         Curve::Line(at, at + Vec2::new(0.8 * length, 0.6 * length))
@@ -2232,15 +2240,33 @@ pub(crate) fn owes_whole(run: &ShapedRun, fit: &FitMode, room: f32) -> bool {
 
 /// The room a curve gives a run: its length, measured on a polyline
 /// through it, which is no longer than it.
-/// Summed in `f64`, so a curve longer than `√f32::MAX` measures what it
-/// is rather than infinite.
+/// Its points are found in `f64` from its control points, and its chords
+/// summed there: a curve longer than `√f32::MAX` measures what it is
+/// rather than infinite, and a curve far from the origin measures its own
+/// length rather than its points' rounding. `Curve::point` found them in
+/// `f32`, where a line from `(1e15, 1e15)` to itself, whose `a·(1−t) +
+/// b·t` rounds to a neighboring float at each of 256 samples, measured
+/// 1.29e10 of chords and owed a run whole along a path of no length (the
+/// finding `structured_curve_far_out_line_its_floats_cannot_part`).
 fn curve_room(curve: &Curve) -> f32 {
     const SAMPLES: usize = 256;
+    let point = |t: f64| -> DVec2 {
+        let u = 1.0 - t;
+        match *curve {
+            Curve::Line(a, b) => a.as_dvec2() * u + b.as_dvec2() * t,
+            Curve::Quadratic(a, c, b) => {
+                a.as_dvec2() * (u * u) + c.as_dvec2() * (2.0 * u * t) + b.as_dvec2() * (t * t)
+            }
+            Curve::Cubic(a, c1, c2, b) => {
+                a.as_dvec2() * (u * u * u)
+                    + c1.as_dvec2() * (3.0 * u * u * t)
+                    + c2.as_dvec2() * (3.0 * u * t * t)
+                    + b.as_dvec2() * (t * t * t)
+            }
+        }
+    };
     (0..SAMPLES)
-        .map(|k| {
-            let (a, b) = (k as f32 / SAMPLES as f32, (k + 1) as f32 / SAMPLES as f32);
-            (curve.point(b) - curve.point(a)).as_dvec2().length()
-        })
+        .map(|k| (point((k + 1) as f64 / SAMPLES as f64) - point(k as f64 / SAMPLES as f64)).length())
         .sum::<f64>() as f32
 }
 

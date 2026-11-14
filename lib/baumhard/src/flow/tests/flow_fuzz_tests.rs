@@ -1642,6 +1642,41 @@ fn test_flow_structured_finding_a_curve_fit_shrunk_to_the_size_floor() {
     }
 }
 
+/// The flow_structured_every_face finding of CI's run on #354 at
+/// 03fd7d9a, after 1,068 runs: a `Spread` of 68 glyphs at 4,096 pt,
+/// some 336,000 long, along a far-out line (#313) from (10¹⁵, 10¹⁵),
+/// `0.8 × length` across and `0.6 × length` down. Floats there are some
+/// 6.7 × 10⁷ apart, so its end rounded onto its start and the line has no
+/// length; the engine laid nothing and reported it cut, as it should. The
+/// property owed the run whole: its oracle, `curve_room`, found the
+/// line's 256 sample points in `f32`, where `a·(1−t) + b·t` rounds to a
+/// neighboring float of `a` at each, and summed 1.29 × 10¹⁰ of chords
+/// that were rounding alone. The oracle finds them in `f64` now, and the
+/// line measures what it is, nothing. The engine was not wrong, and no
+/// budget is involved: it spent 273 steps on the line.
+///
+/// Control: with `curve_room` finding its points by `Curve::point` again,
+/// red ("along a curve: the placement: its natural length fits, and it
+/// was cut").
+#[test]
+fn test_flow_structured_every_face_finding_a_far_out_line_its_floats_cannot_part() {
+    use crate::flow::tests::flow_fuzz::LAST_FAR_CURVE;
+    let found = include_bytes!("fuzz_findings/structured_curve_far_out_line_its_floats_cannot_part");
+    LAST_FAR_CURVE.with(|last| last.set(None));
+    if let Err(why) = crate::flow::tests::flow_fuzz::check_flow_structured_every_face(found) {
+        panic!("{why}");
+    }
+    let Some((curve, room)) = LAST_FAR_CURVE.with(|last| last.get()) else {
+        panic!("the finding draws no far-out path");
+    };
+    assert_eq!(
+        curve,
+        crate::flow::Curve::Line(Vec2::splat(1e15), Vec2::splat(1e15)),
+        "the finding draws a far-out line whose ends its floats cannot part"
+    );
+    assert_eq!(room, 0.0, "a line of no length gives a run no room");
+}
+
 /// The flow_structured finding of #308's fuzz run, failing alike at
 /// d7242d38: a `Spread` frame laid inward round an ellipse 3.24 wide and
 /// 1.18e-38 tall, its text of two glyphs one line, 0.45 long at its
