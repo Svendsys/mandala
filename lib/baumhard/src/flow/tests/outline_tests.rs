@@ -534,7 +534,7 @@ fn test_flow_an_ellipses_length_is_its_ellipses_at_every_magnitude() {
 /// An ellipse's length is the length of the ellipse its center and radii
 /// make, at every distance from the origin and at the origin, to the bound
 /// `ArcPath::closed` states (#356): ellipses 200 to 409,600 across at the
-/// origin and 10⁶ to 10²² from it, held to [`ellipse_polygon`] through it
+/// origin and 10⁶ to 10²² from it, held to `ellipse_polygon` through it
 /// at the angles its table was built at — within `2⁻²⁴` of that length,
 /// and `2⁻⁴⁷` of its larger radius and of that length a sample. Far out,
 /// where an `f32` sets its points apart by more than its radii, it still
