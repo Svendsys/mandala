@@ -68,17 +68,20 @@ Commands:
                                 '[portal → #<id>]'.
   grep <map> <pattern> [-i]     Print every line of text the regex
                                 <pattern> matches, as
-                                '#<id> <element>: <line>'. Searched: the
-                                spans of sections, frame rings,
+                                '#<id> <element>: <line>'. Searched:
+                                every string the map draws as glyphs —
+                                the spans of sections, frame rings,
                                 connectors and line links (and their
                                 caps and labels) and portal ends (and
                                 their labels); the 'content' a
                                 connector, line link or portal end sets
-                                of its own; a frame's or ring's 'sides'
-                                ornament; and a ring's 'vertical' and
-                                'corners'. Not searched: what the map's
-                                defaults set. The element is named by
-                                its path below the node ('sections[0]',
+                                of its own; a 'once' fit's 'filler'; a
+                                frame's or ring's 'sides' ornament; and
+                                a ring's 'vertical' and 'corners'. Not
+                                searched: a span's 'url' link, and what
+                                the map's defaults set. The element is
+                                named by its path below the node as the
+                                saved map spells it ('sections[0]',
                                 'links[1].ends[0]', 'connector.content',
                                 'frame.rings[0].corners[1]'). An empty
                                 section is one empty line. -i matches
@@ -270,13 +273,13 @@ fn export(args: &[String]) -> Result<String, CliError> {
     };
     if let (Some(path), Some(real)) = (out, &real) {
         if file::has_map_extension(path) {
-            return Err(CliError::Usage(format!(
+            return Err(CliError::Failed(format!(
                 "export: {}: names a map; the Markdown goes to a file of its own",
                 tilde_path(Path::new(path))
             )));
         }
         if file::has_map_extension(&real.to_string_lossy()) {
-            return Err(CliError::Usage(format!(
+            return Err(CliError::Failed(format!(
                 "export: {}: links to `{}`, a map; the Markdown goes to a file of its own",
                 tilde_path(Path::new(path)),
                 collapse_home_in(&shown_path(real))

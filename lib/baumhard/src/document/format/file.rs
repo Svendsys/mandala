@@ -50,48 +50,58 @@ pub fn extension_refusal(path: &str) -> String {
     )
 }
 
-/// The real file of the map at `path`: refused unless `path` ends in
-/// [`MAP_EXTENSION`]; then, when it is a symlink, resolved to the file at
-/// the end of its chain
+/// The real file a write to the map at `path` replaces: refused unless
+/// `path` ends in [`MAP_EXTENSION`]; then, when it is a symlink,
+/// resolved to the file at the end of its chain
 /// ([`real_file`](crate::util::guarded_file::real_file)), which must be
-/// named like a map too (amendment E1.1). The one rule both a read and a
-/// write hold to: the extension is checked on the file used, not only on
-/// the name typed. Errors name the path, and for a link both paths.
+/// named like a map too (amendment E1.1, second and third addenda). A
+/// rule for writes only: a write must never carry map bytes into a file
+/// that is not a map, whoever names the path. A read holds to the name
+/// typed alone ([`read_bytes`]). Errors name the path once, and for a
+/// link both paths.
 ///
 /// Cost: a `symlink_metadata`, and for a link `real_file`'s walk.
-fn real_map(path: &str) -> Result<std::path::PathBuf, String> {
+fn write_target(path: &str) -> Result<std::path::PathBuf, String> {
     use crate::util::guarded_file::{real_file, shown_path, PublishRefusal};
     if !has_map_extension(path) {
         return Err(extension_refusal(path));
     }
-    let shown = || tilde_path(Path::new(path));
     let real = real_file(Path::new(path)).map_err(|refusal| {
+        // The refusal opens with the path itself; it is not named twice.
         let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
-        format!("{}: {}", shown(), crate::util::log::collapse_home_in(&message))
+        crate::util::log::collapse_home_in(&message)
     })?;
     if !has_map_extension(&real.to_string_lossy()) {
         return Err(format!(
-            "{}: links to `{}`, which is not a map; a map's file name ends in `{MAP_EXTENSION}`",
-            shown(),
+            "{}: links to `{}`, which is not a map; a map's file name ends in `{MAP_EXTENSION}`; \
+             save it under a name of its own",
+            tilde_path(Path::new(path)),
             crate::util::log::collapse_home_in(&shown_path(&real))
         ));
     }
     Ok(real)
 }
 
-/// The bytes of the map at `path`: its real file (`real_map`), read whole. For
-/// a caller that needs the file as it is on disk as well as the document
-/// [`load`] makes of it.
+/// The bytes of the map at `path`: refused unless `path` ends in
+/// [`MAP_EXTENSION`], then read whole, following a symlink to wherever
+/// it leads (amendment E1.1, third addendum §1). A read writes nothing,
+/// and the loader judges what it reads, so the file a link leads to
+/// need not be named like a map: a git-annex link points at a key that
+/// keeps only a short extension, and the map behind it opens. Saving it
+/// back through that link is refused ([`write`]). For a caller that
+/// needs the file as it is on disk as well as the document [`load`]
+/// makes of it.
 ///
-/// Errors, each prefixed by the path: the extension refusal (of the
-/// name typed, or of the file a link leads to), a link that cannot be
-/// followed, or the read's own error. In the browser there are no
-/// files, and the read fails and says so.
+/// Errors, each prefixed by the path: the extension refusal, or the
+/// read's own error. In the browser there are no files, and the read
+/// fails and says so.
 ///
 /// Cost: the file's bytes, held once.
 pub fn read_bytes(path: &str) -> Result<Vec<u8>, String> {
-    let real = real_map(path)?;
-    std::fs::read(real).map_err(|e| format!("{}: could not read: {e}", tilde_path(Path::new(path))))
+    if !has_map_extension(path) {
+        return Err(extension_refusal(path));
+    }
+    std::fs::read(path).map_err(|e| format!("{}: could not read: {e}", tilde_path(Path::new(path))))
 }
 
 /// The document `bytes`, read from `path`, make: [`load_from_bytes`],
@@ -150,7 +160,7 @@ fn publish(
     // The extension rule holds for the file written, not only for the
     // name typed (amendment E1.1): a link named like a map cannot carry
     // map bytes into a file that is not one.
-    let real = real_map(path)?;
+    let real = write_target(path)?;
     publish(&real, true, produce).map(|_| ()).map_err(|refusal| {
         let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
         // The caller names its own area (`save:`, `apply:`); the
@@ -422,29 +432,52 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// A read holds to the same rule as a write: through a link to a map
-    /// it reads the map, and through a link named like a map to a file
-    /// that is not one it is refused, naming both.
+    /// A read follows a link named like a map to a file that is not —
+    /// a git-annex key ending `.json` — and reads the map there (third
+    /// addendum §1); a write back through the same link is refused, naming
+    /// both paths once each, and the key is not written.
     ///
-    /// Control: checking the name typed alone reads `notamap.txt`, whose
-    /// text is a valid map, and the refusal assertion goes red.
+    /// Control: holding the read to the write's rule (the real file
+    /// named like a map) refuses the read, and its `unwrap` goes red;
+    /// dropping the write's real-file check writes the key, and the
+    /// refusal assertion goes red.
     #[cfg(unix)]
     #[test]
-    fn test_file_read_holds_the_extension_rule_to_the_file_read() {
+    fn test_file_read_follows_a_link_that_a_write_refuses() {
         let dir = scratch_dir("file-read-link");
         let map = r#"{"format": 1, "name": "m"}"#;
-        let real = dir.join("real.mandala.json");
-        std::fs::write(&real, map).unwrap();
-        let to_map = dir.join("link.mandala.json");
-        std::os::unix::fs::symlink(&real, &to_map).unwrap();
-        assert_eq!(read(to_map.to_str().unwrap()).unwrap().name(), "m");
-        let other = dir.join("notamap.txt");
-        std::fs::write(&other, map).unwrap();
-        let sneaky = dir.join("sneaky.mandala.json");
-        std::os::unix::fs::symlink(&other, &sneaky).unwrap();
-        let refused = read(sneaky.to_str().unwrap()).unwrap_err();
-        assert!(refused.contains("sneaky.mandala.json: links to `"), "{refused}");
-        assert!(refused.contains("notamap.txt`, which is not a map"), "{refused}");
+        let key = dir.join("SHA256E-s27--0123abcd.json");
+        std::fs::write(&key, map).unwrap();
+        let link = dir.join("m.mandala.json");
+        std::os::unix::fs::symlink(&key, &link).unwrap();
+        assert_eq!(read(link.to_str().unwrap()).unwrap().name(), "m");
+        let refused = write(link.to_str().unwrap(), "new").unwrap_err();
+        assert!(refused.contains("m.mandala.json: links to `"), "{refused}");
+        assert!(
+            refused.contains("0123abcd.json`, which is not a map"),
+            "{refused}"
+        );
+        assert_eq!(
+            refused.matches("m.mandala.json").count(),
+            1,
+            "the typed path is named once: {refused}"
+        );
+        assert_eq!(std::fs::read_to_string(&key).unwrap(), map);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A link that cannot be followed is refused with the path named
+    /// once: the guarded writer's refusal already opens with it.
+    ///
+    /// Control: prefixing the typed path to that refusal names it twice.
+    #[cfg(unix)]
+    #[test]
+    fn test_file_write_names_a_bad_link_once() {
+        let dir = scratch_dir("file-bad-link-once");
+        let link = dir.join("m.mandala.json");
+        std::os::unix::fs::symlink(dir.join("gone.mandala.json"), &link).unwrap();
+        let refused = write(link.to_str().unwrap(), "new").unwrap_err();
+        assert_eq!(refused.matches("m.mandala.json").count(), 1, "{refused}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

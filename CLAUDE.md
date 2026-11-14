@@ -63,7 +63,7 @@ draws them.
 - **`crates/maptool/`** — CLI tool for `.mandala.json` files, a client
   of the same `Document` the app edits: `show` (the node tree), `grep`
   (by regex, every string a map draws as glyphs: spans, own `content`,
-  frame ornaments), `export` (Markdown), `verify` (the loader's
+  `once` fillers, frame ornaments), `export` (Markdown), `verify` (the loader's
   verdict, with its JSON path, plus warnings for what loads but is
   probably a mistake) and `apply` (pipe matching sections' text through
   a command, as one `EditRequest` through `Document::apply`; `-i`

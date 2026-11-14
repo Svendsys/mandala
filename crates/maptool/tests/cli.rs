@@ -381,13 +381,17 @@ fn test_verify_exits_1_with_the_loaders_path_on_a_refused_map() {
 
 /// `export` refuses an output path that names a map, so a slip of the
 /// command line cannot replace a map with Markdown, and writes nothing.
+/// The command line is well formed, so it is exit 1 with no usage text.
+///
+/// Control: a usage error (exit 2, the usage printed) fails it.
 #[test]
 fn test_export_refuses_to_write_over_a_map() {
     let dir = TempDir::new("maptool-export-map");
     let map = copy(&dir, "tree");
     let before = std::fs::read(&map).unwrap();
     let run = maptool(&["export", arg(&map), arg(&map)]);
-    assert_eq!(run.status, 2);
+    assert_eq!(run.status, 1);
+    assert!(!run.stderr.contains("Usage: maptool"), "{}", run.stderr);
     assert!(
         run.stderr
             .contains("names a map; the Markdown goes to a file of its own"),
@@ -411,7 +415,7 @@ fn test_export_refuses_an_output_that_links_to_a_map() {
     let link = dir.join("out.md");
     std::os::unix::fs::symlink(&map, &link).unwrap();
     let run = maptool(&["export", arg(&map), arg(&link)]);
-    assert_eq!(run.status, 2, "{}", run.stderr);
+    assert_eq!(run.status, 1, "{}", run.stderr);
     assert!(
         run.stderr.contains("out.md: links to `") && run.stderr.contains("tree.mandala.json`, a map"),
         "{}",
@@ -609,30 +613,49 @@ fn test_apply_matches_case_insensitively_with_the_pattern_flag_and_passes_stderr
     assert!(run.stdout.contains(r#""THE EARTH""#), "{}", run.stdout);
 }
 
-/// The reviewer's repro: `apply -i` on a link named like a map that
-/// leads to a file that is not one is refused, naming both, before any
-/// command runs, and the file it leads to is not written.
+/// A map behind a link named like a map that leads to a file that is not
+/// one — a git-annex key ending `.json` — reads (third addendum §1):
+/// `show`, `grep` and `verify` work through it, and `apply` to stdout
+/// prints the changed map. `apply -i` is refused, naming both paths, and
+/// the key is not written.
 ///
-/// Control: checking the name typed alone lets `-i` write the map into
-/// `notamap.txt`.
+/// Controls: holding reads to the write's rule fails the first
+/// assertions (`show` exits 1); checking the name typed alone on the
+/// write lets `-i` write the key.
 #[cfg(unix)]
 #[test]
-fn test_apply_in_place_refuses_a_link_to_a_file_that_is_not_a_map() {
-    let dir = TempDir::new("maptool-apply-sneaky");
-    let other = dir.join("notamap.txt");
-    std::fs::copy(fixture("tree"), &other).expect("the fixture copies");
-    let before = std::fs::read(&other).unwrap();
-    let link = dir.join("sneaky.mandala.json");
-    std::os::unix::fs::symlink(&other, &link).unwrap();
-    let run = maptool(&["apply", arg(&link), "^the earth", "-i", "--", "tr", "a-z", "A-Z"]);
-    assert_eq!(run.status, 1, "{}", run.stderr);
-    assert!(
-        run.stderr.contains("sneaky.mandala.json: links to `")
-            && run.stderr.contains("notamap.txt`, which is not a map"),
+fn test_a_map_behind_a_link_to_another_name_reads_and_is_not_written() {
+    let dir = TempDir::new("maptool-annex");
+    let key = dir.join("SHA256E-s2394--0123abcd.json");
+    std::fs::copy(fixture("tree"), &key).expect("the fixture copies");
+    let before = std::fs::read(&key).unwrap();
+    let link = dir.join("tree.mandala.json");
+    std::os::unix::fs::symlink(&key, &link).unwrap();
+    let run = maptool(&["show", arg(&link)]);
+    assert_eq!(run.status, 0, "{}", run.stderr);
+    assert!(run.stdout.starts_with("#1 In the beginning"), "{}", run.stdout);
+    let run = maptool(&["grep", arg(&link), "^the earth$"]);
+    assert_eq!(
+        (run.status, run.stdout.as_str()),
+        (0, "#3 sections[0]: the earth\n"),
         "{}",
         run.stderr
     );
-    assert_eq!(std::fs::read(&other).unwrap(), before);
+    let run = maptool(&["verify", arg(&link)]);
+    assert_eq!(run.status, 0, "{}", run.stderr);
+    let run = maptool(&["apply", arg(&link), "^the earth", "--", "tr", "a-z", "A-Z"]);
+    assert_eq!(run.status, 0, "{}", run.stderr);
+    assert!(run.stdout.contains(r#""THE EARTH""#), "{}", run.stdout);
+    let run = maptool(&["apply", arg(&link), "^the earth", "-i", "--", "tr", "a-z", "A-Z"]);
+    assert_eq!(run.status, 1, "{}", run.stderr);
+    assert!(
+        run.stderr.contains("tree.mandala.json: links to `")
+            && run.stderr.contains("0123abcd.json`, which is not a map"),
+        "{}",
+        run.stderr
+    );
+    assert_eq!(std::fs::read(&key).unwrap(), before);
+    assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
 }
 
 /// With neither flag the changed map goes to stdout — the same text `-i`
@@ -781,8 +804,9 @@ fn test_help_lists_exactly_the_five_verbs() {
         "For each section with a line the regex <pattern> matches",
         "is waited for with no time limit",
         "the 'content' a connector, line link or portal end sets of its own",
-        "a frame's or ring's 'sides' ornament; and a ring's 'vertical' and 'corners'",
-        "Not searched: what the map's defaults set",
+        "a 'once' fit's 'filler'; a frame's or ring's 'sides' ornament; and a ring's 'vertical' and 'corners'",
+        "Not searched: a span's 'url' link, and what the map's defaults set",
+        "named by its path below the node as the saved map spells it",
     ] {
         assert!(help.contains(owed), "--help says {owed:?}: {help}");
     }

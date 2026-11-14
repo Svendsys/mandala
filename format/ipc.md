@@ -1186,6 +1186,20 @@ the human's half: an open console's scrollback and the command
 history are left alone, by `act.console` and by the `act.action` /
 `act.macro` paths that run console lines or save.
 
+**Saving a map over IPC.** `save <path>` (and `SaveDocumentAs`,
+`SaveDocument`) writes as a human's save does, through the one map
+writer (`format::file::write`): the path must end in `.mandala.json`;
+a path that is a symlink is followed to its real file, which must
+**also** end in `.mandala.json`, and that file is replaced atomically,
+the link staying a link. A link whose real file is not named like a
+map is refused (`console_error`, naming both paths), and nothing is
+written — so no caller, over IPC or not, can write map bytes through a
+link into a file that is not a map. A dangling link, a loop, or a link
+to something that is not a regular file is refused the same way.
+Opening is not held to the real file's name: `open` follows a
+`*.mandala.json` link wherever it leads, and the loader judges what it
+reads.
+
 ### `act.macro`
 
 Run a macro through the macro dispatcher's gated step loop, the one

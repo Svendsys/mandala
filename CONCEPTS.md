@@ -3098,8 +3098,10 @@ A separate binary in `crates/maptool/` for scripted operations on
 edits: it reads a map with `format::file::read`, the app's own read, so
 a map the app refuses it refuses in the same words. `show` prints the
 node tree, `grep` the lines a regex matches in every string a map
-draws as glyphs — spans, an element's own `content`, a frame's `sides`
-and a ring's `vertical` and `corners` — each named by its path below
+draws as glyphs — spans, an element's own `content`, a `once` fit's
+`filler`, a frame's `sides` and a ring's `vertical` and `corners`, the
+list `maptool`'s element walk derives from the format's own fields —
+each named by its path below
 the node (`#3 links[1].ends[0]: …`, `#3 connector.content: …`,
 `#3 frame.rings[0].corners[1]: …`), `export` the tree
 as Markdown and `verify` the loader's verdict plus warnings for what
