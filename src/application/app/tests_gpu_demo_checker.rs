@@ -1224,7 +1224,12 @@ const LABEL_FIXTURE: &str = r#"{"format": 1, "name": "a label under a node", "no
 /// raster. Testament draws labels and hides none, as does every shipped
 /// map, so the hidden direction is held on a fixture built here — a
 /// label under a third node's text — rather than on a demo map changed to
-/// carry one.
+/// carry one. And a path's own label, drawn, wins over its line (#340):
+/// no glyph the path's body draws (its caps, read as their own elements,
+/// are not held here) comes within its own gap of the label's text
+/// cells — three quarters of it, for the raster — and a glyph left out
+/// near no other node lies within the margin of its own label; some label
+/// on these maps is drawn on its own path (testament's).
 ///
 /// Controls: with a node's region its text alone, red on the glyphs drawn
 /// inside its rings on `stress_long_edges`; with the margin three gaps,
@@ -1235,7 +1240,7 @@ const LABEL_FIXTURE: &str = r#"{"format": 1, "name": "a label under a node", "no
 #[test]
 fn test_maps_hide_only_the_glyphs_behind_other_nodes() {
     let mut faults: Vec<String> = Vec::new();
-    let (mut hidden, mut labels, mut labels_behind) = (0, 0, 0);
+    let (mut hidden, mut labels, mut labels_behind, mut on_path) = (0, 0, 0, 0);
     let mut maps: Vec<(String, String)> = connector_maps()
         .into_iter()
         .map(|(name, path)| {
@@ -1254,6 +1259,13 @@ fn test_maps_hide_only_the_glyphs_behind_other_nodes() {
                 .filter(|(node, r)| !p.ends.contains(node) && r.opacity > 0.0 && holds(r.zoom, p.zoom))
                 .flat_map(|(_, r)| r.text.map(|t| (t, false)).into_iter().chain(r.rings))
                 .collect();
+            let own = median(p.inks.windows(2).map(|w| w[0].gap(&w[1])).collect());
+            let margin = own * 1.25 + 0.5;
+            // The path's own label, drawn: text that wins over its line (#340).
+            let label = p.label.filter(|&(_, drawn)| drawn).map(|(text, _)| text);
+            if label.is_some_and(|text| p.inks.iter().any(|i| i.gap(&text) <= margin)) {
+                on_path += 1;
+            }
             for ink in &p.drawn {
                 if let Some((reach, _)) = others.iter().find(|(r, ellipse)| inside_region(ink, r, *ellipse)) {
                     faults.push(format!(
@@ -1263,15 +1275,23 @@ fn test_maps_hide_only_the_glyphs_behind_other_nodes() {
                         reach.min
                     ));
                 }
+                if label.is_some_and(|text| ink.gap(&text) < own * 0.75) {
+                    faults.push(format!(
+                        "{name} {}: a glyph drawn at {:.0?} within its gap of its own label",
+                        p.name,
+                        ink.center()
+                    ));
+                }
             }
-            let own = median(p.inks.windows(2).map(|w| w[0].gap(&w[1])).collect());
-            let margin = own * 1.25 + 0.5;
             let left_out = p
                 .inks
                 .iter()
                 .filter(|i| !p.drawn.iter().any(|d| d.min == i.min && d.max == i.max));
             for ink in left_out {
                 hidden += 1;
+                if label.is_some_and(|text| ink.gap(&text) <= margin) {
+                    continue;
+                }
                 if !others.iter().any(|(r, _)| ink.gap(r) <= margin) {
                     faults.push(format!(
                         "{name} {}: a glyph at {:.0?} left out, no other node within {margin:.2}",
@@ -1307,6 +1327,7 @@ fn test_maps_hide_only_the_glyphs_behind_other_nodes() {
     assert!(hidden > 0, "precondition: some path runs behind a node");
     assert!(labels > 0, "precondition: some path has a label");
     assert!(labels_behind > 0, "precondition: some label is behind a node");
+    assert!(on_path > 0, "precondition: some label is drawn on its own path");
     assert!(
         faults.is_empty(),
         "{} faults:\n{}",

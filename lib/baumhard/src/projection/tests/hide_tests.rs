@@ -1046,3 +1046,266 @@ fn test_projection_a_text_path_hides_behind_a_node() {
     );
     p.check().unwrap();
 }
+
+/// A path's own glyphs stop one gap short of its own label's text, on
+/// each side, and carry on past it; the label is drawn in full (#340:
+/// text wins over a line). The path the label is not on is untouched by
+/// it.
+///
+/// Control: with the hide stage ignoring the path's own label, red on the
+/// glyphs left out.
+#[test]
+fn test_projection_a_path_stops_short_of_its_own_label() {
+    let mut p = Projected::new(two_paths(AWAY, json!({}), labeled("LABEL", 0.5, 0.0)));
+    let path = path_of(&p, 2);
+    let label = label_of(&p, path);
+    assert!(label_drawn(&p, path), "the label is drawn in full");
+    let hidden = hides_exactly(&p, path, label);
+    assert!(
+        hidden >= 3,
+        "the path stops short of its label, {hidden} glyphs left out"
+    );
+    let shown = inks(&drawn(&p, path));
+    for (side, x) in [("left", label.origin.x), ("right", label.max().x)] {
+        assert!(
+            shown.iter().any(|i| (i.center().x < x) == (side == "left")),
+            "the path carries on past its label's {side} side"
+        );
+    }
+    p.check().unwrap();
+}
+
+/// A text path stops short of its own label as an ornament path does: its
+/// letters, boxed by their advance and the line height, are left out
+/// within its gap of the label's text, and the label is drawn.
+///
+/// Control: with the hide stage ignoring the path's own label, red on the
+/// text path drawn whole.
+#[test]
+fn test_projection_a_text_path_stops_short_of_its_own_label() {
+    let text = merged(
+        json!({"fit": "repeat", "spans": [{"text": "words along a path "}]}),
+        labeled("LABEL", 0.5, 0.0),
+    );
+    let mut p = Projected::new(two_paths(AWAY, json!({}), text));
+    let path = path_of(&p, 2);
+    let count = |run: Option<&GlyphRunData>| run.map_or(0, |r| r.shaped().glyph_count());
+    let laid = count(p.projector.laid(path));
+    let shown = count(Some(&drawn(&p, path)));
+    assert!(label_drawn(&p, path), "the label is drawn");
+    assert!(
+        shown < laid,
+        "the text path stops short of its label: {shown} of {laid} drawn"
+    );
+    p.check().unwrap();
+}
+
+/// A path's own glyphs follow its label as it changes, each time through
+/// that path's own hide stage alone and with the oracle agreeing: the
+/// label moved along the path (`SetT`), moved off it (`SetOffset`), its
+/// text edited, the path's gap widened (`SetSpacing`), and the label
+/// removed.
+///
+/// Control: with the hide stage ignoring the path's own label, red on the
+/// glyphs left out where the label stands.
+#[test]
+fn test_projection_a_path_follows_its_own_label() {
+    use crate::document::mutation::compose::remove;
+    use crate::document::mutation::ops::{LabelOp, PathOp, SpanOp};
+    use crate::document::writer::EditRequest;
+    let mut p = Projected::new(two_paths(AWAY, json!({}), labeled("LABEL", 0.5, 0.0)));
+    let path = path_of(&p, 2);
+    let label = kid(&p.doc, path, DocKind::Label);
+    let span = kid(&p.doc, label, DocKind::Span);
+    let steps: [(&str, DocKind, NodeId, DocMutation, bool); 4] = [
+        (
+            "moved along",
+            DocKind::Label,
+            label,
+            DocMutation::Label(LabelOp::SetT(Some(0.3))),
+            true,
+        ),
+        (
+            "moved off",
+            DocKind::Label,
+            label,
+            DocMutation::Label(LabelOp::SetOffset(Some(40.0))),
+            false,
+        ),
+        (
+            "back on, its text longer",
+            DocKind::Label,
+            label,
+            DocMutation::Label(LabelOp::SetOffset(Some(0.0))),
+            true,
+        ),
+        (
+            "the gap widened",
+            DocKind::Connector,
+            path,
+            DocMutation::Path(PathOp::SetSpacing(Some(6.0))),
+            true,
+        ),
+    ];
+    for (step, kind, element, mutation, on) in steps {
+        p.apply(request(single(kind, mutation), vec![element], step))
+            .unwrap();
+        if step.starts_with("back on") {
+            let edit = single(
+                DocKind::Span,
+                DocMutation::Span(SpanOp::SetText("A LONGER LABEL".into())),
+            );
+            p.apply(request(edit, vec![span], "longer")).unwrap();
+        }
+        let hidden = hides_exactly(&p, path, label_of(&p, path));
+        assert_eq!(hidden > 0, on, "{step}: {hidden} glyphs left out by the label");
+        assert_eq!(
+            hidden_again(&p),
+            [path].into_iter().collect(),
+            "{step}: that path alone is hidden again"
+        );
+        p.check().unwrap();
+    }
+    let steps = remove(&p.doc, DocKind::Label, &[label]).unwrap();
+    p.apply(EditRequest::new(steps, "remove the label")).unwrap();
+    assert_eq!(left_out(&p, path), 0, "the label removed, the path is whole");
+    assert_eq!(
+        hidden_again(&p),
+        [path].into_iter().collect(),
+        "the label removed: that path alone"
+    );
+    p.check().unwrap();
+}
+
+/// A label hidden whole behind another node hides nothing of its own
+/// path: the node over the label's top, clear of the path's glyphs, hides
+/// the label, and the path runs on under where the label would be.
+///
+/// Control: with a hidden label still hiding its path's glyphs, red on
+/// the glyphs left out.
+#[test]
+fn test_projection_a_hidden_label_hides_nothing_of_its_path() {
+    let mut p = Projected::new(two_paths(AWAY, json!({}), labeled("LABEL", 0.5, 0.0)));
+    let path = path_of(&p, 2);
+    let label = label_of(&p, path);
+    // The blocker's text, 36 tall, its bottom 2 into the label's top.
+    move_to(&mut p, 3, Vec2::new(label.origin.x, label.origin.y + 2.0 - 36.0));
+    let region = region_of(&p, 3);
+    let gap = own_gap(&p.projector, path);
+    let laid = inks(p.projector.laid(path).unwrap());
+    assert!(meet(&region, &label), "precondition: the node meets the label");
+    assert!(
+        !laid.iter().any(|i| meet(&i.grown(gap), &region)),
+        "precondition: the node is clear of the path's glyphs"
+    );
+    assert!(!label_drawn(&p, path), "the label is hidden");
+    assert_eq!(left_out(&p, path), 0, "the path runs on under its hidden label");
+    p.check().unwrap();
+}
+
+/// The two rules meet as a node moves: a node moved onto a path's label,
+/// clear of the path's glyphs, hides the label, and the glyphs the label
+/// held back come back; moved away, the label is drawn and they are left
+/// out again — twice. Then, the node on the label, its opacity set to 0
+/// and back to 1, and its zoom window set to one that does not hold the
+/// path's and taken away, flip the label and those glyphs together. The
+/// oracle agrees after every step.
+///
+/// Control: with the path's glyphs giving way to its label whether it is
+/// drawn or hidden, red on the glyphs left out under the hidden label.
+#[test]
+fn test_projection_a_path_follows_its_label_hidden_and_shown() {
+    use crate::document::values::ZoomWindow;
+    let mut p = Projected::new(two_paths(AWAY, json!({}), labeled("LABEL", 0.5, 0.0)));
+    let path = path_of(&p, 2);
+    let blocker = ident(&p.doc, 3);
+    let label = label_of(&p, path);
+    let held = left_out(&p, path);
+    assert!(label_drawn(&p, path), "precondition: the label is drawn");
+    assert!(held > 0, "precondition: the path stops short of its label");
+    // The blocker's text, 36 tall, its bottom 2 into the label's top.
+    let on = Vec2::new(label.origin.x, label.origin.y + 2.0 - 36.0);
+    // Whether the label is drawn and the path stops short of it, or it is
+    // hidden and the path runs on under it.
+    let holds = |p: &Projected, drawn: bool, step: &str| {
+        assert_eq!(label_drawn(p, path), drawn, "the label drawn, {step}");
+        let want = if drawn { held } else { 0 };
+        assert_eq!(left_out(p, path), want, "the path's glyphs left out, {step}");
+    };
+    for round in 0..2 {
+        move_to(&mut p, 3, on);
+        if round == 0 {
+            let gap = own_gap(&p.projector, path);
+            let region = region_of(&p, 3);
+            let laid = inks(p.projector.laid(path).unwrap());
+            assert!(meet(&region, &label), "precondition: the node meets the label");
+            assert!(
+                !laid.iter().any(|i| meet(&i.grown(gap), &region)),
+                "precondition: the node is clear of the path's glyphs"
+            );
+        }
+        holds(&p, false, &format!("the node moved onto it, round {round}"));
+        p.check().unwrap();
+        move_to(&mut p, 3, AWAY);
+        holds(&p, true, &format!("the node moved away, round {round}"));
+        p.check().unwrap();
+    }
+    move_to(&mut p, 3, on);
+    holds(&p, false, "the node back on it");
+    p.check().unwrap();
+    let window = ZoomWindow {
+        min: Some(50.0),
+        max: None,
+    };
+    let steps = [
+        ("opacity 0", NodeOp::SetOpacity(0.0), true),
+        ("opacity 1", NodeOp::SetOpacity(1.0), false),
+        (
+            "a window that does not hold the path's",
+            NodeOp::SetZoom(Some(window)),
+            true,
+        ),
+        ("no window", NodeOp::SetZoom(None), false),
+    ];
+    for (step, op, drawn) in steps {
+        let mutation = single(DocKind::Node, DocMutation::Node(op));
+        p.apply(request(mutation, vec![blocker], step)).unwrap();
+        holds(&p, drawn, &format!("the node at {step}"));
+        p.check().unwrap();
+    }
+}
+
+/// A path's own label does not hide its caps: with the label at the
+/// path's end (`t = 1.0`), over its end cap, the cap is drawn whole — a
+/// cap marks the path's direction, it is not line — while the body still
+/// stops short of the label.
+///
+/// Control: with the caps giving way to the path's own label as the body
+/// does, red on the cap drawn.
+#[test]
+fn test_projection_a_paths_own_label_keeps_its_caps() {
+    let path = merged(
+        labeled("LABEL", 1.0, 0.0),
+        json!({"cap_end": {"spans": [{"text": "▶"}]}}),
+    );
+    let mut p = Projected::new(two_paths(AWAY, json!({}), path));
+    let path = path_of(&p, 2);
+    let label = label_of(&p, path);
+    let gap = own_gap(&p.projector, path);
+    assert!(label_drawn(&p, path), "precondition: the label is drawn");
+    let Some(UnitBody::Line(line)) = p.projector.units.get(&path).map(|u| &u.body) else {
+        panic!("a line");
+    };
+    let cap = line.laid[2].as_ref().expect("the end cap is laid");
+    assert!(
+        inks(cap).iter().any(|i| meet(&i.grown(gap), &label)),
+        "precondition: the end cap is within its gap of the label"
+    );
+    assert_eq!(
+        p.projector.units[&path].slots[2].want.as_ref(),
+        Some(cap),
+        "the end cap is drawn whole"
+    );
+    assert!(left_out(&p, path) > 0, "the body stops short of the label");
+    p.check().unwrap();
+}
