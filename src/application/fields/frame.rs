@@ -6,17 +6,24 @@
 //! preview, a transaction (§9).
 //!
 //! **Box-drawing glyphs are ring content** (D8): there are no presets.
-//! A node with no frame that is given one — by `frame on`, by
-//! [`toggle`], by [`cycle`], by a ring added to it — gets a frame of one
-//! ring holding [`CYCLE`]'s first glyph, repeated around the outline
-//! (`fit: repeat`), unless the ring added brings its own text.
+//! What [`cycle`] sets is a ring's ordinary keys — its spans, its
+//! `vertical` and its `corners` (#324, #338) — which the map saves and
+//! the console edits like any other. The cycle does not touch a ring's
+//! fit: on a `repeat` ring the three keys read as a box; a ring in
+//! another mode keeps them but draws its spans alone, as
+//! `format/schema.md` "Directional ring" has it, until it is made
+//! `repeat`. A node with no frame that is given
+//! one — by `frame on`, by [`toggle`], by [`cycle`] — gets a frame of
+//! one ring of [`CYCLE`]'s first set, the light box, repeated around the
+//! outline (`fit: repeat`); a ring added to it (`frame ring add`) brings
+//! its own text instead.
 //!
 //! **Rings are counted in document order**, innermost first: `frame
 //! ring 0` is the first ring of each selected node's frame.
 
 use baumhard::arena::NodeId;
 use baumhard::document::element::{
-    DocElement, DocKind, FrameData, FrameStyle, RingData, RingStyle, TextStyle,
+    DirectionalGlyphs, DocElement, DocKind, FrameData, FrameStyle, RingData, RingStyle, SpanData, TextStyle,
 };
 use baumhard::document::ids::Document;
 use baumhard::document::mutation::compose;
@@ -32,9 +39,88 @@ use crate::application::document::{Interaction, MindMapDocument};
 use crate::application::keybinds::FramePreviewTarget;
 use crate::application::view::inspect::children_of_kind;
 
-/// The glyphs [`cycle`] steps a frame's first ring through, in order,
-/// wrapping: light, heavy, double.
-pub(crate) const CYCLE: [&str; 3] = ["─", "━", "═"];
+/// One set of box-drawing glyphs [`cycle`] gives a ring (#338): its
+/// spans, laid where the outline runs level, its `vertical`, laid where
+/// it runs steep, and its four `corners`, clockwise from the top left,
+/// laid where it turns as a box does (`format/schema.md` "Directional
+/// ring"). Round a rectangle a `repeat` ring of one set reads as a
+/// closed box; a ring in another mode keeps the keys but draws its spans
+/// alone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct BoxGlyphs {
+    /// The text of its one span.
+    pub level: &'static str,
+    /// Its `vertical` text.
+    pub vertical: &'static str,
+    /// Its `corners`: top left, top right, bottom right, bottom left.
+    pub corners: [&'static str; 4],
+}
+
+impl BoxGlyphs {
+    /// Its spans: one, holding [`level`](Self::level).
+    fn spans(&self) -> Vec<SpanData> {
+        plain(self.level)
+    }
+
+    /// Its `vertical` and `corners`, as a ring holds them.
+    fn directional(&self) -> DirectionalGlyphs {
+        DirectionalGlyphs {
+            vertical: Some(self.vertical.to_string()),
+            corners: Some(self.corners.map(str::to_string)),
+        }
+    }
+
+    /// Whether a ring whose text is `text` and whose directional keys
+    /// are `directional` is exactly this set: all three keys, and
+    /// nothing else in them.
+    fn is(&self, text: &str, directional: Option<&DirectionalGlyphs>) -> bool {
+        text == self.level && directional == Some(&self.directional())
+    }
+}
+
+/// The ops that set a ring's `vertical` and `corners` to `set`'s, or
+/// clear both when `set` is `None`: the two keys always move together,
+/// and the corners all four or none.
+fn directional_ops(set: Option<&BoxGlyphs>) -> Vec<DocMutation> {
+    let directional = set.map(BoxGlyphs::directional).unwrap_or_default();
+    vec![
+        DocMutation::Ring(RingOp::SetVertical(directional.vertical)),
+        DocMutation::Ring(RingOp::SetCorners(directional.corners)),
+    ]
+}
+
+/// The sets [`cycle`] steps a frame's first ring through, in order,
+/// wrapping: light, heavy, double. Every glyph of them is drawn by
+/// `Mandala Ornaments` on every target (`scripts/ornament_fonts.sh`).
+pub(crate) const CYCLE: [BoxGlyphs; 3] = [
+    BoxGlyphs {
+        level: "─",
+        vertical: "│",
+        corners: ["┌", "┐", "┘", "└"],
+    },
+    BoxGlyphs {
+        level: "━",
+        vertical: "┃",
+        corners: ["┏", "┓", "┛", "┗"],
+    },
+    BoxGlyphs {
+        level: "═",
+        vertical: "║",
+        corners: ["╔", "╗", "╝", "╚"],
+    },
+];
+
+/// The set of [`CYCLE`] that `ring` is exactly ([`BoxGlyphs::is`]), if
+/// any: a ring the cycle made, or one spelled as it would make it.
+fn set_of(doc: &Document, ring: NodeId) -> Option<&'static BoxGlyphs> {
+    let Some(DocElement::Ring(data)) = doc.get(ring) else {
+        return None;
+    };
+    let text = crate::application::view::inspect::element_text(doc, ring);
+    CYCLE
+        .iter()
+        .find(|set| set.is(&text, data.directional.as_deref()))
+}
 
 /// One frame field, as `frame <key>=<value>` and `SetFrameField` name
 /// it; `None` inside a field inherits.
@@ -169,12 +255,21 @@ fn ring(
     }
 }
 
-/// A frame holding `ring`; with [`CYCLE`]'s first glyph repeated when
-/// `ring` is `None`.
+/// A ring of `set`, on channel 0: its spans, `vertical` and `corners`.
+fn box_ring(set: &BoxGlyphs) -> Subtree<DocElement> {
+    let mut tree = ring(set.spans(), None, 0);
+    if let DocElement::Ring(data) = &mut tree.root {
+        data.directional = Some(Box::new(set.directional()));
+    }
+    tree
+}
+
+/// A frame holding `ring`; with a ring of [`CYCLE`]'s first set
+/// repeated when `ring` is `None`.
 fn new_frame(ring_given: Option<Subtree<DocElement>>) -> Subtree<DocElement> {
     let (fit, ring_tree) = match ring_given {
         Some(ring_tree) => (None, ring_tree),
-        None => (Some(FitMode::Repeat), ring(plain(CYCLE[0]), None, 0)),
+        None => (Some(FitMode::Repeat), box_ring(&CYCLE[0])),
     };
     Subtree {
         root: DocElement::Frame(FrameData {
@@ -250,14 +345,21 @@ pub(crate) fn toggle(doc: &MindMapDocument) -> Steps {
     Ok(steps)
 }
 
-/// The steps that replace the spans of each selected frame's first ring
-/// with one span of the next of [`CYCLE`] after its text — the first
+/// The steps that make each selected frame's first ring the next set of
+/// [`CYCLE`] after the one its text is the level glyph of — the first
 /// when its text is none of them — and give a frame with no ring, and a
-/// node with no frame, one ring of the first.
+/// node with no frame, one ring of the first. The ring takes the whole
+/// set: its spans, its `vertical` and its four `corners`, replacing
+/// whatever it held in them, an author's own included, so no key of the
+/// set it leaves is left behind (#338). Its other keys are kept, its
+/// fit among them: on a `repeat` ring the set reads as a box; a ring in
+/// another mode keeps the keys but draws its spans alone. Only each
+/// frame's first ring changes; each takes the set after its own, however
+/// many frames are selected, in one edit.
 pub(crate) fn cycle(doc: &MindMapDocument) -> Steps {
     let (framed, bare) = split(doc)?;
     let d = doc.doc();
-    let mut by_glyph: Vec<(&str, Vec<NodeId>)> = CYCLE.iter().map(|&glyph| (glyph, Vec::new())).collect();
+    let mut by_set: Vec<(&BoxGlyphs, Vec<NodeId>)> = CYCLE.iter().map(|set| (set, Vec::new())).collect();
     let mut ringless = Vec::new();
     for frame in framed {
         match children_of_kind(d, frame, DocKind::Ring).next() {
@@ -265,20 +367,22 @@ pub(crate) fn cycle(doc: &MindMapDocument) -> Steps {
                 let text = crate::application::view::inspect::element_text(d, first);
                 let next = CYCLE
                     .iter()
-                    .position(|&glyph| glyph == text)
+                    .position(|set| set.level == text)
                     .map_or(0, |at| (at + 1) % CYCLE.len());
-                by_glyph[next].1.push(first);
+                by_set[next].1.push(first);
             }
             None => ringless.push(frame),
         }
     }
     let mut steps = Vec::new();
-    for (glyph, rings) in by_glyph {
-        steps.extend(compose::replace_spans(d, &rings, &plain(glyph)).map_err(|e| e.to_string())?);
+    for (set, rings) in by_set {
+        steps.extend(compose::replace_spans(d, &rings, &set.spans()).map_err(|e| e.to_string())?);
+        steps.extend(
+            compose::set(d, DocKind::Ring, directional_ops(Some(set)), &rings).map_err(|e| e.to_string())?,
+        );
     }
     steps.extend(
-        compose::insert(d, DocKind::Frame, &ringless, ring(plain(CYCLE[0]), None, 0))
-            .map_err(|e| e.to_string())?,
+        compose::insert(d, DocKind::Frame, &ringless, box_ring(&CYCLE[0])).map_err(|e| e.to_string())?,
     );
     steps.extend(frame_the(d, &bare, None)?);
     Ok(steps)
@@ -344,11 +448,31 @@ pub(crate) struct RingFields {
 
 /// The steps that set `fields` on ring `index` of each selected node's
 /// frame.
+///
+/// A new text moves a ring that is exactly a set of [`CYCLE`] off that
+/// set (#338): its `vertical` and `corners` were the set's, not the
+/// author's, so they follow the text — to the set the text is the level
+/// glyph of, or cleared when it is none — rather than staying behind
+/// round a text they no longer belong to. A ring that is not exactly a
+/// set keeps its `vertical` and `corners` as they are.
 pub(crate) fn set_ring(doc: &MindMapDocument, index: usize, fields: &RingFields) -> Steps {
     let rings = rings_at(doc, index)?;
     let d = doc.doc();
     let mut steps = match &fields.text {
-        Some(text) => compose::replace_spans(d, &rings, &plain(text)).map_err(|e| e.to_string())?,
+        Some(text) => {
+            let mut steps = compose::replace_spans(d, &rings, &plain(text)).map_err(|e| e.to_string())?;
+            let boxed: Vec<NodeId> = rings
+                .iter()
+                .copied()
+                .filter(|&ring| set_of(d, ring).is_some())
+                .collect();
+            let follows = CYCLE.iter().find(|set| set.level == text);
+            steps.extend(
+                compose::set(d, DocKind::Ring, directional_ops(follows), &boxed)
+                    .map_err(|e| e.to_string())?,
+            );
+            steps
+        }
         None => Vec::new(),
     };
     let mut ops = Vec::new();

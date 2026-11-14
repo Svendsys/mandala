@@ -171,7 +171,7 @@ pub const COMPLETION_EXPECTED: &[&str] = &[
     "cw [clockwise] ; ccw [counter-clockwise] ; reset [inherit]",
     "once [the text once; `once:<filler>` fills the rest] ; repeat [the text repeated round the outline] ; spread [the text once, spread to the ends] ; fit [the text once, scaled to fit; `fit:<min>,<max>`] ; reset [inherit]",
     "add [add a ring outside the others]",
-    "text= [the ring's text, one span] ; size= [font size, a fraction of the node's shorter side] ; fit= [the ring's fit, over the frame's] ; color= [the ring's own color, over the frame's]",
+    "text= [the ring's text, one span; on a light, heavy or double box, its sides and corners follow] ; size= [font size, a fraction of the node's shorter side] ; fit= [the ring's fit, over the frame's] ; color= [the ring's own color, over the frame's]",
     "palette(frame) ; palette(text) ; palette(title) ; reset [inherit]",
     "natural [each line at its own width] ; whole [each line across its whole half] ; reset [inherit]",
     "false [no ornament] ; reset [inherit]",

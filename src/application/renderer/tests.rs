@@ -1235,7 +1235,7 @@ fn test_measure_max_glyph_advance_takes_the_widest_and_falls_back_on_nothing() {
 }
 
 /// Every non-ASCII character of a string or char literal in the code
-/// that ships under `src/application/{console,renderer,view}/` — comments
+/// that ships under `src/application/{console,fields,renderer,view}/` — comments
 /// and test modules stripped (`baumhard::util::rust_source`), files of
 /// tests skipped — with the file it is in, `\u{…}` escapes decoded, and
 /// whitespace and invisible controls left out.
@@ -1275,7 +1275,7 @@ fn chrome_literal_chars() -> Vec<(char, String)> {
     };
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut files = Vec::new();
-    for dir in ["console", "renderer", "view"] {
+    for dir in ["console", "fields", "renderer", "view"] {
         walk(&root.join("src/application").join(dir), &mut files);
     }
     files.sort();
@@ -1325,10 +1325,11 @@ fn chrome_literal_chars() -> Vec<(char, String)> {
 
 /// **Every glyph of the app's own chrome is drawn by the default face or
 /// `Mandala Ornaments`** (#228): every non-ASCII character a literal in
-/// the shipping code of the console, the renderer and the view spells
-/// ([`chrome_literal_chars`]) — the console's prompt, cursor, gutter,
-/// completion marker and frame, the rubber band's corners and dashes,
-/// the `body` presets, and whatever a new chrome surface adds. Each is
+/// the shipping code of the console, the field edits, the renderer and
+/// the view spells ([`chrome_literal_chars`]) — the console's prompt,
+/// cursor, gutter, completion marker and frame, the rubber band's
+/// corners and dashes, the `body` presets, the boxes the frame cycle
+/// sets a ring to (#338), and whatever a new chrome surface adds. Each is
 /// drawn in the default family, so its look must not depend on the
 /// machine: a glyph neither face holds is drawn in whatever face the
 /// host has, as a `.notdef` box where it has none and in the browser, or
@@ -1342,13 +1343,15 @@ fn chrome_literal_chars() -> Vec<(char, String)> {
 /// each of them. Controls: with the pre-chrome `Mandala Ornaments`
 /// (#228's first subset, which held the frame alone), red on
 /// `❯ ▌ ▏ ▸ ┄ ┆ ═ ∼ ⋯`; with a `"\u{272A}"` constant planted in
-/// `console/visuals.rs`, red on it, drawn in a host face.
+/// `console/visuals.rs`, red on it, drawn in a host face; with the
+/// `Mandala Ornaments` of #324, red on the frame cycle's `║ ╔ ╗ ╝ ╚`.
 #[test]
 fn test_every_chrome_glyph_is_drawn_by_the_default_or_an_ornament_face() {
     use crate::application::console::commands::body::PRESETS;
     use crate::application::console::visuals::{
         CURSOR_GLYPH, GUTTER_GLYPH, PROMPT_GLYPH, SELECTED_COMPLETION_MARKER,
     };
+    use crate::application::fields::frame::CYCLE;
     use crate::application::view::band::{BAND_CORNERS, BAND_HORIZONTAL, BAND_VERTICAL};
     use baumhard::font::fallback::DEFAULT_FACE;
     use baumhard::font::fonts::COMPILED_FONT_ID_MAP;
@@ -1372,6 +1375,10 @@ fn test_every_chrome_glyph_is_drawn_by_the_default_or_an_ornament_face() {
         + &side
         + &BAND_CORNERS.iter().collect::<String>()
         + &BAND_HORIZONTAL.to_string()
+        + &CYCLE
+            .iter()
+            .flat_map(|set| [set.level, set.vertical].into_iter().chain(set.corners))
+            .collect::<String>()
         + &PRESETS.iter().map(|(_, glyph)| *glyph).collect::<String>();
     for c in named.chars().filter(|c| !c.is_ascii() && !c.is_whitespace()) {
         assert!(

@@ -78,8 +78,11 @@ pub const DEFAULT_FACE: (AppFont, &str) = (AppFont::InterVariable, "Inter Variab
 /// The ornament faces, in the order they are tried, after the default
 /// face, with the family name each face stores.
 ///
-/// - **Mandala Ornaments**: DejaVu Sans 2.37 subset to `∙ ◈ ✦ ❦` and the
-///   box-drawing `─ ━ │ ┃ ┌ ┐ └ ┘ ┏ ┓ ┗ ┛ ╭ ╮ ╯ ╰` (Bitstream Vera and Arev licenses).
+/// - **Mandala Ornaments**: DejaVu Sans 2.37 subset to the ornaments,
+///   box-drawing glyphs and chrome glyphs `format/fonts.md` "Fallback"
+///   lists, not repeated here (`scripts/ornament_fonts.sh` subsets it,
+///   and `font::tests::ornament_tests` holds the face to that list), under
+///   the Bitstream Vera and Arev licenses.
 /// - **Mandala Emoji**: Noto Color Emoji 2.047 subset to `🌸` (OFL 1.1).
 ///
 /// Two faces, because cosmic-text tries one face of a fallback family: a

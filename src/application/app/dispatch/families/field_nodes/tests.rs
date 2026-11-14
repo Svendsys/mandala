@@ -319,7 +319,7 @@ const CASES: &[Case] = &[
         name: "frame on gives a frame",
         select: N3,
         input: Input::Line("frame on"),
-        edits: &[(N3_SECTIONS, "\"sections\": [{\"spans\": [{\"text\": \"plain\"}]}],\n      \"frame\": {\"fit\": \"repeat\", \"rings\": [{\"spans\": [{\"text\": \"─\"}]}]},")],
+        edits: &[(N3_SECTIONS, "\"sections\": [{\"spans\": [{\"text\": \"plain\"}]}],\n      \"frame\": {\"fit\": \"repeat\", \"rings\": [{\"spans\": [{\"text\": \"─\"}], \"vertical\": \"│\", \"corners\": [\"┌\", \"┐\", \"┘\", \"└\"]}]},")],
     },
     Case {
         name: "frame ring add",
@@ -532,13 +532,16 @@ const CASES: &[Case] = &[
         name: "CycleFrameContent",
         select: N1,
         input: Input::Act(|| Action::CycleFrameContent),
-        edits: &[("{\"text\": \"─\"}", "{\"text\": \"━\"}")],
+        edits: &[(
+            "{\"text\": \"─\"}]}",
+            "{\"text\": \"━\"}], \"vertical\": \"┃\", \"corners\": [\"┏\", \"┓\", \"┛\", \"┗\"]}",
+        )],
     },
     Case {
         name: "CycleFrameContent gives a frame",
         select: N3,
         input: Input::Act(|| Action::CycleFrameContent),
-        edits: &[(N3_SECTIONS, "\"sections\": [{\"spans\": [{\"text\": \"plain\"}]}],\n      \"frame\": {\"fit\": \"repeat\", \"rings\": [{\"spans\": [{\"text\": \"─\"}]}]},")],
+        edits: &[(N3_SECTIONS, "\"sections\": [{\"spans\": [{\"text\": \"plain\"}]}],\n      \"frame\": {\"fit\": \"repeat\", \"rings\": [{\"spans\": [{\"text\": \"─\"}], \"vertical\": \"│\", \"corners\": [\"┌\", \"┐\", \"┘\", \"└\"]}]},")],
     },
     Case {
         name: "ToggleFrameVisible",
@@ -550,7 +553,7 @@ const CASES: &[Case] = &[
         name: "ToggleFrameVisible gives a frame",
         select: N3,
         input: Input::Act(|| Action::ToggleFrameVisible),
-        edits: &[(N3_SECTIONS, "\"sections\": [{\"spans\": [{\"text\": \"plain\"}]}],\n      \"frame\": {\"fit\": \"repeat\", \"rings\": [{\"spans\": [{\"text\": \"─\"}]}]},")],
+        edits: &[(N3_SECTIONS, "\"sections\": [{\"spans\": [{\"text\": \"plain\"}]}],\n      \"frame\": {\"fit\": \"repeat\", \"rings\": [{\"spans\": [{\"text\": \"─\"}], \"vertical\": \"│\", \"corners\": [\"┌\", \"┐\", \"┘\", \"└\"]}]},")],
     },
     Case {
         name: "SetSectionOffsetDelta",
