@@ -75,10 +75,14 @@ fi
 # frames together may take 15 s, three quarters of -timeout=20: 464,396
 # steps. Two frames at the floor are 25.8 s, so a flow target lays one
 # frame an input, its text cut until that frame's work fits: at most
-# MAX_FRAME_GLYPHS (150) glyphs in one face, 462,949 steps, 14.95 s.
+# MAX_FRAME_GLYPHS (151) glyphs in one face, 464,172 steps, 14.99 s.
 # A Repeat ring round an outline is budgeted as a frame is (#310), and
 # laid as an input's one frame (ring_work_steps), at most MAX_RING_GLYPHS
-# glyphs (rulings B17.2a, B17.2b).
+# glyphs (rulings B17.2a, B17.2b). So is every placement along an open
+# path, and a whole-glyph one (#313): flow_raw lays one along its line in
+# place of its frame one input in four that draws no ring, and
+# flow_structured lays one along its curve, its fit mode's or its
+# whole-glyph pattern, each at the most glyphs that fit.
 # Every input this script feeds a target
 # fits its ceiling, which `test_every_fuzz_input_fits_its_targets_max_len`
 # holds.
