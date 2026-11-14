@@ -12,7 +12,7 @@ use glam::Vec2;
 use crate::document::values::{FitMode, LineSpan, Percent, Rgba, Shape};
 use crate::flow::place::halves::{
     overshoot_steps, BUDGET_OVERRIDE, MOST_SIDE_CLUSTER_READS, PAST_BUDGET, SIDE_CLUSTER_READS, SIDE_EDGE,
-    SIDE_READS, SIDE_READS_A_STEP, SIDE_STEPS, SIDE_STEP_LOOKUPS,
+    SIDE_READS, SIDE_STEPS, SIDE_STEP_LOOKUPS,
 };
 use crate::flow::place::{SideLoss, Trace};
 use crate::flow::tests::flow_fuzz::ornament_run;
@@ -236,14 +236,14 @@ fn test_flow_side_reads_a_far_out_frame_takes_its_overshoot_at_most() {
 
 /// #313 (ruling R46.1: one counted unit costs about the same everywhere):
 /// a side ornament's lays count every path read they take — each lookup
-/// their clusters make, counted apart from the reads by the lookups'
-/// own counter, is among them — and their counted steps stand to their
-/// reads within a pinned band: at most [`SIDE_READS_A_STEP`] reads a
-/// counted step, every read counted at that weight past the step a
-/// cluster, and
-/// far out at least [`FAR_READS_A_STEP`], where their clusters read the
-/// path many times — where, counted a step a cluster, they read it up to
-/// 20 times a step (and 32 to 53, review 5761697746 found, before #309).
+/// their clusters make, counted apart from the reads by the lookups' own
+/// counter, is among them — and their counted steps stand to their reads
+/// within a pinned band: at most [`MOST_READS_A_STEP`] reads a counted
+/// step, every read counted at the weight ruling R47.3's measure gave
+/// past the step a cluster, and far out at least [`FAR_READS_A_STEP`],
+/// where their clusters read the path many times — where, counted a step
+/// a cluster, they read it up to 20 times a step (and 32 to 53, review
+/// 5761697746 found, before #309).
 ///
 /// Controls: see the pull request of #313.
 #[test]
@@ -265,9 +265,9 @@ fn test_flow_side_reads_counted_steps_stand_to_their_reads_within_a_band() {
             ));
         }
         let per = f.reads as f64 / f.steps as f64;
-        if per > SIDE_READS_A_STEP as f64 || (f.far && per < FAR_READS_A_STEP) {
+        if per > MOST_READS_A_STEP || (f.far && per < FAR_READS_A_STEP) {
             broken.push(format!(
-                "{}: {} reads over {} counted steps, {per:.2} a step, outside {FAR_READS_A_STEP} to {SIDE_READS_A_STEP}{}",
+                "{}: {} reads over {} counted steps, {per:.2} a step, outside {FAR_READS_A_STEP} to {MOST_READS_A_STEP}{}",
                 f.what,
                 f.reads,
                 f.steps,
@@ -290,12 +290,19 @@ fn test_flow_side_reads_counted_steps_stand_to_their_reads_within_a_band() {
 /// the nearest the grid's frames come.
 const EDGE_NEAR: i64 = 1_000;
 
+/// The most path reads a counted step of a side ornament's lays takes
+/// (#313): the weight of a read, four to a step, that ruling R47.3's
+/// measure on the ASan build gave (`SIDE_READS_A_STEP`), held as a number
+/// of its own, so that the weight's constant moved — to the ring's
+/// sixteen, say — turns the band red rather than moving it.
+const MOST_READS_A_STEP: f64 = 4.0;
+
 /// The fewest path reads a counted step of a side ornament's lays takes in
 /// a frame far from the origin (#313): the band's floor, below the 2.6 to
 /// 3.3 the grid's far frames take (`─═` and `· `), above the 0.2 to 0.4 a
 /// frame at the origin takes. A side whose reads went uncounted would take
 /// as many reads a step as its clusters take each, 6 to 20 far out, past
-/// [`SIDE_READS_A_STEP`], and so would one whose reads were counted at
+/// [`MOST_READS_A_STEP`], and so would one whose reads were counted at
 /// the ring's weight, sixteen to a step; one that counted a read a step,
 /// or none, would read a step as [`FAR_READS_A_STEP`] or less.
 const FAR_READS_A_STEP: f64 = 2.0;
