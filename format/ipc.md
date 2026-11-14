@@ -204,12 +204,26 @@ shipped the Unix transport):
 - **Closing.** A connection that ended in order (after `shutdown`, a
   `connection_rejected`, or a client that left) is closed without
   discarding anything: what the client has not read yet stays
-  readable, as a socket's buffer drains after `shutdown`. A connection
+  readable, as a socket's buffer drains after `shutdown`. After
+  `shutdown` the server lets go only once the pipe has taken every
+  byte it wrote (within the same bound a graceful exit gives the
+  event), so the app exiting cannot cancel the tail of its output, and
+  a client that has read everything then reads the end of the stream:
+  a read that returns no bytes, then the closed pipe, which a
+  byte-stream client reads as the end of the stream too. A connection
   the server gives up on — a write stalled past the stalled-write
   timeout, or a hang-up — is *disconnected*, which discards its unread
   output and fails the client's own pending writes, so a client that
   stopped reading is never left blocked on a pipe the server has let
-  go of.
+  go of. That includes a client still behind when a graceful exit's
+  bound runs out (a quarter of a second, the same bound as on Unix):
+  it is disconnected and loses what it had not read, `shutdown`
+  among it. Until #343 it could read what was already in the pipe and
+  then saw a bare end of stream; neither ever delivered `shutdown`.
+  The disconnect is what ends the server's side of a connection whose
+  client has stopped reading; without it, such a client would keep
+  the instance, and itself blocked on its own writes, for as long as
+  it stays.
 - **Connecting** waits for a free instance (`WaitNamedPipeW`). The
   server keeps one waiting except for the instant between handing one
   to a client and creating the next, so a client should connect with a

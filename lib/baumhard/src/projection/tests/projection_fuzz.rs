@@ -12,7 +12,8 @@
 //!   layer, every run's box finite, the same layers when projected again,
 //!   hits that do not panic, and one generated edit that the update
 //!   brings the layers through to a full projection's. A map outside the
-//!   bound is skipped for this property and counted
+//!   bound is skipped for this property and counted, and so is one whose
+//!   untangling reaches the ceiling below, apart
 //!   ([`projection_counts`](crate::projection::tests::projection_fuzz::projection_counts)),
 //!   which the targets report.
 //! - [`check_projection_edits`](crate::projection::tests::projection_fuzz::check_projection_edits)
@@ -22,22 +23,49 @@
 //!   transaction stages, undos and redos — the oracle checked after each.
 //!
 //! **The bound** (ruling B7.3). The engine bounds each placement (R41)
-//! and each frame's work (its budget), never a whole map, so a hostile map
-//! can ask for more work than a fuzz input's time (#316). Where the
+//! and each frame's work (its budget), never a whole map, so a hostile
+//! map can ask for more work than a fuzz input's time (#316). Where the
 //! engine's bound lies past the timeout the harness bounds what it feeds
 //! (TEST_CONVENTIONS §T14): a map is projected here when it holds at most
 //! one ring with text, of at most
-//! [`MAX_FRAME_GLYPHS`](crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS) characters — the
-//! flow harnesses' one frame an input — and every coordinate a path or an
-//! outline is drawn from is within
-//! [`EXTENT`](crate::projection::tests::projection_fuzz::EXTENT), so no path is long enough
-//! for a placement near the cap; and it draws at most
+//! [`MAX_FRAME_GLYPHS`](crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS)
+//! characters — the flow harnesses' one frame an input — and every
+//! coordinate a path or an outline is drawn from is within
+//! [`EXTENT`](crate::projection::tests::projection_fuzz::EXTENT); and it
+//! draws at most
 //! [`MAX_UNITS`](crate::projection::tests::projection_fuzz::MAX_UNITS)
-//! sections, rings, connectors and links. Each is shaped and placed in
-//! every full projection the check makes, so the work grows with their
-//! count: libFuzzer reported a 4,000-node chain with a link on every
-//! node, 8,000 paths, as a slow unit of 16 to 18 s against its 20 s
-//! timeout.
+//! sections, rings, connectors and links. The coordinates bound how long
+//! a path is in map units, not how many glyphs or samples it takes: those
+//! go by its length over its size, and a link at the smallest sizes a few
+//! thousand units long reaches the cap of a placement (R41) and of a
+//! curve's samples in `untangle`. What one such path costs is bounded by
+//! those caps — its glyphs at a placement's, and in `untangle` at most
+//! `UNTANGLE_ROUNDS` rounds of each of its curves sampled to the cap, one
+//! round where its nearness is certain from samples no halving moves
+//! (#346) — not by this bound. Each is shaped and placed in every full
+//! projection the check makes, so the work grows with their count:
+//! libFuzzer reported a 4,000-node chain with a link on every node, 8,000
+//! paths, as a slow unit of 16 to 18 s against its 20 s timeout.
+//!
+//! **The untangling ceiling** (#346). What `untangle` samples cannot be
+//! told before the paths are laid out — a path's width comes from its
+//! shaped glyphs, its sides from where its nodes are drawn — and an
+//! estimate from the map alone, every path end at the sampling's cap for
+//! every round, rates the seeds above maps that take several times their
+//! work, and would skip two thirds of the maps projected. So the check
+//! measures it: it sets `projection::geometry::UNTANGLE_CEILING` to
+//! [`MAX_UNTANGLE_SAMPLES`](crate::projection::tests::projection_fuzz::MAX_UNTANGLE_SAMPLES)
+//! samples for the whole check, every projection of it together;
+//! `untangle` takes from it what each lane samples, and when a lane's
+//! samples would take more than is left it grids no further lane and
+//! takes no further round, and no samples at all after that in the check,
+//! and marks the check. A marked check is abandoned: what it found is not
+//! this map's, so nothing is asserted of it, and it is counted as cut
+//! short. The ceiling and the mark are compiled into test and fuzz builds
+//! only (`cfg(test)`, `cfg(fuzzing)`). So one check's work in `untangle`
+//! is at most the ceiling and the one lane that reaches it; the rest of
+//! the check is bounded by the coordinate bound above and the engine's
+//! own caps.
 
 use std::cell::Cell;
 
@@ -63,17 +91,32 @@ pub const EXTENT: f32 = 8192.0;
 /// targets project may draw (see the module docs).
 pub const MAX_UNITS: usize = 2048;
 
+/// The most samples `untangle` may take in one check of a map, every
+/// projection of the check together: past it the check is abandoned and
+/// the map counted as cut short (see the module docs). Chosen from
+/// counts: the two seeds this bound was made for, each a line link beside
+/// a connector (`line_link_beside_connector_*`), take 769,760 and 461,832
+/// in a check and are projected; the input that timed the target out took
+/// 9,326,695 (#346).
+pub const MAX_UNTANGLE_SAMPLES: usize = 2_000_000;
+
 thread_local! {
     static PROJECTED: Cell<usize> = const { Cell::new(0) };
     static SKIPPED: Cell<usize> = const { Cell::new(0) };
+    static CUT: Cell<usize> = const { Cell::new(0) };
 }
 
-/// How many loaded maps [`check_projects`] has projected and how many it
-/// skipped, on this thread: what a fuzz run reports (ruling B7.3), and,
-/// since a test runs on a thread of its own, exactly what a test's own
-/// sweep made.
-pub fn projection_counts() -> (usize, usize) {
-    (PROJECTED.with(Cell::get), SKIPPED.with(Cell::get))
+/// How many loaded maps [`check_projects`] has projected, how many it
+/// skipped as outside the bound, and how many it abandoned when their
+/// untangling reached [`MAX_UNTANGLE_SAMPLES`], on this thread: what a
+/// fuzz run reports (ruling B7.3), and, since a test runs on a thread of
+/// its own, exactly what a test's own sweep made.
+pub fn projection_counts() -> (usize, usize, usize) {
+    (
+        PROJECTED.with(Cell::get),
+        SKIPPED.with(Cell::get),
+        CUT.with(Cell::get),
+    )
 }
 
 /// Whether `v` is within [`EXTENT`] on both axes.
@@ -128,14 +171,59 @@ pub fn within_bound(doc: &Document) -> bool {
 }
 
 /// The projection properties of a map the loader accepted (see the module
-/// docs): `Ok` when they hold, or when the map is outside the bound —
-/// skipped, and counted.
+/// docs): `Ok` when they hold, when the map is outside the bound, or when
+/// its untangling reaches [`MAX_UNTANGLE_SAMPLES`] — each skipped, and
+/// counted.
 pub fn check_projects(doc: &Document) -> Result<(), String> {
     if !within_bound(doc) {
         SKIPPED.with(|n| n.set(n.get() + 1));
         return Ok(());
     }
-    PROJECTED.with(|n| n.set(n.get() + 1));
+    #[cfg(any(test, fuzzing))]
+    {
+        let (checked, cut) = under_ceiling(|| check_within_ceiling(doc));
+        // Cut short, the map was not laid out as it lays out: whatever the
+        // check found, it is not this map's, and is not reported.
+        if cut {
+            CUT.with(|n| n.set(n.get() + 1));
+            return Ok(());
+        }
+        PROJECTED.with(|n| n.set(n.get() + 1));
+        checked
+    }
+    #[cfg(not(any(test, fuzzing)))]
+    {
+        PROJECTED.with(|n| n.set(n.get() + 1));
+        check_within_ceiling(doc)
+    }
+}
+
+/// `check` under the untangling ceiling, [`MAX_UNTANGLE_SAMPLES`], and
+/// whether the ceiling cut it short. The ceiling and the mark are clear
+/// again however `check` ends, by return or by panic. Test and fuzz
+/// builds only. O(`check`).
+#[cfg(any(test, fuzzing))]
+pub(crate) fn under_ceiling<R>(check: impl FnOnce() -> R) -> (R, bool) {
+    use crate::projection::geometry::{UNTANGLE_CEILING, UNTANGLE_CUT};
+    /// Clears the ceiling and the mark when it goes.
+    struct Clear;
+    impl Drop for Clear {
+        fn drop(&mut self) {
+            UNTANGLE_CEILING.with(|ceiling| ceiling.set(None));
+            UNTANGLE_CUT.with(|cut| cut.set(false));
+        }
+    }
+    let _clear = Clear;
+    UNTANGLE_CEILING.with(|ceiling| ceiling.set(Some(MAX_UNTANGLE_SAMPLES)));
+    UNTANGLE_CUT.with(|cut| cut.set(false));
+    let checked = check();
+    (checked, UNTANGLE_CUT.with(Cell::get))
+}
+
+/// [`check_projects`] once the map is inside the bound, under the ceiling
+/// it sets: abandoned, with `Ok`, as soon as its first projection is cut
+/// short.
+fn check_within_ceiling(doc: &Document) -> Result<(), String> {
     // In the test build the loader suites' maps, up to a hundred thousand
     // nodes, are projected sharing the shapings of equal keys as the
     // oracle's full projections do (`stages::memo`): every property here
@@ -144,6 +232,10 @@ pub fn check_projects(doc: &Document) -> Result<(), String> {
     let mut p = Projected::new_shared(doc.clone());
     #[cfg(not(test))]
     let mut p = Projected::new(doc.clone());
+    #[cfg(any(test, fuzzing))]
+    if crate::projection::geometry::UNTANGLE_CUT.with(Cell::get) {
+        return Ok(());
+    }
     for layer in Layer::ALL {
         let tree = p.layers.tree(layer);
         let mut groups = 0;
