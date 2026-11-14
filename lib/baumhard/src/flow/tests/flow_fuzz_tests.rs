@@ -1678,30 +1678,280 @@ fn test_flow_structured_every_face_finding_a_far_out_line_its_floats_cannot_part
     assert_eq!(room, 0.0, "a line of no length gives a run no room");
 }
 
+/// The flow_structured_every_face finding of CI's run on #354 at
+/// c0268bfa, after 2,171 runs (#313, ruling B18.1 §9): a far-out frame, a
+/// square 800 across with 24 rounded corners at (10¹⁰, 10¹⁰), where `f32`s
+/// are 1,024 apart, round which a `Spread` of 8 glyphs 4.8 long placed
+/// one, its line cut. The frame's room, its own halves' level spans, is
+/// 1,024, so the text's natural length fits it; but no two positions
+/// nearer than 1,024 exist there, so its inks cannot be parted, and the
+/// frame cuts its line and says so (truncated). The property owed it
+/// whole. The oracle now owes a placement whole only where the
+/// coordinates hold its glyphs apart (`coordinates_hold_apart`), and holds
+/// a frame's cut reported wherever it cuts (`frame_reports_its_cut`).
+///
+/// Controls: the grain condition taken out, red with CI's message
+/// ("around an outline: its natural length fits, and it was cut"); the
+/// frame's placement left untruncated where its line is cut, red ("…, and
+/// the frame does not say it was cut").
+#[test]
+fn test_flow_structured_every_face_finding_a_far_out_frame_its_floats_cannot_part() {
+    use crate::flow::tests::flow_fuzz::{LAST_FAR_FRAME, LAST_FRAME_LAID};
+    use crate::flow::{Outline, Rect};
+    let found = include_bytes!("fuzz_findings/structured_frame_far_out_its_floats_cannot_part");
+    LAST_FAR_FRAME.with(|last| last.set(None));
+    LAST_FRAME_LAID.with(|last| last.set(None));
+    if let Err(why) = crate::flow::tests::flow_fuzz::check_flow_structured_every_face(found) {
+        panic!("{why}");
+    }
+    let far = Outline::RoundedRect {
+        rect: Rect::new(Vec2::splat(1e10), Vec2::splat(800.0)),
+        radius: 24.0,
+    };
+    assert_eq!(
+        LAST_FAR_FRAME.with(std::cell::Cell::get),
+        Some(far),
+        "the finding draws a far-out frame smaller than its floats' spacing"
+    );
+    let Some((outline, placed, glyphs, truncated)) = LAST_FRAME_LAID.with(std::cell::Cell::get) else {
+        panic!("the finding lays no frame");
+    };
+    assert_eq!(outline, far, "precondition: the frame laid last is the far one");
+    assert!(
+        placed < glyphs && truncated,
+        "the far frame places {placed} of {glyphs}, cut and saying so: truncated {truncated}"
+    );
+}
+
+/// The ornament runs the review found cut round a bend (review
+/// 5904164019) and the oracle's sweep finds besides: owed whole by a bound
+/// that sums each cluster's step and no more — its advance and ink height,
+/// a space its advance — and cut, reporting nothing, because round a bend
+/// the engine moves a glyph on until its ink is as far from the last as a
+/// line sets it, and the arc that takes outruns the straight gap. The
+/// oracle measures an ornament with its path's curvature
+/// (`ornament_end_along`), and owes none of them.
+///
+/// Control: the oracle's move round a bend taken out — each glyph set at
+/// its natural center, with no bound on the move and no precondition on
+/// the bend — red on each. (The move's bound alone taken out stays green:
+/// on these bends the precondition, that each move stays within `π/κ`,
+/// already refuses them, and the move it allows on a line, the distance
+/// aimed at and a stride, refuses them too.)
+#[test]
+fn test_an_ornament_round_a_bend_is_owed_whole_only_where_its_moves_fit() {
+    use crate::document::values::FitMode;
+    use crate::flow::place::{place_on_open_capped, Trace};
+    use crate::flow::tests::flow_fuzz::{curve_room, owes_whole_along};
+    use crate::flow::Curve;
+    let cases = [
+        (
+            "· · · ·",
+            16.0,
+            Curve::Cubic(
+                Vec2::ZERO,
+                Vec2::new(6.0, 40.0),
+                Vec2::new(14.0, -40.0),
+                Vec2::new(20.0, 0.0),
+            ),
+            FitMode::Spread,
+        ),
+        (
+            "· · · ·",
+            8.0,
+            Curve::Cubic(
+                Vec2::ZERO,
+                Vec2::new(3.0, 20.0),
+                Vec2::new(7.0, -20.0),
+                Vec2::new(10.0, 0.0),
+            ),
+            FitMode::Spread,
+        ),
+    ];
+    with_fonts(|fs| {
+        for (text, points, curve, fit) in &cases {
+            let flow = style(*points);
+            let run = real_run(text, &flow, fs);
+            let what = format!("{text:?} at {points} pt, {fit:?}, along {curve:?}");
+            // Each cluster's step summed, the bound a straight path keeps.
+            let straight: f32 = run
+                .glyphs
+                .iter()
+                .map(|g| {
+                    g.advance
+                        + g.ink
+                            .filter(|_| !g.blank)
+                            .map_or(0.0, |ink| ink.max.y - ink.min.y)
+                })
+                .sum();
+            let mut trace = Trace::default();
+            let (_, placed) = place_on_open_capped(&run, curve, fit, 0.0, &flow, fs, 154, Some(&mut trace));
+            assert!(
+                straight <= curve_room(curve) && placed.glyphs.len() < run.glyphs.len() && trace.ring.is_none(),
+                "precondition: {what} is owed whole by its steps summed, {straight} in {}, and is cut ({} of {}), reporting nothing",
+                curve_room(curve),
+                placed.glyphs.len(),
+                run.glyphs.len()
+            );
+            assert!(
+                !owes_whole_along(&run, fit, curve),
+                "{what}: owed whole, and cut ({} of {} placed)",
+                placed.glyphs.len(),
+                run.glyphs.len()
+            );
+        }
+    });
+}
+
+/// A `Fit` reaches a scale its text fits at whenever one in its window
+/// does (#313, ruling B18.1 §10): texts and ornaments along a line and
+/// curves that bend, at lengths from a few glyphs to many, `Fit` from 0.5
+/// to 2 — 300 placements, 199 owed whole by the oracle (`owes_whole_along`:
+/// its text at the window's least fits, a measure with no engine code),
+/// each laid whole, untruncated and with no loss. The review's "━━━━"
+/// at 16 pt round a 40-long arch is among them: its arithmetic measure
+/// set it at 1.656, a hair too large for its readable lay, and the solve,
+/// reading a cut walk as only just overrunning, shrank a thousandth a
+/// round and ran out of rounds cut at 1.61, silent.
+///
+/// Control: the bracket a cut round starts taken out — a cut walk read as
+/// just overrunning again — red on the review's case.
+#[test]
+fn test_a_fit_reaches_a_scale_that_fits_whenever_one_does() {
+    use crate::document::values::FitMode;
+    use crate::flow::Curve;
+    let fit = FitMode::Fit { min: 0.5, max: 2.0 };
+    let (mut owed, mut laid, mut cut, mut review) = (0usize, 0usize, Vec::new(), false);
+    for text in ["MANDALA", "To see a World", "━━━━", "· · · ·", "─═─═", "x"] {
+        for points in [8.0, 16.0] {
+            for length in [10.0_f32, 20.0, 40.0, 100.0, 400.0] {
+                let to = |x: f32, y: f32| Vec2::new(x * length, y * length);
+                let curves = [
+                    Curve::Line(Vec2::ZERO, to(0.8, 0.6)),
+                    Curve::Cubic(Vec2::ZERO, to(0.0, 0.5), to(0.5, 0.5), to(0.5, 0.0)),
+                    Curve::Cubic(Vec2::ZERO, to(1.2, 0.8), to(-0.2, 0.8), to(1.0, 0.0)),
+                    Curve::Cubic(Vec2::ZERO, to(0.3, 2.0), to(0.7, -2.0), to(1.0, 0.0)),
+                    Curve::Quadratic(Vec2::ZERO, to(0.5, 1.0), to(1.0, 0.0)),
+                ];
+                for curve in &curves {
+                    laid += 1;
+                    let o = owed_along(text, points, curve, &fit);
+                    if !o.grained {
+                        continue;
+                    }
+                    owed += 1;
+                    review |= text == "━━━━"
+                        && points == 16.0
+                        && length == 40.0
+                        && matches!(curve, Curve::Cubic(_, c, _, _) if c.x == 0.0);
+                    if o.placed < o.glyphs || o.lost {
+                        cut.push(format!(
+                            "{text:?} {points} pt {length} {curve:?}: {} of {}, lost {}",
+                            o.placed, o.glyphs, o.lost
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(laid, 300, "every placement of the sweep is laid");
+    assert!(review, "precondition: the review's case is owed whole");
+    assert!(owed >= 100, "precondition: {owed} of {laid} owed whole");
+    assert!(
+        cut.is_empty(),
+        "{} owed whole and not laid whole: {:?}",
+        cut.len(),
+        &cut[..cut.len().min(5)]
+    );
+}
+
+/// A `Fit` no scale of whose window fits is laid at the window's least
+/// and cut there (#313, ruling B18.1 §10): the cut is its window's, not
+/// its solve's, so it reports the text truncated and no loss. "━━━━" at
+/// 16 pt round a 40-long arch, from 2.5 to 3 and from 1.7 to 2, where its
+/// measure finds even the least too long and the solve begins there. (It
+/// lays whole at 1.648 where its window reaches that low.)
+///
+/// Control: a cut at the least reported as a scale not solved, red.
+#[test]
+fn test_a_fit_no_scale_of_whose_window_fits_is_laid_at_its_least() {
+    use crate::document::values::FitMode;
+    use crate::flow::place::{place_on_open_capped, Trace};
+    use crate::flow::tests::flow_fuzz::owes_whole_along;
+    use crate::flow::Curve;
+    let curve = Curve::Cubic(
+        Vec2::ZERO,
+        Vec2::new(0.0, 20.0),
+        Vec2::new(20.0, 20.0),
+        Vec2::new(20.0, 0.0),
+    );
+    with_fonts(|fs| {
+        let flow = style(16.0);
+        let run = real_run("━━━━", &flow, fs);
+        for (min, max) in [(2.5_f32, 3.0_f32), (1.7, 2.0)] {
+            let fit = FitMode::Fit { min, max };
+            assert!(
+                !owes_whole_along(&run, &fit, &curve),
+                "precondition: {fit:?}: no scale of the window is owed"
+            );
+            let mut trace = Trace::default();
+            let (rescaled, placed) =
+                place_on_open_capped(&run, &curve, &fit, 0.0, &flow, fs, 154, Some(&mut trace));
+            let sizes: Vec<f32> = rescaled
+                .as_ref()
+                .map(|r| r.glyphs.iter().map(|g| g.size).collect())
+                .unwrap_or_default();
+            assert!(
+                placed.truncated && placed.glyphs.len() < run.glyphs.len(),
+                "{fit:?}: cut and truncated: {} of {}",
+                placed.glyphs.len(),
+                run.glyphs.len()
+            );
+            assert_eq!(
+                trace.ring, None,
+                "{fit:?}: a cut at the window's least is no loss"
+            );
+            assert!(
+                !sizes.is_empty() && sizes.iter().all(|&size| (size - 16.0 * min).abs() < 1e-3),
+                "{fit:?}: laid at the window's least, {} pt: {sizes:?}",
+                16.0 * min
+            );
+        }
+    });
+}
+
 /// Every `Spread` and `Fit` along a far-out path (#313) that its natural
 /// length fits is laid whole (review 5902086644, ruling B18.1 §1 as
-/// amended): three texts in both modes along `far_curve`'s line and cubic
-/// at every `far_out` draw, 10⁶ to 10²² from the origin and 100 to
-/// 204,800 long, 2,448 placements. The floats far out round a path's
-/// control points, so a path is often not as long as it was drawn, and
-/// is no length at all where its length is below their spacing; each is
-/// owed whole on the room of the path it is ([`curve_room`], an oracle
-/// independent of the engine's arithmetic), against its natural length
-/// along a path that runs any way (ruling B18.1 §7): 760 are, 481 of them
-/// on paths the floats changed, the case swept for.
+/// amended, and §9): three texts and two ornaments in both modes along
+/// `far_curve`'s line and cubic at every `far_out` draw, 10⁶ to 10²² from
+/// the origin and 100 to 204,800 long, 4,080 placements. The floats far
+/// out round a path's control points, so a path is often not as long as
+/// it was drawn, and is no length at all where its length is below their
+/// spacing; each is owed whole on the room of the path it is
+/// ([`curve_room`], an oracle independent of the engine's arithmetic),
+/// against its natural length along it (ruling B18.1 §7), where the
+/// coordinates hold its glyphs apart (§9): 1,274 fit, and 394 of them are
+/// so held — 226 texts, 168 ornaments — 197 on paths the floats changed,
+/// the case swept for. The grain gives up the other 880: of the 760 texts
+/// that fit, it keeps 226, and of the 514 ornaments, 168.
 ///
 /// Control: with `curve_room` finding its points by `Curve::point` in
-/// `f32` again, red (1,236 placements owed whole and cut: rounding read
-/// as room; 695 when the engine's own tables overmeasured too).
+/// `f32` again, red (1 placement owed whole and cut, rounding read as
+/// room: "MANDALA" in `Spread` along a cubic 100 long at 10⁷, given 205.8;
+/// 1,236 before the grain held out what its coordinates cannot part, and
+/// 695 when the engine's own tables overmeasured too).
 #[test]
 fn test_far_out_open_placements_their_natural_length_fits_are_laid_whole() {
     use crate::document::values::FitMode;
     use crate::flow::place::{place_on_open_capped, Trace};
-    use crate::flow::tests::flow_fuzz::{curve_room, far_curve, owes_whole_any_way};
+    use crate::flow::tests::flow_fuzz::{
+        coordinates_hold_apart, curve_reach, curve_room, far_curve, owes_whole_along,
+    };
     let (mut owed, mut moved, mut cut) = (0usize, 0usize, Vec::new());
+    let (mut along, mut ornaments) = (0usize, 0usize);
     with_fonts(|fs| {
         let flow = style(16.0);
-        for text in ["MANDALA", "To see a World", "ab"] {
+        for text in ["MANDALA", "To see a World", "ab", "━━━━", "· · · ·"] {
             let run = real_run(text, &flow, fs);
             for fit in [FitMode::Spread, FitMode::Fit { min: 0.5, max: 2.0 }] {
                 for k in 6..=22 {
@@ -1710,10 +1960,15 @@ fn test_far_out_open_placements_their_natural_length_fits_are_laid_whole() {
                             let length = 100.0 * (1u32 << doubled) as f32;
                             let curve = far_curve(Vec2::splat(10f32.powi(k)), length, line);
                             let room = curve_room(&curve);
-                            if !owes_whole_any_way(&run, &fit, room) {
+                            if !owes_whole_along(&run, &fit, &curve) {
+                                continue;
+                            }
+                            along += 1;
+                            if !coordinates_hold_apart(curve_reach(&curve), &run, &fit) {
                                 continue;
                             }
                             owed += 1;
+                            ornaments += usize::from(!run.glyphs.iter().any(|g| g.letter));
                             if (room - length).abs() > length * 1e-3 {
                                 moved += 1;
                             }
@@ -1745,39 +2000,60 @@ fn test_far_out_open_placements_their_natural_length_fits_are_laid_whole() {
         cut.len(),
         &cut[..cut.len().min(5)]
     );
-    assert!(owed >= 700, "the sweep owes {owed} placements whole");
+    assert!(owed >= 350, "the sweep owes {owed} placements whole");
     assert!(
-        moved >= 400,
+        moved >= 150,
         "the sweep owes {moved} placements whole on paths the floats changed"
+    );
+    assert!(
+        ornaments >= 100,
+        "the sweep owes {ornaments} ornament placements whole"
     );
 }
 
-/// One placement along an open path as the oracle reads it: its text at
-/// `points` along `curve` in `fit`, the glyphs placed, the run's glyphs,
-/// whether it reported a loss, and whether it is owed whole along a
-/// level line's natural length (`owes_whole`) and along one that runs any
-/// way (`owes_whole_any_way`).
+/// One placement along an open path as the oracle reads it
+/// ([`owed_along`]).
+struct Owed {
+    /// The glyphs placed, and the run's.
+    placed: usize,
+    glyphs: usize,
+    /// Whether it reported a loss.
+    lost: bool,
+    /// Whether it is owed whole along a level line's natural length
+    /// (`owes_whole`), along the path whatever way it runs
+    /// (`owes_whole_along`), and that where the coordinates also hold its
+    /// glyphs apart (`coordinates_hold_apart`, ruling B18.1 §9).
+    level: bool,
+    along: bool,
+    grained: bool,
+}
+
+/// Its text at `points` along `curve` in `fit`, laid, and read by the
+/// oracle ([`Owed`]).
 fn owed_along(
     text: &str,
     points: f32,
     curve: &crate::flow::Curve,
     fit: &crate::document::values::FitMode,
-) -> (usize, usize, bool, bool, bool) {
+) -> Owed {
     use crate::flow::place::{place_on_open_capped, Trace};
-    use crate::flow::tests::flow_fuzz::{curve_room, owes_whole, owes_whole_any_way};
+    use crate::flow::tests::flow_fuzz::{
+        coordinates_hold_apart, curve_reach, curve_room, owes_whole, owes_whole_along,
+    };
     with_fonts(|fs| {
         let flow = style(points);
         let run = real_run(text, &flow, fs);
         let mut trace = Trace::default();
         let (_, placed) = place_on_open_capped(&run, curve, fit, 0.0, &flow, fs, 154, Some(&mut trace));
-        let room = curve_room(curve);
-        (
-            placed.glyphs.len(),
-            run.glyphs.len(),
-            trace.ring.is_some(),
-            owes_whole(&run, fit, room),
-            owes_whole_any_way(&run, fit, room),
-        )
+        let along = owes_whole_along(&run, fit, curve);
+        Owed {
+            placed: placed.glyphs.len(),
+            glyphs: run.glyphs.len(),
+            lost: trace.ring.is_some(),
+            level: owes_whole(&run, fit, curve_room(curve)),
+            along,
+            grained: along && coordinates_hold_apart(curve_reach(curve), &run, fit),
+        }
     })
 }
 
@@ -1812,36 +2088,72 @@ fn test_an_open_path_owes_a_run_whole_only_where_it_fits_every_way() {
         ),
     ];
     for (text, points, curve, fit) in &cases {
-        let (placed, glyphs, lost, level, any_way) = owed_along(text, *points, curve, fit);
+        let o = owed_along(text, *points, curve, fit);
         let what = format!("{text:?} at {points} pt, {fit:?}, along {curve:?}");
         assert!(
-            level && placed < glyphs && !lost,
-            "precondition: {what} is owed whole along a level line, and is cut ({placed} of {glyphs}), reporting nothing"
+            o.level && o.placed < o.glyphs && !o.lost,
+            "precondition: {what} is owed whole along a level line, and is cut ({} of {}), reporting nothing",
+            o.placed,
+            o.glyphs
         );
         assert!(
-            !any_way,
-            "{what}: owed whole, and cut ({placed} of {glyphs} placed)"
+            !o.along,
+            "{what}: owed whole, and cut ({} of {} placed)",
+            o.placed, o.glyphs
         );
     }
 }
 
-/// No run owed whole along an open path is cut (#313, ruling B18.1 §7),
-/// over the review's sweep (review 5903692895): four texts at three sizes,
-/// 10⁰ to 10²² from the origin, along a line, a quadratic, a cubic, a loop
-/// and a cubic of no length but its last control point, five lengths each,
-/// in `Spread`, `Fit` and `Once` — 20,700 placements, 4,628 owed whole,
-/// none cut. A level line's natural length owed 4,736, 20 of them cut:
-/// 108 placements, 2.3%, are the coverage given up for owing only what
-/// fits every way.
+/// No run owed whole along an open path is cut (#313, rulings B18.1 §7,
+/// §9, §10), over the review's sweep (review 5903692895) and ornaments
+/// round bends (review 5904164019):
 ///
-/// Control: the open path's oracle measuring a level line's natural
-/// length again, red (20 owed whole and cut, "MANDALA" at 4 pt along
-/// (0.8, 0.6) 37 long, at every distance).
+/// - four texts at three sizes, 10⁰ to 10²² from the origin, along a
+///   line, a quadratic, a cubic, a loop and a cubic of no length but its
+///   last control point, five lengths each, in `Spread`, `Fit` and `Once`:
+///   20,700 placements, 4,628 owed whole along their paths, 3,225 of them
+///   where the coordinates hold their glyphs apart, none cut. A level
+///   line's natural length owed 4,736, 20 of them cut: 108 placements are
+///   what owing only what fits every way gives up, and 1,403 more what the
+///   grain does;
+/// - three ornaments at two sizes, at the same distances, along a line
+///   and four curves that bend — the review's arch, its loop and its S,
+///   and a hump — five lengths each, in `Spread` and `Fit`: 6,900
+///   placements, 1,373 owed whole, none cut. Each cluster's step summed,
+///   the bound that holds on a straight path, owed 1,693, 22 of them cut:
+///   the moves round a bend the oracle now measures.
+///
+/// Controls: the open path's oracle measuring a level line's natural
+/// length again, red (15 owed whole and cut, "MANDALA" at 4 pt along
+/// (0.8, 0.6) 37 long, at every distance its glyphs are held apart); an
+/// ornament's glyphs read as set at their natural centers, with no move
+/// round a bend, red (22, "· · · ·" at 8 pt round the S 10 long among
+/// them). The `Fit` solve's bracket is held by
+/// `test_a_fit_reaches_a_scale_that_fits_whenever_one_does`: taken out, a
+/// cut `Fit` here reports its scale not solved, which this sweep reads as
+/// reported.
 #[test]
 fn test_an_open_path_cuts_no_run_it_owes_whole_at_any_distance() {
     use crate::document::values::FitMode;
     use crate::flow::Curve;
-    let (mut laid, mut owed, mut level_owed, mut cut) = (0usize, 0usize, 0usize, Vec::new());
+    // Laid, owed along the path, owed where the grain holds too, owed
+    // along a level line, for texts [0] and ornaments [1]; and the cut.
+    let mut counts = [[0usize; 4]; 2];
+    let mut cut = Vec::new();
+    let mut lay =
+        |text: &str, points: f32, k: i32, length: f32, curve: &Curve, fit: &FitMode, kind: usize| {
+            let o = owed_along(text, points, curve, fit);
+            let c = &mut counts[kind];
+            c[0] += 1;
+            c[1] += usize::from(o.along);
+            c[2] += usize::from(o.grained);
+            c[3] += usize::from(o.level);
+            if o.grained && o.placed < o.glyphs && !o.lost {
+                cut.push(format!("{text:?} {points} pt 10^{k} {length} {fit:?} {curve:?}"));
+            }
+        };
+    // Texts, along a line, a quadratic, a cubic, a loop and a cubic of no
+    // length but its last control point.
     for text in ["MANDALA", "To see a World", "ab", "mmmmmmmm"] {
         for points in [4.0, 16.0, 96.0] {
             for k in 0..=22 {
@@ -1861,24 +2173,54 @@ fn test_an_open_path_cuts_no_run_it_owes_whole_at_any_distance() {
                             FitMode::Fit { min: 0.5, max: 2.0 },
                             FitMode::Once { filler: None },
                         ] {
-                            let (placed, glyphs, lost, level, any_way) =
-                                owed_along(text, points, curve, &fit);
-                            laid += 1;
-                            owed += usize::from(any_way);
-                            level_owed += usize::from(level);
-                            if any_way && placed < glyphs && !lost {
-                                cut.push(format!("{text:?} {points} pt 10^{k} {length} {fit:?} {curve:?}"));
-                            }
+                            lay(text, points, k, length, curve, &fit, 0);
                         }
                     }
                 }
             }
         }
     }
-    assert_eq!(laid, 20_700, "every placement of the sweep is laid");
+    // Ornaments, along a line and curves that bend: the review's arch, its
+    // loop and its S, and a hump.
+    for text in ["━━━━", "· · · ·", "─═─═"] {
+        for points in [8.0, 16.0] {
+            for k in 0..=22 {
+                let at = Vec2::splat(10f32.powi(k));
+                for length in [10.0_f32, 20.0, 40.0, 100.0, 400.0] {
+                    let to = |x: f32, y: f32| at + Vec2::new(x * length, y * length);
+                    let curves = [
+                        Curve::Line(at, to(0.8, 0.6)),
+                        Curve::Cubic(at, to(0.0, 0.5), to(0.5, 0.5), to(0.5, 0.0)),
+                        Curve::Cubic(at, to(1.2, 0.8), to(-0.2, 0.8), to(1.0, 0.0)),
+                        Curve::Cubic(at, to(0.3, 2.0), to(0.7, -2.0), to(1.0, 0.0)),
+                        Curve::Quadratic(at, to(0.5, 1.0), to(1.0, 0.0)),
+                    ];
+                    for curve in &curves {
+                        for fit in [FitMode::Spread, FitMode::Fit { min: 0.5, max: 2.0 }] {
+                            lay(text, points, k, length, curve, &fit, 1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let [texts, ornaments] = counts;
+    assert_eq!(
+        (texts[0], ornaments[0]),
+        (20_700, 6_900),
+        "every placement of the sweep is laid"
+    );
     assert!(
-        owed >= 4_000 && owed <= level_owed,
-        "the sweep owes {owed} placements whole, a level line's length {level_owed}"
+        texts[2] >= 3_000 && texts[1] <= texts[3],
+        "the sweep owes {} text placements whole, {} along their paths, a level line's length {}",
+        texts[2],
+        texts[1],
+        texts[3]
+    );
+    assert!(
+        ornaments[2] >= 1_200,
+        "the sweep owes {} ornament placements whole",
+        ornaments[2]
     );
     assert!(
         cut.is_empty(),

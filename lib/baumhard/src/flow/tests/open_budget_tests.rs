@@ -482,6 +482,67 @@ fn test_flow_open_budget_a_fits_hold_never_shrinks() {
     }
 }
 
+/// #313, ruling B18.1 §8, review 5904164019: a `Fit` that ends within
+/// its path and runs on past where its walk ended — a run of one cluster,
+/// which `spread` lays as `once` does, or a text its window's least cuts —
+/// takes no more in phase 2 than was held back for it (`again ≤ held`):
+/// one cluster and its text cut, along a line level and steep and along an
+/// arch, at scales from a quarter, at its own budget. Such a run on is less
+/// than its next cluster's width, a few steps, and the hold for the glyphs
+/// it laid (`admits`) covers that several times over: so no hold is taken
+/// for the run on alone at the least line height a `Fit` walks at — what
+/// `steps_at` (gone) held, and why it could be deleted.
+///
+/// Control: the hold for the glyphs laid taken out (`admits` not raising
+/// the reserve), red.
+#[test]
+fn test_flow_open_budget_a_fit_that_runs_on_holds_what_phase_two_takes() {
+    let long = "To see a World in a Grain of Sand ".repeat(4);
+    let texts = ["M", "x", "─", "·", long.as_str()];
+    let fits = [
+        FitMode::Fit { min: 0.25, max: 0.5 },
+        FitMode::Fit { min: 0.25, max: 2.0 },
+    ];
+    let (mut laid, mut single, mut truncated, mut over) = (0usize, 0usize, 0usize, Vec::new());
+    for length in [3.0_f32, 10.0, 40.0, 200.0] {
+        let curves = [
+            Curve::Line(Vec2::ZERO, Vec2::new(length, 0.0)),
+            Curve::Line(Vec2::ZERO, Vec2::new(0.0, length)),
+            Curve::Cubic(
+                Vec2::ZERO,
+                Vec2::new(0.0, 0.5 * length),
+                Vec2::new(0.5 * length, 0.5 * length),
+                Vec2::new(0.5 * length, 0.0),
+            ),
+        ];
+        for curve in &curves {
+            for fit in &fits {
+                for text in texts {
+                    let one = open(text, curve, fit, None, GRID_CAP);
+                    laid += 1;
+                    single += usize::from(one.text == 1 && one.placed.glyphs.len() == 1);
+                    truncated += usize::from(one.placed.truncated);
+                    if one.again > one.held {
+                        over.push(format!(
+                            "{text:?} {fit:?} along {curve:?}: {} again, {} held",
+                            one.again, one.held
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(laid, 120, "every placement is laid");
+    assert!(single >= 20, "precondition: {single} single clusters laid");
+    assert!(truncated >= 10, "precondition: {truncated} texts cut");
+    assert!(
+        over.is_empty(),
+        "{} took more than held: {:?}",
+        over.len(),
+        &over[..over.len().min(5)]
+    );
+}
+
 /// What the pitched grid's placements are of: ornaments a connector lays
 /// as whole glyphs, a dot, and a bar and a double bar, whose inks differ
 /// in shape.

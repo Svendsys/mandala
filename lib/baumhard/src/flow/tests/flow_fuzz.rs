@@ -799,7 +799,11 @@ fn check_open(
     work.open(run, cap, tables, &placed.1, &trace, "the placement")?;
     // `Spread` and `Fit` solve the gap; the spacing does not enter
     // (ruling R6, reading 7).
-    let whole = owes_whole_any_way(run, fit, curve_room(curve)) && trace.ring.is_none();
+    // Owed whole only where the coordinates hold its glyphs apart (ruling
+    // B18.1 §9).
+    let whole = owes_whole_along(run, fit, curve)
+        && coordinates_hold_apart(curve_reach(curve), run, fit)
+        && trace.ring.is_none();
     check_placed(spans, run, placed, whole, "the placement")
 }
 
@@ -983,8 +987,13 @@ fn frames_round_a_rectangle(
         // A line cut so that no two inks touch, and reported so, is owed
         // no longer (ruling R38.1); a frame its sides leave unheld is
         // reported (ruling R35.2).
-        let whole = owes_whole(&frame_run, fit, frame_room(&path)) && trace.cut_apart.is_empty();
+        let whole = owes_whole(&frame_run, fit, frame_room(&path))
+            && coordinates_hold_apart(outline_reach(&path), &frame_run, fit)
+            && trace.cut_apart.is_empty();
         apart(&trace, "around a rectangle")?;
+        if !matches!(fit, FitMode::Repeat) {
+            frame_reports_its_cut(&frame_run, &placed, &trace, "around a rectangle", fs)?;
+        }
         check_frame_placed(
             &frame_spans,
             &frame_run,
@@ -1368,6 +1377,7 @@ fn check_generated_pinning(
                             sets.clear();
                         }
                         FAR_FRAMES.with(|n| n.set(n.get() + 1));
+                        LAST_FAR_FRAME.with(|last| last.set(Some(far)));
                         sets.push((far, vec![drawn]));
                     }
                     let mut laid_texts = vec![drawn_texts];
@@ -1443,8 +1453,20 @@ fn check_generated_pinning(
                             // tight bend — cuts the line that cannot be held
                             // and says so (ruling R38.1): what it cut is no
                             // longer owed.
-                            let whole =
-                                owes_whole(&run, &fit, frame_room(path)) && trace.cut_apart.is_empty();
+                            // Owed whole only where the coordinates hold
+                            // its glyphs apart (ruling B18.1 §9); a cut
+                            // where they cannot is still reported.
+                            let whole = owes_whole(&run, &fit, frame_room(path))
+                                && coordinates_hold_apart(outline_reach(path), &run, &fit)
+                                && trace.cut_apart.is_empty();
+                            LAST_FRAME_LAID.with(|last| {
+                                last.set(Some((
+                                    *path,
+                                    placed.1.glyphs.len(),
+                                    run.glyphs.len(),
+                                    placed.1.truncated,
+                                )))
+                            });
                             let mut work = InputWork::default();
                             let sized = matches!(fit, FitMode::Fit { .. });
                             let counted = if matches!(fit, FitMode::Repeat) {
@@ -1468,6 +1490,19 @@ fn check_generated_pinning(
                                     }
                                 })
                                 .and_then(|()| apart(&trace, "around an outline"))
+                                .and_then(|()| {
+                                    if matches!(fit, FitMode::Repeat) {
+                                        Ok(())
+                                    } else {
+                                        frame_reports_its_cut(
+                                            &run,
+                                            &placed,
+                                            &trace,
+                                            "around an outline",
+                                            &mut fs,
+                                        )
+                                    }
+                                })
                                 .and_then(|()| {
                                     check_frame_placed(
                                         &frame_spans,
@@ -1965,6 +2000,14 @@ thread_local! {
     /// thread, and the room its oracle gave a run along it.
     pub(crate) static LAST_FAR_CURVE: std::cell::Cell<Option<(Curve, f32)>> =
         const { std::cell::Cell::new(None) };
+    /// The far-out outline the structured generator drew last on this
+    /// thread (#313, ruling B18.1 §9).
+    pub(crate) static LAST_FAR_FRAME: std::cell::Cell<Option<Outline>> = const { std::cell::Cell::new(None) };
+    /// The frame round an outline it laid last on this thread: the
+    /// outline, the glyphs placed and its run's, and whether the
+    /// placement says it was truncated.
+    pub(crate) static LAST_FRAME_LAID: std::cell::Cell<Option<(Outline, usize, usize, bool)>> =
+        const { std::cell::Cell::new(None) };
 }
 
 /// The side ornaments a far-out frame is given where its layout draws none
@@ -2165,6 +2208,28 @@ pub(crate) fn check_frame_placed(
     check_frame_placement(refers_to, &placed, (whole, trace), what, fs)
 }
 
+/// A frame that leaves unplaced a glyph of its run that draws says so
+/// (#313, ruling B18.1 §9): its placement is truncated, or its lines were
+/// cut apart (ruling R38.1). Held whether its text is owed whole or not —
+/// where the coordinates cannot hold its glyphs apart
+/// ([`coordinates_hold_apart`]) a frame cuts its line, and that cut is
+/// reported, never silent. `placed` is the placement as laid, the run it
+/// made in place of `run` with it.
+pub(crate) fn frame_reports_its_cut(
+    run: &ShapedRun,
+    (replaced, placed): &(Option<ShapedRun>, PlacedRun),
+    trace: &Trace,
+    what: &str,
+    fs: &mut FontSystemLease,
+) -> Result<(), String> {
+    if placed.truncated || !trace.cut_apart.is_empty() {
+        return Ok(());
+    }
+    let refers_to = replaced.as_ref().unwrap_or(run);
+    check_frame_placement(refers_to, placed, (true, trace), what, fs)
+        .map_err(|why| format!("{why}, and the frame does not say it was cut"))
+}
+
 /// [`check_placement`] of a frame's placement, with
 /// [`check_frame_placed`]'s excuse.
 pub(crate) fn check_frame_placement(
@@ -2245,61 +2310,389 @@ pub(crate) fn natural_length_at(run: &ShapedRun, scale: f32) -> f32 {
 }
 
 /// The run's natural length along a path that runs any way, reshaped at
-/// `scale` (#313, ruling B18.1 §7): each cluster as long as the most step
-/// the walk takes for it in any direction, so no shorter than any lay of
-/// it at no gap along any path. Read from the engine's definition of a
-/// cluster's step (ruling R31), not its code:
-///
-/// - a text's cluster is a box its advance `w` wide and the line height
-///   `h` tall, and its step along a unit direction `(dx, dy)` is the box's
-///   extent that way, `w·|dx| + h·|dy|`: at most `√(w² + h²)`, along the
-///   box's diagonal — the tightest bound that holds every way;
-/// - an ornament's cluster (a run with no letter) steps its ink box's
-///   extent, `iw·|dx| + ih·|dy|`, and its side bearings, its advance `w`
-///   less the ink's width: at most `w + ih`, its ink's height `ih` added
-///   to its advance, since `iw·|dx| ≤ iw`; a space, or a glyph that draws
-///   nothing, its advance alone.
+/// `scale` (#313, ruling B18.1 §7), for a text — a run with a letter. Each
+/// cluster is as long as the most step the walk takes for it in any
+/// direction, so the run is no shorter than any lay of it at no gap along
+/// any path. Read from the engine's definition of a cluster's step (ruling
+/// R31), not its code: a text's cluster is a box its advance `w` wide and
+/// the line height `h` tall, and its step along a unit direction `(dx, dy)`
+/// is the box's extent that way, `w·|dx| + h·|dy|`: at most `√(w² + h²)`,
+/// along the box's diagonal — the tightest bound that holds every way.
 ///
 /// The longer of the advance and the line height, which a level line
-/// steps within, is short of the first along a diagonal: "MANDALA" at
-/// 4 pt was owed whole along a path 37 long running (0.8, 0.6), and was
-/// cut. Advances and heights are scaled by the engine's own `size_factor`
-/// (ruling R52.1), the line height with the run's largest glyph, an ink
-/// with its own glyph.
+/// steps within, is short of that along a diagonal: "MANDALA" at 4 pt was
+/// owed whole along a path 37 long running (0.8, 0.6), and was cut.
+/// Advances and the line height are scaled by the engine's own
+/// `size_factor` (ruling R52.1), the line height with the run's largest
+/// glyph.
+///
+/// An ornament's length is not the run's alone: round a bend its glyphs
+/// are set further on to keep their inks apart, so it is measured with
+/// its path ([`ornament_end_along`]).
 pub(crate) fn natural_length_any_way(run: &ShapedRun, scale: f32) -> f32 {
-    let glyphs: Vec<&GlyphMetrics> = run.glyphs.iter().filter(|g| g.span != FILLER_SPAN).collect();
+    let glyphs = drawn_glyphs(run);
     let largest = glyphs.iter().map(|g| g.size).fold(0.0_f32, f32::max);
     let height = run.line_height.max(0.0) * size_factor(largest, scale);
-    let ornament = !run.glyphs.iter().any(|g| g.letter);
-    let mut length = 0.0_f32;
-    let mut k = 0;
-    while k < glyphs.len() {
-        let end = (k + 1..glyphs.len())
-            .find(|&j| glyphs[j].grapheme_start)
-            .unwrap_or(glyphs.len());
-        let cluster = &glyphs[k..end];
-        let advance: f32 = cluster
-            .iter()
-            .map(|g| g.advance.max(0.0) * size_factor(g.size, scale))
-            .sum();
-        length += if ornament {
-            // Its ink's height, all its glyphs' together, each at its scale.
-            let ink = cluster
-                .iter()
-                .filter(|g| !g.blank)
-                .filter_map(|g| g.ink.map(|ink| (ink, size_factor(g.size, scale))))
-                .fold(None, |was: Option<(f32, f32)>, (ink, f)| {
-                    let (lo, hi) = (ink.min.y * f, ink.max.y * f);
-                    Some(was.map_or((lo, hi), |(a, b)| (a.min(lo), b.max(hi))))
-                })
-                .map_or(0.0, |(lo, hi)| (hi - lo).max(0.0));
-            advance + ink
-        } else {
-            advance.hypot(height)
-        };
-        k = end;
+    glyph_clusters(&glyphs)
+        .iter()
+        .map(|cluster| cluster_advance(cluster, scale).hypot(height))
+        .sum()
+}
+
+/// The glyphs of `run` a placement lays: all but a filler's.
+fn drawn_glyphs(run: &ShapedRun) -> Vec<&GlyphMetrics> {
+    run.glyphs.iter().filter(|g| g.span != FILLER_SPAN).collect()
+}
+
+/// `glyphs` in clusters: a cluster begins at each glyph that starts a
+/// grapheme, and at the first.
+fn glyph_clusters<'g>(glyphs: &[&'g GlyphMetrics]) -> Vec<Vec<&'g GlyphMetrics>> {
+    let mut clusters: Vec<Vec<&GlyphMetrics>> = Vec::new();
+    for &glyph in glyphs {
+        match clusters.last_mut() {
+            Some(cluster) if !glyph.grapheme_start => cluster.push(glyph),
+            _ => clusters.push(vec![glyph]),
+        }
     }
-    length
+    clusters
+}
+
+/// A cluster's advance at `scale`: its glyphs' advances, none below 0,
+/// each scaled by the engine's own `size_factor` (ruling R52.1).
+fn cluster_advance(cluster: &[&GlyphMetrics], scale: f32) -> f32 {
+    cluster
+        .iter()
+        .map(|g| g.advance.max(0.0) * size_factor(g.size, scale))
+        .sum()
+}
+
+/// The least scale `fit` lays its run at, where it owes it whole at all:
+/// a `Spread` its own, a `Fit` its window's lower end, as the engine
+/// shrinks it (no glyph below `MIN_FONT_SIZE_PT`, ruling R52.1).
+fn least_scale(fit: &FitMode) -> Option<f32> {
+    match fit {
+        FitMode::Spread => Some(1.0),
+        FitMode::Fit { min, max } => Some(min.min(*max)),
+        _ => None,
+    }
+}
+
+/// The spacing of `f32`s at `magnitude`: from it to the next `f32` above
+/// it, which no two `f32`s no further from 0 are further apart than.
+/// Infinite past the largest finite `f32`.
+pub(crate) fn f32_spacing(magnitude: f32) -> f64 {
+    let m = magnitude.abs();
+    let next = f32::from_bits(m.to_bits().saturating_add(1));
+    if m.is_finite() && next.is_finite() {
+        f64::from(next) - f64::from(m)
+    } else {
+        f64::INFINITY
+    }
+}
+
+/// How many spacings of `f32` a placement's smallest advance must span
+/// for its coordinates to hold its glyphs apart ([`coordinates_hold_apart`]).
+pub(crate) const GRAIN_SPACINGS: f64 = 4.0;
+
+/// Whether the coordinates a placement of `run` in `fit` is drawn in can
+/// hold its glyphs apart (#313, ruling B18.1 §9): the spacing `u` of `f32`
+/// there at most a [`GRAIN_SPACINGS`]th of the run's smallest advance `a`
+/// at its least scale. A fact about `f32`, from where the placement is
+/// drawn and the run's metrics alone.
+///
+/// Why a quarter: the engine finds each glyph's position from its path in
+/// `f32` — the point at a distance along it, rounded where it is found,
+/// and that point's offset onto the canvas, rounded again — so a position
+/// lies within `u` of where it belongs, each rounding moving it at most
+/// half a spacing. Two neighbors an advance `a` apart are then set at
+/// least `a − 2u` apart, which `4u ≤ a` keeps at half their advance or
+/// more: still apart, and still in their order. At a coarser grain two
+/// neighbors may round onto one point, and a frame cuts its line where its
+/// inks cannot be parted (the finding
+/// `structured_frame_far_out_its_floats_cannot_part`), while an open path,
+/// laid in distance along it and rounded only at the end, stacks them.
+/// Neither is a placement this oracle can hold; what is drawn there is the
+/// whole-map bound's question (#316).
+///
+/// `reach` is how far from the origin the placement's path lies, in either
+/// coordinate; its glyphs, their inks and a frame's push off its outline
+/// lie within two line heights, at the run's largest scale, of the path,
+/// so the spacing is read at `reach` and those two line heights.
+pub(crate) fn coordinates_hold_apart(reach: f32, run: &ShapedRun, fit: &FitMode) -> bool {
+    let Some(least) = least_scale(fit) else {
+        return false;
+    };
+    let most = match fit {
+        FitMode::Fit { min, max } => min.max(*max),
+        _ => 1.0,
+    };
+    let glyphs = drawn_glyphs(run);
+    let largest = glyphs.iter().map(|g| g.size).fold(0.0_f32, f32::max);
+    let height = run.line_height.max(0.0) * size_factor(largest, most);
+    let spacing = f32_spacing(reach.abs() + 2.0 * height);
+    let smallest = glyph_clusters(&glyphs)
+        .iter()
+        .map(|cluster| cluster_advance(cluster, least))
+        .filter(|&a| a > 0.0)
+        .fold(f32::INFINITY, f32::min);
+    !smallest.is_finite() || GRAIN_SPACINGS * spacing <= f64::from(smallest)
+}
+
+/// How far from the origin `curve` lies: the largest coordinate, either
+/// way, of its control points, which hold the curve.
+pub(crate) fn curve_reach(curve: &Curve) -> f32 {
+    let points: Vec<Vec2> = match *curve {
+        Curve::Line(a, b) => vec![a, b],
+        Curve::Quadratic(a, c, b) => vec![a, c, b],
+        Curve::Cubic(a, c1, c2, b) => vec![a, c1, c2, b],
+    };
+    points
+        .iter()
+        .map(|p| p.abs().max_element())
+        .fold(0.0_f32, f32::max)
+}
+
+/// How far from the origin `outline` lies: the largest coordinate, either
+/// way, of the rectangle it is drawn on.
+pub(crate) fn outline_reach(outline: &Outline) -> f32 {
+    let rect = outline.rect();
+    rect.origin
+        .abs()
+        .max((rect.origin + rect.size).abs())
+        .max_element()
+}
+
+/// The pieces [`curvature_bound`] splits a curve into, each bounded on
+/// its own.
+const CURVATURE_PIECES: usize = 64;
+
+/// A bound on the curvature of `curve` everywhere along it, from its
+/// control points alone in `f64` (#313, ruling B18.1 §7): infinite where
+/// it cannot be bounded — a cusp, or a curve that stops and turns back.
+/// A line's is 0.
+///
+/// The curve is split by de Casteljau's construction into
+/// [`CURVATURE_PIECES`] pieces, each a Bézier of the same degree `n` on
+/// its own control points. On a piece, the velocity is `n` times a Bézier
+/// on the differences `d` of its control points, so it lies in their
+/// convex hull scaled by `n`, and its length is at least `n` times that
+/// hull's distance from 0; the acceleration is `n(n−1)` times a Bézier on
+/// the differences `e` of `d`, at most `n(n−1)·max|e|` long. Curvature is
+/// `|B′ × B″| / |B′|³ ≤ |B″| / |B′|²`, so on the piece at most
+/// `(n−1)·max|e| / (n·dist²)`. No engine code: the engine evaluates the
+/// Bernstein form in `f32`.
+pub(crate) fn curvature_bound(curve: &Curve) -> f64 {
+    let (start, rest): (Vec2, Vec<Vec2>) = match *curve {
+        Curve::Line(..) => return 0.0,
+        Curve::Quadratic(a, c, b) => (a, vec![c, b]),
+        Curve::Cubic(a, c1, c2, b) => (a, vec![c1, c2, b]),
+    };
+    let mut controls = vec![DVec2::ZERO];
+    controls.extend(rest.iter().map(|p| p.as_dvec2() - start.as_dvec2()));
+    let n = (controls.len() - 1) as f64;
+    let mut most = 0.0_f64;
+    for k in 0..CURVATURE_PIECES {
+        let piece = bezier_piece(
+            &controls,
+            k as f64 / CURVATURE_PIECES as f64,
+            (k + 1) as f64 / CURVATURE_PIECES as f64,
+        );
+        let d: Vec<DVec2> = piece.windows(2).map(|w| w[1] - w[0]).collect();
+        let e: Vec<DVec2> = d.windows(2).map(|w| w[1] - w[0]).collect();
+        let dist = hull_distance(&d);
+        let turn = e.iter().map(|v| v.length()).fold(0.0_f64, f64::max);
+        let bound = if turn == 0.0 {
+            0.0
+        } else if dist > 0.0 {
+            (n - 1.0) * turn / (n * dist * dist)
+        } else {
+            f64::INFINITY
+        };
+        most = most.max(bound);
+    }
+    most
+}
+
+/// The control points of the piece of the Bézier on `controls` from
+/// parameter `from` to `to`, by de Casteljau's construction: split at `to`,
+/// keep the part before it, then split that at `from / to`, keep the part
+/// after.
+fn bezier_piece(controls: &[DVec2], from: f64, to: f64) -> Vec<DVec2> {
+    let split = |points: &[DVec2], t: f64| -> (Vec<DVec2>, Vec<DVec2>) {
+        let mut before = Vec::with_capacity(points.len());
+        let mut after = Vec::with_capacity(points.len());
+        let mut row = points.to_vec();
+        while !row.is_empty() {
+            before.push(row[0]);
+            after.push(row[row.len() - 1]);
+            row = row.windows(2).map(|w| w[0] + (w[1] - w[0]) * t).collect();
+        }
+        after.reverse();
+        (before, after)
+    };
+    let (head, _) = split(controls, to);
+    if to <= 0.0 {
+        return head;
+    }
+    split(&head, from / to).1
+}
+
+/// The distance from the origin to the convex hull of `points` (two or
+/// three of them): 0 where the hull holds it.
+fn hull_distance(points: &[DVec2]) -> f64 {
+    let segment = |a: DVec2, b: DVec2| {
+        let ab = b - a;
+        let t = if ab.length_squared() > 0.0 {
+            (-a.dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        (a + ab * t).length()
+    };
+    match points {
+        [a] => a.length(),
+        [a, b] => segment(*a, *b),
+        [a, b, c] => {
+            let side = |p: DVec2, q: DVec2| p.perp_dot(q);
+            let (s1, s2, s3) = (side(*a, *b), side(*b, *c), side(*c, *a));
+            let inside = (s1 >= 0.0 && s2 >= 0.0 && s3 >= 0.0) || (s1 <= 0.0 && s2 <= 0.0 && s3 <= 0.0);
+            if inside {
+                0.0
+            } else {
+                segment(*a, *b).min(segment(*b, *c)).min(segment(*c, *a))
+            }
+        }
+        _ => 0.0,
+    }
+}
+
+/// The most distance along a path whose curvature is at most `kappa` that
+/// an ornament run reshaped at `scale` can take, laid at no gap from the
+/// path's start (#313, ruling B18.1 §7): an upper bound on where its walk
+/// ends, or `None` where the bound needs a stretch of the path longer
+/// than its bend allows (below). From the engine's definition of an
+/// ornament's walk (ruling R31), not its code:
+///
+/// - An inked cluster's step is its ink box's extent along the chord plus
+///   its side bearings, at most `max(0, w − iw + √(iw² + ih²))` for advance
+///   `w` and ink `iw × ih`; it is set at its natural center, its lead `x₀`
+///   and half that extent into its step.
+/// - A glyph after an ink, owed `g` — the last ink's right bearing, the
+///   spaces between, and its own lead — more than `INK_TOLERANCE`, is moved
+///   on until its ink box, set square to the canvas, is `g` from the last
+///   one's. Two boxes whose half sizes sum to `r` are at least `g` apart
+///   once their centers are `R = |r| + g` apart, so the engine aims at a
+///   distance of at most `R`, and walks on in strides of at most
+///   `S = max(R, the ink's larger side)` to find one past it.
+/// - On a curve of curvature at most `κ`, the chord across an arc of
+///   length `ℓ ≤ π/κ` is at least `(2/κ)·sin(κℓ/2)`, the circle's (Schur's
+///   comparison theorem). So every point between `L = (2/κ)·asin(κR/2)`
+///   and `π/κ` along from the last center lies at least `R` from it, and the
+///   engine's center lies at most `max(Q, L + S)` on from the last, where
+///   `Q` is how far on its natural center can be. That holds while
+///   `max(Q, L) + S ≤ π/κ` (and `κR < 2`): the precondition, read with a
+///   thousandth to spare, since the engine's distances along are its
+///   table's, a little short of the arc. Where it fails, `None`, and the
+///   run is not owed whole.
+///
+/// So the bound is each cluster's step and move summed, which the bend
+/// lengthens only through `L ≥ R`. A space steps its advance, and adds it
+/// to what the next ink is owed.
+pub(crate) fn ornament_end_along(run: &ShapedRun, scale: f32, kappa: f64) -> Option<f64> {
+    let tolerance = f64::from(INK_TOLERANCE);
+    let glyphs = drawn_glyphs(run);
+    // Where the walk is, at most, after the clusters so far; how far past
+    // the last ink's center that is; and that ink's center, half size and
+    // what the next ink is owed.
+    let mut after = 0.0_f64;
+    let mut past = 0.0_f64;
+    let mut last: Option<(f64, DVec2)> = None;
+    let mut owed = 0.0_f64;
+    for cluster in glyph_clusters(&glyphs) {
+        let advance = f64::from(cluster_advance(&cluster, scale));
+        let ink = if cluster[0].blank {
+            None
+        } else {
+            cluster_ink_at(&cluster, scale)
+        };
+        let Some((min, max)) = ink else {
+            after += advance.max(0.0);
+            past += advance.max(0.0);
+            owed += advance;
+            continue;
+        };
+        let size = max - min;
+        let (lead, diag) = (min.x, size.length());
+        let step = (advance - size.x + diag).max(0.0);
+        let gap = owed + lead;
+        let center = match last {
+            Some((at, half)) if gap > tolerance => {
+                let reach = (half + size * 0.5).length() + gap;
+                let stride = reach.max(size.max_element());
+                let natural = past + lead + 0.5 * diag;
+                let along = if kappa == 0.0 {
+                    reach
+                } else if kappa * reach < 2.0 {
+                    2.0 / kappa * (0.5 * kappa * reach).asin()
+                } else {
+                    return None;
+                };
+                if kappa > 0.0 && along.max(natural) + stride > std::f64::consts::PI / kappa * (1.0 - 1e-3) {
+                    return None;
+                }
+                at + natural.max(along + stride)
+            }
+            _ => after + lead + 0.5 * diag,
+        };
+        after = center - lead + step;
+        past = -lead + step;
+        last = Some((center, size * 0.5));
+        owed = advance - max.x;
+    }
+    Some(after)
+}
+
+/// A cluster's ink as one box at `scale`, `(min, max)` in its box's
+/// coordinates — `x` from its left edge, `y` from the baseline: each
+/// glyph's ink, its pen's distance into the cluster with it, scaled by
+/// the engine's own `size_factor` (ruling R52.1). `None` where no glyph
+/// has ink.
+fn cluster_ink_at(cluster: &[&GlyphMetrics], scale: f32) -> Option<(DVec2, DVec2)> {
+    let left = cluster.iter().map(|g| g.x).fold(f32::INFINITY, f32::min);
+    cluster
+        .iter()
+        .filter_map(|g| {
+            let f = f64::from(size_factor(g.size, scale));
+            let pen = DVec2::new(f64::from(g.x - left) * f, 0.0);
+            g.ink
+                .map(|ink| (pen + ink.min.as_dvec2() * f, pen + ink.max.as_dvec2() * f))
+        })
+        .reduce(|(a, b), (c, d)| (a.min(c), b.max(d)))
+}
+
+/// Whether `fit` along `curve` owes the whole run (#313, ruling B18.1 §7):
+/// its natural length at its least scale within the curve's room — a
+/// text's by [`natural_length_any_way`], an ornament's by
+/// [`ornament_end_along`], with the curve's [`curvature_bound`].
+pub(crate) fn owes_whole_along(run: &ShapedRun, fit: &FitMode, curve: &Curve) -> bool {
+    let Some(least) = least_scale(fit) else {
+        return false;
+    };
+    let room = f64::from(curve_room(curve));
+    if !room.is_finite() {
+        return false;
+    }
+    if is_ornament(run) {
+        ornament_end_along(run, least, curvature_bound(curve)).is_some_and(|end| end <= room)
+    } else {
+        owes_whole_any_way(run, fit, room as f32)
+    }
+}
+
+/// Whether `run` is an ornament's: no letter or digit in it, as the
+/// engine reads one (ruling R31).
+pub(crate) fn is_ornament(run: &ShapedRun) -> bool {
+    !run.glyphs.iter().any(|g| g.letter)
 }
 
 /// Whether `fit` on a path of room `room` owes the whole run: a `Spread` or
@@ -2312,11 +2705,12 @@ pub(crate) fn owes_whole(run: &ShapedRun, fit: &FitMode, room: f32) -> bool {
     owes_whole_by(run, fit, room, natural_length_at)
 }
 
-/// [`owes_whole`] along a path that runs any way: an open path's
-/// placement, its natural length [`natural_length_any_way`] (ruling
-/// B18.1 §7).
+/// [`owes_whole`] for a text along a path that runs any way, of room
+/// `room`: its natural length [`natural_length_any_way`] (ruling B18.1
+/// §7). Never an ornament's, whose length is its path's too
+/// ([`owes_whole_along`]).
 pub(crate) fn owes_whole_any_way(run: &ShapedRun, fit: &FitMode, room: f32) -> bool {
-    owes_whole_by(run, fit, room, natural_length_any_way)
+    !is_ornament(run) && owes_whole_by(run, fit, room, natural_length_any_way)
 }
 
 /// [`owes_whole`], the run's natural length at a scale by `length`.
