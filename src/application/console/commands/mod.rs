@@ -85,6 +85,7 @@ pub mod cap;
 pub mod clock;
 pub mod color;
 pub mod defaults;
+pub mod edit;
 pub mod font;
 pub mod fps;
 pub mod frame;
@@ -164,6 +165,7 @@ pub const COMMANDS: &[Command] = &[
     body::COMMAND,
     cap::COMMAND,
     color::COMMAND,
+    edit::COMMAND,
     font::COMMAND,
     fps::COMMAND,
     spacing::COMMAND,

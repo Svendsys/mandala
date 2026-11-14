@@ -328,6 +328,27 @@ pub enum LoadErrorKind {
         /// Why this element cannot have it.
         reason: &'static str,
     },
+    /// A definition — an edit — nests deeper than
+    /// [`MAX_DEFINITION_DEPTH`](crate::document::bounds::MAX_DEFINITION_DEPTH)
+    /// levels (owner, format Q4 on #250). The path is the definition.
+    DefinitionTooDeep {
+        /// The deepest a definition may nest.
+        max: usize,
+    },
+    /// A definition has more than
+    /// [`MAX_DEFINITION_PARTS`](crate::document::bounds::MAX_DEFINITION_PARTS)
+    /// parts: mutator nodes, mutations and predicate tests. The path is
+    /// the definition.
+    DefinitionTooLarge {
+        /// The most parts a definition may have.
+        max: usize,
+    },
+    /// An edit's body or target is one the edit format refuses
+    /// (`format/edits.md`): `message` says which rule.
+    InvalidEdit {
+        /// The rule it breaks.
+        message: String,
+    },
     /// The loader built something the document refuses: a row that
     /// breaks the shape rules, a tree that is not a document, an insert
     /// the tree rejects. The loader checks everything the document
@@ -420,6 +441,11 @@ impl fmt::Display for LoadErrorKind {
             LoadErrorKind::DuplicateDefinition { id } => {
                 write!(f, "another entry of this list already has the id `{}`", shown(id))
             }
+            LoadErrorKind::DefinitionTooDeep { max } => {
+                write!(f, "a definition nests at most {max} levels deep")
+            }
+            LoadErrorKind::DefinitionTooLarge { max } => write!(f, "a definition has at most {max} parts"),
+            LoadErrorKind::InvalidEdit { message } => f.write_str(message),
             LoadErrorKind::DanglingLink { to } => write!(f, "no node has the id {to}"),
             LoadErrorKind::SelfLink => f.write_str("a link cannot lead to the node that holds it"),
             LoadErrorKind::UnknownVerb { id } => write!(f, "the map defines no verb `{}`", shown(id)),

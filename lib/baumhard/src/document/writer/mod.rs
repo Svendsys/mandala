@@ -188,7 +188,7 @@ impl Document {
     /// **The one place a change to the document runs.** Every call that
     /// changes the tree — [`Self::apply`], [`Self::undo`],
     /// [`Self::redo`], [`Self::begin`] (which may commit an animation),
-    /// [`Self::stage`], [`Self::apply_in`], [`Self::interpolate`],
+    /// [`Self::stage`], [`Self::apply_in`], [`Self::stage_progress`],
     /// [`Self::commit`], [`Self::cancel`], and [`Self::save_json`]'s
     /// bracket around an open transaction — runs inside it, and none
     /// runs inside another.

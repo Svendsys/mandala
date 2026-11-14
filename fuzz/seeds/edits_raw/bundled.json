@@ -1,0 +1,49 @@
+{
+  "edits": [
+    {
+      "id": "grow-font-2pt",
+      "name": "Grow font 2pt",
+      "description": "Every span of the selected nodes and their descendants, 2 points larger.",
+      "reach": "subtree",
+      "target": "spans",
+      "mutations": [{ "span": { "text": { "grow_size": 2.0 } } }],
+      "animate": { "ms": 200, "easing": "ease_out" }
+    },
+    {
+      "id": "shrink-font-2pt",
+      "name": "Shrink font 2pt",
+      "description": "Every span of the selected nodes and their descendants, 2 points smaller.",
+      "reach": "subtree",
+      "target": "spans",
+      "mutations": [{ "span": { "text": { "grow_size": -2.0 } } }],
+      "animate": { "ms": 200, "easing": "ease_out" }
+    },
+    {
+      "id": "nudge-right-50",
+      "name": "Nudge right 50",
+      "description": "The selected nodes 50 units to the right, their descendants left in place.",
+      "reach": "self",
+      "target": "node",
+      "mutations": [{ "node": { "nudge": [50.0, 0.0] } }],
+      "animate": { "ms": 150, "easing": "ease_in_out" }
+    },
+    {
+      "id": "flower",
+      "name": "Flower layout",
+      "description": "The selected nodes' children on a circle round each of them, the first at the top.",
+      "reach": "self",
+      "target": "node",
+      "handler": "flower",
+      "animate": { "ms": 400, "easing": "ease_in_out" }
+    },
+    {
+      "id": "cascade",
+      "name": "Tree cascade",
+      "description": "The selected nodes' descendants as a top-down tree, each row below its parent.",
+      "reach": "self",
+      "target": "node",
+      "handler": "cascade",
+      "animate": { "ms": 400, "easing": "ease_in_out" }
+    }
+  ]
+}

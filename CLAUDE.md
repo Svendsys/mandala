@@ -65,7 +65,13 @@ draws them.
   (by regex, every string a map draws as glyphs: spans, own `content`,
   `once` fillers, frame ornaments), `export` (Markdown), `verify` (the loader's
   verdict, with its JSON path, plus warnings for what loads but is
-  probably a mistake) and `apply` (pipe matching sections' text through
+  probably a mistake; a verb an edit in the map names, anywhere in it
+  (its filter or its body), counts as referred to, whether or not
+  anything runs the edit, and an edit in the map that can unhide a node
+  or give a portal end a marker silences those two warnings; App and
+  User edits, which also run on a map, are outside what a map file can
+  be judged on and are not read) and
+  `apply` (pipe matching sections' text through
   a command, as one `EditRequest` through `Document::apply`; `-i`
   writes the map back as the app's save does — through a link to its
   real file, which must itself be a `.mandala.json` — and `--dry-run`
@@ -288,18 +294,25 @@ the parity trajectory (or why none is owed):
   draining a drag state — not a frame: the browser's frame exists
   (`run_wasm/event_redraw_requested.rs`) and runs an injected sample
   and the view's sync.
-- **Animations** — none run, on either target, since V1-C3 (#244).
-  Animated edits return with V1-D1 (#250) and presentations with
-  V1-D2 (#251), each as a transaction on the document's writer.
+- **Animations** — not gated: an animated edit (V1-D1, #250) runs on
+  both targets, as a transaction on the document's writer that the
+  frame's tick (`app/animation.rs`: `tick`, `keeps_ticking`) writes on
+  the app clock and commits as one history entry — native's from the
+  heartbeat's frame, the browser's from its redraw
+  (`run_wasm/event_redraw_requested.rs`), which asks for the next
+  frame while `keeps_ticking` says one is owed, and from its clock
+  step (`run_wasm/step.rs`). No parity is owed. Presentations, the
+  other kind of animation, return with V1-D2 (#251).
 - **Virtual-clock stepping: the native frame it steps**
   (`src/application/app/heartbeat.rs`; IPC-09/#69) — what a step
   runs at each heartbeat on native is native's whole frame: the
-  rubber band and the view's sync, the recorder's frame, the freeze
-  watchdog's tick. **The step itself is not gated, since IPC-15
+  animation tick, the rubber band and the view's sync, the recorder's
+  frame, the freeze watchdog's tick. **The step itself is not gated, since IPC-15
   (#75)**: the schedule (`app/step.rs`: `run_step`, the `Steps`
   trait, `Beat`) is one body both targets run, the browser
   implements it over its own frame (`run_wasm/step.rs`: one injected
-  sample, then the view's sync, at each virtual instant), and
+  sample, the animation tick, then the view's sync, at each virtual
+  instant), and
   `clock.set_mode` / `clock.step` / `clock.wait` are served over the
   browser transport. The clock was never gated:
   `AppClock` (`src/application/clock.rs`) compiles for both targets,

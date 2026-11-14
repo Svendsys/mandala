@@ -51,6 +51,8 @@ pub mod core;
 /// The document: a map as a `Tree<DocElement>` — typed values,
 /// identity, shape rules and per-field style resolution.
 pub mod document;
+/// Edit handlers: layouts that read a document and return walks (V1-D1).
+pub mod edit_handlers;
 /// The mutation engine, generic over the element type and the
 /// mutation payload: `Tree` / `MutatorTree`, `Mutator` and
 /// `Instruction`, the walker, `Predicate`, and the builder DSL.

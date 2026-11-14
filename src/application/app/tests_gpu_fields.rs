@@ -124,3 +124,93 @@ fn test_the_field_family_runs_through_both_funnels_and_exit_mode_cancels_a_previ
     );
     assert_eq!(entries(init), before + 1);
 }
+
+/// Start the bundled animated `grow-font-2pt` at the selection through
+/// `act.console`, and tick it part way: the map is mid-animation.
+fn grow_part_way(init: &mut InitState) {
+    let reply = console(init, "edit apply grow-font-2pt");
+    assert_eq!(reply["ok"], true, "{reply}");
+    let now = init.clock.now_ms();
+    let doc = init.document.as_mut().expect("a document");
+    doc.tick_animation(now + 100.0);
+    assert!(doc.is_animating(), "precondition: the edit is part way");
+}
+
+/// **Both input funnels settle an animated edit before what they run
+/// reads the map** (review of #331; D28). With `grow-font-2pt` part way
+/// over node 1's first section, `Copy` through `act.action` copies the
+/// section as the edit leaves it — what a copy of the committed map
+/// holds — not a frame of it. A console verb that reads settles it too
+/// (`font size=` refused, after the settle), while the camera and
+/// selection Actions and the verbs that only read or drive time
+/// (`ZoomIn`, `SelectAll`, `help`) leave it running.
+///
+/// Controls: with no settle at `dispatch_compatible`, the copy held the
+/// part-way sizes; with none at `execute_console_line`, the console
+/// line left the edit running; with the camera Action not in the skip
+/// list, `ZoomIn` cut the animation short.
+#[test]
+fn test_both_funnels_settle_an_animated_edit_before_they_read() {
+    let Some(mut app) = headless_app(&fixture()) else {
+        return;
+    };
+    let init = &mut app.init;
+    init.input_context().drain_frame(Beat::Loop);
+    {
+        let doc = init.document.as_mut().expect("a document");
+        let d = doc.doc();
+        let n1 = d.node_by_ident(NodeIdent(1)).expect("node 1");
+        let section = d
+            .children(n1)
+            .find(|&c| {
+                d.get(c)
+                    .is_some_and(|e| e.kind() == baumhard::document::element::DocKind::Section)
+            })
+            .expect("node 1's first section");
+        doc.selection.select_only(section);
+    }
+
+    grow_part_way(init);
+    for (action, why) in [
+        (json!("ZoomIn"), "the camera"),
+        (json!("SelectAll"), "the selection"),
+    ] {
+        act(init, action);
+        assert!(document(init).is_animating(), "{why} leaves the edit running");
+    }
+    {
+        // SelectAll moved the selection; put the section back.
+        let doc = init.document.as_mut().expect("a document");
+        let d = doc.doc();
+        let n1 = d.node_by_ident(NodeIdent(1)).expect("node 1");
+        let section = d
+            .children(n1)
+            .find(|&c| {
+                d.get(c)
+                    .is_some_and(|e| e.kind() == baumhard::document::element::DocKind::Section)
+            })
+            .expect("node 1's first section");
+        doc.selection.select_only(section);
+    }
+    assert_eq!(act(init, json!("Copy")).0, "handled");
+    let settled_by_copy = !document(init).is_animating();
+    // What a copy of the committed map holds: the edit at its end.
+    init.document.as_mut().expect("a document").finish_animation();
+    let doc = document(init);
+    let committed = crate::application::clipboard::take(doc.doc(), &doc.selection, false)
+        .expect("the section copies")
+        .expect("something to copy")
+        .0;
+    assert_eq!(
+        doc.clipboard.as_ref(),
+        Some(&committed),
+        "the copy holds the section as the edit leaves it"
+    );
+    assert!(settled_by_copy, "the Copy settled the edit");
+
+    grow_part_way(init);
+    assert_eq!(console(init, "help")["ok"], true);
+    assert!(document(init).is_animating(), "`help` leaves the edit running");
+    console(init, "font size=nonsense");
+    assert!(!document(init).is_animating(), "a verb that reads settled it");
+}

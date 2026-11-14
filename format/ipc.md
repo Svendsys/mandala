@@ -1216,14 +1216,14 @@ body that runs macro steps.
 | param | type | required | meaning |
 |---|---|---|---|
 | `macro_id` | string | one of | Run the registered macro with this id (named `macro_id`, not `id`, per the [reserved-word rule](#request)). It runs under the tier its loader pinned (see [Trust model](#trust-model)). An id registered in no tier is `not_found`. |
-| `steps` | array | one of | Run these steps, an anonymous macro in the on-disk step form of `format/macros.md`: `{"kind": "Action", "action": …}`, `{"kind": "CustomMutation", "id": …, "target"?: …}`, `{"kind": "ConsoleLine", "line": …}`. They run at the `User` tier: the IPC client authored them, and IPC executes as `User`. A list that does not parse is `invalid_params` naming `steps`. |
+| `steps` | array | one of | Run these steps, an anonymous macro in the on-disk step form of `format/macros.md`: `{"kind": "Action", "action": …}`, `{"kind": "Edit", "id": …, "target"?: …}`, `{"kind": "ConsoleLine", "line": …}`. They run at the `User` tier: the IPC client authored them, and IPC executes as `User`. A list that does not parse is `invalid_params` naming `steps`. |
 
 Exactly one of `macro_id` / `steps`: neither, or both, is
 `invalid_params`.
 
 Result: `ran` (boolean), the dispatcher's any-step-executed flag. A
-step that did not apply does not count: an unhandled Action, a
-skipped custom mutation, or a `ConsoleLine` that failed (also
+step that did not apply does not count: an unhandled Action, an
+`Edit` step that was skipped or refused, or a `ConsoleLine` that failed (also
 reported as a `console_error` warning). A privilege-gate abort is not
 an error. The steps before it ran, so
 the reply is `ok:true` and carries a `macro_gate_rejected` warning
@@ -2181,9 +2181,9 @@ disposition: [`work_plans/LLM_IPC.md`](../work_plans/LLM_IPC.md) §D9.
 
 **One clock for what behaves, the wall clock for what measures.**
 Everything the app *does* by time reads the app clock: double-click
-and long-press timing, a recording's frame times, `ping` (and, when
-V1-D1 (#250) and V1-D2 (#251) bring them back, the animation tick of an
-edit or a presentation). Everything that
+and long-press timing, a recording's frame times, `ping`, and the
+animation tick of an animated edit (and, with V1-D2 (#251), of a
+presentation): a step lands an animation on exact instants. Everything that
 *measures* — the FPS overlay, the `FreezeWatchdog`, an encode's
 cost, a `clock.wait` deadline —
 reads the wall clock in both modes, because a stepped or frozen clock
@@ -2264,8 +2264,9 @@ step names.
   typed by an injected key the step itself landed — is `busy`.
 
 - **`clock.wait`** — params: `until` (`"settled"`; the
-  `"animations_complete"` condition returns with the animations of
-  V1-D1 (#250)), `timeout_ms` (integer, default `10_000`,
+  `"animations_complete"` condition returns with V1-D2's (#251)
+  presentations; a real-time animated edit keeps `settled` from holding
+  until it ends), `timeout_ms` (integer, default `10_000`,
   `1..=60_000`; a value outside it is `invalid_params`, as IPC-07 and
   IPC-08 made their bounds; always **wall-clock** milliseconds — the
   deadline is a client-liveness guard, so a frozen virtual clock must
@@ -2301,7 +2302,8 @@ Wait conditions, defined against the frame (above) and CONCEPTS §5
 "Event loop and `drain_frame`":
 
 - **`settled`** — at an evaluation point, all of: (a)
-  `needs_continuation()` is false; (b) **in real time**, no IPC-injected
+  `needs_continuation()` is false — in real time that includes an
+  animated edit still running; (b) **in real time**, no IPC-injected
   input remains queued; (c) **no redraw is owed**: every redraw the
   app has asked for — every pixels-affecting command's, and every
   input handler's — has been drawn by a render that ran after it; and

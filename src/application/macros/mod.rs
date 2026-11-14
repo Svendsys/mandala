@@ -4,8 +4,8 @@
 //!
 //! A macro is a named `Vec<MacroStep>` invoked atomically through
 //! `crate::application::app::dispatch::dispatch_macro`. Three step
-//! kinds — built-in `Action`, an edit by id (`CustomMutation`, whose
-//! dispatch returns with V1-D1 #250), console-line — cover every
+//! kinds — built-in `Action`, an edit by id (`Edit`, V1-D1 #250),
+//! console-line — cover every
 //! user-driven entry point at the application layer. Plugins, future macro-recording UI, and the
 //! `macro_bindings` resolution tier all reach the same dispatcher.
 //!
@@ -33,8 +33,12 @@ use crate::application::source_tier::SourceTier;
 /// from every other tier — today the `App` bundle — with a `warn!`,
 /// and keeps doing so for whichever tier is added next.
 ///
-/// Document-mutating step kinds (`Action`, `CustomMutation`) gate
-/// via [`SourceTier::allows_action`].
+/// An [`MacroStep::Action`] step gates via
+/// [`SourceTier::allows_action`]. An [`MacroStep::Edit`] step is **not
+/// gated**: every tier may run one. An edit changes only the open map,
+/// as one undoable history entry, through the same writer as a key or
+/// the console, and does no I/O — there is no file, process or socket
+/// it can reach — so there is nothing for a tier to withhold.
 ///
 /// These live here rather than in `source_tier` because the policy
 /// is about what a *macro step* may do, not about what a tier is.
@@ -99,11 +103,10 @@ pub enum MacroStep {
     /// The dispatcher routes through `dispatch_action` exactly as if
     /// the user had pressed the action's bound key.
     Action { action: Action },
-    /// Fire an edit by id, against the resolved target. Forwards to
-    /// the same path a keybind-triggered edit takes
-    /// (`dispatch::families::edits`), which is unhandled until V1-D1
-    /// (#250) rebuilds edits on the one writer.
-    CustomMutation {
+    /// Run an edit by id (`format/edits.md`) at the resolved target,
+    /// through the funnel a keybind-triggered edit takes
+    /// (`dispatch::families::edits::run_edit`).
+    Edit {
         id: String,
         #[serde(default)]
         target: MacroTarget,
@@ -114,7 +117,7 @@ pub enum MacroStep {
     ConsoleLine { line: String },
 }
 
-/// How a `MacroStep::CustomMutation` resolves its target node id at
+/// How a `MacroStep::Edit` resolves its target node at
 /// dispatch time. `CurrentSelection` targets the selection; `NodeId`
 /// lets a macro target a specific node
 /// regardless of selection state (useful for "open the inbox" style
@@ -132,9 +135,9 @@ pub enum MacroTarget {
     /// to skip).
     #[default]
     CurrentSelection,
-    /// Always target the named node. Skips if the node id doesn't
-    /// resolve in the current document.
-    NodeId(String),
+    /// Always target the node with this id (the map's integer node
+    /// id). Skips if no node of the current document has it.
+    NodeId(u32),
 }
 
 /// A user-defined macro: id + ordered list of steps. Loaded from

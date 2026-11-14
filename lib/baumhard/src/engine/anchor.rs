@@ -83,27 +83,7 @@ where
     M: Mutation<E>,
     F: Fn(&Tree<E>, NodeId) -> E::Inherited,
 {
-    // All or nothing: every node the anchors are stated in terms of is
-    // checked — in the arena, and under this tree's root — before
-    // anything resolves, let alone walks. A node named twice is checked
-    // once; each check is O(1) (`Tree::contains`).
-    let mut given: FxHashSet<NodeId> = FxHashSet::default();
-    for &id in anchors.given() {
-        if given.insert(id) && !tree.contains(id) {
-            return Err(TreeError::StaleNode(id));
-        }
-    }
-
-    // The root's kind decides which nodes are anchors at all (no kind
-    // match, no walk); nesting is then decided among those alone, so an
-    // anchor of the root's kind is never dropped for an ancestor the
-    // root would not apply at.
-    let root_kind = mutator_tree.arena[mutator_tree.root()].get().key().kind;
-    let mut resolved = resolve(&tree.arena, anchors, &given, root_kind);
-
-    if resolved.len() > 1 {
-        resolved = in_tree_order(tree, &resolved, mutator_tree.reaches_below_root());
-    }
+    let resolved = walk_starts(mutator_tree, tree, anchors)?;
 
     // Every seed is taken from the tree as it is now, before any
     // anchor's walk can change an ancestor another anchor inherits
@@ -123,6 +103,42 @@ where
     });
     tree.cache.invalidate();
     result
+}
+
+/// Steps 1 to 3 of [`MutatorTree::apply_at`]: the anchors a walk of
+/// `mutator_tree` at `anchors` starts from, in tree order, or the stale
+/// node that refuses the walk. See
+/// [`MutatorTree::walk_starts`](crate::engine::tree::MutatorTree::walk_starts).
+pub(in crate::engine) fn walk_starts<E, M>(
+    mutator_tree: &MutatorTree<E, M>,
+    tree: &Tree<E>,
+    anchors: &Anchors,
+) -> Result<Vec<NodeId>, TreeError>
+where
+    E: TreeElement,
+    M: Mutation<E>,
+{
+    // All or nothing: every node the anchors are stated in terms of is
+    // checked — in the arena, and under this tree's root — before
+    // anything resolves, let alone walks. A node named twice is checked
+    // once; each check is O(1) (`Tree::contains`).
+    let mut given: FxHashSet<NodeId> = FxHashSet::default();
+    for &id in anchors.given() {
+        if given.insert(id) && !tree.contains(id) {
+            return Err(TreeError::StaleNode(id));
+        }
+    }
+
+    // The root's kind decides which nodes are anchors at all (no kind
+    // match, no walk); nesting is then decided among those alone, so an
+    // anchor of the root's kind is never dropped for an ancestor the
+    // root would not apply at.
+    let root_kind = mutator_tree.arena[mutator_tree.root()].get().key().kind;
+    let resolved = resolve(&tree.arena, anchors, &given, root_kind);
+    if resolved.len() > 1 {
+        return Ok(in_tree_order(tree, &resolved, mutator_tree.reaches_below_root()));
+    }
+    Ok(resolved)
 }
 
 /// The distinct nodes `anchors` names that have the kind `root_kind`,
@@ -197,7 +213,11 @@ fn resolve<E: TreeElement>(
 /// Cost, with `u` the size of that union: O(u log u) for the order,
 /// one hash map and two `Vec`s of `u` entries, plus the row scans
 /// ties need. Nothing is proportional to the depth per anchor.
-fn in_tree_order<E: TreeElement>(tree: &Tree<E>, anchors: &[NodeId], drop_nested: bool) -> Vec<NodeId> {
+pub(crate) fn in_tree_order<E: TreeElement>(
+    tree: &Tree<E>,
+    anchors: &[NodeId],
+    drop_nested: bool,
+) -> Vec<NodeId> {
     // A resolved anchor is a given node, its parent or its sibling, so
     // it is in the tree; the climb only adds its path to the union.
     let mut members = Membership::default();

@@ -16,16 +16,16 @@ use super::context::InputContext;
 #[derive(Debug, Clone)]
 pub struct ResolvedKeybinds {
     binds: Vec<(Action, KeyBind)>,
-    /// Parsed `(KeyBind, mutation_id)` pairs from
+    /// Parsed `(KeyBind, edit_id)` pairs from
     /// `KeybindConfig::edit_bindings`. Checked after the
     /// built-in `action_for` lookup in the event loop — a key combo
-    /// bound to both a built-in action and a custom mutation
-    /// resolves to the built-in action (action_for runs first).
-    custom_binds: Vec<(KeyBind, String)>,
+    /// bound to both a built-in action and an edit resolves to the
+    /// built-in action (action_for runs first).
+    edit_binds: Vec<(KeyBind, String)>,
     /// Parsed `(KeyBind, macro_id)` pairs from
-    /// `KeybindConfig::macro_bindings`. Resolved BEFORE custom
-    /// mutations and AFTER built-in actions, so a key bound to both
-    /// a macro and a custom mutation runs the macro.
+    /// `KeybindConfig::macro_bindings`. Resolved BEFORE edits and
+    /// AFTER built-in actions, so a key bound to both a macro and an
+    /// edit runs the macro.
     macro_binds: Vec<(KeyBind, String)>,
     /// The console's default face, resolved from `console_font` by
     /// `config::resolve_console_font`. `None` means cosmic-text's
@@ -46,14 +46,14 @@ impl ResolvedKeybinds {
     /// which owns the validation + parsing of binding strings.
     pub(super) fn new(
         binds: Vec<(Action, KeyBind)>,
-        custom_binds: Vec<(KeyBind, String)>,
+        edit_binds: Vec<(KeyBind, String)>,
         macro_binds: Vec<(KeyBind, String)>,
         console_font: Option<AppFont>,
         console_font_size: f32,
     ) -> Self {
         Self {
             binds,
-            custom_binds,
+            edit_binds,
             macro_binds,
             console_font,
             console_font_size,
@@ -165,10 +165,9 @@ impl ResolvedKeybinds {
 
     /// Return the macro id bound to the given key event, if any.
     /// Resolved AFTER built-in `action_for` and BEFORE
-    /// `edit_for` — macros override custom mutations on
-    /// the same combo, so a user replacing a single-mutation
-    /// shortcut with a multi-step macro just adds the macro entry
-    /// without un-binding the mutation.
+    /// `edit_for` — macros override edits on the same combo, so a
+    /// user replacing a single-edit shortcut with a multi-step macro
+    /// just adds the macro entry without un-binding the edit.
     pub fn macro_for(&self, key: &str, ctrl: bool, shift: bool, alt: bool) -> Option<&str> {
         for (bind, id) in &self.macro_binds {
             if bind.matches(key, ctrl, shift, alt) {
@@ -178,11 +177,11 @@ impl ResolvedKeybinds {
         None
     }
 
-    /// Return the custom-mutation id bound to the given key event,
+    /// Return the edit id bound to the given key event,
     /// if any. Called after `action_for` returns `None` — built-in
     /// actions win on a collision.
     pub fn edit_for(&self, key: &str, ctrl: bool, shift: bool, alt: bool) -> Option<&str> {
-        for (bind, id) in &self.custom_binds {
+        for (bind, id) in &self.edit_binds {
             if bind.matches(key, ctrl, shift, alt) {
                 return Some(id.as_str());
             }
@@ -190,14 +189,14 @@ impl ResolvedKeybinds {
         None
     }
 
-    /// Set or replace a custom-mutation binding at runtime. Returns
-    /// the previous mutation id bound to the same combo, if any.
+    /// Set or replace an edit binding at runtime. Returns
+    /// the previous edit id bound to the same combo, if any.
     /// The `combo_string` is re-parsed through `KeyBind::parse` so
     /// invalid inputs are rejected uniformly with the resolve-time
     /// path.
     ///
     /// Test-gated with its sibling
-    /// [`Self::remove_edit_binding`]: custom-mutation
+    /// [`Self::remove_edit_binding`]: edit
     /// bindings are established at resolve time from the config
     /// files and nothing edits them at runtime yet, so the pair's
     /// only callers are the tests that pin replace-and-return
@@ -206,11 +205,11 @@ impl ResolvedKeybinds {
     pub fn set_edit_binding(
         &mut self,
         combo_string: &str,
-        mutation_id: String,
+        edit_id: String,
     ) -> Result<Option<String>, String> {
         let bind = KeyBind::parse(combo_string)?;
         let mut prev = None;
-        self.custom_binds.retain(|(b, id)| {
+        self.edit_binds.retain(|(b, id)| {
             if b == &bind {
                 prev = Some(id.clone());
                 false
@@ -218,18 +217,18 @@ impl ResolvedKeybinds {
                 true
             }
         });
-        self.custom_binds.push((bind, mutation_id));
+        self.edit_binds.push((bind, edit_id));
         Ok(prev)
     }
 
-    /// Remove the custom-mutation binding for the given combo.
-    /// Returns the removed mutation id, if one was bound. Test-gated
+    /// Remove the edit binding for the given combo.
+    /// Returns the removed edit id, if one was bound. Test-gated
     /// — see [`Self::set_edit_binding`].
     #[cfg(test)]
     pub fn remove_edit_binding(&mut self, combo_string: &str) -> Result<Option<String>, String> {
         let bind = KeyBind::parse(combo_string)?;
         let mut prev = None;
-        self.custom_binds.retain(|(b, id)| {
+        self.edit_binds.retain(|(b, id)| {
             if b == &bind {
                 prev = Some(id.clone());
                 false

@@ -24,7 +24,7 @@
 //!
 //! **An animated transaction** (§10.1) stages the edit once, to learn its
 //! journal, then writes it part-way at each frame
-//! ([`Document::interpolate`](crate::document::ids::Document::interpolate)).
+//! ([`Document::stage_progress`](crate::document::ids::Document::stage_progress)).
 //!
 //! **One open at a time, and who yields** (D28). While an interactive
 //! transaction is open, an `apply` or a `begin` is refused with
@@ -210,7 +210,7 @@ impl Document {
     ///
     /// Cost: one interpolation per entry of the stage's journal; when the
     /// structure changes side, the derived state moves with it.
-    pub fn interpolate(&mut self, tx: &Transaction, t: f32, snap: Snap) -> Result<(), ApplyError> {
+    pub fn stage_progress(&mut self, tx: &Transaction, t: f32, snap: Snap) -> Result<(), ApplyError> {
         self.mutate(|doc| {
             let source = doc.open_for(tx)?.source;
             if tx.kind != TransactionKind::Animated {

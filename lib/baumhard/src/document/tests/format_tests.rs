@@ -110,7 +110,15 @@ pub fn do_format_full_fixture_reads_as_written() {
 
     // The definitions: ids, names, and the verbs' order.
     let definitions = doc.definitions();
-    assert_eq!(definitions.edits.len() + definitions.presentations.len(), 2);
+    assert_eq!(
+        definitions
+            .edits
+            .iter()
+            .map(|edit| edit.id.as_str())
+            .collect::<Vec<_>>(),
+        ["grow", "bend", "flower"]
+    );
+    assert_eq!(definitions.presentations.len(), 1);
     assert_eq!(
         definitions
             .verbs

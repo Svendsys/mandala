@@ -473,8 +473,8 @@ mod tests {
     /// paths (both gate on `is_open()`), but reachable from a macro
     /// step — which is precisely what this PR wired up. Reporting
     /// `Handled` here would set `dispatch_macro`'s `any_ran`, and
-    /// the keyboard handler skips the custom-mutation tier when a
-    /// macro "ran", so a `CustomMutation` bound to the same key
+    /// the keyboard handler skips the edit tier when a
+    /// macro "ran", so an edit bound to the same key
     /// would silently stop firing.
     #[test]
     fn test_picker_decline_reason_declines_every_op_when_the_picker_is_closed() {

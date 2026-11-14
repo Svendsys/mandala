@@ -337,6 +337,9 @@ pub trait Geometry {
     fn curve(&self, path: NodeId) -> Option<&[Curve]>;
     /// Where a drawn label centers.
     fn label_pos(&self, label: NodeId) -> Option<Vec2>;
+    /// The visible nodes whose drawn rectangles `rect` meets, insides
+    /// overlapping (a shared edge does not count), in ascending node id.
+    fn nodes_meeting(&self, rect: Rect) -> Vec<NodeId>;
 }
 
 impl Geometry for Projector {
@@ -351,5 +354,8 @@ impl Geometry for Projector {
     }
     fn label_pos(&self, label: NodeId) -> Option<Vec2> {
         Projector::label_pos(self, label)
+    }
+    fn nodes_meeting(&self, rect: Rect) -> Vec<NodeId> {
+        Projector::nodes_meeting(self, rect)
     }
 }

@@ -82,6 +82,9 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     pub keybinds: &'a ResolvedKeybinds,
     /// Macro registry: the App and User tiers, loaded at startup.
     pub macros: &'a mut MacroRegistry,
+    /// Edit registry: the App and User tiers and the handlers, loaded
+    /// at startup (`application::edits`).
+    pub edits: &'a crate::application::edits::EditRegistry,
     /// Where a server-chosen screenshot lands, and the dir a
     /// caller-chosen path may overwrite into.
     pub artifacts: &'a mut crate::application::capture::artifacts::Artifacts,
