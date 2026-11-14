@@ -358,8 +358,10 @@ pub(crate) struct RingWork {
     /// The samples its path's table was built with, counted in its setup
     /// (ruling B16.3a).
     tables: usize,
-    /// The ring's glyphs a copy, and whether any of them is a letter,
-    /// which phase 2 lays in reading order.
+    /// The ring's glyphs a copy — along an open path, its widest
+    /// cluster's (#313) — what bounds the one cluster that may find its
+    /// budget spent ([`ring_overshoot`]); and whether any of its glyphs is
+    /// a letter, which phase 2 lays in reading order.
     copy: Cell<usize>,
     letters: bool,
     /// The most glyphs it lays (ruling B17.2a), the glyphs its budget is
@@ -508,9 +510,9 @@ impl RingWork {
     /// `path` before its budget is read again (#313): what it has taken
     /// and that pass are less than its budget less what is held back for
     /// phase 2. Read before each pass of an open path's placement that
-    /// does not read the budget as it goes — a reshape, a measure of its
-    /// text as read — so that no such pass takes it past what its budget
-    /// leaves.
+    /// does not read the budget as it goes — a `Fit`'s measure of its text
+    /// as read, and each of its rounds' — so that no such pass takes it
+    /// past what its budget leaves.
     pub(crate) fn affords_more(&self, path: &ArcPath, steps: usize) -> bool {
         let room = self.budget.get().saturating_sub(self.held());
         self.spent(path).saturating_add(steps) < room
@@ -644,7 +646,8 @@ impl RingWork {
     }
 
     /// Its budget, the glyphs it was scaled by ([`ring_glyphs`], at most
-    /// its cap), and its glyphs a copy.
+    /// its cap), and its glyphs a copy (along an open path, its widest
+    /// cluster's).
     pub(crate) fn budget(&self) -> (usize, usize, usize) {
         (self.budget.get(), self.glyphs.get(), self.copy.get())
     }
