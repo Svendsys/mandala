@@ -35,6 +35,9 @@ mod reshape_tests;
 #[cfg(test)]
 mod ring_budget_tests;
 pub mod shape_tests;
+/// A frame's side ornament counts its lays' path reads (#313).
+#[cfg(test)]
+mod side_reads_tests;
 /// Fixtures: resolved styles, real and synthetic runs.
 pub(crate) mod support;
 /// A frame's work counted by kind of outline (#309).

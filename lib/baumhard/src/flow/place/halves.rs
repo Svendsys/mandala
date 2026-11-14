@@ -1829,6 +1829,17 @@ thread_local! {
     /// counted against their frames on this thread ([`Work::read`]).
     #[cfg(test)]
     pub(crate) static SIDE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#313): the glyph steps a side ornament's lays have
+    /// counted against their frames on this thread — a step a cluster, or
+    /// a model lay's share, and their path reads ([`Work::read`]).
+    #[cfg(test)]
+    pub(crate) static SIDE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#313): the most glyph steps a lay of a side
+    /// ornament's copies left its frame past what its budget held for the
+    /// touch check of them, on this thread ([`SideOrnament::laid`]): none,
+    /// since each lay is held back for before it is laid.
+    #[cfg(test)]
+    pub(crate) static SIDE_CROSSED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test counter (#313): the most path reads one cluster of a side
     /// ornament's lay has taken on this thread, what
     /// [`SIDE_CLUSTER_READS`] bounds.
@@ -2929,7 +2940,15 @@ impl Work {
         self.reads.set(now);
         #[cfg(test)]
         SIDE_READS.with(|count| count.set(count.get().saturating_add(reads)));
-        self.take(steps_of(now) - steps_of(was));
+        self.side(steps_of(now) - steps_of(was));
+    }
+
+    /// Count `steps` glyph steps of a side ornament's lays: in a test, its
+    /// frames' side steps too ([`SIDE_STEPS`], #313).
+    fn side(&self, steps: usize) {
+        #[cfg(test)]
+        SIDE_STEPS.with(|count| count.set(count.get().saturating_add(steps)));
+        self.take(steps);
     }
 
     /// Note a touch check of `boxes` boxes that looked at the pairs
@@ -3846,7 +3865,7 @@ impl<'a> SideOrnament<'a> {
     /// Count `copies` copies laid against the frame's glyph steps: a step
     /// a cluster, past its reads ([`read_since`](Self::read_since)).
     fn count(&self, copies: usize) {
-        self.work.take(copies.saturating_mul(self.clusters.len().max(1)));
+        self.work.side(copies.saturating_mul(self.clusters.len().max(1)));
     }
 
     /// Count `copies` copies of a model lay against the frame's glyph
@@ -3854,7 +3873,30 @@ impl<'a> SideOrnament<'a> {
     /// step, past its reads ([`read_since`](Self::read_since)).
     fn modeled(&self, copies: usize) {
         let clusters = copies.saturating_mul(self.clusters.len().max(1));
-        self.work.take(clusters.div_ceil(MODEL_CLUSTERS_A_STEP).max(1));
+        self.work.side(clusters.div_ceil(MODEL_CLUSTERS_A_STEP).max(1));
+    }
+
+    /// Note in a test that a lay of the arc's copies, bringing it to
+    /// `copies`, is counted (#313): how far it left the frame past what its
+    /// budget held for their touch check ([`SIDE_CROSSED`]) — what
+    /// [`affords`](Self::affords) holds back the lay for, so none.
+    #[cfg_attr(not(test), allow(unused_variables))]
+    fn laid(&self, copies: usize) {
+        #[cfg(test)]
+        {
+            let boxes = self
+                .base
+                .get()
+                .saturating_add(copies.saturating_mul(self.per_copy));
+            let work = self.work;
+            let past = work
+                .spent
+                .get()
+                .saturating_add(work.reserve.get())
+                .saturating_add(check_steps(boxes, self.classes.get()))
+                .saturating_sub(work.budget.get());
+            SIDE_CROSSED.with(|most| most.set(most.get().max(past)));
+        }
     }
 
     /// Count the path reads its walk's path has taken since it had `from`
@@ -3867,11 +3909,18 @@ impl<'a> SideOrnament<'a> {
 
     /// Whether the frame can afford an arc of this side, its first end's
     /// anchor read on the band curve ([`ARC_READS`]), and a lay of one
-    /// copy along it (#313): what is read before an arc is taken, so that
-    /// taking it and laying a copy never takes the frame past its budget.
+    /// copy along it and its touch check (#313): what is read before an
+    /// arc is taken, so that taking it and laying a copy never takes the
+    /// frame past what its budget leaves for the check of the copy — as
+    /// [`affords`](Self::affords) holds a lay back, whether the copy is
+    /// then checked or only measured.
     fn affords_arc(&self) -> bool {
-        self.work
-            .affords(steps_of(ARC_READS).saturating_add(self.lay_steps(1)))
+        let boxes = self.base.get().saturating_add(self.per_copy);
+        self.work.affords(
+            steps_of(ARC_READS)
+                .saturating_add(check_steps(boxes, self.classes.get()))
+                .saturating_add(self.lay_steps(1)),
+        )
     }
 
     /// The arc of this side between two text inks, `None` without an
@@ -3989,6 +4038,7 @@ impl<'s> SideArc<'s> {
         }
         self.side.count(n);
         self.side.read_since(reads);
+        self.side.laid(n);
         let end = self.end_of(&lay);
         (lay, end)
     }
@@ -4072,6 +4122,7 @@ impl<'s> SideArc<'s> {
             }
             self.side.count(1);
             self.side.read_since(reads);
+            self.side.laid(rooms.len() + 1);
             let room = self.room_of(&lay, gap);
             if room.is_nan() || room < 0.0 {
                 break;
@@ -4278,6 +4329,7 @@ impl<'s> SideArc<'s> {
             }
             self.side.modeled(n);
             self.side.read_since(reads);
+            self.side.laid(n);
             lay
         };
         if stop() {
