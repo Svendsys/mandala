@@ -56,8 +56,8 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use crate::application::guarded_file::{self, PublishRefusal};
 use crate::application::renderer::CapturedPixels;
+use baumhard::util::guarded_file::{self, PublishRefusal};
 
 use super::artifacts::Artifacts;
 use super::geometry::CameraInfo;
@@ -872,7 +872,7 @@ pub(crate) fn make_dir(
 mod tests {
     use super::*;
     use crate::application::capture::artifacts::BUDGET_BYTES;
-    use crate::application::guarded_file::tests::{names_in, scratch_dir};
+    use baumhard::util::test_temp::{names_in, scratch_dir};
 
     fn config(fps: u32, max_frames: u32) -> RecordConfig {
         RecordConfig {

@@ -118,10 +118,11 @@ pub fn do_inclusive_band_on_every_authored_shape() {
 }
 
 /// Inverted band (`min > max`): `contains` still returns a
-/// well-defined boolean (always `false`) rather than panicking.
-/// The verifier catches this at load-time — see the `maptool
-/// verify` check in commit 5 — but the render-loop path must not
-/// panic per `CODE_CONVENTIONS.md` §9.
+/// well-defined boolean (always `false`) rather than panicking. A map
+/// cannot hold one — the loader refuses it at its JSON path
+/// (`bounds::check_zoom_window`) — but a window built any other way
+/// reaches the render loop, which must not panic per
+/// `CODE_CONVENTIONS.md` §9.
 #[test]
 pub fn test_inverted_band_never_contains() {
     do_inverted_band_never_contains();

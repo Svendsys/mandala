@@ -117,9 +117,9 @@ turns the same loop into a short captioned GIF for a human to review;
 - [`lib/baumhard/`](lib/baumhard/) — the document and its one writer,
   the `.mandala.json` loader and saver, the projector and its glyph
   layers. Most interesting logic lives here.
-- [`crates/maptool/`](crates/maptool/) — CLI for `.mandala.json` files;
-  its verbs return as clients of the document in V1-E1 (#253), and until
-  then it says so and exits `2`.
+- [`crates/maptool/`](crates/maptool/) — CLI for `.mandala.json` files,
+  a client of the document: `show`, `grep`, `export`, `verify` and
+  `apply` (`maptool --help`).
 - [`crates/mandalactl/`](crates/mandalactl/) — CLI client for a running
   app's `--ipc` socket (see "Driving the app from a terminal").
 - [`lib/mandala_derive/`](lib/mandala_derive/) — proc-macro support.
