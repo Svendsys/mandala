@@ -22,13 +22,13 @@
 //! of the same [`Document`] the app edits.
 //!
 //! Every verb reads its map with
-//! [`file::read`](baumhard::document::format::file::read), the app's own
+//! [`file::read`], the app's own
 //! read: a map the app would refuse, `maptool` refuses with the same
 //! words. `show`, `grep`, `export` and `verify` only read the document.
 //! `apply` changes it the one way a document changes — an
 //! [`EditRequest`](baumhard::document::writer::EditRequest) handed to
 //! [`Document::apply`] — and writes it with [`Document::save_json`] and
-//! [`file::write`](baumhard::document::format::file::write).
+//! [`file::write`].
 //!
 //! Exit status: `0` when the verb did its work, `1` when it could not (a
 //! map that does not load, no match, a command that failed, a write that
