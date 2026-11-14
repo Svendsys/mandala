@@ -540,10 +540,19 @@ pub(crate) fn place_pitched_capped(
         work.spent(&track.arc)
     };
     let stopped = Cell::new(false);
+    // In a test, what the last read of its budget that let it go on found
+    // spent and held back for.
+    #[cfg(test)]
+    let allowed: Cell<Option<usize>> = Cell::new(None);
     let affords = |held: usize| {
-        let ok = spent().saturating_add(held) < budget;
+        let now = spent();
+        let ok = now.saturating_add(held) < budget;
         if !ok {
             stopped.set(true);
+        }
+        #[cfg(test)]
+        if ok {
+            allowed.set(Some(now.saturating_add(held)));
         }
         ok
     };
@@ -603,6 +612,11 @@ pub(crate) fn place_pitched_capped(
         super::halves::PAST_BUDGET
             .with(|past| past.set(past.get().saturating_add(spent.saturating_sub(budget))));
         LAST_PITCHED.with(|last| last.set(Some((spent, budget, work.loss()))));
+        LAST_PITCHED_GAPS.with(|last| last.set((track.gaps.get(), work.taken_apart())));
+        if let Some(allowed) = allowed.get() {
+            let edge = spent as i64 - allowed as i64;
+            PITCH_EDGE.with(|most| most.set(Some(most.get().map_or(edge, |was| was.max(edge)))));
+        }
     }
     placed
 }
@@ -612,6 +626,18 @@ thread_local! {
     /// Test counter (#313): what the last [`place_pitched_capped`] on this
     /// thread spent, its budget, and how its budget left it.
     pub(crate) static LAST_PITCHED: std::cell::Cell<Option<(usize, usize, Option<RingLoss>)>> = const { std::cell::Cell::new(None) };
+    /// Test counter (#313, review 5902086644): the gaps between boxes the
+    /// last [`place_pitched_capped`] on this thread measured
+    /// ([`Track::gap`]), and the glyph steps it took apart from its reads
+    /// and its glyphs (`RingWork::taken_apart`): its gaps' ([`gap_steps`]),
+    /// all it takes apart.
+    pub(crate) static LAST_PITCHED_GAPS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// Test counter (#313, ruling B18.1 §4): the most glyph steps a
+    /// pitched placement has taken on this thread, its glyphs counted once
+    /// it is laid, past what the last read of its budget that let it go on
+    /// found spent and held back for: never above none, the hold being
+    /// what it takes after. `None` before any.
+    pub(crate) static PITCH_EDGE: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
 }
 
 /// The glyphs of `marks[k]`'s cluster for each `(k, center)` of

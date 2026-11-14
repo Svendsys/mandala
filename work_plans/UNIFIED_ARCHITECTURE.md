@@ -839,7 +839,10 @@ line (cosmic-text gives each glyph's advance), then placed:
      (#313): far from the origin a copy's cluster reads its path fifteen
      to twenty times where it reads it once at the origin, and a read of
      the band curve with the pairwise rule's try at it is dearer than a
-     ring's. The budget is read before every lay, build and reshape and
+     ring's. A line's lay (`track`) counts its path's reads past one a
+     cluster, `TRACK_READS_A_STEP` (8) to a step (ruling B18.1 §2): a
+     line's cluster reads its path about once at the origin, which its
+     step a cluster weighs, and eleven to thirteen times far from it. The budget is read before every lay, build and reshape and
      before each copy of a side ornament, which is laid only while the
      frame can afford it — the most it may take, `SIDE_CLUSTER_READS`
      reads a cluster — and the touch check of its arc's copies after, at

@@ -78,17 +78,19 @@ pub const MAX_SPAN_CHARS: u32 = 64;
 /// R45.1, R46.3): the most a frame of the lightest text — one face, no
 /// glyph that no face holds, a short side ornament — may hold and still
 /// be laid, to the whole of its budget and its overshoot past it
-/// (`frame_work_steps`), within [`INPUT_STEPS`]: 152 glyphs, 3,000 glyph
-/// steps each of budget and some 48 more of shaping, inking and lays,
-/// 463,355 steps, 14.97 s at [`ASAN_STEP_NANOS`] a step (150 until #304
-/// counted a reshape at a size as no shaping, some 65 a glyph more).
+/// (`frame_work_steps`), within [`INPUT_STEPS`]: 151 glyphs, 3,000 glyph
+/// steps each of budget and some 74 more of shaping, inking and lays,
+/// 464,172 steps, 14.99 s at [`ASAN_STEP_NANOS`] a step (150 until #304
+/// counted a reshape at a size as no shaping, some 65 a glyph more; 152
+/// until a line's lay counted its path's reads past one a cluster, some
+/// 24 a glyph more in its overshoot, #313 ruling B18.1 §2).
 /// `test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout`
 /// holds it to that: the most, and no more. A heavier text — glyphs in
 /// many faces — or a heavier ornament is cut further ([`framed`]). A longer text's frame is laid from as
 /// much of it as fits: the engine places the whole of a real text,
 /// bounded by its glyphs; a fuzz input is held to what it can lay
 /// inside the timeout.
-pub const MAX_FRAME_GLYPHS: usize = 152;
+pub const MAX_FRAME_GLYPHS: usize = 151;
 
 /// The most glyphs a `Repeat` ring the harnesses lay lays (rulings
 /// B17.2a, B17.2b): the most whose budget, its overshoot past it for a
@@ -647,6 +649,15 @@ pub fn frame_fits() -> [FitMode; 3] {
 /// committed raw finding but the ones that spell a layout — draws `Fit`,
 /// the mode most of them were found in.
 pub fn raw_frame_fits(bytes: &[u8]) -> Vec<FitMode> {
+    raw_draws(bytes).0
+}
+
+/// What flow_raw draws from `bytes`, in the order it draws it, by the one
+/// body that draws it (review 5902086644): its frames' fit modes
+/// ([`raw_frame_fits`]) and the placement along its line in place of its
+/// frame, if any ([`raw_line`]) — so that a draw added to or moved in one
+/// moves the other with it, and an input draws what it drew before.
+fn raw_draws(bytes: &[u8]) -> (Vec<FitMode>, Option<RawLine>) {
     let mut choices = Choices::new(bytes);
     ring_layout(&mut choices);
     let fits = frame_fits();
@@ -654,11 +665,20 @@ pub fn raw_frame_fits(bytes: &[u8]) -> Vec<FitMode> {
     // The ring in place of the frame one time in four, drawn after it so
     // that every input draws the frame it drew before (#310).
     if choices.one_in(4) {
-        return vec![FitMode::Repeat; RAW_FRAMES];
+        return (vec![FitMode::Repeat; RAW_FRAMES], None);
     }
-    (0..RAW_FRAMES)
+    let frames = (0..RAW_FRAMES)
         .map(|k| fits[(first + k) % fits.len()].clone())
-        .collect()
+        .collect();
+    // A placement along the line one time in four, drawn after the frame
+    // and the ring (#313).
+    let line = if choices.one_in(4) {
+        let lines = raw_lines();
+        lines.get(choices.below(lines.len() as u32) as usize).cloned()
+    } else {
+        None
+    };
+    (frames, line)
 }
 
 /// A placement flow_raw lays along its line (#313): a fit mode's, or the
@@ -688,14 +708,7 @@ pub fn raw_lines() -> Vec<RawLine> {
 /// choices run out before it — every committed raw finding — lays its
 /// frame, as it did.
 pub fn raw_line(bytes: &[u8]) -> Option<RawLine> {
-    let mut choices = Choices::new(bytes);
-    ring_layout(&mut choices);
-    choices.below(frame_fits().len() as u32);
-    if choices.one_in(4) || !choices.one_in(4) {
-        return None;
-    }
-    let lines = raw_lines();
-    lines.get(choices.below(lines.len() as u32) as usize).cloned()
+    raw_draws(bytes).1
 }
 
 /// [`check_flow_bytes`]'s body, its frames laid in `fits` and, along its
@@ -1803,12 +1816,12 @@ pub const LONG_ORNAMENT_BYTES: usize = 200;
 /// the overshoot counts the ornament's shaping and inking twice beside
 /// the text's, its faces and `.notdef`s included (`build_steps`). At
 /// 16 pt in the compiled faces alone, [`MAX_FRAME_GLYPHS`] glyphs of one
-/// face beside a 4-glyph ornament take 463,355 steps, within the 464,396
+/// face beside a 4-glyph ornament take 464,172 steps, within the 464,396
 /// of [`INPUT_STEPS`]; beside 200 `|`s, which add 6,700 more to shape
-/// and ink, 470,055, past it, so the text is halved to 76 glyphs, whose
-/// budget is the 400,000-step floor: 411,669. A text of one glyph beside
+/// and ink, 470,872, past it, so the text is halved to 75 glyphs, whose
+/// budget is the 400,000-step floor: 413,653. A text of one glyph beside
 /// the heaviest long ornament the compiled faces hold, 200 `|`s, takes
-/// 409,308, with host faces or without; a frame of no text beside fifty
+/// 409,532, with host faces or without; a frame of no text beside fifty
 /// U+FFFE, one code point no face holds, 408,098, and beside fifty
 /// distinct noncharacters 484,150, so that ornament is cut first.
 pub fn long_ornament(choices: &mut Choices<'_>, layout: RingLayout) -> RingLayout {
@@ -1967,6 +1980,15 @@ pub const FAR_SIDES: [&str; 4] = ["─═", "· ", "-=", "x"];
 /// 2771) — and a size of 100 to 204,800, an outline's or a path's,
 /// ordinary there. `None` on a zero choice, so an input that ends before
 /// it draws what it drew.
+///
+/// A far-out path measures the curve its control points make (ruling
+/// B18.1 §6); a far-out ellipse's outline does not yet: its table sums
+/// its points' rounding as length, some 12% past its perimeter 10⁷ from
+/// the origin and up to 60% at 10¹⁰ (#356), so a far frame round one is
+/// laid along a path longer than its outline, its sides laying more
+/// copies. No property here rests on that length: a frame's room is the
+/// engine's own halves (`frame_room`), and its work is held in counted
+/// reads and steps, which the longer path only adds to. #356 removes it.
 pub fn far_out(choices: &mut Choices<'_>) -> Option<(Vec2, f32)> {
     if !choices.one_in(4) {
         return None;
@@ -2274,7 +2296,10 @@ pub(crate) fn polyline_length(curve: &Curve, count: usize) -> f64 {
     let point = |t: f64| {
         let mut row = controls.clone();
         while row.len() > 1 {
-            row = row.windows(2).map(|pair| pair[0] + (pair[1] - pair[0]) * t).collect();
+            row = row
+                .windows(2)
+                .map(|pair| pair[0] + (pair[1] - pair[0]) * t)
+                .collect();
         }
         row[0]
     };

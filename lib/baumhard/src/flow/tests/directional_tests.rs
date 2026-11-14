@@ -989,6 +989,109 @@ mod held {
         }
     }
 
+    /// A ring of wide clusters — a letter under 240 marks, an ink of its
+    /// runs 241 glyphs — held to its budget by construction (#313, ruling
+    /// B18.1 §4): a run's count and each round of its spacing hold back
+    /// what its last lays take and the glyphs of the inks it would then
+    /// hold, which are counted once it is laid, as a pitched placement's
+    /// do, so no run takes more after its last go than that go held back
+    /// (`RUN_EDGE`), at any budget from its setup's to its whole, and no
+    /// budget past the setup is passed. Before, its four lays' reads held
+    /// back for the glyphs too: their slack covers some 136 glyphs an ink
+    /// at a lay's most reads — `LIGHT` round a box and an ellipse never
+    /// passed its budget at any of 2,001 budgets with no glyph term at all
+    /// (review 5902086644) — but not an ink wider than that.
+    ///
+    /// Control: see the pull request of #313.
+    #[test]
+    fn test_flow_directional_holds_wide_clusters_to_its_budget() {
+        use crate::flow::place::directional::RUN_EDGE;
+        use crate::flow::place::halves::{BUDGET_OVERRIDE, PAST_BUDGET};
+        const MARKS: &str = "\u{0300}\u{0301}\u{0302}\u{0303}\u{0304}\u{0306}\u{0307}\u{0308}\u{030A}\u{030B}\u{030C}\u{0323}\u{0324}\u{0325}\u{0330}";
+        let level = format!("o{}", MARKS.repeat(16));
+        let steep = format!("l{}", MARKS.repeat(16));
+        let set: (&str, &str, [&str; 4]) = (&level, &steep, LIGHT.2);
+        let wide = with_fonts(|fs| {
+            let run = real_run(&level, &style(POINTS), fs);
+            assert_eq!(
+                run.glyphs.iter().filter(|g| g.grapheme_start).count(),
+                1,
+                "precondition: the letter and its marks are one cluster"
+            );
+            run.glyphs.len()
+        });
+        assert!(wide > 136, "precondition: an ink of the ring is {wide} glyphs");
+        // Its glyphs, and its trace: its marks draw no ink of their own, so
+        // it is not parted as `lay` parts a ring.
+        let lay = |set: (&str, &str, [&str; 4]), path: &Outline| {
+            let text = style(POINTS);
+            let layout = RingLayout {
+                directional: glyphs(set, true),
+                ..RingLayout::whole()
+            };
+            let mut trace = Trace::default();
+            let placed = with_fonts(|fs| {
+                let input = real_run(set.0, &text, fs);
+                place_on_closed_traced(
+                    &input,
+                    path,
+                    StartPoint {
+                        edge: Edge::Top,
+                        at: 0.0,
+                    },
+                    Direction::Clockwise,
+                    &FitMode::Repeat,
+                    &layout,
+                    true,
+                    &text,
+                    fs,
+                    Some(&mut trace),
+                )
+                .1
+            });
+            (placed.glyphs, trace)
+        };
+        for path in [Outline::Ellipse { rect: big().rect() }, big()] {
+            RUN_EDGE.with(|edge| edge.set(None));
+            let (whole, trace) = lay(set, &path);
+            BUDGET_OVERRIDE.with(|b| b.set(Some(1)));
+            let (_, setup) = lay(set, &path);
+            BUDGET_OVERRIDE.with(|b| b.set(None));
+            assert!(
+                trace.spent > 2 * setup.spent && !whole.is_empty(),
+                "precondition: the ring's work, {} steps, is more than twice its setup's, {}",
+                trace.spent,
+                setup.spent
+            );
+            let mut stopped = 0;
+            for step in 1..=100 {
+                let budget = setup.spent + (trace.spent - setup.spent) * step / 100;
+                PAST_BUDGET.with(|past| past.set(0));
+                BUDGET_OVERRIDE.with(|b| b.set(Some(budget)));
+                let (_, held) = lay(set, &path);
+                BUDGET_OVERRIDE.with(|b| b.set(None));
+                let past = PAST_BUDGET.with(std::cell::Cell::get);
+                assert_eq!(
+                    past, 0,
+                    "a budget of {budget} past the setup's {} is passed by {past}",
+                    setup.spent
+                );
+                stopped += usize::from(held.ring == Some(RingLoss::Short));
+            }
+            assert!(
+                stopped >= 25,
+                "precondition: the budgets stop the ring ({stopped} of 100)"
+            );
+            let edge = RUN_EDGE
+                .with(std::cell::Cell::get)
+                .expect("precondition: its runs are laid");
+            assert!(
+                edge <= 0,
+                "a run took {edge} glyph steps past what its last go held back for"
+            );
+        }
+    }
+
     /// A ring round `path` held to its budget: never past it once it
     /// covers its setup, and nothing laid past its setup.
     fn held_to_its_budget(path: Outline) {

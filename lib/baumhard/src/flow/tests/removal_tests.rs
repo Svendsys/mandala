@@ -211,7 +211,10 @@ fn test_flow_a_frame_reads_each_distinct_glyphs_outline_once_an_inking() {
 /// where it did, and lays a track for each line it had read. And a line
 /// read costs what it is, [`TRACK_CALL_STEPS`] (ruling B16.1c): its work
 /// is the work laid without the memo, less the steps those tracks were
-/// worth as `track` counts them (`TRACKED_STEPS`), and the read's own.
+/// worth as `track` counts them (`TRACKED_STEPS`) and the steps of their
+/// path's reads past one a cluster (`TRACK_READS`, a frame's reads in
+/// all at [`TRACK_READS_A_STEP`] to a step rounded up, #313 ruling
+/// B18.1 §2), and the read's own.
 ///
 /// Over the sweep, 841 lines read in 138 frames.
 ///
@@ -219,10 +222,13 @@ fn test_flow_a_frame_reads_each_distinct_glyphs_outline_once_an_inking() {
 /// precondition; its key without the gap, red on "placed otherwise"; a
 /// line read charged nothing, red on its work, a step short of it — the
 /// read's — round the circle, `Fit` outward; and charged a track's
-/// clusters too, as before ruling B16.1c, red, the line's 25 over it.
+/// clusters too, as before ruling B16.1c, red, the line's 25 over it; a
+/// line read charged its track's path reads too, red.
 #[test]
 fn test_flow_a_frames_remembered_lines_are_the_lines_and_cost_what_they_are() {
-    use crate::flow::place::halves::{NO_TRACK_MEMO, TRACKED_STEPS, TRACK_CALL_STEPS};
+    use crate::flow::place::halves::{
+        NO_TRACK_MEMO, TRACKED_STEPS, TRACK_CALL_STEPS, TRACK_READS, TRACK_READS_A_STEP,
+    };
     struct On;
     impl Drop for On {
         fn drop(&mut self) {
@@ -237,20 +243,29 @@ fn test_flow_a_frames_remembered_lines_are_the_lines_and_cost_what_they_are() {
             .collect()
     };
     let tracked = || TRACKED_STEPS.with(std::cell::Cell::get);
+    let reads = || TRACK_READS.with(std::cell::Cell::get);
     let (mut frames, mut hits) = (0, 0);
     for (name, shape, text, points, fit, layout, outward) in sweep_frames() {
         let what = format!("{name} {text:.10}… {fit:?} outward {outward}");
-        let (before, steps) = (Counters::now(), tracked());
+        let (before, steps, read_before) = (Counters::now(), tracked(), reads());
         let (_, with, t_on) = frame_with(text, points, &shape, &fit, &layout, outward);
-        let (on, steps_on) = (Counters::now().since(before), tracked() - steps);
+        let (on, steps_on, reads_on) = (
+            Counters::now().since(before),
+            tracked() - steps,
+            reads() - read_before,
+        );
         if on.track_hits == 0 {
             continue;
         }
         let _reset = On;
         NO_TRACK_MEMO.with(|off| off.set(true));
-        let (before, steps) = (Counters::now(), tracked());
+        let (before, steps, read_before) = (Counters::now(), tracked(), reads());
         let (_, without, t_off) = frame_with(text, points, &shape, &fit, &layout, outward);
-        let (off, steps_off) = (Counters::now().since(before), tracked() - steps);
+        let (off, steps_off, reads_off) = (
+            Counters::now().since(before),
+            tracked() - steps,
+            reads() - read_before,
+        );
         NO_TRACK_MEMO.with(|off| off.set(false));
         assert!(
             bits(&with) == bits(&without),
@@ -265,10 +280,13 @@ fn test_flow_a_frames_remembered_lines_are_the_lines_and_cost_what_they_are() {
             on.track_hits
         );
         assert_eq!(off.track_hits, 0, "{what}: the memo answered while switched off");
-        let read = steps_off - steps_on;
+        // Signed: a read charged more than its track would read as work the
+        // memo added, not a step short.
+        let read = (steps_off as i64 - steps_on as i64)
+            + (reads_off.div_ceil(TRACK_READS_A_STEP) as i64 - reads_on.div_ceil(TRACK_READS_A_STEP) as i64);
         assert_eq!(
-            t_on.spent,
-            t_off.spent - read + on.track_hits * TRACK_CALL_STEPS,
+            t_on.spent as i64,
+            t_off.spent as i64 - read + (on.track_hits * TRACK_CALL_STEPS) as i64,
             "{what}: {} glyph steps with the memo; without it {}, of which its {} lines' tracks {read}",
             t_on.spent,
             t_off.spent,

@@ -17,7 +17,7 @@ use crate::flow::place::ring::{phase_two_steps, ring_overshoot, RingLoss, RING_S
 use crate::flow::place::{place_on_open_capped, Trace, LAST_OPEN};
 use crate::flow::tests::halves_tests::with_seam;
 use crate::flow::tests::support::{real_run, style, with_fonts};
-use crate::flow::{Curve, PathEnd, PlacedRun, Rect};
+use crate::flow::{Curve, PathEnd, PlacedRun, Rect, MAX_PLACED_GLYPHS};
 
 /// The size every placement here is laid at.
 const POINTS: f32 = 16.0;
@@ -137,6 +137,9 @@ struct Laid {
     /// has a letter in it, which phase 2 lays in reading order.
     held: usize,
     letters: bool,
+    /// What phase 2 took, from when it began to the end of the placement
+    /// (`LastRing::again`): what the hold is for.
+    again: usize,
     loss: Option<RingLoss>,
     placed: PlacedRun,
 }
@@ -166,6 +169,7 @@ fn open(text: &str, curve: &Curve, fit: &FitMode, budget: Option<usize>, cap: us
                 late,
                 held: last.held.0,
                 letters: run.glyphs.iter().any(|glyph| glyph.letter),
+                again: last.again,
                 loss: trace.ring,
                 placed,
             }
@@ -325,6 +329,12 @@ fn test_flow_open_budget_a_placement_past_its_budget_takes_its_overshoot_at_most
                 ));
             }
             let owed = phase_two_steps(laid.placed.glyphs.len(), laid.letters);
+            if laid.again > laid.held {
+                broken.push(format!(
+                    "{}: phase 2 took {} glyph steps, past the {} held back for it (phase 2)",
+                    laid.what, laid.again, laid.held
+                ));
+            }
             if laid.held < owed {
                 broken.push(format!(
                     "{}: it held back {} glyph steps for phase 2, short of its work on its glyphs, {owed} (held)",
@@ -352,9 +362,14 @@ fn test_flow_open_budget_a_placement_past_its_budget_takes_its_overshoot_at_most
 /// how it was left (`Trace::ring`), each way somewhere in the grid: short,
 /// a walk stopped before its text or its copies were laid; uneven, a
 /// solve of its spacing or of a `Fit`'s scale stopped — and, at budgets
-/// that afford it, not at all.
+/// that afford it, not at all. A `Fit` of an ornament, whose measure at a
+/// scale walks it as laid, is left uneven where that walk finds its
+/// budget spent (review 5902086644), as a text's is where its measure as
+/// read cannot be afforded.
 ///
-/// Controls: with each of the two left unreported, red (that one).
+/// Controls: with each of the two left unreported, red (that one); with
+/// an ornament's measure stopped by its budget left unreported, red on
+/// the ornament's `Fit`.
 #[test]
 fn test_flow_open_budget_a_spent_placement_says_how_it_was_left() {
     let laid: Vec<&Laid> = grid().iter().flat_map(|case| &case.laid).collect();
@@ -365,6 +380,109 @@ fn test_flow_open_budget_a_spent_placement_says_how_it_was_left() {
             laid.len()
         );
     }
+    let ornament_fits: Vec<&&Laid> = laid
+        .iter()
+        .filter(|l| l.what.starts_with("ornament Fit along"))
+        .collect();
+    assert!(
+        ornament_fits.iter().any(|l| l.loss == Some(RingLoss::Uneven)),
+        "no ornament's Fit of the grid's {} is left uneven",
+        ornament_fits.len()
+    );
+}
+
+/// #313 (review 5902086644): a `Once` whose filler's cluster is wider than
+/// every cluster of its text — a letter under fifteen marks, sixteen
+/// glyphs, after two letters — is held to the overshoot of a cluster of
+/// the filler's (`RingWork::widen`), the one cluster that may find its
+/// budget spent being one of its copies: the placement records the
+/// filler's cluster as its copy, and at every budget from its setup's to
+/// its own it takes past its budget, and stops past what its budget
+/// leaves (crossed), no more than that overshoot.
+///
+/// Controls: see the pull request of #313.
+#[test]
+fn test_flow_open_budget_a_fillers_wide_cluster_is_its_overshoots_cluster() {
+    const MARKS: &str = "\u{0300}\u{0301}\u{0302}\u{0303}\u{0304}\u{0306}\u{0307}\u{0308}\u{030A}\u{030B}\u{030C}\u{0323}\u{0324}\u{0325}\u{0330}";
+    let filler = format!("o{MARKS}");
+    let wide = with_fonts(|fs| real_run(&filler, &style(POINTS), fs).glyphs.len());
+    assert!(wide >= 8, "precondition: the filler's cluster is {wide} glyphs");
+    let fit = FitMode::Once {
+        filler: Some(filler.clone()),
+    };
+    let (_, _, line) = &paths()[0];
+    let own = open("ab", line, &fit, None, GRID_CAP);
+    let setup = open("ab", line, &fit, Some(1), GRID_CAP);
+    assert!(
+        own.placed.glyphs.len() > 2 * wide && own.spent > setup.spent,
+        "precondition: its copies are laid ({} glyphs, {} steps)",
+        own.placed.glyphs.len(),
+        own.spent
+    );
+    let mut crossed = 0;
+    for step in 0..=60 {
+        let budget = setup.spent + (own.spent - setup.spent) * step / 60;
+        let laid = open("ab", line, &fit, Some(budget), GRID_CAP);
+        // One that laid a copy of its filler took the filler's cluster as
+        // its copy before it laid any; one stopped before it came to them
+        // laid none.
+        let copies = laid.placed.glyphs.len() > 2;
+        assert!(
+            !copies || laid.copy == wide,
+            "budget {budget}: its copy is the filler's cluster, {wide} glyphs, not {}",
+            laid.copy
+        );
+        let allowed = ring_overshoot(laid.copy, laid.tables);
+        assert!(
+            laid.past <= allowed && laid.crossed.is_none_or(|c| c <= allowed),
+            "budget {budget}: {} past its budget, crossed {:?}, against {allowed}",
+            laid.past,
+            laid.crossed
+        );
+        crossed += usize::from(laid.crossed.is_some() && copies);
+    }
+    assert!(
+        crossed >= 10,
+        "precondition: the budgets stop its walks among its copies ({crossed} of 61)"
+    );
+}
+
+/// #313 (review 5902086644): what an open path's placement holds back for
+/// phase 2's run on past where its walk stops is read at the least line
+/// height any of its walks steps at (`RingWork::steps_at`) — an open
+/// path's `Fit`, reshaped smaller than it began, steps more often along
+/// the path — and a larger one leaves it there: the hold is the run on
+/// from the path's start, at that line height, to the step.
+///
+/// The grid holds phase 2 to its hold over every placement (`again`), but
+/// no `Fit` of it, nor a `Fit` of 4,000 glyphs shrunk to its size floor
+/// at budgets from 1,000 to 32,000, reaches that hold's run-on part: a
+/// `Fit` its budget stops while it walks lays nothing in phase 2, and one
+/// that walks to its end holds back for every glyph it laid, which is far
+/// more (20,876 glyph steps, against 732 its phase 2 took). So the hold
+/// is held here, on the budget itself.
+///
+/// Control: with `steps_at` a no-op, red.
+#[test]
+fn test_flow_open_budget_a_fits_run_on_is_held_at_its_least_line_height() {
+    use crate::flow::place::ring::{run_on_reads, RingWork, READS_A_STEP};
+    use crate::flow::ArcPath;
+    let path = ArcPath::open(&Curve::Line(Vec2::ZERO, Vec2::new(2_000.0, 0.0)), 1.0);
+    let work = RingWork::new(&path, 1, true, 20.0, 100, GRID_CAP);
+    work.steps_at(30.0);
+    work.steps_at(2.0);
+    work.steps_at(5.0);
+    work.lay_again();
+    let held = work.held_again().0;
+    let want = run_on_reads(0.0, 2_000.0, 2.0).div_ceil(READS_A_STEP);
+    assert!(
+        want > run_on_reads(0.0, 2_000.0, 20.0).div_ceil(READS_A_STEP),
+        "precondition: a run on at a tenth of the line height takes more"
+    );
+    assert_eq!(
+        held, want,
+        "the run on held back for at the least line height walked"
+    );
 }
 
 /// What the pitched grid's placements are of: ornaments a connector lays
@@ -563,6 +681,75 @@ fn test_flow_open_budget_a_pitched_pattern_takes_its_budget_at_most() {
         laid.len(),
         broken.join("\n")
     );
+}
+
+/// #313 (review 5902086644): a pitched placement counts the gaps between
+/// boxes it measures — to the boxes at its ends, and between its inks —
+/// [`BOXES_A_STEP`](crate::flow::place::halves) to a glyph step, exactly:
+/// its counted steps are its gaps over that, rounded up; and beside two
+/// hundred boxes at each end its gaps are many.
+///
+/// Control: see the pull request of #313.
+#[test]
+fn test_flow_open_budget_a_pitched_pattern_counts_the_gaps_it_measures() {
+    use crate::flow::place::halves::BOXES_A_STEP;
+    use crate::flow::place::pitch::LAST_PITCHED_GAPS;
+    let (_, _, line) = &paths()[0];
+    for boxes in [0, 200] {
+        LAST_PITCHED_GAPS.with(|last| last.set((0, 0)));
+        let _ = pitched(PATTERNS[1].1, line, boxes, None, GRID_CAP);
+        let (gaps, steps) = LAST_PITCHED_GAPS.with(std::cell::Cell::get);
+        assert!(
+            gaps >= 2 * boxes,
+            "precondition: beside {boxes} boxes at each end it measures {gaps} gaps"
+        );
+        assert_eq!(
+            steps,
+            gaps.div_ceil(BOXES_A_STEP),
+            "beside {boxes} boxes: {gaps} gaps counted {steps} glyph steps"
+        );
+    }
+}
+
+/// #313, ruling B18.1 §4: a pitched placement of wide clusters — a dot
+/// under 240 marks, 241 glyphs an ink — holds back, before each ink it
+/// counts and each round of its slack, the glyphs of the inks it would
+/// then hold, which are counted once it is laid: no placement takes more
+/// after its last read of its budget than that read held back for
+/// (`PITCH_EDGE`), at any budget from its setup's to its own, by
+/// construction — the four lays it holds back for besides cover some
+/// thirty glyphs an ink at their most reads and gaps, and no more.
+///
+/// Control: see the pull request of #313.
+#[test]
+fn test_flow_open_budget_a_pitched_pattern_of_wide_clusters_holds_its_glyphs() {
+    use crate::flow::place::pitch::PITCH_EDGE;
+    const MARKS: &str = "\u{0300}\u{0301}\u{0302}\u{0303}\u{0304}\u{0306}\u{0307}\u{0308}\u{030A}\u{030B}\u{030C}\u{0323}\u{0324}\u{0325}\u{0330}";
+    let pattern = format!("·{}", MARKS.repeat(16));
+    let (_, _, line) = &paths()[0];
+    let own = pitched(&pattern, line, 0, None, MAX_PLACED_GLYPHS);
+    let setup = pitched(&pattern, line, 0, Some(1), MAX_PLACED_GLYPHS);
+    assert!(
+        own.placed.glyphs.len() > 4 * 200 && own.spent > setup.spent,
+        "precondition: it lays many inks ({} glyphs, {} steps)",
+        own.placed.glyphs.len(),
+        own.spent
+    );
+    PITCH_EDGE.with(|edge| edge.set(None));
+    let mut short = 0;
+    for step in 0..=100 {
+        let budget = setup.spent + (own.spent - setup.spent) * step / 100;
+        let laid = pitched(&pattern, line, 0, Some(budget), MAX_PLACED_GLYPHS);
+        short += usize::from(laid.loss == Some(RingLoss::Short));
+    }
+    let edge = PITCH_EDGE
+        .with(std::cell::Cell::get)
+        .expect("precondition: it reads its budget");
+    assert!(
+        edge <= 0,
+        "a pitched placement took {edge} glyph steps past what its last read of its budget held back for"
+    );
+    assert!(short >= 10, "precondition: the budgets stop it ({short} of 101)");
 }
 
 /// #313, as ruling B17.1a has it for a ring's copies: a `Once` with a

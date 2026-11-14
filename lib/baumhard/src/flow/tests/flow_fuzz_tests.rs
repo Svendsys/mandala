@@ -1387,7 +1387,8 @@ fn test_a_frame_round_an_outline_whose_width_is_not_a_number_is_not_cut() {
 /// glyphs of its text, what one frame lays inside the fuzz timeout: 247
 /// `track`s and 340,712 lookups on the second machine. Since ruling
 /// R46.3 the harness lays a frame from what its work fits inside the
-/// timeout, at most 150 glyphs (152 since #304); the replay lays its text as it was found,
+/// timeout, at most 150 glyphs (152 since #304, 151 since #313); the
+/// replay lays its text as it was found,
 /// cut to 210 characters, 209 glyphs, at R44's 320
 /// ([`FOUND_FRAME_GLYPHS`](crate::flow::tests::flow_fuzz::FOUND_FRAME_GLYPHS)),
 /// so its frames are as they were.
@@ -1716,10 +1717,20 @@ fn test_far_out_open_placements_their_natural_length_fits_are_laid_whole() {
                                 moved += 1;
                             }
                             let mut trace = Trace::default();
-                            let (_, placed) =
-                                place_on_open_capped(&run, &curve, &fit, 0.0, &flow, fs, 154, Some(&mut trace));
+                            let (_, placed) = place_on_open_capped(
+                                &run,
+                                &curve,
+                                &fit,
+                                0.0,
+                                &flow,
+                                fs,
+                                154,
+                                Some(&mut trace),
+                            );
                             if placed.glyphs.len() < run.glyphs.len() {
-                                cut.push(format!("{text:?} {fit:?} 10^{k} {length} line {line}: room {room}"));
+                                cut.push(format!(
+                                    "{text:?} {fit:?} 10^{k} {length} line {line}: room {room}"
+                                ));
                             }
                         }
                     }
@@ -2254,9 +2265,10 @@ fn test_a_rings_cap_holds_the_copy_its_tables_leave() {
 /// that a frame at the floor of its budget fits that share at all — no
 /// cut can make a frame lighter than its budget's floor — and that
 /// [`MAX_FRAME_GLYPHS`] is the most glyphs of the lightest text, one
-/// face, with a short side ornament, that fit: 152, 463,355 glyph steps,
-/// 14.97 s; 153 take 466,434, 15.07 s (150 and 151 until #304 counted a
-/// reshape at a size as no shaping).
+/// face, with a short side ornament, that fit: 151, 464,172 glyph steps,
+/// 14.99 s; 152 take 467,221, 15.09 s (150 and 151 until #304 counted a
+/// reshape at a size as no shaping; 152 and 153 until a line's lay
+/// counted its path's reads past one a cluster, #313 ruling B18.1 §2).
 ///
 /// A `Repeat` ring's work (#310) fits an input's as its one budgeted
 /// placement, and not beside a frame; and [`MAX_RING_GLYPHS`] is the most

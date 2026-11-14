@@ -109,10 +109,10 @@
 //! least [`TRACK_BUDGET`] ([`frame_budget`]), counts all of its work —
 //! its tracking and side lays, its shaping and inking, its touch checks,
 //! R27's walks and its paths' tables, each weighted to about one tracking
-//! step's time, and its side lays' path reads besides,
-//! [`SIDE_READS_A_STEP`] to a step (#313), since far from the origin a
-//! copy's cluster reads its path fifteen to twenty times where at the
-//! origin it reads it once. It is read before every lay, build and
+//! step's time, and its side lays' and its tracking's path reads
+//! besides, [`SIDE_READS_A_STEP`] and [`TRACK_READS_A_STEP`] to a step
+//! (#313, ruling B18.1 §2), since far from the origin a cluster reads its
+//! path some fifteen times where at the origin it reads it once. It is read before every lay, build and
 //! reshape — in each tracking solve, slide, shrink (its floor build too),
 //! cut and backtrack, R27's fit and a `Once` filler's copies — and before
 //! each copy of a side ornament, which is laid only while the frame can
@@ -574,6 +574,22 @@ pub(crate) const CLUSTERS_A_STEP: usize = 8;
 /// temporary instrumentation of the engine, never committed, on the flow
 /// targets' ASan build over their seeds, every committed flow finding and
 /// the heavy seeds, three runs each, at a load average of about 2.
+///
+/// A lay counts its clusters at this weight rounded up once over the lay,
+/// copy by copy as its budget lets it lay them
+/// ([`SideOrnament::modeled`]), and its path's reads besides, at
+/// [`SIDE_READS_A_STEP`] to a step (#313, ruling B18.1 §3). Checked again
+/// under that counting, in time a counted step: over the 2,750 model lays
+/// of the 210 frames [`SIDE_READS_A_STEP`] was measured on, origin lays
+/// included, each at the least of three runs at a load average of 2.1 to
+/// 2.9, the worst took 4.41 µs a counted step — a lay of 494 clusters
+/// round an ellipse 2,000 across at the origin — at most 2.22 µs a
+/// cluster, within the 16 µs a step is weighed at, and the constant
+/// stands. One lay, of `x` round a square 20,000 across at the origin,
+/// took 42 µs a counted step in every run and 4.5 when its frame was laid
+/// alone: a pause of the instrumented build at the same point of its
+/// corpus, which is left out — the 38.5 µs a counted step #313 first
+/// reported for it was that pause.
 pub(crate) const MODEL_CLUSTERS_A_STEP: usize = 2;
 
 /// Path reads ([`ArcPath::reads`]) one glyph step weighs in a frame's side
@@ -599,6 +615,43 @@ pub(crate) const SIDE_READS_A_STEP: usize = 4;
 /// ([`SIDE_READS_A_STEP`] to a step, #313).
 fn side_read_steps(reads: usize) -> usize {
     reads.div_ceil(SIDE_READS_A_STEP)
+}
+
+/// Path reads ([`ArcPath::reads`]) one glyph step weighs in a frame's
+/// tracking ([`track`]; #313, ruling B18.1 §2), past the one read a
+/// cluster its step a cluster already weighs: a line's cluster reads its
+/// path about once at the origin, where [`CLUSTERS_A_STEP`]'s and the
+/// tracking step's weights were measured, and eleven to thirteen times
+/// 3·10⁷ from it and beyond (review 5902086644). At most 1.22 µs a read
+/// past the first a cluster, all of a track's time over those reads, over
+/// the tracks of 128 such reads or more that read their path eight times
+/// a cluster or more, so 16 µs ÷ 1.22 µs = 13.1 reads, rounded down to 8.
+/// Before those reads were counted, the worst track took 11.9 µs a
+/// counted step, and at this weight 6.5. Measured as [`CLUSTERS_A_STEP`]'s ruling R47.3
+/// asks — each track timed by a temporary instrumentation of the engine,
+/// never committed, on the flow targets' ASan build, over the 210 frames
+/// [`SIDE_READS_A_STEP`] was measured on, three runs, each track at the
+/// least of its three times, at a load average of 2.1 to 2.9. Three of
+/// those 42,145 tracks took 20 to 41 µs a step in every run, and 0.3 to
+/// 0.8 when their frame was laid alone: pauses of the instrumented build
+/// at the same points of its corpus, not their work, which are left out.
+pub(crate) const TRACK_READS_A_STEP: usize = 8;
+
+/// The glyph steps `reads` path reads of a frame's tracking count
+/// ([`TRACK_READS_A_STEP`] to a step, #313).
+fn track_read_steps(reads: usize) -> usize {
+    reads.div_ceil(TRACK_READS_A_STEP)
+}
+
+/// The most glyph steps one [`track`] of `glyphs` glyphs counts (#313,
+/// ruling B18.1 §2): a step a glyph and [`TRACK_CALL_STEPS`], and its
+/// path's reads past one a cluster, [`TRACK_CLUSTER_READS`] less one a
+/// glyph at the most, [`TRACK_READS_A_STEP`] to a step
+/// ([`Work::track_read`]).
+pub(crate) fn track_steps(glyphs: usize) -> usize {
+    glyphs
+        .saturating_add(TRACK_CALL_STEPS)
+        .saturating_add(track_read_steps(glyphs.saturating_mul(TRACK_CLUSTER_READS - 1)))
 }
 
 /// Samples of an arc-length table one glyph step weighs, where a frame's
@@ -787,7 +840,8 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
 /// ([`predicted_resizing_steps`]) — the inking its lines are parted on
 /// (`parting_run`, #333; [`inking_steps`]), one build's shaping and inking
 /// ([`build_steps`]), and a lay of each line ([`OVERSHOOT_TRACKS`]
-/// `track`s of every glyph), which the touch checks that end the frame
+/// `track`s of every glyph, each with its path's reads, [`track_steps`]),
+/// which the touch checks that end the frame
 /// fall within. A budget is read before each build, each reshape of
 /// R27's fit, each lay and each copy of a side ornament, so no more than
 /// one of each runs past it; [`untouched`] runs within the budget, which
@@ -823,7 +877,7 @@ pub(crate) fn overshoot_steps(
         .saturating_add(r27)
         .saturating_add(build_steps(text, ornament))
         .saturating_add(inking_steps(text))
-        .saturating_add(OVERSHOOT_TRACKS.saturating_mul(text.glyphs.len() + TRACK_CALL_STEPS))
+        .saturating_add(OVERSHOOT_TRACKS.saturating_mul(track_steps(text.glyphs.len())))
 }
 
 /// The most glyph steps a frame of `text` may take in all, its paths'
@@ -1431,7 +1485,14 @@ fn track(
     TRACKED_STEPS.with(|count| count.set(count.get() + clusters.len() + TRACK_CALL_STEPS));
     let mut lay = InkLay::new(walk, glyphs, sa, 0.5 * g, band);
     for cluster in clusters {
+        #[cfg(test)]
+        let before = walk.path.reads();
         lay.cluster(cluster, g);
+        #[cfg(test)]
+        {
+            let took = walk.path.reads() - before;
+            MOST_TRACK_CLUSTER_READS.with(|most| most.set(most.get().max(took)));
+        }
     }
     let (short, ends, centers, normals) = match (lay.first, lay.last) {
         (Some(a), Some(b)) => (
@@ -1857,6 +1918,37 @@ thread_local! {
     /// counted against their frames on this thread ([`Work::read`]).
     #[cfg(test)]
     pub(crate) static SIDE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counters (#313, review 5902086644): the most path lookups one
+    /// glyph step of a side ornament's lays, and of a [`track`], has
+    /// taken on this thread — of [`MOST_STEP_LOOKUPS`], each its own: what
+    /// the most reads one cluster of each counts is held to from below,
+    /// by a counter that counts apart from it.
+    #[cfg(test)]
+    pub(crate) static MOST_SIDE_STEP_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    #[cfg(test)]
+    pub(crate) static MOST_TRACK_STEP_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#313, ruling B18.1 §2): the most glyph steps one
+    /// [`track`] has counted on this thread, its path's reads included,
+    /// less the most [`track_steps`] says a track of its clusters may
+    /// count, what a frame's overshoot holds for each of its lines' lays
+    /// ([`overshoot_steps`]): never above none. `None` before any track.
+    #[cfg(test)]
+    pub(crate) static TRACK_EDGE: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
+    /// Test counter (#313, ruling B18.1 §2): the glyph steps frames'
+    /// tracking's path reads have counted against them on this thread
+    /// ([`Work::track_read`]).
+    #[cfg(test)]
+    pub(crate) static TRACK_READ_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#313, ruling B18.1 §2): the path reads past one a
+    /// cluster frames' tracking has counted against them on this thread
+    /// ([`Work::track_read`]).
+    #[cfg(test)]
+    pub(crate) static TRACK_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#313, ruling B18.1 §2): the most path reads one
+    /// cluster of a [`track`] has taken on this thread, what
+    /// [`TRACK_CLUSTER_READS`] bounds.
+    #[cfg(test)]
+    pub(crate) static MOST_TRACK_CLUSTER_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test counter (#313): the glyph steps a side ornament's lays have
     /// counted against their frames on this thread — a step a cluster, or
     /// a model lay's share, and their path reads ([`Work::read`]).
@@ -1874,6 +1966,11 @@ thread_local! {
     /// [`SIDE_CLUSTER_READS`] bounds.
     #[cfg(test)]
     pub(crate) static MOST_SIDE_CLUSTER_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#313, ruling B18.1 §3): each model lay of a side's
+    /// copies on this thread, as the clusters it laid and the glyph steps
+    /// they counted, past its reads ([`SideOrnament::modeled`]).
+    #[cfg(test)]
+    pub(crate) static MODEL_LAYS: std::cell::RefCell<Vec<(usize, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
     /// Test counter (#309): the runs a frame's placement has shaped or
     /// reshaped on this thread — R27's fit, a build at a size, a side
     /// ornament's runs.
@@ -1923,6 +2020,22 @@ thread_local! {
     pub(crate) static INKINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+thread_local! {
+    /// Test counter (#313, review 5902086644): the nearest the anchor
+    /// read of a side's arc has left its frame to its budget, past what
+    /// [`SideOrnament::affords_arc`] held back for — a lay of one copy
+    /// along it and that copy's touch check — on this thread: how far
+    /// past it, in glyph steps, below none where short of it; never past,
+    /// since an arc is taken only where the frame affords all three.
+    /// `None` before any arc.
+    #[cfg(test)]
+    pub(crate) static ARC_EDGE: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
+    /// Test counter (#313): the arcs of sides taken on this thread, each
+    /// its first end's anchor read ([`ARC_READS`]).
+    #[cfg(test)]
+    pub(crate) static ARCS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Test counter (#294, ruling R43): one glyph step of [`track`] or of a
 /// side ornament's lay (`side`) taken, the path lookups since `before` its
 /// cost.
@@ -1938,6 +2051,12 @@ fn note_step(before: usize, side: bool) {
     if side {
         SIDE_STEP_LOOKUPS.with(add);
     }
+    let most = if side {
+        &MOST_SIDE_STEP_LOOKUPS
+    } else {
+        &MOST_TRACK_STEP_LOOKUPS
+    };
+    most.with(|most| most.set(most.get().max(spent)));
 }
 
 /// Test counter (#309): one run shaped or reshaped by a frame's
@@ -2476,6 +2595,14 @@ const ARC_READS: usize = 1;
 /// laid ([`SideOrnament::copy_steps`]).
 pub(crate) const SIDE_CLUSTER_READS: usize = 2 * FORM_CHAIN + PAIR_ROUNDS;
 
+/// The most path reads one cluster of a frame's [`track`] takes (#313,
+/// ruling B18.1 §2): a letter's first center, its root on the band
+/// curve's form ([`osculating`]), [`FORM_CHAIN`] reads at most, and
+/// [`pair`]'s inks tried, each a read, [`PAIR_ROUNDS`] for it and the
+/// inks before its neighbor together. A track lays no model letter. A
+/// space, or the first ink, is one.
+pub(crate) const TRACK_CLUSTER_READS: usize = FORM_CHAIN + PAIR_ROUNDS;
+
 /// Where [`model_root`] sets a letter: how far along the path past the
 /// ink it is set after, the curve's point there, and the form it lies on
 /// with how far on along it — what the next letter's form is taken from
@@ -2878,6 +3005,10 @@ pub(super) struct Work {
     /// The path reads its side ornament's lays took, counted in `spent`
     /// at [`SIDE_READS_A_STEP`] to a step ([`read`](Self::read), #313).
     reads: Cell<usize>,
+    /// The path reads its tracking took past one a cluster, counted in
+    /// `spent` at [`TRACK_READS_A_STEP`] to a step
+    /// ([`track_read`](Self::track_read), #313).
+    track_reads: Cell<usize>,
     glyphs: Cell<usize>,
     budget: Cell<usize>,
     reserve: Cell<usize>,
@@ -2903,6 +3034,7 @@ impl Work {
             spent: Cell::new(FRAME_STEPS),
             tables: Cell::new(0),
             reads: Cell::new(0),
+            track_reads: Cell::new(0),
             glyphs: Cell::new(0),
             budget: Cell::new(TRACK_BUDGET),
             reserve: Cell::new(0),
@@ -2970,6 +3102,24 @@ impl Work {
         #[cfg(test)]
         SIDE_READS.with(|count| count.set(count.get().saturating_add(reads)));
         self.side(side_read_steps(now) - side_read_steps(was));
+    }
+
+    /// Count `reads` more path reads of the frame's tracking past one a
+    /// cluster (#313, ruling B18.1 §2), as [`read`](Self::read) counts a
+    /// side's: those reads in all, [`TRACK_READS_A_STEP`] to a glyph step,
+    /// so that `reads` takes at most `reads` over [`TRACK_READS_A_STEP`]
+    /// rounded up ([`track_read_steps`]).
+    fn track_read(&self, reads: usize) -> usize {
+        let was = self.track_reads.get();
+        let now = was.saturating_add(reads);
+        self.track_reads.set(now);
+        #[cfg(test)]
+        TRACK_READS.with(|count| count.set(count.get().saturating_add(reads)));
+        let steps = track_read_steps(now) - track_read_steps(was);
+        #[cfg(test)]
+        TRACK_READ_STEPS.with(|count| count.set(count.get().saturating_add(steps)));
+        self.take(steps);
+        steps
     }
 
     /// Count `steps` glyph steps of a side ornament's lays: in a test, its
@@ -3204,7 +3354,8 @@ impl Layout<'_> {
     }
 
     /// [`track`] on the frame's band curve, counted against the frame's
-    /// budget ([`Work`]).
+    /// budget ([`Work`]): a step a cluster and [`TRACK_CALL_STEPS`], and
+    /// its path's reads ([`Work::track_read`]).
     fn track(
         &self,
         walk: &PathWalk<'_>,
@@ -3232,7 +3383,23 @@ impl Layout<'_> {
             return tracked.clone();
         }
         self.work.take(clusters.len() + TRACK_CALL_STEPS);
+        let reads = walk.path.reads();
         let tracked = track(walk, glyphs, clusters, part, g, self.band());
+        // Its path's reads past the one a cluster its step a cluster
+        // weighs (#313, ruling B18.1 §2).
+        #[cfg_attr(not(test), allow(unused_variables))]
+        let steps = self.work.track_read(
+            walk.path
+                .reads()
+                .saturating_sub(reads)
+                .saturating_sub(clusters.len()),
+        );
+        #[cfg(test)]
+        {
+            let counted = clusters.len() + TRACK_CALL_STEPS + steps;
+            let edge = counted as i64 - track_steps(clusters.len()) as i64;
+            TRACK_EDGE.with(|most| most.set(Some(most.get().map_or(edge, |was| was.max(edge)))));
+        }
         self.tracked.borrow_mut().put(key, &tracked);
         tracked
     }
@@ -3884,8 +4051,10 @@ impl<'a> SideOrnament<'a> {
     /// The most glyph steps the lay of one copy counts (#313): a step a
     /// cluster ([`count`](Self::count)), and its path's reads,
     /// [`SIDE_CLUSTER_READS`] a cluster at the most, [`SIDE_READS_A_STEP`]
-    /// to a step ([`Work::read`]). A model lay's copy counts no more: half a
-    /// step a cluster ([`modeled`](Self::modeled)), and its reads.
+    /// to a step ([`Work::read`]). A model lay's copy counts no more: what
+    /// its clusters bring the lay's to at [`MODEL_CLUSTERS_A_STEP`] a step
+    /// rounded up, at most a step a cluster ([`modeled`](Self::modeled)),
+    /// and its reads.
     fn copy_steps(&self) -> usize {
         let clusters = self.clusters.len().max(1);
         clusters.saturating_add(side_read_steps(clusters.saturating_mul(SIDE_CLUSTER_READS)))
@@ -3897,12 +4066,19 @@ impl<'a> SideOrnament<'a> {
         self.work.side(copies.saturating_mul(self.clusters.len().max(1)));
     }
 
-    /// Count `copies` copies of a model lay against the frame's glyph
-    /// steps ([`InkLay::modeled`]): [`MODEL_CLUSTERS_A_STEP`] clusters a
-    /// step, past its reads ([`read_since`](Self::read_since)).
-    fn modeled(&self, copies: usize) {
-        let clusters = copies.saturating_mul(self.clusters.len().max(1));
-        self.work.side(clusters.div_ceil(MODEL_CLUSTERS_A_STEP).max(1));
+    /// Count a model lay's copies against the frame's glyph steps
+    /// ([`InkLay::modeled`]), the lay having laid `was` copies and now
+    /// `now`: the steps its clusters bring it to at
+    /// [`MODEL_CLUSTERS_A_STEP`] clusters a step, rounded up once over the
+    /// lay — so that a lay of `n` copies counts `n` copies' clusters over
+    /// [`MODEL_CLUSTERS_A_STEP`], rounded up, whichever copies its budget
+    /// lets it lay — past its reads ([`read_since`](Self::read_since)).
+    fn modeled(&self, was: usize, now: usize) -> usize {
+        let clusters = |copies: usize| copies.saturating_mul(self.clusters.len().max(1));
+        let steps =
+            clusters(now).div_ceil(MODEL_CLUSTERS_A_STEP) - clusters(was).div_ceil(MODEL_CLUSTERS_A_STEP);
+        self.work.side(steps);
+        steps
     }
 
     /// Note in a test that a lay of the arc's copies, bringing it to
@@ -3961,6 +4137,23 @@ impl<'a> SideOrnament<'a> {
         let reads = self.walk.path.reads();
         let arc = SideArc::new(self, from, to);
         self.read_since(reads);
+        // In a test: how near what it held back for, a copy's lay and its
+        // touch check, the arc's read left the frame (`ARC_EDGE`).
+        #[cfg(test)]
+        {
+            let boxes = self.base.get().saturating_add(self.per_copy);
+            let work = self.work;
+            let held = work
+                .spent
+                .get()
+                .saturating_add(work.reserve.get())
+                .saturating_add(check_steps(boxes, self.classes.get()))
+                .saturating_add(self.copy_steps());
+            let edge = i64::try_from(held).unwrap_or(i64::MAX)
+                - i64::try_from(work.budget.get()).unwrap_or(i64::MAX);
+            ARC_EDGE.with(|most| most.set(Some(most.get().map_or(edge, |was| was.max(edge)))));
+            ARCS.with(|count| count.set(count.get() + 1));
+        }
         arc
     }
 
@@ -4367,7 +4560,9 @@ impl<'s> SideArc<'s> {
             let mut lay = self.begun(gap);
             lay.modeled = true;
             let mut whole = true;
-            for _ in 0..n {
+            #[cfg(test)]
+            let mut counted = (0, 0);
+            for copy in 0..n {
                 if !self.side.affords(n) {
                     self.stopped.set(true);
                     whole = false;
@@ -4377,10 +4572,17 @@ impl<'s> SideArc<'s> {
                 for cluster in &self.side.clusters {
                     self.side.lay_cluster(&mut lay, cluster, gap);
                 }
-                self.side.modeled(1);
+                #[cfg_attr(not(test), allow(unused_variables))]
+                let steps = self.side.modeled(copy, copy + 1);
+                #[cfg(test)]
+                {
+                    counted = (counted.0 + self.side.clusters.len().max(1), counted.1 + steps);
+                }
                 self.side.read_since(reads);
                 self.side.laid(n);
             }
+            #[cfg(test)]
+            MODEL_LAYS.with(|lays| lays.borrow_mut().push(counted));
             (lay, whole)
         };
         if stop() {

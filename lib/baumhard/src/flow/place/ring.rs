@@ -339,7 +339,9 @@ pub(crate) enum RingLoss {
     /// scale it reached.
     Uneven,
     /// Its copies fill the path, but their spacing was not solved to
-    /// close its seam: laid as walked, the seam a part-copy wide.
+    /// close its seam: laid as walked, the seam a part-copy wide. A closed
+    /// ring's alone: an open path has no seam, and a placement along one
+    /// is never left so.
     Unclosed,
     /// Its first walk stopped before its copies filled the path — its
     /// budget spent, or its cap reached (ruling B17.2a): the copies laid
@@ -474,6 +476,13 @@ impl RingWork {
     /// its glyphs (#324).
     pub(crate) fn took(&self, steps: usize) {
         self.took.set(self.took.get().saturating_add(steps));
+    }
+
+    /// The glyph steps taken apart from its path's reads and its glyphs
+    /// ([`took`](Self::took)), in a test.
+    #[cfg(test)]
+    pub(crate) fn taken_apart(&self) -> usize {
+        self.took.get()
     }
 
     /// Count `glyphs` glyphs set: laid by a walk, or by phase 2 handled

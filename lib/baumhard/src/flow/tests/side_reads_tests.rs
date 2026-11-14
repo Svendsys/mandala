@@ -1,18 +1,28 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! A frame's side ornament counts its lays' path reads (#313): far from
-//! the origin, where a copy's cluster reads its path many times where it
-//! reads it once at the origin, what it takes past its budget, how its
+//! A frame counts its path reads (#313): its side ornament's lays', and
+//! its tracking's past one a cluster (ruling B18.1 §2). Far from the
+//! origin, where a cluster reads its path many times where it reads it
+//! once at the origin: what a frame takes past its budget, how its
 //! counted steps stand to its reads, and the most a cluster reads, what
-//! its lays are held back for. Every test here sets a test seam or reads
-//! a test counter, so none has a `do_*` twin.
+//! its lays are held back for and its overshoot holds for each line's lay.
+//! Every test here sets a test seam or reads a test counter, so none has a
+//! `do_*` twin.
+//!
+//! The far ellipses' tables sum their points' rounding as length, so
+//! their paths are longer than their outlines (#356): their frames lay
+//! more copies than an outline that long would hold. Nothing here rests
+//! on that length — each bound is in counted reads and steps, and each
+//! band in reads a step or a cluster — and #356 removes it.
 
 use glam::Vec2;
 
 use crate::document::values::{FitMode, LineSpan, Percent, Rgba, Shape};
 use crate::flow::place::halves::{
-    overshoot_steps, BUDGET_OVERRIDE, MOST_SIDE_CLUSTER_READS, PAST_BUDGET, SIDE_CLUSTER_READS, SIDE_EDGE,
-    SIDE_READS, SIDE_STEPS, SIDE_STEP_LOOKUPS,
+    overshoot_steps, ARCS, ARC_EDGE, BUDGET_OVERRIDE, MOST_SIDE_CLUSTER_READS, MOST_SIDE_STEP_LOOKUPS,
+    MOST_TRACK_CLUSTER_READS, MOST_TRACK_STEP_LOOKUPS, PAST_BUDGET, SIDE_CLUSTER_READS, SIDE_EDGE,
+    SIDE_READS, SIDE_STEPS, SIDE_STEP_LOOKUPS, STEP_LOOKUPS, TRACK_CLUSTER_READS, TRACK_EDGE, TRACK_READS,
+    TRACK_READ_STEPS,
 };
 use crate::flow::place::{SideLoss, Trace};
 use crate::flow::tests::flow_fuzz::ornament_run;
@@ -30,8 +40,9 @@ const POINTS: f32 = 22.0;
 const SIDES: [&str; 2] = ["─═", "· "];
 
 /// The budgets each frame of the grid is laid with besides its own: each
-/// spends it partway through its side ornament's lays, far out.
-const BUDGETS: [usize; 3] = [20_000, 60_000, 150_000];
+/// spends it partway through its tracking or its side ornament's lays,
+/// far out.
+const BUDGETS: [usize; 6] = [2_000, 5_000, 10_000, 20_000, 60_000, 150_000];
 
 /// The grid's outlines: an ellipse and a sharp square — whose corners
 /// the band curve sweeps round, a read each (`ArcPath::offset_in`) — 2,000
@@ -85,6 +96,31 @@ struct Laid {
     steps: usize,
     lookups: usize,
     most: usize,
+    /// The most path lookups one step of its sides' lays took
+    /// (`MOST_SIDE_STEP_LOOKUPS`, counted apart from the reads).
+    most_lookups: usize,
+    /// Its tracking (#313, ruling B18.1 §2): the path reads past one a
+    /// cluster it counted ([`TRACK_READS`]) and the glyph steps they
+    /// counted ([`TRACK_READ_STEPS`]); the glyph steps its tracks took and
+    /// the path lookups they took (`STEP_LOOKUPS` less
+    /// `SIDE_STEP_LOOKUPS`, counted apart from the reads); and the most
+    /// reads one cluster of a track took, and the most lookups one step
+    /// did ([`MOST_TRACK_CLUSTER_READS`], `MOST_TRACK_STEP_LOOKUPS`).
+    track_reads: usize,
+    track_read_steps: usize,
+    track_steps: usize,
+    track_lookups: usize,
+    most_track: usize,
+    most_track_lookups: usize,
+    /// The most one of its tracks counted past what a frame's overshoot
+    /// holds for a line's lay ([`TRACK_EDGE`]); `None` where none was
+    /// laid.
+    track_edge: Option<i64>,
+    /// The nearest an arc's anchor read left it to its budget past what
+    /// the arc held back for ([`ARC_EDGE`]); `None` where none was taken.
+    arc_edge: Option<i64>,
+    /// The arcs of its sides it took ([`ARCS`]), each an anchor read.
+    arcs: usize,
     /// The nearest a lay of its sides left it to what its budget holds for
     /// their touch check ([`SIDE_EDGE`]): how far past, below none where
     /// short of it; `None` where none was laid.
@@ -109,18 +145,35 @@ fn frame(sides: &str, shape: &Outline, budget: Option<usize>) -> Laid {
         let tables = crate::flow::place::setup_table_samples(&run, shape, &fit, &flow);
         overshoot_steps(&run, ornament.as_ref(), false, tables)
     });
-    let counters = [&SIDE_READS, &SIDE_STEPS, &MOST_SIDE_CLUSTER_READS, &PAST_BUDGET];
+    let counters = [
+        &SIDE_READS,
+        &SIDE_STEPS,
+        &MOST_SIDE_CLUSTER_READS,
+        &PAST_BUDGET,
+        &MOST_SIDE_STEP_LOOKUPS,
+        &TRACK_READS,
+        &TRACK_READ_STEPS,
+        &MOST_TRACK_CLUSTER_READS,
+        &MOST_TRACK_STEP_LOOKUPS,
+    ];
     for counter in counters {
         counter.with(|count| count.set(0));
     }
     SIDE_EDGE.with(|edge| edge.set(None));
-    let (_, lookups_before) = SIDE_STEP_LOOKUPS.with(std::cell::Cell::get);
+    TRACK_EDGE.with(|edge| edge.set(None));
+    ARC_EDGE.with(|edge| edge.set(None));
+    ARCS.with(|count| count.set(0));
+    let (side_steps_before, lookups_before) = SIDE_STEP_LOOKUPS.with(std::cell::Cell::get);
+    let (steps_before, all_lookups_before) = STEP_LOOKUPS.with(std::cell::Cell::get);
     let lay = || frame_with(TEXT, POINTS, shape, &fit, &layout, true);
     let (_, placed, trace): (_, PlacedRun, Trace) = match budget {
         Some(budget) => with_seam(&BUDGET_OVERRIDE, budget, lay),
         None => lay(),
     };
-    let [reads, steps, most, past] = counters.map(|counter| counter.with(std::cell::Cell::get));
+    let [reads, steps, most, past, most_lookups, track_reads, track_read_steps, most_track, most_track_lookups] =
+        counters.map(|counter| counter.with(std::cell::Cell::get));
+    let (side_steps, side_lookups) = SIDE_STEP_LOOKUPS.with(std::cell::Cell::get);
+    let (all_steps, all_lookups) = STEP_LOOKUPS.with(std::cell::Cell::get);
     Laid {
         what: String::new(),
         far: false,
@@ -130,8 +183,18 @@ fn frame(sides: &str, shape: &Outline, budget: Option<usize>) -> Laid {
         allowed,
         reads,
         steps,
-        lookups: SIDE_STEP_LOOKUPS.with(std::cell::Cell::get).1 - lookups_before,
+        lookups: side_lookups - lookups_before,
         most,
+        most_lookups,
+        track_reads,
+        track_read_steps,
+        track_steps: (all_steps - steps_before) - (side_steps - side_steps_before),
+        track_lookups: (all_lookups - all_lookups_before) - (side_lookups - lookups_before),
+        most_track,
+        most_track_lookups,
+        track_edge: TRACK_EDGE.with(std::cell::Cell::get),
+        arc_edge: ARC_EDGE.with(std::cell::Cell::get),
+        arcs: ARCS.with(std::cell::Cell::get),
         edge: SIDE_EDGE.with(std::cell::Cell::get),
         sides: trace.unheld.sides,
         placed,
@@ -168,10 +231,11 @@ fn grid() -> &'static [Vec<Laid>] {
 }
 
 /// #313: a frame's side ornament counts its lays' path reads, and holds
-/// back the most a lay may read before it is laid, so a frame far from the
-/// origin, whose copies read their path 15 to 20 times a cluster where at
-/// the origin they read it once, takes past its budget no more than
-/// `overshoot_steps` — `PAST_BUDGET`, a take that crosses the budget
+/// back the most a lay may read before it is laid, and its tracking counts
+/// its lines' reads past one a cluster, which its overshoot holds for each
+/// line's lay (ruling B18.1 §2), so a frame far from the origin, whose
+/// clusters read their path 11 to 20 times where at the origin they read
+/// it once, takes past its budget no more than `overshoot_steps` — `PAST_BUDGET`, a take that crosses the budget
 /// counted for the part past it (ruling R50.4) — and in all no more than
 /// its budget and that (ruling R47.2): no lay of its sides leaves it past
 /// what its budget holds for their touch check (crossed). And a frame
@@ -179,7 +243,8 @@ fn grid() -> &'static [Vec<Laid>] {
 /// empty or kept short.
 ///
 /// Preconditions: a frame far out spends its budget partway through its
-/// sides, at some budget of the grid.
+/// sides, at some budget of the grid; and at the grid's least budgets,
+/// before them, in its tracking.
 ///
 /// Controls: see the pull request of #313.
 #[test]
@@ -193,11 +258,12 @@ fn test_flow_side_reads_a_far_out_frame_takes_its_overshoot_at_most() {
         "precondition: a frame far out spends its budget partway through its sides"
     );
     // A lay that the next one's hold stopped left the frame within that
-    // hold of the edge: the edge is measured, not left at its start.
+    // hold of the edge: the edge is measured, and the hold is no more than
+    // a copy's.
     let nearest = frames.iter().filter_map(|f| f.edge).max();
     assert!(
-        nearest.is_some_and(|edge| edge >= -EDGE_NEAR),
-        "precondition: some frame's sides' lays come within {EDGE_NEAR} glyph steps of what its budget holds for their check ({nearest:?})"
+        nearest.is_some_and(|edge| edge >= -COPY_HOLD),
+        "some frame's sides' lays come within a copy's hold, {COPY_HOLD} glyph steps, of what its budget holds for their check ({nearest:?})"
     );
     let mut broken = Vec::new();
     for case in cases {
@@ -207,6 +273,12 @@ fn test_flow_side_reads_a_far_out_frame_takes_its_overshoot_at_most() {
                 broken.push(format!(
                     "{}: {} past its budget of {}, {} in all, against {} allowed past it",
                     f.what, f.past, f.budget, f.spent, f.allowed
+                ));
+            }
+            if f.arc_edge.is_some_and(|edge| edge > 0) {
+                broken.push(format!(
+                    "{}: an arc's read left it {:?} glyph steps past what the arc held back for, a copy and its check (arc)",
+                    f.what, f.arc_edge
                 ));
             }
             if f.edge.is_some_and(|edge| edge > 0) {
@@ -248,20 +320,23 @@ fn test_flow_side_reads_a_far_out_frame_takes_its_overshoot_at_most() {
 /// Controls: see the pull request of #313.
 #[test]
 fn test_flow_side_reads_counted_steps_stand_to_their_reads_within_a_band() {
-    let frames: Vec<&Laid> = grid().iter().flatten().collect();
+    let frames: Vec<&Laid> = grid().iter().flatten().filter(|f| f.steps > 0).collect();
+    for case in grid() {
+        let own = case.last().expect("every case lays its frame at its own budget");
+        assert!(
+            own.steps > 0 && own.reads > 0,
+            "precondition: {} lays its sides ({} steps, {} reads)",
+            own.what,
+            own.steps,
+            own.reads
+        );
+    }
     let mut broken = Vec::new();
     for f in &frames {
-        assert!(
-            f.steps > 0 && f.reads > 0,
-            "precondition: {} lays its sides ({} steps, {} reads)",
-            f.what,
-            f.steps,
-            f.reads
-        );
-        if f.lookups > f.reads {
+        if f.lookups + f.arcs > f.reads {
             broken.push(format!(
-                "{}: its sides' clusters looked the path up {} times, past the {} reads they counted",
-                f.what, f.lookups, f.reads
+                "{}: its sides' clusters looked the path up {} times and its {} arcs read their anchors, past the {} reads they counted",
+                f.what, f.lookups, f.arcs, f.reads
             ));
         }
         let per = f.reads as f64 / f.steps as f64;
@@ -284,11 +359,17 @@ fn test_flow_side_reads_counted_steps_stand_to_their_reads_within_a_band() {
     );
 }
 
-/// How near what its budget holds for their touch check some frame's
-/// sides' lays come in the grid (#313): within a copy's hold of it, where
-/// the hold of the next copy of a floor's row stopped it — 2 glyph steps,
-/// the nearest the grid's frames come.
-const EDGE_NEAR: i64 = 1_000;
+/// The most a lay of one copy of the grid's ornaments is held back for
+/// (#313, review 5902086644): a step each of its two clusters, and its
+/// reads, [`SIDE_CLUSTER_READS`] a cluster at four to a step —
+/// `SideOrnament::copy_steps`, worked out here apart from it: 2 + 15 =
+/// 17. Some frame's sides' lays, stopped by the hold of their next copy,
+/// come within it of what its budget holds for their touch check — 6
+/// glyph steps, the nearest the grid's frames come — so a lay held back
+/// for more than a copy needs, which would leave arcs empty that a copy
+/// fits, turns the test red, as does an edge recorded short of where it
+/// is.
+const COPY_HOLD: i64 = 2 + (2 * SIDE_CLUSTER_READS as i64 + 3) / 4;
 
 /// The most path reads a counted step of a side ornament's lays takes
 /// (#313): the weight of a read, four to a step, that ruling R47.3's
@@ -317,12 +398,173 @@ const FAR_READS_A_STEP: f64 = 2.0;
 fn test_flow_side_reads_no_cluster_reads_past_what_its_lay_holds_back() {
     let frames: Vec<&Laid> = grid().iter().flatten().collect();
     let most = frames.iter().map(|f| f.most).max().unwrap_or(0);
-    assert!(
-        frames.iter().filter(|f| f.far).all(|f| f.most >= 8),
-        "precondition: every far frame has a cluster that reads its path 8 times or more"
-    );
+    // Held from below by a count apart from the reads: no cluster reads
+    // its path fewer times than one of its steps looked it up; and far out,
+    // at its own budget, as many times as the grid's far frames read it,
+    // 21 or 22.
+    for case in grid() {
+        let own = case.last().expect("every case lays its frame at its own budget");
+        assert!(
+            !own.far || own.most >= 20,
+            "{}: far out, no cluster of its sides read its path 20 times or more ({})",
+            own.what,
+            own.most
+        );
+    }
+    for f in &frames {
+        assert!(
+            f.most >= f.most_lookups,
+            "{}: the most reads a cluster of its sides counted, {}, is short of the {} lookups one of their steps took",
+            f.what,
+            f.most,
+            f.most_lookups
+        );
+    }
     assert!(
         most <= SIDE_CLUSTER_READS,
         "a side's cluster read its path {most} times, past the {SIDE_CLUSTER_READS} its lays are held back for"
     );
+}
+
+/// The weight of a tracking read past the first a cluster (#313, ruling
+/// B18.1 §2): eight to a step, what ruling R47.3's measure on the ASan
+/// build gave (`TRACK_READS_A_STEP`), held as a number of its own so that
+/// the weight's constant moved turns the test red rather than moving it.
+const TRACK_READS_WEIGHT: usize = 8;
+
+/// #313, ruling B18.1 §2: a frame's tracking counts its path's reads past
+/// one a cluster — exactly the lookups its tracks' steps took past one a
+/// step, counted apart by the lookups' own counter (`STEP_LOOKUPS` less
+/// `SIDE_STEP_LOOKUPS`) — at [`TRACK_READS_WEIGHT`] to a counted step,
+/// rounded up over the frame. Far out its lines' clusters read their path
+/// 11 to 13 times past the first (review 5902086644), at the origin less
+/// than once in four.
+///
+/// Controls: see the pull request of #313.
+#[test]
+fn test_flow_track_reads_a_frame_counts_its_lines_reads_past_one_a_cluster() {
+    let frames: Vec<&Laid> = grid().iter().flatten().collect();
+    let mut broken = Vec::new();
+    for f in &frames {
+        assert!(f.track_steps > 0, "precondition: {} tracks its lines", f.what);
+        if f.track_reads + f.track_steps != f.track_lookups {
+            broken.push(format!(
+                "{}: its tracks counted {} reads past one a cluster over {} steps, where they looked the path up {} times",
+                f.what, f.track_reads, f.track_steps, f.track_lookups
+            ));
+        }
+        if f.track_read_steps != f.track_reads.div_ceil(TRACK_READS_WEIGHT) {
+            broken.push(format!(
+                "{}: {} reads counted {} glyph steps, not {} at {TRACK_READS_WEIGHT} to a step",
+                f.what,
+                f.track_reads,
+                f.track_read_steps,
+                f.track_reads.div_ceil(TRACK_READS_WEIGHT)
+            ));
+        }
+        let per = f.track_reads as f64 / f.track_steps as f64;
+        if (f.far && per < 10.0) || (!f.far && per > 0.5) {
+            broken.push(format!(
+                "{}: {per:.2} reads past the first a cluster, {}",
+                f.what,
+                if f.far {
+                    "below 10 far out"
+                } else {
+                    "above 0.5 at the origin"
+                }
+            ));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "{} of {} frames:\n{}",
+        broken.len(),
+        frames.len(),
+        broken.join("\n")
+    );
+}
+
+/// #313, ruling B18.1 §2: no cluster of a frame's [`track`] reads its path
+/// more than [`TRACK_CLUSTER_READS`] times, what a frame's overshoot holds
+/// for each line's lay; held from below by the lookups a step of a track
+/// took, counted apart, and far out a cluster reads it 21 or 22 times. And
+/// no track counts more than that overshoot holds for it
+/// ([`TRACK_EDGE`]), while far out one comes within half of it.
+///
+/// [`track`]: crate::flow::place::halves
+///
+/// Controls: see the pull request of #313.
+#[test]
+fn test_flow_track_reads_no_line_lay_counts_past_what_its_overshoot_holds() {
+    let frames: Vec<&Laid> = grid().iter().flatten().collect();
+    for f in &frames {
+        assert!(
+            f.most_track <= TRACK_CLUSTER_READS,
+            "{}: a cluster of a track read its path {} times, past the {TRACK_CLUSTER_READS} its overshoot holds",
+            f.what,
+            f.most_track
+        );
+        assert!(
+            f.most_track >= f.most_track_lookups,
+            "{}: the most reads a cluster of a track counted, {}, is short of the {} lookups one step took",
+            f.what,
+            f.most_track,
+            f.most_track_lookups
+        );
+        assert!(
+            !f.far || f.most_track >= 20,
+            "{}: far out, no cluster of a track read its path 20 times or more ({})",
+            f.what,
+            f.most_track
+        );
+        let edge = f.track_edge.expect("every frame tracks a line");
+        assert!(
+            edge <= 0,
+            "{}: a track counted {edge} glyph steps past what its overshoot holds",
+            f.what
+        );
+    }
+    let far_nearest = frames.iter().filter(|f| f.far).filter_map(|f| f.track_edge).max();
+    assert!(
+        far_nearest.is_some_and(|edge| edge >= -TRACK_NEAR),
+        "far out, some track comes within {TRACK_NEAR} glyph steps of what its overshoot holds ({far_nearest:?})"
+    );
+}
+
+/// How near what a frame's overshoot holds for a line's lay some far
+/// frame's track comes (#313, ruling B18.1 §2): the grid's far frames'
+/// nearest come 17 to 25 glyph steps short of it, its frames at the
+/// origin 43 or more. A hold its reads do not reach — a weight or a bound
+/// of reads a cluster too large — turns the test red, as one too small
+/// does past it.
+const TRACK_NEAR: i64 = 24;
+
+/// #313, ruling B18.1 §3: a model lay of a side's copies counts its
+/// clusters at [`MODEL_CLUSTERS_A_STEP`](crate::flow::place::halves::MODEL_CLUSTERS_A_STEP)
+/// — two — to a step, rounded up once over the lay, as it did before its
+/// copies were each read against the budget: an ornament of one cluster,
+/// `x`, whose copies each rounded up on their own would count a step a
+/// cluster, twice its weight. Round an ellipse 2,000 across at the origin,
+/// where its lays are modeled.
+///
+/// Controls: see the pull request of #313.
+#[test]
+fn test_flow_side_reads_a_model_lay_counts_its_clusters_rounded_once() {
+    use crate::flow::place::halves::MODEL_LAYS;
+    let shape = outline(Rect::new(Vec2::ZERO, Vec2::splat(2_000.0)), Shape::Ellipse);
+    MODEL_LAYS.with(|lays| lays.borrow_mut().clear());
+    let _ = frame("x", &shape, None);
+    let lays = MODEL_LAYS.with(|lays| lays.borrow().clone());
+    assert!(
+        lays.iter().any(|&(clusters, _)| clusters >= 2),
+        "precondition: a model lay lays two copies or more ({} lays)",
+        lays.len()
+    );
+    for (clusters, steps) in lays {
+        assert_eq!(
+            steps,
+            clusters.div_ceil(2),
+            "a model lay of {clusters} clusters counted {steps} glyph steps past its reads"
+        );
+    }
 }

@@ -625,15 +625,20 @@ pub(crate) struct Trace {
     /// junction, `[half][junction]`, as its last clearance search left
     /// it: never `NaN`.
     pub(crate) clear: [[f32; 2]; 2],
-    /// For a text frame, the glyph steps its tracking took in all, what
-    /// its budget bounds (`halves::frame_budget`).
+    /// For every budgeted placement — a text frame, a `Repeat` ring or a
+    /// directional one, and since #313 every placement along an open path
+    /// and every whole-glyph pattern along one (`place_pitched`) — the
+    /// glyph steps its work took in all, what its budget bounds
+    /// (`halves::frame_budget`).
     pub(crate) spent: usize,
-    /// For a text frame or a `Repeat` ring, the samples its paths' tables
-    /// were built with, counted in `spent` (ruling B16.3a): what
-    /// [`setup_table_samples`] says they are.
+    /// For every budgeted placement, as for `spent`, the samples its
+    /// paths' tables were built with, counted in `spent` (ruling B16.3a):
+    /// for a frame or a ring, what [`setup_table_samples`] says they are.
     pub(crate) tables: usize,
-    /// For a text frame, its budget, and the glyphs of its text it was
-    /// scaled by (ruling R44.2).
+    /// For every budgeted placement, as for `spent`, its budget, and the
+    /// glyphs it was scaled by: a frame's text's (ruling R44.2), or the
+    /// glyphs a ring, or a placement along an open path, estimates it lays
+    /// (ruling B17.1a, #313).
     pub(crate) budget: usize,
     pub(crate) glyphs: usize,
     /// For a text frame, the share of its budget held back for its last
@@ -650,9 +655,12 @@ pub(crate) struct Trace {
     /// center — lies on the outline's offset curve there. `None` for a
     /// frame R27 lays on its level spans.
     pub(crate) offset: Option<f32>,
-    /// For a `Repeat` ring, how its budget left it, when it stopped any of
-    /// its work (#310): `None` when its work fit. A ring's `spent`,
-    /// `budget` and `glyphs` are its own, as a frame's are.
+    /// For a `Repeat` or directional ring, and since #313 for a placement
+    /// along an open path and a whole-glyph pattern along one, how its
+    /// budget or its cap left it, when either stopped any of its work
+    /// (#310): `None` when its work fit. Its `spent`, `budget` and
+    /// `glyphs` are its own, as a frame's are. A frame reports what it
+    /// left in `unheld` and `cut_apart` instead.
     pub(crate) ring: Option<RingLoss>,
 }
 
@@ -789,10 +797,6 @@ thread_local! {
     /// began with its budget spent (`RingWork::late`).
     #[cfg(test)]
     pub(crate) static LAST_OPEN: std::cell::Cell<Option<(LastRing, Option<usize>, usize)>> = const { std::cell::Cell::new(None) };
-    /// Test counter (#313): the placements along open paths their budgets
-    /// have stopped on this thread.
-    #[cfg(test)]
-    pub(crate) static OPENS_STOPPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A `Repeat` ring as laid (#310), what [`LAST_RING`] keeps, or a
@@ -815,6 +819,10 @@ pub(crate) struct LastRing {
     /// What was held back for phase 2 when it began, and whether the ring
     /// had closed then (`RingWork::held_again`).
     pub(crate) held: (usize, bool),
+    /// The glyph steps phase 2 took (#313): what it took from when it
+    /// began to the end of the placement, its handling of the glyphs
+    /// placed included — what the hold is for.
+    pub(crate) again: usize,
 }
 
 /// The extent a `w × h` box spans along unit direction `dir`.
@@ -3147,6 +3155,8 @@ fn place(
         FitMode::Spread => fs.unlocked(|| spread(run, &walk(run), 0.0)),
         FitMode::Fit { min, max } => fit_to(run, path, *min, *max, fs.fonts(), &walk),
     };
+    #[cfg(test)]
+    let before_again = work.spent(path);
     work.lay_again();
     let mut trace = trace;
     let placed =
@@ -3176,6 +3186,7 @@ fn place(
             tables: work.tables(),
             loss: work.loss(),
             held: work.held_again(),
+            again: spent.saturating_sub(before_again),
         };
         if closed {
             LAST_RING.with(|last| last.set(Some(laid)));
@@ -3186,9 +3197,6 @@ fn place(
             }
         } else {
             LAST_OPEN.with(|last| last.set(Some((laid, work.crossed(), work.late()))));
-            if work.loss().is_some() {
-                OPENS_STOPPED.with(|count| count.set(count.get() + 1));
-            }
         }
     }
     #[cfg(test)]
