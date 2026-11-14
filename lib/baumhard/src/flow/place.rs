@@ -223,6 +223,22 @@ const SOLVE_ROUNDS: usize = 48;
 /// The most rounds `Fit` takes to shrink its scale until the text fits.
 const FIT_ROUNDS: usize = 16;
 
+#[cfg(test)]
+thread_local! {
+    /// Test seam (#313, ruling B18.1 §10.2): the rounds [`fit_to`] runs
+    /// in place of [`FIT_ROUNDS`], so that a test can make them run out.
+    pub(crate) static FIT_ROUNDS_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// The rounds [`fit_to`] runs at most: [`FIT_ROUNDS`], or a test's.
+fn fit_rounds() -> usize {
+    #[cfg(test)]
+    if let Some(rounds) = FIT_ROUNDS_OVERRIDE.with(std::cell::Cell::get) {
+        return rounds;
+    }
+    FIT_ROUNDS
+}
+
 /// The chord rounds that resolve a step after its seed (ruling R9.2).
 const CHORD_ROUNDS: usize = 2;
 
@@ -3747,9 +3763,10 @@ fn solve_gap_until(miss: impl Fn(f32) -> f32, length: f32, guess: f32, stop: &dy
 /// round whose walk is cut says it overruns, not by how much, so from the
 /// first such round the scale is bisected instead, between the largest
 /// scale found to fit and the least found cut, and the largest found to
-/// fit is laid (ruling B18.1 §10). Rounds that run out, or a bracket that
-/// closes, with the text still cut above `min` report its scale not solved
-/// (`RingLoss::Uneven`), never silent.
+/// fit is laid (ruling B18.1 §10). A bracket that closes on `min` with no
+/// round found to fit lays one round at `min`, where a cut is the
+/// window's, no loss. Rounds that run out with the text still cut above
+/// `min` report its scale not solved (`RingLoss::Uneven`), never silent.
 fn fit_to<'p>(
     run: &ShapedRun,
     path: &'p ArcPath,
@@ -3777,6 +3794,7 @@ fn fit_to<'p>(
     };
     let mut scale = fitting_scale(&walk, &run.glyphs, &clusters, length, start, low);
     let mut rounds = 0;
+    let fit_rounds = fit_rounds();
     let mut previous: Option<(f32, f32)> = None;
     // Once a round's walk is cut: the least scale found cut, and the
     // largest round found to fit since, with its walk (ruling B18.1 §10).
@@ -3839,7 +3857,7 @@ fn fit_to<'p>(
                         ..walked
                     },
                 ));
-                if rounds >= FIT_ROUNDS || over - scale <= scale * BRACKET_TOLERANCE {
+                if rounds >= fit_rounds || over - scale <= scale * BRACKET_TOLERANCE {
                     return fitted.map(|(_, walked)| walked).expect("a fitting round is kept");
                 }
                 scale = 0.5 * (scale + over);
@@ -3847,7 +3865,19 @@ fn fit_to<'p>(
             }
             cut_at = Some(over.min(scale));
             let under = fitted.as_ref().map_or(low, |(at, _)| *at);
-            if rounds >= FIT_ROUNDS || scale <= low || scale - under <= under * BRACKET_TOLERANCE {
+            // The bracket closed on the window's least with no round found
+            // to fit: `under` was the least assumed, never laid. One round
+            // is laid there (ruling B18.1 §10.2, as amended): whole, it is
+            // laid with no loss; cut, the cut is the window's, no loss.
+            if fitted.is_none()
+                && scale > low
+                && scale - low <= low * BRACKET_TOLERANCE
+                && rounds < fit_rounds
+            {
+                scale = low;
+                continue;
+            }
+            if rounds >= fit_rounds || scale <= low || scale - under <= under * BRACKET_TOLERANCE {
                 // The largest round found to fit, if its phase 2 is still
                 // afforded: it was held back for when that round ran, and
                 // the rounds since have spent more (#313).
@@ -3866,10 +3896,9 @@ fn fit_to<'p>(
                         ..walked
                     };
                 }
-                // Its rounds run out, or its bracket closes, with its text
-                // still cut above the least scale its window allows: its
-                // scale is not solved to the end, and says so (ruling
-                // B18.1 §10).
+                // Its rounds run out with its text still cut above the
+                // least scale its window allows: its scale is not solved
+                // to the end, and says so (ruling B18.1 §10.2).
                 if scale > low {
                     if let Some(work) = placed_walk.work {
                         work.lose(RingLoss::Uneven);
@@ -3883,7 +3912,7 @@ fn fit_to<'p>(
             scale = (0.5 * (under + scale)).max(low);
             continue;
         }
-        if fits || scale <= low || rounds >= FIT_ROUNDS {
+        if fits || scale <= low || rounds >= fit_rounds {
             // Its rounds run out overrunning above the least scale its
             // window allows: its scale is not solved to the end, and says
             // so (ruling B18.1 §10). At the least scale, an overrun is the
