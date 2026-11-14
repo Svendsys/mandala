@@ -269,6 +269,181 @@ fn test_a_pan_through_act_action_applies_nothing_to_the_layers() {
     );
 }
 
+/// The warning codes an IPC reply carries. Gated as its callers, the
+/// `cfg(unix)` save-through-a-link tests, are.
+#[cfg(unix)]
+fn warning_codes(reply: &Value) -> Vec<String> {
+    reply["warnings"]
+        .as_array()
+        .map(|warnings| {
+            warnings
+                .iter()
+                .filter_map(|w| w["code"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether some warning of `reply` carries `code` and a message holding
+/// every one of `words`. Gated as its callers are.
+#[cfg(unix)]
+fn warns(reply: &Value, code: &str, words: &[&str]) -> bool {
+    reply["warnings"].as_array().is_some_and(|warnings| {
+        warnings.iter().any(|w| {
+            w["code"] == code
+                && w["message"]
+                    .as_str()
+                    .is_some_and(|m| words.iter().all(|word| m.contains(word)))
+        })
+    })
+}
+
+/// **`SaveDocumentAs` through `act.action` to a link that leads to a
+/// file that is not a map** is refused as `format/ipc.md` says: the
+/// reply is `ok`, the outcome `unhandled`, with a `console_error`
+/// warning naming the link and that it leads to another file (cut to
+/// the log's excerpt width); nothing is written, and the binding and
+/// the unsaved change stay.
+///
+/// Control: checking the extension on the name typed alone lets the
+/// save through (`handled`), and `notamap.txt` holds the map.
+#[cfg(unix)]
+#[test]
+fn test_an_ipc_save_document_as_through_a_link_to_a_file_that_is_not_a_map_is_unhandled() {
+    // The reply carries the warnings a logger hands it.
+    baumhard::util::test_logger::install();
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    init.document.as_mut().expect("document").create_root_for_test();
+    frame(init);
+    let bound = document(init).file_path.clone();
+    let dir = baumhard::util::test_temp::TempDir::new("gpu-ipc-save-as-link");
+    let other = dir.join("notamap.txt");
+    std::fs::write(&other, "notes").expect("the plain file is written");
+    let link = dir.join("sneaky.mandala.json");
+    std::os::unix::fs::symlink(&other, &link).expect("the link is made");
+    let (reply, _) = act(
+        init,
+        json!({"id": 8, "cmd": "act.action", "action": {"SaveDocumentAs": link.to_str().expect("a UTF-8 path")}}),
+    );
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(reply["result"]["outcome"], "unhandled", "{reply}");
+    assert!(
+        // The console's warning carries the line's failure cut to the log's
+        // excerpt width, so the link's target may be cut off; the full
+        // words are the `act.console` reply's (the test below this one).
+        warns(&reply, "console_error", &["sneaky.mandala.json: links to `"]),
+        "a console_error warning names the link and that it leads elsewhere: {reply} ({:?})",
+        warning_codes(&reply)
+    );
+    assert_eq!(std::fs::read_to_string(&other).expect("reads"), "notes");
+    assert_eq!(document(init).file_path, bound);
+    assert!(document(init).is_dirty());
+}
+
+/// **`SaveDocument` on a map opened through a git-annex-style link** —
+/// a `*.mandala.json` link to a key ending `.json` — opens it, takes an
+/// edit, and then the bound save is refused as `format/ipc.md` says:
+/// `outcome: "unhandled"` with a `save_failed` warning naming both paths;
+/// the key is not written, and the binding and the unsaved change stay.
+///
+/// Control: checking the extension on the name typed alone lets the
+/// save through (`handled`), and the key holds the edit.
+#[cfg(unix)]
+#[test]
+fn test_an_ipc_save_document_of_a_map_opened_through_an_annex_link_is_unhandled() {
+    // The reply carries the warnings a logger hands it.
+    baumhard::util::test_logger::install();
+    let dir = baumhard::util::test_temp::TempDir::new("gpu-ipc-save-annex");
+    let key = dir.join("SHA256E-s1--0123abcd.json");
+    std::fs::copy(map_path("theme_demo.mandala.json"), &key).expect("the key is written");
+    let before = std::fs::read(&key).expect("reads");
+    let link = dir.join("annexed.mandala.json");
+    std::os::unix::fs::symlink(&key, &link).expect("the link is made");
+    let link_str = link.to_str().expect("a UTF-8 path").to_string();
+    let Some(mut app) = headless_app(&link_str) else {
+        return;
+    };
+    let init = &mut app.init;
+    assert_eq!(
+        document(init).file_path.as_deref(),
+        Some(link_str.as_str()),
+        "precondition: the map opened through the link"
+    );
+    init.document.as_mut().expect("document").create_root_for_test();
+    frame(init);
+    let reply = action(init, "SaveDocument");
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(reply["result"]["outcome"], "unhandled", "{reply}");
+    assert!(
+        warns(
+            &reply,
+            "save_failed",
+            &[
+                "annexed.mandala.json: links to `",
+                "0123abcd.json`, which is not a map"
+            ]
+        ),
+        "a save_failed warning names both paths: {reply} ({:?})",
+        warning_codes(&reply)
+    );
+    assert_eq!(
+        std::fs::read(&key).expect("reads"),
+        before,
+        "the key is not written"
+    );
+    assert_eq!(document(init).file_path.as_deref(), Some(link_str.as_str()));
+    assert!(document(init).is_dirty());
+}
+
+/// **A save driven over IPC cannot write map bytes into a file that is
+/// not a map** (amendment E1.1, second addendum): `save <path>` through
+/// `act.console`, where the path is a link named like a map that leads
+/// to `notamap.txt`, is refused naming both, and the file it leads to,
+/// the document's binding and its unsaved change are all as they were.
+///
+/// Control: checking the extension on the name typed alone lets the
+/// save through, and `notamap.txt` holds the map.
+#[cfg(unix)]
+#[test]
+fn test_an_ipc_save_through_a_link_to_a_file_that_is_not_a_map_is_refused() {
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    init.document.as_mut().expect("document").create_root_for_test();
+    frame(init);
+    assert!(
+        document(init).is_dirty(),
+        "precondition: the edit dirtied the map"
+    );
+    let bound = document(init).file_path.clone();
+    let dir = baumhard::util::test_temp::TempDir::new("gpu-ipc-save-link");
+    let other = dir.join("notamap.txt");
+    std::fs::write(&other, "notes").expect("the plain file is written");
+    let link = dir.join("sneaky.mandala.json");
+    std::os::unix::fs::symlink(&other, &link).expect("the link is made");
+    let line = format!("save {}", link.to_str().expect("a UTF-8 path"));
+    let (reply, _) = act(init, json!({"id": 7, "cmd": "act.console", "line": line}));
+    assert_eq!(reply["ok"], false, "the save is refused: {reply}");
+    assert!(
+        reply["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("sneaky.mandala.json: links to `")
+                && m.contains("notamap.txt`, which is not a map")),
+        "the refusal names both paths: {reply}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&other).expect("reads"),
+        "notes",
+        "nothing was written through the link"
+    );
+    assert_eq!(document(init).file_path, bound, "the binding is as it was");
+    assert!(document(init).is_dirty(), "the unsaved change is still unsaved");
+}
+
 /// **`act.console` through the whole side-effect drain.** The dirty
 /// guard — the one thing between a typo'd `open` and lost work —
 /// refuses `open` and `new` over an unsaved change, through the same

@@ -58,6 +58,9 @@ pub(crate) mod dto;
 /// An edit as a file writes it (`format/edits.md`, V1-D1).
 pub(crate) mod edits;
 pub mod error;
+/// The file a map lives in: its extension, the read and the atomic
+/// write every surface with a path goes through.
+pub mod file;
 mod from_dto;
 pub(crate) mod index;
 mod load_map;

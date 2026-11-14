@@ -60,10 +60,17 @@ draws them.
   `format/projection.md` is where a map is drawn, `format/ipc.md` the
   control protocol, `format/macros.md` and `format/fonts.md` their
   concepts. Read this before changing the data model.
-- **`crates/maptool/`** — CLI tool for `.mandala.json` files. Its verbs
-  read the old model and were deleted with it (V1-C3); they return as
-  clients of the document in V1-E1 (#253), and until then every
-  invocation says so and exits `2`.
+- **`crates/maptool/`** — CLI tool for `.mandala.json` files, a client
+  of the same `Document` the app edits: `show` (the node tree), `grep`
+  (by regex, every string a map draws as glyphs: spans, own `content`,
+  `once` fillers, frame ornaments), `export` (Markdown), `verify` (the loader's
+  verdict, with its JSON path, plus warnings for what loads but is
+  probably a mistake) and `apply` (pipe matching sections' text through
+  a command, as one `EditRequest` through `Document::apply`; `-i`
+  writes the map back as the app's save does — through a link to its
+  real file, which must itself be a `.mandala.json` — and `--dry-run`
+  prints what `-i` would change on disk). There is no `convert`: no
+  older format remains to convert from.
 - **`crates/mandalactl/`** — CLI client for a *running* app's `--ipc`
   socket: one invocation, one command, JSON or `path: value` lines on
   stdout, exit code `0` / `1` (the app said no) / `2` (could not reach
