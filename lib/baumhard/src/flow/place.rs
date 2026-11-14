@@ -3095,9 +3095,9 @@ fn place(
     // An open path's cap is the one every walk but a ring's has: in a
     // test, the frame's cap seam's (`placed_cap`).
     let cap = cap.min(if closed { MAX_PLACED_GLYPHS } else { placed_cap() });
+    let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
     let glyphs = if matches!(fit, FitMode::Repeat) {
-        let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len()).len();
-        let advance = ring::copy_advance(&run.glyphs, clusters, spacing);
+        let advance = ring::copy_advance(&run.glyphs, clusters.len(), spacing);
         #[cfg(test)]
         if closed {
             LAST_RING_ESTIMATE.with(|last| last.set(Some((run.glyphs.len(), advance, path.length()))));
@@ -3106,9 +3106,17 @@ fn place(
     } else {
         run.glyphs.len().min(cap)
     };
+    // What bounds the one cluster that may find its budget spent past it
+    // (`ring::ring_overshoot`): a ring's copy, as #310 has it; along an
+    // open path, its widest cluster — its text is one copy, laid once.
+    let copy = if closed {
+        run.glyphs.len()
+    } else {
+        widest(&clusters)
+    };
     let work = RingWork::new(
         path,
-        run.glyphs.len(),
+        copy,
         run.glyphs.iter().any(|glyph| glyph.letter),
         run.line_height,
         glyphs,
@@ -3183,6 +3191,16 @@ fn place(
     placed
 }
 
+/// The most glyphs any of `clusters` holds, at least one.
+fn widest(clusters: &[Cluster]) -> usize {
+    clusters
+        .iter()
+        .map(|cluster| cluster.glyphs.len())
+        .max()
+        .unwrap_or(1)
+        .max(1)
+}
+
 /// Every cluster once from the start, `gap` apart, cut to the longest
 /// reading-order prefix that fits. Also returns where the next cluster
 /// would start, when the text was placed whole.
@@ -3248,6 +3266,7 @@ fn once<'p>(
         let advance = ring::copy_advance(&filled.glyphs[text_glyphs..], copy.len(), gap);
         let room = walk.path.length() - next.unwrap_or(0.0);
         work.scale(text_glyphs.saturating_add(ring::ring_glyphs(filler_glyphs, advance, room, work.cap())));
+        work.widen(widest(&copy));
     }
     let mut glyphs = Laying::with_capacity(filled.glyphs.len());
     let mut s = match walk.lay(&filled.glyphs, &text, 0.0, gap, &mut glyphs) {
@@ -3587,10 +3606,11 @@ fn spread(run: &ShapedRun, walk: &PathWalk<'_>, overrun_slack: f32) -> Walked {
         return walked;
     }
     let guess = (length - natural) / (clusters.len() - 1) as f32;
-    // Read against the placement's budget before each probe (#313): a
-    // solve it stops keeps the fitting side of its bracket, the text laid
-    // short of the path's end, and is uneven.
-    let gap = walk.solve(|gap| walk.measure(&clusters, gap) - length, length, guess);
+    // Each probe's measure reads the placement's budget before each cluster
+    // it walks (`walk_bodies`, #313): spent, it ends at `NaN`, which the
+    // solve reads as overrunning, and the lay at the gap it keeps finds the
+    // budget spent too, and is short.
+    let gap = solve_gap(|gap| walk.measure(&clusters, gap) - length, length, guess);
     let mut walked = once_text(run, walk, gap).0;
     walked.ends = Ends::Exactly;
     walked

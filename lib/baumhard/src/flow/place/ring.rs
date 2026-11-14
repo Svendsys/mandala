@@ -338,7 +338,7 @@ pub(crate) struct RingWork {
     tables: usize,
     /// The ring's glyphs a copy, and whether any of them is a letter,
     /// which phase 2 lays in reading order.
-    copy: usize,
+    copy: Cell<usize>,
     letters: bool,
     /// The most glyphs it lays (ruling B17.2a), the glyphs its budget is
     /// scaled by ([`ring_glyphs`], at most the cap), and its budget.
@@ -400,7 +400,7 @@ impl RingWork {
         RingWork {
             from: path.reads(),
             tables: path.table_samples(),
-            copy,
+            copy: Cell::new(copy),
             letters,
             cap,
             glyphs: Cell::new(glyphs),
@@ -504,6 +504,14 @@ impl RingWork {
             self.glyphs.set(glyphs);
             self.budget.set(frame_budget(glyphs));
         }
+    }
+
+    /// Note that a cluster of `glyphs` glyphs may be laid (#313): an open
+    /// path's `Once`, whose filler's clusters may hold more glyphs than its
+    /// text's, what bounds the one cluster that may find its budget spent
+    /// ([`ring_overshoot`]).
+    pub(crate) fn widen(&self, glyphs: usize) {
+        self.copy.set(self.copy.get().max(glyphs));
     }
 
     /// Hold back the run on phase 2 would take of a placement whose walks
@@ -616,6 +624,6 @@ impl RingWork {
     /// Its budget, the glyphs it was scaled by ([`ring_glyphs`], at most
     /// its cap), and its glyphs a copy.
     pub(crate) fn budget(&self) -> (usize, usize, usize) {
-        (self.budget.get(), self.glyphs.get(), self.copy)
+        (self.budget.get(), self.glyphs.get(), self.copy.get())
     }
 }

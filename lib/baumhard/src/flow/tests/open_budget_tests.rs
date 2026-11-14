@@ -122,8 +122,10 @@ struct Laid {
     past: usize,
     spent: usize,
     budget: usize,
-    /// Its run's glyphs, what bounds a cluster's, and the samples its
+    /// Its text's glyphs; what bounds the one cluster that may find its
+    /// budget spent, its widest cluster's glyphs; and the samples its
     /// path's table was built with.
+    text: usize,
     copy: usize,
     tables: usize,
     /// How far past what its budget left after its hold for phase 2 it
@@ -157,7 +159,8 @@ fn open(text: &str, curve: &Curve, fit: &FitMode, budget: Option<usize>, cap: us
                 past: PAST_BUDGET.with(std::cell::Cell::get),
                 spent: trace.spent,
                 budget: trace.budget,
-                copy: run.glyphs.len(),
+                text: run.glyphs.len(),
+                copy: last.copy,
                 tables: trace.tables,
                 crossed,
                 late,
@@ -226,9 +229,39 @@ fn grid() -> &'static [Case] {
                 }
             }
         }
+        // A long text's `Fit` (#313): its measures of its text as read walk
+        // it as phase 2 would, reading no budget as they go, so each is read
+        // against the budget before it runs — at every budget about where
+        // they run out.
+        let (_, _, line) = &paths()[0];
+        let fit = FitMode::Fit { min: 0.5, max: 2.0 };
+        let text = CONTENTS[0].1.repeat(LONG_FIT_COPIES);
+        let mut laid: Vec<Laid> = LONG_FIT_BUDGETS
+            .step_by(250)
+            .map(|b| {
+                let mut laid = open(&text, line, &fit, Some(b), GRID_CAP);
+                laid.what = format!("a long text's Fit along the 2,000 line at the origin, budget {b}");
+                laid
+            })
+            .collect();
+        let mut own = open(&text, line, &fit, None, GRID_CAP);
+        own.what = "a long text's Fit along the 2,000 line at the origin, its own budget".to_string();
+        laid.push(own);
+        cases.push(Case { far: false, laid });
         cases
     })
 }
+
+/// How many copies of the grid's letters the long text's `Fit` lays: 400,
+/// 3,200 glyphs, whose measure of its text as read, laid unread against
+/// its budget, takes the placement 609 glyph steps past what its budget
+/// leaves (at a budget of 1,500), past the setup and the one cluster it
+/// may take past it.
+const LONG_FIT_COPIES: usize = 400;
+
+/// The budgets the long text's `Fit` is laid with, every 250th: about
+/// where its measures run out.
+const LONG_FIT_BUDGETS: std::ops::RangeInclusive<usize> = 500..=4_000;
 
 /// #313: a placement along an open path reads its budget before every
 /// cluster its walks lay or measure, before every probe of its spacing
@@ -547,18 +580,18 @@ fn test_flow_open_budget_a_once_with_a_filler_is_budgeted_by_its_copies() {
         .filter(|own| own.what.contains("Once with a filler along a cubic 10²² across"))
         .collect();
     assert!(
-        fillers.len() == 2 && fillers.iter().all(|own| own.placed.glyphs.len() > own.copy),
+        fillers.len() == 2 && fillers.iter().all(|own| own.placed.glyphs.len() > own.text),
         "precondition: the grid lays both its fillers along the far cubic past their text"
     );
     for own in fillers {
         assert!(
-            own.budget > frame_budget(own.copy),
+            own.budget > frame_budget(own.text),
             "{}: budgeted {} glyph steps, its text's {} alone, though it placed {} glyphs of a text of {}",
             own.what,
             own.budget,
-            frame_budget(own.copy),
+            frame_budget(own.text),
             own.placed.glyphs.len(),
-            own.copy
+            own.text
         );
     }
 }
