@@ -16,7 +16,7 @@
 //! always exactly on the curve and only its distance carries the
 //! table's (second-order) error.
 
-use glam::Vec2;
+use glam::{DVec2, Vec2};
 use std::cell::Cell;
 
 use crate::document::values::{Direction, Edge, StartPoint};
@@ -39,15 +39,65 @@ enum Param {
     /// `center + (radii.x · cos φ, radii.y · sin φ)`; `y` grows downward,
     /// so a growing `φ` runs clockwise on screen.
     Ellipse { center: Vec2, radii: Vec2 },
-    /// A Bézier (or a line) over `t` in `0..=1`.
-    Curve(Curve),
+    /// A Bézier (or a line) over `t` in `0..=1`, found in its own frame
+    /// (#313, ruling B18.1 §6): its start, `at`, and its control points'
+    /// offsets from it, `local`, in `f64` ([`Local`]). A point is the
+    /// offset at `t` added to `at` in `f64` and rounded once to `f32`.
+    /// Found from coordinates as large as where the curve is, as
+    /// [`Curve::point`] finds it, each Bernstein term rounds at their
+    /// magnitude, and a table summed that rounding as length: a cubic 128
+    /// long 10⁹ from the origin measured 20,260. `curve` is kept for its
+    /// derivative, a direction, which its control points' differences
+    /// give.
+    Curve { at: Vec2, local: Local, curve: Curve },
+}
+
+/// A Bézier's control points as offsets from its start, in `f64`: each
+/// the difference of two `f32`s, which `f64` holds exactly but where
+/// their exponents are more than 29 apart, and then within half an `f64`
+/// ulp (#313). The start's own offset is zero, so it is not kept.
+#[derive(Copy, Clone, Debug)]
+enum Local {
+    Line(DVec2),
+    Quadratic(DVec2, DVec2),
+    Cubic(DVec2, DVec2, DVec2),
+}
+
+impl Local {
+    /// `curve`'s control points less its start.
+    fn of(curve: Curve) -> (Vec2, Self) {
+        let from = |at: Vec2, p: Vec2| p.as_dvec2() - at.as_dvec2();
+        match curve {
+            Curve::Line(a, b) => (a, Local::Line(from(a, b))),
+            Curve::Quadratic(a, c, b) => (a, Local::Quadratic(from(a, c), from(a, b))),
+            Curve::Cubic(a, c1, c2, b) => (a, Local::Cubic(from(a, c1), from(a, c2), from(a, b))),
+        }
+    }
+
+    /// The offset from the start at `t`, in `f64`: the Bernstein form with
+    /// the start's term, zero, left out.
+    fn at(&self, t: f32) -> DVec2 {
+        let t = f64::from(t);
+        let u = 1.0 - t;
+        match *self {
+            Local::Line(b) => b * t,
+            Local::Quadratic(c, b) => c * (2.0 * u * t) + b * (t * t),
+            Local::Cubic(c1, c2, b) => c1 * (3.0 * u * u * t) + c2 * (3.0 * u * t * t) + b * (t * t * t),
+        }
+    }
 }
 
 impl Param {
+    /// `curve` in its own frame ([`Param::Curve`]).
+    fn curve(curve: Curve) -> Self {
+        let (at, local) = Local::of(curve);
+        Param::Curve { at, local, curve }
+    }
+
     fn point(&self, t: f32) -> Vec2 {
         match *self {
             Param::Ellipse { center, radii } => center + Vec2::new(radii.x * t.cos(), radii.y * t.sin()),
-            Param::Curve(curve) => curve.point(t),
+            Param::Curve { at, local, .. } => (at.as_dvec2() + local.at(t)).as_vec2(),
         }
     }
 
@@ -63,7 +113,7 @@ impl Param {
                     Vec2::new(-radii.x * sin, radii.y * cos),
                 )
             }
-            Param::Curve(curve) => (curve.point(t), curve.derivative(t)),
+            Param::Curve { curve, .. } => (self.point(t), curve.derivative(t)),
         }
     }
 }
@@ -936,6 +986,38 @@ impl ArcPath {
     /// last ended — walked from its source end, each curve tabled no
     /// coarser than `spacing` unless it is a straight line.
     ///
+    /// How long each curve measures, at any distance from the origin
+    /// (#313, ruling B18.1 §6):
+    ///
+    /// - a line, the length of its end less its start, in `f32`: within
+    ///   `2⁻²²` of the length of the line its two points make;
+    /// - a Bézier, its table's last distance: the sum, in `f64`, of the
+    ///   chords between its points at the table's `count + 1` parameters
+    ///   `t = i / count` (each `t` an `f32`), found from its control
+    ///   points' offsets from its start ([`Param::Curve`]), and rounded
+    ///   once to `f32`. Against `L`, the length in exact arithmetic of
+    ///   the polyline through the curve those `f32` control points make,
+    ///   at those parameters, it is within `2⁻²⁴·L`, the last rounding,
+    ///   and `(count + 1)·2⁻⁴⁷·(R + L)` more, where `R` is the farthest
+    ///   control point's reach from the start: each point is found within
+    ///   a few `f64` roundings of `R`, each chord and each partial sum
+    ///   within one of their own, and the sample count is how many of
+    ///   them add up. With at most [`MAX_TABLE_SAMPLES`] + 1 samples that
+    ///   is under `2⁻²⁶·(R + L)`. It depends on the curve's size and
+    ///   never on where it lies: the absolute arithmetic this replaced
+    ///   summed rounding at the coordinates' magnitude, and a cubic 128
+    ///   long 10⁹ from the origin measured 20,260. A polyline is no
+    ///   longer than its curve, so `L` falls short of the curve by its
+    ///   chords' error, which the spacing bounds.
+    ///
+    /// A point it returns ([`at`](Self::at)) is a Bézier's offset at its
+    /// parameter added to its start in `f64` and rounded once: within half
+    /// an `f32` ulp of the coordinate, and a few `f64` roundings of `R`,
+    /// of where those control points put it. That is all an `f32`
+    /// position carries: far from the origin, two glyphs whose places
+    /// along the path are nearer than an ulp there land on one float, and
+    /// are placed there.
+    ///
     /// Cost: O(1) a line; one table of `O(length / spacing)` samples, at
     /// most [`MAX_TABLE_SAMPLES`], a Bézier.
     pub(crate) fn open(path: &(impl AsRef<[Curve]> + ?Sized), spacing: f32) -> Self {
@@ -947,7 +1029,7 @@ impl ArcPath {
                 dir: direction_of(b - a).unwrap_or(Vec2::X),
                 len: length_of(b - a),
             }),
-            _ => table(Param::Curve(*curve), 0.0, 1.0, curve.speed_bound(), spacing),
+            _ => table(Param::curve(*curve), 0.0, 1.0, curve.speed_bound(), spacing),
         });
         ArcPath::from_stretches(stretches, origin, 0.0)
     }
@@ -1652,21 +1734,46 @@ fn table_count(speed: f32, from: f32, to: f32, spacing: f32) -> Option<usize> {
 /// `None`, building nothing, when `speed` or the parameter range is not
 /// finite: a curve with no finite speed bound has a control point that is
 /// not finite, so every sample would be too.
+///
+/// A Bézier's distances are its chords between its offsets from its
+/// start, summed in `f64` and each rounded once to `f32`, to the bound
+/// [`ArcPath::open`] states; an ellipse's, its chords between its points,
+/// summed in `f32`.
 fn table(param: Param, from: f32, to: f32, speed: f32, spacing: f32) -> Option<Stretch> {
     let count = table_count(speed, from, to, spacing)?;
     #[cfg(test)]
     TABLE_SAMPLES.with(|samples| samples.set(samples.get() + count + 1));
     let mut params = Vec::with_capacity(count + 1);
     let mut distances = Vec::with_capacity(count + 1);
-    let mut previous = param.point(from);
-    let mut walked = 0.0_f32;
-    for i in 0..=count {
-        let t = from + (to - from) * (i as f32 / count as f32);
-        let point = param.point(t);
-        walked += length_of(point - previous);
-        previous = point;
-        params.push(t);
-        distances.push(walked);
+    let t_at = |i: usize| from + (to - from) * (i as f32 / count as f32);
+    match param {
+        // A Bézier's chords between its offsets from its start, and their
+        // sum, in `f64`; each distance rounded once to `f32` (#313, ruling
+        // B18.1 §6).
+        Param::Curve { local, .. } => {
+            let mut previous = local.at(from);
+            let mut walked = 0.0_f64;
+            for i in 0..=count {
+                let t = t_at(i);
+                let point = local.at(t);
+                walked += (point - previous).length();
+                previous = point;
+                params.push(t);
+                distances.push(walked as f32);
+            }
+        }
+        Param::Ellipse { .. } => {
+            let mut previous = param.point(from);
+            let mut walked = 0.0_f32;
+            for i in 0..=count {
+                let t = t_at(i);
+                let point = param.point(t);
+                walked += length_of(point - previous);
+                previous = point;
+                params.push(t);
+                distances.push(walked);
+            }
+        }
     }
     Some(Stretch::Table {
         param,

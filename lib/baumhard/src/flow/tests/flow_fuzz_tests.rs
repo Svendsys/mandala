@@ -1740,6 +1740,83 @@ fn test_far_out_open_placements_their_natural_length_fits_are_laid_whole() {
     );
 }
 
+/// An open path's length is the length of the curve its control points
+/// make, at every magnitude `far_out` draws and at the origin, to the
+/// bound `ArcPath::open` states (#313, ruling B18.1 §6): `far_curve`'s
+/// line and cubic 100 to 204,800 long from the origin and 10⁶ to 10²²
+/// from it, and at each a line and a cubic whose control points coincide,
+/// which measure exactly 0. Held to [`polyline_length`] through the
+/// curve at the parameters the table was built at, an oracle that shares
+/// no arithmetic with the engine: de Casteljau's construction where the
+/// engine takes the Bernstein form, and no engine code. A Bézier's table
+/// is within `2⁻²⁴` of that length, and `2⁻⁴⁷` of its control points'
+/// reach and of that length a sample; a line within `2⁻²²` of its length.
+///
+/// Controls: a Bézier's table found from its points rounded to `f32`
+/// where they lie (`Param::point`'s), red already at the origin (a cubic 25,600 across
+/// measured 27,509.2422 against its 27,509.2401, past 0.0017), and far
+/// out by orders more (a cubic 128 long 10⁹ from the origin measured
+/// 20,260); its distances summed in `f32`, red at the origin (a cubic 100
+/// across measured 107.457306 against its 107.457241, past 6.4·10⁻⁶).
+#[test]
+fn test_an_open_paths_length_is_its_curves_at_every_magnitude() {
+    use crate::flow::tests::flow_fuzz::{far_curve, polyline_length};
+    use crate::flow::{ArcPath, Curve};
+    let mut curves = Vec::new();
+    for at in std::iter::once(Vec2::ZERO).chain((6..=22).map(|k| Vec2::splat(10f32.powi(k)))) {
+        for doubled in 0..12 {
+            for line in [true, false] {
+                curves.push(far_curve(at, 100.0 * (1u32 << doubled) as f32, line));
+            }
+        }
+        curves.push(Curve::Line(at, at));
+        curves.push(Curve::Cubic(at, at, at, at));
+    }
+    let (mut checked, mut far_beziers) = (0usize, 0usize);
+    for curve in &curves {
+        let path = ArcPath::open(curve, 1.0);
+        let measured = f64::from(path.length());
+        let (exact, bound) = match *curve {
+            Curve::Line(a, b) => {
+                let exact = (b.as_dvec2() - a.as_dvec2()).length();
+                (exact, exact * 2f64.powi(-22))
+            }
+            Curve::Quadratic(a, ..) | Curve::Cubic(a, ..) => {
+                let samples = path.table_samples();
+                assert!(samples > 1, "{curve:?} is tabled");
+                let exact = polyline_length(curve, samples - 1);
+                let reach = match *curve {
+                    Curve::Quadratic(_, c, b) => [c, b, b],
+                    Curve::Cubic(_, c1, c2, b) => [c1, c2, b],
+                    Curve::Line(..) => unreachable!(),
+                }
+                .iter()
+                .map(|p| (p.as_dvec2() - a.as_dvec2()).length())
+                .fold(0.0, f64::max);
+                if a.x > 0.0 && exact > 0.0 {
+                    far_beziers += 1;
+                }
+                (
+                    exact,
+                    exact * 2f64.powi(-24) + samples as f64 * 2f64.powi(-47) * (reach + exact),
+                )
+            }
+        };
+        if exact == 0.0 {
+            assert_eq!(measured, 0.0, "{curve:?} has no length");
+        }
+        assert!(
+            (measured - exact).abs() <= bound,
+            "{curve:?} measures {measured}, its curve {exact}: past {bound}"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 18 * 26, "every curve is checked");
+    // Far out, where the absolute arithmetic overmeasured: the cubics
+    // whose control points the floats there keep apart.
+    assert_eq!(far_beziers, 66, "the far-out cubics that have a length to hold");
+}
+
 /// The flow_structured finding of #308's fuzz run, failing alike at
 /// d7242d38: a `Spread` frame laid inward round an ellipse 3.24 wide and
 /// 1.18e-38 tall, its text of two glyphs one line, 0.45 long at its
