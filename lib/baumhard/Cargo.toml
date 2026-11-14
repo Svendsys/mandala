@@ -188,3 +188,9 @@ allocation-counter = "0.8.1"
 [[bench]]
 name = "test_bench"
 harness = false
+
+# `cargo fuzz` builds with `--cfg fuzzing`: the fuzz harness's seams are
+# compiled under it (and under `cfg(test)`), and never into a shipped
+# build (`projection::geometry::UNTANGLE_CEILING`, #346).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
