@@ -75,7 +75,7 @@ fi
 # frames together may take 15 s, three quarters of -timeout=20: 464,396
 # steps. Two frames at the floor are 25.8 s, so a flow target lays one
 # frame an input, its text cut until that frame's work fits: at most
-# MAX_FRAME_GLYPHS (152) glyphs in one face, 463,355 steps, 14.97 s.
+# MAX_FRAME_GLYPHS (151) glyphs in one face, 464,172 steps, 14.99 s.
 # A Repeat ring round an outline is budgeted as a frame is (#310), and
 # laid as an input's one frame (ring_work_steps), at most MAX_RING_GLYPHS
 # glyphs (rulings B17.2a, B17.2b). So is every placement along an open

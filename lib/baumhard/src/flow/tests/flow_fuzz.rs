@@ -63,8 +63,8 @@ use crate::flow::place::{
 };
 use crate::flow::tests::support::raster_box;
 use crate::flow::{
-    offset, outline, place_at_point, shape_box, shape_run, Curve, FlowSpan, Outline, PathEnd, PlacedRun,
-    Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS, MAX_TABLE_SAMPLES,
+    offset, outline, place_at_point, shape_box, shape_run, Curve, FlowSpan, GlyphMetrics, Outline, PathEnd,
+    PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS, MAX_TABLE_SAMPLES,
 };
 use crate::font::fonts::{self, AppFont, FontSystemLease, COMPILED_FONT_ID_MAP};
 use crate::util::tests::choices::Choices;
@@ -799,7 +799,7 @@ fn check_open(
     work.open(run, cap, tables, &placed.1, &trace, "the placement")?;
     // `Spread` and `Fit` solve the gap; the spacing does not enter
     // (ruling R6, reading 7).
-    let whole = owes_whole(run, fit, curve_room(curve)) && trace.ring.is_none();
+    let whole = owes_whole_any_way(run, fit, curve_room(curve)) && trace.ring.is_none();
     check_placed(spans, run, placed, whole, "the placement")
 }
 
@@ -2227,13 +2227,14 @@ pub(crate) fn apart(trace: &Trace, what: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The run's natural length reshaped at `scale`, every cluster as long
-/// as the longer of its advance and the line height — what the longest
-/// step the walk takes for it is, a steep one — and so no shorter than
-/// any lay of it at no gap. Each glyph's advance, and the line height
-/// with the run's largest glyph, are scaled by the engine's own
-/// `size_factor` (ruling R52.1), so below `MIN_FONT_SIZE_PT` a glyph
-/// stops shrinking here as it does there.
+/// The run's natural length along a level line, reshaped at `scale`:
+/// every glyph as long as the longer of its advance and the line height,
+/// no shorter than the step a level walk takes for it, its advance. What
+/// a frame's lines are owed against, R27 sizing them on their level spans
+/// ([`frame_room`]). Each glyph's advance, and the line height with the
+/// run's largest glyph, are scaled by the engine's own `size_factor`
+/// (ruling R52.1), so below `MIN_FONT_SIZE_PT` a glyph stops shrinking
+/// here as it does there.
 pub(crate) fn natural_length_at(run: &ShapedRun, scale: f32) -> f32 {
     let glyphs = || run.glyphs.iter().filter(|g| g.span != FILLER_SPAN);
     let largest = glyphs().map(|g| g.size).fold(0.0_f32, f32::max);
@@ -2243,20 +2244,89 @@ pub(crate) fn natural_length_at(run: &ShapedRun, scale: f32) -> f32 {
         .sum()
 }
 
-/// Whether `fit` on a path of room `room` owes the whole run: a
-/// `Spread` or `Fit` whose natural length fits — for `Fit` at its least
-/// scale, as the engine shrinks it, no glyph below `MIN_FONT_SIZE_PT`
-/// (ruling R52.1) — places every cluster, and cuts nothing. Owed of every path
-/// whose room is finite, as far from the origin as an `f32` reaches: a
-/// glyph's step lost below an `f32`'s precision there moves it nowhere,
-/// but it is placed.
+/// The run's natural length along a path that runs any way, reshaped at
+/// `scale` (#313, ruling B18.1 §7): each cluster as long as the most step
+/// the walk takes for it in any direction, so no shorter than any lay of
+/// it at no gap along any path. Read from the engine's definition of a
+/// cluster's step (ruling R31), not its code:
+///
+/// - a text's cluster is a box its advance `w` wide and the line height
+///   `h` tall, and its step along a unit direction `(dx, dy)` is the box's
+///   extent that way, `w·|dx| + h·|dy|`: at most `√(w² + h²)`, along the
+///   box's diagonal — the tightest bound that holds every way;
+/// - an ornament's cluster (a run with no letter) steps its ink box's
+///   extent, `iw·|dx| + ih·|dy|`, and its side bearings, its advance `w`
+///   less the ink's width: at most `w + ih`, its ink's height `ih` added
+///   to its advance, since `iw·|dx| ≤ iw`; a space, or a glyph that draws
+///   nothing, its advance alone.
+///
+/// The longer of the advance and the line height, which a level line
+/// steps within, is short of the first along a diagonal: "MANDALA" at
+/// 4 pt was owed whole along a path 37 long running (0.8, 0.6), and was
+/// cut. Advances and heights are scaled by the engine's own `size_factor`
+/// (ruling R52.1), the line height with the run's largest glyph, an ink
+/// with its own glyph.
+pub(crate) fn natural_length_any_way(run: &ShapedRun, scale: f32) -> f32 {
+    let glyphs: Vec<&GlyphMetrics> = run.glyphs.iter().filter(|g| g.span != FILLER_SPAN).collect();
+    let largest = glyphs.iter().map(|g| g.size).fold(0.0_f32, f32::max);
+    let height = run.line_height.max(0.0) * size_factor(largest, scale);
+    let ornament = !run.glyphs.iter().any(|g| g.letter);
+    let mut length = 0.0_f32;
+    let mut k = 0;
+    while k < glyphs.len() {
+        let end = (k + 1..glyphs.len())
+            .find(|&j| glyphs[j].grapheme_start)
+            .unwrap_or(glyphs.len());
+        let cluster = &glyphs[k..end];
+        let advance: f32 = cluster
+            .iter()
+            .map(|g| g.advance.max(0.0) * size_factor(g.size, scale))
+            .sum();
+        length += if ornament {
+            // Its ink's height, all its glyphs' together, each at its scale.
+            let ink = cluster
+                .iter()
+                .filter(|g| !g.blank)
+                .filter_map(|g| g.ink.map(|ink| (ink, size_factor(g.size, scale))))
+                .fold(None, |was: Option<(f32, f32)>, (ink, f)| {
+                    let (lo, hi) = (ink.min.y * f, ink.max.y * f);
+                    Some(was.map_or((lo, hi), |(a, b)| (a.min(lo), b.max(hi))))
+                })
+                .map_or(0.0, |(lo, hi)| (hi - lo).max(0.0));
+            advance + ink
+        } else {
+            advance.hypot(height)
+        };
+        k = end;
+    }
+    length
+}
+
+/// Whether `fit` on a path of room `room` owes the whole run: a `Spread` or
+/// `Fit` whose natural length fits — for `Fit` at its least scale, as the
+/// engine shrinks it, no glyph below `MIN_FONT_SIZE_PT` (ruling R52.1) —
+/// places every cluster, and cuts nothing. Owed of every path whose room is
+/// finite, as far from the origin as an `f32` reaches: a glyph's step lost
+/// below an `f32`'s precision there moves it nowhere, but it is placed.
 pub(crate) fn owes_whole(run: &ShapedRun, fit: &FitMode, room: f32) -> bool {
+    owes_whole_by(run, fit, room, natural_length_at)
+}
+
+/// [`owes_whole`] along a path that runs any way: an open path's
+/// placement, its natural length [`natural_length_any_way`] (ruling
+/// B18.1 §7).
+pub(crate) fn owes_whole_any_way(run: &ShapedRun, fit: &FitMode, room: f32) -> bool {
+    owes_whole_by(run, fit, room, natural_length_any_way)
+}
+
+/// [`owes_whole`], the run's natural length at a scale by `length`.
+fn owes_whole_by(run: &ShapedRun, fit: &FitMode, room: f32, length: fn(&ShapedRun, f32) -> f32) -> bool {
     let least = match fit {
         FitMode::Spread => 1.0,
         FitMode::Fit { min, .. } => *min,
         _ => return false,
     };
-    let length = natural_length_at(run, least);
+    let length = length(run, least);
     room.is_finite() && length.is_finite() && length <= room
 }
 

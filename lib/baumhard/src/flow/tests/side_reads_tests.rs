@@ -9,11 +9,10 @@
 //! Every test here sets a test seam or reads a test counter, so none has a
 //! `do_*` twin.
 //!
-//! The far ellipses' tables sum their points' rounding as length, so
-//! their paths are longer than their outlines (#356): their frames lay
-//! more copies than an outline that long would hold. Nothing here rests
-//! on that length — each bound is in counted reads and steps, and each
-//! band in reads a step or a cluster — and #356 removes it.
+//! The far frames' perimeters here are overmeasured until #356 (their
+//! ellipses' tables sum rounding as length, +12% to +60% from 10⁷ to
+//! 10¹⁰), and counted work bounds them regardless: every pin here — reads
+//! a step, `SIDE_EDGE`, `TRACK_EDGE` — is in counted reads and steps.
 
 use glam::Vec2;
 
@@ -234,13 +233,13 @@ fn grid() -> &'static [Vec<Laid>] {
 /// back the most a lay may read before it is laid, and its tracking counts
 /// its lines' reads past one a cluster, which its overshoot holds for each
 /// line's lay (ruling B18.1 §2), so a frame far from the origin, whose
-/// clusters read their path 11 to 20 times where at the origin they read
-/// it once, takes past its budget no more than `overshoot_steps` — `PAST_BUDGET`, a take that crosses the budget
-/// counted for the part past it (ruling R50.4) — and in all no more than
-/// its budget and that (ruling R47.2): no lay of its sides leaves it past
-/// what its budget holds for their touch check (crossed). And a frame
-/// that lays fewer glyphs than at its own budget says which arcs it left
-/// empty or kept short.
+/// clusters read their path 11 to 20 times where at the origin they read it
+/// once, takes past its budget no more than `overshoot_steps` —
+/// `PAST_BUDGET`, a take that crosses the budget counted for the part past
+/// it (ruling R50.4) — and in all no more than its budget and that (ruling
+/// R47.2): no lay of its sides leaves it past what its budget holds for
+/// their touch check (crossed). And a frame that lays fewer glyphs than at
+/// its own budget says which arcs it left empty or kept short.
 ///
 /// Preconditions: a frame far out spends its budget partway through its
 /// sides, at some budget of the grid; and at the grid's least budgets,

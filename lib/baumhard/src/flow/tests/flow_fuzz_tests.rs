@@ -1686,17 +1686,18 @@ fn test_flow_structured_every_face_finding_a_far_out_line_its_floats_cannot_part
 /// control points, so a path is often not as long as it was drawn, and
 /// is no length at all where its length is below their spacing; each is
 /// owed whole on the room of the path it is ([`curve_room`], an oracle
-/// independent of the engine's arithmetic). Some of those owed are on
-/// paths the floats changed, the case swept for.
+/// independent of the engine's arithmetic), against its natural length
+/// along a path that runs any way (ruling B18.1 §7): 760 are, 481 of them
+/// on paths the floats changed, the case swept for.
 ///
 /// Control: with `curve_room` finding its points by `Curve::point` in
-/// `f32` again, red (1,237 placements owed whole and cut: rounding read
+/// `f32` again, red (1,236 placements owed whole and cut: rounding read
 /// as room; 695 when the engine's own tables overmeasured too).
 #[test]
 fn test_far_out_open_placements_their_natural_length_fits_are_laid_whole() {
     use crate::document::values::FitMode;
     use crate::flow::place::{place_on_open_capped, Trace};
-    use crate::flow::tests::flow_fuzz::{curve_room, far_curve, owes_whole};
+    use crate::flow::tests::flow_fuzz::{curve_room, far_curve, owes_whole_any_way};
     let (mut owed, mut moved, mut cut) = (0usize, 0usize, Vec::new());
     with_fonts(|fs| {
         let flow = style(16.0);
@@ -1709,7 +1710,7 @@ fn test_far_out_open_placements_their_natural_length_fits_are_laid_whole() {
                             let length = 100.0 * (1u32 << doubled) as f32;
                             let curve = far_curve(Vec2::splat(10f32.powi(k)), length, line);
                             let room = curve_room(&curve);
-                            if !owes_whole(&run, &fit, room) {
+                            if !owes_whole_any_way(&run, &fit, room) {
                                 continue;
                             }
                             owed += 1;
@@ -1751,6 +1752,142 @@ fn test_far_out_open_placements_their_natural_length_fits_are_laid_whole() {
     );
 }
 
+/// One placement along an open path as the oracle reads it: its text at
+/// `points` along `curve` in `fit`, the glyphs placed, the run's glyphs,
+/// whether it reported a loss, and whether it is owed whole along a
+/// level line's natural length (`owes_whole`) and along one that runs any
+/// way (`owes_whole_any_way`).
+fn owed_along(
+    text: &str,
+    points: f32,
+    curve: &crate::flow::Curve,
+    fit: &crate::document::values::FitMode,
+) -> (usize, usize, bool, bool, bool) {
+    use crate::flow::place::{place_on_open_capped, Trace};
+    use crate::flow::tests::flow_fuzz::{curve_room, owes_whole, owes_whole_any_way};
+    with_fonts(|fs| {
+        let flow = style(points);
+        let run = real_run(text, &flow, fs);
+        let mut trace = Trace::default();
+        let (_, placed) = place_on_open_capped(&run, curve, fit, 0.0, &flow, fs, 154, Some(&mut trace));
+        let room = curve_room(curve);
+        (
+            placed.glyphs.len(),
+            run.glyphs.len(),
+            trace.ring.is_some(),
+            owes_whole(&run, fit, room),
+            owes_whole_any_way(&run, fit, room),
+        )
+    })
+}
+
+/// A run along an open path is owed whole only where it fits every way
+/// its path may run (#313, ruling B18.1 §7, review 5903692895): the
+/// review's five placements, four of `far_out`'s own lines at 10⁹ — whose
+/// rounding of `0.8·L, 0.6·L` turns the line toward 45° — and one at the
+/// origin along (0.8, 0.6), each owed whole by a level line's natural
+/// length, the longer of each glyph's advance and the line height, and
+/// each cut by a glyph: a text's box steps its diagonal there, more than
+/// either. Along any way, the box's diagonal a cluster, none is owed.
+///
+/// Control: the open path's oracle measuring a level line's natural
+/// length again, red on each.
+#[test]
+fn test_an_open_path_owes_a_run_whole_only_where_it_fits_every_way() {
+    use crate::document::values::FitMode;
+    use crate::flow::tests::flow_fuzz::far_curve;
+    use crate::flow::Curve;
+    let far = Vec2::splat(1e9);
+    let fit = FitMode::Fit { min: 0.5, max: 2.0 };
+    let cases = [
+        ("MANDALA", 48.0, far_curve(far, 400.0, true), FitMode::Spread),
+        ("MANDALA", 96.0, far_curve(far, 400.0, true), fit),
+        ("MANDALA", 96.0, far_curve(far, 800.0, true), FitMode::Spread),
+        ("mmmmmmmm", 8.0, far_curve(far, 100.0, true), FitMode::Spread),
+        (
+            "MANDALA",
+            4.0,
+            Curve::Line(Vec2::ZERO, Vec2::new(0.8 * 37.0, 0.6 * 37.0)),
+            FitMode::Spread,
+        ),
+    ];
+    for (text, points, curve, fit) in &cases {
+        let (placed, glyphs, lost, level, any_way) = owed_along(text, *points, curve, fit);
+        let what = format!("{text:?} at {points} pt, {fit:?}, along {curve:?}");
+        assert!(
+            level && placed < glyphs && !lost,
+            "precondition: {what} is owed whole along a level line, and is cut ({placed} of {glyphs}), reporting nothing"
+        );
+        assert!(
+            !any_way,
+            "{what}: owed whole, and cut ({placed} of {glyphs} placed)"
+        );
+    }
+}
+
+/// No run owed whole along an open path is cut (#313, ruling B18.1 §7),
+/// over the review's sweep (review 5903692895): four texts at three sizes,
+/// 10⁰ to 10²² from the origin, along a line, a quadratic, a cubic, a loop
+/// and a cubic of no length but its last control point, five lengths each,
+/// in `Spread`, `Fit` and `Once` — 20,700 placements, 4,628 owed whole,
+/// none cut. A level line's natural length owed 4,736, 20 of them cut:
+/// 108 placements, 2.3%, are the coverage given up for owing only what
+/// fits every way.
+///
+/// Control: the open path's oracle measuring a level line's natural
+/// length again, red (20 owed whole and cut, "MANDALA" at 4 pt along
+/// (0.8, 0.6) 37 long, at every distance).
+#[test]
+fn test_an_open_path_cuts_no_run_it_owes_whole_at_any_distance() {
+    use crate::document::values::FitMode;
+    use crate::flow::Curve;
+    let (mut laid, mut owed, mut level_owed, mut cut) = (0usize, 0usize, 0usize, Vec::new());
+    for text in ["MANDALA", "To see a World", "ab", "mmmmmmmm"] {
+        for points in [4.0, 16.0, 96.0] {
+            for k in 0..=22 {
+                let at = Vec2::splat(10f32.powi(k));
+                for length in [37.0_f32, 100.0, 400.0, 1_600.0, 6_400.0] {
+                    let to = |x: f32, y: f32| at + Vec2::new(x * length, y * length);
+                    let curves = [
+                        Curve::Line(at, to(0.8, 0.6)),
+                        Curve::Quadratic(at, to(0.5, 0.4), to(1.0, 0.0)),
+                        Curve::Cubic(at, to(0.35, -0.3), to(0.65, 0.3), to(1.0, 0.0)),
+                        Curve::Cubic(at, to(1.2, 0.8), to(-0.2, 0.8), to(1.0, 0.0)),
+                        Curve::Cubic(at, at, at, to(1.0, 0.0)),
+                    ];
+                    for curve in &curves {
+                        for fit in [
+                            FitMode::Spread,
+                            FitMode::Fit { min: 0.5, max: 2.0 },
+                            FitMode::Once { filler: None },
+                        ] {
+                            let (placed, glyphs, lost, level, any_way) =
+                                owed_along(text, points, curve, &fit);
+                            laid += 1;
+                            owed += usize::from(any_way);
+                            level_owed += usize::from(level);
+                            if any_way && placed < glyphs && !lost {
+                                cut.push(format!("{text:?} {points} pt 10^{k} {length} {fit:?} {curve:?}"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(laid, 20_700, "every placement of the sweep is laid");
+    assert!(
+        owed >= 4_000 && owed <= level_owed,
+        "the sweep owes {owed} placements whole, a level line's length {level_owed}"
+    );
+    assert!(
+        cut.is_empty(),
+        "{} owed whole and cut: {:?}",
+        cut.len(),
+        &cut[..cut.len().min(5)]
+    );
+}
+
 /// An open path's length is the length of the curve its control points
 /// make, at every magnitude `far_out` draws and at the origin, to the
 /// bound `ArcPath::open` states (#313, ruling B18.1 §6): `far_curve`'s
@@ -1760,13 +1897,14 @@ fn test_far_out_open_placements_their_natural_length_fits_are_laid_whole() {
 /// curve at the parameters the table was built at, an oracle that shares
 /// no arithmetic with the engine: de Casteljau's construction where the
 /// engine takes the Bernstein form, and no engine code. A Bézier's table
-/// is within `2⁻²⁴` of that length, and `2⁻⁴⁷` of its control points'
-/// reach and of that length a sample; a line within `2⁻²²` of its length.
+/// is within `2⁻²⁴·L` of that length `L`, and `2⁻⁴⁷·(R + L)` more a
+/// sample, `R` its control points' reach; a line within `2⁻²²·L` of its
+/// length `L`.
 ///
-/// Controls: a Bézier's table found from its points rounded to `f32`
-/// where they lie (`Param::point`'s), red already at the origin (a cubic 25,600 across
-/// measured 27,509.2422 against its 27,509.2401, past 0.0017), and far
-/// out by orders more (a cubic 128 long 10⁹ from the origin measured
+/// Controls: a Bézier's table found from its points rounded to `f32` where
+/// they lie (`Param::point`'s), red already at the origin (a cubic 25,600
+/// across measured 27,509.2422 against its 27,509.2401, past 0.0017), and
+/// far out by orders more (a cubic 128 long 10⁹ from the origin measured
 /// 20,260); its distances summed in `f32`, red at the origin (a cubic 100
 /// across measured 107.457306 against its 107.457241, past 6.4·10⁻⁶).
 #[test]
@@ -1873,7 +2011,7 @@ fn test_flow_structured_finding_a_frame_of_one_line_round_an_outline_of_no_heigh
 #[test]
 fn test_flow_the_whole_text_owed_a_fit_is_measured_at_the_size_floor() {
     use crate::document::values::FitMode;
-    use crate::flow::tests::flow_fuzz::{natural_length_at, owes_whole};
+    use crate::flow::tests::flow_fuzz::{natural_length_any_way, owes_whole_any_way};
     use crate::font::fonts::MIN_FONT_SIZE_PT;
     let text = "To see a World";
     let (run, floored) = with_fonts(|fs| {
@@ -1883,18 +2021,18 @@ fn test_flow_the_whole_text_owed_a_fit_is_measured_at_the_size_floor() {
         )
     });
     // The text shaped at the floor, measured as the oracle measures a text.
-    let at_floor = natural_length_at(&floored, 1.0);
+    let at_floor = natural_length_any_way(&floored, 1.0);
     let fit = FitMode::Fit { min: 1e-6, max: 1.0 };
     assert!(
-        natural_length_at(&run, 1.0) * 1e-6 < at_floor * 0.99,
+        natural_length_any_way(&run, 1.0) * 1e-6 < at_floor * 0.99,
         "precondition: a millionth of the text's natural length fits a path shorter than it at the floor"
     );
     assert!(
-        owes_whole(&run, &fit, at_floor * 1.01),
+        owes_whole_any_way(&run, &fit, at_floor * 1.01),
         "a path 1% longer than the text at the floor, {at_floor}, does not owe it whole"
     );
     assert!(
-        !owes_whole(&run, &fit, at_floor * 0.99),
+        !owes_whole_any_way(&run, &fit, at_floor * 0.99),
         "a path 1% shorter than the text at the floor, {at_floor}, owes it whole"
     );
 }

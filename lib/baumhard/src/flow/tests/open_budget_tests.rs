@@ -447,42 +447,39 @@ fn test_flow_open_budget_a_fillers_wide_cluster_is_its_overshoots_cluster() {
     );
 }
 
-/// #313 (review 5902086644): what an open path's placement holds back for
-/// phase 2's run on past where its walk stops is read at the least line
-/// height any of its walks steps at (`RingWork::steps_at`) — an open
-/// path's `Fit`, reshaped smaller than it began, steps more often along
-/// the path — and a larger one leaves it there: the hold is the run on
-/// from the path's start, at that line height, to the step.
+/// #313, ruling B18.1 §8: a `Fit`'s hold never shrinks — what its report
+/// of a scale its budget stopped rests on (`place::fit_to`) — and a debug
+/// build says so the moment it would: a `Fit`'s work its walk would note,
+/// as a `Repeat`'s does, as stopping near its path's end (`ends_by`), so
+/// that its run on fell, panics at its next read of its budget. A `Fit`'s
+/// work never comes there: every placement of the grid in `Fit` reads its
+/// budget unasserted.
 ///
-/// The grid holds phase 2 to its hold over every placement (`again`), but
-/// no `Fit` of it, nor a `Fit` of 4,000 glyphs shrunk to its size floor
-/// at budgets from 1,000 to 32,000, reaches that hold's run-on part: a
-/// `Fit` its budget stops while it walks lays nothing in phase 2, and one
-/// that walks to its end holds back for every glyph it laid, which is far
-/// more (20,876 glyph steps, against 732 its phase 2 took). So the hold
-/// is held here, on the budget itself.
-///
-/// Control: with `steps_at` a no-op, red.
+/// Control: `fit_to` noting its walk's end as a `Repeat` does, red on
+/// every budgeted `Fit` of the grid (its hold shrinks).
 #[test]
-fn test_flow_open_budget_a_fits_run_on_is_held_at_its_least_line_height() {
-    use crate::flow::place::ring::{run_on_reads, RingWork, READS_A_STEP};
+fn test_flow_open_budget_a_fits_hold_never_shrinks() {
+    use crate::flow::place::ring::RingWork;
     use crate::flow::ArcPath;
     let path = ArcPath::open(&Curve::Line(Vec2::ZERO, Vec2::new(2_000.0, 0.0)), 1.0);
-    let work = RingWork::new(&path, 1, true, 20.0, 100, GRID_CAP);
-    work.steps_at(30.0);
-    work.steps_at(2.0);
-    work.steps_at(5.0);
-    work.lay_again();
-    let held = work.held_again().0;
-    let want = run_on_reads(0.0, 2_000.0, 2.0).div_ceil(READS_A_STEP);
-    assert!(
-        want > run_on_reads(0.0, 2_000.0, 20.0).div_ceil(READS_A_STEP),
-        "precondition: a run on at a tenth of the line height takes more"
-    );
-    assert_eq!(
-        held, want,
-        "the run on held back for at the least line height walked"
-    );
+    let fits = |end: bool| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let work = RingWork::new(&path, 1, true, 20.0, 100, GRID_CAP);
+            work.fitting();
+            let _ = work.affords(&path);
+            if end {
+                work.ends_by(1_900.0);
+            }
+            work.affords(&path)
+        }))
+    };
+    assert!(fits(false).is_ok(), "a Fit's work reads its budget");
+    if cfg!(debug_assertions) {
+        assert!(
+            fits(true).is_err(),
+            "a Fit's hold that shrank is asserted, not passed over"
+        );
+    }
 }
 
 /// What the pitched grid's placements are of: ornaments a connector lays

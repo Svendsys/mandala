@@ -308,7 +308,9 @@ pub fn do_flow_pitched_lays_no_text_and_no_empty_path() {
 /// met such a round. Nothing holds it there but the arithmetic as it
 /// stands, so a later change of where the floats fall fails this test at
 /// its precondition, that the solve met a round the lay did not answer,
-/// not at its answer; search again then.
+/// not at its answer; search again then. Not every arch's solve that
+/// meets such a round reaches its tolerance: a few of a grid of them fall
+/// short of it by little more than it, which #358 takes up.
 ///
 /// Control: the stop for a round the lay does not answer taken on every
 /// path, not only where the path's float steps are wider than the

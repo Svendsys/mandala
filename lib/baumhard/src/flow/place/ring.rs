@@ -88,9 +88,8 @@
 //! path past its text holds besides ([`RingWork::scale`]). It reads the
 //! budget where a ring does, and `Fit` before each measure of its text as
 //! read and each round of its scale, which read none as they go, holding
-//! back what phase 2 takes of its glyphs ([`RingWork::affords_more`]); its
-//! run on is held back at the least line height it walks at
-//! ([`RingWork::steps_at`]). The one cluster that may find it spent holds
+//! back what phase 2 takes of its glyphs ([`RingWork::affords_more`]). The
+//! one cluster that may find it spent holds
 //! no more than its widest cluster's glyphs. A connector's whole-glyph
 //! pattern (`pitch::place_pitched`) is budgeted by its rounds of pitch, as
 //! a directional ring's runs are. Neither counts its shaping, as a ring
@@ -374,10 +373,12 @@ pub(crate) struct RingWork {
     /// Its path's length and its line height, what its run on is held
     /// back for by ([`run_on_reads`]).
     length: f32,
-    line_height: Cell<f32>,
-    /// Where its walk would end were it stopped now, as last noted
-    /// ([`ends_by`](Self::ends_by)).
-    from_end: Cell<f32>,
+    line_height: f32,
+    /// Whether it is a `Fit`'s ([`fitting`](Self::fitting)), and what it
+    /// last held back if so: what [`held`](Self::held) asserts it never
+    /// falls below (ruling B18.1 §8).
+    fit: Cell<bool>,
+    fit_held: Cell<usize>,
     /// The glyph steps of work it counts past its reads and its glyphs:
     /// a directional ring's shaping of its glyphs by direction (#324).
     took: Cell<usize>,
@@ -432,8 +433,9 @@ impl RingWork {
             glyphs: Cell::new(glyphs),
             budget: Cell::new(frame_budget(glyphs)),
             length,
-            line_height: Cell::new(line_height),
-            from_end: Cell::new(0.0),
+            line_height,
+            fit: Cell::new(false),
+            fit_held: Cell::new(0),
             took: Cell::new(0),
             set: Cell::new(0),
             reserve: Cell::new(0),
@@ -499,8 +501,29 @@ impl RingWork {
 
     /// What is held back for phase 2 ([`admits`](Self::admits),
     /// [`ends_by`](Self::ends_by)).
+    ///
+    /// A `Fit`'s never shrinks (ruling B18.1 §8): its `reserve` only rises
+    /// ([`admits`](Self::admits)) and its `run_on` is its path's from its
+    /// start, as [`new`](Self::new) sets it, never lowered — [`ends_by`]
+    /// and [`closed`](Self::closed), which lower them, are a `Repeat`'s
+    /// walk's alone. Nor does it need its run on lowered for a smaller
+    /// line height when it is reshaped smaller: phase 2 lays a `Fit`, as a
+    /// `Spread`, to end exactly where its walk ended (`Ends::Exactly`), and
+    /// runs on past it never (`PathWalk::runs_on` is for `Once` and
+    /// `Repeat`). A debug build asserts a `Fit`'s hold never shrinks.
+    ///
+    /// [`ends_by`]: Self::ends_by
     fn held(&self) -> usize {
-        self.reserve.get().saturating_add(self.run_on.get())
+        let held = self.reserve.get().saturating_add(self.run_on.get());
+        if self.fit.get() {
+            debug_assert!(
+                held >= self.fit_held.get(),
+                "a Fit's hold never shrinks: {held} after {}",
+                self.fit_held.get()
+            );
+            self.fit_held.set(held);
+        }
+        held
     }
 
     /// Whether the ring may walk on along `path`: what it has taken is
@@ -547,16 +570,12 @@ impl RingWork {
         self.copy.set(self.copy.get().max(glyphs));
     }
 
-    /// Hold back the run on phase 2 would take of a placement whose walks
-    /// step `line_height` high (#313): an open path's `Fit`, reshaped to a
-    /// smaller size than it began at, steps more often along the path
-    /// past where its walk ends ([`run_on_reads`]). The least line height
-    /// any of its walks steps at is what is held for.
-    pub(crate) fn steps_at(&self, line_height: f32) {
-        if line_height < self.line_height.get() {
-            self.line_height.set(line_height);
-            self.ends_by(self.from_end.get());
-        }
+    /// Note that this is a `Fit`'s work (#313, ruling B18.1 §8): its hold
+    /// never shrinks, which its report of a scale not solved to the end
+    /// rests on (`place::fit_to`), and [`held`](Self::held) asserts so in a
+    /// debug build.
+    pub(crate) fn fitting(&self) {
+        self.fit.set(true);
     }
 
     /// Note that phase 2 begins: the ring is laid again in reading order
@@ -594,8 +613,7 @@ impl RingWork {
     /// before it ends: what a stop of the copy keeps.
     pub(crate) fn ends_by(&self, from: f32) {
         self.run_on
-            .set(steps_of(run_on_reads(from, self.length, self.line_height.get())));
-        self.from_end.set(from);
+            .set(steps_of(run_on_reads(from, self.length, self.line_height)));
     }
 
     /// Note that the ring closed, laid as `glyphs` glyphs (ruling B17.1d):
