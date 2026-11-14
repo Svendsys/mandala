@@ -4377,7 +4377,7 @@ pub fn do_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline() {
 /// 200,000 sharp square (review 5739829769).
 ///
 /// With a budget that holds it (a floor of 2,000,000, the test seam;
-/// some 640,000 and 1,022,000 glyph steps since its lays' path reads are
+/// some 980,000 and 1,459,000 glyph steps since its lays' path reads are
 /// counted, #313), each fills both arcs, some
 /// 65,000 glyphs, in at most [`SIDE_LOOKUPS_A_GLYPH`] path lookups a glyph
 /// placed (35.7 round the ellipse, 37.7 round the square, each copy set
@@ -4399,17 +4399,17 @@ pub fn do_flow_halves_ascenders_on_a_lower_half_hang_off_one_baseline() {
 /// leaves both arcs empty and reported — a frame loses its sides before
 /// its text (ruling R48.3) — and takes no more past its budget than
 /// `overshoot_steps` (rulings R44.2, R47.2, R48.2). At its own budget,
-/// 400,000, it can afford its first arc and not its second: on its band
-/// curve each copy's gap is solved in fewer lays than at d7242d38, which
-/// spent 339,200 and 294,560 there on a first arc it then left empty
-/// (#308; both arcs at the floor of 2,000,000 515,000 and 805,000 where
-/// they took 761,000 and 1,299,000), so it lays its text whole and its
-/// first arc as far as it affords, kept short, and leaves the second
-/// empty and reported, within the same bound. (Round the ellipse its
-/// first arc was filled until #313, which counts the lays' path reads
-/// and holds back the most a lay may read before it is laid: it stops
-/// at 244,000 glyph steps with its next lay held back, where it filled
-/// the arc in 296,000.)
+/// 400,000, neither can afford both arcs: on its band curve each copy's
+/// gap is solved in fewer lays than at d7242d38, which spent 339,200 and
+/// 294,560 there on a first arc it then left empty (#308; both arcs at the
+/// floor of 2,000,000 515,000 and 805,000 where they took 761,000 and
+/// 1,299,000), but since #313 counts its lays' path reads
+/// (`SIDE_READS_A_STEP`) the first arc round the ellipse costs past what
+/// the budget leaves (it filled it in 296,000 until then). So each lays
+/// its text whole and its arcs as far as it affords — round the square
+/// its first arc kept short, round the ellipse, whose search for the
+/// count stops at 334,000 with none solved, none — and leaves the rest
+/// empty and reported, within the same bound.
 ///
 /// Controls: with the gap bisected in 30 lays again, past the lookups'
 /// bound; with the sweep along one axis again, past the pairs' round the
@@ -4467,7 +4467,7 @@ fn a_long_side_ornament(shape: Shape, what: &str, own: &[(usize, crate::flow::pl
         (
             None,
             own,
-            "at its own budget, which holds the first arc and its check and not the second's, the text is laid whole, the first arc as far as it affords, and the second left empty",
+            "at its own budget, which does not hold both arcs and their checks, the text is laid whole, its arcs as far as it affords, and the rest left empty",
         ),
         (
             Some(200_000),
@@ -4503,7 +4503,7 @@ fn test_flow_halves_a_long_side_ornament_is_filled_in_few_lays() {
     a_long_side_ornament(
         Shape::Ellipse,
         "ellipse",
-        &[(0, SideLoss::Short), (1, SideLoss::Empty)],
+        &[(0, SideLoss::Empty), (1, SideLoss::Empty)],
     );
 }
 

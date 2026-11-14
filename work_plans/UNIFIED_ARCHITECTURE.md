@@ -835,13 +835,14 @@ line (cosmic-text gives each glyph's advance), then placed:
      cluster of several code points a pass a glyph of its line (a pass
      shapes its whole run in each face), and an inking reads each
      distinct glyph once. A side ornament's lays count their path's
-     reads too, `READS_A_STEP` to a step past the step a cluster (#313):
-     far from the origin a copy's cluster reads its path fifteen to twenty
-     times where it reads it once at the origin. The budget is read before
-     every lay, build and reshape and before each lay of a side
-     ornament's copies, which is laid only while the frame can afford it
-     — the most it may take, `SIDE_CLUSTER_READS` reads a cluster — and
-     its arc's touch check after, at
+     reads too, `SIDE_READS_A_STEP` (4) to a step past the step a cluster
+     (#313): far from the origin a copy's cluster reads its path fifteen
+     to twenty times where it reads it once at the origin, and a read of
+     the band curve with the pairwise rule's try at it is dearer than a
+     ring's. The budget is read before every lay, build and reshape and
+     before each copy of a side ornament, which is laid only while the
+     frame can afford it — the most it may take, `SIDE_CLUSTER_READS`
+     reads a cluster — and the touch check of its arc's copies after, at
      `touch_looks` looks a box of the classes of height the check holds
      (an arc it cannot afford is left empty, or keeps the copies it has
      where their gaps are equal, and is reported as left empty or kept

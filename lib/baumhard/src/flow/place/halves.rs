@@ -109,30 +109,30 @@
 //! least [`TRACK_BUDGET`] ([`frame_budget`]), counts all of its work —
 //! its tracking and side lays, its shaping and inking, its touch checks,
 //! R27's walks and its paths' tables, each weighted to about one tracking
-//! step's time, and its side lays' path reads besides, [`READS_A_STEP`]
-//! to a step (#313), since far from the origin a copy's cluster reads its
-//! path fifteen to twenty times where at the origin it reads it once. It
-//! is read before every lay, build and reshape — in each tracking solve,
-//! slide, shrink (its floor build too), cut and backtrack, R27's fit and a
-//! `Once` filler's copies — and before each lay of a side ornament's
-//! copies, which is laid only while the frame can afford the most it may
-//! take ([`SIDE_CLUSTER_READS`] reads a cluster) and the touch check of the
-//! arc after ([`check_steps`], at [`touch_looks`] looks a box of the
-//! classes of height it holds): an arc it cannot afford is left empty, or
-//! keeps the copies it has where they hold the equal-gap rule, and is
-//! reported as left empty or kept short ([`Unheld::sides`]). So a frame
-//! overshoots its budget by at most [`overshoot_steps`] (ruling R47.2):
-//! what runs before the budget is first read — its setup, R27's first
-//! reshape and one build's shaping and inking — the lay of each line that
-//! finds it spent, and the touch checks that end the frame; no lay of its
-//! sides runs past what the budget leaves for their check. A frame whose
-//! budget runs out while two of its inks still touch keeps the longest
-//! run of its inks that touch nothing ([`untouched`], within a share of
-//! the budget held back for it), and says it was cut
-//! ([`Trace::cut_apart`]). A frame's text is cut to [`MAX_PLACED_GLYPHS`]
-//! at a cluster before its lines are prepared (ruling R44.1), its sides
-//! placing no more than the cap leaves, so the budget is at most
-//! `STEPS_PER_GLYPH × MAX_PLACED_GLYPHS`.
+//! step's time, and its side lays' path reads besides,
+//! [`SIDE_READS_A_STEP`] to a step (#313), since far from the origin a
+//! copy's cluster reads its path fifteen to twenty times where at the
+//! origin it reads it once. It is read before every lay, build and
+//! reshape — in each tracking solve, slide, shrink (its floor build too),
+//! cut and backtrack, R27's fit and a `Once` filler's copies — and before
+//! each copy of a side ornament, which is laid only while the frame can
+//! afford the most it may take ([`SIDE_CLUSTER_READS`] reads a cluster)
+//! and the touch check of the arc's copies after ([`check_steps`], at
+//! [`touch_looks`] looks a box of the classes of height it holds): an arc
+//! it cannot afford is left empty, or keeps the copies it has where they
+//! hold the equal-gap rule, and is reported as left empty or kept short
+//! ([`Unheld::sides`]). So a frame overshoots its budget by at most
+//! [`overshoot_steps`] (ruling R47.2): what runs before the budget is
+//! first read — its setup, R27's first reshape and one build's shaping
+//! and inking — the lay of each line that finds it spent, and the touch
+//! checks that end the frame; no copy of its sides is laid past what the
+//! budget leaves for their check. A frame whose budget runs out while two
+//! of its inks still touch keeps the longest run of its inks that touch
+//! nothing ([`untouched`], within a share of the budget held back for
+//! it), and says it was cut ([`Trace::cut_apart`]). A frame's text is cut
+//! to [`MAX_PLACED_GLYPHS`] at a cluster before its lines are prepared
+//! (ruling R44.1), its sides placing no more than the cap leaves, so the
+//! budget is at most `STEPS_PER_GLYPH × MAX_PLACED_GLYPHS`.
 //!
 //! **Sides.** With `sides`, an ornament closes what the lines leave
 //! round each junction: whole copies, at least one and at most
@@ -157,7 +157,6 @@ use std::rc::Rc;
 use glam::Vec2;
 
 use super::lines::{frame_halves, frame_lines, line_partition, place_lines_in};
-use super::ring::steps_of;
 #[cfg(doc)]
 use super::ring::READS_A_STEP;
 use super::*;
@@ -576,6 +575,31 @@ pub(crate) const CLUSTERS_A_STEP: usize = 8;
 /// targets' ASan build over their seeds, every committed flow finding and
 /// the heavy seeds, three runs each, at a load average of about 2.
 pub(crate) const MODEL_CLUSTERS_A_STEP: usize = 2;
+
+/// Path reads ([`ArcPath::reads`]) one glyph step weighs in a frame's side
+/// ornament's lays (#313), past their step a cluster: at most 3.13 µs a
+/// read, all of a lay's time over its reads, over the lays of 512 reads or
+/// more that read their path eight times a cluster or more, so 16 µs ÷
+/// 3.13 µs = 5.1 reads, rounded down to 4. A side's read is a point on the
+/// band curve and a try of the pairwise rule's straight-path model with
+/// it ([`pair`]), dearer than a `Repeat` ring's read, which
+/// [`READS_A_STEP`] weighs: at that weight the worst lay took 26.6 µs a
+/// counted step. Measured as [`CLUSTERS_A_STEP`]'s ruling R47.3 asks —
+/// each side lay timed by a temporary instrumentation of the engine, never
+/// committed, on the flow targets' ASan build, over 210 frames with side
+/// ornaments (five ornaments round ellipses, sharp and rounded squares
+/// 2,000 and 20,000 across at the origin, 2,000 across 10⁷ to 3·10⁸ from
+/// it and 200,000 across 10¹⁰ from it, outward and inward), three runs,
+/// each lay at the least of its three times, at a load average of 2.4 to
+/// 3.7. Beside a step a cluster, every lay of 16 counted steps or more
+/// then took at most 10.2 µs a step.
+pub(crate) const SIDE_READS_A_STEP: usize = 4;
+
+/// The glyph steps `reads` path reads of a side ornament's lays count
+/// ([`SIDE_READS_A_STEP`] to a step, #313).
+fn side_read_steps(reads: usize) -> usize {
+    reads.div_ceil(SIDE_READS_A_STEP)
+}
 
 /// Samples of an arc-length table one glyph step weighs, where a frame's
 /// setup builds its halves' paths or a `Repeat` ring its path
@@ -2852,7 +2876,7 @@ pub(super) struct Work {
     /// ([`tabled`](Self::tabled)).
     tables: Cell<usize>,
     /// The path reads its side ornament's lays took, counted in `spent`
-    /// at [`READS_A_STEP`] to a step ([`read`](Self::read), #313).
+    /// at [`SIDE_READS_A_STEP`] to a step ([`read`](Self::read), #313).
     reads: Cell<usize>,
     glyphs: Cell<usize>,
     budget: Cell<usize>,
@@ -2935,17 +2959,17 @@ impl Work {
     }
 
     /// Count `reads` more path reads of a side ornament's lays (#313):
-    /// the frame's reads in all, [`READS_A_STEP`] to a glyph step and the
-    /// last step a part, so that the steps `reads` takes are what its
-    /// reads bring the count to, at most `reads` over [`READS_A_STEP`]
-    /// rounded up.
+    /// the frame's reads in all, [`SIDE_READS_A_STEP`] to a glyph step and
+    /// the last step a part, so that the steps `reads` takes are what its
+    /// reads bring the count to, at most `reads` over
+    /// [`SIDE_READS_A_STEP`] rounded up ([`side_read_steps`]).
     fn read(&self, reads: usize) {
         let was = self.reads.get();
         let now = was.saturating_add(reads);
         self.reads.set(now);
         #[cfg(test)]
         SIDE_READS.with(|count| count.set(count.get().saturating_add(reads)));
-        self.side(steps_of(now) - steps_of(was));
+        self.side(side_read_steps(now) - side_read_steps(was));
     }
 
     /// Count `steps` glyph steps of a side ornament's lays: in a test, its
@@ -3840,31 +3864,31 @@ impl<'a> SideOrnament<'a> {
         });
     }
 
-    /// Whether the frame can afford a lay of `laying` copies of the arc
-    /// being laid, bringing it to `copies`, and the touch check of those
-    /// after (rulings R48.2, R51.2; #313): the lay's glyph steps at the
-    /// most it may take ([`lay_steps`](Self::lay_steps)), and the check's
-    /// at [`touch_looks`] looks a box of the classes of height it holds
-    /// ([`check_steps`]), held back from what the budget has left. So no
-    /// lay of a side's copies takes the frame past what its budget leaves
-    /// for the check of them.
-    fn affords(&self, copies: usize, laying: usize) -> bool {
+    /// Whether the frame can afford a copy of the arc being laid, in a lay
+    /// of `copies` copies, and the touch check of those after (rulings
+    /// R48.2, R51.2; #313): the copy's glyph steps at the most it may take
+    /// ([`copy_steps`](Self::copy_steps)), and the check's at
+    /// [`touch_looks`] looks a box of the classes of height it holds
+    /// ([`check_steps`]), held back from what the budget has left. Read
+    /// before each copy a lay lays, so no lay of a side's copies takes the
+    /// frame past what its budget leaves for the check of them.
+    fn affords(&self, copies: usize) -> bool {
         let boxes = self
             .base
             .get()
             .saturating_add(copies.saturating_mul(self.per_copy));
         self.work
-            .affords(check_steps(boxes, self.classes.get()).saturating_add(self.lay_steps(laying)))
+            .affords(check_steps(boxes, self.classes.get()).saturating_add(self.copy_steps()))
     }
 
-    /// The most glyph steps a lay of `copies` copies counts (#313): a
-    /// step a cluster ([`count`](Self::count)), and its path's reads,
-    /// [`SIDE_CLUSTER_READS`] a cluster at the most, [`READS_A_STEP`] to a
-    /// step ([`Work::read`]). A model lay counts no more: half a step a
-    /// cluster ([`modeled`](Self::modeled)), and its reads.
-    fn lay_steps(&self, copies: usize) -> usize {
-        let clusters = copies.saturating_mul(self.clusters.len().max(1));
-        clusters.saturating_add(steps_of(clusters.saturating_mul(SIDE_CLUSTER_READS)))
+    /// The most glyph steps the lay of one copy counts (#313): a step a
+    /// cluster ([`count`](Self::count)), and its path's reads,
+    /// [`SIDE_CLUSTER_READS`] a cluster at the most, [`SIDE_READS_A_STEP`]
+    /// to a step ([`Work::read`]). A model lay's copy counts no more: half a
+    /// step a cluster ([`modeled`](Self::modeled)), and its reads.
+    fn copy_steps(&self) -> usize {
+        let clusters = self.clusters.len().max(1);
+        clusters.saturating_add(side_read_steps(clusters.saturating_mul(SIDE_CLUSTER_READS)))
     }
 
     /// Count `copies` copies laid against the frame's glyph steps: a step
@@ -3923,9 +3947,9 @@ impl<'a> SideOrnament<'a> {
     fn affords_arc(&self) -> bool {
         let boxes = self.base.get().saturating_add(self.per_copy);
         self.work.affords(
-            steps_of(ARC_READS)
+            side_read_steps(ARC_READS)
                 .saturating_add(check_steps(boxes, self.classes.get()))
-                .saturating_add(self.lay_steps(1)),
+                .saturating_add(self.copy_steps()),
         )
     }
 
@@ -4026,27 +4050,34 @@ impl<'s> SideArc<'s> {
 
     /// `n` copies laid at `gap` by the pairwise rule ([`InkLay`]): the
     /// first ink `gap` from `from`'s, each next ink `gap` from the last, a
-    /// space owing its advance and `gap` more. Returns the lay, and how far
-    /// the last ink is from `to` and where along the path its center lies.
-    /// The frame's budget is the caller's to read: a search reads before
-    /// each lay whether the frame can afford the lay of `n` copies and
-    /// their check ([`SideOrnament::affords`]). The lay counts a step a
-    /// cluster and its path's reads (#313).
+    /// space owing its advance and `gap` more. Returns the lay, how far the
+    /// last ink is from `to` and where along the path its center lies, and
+    /// whether it laid all `n`: before each copy it reads whether the frame
+    /// can afford it and the touch check of the `n` ([`SideOrnament::affords`],
+    /// #313), and stops before one it cannot — a lay so stopped is no
+    /// answer, and stops the arc's search. Each copy counts a step a cluster
+    /// and its path's reads.
     ///
     /// Cost: an [`InkLay::set_at`] or a few a glyph.
-    fn lay(&self, n: usize, gap: f32) -> (InkLay<'_>, (f32, f32)) {
-        let reads = self.side.walk.path.reads();
+    fn lay(&self, n: usize, gap: f32) -> (InkLay<'_>, (f32, f32), bool) {
         let mut lay = self.begun(gap);
+        let mut whole = true;
         for _ in 0..n {
+            if !self.side.affords(n) {
+                self.stopped.set(true);
+                whole = false;
+                break;
+            }
+            let reads = self.side.walk.path.reads();
             for cluster in &self.side.clusters {
                 self.side.lay_cluster(&mut lay, cluster, gap);
             }
+            self.side.count(1);
+            self.side.read_since(reads);
+            self.side.laid(n);
         }
-        self.side.count(n);
-        self.side.read_since(reads);
-        self.side.laid(n);
         let end = self.end_of(&lay);
-        (lay, end)
+        (lay, end, whole)
     }
 
     /// A lay of copies at `gap` begun past the text ink the arc starts
@@ -4080,8 +4111,8 @@ impl<'s> SideArc<'s> {
     /// `to`'s and its ink at least `gap` from `to`'s. A miss that is not
     /// a number does not fit.
     fn fits(&self, n: usize, gap: f32) -> bool {
-        let (_, (end, at)) = self.lay(n, gap);
-        at < self.cb && end >= gap
+        let (_, (end, at), whole) = self.lay(n, gap);
+        whole && at < self.cb && end >= gap
     }
 
     /// How much room `n` copies laid by `lay` leave: how far the last
@@ -4119,7 +4150,7 @@ impl<'s> SideArc<'s> {
         let mut lay = self.begun(gap);
         let mut rooms = Vec::new();
         while rooms.len() < most.min(MAX_SIDE_COPIES) {
-            if !self.side.affords(rooms.len() + 1, 1) {
+            if !self.side.affords(rooms.len() + 1) {
                 return None;
             }
             let reads = self.side.walk.path.reads();
@@ -4190,9 +4221,15 @@ impl<'s> SideArc<'s> {
         let probes: std::cell::RefCell<Vec<(f32, f32)>> = std::cell::RefCell::new(Vec::new());
         // The room each lay leaves, as `falsi` reads it
         // (`solved_room`).
+        // A lay its budget stopped is no answer: far short, so that it is
+        // never taken, and the search, reading its budget, stops.
         let room = |gap: f32| {
-            let (lay, _) = self.lay(n, gap);
-            let v = self.solved_room(&lay, gap, tolerance);
+            let (lay, _, whole) = self.lay(n, gap);
+            let v = if whole {
+                self.solved_room(&lay, gap, tolerance)
+            } else {
+                f32::NEG_INFINITY
+            };
             probes.borrow_mut().push((gap, v));
             (
                 v,
@@ -4202,10 +4239,10 @@ impl<'s> SideArc<'s> {
                 },
             )
         };
-        // The frame cannot afford a lay of `n` copies and their touch
-        // check: the search stops (ruling R48.2; #313).
+        // The frame cannot afford a copy and the touch check of `n`: the
+        // search stops (ruling R48.2; #313).
         let stop = || {
-            let stopped = !self.side.affords(n, n);
+            let stopped = !self.side.affords(n);
             if stopped {
                 self.stopped.set(true);
             }
@@ -4324,19 +4361,27 @@ impl<'s> SideArc<'s> {
     ) -> Option<f32> {
         let gaps = self.gaps(n);
         let aim = 0.25 * tolerance;
+        // Each copy read against the budget before it is laid (#313): a lay
+        // it stops is no answer, and is read as far short.
         let lay_at = |gap: f32| {
-            let reads = self.side.walk.path.reads();
             let mut lay = self.begun(gap);
             lay.modeled = true;
+            let mut whole = true;
             for _ in 0..n {
+                if !self.side.affords(n) {
+                    self.stopped.set(true);
+                    whole = false;
+                    break;
+                }
+                let reads = self.side.walk.path.reads();
                 for cluster in &self.side.clusters {
                     self.side.lay_cluster(&mut lay, cluster, gap);
                 }
+                self.side.modeled(1);
+                self.side.read_since(reads);
+                self.side.laid(n);
             }
-            self.side.modeled(n);
-            self.side.read_since(reads);
-            self.side.laid(n);
-            lay
+            (lay, whole)
         };
         if stop() {
             return None;
@@ -4347,8 +4392,8 @@ impl<'s> SideArc<'s> {
         // floor, the model does not tell how the copies read from the path
         // lie: far out, where the float each letter lies past its root
         // moves with the gap.
-        let at = lay_at(self.floor);
-        if at.abandoned || at.formed.1 > at.formed.0 {
+        let (at, whole) = lay_at(self.floor);
+        if !whole || at.abandoned || at.formed.1 > at.formed.0 {
             return None;
         }
         let shift = at_floor - self.room_of(&at, self.floor);
@@ -4358,7 +4403,10 @@ impl<'s> SideArc<'s> {
         ) {
             return None;
         }
-        let room = |gap: f32| (self.shifted_room(&lay_at(gap), gap, tolerance, shift), ());
+        let room = |gap: f32| match lay_at(gap) {
+            (lay, true) => (self.shifted_room(&lay, gap, tolerance, shift), ()),
+            (_, false) => (f32::NEG_INFINITY, ()),
+        };
         let mut low = (self.floor, at_floor, ());
         let mut g = straight;
         for _ in 0..TRACK_DOUBLINGS {
@@ -4443,7 +4491,7 @@ impl<'s> SideArc<'s> {
         // that cannot afford a lay of `k` copies and their check stops the
         // search where it stands (ruling R48.2; #313).
         let short = |k: usize| {
-            let short = !self.side.affords(k, k);
+            let short = !self.side.affords(k);
             if short {
                 self.stopped.set(true);
             }
@@ -7463,7 +7511,7 @@ pub(crate) fn side_solve_seam(
         reaches: row.reaches[..reaches].to_vec(),
     };
     let (gap, _, _) = arc.solve(n, room, copies);
-    let (_, (end, at)) = arc.lay(n, gap);
+    let (_, (end, at), _) = arc.lay(n, gap);
     Some((gap, at >= arc.cb || end.is_nan() || end <= TOUCH))
 }
 

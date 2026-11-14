@@ -897,11 +897,11 @@ counted at a weight measured in one tracking step's time (R46.1) — is
 bounded by its budget, `max(400,000, 3,000 × glyphs)` steps, and by
 what its weights allow past it, one build's shaping and inking and a
 lay of each line (`frame_work_steps`, R47.2): the budget is read before
-each build, reshape and lay, and before each lay of a side ornament's
-copies, which also holds back the cost of its arc's touch check at
+each build, reshape and lay, and before each copy of a side ornament,
+which also holds back the cost of its arc's touch check at
 `touch_looks` looks a box of the classes of height it holds (R48.2,
-R51.2) and the most the lay may take, its path's reads counted at
-`READS_A_STEP` to a step (#313), so once it is spent nothing
+R51.2) and the most the copy may take, its path's reads counted at
+`SIDE_READS_A_STEP` to a step (#313), so once it is spent nothing
 runs that the overshoot does not count (the `PAST_BUDGET` grid in
 `flow/tests/budget_tests.rs` holds every fit mode, span, kind of sides
 and direction to it, a take that crosses the budget counted for the
