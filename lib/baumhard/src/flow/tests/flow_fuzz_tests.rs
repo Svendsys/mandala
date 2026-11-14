@@ -1677,6 +1677,69 @@ fn test_flow_structured_every_face_finding_a_far_out_line_its_floats_cannot_part
     assert_eq!(room, 0.0, "a line of no length gives a run no room");
 }
 
+/// Every `Spread` and `Fit` along a far-out path (#313) that its natural
+/// length fits is laid whole (review 5902086644, ruling B18.1 §1 as
+/// amended): three texts in both modes along `far_curve`'s line and cubic
+/// at every `far_out` draw, 10⁶ to 10²² from the origin and 100 to
+/// 204,800 long, 2,448 placements. The floats far out round a path's
+/// control points, so a path is often not as long as it was drawn, and
+/// is no length at all where its length is below their spacing; each is
+/// owed whole on the room of the path it is ([`curve_room`], an oracle
+/// independent of the engine's arithmetic). Some of those owed are on
+/// paths the floats changed, the case swept for.
+///
+/// Control: with `curve_room` finding its points by `Curve::point` in
+/// `f32` again, red (1,237 placements owed whole and cut: rounding read
+/// as room; 695 when the engine's own tables overmeasured too).
+#[test]
+fn test_far_out_open_placements_their_natural_length_fits_are_laid_whole() {
+    use crate::document::values::FitMode;
+    use crate::flow::place::{place_on_open_capped, Trace};
+    use crate::flow::tests::flow_fuzz::{curve_room, far_curve, owes_whole};
+    let (mut owed, mut moved, mut cut) = (0usize, 0usize, Vec::new());
+    with_fonts(|fs| {
+        let flow = style(16.0);
+        for text in ["MANDALA", "To see a World", "ab"] {
+            let run = real_run(text, &flow, fs);
+            for fit in [FitMode::Spread, FitMode::Fit { min: 0.5, max: 2.0 }] {
+                for k in 6..=22 {
+                    for doubled in 0..12 {
+                        for line in [true, false] {
+                            let length = 100.0 * (1u32 << doubled) as f32;
+                            let curve = far_curve(Vec2::splat(10f32.powi(k)), length, line);
+                            let room = curve_room(&curve);
+                            if !owes_whole(&run, &fit, room) {
+                                continue;
+                            }
+                            owed += 1;
+                            if (room - length).abs() > length * 1e-3 {
+                                moved += 1;
+                            }
+                            let mut trace = Trace::default();
+                            let (_, placed) =
+                                place_on_open_capped(&run, &curve, &fit, 0.0, &flow, fs, 154, Some(&mut trace));
+                            if placed.glyphs.len() < run.glyphs.len() {
+                                cut.push(format!("{text:?} {fit:?} 10^{k} {length} line {line}: room {room}"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    assert!(
+        cut.is_empty(),
+        "{} owed whole and cut: {:?}",
+        cut.len(),
+        &cut[..cut.len().min(5)]
+    );
+    assert!(owed >= 700, "the sweep owes {owed} placements whole");
+    assert!(
+        moved >= 400,
+        "the sweep owes {moved} placements whole on paths the floats changed"
+    );
+}
+
 /// The flow_structured finding of #308's fuzz run, failing alike at
 /// d7242d38: a `Spread` frame laid inward round an ellipse 3.24 wide and
 /// 1.18e-38 tall, its text of two glyphs one line, 0.45 long at its
