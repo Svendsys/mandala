@@ -707,6 +707,16 @@ const SAMPLE_CAP: usize = 1 << 16;
 /// with its shape. The points are each curve's own, as before, so a
 /// sample is the same point, to the bit, in every call that takes it
 /// ([`fixed_samples`]).
+///
+/// The bound: against `L`, the length in exact arithmetic of the polyline
+/// through a curve's points at its parameters `t = i / n` (each an `f32`),
+/// the distance a curve adds is within `(n + 1)·2⁻⁴⁷·(R + L)`, `R` its
+/// control points' reach from its start — each offset a few `f64`
+/// roundings of `R`, each chord and partial sum one of their own — under
+/// `2⁻³⁰·(R + L)` at [`SAMPLE_CAP`]; and `along` is never rounded to
+/// `f32`. It is the arithmetic of a Bézier's table (`ArcPath::open`),
+/// whose bound `flow_fuzz_tests`' agreement test holds, wherever the
+/// curve lies.
 pub(crate) fn sample(curves: &[Curve], step: f32, skip: f32) -> Vec<Vec2> {
     let step = step.max(1e-2);
     let mut out = Vec::new();
