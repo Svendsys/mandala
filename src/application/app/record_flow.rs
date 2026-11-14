@@ -396,8 +396,8 @@ mod tests {
     use crate::application::capture::geometry::CameraInfo;
     use crate::application::capture::record::MANIFEST_FILE;
     use crate::application::clock::wall_ms;
-    use crate::application::guarded_file::tests::scratch_dir;
     use crate::application::renderer::CapturedPixels;
+    use baumhard::util::test_temp::scratch_dir;
 
     /// A watchdog that will not abort the test process: parked, so the
     /// silence between tests is idle and not a freeze.
@@ -599,7 +599,7 @@ mod tests {
         shutdown(&mut recorder, &mut artifacts, &watchdog, &AppClock::default());
         assert!(recorder.active.is_none() && recorder.finished.is_none());
         assert_eq!(
-            crate::application::guarded_file::tests::names_in(&rec),
+            baumhard::util::test_temp::names_in(&rec),
             Vec::<String>::new(),
             "nothing was encoded and no manifest written"
         );

@@ -64,6 +64,11 @@ pub mod geometry;
 /// Grapheme-cluster aware text primitives — reach for these from
 /// the app crate rather than byte-indexing a `String` (§B3).
 pub mod grapheme_chad;
+/// Writing a file at a path the program did not choose: atomic, never
+/// through a symlink, never over a file unasked. The one such writer
+/// in the workspace; native-only.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod guarded_file;
 /// Every crate `Cargo.lock` holds at two versions, each with the reason
 /// it stays (#284), held against the lockfile so a `cargo update` cannot
 /// bring a removed one back unnoticed. Test-only and native-only for the

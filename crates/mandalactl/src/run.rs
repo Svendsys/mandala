@@ -579,7 +579,7 @@ fn screenshot_sink(target: &Target, prepared: &mut Prepared) -> Result<Option<Sc
 /// Why `path` cannot take a screenshot file, if it cannot: a symlink
 /// (never followed, with or without `overwrite`), a directory, or an
 /// existing file without `overwrite`. The guarantees of native's
-/// writer (`guarded_file::publish` in the app, `format/ipc.md`
+/// writer (baumhard's `guarded_file::publish`, `format/ipc.md`
 /// §`capture.screenshot`), given by the client that writes on the
 /// browser's behalf. `symlink_metadata`, not `exists`, which is
 /// `false` for a dangling symlink.

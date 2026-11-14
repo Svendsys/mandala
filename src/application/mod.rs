@@ -29,8 +29,8 @@
 //!   running app through (native-only, so a plain code-span).
 //! - `capture` — the screenshot engine both the IPC
 //!   `capture.screenshot` command and the `screenshot` console verb
-//!   call, and `guarded_file`, the one writer behind every
-//!   caller-chosen path (both native-only).
+//!   call (native-only); every caller-chosen path it writes goes
+//!   through baumhard's `util::guarded_file`.
 //! - [`scene_host`] — canvas vs overlay scene-tree slot
 //!   routing (the boundary between renderer and the modal
 //!   editors).
@@ -102,10 +102,6 @@ pub(crate) mod document;
 // defaults and style edits that the field Actions and console verbs
 // share, on both targets.
 pub(crate) mod fields;
-// The one writer behind every caller-chosen path. Native-only with its
-// consumers, the IPC file sidecar and the screenshot engine.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) mod guarded_file;
 // The control surface for agents and tooling: envelope, registry and
 // commands on both targets; the Unix socket on native and a WebSocket
 // toward `mandalactl bridge` in the browser (`format/ipc.md`

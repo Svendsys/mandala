@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Writing a file someone else named: the one writer behind every
-//! command that puts bytes at a caller-chosen path — the IPC file
-//! sidecar (`to_file` on `query.document` and `scene.dump`) and the
-//! screenshot's PNG and geometry sidecar, from IPC and the console
-//! alike.
+//! Writing a file someone else named: the one writer in the workspace
+//! that puts bytes at a path the program did not choose — the app's IPC
+//! file sidecar (`to_file` on `query.document` and `scene.dump`), the
+//! screenshot's PNG and geometry sidecar and a recording's frames, from
+//! IPC and the console alike, and every map the app or `maptool` saves
+//! (`format::file::write`).
 //!
 //! **Why one writer.** A path typed by a person, or composed by an
 //! agent, is a path the app did not choose, and three guarantees are
@@ -14,15 +15,21 @@
 //! where a good one was. Each is easy to state and easy to lose in a
 //! second copy, so they are stated and tested here once.
 //!
-//! Native-only: its consumers are (`CLAUDE.md` "Dual-target status").
+//! **Why here.** The app and `maptool` are two processes that can save
+//! one map at the same moment, so the map writer needs the same
+//! guarantees, and one implementation of them is kept: this one, in the
+//! crate both depend on.
+//!
+//! Native-only: the browser has no files, and the temp file's name needs
+//! a process id, which `wasm32-unknown-unknown` does not have.
 
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// Why [`publish`] wrote nothing.
+/// Why [`publish`](crate::util::guarded_file::publish) wrote nothing.
 #[derive(Debug, PartialEq)]
-pub(crate) enum PublishRefusal {
+pub enum PublishRefusal {
     /// The path is the caller's mistake — a symlink, a directory, an
     /// existing file without `overwrite`, a parent that does not exist.
     /// The message names it.
@@ -116,9 +123,12 @@ fn produce_into(
 /// message: it names a symlink, a directory or an existing file before
 /// any bytes are written, but the guarantees above do not rest on it.
 ///
-/// `path` should be absolute; the callers check that, each in its own
-/// words.
-pub(crate) fn publish(
+/// `path` should be absolute where it comes from someone else; the
+/// app's callers check that, each in its own words.
+///
+/// Cost: the bytes written once, an `fsync`, and a rename (or a hard
+/// link and an unlink); no copy of the output is held.
+pub fn publish(
     path: &Path,
     overwrite: bool,
     produce: impl FnOnce(&mut dyn Write) -> Result<(), String>,
@@ -199,31 +209,9 @@ fn exists(path: &Path) -> PublishRefusal {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-
-    /// A fresh directory under the system temp dir, unique to this
-    /// process and call.
-    pub(crate) fn scratch_dir(label: &str) -> std::path::PathBuf {
-        static N: AtomicU32 = AtomicU32::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "mandala-write-{}-{}-{label}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).expect("scratch dir");
-        dir
-    }
-
-    /// What is left in `dir`, by name.
-    pub(crate) fn names_in(dir: &Path) -> Vec<String> {
-        let mut names: Vec<String> = std::fs::read_dir(dir)
-            .expect("readable")
-            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        names
-    }
+    use crate::util::test_temp::{names_in, scratch_dir};
 
     fn bytes(content: &'static str) -> impl FnOnce(&mut dyn Write) -> Result<(), String> {
         move |out| out.write_all(content.as_bytes()).map_err(|e| e.to_string())
