@@ -36,14 +36,17 @@
 //! Nothing is reversed: an ornament has no reading direction (ruling
 //! R29).
 
+use std::cell::Cell;
+
 use glam::Vec2;
 
 use crate::flow::curve::Curve;
 use crate::flow::outline::Rect;
 use crate::flow::path::ArcPath;
-use crate::flow::place::halves::resolved;
+use crate::flow::place::halves::{resolved, BOXES_A_STEP};
+use crate::flow::place::ring::{ring_glyphs, steps_of, RingLoss, RingWork, GLYPHS_A_STEP};
 use crate::flow::place::{
-    cluster_ink, clusters_of, Cluster, PlacedGlyph, PlacedRun, MAX_PLACED_GLYPHS, MIN_TABLE_SPACING,
+    cluster_ink, clusters_of, Cluster, PlacedGlyph, PlacedRun, Trace, MAX_PLACED_GLYPHS, MIN_TABLE_SPACING,
 };
 use crate::flow::shape::{Ink, ShapedRun};
 
@@ -333,6 +336,9 @@ struct Open {
     length: f32,
     start_dir: Vec2,
     end_dir: Vec2,
+    /// The gaps between two boxes measured along it ([`Track::gap`]),
+    /// each a unit of a placement's work past its path's reads (#313).
+    gaps: Cell<usize>,
 }
 
 impl Track for Open {
@@ -363,6 +369,11 @@ impl Track for Open {
 
     fn magnitude(&self) -> f32 {
         self.length
+    }
+
+    fn gap(&self, a: &Rect, b: &Rect) -> f32 {
+        self.gaps.set(self.gaps.get().saturating_add(1));
+        signed_gap(a, b)
     }
 }
 
@@ -401,6 +412,89 @@ pub fn place_pitched(
     spacing: f32,
     ends: [PathEnd<'_>; 2],
 ) -> PlacedRun {
+    place_pitched_capped(run, path, spacing, ends, MAX_PLACED_GLYPHS, None)
+}
+
+/// The most path reads a pitched lay along an open path ([`pitch`]'s
+/// `next_at`) takes an ink (#313): its box, the way the path runs there
+/// and at its first guess, and its gap's first measure and [`REFINE`]
+/// refinements, a box each.
+const INK_READS: usize = 4 + REFINE;
+
+/// The most gaps between two boxes ([`Track::gap`]) a pitched lay
+/// measures an ink: its gap's first measure and its refinements.
+const INK_GAPS: usize = 1 + REFINE;
+
+/// The most path reads, and the gaps to each of an end's boxes, an end
+/// ink's place takes ([`pitch`]'s `first_at` and `last_at`): its gap's
+/// first measure and its refinements, a box each.
+const END_MEASURES: usize = 1 + REFINE;
+
+/// The lays of a pitched placement held back for whenever its count or
+/// its slack asks whether it may go on (#313), as a directional ring's
+/// runs are: the two counts its slack is solved for each begin with a lay
+/// the budget is not asked about, a round of the slack is one more, and
+/// the lay at the slack found one more.
+const LAYS_HELD: usize = 4;
+
+/// The glyph steps `gaps` gaps between two boxes count (#313): as many as
+/// a touch check's sweep weighs, [`BOXES_A_STEP`] to a step.
+fn gap_steps(gaps: usize) -> usize {
+    gaps.div_ceil(BOXES_A_STEP)
+}
+
+/// The glyph steps a pitched lay of `inks` inks along an open path takes
+/// at most (#313), its ends each beside at most `boxes` boxes: its path's
+/// reads ([`INK_READS`] an ink, and [`END_MEASURES`] an end) and its gaps
+/// measured ([`INK_GAPS`] an ink, and [`END_MEASURES`] an end's boxes).
+fn lay_steps(inks: usize, boxes: usize) -> usize {
+    let reads = inks.saturating_mul(INK_READS).saturating_add(2 * END_MEASURES);
+    let gaps = inks
+        .saturating_mul(INK_GAPS)
+        .saturating_add((2 * END_MEASURES).saturating_mul(boxes));
+    steps_of(reads).saturating_add(gap_steps(gaps))
+}
+
+/// The glyph steps a pitched placement of a pattern of `marks` inks takes
+/// before it first asks its budget (#313): where each ink would sit as
+/// the last, and where the first sits, each an end's place
+/// ([`END_MEASURES`] reads and gaps to each of `boxes` boxes).
+fn setup_steps(marks: usize, boxes: usize) -> usize {
+    let places = marks.saturating_add(1).saturating_mul(END_MEASURES);
+    steps_of(places).saturating_add(gap_steps(places.saturating_mul(boxes.max(1))))
+}
+
+/// [`place_pitched`], laying at most `cap` glyphs, filling `trace` with
+/// its work (#313).
+///
+/// **Its budget.** A pitched placement is budgeted as a `repeat` ring is
+/// ([`RingWork`]; rulings B17.1a, B17.2a): by the glyphs it will lay, the
+/// path's length over one round of the pattern's pitch — each ink's least
+/// extent and its gap, so that a path that runs steep is not estimated
+/// short — rounded up, times a round's glyphs, at most `cap`. Its work is
+/// its path's reads ([`READS_A_STEP`](super::ring::READS_A_STEP) to a
+/// step), the glyphs it places, and the gaps between boxes it measures
+/// ([`gap_steps`]). Before it lays anything it asks whether it can afford
+/// where its inks would end ([`setup_steps`]) and [`LAYS_HELD`] lays of
+/// one ink; and [`pitch`] asks before each ink it counts and each round
+/// of its slack whether it can afford [`LAYS_HELD`] lays of one ink more
+/// ([`lay_steps`]), and the glyphs of the inks it would then hold, which
+/// are counted as they are placed. A placement its budget stops is laid
+/// at the count and the slack found so far, or, stopped before its first
+/// ink, laid empty, and it is short ([`RingLoss::Short`]) — as is one its
+/// cap holds. So it takes no more than its budget, but for what it counts
+/// before it first reads it: its own setup and its path's table, as a
+/// ring's ([`ring_overshoot`](super::ring::ring_overshoot)) — none of it
+/// past the budget of any real placement, which is at least
+/// [`TRACK_BUDGET`](super::halves::TRACK_BUDGET).
+pub(crate) fn place_pitched_capped(
+    run: &ShapedRun,
+    path: &(impl AsRef<[Curve]> + ?Sized),
+    spacing: f32,
+    ends: [PathEnd<'_>; 2],
+    cap: usize,
+    trace: Option<&mut Trace>,
+) -> PlacedRun {
     let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
     let marks = marks_of(run, &clusters, spacing);
     if marks.is_empty() {
@@ -418,11 +512,49 @@ pub fn place_pitched(
             .try_normalize()
             .unwrap_or(Vec2::X)
     };
+    // Its budget, scaled by the glyphs a round of its pattern's pitch along
+    // the path holds (#313).
+    let cap = cap.min(MAX_PLACED_GLYPHS);
+    let round: usize = marks.iter().map(|m| clusters[m.cluster].glyphs.len()).sum();
+    let pitch_of: f64 = marks
+        .iter()
+        .map(|m| f64::from(m.size().min_element()) + f64::from(m.gap))
+        .sum();
+    let estimate = ring_glyphs(round, pitch_of, length, cap);
+    let work = RingWork::new(&arc, round, false, run.line_height, estimate, cap);
+    let (budget, glyphs, _) = work.budget();
     let track = Open {
         arc,
         length,
         start_dir: direction(curves.first(), 0.0),
         end_dir: direction(curves.last(), 1.0),
+        gaps: Cell::new(0),
+    };
+    let boxes = ends[0].inks.len().max(ends[1].inks.len());
+    // The gaps measured so far, counted as they are asked about.
+    let counted = Cell::new(0usize);
+    let spent = || {
+        let gaps = track.gaps.get();
+        work.took(gap_steps(gaps) - gap_steps(counted.get()));
+        counted.set(gaps);
+        work.spent(&track.arc)
+    };
+    let stopped = Cell::new(false);
+    // In a test, what the last read of its budget that let it go on found
+    // spent and held back for.
+    #[cfg(test)]
+    let allowed: Cell<Option<usize>> = Cell::new(None);
+    let affords = |held: usize| {
+        let now = spent();
+        let ok = now.saturating_add(held) < budget;
+        if !ok {
+            stopped.set(true);
+        }
+        #[cfg(test)]
+        if ok {
+            allowed.set(Some(now.saturating_add(held)));
+        }
+        ok
     };
     let end_gap = marks.iter().map(|m| m.gap).sum::<f32>() / marks.len() as f32;
     // The least slack: no gap below 0.
@@ -433,23 +565,79 @@ pub fn place_pitched(
         .map(|m| clusters[m.cluster].glyphs.len())
         .max()
         .unwrap_or(1);
-    let cap = MAX_PLACED_GLYPHS / widest.max(1);
-    let Some(pitched) = pitch(&track, &marks, cap, floor, ends, &|_| true) else {
-        return PlacedRun::default();
+    let inks_cap = cap / widest.max(1);
+    // The lays held back for with `inks` inks in hand, and the glyphs of
+    // one ink more placed once the lay is done, counted then.
+    let held = |inks: usize| {
+        let inks = inks.saturating_add(1);
+        LAYS_HELD
+            .saturating_mul(lay_steps(inks, boxes))
+            .saturating_add(inks.saturating_mul(widest).div_ceil(GLYPHS_A_STEP))
     };
-    let centers: Vec<(usize, Vec2)> = pitched
-        .centers
-        .iter()
-        .enumerate()
-        .map(|(k, &s)| {
-            let k = k % marks.len();
-            (k, track.center(s, marks[k].size()))
-        })
-        .collect();
-    PlacedRun {
-        glyphs: glyphs_at(run, &clusters, &marks, &centers),
-        truncated: pitched.truncated,
+    let go = |inks: usize| affords(held(inks));
+    let pitched = if affords(setup_steps(marks.len(), boxes).saturating_add(held(0))) {
+        pitch(&track, &marks, inks_cap, floor, ends, &go)
+    } else {
+        None
+    };
+    let placed = pitched.map_or_else(PlacedRun::default, |pitched| {
+        let centers: Vec<(usize, Vec2)> = pitched
+            .centers
+            .iter()
+            .enumerate()
+            .map(|(k, &s)| {
+                let k = k % marks.len();
+                (k, track.center(s, marks[k].size()))
+            })
+            .collect();
+        PlacedRun {
+            glyphs: glyphs_at(run, &clusters, &marks, &centers),
+            truncated: pitched.truncated,
+        }
+    });
+    work.set(placed.glyphs.len());
+    if stopped.get() || placed.truncated {
+        work.lose(RingLoss::Short);
     }
+    let spent = spent();
+    if let Some(trace) = trace {
+        trace.spent = spent;
+        trace.tables = work.tables();
+        trace.budget = budget;
+        trace.glyphs = glyphs;
+        trace.ring = work.loss();
+    }
+    #[cfg(test)]
+    {
+        super::halves::PAST_BUDGET
+            .with(|past| past.set(past.get().saturating_add(spent.saturating_sub(budget))));
+        LAST_PITCHED.with(|last| last.set(Some((spent, budget, work.loss()))));
+        LAST_PITCHED_GAPS.with(|last| last.set((track.gaps.get(), work.taken_apart())));
+        if let Some(allowed) = allowed.get() {
+            let edge = spent as i64 - allowed as i64;
+            PITCH_EDGE.with(|most| most.set(Some(most.get().map_or(edge, |was| was.max(edge)))));
+        }
+    }
+    placed
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test counter (#313): what the last [`place_pitched_capped`] on this
+    /// thread spent, its budget, and how its budget left it.
+    pub(crate) static LAST_PITCHED: std::cell::Cell<Option<(usize, usize, Option<RingLoss>)>> = const { std::cell::Cell::new(None) };
+    /// Test counter (#313, review 5902086644): the gaps between boxes the
+    /// last [`place_pitched_capped`] on this thread measured
+    /// ([`Track::gap`]), and the glyph steps it took apart from its reads
+    /// and its glyphs (`RingWork::taken_apart`): its gaps' ([`gap_steps`]),
+    /// all it takes apart.
+    pub(crate) static LAST_PITCHED_GAPS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// Test counter (#313, ruling B18.1 §4): the most glyph steps a
+    /// pitched placement has taken on this thread, its glyphs counted once
+    /// it is laid, past what the last read of its budget that let it go on
+    /// found spent and held back for: never above none, the hold being
+    /// what it takes after. `None` before any.
+    pub(crate) static PITCH_EDGE: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
 }
 
 /// The glyphs of `marks[k]`'s cluster for each `(k, center)` of

@@ -296,15 +296,27 @@ pub fn do_flow_pitched_lays_no_text_and_no_empty_path() {
 /// steps each ink's place by the float steps of the canvas, so a move of
 /// the slack too small to cross one leaves the lay where it was, and a
 /// later move, landing across one, does move it. Along a cubic arch some
-/// 1 120 across and 314 high, the solve for 208 inks meets such a round
+/// 1 128 across and 314 high, the solve for 210 inks meets such a round
 /// and goes on past it, to a slack at which the last ink lies within the
-/// solve's tolerance, 1e-3, of where its end gap puts it.
+/// solve's tolerance, 1e-3, of where its end gap puts it. (The arch was
+/// 1 120.6 across and 313.77 high, 208 inks, until its points were found
+/// from its start in `f64` and rounded once (#313, ruling B18.1 §6),
+/// which moved where the canvas's float steps fall: that arch's solve
+/// meets no such round now.) A searched constant, not a derived one: the
+/// arches 1 120.6 + 0.37·i across and 313.77 + 0.113·j high, i and j
+/// below 40 and 100, were laid and this one taken of the 382 whose solve
+/// met such a round. Nothing holds it there but the arithmetic as it
+/// stands, so a later change of where the floats fall fails this test at
+/// its precondition, that the solve met a round the lay did not answer,
+/// not at its answer; search again then. Not every arch's solve that
+/// meets such a round reaches its tolerance: a few of a grid of them fall
+/// short of it by little more than it, which #358 takes up.
 ///
 /// Control: the stop for a round the lay does not answer taken on every
 /// path, not only where the path's float steps are wider than the
 /// pattern's gaps, red: the solve stops at that round, its last ink
-/// 3.4e-3 short ("208 inks laid at a slack of 0.012420217, the last
-/// 0.0034179688 short of its end gap").
+/// 1.8e-3 short ("210 inks laid at a slack of -0.010735823, the last
+/// -0.0018310547 short of its end gap").
 ///
 /// Not a `do_*` body: it reads what the solve reached through a
 /// test-only record (`pitch::SOLVED`), which a bench build does not
@@ -315,7 +327,7 @@ fn test_flow_pitched_solves_past_a_round_the_lay_does_not_answer() {
     // The arch: how far across, and how high its control points stand.
     // Exact: the round the lay does not answer falls where the canvas's
     // float steps fall.
-    let (across, high) = (1120.6_f32, 313.76797_f32);
+    let (across, high) = (1128.37_f32, 313.994_f32);
     let run = dot();
     let path = Curve::Cubic(
         Vec2::ZERO,

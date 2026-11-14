@@ -896,11 +896,14 @@ text frame's work — its tracking, shaping, inking and the rest, each
 counted at a weight measured in one tracking step's time (R46.1) — is
 bounded by its budget, `max(400,000, 3,000 × glyphs)` steps, and by
 what its weights allow past it, one build's shaping and inking and a
-lay of each line (`frame_work_steps`, R47.2): the budget is read before
+lay of each line, its path's reads past one a cluster counted at
+`TRACK_READS_A_STEP` to a step (#313, ruling B18.1 §2;
+`frame_work_steps`, R47.2): the budget is read before
 each build, reshape and lay, and before each copy of a side ornament,
 which also holds back the cost of its arc's touch check at
 `touch_looks` looks a box of the classes of height it holds (R48.2,
-R51.2), so once it is spent nothing
+R51.2) and the most the copy may take, its path's reads counted at
+`SIDE_READS_A_STEP` to a step (#313), so once it is spent nothing
 runs that the overshoot does not count (the `PAST_BUDGET` grid in
 `flow/tests/budget_tests.rs` holds every fit mode, span, kind of sides
 and direction to it, a take that crosses the budget counted for the
@@ -939,10 +942,21 @@ place of its frame one input in four. The harnesses lay it at most
 `MAX_RING_GLYPHS` (154) glyphs, the most whose budget fits an input
 (rulings B17.2a, B17.2b): its whole text round its whole outline, so
 that a ring far from the origin is walked there, over fewer glyphs,
-where a map's cap would budget it 196,608,000 steps. The frame's
+where a map's cap would budget it 196,608,000 steps. Every placement
+along an open path, and a connector's whole-glyph pattern
+(`place_pitched`), is budgeted as a ring is since #313, so each is an
+input's one budgeted placement as well: flow_raw lays one along its line
+in place of its frame one input in four that draws no ring (`raw_line`),
+and flow_structured lays one along its curve, its fit mode's or, one
+time in two, its whole-glyph pattern — each at the most glyphs whose work
+fits an input (`open_cap`, `pitched_cap`), its whole text and path laid.
+flow_structured draws, one time in four, its outline or its curve far
+from the origin, from 10⁶ to 10²² (`far_out`): a far frame with sides, its
+side ornament's lays counting their path reads (#313), and a far
+`Repeat` along a path one time in two. The frame's
 text is cut until the frame's work fits
-(`fits_in_time`): at most `MAX_FRAME_GLYPHS` (150) glyphs of a text in
-one face, 462,949 steps, 14.95 s, and fewer of a text the shaper must
+(`fits_in_time`): at most `MAX_FRAME_GLYPHS` (151) glyphs of a text in
+one face, 464,172 steps, 14.99 s, and fewer of a text the shaper must
 search every face for. `test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout`
 computes it from those constants, and every input holds its own frames
 to it. A committed finding replays in the frame it was found in: a raw

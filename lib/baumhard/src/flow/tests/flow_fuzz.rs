@@ -27,10 +27,12 @@
 //!   and its text is cut to what it lays inside the timeout
 //!   ([`fits_in_time`](crate::flow::tests::flow_fuzz::fits_in_time)).
 //! - **An input's frames fit in the fuzz timeout** (rulings R45.1,
-//!   R46, R47.2): each target lays one frame an input, whose budget is at
-//!   most what the harness counts for it and whose work is at most that
-//!   budget and the overshoot its weights allow (`frame_work_steps`), and
-//!   the frames' work together is at most
+//!   R46, R47.2): each target lays one budgeted placement an input — a
+//!   frame, a `Repeat` ring (#310), or a placement along an open path
+//!   (#313) — whose budget is at most what the harness counts for it and
+//!   whose work is at most that budget and the overshoot its weights allow
+//!   (`frame_work_steps`, `ring_work_steps`), and the input's work
+//!   together is at most
 //!   [`INPUT_STEPS`](crate::flow::tests::flow_fuzz::INPUT_STEPS), three
 //!   quarters of the timeout at the ASan build's cost a counted step.
 //! - **A box is a box:** its size is finite, non-negative, at least the
@@ -44,7 +46,7 @@
 //! point's `at` is in `0..=1`, sizes are in points — because placement
 //! receives those from a loaded document, never raw.
 
-use glam::Vec2;
+use glam::{DVec2, Vec2};
 
 use crate::document::bounds;
 use crate::document::element::DirectionalGlyphs;
@@ -52,16 +54,17 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::{
     Align, Direction, Edge, FitMode, FontSize, LineSpan, Percent, Rgba, Shape, StartPoint, Weight,
 };
-use crate::flow::place::halves::{frame_budget, frame_work_steps, touch_looks, NEARER};
-use crate::flow::place::ring::ring_work_steps;
+use crate::flow::place::halves::{frame_budget, frame_work_steps, table_steps, touch_looks, NEARER};
+use crate::flow::place::pitch::place_pitched_capped;
+use crate::flow::place::ring::{ring_work_steps, RING_STEPS};
 use crate::flow::place::{
-    frame_halves, place_on_closed_capped, setup_table_samples, size_factor, Trace, INK_TOLERANCE,
-    MIN_TABLE_SPACING,
+    frame_halves, place_on_closed_capped, place_on_open_capped, setup_table_samples, size_factor, Trace,
+    INK_TOLERANCE, MIN_TABLE_SPACING,
 };
 use crate::flow::tests::support::raster_box;
 use crate::flow::{
-    offset, outline, place_at_point, place_on_open, place_pitched, shape_box, shape_run, Curve, FlowSpan,
-    Outline, PathEnd, PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS,
+    offset, outline, place_at_point, shape_box, shape_run, Curve, FlowSpan, GlyphMetrics, Outline, PathEnd,
+    PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS, MAX_TABLE_SAMPLES,
 };
 use crate::font::fonts::{self, AppFont, FontSystemLease, COMPILED_FONT_ID_MAP};
 use crate::util::tests::choices::Choices;
@@ -75,17 +78,19 @@ pub const MAX_SPAN_CHARS: u32 = 64;
 /// R45.1, R46.3): the most a frame of the lightest text — one face, no
 /// glyph that no face holds, a short side ornament — may hold and still
 /// be laid, to the whole of its budget and its overshoot past it
-/// (`frame_work_steps`), within [`INPUT_STEPS`]: 152 glyphs, 3,000 glyph
-/// steps each of budget and some 48 more of shaping, inking and lays,
-/// 463,355 steps, 14.97 s at [`ASAN_STEP_NANOS`] a step (150 until #304
-/// counted a reshape at a size as no shaping, some 65 a glyph more).
+/// (`frame_work_steps`), within [`INPUT_STEPS`]: 151 glyphs, 3,000 glyph
+/// steps each of budget and some 74 more of shaping, inking and lays,
+/// 464,172 steps, 14.99 s at [`ASAN_STEP_NANOS`] a step (150 until #304
+/// counted a reshape at a size as no shaping, some 65 a glyph more; 152
+/// until a line's lay counted its path's reads past one a cluster, some
+/// 24 a glyph more in its overshoot, #313 ruling B18.1 §2).
 /// `test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout`
 /// holds it to that: the most, and no more. A heavier text — glyphs in
 /// many faces — or a heavier ornament is cut further ([`framed`]). A longer text's frame is laid from as
 /// much of it as fits: the engine places the whole of a real text,
 /// bounded by its glyphs; a fuzz input is held to what it can lay
 /// inside the timeout.
-pub const MAX_FRAME_GLYPHS: usize = 152;
+pub const MAX_FRAME_GLYPHS: usize = 151;
 
 /// The most glyphs a `Repeat` ring the harnesses lay lays (rulings
 /// B17.2a, B17.2b): the most whose budget, its overshoot past it for a
@@ -127,6 +132,64 @@ pub(crate) fn ring_cap(copy: usize, bounded: bool, tables: usize) -> usize {
     }
 }
 
+/// The samples of the arc-length tables a harness counts a path of
+/// `curves` with before it is laid (#313): the most one curve's table
+/// holds, [`MAX_TABLE_SAMPLES`] and its closing sample, for each curve but
+/// a line, which builds none (`ArcPath::open`). What a placement along it
+/// counts in its setup is held to no more ([`InputWork::open`],
+/// [`InputWork::pitched`]).
+pub(crate) fn open_tables(curves: &[Curve]) -> usize {
+    curves
+        .iter()
+        .filter(|curve| !matches!(curve, Curve::Line(..)))
+        .count()
+        .saturating_mul(MAX_TABLE_SAMPLES + 1)
+}
+
+/// The cap a harness lays a placement along an open path of `copy` glyphs
+/// with, its path's tables of `tables` samples at most (#313, as ruling
+/// B17.2b has it for a ring): held to the timeout (`bounded`), the most
+/// glyphs, [`MAX_RING_GLYPHS`] at most, whose placement — its budget
+/// scaled by them and what it may take past it, a ring's
+/// (`ring_work_steps`), the one cluster that may find it spent no wider
+/// than its whole text — fits [`INPUT_STEPS`] as an input's one budgeted
+/// placement; `None` where not even none does. Its whole text and path
+/// are laid, so a path far from the origin is walked there, over fewer
+/// glyphs. Replaying a finding, [`MAX_PLACED_GLYPHS`], as a map lays it.
+pub(crate) fn open_cap(copy: usize, tables: usize, bounded: bool) -> Option<usize> {
+    if !bounded {
+        return Some(MAX_PLACED_GLYPHS);
+    }
+    (0..=MAX_RING_GLYPHS)
+        .rev()
+        .find(|&cap| ring_work_steps(cap, copy, tables) <= INPUT_STEPS)
+}
+
+/// The glyph steps a whole-glyph placement along an open path
+/// (`place_pitched`) at most `cap` glyphs, its path's tables of `tables`
+/// samples at most, may take (#313): its budget, and its setup and its
+/// tables, counted before it first reads its budget.
+pub(crate) fn pitched_work_steps(cap: usize, tables: usize) -> usize {
+    frame_budget(cap)
+        .saturating_add(RING_STEPS)
+        .saturating_add(table_steps(tables))
+}
+
+/// The cap a harness lays a whole-glyph placement along an open path with,
+/// its path's tables of `tables` samples at most (#313): held to the
+/// timeout (`bounded`), the most glyphs, [`MAX_RING_GLYPHS`] at most, whose
+/// placement may take no more than fits [`INPUT_STEPS`]
+/// ([`pitched_work_steps`]) as an input's one budgeted placement; `None`
+/// where not even none does. Replaying a finding, [`MAX_PLACED_GLYPHS`].
+pub(crate) fn pitched_cap(tables: usize, bounded: bool) -> Option<usize> {
+    if !bounded {
+        return Some(MAX_PLACED_GLYPHS);
+    }
+    (0..=MAX_RING_GLYPHS)
+        .rev()
+        .find(|&cap| pitched_work_steps(cap, tables) <= INPUT_STEPS)
+}
+
 /// The most glyphs a frame's text was shaped to when the committed flow
 /// findings were found (ruling R44.2): what their replays lay, so that
 /// each still exercises the frame it was found in
@@ -141,12 +204,14 @@ pub const FOUND_FRAME_GLYPHS: usize = 320;
 /// [`INPUT_WORK_MICROS`] however few glyphs they share — and three, as
 /// before R45, 38.8 s. A ring's budget is a frame's (#310), so the ring
 /// the target laid besides its frame until then is one of the modes it
-/// draws.
+/// draws; and since #313 so is each placement along its line, which it
+/// draws in place of its frame ([`raw_line`]).
 pub const RAW_FRAMES: usize = 1;
 
 /// The frames flow_structured lays an input: one, round its outline,
 /// when it draws an outline at all — a `Repeat` ring among them, which is
-/// budgeted as a frame is (#310).
+/// budgeted as a frame is (#310). Where it draws a curve, it lays one
+/// placement along it instead, budgeted so too (#313).
 pub const STRUCTURED_FRAMES: usize = 1;
 
 /// `scripts/fuzz.sh`'s `-timeout`, in seconds: the longest one input
@@ -343,6 +408,110 @@ impl InputWork {
         Ok(())
     }
 
+    /// Count a placement of `run` along an open path, laid at most `cap`
+    /// glyphs as `placed`, with `trace`, its path's tables of `tables`
+    /// samples at most ([`open_tables`]): the most it may take,
+    /// `ring_work_steps` of its cap (#313, as a ring's). The engine
+    /// counts tables of no more samples, scales its budget by no more
+    /// than its cap, places no more than its cap, and spends no more than
+    /// its budget and the one cluster past it that found it spent:
+    /// properties. Its silence is the engine's grid's to hold
+    /// (`open_budget_tests`): a placement along an open path is cut by its
+    /// path too, which says nothing.
+    pub(crate) fn open(
+        &mut self,
+        run: &ShapedRun,
+        cap: usize,
+        tables: usize,
+        placed: &PlacedRun,
+        trace: &Trace,
+        what: &str,
+    ) -> Result<(), String> {
+        let copy = run.glyphs.len();
+        let budget = frame_budget(cap);
+        if trace.tables > tables {
+            return Err(format!(
+                "{what}: a placement's setup counted tables of {} samples, past the {tables} its path's curves hold",
+                trace.tables
+            ));
+        }
+        if trace.glyphs > cap || trace.budget > budget {
+            return Err(format!(
+                "{what}: a placement budgeted {} glyph steps for {} glyphs, past the {budget} its cap of {cap} gives",
+                trace.budget, trace.glyphs
+            ));
+        }
+        let most = ring_work_steps(cap, copy, trace.tables);
+        if trace.spent > most {
+            return Err(format!(
+                "{what}: a placement took {} glyph steps, past its budget of {} and its overshoot, {most} in all ({:?})",
+                trace.spent, trace.budget, trace.ring
+            ));
+        }
+        if placed.glyphs.len() > cap {
+            return Err(format!(
+                "{what}: a placement placed {} glyphs, past its cap of {cap}",
+                placed.glyphs.len()
+            ));
+        }
+        self.frames += 1;
+        self.steps += ring_work_steps(cap, copy, tables);
+        Ok(())
+    }
+
+    /// Count a whole-glyph placement along an open path (`place_pitched`),
+    /// laid at most `cap` glyphs as `placed`, with `trace`, its path's
+    /// tables of `tables` samples at most ([`open_tables`]): the most it
+    /// may take, [`pitched_work_steps`] of its cap (#313). The engine counts
+    /// tables of no more samples, scales its budget by no more than its
+    /// cap, places no more than its cap, spends no more than its budget but
+    /// for its setup and its tables, and reports a placement its cap held:
+    /// properties.
+    pub(crate) fn pitched(
+        &mut self,
+        cap: usize,
+        tables: usize,
+        placed: &PlacedRun,
+        trace: &Trace,
+        what: &str,
+    ) -> Result<(), String> {
+        let budget = frame_budget(cap);
+        if trace.tables > tables {
+            return Err(format!(
+                "{what}: a placement's setup counted tables of {} samples, past the {tables} its path's curves hold",
+                trace.tables
+            ));
+        }
+        if trace.glyphs > cap || trace.budget > budget {
+            return Err(format!(
+                "{what}: a placement budgeted {} glyph steps for {} glyphs, past the {budget} its cap of {cap} gives",
+                trace.budget, trace.glyphs
+            ));
+        }
+        let setup = RING_STEPS.saturating_add(table_steps(trace.tables));
+        if trace.spent > trace.budget.max(setup) {
+            return Err(format!(
+                "{what}: a placement took {} glyph steps, past its budget of {} and its setup's {setup} ({:?})",
+                trace.spent, trace.budget, trace.ring
+            ));
+        }
+        if placed.glyphs.len() > cap {
+            return Err(format!(
+                "{what}: a placement placed {} glyphs, past its cap of {cap}",
+                placed.glyphs.len()
+            ));
+        }
+        if placed.truncated && trace.ring.is_none() {
+            return Err(format!(
+                "{what}: a placement held to its cap of {cap} at {} glyphs reported nothing: capped silently",
+                placed.glyphs.len()
+            ));
+        }
+        self.frames += 1;
+        self.steps += pitched_work_steps(cap, tables);
+        Ok(())
+    }
+
     /// Whether the input's frames, laid to their whole budgets and past
     /// them, fit in [`INPUT_STEPS`]: what holds the harness to the
     /// timeout on every input, as
@@ -424,15 +593,22 @@ const INTERESTING: [char; 28] = [
 /// not be UTF-8), shaped as one span in each layout: the flow_raw
 /// target's whole body.
 ///
-/// It lays [`RAW_FRAMES`] frames round its rectangle, in fit modes drawn
-/// from the bytes ([`raw_frame_fits`]) — a `Repeat` ring among them, which
-/// is budgeted as a frame is (#310) — so that the input's work is held
-/// inside the fuzz timeout (ruling R45.1); all four modes along its line
-/// are laid whatever it draws. [`check_flow_bytes_in_every_fit`] lays
-/// all three frames and the ring, as a finding's replay does.
+/// It lays one budgeted placement an input, so that the input's work is
+/// held inside the fuzz timeout (ruling R45.1): [`RAW_FRAMES`] frames
+/// round its rectangle, in fit modes drawn from the bytes
+/// ([`raw_frame_fits`]) — a `Repeat` ring among them, which is budgeted as
+/// a frame is (#310) — or, drawn in their place, one placement along its
+/// line ([`raw_line`]), each budgeted as a ring is since #313.
+/// [`check_flow_bytes_in_every_fit`] lays all three frames, the ring and
+/// every placement along the line, as a finding's replay does.
 pub fn check_flow_bytes(bytes: &[u8]) -> Result<(), String> {
-    let fits = raw_frame_fits(bytes);
-    check_raw(bytes, &fits, true)
+    let line = raw_line(bytes);
+    let fits = if line.is_some() {
+        Vec::new()
+    } else {
+        raw_frame_fits(bytes)
+    };
+    check_raw(bytes, &fits, line.as_ref(), true)
 }
 
 /// [`check_flow_bytes`] with a frame in every fit mode a frame tracks
@@ -447,7 +623,7 @@ pub fn check_flow_bytes(bytes: &[u8]) -> Result<(), String> {
 /// frame it was found in. It is not held to the per-input work bound,
 /// which is the fuzz timeout's, and a test has none.
 pub fn check_flow_bytes_in_every_fit(bytes: &[u8]) -> Result<(), String> {
-    check_raw(bytes, &frame_fits(), false)
+    check_raw(bytes, &frame_fits(), None, false)
 }
 
 /// The fit modes a flow_raw frame is laid in, in the order
@@ -473,6 +649,15 @@ pub fn frame_fits() -> [FitMode; 3] {
 /// committed raw finding but the ones that spell a layout — draws `Fit`,
 /// the mode most of them were found in.
 pub fn raw_frame_fits(bytes: &[u8]) -> Vec<FitMode> {
+    raw_draws(bytes).0
+}
+
+/// What flow_raw draws from `bytes`, in the order it draws it, by the one
+/// body that draws it (review 5902086644): its frames' fit modes
+/// ([`raw_frame_fits`]) and the placement along its line in place of its
+/// frame, if any ([`raw_line`]) — so that a draw added to or moved in one
+/// moves the other with it, and an input draws what it drew before.
+fn raw_draws(bytes: &[u8]) -> (Vec<FitMode>, Option<RawLine>) {
     let mut choices = Choices::new(bytes);
     ring_layout(&mut choices);
     let fits = frame_fits();
@@ -480,17 +665,62 @@ pub fn raw_frame_fits(bytes: &[u8]) -> Vec<FitMode> {
     // The ring in place of the frame one time in four, drawn after it so
     // that every input draws the frame it drew before (#310).
     if choices.one_in(4) {
-        return vec![FitMode::Repeat; RAW_FRAMES];
+        return (vec![FitMode::Repeat; RAW_FRAMES], None);
     }
-    (0..RAW_FRAMES)
+    let frames = (0..RAW_FRAMES)
         .map(|k| fits[(first + k) % fits.len()].clone())
+        .collect();
+    // A placement along the line one time in four, drawn after the frame
+    // and the ring (#313).
+    let line = if choices.one_in(4) {
+        let lines = raw_lines();
+        lines.get(choices.below(lines.len() as u32) as usize).cloned()
+    } else {
+        None
+    };
+    (frames, line)
+}
+
+/// A placement flow_raw lays along its line (#313): a fit mode's, or the
+/// whole-glyph pattern's (`place_pitched`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum RawLine {
+    /// The run along the line in this fit mode.
+    Open(FitMode),
+    /// The run as whole glyphs along the line, as a connector's ornament.
+    Pitched,
+}
+
+/// The placements flow_raw lays along its line: `Repeat`, each of
+/// [`frame_fits`], and the whole-glyph pattern.
+pub fn raw_lines() -> Vec<RawLine> {
+    std::iter::once(RawLine::Open(FitMode::Repeat))
+        .chain(frame_fits().into_iter().map(RawLine::Open))
+        .chain(std::iter::once(RawLine::Pitched))
         .collect()
 }
 
-/// [`check_flow_bytes`]'s body, its frames laid in `fits`, held to the
-/// per-input work bound with `bounded`; without, replaying a finding,
-/// laid in [`RingLayout::whole`] as well as the layout its bytes draw.
-pub(crate) fn check_raw(bytes: &[u8], fits: &[FitMode], bounded: bool) -> Result<(), String> {
+/// The placement flow_raw lays along its line in place of its frame, if
+/// any (#313): each placement along it is budgeted as a ring is, and an
+/// input lays one budgeted placement (ruling R45.1) — so one time in four,
+/// where it draws no ring, it lays one of [`raw_lines`], drawn after the
+/// frame and the ring ([`raw_frame_fits`]), and no frame. An input whose
+/// choices run out before it — every committed raw finding — lays its
+/// frame, as it did.
+pub fn raw_line(bytes: &[u8]) -> Option<RawLine> {
+    raw_draws(bytes).1
+}
+
+/// [`check_flow_bytes`]'s body, its frames laid in `fits` and, along its
+/// line, `line`, held to the per-input work bound with `bounded`;
+/// without, replaying a finding, laid in [`RingLayout::whole`] as well as
+/// the layout its bytes draw, and every placement along its line.
+pub(crate) fn check_raw(
+    bytes: &[u8],
+    fits: &[FitMode],
+    line: Option<&RawLine>,
+    bounded: bool,
+) -> Result<(), String> {
     let text = String::from_utf8_lossy(bytes);
     let style = plain_style();
     let spans = [FlowSpan {
@@ -510,31 +740,88 @@ pub(crate) fn check_raw(bytes: &[u8], fits: &[FitMode], bounded: bool) -> Result
     // are text, not zeros, and draw another layout from the one it was
     // found in (review 5739829769).
     let layouts = laid_layouts(ring_layout(&mut Choices::new(bytes)), bounded);
-    for layout in &layouts {
-        frames_round_a_rectangle(&text, &style, layout, fits, bounded, &mut fs)
-            .map_err(|why| format!("{why}, laid {layout:?}"))?;
+    // The input's work, its frames' and what it lays along its line
+    // together (ruling R45.1, #313).
+    let mut work = InputWork::default();
+    if !fits.is_empty() || !bounded {
+        for layout in &layouts {
+            frames_round_a_rectangle(&text, &style, layout, fits, bounded, &mut work, &mut fs)
+                .map_err(|why| format!("{why}, laid {layout:?}"))?;
+        }
     }
-    for fit in std::iter::once(FitMode::Repeat).chain(frame_fits()) {
-        let curve = Curve::Line(Vec2::ZERO, Vec2::new(200.0, 0.0));
-        let placed = place_on_open(&run, &curve, &fit, 1.0, &style, &mut fs);
-        check_placed(
-            &spans,
-            &run,
-            placed,
-            owes_whole(&run, &fit, curve_room(&curve)),
-            "along a line",
-        )?;
+    // Along its line: held to the timeout, the one placement drawn in
+    // place of its frame (#313); replaying a finding, every one.
+    let curve = Curve::Line(Vec2::ZERO, Vec2::new(200.0, 0.0));
+    let lines = if bounded {
+        line.into_iter().cloned().collect()
+    } else {
+        raw_lines()
+    };
+    for laid in lines {
+        match laid {
+            RawLine::Open(fit) => check_open(
+                &spans, &run, &curve, &fit, 1.0, bounded, &style, &mut work, &mut fs,
+            )
+            .map_err(|why| format!("along a line: {why}"))?,
+            RawLine::Pitched => check_pitched(&run, &[curve], 1.0, bounded, &mut work)?,
+        }
     }
-    check_pitched(&run, &[Curve::Line(Vec2::ZERO, Vec2::new(200.0, 0.0))], 1.0)?;
+    if bounded {
+        work.within_the_timeout()?;
+    }
     check_placement(&run, &place_at_point(&run, Vec2::ZERO), false, "at a point")
+}
+
+/// `run` of `spans` laid along `curve` in `fit` with `spacing`, at the cap
+/// that holds it to the timeout with `bounded` ([`open_cap`]), counted in
+/// `work` ([`InputWork::open`], #313): the placement's properties
+/// ([`check_placed`]), a text a placement its budget or its cap stopped
+/// owed no longer whole — it says so (`Trace::ring`). Laid at none where
+/// no cap holds it.
+#[allow(clippy::too_many_arguments)] // A placement's inputs, and the work it is counted in.
+fn check_open(
+    spans: &[FlowSpan<'_>],
+    run: &ShapedRun,
+    curve: &Curve,
+    fit: &FitMode,
+    spacing: f32,
+    bounded: bool,
+    flow: &ResolvedText,
+    work: &mut InputWork,
+    fs: &mut FontSystemLease,
+) -> Result<(), String> {
+    let tables = open_tables(std::slice::from_ref(curve));
+    let Some(cap) = open_cap(run.glyphs.len(), tables, bounded) else {
+        return Ok(());
+    };
+    let mut trace = Trace::default();
+    let placed = place_on_open_capped(run, curve, fit, spacing, flow, fs, cap, Some(&mut trace));
+    work.open(run, cap, tables, &placed.1, &trace, "the placement")?;
+    // `Spread` and `Fit` solve the gap; the spacing does not enter
+    // (ruling R6, reading 7).
+    // Owed whole only where the coordinates hold its glyphs apart (ruling
+    // B18.1 §9).
+    let whole = owes_whole_along(run, fit, curve)
+        && coordinates_hold_apart(curve_reach(curve), run, fit)
+        && trace.ring.is_none();
+    check_placed(spans, run, placed, whole, "the placement")
 }
 
 /// `run` laid as whole glyphs along `path` and on along a line past its
 /// end (#296), a box at each end of the chain to keep its gap from, the
 /// start's half a line height back from the path's start: the
 /// placement's properties ([`check_placement`]). It draws no choice of
-/// its own, so a committed seed draws what it drew before.
-fn check_pitched(run: &ShapedRun, path: &[Curve], spacing: f32) -> Result<(), String> {
+/// its own, so a committed seed draws what it drew before. It is laid at
+/// the cap that holds it to the timeout with `bounded` ([`pitched_cap`]),
+/// and counted in `work` ([`InputWork::pitched`], #313); at none where no
+/// cap holds it.
+fn check_pitched(
+    run: &ShapedRun,
+    path: &[Curve],
+    spacing: f32,
+    bounded: bool,
+    work: &mut InputWork,
+) -> Result<(), String> {
     let (Some(first), Some(last)) = (path.first(), path.last()) else {
         return Ok(());
     };
@@ -558,9 +845,15 @@ fn check_pitched(run: &ShapedRun, path: &[Curve], spacing: f32) -> Result<(), St
             hold: run.line_height,
         },
     ];
+    let tables = open_tables(&chain);
+    let Some(cap) = pitched_cap(tables, bounded) else {
+        return Ok(());
+    };
+    let mut trace = Trace::default();
     #[cfg(test)]
     let before = crate::flow::path::PATH_LOOKUPS.with(std::cell::Cell::get);
-    let placed = place_pitched(run, &chain, spacing, ends);
+    let placed = place_pitched_capped(run, &chain, spacing, ends, cap, Some(&mut trace));
+    work.pitched(cap, tables, &placed, &trace, "as whole glyphs")?;
     #[cfg(test)]
     PITCHED_LOOKUPS.with(|count| {
         count.set(count.get() + crate::flow::path::PATH_LOOKUPS.with(std::cell::Cell::get) - before)
@@ -596,13 +889,16 @@ pub(crate) fn laid_layouts(drawn: RingLayout, bounded: bool) -> Vec<RingLayout> 
 /// [`check_raw`]'s frames round its rectangle for `text` in `style`,
 /// laid with `layout` in `fits` and a `Repeat` — their text held to what
 /// they lay inside the timeout with `bounded` (rulings R45.1, R46.3), or,
-/// replaying a finding, to what a frame laid when it was found.
+/// replaying a finding, to what a frame laid when it was found — and
+/// counted in `work`, the input's, which its caller holds to the timeout.
+#[allow(clippy::too_many_arguments)] // Its frames' inputs, and the work they are counted in.
 fn frames_round_a_rectangle(
     text: &str,
     style: &ResolvedText,
     layout: &RingLayout,
     fits: &[FitMode],
     bounded: bool,
+    work: &mut InputWork,
     fs: &mut FontSystemLease,
 ) -> Result<(), String> {
     let rect = Rect::new(Vec2::ZERO, Vec2::new(120.0, 40.0));
@@ -656,7 +952,6 @@ fn frames_round_a_rectangle(
         link: None,
     }];
     let frame_run = shape_run(&frame_spans, 1.0, fs);
-    let mut work = InputWork::default();
     for fit in laid {
         let tables = setup_table_samples(&frame_run, &path, fit, style);
         // A ring's cap (rulings B17.2a, B17.2b): what fits the timeout, or
@@ -692,8 +987,13 @@ fn frames_round_a_rectangle(
         // A line cut so that no two inks touch, and reported so, is owed
         // no longer (ruling R38.1); a frame its sides leave unheld is
         // reported (ruling R35.2).
-        let whole = owes_whole(&frame_run, fit, frame_room(&path)) && trace.cut_apart.is_empty();
+        let whole = owes_whole(&frame_run, fit, frame_room(&path))
+            && coordinates_hold_apart(outline_reach(&path), &frame_run, fit)
+            && trace.cut_apart.is_empty();
         apart(&trace, "around a rectangle")?;
+        if !matches!(fit, FitMode::Repeat) {
+            frame_reports_its_cut(&frame_run, &placed, &trace, "around a rectangle", fs)?;
+        }
         check_frame_placed(
             &frame_spans,
             &frame_run,
@@ -702,9 +1002,6 @@ fn frames_round_a_rectangle(
             "around a rectangle",
             fs,
         )?;
-    }
-    if bounded {
-        work.within_the_timeout()?;
     }
     Ok(())
 }
@@ -1063,114 +1360,163 @@ fn check_generated_pinning(
                     if let Some(drawn) = layouts.last_mut() {
                         drawn.directional = directional(choices);
                     }
+                    // Far from the origin, its sides drawn (#313), drawn
+                    // after every choice before, so that an input that ends
+                    // before it lays the outline and the layout it drew. A
+                    // replay lays a finding's outline and layouts as found
+                    // as well, as it lays its layout (`laid_layouts`).
+                    let mut sets = vec![(path, layouts)];
+                    if let Some((at, size)) = far_out(choices) {
+                        let far = outline(Rect::new(at, Vec2::splat(size)), shape);
+                        let sides = choices.pick(&FAR_SIDES).to_string();
+                        let mut drawn = sets[0].1.last().cloned().unwrap_or_else(RingLayout::whole);
+                        if drawn.sides.is_none() {
+                            drawn.sides = Some((sides, Rgba::new(255, 255, 255, 255)));
+                        }
+                        if bounded {
+                            sets.clear();
+                        }
+                        FAR_FRAMES.with(|n| n.set(n.get() + 1));
+                        LAST_FAR_FRAME.with(|last| last.set(Some(far)));
+                        sets.push((far, vec![drawn]));
+                    }
                     let mut laid_texts = vec![drawn_texts];
                     if !bounded && laid_texts[0].0 != texts {
                         laid_texts.push((texts.clone(), styles.clone()));
                     }
-                    for ((frame_texts, frame_styles), layout) in laid_texts
-                        .iter()
-                        .flat_map(|t| layouts.iter().map(move |l| (t, l)))
-                    {
-                        if laid_texts.len() > 1 && *frame_texts == texts {
-                            FOUND_TEXT_LAID.with(|n| n.set(n.get() + 1));
-                        }
-                        // The frame's sides and then its text, held to what
-                        // its frame lays inside the timeout (rulings R45.1,
-                        // R46.3, R50.3) — or, replaying a finding, its text
-                        // to what a frame laid when it was found.
-                        // Its paths' tables, counted in its setup (ruling
-                        // B16.3a), for the text it is laid with.
-                        let tables = |run: &ShapedRun| setup_table_samples(run, &path, &fit, &flow);
-                        let (layout, ornament) = if bounded {
-                            sides_in_time(layout, &flow, scale, STRUCTURED_FRAMES, &tables, &mut fs)
-                        } else {
-                            (layout.clone(), ornament_run(layout, &flow, scale, &mut fs))
-                        };
-                        let layout = &layout;
-                        let fits_in_time = |run: &ShapedRun| {
-                            fits_in_time(run, ornament.as_ref(), STRUCTURED_FRAMES, tables(run))
-                        };
-                        let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
-                        let framed = framed(
-                            frame_texts,
-                            frame_styles,
-                            scale,
-                            &mut fs,
-                            if bounded { &fits_in_time } else { &as_found },
-                        );
-                        let frame_spans: Vec<FlowSpan<'_>> = framed
+                    for (path, layouts) in &sets {
+                        for ((frame_texts, frame_styles), layout) in laid_texts
                             .iter()
-                            .zip(frame_styles)
-                            .map(|(text, style)| FlowSpan {
-                                text,
-                                style,
-                                link: None,
-                            })
-                            .collect();
-                        let run = if framed == texts {
-                            run.clone()
-                        } else {
-                            shape_run(&frame_spans, scale, &mut fs)
-                        };
-                        let mut trace = Trace::default();
-                        // A ring's cap (rulings B17.2a, B17.2b).
-                        let laid_tables = tables(&run);
-                        let cap = ring_cap(run.glyphs.len(), bounded, laid_tables);
-                        let placed = place_on_closed_capped(
-                            &run,
-                            &path,
-                            start,
-                            direction,
-                            &fit,
-                            layout,
-                            outward,
-                            &flow,
-                            &mut fs,
-                            cap,
-                            Some(&mut trace),
-                        );
-                        // A frame that cannot hold its lines without two
-                        // inks touching — inward round an outline too thin
-                        // for both, or a line of tall inks wrapped round a
-                        // tight bend — cuts the line that cannot be held
-                        // and says so (ruling R38.1): what it cut is no
-                        // longer owed.
-                        let whole = owes_whole(&run, &fit, frame_room(&path)) && trace.cut_apart.is_empty();
-                        let mut work = InputWork::default();
-                        let sized = matches!(fit, FitMode::Fit { .. });
-                        let counted = if matches!(fit, FitMode::Repeat) {
-                            work.ring(&run, cap, laid_tables, &placed.1, &trace, "around an outline")
-                        } else {
-                            work.frame(
+                            .flat_map(|t| layouts.iter().map(move |l| (t, l)))
+                        {
+                            if laid_texts.len() > 1 && *frame_texts == texts {
+                                FOUND_TEXT_LAID.with(|n| n.set(n.get() + 1));
+                            }
+                            // The frame's sides and then its text, held to what
+                            // its frame lays inside the timeout (rulings R45.1,
+                            // R46.3, R50.3) — or, replaying a finding, its text
+                            // to what a frame laid when it was found.
+                            // Its paths' tables, counted in its setup (ruling
+                            // B16.3a), for the text it is laid with.
+                            let tables = |run: &ShapedRun| setup_table_samples(run, path, &fit, &flow);
+                            let (layout, ornament) = if bounded {
+                                sides_in_time(layout, &flow, scale, STRUCTURED_FRAMES, &tables, &mut fs)
+                            } else {
+                                (layout.clone(), ornament_run(layout, &flow, scale, &mut fs))
+                            };
+                            let layout = &layout;
+                            let fits_in_time = |run: &ShapedRun| {
+                                fits_in_time(run, ornament.as_ref(), STRUCTURED_FRAMES, tables(run))
+                            };
+                            let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
+                            let framed = framed(
+                                frame_texts,
+                                frame_styles,
+                                scale,
+                                &mut fs,
+                                if bounded { &fits_in_time } else { &as_found },
+                            );
+                            let frame_spans: Vec<FlowSpan<'_>> = framed
+                                .iter()
+                                .zip(frame_styles)
+                                .map(|(text, style)| FlowSpan {
+                                    text,
+                                    style,
+                                    link: None,
+                                })
+                                .collect();
+                            let run = if framed == texts {
+                                run.clone()
+                            } else {
+                                shape_run(&frame_spans, scale, &mut fs)
+                            };
+                            let mut trace = Trace::default();
+                            // A ring's cap (rulings B17.2a, B17.2b).
+                            let laid_tables = tables(&run);
+                            let cap = ring_cap(run.glyphs.len(), bounded, laid_tables);
+                            let placed = place_on_closed_capped(
                                 &run,
-                                ornament.as_ref(),
-                                sized,
-                                laid_tables,
-                                &trace,
-                                "around an outline",
-                            )
-                        };
-                        let checked = counted
-                            .and_then(|()| {
-                                if bounded {
-                                    work.within_the_timeout()
-                                } else {
-                                    Ok(())
-                                }
-                            })
-                            .and_then(|()| apart(&trace, "around an outline"))
-                            .and_then(|()| {
-                                check_frame_placed(
-                                    &frame_spans,
-                                    &run,
-                                    placed,
-                                    (whole, &trace),
-                                    "around an outline",
-                                    &mut fs,
-                                )
+                                path,
+                                start,
+                                direction,
+                                &fit,
+                                layout,
+                                outward,
+                                &flow,
+                                &mut fs,
+                                cap,
+                                Some(&mut trace),
+                            );
+                            // A frame that cannot hold its lines without two
+                            // inks touching — inward round an outline too thin
+                            // for both, or a line of tall inks wrapped round a
+                            // tight bend — cuts the line that cannot be held
+                            // and says so (ruling R38.1): what it cut is no
+                            // longer owed.
+                            // Owed whole only where the coordinates hold
+                            // its glyphs apart (ruling B18.1 §9); a cut
+                            // where they cannot is still reported.
+                            let whole = owes_whole(&run, &fit, frame_room(path))
+                                && coordinates_hold_apart(outline_reach(path), &run, &fit)
+                                && trace.cut_apart.is_empty();
+                            LAST_FRAME_LAID.with(|last| {
+                                last.set(Some((
+                                    *path,
+                                    placed.1.glyphs.len(),
+                                    run.glyphs.len(),
+                                    placed.1.truncated,
+                                )))
                             });
-                        checked
-                            .map_err(|why| format!("{why}, laid {layout:?}, {} spans", frame_texts.len()))?;
+                            let mut work = InputWork::default();
+                            let sized = matches!(fit, FitMode::Fit { .. });
+                            let counted = if matches!(fit, FitMode::Repeat) {
+                                work.ring(&run, cap, laid_tables, &placed.1, &trace, "around an outline")
+                            } else {
+                                work.frame(
+                                    &run,
+                                    ornament.as_ref(),
+                                    sized,
+                                    laid_tables,
+                                    &trace,
+                                    "around an outline",
+                                )
+                            };
+                            let checked = counted
+                                .and_then(|()| {
+                                    if bounded {
+                                        work.within_the_timeout()
+                                    } else {
+                                        Ok(())
+                                    }
+                                })
+                                .and_then(|()| apart(&trace, "around an outline"))
+                                .and_then(|()| {
+                                    if matches!(fit, FitMode::Repeat) {
+                                        Ok(())
+                                    } else {
+                                        frame_reports_its_cut(
+                                            &run,
+                                            &placed,
+                                            &trace,
+                                            "around an outline",
+                                            &mut fs,
+                                        )
+                                    }
+                                })
+                                .and_then(|()| {
+                                    check_frame_placed(
+                                        &frame_spans,
+                                        &run,
+                                        placed,
+                                        (whole, &trace),
+                                        "around an outline",
+                                        &mut fs,
+                                    )
+                                });
+                            checked.map_err(|why| {
+                                format!("{why}, laid {layout:?}, {} spans", frame_texts.len())
+                            })?;
+                        }
                     }
                     Ok(())
                 }
@@ -1184,12 +1530,49 @@ fn check_generated_pinning(
                     };
                     let fit = fit(choices, &texts);
                     let spacing = any_f32(choices);
-                    let placed = place_on_open(&run, &curve, &fit, spacing, &flow, &mut fs);
-                    // `Spread` and `Fit` solve the gap; the spacing does not
-                    // enter (ruling R6, reading 7).
-                    let whole = owes_whole(&run, &fit, curve_room(&curve));
-                    check_placed(&spans, &run, placed, whole, "along a curve")
-                        .and_then(|()| check_pitched(&run, &[curve], spacing))
+                    // One budgeted placement an input (ruling R45.1, #313):
+                    // held to the timeout, the curve's in its fit mode, or,
+                    // one time in two, its whole-glyph pattern — drawn
+                    // after every choice before, so an input that ends
+                    // before it lays the fit mode's. A replay lays both.
+                    let pitched = choices.one_in(2);
+                    // Far from the origin, a `Repeat` one time in two
+                    // (#313), drawn last of all.
+                    // A replay lays a finding's curve as found as well.
+                    let mut curves = vec![(curve, fit)];
+                    if let Some((at, length)) = far_out(choices) {
+                        let line = matches!(curves[0].0, Curve::Line(..));
+                        let fit = if choices.one_in(2) {
+                            FitMode::Repeat
+                        } else {
+                            curves[0].1.clone()
+                        };
+                        if bounded {
+                            curves.clear();
+                        }
+                        if fit == FitMode::Repeat {
+                            FAR_REPEATS.with(|n| n.set(n.get() + 1));
+                        }
+                        let far = far_curve(at, length, line);
+                        LAST_FAR_CURVE.with(|last| last.set(Some((far, curve_room(&far)))));
+                        curves.push((far, fit));
+                    }
+                    for (curve, fit) in &curves {
+                        let mut work = InputWork::default();
+                        if !bounded || !pitched {
+                            check_open(
+                                &spans, &run, curve, fit, spacing, bounded, &flow, &mut work, &mut fs,
+                            )
+                            .map_err(|why| format!("along a curve: {why}"))?;
+                        }
+                        if !bounded || pitched {
+                            check_pitched(&run, std::slice::from_ref(curve), spacing, bounded, &mut work)?;
+                        }
+                        if bounded {
+                            work.within_the_timeout()?;
+                        }
+                    }
+                    Ok(())
                 }
                 _ => check_placement(
                     &run,
@@ -1468,12 +1851,12 @@ pub const LONG_ORNAMENT_BYTES: usize = 200;
 /// the overshoot counts the ornament's shaping and inking twice beside
 /// the text's, its faces and `.notdef`s included (`build_steps`). At
 /// 16 pt in the compiled faces alone, [`MAX_FRAME_GLYPHS`] glyphs of one
-/// face beside a 4-glyph ornament take 463,355 steps, within the 464,396
+/// face beside a 4-glyph ornament take 464,172 steps, within the 464,396
 /// of [`INPUT_STEPS`]; beside 200 `|`s, which add 6,700 more to shape
-/// and ink, 470,055, past it, so the text is halved to 76 glyphs, whose
-/// budget is the 400,000-step floor: 411,669. A text of one glyph beside
+/// and ink, 470,872, past it, so the text is halved to 75 glyphs, whose
+/// budget is the 400,000-step floor: 413,653. A text of one glyph beside
 /// the heaviest long ornament the compiled faces hold, 200 `|`s, takes
-/// 409,308, with host faces or without; a frame of no text beside fifty
+/// 409,532, with host faces or without; a frame of no text beside fifty
 /// U+FFFE, one code point no face holds, 408,098, and beside fifty
 /// distinct noncharacters 484,150, so that ornament is cut first.
 pub fn long_ornament(choices: &mut Choices<'_>, layout: RingLayout) -> RingLayout {
@@ -1604,6 +1987,74 @@ pub fn framed(
             return cut;
         }
         share = if share == usize::MAX { 512 } else { share / 2 };
+    }
+}
+
+thread_local! {
+    /// Test counters (#313): the far-out frames with sides, and the
+    /// far-out `Repeat`s along a path, the structured generator has drawn
+    /// on this thread ([`far_out`]).
+    pub(crate) static FAR_FRAMES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static FAR_REPEATS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The far-out path the structured generator drew last on this
+    /// thread, and the room its oracle gave a run along it.
+    pub(crate) static LAST_FAR_CURVE: std::cell::Cell<Option<(Curve, f32)>> =
+        const { std::cell::Cell::new(None) };
+    /// The far-out outline the structured generator drew last on this
+    /// thread (#313, ruling B18.1 §9).
+    pub(crate) static LAST_FAR_FRAME: std::cell::Cell<Option<Outline>> = const { std::cell::Cell::new(None) };
+    /// The frame round an outline it laid last on this thread: the
+    /// outline, the glyphs placed and its run's, and whether the
+    /// placement says it was truncated.
+    pub(crate) static LAST_FRAME_LAID: std::cell::Cell<Option<(Outline, usize, usize, bool)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// The side ornaments a far-out frame is given where its layout draws none
+/// (#313): a box-drawing pair and a dot, whose copies far from the origin
+/// read their path many times a cluster (review 5761697746), and two of
+/// [`ORNAMENT_GLYPHS`].
+pub const FAR_SIDES: [&str; 4] = ["─═", "· ", "-=", "x"];
+
+/// One time in four, a place far from the origin and a size there (#313):
+/// a point `10^k` from it along both axes, `k` from 6 to 22 — where an
+/// `f32` sets a point to the nearest unit, and on to where it sets an
+/// ornament's glyphs apart by bisection that barely moves them (seed
+/// 2771) — and a size of 100 to 204,800, an outline's or a path's,
+/// ordinary there. `None` on a zero choice, so an input that ends before
+/// it draws what it drew.
+///
+/// A far-out path measures the curve its control points make (ruling
+/// B18.1 §6); a far-out ellipse's outline does not yet: its table sums
+/// its points' rounding as length, some 12% past its perimeter 10⁷ from
+/// the origin and up to 60% at 10¹⁰ (#356), so a far frame round one is
+/// laid along a path longer than its outline, its sides laying more
+/// copies. No property here rests on that length: a frame's room is the
+/// engine's own halves (`frame_room`), and its work is held in counted
+/// reads and steps, which the longer path only adds to. #356 removes it.
+pub fn far_out(choices: &mut Choices<'_>) -> Option<(Vec2, f32)> {
+    if !choices.one_in(4) {
+        return None;
+    }
+    let at = 10.0_f32.powi(6 + choices.below(17) as i32);
+    let size = 100.0 * (1u32 << choices.below(12)) as f32;
+    Some((Vec2::splat(at), size))
+}
+
+/// A path `length` long from `at` (#313): a line, or a cubic that bends
+/// one way and back. As long as `at`'s floats can make it: where `length`
+/// is below their spacing, its control points round onto `at` and it is
+/// shorter, down to no length at all.
+pub(crate) fn far_curve(at: Vec2, length: f32, line: bool) -> Curve {
+    if line {
+        Curve::Line(at, at + Vec2::new(0.8 * length, 0.6 * length))
+    } else {
+        Curve::Cubic(
+            at,
+            at + Vec2::new(0.35 * length, -0.3 * length),
+            at + Vec2::new(0.65 * length, 0.3 * length),
+            at + Vec2::new(length, 0.0),
+        )
     }
 }
 
@@ -1757,6 +2208,28 @@ pub(crate) fn check_frame_placed(
     check_frame_placement(refers_to, &placed, (whole, trace), what, fs)
 }
 
+/// A frame that leaves unplaced a glyph of its run that draws says so
+/// (#313, ruling B18.1 §9): its placement is truncated, or its lines were
+/// cut apart (ruling R38.1). Held whether its text is owed whole or not —
+/// where the coordinates cannot hold its glyphs apart
+/// ([`coordinates_hold_apart`]) a frame cuts its line, and that cut is
+/// reported, never silent. `placed` is the placement as laid, the run it
+/// made in place of `run` with it.
+pub(crate) fn frame_reports_its_cut(
+    run: &ShapedRun,
+    (replaced, placed): &(Option<ShapedRun>, PlacedRun),
+    trace: &Trace,
+    what: &str,
+    fs: &mut FontSystemLease,
+) -> Result<(), String> {
+    if placed.truncated || !trace.cut_apart.is_empty() {
+        return Ok(());
+    }
+    let refers_to = replaced.as_ref().unwrap_or(run);
+    check_frame_placement(refers_to, placed, (true, trace), what, fs)
+        .map_err(|why| format!("{why}, and the frame does not say it was cut"))
+}
+
 /// [`check_placement`] of a frame's placement, with
 /// [`check_frame_placed`]'s excuse.
 pub(crate) fn check_frame_placement(
@@ -1819,13 +2292,14 @@ pub(crate) fn apart(trace: &Trace, what: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The run's natural length reshaped at `scale`, every cluster as long
-/// as the longer of its advance and the line height — what the longest
-/// step the walk takes for it is, a steep one — and so no shorter than
-/// any lay of it at no gap. Each glyph's advance, and the line height
-/// with the run's largest glyph, are scaled by the engine's own
-/// `size_factor` (ruling R52.1), so below `MIN_FONT_SIZE_PT` a glyph
-/// stops shrinking here as it does there.
+/// The run's natural length along a level line, reshaped at `scale`:
+/// every glyph as long as the longer of its advance and the line height,
+/// no shorter than the step a level walk takes for it, its advance. What
+/// a frame's lines are owed against, R27 sizing them on their level spans
+/// ([`frame_room`]). Each glyph's advance, and the line height with the
+/// run's largest glyph, are scaled by the engine's own `size_factor`
+/// (ruling R52.1), so below `MIN_FONT_SIZE_PT` a glyph stops shrinking
+/// here as it does there.
 pub(crate) fn natural_length_at(run: &ShapedRun, scale: f32) -> f32 {
     let glyphs = || run.glyphs.iter().filter(|g| g.span != FILLER_SPAN);
     let largest = glyphs().map(|g| g.size).fold(0.0_f32, f32::max);
@@ -1835,35 +2309,501 @@ pub(crate) fn natural_length_at(run: &ShapedRun, scale: f32) -> f32 {
         .sum()
 }
 
-/// Whether `fit` on a path of room `room` owes the whole run: a
-/// `Spread` or `Fit` whose natural length fits — for `Fit` at its least
-/// scale, as the engine shrinks it, no glyph below `MIN_FONT_SIZE_PT`
-/// (ruling R52.1) — places every cluster, and cuts nothing. Owed of every path
-/// whose room is finite, as far from the origin as an `f32` reaches: a
-/// glyph's step lost below an `f32`'s precision there moves it nowhere,
-/// but it is placed.
+/// The run's natural length along a path that runs any way, reshaped at
+/// `scale` (#313, ruling B18.1 §7), for a text — a run with a letter. Each
+/// cluster is as long as the most step the walk takes for it in any
+/// direction, so the run is no shorter than any lay of it at no gap along
+/// any path. Read from the engine's definition of a cluster's step (ruling
+/// R31), not its code: a text's cluster is a box its advance `w` wide and
+/// the line height `h` tall, and its step along a unit direction `(dx, dy)`
+/// is the box's extent that way, `w·|dx| + h·|dy|`: at most `√(w² + h²)`,
+/// along the box's diagonal — the tightest bound that holds every way.
+///
+/// The longer of the advance and the line height, which a level line
+/// steps within, is short of that along a diagonal: "MANDALA" at 4 pt was
+/// owed whole along a path 37 long running (0.8, 0.6), and was cut.
+/// Advances and the line height are scaled by the engine's own
+/// `size_factor` (ruling R52.1), the line height with the run's largest
+/// glyph.
+///
+/// An ornament's length is not the run's alone: round a bend its glyphs
+/// are set further on to keep their inks apart, so it is measured with
+/// its path ([`ornament_end_along`]).
+pub(crate) fn natural_length_any_way(run: &ShapedRun, scale: f32) -> f32 {
+    let glyphs = drawn_glyphs(run);
+    let largest = glyphs.iter().map(|g| g.size).fold(0.0_f32, f32::max);
+    let height = run.line_height.max(0.0) * size_factor(largest, scale);
+    glyph_clusters(&glyphs)
+        .iter()
+        .map(|cluster| cluster_advance(cluster, scale).hypot(height))
+        .sum()
+}
+
+/// The glyphs of `run` a placement lays: all but a filler's.
+fn drawn_glyphs(run: &ShapedRun) -> Vec<&GlyphMetrics> {
+    run.glyphs.iter().filter(|g| g.span != FILLER_SPAN).collect()
+}
+
+/// `glyphs` in clusters: a cluster begins at each glyph that starts a
+/// grapheme, and at the first.
+fn glyph_clusters<'g>(glyphs: &[&'g GlyphMetrics]) -> Vec<Vec<&'g GlyphMetrics>> {
+    let mut clusters: Vec<Vec<&GlyphMetrics>> = Vec::new();
+    for &glyph in glyphs {
+        match clusters.last_mut() {
+            Some(cluster) if !glyph.grapheme_start => cluster.push(glyph),
+            _ => clusters.push(vec![glyph]),
+        }
+    }
+    clusters
+}
+
+/// A cluster's advance at `scale`: its glyphs' advances, none below 0,
+/// each scaled by the engine's own `size_factor` (ruling R52.1).
+fn cluster_advance(cluster: &[&GlyphMetrics], scale: f32) -> f32 {
+    cluster
+        .iter()
+        .map(|g| g.advance.max(0.0) * size_factor(g.size, scale))
+        .sum()
+}
+
+/// The least scale `fit` lays its run at, where it owes it whole at all:
+/// a `Spread` its own, a `Fit` its window's lower end, as the engine
+/// shrinks it (no glyph below `MIN_FONT_SIZE_PT`, ruling R52.1).
+fn least_scale(fit: &FitMode) -> Option<f32> {
+    match fit {
+        FitMode::Spread => Some(1.0),
+        FitMode::Fit { min, max } => Some(min.min(*max)),
+        _ => None,
+    }
+}
+
+/// The spacing of `f32`s at `magnitude`: from it to the next `f32` above
+/// it, which no two `f32`s no further from 0 are further apart than.
+/// Infinite past the largest finite `f32`.
+pub(crate) fn f32_spacing(magnitude: f32) -> f64 {
+    let m = magnitude.abs();
+    let next = f32::from_bits(m.to_bits().saturating_add(1));
+    if m.is_finite() && next.is_finite() {
+        f64::from(next) - f64::from(m)
+    } else {
+        f64::INFINITY
+    }
+}
+
+/// How many spacings of `f32` a placement's smallest advance must span
+/// for its coordinates to hold its glyphs apart ([`coordinates_hold_apart`]).
+pub(crate) const GRAIN_SPACINGS: f64 = 4.0;
+
+/// Whether the coordinates a placement of `run` in `fit` is drawn in can
+/// hold its glyphs apart (#313, ruling B18.1 §9): the spacing `u` of `f32`
+/// there at most a [`GRAIN_SPACINGS`]th of the run's smallest advance `a`
+/// at its least scale. A fact about `f32`, from where the placement is
+/// drawn and the run's metrics, scaled by the engine's own `size_factor`
+/// (a metric, ruling R52.1); no placement code.
+///
+/// What the quarter proves: the engine finds each glyph's position from
+/// its path in `f32` — the point at a distance along it, rounded where it
+/// is found, and that point's offset onto the canvas, rounded again — so a
+/// position lies within `u` of where it belongs, each rounding moving it at
+/// most half a spacing. Two neighbors an advance `a` apart are then set at
+/// least `a − 2u` apart, which `4u ≤ a` keeps at half their advance or
+/// more: still apart, and still in their order. It does not prove the line
+/// still fits its room — on a grid of spacing `u` a frame's pairwise rule
+/// may move each pair up to a spacing on — and that the quarter suffices
+/// is shown by the sweeps, not proved: the far sweep and the far frames of
+/// the review's sweep (645 owed, none cut; none cut without saying so,
+/// review 5905087617). It is conservative: of the frames the review found
+/// refused by the grain alone, 525, 420 lay as many glyphs as at the
+/// origin — coverage given up, as the sweeps record for open paths
+/// (ruling B18.1 §9, as amended). At a coarser grain two
+/// neighbors may round onto one point, and a frame cuts its line where its
+/// inks cannot be parted (the finding
+/// `structured_frame_far_out_its_floats_cannot_part`), while an open path,
+/// laid in distance along it and rounded only at the end, stacks them.
+/// Neither is a placement this oracle can hold; what is drawn there is the
+/// whole-map bound's question (#316).
+///
+/// `reach` is how far from the origin the placement's path lies, in either
+/// coordinate; its glyphs, their inks and a frame's push off its outline
+/// lie within two line heights, at the run's largest scale, of the path,
+/// so the spacing is read at `reach` and those two line heights.
+pub(crate) fn coordinates_hold_apart(reach: f32, run: &ShapedRun, fit: &FitMode) -> bool {
+    let Some(least) = least_scale(fit) else {
+        return false;
+    };
+    let most = match fit {
+        FitMode::Fit { min, max } => min.max(*max),
+        _ => 1.0,
+    };
+    let glyphs = drawn_glyphs(run);
+    let largest = glyphs.iter().map(|g| g.size).fold(0.0_f32, f32::max);
+    let height = run.line_height.max(0.0) * size_factor(largest, most);
+    let spacing = f32_spacing(reach.abs() + 2.0 * height);
+    let smallest = glyph_clusters(&glyphs)
+        .iter()
+        .map(|cluster| cluster_advance(cluster, least))
+        .filter(|&a| a > 0.0)
+        .fold(f32::INFINITY, f32::min);
+    !smallest.is_finite() || GRAIN_SPACINGS * spacing <= f64::from(smallest)
+}
+
+/// How far from the origin `curve` lies: the largest coordinate, either
+/// way, of its control points, which hold the curve.
+pub(crate) fn curve_reach(curve: &Curve) -> f32 {
+    let points: Vec<Vec2> = match *curve {
+        Curve::Line(a, b) => vec![a, b],
+        Curve::Quadratic(a, c, b) => vec![a, c, b],
+        Curve::Cubic(a, c1, c2, b) => vec![a, c1, c2, b],
+    };
+    points
+        .iter()
+        .map(|p| p.abs().max_element())
+        .fold(0.0_f32, f32::max)
+}
+
+/// How far from the origin `outline` lies: the largest coordinate, either
+/// way, of the rectangle it is drawn on.
+pub(crate) fn outline_reach(outline: &Outline) -> f32 {
+    let rect = outline.rect();
+    rect.origin
+        .abs()
+        .max((rect.origin + rect.size).abs())
+        .max_element()
+}
+
+/// The pieces [`curvature_bound`] splits a curve into, each bounded on
+/// its own.
+const CURVATURE_PIECES: usize = 64;
+
+/// A bound on the curvature of `curve` everywhere along it, from its
+/// control points alone in `f64` (#313, ruling B18.1 §7): infinite where
+/// its velocity may vanish — a cusp, or a curve whose control points
+/// coincide at an end, such as the cubic `(a, a, a, b)`, which stops there
+/// without turning back. Such a curve is never owed an ornament whole:
+/// coverage given up, not soundness. A line's is 0.
+///
+/// The curve is split by de Casteljau's construction into
+/// [`CURVATURE_PIECES`] pieces, each a Bézier of the same degree `n` on
+/// its own control points. On a piece, the velocity is `n` times a Bézier
+/// on the differences `d` of its control points, so it lies in their
+/// convex hull scaled by `n`, and its length is at least `n` times that
+/// hull's distance from 0; the acceleration is `n(n−1)` times a Bézier on
+/// the differences `e` of `d`, at most `n(n−1)·max|e|` long. Curvature is
+/// `|B′ × B″| / |B′|³ ≤ |B″| / |B′|²`, so on the piece at most
+/// `(n−1)·max|e| / (n·dist²)`. No engine code: the engine evaluates the
+/// Bernstein form in `f32`.
+pub(crate) fn curvature_bound(curve: &Curve) -> f64 {
+    let (start, rest): (Vec2, Vec<Vec2>) = match *curve {
+        Curve::Line(..) => return 0.0,
+        Curve::Quadratic(a, c, b) => (a, vec![c, b]),
+        Curve::Cubic(a, c1, c2, b) => (a, vec![c1, c2, b]),
+    };
+    let mut controls = vec![DVec2::ZERO];
+    controls.extend(rest.iter().map(|p| p.as_dvec2() - start.as_dvec2()));
+    let n = (controls.len() - 1) as f64;
+    let mut most = 0.0_f64;
+    for k in 0..CURVATURE_PIECES {
+        let piece = bezier_piece(
+            &controls,
+            k as f64 / CURVATURE_PIECES as f64,
+            (k + 1) as f64 / CURVATURE_PIECES as f64,
+        );
+        let d: Vec<DVec2> = piece.windows(2).map(|w| w[1] - w[0]).collect();
+        let e: Vec<DVec2> = d.windows(2).map(|w| w[1] - w[0]).collect();
+        let dist = hull_distance(&d);
+        let turn = e.iter().map(|v| v.length()).fold(0.0_f64, f64::max);
+        let bound = if turn == 0.0 {
+            0.0
+        } else if dist > 0.0 {
+            (n - 1.0) * turn / (n * dist * dist)
+        } else {
+            f64::INFINITY
+        };
+        most = most.max(bound);
+    }
+    most
+}
+
+/// The control points of the piece of the Bézier on `controls` from
+/// parameter `from` to `to`, by de Casteljau's construction: split at `to`,
+/// keep the part before it, then split that at `from / to`, keep the part
+/// after.
+fn bezier_piece(controls: &[DVec2], from: f64, to: f64) -> Vec<DVec2> {
+    let split = |points: &[DVec2], t: f64| -> (Vec<DVec2>, Vec<DVec2>) {
+        let mut before = Vec::with_capacity(points.len());
+        let mut after = Vec::with_capacity(points.len());
+        let mut row = points.to_vec();
+        while !row.is_empty() {
+            before.push(row[0]);
+            after.push(row[row.len() - 1]);
+            row = row.windows(2).map(|w| w[0] + (w[1] - w[0]) * t).collect();
+        }
+        after.reverse();
+        (before, after)
+    };
+    let (head, _) = split(controls, to);
+    if to <= 0.0 {
+        return head;
+    }
+    split(&head, from / to).1
+}
+
+/// The distance from the origin to the convex hull of `points` (two or
+/// three of them): 0 where the hull holds it.
+fn hull_distance(points: &[DVec2]) -> f64 {
+    let segment = |a: DVec2, b: DVec2| {
+        let ab = b - a;
+        let t = if ab.length_squared() > 0.0 {
+            (-a.dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        (a + ab * t).length()
+    };
+    match points {
+        [a] => a.length(),
+        [a, b] => segment(*a, *b),
+        [a, b, c] => {
+            let side = |p: DVec2, q: DVec2| p.perp_dot(q);
+            let (s1, s2, s3) = (side(*a, *b), side(*b, *c), side(*c, *a));
+            let inside = (s1 >= 0.0 && s2 >= 0.0 && s3 >= 0.0) || (s1 <= 0.0 && s2 <= 0.0 && s3 <= 0.0);
+            if inside {
+                0.0
+            } else {
+                segment(*a, *b).min(segment(*b, *c)).min(segment(*c, *a))
+            }
+        }
+        _ => 0.0,
+    }
+}
+
+/// The most distance along a path whose curvature is at most `kappa` that
+/// an ornament run reshaped at `scale` can take, laid at no gap from the
+/// path's start (#313, ruling B18.1 §7): an upper bound on where its walk
+/// ends, or `None` where the bound needs a stretch of the path longer
+/// than its bend allows (below). From the engine's definition of an
+/// ornament's walk (ruling R31), not its code:
+///
+/// - An inked cluster's step is its ink box's extent along the chord plus
+///   its side bearings, at most `max(0, w − iw + √(iw² + ih²))` for advance
+///   `w` and ink `iw × ih`; it is set at its natural center, its lead `x₀`
+///   and half that extent into its step.
+/// - A glyph after an ink, owed `g` — the last ink's right bearing, the
+///   spaces between, and its own lead — more than `INK_TOLERANCE`, is moved
+///   on until its ink box, set square to the canvas, is `g` from the last
+///   one's. Two boxes whose half sizes sum to `r` are at least `g` apart
+///   once their centers are `R = |r| + g` apart, so the engine aims at a
+///   distance of at most `R`, and walks on in strides of at most
+///   `S = max(R, the ink's larger side)` to find one past it.
+/// - On a curve of curvature at most `κ`, the chord across an arc of
+///   length `ℓ ≤ π/κ` is at least `(2/κ)·sin(κℓ/2)`, the circle's (Schur's
+///   comparison theorem). So every point between `L = (2/κ)·asin(κR/2)`
+///   and `π/κ` along from the last center lies at least `R` from it, and the
+///   engine's center lies at most `max(Q, L + S)` on from the last, where
+///   `Q` is how far on its natural center can be. That holds while the
+///   window `W = max(Q, L) + S` lies within `π/κ` of arc (and `κR < 2`):
+///   the precondition. Where it fails, `None`, and the run is not owed
+///   whole.
+/// - The engine's distances along are its table's, sums of chords between
+///   samples no more than `spacing` apart along the arc (`ArcPath::open`'s
+///   contract), so a distance is never more than the arc it spans — which
+///   is what the chord bound above needs — and an arc spanning a table
+///   distance `d` is at most `ρ·(d + 2·spacing)`: the segments it touches,
+///   each at most `ρ` times its chord, `ρ = x / sin x` for
+///   `x = κ·spacing/2` (the circle's, by the same theorem). So the
+///   precondition is read as `ρ·(W + 2·spacing) ≤ π/κ`, with
+///   `x < π/2`.
+///
+/// So the bound is each cluster's step and move summed, which the bend
+/// lengthens only through `L ≥ R`. A space steps its advance, and adds it
+/// to what the next ink is owed.
+pub(crate) fn ornament_end_along(run: &ShapedRun, scale: f32, kappa: f64, spacing: f64) -> Option<f64> {
+    let tolerance = f64::from(INK_TOLERANCE);
+    // How much longer than the table's distance the arc it spans may be.
+    let half_turn = 0.5 * kappa * spacing;
+    if half_turn >= std::f64::consts::FRAC_PI_2 {
+        return None;
+    }
+    let rho = if half_turn > 0.0 {
+        half_turn / half_turn.sin()
+    } else {
+        1.0
+    };
+    let glyphs = drawn_glyphs(run);
+    // Where the walk is, at most, after the clusters so far; how far past
+    // the last ink's center that is; and that ink's center, half size and
+    // what the next ink is owed.
+    let mut after = 0.0_f64;
+    let mut past = 0.0_f64;
+    let mut last: Option<(f64, DVec2)> = None;
+    let mut owed = 0.0_f64;
+    for cluster in glyph_clusters(&glyphs) {
+        let advance = f64::from(cluster_advance(&cluster, scale));
+        let ink = if cluster[0].blank {
+            None
+        } else {
+            cluster_ink_at(&cluster, scale)
+        };
+        let Some((min, max)) = ink else {
+            after += advance.max(0.0);
+            past += advance.max(0.0);
+            owed += advance;
+            continue;
+        };
+        let size = max - min;
+        let (lead, diag) = (min.x, size.length());
+        let step = (advance - size.x + diag).max(0.0);
+        let gap = owed + lead;
+        let center = match last {
+            Some((at, half)) if gap > tolerance => {
+                let reach = (half + size * 0.5).length() + gap;
+                let stride = reach.max(size.max_element());
+                let natural = past + lead + 0.5 * diag;
+                let along = if kappa == 0.0 {
+                    reach
+                } else if kappa * reach < 2.0 {
+                    2.0 / kappa * (0.5 * kappa * reach).asin()
+                } else {
+                    return None;
+                };
+                let window = along.max(natural) + stride;
+                if kappa > 0.0 && rho * (window + 2.0 * spacing) > std::f64::consts::PI / kappa {
+                    return None;
+                }
+                at + natural.max(along + stride)
+            }
+            _ => after + lead + 0.5 * diag,
+        };
+        after = center - lead + step;
+        past = -lead + step;
+        last = Some((center, size * 0.5));
+        owed = advance - max.x;
+    }
+    Some(after)
+}
+
+/// A cluster's ink as one box at `scale`, `(min, max)` in its box's
+/// coordinates — `x` from its left edge, `y` from the baseline: each
+/// glyph's ink, its pen's distance into the cluster with it, scaled by
+/// the engine's own `size_factor` (ruling R52.1). `None` where no glyph
+/// has ink.
+fn cluster_ink_at(cluster: &[&GlyphMetrics], scale: f32) -> Option<(DVec2, DVec2)> {
+    let left = cluster.iter().map(|g| g.x).fold(f32::INFINITY, f32::min);
+    cluster
+        .iter()
+        .filter_map(|g| {
+            let f = f64::from(size_factor(g.size, scale));
+            let pen = DVec2::new(f64::from(g.x - left) * f, 0.0);
+            g.ink
+                .map(|ink| (pen + ink.min.as_dvec2() * f, pen + ink.max.as_dvec2() * f))
+        })
+        .reduce(|(a, b), (c, d)| (a.min(c), b.max(d)))
+}
+
+/// Whether `fit` along `curve` owes the whole run (#313, ruling B18.1 §7):
+/// its natural length at its least scale within the curve's room — a
+/// text's by [`natural_length_any_way`], an ornament's by
+/// [`ornament_end_along`], with the curve's [`curvature_bound`].
+pub(crate) fn owes_whole_along(run: &ShapedRun, fit: &FitMode, curve: &Curve) -> bool {
+    let Some(least) = least_scale(fit) else {
+        return false;
+    };
+    let room = f64::from(curve_room(curve));
+    if !room.is_finite() {
+        return false;
+    }
+    if is_ornament(run) {
+        // The table's samples are at most a quarter of the run's line
+        // height apart, and never nearer than `MIN_TABLE_SPACING`
+        // (`table_spacing`'s contract): the coarser of the two bounds it.
+        let spacing = f64::from((0.25 * run.line_height).max(MIN_TABLE_SPACING));
+        ornament_end_along(run, least, curvature_bound(curve), spacing).is_some_and(|end| end <= room)
+    } else {
+        owes_whole_any_way(run, fit, room as f32)
+    }
+}
+
+/// Whether `run` is an ornament's: no letter or digit in it, as the
+/// engine reads one (ruling R31).
+pub(crate) fn is_ornament(run: &ShapedRun) -> bool {
+    !run.glyphs.iter().any(|g| g.letter)
+}
+
+/// Whether `fit` on a path of room `room` owes the whole run: a `Spread` or
+/// `Fit` whose natural length fits — for `Fit` at its least scale, as the
+/// engine shrinks it, no glyph below `MIN_FONT_SIZE_PT` (ruling R52.1) —
+/// places every cluster, and cuts nothing. Owed of every path whose room is
+/// finite, as far from the origin as an `f32` reaches: a glyph's step lost
+/// below an `f32`'s precision there moves it nowhere, but it is placed.
 pub(crate) fn owes_whole(run: &ShapedRun, fit: &FitMode, room: f32) -> bool {
+    owes_whole_by(run, fit, room, natural_length_at)
+}
+
+/// [`owes_whole`] for a text along a path that runs any way, of room
+/// `room`: its natural length [`natural_length_any_way`] (ruling B18.1
+/// §7). Never an ornament's, whose length is its path's too
+/// ([`owes_whole_along`]).
+pub(crate) fn owes_whole_any_way(run: &ShapedRun, fit: &FitMode, room: f32) -> bool {
+    !is_ornament(run) && owes_whole_by(run, fit, room, natural_length_any_way)
+}
+
+/// [`owes_whole`], the run's natural length at a scale by `length`.
+fn owes_whole_by(run: &ShapedRun, fit: &FitMode, room: f32, length: fn(&ShapedRun, f32) -> f32) -> bool {
     let least = match fit {
         FitMode::Spread => 1.0,
         FitMode::Fit { min, .. } => *min,
         _ => return false,
     };
-    let length = natural_length_at(run, least);
+    let length = length(run, least);
     room.is_finite() && length.is_finite() && length <= room
 }
 
 /// The room a curve gives a run: its length, measured on a polyline
-/// through it, which is no longer than it.
-/// Summed in `f64`, so a curve longer than `√f32::MAX` measures what it
-/// is rather than infinite.
-fn curve_room(curve: &Curve) -> f32 {
-    const SAMPLES: usize = 256;
-    (0..SAMPLES)
-        .map(|k| {
-            let (a, b) = (k as f32 / SAMPLES as f32, (k + 1) as f32 / SAMPLES as f32);
-            (curve.point(b) - curve.point(a)).as_dvec2().length()
-        })
-        .sum::<f64>() as f32
+/// through it at 256 even steps of its parameter ([`polyline_length`]),
+/// which is no longer than it. Found as `Curve::point` found it, in `f32`
+/// from coordinates as large as where the curve is, a line from
+/// `(1e15, 1e15)` to itself, whose `a·(1−t) + b·t` rounds to a
+/// neighboring float at each sample, measured 1.29e10 of chords and owed
+/// a run whole along a path of no length (the finding
+/// `structured_curve_far_out_line_its_floats_cannot_part`).
+pub(crate) fn curve_room(curve: &Curve) -> f32 {
+    polyline_length(curve, 256) as f32
+}
+
+/// The length of the polyline through `curve` at `t = i / count` for `i`
+/// from 0 to `count`, each `t` the `f32` an arc-length table steps by
+/// (`i as f32 / count as f32`): the oracle a curve's length is held to
+/// (#313, ruling B18.1 §6). Independent of the engine's arithmetic: no
+/// `ArcPath`, no `Curve::point`, and points found by de Casteljau's
+/// construction — repeated midpoint interpolation — where the engine
+/// evaluates the Bernstein form. Found in `f64` from the control points'
+/// offsets from the curve's start, each the difference of two `f32`s,
+/// which `f64` holds exactly while their exponents are within 29 of one
+/// another; so far from the origin it measures the curve those control
+/// points make, not the rounding of its coordinates, and a curve whose
+/// control points coincide measures exactly 0. Summed in `f64`, so a
+/// curve longer than `√f32::MAX` measures what it is.
+pub(crate) fn polyline_length(curve: &Curve, count: usize) -> f64 {
+    let (start, rest): (Vec2, Vec<Vec2>) = match *curve {
+        Curve::Line(a, b) => (a, vec![b]),
+        Curve::Quadratic(a, c, b) => (a, vec![c, b]),
+        Curve::Cubic(a, c1, c2, b) => (a, vec![c1, c2, b]),
+    };
+    let mut controls = vec![DVec2::ZERO];
+    controls.extend(rest.iter().map(|p| p.as_dvec2() - start.as_dvec2()));
+    let point = |t: f64| {
+        let mut row = controls.clone();
+        while row.len() > 1 {
+            row = row
+                .windows(2)
+                .map(|pair| pair[0] + (pair[1] - pair[0]) * t)
+                .collect();
+        }
+        row[0]
+    };
+    let count = count.max(1);
+    let t = |i: usize| f64::from(i as f32 / count as f32);
+    (0..count).map(|i| (point(t(i + 1)) - point(t(i))).length()).sum()
 }
 
 /// The room a frame round `outline` gives a run: the narrower of the
