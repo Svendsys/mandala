@@ -2398,15 +2398,24 @@ pub(crate) const GRAIN_SPACINGS: f64 = 4.0;
 /// hold its glyphs apart (#313, ruling B18.1 §9): the spacing `u` of `f32`
 /// there at most a [`GRAIN_SPACINGS`]th of the run's smallest advance `a`
 /// at its least scale. A fact about `f32`, from where the placement is
-/// drawn and the run's metrics alone.
+/// drawn and the run's metrics, scaled by the engine's own `size_factor`
+/// (a metric, ruling R52.1); no placement code.
 ///
-/// Why a quarter: the engine finds each glyph's position from its path in
-/// `f32` — the point at a distance along it, rounded where it is found,
-/// and that point's offset onto the canvas, rounded again — so a position
-/// lies within `u` of where it belongs, each rounding moving it at most
-/// half a spacing. Two neighbors an advance `a` apart are then set at
+/// What the quarter proves: the engine finds each glyph's position from
+/// its path in `f32` — the point at a distance along it, rounded where it
+/// is found, and that point's offset onto the canvas, rounded again — so a
+/// position lies within `u` of where it belongs, each rounding moving it at
+/// most half a spacing. Two neighbors an advance `a` apart are then set at
 /// least `a − 2u` apart, which `4u ≤ a` keeps at half their advance or
-/// more: still apart, and still in their order. At a coarser grain two
+/// more: still apart, and still in their order. It does not prove the line
+/// still fits its room — on a grid of spacing `u` a frame's pairwise rule
+/// may move each pair up to a spacing on — and that the quarter suffices
+/// is shown by the sweeps, not proved: the far sweep and the far frames of
+/// the review's sweep (645 owed, none cut; none cut without saying so,
+/// review 5905087617). It is conservative: of the frames the review found
+/// refused by the grain alone, 525, 420 lay as many glyphs as at the
+/// origin — coverage given up, as the sweeps record for open paths
+/// (ruling B18.1 §9, as amended). At a coarser grain two
 /// neighbors may round onto one point, and a frame cuts its line where its
 /// inks cannot be parted (the finding
 /// `structured_frame_far_out_its_floats_cannot_part`), while an open path,
@@ -2468,8 +2477,10 @@ const CURVATURE_PIECES: usize = 64;
 
 /// A bound on the curvature of `curve` everywhere along it, from its
 /// control points alone in `f64` (#313, ruling B18.1 §7): infinite where
-/// it cannot be bounded — a cusp, or a curve that stops and turns back.
-/// A line's is 0.
+/// its velocity may vanish — a cusp, or a curve whose control points
+/// coincide at an end, such as the cubic `(a, a, a, b)`, which stops there
+/// without turning back. Such a curve is never owed an ornament whole:
+/// coverage given up, not soundness. A line's is 0.
 ///
 /// The curve is split by de Casteljau's construction into
 /// [`CURVATURE_PIECES`] pieces, each a Bézier of the same degree `n` on
@@ -2589,17 +2600,35 @@ fn hull_distance(points: &[DVec2]) -> f64 {
 ///   comparison theorem). So every point between `L = (2/κ)·asin(κR/2)`
 ///   and `π/κ` along from the last center lies at least `R` from it, and the
 ///   engine's center lies at most `max(Q, L + S)` on from the last, where
-///   `Q` is how far on its natural center can be. That holds while
-///   `max(Q, L) + S ≤ π/κ` (and `κR < 2`): the precondition, read with a
-///   thousandth to spare, since the engine's distances along are its
-///   table's, a little short of the arc. Where it fails, `None`, and the
-///   run is not owed whole.
+///   `Q` is how far on its natural center can be. That holds while the
+///   window `W = max(Q, L) + S` lies within `π/κ` of arc (and `κR < 2`):
+///   the precondition. Where it fails, `None`, and the run is not owed
+///   whole.
+/// - The engine's distances along are its table's, sums of chords between
+///   samples no more than `spacing` apart along the arc (`ArcPath::open`'s
+///   contract), so a distance is never more than the arc it spans — which
+///   is what the chord bound above needs — and an arc spanning a table
+///   distance `d` is at most `ρ·(d + 2·spacing)`: the segments it touches,
+///   each at most `ρ` times its chord, `ρ = x / sin x` for
+///   `x = κ·spacing/2` (the circle's, by the same theorem). So the
+///   precondition is read as `ρ·(W + 2·spacing) ≤ π/κ`, with
+///   `x < π/2`.
 ///
 /// So the bound is each cluster's step and move summed, which the bend
 /// lengthens only through `L ≥ R`. A space steps its advance, and adds it
 /// to what the next ink is owed.
-pub(crate) fn ornament_end_along(run: &ShapedRun, scale: f32, kappa: f64) -> Option<f64> {
+pub(crate) fn ornament_end_along(run: &ShapedRun, scale: f32, kappa: f64, spacing: f64) -> Option<f64> {
     let tolerance = f64::from(INK_TOLERANCE);
+    // How much longer than the table's distance the arc it spans may be.
+    let half_turn = 0.5 * kappa * spacing;
+    if half_turn >= std::f64::consts::FRAC_PI_2 {
+        return None;
+    }
+    let rho = if half_turn > 0.0 {
+        half_turn / half_turn.sin()
+    } else {
+        1.0
+    };
     let glyphs = drawn_glyphs(run);
     // Where the walk is, at most, after the clusters so far; how far past
     // the last ink's center that is; and that ink's center, half size and
@@ -2637,7 +2666,8 @@ pub(crate) fn ornament_end_along(run: &ShapedRun, scale: f32, kappa: f64) -> Opt
                 } else {
                     return None;
                 };
-                if kappa > 0.0 && along.max(natural) + stride > std::f64::consts::PI / kappa * (1.0 - 1e-3) {
+                let window = along.max(natural) + stride;
+                if kappa > 0.0 && rho * (window + 2.0 * spacing) > std::f64::consts::PI / kappa {
                     return None;
                 }
                 at + natural.max(along + stride)
@@ -2683,7 +2713,11 @@ pub(crate) fn owes_whole_along(run: &ShapedRun, fit: &FitMode, curve: &Curve) ->
         return false;
     }
     if is_ornament(run) {
-        ornament_end_along(run, least, curvature_bound(curve)).is_some_and(|end| end <= room)
+        // The table's samples are at most a quarter of the run's line
+        // height apart, and never nearer than `MIN_TABLE_SPACING`
+        // (`table_spacing`'s contract): the coarser of the two bounds it.
+        let spacing = f64::from((0.25 * run.line_height).max(MIN_TABLE_SPACING));
+        ornament_end_along(run, least, curvature_bound(curve), spacing).is_some_and(|end| end <= room)
     } else {
         owes_whole_any_way(run, fit, room as f32)
     }

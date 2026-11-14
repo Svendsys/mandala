@@ -1732,12 +1732,11 @@ fn test_flow_structured_every_face_finding_a_far_out_frame_its_floats_cannot_par
 /// oracle measures an ornament with its path's curvature
 /// (`ornament_end_along`), and owes none of them.
 ///
-/// Control: the oracle's move round a bend taken out — each glyph set at
-/// its natural center, with no bound on the move and no precondition on
-/// the bend — red on each. (The move's bound alone taken out stays green:
-/// on these bends the precondition, that each move stays within `π/κ`,
-/// already refuses them, and the move it allows on a line, the distance
-/// aimed at and a stride, refuses them too.)
+/// Control: the oracle's whole account of the bend taken out — each glyph
+/// set at its natural center, with no window and no bound from the table's
+/// spacing — red on each. Each part alone taken out stays green: the
+/// table's spacing at their curvature, a segment beyond `π/κ`, already
+/// refuses them (ruling B18.1 §7, as amended).
 #[test]
 fn test_an_ornament_round_a_bend_is_owed_whole_only_where_its_moves_fit() {
     use crate::document::values::FitMode;
@@ -1764,6 +1763,18 @@ fn test_an_ornament_round_a_bend_is_owed_whole_only_where_its_moves_fit() {
                 Vec2::new(3.0, 20.0),
                 Vec2::new(7.0, -20.0),
                 Vec2::new(10.0, 0.0),
+            ),
+            FitMode::Spread,
+        ),
+        // The review's loop 16 long (review 5905087617).
+        (
+            "· · · ·",
+            8.0,
+            Curve::Cubic(
+                Vec2::ZERO,
+                Vec2::new(19.2, 12.8),
+                Vec2::new(-3.2, 12.8),
+                Vec2::new(16.0, 0.0),
             ),
             FitMode::Spread,
         ),
@@ -1920,6 +1931,206 @@ fn test_a_fit_no_scale_of_whose_window_fits_is_laid_at_its_least() {
     });
 }
 
+/// `text` at `points` laid in `fit` along `curve`, at its own budget: the
+/// glyphs placed and the run's, whether it is truncated, its loss, and the
+/// size its first glyph was laid at.
+fn fit_laid(
+    text: &str,
+    points: f32,
+    curve: &crate::flow::Curve,
+    fit: &crate::document::values::FitMode,
+) -> (
+    usize,
+    usize,
+    bool,
+    Option<crate::flow::place::ring::RingLoss>,
+    f32,
+) {
+    use crate::flow::place::{place_on_open_capped, Trace};
+    with_fonts(|fs| {
+        let flow = style(points);
+        let run = real_run(text, &flow, fs);
+        let mut trace = Trace::default();
+        let (rescaled, placed) =
+            place_on_open_capped(&run, curve, fit, 0.0, &flow, fs, 154, Some(&mut trace));
+        let size = rescaled
+            .as_ref()
+            .unwrap_or(&run)
+            .glyphs
+            .first()
+            .map_or(0.0, |g| g.size);
+        (
+            placed.glyphs.len(),
+            run.glyphs.len(),
+            placed.truncated,
+            trace.ring,
+            size,
+        )
+    })
+}
+
+/// A `Fit` whose solve finds no scale above its window's least to fit is
+/// laid at exactly that least, as a window of that least alone lays it,
+/// with no loss (#313, ruling B18.1 §10.2 as amended, review 5905087617):
+/// the bracket closes on the least it assumed and never laid, and lays it.
+/// The review's cases: "━━━━" at 16 pt round an arch 6.2 across, `Fit`
+/// from 0.5 to 2, cut there as `Fit {0.5, 0.5}` cuts it; and "──────" at
+/// 8 pt along a steep line 24 long, laid whole at exactly 4 pt.
+///
+/// Control: the round at the least taken out — the bracket closing a
+/// thousandth above it — red: the arch's cut reported as a scale not
+/// solved, the line's laid at 4.0027 pt and reported so.
+#[test]
+fn test_a_fit_whose_bracket_closes_on_its_least_is_laid_there() {
+    use crate::document::values::FitMode;
+    use crate::flow::Curve;
+    let window = FitMode::Fit { min: 0.5, max: 2.0 };
+    let least = FitMode::Fit { min: 0.5, max: 0.5 };
+    let cases = [
+        (
+            "━━━━",
+            16.0,
+            Curve::Cubic(
+                Vec2::ZERO,
+                Vec2::new(0.0, 6.2),
+                Vec2::new(6.2, 6.2),
+                Vec2::new(6.2, 0.0),
+            ),
+            false,
+        ),
+        (
+            "──────",
+            8.0,
+            Curve::Line(Vec2::ZERO, Vec2::new(14.4, -19.2)),
+            true,
+        ),
+    ];
+    for (text, points, curve, whole) in &cases {
+        let what = format!("{text:?} at {points} pt along {curve:?}");
+        let (placed, glyphs, truncated, ring, size) = fit_laid(text, *points, curve, &window);
+        let alone = fit_laid(text, *points, curve, &least);
+        assert_eq!(
+            *whole,
+            placed == glyphs,
+            "precondition: {what} laid whole {whole}: {placed} of {glyphs}"
+        );
+        assert_eq!(ring, None, "{what}: a lay at the window's least is no loss");
+        assert_eq!(size, 0.5 * points, "{what}: laid at the window's least");
+        assert_eq!(
+            (placed, truncated, ring, size),
+            (alone.0, alone.2, alone.3, alone.4),
+            "{what}: laid as a window of its least alone lays it"
+        );
+    }
+}
+
+/// The invariant the bracket must keep (#313, ruling B18.1 §10.2, review
+/// 5905087617): wherever a `Fit` from 0.5 to 2 is laid within a thousandth
+/// of its window's least — no scale above found to fit — it is laid at
+/// exactly that least, as `Fit {0.5, 0.5}` lays it, with no loss. Texts
+/// and ornaments along lines at eight angles and the review's, lengths
+/// from a glyph or two to many, and along arches: 240 placements, 155 laid
+/// at their least, every one as its least alone lays it.
+///
+/// Control: the round at the least taken out, red (3: the review's line
+/// and arch, laid a thousandth above the least and reported not solved).
+#[test]
+fn test_a_fit_laid_at_its_least_is_laid_as_its_least_alone() {
+    use crate::document::values::FitMode;
+    use crate::flow::Curve;
+    let window = FitMode::Fit { min: 0.5, max: 2.0 };
+    let least = FitMode::Fit { min: 0.5, max: 0.5 };
+    let (mut laid, mut at_least, mut wrong) = (0usize, 0usize, Vec::new());
+    for (text, points) in [
+        ("──────", 8.0),
+        ("━━━━", 16.0),
+        ("MANDALA", 8.0),
+        ("To see a World", 16.0),
+    ] {
+        for length in [6.0_f32, 6.2, 12.0, 24.0, 48.0, 96.0] {
+            let mut curves: Vec<Curve> = (0..8)
+                .map(|k| {
+                    let angle = k as f32 * std::f32::consts::TAU / 8.0 + 0.3;
+                    Curve::Line(Vec2::ZERO, Vec2::new(angle.cos(), angle.sin()) * length)
+                })
+                .collect();
+            // The review's line (review 5905087617).
+            curves.push(Curve::Line(Vec2::ZERO, Vec2::new(0.6, -0.8) * length));
+            curves.push(Curve::Cubic(
+                Vec2::ZERO,
+                Vec2::new(0.0, length),
+                Vec2::new(length, length),
+                Vec2::new(length, 0.0),
+            ));
+            for curve in &curves {
+                laid += 1;
+                let (placed, _, truncated, ring, size) = fit_laid(text, points, curve, &window);
+                if size > 0.5 * points * (1.0 + 2e-3) {
+                    continue;
+                }
+                at_least += 1;
+                let alone = fit_laid(text, points, curve, &least);
+                if (placed, truncated, ring, size) != (alone.0, alone.2, alone.3, alone.4) {
+                    wrong.push(format!(
+                        "{text:?} {points} pt along {curve:?}: {placed} glyphs, truncated {truncated}, {ring:?}, {size} pt; alone {:?}",
+                        (alone.0, alone.2, alone.3, alone.4)
+                    ));
+                }
+            }
+        }
+    }
+    assert_eq!(laid, 240, "every placement is laid");
+    assert!(at_least >= 20, "precondition: {at_least} laid at their least");
+    assert!(
+        wrong.is_empty(),
+        "{} not laid as their least alone: {:?}",
+        wrong.len(),
+        &wrong[..wrong.len().min(5)]
+    );
+}
+
+/// A `Fit` whose rounds run out with its text still cut above its window's
+/// least reports its scale not solved, `Uneven` (#313, ruling B18.1 §10.2
+/// as amended): "━━━━" at 16 pt round the 40-long arch, whose first round
+/// is cut at 1.656, given that one round (`FIT_ROUNDS_OVERRIDE`), is laid
+/// cut and says so; given its rounds, it is laid whole with no loss. No
+/// case reaches the report without the seam — none of 40,000 `Fit`s along
+/// random cubics, nor of the sweeps here — but a readable lay that keeps
+/// overrunning could run its rounds out, so the report stays, held here.
+///
+/// Control: the report taken out, red.
+#[test]
+fn test_a_fit_whose_rounds_run_out_cut_reports_its_scale_not_solved() {
+    use crate::document::values::FitMode;
+    use crate::flow::place::ring::RingLoss;
+    use crate::flow::place::FIT_ROUNDS_OVERRIDE;
+    use crate::flow::tests::halves_tests::with_seam;
+    use crate::flow::Curve;
+    let curve = Curve::Cubic(
+        Vec2::ZERO,
+        Vec2::new(0.0, 20.0),
+        Vec2::new(20.0, 20.0),
+        Vec2::new(20.0, 0.0),
+    );
+    let fit = FitMode::Fit { min: 0.5, max: 2.0 };
+    let (placed, glyphs, truncated, ring, _) = fit_laid("━━━━", 16.0, &curve, &fit);
+    assert!(
+        placed == glyphs && !truncated && ring.is_none(),
+        "precondition: given its rounds, laid whole: {placed} of {glyphs}, {ring:?}"
+    );
+    let (placed, glyphs, truncated, ring, size) =
+        with_seam(&FIT_ROUNDS_OVERRIDE, 1, || fit_laid("━━━━", 16.0, &curve, &fit));
+    assert!(
+        placed < glyphs && truncated && size > 8.0,
+        "precondition: its one round is cut above its least: {placed} of {glyphs} at {size} pt"
+    );
+    assert_eq!(
+        ring,
+        Some(RingLoss::Uneven),
+        "its rounds run out cut: its scale not solved"
+    );
+}
+
 /// Every `Spread` and `Fit` along a far-out path (#313) that its natural
 /// length fits is laid whole (review 5902086644, ruling B18.1 §1 as
 /// amended, and §9): three texts and two ornaments in both modes along
@@ -1930,10 +2141,10 @@ fn test_a_fit_no_scale_of_whose_window_fits_is_laid_at_its_least() {
 /// spacing; each is owed whole on the room of the path it is
 /// ([`curve_room`], an oracle independent of the engine's arithmetic),
 /// against its natural length along it (ruling B18.1 §7), where the
-/// coordinates hold its glyphs apart (§9): 1,274 fit, and 394 of them are
+/// coordinates hold its glyphs apart (§9): 1,260 fit, and 394 of them are
 /// so held — 226 texts, 168 ornaments — 197 on paths the floats changed,
-/// the case swept for. The grain gives up the other 880: of the 760 texts
-/// that fit, it keeps 226, and of the 514 ornaments, 168.
+/// the case swept for. The grain gives up the other 866: of the 760 texts
+/// that fit, it keeps 226, and of the 500 ornaments, 168.
 ///
 /// Control: with `curve_room` finding its points by `Curve::point` in
 /// `f32` again, red (1 placement owed whole and cut, rounding read as
@@ -2119,19 +2330,24 @@ fn test_an_open_path_owes_a_run_whole_only_where_it_fits_every_way() {
 /// - three ornaments at two sizes, at the same distances, along a line
 ///   and four curves that bend — the review's arch, its loop and its S,
 ///   and a hump — five lengths each, in `Spread` and `Fit`: 6,900
-///   placements, 1,373 owed whole, none cut. Each cluster's step summed,
+///   placements, 1,207 owed whole, none cut. Each cluster's step summed,
 ///   the bound that holds on a straight path, owed 1,693, 22 of them cut:
-///   the moves round a bend the oracle now measures.
+///   the moves round a bend the oracle now measures. (Its window read with
+///   a thousandth to spare, not the margin the table's spacing sets, the
+///   oracle owed 1,373.)
 ///
-/// Controls: the open path's oracle measuring a level line's natural
-/// length again, red (15 owed whole and cut, "MANDALA" at 4 pt along
-/// (0.8, 0.6) 37 long, at every distance its glyphs are held apart); an
-/// ornament's glyphs read as set at their natural centers, with no move
-/// round a bend, red (22, "· · · ·" at 8 pt round the S 10 long among
-/// them). The `Fit` solve's bracket is held by
-/// `test_a_fit_reaches_a_scale_that_fits_whenever_one_does`: taken out, a
-/// cut `Fit` here reports its scale not solved, which this sweep reads as
-/// reported.
+/// Controls: the open path's oracle measuring a level line's natural length
+/// again, red (15 owed whole and cut, "MANDALA" at 4 pt along (0.8, 0.6) 37
+/// long, at every distance its glyphs are held apart); an ornament's glyphs
+/// read as set at their natural centers, with no window and no bound from
+/// the table's spacing, red (1,583 owed, 22 cut, "· · · ·" at 8 pt round
+/// the S 10 long among them). What each part decides here: the window
+/// refuses 131 placements, the table's spacing 245; the move's own bound,
+/// with the window kept, changes no verdict the grain leaves — it is a step
+/// of the window's derivation, kept as such. The `Fit` solve's bracket is
+/// held by `test_a_fit_reaches_a_scale_that_fits_whenever_one_does`: taken
+/// out, a cut `Fit` here reports its scale not solved, which this sweep
+/// reads as reported.
 #[test]
 fn test_an_open_path_cuts_no_run_it_owes_whole_at_any_distance() {
     use crate::document::values::FitMode;
@@ -2218,7 +2434,7 @@ fn test_an_open_path_cuts_no_run_it_owes_whole_at_any_distance() {
         texts[3]
     );
     assert!(
-        ornaments[2] >= 1_200,
+        ornaments[2] >= 1_100,
         "the sweep owes {} ornament placements whole",
         ornaments[2]
     );
