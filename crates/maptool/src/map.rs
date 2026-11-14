@@ -292,10 +292,32 @@ pub fn walk<'d>(doc: &'d Document, node: NodeId, mut f: impl FnMut(Place, Found<
                 no_strings(text);
                 filler(fit, Place::Frame, &mut f);
                 sides(ring_layout, Place::Frame, &mut f);
-                let rings = doc.children(id).filter(|&ring| is(doc, ring, DocKind::Ring));
-                for (n, ring) in rings.enumerate() {
-                    if let Some(DocElement::Ring(data)) = doc.get(ring) {
-                        walk_ring(doc, ring, data, n, &mut f);
+                let mut n = 0;
+                for ring in doc.children(id) {
+                    match doc.get(ring) {
+                        Some(DocElement::Ring(data)) => {
+                            walk_ring(doc, ring, data, n, &mut f);
+                            n += 1;
+                        }
+                        // No other kind sits under a frame. Named, so a
+                        // new kind fails here.
+                        Some(
+                            DocElement::Span(_)
+                            | DocElement::CapStart(_)
+                            | DocElement::CapEnd(_)
+                            | DocElement::Label(_)
+                            | DocElement::Node(_)
+                            | DocElement::Map(_)
+                            | DocElement::Theme(_)
+                            | DocElement::Palette(_)
+                            | DocElement::Defaults(_)
+                            | DocElement::Section(_)
+                            | DocElement::Frame(_)
+                            | DocElement::Connector(_)
+                            | DocElement::Link(_)
+                            | DocElement::PortalEnd(_),
+                        )
+                        | None => {}
                     }
                 }
             }
@@ -347,11 +369,33 @@ fn no_strings(style: &TextStyle) {
 /// its owner's concatenated text; its `url` link is not.
 fn spans<'d>(doc: &'d Document, owner: NodeId, at: Place, f: &mut impl FnMut(Place, Found<'d>)) {
     for id in doc.children(owner) {
-        if let Some(DocElement::Span(SpanData { text: _, style, link })) = doc.get(id) {
-            no_strings(style);
-            match link {
-                Some(LinkTarget::Url(_)) | Some(LinkTarget::Verb(_)) | None => {}
+        match doc.get(id) {
+            Some(DocElement::Span(SpanData { text: _, style, link })) => {
+                no_strings(style);
+                match link {
+                    Some(LinkTarget::Url(_)) | Some(LinkTarget::Verb(_)) | None => {}
+                }
             }
+            // A path's caps and label, and a portal end's label, are its
+            // caller's to walk; no other kind sits under an element that
+            // holds spans. Named, so a new kind fails here.
+            Some(
+                DocElement::CapStart(_)
+                | DocElement::CapEnd(_)
+                | DocElement::Label(_)
+                | DocElement::Node(_)
+                | DocElement::Map(_)
+                | DocElement::Theme(_)
+                | DocElement::Palette(_)
+                | DocElement::Defaults(_)
+                | DocElement::Section(_)
+                | DocElement::Frame(_)
+                | DocElement::Ring(_)
+                | DocElement::Connector(_)
+                | DocElement::Link(_)
+                | DocElement::PortalEnd(_),
+            )
+            | None => {}
         }
     }
     f(at, Found::Spans(owner));
@@ -499,39 +543,87 @@ fn walk_path<'d>(
 /// A portal link's ends, each its content, its spans and its label.
 fn walk_portal<'d>(doc: &'d Document, portal: NodeId, link: usize, f: &mut impl FnMut(Place, Found<'d>)) {
     for id in doc.children(portal) {
-        let Some(DocElement::PortalEnd(PortalEndData {
-            end,
-            style:
-                PortalEndStyle {
-                    border_t: _,
-                    offset: _,
-                    color: _,
-                    size: _,
-                    content,
-                },
-        })) = doc.get(id)
-        else {
-            continue;
-        };
-        let end = *end;
-        let at = Place::PortalEnd { link, end };
-        if let Some(content) = content {
-            f(at, Found::Field(Field::Content, content));
+        match doc.get(id) {
+            Some(DocElement::PortalEnd(PortalEndData {
+                end,
+                style:
+                    PortalEndStyle {
+                        border_t: _,
+                        offset: _,
+                        color: _,
+                        size: _,
+                        content,
+                    },
+            })) => walk_portal_end(doc, id, link, *end, content, f),
+            // No other kind sits under a portal link. Named, so a new kind
+            // fails here.
+            Some(
+                DocElement::Span(_)
+                | DocElement::CapStart(_)
+                | DocElement::CapEnd(_)
+                | DocElement::Label(_)
+                | DocElement::Node(_)
+                | DocElement::Map(_)
+                | DocElement::Theme(_)
+                | DocElement::Palette(_)
+                | DocElement::Defaults(_)
+                | DocElement::Section(_)
+                | DocElement::Frame(_)
+                | DocElement::Ring(_)
+                | DocElement::Connector(_)
+                | DocElement::Link(_),
+            )
+            | None => {}
         }
-        spans(doc, id, at, f);
-        for label in doc.children(id) {
-            if let Some(DocElement::Label(LabelData {
+    }
+}
+
+/// A portal end: its content, its spans, then its label.
+fn walk_portal_end<'d>(
+    doc: &'d Document,
+    id: NodeId,
+    link: usize,
+    end: u8,
+    content: &'d Option<String>,
+    f: &mut impl FnMut(Place, Found<'d>),
+) {
+    let at = Place::PortalEnd { link, end };
+    if let Some(content) = content {
+        f(at, Found::Field(Field::Content, content));
+    }
+    spans(doc, id, at, f);
+    for label in doc.children(id) {
+        match doc.get(label) {
+            Some(DocElement::Label(LabelData {
                 style:
                     LabelStyle {
                         t: _,
                         offset: _,
                         text,
                     },
-            })) = doc.get(label)
-            {
+            })) => {
                 no_strings(text);
                 spans(doc, label, Place::PortalEndLabel { link, end }, f);
             }
+            // The end's own spans were visited above; no other kind sits
+            // under a portal end. Named, so a new kind fails here.
+            Some(
+                DocElement::Span(_)
+                | DocElement::CapStart(_)
+                | DocElement::CapEnd(_)
+                | DocElement::Node(_)
+                | DocElement::Map(_)
+                | DocElement::Theme(_)
+                | DocElement::Palette(_)
+                | DocElement::Defaults(_)
+                | DocElement::Section(_)
+                | DocElement::Frame(_)
+                | DocElement::Ring(_)
+                | DocElement::Connector(_)
+                | DocElement::Link(_)
+                | DocElement::PortalEnd(_),
+            )
+            | None => {}
         }
     }
 }

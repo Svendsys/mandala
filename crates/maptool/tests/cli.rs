@@ -619,9 +619,15 @@ fn test_apply_matches_case_insensitively_with_the_pattern_flag_and_passes_stderr
 /// prints the changed map. `apply -i` is refused, naming both paths, and
 /// the key is not written.
 ///
+/// Under `-i` the write rule is asked before any command runs, so a
+/// command with a side effect does not run; `--dry-run` prints the diff
+/// and says on stderr that `-i` would be refused.
+///
 /// Controls: holding reads to the write's rule fails the first
 /// assertions (`show` exits 1); checking the name typed alone on the
-/// write lets `-i` write the key.
+/// write lets `-i` write the key; asking the write rule only after the
+/// commands run leaves the mark; dropping the dry-run notice fails its
+/// assertion.
 #[cfg(unix)]
 #[test]
 fn test_a_map_behind_a_link_to_another_name_reads_and_is_not_written() {
@@ -646,7 +652,20 @@ fn test_a_map_behind_a_link_to_another_name_reads_and_is_not_written() {
     let run = maptool(&["apply", arg(&link), "^the earth", "--", "tr", "a-z", "A-Z"]);
     assert_eq!(run.status, 0, "{}", run.stderr);
     assert!(run.stdout.contains(r#""THE EARTH""#), "{}", run.stdout);
-    let run = maptool(&["apply", arg(&link), "^the earth", "-i", "--", "tr", "a-z", "A-Z"]);
+    // A command that leaves a mark: under `-i` it must never run, since
+    // the write it serves would be refused.
+    let mark = dir.join("ran");
+    let marking = format!("touch '{}'; tr a-z A-Z", arg(&mark));
+    let run = maptool(&[
+        "apply",
+        arg(&link),
+        "^the earth",
+        "-i",
+        "--",
+        "sh",
+        "-c",
+        &marking,
+    ]);
     assert_eq!(run.status, 1, "{}", run.stderr);
     assert!(
         run.stderr.contains("tree.mandala.json: links to `")
@@ -654,8 +673,34 @@ fn test_a_map_behind_a_link_to_another_name_reads_and_is_not_written() {
         "{}",
         run.stderr
     );
+    assert!(!mark.exists(), "no command ran for a write that is refused");
     assert_eq!(std::fs::read(&key).unwrap(), before);
     assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+    // `--dry-run` still shows the change, and says `-i` would be refused.
+    let run = maptool(&[
+        "apply",
+        arg(&link),
+        "^the earth",
+        "--dry-run",
+        "--",
+        "tr",
+        "a-z",
+        "A-Z",
+    ]);
+    assert_eq!(run.status, 0, "{}", run.stderr);
+    assert!(
+        run.stdout
+            .contains("+      \"sections\": [{\"spans\": [{\"text\": \"THE EARTH\"}]}]"),
+        "{}",
+        run.stdout
+    );
+    assert!(
+        run.stderr.contains("apply: -i would be refused: ")
+            && run.stderr.contains("0123abcd.json`, which is not a map"),
+        "{}",
+        run.stderr
+    );
+    assert_eq!(std::fs::read(&key).unwrap(), before);
 }
 
 /// With neither flag the changed map goes to stdout — the same text `-i`

@@ -394,6 +394,8 @@ impl MindMapDocument {
     /// map where a whole one was; then record the saved state and bind the
     /// document to `path`.
     pub fn save_to(&mut self, path: &str) -> Result<(), String> {
+        // The write rule first: a save it refuses serializes nothing.
+        format::file::write_target(path)?;
         let text = self.save_json()?;
         format::file::write(path, &text)?;
         self.doc.mark_saved();

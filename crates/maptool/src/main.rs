@@ -120,9 +120,13 @@ Commands:
                                 stdout; -i writes it back to <map>
                                 instead, through a temporary file and a
                                 rename (a map behind a symlink is saved
-                                through it); --dry-run prints, as a unified
-                                diff, what -i would change in the file
-                                on disk, and writes nothing (the
+                                through it, when the file it leads to is
+                                itself a .mandala.json; when it is not,
+                                -i is refused before any command runs);
+                                --dry-run prints, as a unified diff,
+                                what -i would change in the file on
+                                disk, says on stderr when -i would be
+                                refused, and writes nothing (the
                                 commands still run). Each command runs
                                 in turn and is waited for with no time
                                 limit; what it writes on stderr is
@@ -325,6 +329,18 @@ fn apply(args: &[String]) -> Result<String, CliError> {
     let targets = apply::targets(&doc, &regex);
     if targets.is_empty() {
         return Err(CliError::Failed(format!("apply: no section matches {pattern:?}")));
+    }
+    // The write rule is asked before any command runs, so a write `-i`
+    // would have refused costs no command; `--dry-run` says that `-i`
+    // would be refused, and still shows the change.
+    let write = file::write_target(map);
+    if let Err(why) = &write {
+        if in_place {
+            return Err(CliError::Failed(format!("apply: {why}")));
+        }
+        if dry_run {
+            eprintln!("apply: -i would be refused: {why}");
+        }
     }
     let matched = targets.len();
     let changed = apply::run_commands(targets, cmd, cmd_args).map_err(CliError::Failed)?;

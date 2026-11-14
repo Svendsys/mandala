@@ -1192,10 +1192,18 @@ writer (`format::file::write`): the path must end in `.mandala.json`;
 a path that is a symlink is followed to its real file, which must
 **also** end in `.mandala.json`, and that file is replaced atomically,
 the link staying a link. A link whose real file is not named like a
-map is refused (`console_error`, naming both paths), and nothing is
-written — so no caller, over IPC or not, can write map bytes through a
-link into a file that is not a map. A dangling link, a loop, or a link
-to something that is not a regular file is refused the same way.
+map is refused, naming both paths, and nothing is written — so no
+caller, over IPC or not, can write map bytes through a link into a file
+that is not a map. How the refusal reaches the caller depends on the
+way in: an `act.console` `save <path>` is `ok:false` with code
+`console_error`; an `act.action` `SaveDocumentAs` is `ok:true` with
+`outcome: "unhandled"` and a `console_error` warning; an `act.action`
+`SaveDocument` whose bound path is such a link (a map opened through a
+git-annex link, say) is `outcome: "unhandled"` with a `save_failed`
+warning (a warning's message is the log line's, cut to its excerpt
+width). In each case the document keeps its binding and its unsaved
+change. A dangling link, a loop, or a link to something that is not a
+regular file is refused the same ways.
 Opening is not held to the real file's name: `open` follows a
 `*.mandala.json` link wherever it leads, and the loader judges what it
 reads.

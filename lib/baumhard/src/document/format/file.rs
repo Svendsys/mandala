@@ -62,8 +62,13 @@ pub fn extension_refusal(path: &str) -> String {
 /// typed alone ([`read_bytes`]). Errors name the path once, and for a
 /// link both paths.
 ///
+/// [`write()`] holds to it; a caller that does work before writing —
+/// `maptool apply -i` runs a command per section, the app's save
+/// serializes the map — asks it first, so nothing is done for a write
+/// that would be refused. It reads the file system and changes nothing.
+///
 /// Cost: a `symlink_metadata`, and for a link `real_file`'s walk.
-fn write_target(path: &str) -> Result<std::path::PathBuf, String> {
+pub fn write_target(path: &str) -> Result<std::path::PathBuf, String> {
     use crate::util::guarded_file::{real_file, shown_path, PublishRefusal};
     if !has_map_extension(path) {
         return Err(extension_refusal(path));
