@@ -2335,9 +2335,14 @@ fn line_root(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f32 {
         // is owed squared.
         let probe = delta + v * if hi.is_finite() { lo.midpoint(hi) } else { lo + 1.0 };
         let (mut a, mut b, mut c) = (0.0_f32, 0.0_f32, 0.0_f32);
+        // Each axis's gap at `lo` and its rate, none where it is not apart.
+        let mut parts = [(0.0_f32, 0.0_f32); 2];
         // Whether either axis is apart there, at whatever rate.
         let mut apart = false;
-        for (p, d, w, r) in [(probe.x, delta.x, v.x, reach.x), (probe.y, delta.y, v.y, reach.y)] {
+        for (part, (p, d, w, r)) in parts
+            .iter_mut()
+            .zip([(probe.x, delta.x, v.x, reach.x), (probe.y, delta.y, v.y, reach.y)])
+        {
             if p.abs() > r {
                 apart = true;
                 let side = p.signum();
@@ -2346,9 +2351,20 @@ fn line_root(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f32 {
                 a += rate * rate;
                 b += from * rate;
                 c += from * from;
+                *part = (from, rate);
             }
         }
         c -= owed * owed;
+        // The quadratic's discriminant, `b² − a c`, is `a owed² − cross²`
+        // by Lagrange's identity, `cross` the gaps' cross product with the
+        // rates: none where one axis alone is apart. Where the boxes are
+        // further than owed (`c > 0`), `b²` and `a c` are near equal when
+        // little is owed of a wide gap, and their difference in floats
+        // holds little but rounding (#348: one axis apart by 11.04, owed
+        // 0.012, its root 6.8e-4 off); the identity's terms carry none of
+        // it. Where they are nearer (`c < 0`), `b² − a c` is a sum and
+        // holds no such loss.
+        let cross = parts[0].0 * parts[1].1 - parts[1].0 * parts[0].1;
         let root = if on {
             if owed <= 0.0 {
                 // Nothing owed: where the boxes begin to part.
@@ -2356,7 +2372,11 @@ fn line_root(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f32 {
             } else if c >= 0.0 {
                 Some(0.0)
             } else if a > 0.0 {
-                let root = -c / (b + (b * b - a * c).sqrt());
+                // The larger root, each form free of a difference of
+                // near equals: on a gap that closes first (`b < 0`),
+                // `b + √disc` is one.
+                let s = (b * b - a * c).sqrt();
+                let root = if b >= 0.0 { -c / (b + s) } else { (s - b) / a };
                 root.is_finite().then_some(root)
             } else {
                 None
@@ -2371,7 +2391,7 @@ fn line_root(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f32 {
         } else if c <= 0.0 {
             Some(0.0)
         } else {
-            let disc = b * b - a * c;
+            let disc = a * owed * owed - cross * cross;
             (b < 0.0 && disc >= 0.0)
                 .then(|| c / (-b + disc.sqrt()))
                 .filter(|root| root.is_finite())

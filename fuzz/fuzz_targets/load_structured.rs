@@ -23,7 +23,9 @@ fuzz_target!(|bytes: &[u8]| {
     }
     let inputs = INPUTS.fetch_add(1, Ordering::Relaxed) + 1;
     if inputs.is_power_of_two() || inputs % 256 == 0 {
-        let (projected, skipped) = baumhard::projection::tests::projection_fuzz::projection_counts();
-        eprintln!("projection: {projected} loaded maps projected, {skipped} outside the bound and skipped");
+        let (projected, skipped, cut) = baumhard::projection::tests::projection_fuzz::projection_counts();
+        eprintln!(
+            "projection: {projected} loaded maps projected, {skipped} outside the bound and skipped, {cut} cut short untangling and skipped"
+        );
     }
 });
