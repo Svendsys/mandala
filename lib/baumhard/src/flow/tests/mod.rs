@@ -18,6 +18,9 @@ pub mod flow_fuzz;
 mod flow_fuzz_tests;
 pub mod halves_tests;
 pub mod lines_tests;
+/// A placement along an open path's work budget (#313).
+#[cfg(test)]
+mod open_budget_tests;
 pub mod outline_tests;
 pub mod pitch_tests;
 pub mod place_tests;
@@ -32,6 +35,9 @@ mod reshape_tests;
 #[cfg(test)]
 mod ring_budget_tests;
 pub mod shape_tests;
+/// A frame's side ornament counts its lays' path reads (#313).
+#[cfg(test)]
+mod side_reads_tests;
 /// Fixtures: resolved styles, real and synthetic runs.
 pub(crate) mod support;
 /// A frame's work counted by kind of outline (#309).

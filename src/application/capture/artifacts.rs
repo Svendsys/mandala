@@ -269,7 +269,7 @@ fn create_private_dir(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::guarded_file::tests::{names_in, scratch_dir};
+    use baumhard::util::test_temp::{names_in, scratch_dir};
 
     /// The budget `format/ipc.md` states is the one the dir keeps.
     #[test]
