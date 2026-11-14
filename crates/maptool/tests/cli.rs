@@ -251,9 +251,9 @@ fn maps_in(dir: &str) -> Vec<PathBuf> {
 fn expected_warnings(name: &str) -> Option<String> {
     match name {
         "frames.mandala.json" => Some("warning: #1 frame: visible with no rings\n".to_string()),
-        "full.mandala.json" => {
-            Some("warning: #2: hidden, and no edit, verb or presentation can reveal it\n".to_string())
-        }
+        "full.mandala.json" => Some(
+            "warning: #2: hidden, and no edit in the map, verb or presentation can reveal it\n".to_string(),
+        ),
         "starts.mandala.json" => Some(
             (1..=13)
                 .map(|n| format!("warning: #{n} frame: visible with no rings\n"))
@@ -317,9 +317,9 @@ fn test_verify_prints_each_kind_of_warning() {
     assert_eq!(
         run.stdout,
         format!(
-            "warning: #1: hidden, and no edit, verb or presentation can reveal it\n\
+            "warning: #1: hidden, and no edit in the map, verb or presentation can reveal it\n\
              warning: #1 frame: visible with no rings\n\
-             warning: #1 links[0]: a portal whose ends both have no content, and no edit gives one\n\
+             warning: #1 links[0]: a portal whose ends both have no content, and no edit in the map gives one\n\
              warning: verbs[1] \"unused\": defined, and nothing refers to it\n\
              {}: valid, 4 warning(s)\n",
             shown(&map)

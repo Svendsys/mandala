@@ -10,11 +10,17 @@
 //! looks for four things, as #253 lists them and its amendment E1.1
 //! (issue comment 6870828150) rules:
 //!
+//! The edits read are the map's own, its `edits`. The App and User
+//! tiers (`assets/edits.json`, the user's `edits.json`; `format/edits.md`
+//! "Where edits come from") also run on a map, and they are outside what
+//! a map file can be judged on: `verify` does not read them, and each
+//! warning below says "in the map" for that reason.
+//!
 //! - **A verb nothing refers to.** A verb is referred to by a node's `on`
 //!   (`click`, `hover`), by a span's `link` (`{"verb": …}`), and by an
-//!   edit that names it — a node's `set_click` or `set_hover`, a span's
-//!   `set_link` to `{"verb": …}`, or a filter's `on_click` or `on_hover`,
-//!   anywhere in its body
+//!   edit in the map that names it — a node's `set_click` or
+//!   `set_hover`, a span's `set_link` to `{"verb": …}`, or a filter's
+//!   `on_click` or `on_hover`, anywhere in it (its filter or its body)
 //!   ([`EditDef::mentions`](baumhard::document::edit::EditDef::mentions))
 //!   — and by nothing else in the format. An edit refers to what it names
 //!   whether or not anything runs it: keybinds, the console and macros run
@@ -25,30 +31,39 @@
 //! - **A node saved hidden that nothing can reveal.** What reveals a node
 //!   is an edit that writes `set_hidden: false`, or a step of a
 //!   presentation or a verb — and those are an id and a name until V1-D2
-//!   and V1-D3 (#251, #252) give them steps. Which nodes an edit reaches
-//!   is decided when it runs — by the anchors it is run at, and by its
-//!   filter and its mutator's keys against the map as it stands then,
-//!   which other edits change — so `verify` does not narrow it to some
-//!   nodes: with an edit that writes `set_hidden: false` in the map no
+//!   and V1-D3 (#251, #252) give them steps. In general, which elements
+//!   an edit reaches is decided when it runs — by the anchors it is run
+//!   at, and by its filter and its mutator's keys against the map as it
+//!   stands then, which other edits change — so `verify` does not narrow
+//!   by reach: with an edit in the map that writes `set_hidden: false` no
 //!   hidden node is reported, and without one, as E1.1 rules, every node
-//!   saved with `"hidden": true` is, until D3 narrows it.
+//!   saved with `"hidden": true` is, until D3 narrows it. The known case
+//!   where this is conservative is an edit whose filter fixes its node: on
+//!   `target: "node"`, a first test of `ident` `Equals` decides for every
+//!   node, and no op changes an id, so that edit only ever reaches the one
+//!   node. It is not narrowed for: a second rule for a rare case.
 //! - **An empty frame**: one that resolves visible, through its own
 //!   `visible`, the map's defaults and the built-in value, and holds no
-//!   rings — it draws nothing. No edit can add a ring, so none changes
-//!   this.
+//!   rings — it draws nothing. No edit can add a ring, so none can make it
+//!   draw something.
 //! - **A portal link whose ends both have no content**: each end has no
 //!   spans and no `content` of its own, and the content it resolves to
 //!   through the map's defaults is empty, so neither end draws a marker —
-//!   unless an edit gives one: which ends an edit reaches is decided when
-//!   it runs, as above, so with an edit that writes a portal end's
-//!   `set_content` to a non-empty marker in the map no such portal is
-//!   reported. An edit cannot give an end spans or change the defaults.
+//!   unless an edit gives one. Which ends an edit reaches is, in general,
+//!   decided when it runs, as above, so with an edit in the map that
+//!   writes a portal end's `set_content` to a non-empty marker no such
+//!   portal is reported. "Content" is judged two ways on purpose: an end
+//!   saved with its own `content: ""` is not reported, since an explicit
+//!   empty marker in the file is the author's choice; an edit counts only
+//!   if the marker it gives draws, so its `set_content: ""` (or `null`,
+//!   which inherits the defaults' empty content) does not. An edit cannot
+//!   give an end spans or change the defaults.
 //!
 //! Each warning names its place as `grep` does: `#<id>` and the path
 //! below the node, or a definition's path for a verb.
 
 use baumhard::arena::NodeId;
-use baumhard::document::edit::Mentions;
+use baumhard::document::edit::{Named, Shows};
 use baumhard::document::element::{DocElement, DocKind, Triggers};
 use baumhard::document::ids::Document;
 use baumhard::document::resolve::{resolve_frame, resolve_portal_end, Content};
@@ -69,16 +84,16 @@ pub fn warnings(doc: &Document) -> Vec<String> {
     let mut referenced = vec![false; definitions.verbs.len()];
     let (mut reveals, mut marks_portal_ends) = (false, false);
     for edit in &definitions.edits {
-        let Mentions {
-            verbs,
+        let Shows {
             reveals: reveal,
             marks_portal_ends: marks,
-        } = edit.mentions();
-        for name in verbs {
-            if let Some(n) = definitions.verbs.iter().position(|verb| verb.id == name) {
-                referenced[n] = true;
+        } = edit.mentions(|named| match named {
+            Named::Verb(name) => {
+                if let Some(n) = definitions.verbs.iter().position(|verb| verb.id == name) {
+                    referenced[n] = true;
+                }
             }
-        }
+        });
         reveals |= reveal;
         marks_portal_ends |= marks;
     }
@@ -98,7 +113,7 @@ pub fn warnings(doc: &Document) -> Vec<String> {
         click.into_iter().chain(hover).for_each(&mut refer);
         if data.hidden && !reveals {
             out.push(format!(
-                "#{id}: hidden, and no edit, verb or presentation can reveal it"
+                "#{id}: hidden, and no edit in the map, verb or presentation can reveal it"
             ));
         }
         text_owners(doc, node, |_, owner| {
@@ -121,7 +136,7 @@ pub fn warnings(doc: &Document) -> Vec<String> {
                     && doc.children(child).all(|end| empty_end(doc, end))
                 {
                     out.push(format!(
-                        "#{id} links[{links}]: a portal whose ends both have no content, and no edit gives one"
+                        "#{id} links[{links}]: a portal whose ends both have no content, and no edit in the map gives one"
                     ));
                 }
                 links += 1;
@@ -215,7 +230,7 @@ mod tests {
         };
         assert_eq!(
             warned("", &nodes(true)),
-            ["#4: hidden, and no edit, verb or presentation can reveal it"]
+            ["#4: hidden, and no edit in the map, verb or presentation can reveal it"]
         );
         assert!(warned("", &nodes(false)).is_empty());
     }
@@ -264,7 +279,7 @@ mod tests {
                 empty,
                 &nodes(r#"[{}, {"label": {"spans": [{"text": "a label is not a marker"}]}}]"#)
             ),
-            ["#1 links[1]: a portal whose ends both have no content, and no edit gives one"]
+            ["#1 links[1]: a portal whose ends both have no content, and no edit in the map gives one"]
         );
         assert!(warned("", &nodes("[{}, {}]")).is_empty());
         assert!(warned(empty, &nodes(r#"[{"spans": [{"text": "x"}]}, {}]"#)).is_empty());
@@ -359,7 +374,7 @@ mod tests {
     /// mutator's macro — reports no hidden node. One that writes only
     /// `set_hidden: true` reveals nothing, and the node is reported.
     ///
-    /// Control: dropping the reveal (`self.reveals |= !hidden` made a
+    /// Control: dropping the reveal (`self.shows.reveals |= !hidden` made a
     /// no-op) fails the first assertion with node 4's warning; setting it
     /// on any `set_hidden` fails the second.
     #[test]
@@ -374,7 +389,7 @@ mod tests {
         assert_eq!(warned(&edit(false), node), Vec::<String>::new());
         assert_eq!(
             warned(&edit(true), node),
-            ["#4: hidden, and no edit, verb or presentation can reveal it"]
+            ["#4: hidden, and no edit in the map, verb or presentation can reveal it"]
         );
     }
 
@@ -400,9 +415,37 @@ mod tests {
         };
         let nodes = r#"{"id": 1, "position": [0, 0], "links": [{"to": 2, "kind": "portal"}]},
                        {"id": 2, "position": [0, 0]}"#;
-        let warning = ["#1 links[0]: a portal whose ends both have no content, and no edit gives one"];
+        let warning =
+            ["#1 links[0]: a portal whose ends both have no content, and no edit in the map gives one"];
         assert_eq!(warned(&header(r#""◆""#), nodes), Vec::<String>::new());
         assert_eq!(warned(&header(r#""""#), nodes), warning);
         assert_eq!(warned(&header("null"), nodes), warning);
+    }
+
+    /// What one edit counts stays counted when later edits count
+    /// nothing: the first edit reveals and names `go`, the second marks a
+    /// portal end, and the third does neither. A hidden node, an empty
+    /// portal and `go` are then all unreported.
+    ///
+    /// Controls, each run: `reveals |= reveal` made `reveals = reveal`
+    /// reports node 1; `marks_portal_ends |= marks` made `=` reports the
+    /// portal; clearing `referenced` at the start of each edit reports
+    /// `go`.
+    #[test]
+    fn test_verify_keeps_what_an_earlier_edit_counts() {
+        let header = r#""defaults": {"portal_end": {"content": ""}},
+            "verbs": [{"id": "go", "name": "Go"}],
+            "edits": [
+              {"id": "a", "name": "A", "reach": "self", "target": "node",
+               "mutations": [{"node": {"set_hidden": false}}, {"node": {"set_click": "go"}}]},
+              {"id": "b", "name": "B", "reach": "self", "target": "links",
+               "mutator": {"void": {"kind": "link", "channel": 0, "children": [
+                 {"macro": {"kind": "portal_end", "channel": 0, "mutations": [{"portal_end": {"set_content": "◆"}}]}}]}}},
+              {"id": "c", "name": "C", "reach": "self", "target": "node",
+               "mutations": [{"node": {"set_folded": true}}]}
+            ],"#;
+        let nodes = r#"{"id": 1, "position": [0, 0], "hidden": true, "links": [{"to": 2, "kind": "portal"}]},
+                       {"id": 2, "position": [0, 0]}"#;
+        assert_eq!(warned(header, nodes), Vec::<String>::new());
     }
 }

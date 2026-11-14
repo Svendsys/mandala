@@ -3145,13 +3145,17 @@ whose ends both draw nothing). What it counts includes the map's edits
 (`EditDef::mentions`, one walk that names every edit step, so a step
 added to the format does not compile there until it is counted): a verb
 an edit names — `set_click`, `set_hover`, a span's `set_link` to a
-verb, a filter's `on_click` or `on_hover`, at any depth — is referred
-to, whether or not anything runs the edit, since keybinds, the console
-and macros run edits from outside the map. Which elements an edit
-reaches is decided when it runs, so with an edit that writes
-`set_hidden: false` in the map no hidden node is reported, and with one
-that writes a portal end's non-empty `set_content` no empty portal is.
-No edit can add a ring, so the frame warning stands. `apply` pipes the text of each section a
+verb, a filter's `on_click` or `on_hover`, anywhere in it (its filter
+or its body), at any depth — is referred to, whether or not anything
+runs the edit, since keybinds, the console and macros run edits from
+outside the map. In general, which elements an edit reaches is decided
+when it runs, so `verify` does not narrow by reach: with an edit in the
+map that writes `set_hidden: false` no hidden node is reported, and
+with one that writes a portal end's non-empty `set_content` no empty
+portal is. No edit can add a ring, so none can make an empty frame
+draw something, and that warning stands. Only the map's own edits are
+read: the App and User tiers also run on a map, and are outside what a
+map file can be judged on. `apply` pipes the text of each section a
 line of which matches through a command and replaces its spans as one
 `EditRequest` through `Document::apply` — the only way a document
 changes — then prints the map, writes it back (`-i`, through

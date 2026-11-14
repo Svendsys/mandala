@@ -36,7 +36,7 @@ mod reach;
 mod resolve;
 
 pub use load::{parse_edits, EditsError};
-pub use mentions::Mentions;
+pub use mentions::{Named, Shows};
 
 use crate::arena::NodeId;
 use crate::document::element::DocKind;

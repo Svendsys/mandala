@@ -65,9 +65,11 @@ draws them.
   (by regex, every string a map draws as glyphs: spans, own `content`,
   `once` fillers, frame ornaments), `export` (Markdown), `verify` (the loader's
   verdict, with its JSON path, plus warnings for what loads but is
-  probably a mistake; a verb an edit names counts as referred to,
-  whether or not anything runs the edit, and an edit that can unhide a
-  node or give a portal end a marker silences those two warnings) and
+  probably a mistake; a verb an edit in the map names, anywhere in it
+  (its filter or its body), counts as referred to, whether or not
+  anything runs the edit, and an edit in the map that can unhide a node
+  or give a portal end a marker silences those two warnings; App and
+  User edits are not read) and
   `apply` (pipe matching sections' text through
   a command, as one `EditRequest` through `Document::apply`; `-i`
   writes the map back as the app's save does — through a link to its

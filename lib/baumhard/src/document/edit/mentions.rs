@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! What an edit's body says about the rest of the map: the verbs it
-//! names, and whether it can make drawn what a file saves undrawn.
-//! `maptool verify` reads it, so that a verb an edit names is not
-//! reported as unreferenced, and a node or portal an edit can show is
-//! not reported as never shown.
+//! What an edit says about the rest of the map, anywhere in it (its
+//! filter or its body): the verbs it names, and whether it can make
+//! drawn what a file saves undrawn. `maptool verify` reads it, so that a
+//! verb an edit names is not reported as unreferenced, and a node or
+//! portal an edit can show is not reported as never shown.
 //!
 //! Every edit type is walked by name: structs are destructured without
 //! `..` and enums matched without a wildcard, so a step added to the
@@ -18,13 +18,18 @@ use crate::document::format::edits::{
     NodeOpDto, PathOpDto, PortalEndOpDto, RingOpDto, SectionOpDto, SpanOpDto, TextOpDto,
 };
 
-/// What [`EditDef::mentions`] finds.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Mentions<'a> {
-    /// The id of each verb the edit names — a node's `set_click` or
-    /// `set_hover`, a span's `set_link` to `{"verb": …}`, a filter's
-    /// `on_click` or `on_hover` — in body order, repeats kept.
-    pub verbs: Vec<&'a str>,
+/// A definition an edit names, as [`EditDef::mentions`] reports it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Named<'a> {
+    /// A verb, by id: a node's `set_click` or `set_hover`, a span's
+    /// `set_link` to `{"verb": …}`, or a filter's `on_click` or
+    /// `on_hover`.
+    Verb(&'a str),
+}
+
+/// What an edit can make drawn, as [`EditDef::mentions`] finds it.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Shows {
     /// Whether it writes `set_hidden: false`.
     pub reveals: bool,
     /// Whether it writes a portal end's `set_content` to a non-empty
@@ -33,17 +38,19 @@ pub struct Mentions<'a> {
 }
 
 impl EditDef {
-    /// The verbs this edit names and what it can show, wherever in it
-    /// they are written: its filter, its mutations, a mutator's every
-    /// macro and `repeat_while` test, at any depth. A handler names
-    /// nothing and shows nothing: each one is a layout that writes
-    /// positions ([`edit_handlers`](crate::edit_handlers)).
+    /// Calls `named` with each definition this edit names, and returns
+    /// what it can show, wherever in it they are written: its filter, its
+    /// mutations, a mutator's every macro and `repeat_while` test, at any
+    /// depth. A handler names nothing and shows nothing: each one is a
+    /// layout that writes positions ([`edit_handlers`](crate::edit_handlers)).
     ///
     /// What the edit writes, not where it runs: which elements it
-    /// reaches depends on the anchors it is run at and on the map then.
+    /// reaches depends, in general, on the anchors it is run at and on the
+    /// map then.
     ///
-    /// Cost: one walk of the definition.
-    pub fn mentions(&self) -> Mentions<'_> {
+    /// Cost: one walk of the definition, one call of `named` per name it
+    /// writes, and no allocation.
+    pub fn mentions<'a>(&'a self, mut named: impl FnMut(Named<'a>)) -> Shows {
         let EditDef {
             id: _,
             name: _,
@@ -54,20 +61,30 @@ impl EditDef {
             body,
             animate: _,
         } = self;
-        let mut out = Mentions::default();
+        let mut walk = Walk {
+            named: &mut named,
+            shows: Shows::default(),
+        };
         if let Some(Filter(filter)) = filter {
-            out.filter(filter);
+            walk.filter(filter);
         }
         match body {
-            EditBody::Mutations(Mutations(mutations)) => out.mutations(mutations),
-            EditBody::Mutator(MutatorAst(mutator)) => out.mutator(mutator),
+            EditBody::Mutations(Mutations(mutations)) => walk.mutations(mutations),
+            EditBody::Mutator(MutatorAst(mutator)) => walk.mutator(mutator),
             EditBody::Handler(_) => {}
         }
-        out
+        walk.shows
     }
 }
 
-impl<'a> Mentions<'a> {
+/// One walk of an edit: where its names go, and what it has found it can
+/// show.
+struct Walk<'a, 'f> {
+    named: &'f mut dyn FnMut(Named<'a>),
+    shows: Shows,
+}
+
+impl<'a> Walk<'a, '_> {
     fn mutator(&mut self, mutator: &'a MutatorDto) {
         let children = match mutator {
             MutatorDto::Void {
@@ -107,7 +124,7 @@ impl<'a> Mentions<'a> {
         } = filter;
         for (field, _) in fields {
             match field {
-                FieldDto::OnClick(verb) | FieldDto::OnHover(verb) => self.verbs.push(verb),
+                FieldDto::OnClick(verb) | FieldDto::OnHover(verb) => (self.named)(Named::Verb(verb)),
                 FieldDto::Kind(_)
                 | FieldDto::Background(_)
                 | FieldDto::Channel(_)
@@ -162,7 +179,7 @@ impl<'a> Mentions<'a> {
                     | SectionOpDto::SetChannel(_) => {}
                 },
                 MutationDto::Span(op) => match op {
-                    SpanOpDto::SetLink(Some(LinkTargetDto::Verb(verb))) => self.verbs.push(verb),
+                    SpanOpDto::SetLink(Some(LinkTargetDto::Verb(verb))) => (self.named)(Named::Verb(verb)),
                     SpanOpDto::SetLink(Some(LinkTargetDto::Url(_)) | None) => {}
                     SpanOpDto::Text(op) => text(op),
                     SpanOpDto::SetText(_)
@@ -203,7 +220,7 @@ impl<'a> Mentions<'a> {
                 },
                 MutationDto::PortalEnd(op) => match op {
                     PortalEndOpDto::SetContent(Some(marker)) if !marker.is_empty() => {
-                        self.marks_portal_ends = true
+                        self.shows.marks_portal_ends = true
                     }
                     PortalEndOpDto::SetContent(_)
                     | PortalEndOpDto::SetBorderT(_)
@@ -217,8 +234,10 @@ impl<'a> Mentions<'a> {
 
     fn node(&mut self, op: &'a NodeOpDto) {
         match op {
-            NodeOpDto::SetClick(verb) | NodeOpDto::SetHover(verb) => self.verbs.extend(verb.as_deref()),
-            NodeOpDto::SetHidden(hidden) => self.reveals |= !hidden,
+            NodeOpDto::SetClick(verb) | NodeOpDto::SetHover(verb) => {
+                verb.iter().for_each(|verb| (self.named)(Named::Verb(verb)))
+            }
+            NodeOpDto::SetHidden(hidden) => self.shows.reveals |= !hidden,
             NodeOpDto::Text(op) => text(op),
             NodeOpDto::SetPosition(_)
             | NodeOpDto::Nudge(_)
