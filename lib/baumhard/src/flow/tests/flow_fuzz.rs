@@ -1375,7 +1375,7 @@ fn check_generated_pinning(
                             // to what a frame laid when it was found.
                             // Its paths' tables, counted in its setup (ruling
                             // B16.3a), for the text it is laid with.
-                            let tables = |run: &ShapedRun| setup_table_samples(run, &path, &fit, &flow);
+                            let tables = |run: &ShapedRun| setup_table_samples(run, path, &fit, &flow);
                             let (layout, ornament) = if bounded {
                                 sides_in_time(layout, &flow, scale, STRUCTURED_FRAMES, &tables, &mut fs)
                             } else {
@@ -1413,7 +1413,7 @@ fn check_generated_pinning(
                             let cap = ring_cap(run.glyphs.len(), bounded, laid_tables);
                             let placed = place_on_closed_capped(
                                 &run,
-                                &path,
+                                path,
                                 start,
                                 direction,
                                 &fit,
@@ -1431,7 +1431,7 @@ fn check_generated_pinning(
                             // and says so (ruling R38.1): what it cut is no
                             // longer owed.
                             let whole =
-                                owes_whole(&run, &fit, frame_room(&path)) && trace.cut_apart.is_empty();
+                                owes_whole(&run, &fit, frame_room(path)) && trace.cut_apart.is_empty();
                             let mut work = InputWork::default();
                             let sized = matches!(fit, FitMode::Fit { .. });
                             let counted = if matches!(fit, FitMode::Repeat) {

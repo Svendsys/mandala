@@ -2473,7 +2473,7 @@ const ARC_READS: usize = 1;
 /// at most; and [`pair`]'s inks tried, each a read, [`PAIR_ROUNDS`] for
 /// it and the inks before its neighbor together. A space, or the first
 /// ink, is one. What a side's lays are held back for before they are
-/// laid ([`SideOrnament::lay_steps`]).
+/// laid ([`SideOrnament::copy_steps`]).
 pub(crate) const SIDE_CLUSTER_READS: usize = 2 * FORM_CHAIN + PAIR_ROUNDS;
 
 /// Where [`model_root`] sets a letter: how far along the path past the
@@ -2973,7 +2973,7 @@ impl Work {
     }
 
     /// Count `steps` glyph steps of a side ornament's lays: in a test, its
-    /// frames' side steps too ([`SIDE_STEPS`], #313).
+    /// frames' side steps too (`SIDE_STEPS`, #313).
     fn side(&self, steps: usize) {
         #[cfg(test)]
         SIDE_STEPS.with(|count| count.set(count.get().saturating_add(steps)));
@@ -3907,7 +3907,7 @@ impl<'a> SideOrnament<'a> {
 
     /// Note in a test that a lay of the arc's copies, bringing it to
     /// `copies`, is counted (#313): how near it left the frame to what its
-    /// budget holds for their touch check ([`SIDE_EDGE`]) — never past it,
+    /// budget holds for their touch check (`SIDE_EDGE`) — never past it,
     /// which is what [`affords`](Self::affords) holds the lay back for.
     #[cfg_attr(not(test), allow(unused_variables))]
     fn laid(&self, copies: usize) {
@@ -3966,7 +3966,7 @@ impl<'a> SideOrnament<'a> {
 
     /// Lay `cluster` onto `lay` at `gap`, as [`InkLay::cluster`] does: in a
     /// test, noting the most path reads one cluster of a side's lay takes
-    /// ([`MOST_SIDE_CLUSTER_READS`]).
+    /// (`MOST_SIDE_CLUSTER_READS`).
     fn lay_cluster(&self, lay: &mut InkLay<'_>, cluster: &Cluster, gap: f32) {
         #[cfg(test)]
         let before = self.walk.path.reads();
