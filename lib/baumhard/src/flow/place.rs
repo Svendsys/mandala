@@ -782,6 +782,17 @@ thread_local! {
     /// thread.
     #[cfg(test)]
     pub(crate) static RINGS_STOPPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#313): the last placement along an open path laid on
+    /// this thread ([`LastRing`]), how far past what its budget left after
+    /// its hold it was when a walk of it first found it spent
+    /// (`RingWork::crossed`), and the probes of phase 2's spacing solves it
+    /// began with its budget spent (`RingWork::late`).
+    #[cfg(test)]
+    pub(crate) static LAST_OPEN: std::cell::Cell<Option<(LastRing, Option<usize>, usize)>> = const { std::cell::Cell::new(None) };
+    /// Test counter (#313): the placements along open paths their budgets
+    /// have stopped on this thread.
+    #[cfg(test)]
+    pub(crate) static OPENS_STOPPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A `Repeat` ring as laid (#310), what [`LAST_RING`] keeps: its glyphs a
@@ -1413,7 +1424,23 @@ impl PathWalk<'_> {
                 let ink = cluster_ink(glyphs, cluster, |glyph| size_factor(glyph.size, scale));
                 self.body(width(cluster), ink, cluster.blank, h)
             });
-            return self.walk_bodies(bodies, 0.0, 0.0, Trail::default()).0;
+            let end = self.walk_bodies(bodies, 0.0, 0.0, Trail::default()).0;
+            // Its walk stopped by its budget (#313): `Fit`'s scale is not
+            // solved to the end.
+            if self.spent() {
+                self.lose(RingLoss::Uneven);
+            }
+            return end;
+        }
+        // A measure of the text as read walks it as phase 2 would, reading
+        // no budget as it goes: read before it runs, at the most phase 2
+        // takes of its glyphs (#313). One the placement cannot afford is
+        // not made: the scale is not solved to the end.
+        if let Some(work) = self.work {
+            if !work.affords_more(self.path, ring::phase_two_steps(glyphs.len(), true)) {
+                self.lose(RingLoss::Uneven);
+                return f32::NAN;
+            }
         }
         let widths: Vec<f32> = clusters.iter().map(width).collect();
         let breaks: Vec<bool> = clusters.iter().map(|cluster| cluster.word_break).collect();
@@ -2772,6 +2799,26 @@ pub(crate) fn place_on_open_traced(
     fs: &mut FontSystemLease,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
+    place_on_open_capped(run, curve, fit, spacing, flow, fs, MAX_PLACED_GLYPHS, trace)
+}
+
+/// [`place_on_open_traced`], laying at most `cap` glyphs, and its budget
+/// scaled by no more ([`MAX_PLACED_GLYPHS`] at most; #313, as ruling
+/// B17.2a has a ring's): what the flow fuzzers lay an open path's
+/// placement with, so that its work fits what an input may take whatever
+/// its text and its path. A placement its cap stops is short
+/// ([`RingLoss::Short`]).
+#[allow(clippy::too_many_arguments)] // `place_on_open_traced`'s, and the cap.
+pub(crate) fn place_on_open_capped(
+    run: &ShapedRun,
+    curve: &(impl AsRef<[Curve]> + ?Sized),
+    fit: &FitMode,
+    spacing: f32,
+    flow: &ResolvedText,
+    fs: &mut FontSystemLease,
+    cap: usize,
+    trace: Option<&mut Trace>,
+) -> (Option<ShapedRun>, PlacedRun) {
     let table = table_spacing(run, fit, flow);
     let arc = ArcPath::open(curve, table);
     let spacing = if spacing.is_finite() {
@@ -2779,18 +2826,7 @@ pub(crate) fn place_on_open_traced(
     } else {
         0.0
     };
-    let laid = place(
-        run,
-        &arc,
-        false,
-        fit,
-        spacing,
-        false,
-        flow,
-        fs,
-        MAX_PLACED_GLYPHS,
-        trace,
-    );
+    let laid = place(run, &arc, false, fit, spacing, false, flow, fs, cap, trace);
     #[cfg(test)]
     identity::note(&laid);
     laid
@@ -3046,33 +3082,42 @@ fn place(
     outward: bool,
     flow: &ResolvedText,
     fs: &mut FontSystemLease,
-    ring_cap: usize,
+    cap: usize,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
     let memo = StepMemo::default();
-    // A ring of repeats is budgeted as a frame is (#310), by the glyphs it
-    // will lay, at most `ring_cap` (rulings B17.1a, B17.2a); no other
-    // placement's walks are.
-    let ring = (closed && matches!(fit, FitMode::Repeat)).then(|| {
-        let cap = ring_cap.min(MAX_PLACED_GLYPHS);
+    // Every placement here is budgeted as a frame is, by the glyphs it
+    // will lay, at most `cap`: a ring of repeats (#310; rulings B17.1a,
+    // B17.2a), and every mode along an open path (#313) — `Repeat` by the
+    // copies its path holds, as a ring, the others by their text, and
+    // `Once` with a filler by its copies too once the filler is shaped
+    // (`once`).
+    // An open path's cap is the one every walk but a ring's has: in a
+    // test, the frame's cap seam's (`placed_cap`).
+    let cap = cap.min(if closed { MAX_PLACED_GLYPHS } else { placed_cap() });
+    let glyphs = if matches!(fit, FitMode::Repeat) {
         let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len()).len();
         let advance = ring::copy_advance(&run.glyphs, clusters, spacing);
-        let glyphs = ring::ring_glyphs(run.glyphs.len(), advance, path.length(), cap);
         #[cfg(test)]
-        LAST_RING_ESTIMATE.with(|last| last.set(Some((run.glyphs.len(), advance, path.length()))));
-        RingWork::new(
-            path,
-            run.glyphs.len(),
-            run.glyphs.iter().any(|glyph| glyph.letter),
-            run.line_height,
-            glyphs,
-            cap,
-        )
-    });
+        if closed {
+            LAST_RING_ESTIMATE.with(|last| last.set(Some((run.glyphs.len(), advance, path.length()))));
+        }
+        ring::ring_glyphs(run.glyphs.len(), advance, path.length(), cap)
+    } else {
+        run.glyphs.len().min(cap)
+    };
+    let work = RingWork::new(
+        path,
+        run.glyphs.len(),
+        run.glyphs.iter().any(|glyph| glyph.letter),
+        run.line_height,
+        glyphs,
+        cap,
+    );
     let walk = |run: &ShapedRun| PathWalk {
         path,
         memo: Some(&memo),
-        work: ring.as_ref(),
+        work: Some(&work),
         line_height: run.line_height,
         outward,
         limit: path.length() + end_slack(path.length()),
@@ -3089,46 +3134,46 @@ fn place(
         FitMode::Spread => fs.unlocked(|| spread(run, &walk(run), 0.0)),
         FitMode::Fit { min, max } => fit_to(run, path, *min, *max, fs.fonts(), &walk),
     };
+    work.lay_again();
     let mut trace = trace;
-    if let Some(ring) = &ring {
-        ring.lay_again();
+    let placed = fs.unlocked(|| walk(walked.run.as_ref().unwrap_or(run)).readable(walked, trace.as_deref_mut()));
+    work.placed(placed.1.glyphs.len());
+    let spent = work.spent(path);
+    let (budget, glyphs, _) = work.budget();
+    if let Some(trace) = trace {
+        trace.spent = spent;
+        trace.tables = work.tables();
+        trace.budget = budget;
+        trace.glyphs = glyphs;
+        trace.ring = work.loss();
     }
-    let placed =
-        fs.unlocked(|| walk(walked.run.as_ref().unwrap_or(run)).readable(walked, trace.as_deref_mut()));
-    if let Some(ring) = &ring {
-        ring.placed(placed.1.glyphs.len());
-        let spent = ring.spent(path);
-        let (budget, glyphs, _) = ring.budget();
-        if let Some(trace) = trace {
-            trace.spent = spent;
-            trace.tables = ring.tables();
-            trace.budget = budget;
-            trace.glyphs = glyphs;
-            trace.ring = ring.loss();
-        }
-        // All the ring takes past its budget (ruling R50.4): what is held
-        // back for phase 2 is within it.
-        #[cfg(test)]
-        {
-            halves::PAST_BUDGET
-                .with(|past| past.set(past.get().saturating_add(spent.saturating_sub(budget))));
-            LAST_RING.with(|last| {
-                last.set(Some(LastRing {
-                    copy: ring.budget().2,
-                    glyphs,
-                    cap: ring.cap(),
-                    placed: placed.1.glyphs.len(),
-                    spent,
-                    budget,
-                    tables: ring.tables(),
-                    loss: ring.loss(),
-                    held: ring.held_again(),
-                }))
-            });
-            RING_CROSSED.with(|crossed| crossed.set(ring.crossed()));
-            RING_LATE.with(|late| late.set(ring.late()));
-            if ring.loss().is_some() {
+    // All the placement takes past its budget (ruling R50.4): what is held
+    // back for phase 2 is within it.
+    #[cfg(test)]
+    {
+        halves::PAST_BUDGET.with(|past| past.set(past.get().saturating_add(spent.saturating_sub(budget))));
+        let laid = LastRing {
+            copy: work.budget().2,
+            glyphs,
+            cap: work.cap(),
+            placed: placed.1.glyphs.len(),
+            spent,
+            budget,
+            tables: work.tables(),
+            loss: work.loss(),
+            held: work.held_again(),
+        };
+        if closed {
+            LAST_RING.with(|last| last.set(Some(laid)));
+            RING_CROSSED.with(|crossed| crossed.set(work.crossed()));
+            RING_LATE.with(|late| late.set(work.late()));
+            if work.loss().is_some() {
                 RINGS_STOPPED.with(|count| count.set(count.get() + 1));
+            }
+        } else {
+            LAST_OPEN.with(|last| last.set(Some((laid, work.crossed(), work.late()))));
+            if work.loss().is_some() {
+                OPENS_STOPPED.with(|count| count.set(count.get() + 1));
             }
         }
     }
@@ -3148,7 +3193,12 @@ fn once_text(run: &ShapedRun, walk: &PathWalk<'_>, gap: f32) -> (Walked, Option<
         Laid::Fits(next) if !cut => Some(next),
         _ => None,
     };
-    let truncated = cut || laid == Laid::Capped;
+    // Its lay, or its cut, stopped by its budget or its cap, not the path
+    // (#313): short of the text, and said so.
+    if matches!(laid, Laid::Spent | Laid::Capped) {
+        walk.lose(RingLoss::Short);
+    }
+    let truncated = cut || matches!(laid, Laid::Spent | Laid::Capped);
     let text = laying.steps.len();
     let walked = Walked {
         run: None,
@@ -3189,9 +3239,25 @@ fn once<'p>(
     let walk = walk_for(&filled);
     let text = clusters_of(&filled.glyphs, 0..text_glyphs);
     let copy = clusters_of(&filled.glyphs, text_glyphs..filled.glyphs.len());
+    // Its budget scaled by its copies too, as a `Repeat`'s is by the copies
+    // its path holds (#313; ruling B17.1a): the text and the copies of the
+    // filler the path past it holds.
+    if let Some(work) = walk.work {
+        let filler_glyphs = filled.glyphs.len() - text_glyphs;
+        let advance = ring::copy_advance(&filled.glyphs[text_glyphs..], copy.len(), gap);
+        let room = walk.path.length() - next.unwrap_or(0.0);
+        work.scale(text_glyphs.saturating_add(ring::ring_glyphs(filler_glyphs, advance, room, work.cap())));
+    }
     let mut glyphs = Laying::with_capacity(filled.glyphs.len());
-    let Laid::Fits(mut s) = walk.lay(&filled.glyphs, &text, 0.0, gap, &mut glyphs) else {
-        return placed;
+    let mut s = match walk.lay(&filled.glyphs, &text, 0.0, gap, &mut glyphs) {
+        Laid::Fits(s) => s,
+        // Its budget spent laying its text again, or its cap reached, it
+        // keeps its text as first laid, short of its copies (#313).
+        Laid::Spent | Laid::Capped => {
+            walk.lose(RingLoss::Short);
+            return placed;
+        }
+        Laid::Overran => return placed,
     };
     let mut copies = 0usize;
     let mut capped = false;
@@ -3211,7 +3277,10 @@ fn once<'p>(
                 break;
             }
             Laid::Capped | Laid::Spent => {
+                // Its budget spent, or its cap reached, before its copies
+                // fill the path (#313): the copies it has, said so.
                 glyphs.truncate(before);
+                walk.lose(RingLoss::Short);
                 capped = true;
                 break;
             }
@@ -3517,7 +3586,10 @@ fn spread(run: &ShapedRun, walk: &PathWalk<'_>, overrun_slack: f32) -> Walked {
         return walked;
     }
     let guess = (length - natural) / (clusters.len() - 1) as f32;
-    let gap = solve_gap(|gap| walk.measure(&clusters, gap) - length, length, guess);
+    // Read against the placement's budget before each probe (#313): a
+    // solve it stops keeps the fitting side of its bracket, the text laid
+    // short of the path's end, and is uneven.
+    let gap = walk.solve(|gap| walk.measure(&clusters, gap) - length, length, guess);
     let mut walked = once_text(run, walk, gap).0;
     walked.ends = Ends::Exactly;
     walked
@@ -3672,12 +3744,32 @@ fn fit_to<'p>(
         let placed_run = rescaled.as_ref().unwrap_or(run);
         let slack = if scale > low { SOLVE_TOLERANCE } else { 0.0 };
         let placed_walk = walk_for(placed_run);
+        // Reshaped smaller, its walks step more often past where they end:
+        // the run on held back for is at its line height (#313).
+        if let Some(work) = placed_walk.work {
+            work.steps_at(placed_run.line_height);
+        }
         let walked = Walked {
             slack,
             whole_words: scale > low,
             even: false,
             ..spread(placed_run, &placed_walk, slack)
         };
+        // Its read measured as phase 2 would lay it, which reads no budget
+        // as it goes: read before it runs, at the most phase 2 takes of the
+        // glyphs laid (#313). A placement that cannot afford it keeps this
+        // round's walk, which phase 2 cuts where it overruns: its scale is
+        // not solved to the end.
+        if let Some(work) = placed_walk.work {
+            let glyphs = walked.laying.glyphs.len();
+            if !work.affords_more(path, ring::phase_two_steps(glyphs, true)) {
+                work.lose(RingLoss::Uneven);
+                return Walked {
+                    run: rescaled,
+                    ..walked
+                };
+            }
+        }
         let (read, limit) = placed_walk.readable_extent(&walked.laying.steps, slack);
         // A walk that had to cut the text overran, however its kept
         // clusters read.
