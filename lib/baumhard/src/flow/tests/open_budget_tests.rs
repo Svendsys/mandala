@@ -532,6 +532,37 @@ fn test_flow_open_budget_a_pitched_pattern_takes_its_budget_at_most() {
     );
 }
 
+/// #313, as ruling B17.1a has it for a ring's copies: a `Once` with a
+/// filler is budgeted by the copies of its filler its path holds past its
+/// text, not by its text alone — along the cubic 10²² across, which holds
+/// the grid's cap of copies, its budget is past its text's.
+///
+/// Control: see the pull request of #313.
+#[test]
+fn test_flow_open_budget_a_once_with_a_filler_is_budgeted_by_its_copies() {
+    use crate::flow::place::halves::frame_budget;
+    let fillers: Vec<&Laid> = grid()
+        .iter()
+        .filter_map(|case| case.laid.last())
+        .filter(|own| own.what.contains("Once with a filler along a cubic 10²² across"))
+        .collect();
+    assert!(
+        fillers.len() == 2 && fillers.iter().all(|own| own.placed.glyphs.len() > own.copy),
+        "precondition: the grid lays both its fillers along the far cubic past their text"
+    );
+    for own in fillers {
+        assert!(
+            own.budget > frame_budget(own.copy),
+            "{}: budgeted {} glyph steps, its text's {} alone, though it placed {} glyphs of a text of {}",
+            own.what,
+            own.budget,
+            frame_budget(own.copy),
+            own.placed.glyphs.len(),
+            own.copy
+        );
+    }
+}
+
 /// The connectors of the margin sweep: a line and a cubic at the origin,
 /// from 1,000 long to 200,000, as a map's connectors and line links run.
 fn sweep_paths() -> Vec<(String, Curve)> {
