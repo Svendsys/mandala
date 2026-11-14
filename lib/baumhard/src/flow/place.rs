@@ -3136,7 +3136,8 @@ fn place(
     };
     work.lay_again();
     let mut trace = trace;
-    let placed = fs.unlocked(|| walk(walked.run.as_ref().unwrap_or(run)).readable(walked, trace.as_deref_mut()));
+    let placed =
+        fs.unlocked(|| walk(walked.run.as_ref().unwrap_or(run)).readable(walked, trace.as_deref_mut()));
     work.placed(placed.1.glyphs.len());
     let spent = work.spent(path);
     let (budget, glyphs, _) = work.budget();

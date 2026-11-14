@@ -482,7 +482,11 @@ fn setup_steps(marks: usize, boxes: usize) -> usize {
 /// are counted as they are placed. A placement its budget stops is laid
 /// at the count and the slack found so far, or, stopped before its first
 /// ink, laid empty, and it is short ([`RingLoss::Short`]) — as is one its
-/// cap holds. So it takes no more than its budget.
+/// cap holds. So it takes no more than its budget, but for what it counts
+/// before it first reads it: its own setup and its path's table, as a
+/// ring's ([`ring_overshoot`](super::ring::ring_overshoot)) — none of it
+/// past the budget of any real placement, which is at least
+/// [`TRACK_BUDGET`](super::halves::TRACK_BUDGET).
 pub(crate) fn place_pitched_capped(
     run: &ShapedRun,
     path: &(impl AsRef<[Curve]> + ?Sized),
@@ -596,7 +600,8 @@ pub(crate) fn place_pitched_capped(
     }
     #[cfg(test)]
     {
-        super::halves::PAST_BUDGET.with(|past| past.set(past.get().saturating_add(spent.saturating_sub(budget))));
+        super::halves::PAST_BUDGET
+            .with(|past| past.set(past.get().saturating_add(spent.saturating_sub(budget))));
         LAST_PITCHED.with(|last| last.set(Some((spent, budget, work.loss()))));
     }
     placed

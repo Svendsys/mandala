@@ -18,6 +18,9 @@ pub mod flow_fuzz;
 mod flow_fuzz_tests;
 pub mod halves_tests;
 pub mod lines_tests;
+/// A placement along an open path's work budget (#313).
+#[cfg(test)]
+mod open_budget_tests;
 pub mod outline_tests;
 pub mod pitch_tests;
 pub mod place_tests;

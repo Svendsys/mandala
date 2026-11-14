@@ -153,9 +153,9 @@ use std::rc::Rc;
 use glam::Vec2;
 
 use super::lines::{frame_halves, frame_lines, line_partition, place_lines_in};
+use super::ring::steps_of;
 #[cfg(doc)]
 use super::ring::READS_A_STEP;
-use super::ring::steps_of;
 use super::*;
 use crate::document::values::FontSize;
 use crate::flow::path::{Bend, CornerForm, EllipseForm, FormPoint, OffsetIn};
@@ -3829,9 +3829,8 @@ impl<'a> SideOrnament<'a> {
             .base
             .get()
             .saturating_add(copies.saturating_mul(self.per_copy));
-        self.work.affords(
-            check_steps(boxes, self.classes.get()).saturating_add(self.lay_steps(laying)),
-        )
+        self.work
+            .affords(check_steps(boxes, self.classes.get()).saturating_add(self.lay_steps(laying)))
     }
 
     /// The most glyph steps a lay of `copies` copies counts (#313): a
