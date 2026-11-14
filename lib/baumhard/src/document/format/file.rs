@@ -90,8 +90,11 @@ pub fn read(path: &str) -> Result<Document, String> {
 /// exclusively and without following a symlink, are flushed and synced,
 /// and only then are renamed over `path`; a write that fails part of the
 /// way leaves the file that was there whole, and removes its temp file.
-/// A `path` that is itself a symlink is refused, never written through
-/// or replaced.
+/// A `path` that is a symlink is saved *through*: the write goes beside
+/// the file at the end of its chain of links
+/// ([`real_file`](crate::util::guarded_file::real_file)), which it
+/// replaces, and the link stays a link. A link that leads nowhere, or
+/// to something that is not a regular file, is refused, naming both.
 ///
 /// `text` is what [`Document::save_json`] returned; this function does
 /// not judge it. In the browser there are no files, and the write fails
@@ -114,8 +117,9 @@ fn publish(
     path: &str,
     produce: impl FnOnce(&mut dyn std::io::Write) -> Result<(), String>,
 ) -> Result<(), String> {
-    use crate::util::guarded_file::{publish, PublishRefusal};
-    publish(Path::new(path), true, produce)
+    use crate::util::guarded_file::{publish, real_file, PublishRefusal};
+    real_file(Path::new(path))
+        .and_then(|real| publish(&real, true, produce))
         .map(|_| ())
         .map_err(|refusal| {
             let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
@@ -194,25 +198,78 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// A symlink at the map's path is refused and what it points at is
-    /// untouched: the map is never written through a link, nor the link
-    /// replaced by a file.
+    /// A map kept behind a symlink saves through it: the target's bytes
+    /// are replaced, the link is still a link to the same target, and
+    /// nothing is left beside either.
     ///
-    /// Control: the earlier writer (`File::create` on `<name>.saving`,
-    /// then a rename) replaced the link with a regular file, and the
-    /// first assertion goes red.
+    /// Control: publishing at the path as given (no `real_file`) refuses
+    /// the symlink, and the write's `unwrap` goes red; the earlier
+    /// writer replaced the link with a regular file, and the link
+    /// assertion goes red.
     #[cfg(unix)]
     #[test]
-    fn test_file_write_refuses_a_symlinked_map() {
+    fn test_file_write_saves_through_a_symlinked_map() {
         let dir = scratch_dir("file-symlink");
         let target = dir.join("real.mandala.json");
-        std::fs::write(&target, "precious").unwrap();
+        std::fs::write(&target, "old").unwrap();
         let link = dir.join("m.mandala.json");
         std::os::unix::fs::symlink(&target, &link).unwrap();
-        let refused = write(link.to_str().unwrap(), "new").unwrap_err();
-        assert!(refused.contains("is a symlink"), "{refused}");
+        write(link.to_str().unwrap(), "new").unwrap();
         assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
-        assert_eq!(std::fs::read_to_string(&target).unwrap(), "precious");
+        assert_eq!(std::fs::read_link(&link).unwrap(), target);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+        assert_eq!(names_in(&dir), ["m.mandala.json", "real.mandala.json"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A chain of two links saves through to the file at its end, and
+    /// both links stay links.
+    ///
+    /// Control: resolving one hop (`read_link`) in place of the chain
+    /// publishes over the middle link, which is refused, and the write's
+    /// `unwrap` goes red.
+    #[cfg(unix)]
+    #[test]
+    fn test_file_write_saves_through_a_chain_of_links() {
+        let dir = scratch_dir("file-chain");
+        let target = dir.join("real.mandala.json");
+        std::fs::write(&target, "old").unwrap();
+        let middle = dir.join("middle.mandala.json");
+        std::os::unix::fs::symlink(&target, &middle).unwrap();
+        let link = dir.join("m.mandala.json");
+        std::os::unix::fs::symlink(&middle, &link).unwrap();
+        write(link.to_str().unwrap(), "new").unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+        for name in [&link, &middle] {
+            assert!(std::fs::symlink_metadata(name).unwrap().file_type().is_symlink());
+        }
+        assert_eq!(
+            names_in(&dir),
+            ["m.mandala.json", "middle.mandala.json", "real.mandala.json"]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A link that leads nowhere is refused, naming the link and where it
+    /// leads, and nothing is created — neither its target nor a file in
+    /// its place.
+    ///
+    /// Control: returning the canonical-or-given path for a dangling
+    /// link publishes at the link, which the guarded writer refuses as a
+    /// symlink, so the message assertion goes red.
+    #[cfg(unix)]
+    #[test]
+    fn test_file_write_refuses_a_dangling_link() {
+        let dir = scratch_dir("file-dangling");
+        let link = dir.join("m.mandala.json");
+        std::os::unix::fs::symlink(dir.join("gone.mandala.json"), &link).unwrap();
+        let refused = write(link.to_str().unwrap(), "new").unwrap_err();
+        assert!(refused.contains("is a symlink to"), "{refused}");
+        assert!(
+            refused.contains("gone.mandala.json`, which does not exist"),
+            "{refused}"
+        );
+        assert_eq!(names_in(&dir), ["m.mandala.json"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

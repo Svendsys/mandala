@@ -18,7 +18,10 @@
 //! **Why here.** The app and `maptool` are two processes that can save
 //! one map at the same moment, so the map writer needs the same
 //! guarantees, and one implementation of them is kept: this one, in the
-//! crate both depend on.
+//! crate both depend on. A path the user names themselves — a map they
+//! save, `maptool`'s output — is first resolved to its real file
+//! (`real_file`), so a map kept behind a symlink stays saveable; a path
+//! a remote caller names is not, and a symlink there is refused.
 //!
 //! The browser has no files, and no process id for the temp file's
 //! name: there, `publish` refuses
@@ -206,6 +209,50 @@ pub fn publish(
         }
     })?;
     Ok(bytes)
+}
+
+/// The real file a path the **user names themselves** stands for: the
+/// path itself when it is not a symlink (or does not exist yet, so it is
+/// created), else the file at the end of its chain of links. A write
+/// published there with [`publish`] goes *through* the link to its
+/// target, atomically, and leaves the link a link.
+///
+/// For the paths a person types on their own command line or picks to
+/// save to — a map's save, `maptool`'s `-i` and `export`, where a map
+/// kept behind a symlink (a dotfile setup, a synced folder) must stay
+/// saveable. Never for a path a remote caller names: [`publish`] alone
+/// refuses a symlink there, and that refusal is what keeps an IPC
+/// caller from writing outside where it was told to.
+///
+/// Refused, naming the path and where it leads: a link whose chain
+/// ends nowhere, or at something that is not a regular file. In the
+/// browser, which has no files, the path is returned as it is and
+/// [`publish`] refuses it.
+///
+/// Cost: one `symlink_metadata`, and for a link one `canonicalize` (a
+/// walk of its chain) and one `metadata`.
+pub fn real_file(path: &Path) -> Result<std::path::PathBuf, PublishRefusal> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            let leads = std::fs::read_link(path)
+                .map(|to| to.display().to_string())
+                .unwrap_or_else(|e| format!("somewhere unreadable ({e})"));
+            let shown = path.display();
+            let real = std::fs::canonicalize(path).map_err(|_| {
+                PublishRefusal::Invalid(format!(
+                    "`{shown}` is a symlink to `{leads}`, which does not exist"
+                ))
+            })?;
+            match std::fs::metadata(&real) {
+                Ok(meta) if meta.is_file() => Ok(real),
+                _ => Err(PublishRefusal::Invalid(format!(
+                    "`{shown}` is a symlink to `{}`, which is not a regular file",
+                    real.display()
+                ))),
+            }
+        }
+        _ => Ok(path.to_path_buf()),
+    }
 }
 
 /// [`publish`] in the browser,

@@ -131,19 +131,71 @@ pub fn rewrite(doc: &mut Document, changed: &[Target], label: &str) -> Result<()
 /// (`diff -U0`), from `before` — the map's bytes as they are on disk —
 /// to `after`, the text `-i` would write in their place; empty when the
 /// two are equal. Both headers name `name`, the map's path as given, so
-/// the diff applies with `patch -p0`. A file not in the saver's layout
-/// shows every line `-i` would rewrite, since that is what it would do.
+/// the diff applies with `patch -p0`.
 ///
-/// Cost: the line diff of the two texts (`similar`'s Myers diff).
+/// When the two have as many lines, they correspond one to one — the
+/// case of a file in the saver's layout, where `apply` changes only the
+/// one `sections` line of each node it rewrites (D31) — and each run of
+/// changed lines is a hunk. Otherwise the file is in another layout,
+/// `-i` rewrites all of it, and the diff says exactly that: one hunk of
+/// every line out and every line in. A last line with no line break is
+/// marked as `diff` marks it.
+///
+/// Cost: one pass over both texts; the output.
 pub fn diff(name: &str, before: &str, after: &str) -> String {
     if before == after {
         return String::new();
     }
-    similar::TextDiff::from_lines(before, after)
-        .unified_diff()
-        .context_radius(0)
-        .header(name, name)
-        .to_string()
+    let old: Vec<&str> = before.split_inclusive('\n').collect();
+    let new: Vec<&str> = after.split_inclusive('\n').collect();
+    let mut out = format!("--- {name}\n+++ {name}\n");
+    if old.len() != new.len() {
+        hunk(&mut out, &old, 0, &new, 0);
+        return out;
+    }
+    let mut i = 0;
+    while i < old.len() {
+        if old[i] == new[i] {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < old.len() && old[i] != new[i] {
+            i += 1;
+        }
+        hunk(&mut out, &old[start..i], start, &new[start..i], start);
+    }
+    out
+}
+
+/// One hunk: `old`, from 0-based line `old_start`, out; `new`, from
+/// `new_start`, in.
+fn hunk(out: &mut String, old: &[&str], old_start: usize, new: &[&str], new_start: usize) {
+    out.push_str(&format!(
+        "@@ -{} +{} @@\n",
+        range(old_start, old.len()),
+        range(new_start, new.len())
+    ));
+    for (sign, lines) in [('-', old), ('+', new)] {
+        for line in lines {
+            out.push(sign);
+            out.push_str(line);
+            if !line.ends_with('\n') {
+                out.push_str("\n\\ No newline at end of file\n");
+            }
+        }
+    }
+}
+
+/// A hunk's range of `count` lines from 0-based `start`, as a unified
+/// diff spells it: `l` for one line, `l,n` otherwise, and for no lines
+/// the line before them, `l,0`.
+fn range(start: usize, count: usize) -> String {
+    match count {
+        0 => format!("{start},0"),
+        1 => format!("{}", start + 1),
+        _ => format!("{},{count}", start + 1),
+    }
 }
 
 /// Spawn `cmd args`, write `input` to its stdin from a thread of its own
@@ -222,8 +274,8 @@ mod tests {
     /// numbered from 1 and headed by the name as given; equal texts give
     /// nothing.
     ///
-    /// Control: a context radius of 1 joins the two hunks into one, with
-    /// the unchanged `c` between them.
+    /// Control: ending a hunk after one changed line splits the `d`, `e`
+    /// pair in two, and the comparison goes red.
     #[test]
     fn test_apply_diff_is_a_zero_context_unified_diff() {
         let before = "a\nb\nc\nd\ne\n";
@@ -238,9 +290,8 @@ mod tests {
     /// A text of another shape — one line where the save writes three —
     /// is diffed as it is: the one line goes, the three come.
     ///
-    /// Control: `a/` and `b/` headers fail it on the header lines; the
-    /// layout itself is held end to end by the CLI test on a one-line
-    /// map, which a diff of a re-save fails.
+    /// Control: dropping the whole-file branch compares the first line
+    /// alone and loses the two added lines.
     #[test]
     fn test_apply_diff_reports_a_change_of_shape() {
         assert_eq!(

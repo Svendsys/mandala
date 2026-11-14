@@ -41,7 +41,7 @@ use std::path::Path;
 
 use baumhard::document::format::file;
 use baumhard::document::ids::Document;
-use baumhard::util::guarded_file::{publish, PublishRefusal};
+use baumhard::util::guarded_file::{publish, real_file, PublishRefusal};
 use baumhard::util::log::{collapse_home_in, tilde_path};
 use regex::{Regex, RegexBuilder};
 
@@ -87,7 +87,8 @@ Commands:
                                 To stdout, or to <out.md>, which may not
                                 be a map ('.mandala.json'), and is
                                 written through a temporary file and a
-                                rename, never through a symlink.
+                                rename; a symlink is written through to
+                                its file.
   verify <map>                  Load the map: a refusal is printed with
                                 its JSON path and exits 1. Then print a
                                 warning for what loads but is probably a
@@ -111,7 +112,8 @@ Commands:
                                 with (?i). Prints the changed map to
                                 stdout; -i writes it back to <map>
                                 instead, through a temporary file and a
-                                rename; --dry-run prints, as a unified
+                                rename (a map behind a symlink is saved
+                                through it); --dry-run prints, as a unified
                                 diff, what -i would change in the file
                                 on disk, and writes nothing (the
                                 commands still run). Each command runs
@@ -262,14 +264,19 @@ fn export(args: &[String]) -> Result<String, CliError> {
     let markdown = export::markdown(&read(map)?);
     match out {
         None => Ok(markdown),
-        Some(path) => publish(Path::new(path), true, |out| {
-            out.write_all(markdown.as_bytes()).map_err(|e| e.to_string())
-        })
-        .map(|_| String::new())
-        .map_err(|refusal| {
-            let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
-            CliError::Failed(collapse_home_in(&format!("export: {message}")))
-        }),
+        // A path named on maptool's own command line saves through a
+        // symlink to its real file, as a map's save does (`real_file`).
+        Some(path) => real_file(Path::new(path))
+            .and_then(|real| {
+                publish(&real, true, |out| {
+                    out.write_all(markdown.as_bytes()).map_err(|e| e.to_string())
+                })
+            })
+            .map(|_| String::new())
+            .map_err(|refusal| {
+                let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
+                CliError::Failed(collapse_home_in(&format!("export: {message}")))
+            }),
     }
 }
 

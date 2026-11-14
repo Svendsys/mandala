@@ -397,6 +397,36 @@ fn test_export_refuses_to_write_over_a_map() {
     assert_eq!(std::fs::read(&map).unwrap(), before);
 }
 
+/// An `<out.md>` that is a symlink is written through to its file, and
+/// stays a link: the same rule as a map's save, for a path named on
+/// maptool's own command line. A new output file is simply created.
+///
+/// Control: publishing at the path as given (no `real_file`) refuses
+/// the link, and the status assertion goes red.
+#[cfg(unix)]
+#[test]
+fn test_export_writes_through_a_symlinked_output() {
+    let dir = TempDir::new("maptool-export-link");
+    let real = write(&dir, "real.md", "old");
+    let link = dir.join("out.md");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let run = maptool(&["export", arg(&fixture("tree")), arg(&link)]);
+    assert_eq!(run.status, 0, "{}", run.stderr);
+    assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+    assert!(
+        std::fs::read_to_string(&real)
+            .unwrap()
+            .starts_with("# In the beginning\n"),
+        "the link's file holds the export"
+    );
+    let fresh = dir.join("fresh.md");
+    let run = maptool(&["export", arg(&fixture("tree")), arg(&fresh)]);
+    assert_eq!(run.status, 0, "{}", run.stderr);
+    assert!(std::fs::read_to_string(&fresh)
+        .unwrap()
+        .starts_with("# In the beginning\n"));
+}
+
 // --- apply ------------------------------------------------------------
 
 /// The tree fixture's lines, with the three sections `^the` matches in
