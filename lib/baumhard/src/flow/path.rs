@@ -859,14 +859,15 @@ impl ArcPath {
     /// `(count + 1)·2⁻⁴⁷·(R + L)` more, where `R` is its larger radius:
     /// each point within a few `f64` roundings of `R`, each chord and each
     /// partial sum within one of their own, the sample count how many add
-    /// up — under `2⁻²⁶·(R + L)` at [`MAX_TABLE_SAMPLES`] + 1 samples. It
-    /// depends on the ellipse's size and never on where its center lies:
-    /// summed between its points in coordinates as large as its center, it
-    /// counted their rounding as perimeter, some 12% past it 10⁷ from the
-    /// origin and up to 60% at 10¹⁰. Its points are unchanged: its center
-    /// plus its radii by the cosine and sine of `φ`, in `f32`. One whose
-    /// points pass the largest `f32` has no length. A circle's length is
-    /// its radius times a turn, in `f32`.
+    /// up — at most [`MAX_TABLE_SAMPLES`] + 1 samples, so just over
+    /// `2⁻²⁷·(R + L)`. It depends on the ellipse's size and never on where
+    /// its center lies. Summed between its points in coordinates as large
+    /// as its center, as it was, it counted their rounding as perimeter:
+    /// 7% to 16% long 10⁷ from the origin, from 24% short to 31% long at
+    /// 10⁸, and at 10¹⁰ more than twice as long or nothing at all. Its
+    /// points are unchanged: its center plus its radii by the cosine and
+    /// sine of `φ`, in `f32`. One whose points pass the largest `f32` has
+    /// no length. A circle's length is its radius times a turn, in `f32`.
     ///
     /// Cost: O(1) for a rounded rectangle or a circle; one table of
     /// `O(perimeter / spacing)` samples, at most [`MAX_TABLE_SAMPLES`],

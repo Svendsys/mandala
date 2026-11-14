@@ -1650,6 +1650,105 @@ fn test_projection_a_far_out_junction_keeps_the_samples_it_keeps_at_the_origin()
     }
 }
 
+/// How far along `curve` its points at `t = i / n` lie, `i` from 0 below
+/// `n` (each `t` an `f32`, as `sample` takes them): the polyline through
+/// them, in `f64`, the oracle `sample` is held to (#356). It shares no
+/// arithmetic with `sample`: a point is found by de Casteljau's
+/// construction on the control points' offsets from the start, where
+/// `sample` takes the Bernstein form (`flow::Local`).
+fn along_polyline(curve: &Curve, n: usize) -> (Vec<f64>, f64) {
+    let points: Vec<glam::DVec2> = match *curve {
+        Curve::Line(a, b) => vec![a, b],
+        Curve::Quadratic(a, b, c) => vec![a, b, c],
+        Curve::Cubic(a, b, c, d) => vec![a, b, c, d],
+    }
+    .into_iter()
+    .map(|p| p.as_dvec2() - curve.point(0.0).as_dvec2())
+    .collect();
+    let reach = points.iter().map(|p| p.length()).fold(0.0, f64::max);
+    let at = |t: f64| {
+        let mut row = points.clone();
+        while row.len() > 1 {
+            row = row.windows(2).map(|w| w[0] + (w[1] - w[0]) * t).collect();
+        }
+        row[0]
+    };
+    let mut along = Vec::with_capacity(n);
+    let (mut last, mut walked) = (glam::DVec2::ZERO, 0.0_f64);
+    for i in 0..n {
+        let here = at(f64::from(i as f32 / n as f32));
+        walked += (here - last).length();
+        last = here;
+        along.push(walked);
+    }
+    (along, reach)
+}
+
+/// How far along a curve `sample` measures each sample is the polyline
+/// through its samples, to the bound `sample` states (#356): within
+/// `(n + 1)·2⁻⁴⁷·(R + L)`, at every distance from the origin. Lines,
+/// quadratics and cubics 100 to 409,600 across, at the origin and every
+/// hundredfold from 10⁶ to 10²² from it, at a step of a 37th, a 1,000th
+/// and a 60,000th of their size (up to `SAMPLE_CAP` samples), each with
+/// its skip set at the distance its oracle (`along_polyline`) gives a
+/// third and two thirds of the way along: the first sample kept lies at
+/// or past the skip, and the one before it short of it, each to within
+/// that bound. A curve sampled fewer than three times is left out: far
+/// out, where the floats set its control points onto one, it is a point.
+///
+/// Controls, both red already at the origin: `along` summed in `f32` (a
+/// line 100 across at 1,000 samples, its skip at 33.3: the sample before
+/// it kept); its distance summed between its points as `f32`, where they
+/// lie, as before #356 (a cubic 100 across at 1,287 samples, its skip at
+/// 33.81273: the sample at it dropped).
+#[test]
+fn test_projection_a_samples_distance_along_is_its_polyline_at_every_magnitude() {
+    let (mut checked, mut inside) = (0usize, 0usize);
+    for at in std::iter::once(0.0_f32).chain((6..=22).step_by(2).map(|k| 10f32.powi(k))) {
+        for doubled in 0..=12 {
+            let size = 100.0 * (1u32 << doubled) as f32;
+            let p = |x: f32, y: f32| Vec2::new(at + x * size, at + y * size);
+            let curves = [
+                Curve::Line(p(0.0, 0.0), p(0.8, 0.6)),
+                Curve::Quadratic(p(0.0, 0.0), p(0.5, 1.0), p(1.0, 0.0)),
+                Curve::Cubic(p(0.0, 0.0), p(0.3, -0.2), p(0.7, 0.2), p(1.0, 0.0)),
+            ];
+            for curve in &curves {
+                for samples in [37.0_f32, 1_000.0, 60_000.0] {
+                    let step = size / samples;
+                    let n = sample(std::slice::from_ref(curve), step, 0.0).len();
+                    if n < 3 {
+                        continue;
+                    }
+                    let (along, reach) = along_polyline(curve, n);
+                    let length = along[n - 1];
+                    let bound = (n + 1) as f64 * 2f64.powi(-47) * (reach + length);
+                    for j in [n / 3, 2 * n / 3] {
+                        let skip = along[j] as f32;
+                        let kept = sample(std::slice::from_ref(curve), step, skip).len();
+                        let first = n - kept;
+                        let skip = f64::from(skip);
+                        let past = first == n || along[first] >= skip - bound;
+                        let short = first == 0 || along[first - 1] < skip + bound;
+                        assert!(
+                            past && short,
+                            "{curve:?} at {n} samples, skip {skip}: the first kept is {first}, along {:?}, past {bound}",
+                            &along[first.saturating_sub(1)..(first + 1).min(n)]
+                        );
+                        checked += 1;
+                        inside += usize::from(first > 0 && first < n);
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(
+        checked, 954,
+        "every curve with three samples or more is checked twice"
+    );
+    assert_eq!(inside, checked, "precondition: every skip lies inside its curve");
+}
+
 #[test]
 fn test_projection_a_lanes_fixed_samples_are_in_every_round() {
     // What the stop rests on: every sample `fixed_samples` reads is one

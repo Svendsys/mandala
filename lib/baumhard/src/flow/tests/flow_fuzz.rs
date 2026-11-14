@@ -2027,10 +2027,10 @@ pub const FAR_SIDES: [&str; 4] = ["─═", "· ", "-=", "x"];
 /// A far-out path measures the curve its control points make (ruling
 /// B18.1 §6), and a far-out ellipse's outline its perimeter (#356): their
 /// tables measure each in its own frame. Until the ellipse's did, it
-/// summed its points' rounding as length, some 12% past its perimeter
-/// 10⁷ from the origin and up to 60% at 10¹⁰. A frame's room here is the
-/// engine's own halves (`frame_room`), which share that table; the table
-/// is held to an independent measure by
+/// summed its points' rounding as length: from 10⁷ from the origin on,
+/// anything from 24% short to more than twice as long, or nothing at
+/// all. A frame's room here is the engine's own halves (`frame_room`),
+/// which share that table; the table is held to an independent measure by
 /// `outline_tests::test_flow_an_ellipses_length_is_its_ellipses_at_every_magnitude`.
 pub fn far_out(choices: &mut Choices<'_>) -> Option<(Vec2, f32)> {
     if !choices.one_in(4) {
