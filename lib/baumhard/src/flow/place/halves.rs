@@ -153,6 +153,9 @@ use std::rc::Rc;
 use glam::Vec2;
 
 use super::lines::{frame_halves, frame_lines, line_partition, place_lines_in};
+#[cfg(doc)]
+use super::ring::READS_A_STEP;
+use super::ring::steps_of;
 use super::*;
 use crate::document::values::FontSize;
 use crate::flow::path::{Bend, CornerForm, EllipseForm, FormPoint, OffsetIn};
@@ -1822,6 +1825,15 @@ thread_local! {
     /// ornament's lays took on this thread and the path lookups they took.
     #[cfg(test)]
     pub(crate) static SIDE_STEP_LOOKUPS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// Test counter (#313): the path reads a side ornament's lays have
+    /// counted against their frames on this thread ([`Work::read`]).
+    #[cfg(test)]
+    pub(crate) static SIDE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#313): the most path reads one cluster of a side
+    /// ornament's lay has taken on this thread, what
+    /// [`SIDE_CLUSTER_READS`] bounds.
+    #[cfg(test)]
+    pub(crate) static MOST_SIDE_CLUSTER_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test counter (#309): the runs a frame's placement has shaped or
     /// reshaped on this thread — R27's fit, a build at a size, a side
     /// ornament's runs.
@@ -2404,9 +2416,25 @@ fn line_root(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f32 {
     f32::NAN
 }
 
-/// The most forms of the band curve [`model_root`] reads a root across,
-/// each past the first a path lookup where the last one ends.
+/// The most forms of the band curve [`model_root`] solves a root in,
+/// each that the root lies beyond read from the path where it ends — a
+/// path lookup, the next form's start — so a root sought across them
+/// all takes [`FORM_CHAIN`] lookups at most.
 const FORM_CHAIN: usize = 4;
+
+/// The path reads a side arc's first end takes ([`SideArc::new`]): its
+/// anchor on the band curve, one lookup.
+const ARC_READS: usize = 1;
+
+/// The most path reads ([`ArcPath::reads`]) one cluster of a side
+/// ornament's lay takes ([`InkLay::cluster`], #313): a model lay's look
+/// for it on the band curve's forms ([`model_set`]) and, where that
+/// fails, its first center's ([`osculating`]), [`FORM_CHAIN`] reads each
+/// at most; and [`pair`]'s inks tried, each a read, [`PAIR_ROUNDS`] for
+/// it and the inks before its neighbor together. A space, or the first
+/// ink, is one. What a side's lays are held back for before they are
+/// laid ([`SideOrnament::lay_steps`]).
+pub(crate) const SIDE_CLUSTER_READS: usize = 2 * FORM_CHAIN + PAIR_ROUNDS;
 
 /// Where [`model_root`] sets a letter: how far along the path past the
 /// ink it is set after, the curve's point there, and the form it lies on
@@ -2807,6 +2835,9 @@ pub(super) struct Work {
     /// The samples its paths' tables were built with, counted in `spent`
     /// ([`tabled`](Self::tabled)).
     tables: Cell<usize>,
+    /// The path reads its side ornament's lays took, counted in `spent`
+    /// at [`READS_A_STEP`] to a step ([`read`](Self::read), #313).
+    reads: Cell<usize>,
     glyphs: Cell<usize>,
     budget: Cell<usize>,
     reserve: Cell<usize>,
@@ -2831,6 +2862,7 @@ impl Work {
         let work = Work {
             spent: Cell::new(FRAME_STEPS),
             tables: Cell::new(0),
+            reads: Cell::new(0),
             glyphs: Cell::new(0),
             budget: Cell::new(TRACK_BUDGET),
             reserve: Cell::new(0),
@@ -2884,6 +2916,20 @@ impl Work {
         let samples: usize = paths.into_iter().map(ArcPath::table_samples).sum();
         self.tables.set(self.tables.get().saturating_add(samples));
         self.take(table_steps(samples));
+    }
+
+    /// Count `reads` more path reads of a side ornament's lays (#313):
+    /// the frame's reads in all, [`READS_A_STEP`] to a glyph step and the
+    /// last step a part, so that the steps `reads` takes are what its
+    /// reads bring the count to, at most `reads` over [`READS_A_STEP`]
+    /// rounded up.
+    fn read(&self, reads: usize) {
+        let was = self.reads.get();
+        let now = was.saturating_add(reads);
+        self.reads.set(now);
+        #[cfg(test)]
+        SIDE_READS.with(|count| count.set(count.get().saturating_add(reads)));
+        self.take(steps_of(now) - steps_of(was));
     }
 
     /// Note a touch check of `boxes` boxes that looked at the pairs
@@ -3770,36 +3816,88 @@ impl<'a> SideOrnament<'a> {
         });
     }
 
-    /// Whether the frame can afford `copies` copies of the arc being laid
-    /// and the touch check of them after (rulings R48.2, R51.2): the
-    /// check's glyph steps at [`touch_looks`] looks a box of the classes
-    /// of height it holds ([`check_steps`]) held back from what the budget
-    /// has left.
-    fn affords(&self, copies: usize) -> bool {
+    /// Whether the frame can afford a lay of `laying` copies of the arc
+    /// being laid, bringing it to `copies`, and the touch check of those
+    /// after (rulings R48.2, R51.2; #313): the lay's glyph steps at the
+    /// most it may take ([`lay_steps`](Self::lay_steps)), and the check's
+    /// at [`touch_looks`] looks a box of the classes of height it holds
+    /// ([`check_steps`]), held back from what the budget has left. So no
+    /// lay of a side's copies takes the frame past what its budget leaves
+    /// for the check of them.
+    fn affords(&self, copies: usize, laying: usize) -> bool {
         let boxes = self
             .base
             .get()
             .saturating_add(copies.saturating_mul(self.per_copy));
-        self.work.affords(check_steps(boxes, self.classes.get()))
+        self.work.affords(
+            check_steps(boxes, self.classes.get()).saturating_add(self.lay_steps(laying)),
+        )
     }
 
-    /// Count `copies` copies laid against the frame's glyph steps.
+    /// The most glyph steps a lay of `copies` copies counts (#313): a
+    /// step a cluster ([`count`](Self::count)), and its path's reads,
+    /// [`SIDE_CLUSTER_READS`] a cluster at the most, [`READS_A_STEP`] to a
+    /// step ([`Work::read`]). A model lay counts no more: half a step a
+    /// cluster ([`modeled`](Self::modeled)), and its reads.
+    fn lay_steps(&self, copies: usize) -> usize {
+        let clusters = copies.saturating_mul(self.clusters.len().max(1));
+        clusters.saturating_add(steps_of(clusters.saturating_mul(SIDE_CLUSTER_READS)))
+    }
+
+    /// Count `copies` copies laid against the frame's glyph steps: a step
+    /// a cluster, past its reads ([`read_since`](Self::read_since)).
     fn count(&self, copies: usize) {
         self.work.take(copies.saturating_mul(self.clusters.len().max(1)));
     }
 
     /// Count `copies` copies of a model lay against the frame's glyph
     /// steps ([`InkLay::modeled`]): [`MODEL_CLUSTERS_A_STEP`] clusters a
-    /// step.
+    /// step, past its reads ([`read_since`](Self::read_since)).
     fn modeled(&self, copies: usize) {
         let clusters = copies.saturating_mul(self.clusters.len().max(1));
         self.work.take(clusters.div_ceil(MODEL_CLUSTERS_A_STEP).max(1));
     }
 
+    /// Count the path reads its walk's path has taken since it had `from`
+    /// ([`ArcPath::reads`]) against the frame's glyph steps (#313,
+    /// [`Work::read`]): what a lay of its copies, or the setting of an
+    /// arc's first end, read.
+    fn read_since(&self, from: usize) {
+        self.work.read(self.walk.path.reads().saturating_sub(from));
+    }
+
+    /// Whether the frame can afford an arc of this side, its first end's
+    /// anchor read on the band curve ([`ARC_READS`]), and a lay of one
+    /// copy along it (#313): what is read before an arc is taken, so that
+    /// taking it and laying a copy never takes the frame past its budget.
+    fn affords_arc(&self) -> bool {
+        self.work
+            .affords(steps_of(ARC_READS).saturating_add(self.lay_steps(1)))
+    }
+
     /// The arc of this side between two text inks, `None` without an
-    /// ink in the ornament.
+    /// ink in the ornament. Its first end's anchor read on the band curve
+    /// is counted (#313); a caller reads [`affords_arc`](Self::affords_arc)
+    /// first.
     fn arc(&self, from: ArcEnd, to: ArcEnd) -> Option<SideArc<'_>> {
-        SideArc::new(self, from, to)
+        let reads = self.walk.path.reads();
+        let arc = SideArc::new(self, from, to);
+        self.read_since(reads);
+        arc
+    }
+
+    /// Lay `cluster` onto `lay` at `gap`, as [`InkLay::cluster`] does: in a
+    /// test, noting the most path reads one cluster of a side's lay takes
+    /// ([`MOST_SIDE_CLUSTER_READS`]).
+    fn lay_cluster(&self, lay: &mut InkLay<'_>, cluster: &Cluster, gap: f32) {
+        #[cfg(test)]
+        let before = self.walk.path.reads();
+        lay.cluster(cluster, gap);
+        #[cfg(test)]
+        {
+            let took = self.walk.path.reads() - before;
+            MOST_SIDE_CLUSTER_READS.with(|most| most.set(most.get().max(took)));
+        }
     }
 
     /// About how long one copy and its two joins are along a path:
@@ -3877,18 +3975,21 @@ impl<'s> SideArc<'s> {
     /// space owing its advance and `gap` more. Returns the lay, and how far
     /// the last ink is from `to` and where along the path its center lies.
     /// The frame's budget is the caller's to read: a search reads before
-    /// each lay whether the frame can afford `n` copies and their check
-    /// ([`SideOrnament::affords`]).
+    /// each lay whether the frame can afford the lay of `n` copies and
+    /// their check ([`SideOrnament::affords`]). The lay counts a step a
+    /// cluster and its path's reads (#313).
     ///
     /// Cost: an [`InkLay::set_at`] or a few a glyph.
     fn lay(&self, n: usize, gap: f32) -> (InkLay<'_>, (f32, f32)) {
+        let reads = self.side.walk.path.reads();
         let mut lay = self.begun(gap);
         for _ in 0..n {
             for cluster in &self.side.clusters {
-                lay.cluster(cluster, gap);
+                self.side.lay_cluster(&mut lay, cluster, gap);
             }
         }
         self.side.count(n);
+        self.side.read_since(reads);
         let end = self.end_of(&lay);
         (lay, end)
     }
@@ -3954,8 +4055,8 @@ impl<'s> SideArc<'s> {
     /// first `k` of any row are `k` copies laid on their own: this one lay
     /// tells every copy count's room at the floor (ruling R44.3). `None`
     /// when the frame cannot afford the row: before each copy it must
-    /// afford the copies and their touch check ([`SideOrnament::affords`],
-    /// rulings R47.2, R48.2).
+    /// afford its lay, and the copies' touch check
+    /// ([`SideOrnament::affords`], rulings R47.2, R48.2; #313).
     ///
     /// Cost: one lay of the copies that fit and the one that does not.
     fn floor_row(&self, most: usize) -> Option<FloorRow> {
@@ -3963,13 +4064,15 @@ impl<'s> SideArc<'s> {
         let mut lay = self.begun(gap);
         let mut rooms = Vec::new();
         while rooms.len() < most.min(MAX_SIDE_COPIES) {
-            if !self.side.affords(rooms.len() + 1) {
+            if !self.side.affords(rooms.len() + 1, 1) {
                 return None;
             }
+            let reads = self.side.walk.path.reads();
             for cluster in &self.side.clusters {
-                lay.cluster(cluster, gap);
+                self.side.lay_cluster(&mut lay, cluster, gap);
             }
             self.side.count(1);
+            self.side.read_since(reads);
             let room = self.room_of(&lay, gap);
             if room.is_nan() || room < 0.0 {
                 break;
@@ -4043,10 +4146,10 @@ impl<'s> SideArc<'s> {
                 },
             )
         };
-        // The frame cannot afford `n` copies and their touch check: the
-        // search stops (ruling R48.2).
+        // The frame cannot afford a lay of `n` copies and their touch
+        // check: the search stops (ruling R48.2; #313).
         let stop = || {
-            let stopped = !self.side.affords(n);
+            let stopped = !self.side.affords(n, n);
             if stopped {
                 self.stopped.set(true);
             }
@@ -4166,14 +4269,16 @@ impl<'s> SideArc<'s> {
         let gaps = self.gaps(n);
         let aim = 0.25 * tolerance;
         let lay_at = |gap: f32| {
+            let reads = self.side.walk.path.reads();
             let mut lay = self.begun(gap);
             lay.modeled = true;
             for _ in 0..n {
                 for cluster in &self.side.clusters {
-                    lay.cluster(cluster, gap);
+                    self.side.lay_cluster(&mut lay, cluster, gap);
                 }
             }
             self.side.modeled(n);
+            self.side.read_since(reads);
             lay
         };
         if stop() {
@@ -4278,10 +4383,10 @@ impl<'s> SideArc<'s> {
         let mut n = guess;
         // Down while `n` copies do not reach the target, up while one more
         // still does: the pair whose gaps bracket it, or an end. A frame
-        // that cannot afford `k` copies and their check stops the search
-        // where it stands (ruling R48.2).
+        // that cannot afford a lay of `k` copies and their check stops the
+        // search where it stands (ruling R48.2; #313).
         let short = |k: usize| {
-            let short = !self.side.affords(k);
+            let short = !self.side.affords(k, k);
             if short {
                 self.stopped.set(true);
             }
@@ -4387,12 +4492,16 @@ impl Layout<'_> {
     fn met(&self, laid: &[Line], side: Option<(&ShapedRun, &Range<usize>)>, j: usize) -> (bool, Junctions) {
         let measured = self.apart(laid);
         let words = measured.apart[j] >= measured.want[j] * CLEAR_MARGIN;
+        // A copy the frame cannot afford to lay is not shown to fit (#313):
+        // the junction is no break, and is reported so.
         let copy = side.is_none_or(|(drawn, range)| {
             let side = SideOrnament::new(self, drawn, range.clone());
             side_arcs(laid, self.halves.length)
                 .into_iter()
                 .filter(|(at, _, _)| at[j])
-                .all(|(_, from, to)| side.arc(from, to).is_none_or(|arc| arc.fits(1, arc.floor)))
+                .all(|(_, from, to)| {
+                    side.affords_arc() && side.arc(from, to).is_none_or(|arc| arc.fits(1, arc.floor))
+                })
         });
         (words && copy, measured)
     }
@@ -6110,6 +6219,14 @@ impl Layout<'_> {
         side.beside(&text_boxes);
         for (at, from, to) in side_arcs(lines, self.halves.length) {
             let budget = glyph_cap().saturating_sub(text_len + sides.len());
+            // An arc the frame cannot afford to take and lay a copy along
+            // is left empty, and reported, as one it cannot afford the
+            // floor's row of is (#313).
+            if !side.affords_arc() {
+                out.losses
+                    .extend((0..2).filter(|&j| at[j]).map(|j| (j, SideLoss::Empty)));
+                continue;
+            }
             let Some(arc) = side.arc(from, to) else {
                 continue;
             };

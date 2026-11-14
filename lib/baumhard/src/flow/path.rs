@@ -967,12 +967,15 @@ impl ArcPath {
     }
 
     /// How many times this path has been read: each point it has looked
-    /// up ([`at`](Self::at)), and each step a walk's memo answered in place
-    /// of the lookups it would have taken ([`read`](Self::read)). What a
-    /// `Repeat` ring's work is counted in (#310): every walk, measure and
-    /// lay of a placement reads its path, a few times a cluster where the
-    /// path runs straight and up to some thousands for an ornament's glyph
-    /// whose ink is set where the path's floats barely move it.
+    /// up ([`at`](Self::at)) — on its offset curve too, a corner's sweep
+    /// or fold included ([`offset_in`](Self::offset_in)) — and each step a
+    /// walk's memo answered in place of the lookups it would have taken
+    /// ([`read`](Self::read)). What a `Repeat` ring's work is counted in
+    /// (#310), and a frame's side ornament's lays (#313): every walk,
+    /// measure and lay of a placement reads its path, a few times a
+    /// cluster where the path runs straight and up to some thousands for
+    /// an ornament's glyph whose ink is set where the path's floats barely
+    /// move it.
     ///
     /// Cost: O(1).
     pub(crate) fn reads(&self) -> usize {
@@ -1211,7 +1214,9 @@ impl ArcPath {
     /// sweeping — and is not handled.
     ///
     /// Cost: one path lookup; within a corner's stretch none, but its
-    /// arithmetic, counted as one.
+    /// arithmetic, counted as one — a lookup and a read of the path
+    /// ([`reads`](Self::reads)) either way, what a frame's side ornament
+    /// counts its lays' work in (#313).
     pub(crate) fn offset_at(&self, s: f32, offset: f32) -> OffsetPoint {
         self.offset_in(s, offset).0
     }
@@ -1248,6 +1253,7 @@ impl ArcPath {
                     if reach > 0.0 && from.abs() < reach && reach.is_finite() {
                         #[cfg(test)]
                         PATH_LOOKUPS.with(|count| count.set(count.get() + 1));
+                        self.read();
                         return (
                             self.inside(corner, inside, half_turn, (from + reach) / (2.0 * reach)),
                             OffsetIn::Folded,
@@ -1269,6 +1275,7 @@ impl ArcPath {
                 }
                 #[cfg(test)]
                 PATH_LOOKUPS.with(|count| count.set(count.get() + 1));
+                self.read();
                 return (
                     self.swept(corner, offset, w, sweep, from),
                     OffsetIn::Swept {
