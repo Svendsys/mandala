@@ -7,10 +7,12 @@
 //! document and back, and touch no file. Every surface that holds a path
 //! — the app's `open` and `save`, and `maptool` — wraps them the same
 //! way: refuse a path that is not a `.mandala.json` (D19), read the
-//! bytes, and write through
+//! bytes — following a symlink wherever it leads — and write through
 //! [`guarded_file::publish`](crate::util::guarded_file::publish), the
-//! workspace's one atomic writer. That wrapping is here, once, so the
-//! surfaces cannot disagree about it.
+//! workspace's one atomic writer, into the real file a link leads to,
+//! which must be named like a map too (amendment E1.1: the extension
+//! rule on the real file is a rule for writes). That wrapping is here,
+//! once, so the surfaces cannot disagree about it.
 //!
 //! **Errors are `String`s, ready to show.** CODE_CONVENTIONS §9 admits
 //! no new error type without a project-scale decision; every caller of
@@ -88,7 +90,7 @@ fn write_target(path: &str) -> Result<std::path::PathBuf, String> {
 /// and the loader judges what it reads, so the file a link leads to
 /// need not be named like a map: a git-annex link points at a key that
 /// keeps only a short extension, and the map behind it opens. Saving it
-/// back through that link is refused ([`write`]). For a caller that
+/// back through that link is refused ([`write()`]). For a caller that
 /// needs the file as it is on disk as well as the document [`load`]
 /// makes of it.
 ///
