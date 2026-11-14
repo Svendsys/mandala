@@ -269,7 +269,9 @@ fn test_a_pan_through_act_action_applies_nothing_to_the_layers() {
     );
 }
 
-/// The warning codes an IPC reply carries.
+/// The warning codes an IPC reply carries. Gated as its callers, the
+/// `cfg(unix)` save-through-a-link tests, are.
+#[cfg(unix)]
 fn warning_codes(reply: &Value) -> Vec<String> {
     reply["warnings"]
         .as_array()
@@ -283,7 +285,8 @@ fn warning_codes(reply: &Value) -> Vec<String> {
 }
 
 /// Whether some warning of `reply` carries `code` and a message holding
-/// every one of `words`.
+/// every one of `words`. Gated as its callers are.
+#[cfg(unix)]
 fn warns(reply: &Value, code: &str, words: &[&str]) -> bool {
     reply["warnings"].as_array().is_some_and(|warnings| {
         warnings.iter().any(|w| {
