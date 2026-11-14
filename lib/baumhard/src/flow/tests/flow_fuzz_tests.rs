@@ -1825,9 +1825,8 @@ fn test_an_ornament_round_a_bend_is_owed_whole_only_where_its_moves_fit() {
 /// reading a cut walk as only just overrunning, shrank a thousandth a
 /// round and ran out of rounds cut at 1.61, silent.
 ///
-/// Control: the bracket given no rounds — the shrink alone, a cut walk
-/// read as just overrunning — red on the review's case (cut, its rounds
-/// run out).
+/// Control: the bracket taken out — the shrink alone, a cut walk read as
+/// just overrunning — red on the review's case (cut, its rounds run out).
 #[test]
 fn test_a_fit_reaches_a_scale_that_fits_whenever_one_does() {
     use crate::document::values::FitMode;
@@ -2047,9 +2046,9 @@ fn test_a_fit_whose_bracket_closes_on_its_least_lays_a_round_there() {
 ///   lies below the scale at which every glyph reaches the size floor,
 ///   where a smaller scale shrinks nothing and a stop is the window's.
 ///
-/// Control: the window's least back at its `min` and the bracket given no
-/// rounds, red (the wide windows laid whole and reported not solved, as
-/// the review found them). Either alone stays green: the least stops the
+/// Control: the window's least back at its `min` and the bracket taken
+/// out, red (the wide windows laid whole and reported not solved, as the
+/// review found them). Either alone stays green: the least stops the
 /// shrink at the floor, and the bracket takes over a shrink that runs out.
 #[test]
 fn test_a_fit_whose_bracket_closes_on_its_least_is_laid_there() {
@@ -2172,26 +2171,25 @@ fn test_a_fit_in_a_window_wider_than_its_text_reports_no_loss() {
     );
 }
 
-/// The solve lays no smaller than it did before the bracket where that was
-/// whole (#313, ruling B18.1 §10.5, review 5905947478): "━━━━" and "To see a
-/// World" at 8, 16 and 32 pt round arches and loops from 2 to 400 across,
-/// in `Fit {0.5, 2}`, `{0.9, 1.1}` and `{0.25, 4}` — the review's grid where
+/// The solve lays no smaller than its shrink laid the run whole (#313,
+/// ruling B18.1 §10.5, reviews 5905947478 and 5906753939): where the
+/// shrink lays the run whole after a round that overran, the bracket
+/// begins from that scale and moves only up. "━━━━" and "To see a World"
+/// at 8, 16 and 32 pt round arches and loops 2 to 400 across, in
+/// `Fit {0.5, 2}`, `{0.9, 1.1}` and `{0.25, 4}` — the review's grid where
 /// a bracket bisecting up from the least settled on a lower island of
-/// fitting scales than the shrink had reached. Each placement is laid as
-/// the solve stood at c0268bfa too, by a test-only copy of it
-/// (`place::reference::fit_to`, through `FIT_REFERENCE`): where that laid
-/// the run whole, the solve lays it whole, at a scale no smaller: 2,620
-/// placements, 551 of them larger now.
+/// fitting scales than the shrink had reached. Each placement's shrink
+/// records the scale it laid the run whole at as its bracket began
+/// (`place::SHRINK_FIT`); the run is laid whole at a scale no smaller.
 ///
-/// Control: the bracket begun from the window's least where the shrink
-/// had laid the run whole, red (33 laid smaller than c0268bfa did).
+/// Control: the bracket bisecting down from a round that fits rather than
+/// up, red.
 #[test]
 fn test_a_fit_lays_no_smaller_than_the_shrink_did() {
     use crate::document::values::FitMode;
-    use crate::flow::place::FIT_REFERENCE;
-    use crate::flow::tests::halves_tests::with_seam;
+    use crate::flow::place::SHRINK_FIT;
     use crate::flow::Curve;
-    let (mut held, mut larger, mut smaller) = (0usize, 0usize, Vec::new());
+    let (mut bracketed, mut larger, mut smaller) = (0usize, 0usize, Vec::new());
     for text in ["━━━━", "To see a World"] {
         for points in [8.0_f32, 16.0, 32.0] {
             for i in 0..150 {
@@ -2204,32 +2202,34 @@ fn test_a_fit_lays_no_smaller_than_the_shrink_did() {
                 for curve in &curves {
                     for (min, max) in [(0.5_f32, 2.0_f32), (0.9, 1.1), (0.25, 4.0)] {
                         let fit = FitMode::Fit { min, max };
-                        let before = with_seam(&FIT_REFERENCE, 1, || fit_laid(text, points, curve, &fit));
-                        if before.0 < before.1 || before.2 {
+                        let (placed, glyphs, truncated, ring, size) = fit_laid(text, points, curve, &fit);
+                        let Some(shrink) = SHRINK_FIT.with(std::cell::Cell::get) else {
                             continue;
-                        }
-                        held += 1;
-                        let now = fit_laid(text, points, curve, &fit);
-                        if now.0 < now.1 || now.2 || now.4 < before.4 {
+                        };
+                        bracketed += 1;
+                        let at = shrink * points;
+                        if placed < glyphs || truncated || ring.is_some() || size < at * (1.0 - 1e-6) {
                             smaller.push(format!(
-                                "{text:?} {points} pt {fit:?} along {curve:?}: {} pt then, {} of {} at {} pt now",
-                                before.4, now.0, now.1, now.4
+                                "{text:?} {points} pt {fit:?} along {curve:?}: the shrink whole at {at} pt, laid {placed} of {glyphs} at {size} pt, {ring:?}"
                             ));
                         }
-                        larger += usize::from(now.4 > before.4);
+                        larger += usize::from(size > at * (1.0 + 1e-6));
                     }
                 }
             }
         }
     }
-    assert!(held >= 2_500, "precondition: {held} laid whole before");
-    assert!(larger >= 100, "precondition: {larger} laid larger now");
+    assert!(
+        bracketed >= 500,
+        "precondition: {bracketed} brackets began from a whole round"
+    );
     assert!(
         smaller.is_empty(),
         "{} laid smaller or cut: {:?}",
         smaller.len(),
         &smaller[..smaller.len().min(5)]
     );
+    assert!(larger >= 500, "{larger} laid larger than their shrink");
 }
 
 /// The invariant the bracket must keep (#313, ruling B18.1 §10.2, review
@@ -2304,13 +2304,18 @@ fn test_a_fit_laid_at_its_least_is_laid_as_its_least_alone() {
 
 /// A `Fit` whose rounds run out with its text still cut above its window's
 /// least reports its scale not solved, `Uneven` (#313, ruling B18.1 §10.2
-/// as amended): "━━━━" at 16 pt round the 40-long arch, whose first round
-/// is cut at 1.656, given that one round of its shrink and none of its
-/// bracket (`FIT_ROUNDS_OVERRIDE`, `BRACKET_ROUNDS_OVERRIDE`), is laid cut
-/// and says so; given its rounds, it is laid whole with no loss. No case
-/// reaches the report without the seams — none of 40,000 `Fit`s along
-/// random cubics, nor of 126,000 in the review's grids, nor of the sweeps
-/// here — so the report is defensive: a readable lay that kept
+/// as amended, review 5906753939): "━━━━" at 16 pt round the 40-long arch
+/// is cut at every scale from 1.612 to 1.642, so `Fit {1.615, 1.64}` lies
+/// wholly in that island. Given its rounds, its shrink reaches the least
+/// and lays it cut there, the window's stop, no loss. Given one round of
+/// its shrink (`FIT_ROUNDS_OVERRIDE`) it runs out cut above the least, and
+/// the bracket bisects up from the least; given two rounds of that
+/// (`BRACKET_ROUNDS_OVERRIDE`), both are cut — 1.6275, then 1.62125 — and
+/// they run out with no round found to fit: laid cut there, and said so.
+/// No case reaches the report without the seams — none of 40,000 `Fit`s
+/// along random cubics, of 126,000 in the review's grids, of the sweeps
+/// here, nor of 8,640 at 16, 256 and 4,096 pt in windows as wide as
+/// `{0.0001, 50}` — so the report is defensive: a readable lay that kept
 /// overrunning could run its rounds out, and would say so.
 ///
 /// Control: the report taken out, red.
@@ -2327,20 +2332,24 @@ fn test_a_fit_whose_rounds_run_out_cut_reports_its_scale_not_solved() {
         Vec2::new(20.0, 20.0),
         Vec2::new(20.0, 0.0),
     );
-    let fit = FitMode::Fit { min: 0.5, max: 2.0 };
-    let (placed, glyphs, truncated, ring, _) = fit_laid("━━━━", 16.0, &curve, &fit);
+    let (least, points) = (1.615_f32, 16.0_f32);
+    let fit = FitMode::Fit {
+        min: least,
+        max: 1.64,
+    };
+    let (placed, glyphs, _, ring, size) = fit_laid("━━━━", points, &curve, &fit);
     assert!(
-        placed == glyphs && !truncated && ring.is_none(),
-        "precondition: given its rounds, laid whole: {placed} of {glyphs}, {ring:?}"
+        placed < glyphs && ring.is_none() && (size - least * points).abs() < 1e-3,
+        "precondition: given its rounds, cut at its least with no loss: {placed} of {glyphs} at {size} pt, {ring:?}"
     );
     let (placed, glyphs, truncated, ring, size) = with_seam(&FIT_ROUNDS_OVERRIDE, 1, || {
-        with_seam(&BRACKET_ROUNDS_OVERRIDE, 0, || {
-            fit_laid("━━━━", 16.0, &curve, &fit)
+        with_seam(&BRACKET_ROUNDS_OVERRIDE, 2, || {
+            fit_laid("━━━━", points, &curve, &fit)
         })
     });
     assert!(
-        placed < glyphs && truncated && size > 8.0,
-        "precondition: its one round is cut above its least: {placed} of {glyphs} at {size} pt"
+        placed < glyphs && truncated && size > least * points * (1.0 + 1e-3),
+        "precondition: its bracket's last round is cut above its least: {placed} of {glyphs} at {size} pt"
     );
     assert_eq!(
         ring,
