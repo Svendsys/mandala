@@ -52,20 +52,29 @@ enum Param {
     Curve { at: Vec2, local: Local, curve: Curve },
 }
 
-/// A Bézier's control points as offsets from its start, in `f64`: each
-/// the difference of two `f32`s, which `f64` holds exactly but where
-/// their exponents are more than 29 apart, and then within half an `f64`
-/// ulp (#313). The start's own offset is zero, so it is not kept.
+/// A curve in its own frame, in `f64` (#313, #356): what a table's
+/// distances are measured on, and a path's samples are measured along
+/// (`projection::geometry::sample`), so that how far along it a point lies
+/// is the curve's own and never the rounding of coordinates as large as
+/// where it is. One way of measuring a curve in its own frame, for every
+/// curve a path is tabled along.
+///
+/// - A Bézier: its control points as offsets from its start, each the
+///   difference of two `f32`s, which `f64` holds exactly but where their
+///   exponents are more than 29 apart, and then within half an `f64` ulp.
+///   The start's own offset is zero, so it is not kept.
+/// - An ellipse: its radii, about its center (#356).
 #[derive(Copy, Clone, Debug)]
-enum Local {
+pub(crate) enum Local {
     Line(DVec2),
     Quadratic(DVec2, DVec2),
     Cubic(DVec2, DVec2, DVec2),
+    Ellipse(DVec2),
 }
 
 impl Local {
-    /// `curve`'s control points less its start.
-    fn of(curve: Curve) -> (Vec2, Self) {
+    /// `curve`'s control points less its start, and its start.
+    pub(crate) fn of(curve: Curve) -> (Vec2, Self) {
         let from = |at: Vec2, p: Vec2| p.as_dvec2() - at.as_dvec2();
         match curve {
             Curve::Line(a, b) => (a, Local::Line(from(a, b))),
@@ -74,15 +83,17 @@ impl Local {
         }
     }
 
-    /// The offset from the start at `t`, in `f64`: the Bernstein form with
-    /// the start's term, zero, left out.
-    fn at(&self, t: f32) -> DVec2 {
+    /// The offset at `t` from the curve's start, or an ellipse's center,
+    /// in `f64`: a Bézier's Bernstein form with the start's term, zero,
+    /// left out; an ellipse's radii by the cosine and sine of `t`.
+    pub(crate) fn at(&self, t: f32) -> DVec2 {
         let t = f64::from(t);
         let u = 1.0 - t;
         match *self {
             Local::Line(b) => b * t,
             Local::Quadratic(c, b) => c * (2.0 * u * t) + b * (t * t),
             Local::Cubic(c1, c2, b) => c1 * (3.0 * u * u * t) + c2 * (3.0 * u * t * t) + b * (t * t * t),
+            Local::Ellipse(radii) => DVec2::new(radii.x * t.cos(), radii.y * t.sin()),
         }
     }
 }
@@ -92,6 +103,15 @@ impl Param {
     fn curve(curve: Curve) -> Self {
         let (at, local) = Local::of(curve);
         Param::Curve { at, local, curve }
+    }
+
+    /// The curve in its own frame ([`Local`]): what its table's distances
+    /// are measured on.
+    fn local(&self) -> Local {
+        match *self {
+            Param::Ellipse { radii, .. } => Local::Ellipse(radii.as_dvec2()),
+            Param::Curve { local, .. } => local,
+        }
     }
 
     fn point(&self, t: f32) -> Vec2 {
@@ -827,6 +847,26 @@ impl ArcPath {
     /// ellipse starts at the parametric angle `at` of the way through
     /// its side's quarter (top 225°–315°, right 315°–405°, bottom
     /// 45°–135°, left 135°–225°).
+    ///
+    /// How long an ellipse that is not a circle measures, at any distance
+    /// from the origin (#356): its table's last distance, the sum in `f64`
+    /// of the chords between its points at the table's `count + 1` angles
+    /// `φ` (each an `f32`), found from its center as its radii by the
+    /// cosine and sine of `φ` in `f64` ([`Local`]), and rounded once to
+    /// `f32`. Against `L`, the length in exact arithmetic of the polygon
+    /// through the ellipse its `f32` center and radii make, at those
+    /// angles, it is within `2⁻²⁴·L`, the last rounding, and
+    /// `(count + 1)·2⁻⁴⁷·(R + L)` more, where `R` is its larger radius:
+    /// each point within a few `f64` roundings of `R`, each chord and each
+    /// partial sum within one of their own, the sample count how many add
+    /// up — under `2⁻²⁶·(R + L)` at [`MAX_TABLE_SAMPLES`] + 1 samples. It
+    /// depends on the ellipse's size and never on where its center lies:
+    /// summed between its points in coordinates as large as its center, it
+    /// counted their rounding as perimeter, some 12% past it 10⁷ from the
+    /// origin and up to 60% at 10¹⁰. Its points are unchanged: its center
+    /// plus its radii by the cosine and sine of `φ`, in `f32`. One whose
+    /// points pass the largest `f32` has no length. A circle's length is
+    /// its radius times a turn, in `f32`.
     ///
     /// Cost: O(1) for a rounded rectangle or a circle; one table of
     /// `O(perimeter / spacing)` samples, at most [`MAX_TABLE_SAMPLES`],
@@ -1735,10 +1775,11 @@ fn table_count(speed: f32, from: f32, to: f32, spacing: f32) -> Option<usize> {
 /// finite: a curve with no finite speed bound has a control point that is
 /// not finite, so every sample would be too.
 ///
-/// A Bézier's distances are its chords between its offsets from its
-/// start, summed in `f64` and each rounded once to `f32`, to the bound
-/// [`ArcPath::open`] states; an ellipse's, its chords between its points,
-/// summed in `f32`.
+/// Its distances are its chords between its points in its own frame
+/// ([`Local`]): a Bézier's offsets from its start, an ellipse's from its
+/// center. They are summed in `f64` and each rounded once to `f32`, to the
+/// bound [`ArcPath::open`] states for a Bézier and [`ArcPath::closed`] for
+/// an ellipse (#313, ruling B18.1 §6; #356).
 fn table(param: Param, from: f32, to: f32, speed: f32, spacing: f32) -> Option<Stretch> {
     let count = table_count(speed, from, to, spacing)?;
     #[cfg(test)]
@@ -1746,34 +1787,31 @@ fn table(param: Param, from: f32, to: f32, speed: f32, spacing: f32) -> Option<S
     let mut params = Vec::with_capacity(count + 1);
     let mut distances = Vec::with_capacity(count + 1);
     let t_at = |i: usize| from + (to - from) * (i as f32 / count as f32);
-    match param {
-        // A Bézier's chords between its offsets from its start, and their
-        // sum, in `f64`; each distance rounded once to `f32` (#313, ruling
-        // B18.1 §6).
-        Param::Curve { local, .. } => {
-            let mut previous = local.at(from);
-            let mut walked = 0.0_f64;
-            for i in 0..=count {
-                let t = t_at(i);
-                let point = local.at(t);
-                walked += (point - previous).length();
-                previous = point;
-                params.push(t);
-                distances.push(walked as f32);
-            }
+    let local = param.local();
+    // A path whose points are not all finite has no length, as when its
+    // distances were summed between its points (#356): an ellipse so far
+    // out that its center and radii pass the largest `f32` may set a point
+    // past it, which its offsets from the center, all finite, would not
+    // show. Only such an ellipse's points are looked at; a Bézier's lie in
+    // the hull of its control points, which are finite.
+    let unbounded = match param {
+        Param::Ellipse { center, radii } => {
+            (center.abs().as_dvec2() + radii.abs().as_dvec2()).max_element() > f64::from(f32::MAX)
         }
-        Param::Ellipse { .. } => {
-            let mut previous = param.point(from);
-            let mut walked = 0.0_f32;
-            for i in 0..=count {
-                let t = t_at(i);
-                let point = param.point(t);
-                walked += length_of(point - previous);
-                previous = point;
-                params.push(t);
-                distances.push(walked);
-            }
+        Param::Curve { .. } => false,
+    };
+    let mut previous = local.at(from);
+    let mut walked = 0.0_f64;
+    for i in 0..=count {
+        let t = t_at(i);
+        let point = local.at(t);
+        walked += (point - previous).length();
+        if unbounded && !param.point(t).is_finite() {
+            walked = f64::INFINITY;
         }
+        previous = point;
+        params.push(t);
+        distances.push(walked as f32);
     }
     Some(Stretch::Table {
         param,

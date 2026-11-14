@@ -1605,6 +1605,51 @@ fn test_projection_untangle_stops_when_no_round_can_part_its_paths() {
     );
 }
 
+/// A junction's samples do not move with where it lies (#356): a lane's
+/// curves sampled from its skip on keep the same samples at the origin and
+/// moved 2²³ to 2⁶³ units of their own scale from it, where every control
+/// point is still exactly a float, so the curves are the same curves —
+/// `sample` measures how far along a sample lies in the curve's own frame
+/// (`flow::Local`). Summed between points as large as where the curve
+/// lies, that distance counted their rounding: far out the skip was
+/// reached early, and more samples were kept than at the origin.
+///
+/// Control: `sample` measuring along between its points as `f32`, where
+/// they lie, red far out (2,627 samples kept 2²³ from the origin, against
+/// 2,598 at it).
+#[test]
+fn test_projection_a_far_out_junction_keeps_the_samples_it_keeps_at_the_origin() {
+    for scale in [0, 10, 20, 30, 40] {
+        // A unit at which every control point, moved by `far`, is a float.
+        let unit = 2f32.powi(scale);
+        let far = 2f32.powi(scale + 23);
+        let cubic = |at: f32| {
+            let point = |x: f32, y: f32| Vec2::new(at + x * unit, at + y * unit);
+            Curve::Cubic(
+                point(0.0, 0.0),
+                point(3_000.0, -2_000.0),
+                point(7_000.0, 2_000.0),
+                point(10_000.0, 0.0),
+            )
+        };
+        let lead = |at: f32| Curve::Line(Vec2::splat(at), Vec2::new(at + 64.0 * unit, at));
+        let (step, skip) = (4.0 * unit, 2_000.0 * unit);
+        let kept = |at: f32| sample(&[lead(at), cubic(at)], step, skip).len();
+        let (here, there) = (kept(0.0), kept(far));
+        let all = sample(&[lead(0.0), cubic(0.0)], step, 0.0).len();
+        assert!(
+            here > 0 && here < all,
+            "precondition: the skip keeps some samples and drops some ({here} of {all})"
+        );
+        assert_eq!(
+            here,
+            there,
+            "at 2^{} from the origin: {there} samples kept, against {here} at it",
+            scale + 23
+        );
+    }
+}
+
 #[test]
 fn test_projection_a_lanes_fixed_samples_are_in_every_round() {
     // What the stop rests on: every sample `fixed_samples` reads is one

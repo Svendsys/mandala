@@ -5,12 +5,12 @@
 //! points, where a label and a portal end sit. Pure functions over plain
 //! values; `format/projection.md` is the spelling of every rule here.
 
-use glam::Vec2;
+use glam::{DVec2, Vec2};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::document::resolve::BorderPoint;
 use crate::document::values::{Anchor, Direction, Edge, FontSize, Shape, StartPoint};
-use crate::flow::{ArcPath, Curve, Outline, Rect};
+use crate::flow::{ArcPath, Curve, Local, Outline, Rect};
 use crate::font::fonts::{clamp_font_metric, MIN_FONT_SIZE_PT};
 use crate::gfx_structs::shape::NodeShape;
 
@@ -647,7 +647,9 @@ fn always_near(lanes: &[Lane], widths: &[f32], taken: &[Vec<Vec2>]) -> usize {
 /// share, so the polygon at full handles, twice over and the chord,
 /// bounds it at any share. A margin for rounding is kept back too, a few
 /// units in the last place of each sample's distance and of each point's
-/// coordinates. Lanes near the length where the condition decides need
+/// coordinates: an `f32`'s, though a round measures its distance along in
+/// `f64`, in the curve's own frame, from offsets as exact as its control
+/// points (#356), so the margin holds with room to spare. Lanes near the length where the condition decides need
 /// more than the chord alone
 /// (`test_projection_a_lanes_fixed_samples_are_in_every_round`), but none
 /// found needs all three steps or the rounding margin: they are what the
@@ -695,10 +697,21 @@ pub(crate) fn fixed_samples(lane: &Lane) -> Vec<Vec2> {
 const SAMPLE_CAP: usize = 1 << 16;
 
 /// Points along `curves` at most `step` apart, from `skip` along on.
+///
+/// How far along a point lies is measured in its curve's own frame
+/// ([`Local`]): the chords between its samples' offsets from the curve's
+/// start, in `f64`, summed in `f64` (#356). Summed between the points
+/// themselves, in coordinates as large as where the curve is, it counted
+/// their rounding as distance: far from the origin `skip` was reached
+/// early, and the samples kept moved with where the junction lies, not
+/// with its shape. The points are each curve's own, as before, so a
+/// sample is the same point, to the bit, in every call that takes it
+/// ([`fixed_samples`]).
 pub(crate) fn sample(curves: &[Curve], step: f32, skip: f32) -> Vec<Vec2> {
     let step = step.max(1e-2);
     let mut out = Vec::new();
-    let mut along = 0.0_f32;
+    let skip = f64::from(skip);
+    let mut along = 0.0_f64;
     for curve in curves {
         let (a, d) = (curve.point(0.0), curve.point(1.0));
         let reach = match *curve {
@@ -710,13 +723,15 @@ pub(crate) fn sample(curves: &[Curve], step: f32, skip: f32) -> Vec<Vec2> {
             continue;
         }
         let n = ((reach / step).ceil() as usize).clamp(1, SAMPLE_CAP);
-        let mut last = a;
+        let (_, local) = Local::of(*curve);
+        let mut last = DVec2::ZERO;
         for i in 0..n {
-            let p = curve.point(i as f32 / n as f32);
-            along += p.distance(last);
-            last = p;
+            let t = i as f32 / n as f32;
+            let here = local.at(t);
+            along += (here - last).length();
+            last = here;
             if along >= skip {
-                out.push(p);
+                out.push(curve.point(t));
             }
         }
     }

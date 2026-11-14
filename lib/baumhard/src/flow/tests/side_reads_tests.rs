@@ -9,11 +9,12 @@
 //! Every test here sets a test seam or reads a test counter, so none has a
 //! `do_*` twin.
 //!
-//! The far ellipses' tables sum their points' rounding as length, so
-//! their paths are longer than their outlines (#356): their frames lay
-//! more copies than an outline that long would hold. Nothing here rests
-//! on that length — each bound is in counted reads and steps, and each
-//! band in reads a step or a cluster — and #356 removes it.
+//! The far ellipses' paths are as long as their outlines: their tables
+//! measure from their centers (#356). Until they did, they summed their
+//! points' rounding as length, and their frames laid more copies than an
+//! outline that long would hold; nothing here rested on that length —
+//! each bound is in counted reads and steps, and each band in reads a
+//! step or a cluster.
 
 use glam::Vec2;
 

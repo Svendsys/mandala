@@ -1113,6 +1113,14 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_a_closed_paths_length_is_finite_as_its_build_says", |b| {
         b.iter(do_flow_a_closed_paths_length_is_finite_as_its_build_says)
     });
+    c.bench_function(
+        "flow_an_ellipses_length_is_its_ellipses_at_every_magnitude",
+        |b| b.iter(do_flow_an_ellipses_length_is_its_ellipses_at_every_magnitude),
+    );
+    c.bench_function(
+        "flow_an_ellipse_whose_points_pass_the_largest_f32_has_no_length",
+        |b| b.iter(do_flow_an_ellipse_whose_points_pass_the_largest_f32_has_no_length),
+    );
     c.bench_function("nearest_weight_follows_css_fonts_4", |b| {
         b.iter(do_nearest_weight_follows_css_fonts_4)
     });

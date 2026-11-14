@@ -56,6 +56,9 @@ pub use outline::{offset, offset_keeping_corners, outline, ring_offset, Outline,
 /// label at a fraction of its curve, a portal end at a fraction of its
 /// outline (V1-B7) — answered by the walk placement itself uses.
 pub(crate) use path::ArcPath;
+/// A curve in its own frame, in `f64`: what a path's distances are
+/// measured on, its table's and the projection's samples' (#313, #356).
+pub(crate) use path::Local;
 pub use path::MAX_TABLE_SAMPLES;
 /// A run with every glyph's ink measured, text too: what a text ring's
 /// paths stop at (#296).
