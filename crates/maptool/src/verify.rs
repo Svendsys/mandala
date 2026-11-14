@@ -58,8 +58,8 @@
 //! tiers (`assets/edits.json`, the user's `edits.json`; `format/edits.md`
 //! "Where edits come from") also run on a map, and they are outside what
 //! a map file can be judged on: `verify` does not read them, and the
-//! hidden-node and portal warnings say "no edit in the map" for that
-//! reason.
+//! hidden-node and portal warnings say "no edit in the map" for
+//! that reason.
 //!
 //! Each warning names its place as `grep` does: `#<id>` and the path
 //! below the node, or a definition's path for a verb.
@@ -290,8 +290,8 @@ mod tests {
     /// edit's `set_click` names. It verifies with no warning.
     ///
     /// Control: not reading the edits (dropping the `definitions.edits`
-    /// loop) brings back `verbs[0] "go": defined, and nothing refers to
-    /// it`.
+    /// loop) brings back `verbs[0] "go": defined, and nothing refers
+    /// to it`.
     #[test]
     fn test_verify_counts_a_verb_an_edit_names() {
         let header = r#""verbs": [{"id": "go", "name": "Go"}],
@@ -429,8 +429,8 @@ mod tests {
     ///
     /// Controls, each run: `reveals |= reveal` made `reveals = reveal`
     /// reports node 1; `marks_portal_ends |= marks` made `=` reports the
-    /// portal; clearing `referenced` at the start of each edit reports
-    /// `go`.
+    /// portal; clearing `referenced` at the start of each edit
+    /// reports `go`.
     #[test]
     fn test_verify_keeps_what_an_earlier_edit_counts() {
         let header = r#""defaults": {"portal_end": {"content": ""}},

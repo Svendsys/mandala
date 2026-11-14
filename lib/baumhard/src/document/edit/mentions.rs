@@ -8,8 +8,8 @@
 //!
 //! Every edit type is walked by name: structs are destructured without
 //! `..` and enums matched without a wildcard, so a step added to the
-//! format fails to compile here until it is counted or listed as saying
-//! nothing.
+//! format fails to compile here until it is counted or listed as
+//! saying nothing.
 
 use crate::document::edit::{EditBody, EditDef, Filter, Mutations, MutatorAst};
 use crate::document::format::dto::LinkTargetDto;
@@ -23,8 +23,8 @@ use crate::document::format::edits::{
 pub struct Shows {
     /// Whether it writes `set_hidden: false`.
     pub reveals: bool,
-    /// Whether it writes a portal end's `set_content` to a non-empty
-    /// marker.
+    /// Whether it writes a portal end's `set_content` to a
+    /// non-empty marker.
     pub marks_portal_ends: bool,
 }
 
@@ -33,8 +33,9 @@ impl EditDef {
     /// `set_click` or `set_hover`, a span's `set_link` to `{"verb": …}`, a
     /// filter's `on_click` or `on_hover` — and returns what it can show,
     /// wherever in it they are written: its filter, its mutations, a
-    /// mutator's every macro and `repeat_while` test, at any depth. A handler names nothing and shows nothing: each one is a
-    /// layout that writes positions ([`edit_handlers`](crate::edit_handlers)).
+    /// mutator's every macro and `repeat_while` test, at any depth. A
+    /// handler names nothing and shows nothing: each one is a layout that
+    /// writes positions ([`edit_handlers`](crate::edit_handlers)).
     ///
     /// What the edit writes, not where it runs: which elements it
     /// reaches depends, in general, on the anchors it is run at and on the
@@ -259,8 +260,8 @@ fn text(op: &TextOpDto) {
     }
 }
 
-/// A ring layout op names no verb and shows nothing; listed as [`text`]
-/// is.
+/// A ring layout op names no verb and shows nothing; listed as
+/// [`text`] is.
 fn layout(op: &LayoutOpDto) {
     match op {
         LayoutOpDto::SetSpan(_) | LayoutOpDto::SetSides(_) | LayoutOpDto::SetSpacing(_) => {}

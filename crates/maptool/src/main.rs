@@ -116,8 +116,8 @@ Commands:
                                 edits are read: App and User edits
                                 (edits.json) also run on a map, but a
                                 map file cannot be judged on them, so
-                                they are not read. Warnings alone exit
-                                0.
+                                they are not read. Warnings alone
+                                exit 0.
   apply <map> <pattern> [-i] [--dry-run] -- <cmd> [args...]
                                 For each section with a line the regex
                                 <pattern> matches (an empty section is
