@@ -119,7 +119,13 @@ fn publish(
         .map(|_| ())
         .map_err(|refusal| {
             let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
-            crate::util::log::collapse_home_in(&format!("save: {message}"))
+            // The caller names its own area (`save:`, `apply:`); the
+            // message leads with the path, as a read's does.
+            format!(
+                "{}: could not write: {}",
+                tilde_path(Path::new(path)),
+                crate::util::log::collapse_home_in(&message)
+            )
         })
 }
 
