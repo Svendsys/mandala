@@ -16,7 +16,7 @@
 //! no new error type without a project-scale decision; every caller of
 //! this module shows the message and does nothing else with it; and what
 //! a caller could branch on is already typed one level down, in the
-//! [`LoadError`](crate::document::format::LoadError) and the
+//! `LoadError` and the
 //! [`PublishRefusal`](crate::util::guarded_file::PublishRefusal) whose
 //! words the messages carry. Each message names the path through
 //! [`tilde_path`](crate::util::log::tilde_path) or
@@ -108,7 +108,7 @@ pub fn write(path: &str, text: &str) -> Result<(), String> {
     })
 }
 
-/// [`write`]'s publication: what `produce` writes, published over
+/// [`write()`]'s publication: what `produce` writes, published over
 /// `path` through the guarded writer (which, in the browser, refuses).
 fn publish(
     path: &str,
@@ -174,7 +174,6 @@ mod tests {
     /// the second assertion goes red.
     #[test]
     fn test_file_a_failed_write_leaves_the_old_bytes_and_no_temp_file() {
-        use std::io::Write;
         let dir = scratch_dir("file-failed");
         let path = dir.join("m.mandala.json");
         std::fs::write(&path, "old").unwrap();

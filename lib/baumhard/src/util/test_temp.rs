@@ -88,6 +88,39 @@ impl Drop for TempDir {
     }
 }
 
+/// A fresh directory under the system temp dir, unique to this process
+/// and call, which the caller removes: for a test that inspects the
+/// directory after a writer is done with it, beside [`TempDir`], which
+/// removes itself. Panics if it cannot be created, as [`TempDir::new`]
+/// does. Cost: one `create_dir_all`.
+pub fn scratch_dir(label: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "mandala-write-{}-{}-{label}",
+        std::process::id(),
+        NEXT_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir)
+        .unwrap_or_else(|e| panic!("could not create scratch dir {}: {e}", dir.display()));
+    dir
+}
+
+/// The names of what is in `dir`, sorted: what a writer left behind.
+/// Panics if `dir` cannot be read. Cost: one directory read.
+pub fn names_in(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("could not read {}: {e}", dir.display()))
+        .map(|entry| {
+            entry
+                .unwrap_or_else(|e| panic!("could not read an entry of {}: {e}", dir.display()))
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,37 +164,4 @@ mod tests {
             "name must carry the pid: {name}"
         );
     }
-}
-
-/// A fresh directory under the system temp dir, unique to this process
-/// and call, which the caller removes: for a test that inspects the
-/// directory after a writer is done with it, beside [`TempDir`], which
-/// removes itself. Panics if it cannot be created, as [`TempDir::new`]
-/// does. Cost: one `create_dir_all`.
-pub fn scratch_dir(label: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "mandala-write-{}-{}-{label}",
-        std::process::id(),
-        NEXT_ID.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&dir)
-        .unwrap_or_else(|e| panic!("could not create scratch dir {}: {e}", dir.display()));
-    dir
-}
-
-/// The names of what is in `dir`, sorted: what a writer left behind.
-/// Panics if `dir` cannot be read. Cost: one directory read.
-pub fn names_in(dir: &Path) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(dir)
-        .unwrap_or_else(|e| panic!("could not read {}: {e}", dir.display()))
-        .map(|entry| {
-            entry
-                .unwrap_or_else(|e| panic!("could not read an entry of {}: {e}", dir.display()))
-                .file_name()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect();
-    names.sort();
-    names
 }

@@ -21,7 +21,7 @@
 //! crate both depend on.
 //!
 //! The browser has no files, and no process id for the temp file's
-//! name: there, [`publish`](crate::util::guarded_file::publish) refuses
+//! name: there, `publish` refuses
 //! every write and says so, which is what a file write in the browser
 //! did before it came here.
 
@@ -30,7 +30,7 @@ use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// Why [`publish`](crate::util::guarded_file::publish) wrote nothing.
+/// Why [`publish`] wrote nothing.
 #[derive(Debug, PartialEq)]
 pub enum PublishRefusal {
     /// The path is the caller's mistake — a symlink, a directory, an
@@ -116,7 +116,7 @@ fn produce_into(
 ///
 /// **Atomic, and it never follows a symlink.** The bytes go to a
 /// sibling temp file created exclusively with `O_NOFOLLOW`
-/// ([`create_exclusive`]), are flushed and `fsync`ed, and only then
+/// (`create_exclusive`), are flushed and `fsync`ed, and only then
 /// published under the destination name. A failure at any point (the
 /// producer, a full disk) removes the temp file and leaves the
 /// destination exactly as it was, so an earlier good file is never
@@ -208,7 +208,7 @@ pub fn publish(
     Ok(bytes)
 }
 
-/// [`publish`](crate::util::guarded_file::publish) in the browser,
+/// [`publish`] in the browser,
 /// which has no files: every write is refused, and `produce` is not
 /// run. O(1).
 #[cfg(target_arch = "wasm32")]

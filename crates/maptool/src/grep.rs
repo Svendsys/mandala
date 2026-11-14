@@ -62,7 +62,7 @@ mod tests {
     /// a connector's spans, caps, label and `content`. A line that does
     /// not match is not printed, and neither is a default's `content`.
     ///
-    /// Control: renaming one spelling (`cap_start` as `cap_begin`), or
+    /// Control: misspelling one place (the connector's start cap), or
     /// dropping the `content` search, fails the comparison.
     #[test]
     fn test_grep_finds_text_in_every_element_that_holds_spans() {
