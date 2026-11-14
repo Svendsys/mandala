@@ -30,7 +30,8 @@ pub struct Nodes<'d> {
 }
 
 impl<'d> Nodes<'d> {
-    /// The walk over every node of `doc`.
+    /// The walk over every node of `doc`. Cost: the root's children
+    /// queued; each step queues the children of the node it yields.
     pub fn new(doc: &'d Document) -> Self {
         let mut nodes = Nodes {
             doc,
@@ -64,20 +65,20 @@ impl Iterator for Nodes<'_> {
     }
 }
 
-/// Whether `id` is an element of `kind`.
+/// Whether `id` is an element of `kind`. O(1).
 pub fn is(doc: &Document, id: NodeId, kind: DocKind) -> bool {
     doc.get(id).map(DocElement::kind) == Some(kind)
 }
 
 /// The id the file gives the node `id`, or `0` for an element that is
-/// not a node (which no caller passes).
+/// not a node (which no caller passes). O(1).
 pub fn ident(doc: &Document, id: NodeId) -> u32 {
     doc.get(id)
         .and_then(DocElement::as_node)
         .map_or(0, |node| node.ident.0)
 }
 
-/// The link `id`, if it is one.
+/// The link `id`, if it is one. O(1).
 pub fn link(doc: &Document, id: NodeId) -> Option<&LinkData> {
     match doc.get(id) {
         Some(DocElement::Link(link)) => Some(link),
@@ -86,7 +87,8 @@ pub fn link(doc: &Document, id: NodeId) -> Option<&LinkData> {
 }
 
 /// Replace `out` with the text of `owner`: its spans' text, concatenated
-/// in order. Reuses `out`'s allocation.
+/// in order. Cost: O(its children and their text); reuses `out`'s
+/// allocation.
 pub fn text_into(doc: &Document, owner: NodeId, out: &mut String) {
     out.clear();
     for id in doc.children(owner) {
@@ -115,7 +117,7 @@ pub fn own_content(doc: &Document, owner: NodeId) -> Option<&str> {
     }
 }
 
-/// A node's sections, in their order in the file.
+/// A node's sections, in their order in the file. No allocation.
 pub fn sections(doc: &Document, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     doc.children(node)
         .filter(move |&id| is(doc, id, DocKind::Section))
@@ -215,7 +217,23 @@ pub fn text_owners(doc: &Document, node: NodeId, mut f: impl FnMut(Place, NodeId
                 }
                 link += 1;
             }
-            _ => {}
+            // Every kind by name, so one a node may come to hold fails to
+            // compile here rather than going unsearched. A child node is
+            // walked by `Nodes`; the others never sit under a node.
+            Some(
+                DocKind::Node
+                | DocKind::Map
+                | DocKind::Theme
+                | DocKind::Palette
+                | DocKind::Defaults
+                | DocKind::Span
+                | DocKind::Ring
+                | DocKind::CapStart
+                | DocKind::CapEnd
+                | DocKind::Label
+                | DocKind::PortalEnd,
+            )
+            | None => {}
         }
     }
 }
@@ -228,7 +246,23 @@ fn path_owners(doc: &Document, at: PathAt, path: NodeId, f: &mut impl FnMut(Plac
             Some(DocKind::CapStart) => f(Place::CapStart(at), id),
             Some(DocKind::CapEnd) => f(Place::CapEnd(at), id),
             Some(DocKind::Label) => f(Place::Label(at), id),
-            _ => {}
+            // The path's own spans were its `Place::Path`; every other
+            // kind by name, so a new one fails to compile here.
+            Some(
+                DocKind::Span
+                | DocKind::Node
+                | DocKind::Map
+                | DocKind::Theme
+                | DocKind::Palette
+                | DocKind::Defaults
+                | DocKind::Section
+                | DocKind::Frame
+                | DocKind::Ring
+                | DocKind::Connector
+                | DocKind::Link
+                | DocKind::PortalEnd,
+            )
+            | None => {}
         }
     }
 }

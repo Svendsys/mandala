@@ -21,10 +21,18 @@ struct Run {
 
 /// Run the built `maptool` with `args`.
 fn maptool(args: &[&str]) -> Run {
-    let output = Command::new(env!("CARGO_BIN_EXE_maptool"))
-        .args(args)
-        .output()
-        .expect("maptool runs");
+    maptool_in_home(args, None)
+}
+
+/// Run the built `maptool` with `args`, and with `HOME` set to `home`
+/// when one is given.
+fn maptool_in_home(args: &[&str], home: Option<&Path>) -> Run {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_maptool"));
+    command.args(args);
+    if let Some(home) = home {
+        command.env("HOME", home);
+    }
+    let output = command.output().expect("maptool runs");
     Run {
         status: output.status.code().expect("maptool exits with a status"),
         stdout: String::from_utf8(output.stdout).expect("stdout is UTF-8"),
@@ -317,6 +325,25 @@ fn test_verify_prints_each_kind_of_warning() {
             shown(&map)
         )
     );
+}
+
+/// `verify` names the map one way on every line, success and refusal
+/// alike: home folded to `~`.
+#[test]
+fn test_verify_names_the_map_with_home_folded_on_success_and_refusal() {
+    let dir = TempDir::new("maptool-verify-home");
+    let good = write(&dir, "good.mandala.json", r#"{"format": 1, "name": "g"}"#);
+    let bad = write(&dir, "bad.mandala.json", r#"{"format": 1}"#);
+    let run = maptool_in_home(&["verify", arg(&good)], Some(dir.path()));
+    assert_eq!(
+        (run.status, run.stdout.as_str()),
+        (0, "~/good.mandala.json: valid\n"),
+        "{}",
+        run.stderr
+    );
+    let run = maptool_in_home(&["verify", arg(&bad)], Some(dir.path()));
+    assert_eq!(run.status, 1);
+    assert!(run.stderr.starts_with("~/bad.mandala.json: "), "{}", run.stderr);
 }
 
 /// A map the loader refuses exits 1, with the loader's message — its

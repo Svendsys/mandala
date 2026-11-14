@@ -2397,8 +2397,9 @@ half both surfaces call: it syncs the view, then the layer renderer
 draws the glyph layers through the capture's camera
 (`LayerRenderer::encode`) — the same layers the window draws, at any
 zoom, with nothing projected again. Every caller-chosen path is written through
-`guarded_file::publish` — atomic, no symlink followed, no file
-replaced unasked — the writer the IPC `to_file` sidecar uses too.
+baumhard's `util::guarded_file::publish` — atomic, no symlink followed,
+no file replaced unasked — the writer the IPC `to_file` sidecar, a
+map's save and `maptool` use too.
 
 A frame the renderer skips (`FrameSkip`: not started, font system
 contended, glyph prepare failed) is reported as not rendered and
@@ -3091,16 +3092,20 @@ A separate binary in `crates/maptool/` for scripted operations on
 `.mandala.json` files, and a client of the same `Document` the app
 edits: it reads a map with `format::file::read`, the app's own read, so
 a map the app refuses it refuses in the same words. `show` prints the
-node tree, `grep` the lines of span text a regex matches (named by
-their path below the node, `#3 links[1].ends[0]: …`), `export` the tree
+node tree, `grep` the lines of span text and of an element's own
+`content` a regex matches (named by their path below the node,
+`#3 links[1].ends[0]: …`, `#3 connector.content: …`), `export` the tree
 as Markdown and `verify` the loader's verdict plus warnings for what
 loads but is probably a mistake (a verb nothing refers to, a node saved
 hidden that nothing can reveal, a visible frame with no rings, a portal
-whose ends both draw nothing). `apply` pipes each matching section's
-text through a command and replaces its spans as one `EditRequest`
-through `Document::apply` — the only way a document changes — then
-prints the map, writes it back (`-i`, through `format::file::write`) or
-prints the change as a diff (`--dry-run`). There is no `convert`: there
-is no older format to convert from. `maptool --help` is the reference.
+whose ends both draw nothing). `apply` pipes the text of each section a
+line of which matches through a command and replaces its spans as one
+`EditRequest` through `Document::apply` — the only way a document
+changes — then prints the map, writes it back (`-i`, through
+`format::file::write`, which publishes through baumhard's
+`util::guarded_file` as every caller-chosen path is written) or prints
+what `-i` would change in the file on disk as a diff (`--dry-run`).
+There is no `convert`: there is no older format to convert from.
+`maptool --help` is the reference.
 
 ---

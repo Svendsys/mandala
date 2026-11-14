@@ -1724,8 +1724,8 @@ name = "test_bench"
     const DECLARATIONS_PER_MANIFEST: [(&str, usize); 5] = [
         ("Cargo.toml", 29),
         ("crates/mandalactl/Cargo.toml", 8),
-        ("crates/maptool/Cargo.toml", 3),
-        ("lib/baumhard/Cargo.toml", 30),
+        ("crates/maptool/Cargo.toml", 4),
+        ("lib/baumhard/Cargo.toml", 31),
         ("lib/mandala_derive/Cargo.toml", 3),
     ];
 

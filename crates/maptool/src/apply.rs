@@ -238,9 +238,9 @@ mod tests {
     /// A text of another shape — one line where the save writes three —
     /// is diffed as it is: the one line goes, the three come.
     ///
-    /// Control: diffing line by line at equal positions (the earlier
-    /// diff) prints the added lines as a hunk after line 1 with `@@ -1,0`
-    /// in place of a replacement.
+    /// Control: `a/` and `b/` headers fail it on the header lines; the
+    /// layout itself is held end to end by the CLI test on a one-line
+    /// map, which a diff of a re-save fails.
     #[test]
     fn test_apply_diff_reports_a_change_of_shape() {
         assert_eq!(

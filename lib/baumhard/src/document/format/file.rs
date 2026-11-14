@@ -151,8 +151,8 @@ mod tests {
 
     /// A write replaces the map whole and leaves nothing beside it.
     ///
-    /// Control: publishing by a hard link and never removing the temp
-    /// file leaves `.mandala-write-*.tmp` beside the map, and the second
+    /// Control: publishing by a copy that never removes the temp file
+    /// leaves `.mandala-write-*.tmp` beside the map, and the second
     /// assertion goes red.
     #[test]
     fn test_file_write_replaces_the_map_and_leaves_no_temp_file() {

@@ -89,6 +89,7 @@ dependencies = [
  "path-slash",
  "rand 0.10.3",
  "rustc-hash",
+ "rustix",
  "serde",
  "serde_json",
  "serde_path_to_error",
