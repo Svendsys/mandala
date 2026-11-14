@@ -56,6 +56,9 @@ mod chain;
 pub mod context;
 pub(crate) mod dto;
 pub mod error;
+/// The file a map lives in: its extension, the read and the atomic
+/// write every surface with a path goes through.
+pub mod file;
 mod from_dto;
 pub(crate) mod index;
 mod load_map;

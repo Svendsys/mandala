@@ -238,18 +238,13 @@ pub fn production_code(relative: &str) -> String {
 /// ## The one thing that does truncate to (almost) nothing
 ///
 /// `#![cfg(test)]` — the *inner* form, written at the top of a file
-/// that is nothing but tests. **Three** files open with it, not the
-/// two this paragraph used to list:
-///
-/// - `src/application/macros/tests.rs` and
-///   `src/application/app/dispatch/cross_dispatch/selection/tests.rs`,
-///   each declared by a bare `mod tests;` with no attribute on it, so
-///   the inner attribute is the only gate there is;
-/// - `crates/maptool/src/verify/test_helpers.rs`, which is declared
-///   `#[cfg(test)] mod test_helpers;` and so is gated twice. It is
-///   listed anyway: this function is handed the *file*, never its
-///   declaration, so the outer gate is invisible from here and the
-///   inner one is the only thing that can cut.
+/// that is nothing but tests. One file opens with it today,
+/// `src/application/macros/tests.rs`, declared by a bare `mod tests;`
+/// with no attribute on it, so the inner attribute is the only gate
+/// there is. A file whose declaration is also gated is cut here all the
+/// same: this function is handed the *file*, never its declaration, so
+/// an outer gate is invisible from here and the inner one is the only
+/// thing that can cut.
 ///
 /// Cutting there really does leave nothing, and that is the honest
 /// answer rather than the dangerous one: the file ships no code, so

@@ -46,9 +46,9 @@ use std::path::{Path, PathBuf};
 use baumhard::gfx_structs::camera::Camera2D;
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::application::guarded_file::{self, PublishRefusal};
-#[cfg(not(target_arch = "wasm32"))]
 use crate::application::renderer::{CapturedPixels, FrameSkip};
+#[cfg(not(target_arch = "wasm32"))]
+use baumhard::util::guarded_file::{self, PublishRefusal};
 
 #[cfg(not(target_arch = "wasm32"))]
 use artifacts::Artifacts;
@@ -238,7 +238,7 @@ pub(crate) fn write(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
-    use crate::application::guarded_file::tests::{names_in, scratch_dir};
+    use baumhard::util::test_temp::{names_in, scratch_dir};
     use geometry::{CameraInfo, SurfaceInfo};
 
     fn pixels() -> CapturedPixels {

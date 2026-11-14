@@ -10,8 +10,18 @@
 //! the "Save As" gesture in conventional editors — the original file on
 //! disk is left untouched. A path that is not a `.mandala.json` is
 //! refused by name. The write is `MindMapDocument::save_to`: the
-//! document's `save_json`, written through a temporary file and a
-//! rename, then `mark_saved`.
+//! document's `save_json`, written by `format::file::write` through a
+//! temporary file and a rename, then `mark_saved`.
+//!
+//! **Through a symlink.** A path that is a link is followed to its real
+//! file, which is replaced atomically while the link stays a link — so a
+//! map kept behind a link stays saveable. That real file must be named
+//! like a map too, or the save is refused naming both paths and nothing
+//! is written: this verb is reachable over IPC (`act.console`), and a
+//! link named like a map must not carry map bytes into another file
+//! (amendment E1.1). A map opened through such a link — a git-annex key
+//! ending `.json` — therefore opens, and is saved under a name of its
+//! own (`save <other.mandala.json>`).
 
 use super::Command;
 use crate::application::console::parser::Args;
@@ -176,5 +186,62 @@ mod tests {
         assert_exec_err_contains(run_save(&[&target.to_string_lossy()], &mut doc), ".mandala.json");
         assert!(!target.exists());
         assert_eq!(doc.file_path, None);
+    }
+
+    /// A map opened through a link named like a map that leads to a file
+    /// that is not one (a git-annex key ending `.json`) opens, edits, and
+    /// then cannot be saved back through the link: the refusal names both
+    /// paths, the binding and the unsaved change stay, and the key is not
+    /// written. Saved under a name of its own, it saves, and the link and
+    /// the key are as they were (amendment E1.1, third addendum §1).
+    ///
+    /// Controls: holding the read to the write's rule fails the open;
+    /// checking only the name typed on the write lets the first save
+    /// write the key.
+    #[cfg(unix)]
+    #[test]
+    fn test_a_map_opened_through_a_link_to_another_name_saves_only_under_a_name_of_its_own() {
+        let dir = TempDir::new("console-save-annex");
+        let key = dir.join("SHA256E-s27--0123abcd.json");
+        let map = r#"{"format": 1, "name": "annexed"}"#;
+        std::fs::write(&key, map).expect("the key is written");
+        let link = dir.join("annexed.mandala.json");
+        std::os::unix::fs::symlink(&key, &link).expect("the link is made");
+        let link_str = link.to_string_lossy().to_string();
+
+        let mut doc = MindMapDocument::load(&link_str, 50).expect("a map behind such a link opens");
+        doc.create_root_for_test();
+        assert_exec_err_contains(run_save(&[], &mut doc), "0123abcd.json`, which is not a map");
+        assert_eq!(
+            doc.file_path.as_deref(),
+            Some(link_str.as_str()),
+            "the binding stays"
+        );
+        assert!(doc.is_dirty(), "the change is still unsaved");
+        assert_eq!(
+            std::fs::read_to_string(&key).expect("reads"),
+            map,
+            "the key is not written"
+        );
+
+        let other = dir.join("annexed-copy.mandala.json");
+        let other_str = other.to_string_lossy().to_string();
+        assert!(matches!(run_save(&[&other_str], &mut doc), ExecResult::Ok(_)));
+        assert!(!doc.is_dirty());
+        assert!(other.exists());
+        assert!(std::fs::symlink_metadata(&link)
+            .expect("the link")
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            std::fs::read_link(&link).expect("reads"),
+            key,
+            "the link still leads to the key"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&key).expect("reads"),
+            map,
+            "and the key is as it was"
+        );
     }
 }

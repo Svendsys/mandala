@@ -80,6 +80,24 @@
 //! [`GLYPHS_A_STEP`] to a step, a setup of its own ([`RING_STEPS`]), and
 //! its path's table, at its samples (`halves::TABLE_SAMPLES_A_STEP`,
 //! ruling B16.3a): the work a ring does past its reads.
+//!
+//! **Along an open path** (#313). Every placement along an open path is
+//! budgeted so too, by the glyphs it will lay, at most its cap: a `Repeat`
+//! by the copies its path holds, as a ring; `Once`, `Spread` and `Fit` by
+//! their text, and `Once` with a filler by the copies of the filler the
+//! path past its text holds besides ([`RingWork::scale`]). It reads the
+//! budget where a ring does, and `Fit` before each measure of its text as
+//! read and each round of its scale, which read none as they go, holding
+//! back what phase 2 takes of its glyphs ([`RingWork::affords_more`]). The
+//! one cluster that may find it spent holds
+//! no more than its widest cluster's glyphs. A connector's whole-glyph
+//! pattern (`pitch::place_pitched`) is budgeted by its rounds of pitch, as
+//! a directional ring's runs are. Neither counts its shaping, as a ring
+//! does not: a `Fit`'s reshapes and a filler's are bounded by the text,
+//! not the path. A `Fit` reshapes once a round of its scale, at most
+//! `FIT_ROUNDS + BRACKET_ROUNDS` times — 40, where before its bracket
+//! (#313, ruling B18.1 §10) it reshaped at most 16 — each uncounted;
+//! shaping's cost is #304's.
 
 use std::cell::Cell;
 
@@ -312,43 +330,58 @@ pub(crate) fn ring_work_steps(glyphs: usize, copy: usize, tables: usize) -> usiz
 }
 
 /// How a ring's budget, or its cap, left it (#310), when it stopped its
-/// work (`Trace::ring`).
+/// work (`Trace::ring`) — or a placement's along an open path, which is
+/// never closed, and so short or uneven (#313).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum RingLoss {
     /// Phase 2's spacing was not solved to the end: the ring is laid at
     /// the fitting side of its bracket, its seam wider than its other
-    /// gaps, or a stretch tighter than its walk's.
+    /// gaps, or a stretch tighter than its walk's. Along an open path, a
+    /// `fit`'s scale was not solved to the end, and it is laid at the
+    /// scale it reached.
     Uneven,
     /// Its copies fill the path, but their spacing was not solved to
-    /// close its seam: laid as walked, the seam a part-copy wide.
+    /// close its seam: laid as walked, the seam a part-copy wide. A closed
+    /// ring's alone: an open path has no seam, and a placement along one
+    /// is never left so.
     Unclosed,
     /// Its first walk stopped before its copies filled the path — its
     /// budget spent, or its cap reached (ruling B17.2a): the copies laid
-    /// so far, unclosed.
+    /// so far, unclosed. Along an open path, a walk stopped before its
+    /// text, or its copies, were laid: the longest prefix of them in
+    /// reading order its walk kept, or its text without its copies.
     Short,
 }
 
-/// A `Repeat` ring's work (#310): the path reads it has taken, its
-/// budget and what of it is held back for phase 2.
+/// A `Repeat` ring's work (#310), or a placement's along an open path, in
+/// any fit mode, or a pitched one's (#313): the path reads it has taken,
+/// its budget and what of it is held back for phase 2.
 pub(crate) struct RingWork {
     /// The path's reads when the ring began ([`ArcPath::reads`]).
     from: usize,
     /// The samples its path's table was built with, counted in its setup
     /// (ruling B16.3a).
     tables: usize,
-    /// The ring's glyphs a copy, and whether any of them is a letter,
-    /// which phase 2 lays in reading order.
-    copy: usize,
+    /// The ring's glyphs a copy — along an open path, its widest
+    /// cluster's (#313) — what bounds the one cluster that may find its
+    /// budget spent ([`ring_overshoot`]); and whether any of its glyphs is
+    /// a letter, which phase 2 lays in reading order.
+    copy: Cell<usize>,
     letters: bool,
     /// The most glyphs it lays (ruling B17.2a), the glyphs its budget is
     /// scaled by ([`ring_glyphs`], at most the cap), and its budget.
     cap: usize,
-    glyphs: usize,
-    budget: usize,
+    glyphs: Cell<usize>,
+    budget: Cell<usize>,
     /// Its path's length and its line height, what its run on is held
     /// back for by ([`run_on_reads`]).
     length: f32,
     line_height: f32,
+    /// Whether it is a `Fit`'s ([`fitting`](Self::fitting)), and what it
+    /// last held back if so: what [`held`](Self::held) asserts it never
+    /// falls below (ruling B18.1 §8).
+    fit: Cell<bool>,
+    fit_held: Cell<usize>,
     /// The glyph steps of work it counts past its reads and its glyphs:
     /// a directional ring's shaping of its glyphs by direction (#324).
     took: Cell<usize>,
@@ -397,13 +430,15 @@ impl RingWork {
         RingWork {
             from: path.reads(),
             tables: path.table_samples(),
-            copy,
+            copy: Cell::new(copy),
             letters,
             cap,
-            glyphs,
-            budget: frame_budget(glyphs),
+            glyphs: Cell::new(glyphs),
+            budget: Cell::new(frame_budget(glyphs)),
             length,
             line_height,
+            fit: Cell::new(false),
+            fit_held: Cell::new(0),
             took: Cell::new(0),
             set: Cell::new(0),
             reserve: Cell::new(0),
@@ -448,6 +483,13 @@ impl RingWork {
         self.took.set(self.took.get().saturating_add(steps));
     }
 
+    /// The glyph steps taken apart from its path's reads and its glyphs
+    /// ([`took`](Self::took)), in a test.
+    #[cfg(test)]
+    pub(crate) fn taken_apart(&self) -> usize {
+        self.took.get()
+    }
+
     /// Count `glyphs` glyphs set: laid by a walk, or by phase 2 handled
     /// ([`PHASE_TWO_GLYPH_PASSES`] times each, [`placed`](Self::placed)).
     pub(crate) fn set(&self, glyphs: usize) {
@@ -462,20 +504,85 @@ impl RingWork {
 
     /// What is held back for phase 2 ([`admits`](Self::admits),
     /// [`ends_by`](Self::ends_by)).
+    ///
+    /// A `Fit`'s never shrinks (ruling B18.1 §8): its `reserve` only rises
+    /// ([`admits`](Self::admits)) and its `run_on` is its path's from its
+    /// start, as [`new`](Self::new) sets it, never lowered — [`ends_by`]
+    /// and [`closed`](Self::closed), which lower them, are a `Repeat`'s
+    /// walk's alone. Nor does it need a hold of its own for a run on at a
+    /// smaller line height when it is reshaped smaller (review 5904164019):
+    /// a `Fit` ends within its path and runs on only as one cluster, which
+    /// `spread` lays as `once` does, or as a text its window's least cuts,
+    /// or by `fit_to`'s early return — and then by less than its next
+    /// cluster's width, a few steps, which the hold for the glyphs it laid
+    /// covers several times over (`open_budget_tests`: a `Fit` that runs on
+    /// takes no more in phase 2 than was held for it). A debug build
+    /// asserts a `Fit`'s hold never shrinks.
+    ///
+    /// [`ends_by`]: Self::ends_by
     fn held(&self) -> usize {
-        self.reserve.get().saturating_add(self.run_on.get())
+        let held = self.reserve.get().saturating_add(self.run_on.get());
+        if self.fit.get() {
+            debug_assert!(
+                held >= self.fit_held.get(),
+                "a Fit's hold never shrinks: {held} after {}",
+                self.fit_held.get()
+            );
+            self.fit_held.set(held);
+        }
+        held
     }
 
     /// Whether the ring may walk on along `path`: what it has taken is
     /// less than its budget less what is held back for phase 2.
     pub(crate) fn affords(&self, path: &ArcPath) -> bool {
-        let room = self.budget.saturating_sub(self.held());
+        let room = self.budget.get().saturating_sub(self.held());
         let spent = self.spent(path);
         #[cfg(test)]
         if spent >= room && !self.again.get() && self.crossed.get().is_none() {
             self.crossed.set(Some(spent - room));
         }
         spent < room
+    }
+
+    /// Whether the placement may run a pass of `steps` glyph steps along
+    /// `path` before its budget is read again (#313): what it has taken
+    /// and that pass are less than its budget less what is held back for
+    /// phase 2. Read before each pass of an open path's placement that
+    /// does not read the budget as it goes — a `Fit`'s measure of its text
+    /// as read, and each of its rounds' — so that no such pass takes it
+    /// past what its budget leaves.
+    pub(crate) fn affords_more(&self, path: &ArcPath, steps: usize) -> bool {
+        let room = self.budget.get().saturating_sub(self.held());
+        self.spent(path).saturating_add(steps) < room
+    }
+
+    /// Scale the budget by `glyphs` glyphs, at most the cap, where that is
+    /// more than it was scaled by (#313): an open path's `Once` with a
+    /// filler, whose copies are estimated once the filler is shaped
+    /// ([`ring_glyphs`]).
+    pub(crate) fn scale(&self, glyphs: usize) {
+        let glyphs = glyphs.min(self.cap);
+        if glyphs > self.glyphs.get() {
+            self.glyphs.set(glyphs);
+            self.budget.set(frame_budget(glyphs));
+        }
+    }
+
+    /// Note that a cluster of `glyphs` glyphs may be laid (#313): an open
+    /// path's `Once`, whose filler's clusters may hold more glyphs than its
+    /// text's, what bounds the one cluster that may find its budget spent
+    /// ([`ring_overshoot`]).
+    pub(crate) fn widen(&self, glyphs: usize) {
+        self.copy.set(self.copy.get().max(glyphs));
+    }
+
+    /// Note that this is a `Fit`'s work (#313, ruling B18.1 §8): its hold
+    /// never shrinks, which its report of a scale not solved to the end
+    /// rests on (`place::fit_to`), and [`held`](Self::held) asserts so in a
+    /// debug build.
+    pub(crate) fn fitting(&self) {
+        self.fit.set(true);
     }
 
     /// Note that phase 2 begins: the ring is laid again in reading order
@@ -535,7 +642,7 @@ impl RingWork {
     #[cfg_attr(not(test), allow(unused_variables))]
     pub(crate) fn begin(&self, path: &ArcPath) {
         #[cfg(test)]
-        if self.again.get() && self.spent(path) >= self.budget.saturating_sub(self.held()) {
+        if self.again.get() && self.spent(path) >= self.budget.get().saturating_sub(self.held()) {
             self.late.set(self.late.get() + 1);
         }
     }
@@ -573,8 +680,9 @@ impl RingWork {
     }
 
     /// Its budget, the glyphs it was scaled by ([`ring_glyphs`], at most
-    /// its cap), and its glyphs a copy.
+    /// its cap), and its glyphs a copy (along an open path, its widest
+    /// cluster's).
     pub(crate) fn budget(&self) -> (usize, usize, usize) {
-        (self.budget, self.glyphs, self.copy)
+        (self.budget.get(), self.glyphs.get(), self.copy.get())
     }
 }

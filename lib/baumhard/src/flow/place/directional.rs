@@ -72,7 +72,9 @@
 //! as one), the glyphs it sets and its shaping, scaled by the glyphs
 //! its runs will hold. Each run's count and each round of its spacing
 //! reads the budget first, and holds back what the run's last lays take
-//! ([`LAYS_HELD`]); once it is spent no further run is laid. A ring its
+//! ([`LAYS_HELD`]) and the glyphs of the inks it would then hold, which
+//! are counted once the run is laid (#313, ruling B18.1 §4); once it is
+//! spent no further run is laid. A ring its
 //! budget stops, or its cap holds, is short ([`RingLoss::Short`]).
 
 use std::cell::Cell;
@@ -82,7 +84,7 @@ use glam::Vec2;
 
 use super::halves::{inked, inking_steps, resizing_steps, resolved};
 use super::pitch::{glyphs_at, natural_marks, pitch, Mark, PathEnd, Track, BRACKET_ROUNDS, BRACKET_STRIDES};
-use super::ring::{ring_glyphs, steps_of, RingLoss, RingWork};
+use super::ring::{ring_glyphs, steps_of, RingLoss, RingWork, GLYPHS_A_STEP};
 use super::{
     cluster_ink, clusters_of, support, table_spacing, Cluster, PlacedGlyph, PlacedRun, Trace,
     MAX_PLACED_GLYPHS, VERTICAL_MIN_LINES,
@@ -136,6 +138,16 @@ const INK_READS: usize = 3 + SOLVE_READS;
 /// inks: each end's ink solved against what is beside it, its gap and its
 /// refinements.
 const END_READS: usize = 2 * SOLVE_READS;
+
+thread_local! {
+    /// Test counter (#313, ruling B18.1 §4): the most glyph steps a run of
+    /// a directional ring has taken, its glyphs counted once it is laid,
+    /// past what its last go found spent and held back for, on this
+    /// thread: never above none, the hold being what the run takes after.
+    /// `None` before any run.
+    #[cfg(test)]
+    pub(crate) static RUN_EDGE: Cell<Option<i64>> = const { Cell::new(None) };
+}
 
 /// The lays of a run held back for whenever its count or its spacing
 /// asks whether it may go on: the two counts its spacing is solved for
@@ -745,11 +757,26 @@ pub(super) fn place_directional(
             back: f32::INFINITY,
             hold: 0.0,
         });
+        // The lays held back for, and the glyphs of the inks the run would
+        // then hold, which are counted once it is laid (#313, ruling
+        // B18.1 §4), as a pitched placement holds them back.
+        let widest_glyphs = widest(clusters);
+        // In a test, what the last go found spent and held back for.
+        #[cfg(test)]
+        let last_go: Cell<Option<usize>> = Cell::new(None);
         let go = |inks: usize| {
-            let held = LAYS_HELD.saturating_mul(lay_steps(inks));
+            let held = LAYS_HELD.saturating_mul(lay_steps(inks)).saturating_add(
+                inks.saturating_add(1)
+                    .saturating_mul(widest_glyphs)
+                    .div_ceil(GLYPHS_A_STEP),
+            );
             let ok = work.spent(&arc).saturating_add(held) < budget;
             if !ok {
                 stopped.set(true);
+            }
+            #[cfg(test)]
+            if ok {
+                last_go.set(Some(work.spent(&arc).saturating_add(held)));
             }
             ok
         };
@@ -770,6 +797,11 @@ pub(super) fn place_directional(
             .collect();
         let laid = glyphs_at(m, clusters, marks, &centers);
         work.set(laid.len());
+        #[cfg(test)]
+        if let Some(allowed) = last_go.get() {
+            let edge = work.spent(&arc) as i64 - allowed as i64;
+            RUN_EDGE.with(|most| most.set(Some(most.get().map_or(edge, |was| was.max(edge)))));
+        }
         Some((laid, pitched.truncated))
     };
     let mut by_run: Vec<(Vec<PlacedGlyph>, bool)> = vec![(Vec::new(), false); count];
