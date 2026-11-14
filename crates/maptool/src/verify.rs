@@ -10,12 +10,6 @@
 //! looks for four things, as #253 lists them and its amendment E1.1
 //! (issue comment 6870828150) rules:
 //!
-//! The edits read are the map's own, its `edits`. The App and User
-//! tiers (`assets/edits.json`, the user's `edits.json`; `format/edits.md`
-//! "Where edits come from") also run on a map, and they are outside what
-//! a map file can be judged on: `verify` does not read them, and each
-//! warning below says "in the map" for that reason.
-//!
 //! - **A verb nothing refers to.** A verb is referred to by a node's `on`
 //!   (`click`, `hover`), by a span's `link` (`{"verb": …}`), and by an
 //!   edit in the map that names it — a node's `set_click` or
@@ -41,7 +35,8 @@
 //!   where this is conservative is an edit whose filter fixes its node: on
 //!   `target: "node"`, a first test of `ident` `Equals` decides for every
 //!   node, and no op changes an id, so that edit only ever reaches the one
-//!   node. It is not narrowed for: a second rule for a rare case.
+//!   node. `verify` does not narrow for it: that would be a second rule
+//!   for a rare case.
 //! - **An empty frame**: one that resolves visible, through its own
 //!   `visible`, the map's defaults and the built-in value, and holds no
 //!   rings — it draws nothing. No edit can add a ring, so none can make it
@@ -59,11 +54,18 @@
 //!   which inherits the defaults' empty content) does not. An edit cannot
 //!   give an end spans or change the defaults.
 //!
+//! The edits read are the map's own, its `edits`. The App and User
+//! tiers (`assets/edits.json`, the user's `edits.json`; `format/edits.md`
+//! "Where edits come from") also run on a map, and they are outside what
+//! a map file can be judged on: `verify` does not read them, and the
+//! hidden-node and portal warnings say "no edit in the map" for that
+//! reason.
+//!
 //! Each warning names its place as `grep` does: `#<id>` and the path
 //! below the node, or a definition's path for a verb.
 
 use baumhard::arena::NodeId;
-use baumhard::document::edit::{Named, Shows};
+use baumhard::document::edit::Shows;
 use baumhard::document::element::{DocElement, DocKind, Triggers};
 use baumhard::document::ids::Document;
 use baumhard::document::resolve::{resolve_frame, resolve_portal_end, Content};
@@ -87,11 +89,9 @@ pub fn warnings(doc: &Document) -> Vec<String> {
         let Shows {
             reveals: reveal,
             marks_portal_ends: marks,
-        } = edit.mentions(|named| match named {
-            Named::Verb(name) => {
-                if let Some(n) = definitions.verbs.iter().position(|verb| verb.id == name) {
-                    referenced[n] = true;
-                }
+        } = edit.mentions(|name| {
+            if let Some(n) = definitions.verbs.iter().position(|verb| verb.id == name) {
+                referenced[n] = true;
             }
         });
         reveals |= reveal;

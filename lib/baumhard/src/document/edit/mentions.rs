@@ -18,15 +18,6 @@ use crate::document::format::edits::{
     NodeOpDto, PathOpDto, PortalEndOpDto, RingOpDto, SectionOpDto, SpanOpDto, TextOpDto,
 };
 
-/// A definition an edit names, as [`EditDef::mentions`] reports it.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Named<'a> {
-    /// A verb, by id: a node's `set_click` or `set_hover`, a span's
-    /// `set_link` to `{"verb": …}`, or a filter's `on_click` or
-    /// `on_hover`.
-    Verb(&'a str),
-}
-
 /// What an edit can make drawn, as [`EditDef::mentions`] finds it.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Shows {
@@ -38,19 +29,20 @@ pub struct Shows {
 }
 
 impl EditDef {
-    /// Calls `named` with each definition this edit names, and returns
-    /// what it can show, wherever in it they are written: its filter, its
-    /// mutations, a mutator's every macro and `repeat_while` test, at any
-    /// depth. A handler names nothing and shows nothing: each one is a
+    /// Calls `verb` with each verb id this edit names — a node's
+    /// `set_click` or `set_hover`, a span's `set_link` to `{"verb": …}`, a
+    /// filter's `on_click` or `on_hover` — and returns what it can show,
+    /// wherever in it they are written: its filter, its mutations, a
+    /// mutator's every macro and `repeat_while` test, at any depth. A handler names nothing and shows nothing: each one is a
     /// layout that writes positions ([`edit_handlers`](crate::edit_handlers)).
     ///
     /// What the edit writes, not where it runs: which elements it
     /// reaches depends, in general, on the anchors it is run at and on the
     /// map then.
     ///
-    /// Cost: one walk of the definition, one call of `named` per name it
+    /// Cost: one walk of the definition, one call of `verb` per verb id it
     /// writes, and no allocation.
-    pub fn mentions<'a>(&'a self, mut named: impl FnMut(Named<'a>)) -> Shows {
+    pub fn mentions<'a>(&'a self, mut verb: impl FnMut(&'a str)) -> Shows {
         let EditDef {
             id: _,
             name: _,
@@ -62,7 +54,7 @@ impl EditDef {
             animate: _,
         } = self;
         let mut walk = Walk {
-            named: &mut named,
+            verb: &mut verb,
             shows: Shows::default(),
         };
         if let Some(Filter(filter)) = filter {
@@ -77,10 +69,10 @@ impl EditDef {
     }
 }
 
-/// One walk of an edit: where its names go, and what it has found it can
-/// show.
+/// One walk of an edit: where its verb ids go, and what it has found it
+/// can show.
 struct Walk<'a, 'f> {
-    named: &'f mut dyn FnMut(Named<'a>),
+    verb: &'f mut dyn FnMut(&'a str),
     shows: Shows,
 }
 
@@ -124,7 +116,7 @@ impl<'a> Walk<'a, '_> {
         } = filter;
         for (field, _) in fields {
             match field {
-                FieldDto::OnClick(verb) | FieldDto::OnHover(verb) => (self.named)(Named::Verb(verb)),
+                FieldDto::OnClick(verb) | FieldDto::OnHover(verb) => (self.verb)(verb),
                 FieldDto::Kind(_)
                 | FieldDto::Background(_)
                 | FieldDto::Channel(_)
@@ -179,7 +171,7 @@ impl<'a> Walk<'a, '_> {
                     | SectionOpDto::SetChannel(_) => {}
                 },
                 MutationDto::Span(op) => match op {
-                    SpanOpDto::SetLink(Some(LinkTargetDto::Verb(verb))) => (self.named)(Named::Verb(verb)),
+                    SpanOpDto::SetLink(Some(LinkTargetDto::Verb(verb))) => (self.verb)(verb),
                     SpanOpDto::SetLink(Some(LinkTargetDto::Url(_)) | None) => {}
                     SpanOpDto::Text(op) => text(op),
                     SpanOpDto::SetText(_)
@@ -235,7 +227,7 @@ impl<'a> Walk<'a, '_> {
     fn node(&mut self, op: &'a NodeOpDto) {
         match op {
             NodeOpDto::SetClick(verb) | NodeOpDto::SetHover(verb) => {
-                verb.iter().for_each(|verb| (self.named)(Named::Verb(verb)))
+                verb.iter().for_each(|verb| (self.verb)(verb))
             }
             NodeOpDto::SetHidden(hidden) => self.shows.reveals |= !hidden,
             NodeOpDto::Text(op) => text(op),

@@ -69,7 +69,8 @@ draws them.
   (its filter or its body), counts as referred to, whether or not
   anything runs the edit, and an edit in the map that can unhide a node
   or give a portal end a marker silences those two warnings; App and
-  User edits are not read) and
+  User edits, which also run on a map, are outside what a map file can
+  be judged on and are not read) and
   `apply` (pipe matching sections' text through
   a command, as one `EditRequest` through `Document::apply`; `-i`
   writes the map back as the app's save does — through a link to its
