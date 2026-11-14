@@ -1435,13 +1435,9 @@ impl PathWalk<'_> {
                 let ink = cluster_ink(glyphs, cluster, |glyph| size_factor(glyph.size, scale));
                 self.body(width(cluster), ink, cluster.blank, h)
             });
-            let end = self.walk_bodies(bodies, 0.0, 0.0, Trail::default()).0;
-            // Its walk stopped by its budget (#313): `Fit`'s scale is not
-            // solved to the end.
-            if self.spent() {
-                self.lose(RingLoss::Uneven);
-            }
-            return end;
+            // Its walk stopped by its budget is reported by the round of
+            // `fit_to` that follows it (#313, ruling B18.1 §8).
+            return self.walk_bodies(bodies, 0.0, 0.0, Trail::default()).0;
         }
         // A measure of the text as read walks it as phase 2 would, reading
         // no budget as it goes: read before it runs, at the most phase 2
@@ -3757,6 +3753,9 @@ fn fit_to<'p>(
     walk_for: &dyn Fn(&ShapedRun) -> PathWalk<'p>,
 ) -> Walked {
     let walk = walk_for(run);
+    if let Some(work) = walk.work {
+        work.fitting();
+    }
     let length = path.length();
     let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
     let natural = walk.measure(&clusters, 0.0);
@@ -3778,11 +3777,6 @@ fn fit_to<'p>(
         let placed_run = rescaled.as_ref().unwrap_or(run);
         let slack = if scale > low { SOLVE_TOLERANCE } else { 0.0 };
         let placed_walk = walk_for(placed_run);
-        // Reshaped smaller, its walks step more often past where they end:
-        // the run on held back for is at its line height (#313).
-        if let Some(work) = placed_walk.work {
-            work.steps_at(placed_run.line_height);
-        }
         let walked = Walked {
             slack,
             whole_words: scale > low,
@@ -3794,6 +3788,16 @@ fn fit_to<'p>(
         // glyphs laid (#313). A placement that cannot afford it keeps this
         // round's walk, which phase 2 cuts where it overruns: its scale is
         // not solved to the end.
+        //
+        // This is also the report of a measure of an ornament's scale that
+        // its budget stopped (`measure_at_scale`, ruling B18.1 §8): the
+        // first round always reaches it, after `fitting_scale`, and what
+        // the measure found spent this finds spent too. It reads the same
+        // work: `spent` only grows, the budget only grows (`scale` is
+        // `once`'s), and a `Fit`'s hold never shrinks — its reserve only
+        // rises, and `ends_by` and `closed`, which lower a hold, are a
+        // `Repeat`'s alone (`RingWork::held`, which asserts it in a debug
+        // build).
         if let Some(work) = placed_walk.work {
             let glyphs = walked.laying.glyphs.len();
             if !work.affords_more(path, ring::phase_two_steps(glyphs, true)) {

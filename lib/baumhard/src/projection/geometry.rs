@@ -637,26 +637,26 @@ fn always_near(lanes: &[Lane], widths: &[f32], taken: &[Vec<Vec2>]) -> usize {
 /// and the last lead's when the curves before it reach so far that a
 /// round takes them all.
 ///
-/// The curves before the last lead start and end where they do whatever
-/// the handles; only their control points move. A round's distance along
-/// a curve, summed from its samples, is at least the curve's chord less
-/// how far its last sample falls short of its end: at most its greatest
-/// speed over its samples, three times its control polygon over their
-/// count, so three of its steps, or of its polygon over the sampling's
-/// cap, whichever is more. A handle reaches no further than at its full
-/// share, so the polygon at full handles, twice over and the chord,
-/// bounds it at any share. A margin for rounding is kept back too, a few
-/// units in the last place of each sample's distance and of each point's
-/// coordinates: an `f32`'s, though a round measures its distance along in
-/// `f64`, in the curve's own frame, from offsets as exact as its control
-/// points (#356), so the margin holds with room to spare. Lanes near the length where the condition decides need
-/// more than the chord alone
+/// The curves before the last lead start and end where they do whatever the
+/// handles; only their control points move. A round's distance along a
+/// curve, summed from its samples, is at least the curve's chord less how
+/// far its last sample falls short of its end: at most its greatest speed
+/// over its samples, three times its control polygon over their count, so
+/// three of its steps, or of its polygon over the sampling's cap, whichever
+/// is more. A handle reaches no further than at its full share, so the
+/// polygon at full handles, twice over and the chord, bounds it at any
+/// share. A margin for rounding is kept back too, a few units in the last
+/// place of each sample's distance and of each point's coordinates: an
+/// `f32`'s, though a round measures its distance along in `f64`, in the
+/// curve's own frame, from offsets as exact as its control points (#356),
+/// so the margin holds with room to spare. Lanes near the length where the
+/// condition decides need more than the chord alone
 /// (`test_projection_a_lanes_fixed_samples_are_in_every_round`), but none
 /// found needs all three steps or the rounding margin: they are what the
 /// argument above shows, kept because a lane that loses its last lead's
-/// samples to them is only measured for more rounds, while one that keeps
-/// a sample some round does not take would change what is drawn. O(the
-/// leads' samples, and the curves).
+/// samples to them is only measured for more rounds, while one that keeps a
+/// sample some round does not take would change what is drawn. O(the leads'
+/// samples, and the curves).
 pub(crate) fn fixed_samples(lane: &Lane) -> Vec<Vec2> {
     let (step, skip) = (0.25 * lane.width, CLEARANCE * lane.hold.max(lane.width));
     let curves = path_through(lane.start, lane.end, &lane.via, 1.0);

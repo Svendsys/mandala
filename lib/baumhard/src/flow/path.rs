@@ -1030,7 +1030,7 @@ impl ArcPath {
     /// (#313, ruling B18.1 §6):
     ///
     /// - a line, the length of its end less its start, in `f32`: within
-    ///   `2⁻²²` of the length of the line its two points make;
+    ///   `2⁻²²·L` of `L`, the length of the line its two points make;
     /// - a Bézier, its table's last distance: the sum, in `f64`, of the
     ///   chords between its points at the table's `count + 1` parameters
     ///   `t = i / count` (each `t` an `f32`), found from its control

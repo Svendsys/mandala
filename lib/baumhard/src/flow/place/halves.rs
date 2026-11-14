@@ -105,34 +105,35 @@
 //!
 //! Every last resort is bounded in work (rulings R35.3, R44.2, R46): a
 //! shrink's probe looks first whether its lines fit at all, and a frame's
-//! budget, [`STEPS_PER_GLYPH`] glyph steps a glyph of its text and at
-//! least [`TRACK_BUDGET`] ([`frame_budget`]), counts all of its work —
-//! its tracking and side lays, its shaping and inking, its touch checks,
-//! R27's walks and its paths' tables, each weighted to about one tracking
-//! step's time, and its side lays' and its tracking's path reads
-//! besides, [`SIDE_READS_A_STEP`] and [`TRACK_READS_A_STEP`] to a step
-//! (#313, ruling B18.1 §2), since far from the origin a cluster reads its
-//! path some fifteen times where at the origin it reads it once. It is read before every lay, build and
-//! reshape — in each tracking solve, slide, shrink (its floor build too),
-//! cut and backtrack, R27's fit and a `Once` filler's copies — and before
-//! each copy of a side ornament, which is laid only while the frame can
-//! afford the most it may take ([`SIDE_CLUSTER_READS`] reads a cluster)
-//! and the touch check of the arc's copies after ([`check_steps`], at
-//! [`touch_looks`] looks a box of the classes of height it holds): an arc
-//! it cannot afford is left empty, or keeps the copies it has where they
-//! hold the equal-gap rule, and is reported as left empty or kept short
-//! ([`Unheld::sides`]). So a frame overshoots its budget by at most
-//! [`overshoot_steps`] (ruling R47.2): what runs before the budget is
-//! first read — its setup, R27's first reshape and one build's shaping
-//! and inking — the lay of each line that finds it spent, and the touch
-//! checks that end the frame; no copy of its sides is laid past what the
-//! budget leaves for their check. A frame whose budget runs out while two
-//! of its inks still touch keeps the longest run of its inks that touch
-//! nothing ([`untouched`], within a share of the budget held back for
-//! it), and says it was cut ([`Trace::cut_apart`]). A frame's text is cut
-//! to [`MAX_PLACED_GLYPHS`] at a cluster before its lines are prepared
-//! (ruling R44.1), its sides placing no more than the cap leaves, so the
-//! budget is at most `STEPS_PER_GLYPH × MAX_PLACED_GLYPHS`.
+//! budget, [`STEPS_PER_GLYPH`] glyph steps a glyph of its text and at least
+//! [`TRACK_BUDGET`] ([`frame_budget`]), counts all of its work — its
+//! tracking and side lays, its shaping and inking, its touch checks, R27's
+//! walks and its paths' tables, each weighted to about one tracking step's
+//! time, and its side lays' and its tracking's path reads besides,
+//! [`SIDE_READS_A_STEP`] and [`TRACK_READS_A_STEP`] to a step (#313, ruling
+//! B18.1 §2), since far from the origin a cluster reads its path some
+//! fifteen times where at the origin it reads it once. It is read before
+//! every lay, build and reshape — in each tracking solve, slide, shrink
+//! (its floor build too), cut and backtrack, R27's fit and a `Once`
+//! filler's copies — and before each copy of a side ornament, which is laid
+//! only while the frame can afford the most it may take
+//! ([`SIDE_CLUSTER_READS`] reads a cluster) and the touch check of the
+//! arc's copies after ([`check_steps`], at [`touch_looks`] looks a box of
+//! the classes of height it holds): an arc it cannot afford is left empty,
+//! or keeps the copies it has where they hold the equal-gap rule, and is
+//! reported as left empty or kept short ([`Unheld::sides`]). So a frame
+//! overshoots its budget by at most [`overshoot_steps`] (ruling R47.2):
+//! what runs before the budget is first read — its setup, R27's first
+//! reshape and one build's shaping and inking — the lay of each line that
+//! finds it spent, and the touch checks that end the frame; no copy of its
+//! sides is laid past what the budget leaves for their check. A frame whose
+//! budget runs out while two of its inks still touch keeps the longest run
+//! of its inks that touch nothing ([`untouched`], within a share of the
+//! budget held back for it), and says it was cut ([`Trace::cut_apart`]). A
+//! frame's text is cut to [`MAX_PLACED_GLYPHS`] at a cluster before its
+//! lines are prepared (ruling R44.1), its sides placing no more than the
+//! cap leaves, so the budget is at most `STEPS_PER_GLYPH ×
+//! MAX_PLACED_GLYPHS`.
 //!
 //! **Sides.** With `sides`, an ornament closes what the lines leave
 //! round each junction: whole copies, at least one and at most
@@ -618,23 +619,23 @@ fn side_read_steps(reads: usize) -> usize {
 }
 
 /// Path reads ([`ArcPath::reads`]) one glyph step weighs in a frame's
-/// tracking ([`track`]; #313, ruling B18.1 §2), past the one read a
-/// cluster its step a cluster already weighs: a line's cluster reads its
-/// path about once at the origin, where [`CLUSTERS_A_STEP`]'s and the
-/// tracking step's weights were measured, and eleven to thirteen times
-/// 3·10⁷ from it and beyond (review 5902086644). At most 1.22 µs a read
-/// past the first a cluster, all of a track's time over those reads, over
-/// the tracks of 128 such reads or more that read their path eight times
-/// a cluster or more, so 16 µs ÷ 1.22 µs = 13.1 reads, rounded down to 8.
-/// Before those reads were counted, the worst track took 11.9 µs a
-/// counted step, and at this weight 6.5. Measured as [`CLUSTERS_A_STEP`]'s ruling R47.3
-/// asks — each track timed by a temporary instrumentation of the engine,
-/// never committed, on the flow targets' ASan build, over the 210 frames
+/// tracking ([`track`]; #313, ruling B18.1 §2), past the one read a cluster
+/// its step a cluster already weighs: a line's cluster reads its path about
+/// once at the origin, where [`CLUSTERS_A_STEP`]'s and the tracking step's
+/// weights were measured, and eleven to thirteen times 3·10⁷ from it and
+/// beyond (review 5902086644). At most 1.22 µs a read past the first a
+/// cluster, all of a track's time over those reads, over the tracks of 128
+/// such reads or more that read their path eight times a cluster or more,
+/// so 16 µs ÷ 1.22 µs = 13.1 reads, rounded down to 8. Before those reads
+/// were counted, the worst track took 11.9 µs a counted step, and at this
+/// weight 6.5. Measured as [`CLUSTERS_A_STEP`]'s ruling R47.3 asks — each
+/// track timed by a temporary instrumentation of the engine, never
+/// committed, on the flow targets' ASan build, over the 210 frames
 /// [`SIDE_READS_A_STEP`] was measured on, three runs, each track at the
 /// least of its three times, at a load average of 2.1 to 2.9. Three of
-/// those 42,145 tracks took 20 to 41 µs a step in every run, and 0.3 to
-/// 0.8 when their frame was laid alone: pauses of the instrumented build
-/// at the same points of its corpus, not their work, which are left out.
+/// those 42,145 tracks took 20 to 41 µs a step in every run, and 0.3 to 0.8
+/// when their frame was laid alone: pauses of the instrumented build at the
+/// same points of its corpus, not their work, which are left out.
 pub(crate) const TRACK_READS_A_STEP: usize = 8;
 
 /// The glyph steps `reads` path reads of a frame's tracking count
