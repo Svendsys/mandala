@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use baumhard::util::doc_fixtures::repo_path;
+use baumhard::util::log::tilde_path;
 use baumhard::util::test_temp::TempDir;
 
 /// What one run printed and how it ended.
@@ -121,7 +122,8 @@ fn test_show_marks_each_portal() {
 // --- grep -------------------------------------------------------------
 
 /// Every element of the portals fixture that holds text, by its path:
-/// sections, a portal end, an end's label, an end with only a label.
+/// sections, a portal end's own `content`, a portal end, an end's label,
+/// an end with only a label.
 #[test]
 fn test_grep_names_each_element_of_the_portals_fixture() {
     let run = maptool(&["grep", arg(&fixture("portals")), "."]);
@@ -129,6 +131,7 @@ fn test_grep_names_each_element_of_the_portals_fixture() {
     assert_eq!(
         run.stdout,
         "#1 sections[0]: source\n\
+         #1 links[1].ends[0].content: ◈\n\
          #1 links[1].ends[1]: target\n\
          #1 links[1].ends[1].label: back\n\
          #1 links[2].ends[0].label: only the label\n\
@@ -217,50 +220,71 @@ fn test_export_writes_the_testament_map() {
 
 // --- verify -----------------------------------------------------------
 
-/// Every format fixture and every converted map loads: exit 0 and the
-/// `valid` line, with no warning on the ones that earn none. The
-/// fixtures that earn warnings earn exactly those their content shows:
-/// `frames`' frame `{}` and `starts`' ringless frames, and `full`'s
-/// hidden node.
+/// `path` as `maptool` names it on a `verify` line: home folded to `~`.
+fn shown(path: &Path) -> String {
+    tilde_path(path)
+}
+
+/// Every `.mandala.json` under `dir`, sorted.
+fn maps_in(dir: &str) -> Vec<PathBuf> {
+    let root = repo_path(dir);
+    let mut out: Vec<PathBuf> = std::fs::read_dir(&root)
+        .unwrap_or_else(|e| panic!("{} lists: {e}", root.display()))
+        .map(|entry| entry.expect("a directory entry").path())
+        .filter(|path| arg(path).ends_with(".mandala.json"))
+        .collect();
+    out.sort();
+    out
+}
+
+/// The `verify` warnings of the three fixtures that earn any, whole:
+/// `frames`' frame `{}`, `full`'s hidden node, and `starts`' thirteen
+/// ringless frames, one per node.
+fn expected_warnings(name: &str) -> Option<String> {
+    match name {
+        "frames.mandala.json" => Some("warning: #1 frame: visible with no rings\n".to_string()),
+        "full.mandala.json" => {
+            Some("warning: #2: hidden, and no verb or presentation can reveal it\n".to_string())
+        }
+        "starts.mandala.json" => Some(
+            (1..=13)
+                .map(|n| format!("warning: #{n} frame: visible with no rings\n"))
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
+/// Every format fixture and every map in `maps/` and `maps/demos/` — read
+/// off the disk, so a new one is covered the day it lands — loads: exit
+/// 0, and stdout is exactly its warnings and its `valid` line. Three
+/// fixtures earn warnings, pinned whole; every other map earns none.
 #[test]
 fn test_verify_passes_every_fixture_and_converted_map() {
-    let clean = [
-        fixture("colors"),
-        fixture("deep_leaf"),
-        fixture("fits"),
-        fixture("minimal"),
-        fixture("portals"),
-        fixture("tree"),
-        testament(),
-        repo_path("maps/theme_demo.mandala.json"),
-        repo_path("maps/palette_cascade.mandala.json"),
-        repo_path("maps/stress_long_edges.mandala.json"),
-    ];
-    for map in &clean {
-        let run = maptool(&["verify", arg(map)]);
-        assert_eq!(run.status, 0, "{}", run.stderr);
-        assert_eq!(run.stdout, format!("{}: valid\n", arg(map)));
-    }
-    let run = maptool(&["verify", arg(&fixture("frames"))]);
-    assert_eq!(run.status, 0, "{}", run.stderr);
-    assert_eq!(
-        run.stdout,
-        format!(
-            "warning: #1 frame: visible with no rings\n{}: valid, 1 warning(s)\n",
-            arg(&fixture("frames"))
-        )
-    );
-    let run = maptool(&["verify", arg(&fixture("full"))]);
-    assert_eq!(run.status, 0, "{}", run.stderr);
+    let fixtures = maps_in("lib/baumhard/src/document/format/fixtures");
+    let mut maps = maps_in("maps");
+    maps.extend(maps_in("maps/demos"));
     assert!(
-        run.stdout
-            .starts_with("warning: #2: hidden, and no verb or presentation can reveal it\n"),
-        "{}",
-        run.stdout
+        fixtures.len() >= 9 && maps.len() >= 8,
+        "precondition: the directories hold their maps: {fixtures:?} {maps:?}"
     );
-    let run = maptool(&["verify", arg(&fixture("starts"))]);
-    assert_eq!(run.status, 0, "{}", run.stderr);
-    assert!(run.stdout.ends_with(": valid, 13 warning(s)\n"), "{}", run.stdout);
+    let mut warned = 0;
+    for map in fixtures.iter().chain(&maps) {
+        let run = maptool(&["verify", arg(map)]);
+        assert_eq!(run.status, 0, "{}: {}", arg(map), run.stderr);
+        let in_fixtures = fixtures.contains(map);
+        let name = map.file_name().and_then(|n| n.to_str()).expect("a file name");
+        let expected = match expected_warnings(name).filter(|_| in_fixtures) {
+            Some(warnings) => {
+                warned += 1;
+                let count = warnings.lines().count();
+                format!("{warnings}{}: valid, {count} warning(s)\n", shown(map))
+            }
+            None => format!("{}: valid\n", shown(map)),
+        };
+        assert_eq!(run.stdout, expected, "{}", arg(map));
+    }
+    assert_eq!(warned, 3, "precondition: the three warning fixtures were checked");
 }
 
 /// One map earning all four warnings prints them in the file's order —
@@ -290,7 +314,7 @@ fn test_verify_prints_each_kind_of_warning() {
              warning: #1 links[0]: a portal whose ends both have no content\n\
              warning: verbs[1] \"unused\": defined, and nothing refers to it\n\
              {}: valid, 4 warning(s)\n",
-            arg(&map)
+            shown(&map)
         )
     );
 }
@@ -326,6 +350,24 @@ fn test_verify_exits_1_with_the_loaders_path_on_a_refused_map() {
         "{}",
         run.stderr
     );
+}
+
+/// `export` refuses an output path that names a map, so a slip of the
+/// command line cannot replace a map with Markdown, and writes nothing.
+#[test]
+fn test_export_refuses_to_write_over_a_map() {
+    let dir = TempDir::new("maptool-export-map");
+    let map = copy(&dir, "tree");
+    let before = std::fs::read(&map).unwrap();
+    let run = maptool(&["export", arg(&map), arg(&map)]);
+    assert_eq!(run.status, 2);
+    assert!(
+        run.stderr
+            .contains("names a map; the Markdown goes to a file of its own"),
+        "{}",
+        run.stderr
+    );
+    assert_eq!(std::fs::read(&map).unwrap(), before);
 }
 
 // --- apply ------------------------------------------------------------
@@ -373,8 +415,10 @@ fn test_apply_in_place_rewrites_the_matched_sections_and_reloads() {
     );
 }
 
-/// `--dry-run` prints the change as a unified diff, one hunk per changed
-/// line, and leaves the file's bytes as they were.
+/// `--dry-run` prints the change as a unified diff of the file on disk
+/// against what `-i` would write, headed by the path as given (no
+/// `a/` before an absolute one), one hunk per changed line, and leaves
+/// the file's bytes as they were.
 #[test]
 fn test_apply_dry_run_prints_the_diff_and_writes_nothing() {
     let dir = TempDir::new("maptool-apply-dry-run");
@@ -394,7 +438,7 @@ fn test_apply_dry_run_prints_the_diff_and_writes_nothing() {
     assert_eq!(
         run.stdout,
         format!(
-            "--- a/{0}\n+++ b/{0}\n\
+            "--- {0}\n+++ {0}\n\
              @@ -60 +60 @@\n\
              -      \"sections\": [{{\"spans\": [{{\"text\": \"the heaven\"}}]}}],\n\
              +      \"sections\": [{{\"spans\": [{{\"text\": \"THE HEAVEN\"}}]}}],\n\
@@ -405,6 +449,84 @@ fn test_apply_dry_run_prints_the_diff_and_writes_nothing() {
         )
     );
     assert_eq!(std::fs::read(&map).unwrap(), before, "--dry-run changed the file");
+}
+
+/// On a map not in the saver's layout — here the whole map on one line —
+/// `--dry-run` shows what `-i` really does: the one line goes and the
+/// saver's lines come, and applying the diff to the file gives exactly
+/// what `-i` then writes.
+#[test]
+fn test_apply_dry_run_previews_the_write_on_a_map_in_another_layout() {
+    let dir = TempDir::new("maptool-apply-layout");
+    let one_line = r#"{"format": 1, "name": "m", "nodes": [{"id": 1, "position": [0, 0], "sections": [{"spans": [{"text": "low"}]}]}]}"#;
+    let map = write(&dir, "m.mandala.json", &format!("{one_line}\n"));
+    let run = maptool(&["apply", arg(&map), "low", "--dry-run", "--", "tr", "a-z", "A-Z"]);
+    assert_eq!(run.status, 0, "{}", run.stderr);
+    let mut lines = run.stdout.lines();
+    assert_eq!(lines.next(), Some(format!("--- {}", arg(&map)).as_str()));
+    assert_eq!(lines.next(), Some(format!("+++ {}", arg(&map)).as_str()));
+    let hunk = lines.next().unwrap_or("");
+    assert!(hunk.starts_with("@@ -1 +1,"), "{}", run.stdout);
+    assert_eq!(lines.next(), Some(format!("-{one_line}").as_str()));
+    let added: String = lines
+        .map(|line| format!("{}\n", line.strip_prefix('+').unwrap_or("NOT AN ADDITION")))
+        .collect();
+    let run = maptool(&["apply", arg(&map), "low", "-i", "--", "tr", "a-z", "A-Z"]);
+    assert_eq!(run.status, 0, "{}", run.stderr);
+    let written = std::fs::read_to_string(&map).unwrap();
+    assert!(
+        written.lines().count() > 3,
+        "precondition: -i rewrote the layout: {written}"
+    );
+    assert_eq!(added, written);
+}
+
+/// `cat` changes nothing, whatever the text ends in: a section ending in
+/// a line break is not one character shorter on the way back, and on
+/// the testament map, every section through `cat` is unchanged.
+#[test]
+fn test_apply_through_cat_changes_nothing() {
+    let dir = TempDir::new("maptool-apply-cat");
+    let map = write(
+        &dir,
+        "m.mandala.json",
+        r#"{"format": 1, "name": "m", "nodes": [{"id": 1, "position": [0, 0], "sections": [{"spans": [{"text": "foo\n"}]}]}]}"#,
+    );
+    let run = maptool(&["apply", arg(&map), "foo", "--dry-run", "--", "cat"]);
+    assert_eq!((run.status, run.stdout.as_str()), (0, ""), "{}", run.stderr);
+    assert!(
+        run.stderr.contains("apply: 0 of 1 matched section(s) changed"),
+        "{}",
+        run.stderr
+    );
+    let run = maptool(&["apply", arg(&testament()), "", "--dry-run", "--", "cat"]);
+    assert_eq!((run.status, run.stdout.as_str()), (0, ""), "{}", run.stderr);
+    assert!(run.stderr.contains("apply: 0 of "), "{}", run.stderr);
+}
+
+/// `(?i)` in the pattern matches regardless of case, since `-i` is the
+/// write flag; what a succeeding command writes on stderr is passed on.
+#[test]
+fn test_apply_matches_case_insensitively_with_the_pattern_flag_and_passes_stderr_on() {
+    let dir = TempDir::new("maptool-apply-case");
+    let map = copy(&dir, "tree");
+    let run = maptool(&[
+        "apply",
+        arg(&map),
+        "(?i)^THE EARTH$",
+        "--",
+        "sh",
+        "-c",
+        "echo note-from-the-command >&2; tr a-z A-Z",
+    ]);
+    assert_eq!(run.status, 0, "{}", run.stderr);
+    assert!(
+        run.stderr.contains("apply: 1 of 1 matched section(s) changed"),
+        "{}",
+        run.stderr
+    );
+    assert!(run.stderr.contains("note-from-the-command"), "{}", run.stderr);
+    assert!(run.stdout.contains(r#""THE EARTH""#), "{}", run.stdout);
 }
 
 /// With neither flag the changed map goes to stdout — the same text `-i`
@@ -544,6 +666,18 @@ fn test_help_lists_exactly_the_five_verbs() {
         .filter_map(|line| line.split(' ').next())
         .collect();
     assert_eq!(verbs, ["show", "grep", "export", "verify", "apply"]);
+    // What the help owes a user of `apply` (amendment E1.1): how to match
+    // regardless of case, that matching is per line, and that a command
+    // is not time-bounded. Each sentence is whole in the help.
+    let help = run.stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+    for owed in [
+        "to match case-insensitively, start the pattern with (?i)",
+        "For each section with a line the regex <pattern> matches",
+        "is waited for with no time limit",
+        "the 'content' a connector, line link or portal end sets of its own",
+    ] {
+        assert!(help.contains(owed), "--help says {owed:?}: {help}");
+    }
     let run = maptool(&["convert", "--legacy", "a.json", "b.mandala.json"]);
     assert_eq!(run.status, 2);
     assert!(

@@ -37,8 +37,12 @@
 use std::io::Write as _;
 use std::process::ExitCode;
 
+use std::path::Path;
+
 use baumhard::document::format::file;
 use baumhard::document::ids::Document;
+use baumhard::util::guarded_file::{publish, PublishRefusal};
+use baumhard::util::log::{collapse_home_in, tilde_path};
 use regex::{Regex, RegexBuilder};
 
 mod apply;
@@ -63,21 +67,27 @@ Commands:
                                 '[frame]', '[link → #<id>]' and
                                 '[portal → #<id>]'.
   grep <map> <pattern> [-i]     Print every line of text the regex
-                                <pattern> matches, in sections, frame
-                                rings, connectors and line links (their
-                                spans, caps and labels) and portal ends
-                                (and their labels), as
-                                '#<id> <element>: <line>', the element
-                                named by its path below the node
-                                ('sections[0]', 'links[1].ends[0]').
-                                -i matches case-insensitively. No match
-                                exits 1.
+                                <pattern> matches, as
+                                '#<id> <element>: <line>': the spans of
+                                sections, frame rings, connectors and
+                                line links (and their caps and labels)
+                                and portal ends (and their labels), and
+                                the 'content' a connector, line link or
+                                portal end sets of its own. The element
+                                is named by its path below the node
+                                ('sections[0]', 'links[1].ends[0]',
+                                'connector.content'). An empty section
+                                is one empty line. -i matches
+                                case-insensitively. No match exits 1.
   export <map> [out.md]         Write the node tree as Markdown: the first
                                 line of each node's section text is a
                                 heading as deep as the node, its other
                                 lines plain text under it; a node with no
                                 text passes its level to its children.
-                                To stdout, or to <out.md>.
+                                To stdout, or to <out.md>, which may not
+                                be a map ('.mandala.json'), and is
+                                written through a temporary file and a
+                                rename, never through a symlink.
   verify <map>                  Load the map: a refusal is printed with
                                 its JSON path and exits 1. Then print a
                                 warning for what loads but is probably a
@@ -88,19 +98,28 @@ Commands:
                                 content. Warnings alone exit 0.
   apply <map> <pattern> [-i] [--dry-run] -- <cmd> [args...]
                                 For each section with a line the regex
-                                <pattern> matches, pipe its text to <cmd>
+                                <pattern> matches (an empty section is
+                                one empty line), pipe its text to <cmd>
                                 and replace its spans with one span of
-                                the command's output (one trailing line
-                                break removed) in the first span's style
-                                (not its link), all as one edit. Prints
-                                the changed map to stdout; -i writes it
-                                back to <map> instead, through a
-                                temporary file and a rename; --dry-run
-                                prints the change as a unified diff and
-                                writes nothing (the commands still run).
-                                No matching section exits 1, and so does
-                                a command that fails, before anything is
-                                written.";
+                                the command's output in the first span's
+                                style (not its link), all as one edit.
+                                One trailing line break is removed from
+                                the output only when the text did not
+                                end in one, so 'cat' changes nothing.
+                                Here -i is the write flag: to match
+                                case-insensitively, start the pattern
+                                with (?i). Prints the changed map to
+                                stdout; -i writes it back to <map>
+                                instead, through a temporary file and a
+                                rename; --dry-run prints, as a unified
+                                diff, what -i would change in the file
+                                on disk, and writes nothing (the
+                                commands still run). Each command runs
+                                in turn and is waited for with no time
+                                limit; what it writes on stderr is
+                                passed on. No matching section exits 1,
+                                and so does a command that fails, before
+                                anything is written.";
 
 /// Why a run did not succeed: the exit status and the message for it.
 #[derive(Debug)]
@@ -168,7 +187,7 @@ fn run(args: &[String]) -> Result<String, CliError> {
                 out.push_str(warning);
                 out.push('\n');
             }
-            out.push_str(map);
+            out.push_str(&tilde_path(Path::new(map)));
             match warnings.len() {
                 0 => out.push_str(": valid\n"),
                 n => out.push_str(&format!(": valid, {n} warning(s)\n")),
@@ -234,17 +253,23 @@ fn export(args: &[String]) -> Result<String, CliError> {
             )))
         }
     };
+    if let Some(path) = out.filter(|path| file::has_map_extension(path)) {
+        return Err(CliError::Usage(format!(
+            "export: {}: names a map; the Markdown goes to a file of its own",
+            tilde_path(Path::new(path))
+        )));
+    }
     let markdown = export::markdown(&read(map)?);
     match out {
         None => Ok(markdown),
-        Some(path) => std::fs::write(path, markdown)
-            .map(|()| String::new())
-            .map_err(|e| {
-                CliError::Failed(format!(
-                    "export: {}: could not write: {e}",
-                    baumhard::util::log::tilde_path(std::path::Path::new(path))
-                ))
-            }),
+        Some(path) => publish(Path::new(path), true, |out| {
+            out.write_all(markdown.as_bytes()).map_err(|e| e.to_string())
+        })
+        .map(|_| String::new())
+        .map_err(|refusal| {
+            let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
+            CliError::Failed(collapse_home_in(&format!("export: {message}")))
+        }),
     }
 }
 
@@ -265,22 +290,27 @@ fn apply(args: &[String]) -> Result<String, CliError> {
         return Err(CliError::Usage("apply: missing the command after `--`".into()));
     };
     let regex = build_regex("apply", pattern, false)?;
-    let mut doc = read(map)?;
+    let bytes = file::read_bytes(map).map_err(CliError::Failed)?;
+    let mut doc = file::load(map, &bytes).map_err(CliError::Failed)?;
     let targets = apply::targets(&doc, &regex);
     if targets.is_empty() {
         return Err(CliError::Failed(format!("apply: no section matches {pattern:?}")));
     }
     let matched = targets.len();
     let changed = apply::run_commands(targets, cmd, cmd_args).map_err(CliError::Failed)?;
-    let saved = |doc: &mut Document| {
-        doc.save_json()
-            .map_err(|e| CliError::Failed(format!("apply: the map cannot be saved: {e}")))
-    };
-    let before = saved(&mut doc)?;
     apply::rewrite(&mut doc, &changed, &format!("maptool apply: {cmd}")).map_err(CliError::Failed)?;
-    let after = saved(&mut doc)?;
+    let after = doc
+        .save_json()
+        .map_err(|e| CliError::Failed(format!("apply: the map cannot be saved: {e}")))?;
     eprintln!("apply: {} of {matched} matched section(s) changed", changed.len());
     if dry_run {
+        // What `-i` would do to the file on disk: nothing when nothing
+        // changed, else replace its bytes — UTF-8, since they loaded —
+        // with `after`.
+        if changed.is_empty() {
+            return Ok(String::new());
+        }
+        let before = String::from_utf8_lossy(&bytes);
         Ok(apply::diff(map, &before, &after))
     } else if in_place {
         if !changed.is_empty() {

@@ -108,9 +108,8 @@ pub fn write(path: &str, text: &str) -> Result<(), String> {
     })
 }
 
-/// [`write`]'s publication, native: what `produce` writes, published
-/// over `path` through the guarded writer.
-#[cfg(not(target_arch = "wasm32"))]
+/// [`write`]'s publication: what `produce` writes, published over
+/// `path` through the guarded writer (which, in the browser, refuses).
 fn publish(
     path: &str,
     produce: impl FnOnce(&mut dyn std::io::Write) -> Result<(), String>,
@@ -122,18 +121,6 @@ fn publish(
             let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
             crate::util::log::collapse_home_in(&format!("save: {message}"))
         })
-}
-
-/// [`write`]'s publication in the browser, which has no files.
-#[cfg(target_arch = "wasm32")]
-fn publish(
-    path: &str,
-    _produce: impl FnOnce(&mut dyn std::io::Write) -> Result<(), String>,
-) -> Result<(), String> {
-    Err(format!(
-        "{}: could not write: the browser has no files",
-        tilde_path(Path::new(path))
-    ))
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

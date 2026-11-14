@@ -3,9 +3,15 @@
 //! `apply`: rewrite the text of every section a regex matches by piping
 //! it through a command.
 //!
-//! Each section whose text has a line the pattern matches is a target.
-//! Its text — its spans concatenated — goes to the command's stdin, and
-//! the command's stdout, less one trailing line break, is its new text.
+//! A section is a target when **a line** of its text — its spans
+//! concatenated — matches the pattern, as `grep` matches; a section with
+//! no text is one empty line. Its text goes to the command's stdin, and
+//! the command's stdout is its new text, compared on the input's own
+//! terms: a command such as `tr` or `sed` ends its output with a line
+//! break the input may not have had, so one trailing line break is
+//! removed from the output **only when the input did not end in one**,
+//! and an identity command (`cat`) changes nothing.
+//!
 //! Every target whose text changed has its spans replaced by one span of
 //! the new text (none at all when the new text is empty), by
 //! [`replace_spans`] — and all of them together are **one
@@ -18,10 +24,12 @@
 //! `link` is not carried: it belonged to the text it was on, which the
 //! command has replaced.
 //!
-//! The commands all run before the request is built, and the first that
-//! fails ends the run with nothing written.
+//! The commands all run before the request is built, one at a time and
+//! each waited for **without a time limit**, as `sed` and `xargs` wait;
+//! the first that fails ends the run with nothing written. What a
+//! command writes on stderr reaches the user's stderr: after it exits
+//! when it succeeds, and inside the failure's message when it fails.
 
-use std::fmt::Write as _;
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 
@@ -32,7 +40,7 @@ use baumhard::document::mutation::compose::replace_spans;
 use baumhard::document::writer::{ChangeSource, EditRequest};
 use regex::Regex;
 
-use crate::map::{sections, text_into, Nodes};
+use crate::map::{lines, sections, text_into, Nodes};
 
 /// A section the pattern matched.
 pub struct Target {
@@ -53,7 +61,7 @@ pub fn targets(doc: &Document, regex: &Regex) -> Vec<Target> {
     for (node, _) in Nodes::new(doc) {
         for section in sections(doc, node) {
             text_into(doc, section, &mut text);
-            if text.lines().any(|line| regex.is_match(line)) {
+            if lines(&text).any(|line| regex.is_match(line)) {
                 let style = doc
                     .children(section)
                     .find_map(|id| match doc.get(id) {
@@ -75,6 +83,8 @@ pub fn targets(doc: &Document, regex: &Regex) -> Vec<Target> {
 /// Run `cmd` over each target's text, in order, and return the targets
 /// whose text it changed, each with its new text. The first command that
 /// fails is the error, and the commands after it do not run.
+///
+/// Cost: one process per target, each waited for in turn.
 pub fn run_commands(targets: Vec<Target>, cmd: &str, args: &[String]) -> Result<Vec<Target>, String> {
     let mut changed = Vec::new();
     for target in targets {
@@ -90,6 +100,9 @@ pub fn run_commands(targets: Vec<Target>, cmd: &str, args: &[String]) -> Result<
 /// text in its first span's style, as one [`EditRequest`] applied
 /// through [`Document::apply`]. A list with nothing in it changes
 /// nothing.
+///
+/// Cost: [`replace_spans`]' steps for each section, applied as one
+/// journal.
 pub fn rewrite(doc: &mut Document, changed: &[Target], label: &str) -> Result<(), String> {
     let mut steps = Vec::new();
     for target in changed {
@@ -104,82 +117,49 @@ pub fn rewrite(doc: &mut Document, changed: &[Target], label: &str) -> Result<()
         };
         steps.extend(replace_spans(doc, &[target.section], &spans).map_err(|e| format!("apply: {e}"))?);
     }
+    // `Console` is a compromise (amendment E1.1 on #253): maptool's
+    // command line stands in for a console line; no history, journal or
+    // event outlives the process, so the source is never reported. The
+    // design's sources (§8) name no tool, and adding one is a design
+    // change this sub-issue does not make.
     doc.apply(EditRequest::new(steps, label), ChangeSource::Console)
         .map(|_| ())
         .map_err(|e| format!("apply: the document refused the change: {e}"))
 }
 
-/// The lines that differ between `before` and `after`, as a unified diff
-/// with no context lines (`diff -U0`), headed `--- a/<name>` and
-/// `+++ b/<name>`; empty when the two are equal.
+/// What `--dry-run` prints: a unified diff, with no context lines
+/// (`diff -U0`), from `before` — the map's bytes as they are on disk —
+/// to `after`, the text `-i` would write in their place; empty when the
+/// two are equal. Both headers name `name`, the map's path as given, so
+/// the diff applies with `patch -p0`. A file not in the saver's layout
+/// shows every line `-i` would rewrite, since that is what it would do.
 ///
-/// The two are saves of one document before and after `apply`, which
-/// changes only span text inside a `sections` value — one line of its
-/// node's block, since every key of a node is one line in the saved
-/// layout (D31). So the lines correspond one to one, and each changed
-/// line is a hunk of its own; runs of adjacent changed lines are one
-/// hunk. Should the two texts differ in length, what follows the shorter
-/// one's end is a last hunk, so the diff is still exact.
+/// Cost: the line diff of the two texts (`similar`'s Myers diff).
 pub fn diff(name: &str, before: &str, after: &str) -> String {
-    let old: Vec<&str> = before.lines().collect();
-    let new: Vec<&str> = after.lines().collect();
-    let common = old.len().min(new.len());
-    let mut hunks: Vec<(usize, usize, usize, usize)> = Vec::new();
-    let mut i = 0;
-    while i < common {
-        if old[i] == new[i] {
-            i += 1;
-            continue;
-        }
-        let start = i;
-        while i < common && old[i] != new[i] {
-            i += 1;
-        }
-        hunks.push((start, i - start, start, i - start));
+    if before == after {
+        return String::new();
     }
-    if old.len() != new.len() {
-        hunks.push((common, old.len() - common, common, new.len() - common));
-    }
-    let mut out = String::new();
-    if hunks.is_empty() {
-        return out;
-    }
-    let _ = writeln!(out, "--- a/{name}\n+++ b/{name}");
-    for (old_start, old_count, new_start, new_count) in hunks {
-        let _ = writeln!(
-            out,
-            "@@ -{} +{} @@",
-            range(old_start, old_count),
-            range(new_start, new_count)
-        );
-        for line in &old[old_start..old_start + old_count] {
-            let _ = writeln!(out, "-{line}");
-        }
-        for line in &new[new_start..new_start + new_count] {
-            let _ = writeln!(out, "+{line}");
-        }
-    }
-    out
-}
-
-/// A hunk's range of `count` lines from 0-based `start`, as a unified
-/// diff spells it: `l` for one line, `l,n` otherwise, and for no lines
-/// the line before them, `l,0`.
-fn range(start: usize, count: usize) -> String {
-    match count {
-        0 => format!("{start},0"),
-        1 => format!("{}", start + 1),
-        _ => format!("{},{count}", start + 1),
-    }
+    similar::TextDiff::from_lines(before, after)
+        .unified_diff()
+        .context_radius(0)
+        .header(name, name)
+        .to_string()
 }
 
 /// Spawn `cmd args`, write `input` to its stdin from a thread of its own
 /// (so an input larger than the pipe's buffer cannot deadlock against
-/// its output), and return its stdout less one trailing `\n` or `\r\n`.
+/// its output), wait for it with no time limit, and return its stdout —
+/// less one trailing `\n` or `\r\n` when `input` does not end in `\n`.
+/// What it wrote on stderr is passed to this process's stderr when it
+/// succeeds.
+///
 /// A failed spawn, a non-zero exit (with the command's stderr), output
 /// that is not UTF-8 or a failed write to its stdin is the error; a
 /// command that exits without reading all of its stdin is not one, so
 /// its own status is what is reported.
+///
+/// Cost: one process; its whole stdout and stderr, and a copy of
+/// `input` for the writing thread.
 fn run_pipe(cmd: &str, args: &[String], input: &str) -> Result<String, String> {
     let mut child = Command::new(cmd)
         .args(args)
@@ -221,9 +201,11 @@ fn run_pipe(cmd: &str, args: &[String], input: &str) -> Result<String, String> {
             format!("apply: `{cmd}` exited with {status}: {stderr}")
         });
     }
+    // A stderr this process cannot write to has nowhere else to go.
+    let _ = std::io::stderr().write_all(&output.stderr);
     let mut out = String::from_utf8(output.stdout)
         .map_err(|e| format!("apply: `{cmd}` wrote output that is not UTF-8: {e}"))?;
-    if out.ends_with('\n') {
+    if !input.ends_with('\n') && out.ends_with('\n') {
         out.pop();
         if out.ends_with('\r') {
             out.pop();
@@ -237,31 +219,54 @@ mod tests {
     use super::*;
 
     /// Changed lines are hunks of their own, adjacent ones one hunk,
-    /// numbered from 1; equal texts give nothing.
+    /// numbered from 1 and headed by the name as given; equal texts give
+    /// nothing.
     ///
-    /// Control: numbering from 0 prints `@@ -1 +1 @@` for the second
-    /// line; ending a hunk after one line splits the pair in two.
+    /// Control: a context radius of 1 joins the two hunks into one, with
+    /// the unchanged `c` between them.
     #[test]
     fn test_apply_diff_is_a_zero_context_unified_diff() {
         let before = "a\nb\nc\nd\ne\n";
         let after = "a\nB\nc\nD\nE\n";
         assert_eq!(
-            diff("m.mandala.json", before, after),
-            "--- a/m.mandala.json\n+++ b/m.mandala.json\n@@ -2 +2 @@\n-b\n+B\n@@ -4,2 +4,2 @@\n-d\n-e\n+D\n+E\n"
+            diff("/tmp/m.mandala.json", before, after),
+            "--- /tmp/m.mandala.json\n+++ /tmp/m.mandala.json\n@@ -2 +2 @@\n-b\n+B\n@@ -4,2 +4,2 @@\n-d\n-e\n+D\n+E\n"
         );
         assert_eq!(diff("m", before, before), "");
     }
 
-    /// Texts of different lengths end with a hunk for the extra lines,
-    /// numbered as `diff -U0` numbers an insertion: after line 2.
+    /// A text of another shape — one line where the save writes three —
+    /// is diffed as it is: the one line goes, the three come.
     ///
-    /// Control: dropping the length check loses the last hunk, and the
-    /// diff comes back empty.
+    /// Control: diffing line by line at equal positions (the earlier
+    /// diff) prints the added lines as a hunk after line 1 with `@@ -1,0`
+    /// in place of a replacement.
     #[test]
-    fn test_apply_diff_reports_lines_past_the_shorter_end() {
+    fn test_apply_diff_reports_a_change_of_shape() {
         assert_eq!(
-            diff("m", "a\nb\n", "a\nb\nc\n"),
-            "--- a/m\n+++ b/m\n@@ -2,0 +3 @@\n+c\n"
+            diff("m", "{\"a\": 1}\n", "{\n  \"a\": 2\n}\n"),
+            "--- m\n+++ m\n@@ -1 +1,3 @@\n-{\"a\": 1}\n+{\n+  \"a\": 2\n+}\n"
+        );
+    }
+
+    /// One trailing line break is removed from the output only when the
+    /// input had none: `cat` returns a text ending in `\n` unchanged,
+    /// and `printf` output gains no break it did not write.
+    ///
+    /// Control: removing the break whatever the input fails the first
+    /// assertion (`"foo"` for `"foo\n"`).
+    #[cfg(unix)]
+    #[test]
+    fn test_apply_keeps_the_inputs_trailing_line_break() {
+        assert_eq!(run_pipe("cat", &[], "foo\n").unwrap(), "foo\n");
+        assert_eq!(run_pipe("cat", &[], "foo").unwrap(), "foo");
+        assert_eq!(
+            run_pipe("tr", &["a-z".into(), "A-Z".into()], "foo").unwrap(),
+            "FOO"
+        );
+        assert_eq!(
+            run_pipe("sh", &["-c".into(), "cat; echo".into()], "foo").unwrap(),
+            "foo"
         );
     }
 }

@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 baumhard = { path = "../../lib/baumhard" }
 regex = "1.13.1"
+similar = "2.7.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # One feature set for every shared dependency, whatever a native

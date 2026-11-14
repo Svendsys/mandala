@@ -20,11 +20,14 @@
 //! guarantees, and one implementation of them is kept: this one, in the
 //! crate both depend on.
 //!
-//! Native-only: the browser has no files, and the temp file's name needs
-//! a process id, which `wasm32-unknown-unknown` does not have.
+//! The browser has no files, and no process id for the temp file's
+//! name: there, [`publish`](crate::util::guarded_file::publish) refuses
+//! every write and says so, which is what a file write in the browser
+//! did before it came here.
 
 use std::io::Write;
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Why [`publish`](crate::util::guarded_file::publish) wrote nothing.
@@ -38,12 +41,14 @@ pub enum PublishRefusal {
     Internal(String),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// A `Write` that counts what passes through it.
 struct CountingWriter<W> {
     inner: W,
     bytes: u64,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<W: Write> Write for CountingWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let written = self.inner.write(buf)?;
@@ -56,6 +61,7 @@ impl<W: Write> Write for CountingWriter<W> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Distinguishes this process's temp files from each other.
 static TEMP_SEQUENCE: AtomicU32 = AtomicU32::new(0);
 
@@ -64,7 +70,7 @@ static TEMP_SEQUENCE: AtomicU32 = AtomicU32::new(0);
 /// The kernel makes both atomic with the create, so there is no
 /// check-then-use window to race. A path that is already a symlink,
 /// dangling or not, fails (`O_EXCL` and `O_NOFOLLOW` agree).
-#[cfg(unix)]
+#[cfg(all(unix, not(target_arch = "wasm32")))]
 fn create_exclusive(path: &Path) -> std::io::Result<std::fs::File> {
     use rustix::fs::{open, Mode, OFlags};
     let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
@@ -77,7 +83,7 @@ fn create_exclusive(path: &Path) -> std::io::Result<std::fs::File> {
 
 /// Off Unix there is no `O_NOFOLLOW` to ask for. `create_new` still
 /// refuses any existing path, which is the same refusal for a symlink.
-#[cfg(not(unix))]
+#[cfg(not(any(unix, target_arch = "wasm32")))]
 fn create_exclusive(path: &Path) -> std::io::Result<std::fs::File> {
     std::fs::OpenOptions::new()
         .write(true)
@@ -85,6 +91,7 @@ fn create_exclusive(path: &Path) -> std::io::Result<std::fs::File> {
         .open(path)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Run `produce` into `file`, flush it and `fsync` it, and return how
 /// many bytes it wrote.
 fn produce_into(
@@ -128,6 +135,7 @@ fn produce_into(
 ///
 /// Cost: the bytes written once, an `fsync`, and a rename (or a hard
 /// link and an unlink); no copy of the output is held.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn publish(
     path: &Path,
     overwrite: bool,
@@ -200,6 +208,22 @@ pub fn publish(
     Ok(bytes)
 }
 
+/// [`publish`](crate::util::guarded_file::publish) in the browser,
+/// which has no files: every write is refused, and `produce` is not
+/// run. O(1).
+#[cfg(target_arch = "wasm32")]
+pub fn publish(
+    path: &Path,
+    _overwrite: bool,
+    _produce: impl FnOnce(&mut dyn Write) -> Result<(), String>,
+) -> Result<u64, PublishRefusal> {
+    Err(PublishRefusal::Internal(format!(
+        "could not write `{}`: the browser has no files",
+        path.display()
+    )))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 /// The refusal for an existing file the caller did not ask to replace.
 fn exists(path: &Path) -> PublishRefusal {
     PublishRefusal::Invalid(format!(
@@ -208,7 +232,7 @@ fn exists(path: &Path) -> PublishRefusal {
     ))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use crate::util::test_temp::{names_in, scratch_dir};

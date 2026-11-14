@@ -7,16 +7,21 @@
 //! [`file::read`](baumhard::document::format::file::read), and a refusal
 //! is printed as the loader words it, with its JSON path; nothing here
 //! judges what the loader judges. Once a map has loaded, [`warnings`]
-//! looks for four things:
+//! looks for four things, as #253 lists them and its amendment E1.1
+//! (issue comment 6870828150) rules:
 //!
 //! - **A verb nothing refers to.** A verb is referred to by a node's `on`
 //!   (`click`, `hover`) and by a span's `link` (`{"verb": …}`), and by
-//!   nothing else in the format.
+//!   nothing else in the format. The issue's other half, a presentation
+//!   nothing refers to, has no meaning until something can refer to a
+//!   presentation; E1.1 moves it to V1-D3 (#252), which adds the verb
+//!   steps that will.
 //! - **A node saved hidden that nothing can reveal.** What reveals a node
 //!   is a step of a presentation or a verb, and no definition the format
 //!   holds yet has steps: an edit, a presentation and a verb are an id
-//!   and a name until V1-D1 to V1-D3 (#250–#252) complete them. So today
-//!   every node saved with `"hidden": true` is reported.
+//!   and a name until V1-D1 to V1-D3 (#250–#252) complete them. So, as
+//!   E1.1 rules, every node saved with `"hidden": true` is reported
+//!   until D3 narrows it.
 //! - **An empty frame**: one that resolves visible, through its own
 //!   `visible`, the map's defaults and the built-in value, and holds no
 //!   rings — it draws nothing.
@@ -28,7 +33,7 @@
 //! below the node, or a definition's path for a verb.
 
 use baumhard::arena::NodeId;
-use baumhard::document::element::{DocElement, DocKind};
+use baumhard::document::element::{DocElement, DocKind, Triggers};
 use baumhard::document::ids::Document;
 use baumhard::document::resolve::{resolve_frame, resolve_portal_end, Content};
 use baumhard::document::values::{LinkKind, LinkTarget, VerbId};
@@ -54,11 +59,10 @@ pub fn warnings(doc: &Document) -> Vec<String> {
         let Some(data) = doc.get(node).and_then(DocElement::as_node) else {
             continue;
         };
-        data.on
-            .click
-            .into_iter()
-            .chain(data.on.hover)
-            .for_each(&mut refer);
+        // Every trigger, by name: one added to `Triggers` fails to compile
+        // here instead of leaving its verbs unreferenced.
+        let Triggers { click, hover } = data.on;
+        click.into_iter().chain(hover).for_each(&mut refer);
         if data.hidden {
             out.push(format!(
                 "#{id}: hidden, and no verb or presentation can reveal it"

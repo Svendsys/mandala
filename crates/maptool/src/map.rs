@@ -96,6 +96,25 @@ pub fn text_into(doc: &Document, owner: NodeId, out: &mut String) {
     }
 }
 
+/// The lines `text` is matched as: [`str::lines`], except that a text
+/// with nothing in it is one empty line, so `''` and `^$` find an empty
+/// section. No allocation.
+pub fn lines(text: &str) -> impl Iterator<Item = &str> {
+    let empty = text.is_empty().then_some("");
+    text.lines().chain(empty)
+}
+
+/// The `content` of its own that `owner` — a connector, a line link or a
+/// portal end — sets: the text drawn when it has no spans. `None` for an
+/// element that sets none, and for every other element. O(1).
+pub fn own_content(doc: &Document, owner: NodeId) -> Option<&str> {
+    match doc.get(owner) {
+        Some(DocElement::PortalEnd(end)) => end.style.content.as_deref(),
+        Some(element) => element.as_path().and_then(|path| path.flow.content.as_deref()),
+        None => None,
+    }
+}
+
 /// A node's sections, in their order in the file.
 pub fn sections(doc: &Document, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     doc.children(node)
