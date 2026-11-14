@@ -39,8 +39,8 @@ pub use selection::Selection;
 
 use std::path::Path;
 
-use baumhard::document::format::file::MAP_EXTENSION;
 use baumhard::document::format;
+use baumhard::document::format::file::MAP_EXTENSION;
 use baumhard::document::ids::Document;
 use baumhard::document::writer::error::ApplyError;
 use baumhard::document::writer::feed::ChangeRecord;

@@ -33,7 +33,9 @@ fn maptool(args: &[&str]) -> Run {
 
 /// The format fixture `name`.
 fn fixture(name: &str) -> PathBuf {
-    repo_path(&format!("lib/baumhard/src/document/format/fixtures/{name}.mandala.json"))
+    repo_path(&format!(
+        "lib/baumhard/src/document/format/fixtures/{name}.mandala.json"
+    ))
 }
 
 /// The converted testament map.
@@ -87,8 +89,14 @@ fn test_show_prints_the_tree_fixture() {
 #[test]
 fn test_show_prints_every_testament_node_on_one_line() {
     let text = std::fs::read_to_string(testament()).expect("the testament map reads");
-    let nodes = text.lines().filter(|line| line.starts_with("      \"id\": ")).count();
-    assert!(nodes > 200, "precondition: the testament map has its nodes: {nodes}");
+    let nodes = text
+        .lines()
+        .filter(|line| line.starts_with("      \"id\": "))
+        .count();
+    assert!(
+        nodes > 200,
+        "precondition: the testament map has its nodes: {nodes}"
+    );
     let run = maptool(&["show", arg(&testament())]);
     assert_eq!(run.status, 0, "{}", run.stderr);
     assert_eq!(run.stdout.lines().count(), nodes);
@@ -145,7 +153,10 @@ fn test_grep_matches_testament_lines_with_and_without_case() {
     );
     let run = maptool(&["grep", arg(&testament()), "Covenant"]);
     assert_eq!(run.status, 0, "{}", run.stderr);
-    assert_eq!(run.stdout, "#147 sections[0]: the city where the Ark of the Covenant \n");
+    assert_eq!(
+        run.stdout,
+        "#147 sections[0]: the city where the Ark of the Covenant \n"
+    );
 }
 
 /// No match exits 1 and says so; a pattern that is not a regex is a
@@ -154,10 +165,19 @@ fn test_grep_matches_testament_lines_with_and_without_case() {
 fn test_grep_exits_1_on_no_match_and_2_on_a_bad_regex() {
     let run = maptool(&["grep", arg(&testament()), "xyzzy-no-such-token"]);
     assert_eq!((run.status, run.stdout.as_str()), (1, ""));
-    assert!(run.stderr.contains("grep: no matches for \"xyzzy-no-such-token\""), "{}", run.stderr);
+    assert!(
+        run.stderr
+            .contains("grep: no matches for \"xyzzy-no-such-token\""),
+        "{}",
+        run.stderr
+    );
     let run = maptool(&["grep", arg(&testament()), "[unclosed"]);
     assert_eq!(run.status, 2);
-    assert!(run.stderr.contains("grep: invalid regex \"[unclosed\""), "{}", run.stderr);
+    assert!(
+        run.stderr.contains("grep: invalid regex \"[unclosed\""),
+        "{}",
+        run.stderr
+    );
 }
 
 // --- export -----------------------------------------------------------
@@ -165,7 +185,8 @@ fn test_grep_exits_1_on_no_match_and_2_on_a_bad_regex() {
 /// The tree fixture as Markdown, to stdout and to a file alike.
 #[test]
 fn test_export_writes_the_tree_fixture_as_markdown() {
-    let expected = "# In the beginning\nGenesis 1:1\n\n## the heaven\n\n### the firmament\n\n## the earth\n\n\
+    let expected =
+        "# In the beginning\nGenesis 1:1\n\n## the heaven\n\n### the firmament\n\n## the earth\n\n\
                     ## darkness upon the face of the deep\n\n# Day one\n\n";
     let run = maptool(&["export", arg(&fixture("tree"))]);
     assert_eq!(run.status, 0, "{}", run.stderr);
@@ -174,7 +195,10 @@ fn test_export_writes_the_tree_fixture_as_markdown() {
     let out = dir.join("out.md");
     let run = maptool(&["export", arg(&fixture("tree")), arg(&out)]);
     assert_eq!((run.status, run.stdout.as_str()), (0, ""), "{}", run.stderr);
-    assert_eq!(std::fs::read_to_string(&out).expect("the export was written"), expected);
+    assert_eq!(
+        std::fs::read_to_string(&out).expect("the export was written"),
+        expected
+    );
 }
 
 /// The testament map's export opens with its first node and the second
@@ -297,7 +321,8 @@ fn test_verify_exits_1_with_the_loaders_path_on_a_refused_map() {
     let run = maptool(&["verify", arg(&other)]);
     assert_eq!(run.status, 1);
     assert!(
-        run.stderr.contains("map.json: not a map; a map's file name ends in `.mandala.json`"),
+        run.stderr
+            .contains("map.json: not a map; a map's file name ends in `.mandala.json`"),
         "{}",
         run.stderr
     );
@@ -341,7 +366,11 @@ fn test_apply_in_place_rewrites_the_matched_sections_and_reloads() {
     assert_eq!(std::fs::read_to_string(&map).unwrap(), expected);
     let run = maptool(&["show", arg(&map)]);
     assert_eq!(run.status, 0, "{}", run.stderr);
-    assert!(run.stdout.contains("  #2 THE HEAVEN [link → #4]\n"), "{}", run.stdout);
+    assert!(
+        run.stdout.contains("  #2 THE HEAVEN [link → #4]\n"),
+        "{}",
+        run.stdout
+    );
 }
 
 /// `--dry-run` prints the change as a unified diff, one hunk per changed
@@ -351,7 +380,16 @@ fn test_apply_dry_run_prints_the_diff_and_writes_nothing() {
     let dir = TempDir::new("maptool-apply-dry-run");
     let map = copy(&dir, "tree");
     let before = std::fs::read(&map).unwrap();
-    let run = maptool(&["apply", arg(&map), "--dry-run", "heaven|earth", "--", "tr", "a-z", "A-Z"]);
+    let run = maptool(&[
+        "apply",
+        arg(&map),
+        "--dry-run",
+        "heaven|earth",
+        "--",
+        "tr",
+        "a-z",
+        "A-Z",
+    ]);
     assert_eq!(run.status, 0, "{}", run.stderr);
     assert_eq!(
         run.stdout,
@@ -426,16 +464,33 @@ fn test_apply_refuses_no_match_and_bad_command_lines() {
     let map = copy(&dir, "tree");
     let run = maptool(&["apply", arg(&map), "xyzzy", "--", "cat"]);
     assert_eq!(run.status, 1);
-    assert!(run.stderr.contains("apply: no section matches \"xyzzy\""), "{}", run.stderr);
+    assert!(
+        run.stderr.contains("apply: no section matches \"xyzzy\""),
+        "{}",
+        run.stderr
+    );
     let run = maptool(&["apply", arg(&map), "the", "-i", "--dry-run", "--", "cat"]);
     assert_eq!(run.status, 2);
-    assert!(run.stderr.contains("apply: -i writes the map and --dry-run writes nothing"), "{}", run.stderr);
+    assert!(
+        run.stderr
+            .contains("apply: -i writes the map and --dry-run writes nothing"),
+        "{}",
+        run.stderr
+    );
     let run = maptool(&["apply", arg(&map), "the", "cat"]);
     assert_eq!(run.status, 2);
-    assert!(run.stderr.contains("apply: missing `--` before the command"), "{}", run.stderr);
+    assert!(
+        run.stderr.contains("apply: missing `--` before the command"),
+        "{}",
+        run.stderr
+    );
     let run = maptool(&["apply", arg(&map), "the", "--"]);
     assert_eq!(run.status, 2);
-    assert!(run.stderr.contains("apply: missing the command after `--`"), "{}", run.stderr);
+    assert!(
+        run.stderr.contains("apply: missing the command after `--`"),
+        "{}",
+        run.stderr
+    );
 }
 
 // --- the command line -------------------------------------------------
@@ -456,7 +511,11 @@ fn test_help_lists_exactly_the_five_verbs() {
     assert_eq!(verbs, ["show", "grep", "export", "verify", "apply"]);
     let run = maptool(&["convert", "--legacy", "a.json", "b.mandala.json"]);
     assert_eq!(run.status, 2);
-    assert!(run.stderr.contains("maptool: unknown command: convert"), "{}", run.stderr);
+    assert!(
+        run.stderr.contains("maptool: unknown command: convert"),
+        "{}",
+        run.stderr
+    );
     let run = maptool(&[]);
     assert_eq!(run.status, 2);
     assert!(run.stderr.contains("maptool: missing command"), "{}", run.stderr);

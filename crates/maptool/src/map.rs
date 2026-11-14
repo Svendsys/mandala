@@ -98,7 +98,8 @@ pub fn text_into(doc: &Document, owner: NodeId, out: &mut String) {
 
 /// A node's sections, in their order in the file.
 pub fn sections(doc: &Document, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-    doc.children(node).filter(move |&id| is(doc, id, DocKind::Section))
+    doc.children(node)
+        .filter(move |&id| is(doc, id, DocKind::Section))
 }
 
 /// Which path of a node: its connector, or its `n`th link.

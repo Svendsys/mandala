@@ -56,7 +56,8 @@ pub fn read(path: &str) -> Result<Document, String> {
     if !has_map_extension(path) {
         return Err(extension_refusal(path));
     }
-    let bytes = std::fs::read(path).map_err(|e| format!("{}: could not read: {e}", tilde_path(Path::new(path))))?;
+    let bytes =
+        std::fs::read(path).map_err(|e| format!("{}: could not read: {e}", tilde_path(Path::new(path))))?;
     load_from_bytes(&bytes).map_err(|e| format!("{}: {e}", tilde_path(Path::new(path))))
 }
 

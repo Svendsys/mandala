@@ -207,9 +207,9 @@ fn positional<'a, const N: usize>(
         }
     }
     let count = found.len();
-    let found: [&str; N] = found.try_into().map_err(|_| {
-        CliError::Usage(format!("{verb}: expected {N} argument(s), found {count}"))
-    })?;
+    let found: [&str; N] = found
+        .try_into()
+        .map_err(|_| CliError::Usage(format!("{verb}: expected {N} argument(s), found {count}")))?;
     Ok((found, flags))
 }
 

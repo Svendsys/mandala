@@ -51,8 +51,9 @@ mod tests {
     /// that does not match is not printed.
     ///
     /// Control: dropping `path_owners`' cap and label calls loses the
-    /// `connector.cap_end` and `connector.label` lines; numbering links
-    /// only among line links prints `links[0].ends[1]` for the portal.
+    /// `connector.cap_end` and `connector.label` lines. (Numbering links
+    /// only among line links is not seen here, where the line link comes
+    /// first; the CLI test on the portals fixture is its control.)
     #[test]
     fn test_grep_finds_text_in_every_element_that_holds_spans() {
         let doc = format::load(

@@ -206,8 +206,8 @@ fn run_pipe(cmd: &str, args: &[String], input: &str) -> Result<String, String> {
             format!("apply: `{cmd}` exited with {status}: {stderr}")
         });
     }
-    let mut out =
-        String::from_utf8(output.stdout).map_err(|e| format!("apply: `{cmd}` wrote output that is not UTF-8: {e}"))?;
+    let mut out = String::from_utf8(output.stdout)
+        .map_err(|e| format!("apply: `{cmd}` wrote output that is not UTF-8: {e}"))?;
     if out.ends_with('\n') {
         out.pop();
         if out.ends_with('\r') {
@@ -244,6 +244,9 @@ mod tests {
     /// diff comes back empty.
     #[test]
     fn test_apply_diff_reports_lines_past_the_shorter_end() {
-        assert_eq!(diff("m", "a\nb\n", "a\nb\nc\n"), "--- a/m\n+++ b/m\n@@ -2,0 +3 @@\n+c\n");
+        assert_eq!(
+            diff("m", "a\nb\n", "a\nb\nc\n"),
+            "--- a/m\n+++ b/m\n@@ -2,0 +3 @@\n+c\n"
+        );
     }
 }

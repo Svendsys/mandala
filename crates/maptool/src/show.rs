@@ -75,8 +75,8 @@ mod tests {
     /// a frame, a line link and a portal, above a child with no text: each
     /// part of a line is spelled as the module says.
     ///
-    /// Control: printing sections with the separator before the first
-    /// (` │ a`) or joining spans with a space fails the first line; not
+    /// Control: printing the separator before the first section too
+    /// (`#7 │ one…`), or the line break raw, fails the first line; not
     /// truncating a textless node's leading space fails the second.
     #[test]
     fn test_show_spells_text_separators_breaks_and_markers() {

@@ -910,8 +910,10 @@ node's and a path's `zoom` window (`format/schema.md`).
 `NaN` zoom is treated as "not visible" deliberately —
 a `NaN` camera is a bug upstream, and culling the frame surfaces
 it faster than carrying the `NaN` through the glyph pipeline.
-Inverted windows (`min > max`) render as "always hidden" at
-runtime; `maptool verify` flags these as authoring errors.
+An inverted window (`min > max`) contains no zoom, so it renders as
+"always hidden"; a map cannot hold one — the loader refuses it at its
+JSON path (`bounds::check_zoom_window`), and `maptool verify` prints
+that refusal.
 
 The seam waiting here is **zoom-triggered LOD
 mutations**: an edit (V1-D1) bound to a zoom threshold could
@@ -3086,8 +3088,19 @@ agent-facing reference is `mandalactl --help`.
 ### `maptool` CLI
 
 A separate binary in `crates/maptool/` for scripted operations on
-`.mandala.json` files. Its verbs (`show`, `grep`, `apply`, `export`,
-`verify`) are rebuilt as clients of the document by V1-E1 (#253); until
-then every invocation says so and exits `2`.
+`.mandala.json` files, and a client of the same `Document` the app
+edits: it reads a map with `format::file::read`, the app's own read, so
+a map the app refuses it refuses in the same words. `show` prints the
+node tree, `grep` the lines of span text a regex matches (named by
+their path below the node, `#3 links[1].ends[0]: …`), `export` the tree
+as Markdown and `verify` the loader's verdict plus warnings for what
+loads but is probably a mistake (a verb nothing refers to, a node saved
+hidden that nothing can reveal, a visible frame with no rings, a portal
+whose ends both draw nothing). `apply` pipes each matching section's
+text through a command and replaces its spans as one `EditRequest`
+through `Document::apply` — the only way a document changes — then
+prints the map, writes it back (`-i`, through `format::file::write`) or
+prints the change as a diff (`--dry-run`). There is no `convert`: there
+is no older format to convert from. `maptool --help` is the reference.
 
 ---

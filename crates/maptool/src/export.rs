@@ -72,9 +72,9 @@ mod tests {
     /// text under the heading, and a textless node is transparent: its
     /// child is written at the textless node's own level.
     ///
-    /// Control: making a textless node write an empty heading (`## \n`)
-    /// or pushing its children one level deeper fails the comparison
-    /// (`### grandchild` instead of `## grandchild`).
+    /// Control: pushing a textless node's children one level deeper
+    /// fails the comparison (`### grandchild` instead of
+    /// `## grandchild`).
     #[test]
     fn test_export_levels_lines_and_transparent_nodes() {
         let doc = format::load(

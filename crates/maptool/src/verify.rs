@@ -54,9 +54,15 @@ pub fn warnings(doc: &Document) -> Vec<String> {
         let Some(data) = doc.get(node).and_then(DocElement::as_node) else {
             continue;
         };
-        data.on.click.into_iter().chain(data.on.hover).for_each(&mut refer);
+        data.on
+            .click
+            .into_iter()
+            .chain(data.on.hover)
+            .for_each(&mut refer);
         if data.hidden {
-            out.push(format!("#{id}: hidden, and no verb or presentation can reveal it"));
+            out.push(format!(
+                "#{id}: hidden, and no verb or presentation can reveal it"
+            ));
         }
         text_owners(doc, node, |_, owner| {
             for span in doc.children(owner) {
@@ -74,7 +80,9 @@ pub fn warnings(doc: &Document) -> Vec<String> {
             }
             if let Some(link) = link(doc, child) {
                 if link.kind == LinkKind::Portal && doc.children(child).all(|end| empty_end(doc, end)) {
-                    out.push(format!("#{id} links[{links}]: a portal whose ends both have no content"));
+                    out.push(format!(
+                        "#{id} links[{links}]: a portal whose ends both have no content"
+                    ));
                 }
                 links += 1;
             }
@@ -82,7 +90,10 @@ pub fn warnings(doc: &Document) -> Vec<String> {
     }
     for (n, verb) in doc.definitions().verbs.iter().enumerate() {
         if !referenced[n] {
-            out.push(format!("verbs[{n}] {:?}: defined, and nothing refers to it", verb.id));
+            out.push(format!(
+                "verbs[{n}] {:?}: defined, and nothing refers to it",
+                verb.id
+            ));
         }
     }
     out
@@ -90,7 +101,8 @@ pub fn warnings(doc: &Document) -> Vec<String> {
 
 /// Whether the frame `frame` resolves visible and holds no rings.
 fn empty_frame(doc: &Document, frame: NodeId) -> bool {
-    resolve_frame(doc.tree(), frame, &mut ()).visible && !doc.children(frame).any(|id| is(doc, id, DocKind::Ring))
+    resolve_frame(doc.tree(), frame, &mut ()).visible
+        && !doc.children(frame).any(|id| is(doc, id, DocKind::Ring))
 }
 
 /// Whether the portal end `end` has no spans, no `content` of its own,
@@ -112,8 +124,10 @@ mod tests {
     /// The warnings of the map whose top-level keys are `header` (a
     /// comma-terminated list, or nothing) and whose nodes are `nodes`.
     fn warned(header: &str, nodes: &str) -> Vec<String> {
-        let doc = format::load(&format!(r#"{{"format": 1, "name": "m", {header} "nodes": [{nodes}]}}"#))
-            .unwrap_or_else(|e| panic!("the map loads: {e}"));
+        let doc = format::load(&format!(
+            r#"{{"format": 1, "name": "m", {header} "nodes": [{nodes}]}}"#
+        ))
+        .unwrap_or_else(|e| panic!("the map loads: {e}"));
         warnings(&doc)
     }
 
@@ -206,7 +220,10 @@ mod tests {
             )
         };
         assert_eq!(
-            warned(empty, &nodes(r#"[{}, {"label": {"spans": [{"text": "a label is not a marker"}]}}]"#)),
+            warned(
+                empty,
+                &nodes(r#"[{}, {"label": {"spans": [{"text": "a label is not a marker"}]}}]"#)
+            ),
             ["#1 links[1]: a portal whose ends both have no content"]
         );
         assert!(warned("", &nodes("[{}, {}]")).is_empty());
