@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Writing a file someone else named: the one writer behind every
-//! command that puts bytes at a caller-chosen path — the IPC file
-//! sidecar (`to_file` on `query.document` and `scene.dump`) and the
-//! screenshot's PNG and geometry sidecar, from IPC and the console
-//! alike.
+//! Writing a file someone else named: the one writer in the workspace
+//! that puts bytes at a path the program did not choose — the app's IPC
+//! file sidecar (`to_file` on `query.document` and `scene.dump`), the
+//! screenshot's PNG and geometry sidecar and a recording's frames, from
+//! IPC and the console alike, and every map the app or `maptool` saves
+//! (`format::file::write`).
 //!
 //! **Why one writer.** A path typed by a person, or composed by an
 //! agent, is a path the app did not choose, and three guarantees are
@@ -14,15 +15,34 @@
 //! where a good one was. Each is easy to state and easy to lose in a
 //! second copy, so they are stated and tested here once.
 //!
-//! Native-only: its consumers are (`CLAUDE.md` "Dual-target status").
+//! **Why here.** The app and `maptool` are two processes that can save
+//! one map at the same moment, so the map writer needs the same
+//! guarantees, and one implementation of them is kept: this one, in the
+//! crate both depend on.
+//!
+//! **Two ways to name the file.** `publish` itself never writes through
+//! a symlink: a link at the path is refused. A map's save and
+//! `maptool`'s outputs instead resolve a link to its real file first
+//! (`real_file`), so a map kept behind a symlink stays saveable, and
+//! hold the extension rule to that real file — a map's save writes only
+//! into a `.mandala.json` (`format::file::write`), `maptool export`
+//! never into one. The map's save is reachable over IPC, so that rule,
+//! not a refusal of links, is what keeps a remote caller from writing
+//! map bytes into a file that is not a map (amendment E1.1).
+//!
+//! The browser has no files, and no process id for the temp file's
+//! name: there, `publish` refuses
+//! every write and says so, which is what a file write in the browser
+//! did before it came here.
 
 use std::io::Write;
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Why [`publish`] wrote nothing.
 #[derive(Debug, PartialEq)]
-pub(crate) enum PublishRefusal {
+pub enum PublishRefusal {
     /// The path is the caller's mistake — a symlink, a directory, an
     /// existing file without `overwrite`, a parent that does not exist.
     /// The message names it.
@@ -31,12 +51,14 @@ pub(crate) enum PublishRefusal {
     Internal(String),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// A `Write` that counts what passes through it.
 struct CountingWriter<W> {
     inner: W,
     bytes: u64,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<W: Write> Write for CountingWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let written = self.inner.write(buf)?;
@@ -49,6 +71,7 @@ impl<W: Write> Write for CountingWriter<W> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Distinguishes this process's temp files from each other.
 static TEMP_SEQUENCE: AtomicU32 = AtomicU32::new(0);
 
@@ -57,7 +80,7 @@ static TEMP_SEQUENCE: AtomicU32 = AtomicU32::new(0);
 /// The kernel makes both atomic with the create, so there is no
 /// check-then-use window to race. A path that is already a symlink,
 /// dangling or not, fails (`O_EXCL` and `O_NOFOLLOW` agree).
-#[cfg(unix)]
+#[cfg(all(unix, not(target_arch = "wasm32")))]
 fn create_exclusive(path: &Path) -> std::io::Result<std::fs::File> {
     use rustix::fs::{open, Mode, OFlags};
     let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
@@ -70,7 +93,7 @@ fn create_exclusive(path: &Path) -> std::io::Result<std::fs::File> {
 
 /// Off Unix there is no `O_NOFOLLOW` to ask for. `create_new` still
 /// refuses any existing path, which is the same refusal for a symlink.
-#[cfg(not(unix))]
+#[cfg(not(any(unix, target_arch = "wasm32")))]
 fn create_exclusive(path: &Path) -> std::io::Result<std::fs::File> {
     std::fs::OpenOptions::new()
         .write(true)
@@ -78,6 +101,7 @@ fn create_exclusive(path: &Path) -> std::io::Result<std::fs::File> {
         .open(path)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Run `produce` into `file`, flush it and `fsync` it, and return how
 /// many bytes it wrote.
 fn produce_into(
@@ -102,7 +126,7 @@ fn produce_into(
 ///
 /// **Atomic, and it never follows a symlink.** The bytes go to a
 /// sibling temp file created exclusively with `O_NOFOLLOW`
-/// ([`create_exclusive`]), are flushed and `fsync`ed, and only then
+/// (`create_exclusive`), are flushed and `fsync`ed, and only then
 /// published under the destination name. A failure at any point (the
 /// producer, a full disk) removes the temp file and leaves the
 /// destination exactly as it was, so an earlier good file is never
@@ -116,9 +140,13 @@ fn produce_into(
 /// message: it names a symlink, a directory or an existing file before
 /// any bytes are written, but the guarantees above do not rest on it.
 ///
-/// `path` should be absolute; the callers check that, each in its own
-/// words.
-pub(crate) fn publish(
+/// `path` should be absolute where it comes from someone else; the
+/// app's callers check that, each in its own words.
+///
+/// Cost: the bytes written once, an `fsync`, and a rename (or a hard
+/// link and an unlink); no copy of the output is held.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn publish(
     path: &Path,
     overwrite: bool,
     produce: impl FnOnce(&mut dyn Write) -> Result<(), String>,
@@ -190,6 +218,95 @@ pub(crate) fn publish(
     Ok(bytes)
 }
 
+/// The real file a path names: the path itself when it is not a symlink
+/// (or does not exist yet, so it is created), else the file at the end
+/// of its chain of links. A write published there with [`publish`] goes
+/// *through* the link to its target, atomically, and leaves the link a
+/// link.
+///
+/// For the paths a map's save and `maptool`'s outputs are written to,
+/// where a map kept behind a symlink (a dotfile setup, a synced folder)
+/// must stay saveable. A map's save is reachable over IPC too
+/// (`act.console` with `save <path>`, `SaveDocumentAs`), so a caller of
+/// this function owes the rule that keeps a remote caller in bounds on
+/// the *resolved* path: a map's save requires the real file to be a
+/// `.mandala.json` as well (`format::file::write`, amendment E1.1), and
+/// `maptool export` refuses a real file that is a map. [`publish`]
+/// alone, for every other caller-chosen path, refuses a symlink
+/// outright.
+///
+/// Refused, naming the path and where its link leads: a chain that ends
+/// nowhere ("does not exist"), one that cannot be resolved — a loop
+/// says so, in the system's own words — and one that ends at something
+/// that is not a regular file. In the browser, which has no files, the
+/// path is returned as it is and [`publish`] refuses it.
+///
+/// Cost: one `symlink_metadata`, and for a link one `read_link`, one
+/// `canonicalize` (a walk of its chain) and one `metadata`.
+pub fn real_file(path: &Path) -> Result<std::path::PathBuf, PublishRefusal> {
+    let is_link = std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink());
+    if !is_link {
+        return Ok(path.to_path_buf());
+    }
+    let shown = path.display();
+    let leads = std::fs::read_link(path)
+        .map(|to| to.display().to_string())
+        .unwrap_or_else(|e| format!("somewhere unreadable ({e})"));
+    let real = std::fs::canonicalize(path).map_err(|e| {
+        PublishRefusal::Invalid(match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                format!("`{shown}` is a symlink to `{leads}`, which does not exist")
+            }
+            _ => format!("`{shown}` is a symlink to `{leads}`, which cannot be resolved: {e}"),
+        })
+    })?;
+    match std::fs::metadata(&real) {
+        Ok(meta) if meta.is_file() => Ok(real),
+        Ok(meta) => Err(PublishRefusal::Invalid(format!(
+            "`{shown}` is a symlink to `{leads}`, which leads to `{}`, {}, not a regular file",
+            shown_path(&real),
+            if meta.is_dir() {
+                "a directory"
+            } else {
+                "something else"
+            }
+        ))),
+        Err(e) => Err(PublishRefusal::Invalid(format!(
+            "`{shown}` is a symlink to `{leads}`, which cannot be read: {e}"
+        ))),
+    }
+}
+
+/// `path` as a message shows it: on Windows a resolved path is
+/// verbatim (`\\?\C:\…`), and the prefix only the system needs is
+/// dropped, so the user reads the path they know. Cost: one `String`.
+pub fn shown_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => rest.to_string(),
+        None => text,
+    }
+}
+
+/// [`publish`] in the browser,
+/// which has no files: every write is refused, and `produce` is not
+/// run. O(1).
+#[cfg(target_arch = "wasm32")]
+pub fn publish(
+    path: &Path,
+    _overwrite: bool,
+    _produce: impl FnOnce(&mut dyn Write) -> Result<(), String>,
+) -> Result<u64, PublishRefusal> {
+    Err(PublishRefusal::Internal(format!(
+        "could not write `{}`: the browser has no files",
+        path.display()
+    )))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 /// The refusal for an existing file the caller did not ask to replace.
 fn exists(path: &Path) -> PublishRefusal {
     PublishRefusal::Invalid(format!(
@@ -198,32 +315,10 @@ fn exists(path: &Path) -> PublishRefusal {
     ))
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
     use super::*;
-
-    /// A fresh directory under the system temp dir, unique to this
-    /// process and call.
-    pub(crate) fn scratch_dir(label: &str) -> std::path::PathBuf {
-        static N: AtomicU32 = AtomicU32::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "mandala-write-{}-{}-{label}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).expect("scratch dir");
-        dir
-    }
-
-    /// What is left in `dir`, by name.
-    pub(crate) fn names_in(dir: &Path) -> Vec<String> {
-        let mut names: Vec<String> = std::fs::read_dir(dir)
-            .expect("readable")
-            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        names
-    }
+    use crate::util::test_temp::{names_in, scratch_dir};
 
     fn bytes(content: &'static str) -> impl FnOnce(&mut dyn Write) -> Result<(), String> {
         move |out| out.write_all(content.as_bytes()).map_err(|e| e.to_string())
@@ -348,5 +443,26 @@ pub(crate) mod tests {
         ));
         assert_eq!(names_in(&dir), Vec::<String>::new());
         std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// A verbatim Windows path loses the prefix only the system needs,
+    /// a UNC one keeps its `\\server`, and any other path is shown as it
+    /// is.
+    ///
+    /// Control: returning the display unchanged fails the first two.
+    #[test]
+    fn test_shown_path_drops_only_the_verbatim_prefix() {
+        assert_eq!(
+            shown_path(Path::new(r"\\?\C:\maps\m.mandala.json")),
+            r"C:\maps\m.mandala.json"
+        );
+        assert_eq!(
+            shown_path(Path::new(r"\\?\UNC\server\maps\m.mandala.json")),
+            r"\\server\maps\m.mandala.json"
+        );
+        assert_eq!(
+            shown_path(Path::new("/home/u/m.mandala.json")),
+            "/home/u/m.mandala.json"
+        );
     }
 }

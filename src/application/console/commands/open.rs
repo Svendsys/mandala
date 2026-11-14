@@ -5,7 +5,7 @@
 //! Refuses to load over a dirty document so unsaved work is never
 //! silently discarded — the user has to `save` (or `save <path>`)
 //! first — and refuses a path that is not a `.mandala.json`, naming the
-//! extension it wanted (`document::extension_refusal`). The dispatcher
+//! extension it wanted (`format::file::extension_refusal`). The dispatcher
 //! consumes the `ReplaceDocument` effect: it installs the document and
 //! projects it whole (`view::MapView::load`). The new document keeps the
 //! current one's history limit, which `settings.json` set (D18).

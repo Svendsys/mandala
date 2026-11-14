@@ -32,6 +32,9 @@ half = { version = "2", default-features = false, features = ["num-traits"] }
 num-traits = { version = "0.2", features = ["libm"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
+regex = { version = "1" }
+regex-automata = { version = "0.4", default-features = false, features = ["dfa-onepass", "hybrid", "meta", "nfa-backtrack", "perf-inline", "perf-literal", "std", "unicode"] }
+regex-syntax = { version = "0.8" }
 serde = { version = "1", features = ["alloc", "derive"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "result", "std"] }
 serde_json = { version = "1", features = ["raw_value"] }

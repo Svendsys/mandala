@@ -15,7 +15,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::application::guarded_file::{self, PublishRefusal};
+use baumhard::util::guarded_file::{self, PublishRefusal};
 
 use super::refusal::Refusal;
 
@@ -96,9 +96,7 @@ pub(super) mod tests {
     use super::*;
     use serde_json::json;
 
-    pub(in crate::application::ipc::commands) use crate::application::guarded_file::tests::{
-        names_in, scratch_dir,
-    };
+    pub(in crate::application::ipc::commands) use baumhard::util::test_temp::{names_in, scratch_dir};
 
     pub(in crate::application::ipc::commands) fn to_file(path: &Path, overwrite: bool) -> ToFile {
         ToFile {
