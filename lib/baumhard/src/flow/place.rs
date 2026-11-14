@@ -238,6 +238,11 @@ thread_local! {
     /// test build; a test sets them through `with_seam`, which clears them.
     pub(crate) static FIT_ROUNDS_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     pub(crate) static BRACKET_ROUNDS_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    /// Test record (#313, ruling B18.1 §10.5): the scale at which the
+    /// last `Fit` solved on this thread had its shrink lay the run whole
+    /// before its bracket began, `None` where the bracket did not begin
+    /// from a whole round. Cleared as each solve begins.
+    pub(crate) static SHRINK_FIT: std::cell::Cell<Option<f32>> = const { std::cell::Cell::new(None) };
 }
 
 /// The rounds [`fit_to`] runs at most, its shrink's and its bracket's:
@@ -3180,7 +3185,7 @@ fn place(
         FitMode::Once { filler } => once(run, spacing, filler.as_deref(), flow, fs.fonts(), &walk),
         FitMode::Repeat => fs.unlocked(|| repeat(run, &walk(run), spacing, closed)),
         FitMode::Spread => fs.unlocked(|| spread(run, &walk(run), 0.0)),
-        FitMode::Fit { min, max } => fit_solve(run, path, *min, *max, fs.fonts(), &walk),
+        FitMode::Fit { min, max } => fit_to(run, path, *min, *max, fs.fonts(), &walk),
     };
     #[cfg(test)]
     let before_again = work.spent(path);
@@ -3788,6 +3793,11 @@ fn solve_gap_until(miss: impl Fn(f32) -> f32, length: f32, guess: f32, stop: &dy
 /// a stop there is the window's, no loss. Rounds that run out with the
 /// text still overrunning above that least report its scale not solved
 /// (`RingLoss::Uneven`), never silent.
+///
+/// Each round reshapes the run at its scale, so a `Fit` reshapes at most
+/// `FIT_ROUNDS + BRACKET_ROUNDS` times — 40, where before the bracket it
+/// reshaped at most 16 — and no reshape is counted against the ring's
+/// budget, which counts steps along the path; shaping's cost is #304's.
 fn fit_to<'p>(
     run: &ShapedRun,
     path: &'p ArcPath,
@@ -3796,6 +3806,8 @@ fn fit_to<'p>(
     fs: &mut FontSystem,
     walk_for: &dyn Fn(&ShapedRun) -> PathWalk<'p>,
 ) -> Walked {
+    #[cfg(test)]
+    SHRINK_FIT.with(|fit| fit.set(None));
     let walk = walk_for(run);
     if let Some(work) = walk.work {
         work.fitting();
@@ -3889,7 +3901,9 @@ fn fit_to<'p>(
                 // overran (ruling B18.1 §10.5). A fit is found by a round
                 // laid whole, never by the arithmetic measure alone.
                 match over {
-                    Some(above) if above - scale > scale * BRACKET_TOLERANCE && bracket_rounds > 0 => {
+                    Some(above) if above - scale > scale * BRACKET_TOLERANCE => {
+                        #[cfg(test)]
+                        SHRINK_FIT.with(|fit| fit.set(Some(scale)));
                         fitted = Some((
                             scale,
                             Walked {
@@ -3923,17 +3937,7 @@ fn fit_to<'p>(
                 // least up — a cut walk says it overruns, not by how
                 // much, and read as just past the limit the shrink takes a
                 // thousandth a round ("━━━━" at 16 pt round a 40-long arch
-                // ran out cut at 1.61 of a window whose 0.5 fits). With no
-                // bracket rounds, its rounds have run out: reported.
-                if bracket_rounds == 0 {
-                    if let Some(work) = placed_walk.work {
-                        work.lose(RingLoss::Uneven);
-                    }
-                    return Walked {
-                        run: rescaled,
-                        ..walked
-                    };
-                }
+                // ran out cut at 1.61 of a window whose 0.5 fits).
                 bracketing = Some(0);
                 scale = (0.5 * (least + scale)).max(least);
                 continue;
@@ -4013,7 +4017,8 @@ fn fit_to<'p>(
             // Its rounds run out with its text still cut above the window's
             // least: its scale is not solved to the end, and says so (ruling
             // B18.1 §10.2). No case is known to reach this unaided: the
-            // report is defensive, held through a test seam.
+            // report is defensive, held where the seams cut both phases
+            // short inside a span of scales that are all cut.
             if scale > least {
                 if let Some(work) = placed_walk.work {
                     work.lose(RingLoss::Uneven);
@@ -4025,139 +4030,6 @@ fn fit_to<'p>(
             };
         }
         scale = (0.5 * (under + scale)).max(least);
-    }
-}
-
-/// [`fit_to`], or in a test that sets `FIT_REFERENCE`, the solve as it
-/// stood before the bracket (`reference::fit_to`).
-fn fit_solve<'p>(
-    run: &ShapedRun,
-    path: &'p ArcPath,
-    min: f32,
-    max: f32,
-    fs: &mut FontSystem,
-    walk_for: &dyn Fn(&ShapedRun) -> PathWalk<'p>,
-) -> Walked {
-    #[cfg(test)]
-    if FIT_REFERENCE.with(std::cell::Cell::get).is_some() {
-        return reference::fit_to(run, path, min, max, fs, walk_for);
-    }
-    fit_to(run, path, min, max, fs, walk_for)
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Test seam (#313, ruling B18.1 §10.5): set, `Fit` is solved by
-    /// [`reference::fit_to`], the solve as c0268bfa had it, so that a test
-    /// can hold the bracket to lay no smaller than it did. Only in a test
-    /// build; a test sets it through `with_seam`, which clears it.
-    pub(crate) static FIT_REFERENCE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
-}
-
-/// The `Fit` solve as it stood at c0268bfa, before the bracket (#313,
-/// ruling B18.1 §10.5): a reference a test holds the solve to, laying no
-/// smaller than it laid where that was whole. Copied as it was; test
-/// builds only.
-#[cfg(test)]
-mod reference {
-    use super::*;
-
-    pub(super) fn fit_to<'p>(
-        run: &ShapedRun,
-        path: &'p ArcPath,
-        min: f32,
-        max: f32,
-        fs: &mut FontSystem,
-        walk_for: &dyn Fn(&ShapedRun) -> PathWalk<'p>,
-    ) -> Walked {
-        let walk = walk_for(run);
-        if let Some(work) = walk.work {
-            work.fitting();
-        }
-        let length = path.length();
-        let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
-        let natural = walk.measure(&clusters, 0.0);
-        if clusters.is_empty() || natural.is_nan() || natural <= 0.0 {
-            return once_text(run, &walk, 0.0).0;
-        }
-        let (low, high) = scale_window(min, max);
-        let ideal = length / natural;
-        let start = if ideal.is_nan() {
-            1.0
-        } else {
-            ideal.clamp(low, high)
-        };
-        let mut scale = fitting_scale(&walk, &run.glyphs, &clusters, length, start, low);
-        let mut rounds = 0;
-        let mut previous: Option<(f32, f32)> = None;
-        loop {
-            let rescaled = (scale != 1.0).then(|| reshape(run, scale, None, fs).0);
-            let placed_run = rescaled.as_ref().unwrap_or(run);
-            let slack = if scale > low { SOLVE_TOLERANCE } else { 0.0 };
-            let placed_walk = walk_for(placed_run);
-            let walked = Walked {
-                slack,
-                whole_words: scale > low,
-                even: false,
-                ..spread(placed_run, &placed_walk, slack)
-            };
-            // Its read measured as phase 2 would lay it, which reads no budget
-            // as it goes: read before it runs, at the most phase 2 takes of the
-            // glyphs laid (#313). A placement that cannot afford it keeps this
-            // round's walk, which phase 2 cuts where it overruns: its scale is
-            // not solved to the end.
-            //
-            // This is also the report of a measure of an ornament's scale that
-            // its budget stopped (`measure_at_scale`, ruling B18.1 §8): the
-            // first round always reaches it, after `fitting_scale`, and what
-            // the measure found spent this finds spent too. It reads the same
-            // work: `spent` only grows, the budget only grows (`scale` is
-            // `once`'s), and a `Fit`'s hold never shrinks — its reserve only
-            // rises, and `ends_by` and `closed`, which lower a hold, are a
-            // `Repeat`'s alone (`RingWork::held`, which asserts it in a debug
-            // build).
-            if let Some(work) = placed_walk.work {
-                let glyphs = walked.laying.glyphs.len();
-                if !work.affords_more(path, ring::phase_two_steps(glyphs, true)) {
-                    work.lose(RingLoss::Uneven);
-                    return Walked {
-                        run: rescaled,
-                        ..walked
-                    };
-                }
-            }
-            let (read, limit) = placed_walk.readable_extent(&walked.laying.steps, slack);
-            // A walk that had to cut the text overran, however its kept
-            // clusters read.
-            let read = if walked.truncated {
-                read.max(limit * (1.0 + 1e-3))
-            } else {
-                read
-            };
-            rounds += 1;
-            if read <= limit || scale <= low || rounds >= FIT_ROUNDS {
-                return Walked {
-                    run: rescaled,
-                    ..walked
-                };
-            }
-            // The spacing spread put in moved clusters between stretches, and
-            // read in that order the text no longer fits even with no gap:
-            // shrink by what it overruns, as `fitting_scale` does — and once
-            // two rounds have measured how the overrun falls with the scale,
-            // by the secant through them, a little past it, since the overrun
-            // can fall more slowly than the scale.
-            let proportional = scale * (limit / read) * (1.0 - 1e-3);
-            let next = match previous {
-                Some((before, was)) if was > read && before > scale => {
-                    let rate = (was - read) / (before - scale);
-                    (scale - 1.25 * (read - limit) / rate).min(proportional)
-                }
-                _ => proportional,
-            };
-            previous = Some((scale, read));
-            scale = next.max(low);
-        }
     }
 }
 

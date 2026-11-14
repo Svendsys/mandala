@@ -94,7 +94,10 @@
 //! pattern (`pitch::place_pitched`) is budgeted by its rounds of pitch, as
 //! a directional ring's runs are. Neither counts its shaping, as a ring
 //! does not: a `Fit`'s reshapes and a filler's are bounded by the text,
-//! not the path.
+//! not the path. A `Fit` reshapes once a round of its scale, at most
+//! `FIT_ROUNDS + BRACKET_ROUNDS` times — 40, where before its bracket
+//! (#313, ruling B18.1 §10) it reshaped at most 16 — each uncounted;
+//! shaping's cost is #304's.
 
 use std::cell::Cell;
 
