@@ -31,10 +31,12 @@
 //! edit, the field and the name, and nothing is applied.
 
 pub(crate) mod load;
+mod mentions;
 mod reach;
 mod resolve;
 
 pub use load::{parse_edits, EditsError};
+pub use mentions::Mentions;
 
 use crate::arena::NodeId;
 use crate::document::element::DocKind;

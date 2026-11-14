@@ -99,11 +99,16 @@ Commands:
   verify <map>                  Load the map: a refusal is printed with
                                 its JSON path and exits 1. Then print a
                                 warning for what loads but is probably a
-                                mistake: a verb nothing refers to, a
-                                node saved hidden that nothing can
-                                reveal, a visible frame with no rings,
-                                and a portal whose ends both have no
-                                content. Warnings alone exit 0.
+                                mistake: a verb nothing refers to (a
+                                node's 'on', a span's 'link', or an edit
+                                naming it anywhere in its body, run or
+                                not), a node saved hidden that nothing
+                                can reveal (none while an edit writes
+                                'set_hidden: false'), a visible frame
+                                with no rings, and a portal whose ends
+                                both have no content (none while an edit
+                                writes a portal end's non-empty
+                                'set_content'). Warnings alone exit 0.
   apply <map> <pattern> [-i] [--dry-run] -- <cmd> [args...]
                                 For each section with a line the regex
                                 <pattern> matches (an empty section is

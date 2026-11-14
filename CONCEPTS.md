@@ -3141,7 +3141,17 @@ the node (`#3 links[1].ends[0]: …`, `#3 connector.content: …`,
 as Markdown and `verify` the loader's verdict plus warnings for what
 loads but is probably a mistake (a verb nothing refers to, a node saved
 hidden that nothing can reveal, a visible frame with no rings, a portal
-whose ends both draw nothing). `apply` pipes the text of each section a
+whose ends both draw nothing). What it counts includes the map's edits
+(`EditDef::mentions`, one walk that names every edit step, so a step
+added to the format does not compile there until it is counted): a verb
+an edit names — `set_click`, `set_hover`, a span's `set_link` to a
+verb, a filter's `on_click` or `on_hover`, at any depth — is referred
+to, whether or not anything runs the edit, since keybinds, the console
+and macros run edits from outside the map. Which elements an edit
+reaches is decided when it runs, so with an edit that writes
+`set_hidden: false` in the map no hidden node is reported, and with one
+that writes a portal end's non-empty `set_content` no empty portal is.
+No edit can add a ring, so the frame warning stands. `apply` pipes the text of each section a
 line of which matches through a command and replaces its spans as one
 `EditRequest` through `Document::apply` — the only way a document
 changes — then prints the map, writes it back (`-i`, through

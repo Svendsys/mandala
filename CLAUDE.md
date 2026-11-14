@@ -65,7 +65,10 @@ draws them.
   (by regex, every string a map draws as glyphs: spans, own `content`,
   `once` fillers, frame ornaments), `export` (Markdown), `verify` (the loader's
   verdict, with its JSON path, plus warnings for what loads but is
-  probably a mistake) and `apply` (pipe matching sections' text through
+  probably a mistake; a verb an edit names counts as referred to,
+  whether or not anything runs the edit, and an edit that can unhide a
+  node or give a portal end a marker silences those two warnings) and
+  `apply` (pipe matching sections' text through
   a command, as one `EditRequest` through `Document::apply`; `-i`
   writes the map back as the app's save does — through a link to its
   real file, which must itself be a `.mandala.json` — and `--dry-run`
