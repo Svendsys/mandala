@@ -506,11 +506,15 @@ impl RingWork {
     /// ([`admits`](Self::admits)) and its `run_on` is its path's from its
     /// start, as [`new`](Self::new) sets it, never lowered — [`ends_by`]
     /// and [`closed`](Self::closed), which lower them, are a `Repeat`'s
-    /// walk's alone. Nor does it need its run on lowered for a smaller
-    /// line height when it is reshaped smaller: phase 2 lays a `Fit`, as a
-    /// `Spread`, to end exactly where its walk ended (`Ends::Exactly`), and
-    /// runs on past it never (`PathWalk::runs_on` is for `Once` and
-    /// `Repeat`). A debug build asserts a `Fit`'s hold never shrinks.
+    /// walk's alone. Nor does it need a hold of its own for a run on at a
+    /// smaller line height when it is reshaped smaller (review 5904164019):
+    /// a `Fit` ends within its path and runs on only as one cluster, which
+    /// `spread` lays as `once` does, or as a text its window's least cuts,
+    /// or by `fit_to`'s early return — and then by less than its next
+    /// cluster's width, a few steps, which the hold for the glyphs it laid
+    /// covers several times over (`open_budget_tests`: a `Fit` that runs on
+    /// takes no more in phase 2 than was held for it). A debug build
+    /// asserts a `Fit`'s hold never shrinks.
     ///
     /// [`ends_by`]: Self::ends_by
     fn held(&self) -> usize {
