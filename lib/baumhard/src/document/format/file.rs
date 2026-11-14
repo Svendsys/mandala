@@ -3,8 +3,7 @@
 //! The file a map lives in: its extension, and the one way every
 //! surface that has a path reads a map from it and writes one to it.
 //!
-//! [`load`](crate::document::format::load) and
-//! [`save`](crate::document::format::save) are pure: they turn text into
+//! `format::load` and `format::save` are pure: they turn text into
 //! a document and back, and touch no file. Every surface that holds a
 //! path — the app's `open` and `save`, and `maptool` — wraps them the
 //! same way: refuse a path that is not a `.mandala.json` (D19), read the

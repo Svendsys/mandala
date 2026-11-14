@@ -7,10 +7,16 @@
 //! Its text — its spans concatenated — goes to the command's stdin, and
 //! the command's stdout, less one trailing line break, is its new text.
 //! Every target whose text changed has its spans replaced by one span of
-//! the new text, with no style of its own (none at all when the new text
-//! is empty), by [`replace_spans`] — and all of them together are **one
+//! the new text (none at all when the new text is empty), by
+//! [`replace_spans`] — and all of them together are **one
 //! [`EditRequest`]**, applied by [`Document::apply`]. Nothing else
 //! writes to the document.
+//!
+//! The new span takes the style of the section's first span, so a
+//! rewritten title keeps its size, color and weight; a section whose
+//! spans were styled differently keeps only the first one's. A span's
+//! `link` is not carried: it belonged to the text it was on, which the
+//! command has replaced.
 //!
 //! The commands all run before the request is built, and the first that
 //! fails ends the run with nothing written.
@@ -20,7 +26,7 @@ use std::io::Write as _;
 use std::process::{Command, Stdio};
 
 use baumhard::arena::NodeId;
-use baumhard::document::element::SpanData;
+use baumhard::document::element::{DocElement, SpanData, TextStyle};
 use baumhard::document::ids::Document;
 use baumhard::document::mutation::compose::replace_spans;
 use baumhard::document::writer::{ChangeSource, EditRequest};
@@ -34,11 +40,13 @@ pub struct Target {
     pub section: NodeId,
     /// Its text when it was matched.
     pub text: String,
+    /// The style of its first span, which the new span takes.
+    pub style: TextStyle,
 }
 
 /// Every section of `doc` with a line `regex` matches, in the file's
 /// order. Cost: one walk of the nodes and their sections; one `String`
-/// per target.
+/// and one style per target.
 pub fn targets(doc: &Document, regex: &Regex) -> Vec<Target> {
     let mut out = Vec::new();
     let mut text = String::new();
@@ -46,9 +54,17 @@ pub fn targets(doc: &Document, regex: &Regex) -> Vec<Target> {
         for section in sections(doc, node) {
             text_into(doc, section, &mut text);
             if text.lines().any(|line| regex.is_match(line)) {
+                let style = doc
+                    .children(section)
+                    .find_map(|id| match doc.get(id) {
+                        Some(DocElement::Span(span)) => Some(span.style.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
                 out.push(Target {
                     section,
                     text: text.clone(),
+                    style,
                 });
             }
         }
@@ -64,18 +80,16 @@ pub fn run_commands(targets: Vec<Target>, cmd: &str, args: &[String]) -> Result<
     for target in targets {
         let text = run_pipe(cmd, args, &target.text)?;
         if text != target.text {
-            changed.push(Target {
-                section: target.section,
-                text,
-            });
+            changed.push(Target { text, ..target });
         }
     }
     Ok(changed)
 }
 
 /// Replace the spans of each changed section with one span of its new
-/// text, as one [`EditRequest`] applied through [`Document::apply`]. A
-/// list with nothing in it changes nothing.
+/// text in its first span's style, as one [`EditRequest`] applied
+/// through [`Document::apply`]. A list with nothing in it changes
+/// nothing.
 pub fn rewrite(doc: &mut Document, changed: &[Target], label: &str) -> Result<(), String> {
     let mut steps = Vec::new();
     for target in changed {
@@ -84,7 +98,8 @@ pub fn rewrite(doc: &mut Document, changed: &[Target], label: &str) -> Result<()
         } else {
             vec![SpanData {
                 text: target.text.clone(),
-                ..SpanData::default()
+                style: target.style.clone(),
+                link: None,
             }]
         };
         steps.extend(replace_spans(doc, &[target.section], &spans).map_err(|e| format!("apply: {e}"))?);

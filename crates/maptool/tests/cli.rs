@@ -344,8 +344,8 @@ fn upper_cased_tree() -> String {
 
 /// `-i` rewrites the matched sections in the file and prints nothing; the
 /// file it writes is the fixture with exactly those sections changed —
-/// each one span of the new text, the span's own link gone with its old
-/// spans — and it loads again.
+/// each one span of the new text, `the firmament`'s link gone with the
+/// span it was on — and it loads again.
 #[test]
 fn test_apply_in_place_rewrites_the_matched_sections_and_reloads() {
     let dir = TempDir::new("maptool-apply-in-place");
@@ -418,6 +418,41 @@ fn test_apply_prints_the_changed_map_without_a_flag() {
     assert_eq!(run.status, 0, "{}", run.stderr);
     assert_eq!(run.stdout, upper_cased_tree());
     assert_eq!(std::fs::read(&map).unwrap(), before);
+}
+
+/// The new span takes the first span's style and not its link: the
+/// testament map's title keeps its size, color and weight, and a section
+/// of two differently styled spans, the first linked, becomes one span
+/// in the first one's style with no link.
+#[test]
+fn test_apply_keeps_the_first_spans_style_and_drops_its_link() {
+    let dir = TempDir::new("maptool-apply-style");
+    let map = dir.join("testament.mandala.json");
+    std::fs::copy(testament(), &map).expect("the testament map copies");
+    let run = maptool(&["apply", arg(&map), "^Lord God$", "-i", "--", "tr", "a-z", "A-Z"]);
+    assert_eq!(run.status, 0, "{}", run.stderr);
+    let text = std::fs::read_to_string(&map).unwrap();
+    assert!(
+        text.contains(
+            r##"      "sections": [{"spans": [{"text": "LORD GOD", "size": 74.0, "color": "#ffffff", "weight": "bold"}]}]"##
+        ),
+        "{}",
+        text.lines().find(|line| line.contains("LORD GOD")).unwrap_or("no LORD GOD line")
+    );
+    let two = write(
+        &dir,
+        "two.mandala.json",
+        r#"{"format": 1, "name": "t", "nodes": [{"id": 1, "position": [0, 0], "sections": [{"spans": [
+             {"text": "one ", "italic": true, "link": {"url": "https://example.com"}},
+             {"text": "two", "weight": "bold"}]}]}]}"#,
+    );
+    let run = maptool(&["apply", arg(&two), "one two", "-i", "--", "tr", "a-z", "A-Z"]);
+    assert_eq!(run.status, 0, "{}", run.stderr);
+    let text = std::fs::read_to_string(&two).unwrap();
+    assert!(
+        text.contains(r#"      "sections": [{"spans": [{"text": "ONE TWO", "italic": true}]}]"#),
+        "{text}"
+    );
 }
 
 /// A command whose output is empty leaves the section with no spans.

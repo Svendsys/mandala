@@ -91,7 +91,8 @@ Commands:
                                 <pattern> matches, pipe its text to <cmd>
                                 and replace its spans with one span of
                                 the command's output (one trailing line
-                                break removed), all as one edit. Prints
+                                break removed) in the first span's style
+                                (not its link), all as one edit. Prints
                                 the changed map to stdout; -i writes it
                                 back to <map> instead, through a
                                 temporary file and a rename; --dry-run
