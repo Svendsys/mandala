@@ -1729,7 +1729,10 @@ fn test_projection_untangle_keeps_one_stamp_a_lane_on_a_very_wide_side() {
     // has found grows with the paths, one stamp each a round, not with
     // their pairs — 16 million entries a round as a table of pairs, which
     // past 46 340 paths no longer fits a 32-bit address space. Each path
-    // here is short and clear of the others, so one round settles them.
+    // here is short and clear of the others, so one round settles them
+    // and no stop is read (`always_near` runs only when a round leaves a
+    // path too near): exactly one stamp a path a round. The failing
+    // inputs are a table of pairs, and stamps not counted.
     let count = 4096;
     let lanes: Vec<Lane> = (0..count)
         .map(|k| {
@@ -1755,8 +1758,9 @@ fn test_projection_untangle_keeps_one_stamp_a_lane_on_a_very_wide_side() {
         rounds >= 1 && handles.iter().all(|&h| h == 1.0),
         "precondition: the paths are measured and clear: {rounds} rounds"
     );
-    assert!(
-        scratch <= rounds * count,
-        "{scratch} entries over {rounds} rounds for {count} paths"
+    assert_eq!(
+        scratch,
+        rounds * count,
+        "entries over {rounds} rounds for {count} paths"
     );
 }

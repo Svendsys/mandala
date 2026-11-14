@@ -126,8 +126,8 @@ fn test_a_map_whose_untangling_reaches_the_ceiling_is_abandoned_and_counted() {
     // reached it — here at most three curves at the sampling's cap (#346).
     // The failing inputs are a ceiling half as high, which abandons the
     // one copy; samples never taken from it, which projects the two; and
-    // samples not counted, which a cut, more than the ceiling sampled,
-    // cannot be.
+    // samples not counted, though a cut means more than the ceiling was
+    // sampled.
     for doc in [seed_copies(1), seed_copies(2)] {
         assert!(within_bound(&doc), "precondition: inside the coordinate bound");
     }
@@ -176,10 +176,10 @@ fn test_the_untangle_ceiling_is_overshot_by_one_lane_at_most() {
     // A junction of 128 thin straight paths, each sampled at the cap, so
     // that its first round alone would take four times the ceiling: under
     // the ceiling, `untangle` takes at most the ceiling and the one lane
-    // that reaches it — more than the ceiling, which is what cuts it — and
-    // marks the check. The failing inputs are the ceiling taken from once
-    // a round, after every lane of it is sampled, and samples not
-    // counted.
+    // that reaches it, and marks the check; it takes more than the
+    // ceiling, since that is what cuts it. The failing inputs are the
+    // ceiling taken from once a round, after every lane of it is sampled,
+    // and samples not counted.
     use crate::projection::geometry::{untangle, Lane, UNTANGLE_SAMPLED};
     use glam::Vec2;
     let lanes: Vec<Lane> = (0..128)
