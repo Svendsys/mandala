@@ -106,13 +106,27 @@ fn test_the_pair_model_sets_the_first_root_at_what_is_owed() {
     );
 }
 
+/// Every property, over a hundred seeded inputs of the structured
+/// generator; among them, far-out frames with sides and far-out `Repeat`s
+/// along a path (#313), each laid within the per-input bound.
+///
+/// Precondition: the seeds draw far-out frames with sides and far-out
+/// `Repeat`s. Control: with `far_out` drawing nothing, red.
 #[test]
 fn test_generated_flows_hold_every_flow_property() {
+    use crate::flow::tests::flow_fuzz::{FAR_FRAMES, FAR_REPEATS};
+    FAR_FRAMES.with(|n| n.set(0));
+    FAR_REPEATS.with(|n| n.set(0));
     for seed in 0..100 {
         if let Err(why) = check_flow_generated(&mut Choices::seeded(seed)) {
             panic!("seed {seed}: {why}");
         }
     }
+    let (frames, repeats) = (FAR_FRAMES.with(|n| n.get()), FAR_REPEATS.with(|n| n.get()));
+    assert!(
+        frames > 0 && repeats > 0,
+        "precondition: the seeds draw far-out frames with sides ({frames}) and far-out repeats along a path ({repeats})"
+    );
 }
 
 /// The sweep above over [`every_face`]: `faces()`, the ornament
@@ -2449,6 +2463,283 @@ fn test_the_flow_properties_find_a_ring_past_its_work() {
     }
 }
 
+/// #313: flow_raw lays one budgeted placement an input (ruling R45.1):
+/// one time in four where it draws no ring, one placement along its line
+/// in place of its frame — each of [`raw_lines`] somewhere — and an input
+/// whose choices run out before the draw, every committed raw finding,
+/// none, laying its frame as it did.
+///
+/// Controls: with the line's placements left out of the draw, red; with
+/// one drawn on no choice, red.
+///
+/// [`raw_lines`]: crate::flow::tests::flow_fuzz::raw_lines
+#[test]
+fn test_the_raw_harness_draws_every_line_placement_in_place_of_its_frame() {
+    use crate::flow::tests::flow_fuzz::{raw_line, raw_lines};
+    assert!(
+        raw_line(&[]).is_none(),
+        "an input with no choices left draws no placement along its line"
+    );
+    let lines = raw_lines();
+    let mut drawn = vec![0usize; lines.len()];
+    let mut frames = 0;
+    // Inputs of 64 bytes from a xorshift, each seed its own.
+    for seed in 1..=512_u64 {
+        let mut state = seed;
+        let bytes: Vec<u8> = (0..64)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect();
+        match raw_line(&bytes) {
+            Some(line) => {
+                let k = lines
+                    .iter()
+                    .position(|l| *l == line)
+                    .expect("a line placement of the list");
+                drawn[k] += 1;
+            }
+            None => frames += 1,
+        }
+    }
+    assert!(
+        drawn.iter().all(|&n| n > 0) && frames > 0,
+        "each placement along the line is drawn ({drawn:?}), and frames besides ({frames})"
+    );
+    for name in [
+        "fit_frame_pressed_by_a_clearance_its_other_line_could_give",
+        "fit_frame_shrunk_by_whole_clearance_searches",
+        "raw_frame_cut_apart_by_whole_clearance_searches",
+        "raw_frame_cut_apart_round_a_tight_bend",
+    ] {
+        let found = std::fs::read(
+            crate::util::doc_fixtures::repo_path("lib/baumhard/src/flow/tests/fuzz_findings").join(name),
+        )
+        .unwrap();
+        assert!(
+            raw_line(&found).is_none(),
+            "the finding {name} draws its frame, not a placement along its line"
+        );
+    }
+}
+
+/// #313: a placement along an open path, and a whole-glyph one, are each
+/// an input's one budgeted placement, as a `Repeat` ring is (ruling
+/// B17.2b): laid at the harnesses' cap they fit [`INPUT_STEPS`], the
+/// cap the most glyphs that do — whatever the run's length, a curve's
+/// table at its most among them — and laid beside a frame at the floor of
+/// its budget, as flow_raw laid its line until then, neither does. So an
+/// input whose frame and line placement may take more than one input may
+/// inside the timeout fails.
+///
+/// Control: with an input's frame and its line's placement counted apart,
+/// as two inputs, red.
+///
+/// [`INPUT_STEPS`]: crate::flow::tests::flow_fuzz::INPUT_STEPS
+#[test]
+fn test_an_open_placement_is_an_input_s_one_budgeted_placement() {
+    use crate::document::values::FitMode;
+    use crate::flow::place::halves::frame_work_steps;
+    use crate::flow::place::ring::ring_work_steps;
+    use crate::flow::tests::flow_fuzz::{
+        check_raw, open_cap, open_tables, pitched_cap, pitched_work_steps, RawLine, INPUT_STEPS,
+        MAX_RING_GLYPHS,
+    };
+    use crate::flow::Curve;
+    let cubic = [Curve::Cubic(Vec2::ZERO, Vec2::X, Vec2::Y, Vec2::ONE)];
+    let tables = [0, open_tables(&cubic)];
+    for copy in [1, 256, 4_096] {
+        for tables in tables {
+            let cap = open_cap(copy, tables, true).expect("a cap holds a placement along an open path");
+            let (at, more) = (
+                ring_work_steps(cap, copy, tables),
+                ring_work_steps(cap + 1, copy, tables),
+            );
+            assert!(
+                at <= INPUT_STEPS && (cap == MAX_RING_GLYPHS || more > INPUT_STEPS) && cap >= 100,
+                "a placement of {copy} glyphs, tables of {tables} samples, at its cap of {cap} takes {at} glyph steps and one more {more}, against the {INPUT_STEPS} an input may take"
+            );
+        }
+    }
+    for tables in tables {
+        let cap = pitched_cap(tables, true).expect("a cap holds a whole-glyph placement");
+        let (at, more) = (
+            pitched_work_steps(cap, tables),
+            pitched_work_steps(cap + 1, tables),
+        );
+        assert!(
+            at <= INPUT_STEPS && (cap == MAX_RING_GLYPHS || more > INPUT_STEPS) && cap >= 100,
+            "a whole-glyph placement, tables of {tables} samples, at its cap of {cap} takes {at} glyph steps and one more {more}"
+        );
+    }
+    let flow = style(16.0);
+    let floor = with_fonts(|fs| frame_work_steps(&real_run("", &flow, fs), None, true, 0));
+    let (open, pitched) = (floor + ring_work_steps(0, 1, 0), floor + pitched_work_steps(0, 0));
+    assert!(
+        open > INPUT_STEPS && pitched > INPUT_STEPS,
+        "beside a frame at its floor, a placement along a line takes {open} glyph steps and a whole-glyph one {pitched}, within the {INPUT_STEPS} an input may take: lay them besides"
+    );
+    let both = check_raw(
+        b"plain text",
+        &[FitMode::Fit { min: 0.5, max: 2.0 }],
+        Some(&RawLine::Open(FitMode::Repeat)),
+        true,
+    );
+    assert!(
+        both.as_ref().is_err_and(|why| why.contains("past the")),
+        "a frame and a placement along its line in one input fail: {both:?}"
+    );
+}
+
+/// #313's properties: a placement along an open path that takes more than
+/// its cap's budget and the overshoot past it (`ring_work_steps`) fails, as
+/// does one the engine budgets past its cap, one that places more glyphs
+/// than its cap, and one whose setup counted tables past the samples its
+/// path's curves hold; and a whole-glyph placement that takes more than its
+/// budget past its setup and its tables fails, as does one budgeted past
+/// its cap, one placing more than its cap, one whose tables pass its
+/// curves', and one held to its cap that reports nothing.
+///
+/// Control: with each never failing, red (that one).
+#[test]
+fn test_the_flow_properties_find_an_open_placement_past_its_work() {
+    use crate::flow::place::halves::{frame_budget, table_steps};
+    use crate::flow::place::ring::{ring_work_steps, RingLoss, RING_STEPS};
+    use crate::flow::place::Trace;
+    use crate::flow::tests::flow_fuzz::{InputWork, MAX_RING_GLYPHS};
+    let flow = style(16.0);
+    let run = with_fonts(|fs| real_run("MANDALA", &flow, fs));
+    let (cap, tables) = (MAX_RING_GLYPHS, 1_025);
+    let budget = frame_budget(cap);
+    let glyph = PlacedGlyph {
+        glyph: 0,
+        pos: Vec2::ZERO,
+    };
+    let laid = |glyphs: usize, truncated: bool| PlacedRun {
+        glyphs: vec![glyph; glyphs],
+        truncated,
+    };
+    let whole = laid(cap, false);
+    let base = Trace {
+        spent: ring_work_steps(cap, run.glyphs.len(), tables),
+        budget,
+        glyphs: cap,
+        tables,
+        ..Trace::default()
+    };
+    let open = |placed: &PlacedRun, trace: &Trace| {
+        InputWork::default().open(&run, cap, tables, placed, trace, "a placement")
+    };
+    assert!(
+        open(&whole, &base).is_ok(),
+        "precondition: a placement that takes its budget and its overshoot holds"
+    );
+    let broken: [(&str, Trace, PlacedRun); 5] = [
+        (
+            "past its budget and its overshoot",
+            Trace {
+                spent: base.spent + 1,
+                ..base.clone()
+            },
+            whole.clone(),
+        ),
+        (
+            "budgeted past its cap",
+            Trace {
+                budget: budget + 1,
+                ..base.clone()
+            },
+            whole.clone(),
+        ),
+        (
+            "scaled by more glyphs than its cap",
+            Trace {
+                glyphs: cap + 1,
+                ..base.clone()
+            },
+            whole.clone(),
+        ),
+        (
+            "placing more glyphs than its cap",
+            base.clone(),
+            laid(cap + 1, false),
+        ),
+        (
+            "whose tables pass its curves'",
+            Trace {
+                tables: tables + 1,
+                ..base.clone()
+            },
+            whole.clone(),
+        ),
+    ];
+    for (what, trace, placed) in &broken {
+        assert!(open(placed, trace).is_err(), "a placement {what} fails");
+    }
+    let setup = RING_STEPS + table_steps(tables);
+    let base = Trace {
+        spent: budget,
+        ..base
+    };
+    let pitched = |placed: &PlacedRun, trace: &Trace| {
+        InputWork::default().pitched(cap, tables, placed, trace, "a whole-glyph placement")
+    };
+    assert!(
+        pitched(&whole, &base).is_ok() && setup < budget,
+        "precondition: a whole-glyph placement that takes its budget holds"
+    );
+    let capped = laid(cap, true);
+    let broken: [(&str, Trace, PlacedRun); 5] = [
+        (
+            "past its budget",
+            Trace {
+                spent: budget + 1,
+                ..base.clone()
+            },
+            whole.clone(),
+        ),
+        (
+            "budgeted past its cap",
+            Trace {
+                budget: budget + 1,
+                ..base.clone()
+            },
+            whole.clone(),
+        ),
+        (
+            "placing more glyphs than its cap",
+            base.clone(),
+            laid(cap + 1, false),
+        ),
+        (
+            "whose tables pass its curves'",
+            Trace {
+                tables: tables + 1,
+                ..base.clone()
+            },
+            whole.clone(),
+        ),
+        ("held to its cap, reporting nothing", base.clone(), capped.clone()),
+    ];
+    for (what, trace, placed) in &broken {
+        assert!(
+            pitched(placed, trace).is_err(),
+            "a whole-glyph placement {what} fails"
+        );
+    }
+    let reported = Trace {
+        ring: Some(RingLoss::Short),
+        ..base
+    };
+    assert!(
+        pitched(&capped, &reported).is_ok(),
+        "precondition: a whole-glyph placement held to its cap and reported holds"
+    );
+}
+
 /// R45.1's property: an input whose frames may take more than one input
 /// may inside the timeout fails — flow_raw's three frames at their
 /// least budget, 1,200,000 glyph steps, as the harness laid an input
@@ -2462,7 +2753,7 @@ fn test_the_flow_properties_find_an_input_past_the_timeout() {
         check_flow_bytes(b"plain text").is_ok(),
         "precondition: one frame an input fits"
     );
-    let three = check_raw(b"plain text", &frame_fits(), true);
+    let three = check_raw(b"plain text", &frame_fits(), None, true);
     assert!(
         three.as_ref().is_err_and(|why| why.contains("past the")),
         "three frames an input fail: {three:?}"

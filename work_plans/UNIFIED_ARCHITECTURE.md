@@ -834,9 +834,14 @@ line (cosmic-text gives each glyph's advance), then placed:
      `.notdef` is a pass of the shaper through every face, a `.notdef`
      cluster of several code points a pass a glyph of its line (a pass
      shapes its whole run in each face), and an inking reads each
-     distinct glyph once. The budget is read before every lay, build and
-     reshape and before each copy of a side ornament, which is laid only
-     while the frame can afford it and its arc's touch check after, at
+     distinct glyph once. A side ornament's lays count their path's
+     reads too, `READS_A_STEP` to a step past the step a cluster (#313):
+     far from the origin a copy's cluster reads its path fifteen to twenty
+     times where it reads it once at the origin. The budget is read before
+     every lay, build and reshape and before each lay of a side
+     ornament's copies, which is laid only while the frame can afford it
+     — the most it may take, `SIDE_CLUSTER_READS` reads a cluster — and
+     its arc's touch check after, at
      `touch_looks` looks a box of the classes of height the check holds
      (an arc it cannot afford is left empty, or keeps the copies it has
      where their gaps are equal, and is reported as left empty or kept
@@ -956,6 +961,30 @@ cluster more (`ring_overshoot`). A ring whose budget is spent, or whose
 cap is reached, is laid as far as it got — short of the outline, or
 round it unclosed, or closed but uneven — and its trace says which; it
 is never capped silently.
+
+Every placement along an open path — a connector's or a line link's, in
+every fit mode — is budgeted as a ring is (#313): `max(TRACK_BUDGET,
+STEPS_PER_GLYPH × glyphs)` for the `glyphs` it will lay, at most its
+cap — a `repeat` the copies its path holds, as a ring; `once`, `spread`
+and `fit` their text, and `once` with a filler the copies of the filler
+the path past its text holds besides — its work counted in its path's
+reads and the glyphs it sets, its reading-order lay held back for as its
+clusters are laid. Its walks read the budget before every cluster, and
+`fit` before each measure of its text as read and each round of its
+scale, which read none as they go, holding back what phase 2 would take
+of the glyphs; so it takes at most its budget, its setup and one cluster
+more (`ring_overshoot`, of its widest cluster). A connector's ornament
+laid as whole glyphs (`place_pitched`) is budgeted so too, by the glyphs
+a round of its pattern's pitch along the path holds, its path's reads,
+the gaps between boxes it measures and the glyphs it places counted, and
+held back for before it counts each ink and each round of its slack, so
+it takes no more than its budget but for its setup and its path's table,
+counted before it first reads it. A placement its budget stops, or its
+cap, is laid as far as it got — its text or its copies short of the
+path, or its spacing or its scale not solved to the end — and its trace
+says which (`short`, `uneven`); it is never cut short silently. Its
+shaping — `fit`'s reshapes, a filler's — is not counted, as a ring's is
+not: it is bounded by the text, not by the path.
 
 An ornament — a flow with no letter or digit, such as `✦ ·` or `─` —
 has no reading direction, so no part of it is reversed (§6.2 step 4):

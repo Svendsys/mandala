@@ -795,9 +795,11 @@ thread_local! {
     pub(crate) static OPENS_STOPPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// A `Repeat` ring as laid (#310), what [`LAST_RING`] keeps: its glyphs a
-/// copy, the glyphs its budget was scaled by and its cap, the glyphs it
-/// placed, what it spent of its budget, and how its budget left it.
+/// A `Repeat` ring as laid (#310), what [`LAST_RING`] keeps, or a
+/// placement along an open path, what [`LAST_OPEN`] keeps (#313): its
+/// glyphs a copy — along an open path, its widest cluster's — the glyphs
+/// its budget was scaled by and its cap, the glyphs it placed, what it
+/// spent of its budget, and how its budget left it.
 #[cfg(test)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct LastRing {
@@ -876,11 +878,12 @@ struct PathWalk<'p> {
     /// The steps this placement's walks have taken ([`StepMemo`]), when
     /// it keeps them.
     memo: Option<&'p StepMemo>,
-    /// A `Repeat` ring's work and budget (#310), read before each cluster
-    /// its walks lay or measure ([`lay`](Self::lay),
-    /// [`walk_bodies`](Self::walk_bodies)) and before each probe of
-    /// phase 2's spacing solves ([`spent`](Self::spent)); `None` for every
-    /// other placement, which these walks do not budget.
+    /// A `Repeat` ring's work and budget (#310), or a placement's along an
+    /// open path (#313), read before each cluster its walks lay or measure
+    /// ([`lay`](Self::lay), [`walk_bodies`](Self::walk_bodies)) and before
+    /// each probe of phase 2's spacing solves ([`spent`](Self::spent));
+    /// `None` for a text frame's lines, which their frame budgets
+    /// (`halves::Work`).
     work: Option<&'p RingWork>,
     /// `h`: every cluster's box height and vertical extent.
     line_height: f32,
@@ -904,8 +907,8 @@ struct PathWalk<'p> {
 }
 
 impl PathWalk<'_> {
-    /// Whether this walk's ring has spent its budget, less what it holds
-    /// back for phase 2 (#310, [`RingWork::affords`]): what stops a
+    /// Whether this walk's placement has spent its budget, less what it
+    /// holds back for phase 2 (#310, [`RingWork::affords`]): what stops a
     /// spacing solve. Never, for a walk no budget bounds.
     fn spent(&self) -> bool {
         self.work.is_some_and(|work| !work.affords(self.path))
@@ -920,8 +923,8 @@ impl PathWalk<'_> {
         }
     }
 
-    /// Note that this walk's ring's budget left it so (#310): nothing,
-    /// for a walk no budget bounds.
+    /// Note that this walk's placement's budget, or its cap, left it so
+    /// (#310, #313): nothing, for a walk no budget bounds.
     fn lose(&self, loss: RingLoss) {
         if let Some(work) = self.work {
             work.lose(loss);
@@ -1823,9 +1826,10 @@ impl PathWalk<'_> {
     /// Place `clusters` from `s` with `gap` between steps onto `out`,
     /// each whole: its glyphs share its box, each at its pen position.
     /// Stops before the first cluster whose step would end past the path,
-    /// that would pass [`MAX_PLACED_GLYPHS`] — on a ring's walk, its cap
-    /// ([`RingWork::cap`], ruling B17.2a) — or, on a ring's walk, that its
-    /// budget does not admit with phase 2's walks of it held back
+    /// that would pass [`MAX_PLACED_GLYPHS`] — on a budgeted walk, a
+    /// ring's or a placement's along an open path, its cap
+    /// ([`RingWork::cap`], ruling B17.2a; #313) — or, on a budgeted walk,
+    /// that its budget does not admit with phase 2's walks of it held back
     /// ([`RingWork::admits`], #310), and says which.
     fn lay<'c>(
         &self,
@@ -2450,13 +2454,14 @@ impl PathWalk<'_> {
     /// [`lay`](Self::lay) `clusters`; when they overrun, lay instead the
     /// longest prefix of them in reading order that fits, in visual order
     /// (ruling R9.4). Returns how the final lay stopped and whether text
-    /// was cut. On a ring's walk, a search cut short by its budget or its
-    /// cap rather than by the path — a probe stopped by either, whose
-    /// prefix may have fit the path — says so: [`Laid::Spent`] or
+    /// was cut. On a budgeted walk, a ring's or a placement's along an
+    /// open path (#313), a search cut short by its budget or its cap
+    /// rather than by the path — a probe stopped by either, whose prefix
+    /// may have fit the path — says so: [`Laid::Spent`] or
     /// [`Laid::Capped`], whatever its final lay, which keeps the prefix
     /// that fit (ruling B17.1b; review 5761697746: a ring whose every probe
-    /// found its budget spent kept no cluster and reported nothing). Every
-    /// other walk's search reads a capped probe as one that overran. On
+    /// found its budget spent kept no cluster and reported nothing). A
+    /// frame line's search reads a capped probe as one that overran. On
     /// every walk, clusters that pass the cap are cut as clusters that
     /// pass the path's end are — the longest prefix in reading order that
     /// fits under it — and the cut says so ([`Laid::Capped`]).

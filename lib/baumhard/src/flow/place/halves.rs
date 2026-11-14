@@ -102,33 +102,37 @@
 //! ([`Trace::cut_apart`], ruling R38.1: never
 //! overlap wins over never cut); and what is left unheld even so is
 //! reported in the trace ([`Unheld`]), never silent.
-//! Every last resort is
-//! bounded in work (rulings R35.3, R44.2, R46): a shrink's probe looks
-//! first whether its lines fit at all, and a frame's budget,
-//! [`STEPS_PER_GLYPH`] glyph steps a glyph of its text and at least
-//! [`TRACK_BUDGET`] ([`frame_budget`]), counts all of its work — its
-//! tracking and side lays, its shaping and inking, its touch checks,
+//!
+//! Every last resort is bounded in work (rulings R35.3, R44.2, R46): a
+//! shrink's probe looks first whether its lines fit at all, and a frame's
+//! budget, [`STEPS_PER_GLYPH`] glyph steps a glyph of its text and at
+//! least [`TRACK_BUDGET`] ([`frame_budget`]), counts all of its work —
+//! its tracking and side lays, its shaping and inking, its touch checks,
 //! R27's walks and its paths' tables, each weighted to about one tracking
-//! step's time — and is
-//! read before every lay, build and reshape — in each tracking solve,
-//! slide, shrink (its floor build too), cut and backtrack, R27's fit and
-//! a `Once` filler's copies — and before each copy of a side ornament,
-//! which is laid only while the frame can afford it and the touch check
-//! of the arc after ([`check_steps`], at [`touch_looks`] looks a box of
-//! the classes of height it holds): an arc it cannot afford is left empty, or keeps the copies it
-//! has where they hold the equal-gap rule, and is reported as left empty
-//! or kept short ([`Unheld::sides`]).
-//! So a frame overshoots its budget
-//! by at most [`overshoot_steps`] (ruling R47.2): what runs before the
-//! budget is first read — its setup, R27's first reshape and one build's
-//! shaping and inking — the lay of each line that finds it spent, and
-//! the touch checks that end the frame. A frame whose budget
-//! runs out while two of its inks still touch keeps the longest run of
-//! its inks that touch nothing ([`untouched`], within a share of the
-//! budget held back for it), and says it was cut ([`Trace::cut_apart`]). A frame's text is cut to
-//! [`MAX_PLACED_GLYPHS`] at a cluster before its lines are prepared
-//! (ruling R44.1), its sides placing no more than the cap leaves, so the
-//! budget is at most `STEPS_PER_GLYPH × MAX_PLACED_GLYPHS`.
+//! step's time, and its side lays' path reads besides, [`READS_A_STEP`]
+//! to a step (#313), since far from the origin a copy's cluster reads its
+//! path fifteen to twenty times where at the origin it reads it once. It
+//! is read before every lay, build and reshape — in each tracking solve,
+//! slide, shrink (its floor build too), cut and backtrack, R27's fit and a
+//! `Once` filler's copies — and before each lay of a side ornament's
+//! copies, which is laid only while the frame can afford the most it may
+//! take ([`SIDE_CLUSTER_READS`] reads a cluster) and the touch check of the
+//! arc after ([`check_steps`], at [`touch_looks`] looks a box of the
+//! classes of height it holds): an arc it cannot afford is left empty, or
+//! keeps the copies it has where they hold the equal-gap rule, and is
+//! reported as left empty or kept short ([`Unheld::sides`]). So a frame
+//! overshoots its budget by at most [`overshoot_steps`] (ruling R47.2):
+//! what runs before the budget is first read — its setup, R27's first
+//! reshape and one build's shaping and inking — the lay of each line that
+//! finds it spent, and the touch checks that end the frame; no lay of its
+//! sides runs past what the budget leaves for their check. A frame whose
+//! budget runs out while two of its inks still touch keeps the longest
+//! run of its inks that touch nothing ([`untouched`], within a share of
+//! the budget held back for it), and says it was cut
+//! ([`Trace::cut_apart`]). A frame's text is cut to [`MAX_PLACED_GLYPHS`]
+//! at a cluster before its lines are prepared (ruling R44.1), its sides
+//! placing no more than the cap leaves, so the budget is at most
+//! `STEPS_PER_GLYPH × MAX_PLACED_GLYPHS`.
 //!
 //! **Sides.** With `sides`, an ornament closes what the lines leave
 //! round each junction: whole copies, at least one and at most

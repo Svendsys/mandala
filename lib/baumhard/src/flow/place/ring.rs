@@ -80,6 +80,22 @@
 //! [`GLYPHS_A_STEP`] to a step, a setup of its own ([`RING_STEPS`]), and
 //! its path's table, at its samples (`halves::TABLE_SAMPLES_A_STEP`,
 //! ruling B16.3a): the work a ring does past its reads.
+//!
+//! **Along an open path** (#313). Every placement along an open path is
+//! budgeted so too, by the glyphs it will lay, at most its cap: a `Repeat`
+//! by the copies its path holds, as a ring; `Once`, `Spread` and `Fit` by
+//! their text, and `Once` with a filler by the copies of the filler the
+//! path past its text holds besides ([`RingWork::scale`]). It reads the
+//! budget where a ring does, and `Fit` before each measure of its text as
+//! read and each round of its scale, which read none as they go, holding
+//! back what phase 2 takes of its glyphs ([`RingWork::affords_more`]); its
+//! run on is held back at the least line height it walks at
+//! ([`RingWork::steps_at`]). The one cluster that may find it spent holds
+//! no more than its widest cluster's glyphs. A connector's whole-glyph
+//! pattern (`pitch::place_pitched`) is budgeted by its rounds of pitch, as
+//! a directional ring's runs are. Neither counts its shaping, as a ring
+//! does not: a `Fit`'s reshapes and a filler's are bounded by the text,
+//! not the path.
 
 use std::cell::Cell;
 
@@ -312,24 +328,30 @@ pub(crate) fn ring_work_steps(glyphs: usize, copy: usize, tables: usize) -> usiz
 }
 
 /// How a ring's budget, or its cap, left it (#310), when it stopped its
-/// work (`Trace::ring`).
+/// work (`Trace::ring`) — or a placement's along an open path, which is
+/// never closed, and so short or uneven (#313).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum RingLoss {
     /// Phase 2's spacing was not solved to the end: the ring is laid at
     /// the fitting side of its bracket, its seam wider than its other
-    /// gaps, or a stretch tighter than its walk's.
+    /// gaps, or a stretch tighter than its walk's. Along an open path, a
+    /// `fit`'s scale was not solved to the end, and it is laid at the
+    /// scale it reached.
     Uneven,
     /// Its copies fill the path, but their spacing was not solved to
     /// close its seam: laid as walked, the seam a part-copy wide.
     Unclosed,
     /// Its first walk stopped before its copies filled the path — its
     /// budget spent, or its cap reached (ruling B17.2a): the copies laid
-    /// so far, unclosed.
+    /// so far, unclosed. Along an open path, a walk stopped before its
+    /// text, or its copies, were laid: the longest prefix of them in
+    /// reading order its walk kept, or its text without its copies.
     Short,
 }
 
-/// A `Repeat` ring's work (#310): the path reads it has taken, its
-/// budget and what of it is held back for phase 2.
+/// A `Repeat` ring's work (#310), or a placement's along an open path, in
+/// any fit mode, or a pitched one's (#313): the path reads it has taken,
+/// its budget and what of it is held back for phase 2.
 pub(crate) struct RingWork {
     /// The path's reads when the ring began ([`ArcPath::reads`]).
     from: usize,
