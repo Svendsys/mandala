@@ -83,7 +83,9 @@ use std::ops::Range;
 use glam::Vec2;
 
 use super::halves::{inked, inking_steps, resizing_steps, resolved};
-use super::pitch::{glyphs_at, natural_marks, pitch, Mark, PathEnd, Track, BRACKET_ROUNDS, BRACKET_STRIDES};
+use super::pitch::{
+    glyphs_at, mean_gap, natural_marks, pitch, Mark, PathEnd, Track, BRACKET_ROUNDS, BRACKET_STRIDES,
+};
 use super::ring::{ring_glyphs, steps_of, RingLoss, RingWork, GLYPHS_A_STEP};
 use super::{
     cluster_ink, clusters_of, support, table_spacing, Cluster, PlacedGlyph, PlacedRun, Trace,
@@ -607,7 +609,7 @@ pub(super) fn place_directional(
         steep = natural_marks(m, &parts.steep, layout.spacing);
         (steep.clone(), &parts.steep)
     } else {
-        let gap = level.iter().map(|mark| mark.gap).sum::<f32>() / level.len() as f32;
+        let gap = mean_gap(&level);
         for mark in &mut steep {
             mark.gap = gap;
         }

@@ -3,7 +3,8 @@
 //! The projection's tests: the oracle, the dependency kinds, reshaping
 //! against re-placing, hit testing, depth, and the bench bodies.
 
-/// The oracle's corpus: generated documents and edits.
+/// Connector geometry: sides, curves, fans and a junction's paths held
+/// clear of each other.
 #[cfg(test)]
 mod connector_tests;
 pub mod corpus;

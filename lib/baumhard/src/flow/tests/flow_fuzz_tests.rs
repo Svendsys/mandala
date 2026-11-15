@@ -4113,3 +4113,122 @@ fn test_flow_structured_finding_a_line_root_owed_little_of_a_wide_gap_replays() 
         }
     }
 }
+
+/// The flow_structured_every_face finding of CI's run on #360 at
+/// 59826cfd (job 132771815404), after 5,055 runs: a directional ring
+/// (#324) of its vertical text alone, `spacing` 10³⁰, round a rounded
+/// rectangle some 4.5 × 10³⁴ tall whose width is not a number, placed a
+/// glyph at `NaN`. The engine was wrong, and the path had no part in it:
+/// the same ring round that rectangle with a width is the case below. 224
+/// bytes as found (sha1 4503e5eb…); 160 here, cut down and its other
+/// choices zeroed, which fails both structured properties the same way.
+///
+/// The pitched lay (`pitch`) sets two inks a gap apart, box to box, and
+/// where the path runs on a slant that is the distance between their
+/// corners, found from the gap's square. A gap past the root of the
+/// largest `f32`, 1.8 × 10¹⁹, has no `f32` square: the second ink was set
+/// infinitely far on, the slack's every round missed by an infinite
+/// length, and the lay was laid at the slack it started from, unsolved,
+/// its second ink past every float of the path. Not this PR's: the square
+/// has been there since the pitched lay gapped its inks box to box, and
+/// the input as found fails the same way on the engines of 1659d339,
+/// 47d609c4 and 3fcf59f2. The square is taken in `f64` where `f32` has
+/// none.
+///
+/// So the ring is laid as any other its path holds more of than its cap:
+/// its straight sides alone hold some 81,000 gaps of 10³⁰, it lays its
+/// cap of 154, and says it was cut short (ruling B18.1 §9.2: a cut says
+/// so). At 59826cfd it laid 8 glyphs, 4 of them at `NaN`, and reported
+/// nothing.
+///
+/// Control: with the square taken in `f32` alone, red, the replay and the
+/// case both ("around an outline: a glyph placed at [NaN, NaN]").
+#[test]
+fn test_flow_structured_every_face_finding_a_directional_ring_whose_gap_is_past_the_root_of_the_largest_f32()
+{
+    use crate::document::element::DirectionalGlyphs;
+    use crate::document::values::{Direction, Edge, FitMode, StartPoint};
+    use crate::flow::place::ring::RingLoss;
+    use crate::flow::place::{place_on_closed_capped, Trace};
+    use crate::flow::{Outline, Rect};
+    let found = include_bytes!(
+        "fuzz_findings/structured_directional_ring_whose_gap_is_past_the_root_of_the_largest_f32"
+    );
+    for (what, checked) in [
+        (
+            "every face",
+            crate::flow::tests::flow_fuzz::check_flow_structured_every_face(found),
+        ),
+        (
+            "structured",
+            crate::flow::tests::flow_fuzz::check_flow_structured(found),
+        ),
+    ] {
+        if let Err(why) = checked {
+            panic!("the fuzzer's input, {what}: {why}");
+        }
+    }
+    // The outline the input drew, its width its height's rather than no
+    // number, and the layout: no spans, the vertical text all round.
+    let (side, radius, spacing, cap) = (4.510_807_4e34_f32, 1.240_472_1e34_f32, 1e30_f32, 154);
+    let path = Outline::RoundedRect {
+        rect: Rect::new(Vec2::ZERO, Vec2::splat(side)),
+        radius,
+    };
+    let layout = RingLayout {
+        spacing,
+        directional: DirectionalGlyphs {
+            vertical: Some("a".to_owned()),
+            corners: None,
+        },
+        ..RingLayout::whole()
+    };
+    assert!(
+        (spacing * spacing).is_infinite(),
+        "precondition: the gap has no `f32` square"
+    );
+    // Its straight sides alone hold more gaps than its cap holds inks.
+    let gaps = 4.0 * f64::from(side - 2.0 * radius) / f64::from(spacing);
+    assert!(
+        gaps > 100.0 * cap as f64,
+        "precondition: the outline holds {gaps} gaps, far past its cap of {cap}"
+    );
+    let plain = style(16.0);
+    for outward in [false, true] {
+        let mut trace = Trace::default();
+        let (run, placed) = with_fonts(|fs| {
+            let run = real_run("", &plain, fs);
+            let (replaced, placed) = place_on_closed_capped(
+                &run,
+                &path,
+                StartPoint {
+                    edge: Edge::Top,
+                    at: 0.0,
+                },
+                Direction::Clockwise,
+                &FitMode::Repeat,
+                &layout,
+                outward,
+                &plain,
+                fs,
+                cap,
+                Some(&mut trace),
+            );
+            (replaced.unwrap_or(run), placed)
+        });
+        if let Err(why) = check_placement(&run, &placed, false, "around an outline") {
+            panic!("outward {outward}: {why}");
+        }
+        assert_eq!(
+            placed.glyphs.len(),
+            cap,
+            "outward {outward}: the ring lays its cap, a glyph an ink"
+        );
+        assert!(
+            placed.truncated && trace.ring == Some(RingLoss::Short),
+            "outward {outward}: a ring held to its cap says it was cut short (truncated {}, {:?})",
+            placed.truncated,
+            trace.ring
+        );
+    }
+}
