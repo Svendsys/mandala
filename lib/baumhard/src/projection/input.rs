@@ -78,9 +78,10 @@ pub enum Stage {
     Shape,
     /// A flow's placement.
     Place,
-    /// Which of a connector's or line link's placed glyphs the nodes it
-    /// does not end at hide (#332): a view decision over its placement,
-    /// run after every path is laid.
+    /// Which of a connector's or line link's placed glyphs are left out:
+    /// those the nodes it does not end at hide (#332), and those within
+    /// its gap of its own drawn label (#340). A view decision over its
+    /// placement, run after every path is laid.
     Hide,
 }
 

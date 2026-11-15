@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Nodes hide the paths behind them (#332): a connector's glyph is left
-//! out where it would come within its own gap of what a node it does not
-//! end at draws — its text and its rings — and its label, whole, where
-//! the box round the label's text meets it; both come back when the node
-//! moves away, and a move re-hides only the paths whose glyphs or label
-//! the node's old or new region meets. Glyph cells and inks are read from
+//! Nodes hide the paths behind them (#332): a connector's glyph is left out
+//! where it would come within its own gap of what a node it does not end at
+//! draws — its text and its rings — and its label, whole, where the box
+//! round the label's text meets it; both come back when the node moves
+//! away, and a move re-hides only the paths whose glyphs or label the
+//! node's old or new region meets. A path's own label, drawn, is held the
+//! same way (#340): the path's glyphs within its gap of the label's text,
+//! its caps' among them, are left out, and they follow the label as it is
+//! moved, re-texted, removed or hidden. Glyph cells and inks are read from
 //! the runs' layouts and metrics here, not through the projector's own
 //! reading of them, and every test ends on the oracle.
 

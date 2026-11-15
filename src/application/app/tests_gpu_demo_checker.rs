@@ -477,7 +477,9 @@ fn connector_maps() -> Vec<(String, std::path::PathBuf)> {
 /// A drawn connector or line link as the real projector drew it (#296):
 /// its body's inks in order as laid, its curves, its body's first glyph's
 /// face and size, and at each end the node it attaches to; and the inks
-/// its layer holds, those the nodes it does not end at leave out (#332).
+/// its layer holds: those laid, less the ones the nodes it does not end
+/// at hide (#332) and the ones within its gap of its own drawn label
+/// (#340).
 struct DrawnPath {
     name: String,
     inks: Vec<Ink>,

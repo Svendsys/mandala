@@ -9,23 +9,22 @@
 //! path's glyphs, and those of a path whose placement rescaled or filled
 //! its run — grown by the path's own gap meets the **region** of a visible
 //! node the path does not end at ([`Projector::region`]): what the node
-//! draws, in
-//! two parts — the box round its sections' glyph cells, a rectangle, and
-//! the box round its rings' inks, shaped by its outline — not its drawn
-//! rectangle (the owner's answer on #334). So a path shown on either side
-//! of a node stops
-//! at least one gap short of it, as it stops one gap short of its own
-//! frames. A glyph is drawn whole or not at all, never clipped. Its label
-//! is hidden whole where the box round its text meets such a region (the
-//! owner's answer on #334), its own two nodes sparing it as they spare its
-//! glyphs; a portal end is never hidden. A label drawn is text, which wins
-//! over its own line: the path's glyphs within its gap of the box round
-//! the label's text, its body's and its caps' alike, are left out too, and
-//! the path carries on past it (#340). So a label at the path's end hides
-//! the cap under it (the owner's answer on #345). A label hidden hides
-//! nothing of its path. Both are the path's own state, so a label moved,
-//! re-texted or removed, or the path's gap changed, lays the path again
-//! and hides it again: nothing else reads it.
+//! draws, in two parts — the box round its sections' glyph cells, a
+//! rectangle, and the box round its rings' inks, shaped by its outline —
+//! not its drawn rectangle (the owner's answer on #334). So a path shown on
+//! either side of a node stops at least one gap short of it, as it stops
+//! one gap short of its own frames. A glyph is drawn whole or not at all,
+//! never clipped. Its label is hidden whole where the box round its text
+//! meets such a region (the owner's answer on #334), its own two nodes
+//! sparing it as they spare its glyphs; a portal end is never hidden. A
+//! label drawn is text, which wins over its own line: the path's glyphs
+//! within its gap of the box round the label's text, its body's and its
+//! caps' alike, are left out too, and the path carries on past it (#340).
+//! So a label at the path's end hides the cap under it (the owner's answer
+//! on #345). A label hidden hides nothing of its path. The label and the
+//! gap are both the path's own state, so a label moved, re-texted or
+//! removed, or the path's gap changed, lays the path again and hides it
+//! again: nothing else reads it.
 //!
 //! A node hides a path only where it is drawn wherever the path is: at an
 //! opacity above 0, in a zoom window that holds the path's
