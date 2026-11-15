@@ -107,6 +107,27 @@ impl PublishRefusal {
         let (Self::Invalid(message) | Self::Internal(message)) = self;
         message
     }
+
+    /// The refusal for a symlink where a file or a directory is to be
+    /// written: this writer never writes through one. Public for the one
+    /// other look that says it, a recording's at its directory, so the
+    /// sentence has one owner. Cost: one `String`.
+    pub fn symlink(path: &Path) -> Self {
+        Self::Invalid(format!(
+            "`{}` is a symlink, which is never followed",
+            path.display()
+        ))
+    }
+
+    /// The refusal for a destination whose directory is not there.
+    /// Public for the same reason as [`PublishRefusal::symlink`]. Cost:
+    /// one `String`.
+    pub fn no_parent(path: &Path) -> Self {
+        Self::Invalid(format!(
+            "the parent directory of `{}` does not exist",
+            path.display()
+        ))
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -186,14 +207,18 @@ fn claim<T>(
 #[cfg(not(target_arch = "wasm32"))]
 /// Why [`claim`] made nothing in `parent`, as the refusal of a write to
 /// `destination`: `what` is the thing it was making ("a temp file").
-/// A missing directory, and every name taken, are the caller's to fix
-/// (`Invalid`); anything else is the system's (`Internal`). The
-/// every-name-taken message names the entries in the way as a pattern
-/// in their directory, for whoever clears them.
+/// Every name taken is the caller's to fix (`Invalid`), and its message
+/// names the entries in the way as a pattern in their directory, for
+/// whoever clears them. Anything else is reported in the system's own
+/// words (`Internal`), a "not found" included (ruling B38.1, fourth
+/// addendum §17). Both callers come here after the look ([`check`]'s,
+/// or its parent half alone, [`seen_parent`]), so a "not found" here
+/// is a directory that takes no new file (`/proc`) or one that
+/// vanished in between; "the parent directory does not exist" is the
+/// look's to say, where it has seen it.
 fn claim_refusal(e: std::io::Error, parent: &Path, destination: &Path, what: &str) -> PublishRefusal {
     let shown = destination.display();
     match e.kind() {
-        std::io::ErrorKind::NotFound => no_parent(destination),
         std::io::ErrorKind::AlreadyExists => PublishRefusal::Invalid(format!(
             "could not create {what} beside `{shown}`: all {TEMP_ATTEMPTS} names tried (`{}`) are taken, and \
              none was touched",
@@ -251,26 +276,50 @@ pub fn check(path: &Path, overwrite: bool) -> Result<(), PublishRefusal> {
 
 /// [`check`], returning the directory the file goes in.
 fn checked_parent(path: &Path, overwrite: bool) -> Result<&Path, PublishRefusal> {
-    use std::io::ErrorKind::NotFound;
-    let shown = path.display();
-    let invalid = |message: String| PublishRefusal::Invalid(message);
-    let (Some(parent), Some(_)) = (path.parent(), path.file_name()) else {
-        return Err(invalid(format!("`{shown}` names no file")));
-    };
+    let parent = named_parent(path)?;
     match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => Err(symlink_at(path)),
-        Ok(meta) if meta.is_dir() => Err(invalid(format!("`{shown}` is a directory"))),
+        Ok(meta) if meta.file_type().is_symlink() => Err(PublishRefusal::symlink(path)),
+        Ok(meta) if meta.is_dir() => Err(PublishRefusal::Invalid(format!(
+            "`{}` is a directory",
+            path.display()
+        ))),
         Ok(_) if !overwrite => Err(exists(path)),
         Ok(_) => Ok(parent),
-        // Nothing at the path: look at where it would go. An empty
-        // parent is a bare name's, the current directory.
-        Err(e) if e.kind() == NotFound && parent.as_os_str().is_empty() => Ok(parent),
-        Err(e) if e.kind() == NotFound => match std::fs::metadata(parent) {
-            Ok(meta) if meta.is_dir() => Ok(parent),
-            Ok(_) => Err(not_a_directory(path)),
-            Err(e) if e.kind() == NotFound => Err(no_parent(path)),
-            Err(e) => Err(unseen(path, &e)),
-        },
+        // Nothing at the path: look at where it would go.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => seen_parent(path, parent),
+        Err(e) => Err(unseen(path, &e)),
+    }
+}
+
+/// The directory `path`'s file goes in, as the path spells it (empty
+/// for a bare name), or the refusal for a path that names no file: one
+/// that ends in `..`, a root, an empty path. Looks at nothing.
+fn named_parent(path: &Path) -> Result<&Path, PublishRefusal> {
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(_)) => Ok(parent),
+        _ => Err(PublishRefusal::Invalid(format!(
+            "`{}` names no file",
+            path.display()
+        ))),
+    }
+}
+
+/// The look's parent half: `parent`, the directory `path`'s file goes
+/// in, once it has been seen to be one. An empty parent is a bare
+/// name's, the current directory, and is not looked at. Refused, in
+/// the look's words about `path`: a parent that does not exist, one
+/// that is not a directory, and one the system would not let it look
+/// at ([`unseen`]). [`check`] takes it where nothing is at the path;
+/// [`PrivateDir::beside`], which does not look at the path, takes it
+/// alone. Cost: one `metadata`.
+fn seen_parent<'a>(path: &Path, parent: &'a Path) -> Result<&'a Path, PublishRefusal> {
+    if parent.as_os_str().is_empty() {
+        return Ok(parent);
+    }
+    match std::fs::metadata(parent) {
+        Ok(meta) if meta.is_dir() => Ok(parent),
+        Ok(_) => Err(not_a_directory(path)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(PublishRefusal::no_parent(path)),
         Err(e) => Err(unseen(path, &e)),
     }
 }
@@ -299,24 +348,16 @@ fn not_a_directory(path: &Path) -> PublishRefusal {
     ))
 }
 
-/// The refusal for a symlink where a file or a directory is to be
-/// written: this writer never writes through one. Public for the one
-/// other look that says it, a recording's at its directory, so the
-/// sentence has one owner.
-pub fn symlink_at(path: &Path) -> PublishRefusal {
-    PublishRefusal::Invalid(format!(
-        "`{}` is a symlink, which is never followed",
-        path.display()
-    ))
+/// The refusal for a write that failed after the look passed, for the
+/// reason `why` gives.
+fn unwritten(path: &Path, why: impl std::fmt::Display) -> PublishRefusal {
+    PublishRefusal::Internal(format!("could not write `{}`: {why}", path.display()))
 }
 
-/// The refusal for a destination whose directory is not there. Public
-/// for the same reason as [`symlink_at`].
-pub fn no_parent(path: &Path) -> PublishRefusal {
-    PublishRefusal::Invalid(format!(
-        "the parent directory of `{}` does not exist",
-        path.display()
-    ))
+/// The refusal for every write in the browser, which has no files.
+#[cfg(target_arch = "wasm32")]
+fn no_files(path: &Path) -> PublishRefusal {
+    unwritten(path, "the browser has no files")
 }
 
 /// Write what `produce` writes to `path`, and return how many bytes it
@@ -364,8 +405,7 @@ pub fn publish(
         path: temp,
         published: false,
     };
-    let bytes = produce_into(file, produce)
-        .map_err(|e| PublishRefusal::Internal(format!("could not write `{}`: {e}", path.display())))?;
+    let bytes = produce_into(file, produce).map_err(|e| unwritten(path, e))?;
     commit(&temp.path, path, overwrite)?;
     temp.published = true;
     Ok(bytes)
@@ -457,18 +497,19 @@ pub struct PrivateDir {
 
 impl PrivateDir {
     /// Create a private directory in `destination`'s directory. Refused
-    /// as [`publish`] refuses: `destination` names no file, its parent
-    /// directory does not exist, or every name it tries there is taken
+    /// as [`publish`] refuses, in the same words: `destination` names
+    /// no file; its parent directory does not exist, is not a directory
+    /// or could not be looked at, by the parent half of the look
+    /// [`check`] takes, which this takes itself (ruling B38.1, fourth
+    /// addendum §17); or every name it tries there is taken
     /// (`TEMP_ATTEMPTS` of them, each left as it is). `destination`
     /// itself is not looked at; [`check`] does that.
     ///
-    /// Cost: one `mkdir`, and one more per name found taken.
+    /// Cost: one `metadata` of the parent and one `mkdir`, and one more
+    /// `mkdir` per name found taken.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn beside(destination: &Path) -> Result<Self, PublishRefusal> {
-        let shown = destination.display();
-        let (Some(parent), Some(_)) = (destination.parent(), destination.file_name()) else {
-            return Err(PublishRefusal::Invalid(format!("`{shown}` names no file")));
-        };
+        let parent = seen_parent(destination, named_parent(destination)?)?;
         let (path, ()) = claim(parent, ".d", create_private_dir)
             .map_err(|e| claim_refusal(e, parent, destination, "a private directory"))?;
         Ok(Self { path })
@@ -478,10 +519,7 @@ impl PrivateDir {
     /// refused. O(1).
     #[cfg(target_arch = "wasm32")]
     pub fn beside(destination: &Path) -> Result<Self, PublishRefusal> {
-        Err(PublishRefusal::Internal(format!(
-            "could not write `{}`: the browser has no files",
-            destination.display()
-        )))
+        Err(no_files(destination))
     }
 
     /// Where the producer writes.
@@ -500,10 +538,9 @@ impl PrivateDir {
     /// Cost: an `fsync`, and a rename (or a hard link and an unlink).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn publish(&self, name: &str, path: &Path, overwrite: bool) -> Result<u64, PublishRefusal> {
-        let shown = path.display();
         checked_parent(path, overwrite)?;
         let made = self.path.join(name);
-        let internal = |e: String| PublishRefusal::Internal(format!("could not write `{shown}`: {e}"));
+        let internal = |e: String| unwritten(path, e);
         let meta = std::fs::symlink_metadata(&made).map_err(|e| internal(e.to_string()))?;
         if !meta.file_type().is_file() {
             return Err(internal(format!("`{}` is not a regular file", made.display())));
@@ -523,10 +560,7 @@ impl PrivateDir {
     /// ever made ([`PrivateDir::beside`] refuses): refused. O(1).
     #[cfg(target_arch = "wasm32")]
     pub fn publish(&self, _name: &str, path: &Path, _overwrite: bool) -> Result<u64, PublishRefusal> {
-        Err(PublishRefusal::Internal(format!(
-            "could not write `{}`: the browser has no files",
-            path.display()
-        )))
+        Err(no_files(path))
     }
 }
 
@@ -641,10 +675,7 @@ pub fn publish(
     _overwrite: bool,
     _produce: impl FnOnce(&mut dyn Write) -> Result<(), String>,
 ) -> Result<u64, PublishRefusal> {
-    Err(PublishRefusal::Internal(format!(
-        "could not write `{}`: the browser has no files",
-        path.display()
-    )))
+    Err(no_files(path))
 }
 
 /// How the refusal of an existing file ends: the remedy, in the words of
@@ -866,9 +897,13 @@ mod tests {
     /// - a path that runs through a file, two and three levels down
     ///   (`a-file/sub/x.json`): `Invalid`, "a part of the path … is not
     ///   a directory". Asserted word for word on Unix, where the system
-    ///   says "not a directory" for it; Windows is read (not run) to
-    ///   say "not found", which the look turns into the missing-parent
-    ///   refusal, so there it is held only to be an `Invalid` refusal;
+    ///   says "not a directory" for it. Which error code Windows returns
+    ///   for it is not known here: std's source gives only how a code
+    ///   is read (`ERROR_PATH_NOT_FOUND` as "not found", which the look
+    ///   turns into the missing-parent refusal; `ERROR_DIRECTORY` as
+    ///   "not a directory"), not which one Windows answers with. So
+    ///   there the test accepts either, and holds only that the path is
+    ///   refused as `Invalid`;
     /// - a name longer than any filesystem's limit this workspace
     ///   meets (268 bytes, where the limit is 255 or fewer): `Invalid`,
     ///   naming the path. Unix only: Windows' answer for it was not run;
@@ -944,6 +979,50 @@ mod tests {
             "{written:?}"
         );
         assert_eq!(names_in(dir), vec!["a-file"], "nothing was written");
+    }
+
+    /// **A "not found" at the temp file's creation is the system's to
+    /// describe** (ruling B38.1, fourth addendum §17). `/proc/version`
+    /// is a file in a directory that takes no new file. Under
+    /// `overwrite` the look passes it, having seen the file there, and
+    /// the temp file's create is then answered "not found". The write
+    /// is refused as `Internal`, "could not create a temp file beside
+    /// …" with the system's words, and not as "the parent directory …
+    /// does not exist", which the look has just seen to be false. The
+    /// producer is not run. Linux only: it needs `/proc`.
+    ///
+    /// Control: a `claim_refusal` that reads "not found" as a missing
+    /// parent answers `Invalid`, "the parent directory of
+    /// `/proc/version` does not exist".
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_a_directory_that_takes_no_new_file_is_refused_in_the_systems_words() {
+        let _serial = serial();
+        let path = Path::new("/proc/version");
+        assert!(
+            std::fs::metadata(path).is_ok_and(|meta| meta.is_file()),
+            "precondition: this Linux has /proc/version, a file"
+        );
+        assert_eq!(check(path, true), Ok(()), "precondition: the look passes it");
+        let system = create_exclusive(Path::new("/proc/.guarded-file-test-probe"))
+            .expect_err("precondition: /proc takes no new file");
+        assert_eq!(
+            system.kind(),
+            std::io::ErrorKind::NotFound,
+            "precondition: and answers \"not found\": {system}"
+        );
+        let ran = std::cell::Cell::new(false);
+        let refused = publish(path, true, |_| {
+            ran.set(true);
+            Ok(())
+        });
+        assert_eq!(
+            refused,
+            Err(PublishRefusal::Internal(format!(
+                "could not create a temp file beside `/proc/version`: {system}"
+            )))
+        );
+        assert!(!ran.get(), "the producer is not run");
     }
 
     /// **A leftover at the next temp name is passed over, not an error,
@@ -1338,6 +1417,80 @@ mod tests {
             let mode = std::fs::metadata(&fresh).expect("made").permissions().mode();
             assert_eq!(mode & 0o777, 0o700, "owner only: {mode:o}");
         }
+    }
+
+    /// **A private directory's parent is looked at as `publish` looks
+    /// at it** (ruling B38.1, fourth addendum §17).
+    /// [`PrivateDir::beside`], on its own, answers a parent that does
+    /// not exist and a parent that is a file with the refusal [`check`]
+    /// gives the same destination, word for word, and makes nothing.
+    /// So it does for a parent the system will not let it look at:
+    ///
+    /// - one under a file (`a-file/sub/out.mp4`): `Invalid`, "a part of
+    ///   the path … is not a directory". Word for word on Unix; which
+    ///   error code Windows returns for it is not known here, so there
+    ///   it is held only to be an `Invalid` refusal;
+    /// - one with a NUL in it: `Internal`, "could not look at …".
+    ///
+    /// Controls: a `beside` that goes straight to its `mkdir` answers
+    /// the first two `Internal`, "could not create a private directory
+    /// beside …"; a parent look that reads a parent that is a file, or
+    /// an answer other than "not found", as a directory seen does the
+    /// same for the file, and for the last two.
+    #[test]
+    fn test_a_private_dir_looks_at_its_parent_as_publish_does() {
+        let _serial = serial();
+        let scratch = Scratch::new("private-parent");
+        let dir = &scratch.0;
+        let a_file = dir.join("a-file");
+        std::fs::write(&a_file, "a file").expect("seed");
+
+        let missing = dir.join("missing").join("out.mp4");
+        let no_parent = PublishRefusal::Invalid(format!(
+            "the parent directory of `{}` does not exist",
+            missing.display()
+        ));
+        assert_eq!(PrivateDir::beside(&missing).map(|_| ()).as_ref(), Err(&no_parent));
+        assert_eq!(check(&missing, false), Err(no_parent), "as the look answers it");
+
+        let under_a_file = a_file.join("out.mp4");
+        let not_a_directory = PublishRefusal::Invalid(format!(
+            "a part of the path to `{}` is not a directory",
+            under_a_file.display()
+        ));
+        assert_eq!(
+            PrivateDir::beside(&under_a_file).map(|_| ()).as_ref(),
+            Err(&not_a_directory)
+        );
+        assert_eq!(
+            check(&under_a_file, false),
+            Err(not_a_directory),
+            "as the look answers it"
+        );
+
+        let deeper = a_file.join("sub").join("out.mp4");
+        let refused = PrivateDir::beside(&deeper).map(|_| ());
+        if cfg!(unix) {
+            assert_eq!(
+                refused,
+                Err(PublishRefusal::Invalid(format!(
+                    "a part of the path to `{}` is not a directory",
+                    deeper.display()
+                )))
+            );
+        } else {
+            assert!(matches!(refused, Err(PublishRefusal::Invalid(_))), "{refused:?}");
+        }
+
+        let with_nul = dir.join("a\0b").join("out.mp4");
+        let refused = PrivateDir::beside(&with_nul).map(|_| ());
+        assert!(
+            matches!(&refused, Err(PublishRefusal::Internal(m)) if m.starts_with("could not look at `")),
+            "{refused:?}"
+        );
+
+        assert_eq!(names_in(dir), vec!["a-file"], "nothing was made");
+        assert_eq!(std::fs::read_to_string(&a_file).expect("kept"), "a file");
     }
 
     /// **A private directory passes over a taken name, publishes what

@@ -834,7 +834,7 @@ pub(crate) fn make_dir(
     }
     let shown = path.display();
     match std::fs::symlink_metadata(&path) {
-        Ok(meta) if meta.file_type().is_symlink() => Err(invalid(guarded_file::symlink_at(&path).message())),
+        Ok(meta) if meta.file_type().is_symlink() => Err(invalid(PublishRefusal::symlink(&path).message())),
         Ok(meta) if !meta.is_dir() => Err(invalid(format!("`{shown}` exists and is not a directory"))),
         Ok(_) => {
             let mut entries = std::fs::read_dir(&path)
@@ -857,7 +857,7 @@ pub(crate) fn make_dir(
                 created: true,
             }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Err(invalid(guarded_file::no_parent(&path).message()))
+                Err(invalid(PublishRefusal::no_parent(&path).message()))
             }
             Err(e) => Err(CaptureError::Internal(format!("could not make `{shown}`: {e}"))),
         },

@@ -812,11 +812,16 @@ fn test_a_name_too_long_for_the_filesystem_sends_nothing() {
 /// file in a directory that takes no new file, `/proc/version`: both
 /// looks pass (the file is there, and `overwrite` is given), the image
 /// is written, and the sidecar's temp file cannot be created beside
-/// its real file. Linux only: `/proc` is what is staged.
+/// its real file. What follows the colon is the writer's refusal of
+/// that, in the system's words (fourth addendum §17): the look has
+/// seen `/proc`, so it is not said to be missing. Linux only: `/proc`
+/// is what is staged.
 ///
 /// Controls: a sidecar refusal said the way the image's is ends with
 /// "(the capture succeeded and may be repeated)"; a message that names
-/// the image's resolved file names `real.png`.
+/// the image's resolved file names `real.png`; a writer that reads
+/// "not found" at the temp file's creation as a missing parent says
+/// "the parent directory of `/proc/version` does not exist".
 #[cfg(target_os = "linux")]
 #[test]
 fn test_a_sidecar_that_fails_after_the_image_says_the_image_was_written() {
@@ -863,10 +868,17 @@ fn test_a_sidecar_that_fails_after_the_image_says_the_image_was_written() {
         );
         assert!(
             outcome.err.contains(&format!(
-                "mandalactl: the PNG was written to `{}`, but its sidecar was not: ",
-                path.display()
+                "mandalactl: the PNG was written to `{}`, but its sidecar was not: `{}` leads to \
+                 `/proc/version`: could not create a temp file beside `/proc/version`: ",
+                path.display(),
+                sidecar.display()
             )),
             "link={through_a_link}: {}",
+            outcome.err
+        );
+        assert!(
+            !outcome.err.contains("does not exist"),
+            "link={through_a_link}: a directory the look has seen is not called missing: {}",
             outcome.err
         );
         assert!(

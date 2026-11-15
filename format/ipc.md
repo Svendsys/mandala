@@ -1903,8 +1903,9 @@ app, or `mandalactl` for a browser app ([Client](#client-mandalactl)).
    from `mandalactl`, its message ending "(nothing was sent)"). Only
    "not found" is read as a free place: a path the system will not let
    the look see is refused then too, in the system's words (`internal`
-   from the app). What the look cannot see is found at the write: a
-   full disk, a directory that takes no new file.
+   from the app). What the look cannot see is found at the write, and
+   reported in the system's words: a full disk, a directory that takes
+   no new file.
 2. Both are looked at again right before the first write, so a file
    that appeared meanwhile is refused with nothing written.
 3. The PNG is published, then the sidecar, each atomically: a failure
