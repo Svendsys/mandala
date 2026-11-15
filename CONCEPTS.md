@@ -1629,7 +1629,9 @@ element.
   the shorter side) or the inscribed ellipse; ring *k* runs around the
   outline grown past the rings inside it. Lines and circular arcs are
   walked exactly by arc length, ellipses and Béziers through a table
-  whose points are evaluated on the curve itself.
+  whose points are evaluated on the curve itself and whose distances
+  are measured in the curve's own frame, from its start or its center
+  (#313, #356), so a length does not depend on where the curve lies.
 - **Fit modes** say what happens when text and path differ in length:
   `Once` (with an optional filler, appended to the run in the flow's
   style), `Repeat` (reusing the run's glyph indices; around a closed

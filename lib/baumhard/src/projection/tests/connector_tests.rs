@@ -1831,6 +1831,108 @@ fn test_projection_a_lanes_fixed_samples_are_in_every_round() {
 }
 
 #[test]
+fn test_projection_fixed_samples_keeps_its_rounding_margin_back() {
+    // The margin `fixed_samples` keeps back for rounding, held where it
+    // decides (#356): lanes of one cubic and a last lead, the cubic's first
+    // three control points one point, so that it moves fastest into its
+    // end and its last sample falls short of it by all three steps the
+    // stop allows — and, its parameter an `f32` up to 2⁻²⁵ short of
+    // `1 − 1/n`, by a little more. 48 of them along the x axis, 6,000 to
+    // 21,557 steps long, each held out so that a round's samples start
+    // from its chord less three steps, or from the nearest distance under
+    // it that a hold gives. In 8 the round at full handles does not take
+    // the last lead, though in exact arithmetic the chord less three steps
+    // reaches the skip: the margin is what keeps the stop from reading it.
+    // A 65,536th of the chord nearer, a dozen margins, and the stop reads
+    // the last lead of every one, as every round takes it.
+    //
+    // No junction makes such a lane. Its start has no direction, and its
+    // end's is a third longer than a unit, so that the handles put the
+    // cubic's second and third control points on its first. With unit
+    // directions the handle into the last lead is at most 0.5523 of its
+    // curve's chord, that curve's last sample falls short by not much
+    // more than half the three steps, and the rest is many times the
+    // margin of a lane of a few curves.
+    //
+    // The failing input is the margin zeroed: the stop then reads the last
+    // lead of the 8, which their round at full handles does not take.
+    let width = 1.0_f32;
+    let step = 0.25 * width;
+    let lead = 1.0_f32;
+    // 1/√0.5523, the handles' share: the end's handle reaches the start.
+    let long = 1.345_589_2_f32;
+    let taken = |lane: &Lane, k: i32| {
+        sample(
+            &path_through(lane.start, lane.end, &lane.via, 0.5_f32.powi(k)),
+            step,
+            CLEARANCE * lane.hold.max(lane.width),
+        )
+    };
+    let same = |p: &Vec2, q: &Vec2| p.x.to_bits() == q.x.to_bits() && p.y.to_bits() == q.y.to_bits();
+    let mut past = 0;
+    for case in 0..48 {
+        let span = step * (6_000 + 331 * case) as f32;
+        let mut lane = Lane {
+            start: (Vec2::ZERO, Vec2::ZERO, 0.0),
+            hold: 0.0,
+            end: (Vec2::new(span + long * lead, 0.0), Vec2::new(-long, 0.0), lead),
+            via: Vec::new(),
+            width,
+            straight: false,
+        };
+        let curves = path_through(lane.start, lane.end, &lane.via, 1.0);
+        let [Curve::Cubic(a, b, c, d), last @ Curve::Line(..)] = curves[..] else {
+            panic!("precondition: case {case} is one cubic and a last lead: {curves:?}");
+        };
+        let chord = (d.as_dvec2() - a.as_dvec2()).length();
+        assert!(
+            a == b && f64::from(a.distance(c)) <= 1.0e-6 * chord,
+            "precondition: case {case}: the cubic's first three control points meet: {curves:?}"
+        );
+        // The longest hold whose skip is at most the chord less three steps.
+        let reach = chord - 3.0 * f64::from(step);
+        let mut hold = (reach / f64::from(CLEARANCE)) as f32;
+        while f64::from(CLEARANCE * hold) > reach {
+            hold = f32::from_bits(hold.to_bits() - 1);
+        }
+        lane.hold = hold;
+        assert!(
+            f64::from(CLEARANCE * hold) > reach * (1.0 - 2f64.powi(-22)),
+            "precondition: case {case}: the skip is within two floats of the chord less three steps"
+        );
+        // A 65,536th of the chord nearer: a dozen margins clear of it.
+        let nearer = Lane {
+            hold: hold * (1.0 - 2f32.powi(-16)),
+            ..lane.clone()
+        };
+        for (lane, clear) in [(&lane, false), (&nearer, true)] {
+            let fixed = fixed_samples(lane);
+            for k in 0..=12 {
+                let round = taken(lane, k);
+                assert!(
+                    fixed.iter().all(|p| round.iter().any(|q| same(p, q))),
+                    "case {case}: a fixed sample not taken at share 2^-{k}: {lane:?}"
+                );
+            }
+            if clear {
+                assert!(
+                    fixed.iter().any(|p| same(p, &last.point(0.0))),
+                    "case {case}: a skip a 65,536th of the chord under it and the last lead is read: {lane:?}"
+                );
+            }
+        }
+        if !taken(&lane, 0).iter().any(|q| same(q, &last.point(0.0))) {
+            past += 1;
+        }
+    }
+    assert_eq!(
+        past, 8,
+        "the lanes whose chord less three steps reaches the skip, and whose round at full handles \
+         does not take the last lead"
+    );
+}
+
+#[test]
 fn test_projection_untangle_takes_every_round_on_two_paths_that_meet_along_their_curves() {
     // Two curved paths leaving one point the same way, held out past
     // their first lead, to far ends on one line from it, the near one a

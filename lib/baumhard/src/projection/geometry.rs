@@ -645,18 +645,48 @@ fn always_near(lanes: &[Lane], widths: &[f32], taken: &[Vec<Vec2>]) -> usize {
 /// three of its steps, or of its polygon over the sampling's cap, whichever
 /// is more. A handle reaches no further than at its full share, so the
 /// polygon at full handles, twice over and the chord, bounds it at any
-/// share. A margin for rounding is kept back too, a few units in the last
-/// place of each sample's distance and of each point's coordinates: an
-/// `f32`'s, though a round measures its distance along in `f64`, in the
-/// curve's own frame, from offsets as exact as its control points (#356),
-/// so the margin holds with room to spare. Lanes near the length where the
-/// condition decides need more than the chord alone
-/// (`test_projection_a_lanes_fixed_samples_are_in_every_round`), but none
-/// found needs all three steps or the rounding margin: they are what the
-/// argument above shows, kept because a lane that loses its last lead's
-/// samples to them is only measured for more rounds, while one that keeps a
-/// sample some round does not take would change what is drawn. O(the leads'
-/// samples, and the curves).
+/// share.
+///
+/// That holds in exact arithmetic. A margin is kept back from the chords'
+/// sum for the roundings between it and what runs: `2·k + 8` units in its
+/// last place (`f32::EPSILON`), `k` the curves. What it covers, in those
+/// units:
+///
+/// - **A curve's last sample's parameter**, `(n − 1) / n` as an `f32`: up
+///   to `2⁻²⁵` short of it, which sets the sample back by up to three of
+///   the curve's reach, its control polygon's length, times that. Where
+///   the chord is half the reach or more, that is under `6·2⁻²⁵` of the
+///   chord: 1.5. Where it is less, the legs before the polygon's last are
+///   a quarter of the reach or more, which holds the sample a ninth of the
+///   three steps nearer the end — from three samples on, below which the
+///   parameter is exact: fifty times this at the cap's count, and more
+///   below it.
+/// - **A round's own sums**, in `f64` ([`sample`]): its offsets and
+///   chords, under `2⁻⁵` where the chord is half the reach or more and
+///   far within what the three steps leave over where it is less; and
+///   their running sum, over at most the cap's samples a curve, `k·2⁻¹⁴`.
+/// - **This condition's own arithmetic**, in `f32`, a rounding half a
+///   unit: `k + 5`. Its two sums, of the chords and of the three steps,
+///   round once a curve each, but for the first chord, which joins
+///   nothing; a chord is a distance (three); a round counts its samples
+///   from a reach found as the polygon is (six); the margin's product and
+///   the difference are one each.
+///
+/// Under `k·(1 + 2⁻¹⁴) + 6.6` in all: `2·k + 8` is each of the two
+/// rounded up to a whole number, and holds for any number of curves. No
+/// term is kept for the coordinates' own rounding, as one was while a
+/// round summed its distance between its points (until #356): measured in
+/// each curve's own frame, the distance reads no point's coordinates.
+///
+/// Lanes near the length where the condition decides need more than the
+/// chord alone (`test_projection_a_lanes_fixed_samples_are_in_every_round`),
+/// and a lane of one cubic whose first three control points meet, which
+/// moves fastest into its end, needs the three steps and the margin both
+/// (`test_projection_fixed_samples_keeps_its_rounding_margin_back`). Each
+/// errs toward the last lead not being read: a lane that loses its last
+/// lead's samples so is only measured for more rounds, while one that
+/// keeps a sample some round does not take would change what is drawn.
+/// O(the leads' samples, and the curves).
 pub(crate) fn fixed_samples(lane: &Lane) -> Vec<Vec2> {
     let (step, skip) = (0.25 * lane.width, CLEARANCE * lane.hold.max(lane.width));
     let curves = path_through(lane.start, lane.end, &lane.via, 1.0);
@@ -668,26 +698,20 @@ pub(crate) fn fixed_samples(lane: &Lane) -> Vec<Vec2> {
         return fixed;
     };
     let step = step.max(1e-2);
-    // Per curve before the last lead: its chord, how far a round's sum
-    // along it can fall short of that, and how many samples it is summed
-    // from, at most.
-    let (mut chord, mut short, mut count) = (0.0_f32, 0.0_f32, 0.0_f32);
+    // Per curve before the last lead: its chord, and how far a round's
+    // sum along it can fall short of that.
+    let (mut chord, mut short) = (0.0_f32, 0.0_f32);
     for curve in before {
         let (a, d) = (curve.point(0.0), curve.point(1.0));
-        let (polygon, size) = match *curve {
-            Curve::Cubic(_, b, c, _) => (
-                2.0 * (a.distance(b) + c.distance(d)) + a.distance(d),
-                a.abs().max(b.abs()).max(c.abs()).max(d.abs()).max_element(),
-            ),
-            _ => (a.distance(d), a.abs().max(d.abs()).max_element()),
+        let polygon = match *curve {
+            Curve::Cubic(_, b, c, _) => 2.0 * (a.distance(b) + c.distance(d)) + a.distance(d),
+            _ => a.distance(d),
         };
-        let samples = (polygon / step).ceil().clamp(1.0, SAMPLE_CAP as f32);
         chord += a.distance(d);
-        short += 3.0 * step.max(polygon / SAMPLE_CAP as f32) + 16.0 * f32::EPSILON * size;
-        count += samples;
+        short += 3.0 * step.max(polygon / SAMPLE_CAP as f32);
     }
-    let rounding = (count + 16.0) * f32::EPSILON;
-    if !before.is_empty() && rounding < 0.5 && (1.0 - rounding) * chord - short >= skip {
+    let rounding = (2.0 * before.len() as f32 + 8.0) * f32::EPSILON;
+    if !before.is_empty() && (1.0 - rounding) * chord - short >= skip {
         fixed.extend(sample(&[*last], step, 0.0));
     }
     fixed
@@ -716,8 +740,10 @@ const SAMPLE_CAP: usize = 1 << 16;
 /// its control points' reach from its start — each offset a few `f64`
 /// roundings of `R`, each chord and partial sum one of their own — at
 /// most [`SAMPLE_CAP`] samples, so just over `2⁻³¹·(R + L)`; and `along`
-/// is never rounded to `f32`. `connector_tests`' agreement test holds it, wherever the curve
-/// lies.
+/// is never rounded to `f32`. `connector_tests`' agreement test holds it,
+/// wherever the curve lies. That is a curve sampled alone, or the first of
+/// `curves`: a later one's partial sums are of the path so far, and round
+/// at its size — `2⁻⁵³` of the distance along, a sample.
 pub(crate) fn sample(curves: &[Curve], step: f32, skip: f32) -> Vec<Vec2> {
     let step = step.max(1e-2);
     let mut out = Vec::new();

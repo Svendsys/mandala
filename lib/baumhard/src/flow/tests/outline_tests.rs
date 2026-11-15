@@ -500,15 +500,15 @@ pub fn do_flow_a_closed_paths_length_is_finite_as_its_build_says() {
     );
 }
 
-/// The length of the polygon through the ellipse of `radii` about the
+/// The lengths of the polygon through the ellipse of `radii` about the
 /// origin at the angles `from + (to − from)·(i / count)`, each an `f32`
-/// as a table's are, for `i` from 0 to `count`: the oracle an ellipse's
-/// table is held to (#356). It shares no arithmetic with the engine's
-/// table: a point is found from the tangent of its half angle,
-/// `u = tan(φ/2)`, as `(1 − u², 2u) / (1 + u²)` scaled by the radii — or
-/// from its cotangent where the half angle nears a quarter turn — in
-/// `f64`, where the table takes the cosine and sine.
-fn ellipse_polygon(radii: glam::DVec2, from: f32, to: f32, count: usize) -> f64 {
+/// as a table's are, from its first point to each, for `i` from 0 to
+/// `count`: the oracle an ellipse's table is held to (#356). It shares no
+/// arithmetic with the engine's table: a point is found from the tangent
+/// of its half angle, `u = tan(φ/2)`, as `(1 − u², 2u) / (1 + u²)` scaled
+/// by the radii — or from its cotangent where the half angle nears a
+/// quarter turn — in `f64`, where the table takes the cosine and sine.
+fn ellipse_polygon(radii: glam::DVec2, from: f32, to: f32, count: usize) -> Vec<f64> {
     let point = |phi: f64| {
         let half = 0.5 * phi;
         let (c, s) = if half.cos().abs() >= half.sin().abs() {
@@ -521,9 +521,28 @@ fn ellipse_polygon(radii: glam::DVec2, from: f32, to: f32, count: usize) -> f64 
         glam::DVec2::new(radii.x * c, radii.y * s)
     };
     let phi = |i: usize| f64::from(from + (to - from) * (i as f32 / count as f32));
-    (0..count)
-        .map(|i| (point(phi(i + 1)) - point(phi(i))).length())
-        .sum()
+    let mut along = Vec::with_capacity(count + 1);
+    let mut walked = 0.0_f64;
+    along.push(walked);
+    for i in 0..count {
+        walked += (point(phi(i + 1)) - point(phi(i))).length();
+        along.push(walked);
+    }
+    along
+}
+
+/// The angle, in radians as an `f32`, at which an ellipse's outline starts
+/// from `start`, by the rule `ArcPath::closed` states: its side's quarter
+/// (top 225°–315°, right 315°–405°, bottom 45°–135°, left 135°–225°),
+/// `start.at` of the way along it.
+fn ellipse_start(start: StartPoint) -> f32 {
+    let (from, to) = match start.edge {
+        Edge::Top => (225.0_f32, 315.0_f32),
+        Edge::Right => (315.0, 405.0),
+        Edge::Bottom => (45.0, 135.0),
+        Edge::Left => (135.0, 225.0),
+    };
+    (from + (to - from) * start.at).to_radians()
 }
 
 #[test]
@@ -533,49 +552,113 @@ fn test_flow_an_ellipses_length_is_its_ellipses_at_every_magnitude() {
 
 /// An ellipse's length is the length of the ellipse its center and radii
 /// make, at every distance from the origin and at the origin, to the bound
-/// `ArcPath::closed` states (#356): ellipses 200 to 409,600 across at the
-/// origin and 10⁶ to 10²² from it, held to `ellipse_polygon` through it
-/// at the angles its table was built at — within `2⁻²⁴` of that length,
-/// and `2⁻⁴⁷` of its larger radius and of that length a sample. Far out,
-/// where an `f32` sets its points apart by more than its radii, it still
-/// has its perimeter.
+/// `ArcPath::closed` states (#356), and so is each distance along it its
+/// table holds. The centers: the origin, 10⁶ to 10²² from it on the
+/// diagonal, and five of mixed signs from 10⁶ to 10²². The ellipses:
 ///
-/// Controls: its table's distances summed between its points as `f32`,
-/// where they lie, red already at the origin (an ellipse 25,600 across
-/// measured 65,349.129 against its 65,349.123, past 0.0039), and far out
-/// by some 12% at 10⁷; its distances summed in `f32`, red at the origin
-/// (one 200 across measured 510.53827 against its 510.53790, past
-/// 3.0·10⁻⁵).
+/// - at every center, 200 and 1,600 across, a:b = 0.6, a flat 0.05 and a
+///   tall 3, each way round, from the top's start, from a right side 0.37
+///   of the way along and from a left side 0.81 of it; and 25,600 across,
+///   the flat one counter-clockwise from the left and the tall one
+///   clockwise from the right;
+/// - at the centers on the diagonal, a:b = 0.6 at every doubling from 400
+///   to 409,600 across but 1,600, the direction and the start turning
+///   with the size.
+///
+/// Each is held to `ellipse_polygon` through it at the angles its start
+/// and direction give by the rule `ArcPath::closed` states
+/// (`ellipse_start`) — its length and its distances a quarter, a half and
+/// three quarters of its samples in, each within `2⁻²⁴` of that polygon's
+/// length to there, and `2⁻⁴⁷` of its larger radius and of that length a
+/// sample. Far out, where an `f32` sets its points apart by more than its
+/// radii, it still has its perimeter.
+///
+/// Controls, each red: its table's distances summed between its points as
+/// `f32`, where they lie; its distances summed in `f32`; the cosine and
+/// sine taken in `f32` and widened; a counter-clockwise outline's angle
+/// running up, as a clockwise one's does; the start edge's quarter one
+/// side on.
 pub fn do_flow_an_ellipses_length_is_its_ellipses_at_every_magnitude() {
+    let diagonal: Vec<Vec2> = std::iter::once(Vec2::ZERO)
+        .chain((6..=22).map(|k| Vec2::splat(10f32.powi(k))))
+        .collect();
+    let mixed: Vec<Vec2> = (6..=22)
+        .step_by(4)
+        .map(|k| Vec2::new(-10f32.powi(k), 0.3 * 10f32.powi(k)))
+        .collect();
+    let starts = [
+        start(Edge::Top, 0.0),
+        start(Edge::Right, 0.37),
+        start(Edge::Left, 0.81),
+    ];
+    let directions = [Direction::Clockwise, Direction::CounterClockwise];
+    // (across, a:b, direction, start)
+    let mut everywhere = Vec::new();
+    for across in [200.0_f32, 1_600.0] {
+        for aspect in [0.6_f32, 0.05, 3.0] {
+            for direction in directions {
+                for from_start in starts {
+                    everywhere.push((across, aspect, direction, from_start));
+                }
+            }
+        }
+    }
+    everywhere.push((25_600.0, 0.05, directions[1], starts[2]));
+    everywhere.push((25_600.0, 3.0, directions[0], starts[1]));
+    let doublings: Vec<_> = [1_usize, 2, 4, 5, 6, 7, 8, 9, 10, 11]
+        .into_iter()
+        .map(|d| {
+            (
+                200.0 * (1u32 << d) as f32,
+                0.6_f32,
+                directions[d % 2],
+                starts[d % 3],
+            )
+        })
+        .collect();
     let mut checked = 0;
-    for at in std::iter::once(0.0_f32).chain((6..=22).map(|k| 10f32.powi(k))) {
-        for doubled in 0..12 {
-            let across = 200.0 * (1u32 << doubled) as f32;
-            let size = Vec2::new(across, 0.6 * across);
+    for (k, &center) in diagonal.iter().chain(&mixed).enumerate() {
+        let on_diagonal = k < diagonal.len();
+        for &(across, aspect, direction, from_start) in
+            everywhere.iter().chain(doublings.iter().filter(|_| on_diagonal))
+        {
+            let size = Vec2::new(across, aspect * across);
             let path = Outline::Ellipse {
-                rect: Rect::new(Vec2::splat(at) - size * 0.5, size),
+                rect: Rect::new(center - size * 0.5, size),
             };
             let Outline::Ellipse { rect } = path else { unreachable!() };
             let radii = rect.size * 0.5;
-            // From the top's start, clockwise: the table's angles.
-            let from = 225.0_f32.to_radians();
-            let to = from + std::f32::consts::TAU;
-            let built = ArcPath::closed(&path, start(Edge::Top, 0.0), Direction::Clockwise, 1.0);
+            let from = ellipse_start(from_start);
+            let turn = match direction {
+                Direction::Clockwise => 1.0,
+                Direction::CounterClockwise => -1.0,
+            };
+            let to = from + turn * std::f32::consts::TAU;
+            let built = ArcPath::closed(&path, from_start, direction, 1.0);
             let samples = built.table_samples();
             assert!(samples > 1, "{path:?} is tabled");
+            let (_, distances) = built.table(0).expect("an ellipse's one table");
             let exact = ellipse_polygon(radii.as_dvec2(), from, to, samples - 1);
             let reach = f64::from(radii.max_element());
-            let bound = exact * 2f64.powi(-24) + samples as f64 * 2f64.powi(-47) * (reach + exact);
-            let measured = f64::from(built.length());
-            assert!(
-                (measured - exact).abs() <= bound,
-                "{path:?} measures {measured}, its ellipse {exact}: past {bound}"
-            );
-            assert!(measured > 0.0, "{path:?} has its perimeter");
+            let within = |i: usize, measured: f64| {
+                let bound = exact[i] * 2f64.powi(-24) + (i + 1) as f64 * 2f64.powi(-47) * (reach + exact[i]);
+                assert!(
+                    (measured - exact[i]).abs() <= bound,
+                    "{path:?} from {from_start:?} {direction:?}: {measured} at sample {i}, \
+                     its ellipse {}: past {bound}",
+                    exact[i]
+                );
+            };
+            within(samples - 1, f64::from(built.length()));
+            let count = samples - 1;
+            for i in [count / 4, count / 2, 3 * count / 4] {
+                within(i, f64::from(distances[i]));
+            }
+            assert!(built.length() > 0.0, "{path:?} has its perimeter");
             checked += 1;
         }
     }
-    assert_eq!(checked, 18 * 12, "every ellipse is checked");
+    assert_eq!(checked, 23 * 38 + 18 * 10, "every ellipse is checked");
 }
 
 #[test]
