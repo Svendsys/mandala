@@ -66,9 +66,12 @@ fn fits() -> [(&'static str, FitMode); 5] {
 
 /// The grid's paths: a line and a cubic 2,000 long at the origin, the
 /// same 10⁷ from it — where an `f32` sets a point to the nearest unit —
-/// and a line 10¹⁸ long, where the floats of a point some 10¹⁸ from the
-/// origin set an ornament's glyphs apart by bisection that barely moves
-/// them (the cost shape of seed 2771's ring, review 5761697746).
+/// and a line and a cubic 10¹⁸ long, where the floats of a point some
+/// 10¹⁸ from the origin set an ornament's glyphs apart by bisection that
+/// barely moves them (the cost shape of seed 2771's ring, review
+/// 5761697746). The far two were 10²² long until #363, which lays
+/// nothing along a path that long; the controls of #313's pull request
+/// were last run along those.
 fn paths() -> Vec<(String, bool, Curve)> {
     let line = |at: Vec2, to: Vec2| Curve::Line(at, at + to);
     let cubic = |at: Vec2| {

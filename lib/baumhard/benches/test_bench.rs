@@ -2488,8 +2488,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_lines_center_and_fill", |b| {
         b.iter(do_flow_lines_center_and_fill)
     });
-    c.bench_function("flow_lines_fill_a_frame_as_wide_as_an_f32_reaches", |b| {
-        b.iter(do_flow_lines_fill_a_frame_as_wide_as_an_f32_reaches)
+    c.bench_function("flow_lines_fill_a_frame_whose_floats_lose_a_fillers_steps", |b| {
+        b.iter(do_flow_lines_fill_a_frame_whose_floats_lose_a_fillers_steps)
     });
     c.bench_function("flow_lines_fit_sweeps_a_sharp_rect", |b| {
         b.iter(do_flow_lines_fit_sweeps_a_sharp_rect)
