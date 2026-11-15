@@ -659,7 +659,9 @@ fn always_near(lanes: &[Lane], widths: &[f32], taken: &[Vec<Vec2>]) -> usize {
 /// its length (three roundings of a square); and `f32::MAX.sqrt()` is
 /// itself a quarter of a unit under the root. So far under, every leg's
 /// squares are finite, its distance is at most `2⁶⁴`, and the three sum
-/// to a finite reach; a float nearer, the argument does not show it.
+/// to a finite reach; a float nearer, the argument does not show it. A
+/// polygon that is not a number is not at most the bound, and its lane's
+/// last lead is not read.
 ///
 /// Of a curve a round walks, the bound above holds in exact arithmetic. A
 /// margin is kept back from the chords' sum for the roundings between it
@@ -711,6 +713,18 @@ fn always_near(lanes: &[Lane], widths: &[f32], taken: &[Vec<Vec2>]) -> usize {
 ///   read, and a junction of two such answers as all its rounds do
 ///   (`test_projection_fixed_samples_reads_no_last_lead_past_a_skipped_curve`,
 ///   `test_projection_untangle_answers_as_its_rounds_beside_a_skipped_curve`).
+/// - The bound on the polygon is held from both sides: a lane whose
+///   polygon is the bound, which every round walks, has its last lead
+///   read, and one whose polygon reads `2⁶⁴`, seven floats on, which the
+///   rounds at full and at half handles pass over, has not
+///   (`test_projection_fixed_samples_holds_its_bound_on_a_curves_polygon`).
+///   The six floats between rest on the argument above.
+/// - That a polygon that is not a number is refused by the comparison
+///   itself, no test can show. Such a polygon has a control point that is
+///   not finite; the curve's ends as [`Curve::point`] reckons them, each
+///   control point times its weight, are then not numbers, nor is the
+///   chord, and the condition fails on the chord however the polygon is
+///   compared.
 ///
 /// Each errs toward the last lead not being read: a lane that loses its
 /// last lead's samples so is only measured for more rounds, while one that
@@ -739,7 +753,9 @@ pub(crate) fn fixed_samples(lane: &Lane) -> Vec<Vec2> {
             Curve::Cubic(_, b, c, _) => 2.0 * (a.distance(b) + c.distance(d)) + a.distance(d),
             _ => a.distance(d),
         };
-        if polygon > walked {
+        // At most: a polygon that is not a number is not walked either.
+        let walked_at_every_share = polygon <= walked;
+        if !walked_at_every_share {
             return fixed;
         }
         chord += a.distance(d);
@@ -756,8 +772,9 @@ pub(crate) fn fixed_samples(lane: &Lane) -> Vec<Vec2> {
 const SAMPLE_CAP: usize = 1 << 16;
 
 /// Points along `curves` at most `step` apart, from `skip` along on. A
-/// curve whose reach is not finite, a leg of its control polygon past the
-/// square root of the largest `f32`, gives no points and adds no distance.
+/// curve whose reach is not finite — a leg of its control polygon past
+/// the square root of the largest `f32`, or a control point that is not
+/// finite — gives no points and adds no distance.
 ///
 /// How far along a point lies is measured in its curve's own frame
 /// ([`Local`]): the chords between its samples' offsets from the curve's

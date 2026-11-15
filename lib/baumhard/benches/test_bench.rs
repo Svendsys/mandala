@@ -2228,6 +2228,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         "flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing",
         |b| b.iter(do_flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing),
     );
+    c.bench_function(
+        "flow_directional_lays_gaps_that_sum_past_the_largest_f32_by_their_mean",
+        |b| b.iter(do_flow_directional_lays_gaps_that_sum_past_the_largest_f32_by_their_mean),
+    );
     c.bench_function("flow_pitched_holds_the_nearer_whole_count_evenly", |b| {
         b.iter(do_flow_pitched_holds_the_nearer_whole_count_evenly)
     });
@@ -2243,6 +2247,14 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_pitched_lays_no_text_and_no_empty_path", |b| {
         b.iter(do_flow_pitched_lays_no_text_and_no_empty_path)
     });
+    c.bench_function(
+        "flow_pitched_lays_a_gap_past_the_root_of_the_largest_f32_evenly",
+        |b| b.iter(do_flow_pitched_lays_a_gap_past_the_root_of_the_largest_f32_evenly),
+    );
+    c.bench_function(
+        "flow_pitched_lays_gaps_that_sum_past_the_largest_f32_by_their_mean",
+        |b| b.iter(do_flow_pitched_lays_gaps_that_sum_past_the_largest_f32_by_their_mean),
+    );
     c.bench_function("flow_place_horizontal_steps_by_advance", |b| {
         b.iter(do_flow_place_horizontal_steps_by_advance)
     });

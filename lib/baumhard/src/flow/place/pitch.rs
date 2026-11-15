@@ -242,6 +242,18 @@ pub(super) fn natural_marks(run: &ShapedRun, clusters: &[Cluster], spacing: f32)
     marks
 }
 
+/// The mean of `marks`' gaps: the gap a lay sets at each of its ends, and
+/// a pattern's own. Their sum over their count, in `f32`; gaps past half
+/// the largest `f32` have no `f32` sum, and are summed in `f64`.
+pub(super) fn mean_gap(marks: &[Mark]) -> f32 {
+    let sum = marks.iter().map(|m| m.gap).sum::<f32>();
+    if sum.is_finite() {
+        sum / marks.len() as f32
+    } else {
+        (marks.iter().map(|m| f64::from(m.gap)).sum::<f64>() / marks.len() as f64) as f32
+    }
+}
+
 /// [`natural_marks`], every gap at least 0: what a connector's pattern
 /// is laid by.
 fn marks_of(run: &ShapedRun, clusters: &[Cluster], spacing: f32) -> Vec<Mark> {
@@ -265,7 +277,7 @@ pub fn pattern_gap(run: &ShapedRun, spacing: f32) -> Option<(f32, f32)> {
     if marks.is_empty() {
         return None;
     }
-    let gap = marks.iter().map(|m| m.gap).sum::<f32>() / marks.len() as f32;
+    let gap = mean_gap(&marks);
     let size = marks.iter().map(|m| m.size().max_element()).fold(0.0, f32::max);
     Some((gap, size))
 }
@@ -556,7 +568,7 @@ pub(crate) fn place_pitched_capped(
         }
         ok
     };
-    let end_gap = marks.iter().map(|m| m.gap).sum::<f32>() / marks.len() as f32;
+    let end_gap = mean_gap(&marks);
     // The least slack: no gap below 0.
     let floor = -marks.iter().map(|m| m.gap).fold(end_gap, f32::min);
     // The most inks a placement holds: whole clusters, within the cap.
@@ -701,7 +713,7 @@ pub(super) fn pitch(
     if count == 0 {
         return None;
     }
-    let end_gap = marks.iter().map(|m| m.gap).sum::<f32>() / count as f32;
+    let end_gap = mean_gap(marks);
     let length = track.length();
     let (start_dir, end_dir) = track.ends();
     let mark_of = |k: usize| &marks[k % count];
@@ -726,7 +738,17 @@ pub(super) fn pitch(
             .or_else(|| across(half.y, d.y, half.x, d.x))
             .unwrap_or_else(|| {
                 let (p, want) = (d.dot(half), want.max(0.0));
-                p + (p * p - half.length_squared() + want * want).max(0.0).sqrt()
+                let squares = p * p - half.length_squared() + want * want;
+                if squares.is_finite() {
+                    p + squares.max(0.0).sqrt()
+                } else {
+                    // A gap past the square root of the largest `f32` has
+                    // no `f32` square; `f64` holds it.
+                    let (p, want) = (f64::from(p), f64::from(want));
+                    (p + (p * p - f64::from(half.length_squared()) + want * want)
+                        .max(0.0)
+                        .sqrt()) as f32
+                }
             })
     };
     // How far from an ink's center its box's edge lies along `dir`.

@@ -362,3 +362,118 @@ fn test_flow_pitched_solves_past_a_round_the_lay_does_not_answer() {
         solved.missed
     );
 }
+
+/// Three of [`dot`] in a row: three inks, each its own gap of
+/// [`GAP`] from the next round the pattern.
+fn dots() -> ShapedRun {
+    let mut run = synthetic(&[ADVANCE; 3], 12.0);
+    for glyph in &mut run.glyphs {
+        glyph.letter = false;
+        glyph.ink = Some(Ink {
+            min: Vec2::new(2.0, -3.0),
+            max: Vec2::new(2.0 + INK, -3.0 + INK),
+        });
+    }
+    run
+}
+
+/// How far apart two points are, in `f64`: a length past 1.8 × 10¹⁹ has
+/// no `f32` square.
+fn far_apart(a: Vec2, b: Vec2) -> f64 {
+    (f64::from(b.x) - f64::from(a.x)).hypot(f64::from(b.y) - f64::from(a.y))
+}
+
+#[test]
+fn test_flow_pitched_lays_a_gap_past_the_root_of_the_largest_f32_evenly() {
+    do_flow_pitched_lays_a_gap_past_the_root_of_the_largest_f32_evenly();
+}
+
+/// A gap past the root of the largest `f32` is laid as evenly as any
+/// other (the case CI's fuzz run on #360 comes down to, beside
+/// `test_flow_structured_every_face_finding_a_directional_ring_whose_gap_is_past_the_root_of_the_largest_f32`).
+/// Along a slant — where two inks are apart across both axes, and their
+/// gap is the distance between their corners — 3.12 × 10²⁰ long, a
+/// pattern spaced 3 × 10¹⁹ fits ten gaps at 3 × 10²⁰ and eleven at
+/// 3.3 × 10²⁰; ten needs the smaller change, so nine inks are laid, the
+/// path's tenths apart and a tenth from each end. The inks' own 2 and
+/// their natural gap of 4 are below the path's float steps there.
+///
+/// The gap's square was taken in `f32`, where it is infinite, and the lay
+/// then set every ink at one place: at 59826cfd it lays its cap, 65,536
+/// glyphs, all at the one point 3 × 10¹⁹ along the path, every one
+/// finite, and says it was cut short.
+///
+/// Control: with the square taken in `f32` alone, red ("9 inks along the
+/// slant", 65,536 laid).
+pub fn do_flow_pitched_lays_a_gap_past_the_root_of_the_largest_f32_evenly() {
+    let run = dot();
+    let (length, spacing) = (3.12e20_f32, 3e19_f32);
+    let to = Vec2::new(0.6, 0.8) * length;
+    assert!(
+        ((GAP + spacing) * (GAP + spacing)).is_infinite() && (0.1 * length * (0.1 * length)).is_infinite(),
+        "precondition: neither the pattern's gap nor a tenth of the path has an `f32` square"
+    );
+    let placed = place_pitched(&run, &Curve::Line(Vec2::ZERO, to), spacing, [NO_END; 2]);
+    let centers: Vec<Vec2> = inks(&run, &placed).iter().map(Rect::center).collect();
+    assert_eq!(centers.len(), 9, "9 inks along the slant");
+    assert!(!placed.truncated, "the path holds its nine whole");
+    let tenth = f64::from(length) / 10.0;
+    let stops: Vec<Vec2> = std::iter::once(Vec2::ZERO)
+        .chain(centers.iter().copied())
+        .chain(std::iter::once(to))
+        .collect();
+    for (k, pair) in stops.windows(2).enumerate() {
+        let apart = far_apart(pair[0], pair[1]);
+        assert!(
+            (apart - tenth).abs() <= 1e-5 * tenth,
+            "gap {k} of the ten, from the path's start to its end, is a tenth of it: {apart} against {tenth}"
+        );
+    }
+}
+
+#[test]
+fn test_flow_pitched_lays_gaps_that_sum_past_the_largest_f32_by_their_mean() {
+    do_flow_pitched_lays_gaps_that_sum_past_the_largest_f32_by_their_mean();
+}
+
+/// A pattern whose gaps sum past the largest `f32` is laid by their mean
+/// all the same (found beside CI's fuzz finding on #360). Three inks
+/// spaced 1.2 × 10³⁸ along 3 × 10³⁸: two gaps and an ink take 2.4 × 10³⁸
+/// and three gaps and two inks 3.6 × 10³⁸; three need the smaller change,
+/// so two inks are laid, at the path's thirds. And the pattern's own gap,
+/// which the paths leaving a node's side are fanned by (`pattern_gap`),
+/// is that mean.
+///
+/// The mean was the gaps' `f32` sum over their count, and the sum of
+/// three such gaps is infinite: an end gap of infinity fits no ink, and
+/// nothing was laid.
+///
+/// Controls: with the mean taken from the `f32` sum alone, red ("2 inks
+/// at the path's thirds", none laid); with `pattern_gap` alone taking
+/// it so, red ("the pattern's own gap", infinite).
+pub fn do_flow_pitched_lays_gaps_that_sum_past_the_largest_f32_by_their_mean() {
+    use crate::flow::pattern_gap;
+    let run = dots();
+    let (length, spacing) = (3e38_f32, 1.2e38_f32);
+    let gap = GAP + spacing;
+    assert!(
+        gap.is_finite() && (3.0 * gap).is_infinite() && 2.0 * gap < length,
+        "precondition: each gap is finite, the three sum past the largest `f32`, and the path holds two"
+    );
+    let path = Curve::Line(Vec2::ZERO, Vec2::new(length, 0.0));
+    let placed = place_pitched(&run, &path, spacing, [NO_END; 2]);
+    let centers: Vec<Vec2> = inks(&run, &placed).iter().map(Rect::center).collect();
+    assert_eq!(centers.len(), 2, "2 inks at the path's thirds");
+    for (k, center) in centers.iter().enumerate() {
+        let third = length / 3.0 * (k + 1) as f32;
+        assert!(
+            (center.x - third).abs() <= 1e-5 * length && center.y.abs() <= 12.0,
+            "ink {k} sits at a third of the path, on it: {center} against {third}"
+        );
+    }
+    assert_eq!(
+        pattern_gap(&run, spacing),
+        Some((gap, INK)),
+        "the pattern's own gap is the mean of its three, and its size its ink's"
+    );
+}
