@@ -55,6 +55,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers
 
+      # `mandalactl`'s `test_an_mp4_is_made_when_ffmpeg_is_on_the_host`
+      # is the one test that runs the real `ffmpeg` over what
+      # `record assemble` hands it, and `guarded_file`'s no-hard-link
+      # test builds its `LD_PRELOAD` shim with a C compiler, which the
+      # runner image carries. Each skips with a note without what it
+      # needs; `MANDALA_REQUIRE_FFMPEG` and `MANDALA_REQUIRE_CC` below
+      # make that a failure here. The package lists are the ones the
+      # step above refreshed.
+      - name: Install ffmpeg
+        run: sudo apt-get install -y --no-install-recommends ffmpeg
+
       # `lib/baumhard/tests/wasm_font_lock.rs` runs wasm32 code under
       # node and otherwise skips, with a note, when the target or node
       # is absent. Here both are present by construction (the target
@@ -75,6 +86,8 @@ jobs:
           MANDALA_REQUIRE_WASM_PROBE: "1"
           MANDALA_REQUIRE_GPU: "1"
           MANDALA_REQUIRE_FONTCONFIG_HOSTS: "1"
+          MANDALA_REQUIRE_CC: "1"
+          MANDALA_REQUIRE_FFMPEG: "1"
         run: ./test.sh --lint
 
   # `vendor/cosmic-text` is the published cosmic-text 0.19.0 plus

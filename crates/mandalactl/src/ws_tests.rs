@@ -371,7 +371,14 @@ const PNG_BASE64: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
 fn screenshot_app(relay: &Relay, with_sidecar: bool) -> FakeApp {
+    screenshot_app_then(relay, with_sidecar, || {})
+}
+
+/// [`screenshot_app`], running `first` when a request arrives, before
+/// it answers: what happens on the client's disk during the capture.
+fn screenshot_app_then(relay: &Relay, with_sidecar: bool, first: impl Fn() + Send + 'static) -> FakeApp {
     FakeApp::connect(relay, move |request| {
+        first();
         let mut result = json!({
             "rendered": true, "width": 1, "height": 1, "scale": 1.0,
             "camera": {"center_x": 0.0, "center_y": 0.0, "zoom": 1.0}, "settled": true,
@@ -459,15 +466,161 @@ fn test_a_screenshot_over_ws_needs_a_path_and_refuses_a_file_in_the_way() {
     let outcome = relay.invoke(&format!("capture.screenshot {}", path.display()));
     assert_eq!(outcome.exit, Exit::CommandError, "{}", outcome.err);
     assert!(
-        outcome.err.contains("exists") && outcome.err.contains("`overwrite`"),
+        outcome.err.contains("exists; pass overwrite=true") && outcome.err.contains("nothing was sent"),
         "{}",
         outcome.err
     );
     assert_eq!(std::fs::read(&path).expect("kept"), b"old");
+    assert!(app.requests().is_empty(), "a doomed write asks for no capture");
     let outcome = relay.invoke(&format!("capture.screenshot {} overwrite=true", path.display()));
     assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
     assert_ne!(std::fs::read(&path).expect("replaced"), b"old");
-    assert_eq!(app.requests().len(), 2, "overwrite stayed on the client's side");
+    assert_eq!(app.requests().len(), 1, "overwrite stayed on the client's side");
+}
+
+/// **A sidecar in the way refuses the capture before it is asked for,
+/// and leaves no orphan PNG** (ruling B38.1, addendum §5): with only
+/// `<path>.geometry.json` there and no `overwrite`, nothing is sent,
+/// nothing is written at `path`, and the sidecar is kept.
+///
+/// Control: without the look `invoke` takes before it connects, the
+/// capture is requested (the look at the write still refuses it, so no
+/// PNG is written either way); without either look the PNG is written
+/// and only then is the sidecar refused.
+#[test]
+fn test_a_sidecar_in_the_way_sends_nothing_and_leaves_no_orphan_png() {
+    let relay = Relay::start();
+    let app = screenshot_app(&relay, true);
+    let dir = tempfile::tempdir().expect("a directory");
+    let path = dir.path().join("shot.png");
+    let sidecar = dir.path().join("shot.png.geometry.json");
+    std::fs::write(&sidecar, b"theirs").expect("writes");
+    let outcome = relay.invoke(&format!("capture.screenshot {}", path.display()));
+    assert_eq!(outcome.exit, Exit::CommandError, "{}", outcome.err);
+    assert!(
+        outcome.err.contains(&format!(
+            "`{}` exists; pass overwrite=true to replace it (nothing was sent)",
+            sidecar.display()
+        )),
+        "{}",
+        outcome.err
+    );
+    assert!(!path.exists(), "no orphan PNG");
+    assert_eq!(std::fs::read(&sidecar).expect("kept"), b"theirs");
+    assert!(app.requests().is_empty(), "the capture was not asked for");
+}
+
+/// **A sidecar that is not asked for is not in the way**: with
+/// `sidecar=false` no sidecar will be written, so an existing
+/// `<path>.geometry.json` neither refuses the capture nor is touched,
+/// as on a native app, which looks at the sidecar's path only when it
+/// will write one.
+///
+/// Control: a look before the capture that takes in the sidecar's path
+/// whatever was asked for refuses this capture.
+#[test]
+fn test_a_sidecar_not_asked_for_is_not_in_the_way() {
+    let relay = Relay::start();
+    let _app = screenshot_app(&relay, false);
+    let dir = tempfile::tempdir().expect("a directory");
+    let path = dir.path().join("shot.png");
+    let sidecar = dir.path().join("shot.png.geometry.json");
+    std::fs::write(&sidecar, b"theirs").expect("writes");
+    let outcome = relay.invoke(&format!("capture.screenshot {} sidecar=false", path.display()));
+    assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
+    assert!(std::fs::read(&path).expect("written").starts_with(b"\x89PNG"));
+    assert_eq!(std::fs::read(&sidecar).expect("kept"), b"theirs");
+}
+
+/// **A file that appears during the capture is refused at the write,
+/// and nothing is written beside it**: the look before the capture
+/// passed, the app was asked, and while it answered a file appeared at
+/// the PNG's path, or at the sidecar's. The write refuses it, saying
+/// the capture may be repeated, keeps it, and leaves nothing else — in
+/// the sidecar's case no orphan PNG.
+///
+/// Controls: a write that resolves its files without looking at them
+/// again writes the PNG before the sidecar is refused; `refused`
+/// without its hint fails the message.
+#[test]
+fn test_a_file_that_appears_during_the_capture_is_refused_at_the_write() {
+    for appears in ["shot.png", "shot.png.geometry.json"] {
+        let relay = Relay::start();
+        let dir = tempfile::tempdir().expect("a directory");
+        let path = dir.path().join("shot.png");
+        let appeared = dir.path().join(appears);
+        let plant = appeared.clone();
+        let app = screenshot_app_then(&relay, true, move || {
+            std::fs::write(&plant, b"appeared").expect("writes");
+        });
+        let outcome = relay.invoke(&format!("capture.screenshot {}", path.display()));
+        assert_eq!(outcome.exit, Exit::CommandError, "{appears}: {}", outcome.err);
+        assert_eq!(
+            app.requests().len(),
+            1,
+            "{appears}: precondition: the look before the capture passed, and the capture was asked for"
+        );
+        assert!(
+            outcome.err.contains(&format!(
+                "`{}` exists; pass overwrite=true to replace it (the capture succeeded and may be repeated)",
+                appeared.display()
+            )),
+            "{appears}: {}",
+            outcome.err
+        );
+        assert_eq!(std::fs::read(&appeared).expect("kept"), b"appeared", "{appears}");
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .expect("readable")
+            .map(|entry| {
+                entry
+                    .expect("an entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert_eq!(
+            names,
+            vec![appears.to_string()],
+            "{appears}: nothing else was written"
+        );
+    }
+}
+
+/// **The sidecar follows the name typed** (ruling B38.1, addendum §2):
+/// through `link.png`, a link to `elsewhere/real.png`, the image is
+/// written to `real.png` and the sidecar beside the link, as
+/// `link.png.geometry.json`; nothing is written beside the real file,
+/// and the output reports the names typed.
+///
+/// Control: deriving the sidecar from the resolved path writes
+/// `real.png.geometry.json` beside the real file instead.
+#[cfg(unix)]
+#[test]
+fn test_a_screenshots_sidecar_follows_the_name_typed() {
+    let relay = Relay::start();
+    let _app = screenshot_app(&relay, true);
+    let dir = tempfile::tempdir().expect("a directory");
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir(&elsewhere).expect("a directory");
+    let real = elsewhere.join("real.png");
+    std::fs::write(&real, b"old").expect("writes");
+    let link = dir.path().join("link.png");
+    std::os::unix::fs::symlink(&real, &link).expect("symlinks");
+    let outcome = relay.invoke(&format!("capture.screenshot {} overwrite=true", link.display()));
+    assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
+    assert!(std::fs::read(&real).expect("replaced").starts_with(b"\x89PNG"));
+    let beside_link = dir.path().join("link.png.geometry.json");
+    assert!(beside_link.is_file(), "the sidecar is beside the link typed");
+    assert!(
+        !elsewhere.join("real.png.geometry.json").exists(),
+        "nothing is written beside the real file"
+    );
+    assert!(
+        outcome.out.contains(&beside_link.display().to_string()),
+        "the output reports the sidecar by the name typed: {}",
+        outcome.out
+    );
 }
 
 /// **A symlink at the path leads to the file written, and the
@@ -505,7 +658,12 @@ fn test_a_screenshot_over_ws_writes_through_a_link_only_with_overwrite() {
     std::os::unix::fs::symlink(&target, &link).expect("symlinks");
     let outcome = relay.invoke(&format!("capture.screenshot {}", link.display()));
     assert_eq!(outcome.exit, Exit::CommandError, "{}", outcome.err);
-    assert!(outcome.err.contains("exists"), "{}", outcome.err);
+    assert!(
+        outcome.err.contains(&format!("`{}` leads to", link.display()))
+            && outcome.err.contains("which exists"),
+        "the refusal names the link typed: {}",
+        outcome.err
+    );
     assert_eq!(std::fs::read(&target).expect("kept"), b"keep");
 
     let outcome = relay.invoke(&format!("capture.screenshot {} overwrite=true", link.display()));
@@ -517,68 +675,9 @@ fn test_a_screenshot_over_ws_writes_through_a_link_only_with_overwrite() {
     assert_eq!(std::fs::read_link(&link).expect("still a link"), target);
     assert_eq!(
         app.requests().len(),
-        4,
-        "each capture ran; only the writes were refused"
+        1,
+        "only the capture that could be written was asked for"
     );
-}
-
-/// **Nothing beside the path is in the way or touched.** Until #357 the
-/// client wrote `<path>.<pid>.partial` first, and an entry already
-/// there — a crash's leftover under a reused pid, the user's own file,
-/// a planted link — refused the capture. The write is now the guarded
-/// writer's, whose temp names are its own and pass over a taken one
-/// (`guarded_file`'s tests pin the exact next name), so that entry
-/// neither refuses the capture nor is removed or written through, with
-/// or without `overwrite`, and the write leaves nothing of its own
-/// behind.
-///
-/// Control: the client's former writer refuses both captures, naming
-/// the partial.
-#[cfg(unix)]
-#[test]
-fn test_a_screenshot_over_ws_is_not_stopped_by_an_entry_beside_its_path() {
-    let relay = Relay::start();
-    let _app = screenshot_app(&relay, false);
-    let dir = tempfile::tempdir().expect("a directory");
-    let path = dir.path().join("shot.png");
-    // `invoke` runs the client in this process, so the pid is ours.
-    let partial = dir
-        .path()
-        .join(format!("shot.png.{}.partial", std::process::id()));
-    let target = dir.path().join("precious");
-    std::fs::write(&target, b"keep").expect("writes");
-    std::os::unix::fs::symlink(&target, &partial).expect("symlinks");
-    for extra in ["", " overwrite=true"] {
-        let outcome = relay.invoke(&format!("capture.screenshot {}{extra}", path.display()));
-        assert_eq!(outcome.exit, Exit::Success, "{extra}: {}", outcome.err);
-        assert!(
-            std::fs::read(&path).expect("written").starts_with(b"\x89PNG"),
-            "{extra}: the screenshot was written"
-        );
-        assert!(
-            std::fs::symlink_metadata(&partial)
-                .expect("still there")
-                .file_type()
-                .is_symlink(),
-            "{extra}: the entry beside the path was removed"
-        );
-        assert_eq!(std::fs::read(&target).expect("kept"), b"keep");
-    }
-    let mut names: Vec<String> = std::fs::read_dir(dir.path())
-        .expect("readable")
-        .map(|entry| {
-            entry
-                .expect("an entry")
-                .file_name()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect();
-    names.sort();
-    let partial_name = partial.file_name().expect("named").to_string_lossy().into_owned();
-    let mut expected = vec!["precious".to_string(), "shot.png".to_string(), partial_name];
-    expected.sort();
-    assert_eq!(names, expected, "the write left nothing of its own behind");
 }
 
 #[test]

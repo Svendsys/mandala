@@ -37,6 +37,7 @@ use crate::assemble;
 use crate::bridge;
 use crate::cli::{self, Invocation, Options, Parsed};
 use crate::client::{Connection, Exchange, Outcome, Target, Watched};
+use crate::destination::Destination;
 use crate::help;
 use crate::params::{build_params, tokenize, Signature, Token};
 use crate::render;
@@ -201,6 +202,12 @@ fn invoke(invocation: Invocation, env: Env<'_>, io: &mut Io<'_>) -> Exit {
         Ok(sink) => sink,
         Err(why) => return usage(io, &why),
     };
+    // Its files are looked at before the capture is asked for, so a
+    // write that would be refused costs no capture and no transfer.
+    if let Some(Err(why)) = sink.as_ref().map(|sink| sink.files(sink.sidecar)) {
+        emit(io.err, &format!("mandalactl: {why} (nothing was sent)\n"));
+        return Exit::CommandError;
+    }
     let (mut connection, note) = match Connection::open(&target, options.timeout, options.force) {
         Ok(opened) => opened,
         Err(why) => return transport(io, &why),
@@ -544,14 +551,19 @@ fn target(options: &Options, env: Env<'_>) -> Result<Target, String> {
 
 /// The file a browser app's screenshot is written to by this client.
 struct ScreenshotSink {
+    /// The path as typed, which the output reports.
     path: PathBuf,
     overwrite: bool,
+    /// Whether the request asks for the geometry sidecar (it does
+    /// unless `sidecar=false`), and so whether one will be written.
+    sidecar: bool,
 }
 
 /// For `capture.screenshot` over `--ws`: the `path` the typed arguments
 /// carry (absolute by now), required, and `overwrite`, both taken off
 /// the request — the browser app declares neither and would refuse
-/// them. `raw` frames are sent as written. `None` for every other
+/// them — and whether the request, which keeps its `sidecar`, asks for
+/// one. `raw` frames are sent as written. `None` for every other
 /// command and transport.
 fn screenshot_sink(target: &Target, prepared: &mut Prepared) -> Result<Option<ScreenshotSink>, String> {
     let Prepared::Typed { command, params, .. } = prepared else {
@@ -573,26 +585,65 @@ fn screenshot_sink(target: &Target, prepared: &mut Prepared) -> Result<Option<Sc
         .remove("overwrite")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
-    Ok(Some(ScreenshotSink { path, overwrite }))
+    let sidecar = params.get("sidecar").and_then(Value::as_bool).unwrap_or(true);
+    Ok(Some(ScreenshotSink {
+        path,
+        overwrite,
+        sidecar,
+    }))
 }
 
-/// A refused screenshot write, said with what the caller may do about
-/// it: the capture read nothing from the app's state, so repeating it
-/// is safe.
-fn refused(why: guarded_file::PublishRefusal) -> String {
-    let (guarded_file::PublishRefusal::Invalid(message) | guarded_file::PublishRefusal::Internal(message)) =
-        why;
-    format!("{message} (the capture succeeded and may be repeated)")
+/// `<path>.geometry.json`: the sidecar's name, beside `path` **as
+/// typed** (ruling B38.1, addendum §2). Where `path` is a symlink the
+/// image is written to the file it leads to, and the sidecar beside the
+/// link, so whoever opens the image by the name they typed finds its
+/// sidecar by that name too.
+fn sidecar_path(path: &Path) -> PathBuf {
+    path.with_file_name(format!(
+        "{}.geometry.json",
+        path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
+    ))
+}
+
+/// A refusal at the write, after the capture, said with what the caller
+/// may do about it: the capture read nothing from the app's state, so
+/// repeating it is safe.
+fn refused(said: String) -> String {
+    format!("{said} (the capture succeeded and may be repeated)")
 }
 
 impl ScreenshotSink {
-    /// Write the PNG the reply carries, and its sidecar beside it, and
-    /// rewrite the reply the way a native app's reads: `path` and
-    /// `sidecar_path` in place of `png_base64` and `sidecar`, so the
-    /// output, `--json` included, names files on either transport. A
-    /// reply with `rendered: false` writes nothing, as a native app
-    /// writes nothing. `Err` when the file is in the way or the write
-    /// fails, said by [`refused`].
+    /// The PNG's file and, `with_sidecar`, its sidecar's: each resolved
+    /// and looked at, both before either is written, so a sidecar in the
+    /// way leaves no orphan PNG behind. Each path is one this command
+    /// line named, so a symlink there leads to the file written, as for
+    /// `maptool export` ([`Destination`], ruling B38.1 §6), and the
+    /// no-clobber rule is held to that file.
+    ///
+    /// Called twice. Before the capture is requested, for the sidecar
+    /// the request asks for: a write that would be refused then sends
+    /// nothing. And at the write, for the sidecar the reply carries,
+    /// where it catches a file that appeared during the capture. Either
+    /// look only saves work and names the file; the guarantee is the
+    /// write's own, atomic refusal (`guarded_file::publish`).
+    fn files(&self, with_sidecar: bool) -> Result<(Destination, Option<Destination>), String> {
+        let png = Destination::resolve(&self.path)?;
+        let sidecar = with_sidecar
+            .then(|| Destination::resolve(&sidecar_path(&self.path)))
+            .transpose()?;
+        for file in std::iter::once(&png).chain(&sidecar) {
+            file.check(self.overwrite)?;
+        }
+        Ok((png, sidecar))
+    }
+
+    /// Write the PNG the reply carries, and its sidecar beside the path
+    /// typed ([`sidecar_path`]), and rewrite the reply the way a native
+    /// app's reads: `path` and `sidecar_path` in place of `png_base64`
+    /// and `sidecar`, so the output, `--json` included, names files on
+    /// either transport. A reply with `rendered: false` writes nothing,
+    /// as a native app writes nothing. `Err` when a file appeared in the
+    /// way during the capture, or the write fails, said by [`refused`].
     fn write(self, exchange: Exchange) -> Result<Exchange, String> {
         let Exchange { mut reply, line } = exchange;
         let Some(encoded) = reply.result.get("png_base64").and_then(Value::as_str) else {
@@ -600,37 +651,17 @@ impl ScreenshotSink {
         };
         let png =
             base64_decode(encoded).map_err(|why| format!("the app's png_base64 did not decode: {why}"))?;
-        let sidecar_path = self.path.with_file_name(format!(
-            "{}.geometry.json",
-            self.path
-                .file_name()
-                .map(|n| n.to_string_lossy())
-                .unwrap_or_default()
-        ));
+        let sidecar_path = sidecar_path(&self.path);
         let sidecar = reply.result.get("sidecar").map(Value::to_string);
-        // Each path is one this command line named, so a symlink there
-        // leads to the file written, as for `maptool export`: resolved
-        // to its real file first, and the no-clobber rule held to that
-        // file (`guarded_file::real_file`, ruling B38.1 §6). Both are
-        // refused before either is written, so a sidecar in the way
-        // leaves no orphan PNG behind; the writes refuse again,
-        // atomically (`guarded_file::publish`).
-        let png_file = guarded_file::real_file(&self.path).map_err(refused)?;
-        let sidecar_file = match &sidecar {
-            Some(text) => Some((guarded_file::real_file(&sidecar_path).map_err(refused)?, text)),
-            None => None,
-        };
-        for file in std::iter::once(&png_file).chain(sidecar_file.as_ref().map(|(file, _)| file)) {
-            guarded_file::check(file, self.overwrite).map_err(refused)?;
-        }
-        let write = |file: &Path, bytes: &[u8]| {
-            guarded_file::publish(file, self.overwrite, |out| {
+        let (png_file, sidecar_file) = self.files(sidecar.is_some()).map_err(refused)?;
+        let write = |file: &Destination, bytes: &[u8]| {
+            guarded_file::publish(file.real(), self.overwrite, |out| {
                 out.write_all(bytes).map_err(|e| e.to_string())
             })
-            .map_err(refused)
+            .map_err(|why| refused(file.say(why)))
         };
         write(&png_file, &png)?;
-        if let Some((file, text)) = &sidecar_file {
+        if let (Some(file), Some(text)) = (&sidecar_file, &sidecar) {
             write(file, text.as_bytes())?;
         }
         let rewrite = |result: &mut Value| {

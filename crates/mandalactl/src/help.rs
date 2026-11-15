@@ -293,7 +293,7 @@ mandalactl bridge [listen=<addr:port>] [token=<token>]
     A controller that connects before the page is refused (connection_rejected, reason no_app: exit 2
     here, with the remedy). When the page leaves, its controller is sent `shutdown` and closed; when the
     controller leaves, the page resets its session and the next controller is greeted afresh. Over
-    --ws, `capture.screenshot <path>` writes the PNG the page returns inline, and its sidecar beside it.
+    --ws, `capture.screenshot <path>` writes the PNG the page returns inline, and its sidecar beside <path>.
 ";
 
 const RECORD_HELP: &str = "\

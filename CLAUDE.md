@@ -109,8 +109,9 @@ the parity trajectory (or why none is owed):
   elevated (run-as-administrator) launch makes the Administrators
   group its owner, so any other elevated process of a member of that
   group can connect too. The Windows half runs on CI's `windows-ipc`
-  job (`.github/workflows/test.yml`: clippy, the `ipc::` tests and
-  `mandalactl`'s whole test target), not in `./test.sh`, which cannot
+  job (`.github/workflows/test.yml`: clippy, the `ipc::` tests,
+  `mandalactl`'s whole test target, and `guarded_file`'s, which
+  `mandalactl` writes through), not in `./test.sh`, which cannot
   run it from Linux; locally
   `cargo check --target x86_64-pc-windows-gnu -p mandala` type-checks
   it. **The protocol is not gated, since IPC-15 (#75)**: the
@@ -313,8 +314,9 @@ the parity trajectory (or why none is owed):
 ## Common tasks
 
 - **Run tests**: `./test.sh` runs `cargo test --workspace` — all seven
-  members, `mandala`, `baumhard`, `guarded_file`, `mandala_derive`, `maptool`,
-  `mandalactl` and the generated `workspace-hack` (below) — prints a test count, then type-checks the benchmark targets
+  members, `mandala`, `baumhard`, `guarded_file`, `mandala_derive`,
+  `maptool`, `mandalactl` and the generated `workspace-hack` (below) —
+  prints a test count, then type-checks the benchmark targets
   (`cargo check --workspace --benches`, which runs no benchmark) and
   `wasm32-unknown-unknown`, so neither a drifted `do_*()` nor
   cross-platform drift can pass a green run. **With one caveat about
@@ -331,7 +333,11 @@ the parity trajectory (or why none is owed):
   `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. So does
   `lib/baumhard/tests/font_state.rs`'s host test where fontdb does not
   read `FONTCONFIG_FILE` (off Linux), which CI's
-  `MANDALA_REQUIRE_FONTCONFIG_HOSTS` turns into a failure. **And for
+  `MANDALA_REQUIRE_FONTCONFIG_HOSTS` turns into a failure. So do
+  `guarded_file`'s no-hard-link test, which needs a C compiler, and
+  `mandalactl`'s real-`ffmpeg` test, which needs `ffmpeg`; CI sets
+  `MANDALA_REQUIRE_CC` and `MANDALA_REQUIRE_FFMPEG`, each of which
+  turns its test's skip into a failure. **And for
   the GPU-backed tests** (`src/application/app/tests_gpu.rs`,
   TEST_CONVENTIONS §T8): they build the real app headless on whatever
   adapter the machine has — Mesa's lavapipe on a GPU-less box,
@@ -366,13 +372,15 @@ the parity trajectory (or why none is owed):
   covered too, minus `--all-targets` (criterion and rayon refuse to
   build for wasm32) and minus the generated `workspace-hack`, which is
   native only (`--exclude workspace-hack`, as on the wasm32 check; see
-  "Change a dependency" below); the host doc leg is `--workspace` with private
-  items, while the wasm32 doc leg narrows to `-p mandala`, because
-  baumhard cannot be documented standalone for wasm32 — its `rand` →
-  `getrandom` edge needs the `wasm_js` feature that only the root
-  manifest declares — and maptool, mandalactl and mandala_derive have
-  no wasm32 half to document. Both wasm32 legs are skipped with a note when the
-  target isn't installed. CI runs `./test.sh --lint`, so these gates
+  "Change a dependency" below); the host doc leg is `--workspace` with
+  private items, while the wasm32 doc leg narrows to
+  `-p mandala -p guarded_file`, because baumhard cannot be documented
+  standalone for wasm32 — its `rand` → `getrandom` edge needs the
+  `wasm_js` feature that only the root manifest declares — and
+  maptool, mandalactl and mandala_derive have no wasm32 half to
+  document; guarded_file has one, the browser's stubs of its writer.
+  Both wasm32 legs are skipped with a note when the target isn't
+  installed. CI runs `./test.sh --lint`, so these gates
   hold on every pull request and not only on the machine of whoever
   remembered the flag. They can be hard because the toolchain is
   pinned in `rust-toolchain.toml`: a new stable release cannot add a
@@ -442,17 +450,16 @@ the parity trajectory (or why none is owed):
   the file, and fails on any other `profile.dev*` or `profile.test`
   table that sets `debug`.
 - **Target a specific test**: `cargo test -p baumhard --lib <pattern>`,
-  `cargo test -p mandala <pattern>`,
-  `cargo test -p guarded_file`,
+  `cargo test -p mandala <pattern>`, `cargo test -p guarded_file`,
   `cargo test -p mandala_derive`, `cargo test -p maptool` or
   `cargo test -p mandalactl`. `--lib` narrows to a library target, so
   it belongs only to the five members that have one — baumhard,
   guarded_file, mandala_derive, mandalactl (a `src/lib.rs` beside its
-  binary) and the generated `workspace-hack` (an empty `src/lib.rs`, and
-  no tests).
-  `mandala` and `maptool` are binary crates, where adding it narrows nothing and
-  exits 101 with `no library targets found in package 'mandala'`
-  before a test runs (#148).
+  binary) and the generated `workspace-hack` (an empty `src/lib.rs`,
+  and no tests). `mandala` and `maptool` are binary crates, where
+  adding it narrows nothing and exits 101 with
+  `no library targets found in package 'mandala'` before a test runs
+  (#148).
   `test_no_documented_command_targets_a_lib_the_package_lacks` holds
   this bullet and TEST_CONVENTIONS §T11's copy of it against the real
   manifests — every code span and every fenced line in those two

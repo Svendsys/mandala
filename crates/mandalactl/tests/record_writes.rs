@@ -8,11 +8,16 @@
 //! Each test drives the real binary.
 //!
 //! The MP4 path runs a stand-in `ffmpeg` put first on the child's
-//! `PATH`: a shell script that writes its last argument the way `ffmpeg`
-//! does (`open(O_WRONLY|O_CREAT|O_TRUNC)`, which follows a symlink and
-//! replaces what is there), so the tests need no real `ffmpeg` and run
-//! the same with or without one on the host. It records the output path
-//! it was given in `ARGS_LOG`. `STANDIN_MODE=fail` makes it exit 1
+//! `PATH`: a shell script that writes its last argument the way
+//! `ffmpeg -y` does, which is the worst case. It ignores the `-n` it is
+//! passed and opens its output `O_WRONLY|O_CREAT|O_TRUNC`, which
+//! follows a symlink and replaces what is there. So the tests need no
+//! real `ffmpeg` and run the same with or without one on the host. The
+//! stand-in never reads the frame list: the list's place inside the
+//! private directory, and the video itself, are covered only by
+//! `assemble`'s `test_an_mp4_is_made_when_ffmpeg_is_on_the_host`, which
+//! runs the real program. It records the output path it was given in
+//! `ARGS_LOG`, on every run. `STANDIN_MODE=fail` makes it exit 1
 //! without touching its output; `STANDIN_MODE=race` makes it write
 //! `RACE_PATH` first, a file appearing between the destination's check
 //! and its publication.
@@ -269,8 +274,8 @@ fn test_gif_a_file_that_appears_after_the_check_is_not_replaced() {
     let done = child.finish();
     assert!(!done.status.success(), "refused: {}", text(&done));
     assert!(
-        String::from_utf8_lossy(&done.stderr).contains("exists"),
-        "{}",
+        String::from_utf8_lossy(&done.stderr).contains("exists; pass overwrite=true"),
+        "refused because the file appeared: {}",
         text(&done)
     );
     assert_eq!(std::fs::read(&out).expect("out"), b"precious");
@@ -278,9 +283,12 @@ fn test_gif_a_file_that_appears_after_the_check_is_not_replaced() {
 }
 
 /// **MP4: the same**, the file appearing while `ffmpeg` runs; the
-/// directory this run made for `ffmpeg` is removed.
+/// publish refuses it, saying it exists, and the directory this run
+/// made for `ffmpeg` is removed.
 ///
-/// Control: the former writer's `rename` replaces it.
+/// Control: the former writer's `rename` replaces it; so does a
+/// `PrivateDir::publish` that neither looks at the destination nor
+/// links (either alone still refuses).
 #[test]
 fn test_mp4_a_file_that_appears_after_the_check_is_not_replaced() {
     let (_keep, dir) = scratch();
@@ -294,8 +302,60 @@ fn test_mp4_a_file_that_appears_after_the_check_is_not_replaced() {
         Some(bin.path()),
     ));
     assert!(!done.status.success(), "refused: {}", text(&done));
+    assert!(
+        String::from_utf8_lossy(&done.stderr).contains("exists; pass overwrite=true"),
+        "refused because the file appeared: {}",
+        text(&done)
+    );
     assert_eq!(std::fs::read_to_string(&out).expect("out"), "appeared meanwhile");
     assert_eq!(leftovers(&dir), Vec::<String>::new());
+}
+
+/// **An existing destination is refused before `ffmpeg` runs** (ruling
+/// B38.1, addendum §5): with `x.mp4` there and no `overwrite`, the run
+/// is refused naming it, the stand-in never ran (it logs every run to
+/// `ARGS_LOG`), the file is kept, and nothing of this run's is left.
+/// The same run with `overwrite=true` then reaches the stand-in, which
+/// shows the log would have been there.
+///
+/// Control: without the up-front `check` in `assemble`, `ffmpeg` runs
+/// to completion and only the publish refuses.
+#[test]
+fn test_an_existing_mp4_is_refused_before_ffmpeg_runs() {
+    let (_keep, dir) = scratch();
+    let bin = standin();
+    let log = bin.path().join("args.log");
+    let out = dir.join("x.mp4");
+    std::fs::write(&out, "precious").expect("seed");
+    let log_arg = log.display().to_string();
+    let done = run(assemble(
+        &dir,
+        &[&out_arg(&out), "format=mp4"],
+        &[("ARGS_LOG", &log_arg)],
+        Some(bin.path()),
+    ));
+    assert!(!done.status.success(), "refused: {}", text(&done));
+    assert!(
+        String::from_utf8_lossy(&done.stderr)
+            .contains(&format!("`{}` exists; pass overwrite=true", out.display())),
+        "{}",
+        text(&done)
+    );
+    assert!(!log.exists(), "ffmpeg was never run");
+    assert_eq!(std::fs::read_to_string(&out).expect("kept"), "precious");
+    assert_eq!(leftovers(&dir), Vec::<String>::new());
+
+    let done = run(assemble(
+        &dir,
+        &[&out_arg(&out), "format=mp4", "overwrite=true"],
+        &[("ARGS_LOG", &log_arg)],
+        Some(bin.path()),
+    ));
+    assert!(done.status.success(), "{}", text(&done));
+    assert!(
+        log.exists(),
+        "precondition: a run that reaches ffmpeg leaves the log"
+    );
 }
 
 /// **`ffmpeg` never opens the destination or a guessable name**: the
@@ -404,9 +464,11 @@ fn test_a_symlinked_destination_is_written_through_only_with_overwrite() {
 
         let refused = run(assemble(&dir, &[&out_arg(&out), format], &[], Some(bin.path())));
         assert!(!refused.status.success(), "{format}: {}", text(&refused));
+        let said = String::from_utf8_lossy(&refused.stderr);
         assert!(
-            String::from_utf8_lossy(&refused.stderr).contains("exists"),
-            "{}",
+            said.contains(&format!("`{}` leads to `", out.display()))
+                && said.contains("which exists; pass overwrite=true"),
+            "the refusal names the link typed and where it leads: {}",
             text(&refused)
         );
         assert_eq!(std::fs::read_to_string(&target).expect("kept"), "precious");
@@ -432,7 +494,7 @@ fn test_a_symlinked_destination_is_written_through_only_with_overwrite() {
         let dangling = dir.join(format!("dangling-{name}"));
         let nowhere = dir.join(format!("nowhere-{name}"));
         std::os::unix::fs::symlink(&nowhere, &dangling).expect("link");
-        for extra in [format, "overwrite=true"] {
+        for extra in ["overwrite=false", "overwrite=true"] {
             let refused = run(assemble(
                 &dir,
                 &[&out_arg(&dangling), format, extra],

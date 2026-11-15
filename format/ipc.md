@@ -1880,7 +1880,7 @@ client's, which writes on the page's behalf (below).
 
 | param | type | default | meaning |
 |---|---|---|---|
-| `path` | string | server-chosen file in the per-session artifacts dir | Absolute path for the PNG. Parent dir must exist. Write guards (same-user trust tier, but an LLM composing a path clobbers by accident far more readily than a human): the server does **not** follow a symlink at `path` (one there is `invalid_params`), and refuses to overwrite an existing file **outside** the per-session artifacts dir unless `overwrite: true` is set — an unset `overwrite` hitting an existing external file (or an existing sidecar beside it) is `invalid_params`, and nothing is written. The write is atomic: a failure leaves whatever was at `path` as it was. |
+| `path` | string | server-chosen file in the per-session artifacts dir | Absolute path for the PNG. Parent dir must exist. Write guards (same-user trust tier, but an LLM composing a path clobbers by accident far more readily than a human): the server does **not** follow a symlink at `path` (one there is `invalid_params`, with or without `overwrite`. The transports differ here: over `--ws` it is `mandalactl` that writes the file, and there a link at `path` leads to the file written — an existing one is replaced given `overwrite=true`, the link stays a link, and the sidecar, named after `path` as typed, sits beside the link; see [Client](#client-mandalactl)), and refuses to overwrite an existing file **outside** the per-session artifacts dir unless `overwrite: true` is set — an unset `overwrite` hitting an existing external file (or an existing sidecar beside it) is `invalid_params`, and nothing is written. The write is atomic: a failure leaves whatever was at `path` as it was. |
 | `overwrite` | boolean | `false` | Allow overwriting an existing file outside the artifacts dir. Inside the artifacts dir, overwrite is always allowed. Only valid with `path`. |
 | `width`, `height` | integer | current surface size | The view's size, in window pixels; sent together. Camera center and zoom are preserved, so a larger view shows more canvas. Each side must lie in `1..=16384`, and the image (`width × height × scale²`) must not exceed **67,108,864** pixels (64 Mpx, ~8K square) nor the GPU's largest texture side; a request over any bound is `invalid_params`, never a best-effort giant allocation (degrade-don't-crash — an offscreen texture is a real GPU allocation). |
 | `region` | object | — | `{"x","y","w","h"}` in the `space` coordinate space, `w` and `h` positive: frame this rect instead of the current camera view. `width`/`height` still set the view's size; the aspect rule below governs mismatches. A region so large it would need a zoom below the minimum (`0.05`) is `invalid_params` (it could not be shown whole); one so small it needs more than the maximum (`5.0`) is framed at the maximum, still whole. |
@@ -2579,15 +2579,22 @@ a client does:
   requires the path, takes `path` and `overwrite` off the request, and
   writes the PNG the page returns inline — and its sidecar, as
   `<path>.geometry.json` — through the native writer (`guarded_file`),
-  with one difference the command line earns: the path is the
-  client's own, so a symlink at either path leads to the file written,
-  as for `maptool export` (a dangling one is refused). An existing file,
-  the one a link leads to included, is refused unless `overwrite=true`,
-  which replaces it and leaves a link a link; and the write is atomic
-  (a temp file of this write's own beside it, synced, then moved or
-  linked into place), so a failure leaves what was there. A refusal is
-  exit `1`, and the
-  capture may be repeated; its output,
+  with one difference the command line earns: the path is the client's
+  own, so a symlink at either path leads to the file written, as for
+  `maptool export` (a dangling one is refused), where a native app over
+  `--ipc` refuses every link. The sidecar's name follows the path as
+  typed: through a link, the image goes to the file the link leads to
+  and the sidecar beside the link, so whoever opens the image by the
+  name they typed finds its sidecar by that name. An existing file, the
+  one a link leads to included, is refused unless `overwrite=true`,
+  which replaces it and leaves a link a link. The PNG's file, and the
+  sidecar's unless `sidecar=false`, are looked at before the capture is
+  requested, so a write that would be refused sends nothing (exit `1`,
+  the message ending "(nothing was sent)"). The write is atomic (a temp
+  file of this write's own beside it, synced, then moved or linked into
+  place), so a failure leaves what was there; a file that appeared
+  during the capture is refused at the write, before either file is
+  written, also exit `1`, and the capture may be repeated. The output,
   `--json` included, then names `path` and `sidecar_path` as a native
   reply does, in place of `png_base64` and `sidecar`. A `rendered: false`
   reply writes nothing. The framing parameters are sent as given, for

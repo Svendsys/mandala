@@ -328,6 +328,17 @@ red instead of quietly shrinking the suite (§T13.4). An agent
 container gets lavapipe through the apt-over-HTTPS recipe in the
 `mandala-drive` skill.
 
+**Two tests outside the GPU tier keep the same contract.**
+`test_an_mp4_is_made_when_ffmpeg_is_on_the_host` in `mandalactl` runs
+the host's `ffmpeg`, and the no-hard-link test in `guarded_file`
+builds an `LD_PRELOAD` shim with the host's C compiler. Without what
+it needs, each prints a `SKIPPED:` note and passes having proved
+nothing. `MANDALA_REQUIRE_FFMPEG` and `MANDALA_REQUIRE_CC` turn those
+skips into failures; CI's Linux job installs `ffmpeg` and sets both,
+so a runner image that lost its compiler goes red too. Neither crate
+depends on baumhard, so each writes its note as `test_skip` does,
+through the stderr handle, without calling it.
+
 **Assertions are on state, never on pixels.** The document's bytes
 (`Document::save_json`), the history, the glyph layers, what a sync
 applied to the renderer (its apply log, the camera, the status line),
@@ -471,12 +482,12 @@ re-litigate them without a strong reason.
   `mandala`, `baumhard`, `guarded_file`, `mandala_derive`, `maptool`,
   `mandalactl`, and the generated `workspace-hack`, which has no tests
   (#284) — then a test count, then the bench-target type-check and
-  the wasm32 type-check gate. Read that order literally: the count prints where the
-  *suite* ends, not where the run does, so a `== N tests passed ==`
-  scrolling past still has two gates to clear. It is a convenience
-  either way and cannot fail the run. The wasm32 gate is skipped
-  with a note when the target is not installed, so it is
-  unconditional in CI (which installs it) and conditional locally.
+  the wasm32 type-check gate. Read that order literally: the count
+  prints where the *suite* ends, not where the run does, so a
+  `== N tests passed ==` scrolling past still has two gates to clear.
+  It is a convenience either way and cannot fail the run. The wasm32
+  gate is skipped with a note when the target is not installed, so it
+  is unconditional in CI (which installs it) and conditional locally.
   It runs `cargo test --workspace` rather than a list of `-p` flags,
   on purpose: the list it used to carry named three of the four
   members and so never ran `mandala_derive`'s tests at all.
@@ -487,11 +498,11 @@ re-litigate them without a strong reason.
 - `./test.sh --lint` — also runs `cargo fmt --all -- --check`
   (hard: the tree stays formatted, #130), clippy on the host target
   and on wasm32-unknown-unknown (hard at a zero-warning baseline,
-  run with `-D warnings`), and two `cargo doc` legs — the whole workspace with
-  private items on the host, and mandala on wasm32 — each hard at a
-  zero-warning baseline (#134). A hard-gate failure prints a
-  `FAILED:` line inline and the run exits non-zero at the end, after
-  every gate has reported.
+  run with `-D warnings`), and two `cargo doc` legs — the whole
+  workspace with private items on the host, and mandala and
+  guarded_file on wasm32 — each hard at a zero-warning baseline
+  (#134). A hard-gate failure prints a `FAILED:` line inline and the
+  run exits non-zero at the end, after every gate has reported.
 - **The test profile is lean (#283).** `cargo test` builds with the
   `test` profile, which inherits `[profile.dev]` in the root
   `Cargo.toml`: our own crates carry `line-tables-only` debug info

@@ -42,19 +42,36 @@
 //! published the guarded way, and the directory, only ever this
 //! write's, is removed after.
 //!
-//! **Windows.** The same guarantees, by the same calls: `create_new`
-//! is `CREATE_NEW` with `FILE_FLAG_OPEN_REPARSE_POINT` (std sets the
-//! flag for `create_new`), so a symlink at the temp name is opened as
-//! itself, exists, and is refused rather than followed; a new directory
-//! is `CreateDirectoryW`, which fails on any existing name; `rename` is
-//! `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`, which replaces a
-//! link at the destination rather than writing through it; a hard link
-//! is `CreateHardLinkW`, which fails on an existing name. Two
-//! differences: a file another process holds open cannot be replaced
-//! (the write is refused and the temp file removed), and the private
-//! directory takes its parent's permissions rather than mode `0700`.
-//! Planting a symlink there needs a privilege a test cannot count on,
-//! so the symlink tests are Unix-only; the rest run on both.
+//! **Windows.** The same guarantees, by the matching Win32 calls:
+//! `create_new` is `CREATE_NEW` with `FILE_FLAG_OPEN_REPARSE_POINT`
+//! (std sets the flag for `create_new`), so a symlink at the temp name
+//! is opened as itself, exists, and is refused rather than followed; a
+//! new directory is `CreateDirectoryW`, which fails on any existing
+//! name; `rename` is `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`,
+//! which replaces a link at the destination rather than writing through
+//! it; a hard link is `CreateHardLinkW`, which fails on an existing
+//! name. Two differences. Replacing a file another process holds open
+//! may be refused, when that process opened it without
+//! `FILE_SHARE_DELETE`: where `MoveFileExW` is denied, std's `rename`
+//! tries once more with `FILE_RENAME_FLAG_POSIX_SEMANTICS`, which
+//! replaces a file that is open elsewhere only if its holders share
+//! delete. (That is std's source at the pinned toolchain and Windows'
+//! documentation; no test here holds a destination open.) A refused
+//! replace removes the temp file and leaves the destination as it was.
+//! And the private directory takes its parent's permissions rather
+//! than mode `0700`. Planting a symlink there needs a privilege a test
+//! cannot count on, so the symlink tests are Unix-only; the rest run
+//! on both.
+//!
+//! **What a write leaves behind when it does not finish.** A write that
+//! is refused or fails removes what it created, and so does a
+//! [`PrivateDir`] whose holder panics. A process killed outright
+//! (`SIGKILL`, or `SIGINT` where nothing handles it, as in
+//! `mandalactl`) runs no cleanup, and neither does a producer that
+//! panics inside [`publish`]: the `.mandala-write-<pid>-<n>.tmp` file,
+//! or the `.d` directory and what was written in it, stays beside the
+//! destination. It is never the destination, a later write passes over
+//! its name, and removing it is by hand.
 //!
 //! The browser has no files, and no process id for the temp file's
 //! name: there, [`publish`] and [`PrivateDir::beside`] refuse every
@@ -72,8 +89,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 #[derive(Debug, PartialEq)]
 pub enum PublishRefusal {
     /// The path is the caller's mistake — a symlink, a directory, an
-    /// existing file without `overwrite`, a parent that does not exist.
-    /// The message names it.
+    /// existing file without `overwrite`, a parent that does not exist
+    /// or whose every temp name is taken. The message names it.
     Invalid(String),
     /// The write itself failed: the disk, permissions, the producer.
     Internal(String),
@@ -107,7 +124,8 @@ static TEMP_SEQUENCE: AtomicU32 = AtomicU32::new(0);
 /// How many temp names a write tries before it gives up. A name that is
 /// taken — a crashed process's leftover under a reused pid, or a name
 /// someone planted — is passed over for the next; only this many taken
-/// in a row is a refusal.
+/// in a row is a refusal, and an `Invalid` one: the directory's contents
+/// stopped the write, not the disk ([`claim_refusal`]).
 const TEMP_ATTEMPTS: u32 = 64;
 
 /// Create `path` as a new file for writing: exclusively (it must not
@@ -130,13 +148,13 @@ fn create_exclusive(path: &Path) -> std::io::Result<std::fs::File> {
 /// The first of [`TEMP_ATTEMPTS`] names `.mandala-write-<pid>-<n><suffix>`
 /// in `parent` that `make` can create, and what `make` made of it. A
 /// name `make` finds taken (`AlreadyExists`) is skipped and never
-/// touched; any other error ends the search.
+/// touched; any other error ends the search. `AlreadyExists` from here
+/// therefore means every name was taken.
 fn claim<T>(
     parent: &Path,
     suffix: &str,
     make: impl Fn(&Path) -> std::io::Result<T>,
 ) -> std::io::Result<(PathBuf, T)> {
-    let mut last = None;
     for _ in 0..TEMP_ATTEMPTS {
         let name = parent.join(format!(
             ".mandala-write-{}-{}{suffix}",
@@ -145,11 +163,35 @@ fn claim<T>(
         ));
         match make(&name) {
             Ok(made) => return Ok((name, made)),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = Some(e),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e),
         }
     }
-    Err(last.unwrap_or_else(|| std::io::ErrorKind::AlreadyExists.into()))
+    Err(std::io::ErrorKind::AlreadyExists.into())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+/// Why [`claim`] made nothing in `parent`, as the refusal of a write to
+/// `destination`: `what` is the thing it was making ("a temp file").
+/// A missing directory, and every name taken, are the caller's to fix
+/// (`Invalid`); anything else is the system's (`Internal`). The
+/// every-name-taken message names the entries in the way as a pattern
+/// in their directory, for whoever clears them.
+fn claim_refusal(e: std::io::Error, parent: &Path, destination: &Path, what: &str) -> PublishRefusal {
+    let shown = destination.display();
+    match e.kind() {
+        std::io::ErrorKind::NotFound => {
+            PublishRefusal::Invalid(format!("the parent directory of `{shown}` does not exist"))
+        }
+        std::io::ErrorKind::AlreadyExists => PublishRefusal::Invalid(format!(
+            "could not create {what} beside `{shown}`: all {TEMP_ATTEMPTS} names tried (`{}`) are taken, and \
+             none was touched",
+            parent
+                .join(format!(".mandala-write-{}-*", std::process::id()))
+                .display()
+        )),
+        _ => PublishRefusal::Internal(format!("could not create {what} beside `{shown}`: {e}")),
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -240,12 +282,8 @@ pub fn publish(
 ) -> Result<u64, PublishRefusal> {
     let shown = path.display();
     let parent = checked_parent(path, overwrite)?;
-    let (temp, file) = claim(parent, ".tmp", create_exclusive).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => {
-            PublishRefusal::Invalid(format!("the parent directory of `{shown}` does not exist"))
-        }
-        _ => PublishRefusal::Internal(format!("could not create a temp file beside `{shown}`: {e}")),
-    })?;
+    let (temp, file) =
+        claim(parent, ".tmp", create_exclusive).map_err(|e| claim_refusal(e, parent, path, "a temp file"))?;
     let discard_temp = || {
         // Best effort: the refusal is what matters, and a temp file
         // that outlives it is named `.mandala-write-*.tmp`.
@@ -304,10 +342,22 @@ fn commit(temp: &Path, path: &Path, overwrite: bool) -> Result<(), PublishRefusa
 /// own directory, so the publish is a rename or a link on one
 /// filesystem. It is created exclusively — a name already taken, by a
 /// file, a directory or a symlink, is passed over for the next and left
-/// as it is — and on Unix with mode `0700`, so no other user can plant
-/// anything inside it. Dropping it removes it and everything in it,
-/// whether the producer succeeded or failed; it only ever holds a
-/// directory this value created.
+/// as it is — and on Unix with mode `0700`, so no other user can put
+/// anything inside it. That keeps them out of what the producer opens
+/// only where they also cannot rename entries in the destination's
+/// directory: a parent that is sticky (`/tmp`) or that its owner alone
+/// can write to (a home directory). In a directory other users can
+/// rename in, they can move this directory aside and put one of their
+/// own at its name; but there the destination itself is theirs to
+/// replace, whatever any writer does.
+///
+/// Dropping it removes it and everything in it, whether the producer
+/// succeeded or failed, and on a panic too (the unwind runs `Drop`); it
+/// only ever holds a directory this value created. A process killed
+/// outright (`SIGKILL`, or `SIGINT` where nothing handles it) runs no
+/// `Drop`: the `.mandala-write-<pid>-<n>.d` directory and what the
+/// producer had written in it stay beside the destination, where a
+/// later write passes over the name, until removed by hand.
 #[derive(Debug)]
 pub struct PrivateDir {
     path: PathBuf,
@@ -326,14 +376,8 @@ impl PrivateDir {
         let (Some(parent), Some(_)) = (destination.parent(), destination.file_name()) else {
             return Err(PublishRefusal::Invalid(format!("`{shown}` names no file")));
         };
-        let (path, ()) = claim(parent, ".d", create_private_dir).map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => {
-                PublishRefusal::Invalid(format!("the parent directory of `{shown}` does not exist"))
-            }
-            _ => PublishRefusal::Internal(format!(
-                "could not create a private directory beside `{shown}`: {e}"
-            )),
-        })?;
+        let (path, ()) = claim(parent, ".d", create_private_dir)
+            .map_err(|e| claim_refusal(e, parent, destination, "a private directory"))?;
         Ok(Self { path })
     }
 
@@ -508,12 +552,15 @@ pub fn publish(
     )))
 }
 
+/// How the refusal of an existing file ends: the remedy, in the words of
+/// the app's `overwrite` parameter. Public so a caller whose option is
+/// spelled otherwise (`mandalactl`'s `overwrite=true`) can put the
+/// remedy in its own words without copying the rest of the message.
+pub const OVERWRITE_HINT: &str = "set `overwrite` to replace it";
+
 /// The refusal for an existing file the caller did not ask to replace.
 fn exists(path: &Path) -> PublishRefusal {
-    PublishRefusal::Invalid(format!(
-        "`{}` exists; set `overwrite` to replace it",
-        path.display()
-    ))
+    PublishRefusal::Invalid(format!("`{}` exists; {OVERWRITE_HINT}", path.display()))
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -734,6 +781,100 @@ mod tests {
         );
         assert_eq!(std::fs::read_to_string(&planted).expect("kept"), "precious");
         assert_eq!(std::fs::read_to_string(&path).expect("written"), "{}");
+    }
+
+    /// **A file that appears after the up-front look is not replaced**
+    /// without `overwrite`: the producer itself creates the destination
+    /// while it writes, the publish (`link(2)`, `CreateHardLinkW`) finds
+    /// the name taken, and the write is refused with that file kept and
+    /// no temp file left. With `overwrite` the same write replaces it.
+    ///
+    /// Control: a `commit` that always renames replaces the file that
+    /// appeared.
+    #[test]
+    fn test_a_file_that_appears_during_the_write_is_not_replaced() {
+        let _serial = serial();
+        let scratch = Scratch::new("appears");
+        let dir = &scratch.0;
+        let path = dir.join("model.json");
+        let appears_then_writes = |out: &mut dyn Write| {
+            std::fs::write(&path, "appeared").map_err(|e| e.to_string())?;
+            out.write_all(b"ours").map_err(|e| e.to_string())
+        };
+        let refused = publish(&path, false, appears_then_writes);
+        assert!(
+            matches!(&refused, Err(PublishRefusal::Invalid(m)) if m.contains("exists")),
+            "a file that appeared meanwhile is refused: {refused:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).expect("kept"), "appeared");
+        assert_eq!(names_in(dir), vec!["model.json"], "no temp file is left behind");
+
+        std::fs::remove_file(&path).expect("clear");
+        assert_eq!(publish(&path, true, appears_then_writes), Ok(4));
+        assert_eq!(std::fs::read_to_string(&path).expect("replaced"), "ours");
+        assert_eq!(names_in(dir), vec!["model.json"]);
+    }
+
+    /// **Every temp name taken is a refusal, and an `Invalid` one**
+    /// (ruling B38.1, addendum §3): all [`TEMP_ATTEMPTS`] names the next
+    /// write tries — for `publish`'s temp file and for a private
+    /// directory — are planted, and the write is refused saying the
+    /// names are taken and where they are, with nothing written and
+    /// every planted entry left byte for byte.
+    ///
+    /// Controls: a `claim` with no bound (`loop`), or one that tries a
+    /// name more than [`TEMP_ATTEMPTS`], finds a free name and writes;
+    /// one that tries a name fewer is caught by the count of names
+    /// tried; a refusal reported as `Internal`, or one that carries the
+    /// system's bare "File exists", fails the message.
+    #[test]
+    fn test_every_temp_name_taken_is_refused_and_touches_nothing() {
+        let _serial = serial();
+        let scratch = Scratch::new("all-taken");
+        let dir = &scratch.0;
+        for suffix in [".tmp", ".d"] {
+            let next = TEMP_SEQUENCE.load(Ordering::Relaxed);
+            let planted: Vec<PathBuf> = (next..next + TEMP_ATTEMPTS)
+                .map(|n| temp_name(dir, n, suffix))
+                .collect();
+            for (i, name) in planted.iter().enumerate() {
+                std::fs::write(name, format!("leftover {i}")).expect("plant");
+            }
+            let dest = dir.join("out.json");
+            let (refused, what) = match suffix {
+                ".tmp" => (publish(&dest, false, bytes("{}")).map(|_| ()), "a temp file"),
+                _ => (PrivateDir::beside(&dest).map(|_| ()), "a private directory"),
+            };
+            assert_eq!(
+                refused,
+                Err(PublishRefusal::Invalid(format!(
+                    "could not create {what} beside `{}`: all {TEMP_ATTEMPTS} names tried (`{}`) are taken, \
+                     and none was touched",
+                    dest.display(),
+                    dir.join(format!(".mandala-write-{}-*", std::process::id()))
+                        .display()
+                ))),
+                "{suffix}"
+            );
+            assert!(!dest.exists(), "{suffix}: nothing was written");
+            assert_eq!(
+                TEMP_SEQUENCE.load(Ordering::Relaxed),
+                next + TEMP_ATTEMPTS,
+                "{suffix}: the write tried exactly {TEMP_ATTEMPTS} names"
+            );
+            for (i, name) in planted.iter().enumerate() {
+                assert_eq!(
+                    std::fs::read_to_string(name).expect("kept"),
+                    format!("leftover {i}"),
+                    "{suffix}: {} is left as it was",
+                    name.display()
+                );
+            }
+            assert_eq!(names_in(dir).len(), planted.len(), "{suffix}: nothing was added");
+            for name in &planted {
+                std::fs::remove_file(name).expect("clear");
+            }
+        }
     }
 
     /// A verbatim Windows path loses the prefix only the system needs,
@@ -1009,6 +1150,26 @@ mod tests {
         assert_eq!(names_in(dir), vec!["out.mp4"]);
     }
 
+    /// **A panic removes the private directory too**: the unwind drops
+    /// it, with what the producer had written inside.
+    ///
+    /// Control: a `Drop` that removes nothing leaves the directory.
+    #[test]
+    fn test_a_private_dir_is_removed_when_its_holder_panics() {
+        let _serial = serial();
+        let scratch = Scratch::new("private-panic");
+        let dir = &scratch.0;
+        let dest = dir.join("out.mp4");
+        let caught = std::panic::catch_unwind(|| {
+            let private = PrivateDir::beside(&dest).expect("a private directory");
+            std::fs::write(private.path().join("video.mp4"), "half").expect("the producer writes");
+            assert_eq!(names_in(dir).len(), 1, "precondition: the directory is there");
+            panic!("the holder panics (this test's own)");
+        });
+        assert!(caught.is_err(), "precondition: the holder panicked");
+        assert_eq!(names_in(dir), Vec::<String>::new());
+    }
+
     /// `SKIPPED: {what}` on the process's stderr, past libtest's capture
     /// (the `Write` impl on the handle, not `eprintln!`), where
     /// `./test.sh` counts it — the shape of baumhard's
@@ -1017,7 +1178,18 @@ mod tests {
     fn note_skipped(what: &str) {
         let mut stderr = std::io::stderr().lock();
         let _ = writeln!(stderr, "SKIPPED: {what}");
+        let _ = stderr.flush();
     }
+
+    /// Set to make a missing C compiler a failure rather than a skip, as
+    /// `MANDALA_REQUIRE_GPU` does for a missing adapter. CI sets it.
+    #[cfg(target_os = "linux")]
+    const REQUIRE_CC: &str = "MANDALA_REQUIRE_CC";
+
+    /// Set by the outer half of the no-hard-link test for its child, so
+    /// the inner half knows the shim is meant to be loaded.
+    #[cfg(target_os = "linux")]
+    const SHIM_ENV: &str = "GUARDED_FILE_NO_LINK_SHIM";
 
     /// A filesystem without hard links, in miniature: `link(2)` and
     /// `linkat(2)` fail with `EPERM`, as on FAT and some network
@@ -1036,11 +1208,14 @@ int linkat(int fa, const char *a, int fb, const char *b, int f) {
     /// B38.1 §5). The half that needs the filesystem to refuse links runs
     /// in a child run of this test binary with [`NO_LINK_SHIM`] preloaded,
     /// built here with the host's C compiler; with none (`cc` or `gcc`)
-    /// the test says `SKIPPED:` and proves nothing. CI's Linux runners
-    /// carry `gcc`. Linux only: `LD_PRELOAD` is the glibc loader's.
+    /// the test says `SKIPPED:` and proves nothing, unless
+    /// [`REQUIRE_CC`] is set, as CI sets it, and then it fails. Linux
+    /// only: `LD_PRELOAD` is the glibc loader's.
     ///
-    /// Control: `commit` without the fallback arm (a failed link is the
-    /// refusal) turns the child, and so this test, red.
+    /// Controls: `commit` without the fallback arm (a failed link is the
+    /// refusal) turns the child, and so this test, red; so does a
+    /// fallback that renames without looking (`Err(_) => rename`), at
+    /// the file that appears during the write.
     #[cfg(target_os = "linux")]
     #[test]
     fn test_without_hard_links_a_write_falls_back_to_a_check_and_a_rename() {
@@ -1057,10 +1232,16 @@ int linkat(int fa, const char *a, int fb, const char *b, int f) {
                 .is_ok_and(|status| status.success())
         });
         if !built {
-            note_skipped(
-                "guarded_file: no C compiler (cc, gcc) to build the no-hard-link shim; the fallback \
-                 for a filesystem without hard links was not tested",
+            assert!(
+                std::env::var_os(REQUIRE_CC).is_none(),
+                "no C compiler (cc, gcc) built the no-hard-link shim, and {REQUIRE_CC} is set, so \
+                 this test may not skip"
             );
+            note_skipped(&format!(
+                "guarded_file: no C compiler (cc, gcc) to build the no-hard-link shim; the fallback \
+                 for a filesystem without hard links was not tested. Install one, or set \
+                 {REQUIRE_CC} to make this a failure."
+            ));
             return;
         }
         let child = std::process::Command::new(std::env::current_exe().expect("this test binary"))
@@ -1071,6 +1252,7 @@ int linkat(int fa, const char *a, int fb, const char *b, int f) {
                 "--nocapture",
             ])
             .env("LD_PRELOAD", &shim)
+            .env(SHIM_ENV, &shim)
             .output()
             .expect("the child run");
         let said = format!(
@@ -1086,10 +1268,21 @@ int linkat(int fa, const char *a, int fb, const char *b, int f) {
     }
 
     /// The inner half of the test above, run only by it, under the shim.
+    /// Reached any other way (`--ignored`, `--include-ignored`) it has no
+    /// shim and nothing to prove, and says so instead of failing on its
+    /// precondition.
     #[cfg(target_os = "linux")]
     #[test]
     #[ignore = "run by test_without_hard_links_a_write_falls_back_to_a_check_and_a_rename, under LD_PRELOAD"]
     fn test_without_hard_links_inner_half() {
+        if std::env::var_os(SHIM_ENV).is_none() {
+            note_skipped(
+                "guarded_file: test_without_hard_links_inner_half runs only as the child of \
+                 test_without_hard_links_a_write_falls_back_to_a_check_and_a_rename, which \
+                 preloads the no-hard-link shim",
+            );
+            return;
+        }
         let _serial = serial();
         let scratch = Scratch::new("nolink");
         let dir = &scratch.0;
@@ -1115,6 +1308,27 @@ int linkat(int fa, const char *a, int fb, const char *b, int f) {
             "{refused:?}"
         );
         assert_eq!(std::fs::read_to_string(&path).expect("kept"), "{}");
+
+        // The fallback's own no-clobber half: a file that appears at the
+        // destination after the up-front look, while the producer
+        // writes, is not replaced by the fallback's rename, and the
+        // refused write's temp file is removed.
+        let appeared = dir.join("appeared.json");
+        let refused = publish(&appeared, false, |out| {
+            std::fs::write(&appeared, "appeared").map_err(|e| e.to_string())?;
+            out.write_all(b"ours").map_err(|e| e.to_string())
+        });
+        assert!(
+            matches!(&refused, Err(PublishRefusal::Invalid(m)) if m.contains("exists")),
+            "a file that appeared meanwhile is refused: {refused:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&appeared).expect("kept"),
+            "appeared",
+            "the file that appeared is kept"
+        );
+        assert_eq!(names_in(dir), vec!["appeared.json", "model.json"]);
+        std::fs::remove_file(&appeared).expect("clear");
 
         let dest = dir.join("out.mp4");
         let private = PrivateDir::beside(&dest).expect("a private directory");

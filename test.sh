@@ -24,15 +24,15 @@ Usage: ./test.sh [--coverage] [--lint] [--bench] [--help]
   --coverage   Run the suite under cargo-llvm-cov and emit HTML + LCOV.
   --lint       Also run cargo fmt --check, cargo clippy and cargo doc.
                fmt, both clippy legs and both doc legs (host:
-               --workspace with private items; wasm32: -p mandala)
-               are hard gates: their baselines are zero (#130, #134
-               for fmt and doc; clippy followed once its warnings were
-               cleared), so a regression prints a FAILED: line and the
-               run exits non-zero at the end, after every other gate
-               has reported. clippy runs with -D warnings, because
-               cargo clippy exits 0 on warnings. fmt runs once —
-               rustfmt parses rather than compiles, so it is
-               target-independent.
+               --workspace with private items; wasm32: -p mandala
+               -p guarded_file) are hard gates: their baselines are
+               zero (#130, #134 for fmt and doc; clippy followed once
+               its warnings were cleared), so a regression prints a
+               FAILED: line and the run exits non-zero at the end,
+               after every other gate has reported. clippy runs with
+               -D warnings, because cargo clippy exits 0 on warnings.
+               fmt runs once — rustfmt parses rather than compiles, so
+               it is target-independent.
                clippy and doc run twice, on the host target *and* on
                wasm32-unknown-unknown: a host-target compile drops
                everything under #[cfg(target_arch = "wasm32")], so the
@@ -134,18 +134,20 @@ if [ "$LINT" -eq 1 ]; then
     # form that resolves on both targets), so the expected count is 0
     # and this leg is as hard as the host legs above (#134).
     #
-    # `-p mandala`, not `--workspace`: baumhard cannot be documented
-    # standalone for wasm32 — its `rand` -> `getrandom` edge needs
-    # the `wasm_js` feature that only the root manifest declares (see
-    # the getrandom note in Cargo.toml) — and maptool, mandalactl and
-    # mandala_derive are native-only tools with no wasm32 half to
-    # document. mandala is the crate that carries the
-    # #[cfg(target_arch = "wasm32")] modules. Stated honestly: if
-    # baumhard ever grows a wasm32-gated doc link, no leg checks it.
+    # `-p mandala -p guarded_file`, not `--workspace`: baumhard cannot
+    # be documented standalone for wasm32 — its `rand` -> `getrandom`
+    # edge needs the `wasm_js` feature that only the root manifest
+    # declares (see the getrandom note in Cargo.toml) — and maptool,
+    # mandalactl and mandala_derive are native-only tools with no
+    # wasm32 half to document. mandala is the crate that carries the
+    # #[cfg(target_arch = "wasm32")] modules, and guarded_file has the
+    # browser's stubs of its writer, with intra-doc links of their own.
+    # Stated honestly: if baumhard ever grows a wasm32-gated doc link,
+    # no leg checks it.
     echo "== doc, wasm32-unknown-unknown (hard) =="
-    RUSTDOCFLAGS="-D warnings" cargo doc -p mandala --no-deps --document-private-items \
+    RUSTDOCFLAGS="-D warnings" cargo doc -p mandala -p guarded_file --no-deps --document-private-items \
       --target wasm32-unknown-unknown 2>&1 \
-      || { echo "FAILED (exit $?): cargo doc -p mandala, wasm32 — this gate holds a zero baseline (#134)"; LINT_FAILED=1; }
+      || { echo "FAILED (exit $?): cargo doc -p mandala -p guarded_file, wasm32 — this gate holds a zero baseline (#134)"; LINT_FAILED=1; }
   else
     echo "== clippy + doc, wasm32-unknown-unknown =="
     echo "(wasm32-unknown-unknown target not installed — skipping. Install with:"

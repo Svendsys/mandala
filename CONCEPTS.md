@@ -3121,9 +3121,9 @@ line of which matches through a command and replaces its spans as one
 changes — then prints the map, writes it back (`-i`, through
 `format::file::write`, as the app's save does: a link is resolved to
 its real file, which must itself be a `.mandala.json`, and that file
-is replaced atomically through `guarded_file`, re-exported as baumhard's `util::guarded_file`) or prints
-what `-i` would change in the file on disk as a diff (`--dry-run`).
-There is no `convert`: there is no older format to convert from.
-`maptool --help` is the reference.
+is replaced atomically through `guarded_file`, re-exported as
+baumhard's `util::guarded_file`) or prints what `-i` would change in
+the file on disk as a diff (`--dry-run`). There is no `convert`: there
+is no older format to convert from. `maptool --help` is the reference.
 
 ---

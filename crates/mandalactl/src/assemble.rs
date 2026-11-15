@@ -44,6 +44,7 @@ use std::process::Command;
 use serde_json::{json, Value};
 
 use crate::cli::Invocation;
+use crate::destination::Destination;
 use crate::params::{tokenize, Token};
 use crate::render;
 use crate::run::{Exit, Io};
@@ -566,11 +567,17 @@ pub fn ffmpeg_list(dir: &Path, manifest: &Manifest) -> String {
 
 /// `ffmpeg`'s arguments: read `list`, write `out` as H.264 in an MP4
 /// that any player opens (yuv420p, even sides, the index up front) at
-/// `fps`, scaled to `scale_to`'s width when given. `out` is a name in a
-/// directory this run created for `ffmpeg` alone
-/// ([`guarded_file::PrivateDir`]), where nothing is yet, so `-n`: were
-/// something there, `ffmpeg` would refuse rather than replace it. Its
-/// format is named because its name does not say.
+/// `fps`, scaled to `scale_to`'s width when given. Its format is named
+/// because its name does not say.
+///
+/// `out` is a name in a directory this run created for `ffmpeg` alone
+/// ([`guarded_file::PrivateDir`]), where nothing is yet. Safety rests
+/// wholly on that directory, not on a flag: `ffmpeg` is not trusted to
+/// refuse. `-n` in place of `-y` only states what is true of this
+/// call, that there is nothing to overwrite. Given an output that
+/// exists, `ffmpeg -n` (6.1.1) writes nothing and exits `0`, which
+/// reads as success; given a dangling symlink, it follows the link and
+/// writes the video into the file the link names.
 pub fn ffmpeg_args(list: &Path, out: &Path, fps: u32, scale_to: Option<u32>) -> Vec<String> {
     let mut filters = Vec::new();
     if let Some(width) = scale_to {
@@ -660,23 +667,20 @@ fn run_ffmpeg(dir: &Path, manifest: &Manifest, private: &Path, options: &Options
 /// written, as for `maptool export`: it is resolved to its real file
 /// first, and a dangling link, or one to something that is not a file,
 /// is refused (ruling B38.1 §6). That real file is never replaced
-/// unless `overwrite` (the link, if any, stays a link), and is refused
-/// before any frame is read. The GIF is written to a temp file of this
-/// run's beside it and moved into place; `ffmpeg` writes inside a
-/// directory this run created for it alone, and its video is moved
-/// into place the same way. A failure leaves the real file as it was,
-/// and removes only what this run created.
+/// unless `overwrite` (the link, if any, stays a link), and an existing
+/// one is refused before any frame is read and before `ffmpeg` runs; a
+/// refusal names the path as typed ([`Destination`]). The GIF is
+/// written to a temp file of this run's beside it and moved into place;
+/// `ffmpeg` writes inside a directory this run created for it alone,
+/// and its video is moved into place the same way. A failure leaves the
+/// real file as it was, and removes only what this run created.
 pub fn assemble(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) -> Result<Assembled, String> {
     if manifest.frames.is_empty() {
         return Err("the recording holds no frames; there is nothing to assemble".into());
     }
-    let said = |why: guarded_file::PublishRefusal| {
-        let (guarded_file::PublishRefusal::Invalid(message)
-        | guarded_file::PublishRefusal::Internal(message)) = why;
-        message
-    };
-    let real = guarded_file::real_file(out).map_err(said)?;
-    guarded_file::check(&real, options.overwrite).map_err(said)?;
+    let destination = Destination::resolve(out)?;
+    destination.check(options.overwrite)?;
+    let (real, said) = (destination.real(), |why| destination.say(why));
     let size = output_size(manifest, options);
     match options.format {
         Format::Gif => {
@@ -687,7 +691,7 @@ pub fn assemble(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) 
                 spacing_for(options.fps),
                 options.max_frames,
             );
-            let bytes = guarded_file::publish(&real, options.overwrite, |writer| {
+            let bytes = guarded_file::publish(real, options.overwrite, |writer| {
                 write_gif(dir, manifest, &plan, size, writer)
             })
             .map_err(said)?;
@@ -711,10 +715,10 @@ pub fn assemble(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) 
             // it has finished: a failure never leaves a truncated video
             // where a good one was. Dropping `private`, on either path,
             // removes the directory and only it.
-            let private = guarded_file::PrivateDir::beside(&real).map_err(said)?;
+            let private = guarded_file::PrivateDir::beside(real).map_err(said)?;
             run_ffmpeg(dir, manifest, private.path(), options)?;
             let bytes = private
-                .publish(FFMPEG_VIDEO, &real, options.overwrite)
+                .publish(FFMPEG_VIDEO, real, options.overwrite)
                 .map_err(said)?;
             Ok(Assembled {
                 out: out.to_path_buf(),
@@ -1442,7 +1446,7 @@ mod tests {
         std::fs::write(&precious, "precious").expect("seed");
         let refused = assemble(&dir, &manifest, &precious, &options());
         assert!(
-            matches!(&refused, Err(m) if m.contains("exists") && m.contains("`overwrite`")),
+            matches!(&refused, Err(m) if m.contains("exists; pass overwrite=true")),
             "{refused:?}"
         );
         assert_eq!(std::fs::read_to_string(&precious).expect("read"), "precious");
@@ -1572,10 +1576,19 @@ mod tests {
         assert!(unscaled.contains(&"pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p".to_string()));
     }
 
-    /// With a real `ffmpeg` on the host the MP4 is made and is a video;
-    /// without one the test says so and has nothing to check (the
-    /// refusal path is tested below with a name that is certainly not
-    /// there).
+    /// Set to make a missing `ffmpeg` a failure rather than a skip, as
+    /// `MANDALA_REQUIRE_GPU` does for a missing adapter. CI sets it.
+    const REQUIRE_FFMPEG: &str = "MANDALA_REQUIRE_FFMPEG";
+
+    /// With a real `ffmpeg` on the host the MP4 is made and is a video,
+    /// and the directory `ffmpeg` worked in is gone: the one test that
+    /// runs the real program over what it is handed (`-n`, the frame
+    /// list and the video inside the private directory). Without one it
+    /// fails when [`REQUIRE_FFMPEG`] is set, and otherwise prints a
+    /// `SKIPPED:` note — through the stderr handle, past libtest's
+    /// capture, where `./test.sh` counts it, the shape of baumhard's
+    /// `util::test_skip`, which this crate does not depend on — and has
+    /// nothing to check.
     #[test]
     fn test_an_mp4_is_made_when_ffmpeg_is_on_the_host() {
         let present = Command::new("ffmpeg")
@@ -1583,7 +1596,17 @@ mod tests {
             .output()
             .is_ok_and(|o| o.status.success());
         if !present {
-            eprintln!("skipped: no `ffmpeg` on PATH (format=mp4 is the host's)");
+            assert!(
+                std::env::var_os(REQUIRE_FFMPEG).is_none(),
+                "no `ffmpeg` on PATH, and {REQUIRE_FFMPEG} is set, so this test may not skip"
+            );
+            let mut stderr = std::io::stderr().lock();
+            let _ = writeln!(
+                stderr,
+                "SKIPPED: mandalactl: no `ffmpeg` on PATH, so format=mp4 was not run end to end. \
+                 Install it, or set {REQUIRE_FFMPEG} to make this a failure."
+            );
+            let _ = stderr.flush();
             return;
         }
         let (_keep, dir) = recording("assemble-mp4", &[[255, 0, 0], [0, 255, 0]], &[0.0, 500.0], 1000.0);
@@ -1603,6 +1626,18 @@ mod tests {
         let bytes = std::fs::read(&out).expect("written");
         assert!(bytes.windows(4).any(|w| w == b"ftyp"), "an MP4 container");
         assert!(made.bytes > 0);
+        let left: Vec<String> = std::fs::read_dir(&dir)
+            .expect("readable")
+            .map(|entry| {
+                entry
+                    .expect("an entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .filter(|name| name.starts_with(".mandala-write-"))
+            .collect();
+        assert_eq!(left, Vec::<String>::new(), "the private directory is removed");
     }
 
     // — the command line —
@@ -1794,7 +1829,7 @@ mod tests {
 
         let (exit, _, err) = run_line(&["assemble", &relative], &cwd, false);
         assert_eq!(exit, Exit::CommandError, "an existing file is not clobbered");
-        assert!(err.contains("exists") && err.contains("`overwrite`"), "{err}");
+        assert!(err.contains("exists; pass overwrite=true"), "{err}");
 
         let (exit, _, err) = run_line(&["assemble", "no-such-recording"], &cwd, false);
         assert_eq!(exit, Exit::CommandError);
