@@ -188,7 +188,7 @@ impl Document {
 
     /// Refuse `journal` if accounting for it would take the document past
     /// this target's bounds. O(the journal's touches).
-    fn within_budget(&self, journal: &Journal<DocElement>) -> Result<(), ApplyError> {
+    pub(in crate::document) fn within_budget(&self, journal: &Journal<DocElement>) -> Result<(), ApplyError> {
         let limits = self.writer.limits;
         if limits.elements.is_none() && limits.bytes.is_none() {
             return Ok(());
@@ -225,7 +225,7 @@ impl Document {
 
     /// Take a closed journal back out of the tree and free what it holds:
     /// a refused request, or a journal that changed nothing.
-    pub(super) fn drop_journal(&mut self, journal: Journal<DocElement>) {
+    pub(in crate::document) fn drop_journal(&mut self, journal: Journal<DocElement>) {
         if journal.is_empty() {
             journal.discard(&mut self.tree);
             return;

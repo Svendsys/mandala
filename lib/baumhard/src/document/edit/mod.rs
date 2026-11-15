@@ -31,9 +31,9 @@
 //! edit, the field and the name, and nothing is applied.
 
 pub(crate) mod load;
-mod mentions;
-mod reach;
-mod resolve;
+pub(crate) mod mentions;
+pub(crate) mod reach;
+pub(crate) mod resolve;
 
 pub use load::{parse_edits, EditsError};
 pub use mentions::Shows;

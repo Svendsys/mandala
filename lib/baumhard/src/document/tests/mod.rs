@@ -72,6 +72,8 @@ pub mod mutation_ops_tests;
 pub mod mutation_validate_tests;
 #[cfg(test)]
 mod place_tests;
+#[cfg(test)]
+mod presentation_tests;
 pub mod resolve_tests;
 pub mod shape_tests;
 pub mod structure_tests;

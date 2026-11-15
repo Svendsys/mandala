@@ -121,7 +121,7 @@ pub(super) fn effects(
 /// [`inputs_changed`] is symmetric in its two images no reader can tell
 /// the two directions apart, so no test can observe it; an input kind
 /// that is not symmetric would make it observable.
-pub(super) fn field_inputs(
+pub(in crate::document) fn field_inputs(
     journal: &Journal<DocElement>,
     id: NodeId,
     back: bool,

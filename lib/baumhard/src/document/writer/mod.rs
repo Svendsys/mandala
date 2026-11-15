@@ -165,7 +165,12 @@ enum Settled {
 pub(crate) struct Writer {
     history: History,
     revision: u64,
-    feed: Vec<ChangeRecord>,
+    /// The change feed: every record since it was last drained.
+    pub(in crate::document) feed: Vec<ChangeRecord>,
+    /// How often the feed has been drained
+    /// ([`Document::take_changes`]): what tells the presentation layer
+    /// whether a record it left there has been read.
+    pub(in crate::document) drains: u64,
     open: Option<Open>,
     /// The bounds a change is held to: this target's
     /// ([`format::MAX_ELEMENTS`], [`format::MAX_MAP_BYTES`]).
@@ -178,6 +183,7 @@ impl Default for Writer {
             history: History::new(DEFAULT_HISTORY_LIMIT),
             revision: 0,
             feed: Vec::new(),
+            drains: 0,
             open: None,
             limits: format::LIMITS,
         }
@@ -193,13 +199,25 @@ impl Document {
     /// bracket around an open transaction — runs inside it, and none
     /// runs inside another.
     ///
-    /// It is the hook V1-D2's presentation layer goes in: revert the
-    /// active presentations, newest first, run `f`, then apply each again
-    /// at its current progress — so a history journal holds only the
-    /// change, and a presentation always sits on the map as it now
-    /// stands. Until then it runs `f`.
+    /// **The presentation layer is out of the tree while `f` runs**
+    /// (#251 §3, [`presentation::layer`](crate::document::presentation::layer)):
+    /// the instances playing on the document are written back out,
+    /// newest first, `f` runs on the map itself, and each is applied
+    /// again at its progress, oldest first. So a history journal holds
+    /// only the change, a save writes only the map, and a presentation
+    /// always sits on the map as it now stands. With no instance writing
+    /// the document, or the layer set aside
+    /// ([`Self::suspend_presentations`]), it runs `f` and nothing else.
+    ///
+    /// Cost: `f`'s, plus the layer's reach, out and back.
     fn mutate<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        f(self)
+        if !self.layer_follows_changes() {
+            return f(self);
+        }
+        let layer = self.lift_presentations();
+        let result = f(self);
+        self.restore_presentations(layer);
+        result
     }
 
     /// Apply `req`, declared by `source`, as one history entry, and
@@ -420,7 +438,19 @@ impl Document {
     /// Drain the change feed: every record since the last call, oldest
     /// first. O(1); the records are moved out.
     pub fn take_changes(&mut self) -> Vec<ChangeRecord> {
+        self.writer.drains += 1;
         std::mem::take(&mut self.writer.feed)
+    }
+
+    /// The journals of the applied history entries, oldest entry first,
+    /// each entry's in the order it wrote them: for the tests that hold
+    /// a change made under presentations to the one made without them,
+    /// image for image. No allocation.
+    pub(crate) fn applied_journals(
+        &self,
+    ) -> impl Iterator<Item = &crate::engine::journal::Journal<crate::document::element::DocElement>> + '_
+    {
+        self.writer.history.journals()
     }
 
     /// The links that lead to `node`, as the writer's index holds them,
@@ -473,7 +503,7 @@ impl Document {
 
     /// Append a record of `change` at the current revision, unless it
     /// touched nothing. O(1).
-    fn push_change(&mut self, source: ChangeSource, change: Change) {
+    pub(in crate::document) fn push_change(&mut self, source: ChangeSource, change: Change) {
         let Change {
             touched,
             removed,
@@ -497,13 +527,13 @@ impl Document {
 /// What a change has done, for its record: the four lists a
 /// [`ChangeRecord`] carries beside its source and revision.
 #[derive(Debug, Default)]
-pub(super) struct Change {
+pub(in crate::document) struct Change {
     /// [`ChangeRecord::touched`].
-    pub(super) touched: Vec<(NodeId, Touch)>,
+    pub(in crate::document) touched: Vec<(NodeId, Touch)>,
     /// [`ChangeRecord::removed`].
-    pub(super) removed: Vec<(NodeId, RemovedAddress)>,
+    pub(in crate::document) removed: Vec<(NodeId, RemovedAddress)>,
     /// [`ChangeRecord::inputs`].
-    pub(super) inputs: Vec<(NodeId, crate::document::deps::InputKind)>,
+    pub(in crate::document) inputs: Vec<(NodeId, crate::document::deps::InputKind)>,
     /// [`ChangeRecord::rows`].
-    pub(super) rows: Vec<NodeId>,
+    pub(in crate::document) rows: Vec<NodeId>,
 }

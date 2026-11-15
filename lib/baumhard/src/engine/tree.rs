@@ -343,6 +343,16 @@ impl<E: TreeElement> Tree<E> {
         self.arena.get(id).is_some() && !self.detached.contains(&id)
     }
 
+    /// The stamp of the arrangement the tree is in, as far as journals
+    /// go ([`Tree::version`]): two reads that are equal have no
+    /// journaled change, and no unjournaled structural one, standing
+    /// between them — every one made since the first was undone. What a
+    /// caller that set journals aside and wants to write them forward
+    /// again asks before it does. O(1).
+    pub(crate) fn stamp(&self) -> u64 {
+        self.version.get()
+    }
+
     /// Pre-order iterator over every descendant of [`Self::root`]
     /// (inclusive). See [`NodeId::descendants`] for iteration order.
     /// No allocation.

@@ -328,11 +328,12 @@ fn test_the_ident_counter_starts_above_every_ident_the_map_names() {
 fn test_a_loaded_map_starts_its_counter_through_the_one_hook() {
     use crate::document::ids::{first_free_ident, idents_named_by};
     use crate::document::tests::format_text::{map_with, node_of};
-    // A map whose verbs and presentations name no node yet (their
-    // targets arrive with V1-D1–D3): the counter is one above the
-    // highest node, through the same hook that will count them.
+    // A map whose verbs name no node yet (their targets arrive with
+    // V1-D3) and whose presentation names none, being started on the
+    // nodes it plays on: the counter is one above the highest node,
+    // through the same hook that will count a verb's.
     let json = map_with(
-        r#","verbs":[{"id":"v","name":"V"}],"presentations":[{"id":"p","name":"P"}]"#,
+        r#","verbs":[{"id":"v","name":"V"}],"presentations":[{"id":"p","name":"P","play":"hold","target":"node","mutations":[]}]"#,
         &format!("{},{}", node_of(7, ""), node_of(3, "")),
     );
     let doc = crate::document::format::load(&json).expect("the map loads");

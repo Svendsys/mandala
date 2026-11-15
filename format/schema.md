@@ -151,15 +151,16 @@ branches that each added a node.
 |---|---|
 | a node's `parent` | on the chain, as above |
 | a link's `to` | names a node anywhere in the list but the link's own; a later node is fine |
-| a verb or presentation target | not at load: a missing node is skipped with a warning when it runs (D27) |
+| a verb target | not at load: a missing node is skipped with a warning when it runs (D27) |
 | IPC, the console, `mandalactl` | through the document's ident index |
 
 The counter that gives a new node its id is not saved; a loaded map
 starts it one above the highest node id in the list **and** above every
-node id a verb or a presentation names, so a node deleted while
-something still names it never has its id given to a new node after a
-reload. (Verbs and presentations carry no targets yet; a node's
-`parent` and a link's `to` always name a node in the list.)
+node id a verb names, so a node deleted while something still names it
+never has its id given to a new node after a reload. (Verbs carry no
+targets yet, and a presentation names no node: it plays on the nodes it
+is started on. A node's `parent` and a link's `to` always name a node
+in the list.)
 
 ## How a file is written
 
@@ -262,7 +263,7 @@ built-in value, unless the table gives a default of its own.
 | `palettes` | object: name to array of [palette groups](#palette-group) | no | none | The palettes. |
 | `defaults` | [defaults](#defaults) | no | nothing set | Per-field defaults, consulted after the element and its owners and before the built-in value. |
 | `edits` | array of [edits](./edits.md#edit) | no | `[]` | The edits the map defines: named, saved, undoable changes (`format/edits.md`). |
-| `presentations` | array of [definitions](#definitions) | no | `[]` | The presentations the map defines. V1-D2 extends this schema. |
+| `presentations` | array of [presentations](./presentations.md#presentation) | no | `[]` | The presentations the map defines: performances that are never saved into the map's content (`format/presentations.md`). |
 | `verbs` | array of [definitions](#definitions) | no | `[]` | The verbs the map defines. V1-D3 extends this schema. |
 | `nodes` | array of [nodes](#node) | no | `[]` | Every node of the map, flat, in depth-first pre-order ([The node list](#the-node-list)). |
 
@@ -317,11 +318,12 @@ palette.
 
 ### Definitions
 
-An entry of `presentations` or `verbs`. Ids are unique within their
-list. A verb is named by its `id` from a node's `on` and from a span's
-`link`; the same string in two different lists is two things. An entry
-of `edits` has these two keys and more, and its own page,
-[`edits.md`](./edits.md); its id is unique within `edits` the same way.
+An entry of `verbs`. Ids are unique within the list. A verb is named
+by its `id` from a node's `on` and from a span's `link`; the same
+string in two different lists is two things. An entry of `edits` or of
+`presentations` has these two keys and more, and a page of its own —
+[`edits.md`](./edits.md), [`presentations.md`](./presentations.md) —
+and its id is unique within its list the same way.
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
