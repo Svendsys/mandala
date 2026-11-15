@@ -2255,6 +2255,21 @@ fn criterion_benchmark(c: &mut Criterion) {
         "flow_pitched_lays_gaps_that_sum_past_the_largest_f32_by_their_mean",
         |b| b.iter(do_flow_pitched_lays_gaps_that_sum_past_the_largest_f32_by_their_mean),
     );
+    c.bench_function(
+        "flow_pitched_lays_a_gap_past_the_root_of_the_largest_f32_evenly_where_the_path_bends",
+        |b| b.iter(do_flow_pitched_lays_a_gap_past_the_root_of_the_largest_f32_evenly_where_the_path_bends),
+    );
+    c.bench_function(
+        "flow_pitched_gaps_an_ink_wider_than_the_root_of_the_largest_f32",
+        |b| b.iter(do_flow_pitched_gaps_an_ink_wider_than_the_root_of_the_largest_f32),
+    );
+    c.bench_function("flow_pitched_leaves_no_end_gap_below_none", |b| {
+        b.iter(do_flow_pitched_leaves_no_end_gap_below_none)
+    });
+    c.bench_function(
+        "flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a_smaller",
+        |b| b.iter(do_flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a_smaller),
+    );
     c.bench_function("flow_place_horizontal_steps_by_advance", |b| {
         b.iter(do_flow_place_horizontal_steps_by_advance)
     });

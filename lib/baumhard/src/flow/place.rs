@@ -482,6 +482,21 @@ fn clusters_of(glyphs: &[GlyphMetrics], range: Range<usize>) -> Vec<Cluster> {
     clusters
 }
 
+/// How far apart two boxes are, `apart` across each axis: the distance
+/// between their corners, the length of `apart`. Taken in `f32`, whose
+/// squares a length past the square root of the largest `f32` does not
+/// have: such a length, of an `apart` that is finite, is taken in `f64`.
+/// One measure for the pitched lay's gaps and a frame's ([`pitch`],
+/// [`halves`]).
+fn corner_distance(apart: Vec2) -> f32 {
+    let length = apart.length();
+    if length.is_finite() || !apart.is_finite() {
+        length
+    } else {
+        f64::from(apart.x).hypot(f64::from(apart.y)) as f32
+    }
+}
+
 /// How far, and which way, the center of an ellipse of semi-axes `half`
 /// lies from where it touches, from outside, a line whose outward normal
 /// is `normal` (a unit vector): the ellipse's support point along

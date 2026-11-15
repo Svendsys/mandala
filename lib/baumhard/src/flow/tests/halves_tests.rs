@@ -5722,3 +5722,116 @@ fn test_flow_halves_a_line_no_gap_can_move_keeps_a_finite_lay() {
         "a line a gap moves by less than it places its glyph: gap {gap}, its glyph at {pos}"
     );
 }
+
+#[test]
+fn test_flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a_smaller() {
+    do_flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a_smaller();
+}
+
+/// A frame round an outline too large for its letters' gaps to have an
+/// `f32` square is laid as the same frame round a smaller one, scaled
+/// (review 5911092160). Round a box and a rounded box 10¹⁵ across, where
+/// every length's square is finite, a frame's glyphs sit where they sit
+/// round one 10¹² across, each as a share of its outline's size, to a
+/// millionth: the letters are nothing beside either. So they must round
+/// one 10²², 10²⁵, 10³⁰ and 10³⁴ across, laid `Once`, `Spread` and `Fit`;
+/// and three letters round a box 3 × 10¹⁹ across, where a letter is first
+/// near an earlier one only by such a gap. Held to two parts in ten
+/// thousand of the outline's size.
+///
+/// The frame's rule measures the gap between two inks, across both axes,
+/// as their corners' distance (`corner_distance`). Taken in `f32` alone,
+/// past 1.8 × 10¹⁹ it was infinite: a letter was never "far enough" from
+/// the one before, and at fe7061c9 these frames set their letters at
+/// steps of 1.8 × 10¹⁹ from the lines' starts, or all at one point, and
+/// reported nothing.
+///
+/// Controls, each alone measuring in `f32`: the gap the pairwise rule
+/// solves (`pair`), red; its straight-path model (`along`), red; the
+/// junctions' clearance (`box_gap`), red; the earlier inks' nearness,
+/// red on the three letters. `separation` measuring so is green: where
+/// it is apart it answers what `box_gap` answers, as its doc says, and no
+/// placement here or in the sweep on #360 moves with it.
+pub fn do_flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a_smaller() {
+    use crate::flow::place_on_closed;
+    let text = style(16.0);
+    let lay = |across: f32, radius: f32, spans: &str, fit: &FitMode| {
+        let path = Outline::RoundedRect {
+            rect: Rect::new(Vec2::ZERO, Vec2::new(across, 0.6 * across)),
+            radius: radius * across,
+        };
+        with_fonts(|fs| {
+            let run = real_run(spans, &text, fs);
+            place_on_closed(
+                &run,
+                &path,
+                StartPoint {
+                    edge: Edge::Top,
+                    at: 0.37,
+                },
+                Direction::Clockwise,
+                fit,
+                &RingLayout::whole(),
+                true,
+                &text,
+                fs,
+            )
+            .1
+        })
+    };
+    // The most any glyph of two lays differs by, each as a share of its
+    // outline's size; infinite where they do not lay the same glyphs.
+    let apart = |a: &PlacedRun, across_a: f32, b: &PlacedRun, across_b: f32| -> f64 {
+        if a.glyphs.len() != b.glyphs.len() || a.truncated != b.truncated {
+            return f64::INFINITY;
+        }
+        a.glyphs
+            .iter()
+            .zip(&b.glyphs)
+            .map(|(p, q)| {
+                let moved =
+                    (p.pos.as_dvec2() / f64::from(across_a) - q.pos.as_dvec2() / f64::from(across_b)).abs();
+                if p.glyph == q.glyph {
+                    moved.max_element()
+                } else {
+                    f64::INFINITY
+                }
+            })
+            .fold(0.0, f64::max)
+    };
+    const SAND: &str = "To see a World in a Grain of Sand";
+    let fits = [FitMode::Once { filler: None }, FitMode::Spread, FIT];
+    let (smaller, small) = (1e12_f32, 1e15_f32);
+    let cases = [
+        (SAND, 0.0, &[1e22_f32, 1e25, 1e30, 1e34][..]),
+        (SAND, 0.1, &[1e22, 1e25, 1e30, 1e34][..]),
+        ("abc", 0.0, &[3e19][..]),
+    ];
+    for (spans, radius, sizes) in cases {
+        for fit in &fits {
+            let reference = lay(small, radius, spans, fit);
+            assert!(
+                !reference.glyphs.is_empty() && !reference.truncated,
+                "precondition: {fit:?}: the frame round the outline 1e15 across is laid whole"
+            );
+            let scaled = apart(&lay(smaller, radius, spans, fit), smaller, &reference, small);
+            assert!(
+                scaled <= 2e-5,
+                "precondition: {fit:?}, radius {radius}, {spans:?}: round outlines 1e12 and 1e15 across the \
+                 frame is one frame, scaled ({scaled} of the size apart)"
+            );
+            for &across in sizes {
+                assert!(
+                    (across * across).is_infinite(),
+                    "precondition: an outline {across} across is past the root of the largest f32"
+                );
+                let moved = apart(&lay(across, radius, spans, fit), across, &reference, small);
+                assert!(
+                    moved <= 2e-4,
+                    "{fit:?}, radius {radius}, {spans:?}: round an outline {across} across the frame is \
+                     {moved} of its size from the frame round one 1e15 across"
+                );
+            }
+        }
+    }
+}

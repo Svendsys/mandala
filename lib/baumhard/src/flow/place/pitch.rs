@@ -46,7 +46,8 @@ use crate::flow::path::ArcPath;
 use crate::flow::place::halves::{resolved, BOXES_A_STEP};
 use crate::flow::place::ring::{ring_glyphs, steps_of, RingLoss, RingWork, GLYPHS_A_STEP};
 use crate::flow::place::{
-    cluster_ink, clusters_of, Cluster, PlacedGlyph, PlacedRun, Trace, MAX_PLACED_GLYPHS, MIN_TABLE_SPACING,
+    cluster_ink, clusters_of, corner_distance, Cluster, PlacedGlyph, PlacedRun, Trace, MAX_PLACED_GLYPHS,
+    MIN_TABLE_SPACING,
 };
 use crate::flow::shape::{Ink, ShapedRun};
 
@@ -195,7 +196,7 @@ impl Mark {
 pub(super) fn signed_gap(a: &Rect, b: &Rect) -> f32 {
     let d = (b.origin - a.max()).max(a.origin - b.max());
     if d.x > 0.0 || d.y > 0.0 {
-        d.max(Vec2::ZERO).length()
+        corner_distance(d.max(Vec2::ZERO))
     } else {
         d.max_element()
     }
@@ -243,8 +244,8 @@ pub(super) fn natural_marks(run: &ShapedRun, clusters: &[Cluster], spacing: f32)
 }
 
 /// The mean of `marks`' gaps: the gap a lay sets at each of its ends, and
-/// a pattern's own. Their sum over their count, in `f32`; gaps past half
-/// the largest `f32` have no `f32` sum, and are summed in `f64`.
+/// a pattern's own. Their sum over their count, in `f32`; gaps that sum
+/// past the largest `f32` have no `f32` sum, and are summed in `f64`.
 pub(super) fn mean_gap(marks: &[Mark]) -> f32 {
     let sum = marks.iter().map(|m| m.gap).sum::<f32>();
     if sum.is_finite() {
@@ -568,9 +569,10 @@ pub(crate) fn place_pitched_capped(
         }
         ok
     };
-    let end_gap = mean_gap(&marks);
-    // The least slack: no gap below 0.
-    let floor = -marks.iter().map(|m| m.gap).fold(end_gap, f32::min);
+    // The least slack: no gap below 0, an end's among them. An end's gap
+    // is the pattern's mean ([`pitch`]), which as an `f32` sum over the
+    // count can read a float under the least of equal gaps.
+    let floor = -marks.iter().map(|m| m.gap).fold(mean_gap(&marks), f32::min);
     // The most inks a placement holds: whole clusters, within the cap.
     let widest = marks
         .iter()
@@ -743,11 +745,10 @@ pub(super) fn pitch(
                     p + squares.max(0.0).sqrt()
                 } else {
                     // A gap past the square root of the largest `f32` has
-                    // no `f32` square; `f64` holds it.
-                    let (p, want) = (f64::from(p), f64::from(want));
-                    (p + (p * p - f64::from(half.length_squared()) + want * want)
-                        .max(0.0)
-                        .sqrt()) as f32
+                    // no `f32` square, nor has an ink as wide; `f64` holds
+                    // them.
+                    let (p, want, half) = (f64::from(p), f64::from(want), half.as_dvec2());
+                    (p + (p * p - half.length_squared() + want * want).max(0.0).sqrt()) as f32
                 }
             })
     };
