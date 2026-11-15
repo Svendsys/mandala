@@ -137,12 +137,11 @@ node to the node it leads to.
   box round its text meets the region of a node the path does not end
   at, drawn wherever the label is; a portal end is never hidden. A
   path's own label, drawn, wins over its line as a node's text does: the
-  glyphs of the path's body whose boxes, grown by its gap, meet the box
-  round the label's text are not drawn, so the path stops at least one
-  gap short of its label on each side and carries on past it. Its caps
-  are drawn under it: a cap marks the path's direction, so a label at
-  the path's end keeps its arrow. A label hidden behind another node
-  hides nothing of its path.
+  path's glyphs whose boxes, grown by its gap, meet the box round the
+  label's text are not drawn, so the path stops at least one gap short of
+  its label on each side and carries on past it. A cap is hidden as the
+  body is: a label at the path's end hides the arrow under it. A label
+  hidden behind another node hides nothing of its path.
 
 **Caps** are centered on the path's start (`cap_start`) and end
 (`cap_end`).

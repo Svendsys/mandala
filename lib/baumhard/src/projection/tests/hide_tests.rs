@@ -1275,37 +1275,102 @@ fn test_projection_a_path_follows_its_label_hidden_and_shown() {
     }
 }
 
-/// A path's own label does not hide its caps: with the label at the
-/// path's end (`t = 1.0`), over its end cap, the cap is drawn whole — a
-/// cap marks the path's direction, it is not line — while the body still
-/// stops short of the label.
+/// The cap of `path` in slot `k` (1 its start cap, 2 its end cap) as
+/// laid, every glyph.
+fn cap_laid(p: &Projected, path: NodeId, k: usize) -> GlyphRunData {
+    let Some(UnitBody::Line(line)) = p.projector.units.get(&path).map(|u| &u.body) else {
+        panic!("{path:?} is a line");
+    };
+    line.laid[k].clone().expect("the cap is laid")
+}
+
+/// The run the connections layer holds for the cap of `path` in slot
+/// `k`, `None` where it holds no element for it.
+fn cap_drawn(p: &Projected, path: NodeId, k: usize) -> Option<GlyphRunData> {
+    let slot = &p.projector.units[&path].slots[k];
+    let glyph = slot.glyph?;
+    p.layers.tree(slot.layer).arena()[glyph]
+        .get()
+        .glyph_run()
+        .cloned()
+}
+
+/// A path's own label hides the cap under it as it hides the rest of its
+/// line (the owner's answer on #345: the label hides the arrowhead). With
+/// the label at the path's end (`t = 1.0`), over its end cap, the end cap
+/// is not drawn, and the start cap, clear of the label, is drawn whole.
+/// The label moved to the path's middle, the end cap is drawn whole
+/// again.
 ///
-/// Control: with the caps giving way to the path's own label as the body
-/// does, red on the cap drawn.
+/// Control: with the path's own label sparing its caps
+/// (`own_label.filter(|_| k == 0)` in `hide`), red on the end cap drawn
+/// under the label.
 #[test]
-fn test_projection_a_paths_own_label_keeps_its_caps() {
+fn test_projection_a_paths_own_label_hides_the_cap_under_it() {
+    use crate::document::mutation::ops::LabelOp;
     let path = merged(
         labeled("LABEL", 1.0, 0.0),
-        json!({"cap_end": {"spans": [{"text": "▶"}]}}),
+        json!({
+            "cap_start": {"spans": [{"text": "◀"}]},
+            "cap_end": {"spans": [{"text": "▶"}]},
+        }),
     );
     let mut p = Projected::new(two_paths(AWAY, json!({}), path));
     let path = path_of(&p, 2);
-    let label = label_of(&p, path);
     let gap = own_gap(&p.projector, path);
-    assert!(label_drawn(&p, path), "precondition: the label is drawn");
-    let Some(UnitBody::Line(line)) = p.projector.units.get(&path).map(|u| &u.body) else {
-        panic!("a line");
+    // How many of the cap's inks in slot `k` come within the path's gap
+    // of its label's text, the gap scaled by `slack`, of how many.
+    let near = |p: &Projected, k: usize, slack: f32| {
+        let label = label_of(p, path);
+        let cap = inks(&cap_laid(p, path, k));
+        assert!(!cap.is_empty(), "precondition: the cap in slot {k} has ink");
+        let near = cap.iter().filter(|i| meet(&i.grown(gap * slack), &label));
+        (near.count(), cap.len())
     };
-    let cap = line.laid[2].as_ref().expect("the end cap is laid");
-    assert!(
-        inks(cap).iter().any(|i| meet(&i.grown(gap), &label)),
-        "precondition: the end cap is within its gap of the label"
+    let drawn_inks = |p: &Projected, k: usize| cap_drawn(p, path, k).map_or(0, |run| inks(&run).len());
+
+    assert!(label_drawn(&p, path), "precondition: the label is drawn");
+    let (under, of) = near(&p, 2, 0.95);
+    assert_eq!(under, of, "precondition: the end cap is under the label");
+    assert_eq!(
+        near(&p, 1, 1.05).0,
+        0,
+        "precondition: the start cap is clear of the label"
     );
     assert_eq!(
-        p.projector.units[&path].slots[2].want.as_ref(),
-        Some(cap),
-        "the end cap is drawn whole"
+        drawn_inks(&p, 2),
+        0,
+        "the end cap under the path's own label is not drawn"
+    );
+    assert_eq!(
+        cap_drawn(&p, path, 1),
+        Some(cap_laid(&p, path, 1)),
+        "the start cap, clear of the label, is drawn whole"
     );
     assert!(left_out(&p, path) > 0, "the body stops short of the label");
+    p.check().unwrap();
+
+    let label = kid(&p.doc, path, DocKind::Label);
+    let to_the_middle = single(DocKind::Label, DocMutation::Label(LabelOp::SetT(Some(0.5))));
+    p.apply(request(to_the_middle, vec![label], "to the middle"))
+        .unwrap();
+    assert!(label_drawn(&p, path), "precondition: the label is still drawn");
+    for k in [1, 2] {
+        assert_eq!(
+            near(&p, k, 1.05).0,
+            0,
+            "precondition: the cap in slot {k} is clear of the label at the middle"
+        );
+        assert_eq!(
+            cap_drawn(&p, path, k),
+            Some(cap_laid(&p, path, k)),
+            "the label moved off it, the cap in slot {k} is drawn whole"
+        );
+    }
+    assert_eq!(
+        hidden_again(&p),
+        [path].into_iter().collect(),
+        "the label moved: that path alone is hidden again"
+    );
     p.check().unwrap();
 }

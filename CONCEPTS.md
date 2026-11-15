@@ -1771,17 +1771,16 @@ the layers to learn what the document is, and nothing flows back.
   wherever the path is (opacity above 0, a zoom window holding the
   path's); and the path's label is left out whole where the box round
   its text meets such a region. A label drawn is text, which wins over
-  its own line: the glyphs of the path's body within its gap of the
-  label's text are left out too, and its caps are kept (#340). It is a
-  view decision: the document keeps the
-  path, the projector keeps the run as laid (`Projector::laid`), and the
-  glyph comes back when the node moves off. Indices on the hit grid keep
-  it incremental: the regions, a body index for each part
-  (`Projector::regions`), and where each path's glyphs and label are
-  (`Projector::path_cells`). A path's hide records reading the `Region`,
-  opacity and zoom window of each node it met, so a node whose region
-  changes marks it; that node then finds, in the path cells, the paths its
-  new region meets.
+  its own line: the path's glyphs within its gap of the label's text,
+  its body's and its caps' alike, are left out too (#340). It is a view
+  decision: the document keeps the path, the projector keeps the run as
+  laid (`Projector::laid`), and the glyph comes back when the node moves
+  off. Indices on the hit grid keep it incremental: the regions, a body
+  index for each part (`Projector::regions`), and where each path's
+  glyphs and label are (`Projector::path_cells`). A path's hide records
+  reading the `Region`, opacity and zoom window of each node it met, so a
+  node whose region changes marks it; that node then finds, in the path
+  cells, the paths its new region meets.
 - **Captured dependencies.** Every read of another element's state goes
   through a recorder into the dependency index (`projection::Input`:
   the resolvers' `document::resolve::Input`s, and the projection's own
