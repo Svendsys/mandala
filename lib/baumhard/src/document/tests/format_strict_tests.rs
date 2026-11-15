@@ -502,10 +502,31 @@ fn test_a_node_nests_at_most_nine_levels_by_its_schema() {
     // schema, never by the tree it is in (design B.7).
     let graph = TypeGraph::build(&crate_src_root());
     assert_eq!(dto_depth(&graph, "NodeDto", &mut Vec::new()), Ok(9));
-    // And the header's values are bounded too: the deepest is
-    // `defaults.frame.fit` as `{"fit": {"min", "max"}}`, four below the
-    // top-level object (design B.7's table).
-    assert_eq!(dto_depth(&graph, "MapHeaderDto", &mut Vec::new()), Ok(5));
+    // And the header's values are bounded too, `edits` aside: the
+    // deepest is `defaults.frame.fit` as `{"fit": {"min", "max"}}`, four
+    // below the top-level object (design B.7's table).
+    let header = graph.get("MapHeaderDto").unwrap();
+    let mut deepest_value = 0;
+    for field in header
+        .fields
+        .iter()
+        .filter(|f| f.member.as_deref() != Some("edits"))
+    {
+        let mut visiting = vec!["MapHeaderDto".to_string()];
+        deepest_value = deepest_value.max(type_depth(&graph, &field.ty.0, &mut visiting).unwrap());
+    }
+    assert_eq!(1 + deepest_value, 5);
+    // An edit's mutator holds mutators, so `edits` nests as deep as the
+    // definition bound lets it (`bounds::MAX_DEFINITION_DEPTH`), which
+    // the loader holds it to itself (`document::edit::load`). That is
+    // the one unbounded type on the walk, and the whole header reaches
+    // it through `edits` alone.
+    let cycle_end = |root: &str| match dto_depth(&graph, root, &mut Vec::new()) {
+        Err(NestingFault::Cycle(cycle)) => cycle.last().cloned(),
+        Ok(_) => None,
+    };
+    assert_eq!(cycle_end("EditDto").as_deref(), Some("MutatorDto"));
+    assert_eq!(cycle_end("MapHeaderDto").as_deref(), Some("MutatorDto"));
     // The deepest fixture node reaches the bound, and none passes it.
     let mut deepest = 0;
     for (name, text) in FIXTURES {

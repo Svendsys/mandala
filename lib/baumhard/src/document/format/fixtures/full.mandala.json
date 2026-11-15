@@ -127,7 +127,116 @@
   "edits": [
     {
       "id": "grow",
-      "name": "Grow the text"
+      "name": "Grow the text",
+      "description": "Every span of the subtree two points larger, but the large ones.",
+      "reach": "subtree",
+      "target": "spans",
+      "filter": {
+        "fields": [
+          [
+            {
+              "font_size": {
+                "pt": 30.0
+              }
+            },
+            {
+              "LessThan": false
+            }
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "span": {
+            "text": {
+              "grow_size": 2.0
+            }
+          }
+        },
+        {
+          "span": {
+            "insert_text": {
+              "at": 0,
+              "text": "» "
+            }
+          }
+        },
+        {
+          "span": {
+            "delete_text": {
+              "start": 0,
+              "end": 0
+            }
+          }
+        }
+      ],
+      "animate": {
+        "ms": 200,
+        "delay_ms": 50,
+        "easing": "ease_out",
+        "snap": "start"
+      }
+    },
+    {
+      "id": "bend",
+      "name": "Bend the links",
+      "reach": "self",
+      "target": "links",
+      "mutator": {
+        "macro": {
+          "kind": "link",
+          "channel": 0,
+          "mutations": [
+            {
+              "path": {
+                "move_control_point": {
+                  "index": 0,
+                  "to": [
+                    10.0,
+                    -10.0
+                  ]
+                }
+              }
+            },
+            {
+              "path": {
+                "set_color": "var(accent)"
+              }
+            }
+          ],
+          "children": [
+            {
+              "instruction": {
+                "kind": "label",
+                "channel": 0,
+                "instruction": {
+                  "repeat_while": {
+                    "always_match": true
+                  }
+                },
+                "children": [
+                  {
+                    "void": {
+                      "kind": "span",
+                      "channel": 0
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "flower",
+      "name": "Flower",
+      "reach": "self",
+      "target": "node",
+      "handler": "flower",
+      "animate": {
+        "ms": 400
+      }
     }
   ],
   "presentations": [

@@ -11,6 +11,7 @@ mod clock;
 mod completion;
 mod dispatch;
 mod edit;
+mod edits;
 pub(in crate::application::app) mod exec;
 mod history;
 mod record;

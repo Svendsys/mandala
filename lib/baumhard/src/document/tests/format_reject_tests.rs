@@ -770,7 +770,7 @@ fn test_a_verb_the_map_does_not_define_is_refused() {
     // A verb of another kind of list is not a verb.
     rejects(
         &map_with(
-            r#","edits":[{"id":"e","name":"E"}]"#,
+            r#","edits":[{"id":"e","name":"E","reach":"self","target":"node","handler":"flower"}]"#,
             &node_of(1, r#","on":{"click":"e"}"#),
         ),
         "nodes[0].on.click",
@@ -1002,10 +1002,11 @@ fn test_a_top_level_node_has_no_connector() {
 fn test_an_id_in_a_list_of_definitions_is_unique_within_its_list() {
     let twice = |id: &str| LoadErrorKind::DuplicateDefinition { id: id.to_string() };
     for list in ["edits", "presentations", "verbs"] {
+        let more = if list == "edits" { EDIT_BODY } else { "" };
         rejects(
             &map_with(
                 &format!(
-                    r#","{list}":[{{"id":"a","name":"A"}},{{"id":"b","name":"B"}},{{"id":"a","name":"C"}}]"#
+                    r#","{list}":[{{"id":"a","name":"A"{more}}},{{"id":"b","name":"B"{more}}},{{"id":"a","name":"C"{more}}}]"#
                 ),
                 "",
             ),
@@ -1015,7 +1016,7 @@ fn test_an_id_in_a_list_of_definitions_is_unique_within_its_list() {
     }
     // The same id in two lists is two ids.
     assert!(load(&map_with(
-        r#","edits":[{"id":"a","name":"A"}],"verbs":[{"id":"a","name":"A"}]"#,
+        r#","edits":[{"id":"a","name":"A","reach":"self","target":"node","handler":"flower"}],"verbs":[{"id":"a","name":"A"}]"#,
         ""
     ))
     .is_ok());
@@ -1701,13 +1702,18 @@ fn test_more_theme_variants_than_an_index_addresses_is_refused() {
     );
 }
 
-/// `count` definitions, as the text of an array's elements.
-fn definitions(count: usize) -> String {
+/// `count` definitions of the list `key`, as the text of an array's
+/// elements: an edit has a reach, a target and a body besides.
+fn definitions(key: &str, count: usize) -> String {
+    let more = if key == "edits" { EDIT_BODY } else { "" };
     (0..count)
-        .map(|n| format!(r#"{{"id":"d{n}","name":""}}"#))
+        .map(|n| format!(r#"{{"id":"d{n}","name":""{more}}}"#))
         .collect::<Vec<_>>()
         .join(",")
 }
+
+/// What an edit has beside its id and name, in the shortest spelling.
+const EDIT_BODY: &str = r#","reach":"self","target":"node","handler":"flower""#;
 
 #[test]
 fn test_more_definitions_than_an_index_addresses_are_refused() {
@@ -1716,13 +1722,13 @@ fn test_more_definitions_than_an_index_addresses_are_refused() {
         ("edits", bounds::MAX_EDITS),
         ("presentations", bounds::MAX_PRESENTATIONS),
     ] {
-        let json = |count| map_with(&format!(r#","{key}":[{}]"#, definitions(count)), "");
+        let json = |count| map_with(&format!(r#","{key}":[{}]"#, definitions(key, count)), "");
         assert!(load(&json(max)).is_ok(), "{key}: exactly the bound loads");
         rejects_bound(&json(max + 1), key, BoundError::TooMany { count: max + 1, max });
     }
     // The last verb has the last index, and a node can name it.
     let json = map_with(
-        &format!(r#","verbs":[{}]"#, definitions(bounds::MAX_VERBS)),
+        &format!(r#","verbs":[{}]"#, definitions("verbs", bounds::MAX_VERBS)),
         &node_of(1, &format!(r#","on":{{"click":"d{}"}}"#, bounds::MAX_VERBS - 1)),
     );
     let doc = load(&json).unwrap();

@@ -13,7 +13,7 @@
 //! | [`field_paths`] | connector, link, label and portal fields | V1-C6 (#247) |
 //! | [`transactions`] | drags, resizes, the color picker, handle chrome | V1-C7 (#248) |
 //! | [`text`] | text editing on spans, node editing | V1-C8 (#249) |
-//! | [`edits`] | the keys bound to edits, the macro edit step | V1-D1 (#250) |
+//! | [`edits`] | the edit funnel: keys bound to edits, the macro `Edit` step, the console | V1-D1 (#250), rebuilt |
 //! | [`verbs`] | node click triggers, the macro verb step | V1-D3 (#252) |
 //!
 //! Presentations (V1-D2, #251) have no Action and no dispatch entry of

@@ -99,11 +99,25 @@ Commands:
   verify <map>                  Load the map: a refusal is printed with
                                 its JSON path and exits 1. Then print a
                                 warning for what loads but is probably a
-                                mistake: a verb nothing refers to, a
-                                node saved hidden that nothing can
-                                reveal, a visible frame with no rings,
-                                and a portal whose ends both have no
-                                content. Warnings alone exit 0.
+                                mistake: a verb nothing refers to (a
+                                node's 'on', a span's 'link', or an edit
+                                in the map naming it anywhere in it, its
+                                filter or its body, run or not), a node
+                                saved hidden that nothing can reveal
+                                (none while an edit in the map writes
+                                'set_hidden: false'), a visible frame
+                                with no rings, and a portal whose ends
+                                both have no content (none while an edit
+                                in the map writes a portal end's
+                                non-empty 'set_content'). In general,
+                                which elements an edit reaches is
+                                decided when it runs, so verify does not
+                                narrow by reach. Only the map's own
+                                edits are read: App and User edits
+                                (edits.json) also run on a map, but a
+                                map file cannot be judged on them, so
+                                they are not read. Warnings alone
+                                exit 0.
   apply <map> <pattern> [-i] [--dry-run] -- <cmd> [args...]
                                 For each section with a line the regex
                                 <pattern> matches (an empty section is

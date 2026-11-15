@@ -1096,13 +1096,14 @@ fn test_a_repeated_key_resolves_to_its_last_occurrence() {
 /// serves.
 fn dispatchers() -> Vec<(&'static str, Vec<&'static Grammar>, Vec<&'static str>)> {
     use crate::application::console::commands::{
-        clock, color, font, fps, frame, mode, node, record, section, theme, zoom,
+        clock, color, edit, font, fps, frame, mode, node, record, section, theme, zoom,
     };
     vec![
         ("fps", vec![&fps::GRAMMAR], fps::routed_names()),
         ("mode", vec![&mode::GRAMMAR], mode::routed_names()),
         ("clock", vec![&clock::GRAMMAR], clock::routed_names()),
         ("record", vec![&record::GRAMMAR], record::routed_names()),
+        ("edit", vec![&edit::GRAMMAR], edit::routed_names()),
         ("node", vec![&node::GRAMMAR], node::routed_names()),
         (
             "section",

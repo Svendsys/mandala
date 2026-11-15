@@ -83,6 +83,9 @@ pub(super) struct InitState {
     /// (`run_native_init::build`) from `~/.config/mandala/macros.json`;
     /// queried at dispatch time via `keybinds.macro_for(...)`.
     pub(super) macros: crate::application::macros::MacroRegistry,
+    /// The edits' App and User tiers and the handlers, loaded once at
+    /// startup (`application::edits`); a map's own are its document's.
+    pub(super) edits: crate::application::edits::EditRegistry,
     /// Touch gesture state machine. Fed by `WindowEvent::Touch`
     /// events (winit); emits a tap, a long-press, a one-finger pan
     /// step or a two-finger pinch step. Cross-platform peer of WASM's
@@ -142,6 +145,7 @@ impl InitState {
             cursor_icon_last: &mut self.cursor_icon_last,
             keybinds: &self.keybinds,
             macros: &mut self.macros,
+            edits: &self.edits,
             artifacts: &mut self.artifacts,
             recorder: &mut self.recorder,
             watchdog: &self.watchdog,
@@ -234,7 +238,7 @@ impl InitState {
     /// park until next OS event) and `ControlFlow::Poll` (continuous
     /// frames).
     pub(super) fn needs_continuation(&self) -> bool {
-        heartbeat::needs_continuation(&self.injected, &self.clock)
+        heartbeat::needs_continuation(&self.injected, &self.clock, self.document.as_ref())
     }
 }
 
@@ -316,6 +320,8 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
     // `macros::loader::build_macro_registry`, which the browser's init
     // calls too. A map carries no macros: its verbs replace them (§11.3).
     let macros = crate::application::macros::loader::build_macro_registry();
+    // The edits' App and User tiers, on both targets the same way.
+    let edits = crate::application::edits::EditRegistry::load();
 
     // Real, reading the wall clock, for a launch a person watches:
     // only `clock.set_mode` or the `clock` verb leaves it. Virtual with
@@ -356,6 +362,7 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
         keybinds,
 
         macros,
+        edits,
         // Touch gesture recognizer. State machine starts Idle;
         // first `WindowEvent::Touch` lands a finger.
         touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),

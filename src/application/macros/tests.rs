@@ -196,10 +196,9 @@ fn step_allowed(step: &MacroStep, src: SourceTier) -> bool {
     match step {
         MacroStep::Action { action } => src.allows_action(action),
         MacroStep::ConsoleLine { .. } => src.allows_console_line(),
-        // CustomMutation has no per-step privilege gate today
-        // (registry presence is the implicit gate). Treat as
-        // always-allowed for the iteration test.
-        MacroStep::CustomMutation { .. } => true,
+        // An edit has no per-step privilege gate: it is one undoable
+        // document change with no I/O, open to every tier.
+        MacroStep::Edit { .. } => true,
     }
 }
 
@@ -287,7 +286,7 @@ fn macro_step_serde_round_trip() {
         MacroStep::ConsoleLine {
             line: "fps on".into(),
         },
-        MacroStep::CustomMutation {
+        MacroStep::Edit {
             id: "nudge-right".into(),
             target: MacroTarget::CurrentSelection,
         },
@@ -307,8 +306,8 @@ fn macro_step_serde_round_trip() {
 /// hand-authored macro files in `~/.config/mandala/macros.json`
 /// use these keys; a serde-derive rearrangement would silently
 /// break user configs. Covers Action, ConsoleLine, and the two
-/// CustomMutation target shapes (default-omitted CurrentSelection
-/// and explicit `{node_id: "..."}`).
+/// Edit target shapes (default-omitted CurrentSelection and an
+/// explicit `{node_id: <integer id>}`).
 #[test]
 fn macro_step_json_shape_round_trip() {
     let action = MacroStep::Action { action: Action::Undo };
@@ -323,23 +322,29 @@ fn macro_step_json_shape_round_trip() {
         r#"{"kind":"ConsoleLine","line":"save"}"#,
     );
 
-    let omitted: MacroStep = serde_json::from_str(r#"{"kind":"CustomMutation","id":"x"}"#).unwrap();
-    let MacroStep::CustomMutation { id, target } = omitted else {
-        panic!("expected CustomMutation");
+    let omitted: MacroStep = serde_json::from_str(r#"{"kind":"Edit","id":"x"}"#).unwrap();
+    let MacroStep::Edit { id, target } = omitted else {
+        panic!("expected Edit");
     };
     assert_eq!(id, "x");
     assert!(matches!(target, MacroTarget::CurrentSelection));
 
     let node_target: MacroStep =
-        serde_json::from_str(r#"{"kind":"CustomMutation","id":"x","target":{"node_id":"abc"}}"#).unwrap();
-    let MacroStep::CustomMutation {
-        target: MacroTarget::NodeId(s),
+        serde_json::from_str(r#"{"kind":"Edit","id":"x","target":{"node_id":7}}"#).unwrap();
+    let MacroStep::Edit {
+        target: MacroTarget::NodeId(ident),
         ..
     } = node_target
     else {
         panic!("expected NodeId target");
     };
-    assert_eq!(s, "abc");
+    assert_eq!(ident, 7);
+    // The old step's name, and a node named by a path string, no longer
+    // read (no alias).
+    assert!(serde_json::from_str::<MacroStep>(r#"{"kind":"CustomMutation","id":"x"}"#).is_err());
+    assert!(
+        serde_json::from_str::<MacroStep>(r#"{"kind":"Edit","id":"x","target":{"node_id":"1.2"}}"#).is_err()
+    );
 }
 
 /// A User macro SHADOWS an App macro with the same id — it does not

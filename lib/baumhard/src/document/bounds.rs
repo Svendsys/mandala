@@ -80,6 +80,27 @@ pub const MAX_EDITS: usize = 1 << 16;
 /// `u16`.
 pub const MAX_PRESENTATIONS: usize = 1 << 16;
 
+/// How deep a map-borne definition — an edit's mutator, a presentation's
+/// — may nest (owner, format Q4 on #250 and #251). Reaching any depth of
+/// the map is done by repeating down the tree, not by nesting, and the
+/// node tree itself has no bound (R13).
+pub const MAX_DEFINITION_DEPTH: usize = 32;
+
+/// How many parts a map-borne definition may have: mutator nodes,
+/// mutations and predicate tests, counted after any expansion the format
+/// allows (owner, format Q4).
+pub const MAX_DEFINITION_PARTS: usize = 65_536;
+
+/// The longest an animated edit's `ms` and its `delay_ms` may each be,
+/// in milliseconds: one minute. While an edit animates, the frame loop
+/// stays awake and the change is not committed — a save in that window
+/// writes the map without it, a quit does not ask, and a settled wait
+/// does not settle — so a number from a shared map, or a typo, must not
+/// hold the app there for longer than a person watches one change
+/// land. A minute is far past that: the bundled edits take 150 to
+/// 400 ms.
+pub const MAX_ANIMATE_MS: u32 = 60_000;
+
 /// The lightest [`Weight`](crate::document::values::Weight).
 pub const MIN_WEIGHT: u16 = 100;
 
@@ -429,6 +450,21 @@ pub fn check_channel(channel: usize) -> Result<(), BoundError> {
         Err(BoundError::NotAChannel(
             u64::try_from(channel).unwrap_or(u64::MAX),
         ))
+    }
+}
+
+/// An animation time — an edit's `ms` or `delay_ms` — if it is at most
+/// [`MAX_ANIMATE_MS`]. O(1).
+pub fn check_animate_ms(value: u32) -> Result<u32, BoundError> {
+    if value > MAX_ANIMATE_MS {
+        Err(BoundError::Above {
+            // Exact for every value a person would mean; one past
+            // 2^24 prints rounded, and is refused all the same.
+            value: value as f32,
+            max: MAX_ANIMATE_MS as f32,
+        })
+    } else {
+        Ok(value)
     }
 }
 

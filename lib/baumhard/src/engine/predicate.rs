@@ -55,7 +55,7 @@ pub trait Inspect {
 /// flag). The two interpretations are easy to flip in your head — keep
 /// this example pinned at the call site if you write a new field arm
 /// in an [`Inspect`] implementation.
-#[derive(Clone, Debug, Copy, Serialize, Deserialize)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Comparator {
     /// Equality test. `Equals(false)` means `==`; `Equals(true)` means `!=`.
     Equals(bool),
