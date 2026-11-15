@@ -59,8 +59,9 @@
 //!    one side of a node are fanned together (#296); then connectors,
 //!    links, labels and portal ends are laid. **Phase D:** the nodes
 //!    whose reach moved find the paths behind them, and each path laid or
-//!    found leaves out the glyphs a node it does not end at hides
-//!    (#332). A piece of work runs at most once per phase.
+//!    found leaves out the glyphs a node it does not end at hides (#332)
+//!    and the glyphs within its gap of its own drawn label (#340). A
+//!    piece of work runs at most once per phase.
 //! 4. **Emit.** Every run whose new data differs from what the projector
 //!    last wrote — its own state, never the live element, which overlays
 //!    may have written (#241 amendment 2) — is set, inserted, removed or
@@ -282,7 +283,8 @@ impl Projector {
 
     /// A drawn connector's or line link's body run as laid, every glyph:
     /// the run its layer holds, but for the glyphs the nodes it does not
-    /// end at hide (#332). `None` until it is placed. O(1).
+    /// end at hide (#332) and the glyphs within its gap of its own drawn
+    /// label (#340). `None` until it is placed. O(1).
     pub fn laid(&self, path: NodeId) -> Option<&GlyphRunData> {
         match &self.units.get(&path)?.body {
             UnitBody::Line(line) if line.drawn => line.laid[0].as_ref(),
