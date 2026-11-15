@@ -688,7 +688,7 @@ impl Recording {
                 // frame's, and the manifest of what landed is a
                 // courtesy to whoever reads the directory.
                 let _ = self.write_manifest(now_ms, None);
-                Err(message_of(refusal))
+                Err(refusal.message())
             }
         }
     }
@@ -748,7 +748,7 @@ impl Recording {
         self.manifest_bytes = guarded_file::publish(&path, true, |out| {
             serde_json::to_writer(out, &manifest).map_err(|e| e.to_string())
         })
-        .map_err(message_of)?;
+        .map_err(PublishRefusal::message)?;
         Ok(())
     }
 }
@@ -765,11 +765,6 @@ pub(crate) fn dir_bytes(dir: &Path) -> u64 {
             .map(|meta| meta.len())
             .sum()
     })
-}
-
-fn message_of(refusal: PublishRefusal) -> String {
-    let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
-    message
 }
 
 /// The app's one recording: in progress, or how the last one ended.

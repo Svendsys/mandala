@@ -1890,6 +1890,36 @@ client's, which writes on the page's behalf (below).
 | `format` | string | `"png"` | `"png"` is the only value at pin time; the param exists so adding one is non-breaking. |
 | `sidecar` | boolean | `true` | Write the geometry sidecar next to the PNG (`<path>.geometry.json`). |
 
+**The two files, one sequence.** The PNG and, when `sidecar` is set,
+the sidecar are written the same way whichever side writes them: the
+app, or `mandalactl` for a browser app ([Client](#client-mandalactl)).
+
+1. Both destinations are looked at before the work: before the frame
+   is drawn, or over `--ws` before the capture is requested. A file in
+   the way without `overwrite`, a directory there, or a parent
+   directory that does not exist or is not one is refused then, and
+   nothing is drawn, sent or written (`invalid_params` from the app;
+   exit `1` from `mandalactl`, its message ending "(nothing was
+   sent)").
+2. Both are looked at again right before the first write, so a file
+   that appeared meanwhile is refused with nothing written.
+3. The PNG is published, then the sidecar, each atomically: a failure
+   leaves what was at that name.
+4. If the sidecar's write fails after the PNG has landed, the error
+   says so, naming the PNG: "the PNG was written to `<path>`, but its
+   sidecar was not: …" (`internal` from the app, exit `1` from
+   `mandalactl`). The PNG is good and stays; repeating the capture to
+   the same `path` then needs `overwrite`.
+
+Two things differ between the transports, by design. A symlink at
+`path`, or at the sidecar's name, is refused by the app, with or
+without `overwrite`; over `--ws`, where the path is `mandalactl`'s own
+command line's, a link leads to the file written (the `path` row
+above). And the remedy for a file in the way is spelled as each side
+spells its option: "set `overwrite` to replace it" in the app's
+message, which `mandalactl` prints as received over `--ipc`, and "pass
+overwrite=true to replace it" where `mandalactl` writes the file.
+
 **Result** (plus `revision` and `document_revision` at the envelope level, as on every reply):
 
 | field | type | meaning |
@@ -2587,18 +2617,23 @@ a client does:
   and the sidecar beside the link, so whoever opens the image by the
   name they typed finds its sidecar by that name. An existing file, the
   one a link leads to included, is refused unless `overwrite=true`,
-  which replaces it and leaves a link a link. The PNG's file, and the
-  sidecar's unless `sidecar=false`, are looked at before the capture is
-  requested, so a write that would be refused sends nothing (exit `1`,
-  the message ending "(nothing was sent)"). The write is atomic (a temp
-  file of this write's own beside it, synced, then moved or linked into
-  place), so a failure leaves what was there; a file that appeared
-  during the capture is refused at the write, before either file is
-  written, also exit `1`, and the capture may be repeated. The output,
-  `--json` included, then names `path` and `sidecar_path` as a native
-  reply does, in place of `png_base64` and `sidecar`. A `rendered: false`
-  reply writes nothing. The framing parameters are sent as given, for
-  the page to refuse as the stray parameters they are there.
+  which replaces it and leaves a link a link. The sequence is the one a
+  native app follows (§`capture.screenshot`, "The two files, one
+  sequence"): the PNG's file, and the sidecar's unless `sidecar=false`,
+  are looked at before the capture is requested, so a write the look can
+  see would be refused sends nothing (exit `1`, the message ending
+  "(nothing was sent)"): a file in the way, a directory there, a link
+  that leads nowhere, a parent directory that does not exist. The write
+  is atomic (a temp file of this write's own beside it, synced, then
+  moved or linked into place), so a failure leaves what was there. A
+  file that appeared during the capture is refused at the write, before
+  either file is written, also exit `1`, and the capture may be
+  repeated; a sidecar that fails after the PNG has landed says the PNG
+  was written and that its sidecar was not. The output, `--json`
+  included, then names `path` and `sidecar_path` as a native reply does,
+  in place of `png_base64` and `sidecar`. A `rendered: false` reply
+  writes nothing. The framing parameters are sent as given, for the page
+  to refuse as the stray parameters they are there.
 - **Paths:** a relative path argument (`path=`, `to_file=`) is made
   absolute against the client's working directory before it is sent,
   because the server requires absolute paths and has no working directory
@@ -2651,25 +2686,28 @@ a client does:
   must not be repeated. The flag is refused up front (exit 3), through `raw`
   as well, for a command the client knows only reads.
 - **Exit codes:** `0` the reply was `ok:true` (warnings do not change it);
-  `1` it was `ok:false`; `2` the app could not be reached or the request
-  did not go out whole (not running, stale socket, busy or refused,
-  wrong protocol), so nothing ran; `3` the command line was wrong and
-  nothing was sent; `4` the request went out whole and no reply was read
-  (the deadline passed, the connection closed, `shutdown` arrived, or the
-  reply was unreadable), so it may have run. The split exists for the
-  caller's retry: `2` is safe to repeat, `4` calls for a read of the app's
-  state first. The boundary is the end of the request's JSON body, not
-  its newline: a body cut short cannot decode, so nothing runs, but the
-  server also runs a final line its peer closes without terminating
-  (`read_capped_line`), so a send that fails on the one-byte terminator
-  after the whole body went out is a `4`. Over `--ws` the boundary is
-  the whole WebSocket frame, header and mask included: a frame cut
-  short names a length it never reaches and is never delivered, so a
-  send that stopped inside it is a `2`, and one that failed after it a
-  `4`.
-  Errors go to stderr as `error: <code>: <message>`, warnings as
-  `warning: <code>: <message>`. `--json` prints each reply line exactly as
-  received, one per request.
+  `1` it was `ok:false`, or the client refused or failed its own part of
+  the command, whether or not anything was sent (a file it would not
+  write for a `--ws` screenshot or for `record assemble`, a recording
+  that could not be assembled, a `--wait-settled` the app cannot serve):
+  one command, one exit code, whichever side refuses it; `2` the app
+  could not be reached or the request did not go out whole (not running,
+  stale socket, busy or refused, wrong protocol), so nothing ran; `3`
+  the command line was wrong and nothing was sent; `4` the request went
+  out whole and no reply was read (the deadline passed, the connection
+  closed, `shutdown` arrived, or the reply was unreadable), so it may
+  have run. The split exists for the caller's retry: `2` is safe to
+  repeat, `4` calls for a read of the app's state first. The boundary is
+  the end of the request's JSON body, not its newline: a body cut short
+  cannot decode, so nothing runs, but the server also runs a final line
+  its peer closes without terminating (`read_capped_line`), so a send
+  that fails on the one-byte terminator after the whole body went out is
+  a `4`. Over `--ws` the boundary is the whole WebSocket frame, header
+  and mask included: a frame cut short names a length it never reaches
+  and is never delivered, so a send that stopped inside it is a `2`, and
+  one that failed after it a `4`. Errors go to stderr as
+  `error: <code>: <message>`, warnings as `warning: <code>: <message>`.
+  `--json` prints each reply line exactly as received, one per request.
 
 The client's table of commands (`verbs::VERBS`) is held to the registry in
 both directions by tests in the app crate, so it is as honest as `describe`

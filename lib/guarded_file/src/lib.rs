@@ -90,11 +90,21 @@ use std::sync::atomic::{AtomicU32, Ordering};
 #[derive(Debug, PartialEq)]
 pub enum PublishRefusal {
     /// The path is the caller's mistake — a symlink, a directory, an
-    /// existing file without `overwrite`, a parent that does not exist
-    /// or whose every temp name is taken. The message names it.
+    /// existing file without `overwrite`, a parent that does not exist,
+    /// is not a directory, or has every temp name taken. The message
+    /// names it.
     Invalid(String),
     /// The write itself failed: the disk, permissions, the producer.
     Internal(String),
+}
+
+impl PublishRefusal {
+    /// The refusal's message, whichever kind it is: for a caller that
+    /// reports both kinds the same way. O(1).
+    pub fn message(self) -> String {
+        let (Self::Invalid(message) | Self::Internal(message)) = self;
+        message
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -181,9 +191,7 @@ fn claim<T>(
 fn claim_refusal(e: std::io::Error, parent: &Path, destination: &Path, what: &str) -> PublishRefusal {
     let shown = destination.display();
     match e.kind() {
-        std::io::ErrorKind::NotFound => {
-            PublishRefusal::Invalid(format!("the parent directory of `{shown}` does not exist"))
-        }
+        std::io::ErrorKind::NotFound => no_parent(destination),
         std::io::ErrorKind::AlreadyExists => PublishRefusal::Invalid(format!(
             "could not create {what} beside `{shown}`: all {TEMP_ATTEMPTS} names tried (`{}`) are taken, and \
              none was touched",
@@ -216,11 +224,15 @@ fn produce_into(
 /// byte, for a caller that must refuse before it spends work producing
 /// the file (an encoder, a second file beside the first): `path` names
 /// no file, is a symlink, is a directory, or exists without
-/// `overwrite`. It is for the message, not the guarantees — those are
-/// the write's own, atomic with it — so a path that passes here can
-/// still be refused by the write if something appears in between.
+/// `overwrite`; or nothing is there and the directory it would go in
+/// does not exist or is not a directory. A bare name goes in the
+/// current directory, which is not looked at. It is for the message,
+/// not the guarantees — those are the write's own, atomic with it — so
+/// a path that passes here can still be refused by the write if
+/// something appears in between.
 ///
-/// Cost: one `symlink_metadata`.
+/// Cost: one `symlink_metadata`, and where nothing is at the path one
+/// `metadata` of its directory.
 pub fn check(path: &Path, overwrite: bool) -> Result<(), PublishRefusal> {
     checked_parent(path, overwrite).map(|_| ())
 }
@@ -233,16 +245,30 @@ fn checked_parent(path: &Path, overwrite: bool) -> Result<&Path, PublishRefusal>
         return Err(invalid(format!("`{shown}` names no file")));
     };
     match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => {
-            return Err(invalid(format!(
-                "`{shown}` is a symlink, which is never followed"
-            )))
-        }
-        Ok(meta) if meta.is_dir() => return Err(invalid(format!("`{shown}` is a directory"))),
-        Ok(_) if !overwrite => return Err(exists(path)),
-        _ => {}
+        Ok(meta) if meta.file_type().is_symlink() => Err(invalid(format!(
+            "`{shown}` is a symlink, which is never followed"
+        ))),
+        Ok(meta) if meta.is_dir() => Err(invalid(format!("`{shown}` is a directory"))),
+        Ok(_) if !overwrite => Err(exists(path)),
+        Ok(_) => Ok(parent),
+        // Nothing to be read at the path: look at where it would go.
+        // An empty parent is a bare name's, the current directory.
+        Err(_) if parent.as_os_str().is_empty() => Ok(parent),
+        Err(_) => match std::fs::metadata(parent) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(no_parent(path)),
+            Ok(meta) if !meta.is_dir() => Err(invalid(format!("the parent of `{shown}` is not a directory"))),
+            // Anything else about the directory is the write's to report.
+            _ => Ok(parent),
+        },
     }
-    Ok(parent)
+}
+
+/// The refusal for a destination whose directory is not there.
+fn no_parent(path: &Path) -> PublishRefusal {
+    PublishRefusal::Invalid(format!(
+        "the parent directory of `{}` does not exist",
+        path.display()
+    ))
 }
 
 /// Write what `produce` writes to `path`, and return how many bytes it
@@ -257,11 +283,12 @@ fn checked_parent(path: &Path, overwrite: bool) -> Result<&Path, PublishRefusal>
 /// name. The temp file's name is this process's and this write's
 /// (`.mandala-write-<pid>-<n>.tmp`); a name already taken — a crashed
 /// process's leftover under a reused pid, or one someone planted — is
-/// passed over for the next and left as it is. A failure at any point
-/// (the producer, a full disk, a refused publish, a panic in the
-/// producer) removes the temp file and leaves the destination exactly
-/// as it was, so an earlier good file is never replaced by a truncated
-/// one and a retry never trips over a half-written file. Publishing is
+/// passed over for the next and left as it is, up to `TEMP_ATTEMPTS`
+/// names, after which the write is refused. A failure at any point (the
+/// producer, a full disk, a refused publish, a panic in the producer)
+/// removes the temp file and leaves the destination exactly as it was,
+/// so an earlier good file is never replaced by a truncated one and a
+/// retry never trips over a half-written file. Publishing is
 /// `rename(2)` with `overwrite`, which replaces the directory entry
 /// itself and cannot write through a symlink; without it, `link(2)`,
 /// which fails if the name exists, so a file created in the window
@@ -382,9 +409,10 @@ pub struct PrivateDir {
 
 impl PrivateDir {
     /// Create a private directory in `destination`'s directory. Refused
-    /// as [`publish`] refuses: `destination` names no file, or its
-    /// parent directory does not exist. `destination` itself is not
-    /// looked at; [`check`] does that.
+    /// as [`publish`] refuses: `destination` names no file, its parent
+    /// directory does not exist, or every name it tries there is taken
+    /// (`TEMP_ATTEMPTS` of them, each left as it is). `destination`
+    /// itself is not looked at; [`check`] does that.
     ///
     /// Cost: one `mkdir`, and one more per name found taken.
     #[cfg(not(target_arch = "wasm32"))]
@@ -725,6 +753,61 @@ mod tests {
         assert_eq!(names_in(dir), Vec::<String>::new());
     }
 
+    /// **The look sees that there is nowhere for the file to go**
+    /// (ruling B38.1, second addendum §7): [`check`] refuses a
+    /// destination whose directory does not exist, or is a file, in the
+    /// words the write uses, with or without `overwrite`; a free name in
+    /// a directory that is there passes, and so does a bare name, whose
+    /// directory is the current one. [`publish`] refuses the same two
+    /// the same way and writes nothing.
+    ///
+    /// Controls: a `check` that looks only at the path itself passes
+    /// both; one that looks at an empty parent refuses the bare name.
+    #[test]
+    fn test_check_refuses_a_destination_with_nowhere_to_go() {
+        let _serial = serial();
+        let scratch = Scratch::new("nowhere");
+        let dir = &scratch.0;
+        let missing = dir.join("missing").join("x.json");
+        let a_file = dir.join("a-file");
+        std::fs::write(&a_file, "a file").expect("seed");
+        let under_a_file = a_file.join("x.json");
+        let no_parent = PublishRefusal::Invalid(format!(
+            "the parent directory of `{}` does not exist",
+            missing.display()
+        ));
+        let not_a_directory = PublishRefusal::Invalid(format!(
+            "the parent of `{}` is not a directory",
+            under_a_file.display()
+        ));
+        for overwrite in [false, true] {
+            assert_eq!(
+                check(&missing, overwrite).as_ref(),
+                Err(&no_parent),
+                "overwrite={overwrite}"
+            );
+            assert_eq!(
+                check(&under_a_file, overwrite).as_ref(),
+                Err(&not_a_directory),
+                "overwrite={overwrite}"
+            );
+            assert_eq!(
+                check(&dir.join("free.json"), overwrite),
+                Ok(()),
+                "overwrite={overwrite}"
+            );
+            assert_eq!(
+                check(Path::new("guarded-file-test-a-bare-name.json"), overwrite),
+                Ok(()),
+                "overwrite={overwrite}: a bare name goes in the current directory"
+            );
+        }
+        assert_eq!(publish(&missing, false, bytes("{}")), Err(no_parent));
+        assert_eq!(publish(&under_a_file, false, bytes("{}")), Err(not_a_directory));
+        assert_eq!(names_in(dir), vec!["a-file"], "nothing was written");
+        assert_eq!(std::fs::read_to_string(&a_file).expect("kept"), "a file");
+    }
+
     /// **A leftover at the next temp name is passed over, not an error,
     /// and left as it is** (ruling B38.1 §4): a crashed process's temp
     /// file under a pid this process now has, at the very sequence
@@ -803,12 +886,16 @@ mod tests {
     /// **A producer that panics leaves nothing beside the destination,
     /// and the destination as it was**: the unwind drops the write's
     /// temp file, with no destination yet and with an earlier good file
-    /// there under `overwrite`.
+    /// there under `overwrite`. What the producer saw before it
+    /// panicked is carried out and asserted here, and the panic must be
+    /// this test's own, so no other panic can pass for it.
     ///
-    /// Control: a [`TempFile`] whose `Drop` removes nothing leaves the
-    /// `.tmp` file.
+    /// Controls: a [`TempFile`] whose `Drop` removes nothing leaves the
+    /// `.tmp` file; a `publish` that makes no temp file fails the
+    /// precondition.
     #[test]
     fn test_a_producer_that_panics_leaves_no_temp_file_and_the_destination_alone() {
+        const PANIC: &str = "the producer panics (this test's own)";
         let _serial = serial();
         let scratch = Scratch::new("producer-panic");
         let dir = &scratch.0;
@@ -817,18 +904,29 @@ mod tests {
             if overwrite {
                 std::fs::write(&path, "previous good export").expect("seed");
             }
+            let seen = Mutex::new(None);
             let caught = std::panic::catch_unwind(|| {
                 publish(&path, overwrite, |out| {
                     out.write_all(&[b'x'; 1 << 16]).expect("part of the output");
-                    assert_eq!(
-                        names_in(dir).len(),
-                        before.len() + 1,
-                        "precondition: the temp file is there while the producer writes"
-                    );
-                    panic!("the producer panics (this test's own)")
+                    *seen.lock().expect("not poisoned") = Some(names_in(dir));
+                    panic!("{}", PANIC)
                 })
             });
-            assert!(caught.is_err(), "precondition: the producer panicked");
+            let payload = caught.expect_err("precondition: the producer panicked");
+            assert_eq!(
+                payload.downcast_ref::<String>().map(String::as_str),
+                Some(PANIC),
+                "precondition: the panic is this test's own"
+            );
+            let seen = seen
+                .into_inner()
+                .expect("not poisoned")
+                .expect("precondition: the producer ran");
+            assert_eq!(
+                seen.len(),
+                before.len() + 1,
+                "precondition: the temp file was there while the producer wrote: {seen:?}"
+            );
             assert_eq!(
                 names_in(dir),
                 before,
@@ -879,13 +977,17 @@ mod tests {
     /// write tries — for `publish`'s temp file and for a private
     /// directory — are planted, and the write is refused saying the
     /// names are taken and where they are, with nothing written and
-    /// every planted entry left byte for byte.
+    /// every planted entry left byte for byte. The expected message
+    /// writes the number out, so the bound is pinned as 64 and not only
+    /// as whatever [`TEMP_ATTEMPTS`] says (ruling B38.1, second
+    /// addendum §10).
     ///
     /// Controls: a `claim` with no bound (`loop`), or one that tries a
     /// name more than [`TEMP_ATTEMPTS`], finds a free name and writes;
     /// one that tries a name fewer is caught by the count of names
     /// tried; a refusal reported as `Internal`, or one that carries the
-    /// system's bare "File exists", fails the message.
+    /// system's bare "File exists", fails the message; and so does
+    /// `TEMP_ATTEMPTS = 4`, on the number.
     #[test]
     fn test_every_temp_name_taken_is_refused_and_touches_nothing() {
         let _serial = serial();
@@ -907,8 +1009,8 @@ mod tests {
             assert_eq!(
                 refused,
                 Err(PublishRefusal::Invalid(format!(
-                    "could not create {what} beside `{}`: all {TEMP_ATTEMPTS} names tried (`{}`) are taken, \
-                     and none was touched",
+                    "could not create {what} beside `{}`: all 64 names tried (`{}`) are taken, and none was \
+                     touched",
                     dest.display(),
                     dir.join(format!(".mandala-write-{}-*", std::process::id()))
                         .display()
@@ -1210,23 +1312,46 @@ mod tests {
     }
 
     /// **A panic removes the private directory too**: the unwind drops
-    /// it, with what the producer had written inside.
+    /// it, with what the producer had written inside. Where the
+    /// directory was, and that it was there, is carried out of the
+    /// panicking closure and asserted here, and the panic must be this
+    /// test's own, so no other panic can pass for it.
     ///
-    /// Control: a `Drop` that removes nothing leaves the directory.
+    /// Controls: a `Drop` that removes nothing leaves the directory; a
+    /// `beside` that makes nothing fails on the panic not being this
+    /// test's own.
     #[test]
     fn test_a_private_dir_is_removed_when_its_holder_panics() {
+        const PANIC: &str = "the holder panics (this test's own)";
         let _serial = serial();
         let scratch = Scratch::new("private-panic");
         let dir = &scratch.0;
         let dest = dir.join("out.mp4");
+        let held = Mutex::new(None);
         let caught = std::panic::catch_unwind(|| {
             let private = PrivateDir::beside(&dest).expect("a private directory");
             std::fs::write(private.path().join("video.mp4"), "half").expect("the producer writes");
-            assert_eq!(names_in(dir).len(), 1, "precondition: the directory is there");
-            panic!("the holder panics (this test's own)");
+            *held.lock().expect("not poisoned") = Some((private.path().to_path_buf(), names_in(dir)));
+            panic!("{}", PANIC);
         });
-        assert!(caught.is_err(), "precondition: the holder panicked");
-        assert_eq!(names_in(dir), Vec::<String>::new());
+        let payload = caught.expect_err("precondition: the holder panicked");
+        assert_eq!(
+            payload.downcast_ref::<String>().map(String::as_str),
+            Some(PANIC),
+            "precondition: the panic is this test's own"
+        );
+        let (made, while_held) = held
+            .into_inner()
+            .expect("not poisoned")
+            .expect("precondition: the directory was made before the panic");
+        assert_eq!(
+            made.parent(),
+            Some(dir.as_path()),
+            "precondition: it was in the directory"
+        );
+        let name = made.file_name().expect("named").to_string_lossy().into_owned();
+        assert_eq!(while_held, vec![name], "precondition: it was there while held");
+        assert_eq!(names_in(dir), Vec::<String>::new(), "the unwind removed it");
     }
 
     /// `SKIPPED: {what}` on the process's stderr, past libtest's capture

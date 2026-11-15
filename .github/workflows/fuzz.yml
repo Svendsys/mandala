@@ -145,18 +145,19 @@ jobs:
         run: echo "$HOME/.cargo-fuzz/bin" >> "$GITHUB_PATH"
 
       # One build cache for every target, saved by one entry and restored
-      # by all six. Count on it for the registry dependencies' build
-      # alone. rust-cache cleans a workspace's own crates out of what it
-      # saves ("the workspace crates themselves are not cached", its
-      # README), and for the `fuzz` workspace that is mandala-fuzz, so
-      # every job compiles it. The four other packages `fuzz/Cargo.lock`
-      # lists with no `source` (baumhard, guarded_file, the vendored
-      # cosmic-text and the workspace-hack) lie outside `fuzz/`, and
-      # rust-cache v2 keeps the build of a package outside the workspace
-      # root (`getPackagesOutsideWorkspaceRoot`, its `src/save.ts`);
-      # whether a job on a fresh checkout reuses that build was not
-      # measured. (After a restore that matched its key in full, it does
-      # not save again: `isCacheUpToDate`, in the same file.)
+      # by every target in the matrix. Before it saves, rust-cache v2
+      # prunes the build of the packages under the workspace root, which
+      # for `workspaces: fuzz` is mandala-fuzz alone, and keeps every
+      # package whose manifest is outside it
+      # (`getPackagesOutsideWorkspaceRoot`, its `src/save.ts`): the
+      # registry dependencies, and the four other packages
+      # `fuzz/Cargo.lock` lists with no `source` (baumhard, guarded_file,
+      # the vendored cosmic-text and the workspace-hack). So mandala-fuzz
+      # is compiled by every job. The other four are saved, but a fresh
+      # checkout's sources are newer than the cached build, so cargo most
+      # likely rebuilds them as well; that last part was not measured.
+      # (After a restore that matched its key in full, it does not save
+      # again: `isCacheUpToDate`, in the same file.)
       - name: Cache the fuzz build
         uses: Swatinem/rust-cache@v2
         with:

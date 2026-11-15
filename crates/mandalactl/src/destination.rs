@@ -37,7 +37,7 @@ impl Destination {
     /// cannot be followed to a file; the message names the link and
     /// where it leads. Cost: [`guarded_file::real_file`]'s.
     pub(crate) fn resolve(typed: &Path) -> Result<Self, String> {
-        let real = guarded_file::real_file(typed).map_err(text)?;
+        let real = guarded_file::real_file(typed).map_err(PublishRefusal::message)?;
         Ok(Self {
             typed: typed.to_path_buf(),
             real,
@@ -62,7 +62,7 @@ impl Destination {
     /// `…/real.gif`, which exists; …"), and shows the real file in
     /// `shown_path`'s form wherever it names it.
     pub(crate) fn say(&self, why: PublishRefusal) -> String {
-        let message = text(why);
+        let message = why.message();
         let message = match message.strip_suffix(guarded_file::OVERWRITE_HINT) {
             Some(head) => format!("{head}pass overwrite=true to replace it"),
             None => message,
@@ -78,13 +78,6 @@ impl Destination {
             None => format!("`{typed}` leads to `{shown}`: {message}"),
         }
     }
-}
-
-/// A refusal's message, whichever kind it is: this tool reports both
-/// the same way, as exit `1`.
-fn text(why: PublishRefusal) -> String {
-    let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = why;
-    message
 }
 
 #[cfg(test)]

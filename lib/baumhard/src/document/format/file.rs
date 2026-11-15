@@ -69,14 +69,13 @@ pub fn extension_refusal(path: &str) -> String {
 ///
 /// Cost: a `symlink_metadata`, and for a link `real_file`'s walk.
 pub fn write_target(path: &str) -> Result<std::path::PathBuf, String> {
-    use crate::util::guarded_file::{real_file, shown_path, PublishRefusal};
+    use crate::util::guarded_file::{real_file, shown_path};
     if !has_map_extension(path) {
         return Err(extension_refusal(path));
     }
     let real = real_file(Path::new(path)).map_err(|refusal| {
         // The refusal opens with the path itself; it is not named twice.
-        let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
-        crate::util::log::collapse_home_in(&message)
+        crate::util::log::collapse_home_in(&refusal.message())
     })?;
     if !has_map_extension(&real.to_string_lossy()) {
         return Err(format!(
@@ -162,19 +161,18 @@ fn publish(
     path: &str,
     produce: impl FnOnce(&mut dyn std::io::Write) -> Result<(), String>,
 ) -> Result<(), String> {
-    use crate::util::guarded_file::{publish, PublishRefusal};
+    use crate::util::guarded_file::publish;
     // The extension rule holds for the file written, not only for the
     // name typed (amendment E1.1): a link named like a map cannot carry
     // map bytes into a file that is not one.
     let real = write_target(path)?;
     publish(&real, true, produce).map(|_| ()).map_err(|refusal| {
-        let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
         // The caller names its own area (`save:`, `apply:`); the
         // message leads with the path, as a read's does.
         format!(
             "{}: could not write: {}",
             tilde_path(Path::new(path)),
-            crate::util::log::collapse_home_in(&message)
+            crate::util::log::collapse_home_in(&refusal.message())
         )
     })
 }

@@ -4,7 +4,13 @@
 //! the request, talk to the app, print the reply.
 //!
 //! **The exit code is the contract.** `0` — the app answered
-//! `ok:true`. `1` — it answered `ok:false` ("the server said no").
+//! `ok:true`. `1` — the command was refused: the app answered
+//! `ok:false` ("the server said no"), or this client refused or failed
+//! its own part of it, whether or not anything was sent — a file it
+//! would not write (`record assemble`'s output, a `--ws` screenshot's),
+//! a recording it could not assemble, a `--wait-settled` the app cannot
+//! serve. One command, one exit code, whichever side writes the file
+//! (ruling B38.1, second addendum §9).
 //! `2` — it could not be reached, or the request did not go out whole:
 //! not running, busy, refused, or speaking another protocol — nothing
 //! can have run, so repeating is safe. `3` — the command line was wrong
@@ -20,8 +26,9 @@
 //! **Errors are `String`s, classified by the stage that made them**
 //! (CODE_CONVENTIONS §9 allows no error types): a failure while
 //! reading the command line is a `3`, one before the request left a
-//! `2`, one after it left a `4`, and a reply with `ok:false` a `1` — no
-//! enum of causes is needed because the stage already says which.
+//! `2`, one after it left a `4`, and a reply with `ok:false`, or this
+//! client's own refusal of the command, a `1` — no enum of causes is
+//! needed because the stage already says which.
 //!
 //! All output goes through the writers in [`Io`], so a test reads
 //! exactly what a shell would have shown.
@@ -49,7 +56,8 @@ use crate::wire::{self, base64_decode, ErrorBody, Outgoing, Reply, PROTOCOL, REQ
 pub enum Exit {
     /// The app answered `ok:true`.
     Success,
-    /// The app answered `ok:false`.
+    /// The command was refused: the app answered `ok:false`, or this
+    /// client refused or failed its own part of it.
     CommandError,
     /// The app could not be reached or understood, and the request did
     /// not go out whole: nothing ran.
@@ -203,7 +211,8 @@ fn invoke(invocation: Invocation, env: Env<'_>, io: &mut Io<'_>) -> Exit {
         Err(why) => return usage(io, &why),
     };
     // Its files are looked at before the capture is asked for, so a
-    // write that would be refused costs no capture and no transfer.
+    // write the look can see would be refused costs no capture and no
+    // transfer.
     if let Some(Err(why)) = sink.as_ref().map(|sink| sink.files(sink.sidecar)) {
         emit(io.err, &format!("mandalactl: {why} (nothing was sent)\n"));
         return Exit::CommandError;
@@ -605,9 +614,9 @@ fn sidecar_path(path: &Path) -> PathBuf {
     ))
 }
 
-/// A refusal at the write, after the capture, said with what the caller
-/// may do about it: the capture read nothing from the app's state, so
-/// repeating it is safe.
+/// A refusal at the write, after the capture and before anything was
+/// written, said with what the caller may do about it: the capture
+/// read nothing from the app's state, so repeating it is safe.
 fn refused(said: String) -> String {
     format!("{said} (the capture succeeded and may be repeated)")
 }
@@ -620,9 +629,11 @@ impl ScreenshotSink {
     /// `maptool export` ([`Destination`], ruling B38.1 §6), and the
     /// no-clobber rule is held to that file.
     ///
-    /// Called twice. Before the capture is requested, for the sidecar
-    /// the request asks for: a write that would be refused then sends
-    /// nothing. And at the write, for the sidecar the reply carries,
+    /// Called twice (ruling B38.1, second addendum §8, the sequence a
+    /// native app follows too). Before the capture is requested, for
+    /// the sidecar the request asks for: a write the look can see would
+    /// be refused then sends nothing. And at the write, right before
+    /// the first file is written, for the sidecar the reply carries,
     /// where it catches a file that appeared during the capture. Either
     /// look only saves work and names the file; the guarantee is the
     /// write's own, atomic refusal (`guarded_file::publish`).
@@ -643,7 +654,11 @@ impl ScreenshotSink {
     /// and `sidecar`, so the output, `--json` included, names files on
     /// either transport. A reply with `rendered: false` writes nothing,
     /// as a native app writes nothing. `Err` when a file appeared in the
-    /// way during the capture, or the write fails, said by [`refused`].
+    /// way during the capture, or the PNG's write fails, said by
+    /// [`refused`]; and when the sidecar's write fails after the PNG has
+    /// landed, in a native app's words for it: the PNG was written, at
+    /// the path typed, and its sidecar was not. Repeating the capture
+    /// then needs `overwrite=true`, so that message does not offer it.
     fn write(self, exchange: Exchange) -> Result<Exchange, String> {
         let Exchange { mut reply, line } = exchange;
         let Some(encoded) = reply.result.get("png_base64").and_then(Value::as_str) else {
@@ -654,15 +669,20 @@ impl ScreenshotSink {
         let sidecar_path = sidecar_path(&self.path);
         let sidecar = reply.result.get("sidecar").map(Value::to_string);
         let (png_file, sidecar_file) = self.files(sidecar.is_some()).map_err(refused)?;
-        let write = |file: &Destination, bytes: &[u8]| {
+        let publish = |file: &Destination, bytes: &[u8]| {
             guarded_file::publish(file.real(), self.overwrite, |out| {
                 out.write_all(bytes).map_err(|e| e.to_string())
             })
-            .map_err(|why| refused(file.say(why)))
+            .map_err(|why| file.say(why))
         };
-        write(&png_file, &png)?;
+        publish(&png_file, &png).map_err(refused)?;
         if let (Some(file), Some(text)) = (&sidecar_file, &sidecar) {
-            write(file, text.as_bytes())?;
+            publish(file, text.as_bytes()).map_err(|why| {
+                format!(
+                    "the PNG was written to `{}`, but its sidecar was not: {why}",
+                    self.path.display()
+                )
+            })?;
         }
         let rewrite = |result: &mut Value| {
             if let Some(object) = result.as_object_mut() {

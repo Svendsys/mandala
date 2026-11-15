@@ -591,10 +591,12 @@ fn test_a_file_that_appears_during_the_capture_is_refused_at_the_write() {
 /// through `link.png`, a link to `elsewhere/real.png`, the image is
 /// written to `real.png` and the sidecar beside the link, as
 /// `link.png.geometry.json`; nothing is written beside the real file,
-/// and the output reports the names typed.
+/// and the output reports both names as typed, never the real file's.
 ///
-/// Control: deriving the sidecar from the resolved path writes
-/// `real.png.geometry.json` beside the real file instead.
+/// Controls: deriving the sidecar from the resolved path writes
+/// `real.png.geometry.json` beside the real file instead; an output
+/// whose `path` is the resolved file, or whose `sidecar_path` is,
+/// fails the output's lines.
 #[cfg(unix)]
 #[test]
 fn test_a_screenshots_sidecar_follows_the_name_typed() {
@@ -616,11 +618,182 @@ fn test_a_screenshots_sidecar_follows_the_name_typed() {
         !elsewhere.join("real.png.geometry.json").exists(),
         "nothing is written beside the real file"
     );
+    for (key, typed) in [("path", &link), ("sidecar_path", &beside_link)] {
+        assert!(
+            outcome
+                .out
+                .contains(&format!("{key}: {:?}\n", typed.to_string_lossy())),
+            "the output reports `{key}` by the name typed: {}",
+            outcome.out
+        );
+    }
     assert!(
-        outcome.out.contains(&beside_link.display().to_string()),
-        "the output reports the sidecar by the name typed: {}",
+        !outcome.out.contains("real.png"),
+        "the output does not name the real file: {}",
         outcome.out
     );
+}
+
+/// **A link at the sidecar's name leads to the file written, too**
+/// ("a symlink at either path", `format/ipc.md`): with `overwrite` the
+/// sidecar goes to the file its name's link leads to, and the link
+/// stays a link.
+///
+/// Control: a sidecar written at its name without resolving it is
+/// refused as a symlink.
+#[cfg(unix)]
+#[test]
+fn test_a_link_at_the_sidecars_name_is_written_through_with_overwrite() {
+    let relay = Relay::start();
+    let _app = screenshot_app(&relay, true);
+    let dir = tempfile::tempdir().expect("a directory");
+    let path = dir.path().join("shot.png");
+    let kept = dir.path().join("kept.json");
+    std::fs::write(&kept, b"old").expect("writes");
+    let sidecar = dir.path().join("shot.png.geometry.json");
+    std::os::unix::fs::symlink(&kept, &sidecar).expect("symlinks");
+    let outcome = relay.invoke(&format!("capture.screenshot {} overwrite=true", path.display()));
+    assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
+    let written: Value = serde_json::from_slice(&std::fs::read(&kept).expect("replaced")).expect("JSON");
+    assert_eq!(written, json!({"protocol": 1, "nodes": []}));
+    assert_eq!(std::fs::read_link(&sidecar).expect("still a link"), kept);
+}
+
+/// **The screenshot is written by the guarded writer, which replaces
+/// the name and never writes in place** (#357, scope item 2): `shot.png`
+/// is a hard link to `other-name.png`; after a capture with `overwrite`
+/// `shot.png` holds the image and `other-name.png` what it held. A
+/// write in place would change the file both names share. A hard link
+/// needs no privilege, so this runs on Windows too.
+///
+/// Control: `std::fs::write` at the resolved path, in place of
+/// `guarded_file::publish`, writes the image into `other-name.png`.
+#[test]
+fn test_a_screenshot_over_ws_replaces_the_name_and_never_writes_in_place() {
+    let relay = Relay::start();
+    let _app = screenshot_app(&relay, false);
+    let dir = tempfile::tempdir().expect("a directory");
+    let other = dir.path().join("other-name.png");
+    std::fs::write(&other, b"keep").expect("writes");
+    let path = dir.path().join("shot.png");
+    std::fs::hard_link(&other, &path).expect("hard links");
+    let outcome = relay.invoke(&format!(
+        "capture.screenshot {} overwrite=true sidecar=false",
+        path.display()
+    ));
+    assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
+    assert!(
+        std::fs::read(&path).expect("written").starts_with(b"\x89PNG"),
+        "precondition: the name typed holds the screenshot"
+    );
+    assert_eq!(
+        std::fs::read(&other).expect("kept"),
+        b"keep",
+        "the file the name used to share is not written into"
+    );
+}
+
+/// **A directory that is not there, or one where the image should be,
+/// refuses the capture before it is asked for** (ruling B38.1, second
+/// addendum §7): the look sees that `<dir>/missing/shot.png` has
+/// nowhere to go and that `<dir>/folder.png` is a directory, each in
+/// the writer's words; nothing is sent, and nothing is made or changed.
+///
+/// Control: a look that sees only an existing file sends both
+/// captures, and the write then refuses them.
+#[test]
+fn test_a_directory_missing_or_in_the_way_sends_nothing() {
+    let relay = Relay::start();
+    let app = screenshot_app(&relay, true);
+    let dir = tempfile::tempdir().expect("a directory");
+    let nowhere = dir.path().join("missing").join("shot.png");
+    let folder = dir.path().join("folder.png");
+    std::fs::create_dir(&folder).expect("a directory");
+    for (path, why) in [
+        (
+            &nowhere,
+            format!("the parent directory of `{}` does not exist", nowhere.display()),
+        ),
+        (&folder, format!("`{}` is a directory", folder.display())),
+    ] {
+        for extra in ["", " overwrite=true"] {
+            let outcome = relay.invoke(&format!("capture.screenshot {}{extra}", path.display()));
+            assert_eq!(outcome.exit, Exit::CommandError, "{extra}: {}", outcome.err);
+            assert!(
+                outcome
+                    .err
+                    .contains(&format!("mandalactl: {why} (nothing was sent)")),
+                "{extra}: {}",
+                outcome.err
+            );
+        }
+    }
+    assert!(app.requests().is_empty(), "no capture was asked for");
+    assert!(!dir.path().join("missing").exists(), "nothing was made");
+    assert!(
+        std::fs::read_dir(&folder)
+            .expect("still a directory")
+            .next()
+            .is_none(),
+        "nothing was written into the directory"
+    );
+}
+
+/// **A sidecar that fails after the image has landed says the image
+/// was written** (ruling B38.1, second addendum §8), in a native app's
+/// words for it, and does not offer a repeat that the image now at
+/// `path` would refuse. Staged with no seam: the image's name is one
+/// byte under the longest a file name may be, so both looks pass and
+/// the image is written, and the sidecar's name, fourteen bytes
+/// longer, cannot be created. Unix only: the limit staged is a
+/// component's 255 bytes, where Windows also limits the whole path.
+///
+/// Control: a sidecar refusal said the way the image's is ends with
+/// "(the capture succeeded and may be repeated)".
+#[cfg(unix)]
+#[test]
+fn test_a_sidecar_that_fails_after_the_image_says_the_image_was_written() {
+    let relay = Relay::start();
+    let app = screenshot_app(&relay, true);
+    let dir = tempfile::tempdir().expect("a directory");
+    let name = format!("{}.png", "a".repeat(250));
+    let path = dir.path().join(&name);
+    let outcome = relay.invoke(&format!("capture.screenshot {}", path.display()));
+    assert_eq!(
+        app.requests().len(),
+        1,
+        "precondition: both looks passed and the capture was asked for: {}",
+        outcome.err
+    );
+    assert!(
+        std::fs::read(&path).expect("written").starts_with(b"\x89PNG"),
+        "precondition: the image landed"
+    );
+    assert_eq!(outcome.exit, Exit::CommandError, "{}", outcome.err);
+    assert!(
+        outcome.err.contains(&format!(
+            "mandalactl: the PNG was written to `{}`, but its sidecar was not: ",
+            path.display()
+        )),
+        "{}",
+        outcome.err
+    );
+    assert!(
+        !outcome.err.contains("may be repeated"),
+        "no repeat is offered: {}",
+        outcome.err
+    );
+    let names: Vec<String> = std::fs::read_dir(dir.path())
+        .expect("readable")
+        .map(|entry| {
+            entry
+                .expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    assert_eq!(names, vec![name], "the image, and nothing of the sidecar's");
 }
 
 /// **A symlink at the path leads to the file written, and the

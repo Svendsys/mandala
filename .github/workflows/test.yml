@@ -174,9 +174,9 @@ jobs:
   # has never run on Windows: making all of it pass there is a port of
   # its own, not part of a transport. What this job holds instead:
   #
-  # - clippy over the app crate and `mandalactl`, every target,
-  #   `-D warnings` — a hard gate as on Linux, and the only lint the
-  #   `cfg(windows)` code on either side gets;
+  # - clippy over the app crate, `mandalactl` and `guarded_file`, every
+  #   target, `-D warnings` — a hard gate as on Linux, and the only
+  #   lint the `cfg(windows)` code in any of the three gets;
   # - the `ipc::` tests: the transport's loopback suite against a real
   #   pipe (and `mandalactl` round-tripping a `ping` over it), the
   #   pipe's own unit tests, and the protocol tests above the
@@ -185,7 +185,13 @@ jobs:
   #   loopback scenarios against a fake app on a real pipe, and
   #   `tests/binary.rs` driving the shipped binary over one. Path
   #   expectations are spelled per platform, and the handful of tests
-  #   that are Unix-only by nature say why beside their `cfg`;
+  #   that are Unix-only by nature say why beside their `cfg`. One of
+  #   its tests may skip here: `test_an_mp4_is_made_when_ffmpeg_is_on_the_host`
+  #   needs `ffmpeg`, which this job does not install and
+  #   `MANDALA_REQUIRE_FFMPEG` is not set for. Where the runner has
+  #   none, `record assemble`'s MP4 path through `PrivateDir` is not
+  #   run on Windows, and the test's `SKIPPED:` line shows in the
+  #   step's output (ruling B38.1, second addendum §11);
   # - `guarded_file`'s tests (#357): the one writer of a caller-named
   #   file, which `mandalactl` writes through on Windows too. Its symlink
   #   and no-hard-link tests are Unix and Linux only, and say why.

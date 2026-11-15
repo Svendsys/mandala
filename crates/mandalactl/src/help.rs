@@ -241,7 +241,9 @@ OUTPUT
 
 EXIT CODES
   0  success: the app answered ok:true (warnings do not change this)
-  1  the app said no: ok:false, code and message on stderr
+  1  refused: the app said no (ok:false, code and message on stderr), or mandalactl refused or failed
+     its own part of the command: a file it would not write (record assemble, a screenshot over --ws),
+     a recording it could not assemble, --wait-settled where the app has no clock.wait
   2  the app could not be reached, or the request did not go out whole: not running, busy,
      refused, wrong protocol. Nothing ran, so repeating the command is safe
   3  bad command line: nothing was sent
