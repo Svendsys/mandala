@@ -22,17 +22,18 @@ use crate::font::fonts::{self, acquire_font_system_write, AppFont, FONT_SOURCES}
 /// What `Mandala Ornaments` is subset to, and so holds: the ornaments of
 /// the demo maps (`✦ ❦ ∙`), the built-in portal-end glyph (`◈`), the
 /// box-drawing characters of the console's frame (`─ │ ╭ ╮ ╯ ╰`), of
-/// testament's custom sides (`━ ┃`) and of the maps' directional rings'
-/// corners (`┌ ┐ └ ┘ ┏ ┓ ┗ ┛`, #324), and the rest of the app's chrome:
+/// testament's custom sides (`━ ┃`), of the maps' directional rings'
+/// corners (`┌ ┐ └ ┘ ┏ ┓ ┗ ┛`, #324) and of the frame cycle's double box
+/// (`║ ╔ ╗ ╝ ╚`, #338), and the rest of the app's chrome:
 /// the console's prompt, cursor, gutter and completion marker
 /// (`❯ ▌ ▏ ▸`), the rubber band's dashes (`┄ ┆`) and the `body` presets'
 /// `═ ∼ ⋯` — with `∽` and `❮`, the mirrored forms of `∼` and `❯`, which
 /// the subsetter keeps for a right-to-left run. The default face holds
 /// none of them. `scripts/ornament_fonts.sh` subsets the face to exactly
 /// these.
-pub const ORNAMENT_CODE_POINTS: [char; 31] = [
-    '∙', '∼', '∽', '⋯', '─', '━', '│', '┃', '┄', '┆', '┌', '┏', '┐', '┓', '└', '┗', '┘', '┛', '═', '╭', '╮',
-    '╯', '╰', '▌', '▏', '▸', '◈', '✦', '❦', '❮', '❯',
+pub const ORNAMENT_CODE_POINTS: [char; 36] = [
+    '∙', '∼', '∽', '⋯', '─', '━', '│', '┃', '┄', '┆', '┌', '┏', '┐', '┓', '└', '┗', '┘', '┛', '═', '║', '╔',
+    '╗', '╚', '╝', '╭', '╮', '╯', '╰', '▌', '▏', '▸', '◈', '✦', '❦', '❮', '❯',
 ];
 
 /// What `Mandala Emoji` is subset to: the frames demo's `🌸`.
