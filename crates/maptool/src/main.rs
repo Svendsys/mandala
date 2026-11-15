@@ -101,22 +101,26 @@ Commands:
                                 warning for what loads but is probably a
                                 mistake: a verb nothing refers to (a
                                 node's 'on', a span's 'link', or an edit
-                                in the map naming it anywhere in it, its
-                                filter or its body, run or not), a node
-                                saved hidden that nothing can reveal
-                                (none while an edit in the map writes
+                                or a presentation in the map naming it
+                                anywhere in it, its filter or its body,
+                                run or not), a node saved hidden that
+                                nothing can reveal (none while an edit
+                                in the map, or a presentation in it that
+                                plays on nodes, writes
                                 'set_hidden: false'), a visible frame
                                 with no rings, and a portal whose ends
                                 both have no content (none while an edit
                                 in the map writes a portal end's
                                 non-empty 'set_content'). In general,
                                 which elements an edit reaches is
-                                decided when it runs, so verify does not
-                                narrow by reach. Only the map's own
-                                edits are read: App and User edits
-                                (edits.json) also run on a map, but a
-                                map file cannot be judged on them, so
-                                they are not read. Warnings alone
+                                decided when it runs, and a
+                                presentation's when it starts, so verify
+                                does not narrow by reach. Only the map's
+                                own edits and presentations are read:
+                                the App's and the User's (edits.json,
+                                presentations.json) also run on a map,
+                                but a map file cannot be judged on them,
+                                so they are not read. Warnings alone
                                 exit 0.
   apply <map> <pattern> [-i] [--dry-run] -- <cmd> [args...]
                                 For each section with a line the regex

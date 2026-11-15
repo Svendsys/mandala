@@ -88,8 +88,12 @@ fn fading(id: &str, play: &str, opacity: f32, in_ms: u32, out_ms: u32) -> Presen
     ))
 }
 
+/// One entry of a journal: the element, what happened to it, and its
+/// image before and after.
+type Image = (NodeId, Touch, Option<DocElement>, Option<DocElement>);
+
 /// What the journals of the applied history hold, image for image.
-fn history_images(doc: &Document) -> Vec<Vec<(NodeId, Touch, Option<DocElement>, Option<DocElement>)>> {
+fn history_images(doc: &Document) -> Vec<Vec<Image>> {
     doc.applied_journals()
         .map(|journal| {
             journal
@@ -1070,6 +1074,118 @@ fn test_a_suspension_guard_resumes_however_its_scope_ends() {
     assert_eq!(doc.save_json().unwrap(), written(&map()));
 }
 
+/// `own` is the map's element under whatever plays on it — one
+/// instance or two, part-way or whole — and the tree's where nothing
+/// does; it follows the map when an edit changes it.
+///
+/// Control: reading the newest application's before-image gives node 2
+/// as the dimming left it, under the lift.
+#[test]
+fn test_own_is_the_maps_element_under_whatever_plays() {
+    let mut doc = performed();
+    let (two, three, four) = (n(&doc, 2), n(&doc, 3), n(&doc, 4));
+    // A second instance on node 2, over the lift.
+    doc.start_presentation(&fading("dim", "hold", 0.25, 0, 0), &[two], 100.0)
+        .unwrap();
+    let shown = node(&doc, 2).1;
+    assert_eq!(
+        (shown.position, shown.opacity),
+        (Vec2::new(300.0, -5.0), 0.25),
+        "precondition: both show"
+    );
+    let own = |doc: &Document, id: NodeId| match doc.own(id) {
+        Some(DocElement::Node(data)) => (data.position, data.opacity, data.hidden),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(own(&doc, two), (Vec2::new(300.0, 0.0), 1.0, false));
+    assert_eq!(
+        own(&doc, three),
+        (Vec2::new(300.0, 200.0), 1.0, false),
+        "concealed"
+    );
+    assert_eq!(
+        doc.own(four),
+        doc.get(four),
+        "nothing plays on node 4: the tree's own element"
+    );
+    // The map moves under them.
+    doc.apply(place(vec![two], Vec2::new(340.0, 40.0)), ChangeSource::Action)
+        .unwrap();
+    assert_eq!(own(&doc, two), (Vec2::new(340.0, 40.0), 1.0, false));
+    assert_eq!(node(&doc, 2).1.position, Vec2::new(340.0, 35.0));
+    // Set aside, the tree is the map.
+    {
+        let map = doc.suspended();
+        assert_eq!(own(&map, two), (Vec2::new(340.0, 40.0), 1.0, false));
+    }
+    // An element the tree no longer holds has no element of the map's.
+    let steps = delete(&doc, &[four]).unwrap();
+    doc.apply(EditRequest::new(steps, "delete"), ChangeSource::Action)
+        .unwrap();
+    assert!(doc.own(four).is_none());
+}
+
+/// What a presentation says of the rest of the map: the verbs it names,
+/// in its filter and in its mutations, and that it can show a node when
+/// it writes `set_hidden: false` — which only one that plays on nodes
+/// can write, and nothing gives a portal end a marker: a load refuses a
+/// mutation of another kind than the target's.
+///
+/// Controls: with the filter not walked, `peek` is not named; with any
+/// `set_hidden` counted, the second row reveals.
+#[test]
+fn test_a_presentation_mentions_the_verbs_it_names_and_what_it_can_show() {
+    use crate::document::edit::Shows;
+    let said = |json: &str| {
+        let def = presentation(json);
+        let mut verbs: Vec<String> = Vec::new();
+        let shows = def.mentions(|verb| verbs.push(verb.to_string()));
+        (verbs, shows)
+    };
+    let nothing = Shows::default();
+    let reveals = Shows {
+        reveals: true,
+        ..Shows::default()
+    };
+    assert_eq!(
+        said(
+            r#"{"id":"p","name":"P","play":"hold","target":"node",
+            "filter":{"fields":[[{"on_hover":"peek"},{"Equals":false}]]},
+            "mutations":[{"node":{"set_click":"go"}},{"node":{"set_hidden":false}}]}"#
+        ),
+        (vec!["peek".to_string(), "go".to_string()], reveals)
+    );
+    assert_eq!(
+        said(
+            r#"{"id":"p","name":"P","play":"hold","target":"node","mutations":[{"node":{"set_hidden":true}}]}"#
+        ),
+        (Vec::new(), nothing)
+    );
+    assert_eq!(
+        said(
+            r#"{"id":"p","name":"P","play":"hold","target":"spans","mutations":[{"span":{"set_link":{"verb":"go"}}}]}"#
+        ),
+        (vec!["go".to_string()], nothing)
+    );
+    assert_eq!(
+        said(
+            r#"{"id":"g","name":"G","play":"hold","layer":"glyph","target":"sections","glyph":[{"run_opacity":0.5}]}"#
+        ),
+        (Vec::new(), nothing)
+    );
+    // A node's `set_hidden` on another target, and a portal end's marker
+    // on any, are no presentation: neither reads.
+    for (target, mutation) in [
+        ("sections", r#"{"node":{"set_hidden":false}}"#),
+        ("links", r#"{"portal_end":{"set_content":"◆"}}"#),
+    ] {
+        let (path, _) = refusal(&format!(
+            r#"{{"id":"p","name":"P","play":"hold","target":"{target}","mutations":[{mutation}]}}"#
+        ));
+        assert_eq!(path, "presentations[0].mutations[0]", "{mutation} on {target}");
+    }
+}
+
 /// A node an edit removes takes its instance's application with it, and
 /// an undo brings both back; once the history can no longer bring the
 /// node back, the instance is dropped.
@@ -1117,10 +1233,10 @@ fn test_a_start_past_the_platform_budget_is_refused_in_the_writers_words() {
         refused,
         PresentError::Refused {
             presentation: "wordy".to_string(),
-            error: ApplyError::TooMuchText {
+            error: Box::new(ApplyError::TooMuchText {
                 bytes: text + 7,
                 max: text + 4
-            },
+            }),
         }
     );
     assert_eq!(

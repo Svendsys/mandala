@@ -347,7 +347,7 @@ impl Document {
             self.try_application(&started, &reached)
                 .map_err(|error| PresentError::Refused {
                     presentation: def.id.clone(),
-                    error,
+                    error: Box::new(error),
                 })?;
             plan.push(Planned::Fresh(node, reached));
         }
@@ -385,7 +385,7 @@ impl Document {
     /// Stop the presentation `id` on each of `nodes` — an element stands
     /// for its node — at the clock reading `now_ms`: each instance there
     /// plays its way out from where it is, and a loop finishes the cycle
-    /// it is in ([`Lifecycle`]'s rules). Returns how many instances it
+    /// it is in (`lifecycle::Lifecycle`'s rules). Returns how many instances it
     /// stopped. Nothing is written here; the next
     /// [`Self::tick_presentations`] writes where they are.
     ///
@@ -539,7 +539,7 @@ impl Document {
         for (_, applied) in &lifted.journals {
             touch_all(&self.tree, applied, &mut change);
         }
-        let record = (!change.touched.is_empty()).then(|| (self.writer.feed.len(), self.writer.drains));
+        let record = (!change.touched.is_empty()).then_some((self.writer.feed.len(), self.writer.drains));
         self.push_change(ChangeSource::Presentation, change);
         self.presentations.aside = Some(Aside { lifted, record });
     }
@@ -642,6 +642,29 @@ impl Document {
             }
         }
         Cow::Owned(copy)
+    }
+
+    /// The element `id` as the map has it: with nothing a presentation
+    /// shows on it. `None` for an id the tree does not hold.
+    ///
+    /// For a reader that holds the document shared and describes one
+    /// element of the map — IPC's `scene.node_geometry` reports a node's
+    /// authored position beside where it is drawn — where
+    /// [`Self::without_presentations`] would copy the tree for it.
+    ///
+    /// The oldest application that holds the element stands on the map's
+    /// own, so its before-image is the answer; with none, the tree's.
+    /// O(the instances).
+    pub fn own(&self, id: NodeId) -> Option<&DocElement> {
+        if !self.tree.contains(id) {
+            return None;
+        }
+        self.presentations
+            .instances
+            .iter()
+            .filter_map(|instance| instance.applied.as_ref())
+            .find_map(|applied| applied.journal.before(id))
+            .or_else(|| self.get(id))
     }
 
     /// Whether the document layer is set aside. O(1).

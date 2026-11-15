@@ -1496,8 +1496,9 @@ and a request cannot declare them). Nothing outside `document` holds a
   row it rearranged (`ChangeRecord::rows`). The projector (V1-B7) and
   IPC's event stream (V1-E2) read it; neither diffs anything.
 - **One funnel.** Every call that changes the tree runs through one
-  private method, `mutate`, where the presentation layer (V1-D2) will
-  revert and re-apply around each change.
+  private method, `mutate`, where the
+  [presentation layer](#presentations--presentationdef-the-lifecycle-the-two-layers)
+  is written back out before the change and applied again after it.
 
 `lib/baumhard/src/document/writer/`.
 
@@ -1533,6 +1534,77 @@ Another change, or an undo, finishes it first (D28).
 
 `lib/baumhard/src/document/edit/`, `lib/baumhard/src/edit_handlers.rs`,
 `src/application/edits.rs`.
+
+### Presentations — `PresentationDef`, the lifecycle, the two layers
+
+**A named way of showing the map otherwise than it is, for a while,
+that is never saved** (design §10.2, D7, D17; V1-D2, #251;
+[`format/presentations.md`](./format/presentations.md)): a node lifted
+under the pointer, a branch concealed until it is revealed, a word
+that swells. Where an edit changes the map and is undone, a
+presentation changes what is drawn and is stopped.
+
+- **The definition** (`PresentationDef`) is an edit's without a reach:
+  a target within the node it plays on, a filter, a body, and how it
+  goes in (`animate`) and comes back (`return`). Its `play` is its
+  lifecycle: `while` (in, hold until stopped, out), `once` (in, out,
+  over), `loop` (in and out until stopped) and `hold` (in, and hold).
+  It comes from the same three tiers as an edit — the app's
+  (`assets/presentations.json`), the user's, the map's own
+  `presentations`, a later one winning by id.
+- **An instance** is one presentation playing on one node
+  (`Document::start_presentation`, `stop_presentation`; one a node,
+  and a start where it already plays restarts it in place). Its
+  `Lifecycle` is a pure function of the clock readings it is given: a
+  direction is followed from the progress it began at, a stop turns it
+  back from where it is, and however rarely the clock is read the
+  instant is the same.
+- **The document layer** (`layer: "document"`): the body is document
+  mutations, fields only (`validate_for_presentation`). The instances
+  are applied on top of the tree, in start order, each keeping the
+  journal of what it wrote, and the writer's one funnel writes them
+  all back out before any change and applies them again after it — so
+  the history, the derived indexes, the budget and every save hold the
+  map alone, and what is drawn is `map ⊕ open transaction ⊕
+  presentations`. The layer records what it shows differently on the
+  change feed under `ChangeSource::Presentation`, at the revision the
+  document already has; the projector draws it like any other change.
+- **The glyph layer** (`layer: "glyph"`): the body is run mutations
+  (`RunOpacity`, `RunOrigin`, `RunOverrides`) on the glyph runs the
+  target projects to — effects with no meaning in the data. The view's
+  `Stage` (`src/application/view/present.rs`) writes them after the
+  projector and the overlays, through the walker like every other
+  write to a layer. For each run an instance plays on it keeps only
+  what a run mutation can change (opacity, origin, overrides), so that
+  ending the last instance leaves the run, to the bit, what the
+  projector and the overlays alone make it; a pass costs the runs it
+  names, never the layer.
+- **Reading the map, not the performance.** A change is often built
+  from values read first — a copy, a paste beside a node, a layout.
+  The funnels an input reaches the map through — an Action
+  (`dispatch::the_map`), a console verb's execution, an edit — set the
+  layer aside for as long as they run (`Document::suspended`, a guard
+  that puts it back however its scope ends), so nothing a presentation
+  shows is ever read into a change. A reader that holds the document
+  shared and must describe the map reads through
+  `Document::without_presentations`, as `format::save` does. Which
+  surface answers the map and which what is drawn is in
+  [`format/ipc.md`](./format/ipc.md) "The map itself, or what is
+  drawn".
+- **On the clock.** The frame's tick (`app::animation::tick`) brings
+  every instance to the app clock's reading, then writes the animated
+  edit; `keeps_ticking` owes the loop a frame while an instance is on
+  its way and none while it holds. `query.animations` lists them, and
+  `clock.wait until=animations_complete` waits for them to come to
+  rest.
+
+**Caveat:** nothing starts a presentation from the canvas yet — the
+console's `present` verb and the API do; a map's `hover` and `click`
+verbs are V1-D3's.
+
+`lib/baumhard/src/document/presentation/`,
+`src/application/presentations.rs`, `src/application/view/present.rs`,
+`src/application/app/dispatch/the_map.rs`.
 
 ### TextFlow — `FlowSpan`, `ShapedRun`, `ShapedBox`, `PlacedRun`, `Outline`, `Curve`
 
@@ -1887,9 +1959,11 @@ The glyph vocabulary — commands, deltas and glyph-run mutations — and
 the `MutatorNode` AST that carries it, with runtime holes a
 `BuildContext` fills, are kept (D24) and published in
 [`format/mutations.md`](./format/mutations.md). Nothing in a
-`.mandala.json` holds a glyph mutation today: an **edit** changes the
-map in the document's vocabulary ([`format/edits.md`](./format/edits.md)),
-and glyph-layer effects are presentations, V1-D2's.
+`.mandala.json` holds a `GfxMutation` in that spelling: an **edit**
+changes the map in the document's vocabulary
+([`format/edits.md`](./format/edits.md)), and a glyph-layer
+**presentation** names the three glyph-run mutations in its own
+([`format/presentations.md`](./format/presentations.md)).
 
 ## §5 The application runtime
 
@@ -1997,8 +2071,9 @@ runs the drain; `src/application/app/drain_frame.rs` holds the rubber
 band (native-only, like the drag state it reads). The view's sync
 (`MapView::sync`) is the one place the document reaches the screen: it
 drains the change feed once, updates the projector, re-stamps the
-selection tint and hands the journals to the layer renderer, with the
-background and the status line. A pan or a zoom is a camera change and
+selection tint, writes the glyph-layer presentations over both and
+hands the journals to the layer renderer, with the background and the
+status line. A pan or a zoom is a camera change and
 applies nothing. The browser's frame
 (`run_wasm/event_redraw_requested.rs`) runs the same sync.
 
@@ -2541,10 +2616,10 @@ its canvas (`CLAUDE.md` "Dual-target status").
 
 ### App clock
 
-The one time axis everything the app *does* by time reads —
-animations, the drag pause on them, double-click and long-press timing,
-an `OnClick` trigger's start, a recording's frames — with a virtual
-mode in which it advances only when stepped. `AppClock` in
+The one time axis everything the app *does* by time reads — an
+animated edit, the presentations, double-click and long-press timing,
+a recording's frames — with a virtual mode in which it advances only
+when stepped. `AppClock` in
 `src/application/clock.rs`; `wall_ms` beside it is the wall clock
 what *measures* reads.
 

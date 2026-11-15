@@ -32,9 +32,9 @@
 //! resolved against the open map when it starts, as an edit's are when
 //! it runs.
 
-/// The instances and the layer they form on a document.
+// Each module's own docs say what it is. (A doc comment here would
+// have rustdoc read the module's own links in this scope.)
 pub mod layer;
-/// An instance's progress over time.
 pub mod lifecycle;
 pub(crate) mod load;
 mod mentions;
@@ -165,8 +165,9 @@ pub enum PresentError {
     Refused {
         /// The presentation's id.
         presentation: String,
-        /// The document's refusal.
-        error: ApplyError,
+        /// The document's refusal. Boxed: it is the largest part of any
+        /// refusal, and a start that succeeds carries none.
+        error: Box<ApplyError>,
     },
 }
 
@@ -229,9 +230,9 @@ pub(crate) fn takes_time(play: Play, animate: &Animate, out: &Animate) -> bool {
 fn glyph_mutation(dto: &GlyphOpDto) -> GfxMutation {
     let range = |[start, end]: [usize; 2]| start..end;
     match dto {
-        GlyphOpDto::RunOpacity(opacity) => GfxMutation::RunOpacity(*opacity),
-        GlyphOpDto::RunOrigin([x, y]) => GfxMutation::RunOrigin(Vec2::new(*x, *y)),
-        GlyphOpDto::RunOverrides(op) => GfxMutation::RunOverrides(match op {
+        GlyphOpDto::Opacity(opacity) => GfxMutation::RunOpacity(*opacity),
+        GlyphOpDto::Origin([x, y]) => GfxMutation::RunOrigin(Vec2::new(*x, *y)),
+        GlyphOpDto::Overrides(op) => GfxMutation::RunOverrides(match op {
             RunOverrideDto::Offset { range: r, value } => RunOverrideOp::Offset {
                 range: range(*r),
                 value: Vec2::new(value[0], value[1]),

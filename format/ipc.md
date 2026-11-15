@@ -1083,10 +1083,10 @@ the two are the same answer.
 
 | answers | commands |
 |---|---|
-| **the map itself** | `query.document` (every field: `document` is what a save writes, and a save never holds a presentation), `query.undo`; every reply's `document_revision` and the `document_changed` event, which a presentation never moves or raises; what an `act.action`, `act.console` or `act.macro` reads to build its change, and every console readout of the map (`section inspect`, `edit inspect`, `theme`, `defaults`) |
-| **what is drawn** | every `scene.*` command (the runs the projector drew, a node's `folded` and `hidden` as they show, the text as it reads); `capture.screenshot` and its geometry sidecar, and a recording's frames; where an `input.*` command lands (`input.click_node` aims at the node where it is drawn, and a click hits what is drawn there); the Actions that move the camera or change the selection by what can be seen (`ZoomFit`, `CenterOnSelection`, `SelectAll`, `InvertSelection`: a node under a fold a presentation closed is not selected) |
-| **the performance** | `query.animations`, and the console's `present list` |
-| **neither** (the app's own state, which no presentation writes) | `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.editors`, `clock.status`, `input.pending`, `events.revision`, `describe`, `ping` |
+| **the map itself** | `query.document` (every field: `document` is what a save writes, and a save never holds a presentation), `query.undo`; `scene.node_geometry`'s `model`, the one part of a `scene` reply that is the document's; every reply's `document_revision` and the `document_changed` event, which a presentation never moves or raises; what an `act.action`, `act.console` or `act.macro` reads to build its change, and the console's readouts of the map (`section show`, `edit inspect`) |
+| **what is drawn** | every `scene.*` command (the runs the projector drew, whether a node is in the scene — its `folded` and `hidden` as they show — and the text as it reads); `capture.screenshot` and its geometry sidecar, and a recording's frames; where an `input.*` command lands (`input.click_node` aims at the node where it is drawn, and a click hits what is drawn there); the Actions that move the camera or change the selection by what can be seen (`ZoomFit`, `CenterOnSelection`, `SelectAll`, `InvertSelection`: a node under a fold a presentation closed is not selected) |
+| **the performance** | `query.animations`, `clock.wait until=animations_complete`, and the console's `present list` |
+| **neither** (the app's own state, which no presentation writes) | `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.editors`, `clock.status`, `clock.wait until=settled`, `input.pending`, `events.revision`, `describe`, `ping`; the console's `help`, `mode`, `clock status`, `edit list` and `edit help` |
 
 **A change is built from the map itself.** An Action, a console line
 and an edit each run with the presentations set aside, and the
@@ -1574,7 +1574,7 @@ scene draws it, and where.
 | result field | type | meaning |
 |---|---|---|
 | `element` | object | The node described: `{"node": <id>}`. |
-| `model` | object | `{"position": {"x", "y"}, "min_size": {"w", "h"} or null, "folded", "hidden"}` as the document holds them: the authored values, before text fitting. |
+| `model` | object | `{"position": {"x", "y"}, "min_size": {"w", "h"} or null, "folded", "hidden"}` as the document holds them: the authored values, before text fitting, and with nothing a presentation shows on the node — so `model` and `canvas` differ while one moves it, and `in_scene` is `false` with `model.hidden` `false` for a node a presentation conceals. |
 | `in_scene` | boolean | Whether the scene draws the node: `false` for a node hidden by its own flag or a folded ancestor, or one that draws nothing. |
 | `canvas`, `surface`, `visibility` | object, object, string | Only when `in_scene`: the node's placement, as in `scene.dump`. |
 | `sections` | array | Only when `in_scene`: the drawn sections, as in `scene.dump`, visible or not. |

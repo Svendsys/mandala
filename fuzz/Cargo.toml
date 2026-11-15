@@ -11,8 +11,10 @@
 #
 # The targets are thin: each hands its bytes to a property function in
 # baumhard's tests trees (`document::tests::format_fuzz`,
-# `flow::tests::flow_fuzz`, `gfx_structs::tests::glyph_layer_fuzz`) and
-# panics on the `Err` it returns. The properties, the structure-aware
+# `document::tests::edit_fuzz`, `document::tests::presentation_fuzz`,
+# `flow::tests::flow_fuzz`, `gfx_structs::tests::glyph_layer_fuzz`,
+# `projection::tests::projection_fuzz`) and panics on the `Err` it
+# returns. The properties, the structure-aware
 # decoders and every finding's regression test therefore compile and
 # run on stable, in `./test.sh`.
 #
@@ -116,6 +118,20 @@ bench = false
 [[bin]]
 name = "edits_structured"
 path = "fuzz_targets/edits_structured.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "presentations_raw"
+path = "fuzz_targets/presentations_raw.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "presentations_structured"
+path = "fuzz_targets/presentations_structured.rs"
 test = false
 doc = false
 bench = false

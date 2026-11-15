@@ -869,7 +869,8 @@ fn result(init: &mut InitState, request: Value) -> Value {
 
 /// Where node `id` is drawn, and where the document has it:
 /// `scene.node_geometry`'s `canvas` corner, and `query.document`'s
-/// position of the node.
+/// position of the node — which `scene.node_geometry`'s `model` must
+/// agree with, being the one part of that reply that is the document's.
 fn drawn_and_saved(init: &mut InitState, id: u64) -> ((f64, f64), Value) {
     let geometry = result(
         init,
@@ -885,7 +886,14 @@ fn drawn_and_saved(init: &mut InitState, id: u64) -> ((f64, f64), Value) {
         init,
         json!({"id": 1, "cmd": "query.document", "pointer": pointer}),
     );
-    (drawn, saved["document"].clone())
+    let saved = saved["document"].clone();
+    let model = &geometry["model"]["position"];
+    assert_eq!(
+        json!([model["x"], model["y"]]),
+        saved,
+        "`model` is the map's own node, whatever is drawn"
+    );
+    (drawn, saved)
 }
 
 /// Whether `clock.wait until=animations_complete` would hold now, as
@@ -904,7 +912,8 @@ fn at_rest(init: &InitState) -> bool {
 /// Controls, each seen red: with the frame's tick not bringing the
 /// presentations to the clock, `t` stays `0` after the first step; with
 /// `format::save` reading the tree as it stands, `query.document`
-/// answers the lifted position.
+/// answers the lifted position; with `scene.node_geometry` reading the
+/// node off the tree, its `model` does.
 #[test]
 fn test_a_presentation_from_the_console_is_drawn_reported_and_never_in_the_document() {
     let Some(mut app) = headless_app(&fixture()) else {

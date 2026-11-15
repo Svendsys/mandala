@@ -30,7 +30,7 @@
 //! is one no presentation the format reads can reach; a text nested past
 //! what the JSON reader follows is refused as too deep a definition
 //! before the reader reads it
-//! ([`check_nesting`](crate::document::edit::load::check_nesting)), so
+//! ([`check_nesting`]), so
 //! the refusal a user meets is never the reader's.
 
 use crate::document::bounds::{
@@ -280,14 +280,14 @@ fn glyph_op(op: &GlyphOpDto) -> Result<(), (Vec<Seg>, BoundError)> {
         Ok(())
     };
     match op {
-        GlyphOpDto::RunOpacity(opacity) => check_unit_interval(*opacity)
+        GlyphOpDto::Opacity(opacity) => check_unit_interval(*opacity)
             .map(drop)
             .map_err(|error| (vec![Seg::Key("run_opacity")], error)),
-        GlyphOpDto::RunOrigin(origin) => on_canvas("run_origin", *origin, &[]),
-        GlyphOpDto::RunOverrides(RunOverrideDto::Offset { range: _, value }) => {
+        GlyphOpDto::Origin(origin) => on_canvas("run_origin", *origin, &[]),
+        GlyphOpDto::Overrides(RunOverrideDto::Offset { range: _, value }) => {
             on_canvas("value", *value, &[Seg::Key("run_overrides"), Seg::Key("offset")])
         }
-        GlyphOpDto::RunOverrides(RunOverrideDto::Scale { range: _, value }) => {
+        GlyphOpDto::Overrides(RunOverrideDto::Scale { range: _, value }) => {
             check_non_negative(*value).map(drop).map_err(|error| {
                 (
                     vec![Seg::Key("run_overrides"), Seg::Key("scale"), Seg::Key("value")],
@@ -295,9 +295,7 @@ fn glyph_op(op: &GlyphOpDto) -> Result<(), (Vec<Seg>, BoundError)> {
                 )
             })
         }
-        GlyphOpDto::RunOverrides(RunOverrideDto::Color { range: _, value: _ } | RunOverrideDto::Clear) => {
-            Ok(())
-        }
+        GlyphOpDto::Overrides(RunOverrideDto::Color { range: _, value: _ } | RunOverrideDto::Clear) => Ok(()),
     }
 }
 

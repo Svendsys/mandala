@@ -217,6 +217,7 @@ overlap, color, glyph rendering) or when you need evidence for a human.
 | interaction mode, open modals, who gets keys | `mandalactl query.mode` |
 | the status line the user sees | `mandalactl query.status` |
 | undo stack | `mandalactl query.undo` |
+| what is animating: presentations playing, an edit mid-way | `mandalactl query.animations` |
 | where is node X drawn, is it on screen | `mandalactl scene.node_geometry X` |
 | find drawn text (on or off screen) | `mandalactl scene.find_text "Border Toolkit"` |
 | what would a click at a point hit | `mandalactl scene.hit_test X Y [space=surface]` |
@@ -252,6 +253,13 @@ hit.node.node: 247
 …
 ```
 
+**The map, or what is drawn.** A presentation (`act.console "present start
+<id> <node>"`) shows a node otherwise than the map has it — lifted, faded,
+concealed — and is never saved. While one plays, `query.document` and `scene.node_geometry`'s `model` answer **the map
+itself**; every other `scene.*` field and every screenshot answer **what is
+drawn**; `query.animations` lists what is playing. `format/ipc.md` "The map
+itself, or what is drawn" has every command's row.
+
 **Two coordinate spaces.** `canvas` is the map's world space (node positions,
 the default for `scene.*`, `act.action x/y` and capture `region`). `surface`
 is window pixels, origin top-left (the default for `input.*`). Every `scene.*`
@@ -277,6 +285,16 @@ after an undo returns the model to where it was.
 until the result is rendered (queued input landed, the latest frame
 drawn), so your next read or screenshot sees it. Use it on every mutating
 call you are about to inspect. It is refused on read-only commands.
+
+**An animation is not finished because the app is settled.** In a window
+(real time) `settled` does wait for an animated edit and for a presentation
+on its way in or out; under a virtual clock it means "at this instant", and
+an animation stands where the last step left it. `mandalactl clock.wait
+animations_complete` is the condition that says nothing is moving any more:
+in real time it waits them out, and headless it tells you whether your
+`clock.step` went far enough (it times out saying the clock is virtual when
+not; `query.animations` gives an edit's `ms`). A `loop` presentation never
+completes until `present stop` — the timeout says so.
 
 A real sequence — bring an off-screen node into view and select it. It was
 run headless, so time is virtual and the drag's 13 queued samples land on a

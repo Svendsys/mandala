@@ -14,7 +14,12 @@
 //!   refused under `edits[i]`;
 //! - **all or nothing**: an edit that reads, run on a map, either
 //!   applies whole — and undo takes the map back to the byte — or is
-//!   refused and leaves the map as it was.
+//!   refused and leaves the map as it was;
+//! - **the same under what plays** (ruling D2.1 §2 on #251): built
+//!   from the map itself and run with presentations playing on every
+//!   kind of element, it leaves the history, image for image, and the
+//!   saved bytes it leaves with none, as do its undo and its redo
+//!   ([`presentation_fuzz::check_edit_under`]).
 //!
 //! The fuzz targets (`fuzz/fuzz_targets/edits_*.rs`) are thin wrappers
 //! over [`check_edits_json`] and [`check_edits_structured`]; the sweep in
@@ -26,6 +31,7 @@ use crate::document::edit::parse_edits;
 use crate::document::element::{DocElement, DocKind};
 use crate::document::format::{load, save, LoadErrorKind};
 use crate::document::ids::Document;
+use crate::document::tests::presentation_fuzz;
 use crate::document::writer::transaction::TransactionKind;
 use crate::document::writer::{ChangeSource, EditRequest};
 use crate::edit_handlers::registry;
@@ -94,7 +100,14 @@ pub fn check_edits_json(bytes: &[u8]) -> Result<(), String> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Ok(());
     };
-    check_text(text, false, &[0.5])
+    check_text(text, false, &[0.5], true)
+}
+
+/// [`check_edits_json`] for a text, with each edit run under what plays
+/// built from the map as it is drawn: the control that shows the
+/// differential property can fail.
+pub fn check_edits_built_from_what_plays(text: &str) -> Result<(), String> {
+    check_text(text, false, &[0.5], false)
 }
 
 /// Every property of the edits file `bytes` choose.
@@ -113,7 +126,7 @@ pub fn check_edits_generated(choices: &mut Choices<'_>) -> Result<(), String> {
         choices.below(1001) as f32 / 1000.0,
     ];
     let nodes_first = choices.one_in(2);
-    check_text(&file, true, &progress)?;
+    check_text(&file, true, &progress, true)?;
     check_in_a_map(&file, nodes_first)
 }
 
@@ -176,8 +189,10 @@ fn run_animated(
 /// of [`generate`]'s, which are always JSON of the file's shape, so a
 /// refusal must be inside an edit. Each edit is run instantly and
 /// animated through `progress`, and the two must end in the same map
-/// and the same history.
-fn check_text(text: &str, generated: bool, progress: &[f32]) -> Result<(), String> {
+/// and the same history; and it is run under a performance, where it
+/// must leave what it leaves with none (built from the map itself when
+/// `from_the_map`).
+fn check_text(text: &str, generated: bool, progress: &[f32], from_the_map: bool) -> Result<(), String> {
     let edits = match parse_edits(text) {
         Ok(edits) => edits,
         Err(error) => {
@@ -209,7 +224,18 @@ fn check_text(text: &str, generated: bool, progress: &[f32]) -> Result<(), Strin
         .filter(|&id| doc.get(id).is_some_and(|e| e.kind() == DocKind::Node))
         .collect();
     let before = save(&doc).map_err(|error| format!("the map saves: {error}"))?;
+    // The map as it was loaded, and the same with a performance on it.
+    let pristine = doc.clone();
+    let performed = presentation_fuzz::performed(&pristine, &anchors)?;
     for edit in &edits {
+        presentation_fuzz::check_edit_under(
+            pristine.clone(),
+            performed.clone(),
+            edit,
+            &anchors,
+            from_the_map,
+        )
+        .map_err(|why| format!("edit `{}` under a performance: {why}", edit.id))?;
         let geometry = Boxes::of(&doc);
         let revision = doc.revision();
         let Ok(request) = edit.request(&doc, &geometry, &handlers, &anchors) else {
@@ -257,7 +283,7 @@ fn check_text(text: &str, generated: bool, progress: &[f32]) -> Result<(), Strin
 const REACHES: [&str; 6] = ["self", "children", "descendants", "subtree", "parent", "siblings"];
 
 /// Targets, as the file spells them.
-const TARGETS: [&str; 8] = [
+pub(crate) const TARGETS: [&str; 8] = [
     "node",
     "sections",
     "spans",
@@ -282,7 +308,7 @@ const KINDS: [&str; 9] = [
 ];
 
 /// One mutation of each element, some at their bounds and past them.
-const MUTATIONS: [&str; 24] = [
+pub(crate) const MUTATIONS: [&str; 24] = [
     r#"{"node":{"nudge":[50.0,0.0]}}"#,
     r#"{"node":{"set_position":[1e39,0.0]}}"#,
     r#"{"node":{"set_shape":{"rectangle":{"radius":250}}}}"#,
@@ -310,7 +336,7 @@ const MUTATIONS: [&str; 24] = [
 ];
 
 /// Filter fields.
-const FIELDS: [&str; 8] = [
+pub(crate) const FIELDS: [&str; 8] = [
     r#"[{"kind":"span"},{"Equals":false}]"#,
     r#"[{"font_size":{"pt":12.0}},{"GreaterThan":false}]"#,
     r#"[{"color":"var(accent)"},{"Equals":true}]"#,

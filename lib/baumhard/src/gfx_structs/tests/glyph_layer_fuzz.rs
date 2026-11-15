@@ -124,6 +124,14 @@ pub fn check_glyph_mutations_json(bytes: &[u8]) -> Result<(), String> {
     let Some(mutations) = parse_mutations(bytes) else {
         return Ok(());
     };
+    check_mutations(&mutations)
+}
+
+/// Every property of `mutations` applied to the tree [`JSON_TREE`]
+/// builds, whatever spelled them: a file of mutations
+/// ([`check_glyph_mutations_json`]), or a glyph-layer presentation's
+/// body (`document::tests::presentation_fuzz`).
+pub fn check_mutations(mutations: &[GfxMutation]) -> Result<(), String> {
     // Every mutation goes to every element, as a scope such as
     // `SelfAndDescendants` sends one list to elements of every kind.
     let (mut tree, targets) = build_tree(&mut Choices::new(&encode(&JSON_TREE)));

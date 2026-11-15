@@ -17,6 +17,7 @@ use baumhard::document::tests::mutation_compose_tests::*;
 use baumhard::document::tests::mutation_inherited_tests::*;
 use baumhard::document::tests::mutation_ops_tests::*;
 use baumhard::document::tests::mutation_validate_tests::*;
+use baumhard::document::tests::presentation_layer_tests::*;
 use baumhard::document::tests::resolve_tests::*;
 use baumhard::document::tests::shape_tests::*;
 use baumhard::document::tests::structure_tests::*;
@@ -1987,6 +1988,21 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("writer_cancel_restores_the_document", |b| {
         b.iter(do_writer_cancel_restores_the_document)
+    });
+    // The presentation layer on a 256-node map (V1-D2, #251). Each row
+    // includes loading the map and starting the instances.
+    c.bench_function("presentation_a_frame_moves_every_instance", |b| {
+        b.iter(do_presentation_a_frame_moves_every_instance)
+    });
+    c.bench_function("presentation_a_change_under_the_layer_is_the_change_alone", |b| {
+        b.iter(do_presentation_a_change_under_the_layer_is_the_change_alone)
+    });
+    c.bench_function(
+        "presentation_a_suspension_reads_the_map_and_brings_the_layer_back",
+        |b| b.iter(do_presentation_a_suspension_reads_the_map_and_brings_the_layer_back),
+    );
+    c.bench_function("presentation_starts_and_stops_on_every_node", |b| {
+        b.iter(do_presentation_starts_and_stops_on_every_node)
     });
     c.bench_function("writer_one_transaction_at_a_time", |b| {
         b.iter(do_writer_one_transaction_at_a_time)

@@ -547,7 +547,7 @@ pub const VERBS: &[Verb] = &[
     Verb {
         name: "clock.wait",
         summary:
-            "Wait until the app is settled: no frames left to run, the latest one drawn; timeout_ms= is wall-clock, default 10000.",
+            "Wait until the app is settled (no frames left to run, the latest one drawn) or animations_complete (no animated edit or presentation still moving); timeout_ms= is wall-clock, default 10000.",
         params: &[param("until", STRING, true), param("timeout_ms", INTEGER, false)],
         positional: &["until"],
         effect: Effect::Reads,

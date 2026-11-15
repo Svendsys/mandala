@@ -122,6 +122,10 @@ style, frame and path fields, `hidden`, `opacity`. What it writes goes
 through projection as an edit's does, so a node lifted on hover takes
 its connections with it.
 
+- **Each mutation is one its target takes.** A node's mutation on
+  `"target": "sections"` is refused at load, at the mutation's path
+  (``this mutation does not apply to the presentation's target``): a
+  presentation has no mutator to reach below its target with.
 - **Fields only, never structure** (D17). The format has no spelling
   for a structural command, so a file that writes one does not read;
   and when an instance starts the document judges its mutator once
@@ -212,6 +216,20 @@ data. They never touch the document.
   A color override blends only where the glyph was already colored by
   an override; otherwise it appears whole where `snap` puts it
   (`"start"`: as soon as the instance moves; `"end"`: at `t = 1`).
+  To fade a glyph from its own color, give it that color with a `hold`
+  presentation first and start the fading one after it: instances on a
+  run combine in the order they started, so the second blends from the
+  first's color. `maps/demos/dickinson.mandala.json` does:
+  `feathers-rest` gives the letters of "feathers" the line's color and
+  the trail after them the same color at no opacity, and
+  `feathers-lift`, started after it, thins the letters and brings the
+  trail up from there.
+- **A glyph the map does not draw has nothing to write on.** A run
+  mutation moves, sizes and colors glyphs the run already holds; it
+  adds none. A trail, a spark or an underline that a presentation
+  brings up is text of the element — the dots at the end of
+  Dickinson's first line are a span of it, saved at no opacity — which
+  the presentation then colors and moves.
 - When projection rewrites a run an instance plays on — its text
   changed, its node moved — the instance is written on it again, and
   on no other run. The selection's tint and a presentation share a
@@ -255,7 +273,12 @@ so the refusal is always this one.
 - Console: `present start <id> [node-id …]`, `present stop <id>
   [node-id …]` (the selection when no node is named) and `present
   list` (the definitions that run on this map, then the instances
-  playing: the node, `t`, and which way each is going).
+  playing: the node, `t`, and which way each is going). It is how a
+  presentation is started today: nothing in a map starts one when the
+  map opens or a node is clicked until verbs have steps (V1-D3). The
+  demo maps that carry presentations name the node to start each on in
+  its `description` — `present start an-ellipse 2` on
+  `maps/demos/frames.mandala.json`.
 - IPC: [`query.animations`](./ipc.md#queryanimations) lists the
   instances playing and an animated edit that is running, and
   `clock.wait until=animations_complete` waits for them to come to

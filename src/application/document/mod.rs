@@ -550,6 +550,14 @@ impl MindMapDocument {
     /// already playing (`Document::start_presentation`). Never a change
     /// of the map: no history entry, no revision, no status line. A
     /// refusal starts nothing and is returned for the caller to show.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "what starts and stops a presentation today is the console shell, which is native; \
+                      the map's triggers (V1-D3, #252) do on both targets"
+        )
+    )]
     pub fn start_presentation(
         &mut self,
         def: &PresentationDef,
@@ -562,6 +570,14 @@ impl MindMapDocument {
     /// Stop the presentation `id` on `nodes` at `now_ms`: each instance
     /// there plays its way out (`Document::stop_presentation`). Returns
     /// how many it stopped.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "what starts and stops a presentation today is the console shell, which is native; \
+                      the map's triggers (V1-D3, #252) do on both targets"
+        )
+    )]
     pub fn stop_presentation(&mut self, id: &str, nodes: &[NodeId], now_ms: f64) -> usize {
         self.doc.stop_presentation(id, nodes, now_ms)
     }

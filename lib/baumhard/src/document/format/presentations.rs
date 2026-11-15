@@ -102,14 +102,16 @@ pub(crate) enum LayerDto {
 
 /// One run mutation of a glyph-layer body.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub(crate) enum GlyphOpDto {
-    /// Set the run's opacity, `0` to `1`.
-    RunOpacity(f32),
-    /// Set the run's origin, `[x, y]`.
-    RunOrigin([f32; 2]),
-    /// Write the run's per-glyph overrides.
-    RunOverrides(RunOverrideDto),
+    /// `run_opacity`: set the run's opacity, `0` to `1`.
+    #[serde(rename = "run_opacity")]
+    Opacity(f32),
+    /// `run_origin`: set the run's origin, `[x, y]`.
+    #[serde(rename = "run_origin")]
+    Origin([f32; 2]),
+    /// `run_overrides`: write the run's per-glyph overrides.
+    #[serde(rename = "run_overrides")]
+    Overrides(RunOverrideDto),
 }
 
 /// One edit of a run's per-glyph overrides. `range` is `[start, end]`,

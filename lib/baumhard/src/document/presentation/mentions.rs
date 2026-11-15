@@ -20,12 +20,16 @@ impl PresentationDef {
     /// `set_click` or `set_hover`, a span's `set_link` to
     /// `{"verb": …}`, a filter's `on_click` or `on_hover` — and returns
     /// what it can show while it plays: a node it writes
-    /// `set_hidden: false` on, a portal end it gives a marker. A
-    /// glyph-layer body names nothing and shows nothing: it writes runs
-    /// that are already drawn.
+    /// `set_hidden: false` on. A glyph-layer body names nothing and
+    /// shows nothing: it writes runs that are already drawn.
     ///
-    /// What the presentation writes, not where it plays: that is decided
-    /// when it starts, by the nodes it is started on.
+    /// A presentation's mutations are written on its target's elements
+    /// and on nothing below them — it has no mutator — and a load holds
+    /// each to the target's kind. So one that reveals plays on nodes,
+    /// and none gives a portal end a marker: no target is a portal end,
+    /// and [`Shows::marks_portal_ends`] is never set for one that read.
+    /// Which nodes it plays on is decided when it starts, by the nodes
+    /// it is started on, and is not narrowed here.
     ///
     /// Cost: one walk of the definition, one call of `verb` per verb id
     /// it writes, and no allocation.

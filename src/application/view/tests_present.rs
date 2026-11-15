@@ -318,7 +318,7 @@ fn test_a_projector_rewrite_brings_the_instance_back_on_exactly_that_run() {
     view.sync_for_test(&mut doc).expect("started");
     let scaled = |view: &MapView, run: Run| {
         let scales = run_data(view, run).overrides().scale();
-        !scales.is_empty() && scales.iter().any(|&scale| scale == 1.25)
+        !scales.is_empty() && scales.contains(&1.25)
     };
     let targeted: BTreeSet<Run> = section_runs(&view, &doc, a)
         .into_iter()

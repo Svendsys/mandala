@@ -32,6 +32,14 @@ const LABEL: &str = "presentations";
 
 /// The App and User presentations, filled at startup on both targets.
 pub(crate) struct PresentationRegistry {
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "what starts and stops a presentation today is the console shell, which is native; \
+                      the map's triggers (V1-D3, #252) do on both targets"
+        )
+    )]
     app: Vec<PresentationDef>,
     user: Vec<PresentationDef>,
 }
@@ -65,6 +73,14 @@ impl PresentationRegistry {
     /// The presentation `id` plays as on `doc`, and the tier it came
     /// from: the map's, else the user's, else the app's.
     /// O(presentations).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "what starts and stops a presentation today is the console shell, which is native; \
+                      the map's triggers (V1-D3, #252) do on both targets"
+        )
+    )]
     pub(crate) fn find<'a>(&'a self, doc: &'a Document, id: &str) -> Option<(&'a PresentationDef, EditTier)> {
         let find = |list: &'a [PresentationDef]| list.iter().find(|def| def.id == id);
         find(&doc.definitions().presentations)
@@ -75,6 +91,14 @@ impl PresentationRegistry {
 
     /// Every presentation that plays on `doc` — each id's winning
     /// definition — by id. O(presentations log presentations).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "what starts and stops a presentation today is the console shell, which is native; \
+                      the map's triggers (V1-D3, #252) do on both targets"
+        )
+    )]
     pub(crate) fn list<'a>(&'a self, doc: &'a Document) -> Vec<(&'a PresentationDef, EditTier)> {
         let mut ids: Vec<&str> = doc
             .definitions()
@@ -167,6 +191,45 @@ mod tests {
                 ("pulse", Play::Once)
             ]
         );
+    }
+
+    /// A presentation that would change the map's structure reaches no
+    /// tier by a file: the App's and the User's are read by one
+    /// function, which refuses the whole file at the mutation's path —
+    /// so a user file holding one beside a good presentation gives no
+    /// User tier at all (`load_desktop_layered` keeps nothing of a file
+    /// that does not parse). The map's own list is refused by the same
+    /// reader (`presentation_tests`), and a definition built in code
+    /// cannot hold one by its type; the layer refuses a mutator that
+    /// does all the same (`layer::tests`).
+    ///
+    /// Control: the same file with the field write alone reads.
+    #[test]
+    fn test_a_file_with_a_structural_mutation_gives_no_tier() {
+        let file = |mutation: &str| {
+            format!(
+                r#"{{"presentations":[{},{{"id":"s","name":"S","play":"hold","target":"node","mutations":[{{"node":{{"set_hidden":true}}}},{mutation}]}}]}}"#,
+                entry("good", "Good", "while")
+            )
+        };
+        assert_eq!(
+            parse(&file(r#"{"node":{"set_opacity":0.5}}"#)).map(|read| read.len()),
+            Ok(2)
+        );
+        for structural in [
+            r#"{"node":{"remove":true}}"#,
+            r#"{"node":{"insert_child":{"id":9}}}"#,
+            r#"{"section":{"split":{"at":1}}}"#,
+            r#"{"structure":{"remove":true}}"#,
+        ] {
+            let refused = parse(&file(structural)).expect_err(structural);
+            assert!(
+                refused.contains("presentations[1].mutations[1]"),
+                "{structural}: refused where it is written: {refused}"
+            );
+        }
+        // And the bundled file, read by the same function, holds none.
+        assert_eq!(parse(APP_PRESENTATIONS).map(|read| read.len()), Ok(3));
     }
 
     /// App < User < Map, by id, whole definition — and each tier is

@@ -95,6 +95,8 @@ jobs:
           - projection_edits
           - edits_raw
           - edits_structured
+          - presentations_raw
+          - presentations_structured
     steps:
       - uses: actions/checkout@v7
 

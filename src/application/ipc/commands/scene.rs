@@ -487,7 +487,10 @@ fn overlaps(a: Rect, b: Rect) -> bool {
 fn node_geometry_of(view: &SceneView<'_>, node: NodeId) -> Value {
     let doc = view.document.doc();
     let (projector, layers) = (view.view.projector(), view.view.layers());
-    let Some(DocElement::Node(data)) = doc.get(node) else {
+    // The document's own node: `model` describes the map, and the rest
+    // of the reply what is drawn (`format/ipc.md` "The map itself, or
+    // what is drawn").
+    let Some(DocElement::Node(data)) = doc.own(node) else {
         return Value::Null;
     };
     let model = json!({

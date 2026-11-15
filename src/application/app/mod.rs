@@ -53,8 +53,8 @@
 // directory's `mod.rs` re-exports the public surface so callers stay
 // terse.
 pub(crate) mod dispatch;
-// The animation tick both targets' frames run (animated edits; V1-D2's
-// presentations join it).
+// The animation tick both targets' frames run: the presentation
+// instances and an animated edit.
 mod animation;
 
 // Native-only — interactive modal state machines absent on WASM.
