@@ -739,61 +739,152 @@ fn test_a_directory_missing_or_in_the_way_sends_nothing() {
     );
 }
 
-/// **A sidecar that fails after the image has landed says the image
-/// was written** (ruling B38.1, second addendum §8), in a native app's
-/// words for it, and does not offer a repeat that the image now at
-/// `path` would refuse. Staged with no seam: the image's name is one
-/// byte under the longest a file name may be, so both looks pass and
-/// the image is written, and the sidecar's name, fourteen bytes
-/// longer, cannot be created. Unix only: the limit staged is a
-/// component's 255 bytes, where Windows also limits the whole path.
+/// The longest file name `dir` takes, in bytes: 255 on the common
+/// filesystems, fewer on some (eCryptfs, about 143). Found by trying,
+/// so a test that needs a name at the limit holds wherever it runs.
+#[cfg(unix)]
+fn longest_name(dir: &std::path::Path) -> usize {
+    (1..=255)
+        .rev()
+        .find(|len| {
+            let probe = dir.join("p".repeat(*len));
+            let made = std::fs::write(&probe, b"").is_ok();
+            let _ = std::fs::remove_file(&probe);
+            made
+        })
+        .expect("a directory that takes a name")
+}
+
+/// **A name the filesystem cannot hold refuses the capture before it
+/// is asked for** (ruling B38.1, third addendum §13, §14): an image
+/// whose name is at the directory's limit has a sidecar name fourteen
+/// bytes over it, and an image name over the limit is refused itself.
+/// Either way the look says which name, nothing is sent, and nothing
+/// is written. Unix only: the limit staged is a component's, and
+/// Windows also limits the whole path.
 ///
-/// Control: a sidecar refusal said the way the image's is ends with
-/// "(the capture succeeded and may be repeated)".
+/// Control: a look that reads "name too long" as "nothing there" sends
+/// both captures; the first then writes its PNG before the sidecar
+/// fails.
 #[cfg(unix)]
 #[test]
-fn test_a_sidecar_that_fails_after_the_image_says_the_image_was_written() {
+fn test_a_name_too_long_for_the_filesystem_sends_nothing() {
     let relay = Relay::start();
     let app = screenshot_app(&relay, true);
     let dir = tempfile::tempdir().expect("a directory");
-    let name = format!("{}.png", "a".repeat(250));
-    let path = dir.path().join(&name);
-    let outcome = relay.invoke(&format!("capture.screenshot {}", path.display()));
-    assert_eq!(
-        app.requests().len(),
-        1,
-        "precondition: both looks passed and the capture was asked for: {}",
-        outcome.err
-    );
+    let limit = longest_name(dir.path());
+    let at_the_limit = dir.path().join(format!("{}.png", "a".repeat(limit - 4)));
+    let over_the_limit = dir.path().join(format!("{}.png", "b".repeat(limit)));
+    let sidecar_of_the_first = dir
+        .path()
+        .join(format!("{}.png.geometry.json", "a".repeat(limit - 4)));
+    for (path, named) in [
+        (&at_the_limit, &sidecar_of_the_first),
+        (&over_the_limit, &over_the_limit),
+    ] {
+        let outcome = relay.invoke(&format!("capture.screenshot {}", path.display()));
+        assert_eq!(outcome.exit, Exit::CommandError, "{}", outcome.err);
+        assert!(
+            outcome.err.contains(&format!(
+                "mandalactl: a name in `{}` is too long for this filesystem, or is not one it allows \
+                 (nothing was sent)",
+                named.display()
+            )),
+            "{}",
+            outcome.err
+        );
+    }
+    assert!(app.requests().is_empty(), "no capture was asked for");
     assert!(
-        std::fs::read(&path).expect("written").starts_with(b"\x89PNG"),
-        "precondition: the image landed"
+        std::fs::read_dir(dir.path()).expect("readable").next().is_none(),
+        "nothing was written"
     );
-    assert_eq!(outcome.exit, Exit::CommandError, "{}", outcome.err);
+}
+
+/// **A sidecar that fails after the image has landed says the image
+/// was written, at the path typed** (ruling B38.1, second addendum §8,
+/// third §14), in a native app's words for it, and does not offer a
+/// repeat that the image now at `path` would refuse. Twice: the image
+/// at a plain path, and through a link, where the message names the
+/// link typed and not the file it leads to.
+///
+/// Staged end to end with no seam. The sidecar's name is a link to a
+/// file in a directory that takes no new file, `/proc/version`: both
+/// looks pass (the file is there, and `overwrite` is given), the image
+/// is written, and the sidecar's temp file cannot be created beside
+/// its real file. Linux only: `/proc` is what is staged.
+///
+/// Controls: a sidecar refusal said the way the image's is ends with
+/// "(the capture succeeded and may be repeated)"; a message that names
+/// the image's resolved file names `real.png`.
+#[cfg(target_os = "linux")]
+#[test]
+fn test_a_sidecar_that_fails_after_the_image_says_the_image_was_written() {
+    let takes_no_new_file = std::path::Path::new("/proc/version");
     assert!(
-        outcome.err.contains(&format!(
-            "mandalactl: the PNG was written to `{}`, but its sidecar was not: ",
-            path.display()
-        )),
-        "{}",
-        outcome.err
+        takes_no_new_file.is_file(),
+        "precondition: this Linux has /proc/version, a file in a directory that takes no new file"
     );
-    assert!(
-        !outcome.err.contains("may be repeated"),
-        "no repeat is offered: {}",
-        outcome.err
-    );
-    let names: Vec<String> = std::fs::read_dir(dir.path())
-        .expect("readable")
-        .map(|entry| {
-            entry
-                .expect("an entry")
-                .file_name()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect();
-    assert_eq!(names, vec![name], "the image, and nothing of the sidecar's");
+    for through_a_link in [false, true] {
+        let relay = Relay::start();
+        let app = screenshot_app(&relay, true);
+        let dir = tempfile::tempdir().expect("a directory");
+        let path = dir.path().join("shot.png");
+        let image = match through_a_link {
+            true => {
+                let elsewhere = dir.path().join("elsewhere");
+                std::fs::create_dir(&elsewhere).expect("a directory");
+                let real = elsewhere.join("real.png");
+                std::fs::write(&real, b"old").expect("writes");
+                std::os::unix::fs::symlink(&real, &path).expect("symlinks");
+                real
+            }
+            false => path.clone(),
+        };
+        let sidecar = dir.path().join("shot.png.geometry.json");
+        std::os::unix::fs::symlink(takes_no_new_file, &sidecar).expect("symlinks");
+
+        let outcome = relay.invoke(&format!("capture.screenshot {} overwrite=true", path.display()));
+        assert_eq!(
+            app.requests().len(),
+            1,
+            "link={through_a_link}: precondition: both looks passed and the capture was asked for: {}",
+            outcome.err
+        );
+        assert!(
+            std::fs::read(&image).expect("written").starts_with(b"\x89PNG"),
+            "link={through_a_link}: precondition: the image landed"
+        );
+        assert_eq!(
+            outcome.exit,
+            Exit::CommandError,
+            "link={through_a_link}: {}",
+            outcome.err
+        );
+        assert!(
+            outcome.err.contains(&format!(
+                "mandalactl: the PNG was written to `{}`, but its sidecar was not: ",
+                path.display()
+            )),
+            "link={through_a_link}: {}",
+            outcome.err
+        );
+        assert!(
+            !outcome.err.contains("real.png"),
+            "link={through_a_link}: the image is named as typed: {}",
+            outcome.err
+        );
+        assert!(
+            !outcome.err.contains("may be repeated"),
+            "link={through_a_link}: no repeat is offered: {}",
+            outcome.err
+        );
+        assert_eq!(
+            std::fs::read_link(&sidecar).expect("still a link"),
+            takes_no_new_file,
+            "link={through_a_link}"
+        );
+    }
 }
 
 /// **A symlink at the path leads to the file written, and the

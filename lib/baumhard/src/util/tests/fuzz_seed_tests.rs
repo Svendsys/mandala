@@ -815,16 +815,23 @@ fn workflow_paths(workflow: &str) -> Vec<String> {
         .collect()
 }
 
-/// Each of `packages` no entry of `filter` lies under the directory of,
-/// named with that directory: a package whose change the filter would
-/// not see. A package with no known directory is named as such.
+/// Each of `packages` whose source no entry of `filter` covers, named
+/// with its directory: a package whose code could change without the
+/// filter seeing it. The source is covered by the whole directory
+/// (`<dir>/**`) or by its `src/` (`<dir>/src/**`); an entry for a
+/// manifest or a build script alone is not enough. A package with no
+/// known directory is named as such.
 fn unwatched(packages: &BTreeSet<String>, dirs: &BTreeMap<String, String>, filter: &[String]) -> Vec<String> {
     packages
         .iter()
         .filter_map(|name| match dirs.get(name) {
             None => Some(format!("{name}: no directory in this repository declares it")),
-            Some(dir) => (!filter.iter().any(|entry| entry.starts_with(&format!("{dir}/"))))
-                .then(|| format!("{name}: nothing under `{dir}/` is in the filter")),
+            Some(dir) => {
+                let covers =
+                    |entry: &String| *entry == format!("{dir}/**") || *entry == format!("{dir}/src/**");
+                (!filter.iter().any(covers))
+                    .then(|| format!("{name}: neither `{dir}/**` nor `{dir}/src/**` is in the filter"))
+            }
         })
         .collect()
 }
@@ -837,9 +844,12 @@ fn unwatched(packages: &BTreeSet<String>, dirs: &BTreeMap<String, String>, filte
 /// that way until #357.
 ///
 /// Controls: an entry taken out of the workflow's filter fails this,
-/// naming the package; the last assertion holds the same on the
-/// filter as read, less its `vendor/` entries, so a check that sees no
-/// gap anywhere cannot pass.
+/// naming the package, and so does one narrowed to less than the
+/// source (`lib/baumhard/src/**` gone with the manifest and the build
+/// script still listed; `lib/guarded_file/**` narrowed to its
+/// `Cargo.toml`); the last assertion holds the same on the filter as
+/// read, less its `vendor/` entries, so a check that sees no gap
+/// anywhere cannot pass.
 #[test]
 fn test_the_fuzz_workflow_watches_every_path_package_of_its_lockfile() {
     let lock = std::fs::read_to_string(repo_path("fuzz/Cargo.lock")).expect("fuzz/Cargo.lock reads");
@@ -874,7 +884,10 @@ fn test_the_fuzz_workflow_watches_every_path_package_of_its_lockfile() {
         .collect();
     assert_eq!(
         unwatched(&packages, &dirs, &without_vendor),
-        vec!["cosmic-text: nothing under `vendor/cosmic-text/` is in the filter".to_string()],
+        vec![
+            "cosmic-text: neither `vendor/cosmic-text/**` nor `vendor/cosmic-text/src/**` is in the filter"
+                .to_string()
+        ],
         "a filter that misses one is caught, and only that one"
     );
 }

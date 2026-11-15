@@ -40,16 +40,17 @@ jobs:
       - name: Cache cargo + target
         uses: Swatinem/rust-cache@v2
 
-      # The GPU-backed half of the suite (`src/application/app/tests_gpu.rs`,
-      # TEST_CONVENTIONS §T8) builds the real app, headless, on whatever
-      # adapter the machine has, and otherwise skips with a note. A
-      # runner has no GPU; Mesa's lavapipe is a Vulkan ICD that
-      # rasterizes on the CPU, and the app runs on it exactly as it
-      # does in a GPU-less container (the `mandala-drive` skill's
-      # recipe (b)). Installed here so the adapter exists by
-      # construction, and `MANDALA_REQUIRE_GPU` below makes a missing
-      # one fail the run rather than let the GPU-backed tests pass by
-      # skipping — the same arrangement as the wasm32 probe.
+      # The GPU-backed half of the suite
+      # (`src/application/app/tests_gpu.rs`, TEST_CONVENTIONS §T8) builds
+      # the real app, headless, on whatever adapter the machine has, and
+      # otherwise skips with a note. A runner has no GPU; Mesa's lavapipe
+      # is a Vulkan ICD that rasterizes on the CPU, and the app runs on
+      # it exactly as it does in a GPU-less container (the
+      # `mandala-drive` skill's recipe (b)). Installed here so the
+      # adapter exists by construction, and `MANDALA_REQUIRE_GPU` below
+      # makes a missing one fail the run rather than let the GPU-backed
+      # tests pass by skipping — the same arrangement as the wasm32
+      # probe.
       - name: Install Mesa's software Vulkan driver (lavapipe)
         run: |
           sudo apt-get update
@@ -186,12 +187,13 @@ jobs:
   #   `tests/binary.rs` driving the shipped binary over one. Path
   #   expectations are spelled per platform, and the handful of tests
   #   that are Unix-only by nature say why beside their `cfg`. One of
-  #   its tests may skip here: `test_an_mp4_is_made_when_ffmpeg_is_on_the_host`
-  #   needs `ffmpeg`, which this job does not install and
-  #   `MANDALA_REQUIRE_FFMPEG` is not set for. Where the runner has
-  #   none, `record assemble`'s MP4 path through `PrivateDir` is not
-  #   run on Windows, and the test's `SKIPPED:` line shows in the
-  #   step's output (ruling B38.1, second addendum §11);
+  #   its tests may skip here:
+  #   `test_an_mp4_is_made_when_ffmpeg_is_on_the_host` needs `ffmpeg`,
+  #   which this job does not install and `MANDALA_REQUIRE_FFMPEG` is
+  #   not set for. Where the runner has none, `record assemble`'s MP4
+  #   path through `PrivateDir` is not run on Windows, and the test's
+  #   `SKIPPED:` line shows in the step's output (ruling B38.1, second
+  #   addendum §11);
   # - `guarded_file`'s tests (#357): the one writer of a caller-named
   #   file, which `mandalactl` writes through on Windows too. Its symlink
   #   and no-hard-link tests are Unix and Linux only, and say why.

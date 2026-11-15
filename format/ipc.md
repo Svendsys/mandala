@@ -1895,12 +1895,16 @@ the sidecar are written the same way whichever side writes them: the
 app, or `mandalactl` for a browser app ([Client](#client-mandalactl)).
 
 1. Both destinations are looked at before the work: before the frame
-   is drawn, or over `--ws` before the capture is requested. A file in
-   the way without `overwrite`, a directory there, or a parent
-   directory that does not exist or is not one is refused then, and
-   nothing is drawn, sent or written (`invalid_params` from the app;
-   exit `1` from `mandalactl`, its message ending "(nothing was
-   sent)").
+   is drawn, or over `--ws` before the capture is requested. Refused
+   then, with nothing drawn, sent or written: a file in the way
+   without `overwrite`, a directory there, a parent directory that
+   does not exist, a path that runs through a file, and a name the
+   filesystem cannot hold (`invalid_params` from the app; exit `1`
+   from `mandalactl`, its message ending "(nothing was sent)"). Only
+   "not found" is read as a free place: a path the system will not let
+   the look see is refused then too, in the system's words (`internal`
+   from the app). What the look cannot see is found at the write: a
+   full disk, a directory that takes no new file.
 2. Both are looked at again right before the first write, so a file
    that appeared meanwhile is refused with nothing written.
 3. The PNG is published, then the sidecar, each atomically: a failure
@@ -2623,13 +2627,15 @@ a client does:
   are looked at before the capture is requested, so a write the look can
   see would be refused sends nothing (exit `1`, the message ending
   "(nothing was sent)"): a file in the way, a directory there, a link
-  that leads nowhere, a parent directory that does not exist. The write
-  is atomic (a temp file of this write's own beside it, synced, then
-  moved or linked into place), so a failure leaves what was there. A
-  file that appeared during the capture is refused at the write, before
-  either file is written, also exit `1`, and the capture may be
-  repeated; a sidecar that fails after the PNG has landed says the PNG
-  was written and that its sidecar was not. The output, `--json`
+  that leads nowhere, a parent directory that does not exist, a path
+  that runs through a file, a name the filesystem cannot hold, a path
+  the system will not let it look at. The write is atomic (a temp file
+  of this write's own beside it, synced, then moved or linked into
+  place), so a failure leaves what was there. A file that appeared
+  during the capture is refused at the write, before either file is
+  written, also exit `1`, and the capture may be repeated; a sidecar
+  that fails after the PNG has landed says the PNG was written, at the
+  path typed, and that its sidecar was not. The output, `--json`
   included, then names `path` and `sidecar_path` as a native reply does,
   in place of `png_base64` and `sidecar`. A `rendered: false` reply
   writes nothing. The framing parameters are sent as given, for the page

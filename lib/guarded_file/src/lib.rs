@@ -76,7 +76,8 @@
 //!
 //! The browser has no files, and no process id for the temp file's
 //! name: there, [`publish`] and [`PrivateDir::beside`] refuse every
-//! write and say so.
+//! write and say so, and [`check`] refuses every path as one it cannot
+//! look at.
 #![forbid(unsafe_code)]
 #![warn(clippy::unwrap_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
@@ -90,11 +91,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 #[derive(Debug, PartialEq)]
 pub enum PublishRefusal {
     /// The path is the caller's mistake — a symlink, a directory, an
-    /// existing file without `overwrite`, a parent that does not exist,
-    /// is not a directory, or has every temp name taken. The message
-    /// names it.
+    /// existing file without `overwrite`, a path that runs through a
+    /// file or holds a name the filesystem cannot, a parent that does
+    /// not exist or has every temp name taken. The message names it.
     Invalid(String),
-    /// The write itself failed: the disk, permissions, the producer.
+    /// The write itself failed: the disk, permissions, the producer;
+    /// or the path could not be looked at, in the system's words.
     Internal(String),
 }
 
@@ -222,14 +224,24 @@ fn produce_into(
 
 /// The up-front look [`publish`] takes at `path` before it writes a
 /// byte, for a caller that must refuse before it spends work producing
-/// the file (an encoder, a second file beside the first): `path` names
-/// no file, is a symlink, is a directory, or exists without
-/// `overwrite`; or nothing is there and the directory it would go in
-/// does not exist or is not a directory. A bare name goes in the
-/// current directory, which is not looked at. It is for the message,
-/// not the guarantees — those are the write's own, atomic with it — so
-/// a path that passes here can still be refused by the write if
-/// something appears in between.
+/// the file (an encoder, a second file beside the first). Refused, as
+/// the caller's mistake: `path` names no file, is a symlink, is a
+/// directory, or exists without `overwrite`; nothing is there and the
+/// directory it would go in does not exist or is not a directory; the
+/// path runs through something that is not a directory; or a name in
+/// it is one the filesystem cannot hold.
+///
+/// **Only "not found" means the place is free** (ruling B38.1, third
+/// addendum §13), at the path and at its directory. Any other answer
+/// from the system is a place this could not look at, and is refused
+/// with the system's own words rather than passed as free. A bare name
+/// goes in the current directory, which is not looked at.
+///
+/// The look is for the message, not the guarantees — those are the
+/// write's own, atomic with it — so a path that passes here can still
+/// be refused by the write if something appears in between, and by
+/// what only the write finds: a full disk, a directory that takes no
+/// new file.
 ///
 /// Cost: one `symlink_metadata`, and where nothing is at the path one
 /// `metadata` of its directory.
@@ -239,32 +251,68 @@ pub fn check(path: &Path, overwrite: bool) -> Result<(), PublishRefusal> {
 
 /// [`check`], returning the directory the file goes in.
 fn checked_parent(path: &Path, overwrite: bool) -> Result<&Path, PublishRefusal> {
+    use std::io::ErrorKind::NotFound;
     let shown = path.display();
     let invalid = |message: String| PublishRefusal::Invalid(message);
     let (Some(parent), Some(_)) = (path.parent(), path.file_name()) else {
         return Err(invalid(format!("`{shown}` names no file")));
     };
     match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => Err(invalid(format!(
-            "`{shown}` is a symlink, which is never followed"
-        ))),
+        Ok(meta) if meta.file_type().is_symlink() => Err(symlink_at(path)),
         Ok(meta) if meta.is_dir() => Err(invalid(format!("`{shown}` is a directory"))),
         Ok(_) if !overwrite => Err(exists(path)),
         Ok(_) => Ok(parent),
-        // Nothing to be read at the path: look at where it would go.
-        // An empty parent is a bare name's, the current directory.
-        Err(_) if parent.as_os_str().is_empty() => Ok(parent),
-        Err(_) => match std::fs::metadata(parent) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(no_parent(path)),
-            Ok(meta) if !meta.is_dir() => Err(invalid(format!("the parent of `{shown}` is not a directory"))),
-            // Anything else about the directory is the write's to report.
-            _ => Ok(parent),
+        // Nothing at the path: look at where it would go. An empty
+        // parent is a bare name's, the current directory.
+        Err(e) if e.kind() == NotFound && parent.as_os_str().is_empty() => Ok(parent),
+        Err(e) if e.kind() == NotFound => match std::fs::metadata(parent) {
+            Ok(meta) if meta.is_dir() => Ok(parent),
+            Ok(_) => Err(not_a_directory(path)),
+            Err(e) if e.kind() == NotFound => Err(no_parent(path)),
+            Err(e) => Err(unseen(path, &e)),
         },
+        Err(e) => Err(unseen(path, &e)),
     }
 }
 
-/// The refusal for a destination whose directory is not there.
-fn no_parent(path: &Path) -> PublishRefusal {
+/// The refusal for a path the look could not look at, for a reason
+/// other than there being nothing there: the caller's mistake where
+/// the system names one (the path runs through a file; a name the
+/// filesystem cannot hold), and otherwise the system's own words.
+fn unseen(path: &Path, e: &std::io::Error) -> PublishRefusal {
+    match e.kind() {
+        std::io::ErrorKind::NotADirectory => not_a_directory(path),
+        std::io::ErrorKind::InvalidFilename => PublishRefusal::Invalid(format!(
+            "a name in `{}` is too long for this filesystem, or is not one it allows",
+            path.display()
+        )),
+        _ => PublishRefusal::Internal(format!("could not look at `{}`: {e}", path.display())),
+    }
+}
+
+/// The refusal for a destination whose path runs through something
+/// that is not a directory.
+fn not_a_directory(path: &Path) -> PublishRefusal {
+    PublishRefusal::Invalid(format!(
+        "a part of the path to `{}` is not a directory",
+        path.display()
+    ))
+}
+
+/// The refusal for a symlink where a file or a directory is to be
+/// written: this writer never writes through one. Public for the one
+/// other look that says it, a recording's at its directory, so the
+/// sentence has one owner.
+pub fn symlink_at(path: &Path) -> PublishRefusal {
+    PublishRefusal::Invalid(format!(
+        "`{}` is a symlink, which is never followed",
+        path.display()
+    ))
+}
+
+/// The refusal for a destination whose directory is not there. Public
+/// for the same reason as [`symlink_at`].
+pub fn no_parent(path: &Path) -> PublishRefusal {
     PublishRefusal::Invalid(format!(
         "the parent directory of `{}` does not exist",
         path.display()
@@ -529,8 +577,10 @@ fn create_private_dir(path: &Path) -> std::io::Result<()> {
 /// Refused, naming the path and where its link leads: a chain that ends
 /// nowhere ("does not exist"), one that cannot be resolved — a loop
 /// says so, in the system's own words — and one that ends at something
-/// that is not a regular file. In the browser, which has no files, the
-/// path is returned as it is and [`publish`] refuses it.
+/// that is not a regular file. A path that cannot be looked at is not
+/// this function's to judge: it is returned as it is, and the look
+/// ([`check`], which every write takes) refuses it, once. In the
+/// browser, which has no files, that is every path.
 ///
 /// Cost: one `symlink_metadata`, and for a link one `read_link`, one
 /// `canonicalize` (a walk of its chain) and one `metadata`.
@@ -777,7 +827,7 @@ mod tests {
             missing.display()
         ));
         let not_a_directory = PublishRefusal::Invalid(format!(
-            "the parent of `{}` is not a directory",
+            "a part of the path to `{}` is not a directory",
             under_a_file.display()
         ));
         for overwrite in [false, true] {
@@ -806,6 +856,94 @@ mod tests {
         assert_eq!(publish(&under_a_file, false, bytes("{}")), Err(not_a_directory));
         assert_eq!(names_in(dir), vec!["a-file"], "nothing was written");
         assert_eq!(std::fs::read_to_string(&a_file).expect("kept"), "a file");
+    }
+
+    /// **Only "not found" means the place is free** (ruling B38.1, third
+    /// addendum §13). Three answers the system gives that are not "not
+    /// found" are each refused by [`check`], with and without
+    /// `overwrite`, and by [`publish`], which writes nothing:
+    ///
+    /// - a path that runs through a file, two and three levels down
+    ///   (`a-file/sub/x.json`): `Invalid`, "a part of the path … is not
+    ///   a directory". Asserted word for word on Unix, where the system
+    ///   says "not a directory" for it; Windows is read (not run) to
+    ///   say "not found", which the look turns into the missing-parent
+    ///   refusal, so there it is held only to be an `Invalid` refusal;
+    /// - a name longer than any filesystem's limit this workspace
+    ///   meets (268 bytes, where the limit is 255 or fewer): `Invalid`,
+    ///   naming the path. Unix only: Windows' answer for it was not run;
+    /// - a path the system will not even ask about, one with a NUL in
+    ///   it: `Internal`, "could not look at …", in the system's words.
+    ///
+    /// Controls: each arm removed in turn, so its answer is read as
+    /// "nothing there", turns its assertion red on `Ok(())`.
+    #[test]
+    fn test_check_reads_only_not_found_as_nothing_there() {
+        let _serial = serial();
+        let scratch = Scratch::new("unseen");
+        let dir = &scratch.0;
+        let a_file = dir.join("a-file");
+        std::fs::write(&a_file, "a file").expect("seed");
+        for through in [
+            a_file.join("sub").join("x.json"),
+            a_file.join("sub").join("deeper").join("x.json"),
+        ] {
+            for overwrite in [false, true] {
+                let refused = check(&through, overwrite);
+                if cfg!(unix) {
+                    assert_eq!(
+                        refused,
+                        Err(PublishRefusal::Invalid(format!(
+                            "a part of the path to `{}` is not a directory",
+                            through.display()
+                        ))),
+                        "overwrite={overwrite}"
+                    );
+                } else {
+                    assert!(
+                        matches!(refused, Err(PublishRefusal::Invalid(_))),
+                        "overwrite={overwrite}: {refused:?}"
+                    );
+                }
+            }
+            let written = publish(&through, false, bytes("{}"));
+            assert!(
+                matches!(written, Err(PublishRefusal::Invalid(_))),
+                "the write refuses it the same way: {written:?}"
+            );
+        }
+
+        #[cfg(unix)]
+        {
+            let long = dir.join(format!("{}.json", "n".repeat(263)));
+            let too_long = PublishRefusal::Invalid(format!(
+                "a name in `{}` is too long for this filesystem, or is not one it allows",
+                long.display()
+            ));
+            for overwrite in [false, true] {
+                assert_eq!(
+                    check(&long, overwrite).as_ref(),
+                    Err(&too_long),
+                    "overwrite={overwrite}"
+                );
+            }
+            assert_eq!(publish(&long, false, bytes("{}")), Err(too_long));
+        }
+
+        let with_nul = dir.join("a\0b.json");
+        for overwrite in [false, true] {
+            let refused = check(&with_nul, overwrite);
+            assert!(
+                matches!(&refused, Err(PublishRefusal::Internal(m)) if m.starts_with("could not look at `")),
+                "overwrite={overwrite}: {refused:?}"
+            );
+        }
+        let written = publish(&with_nul, false, bytes("{}"));
+        assert!(
+            matches!(&written, Err(PublishRefusal::Internal(m)) if m.starts_with("could not look at `")),
+            "{written:?}"
+        );
+        assert_eq!(names_in(dir), vec!["a-file"], "nothing was written");
     }
 
     /// **A leftover at the next temp name is passed over, not an error,

@@ -713,6 +713,68 @@ fn test_a_zoom_through_act_action_and_a_capture_draws_the_frame() {
     );
 }
 
+/// **A capture whose path is refused draws no frame** (ruling B38.1,
+/// third addendum §15): `capture.screenshot` to a path where a file
+/// already is, and to one whose directory is not there, is refused as
+/// `invalid_params` in the writer's words, and the renderer has
+/// prepared no frame for it. `capture_flow::capture` resolves the
+/// destination in `draw`'s `before_draw`; this is what holds it there.
+///
+/// The count is the renderer's own, of frames its glyph pass prepared
+/// (`Renderer::glyph_run_counts`), which every capture's frame passes
+/// through. Control, in the test: a capture to a free path is written,
+/// and the count has moved, so a count that never moves cannot pass.
+/// Control, run: `resolve` called after `draw` prepares a frame for
+/// each refused capture.
+#[test]
+fn test_a_capture_whose_path_is_refused_draws_no_frame() {
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    frame(init);
+
+    let taken = TempFile::new("refused-taken", "png");
+    std::fs::write(taken.as_str(), "precious").expect("seed");
+    let nowhere = TempFile::new("refused-missing", "dir");
+    let under_nowhere = format!("{}/shot.png", nowhere.as_str());
+    let prepared_before = init.renderer.glyph_run_counts().prepares;
+    for (path, why) in [
+        (
+            taken.as_str().to_string(),
+            format!("`{}` exists; set `overwrite` to replace it", taken.as_str()),
+        ),
+        (
+            under_nowhere.clone(),
+            format!("the parent directory of `{under_nowhere}` does not exist"),
+        ),
+    ] {
+        let reply = capture_screenshot(init, &path);
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert_eq!(reply["error"]["code"], "invalid_params", "{reply}");
+        assert_eq!(reply["error"]["message"], why.as_str(), "{reply}");
+        assert_eq!(
+            init.renderer.glyph_run_counts().prepares,
+            prepared_before,
+            "no frame was prepared for the refused capture to {path}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(taken.as_str()).expect("kept"),
+        "precious",
+        "the file in the way is as it was"
+    );
+
+    let free = TempFile::new("refused-then-free", "png");
+    let _sidecar = free.sibling(".geometry.json");
+    let reply = capture_screenshot(init, free.as_str());
+    assert_eq!(reply["result"]["rendered"], true, "{reply}");
+    assert!(
+        init.renderer.glyph_run_counts().prepares > prepared_before,
+        "control: a capture that is written prepares a frame, and the count shows it"
+    );
+}
+
 /// `capture.screenshot path=<path>` through the real decoder and
 /// executor, retried while the engine reports the one transient skip
 /// — `font_system_contended`, the font lock held by another test's
