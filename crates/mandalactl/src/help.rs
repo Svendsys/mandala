@@ -241,7 +241,9 @@ OUTPUT
 
 EXIT CODES
   0  success: the app answered ok:true (warnings do not change this)
-  1  the app said no: ok:false, code and message on stderr
+  1  refused: the app said no (ok:false, code and message on stderr), or mandalactl refused or failed
+     its own part of the command: a file it would not write (record assemble, a screenshot over --ws),
+     a recording it could not assemble, --wait-settled where the app has no clock.wait
   2  the app could not be reached, or the request did not go out whole: not running, busy,
      refused, wrong protocol. Nothing ran, so repeating the command is safe
   3  bad command line: nothing was sent
@@ -293,7 +295,7 @@ mandalactl bridge [listen=<addr:port>] [token=<token>]
     A controller that connects before the page is refused (connection_rejected, reason no_app: exit 2
     here, with the remedy). When the page leaves, its controller is sent `shutdown` and closed; when the
     controller leaves, the page resets its session and the next controller is greeted afresh. Over
-    --ws, `capture.screenshot <path>` writes the PNG the page returns inline, and its sidecar beside it.
+    --ws, `capture.screenshot <path>` writes the PNG the page returns inline, and its sidecar beside <path>.
 ";
 
 const RECORD_HELP: &str = "\
@@ -311,7 +313,9 @@ mandalactl record assemble <dir> [out=<file>] [format=gif|mp4] [width=<px>] [fps
     mp4            H.264 through the host's ffmpeg, which must be on PATH (never required for the GIF).
 
     out=           the file to write; default <dir>/recording.gif (or .mp4). An existing file is kept
-                   unless overwrite=true.
+                   unless overwrite=true. A symlink leads to the file written, held to the same rule
+                   (a dangling one is refused); overwrite=true replaces that file, and the link stays
+                   a link. Written whole or not at all: a failure leaves what was there.
     width=         scale the frames down to this many pixels wide, keeping their shape. The way to bring a
                    GIF under GitHub's 10 MiB inline limit, which the result warns about.
     fps=           show at most this many frames a second (1-60): fewer frames, same speed.

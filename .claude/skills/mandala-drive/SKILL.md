@@ -334,10 +334,11 @@ elements: []
   `DeselectAll`, `Undo`, `DeleteSelection`, `OpenConsole`, … — the full list
   is the `Action` enum in `src/application/keybinds/action/mod.rs`, and
   `mandalactl describe act.action` says how payload variants are spelled.
-- Exit `1` is the app saying no (`error: <code>: <message>` on stderr, e.g.
-  `console_error: unknown command: frobnicate`). Exit `4` means the request
-  went out and no reply came back: **read state before repeating** a
-  mutating command.
+- Exit `1` is a refusal: the app saying no (`error: <code>: <message>` on
+  stderr, e.g. `console_error: unknown command: frobnicate`), or `mandalactl`
+  refusing a file of its own it would not write (`record assemble`, a
+  screenshot over `--ws`). Exit `4` means the request went out and no reply
+  came back: **read state before repeating** a mutating command.
 
 ## See — screenshots and the geometry sidecar
 

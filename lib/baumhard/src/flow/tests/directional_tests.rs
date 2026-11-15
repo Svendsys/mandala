@@ -1135,3 +1135,64 @@ mod held {
         );
     }
 }
+
+#[test]
+fn test_flow_directional_lays_gaps_that_sum_past_the_largest_f32_by_their_mean() {
+    do_flow_directional_lays_gaps_that_sum_past_the_largest_f32_by_their_mean();
+}
+
+/// A directional ring whose spans' gaps sum past the largest `f32` lays
+/// every run by their mean (found beside CI's fuzz finding on #360,
+/// `test_flow_structured_every_face_finding_a_directional_ring_whose_gap_is_past_the_root_of_the_largest_f32`).
+/// Round a square 8 × 10³⁷ on a side, three spans spaced 1.2 × 10³⁸: a
+/// side holds one ink, its two end gaps cut back from 1.2 × 10³⁸ to the
+/// 4 × 10³⁷ that center it, so the ring is four glyphs, one at the middle
+/// of each side — a span's on the level sides, the vertical text's on
+/// the steep ones, which are gapped by the spans' mean.
+///
+/// The mean was the gaps' `f32` sum over their count, infinite for three
+/// such gaps: every run's end gap was infinite, and so was the gap the
+/// steep runs took from the level ones. At 59826cfd the ring is 35,584
+/// glyphs, every one at a position that is not finite.
+///
+/// Controls: with a lay's end gap (`pitch`) taken from the `f32` sum
+/// alone, red ("4 glyphs, one a side", 35,584 laid); with the steep runs'
+/// gap (`place_directional`) alone taken so, red (6 laid).
+pub fn do_flow_directional_lays_gaps_that_sum_past_the_largest_f32_by_their_mean() {
+    let (side, spacing) = (8e37_f32, 1.2e38_f32);
+    let path = Outline::RoundedRect {
+        rect: Rect::new(Vec2::ZERO, Vec2::splat(side)),
+        radius: 0.0,
+    };
+    let layout = RingLayout {
+        spacing,
+        directional: glyphs(LIGHT, false),
+        ..RingLayout::whole()
+    };
+    assert!(
+        (3.0 * spacing).is_infinite() && 4.0 * side < f32::MAX && spacing > side && spacing < 2.0 * side,
+        "precondition: three gaps sum past the largest `f32`, the outline's perimeter does not, \
+         and a side holds one ink between two gaps cut back"
+    );
+    let (_, placed) = lay_layout("abc", &layout, &path);
+    assert_eq!(placed.glyphs.len(), 4, "4 glyphs, one a side");
+    let half = 0.5 * side;
+    for middle in [
+        Vec2::new(half, 0.0),
+        Vec2::new(side, half),
+        Vec2::new(half, side),
+        Vec2::new(0.0, half),
+    ] {
+        let at = placed
+            .glyphs
+            .iter()
+            .filter(|g| (g.pos - middle).abs().max_element() <= 1e-4 * side)
+            .count();
+        assert_eq!(
+            at,
+            1,
+            "one glyph at the middle of the side through {middle}: {:?}",
+            placed.glyphs.iter().map(|g| g.pos).collect::<Vec<_>>()
+        );
+    }
+}

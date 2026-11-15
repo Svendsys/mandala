@@ -8,11 +8,11 @@
 //! — the app's `open` and `save`, and `maptool` — wraps them the same
 //! way: refuse a path that is not a `.mandala.json` (D19), read the
 //! bytes — following a symlink wherever it leads — and write through
-//! [`guarded_file::publish`](crate::util::guarded_file::publish), the
-//! workspace's one atomic writer, into the real file a link leads to,
-//! which must be named like a map too (amendment E1.1: the extension
-//! rule on the real file is a rule for writes). That wrapping is here,
-//! once, so the surfaces cannot disagree about it.
+//! [`guarded_file::publish`], the workspace's one atomic writer, into
+//! the real file a link leads to, which must be named like a map too
+//! (amendment E1.1: the extension rule on the real file is a rule for
+//! writes). That wrapping is here, once, so the surfaces cannot
+//! disagree about it.
 //!
 //! **Errors are `String`s, ready to show.** CODE_CONVENTIONS §9 admits
 //! no new error type without a project-scale decision; every caller of
@@ -69,14 +69,13 @@ pub fn extension_refusal(path: &str) -> String {
 ///
 /// Cost: a `symlink_metadata`, and for a link `real_file`'s walk.
 pub fn write_target(path: &str) -> Result<std::path::PathBuf, String> {
-    use crate::util::guarded_file::{real_file, shown_path, PublishRefusal};
+    use crate::util::guarded_file::{real_file, shown_path};
     if !has_map_extension(path) {
         return Err(extension_refusal(path));
     }
     let real = real_file(Path::new(path)).map_err(|refusal| {
         // The refusal opens with the path itself; it is not named twice.
-        let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
-        crate::util::log::collapse_home_in(&message)
+        crate::util::log::collapse_home_in(&refusal.message())
     })?;
     if !has_map_extension(&real.to_string_lossy()) {
         return Err(format!(
@@ -128,9 +127,8 @@ pub fn read(path: &str) -> Result<Document, String> {
 }
 
 /// Write `text` to the map at `path`: refused unless it ends in
-/// [`MAP_EXTENSION`], then published by
-/// [`guarded_file::publish`](crate::util::guarded_file::publish), with
-/// the file it replaces. So the bytes go to a temp file unique to this
+/// [`MAP_EXTENSION`], then published by [`guarded_file::publish`],
+/// with the file it replaces. So the bytes go to a temp file unique to this
 /// writer — two processes saving one map never share one — created
 /// exclusively and without following a symlink, are flushed and synced,
 /// and only then are renamed over `path`; a write that fails part of the
@@ -149,8 +147,8 @@ pub fn read(path: &str) -> Result<Document, String> {
 /// not judge it. In the browser there are no files, and the write fails
 /// and says so.
 ///
-/// Cost: [`guarded_file::publish`](crate::util::guarded_file::publish)'s:
-/// the text written once, an `fsync` and a rename.
+/// Cost: [`guarded_file::publish`]'s: the text written once, an
+/// `fsync` and a rename.
 pub fn write(path: &str, text: &str) -> Result<(), String> {
     publish(path, |out| {
         out.write_all(text.as_bytes()).map_err(|e| e.to_string())
@@ -163,19 +161,18 @@ fn publish(
     path: &str,
     produce: impl FnOnce(&mut dyn std::io::Write) -> Result<(), String>,
 ) -> Result<(), String> {
-    use crate::util::guarded_file::{publish, PublishRefusal};
+    use crate::util::guarded_file::publish;
     // The extension rule holds for the file written, not only for the
     // name typed (amendment E1.1): a link named like a map cannot carry
     // map bytes into a file that is not one.
     let real = write_target(path)?;
     publish(&real, true, produce).map(|_| ()).map_err(|refusal| {
-        let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
         // The caller names its own area (`save:`, `apply:`); the
         // message leads with the path, as a read's does.
         format!(
             "{}: could not write: {}",
             tilde_path(Path::new(path)),
-            crate::util::log::collapse_home_in(&message)
+            crate::util::log::collapse_home_in(&refusal.message())
         )
     })
 }

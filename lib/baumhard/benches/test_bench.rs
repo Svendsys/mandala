@@ -1113,6 +1113,14 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_a_closed_paths_length_is_finite_as_its_build_says", |b| {
         b.iter(do_flow_a_closed_paths_length_is_finite_as_its_build_says)
     });
+    c.bench_function(
+        "flow_an_ellipses_length_is_its_ellipses_at_every_magnitude",
+        |b| b.iter(do_flow_an_ellipses_length_is_its_ellipses_at_every_magnitude),
+    );
+    c.bench_function(
+        "flow_an_ellipse_whose_points_pass_the_largest_f32_has_no_length",
+        |b| b.iter(do_flow_an_ellipse_whose_points_pass_the_largest_f32_has_no_length),
+    );
     c.bench_function("nearest_weight_follows_css_fonts_4", |b| {
         b.iter(do_nearest_weight_follows_css_fonts_4)
     });
@@ -2220,6 +2228,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         "flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing",
         |b| b.iter(do_flow_directional_lays_its_vertical_all_round_where_its_spans_draw_nothing),
     );
+    c.bench_function(
+        "flow_directional_lays_gaps_that_sum_past_the_largest_f32_by_their_mean",
+        |b| b.iter(do_flow_directional_lays_gaps_that_sum_past_the_largest_f32_by_their_mean),
+    );
     c.bench_function("flow_pitched_holds_the_nearer_whole_count_evenly", |b| {
         b.iter(do_flow_pitched_holds_the_nearer_whole_count_evenly)
     });
@@ -2235,6 +2247,29 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_pitched_lays_no_text_and_no_empty_path", |b| {
         b.iter(do_flow_pitched_lays_no_text_and_no_empty_path)
     });
+    c.bench_function(
+        "flow_pitched_lays_a_gap_past_the_root_of_the_largest_f32_evenly",
+        |b| b.iter(do_flow_pitched_lays_a_gap_past_the_root_of_the_largest_f32_evenly),
+    );
+    c.bench_function(
+        "flow_pitched_lays_gaps_that_sum_past_the_largest_f32_by_their_mean",
+        |b| b.iter(do_flow_pitched_lays_gaps_that_sum_past_the_largest_f32_by_their_mean),
+    );
+    c.bench_function(
+        "flow_pitched_lays_a_gap_past_the_root_of_the_largest_f32_evenly_where_the_path_bends",
+        |b| b.iter(do_flow_pitched_lays_a_gap_past_the_root_of_the_largest_f32_evenly_where_the_path_bends),
+    );
+    c.bench_function(
+        "flow_pitched_gaps_an_ink_wider_than_the_root_of_the_largest_f32",
+        |b| b.iter(do_flow_pitched_gaps_an_ink_wider_than_the_root_of_the_largest_f32),
+    );
+    c.bench_function("flow_pitched_leaves_no_end_gap_below_none", |b| {
+        b.iter(do_flow_pitched_leaves_no_end_gap_below_none)
+    });
+    c.bench_function(
+        "flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a_smaller",
+        |b| b.iter(do_flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a_smaller),
+    );
     c.bench_function("flow_place_horizontal_steps_by_advance", |b| {
         b.iter(do_flow_place_horizontal_steps_by_advance)
     });
