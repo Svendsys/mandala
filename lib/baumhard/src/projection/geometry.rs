@@ -364,10 +364,10 @@ pub(crate) fn turn_to(normal: Vec2, toward: Vec2) -> f32 {
 /// The curves of a path (#296, rule 3): from `start` to `end`, each a
 /// point, the direction the path leaves it in — at `end`, the
 /// direction it leaves *backward*, the end side's outward normal for a
-/// path that arrives straight on — and its lead, through each of `via`. Point `k` of
-/// `n` is the point `k / (n + 1)` of the way along the straight line
-/// from end to end, moved by `via[k - 1]`; one that is not finite moves
-/// it nothing.
+/// path that arrives straight on — and its lead, through each of `via`.
+/// Point `k` of `n` is the point `k / (n + 1)` of the way along the
+/// straight line from end to end, moved by `via[k - 1]`; one that is not
+/// finite moves it nothing.
 ///
 /// Each end first runs straight along its direction for its own lead —
 /// its first two glyphs, and as far as the paths that share its point
@@ -639,18 +639,32 @@ fn always_near(lanes: &[Lane], widths: &[f32], taken: &[Vec<Vec2>]) -> usize {
 ///
 /// The curves before the last lead start and end where they do whatever the
 /// handles; only their control points move. A round's distance along a
-/// curve, summed from its samples, is at least the curve's chord less how
-/// far its last sample falls short of its end: at most its greatest speed
-/// over its samples, three times its control polygon over their count, so
-/// three of its steps, or of its polygon over the sampling's cap, whichever
-/// is more. A handle reaches no further than at its full share, so the
-/// polygon at full handles, twice over and the chord, bounds it at any
-/// share.
+/// curve it walks, summed from its samples, is at least the curve's chord
+/// less how far its last sample falls short of its end: at most its
+/// greatest speed over its samples, three times its control polygon over
+/// their count, so three of its steps, or of its polygon over the
+/// sampling's cap, whichever is more. A handle reaches no further than at
+/// its full share, so the polygon at full handles, twice over and the
+/// chord, bounds it at any share.
 ///
-/// That holds in exact arithmetic. A margin is kept back from the chords'
-/// sum for the roundings between it and what runs: `2·k + 8` units in its
-/// last place (`f32::EPSILON`), `k` the curves. What it covers, in those
-/// units:
+/// A round walks a curve only where its reach is finite ([`sample`]): of
+/// one with a leg whose distance is not, it takes no sample and adds no
+/// distance, and the chord says nothing of it. So the last lead is read
+/// only of a lane no curve of which a round can pass over, at any share:
+/// each curve's polygon at full handles is at most three units in the last
+/// place under `f32::MAX.sqrt()`. Every leg at every share is at most that
+/// polygon, in exact arithmetic. As reckoned, the polygon may read two and
+/// a half units short (five roundings: a distance's three and two
+/// additions); a leg's squares may round up by three quarters of a unit of
+/// its length (three roundings of a square); and `f32::MAX.sqrt()` is
+/// itself a quarter of a unit under the root. So far under, every leg's
+/// squares are finite, its distance is at most `2⁶⁴`, and the three sum
+/// to a finite reach; a float nearer, the argument does not show it.
+///
+/// Of a curve a round walks, the bound above holds in exact arithmetic. A
+/// margin is kept back from the chords' sum for the roundings between it
+/// and what runs: `2·k + 7` units in its last place (`f32::EPSILON`), `k`
+/// the curves. What it covers, in those units:
 ///
 /// - **A curve's last sample's parameter**, `(n − 1) / n` as an `f32`: up
 ///   to `2⁻²⁵` short of it, which sets the sample back by up to three of
@@ -666,25 +680,40 @@ fn always_near(lanes: &[Lane], widths: &[f32], taken: &[Vec<Vec2>]) -> usize {
 ///   far within what the three steps leave over where it is less; and
 ///   their running sum, over at most the cap's samples a curve, `k·2⁻¹⁴`.
 /// - **This condition's own arithmetic**, in `f32`, a rounding half a
-///   unit: `k + 5`. Its two sums, of the chords and of the three steps,
-///   round once a curve each, but for the first chord, which joins
-///   nothing; a chord is a distance (three); a round counts its samples
-///   from a reach found as the polygon is (six); the margin's product and
-///   the difference are one each.
+///   unit: `k + 5`, of `2·k + 10` roundings. The chords' sum rounds once
+///   a curve after its first, whose addition to nothing is exact, and so
+///   does the three steps' (`2·k − 2`). A curve's three steps are a
+///   product, off by half a unit of itself, so all of them by half a unit
+///   of their sum (one). A chord is a distance (three). A round counts
+///   its samples from a reach found as the polygon is (six: a distance's
+///   three, two additions and a division). The margin's product and the
+///   difference are one each.
 ///
-/// Under `k·(1 + 2⁻¹⁴) + 6.6` in all: `2·k + 8` is each of the two
+/// Under `k·(1 + 2⁻¹⁴) + 6.6` in all: `2·k + 7` is each of the two
 /// rounded up to a whole number, and holds for any number of curves. No
 /// term is kept for the coordinates' own rounding, as one was while a
 /// round summed its distance between its points (until #356): measured in
 /// each curve's own frame, the distance reads no point's coordinates.
 ///
-/// Lanes near the length where the condition decides need more than the
-/// chord alone (`test_projection_a_lanes_fixed_samples_are_in_every_round`),
-/// and a lane of one cubic whose first three control points meet, which
-/// moves fastest into its end, needs the three steps and the margin both
-/// (`test_projection_fixed_samples_keeps_its_rounding_margin_back`). Each
-/// errs toward the last lead not being read: a lane that loses its last
-/// lead's samples so is only measured for more rounds, while one that
+/// What the tests hold of this, and what they do not:
+/// - Lanes near the length where the condition decides need more than the
+///   chord alone
+///   (`test_projection_a_lanes_fixed_samples_are_in_every_round`).
+/// - A lane of one cubic whose first three control points meet, which
+///   moves fastest into its end, needs the three steps and the margin both
+///   (`test_projection_fixed_samples_keeps_its_rounding_margin_back`).
+/// - A lane of many curves, each chord rounding the `f32` sum up as it
+///   joins it, needs the margin's part that grows with the curves
+///   (`test_projection_fixed_samples_keeps_a_margin_for_each_curve`). That
+///   holds that the part is needed. Its coefficient, and the constant's
+///   size, are upper bounds by the argument above, which no test reaches.
+/// - A lane with a leg too long for a finite distance has no last lead
+///   read, and a junction of two such answers as all its rounds do
+///   (`test_projection_fixed_samples_reads_no_last_lead_past_a_skipped_curve`,
+///   `test_projection_untangle_answers_as_its_rounds_beside_a_skipped_curve`).
+///
+/// Each errs toward the last lead not being read: a lane that loses its
+/// last lead's samples so is only measured for more rounds, while one that
 /// keeps a sample some round does not take would change what is drawn.
 /// O(the leads' samples, and the curves).
 pub(crate) fn fixed_samples(lane: &Lane) -> Vec<Vec2> {
@@ -698,6 +727,9 @@ pub(crate) fn fixed_samples(lane: &Lane) -> Vec<Vec2> {
         return fixed;
     };
     let step = step.max(1e-2);
+    // The longest polygon no leg of which, at any share, a round can find
+    // too long for a finite distance.
+    let walked = (1.0 - 3.0 * f32::EPSILON) * f32::MAX.sqrt();
     // Per curve before the last lead: its chord, and how far a round's
     // sum along it can fall short of that.
     let (mut chord, mut short) = (0.0_f32, 0.0_f32);
@@ -707,10 +739,13 @@ pub(crate) fn fixed_samples(lane: &Lane) -> Vec<Vec2> {
             Curve::Cubic(_, b, c, _) => 2.0 * (a.distance(b) + c.distance(d)) + a.distance(d),
             _ => a.distance(d),
         };
+        if polygon > walked {
+            return fixed;
+        }
         chord += a.distance(d);
         short += 3.0 * step.max(polygon / SAMPLE_CAP as f32);
     }
-    let rounding = (2.0 * before.len() as f32 + 8.0) * f32::EPSILON;
+    let rounding = (2.0 * before.len() as f32 + 7.0) * f32::EPSILON;
     if !before.is_empty() && (1.0 - rounding) * chord - short >= skip {
         fixed.extend(sample(&[*last], step, 0.0));
     }
@@ -720,7 +755,9 @@ pub(crate) fn fixed_samples(lane: &Lane) -> Vec<Vec2> {
 /// The most points [`sample`] takes along one curve.
 const SAMPLE_CAP: usize = 1 << 16;
 
-/// Points along `curves` at most `step` apart, from `skip` along on.
+/// Points along `curves` at most `step` apart, from `skip` along on. A
+/// curve whose reach is not finite, a leg of its control polygon past the
+/// square root of the largest `f32`, gives no points and adds no distance.
 ///
 /// How far along a point lies is measured in its curve's own frame
 /// ([`Local`]): the chords between its samples' offsets from the curve's
@@ -1005,9 +1042,11 @@ impl<'a> NearGrid<'a> {
     }
 }
 
-/// The nine cells round `at`, `at` among them.
+/// The nine cells round `at`, `at` among them. At the largest index or
+/// the least, where [`cell_of`] holds every point further out, no cell
+/// lies beyond: `at` stands for it, and is given more than once.
 fn around((x, y): CellKey) -> impl Iterator<Item = CellKey> {
-    (-1..=1).flat_map(move |dx| (-1..=1).map(move |dy| (x + dx, y + dy)))
+    (-1..=1).flat_map(move |dx| (-1..=1).map(move |dy| (x.saturating_add(dx), y.saturating_add(dy))))
 }
 
 /// The pairs of lanes, each `(lower, higher)`, whose points `samples`
