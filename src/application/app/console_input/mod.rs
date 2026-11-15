@@ -14,6 +14,7 @@ mod edit;
 mod edits;
 pub(in crate::application::app) mod exec;
 mod history;
+mod presentations;
 mod record;
 mod screenshot;
 

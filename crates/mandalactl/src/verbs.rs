@@ -289,6 +289,16 @@ pub const VERBS: &[Verb] = &[
         example: "mandalactl query.undo 5",
     },
     Verb {
+        name: "query.animations",
+        summary:
+            "What is animating: each presentation instance playing (node, t, direction) and a running animated edit.",
+        params: &[],
+        positional: &[],
+        effect: Effect::Reads,
+        render: Render::Flat,
+        example: "mandalactl query.animations",
+    },
+    Verb {
         name: "scene.dump",
         summary:
             "What is drawn: nodes, paths, labels, portals with canvas/surface rects, visibility and text.",

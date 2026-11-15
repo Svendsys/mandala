@@ -140,6 +140,11 @@ pub(in crate::application::app) fn execute_console_line(
     if let Some(ConsoleSideEffect::Edit(line)) = &side_effect {
         edit_report = Some(super::edits::take(ctx, line));
     }
+    // And a presentation's: what it started, stopped or lists. What it
+    // started shows at once, which the sync below draws.
+    if let Some(ConsoleSideEffect::Present(line)) = &side_effect {
+        edit_report = Some(super::presentations::take(ctx, line));
+    }
     if let Some(result) = edit_report {
         let synced = match (ctx.document.as_mut(), ctx.view.as_mut()) {
             (Some(doc), Some(view)) => view.sync(doc, ctx.renderer),
@@ -185,8 +190,9 @@ pub(in crate::application::app) fn execute_console_line(
     })
 }
 
-/// Perform the side effect a verb asked for. The four that are a
-/// line's whole report (`Record`, `Clock`, `Edit`, `Screenshot`) are taken by
+/// Perform the side effect a verb asked for. The five that are a
+/// line's whole report (`Record`, `Clock`, `Edit`, `Present`,
+/// `Screenshot`) are taken by
 /// [`execute_console_line`] before this is reached.
 fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffect) {
     match effect {
@@ -203,7 +209,8 @@ fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffec
         ConsoleSideEffect::Screenshot(_)
         | ConsoleSideEffect::Record(_)
         | ConsoleSideEffect::Clock(_)
-        | ConsoleSideEffect::Edit(_) => {
+        | ConsoleSideEffect::Edit(_)
+        | ConsoleSideEffect::Present(_) => {
             log::error!("console: {effect:?} reached the side-effect handler; it is taken before — ignoring");
         }
     }

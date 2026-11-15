@@ -324,7 +324,15 @@ impl Tracker {
         if document {
             let source = match driver {
                 Driver::Ipc => "ipc",
-                Driver::App => now.changes.last().map_or("input", |record| record.source.name()),
+                // The newest record of the map's own: a presentation
+                // playing on the map records what it shows after every
+                // change under it, and changes no document.
+                Driver::App => now
+                    .changes
+                    .iter()
+                    .rev()
+                    .find(|record| record.source != baumhard::document::writer::ChangeSource::Presentation)
+                    .map_or("input", |record| record.source.name()),
             };
             push(
                 Class::DocumentChanged,

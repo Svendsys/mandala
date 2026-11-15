@@ -92,13 +92,16 @@ pub(super) const FAMILY: Family = Family {
         },
         CommandSpec {
             name: "clock.wait",
-            summary: "Reply once the app is settled; other commands keep running meanwhile.",
+            summary: "Reply once the app is settled, or its animations are at rest; other commands keep running \
+                      meanwhile.",
             params: &[
                 ParamSpec::new(
                     "until",
                     ParamType::String,
                     true,
-                    "\"settled\": the rendered scene is the final consequence of every command sent so far.",
+                    "\"settled\": the rendered scene is the final consequence of every command sent so far. \
+                     \"animations_complete\": no animated edit is running and no presentation instance is on \
+                     its way in or out; a looping presentation keeps it from holding.",
                 ),
                 ParamSpec::new(
                     "timeout_ms",
@@ -530,6 +533,8 @@ mod tests {
             continuing: false,
             redraw_owed: false,
             virtual_clock: false,
+            animating: false,
+            looping: false,
         };
         let owed = Settling {
             redraw_owed: true,

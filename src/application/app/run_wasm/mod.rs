@@ -89,6 +89,16 @@ pub(super) struct WasmInputState {
     /// The edits' App and User tiers and the handlers. Mirrors native's
     /// `InputHandlerContext::edits`.
     pub edits: crate::application::edits::EditRegistry,
+    /// The presentations' App and User tiers. Mirrors native's
+    /// `InputHandlerContext::presentations`. Nothing in the browser
+    /// starts a presentation yet: the console shell that does is native
+    /// (`CLAUDE.md` "Dual-target status"), and a map's triggers are
+    /// V1-D3 (#252), which reads this.
+    #[expect(
+        dead_code,
+        reason = "read by the map's triggers (V1-D3, #252); the console shell that reads it today is native"
+    )]
+    pub presentations: crate::application::presentations::PresentationRegistry,
     /// Touch gesture recognizer. Cross-platform peer of native's
     /// `InitState.touch_recognizer`. WASM mobile is the *primary*
     /// surface this targets (mobile-browser tap-and-hold is
@@ -671,6 +681,7 @@ pub(super) fn run(mut app: Application) {
         // macros: its verbs replace them.
         let macros = crate::application::macros::loader::build_macro_registry();
         let edits = crate::application::edits::EditRegistry::load();
+        let presentations = crate::application::presentations::PresentationRegistry::load();
 
         // Unconditional now that a rejected load yields a placard
         // document: the input state exists even when the map did
@@ -687,6 +698,7 @@ pub(super) fn run(mut app: Application) {
             interaction_mode: super::InteractionMode::Default,
             macros,
             edits,
+            presentations,
             touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
             clock: crate::application::clock::AppClock::default(),
             injected: InjectedQueue::default(),

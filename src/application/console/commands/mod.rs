@@ -95,6 +95,7 @@ pub mod mode;
 pub mod new;
 pub mod node;
 pub mod open;
+pub mod present;
 pub mod range;
 pub mod record;
 pub mod save;
@@ -166,6 +167,7 @@ pub const COMMANDS: &[Command] = &[
     cap::COMMAND,
     color::COMMAND,
     edit::COMMAND,
+    present::COMMAND,
     font::COMMAND,
     fps::COMMAND,
     spacing::COMMAND,

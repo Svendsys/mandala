@@ -39,10 +39,12 @@ pub use selection::Selection;
 
 use std::path::Path;
 
+use baumhard::arena::NodeId;
 use baumhard::document::edit::Animate;
 use baumhard::document::format;
 use baumhard::document::format::file::MAP_EXTENSION;
 use baumhard::document::ids::Document;
+use baumhard::document::presentation::{InstanceId, PresentError, PresentationDef};
 use baumhard::document::writer::error::ApplyError;
 use baumhard::document::writer::feed::ChangeRecord;
 use baumhard::document::writer::transaction::{Transaction, TransactionKind};
@@ -541,6 +543,56 @@ impl MindMapDocument {
     /// another change finished is not running. O(1).
     pub fn is_animating(&self) -> bool {
         self.animation.as_ref().is_some_and(|a| self.doc.is_open(&a.tx))
+    }
+
+    /// Start the presentation `def` on `nodes` at the app clock's
+    /// reading `now_ms`: one instance per node, a restart where it is
+    /// already playing (`Document::start_presentation`). Never a change
+    /// of the map: no history entry, no revision, no status line. A
+    /// refusal starts nothing and is returned for the caller to show.
+    pub fn start_presentation(
+        &mut self,
+        def: &PresentationDef,
+        nodes: &[NodeId],
+        now_ms: f64,
+    ) -> Result<Vec<InstanceId>, PresentError> {
+        self.doc.start_presentation(def, nodes, now_ms)
+    }
+
+    /// Stop the presentation `id` on `nodes` at `now_ms`: each instance
+    /// there plays its way out (`Document::stop_presentation`). Returns
+    /// how many it stopped.
+    pub fn stop_presentation(&mut self, id: &str, nodes: &[NodeId], now_ms: f64) -> usize {
+        self.doc.stop_presentation(id, nodes, now_ms)
+    }
+
+    /// Bring every presentation instance to `now_ms`
+    /// (`Document::tick_presentations`). Returns whether the frame owes
+    /// a draw.
+    pub fn tick_presentations(&mut self, now_ms: f64) -> bool {
+        self.doc.tick_presentations(now_ms)
+    }
+
+    /// Whether a presentation instance is on its way in or out: what
+    /// keeps the frame loop ticking beside an animated edit. O(the
+    /// instances).
+    pub fn presentations_moving(&self) -> bool {
+        self.doc.presentations_moving()
+    }
+
+    /// Whether an animation is moving: an animated edit is running, or
+    /// a presentation instance is on its way in or out. What
+    /// `clock.wait until=animations_complete` waits out. O(the
+    /// instances).
+    pub fn animations_moving(&self) -> bool {
+        self.is_animating() || self.presentations_moving()
+    }
+
+    /// Whether a presentation plays on with nobody stopping it: a `loop`
+    /// that was not stopped, which keeps the animations from ever coming
+    /// to rest. O(the instances).
+    pub fn presentation_loops(&self) -> bool {
+        self.doc.presentations().any(|instance| instance.unending)
     }
 
     /// Drop the selected elements the document no longer holds: what a

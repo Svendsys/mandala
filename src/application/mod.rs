@@ -101,6 +101,7 @@ pub(crate) mod document;
 // The edits the app can run: the App and User tiers and the handlers
 // (`format/edits.md`), on both targets.
 pub(crate) mod edits;
+pub(crate) mod presentations;
 // Field editing I (V1-C5): the steps of the node, section, frame, theme,
 // defaults and style edits that the field Actions and console verbs
 // share, on both targets.

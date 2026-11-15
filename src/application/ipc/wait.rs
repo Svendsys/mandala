@@ -44,17 +44,19 @@ pub(crate) enum Until {
     /// The rendered scene is the final consequence of every command so
     /// far: nothing continuing, nothing owed to the window.
     Settled,
+    /// No animation is moving: no animated edit is running, and every
+    /// presentation instance is at rest — holding, or gone.
+    AnimationsComplete,
 }
 
 impl Until {
-    /// Every condition, in the order the wire lists them. The second the
-    /// wire had, `animations_complete` (gone), went with the animations; it
-    /// returns with presentations (V1-D2, #251).
-    pub(crate) const ALL: [Until; 1] = [Until::Settled];
+    /// Every condition, in the order the wire lists them.
+    pub(crate) const ALL: [Until; 2] = [Until::Settled, Until::AnimationsComplete];
 
     pub(crate) const fn word(self) -> &'static str {
         match self {
             Until::Settled => "settled",
+            Until::AnimationsComplete => "animations_complete",
         }
     }
 
@@ -78,6 +80,13 @@ pub(crate) struct Settling {
     /// The clock is virtual, so time moves only by `clock.step` — what
     /// a timeout says when the condition waits on time.
     pub(crate) virtual_clock: bool,
+    /// An animation is moving, on either kind of clock: an animated edit
+    /// is running, or a presentation instance is on its way in or out
+    /// (`MindMapDocument::animations_moving`).
+    pub(crate) animating: bool,
+    /// A presentation plays on with nobody stopping it — a `loop` — so
+    /// the animations never come to rest by themselves.
+    pub(crate) looping: bool,
 }
 
 impl Settling {
@@ -85,6 +94,7 @@ impl Settling {
     pub(crate) fn holds(self, until: Until) -> bool {
         match until {
             Until::Settled => !self.continuing && !self.redraw_owed,
+            Until::AnimationsComplete => !self.animating,
         }
     }
 
@@ -96,6 +106,13 @@ impl Settling {
             Until::Settled if self.continuing && self.virtual_clock => "the app still had frames to run",
             Until::Settled if self.continuing => "the app still had frames to run (queued input)",
             Until::Settled => "the renderer had not drawn the latest frame",
+            Until::AnimationsComplete if self.looping => {
+                "a looping presentation is playing, which ends only when it is stopped (`present stop`)"
+            }
+            Until::AnimationsComplete if self.virtual_clock => {
+                "an animation was still moving, and the clock is virtual: only `clock.step` moves it"
+            }
+            Until::AnimationsComplete => "an animated edit or a presentation was still moving",
         }
     }
 }
@@ -167,6 +184,8 @@ mod tests {
         continuing: false,
         redraw_owed: false,
         virtual_clock: false,
+        animating: false,
+        looping: false,
     };
 
     #[test]
