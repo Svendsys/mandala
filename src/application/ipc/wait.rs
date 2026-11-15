@@ -259,6 +259,69 @@ mod tests {
         assert_eq!(wait.deadline(), at);
     }
 
+    /// `animations_complete` holds exactly when nothing is moving: an
+    /// owed frame or queued input is `settled`'s to wait for, not its,
+    /// and an animation alone does not unsettle a virtual clock.
+    ///
+    /// Controls, each seen red: with `animations_complete` reading
+    /// `settled`'s condition the owed frame keeps it from holding;
+    /// with the loop's message dropped the looping row reads as the
+    /// plain one.
+    #[test]
+    fn test_animations_complete_waits_for_what_moves_and_says_what_keeps_it() {
+        let moving = Settling {
+            animating: true,
+            ..QUIET
+        };
+        assert!(QUIET.holds(Until::AnimationsComplete));
+        assert!(!moving.holds(Until::AnimationsComplete));
+        assert!(
+            moving.holds(Until::Settled),
+            "what moves is `continuing`'s to say to `settled`, in real time"
+        );
+        let owed = Settling {
+            continuing: true,
+            redraw_owed: true,
+            ..QUIET
+        };
+        assert!(owed.holds(Until::AnimationsComplete) && !owed.holds(Until::Settled));
+
+        let since = Instant::now();
+        let at = since + Duration::from_millis(10);
+        let message = |app: Settling| {
+            let wait = PendingWait::new(json!(1), Until::AnimationsComplete, 10, since);
+            assert!(wait.resolve(since, app).is_none(), "it waits while {app:?}");
+            let reply = wire(wait.resolve(at, app).expect("times out"));
+            assert_eq!(reply["error"]["code"], json!("timeout"));
+            reply["error"]["message"].as_str().expect("message").to_string()
+        };
+        assert_eq!(
+            message(moving),
+            "`animations_complete` did not hold within 10 ms: an animated edit or a presentation was \
+             still moving"
+        );
+        assert_eq!(
+            message(Settling {
+                virtual_clock: true,
+                ..moving
+            }),
+            "`animations_complete` did not hold within 10 ms: an animation was still moving, and the \
+             clock is virtual: only `clock.step` moves it"
+        );
+        // A loop is named before the clock: stepping does not end it.
+        for virtual_clock in [false, true] {
+            assert_eq!(
+                message(Settling {
+                    looping: true,
+                    virtual_clock,
+                    ..moving
+                }),
+                "`animations_complete` did not hold within 10 ms: a looping presentation is playing, \
+                 which ends only when it is stopped (`present stop`)"
+            );
+        }
+    }
+
     /// Under a virtual clock a `settled` wait that runs out does not
     /// blame queued input, which virtual time does not owe.
     #[test]

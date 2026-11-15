@@ -580,6 +580,29 @@ impl MindMapDocument {
         self.doc.presentations_moving()
     }
 
+    /// Set the presentation layer aside (`Document::suspend_presentations`):
+    /// until the matching [`Self::resume_presentations`] the document
+    /// reads as the map itself. For a funnel that hands the document on
+    /// and cannot hold [`Self::suspended`]'s guard; the pair nests.
+    pub fn suspend_presentations(&mut self) {
+        self.doc.suspend_presentations();
+    }
+
+    /// Put the presentation layer back (`Document::resume_presentations`).
+    /// Nothing for a resume no suspension matches.
+    pub fn resume_presentations(&mut self) {
+        self.doc.resume_presentations();
+    }
+
+    /// The map with its presentation layer set aside, as a guard: what
+    /// builds a change from values it reads — a copy, an edit's filter, a
+    /// layout — reads through it, and the layer is back when it is
+    /// dropped, however its scope ends.
+    pub fn suspended(&mut self) -> MapItself<'_> {
+        self.doc.suspend_presentations();
+        MapItself { doc: self }
+    }
+
     /// Whether an animation is moving: an animated edit is running, or
     /// a presentation instance is on its way in or out. What
     /// `clock.wait until=animations_complete` waits out. O(the
@@ -630,6 +653,35 @@ impl MindMapDocument {
             label: "test: create root".to_string(),
         })
         .expect("the root applies")
+    }
+}
+
+/// The open map with its presentation layer set aside
+/// ([`MindMapDocument::suspended`]): it derefs to the document, which
+/// reads as the map itself, and the layer comes back when this is
+/// dropped — at the end of its scope, on an early return, and while a
+/// panic unwinds.
+pub struct MapItself<'d> {
+    doc: &'d mut MindMapDocument,
+}
+
+impl std::ops::Deref for MapItself<'_> {
+    type Target = MindMapDocument;
+
+    fn deref(&self) -> &MindMapDocument {
+        self.doc
+    }
+}
+
+impl std::ops::DerefMut for MapItself<'_> {
+    fn deref_mut(&mut self) -> &mut MindMapDocument {
+        self.doc
+    }
+}
+
+impl Drop for MapItself<'_> {
+    fn drop(&mut self) {
+        self.doc.doc.resume_presentations();
     }
 }
 

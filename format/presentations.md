@@ -164,9 +164,22 @@ committed map ⊕ open transaction ⊕ presentation layer   →  what is drawn
 - Two instances that write one field combine in the order they
   started: the later one starts from what the earlier one shows.
 - On wasm32 a presentation is held to the platform's bounds as an edit
-  is: a start that would pass them is refused in the writer's words
-  (``the map would hold N bytes of text; this platform holds at most M``),
-  shown where the start was asked for.
+  is ([`validation.md`](./validation.md)): what it shows may not take
+  the map past them.
+  - **At a start**, nothing starts, and the refusal is the answer where
+    the start was asked for — the console line's error, and so
+    `act.console`'s — naming the presentation and then the writer's own
+    words:
+    ``presentation `wordy`: the map would hold N bytes of text; this platform holds at most M``.
+  - **While it plays** — an edit under it grew the map, so writing the
+    instance back on would now pass the bounds — the edit stands and
+    the instance shows nothing: it keeps playing, is tried again after
+    every later change, and shows again as soon as it fits. The reason
+    is on the instance, in the same words: `present list` ends its line
+    with ``— not applied: the map would hold N bytes of text; this
+    platform holds at most M``, `query.animations` carries it as
+    `refusal`, and the log has one warning when it begins
+    (``presentation `wordy`: not applied on the map as it stands: …``).
 
 ### The glyph layer
 

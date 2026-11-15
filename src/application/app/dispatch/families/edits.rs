@@ -14,8 +14,8 @@
 //!
 //! **It resolves against the map as it stands, drawn as it stands.** An
 //! edit that is still animating is fast-forwarded and committed first
-//! (D28), and the view is brought up to the document before anything is
-//! read: a filter reads the values the last edit left, and a handler
+//! (D28), the presentation layer is set aside (`dispatch::the_map`), and
+//! the view is brought up to the document before anything is read: a filter reads the values the last edit left, and a handler
 //! reads where they are drawn — the step before it in a macro included —
 //! never a frame of an animation or a projection a change has not
 //! reached.
@@ -133,7 +133,11 @@ pub(in crate::application) fn run_edit(
     now_ms: f64,
 ) -> Result<(), String> {
     doc.finish_animation();
-    let geometry = drawn.synced(doc);
+    // The map itself, and where it is drawn without a presentation on
+    // it: the edit's filter, and a handler's layout, read neither a
+    // lifted node nor a concealed one (`dispatch::the_map`).
+    let mut doc = doc.suspended();
+    let geometry = drawn.synced(&mut doc);
     let Some((def, _)) = edits.find(doc.doc(), edit_id) else {
         return Err(format!("no edit is called `{edit_id}`"));
     };

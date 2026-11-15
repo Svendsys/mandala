@@ -171,6 +171,13 @@ pub(crate) struct Writer {
     /// ([`Document::take_changes`]): what tells the presentation layer
     /// whether a record it left there has been read.
     pub(in crate::document) drains: u64,
+    /// How many records of the map's own changes the feed has ever been
+    /// given, drained or not: what tells the presentation layer whether
+    /// the map changed under an application it set aside. The tree's
+    /// stamp alone does not: a stage written part-way
+    /// ([`Document::stage_progress`]) changes elements and leaves the
+    /// tree in the arrangement it was in.
+    pub(in crate::document) recorded: u64,
     open: Option<Open>,
     /// The bounds a change is held to: this target's
     /// ([`format::MAX_ELEMENTS`], [`format::MAX_MAP_BYTES`]).
@@ -184,6 +191,7 @@ impl Default for Writer {
             revision: 0,
             feed: Vec::new(),
             drains: 0,
+            recorded: 0,
             open: None,
             limits: format::LIMITS,
         }
@@ -512,6 +520,9 @@ impl Document {
         } = change;
         if touched.is_empty() && removed.is_empty() {
             return;
+        }
+        if source != ChangeSource::Presentation {
+            self.writer.recorded += 1;
         }
         self.writer.feed.push(ChangeRecord {
             source,

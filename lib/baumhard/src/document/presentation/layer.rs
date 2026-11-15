@@ -178,12 +178,14 @@ impl Instance {
     }
 }
 
-/// Applications written back out of the tree, oldest first, and the
-/// tree's stamp once they were out.
+/// Applications written back out of the tree, oldest first, and where
+/// the map stood once they were out: the tree's stamp, and how many
+/// changes of its own the document had recorded.
 #[derive(Clone, Debug, Default)]
 struct Lifted {
     journals: Vec<(InstanceId, Applied)>,
     stamp: u64,
+    recorded: u64,
 }
 
 /// A layer set aside by a suspension.
@@ -690,6 +692,7 @@ impl Document {
         Lifted {
             journals,
             stamp: self.tree.stamp(),
+            recorded: self.writer.recorded,
         }
     }
 
@@ -700,15 +703,17 @@ impl Document {
     ///
     /// An application set aside is written forward again as it is when
     /// nothing under it can have changed: the tree stands where the lift
-    /// left it, every instance before it stands on the side it stood on,
-    /// and none of them wrote an element this one holds differently.
-    /// Otherwise the instance is applied afresh.
+    /// left it and the document has recorded no change of its own since
+    /// — a stage written part-way changes elements without moving the
+    /// tree's stamp — every instance before it stands on the side it
+    /// stood on, and none of them wrote an element this one holds
+    /// differently. Otherwise the instance is applied afresh.
     fn restore_layer(&mut self, from: usize, lifted: Lifted) -> Change {
         let mut change = Change::default();
         let mut old = lifted.journals.into_iter().peekable();
-        // Whether the tree is, stamp for stamp, where each journal set
-        // aside expects it.
-        let mut in_step = self.tree.stamp() == lifted.stamp;
+        // Whether the map is where each journal set aside expects it:
+        // the tree stamp for stamp, and no change recorded since.
+        let mut in_step = self.tree.stamp() == lifted.stamp && self.writer.recorded == lifted.recorded;
         // The elements written differently from before, so far.
         let mut rewritten: FxHashSet<NodeId> = FxHashSet::default();
         for index in from..self.presentations.instances.len() {

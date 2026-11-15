@@ -106,8 +106,13 @@ pub(in crate::application::app) fn execute_console_line(
     if !LEAVE_ANIMATION_RUNNING.contains(&cmd.name) {
         doc.finish_animation();
     }
+    // A verb reads the map itself, not what a presentation shows on it:
+    // the layer is aside while it executes, and back before its side
+    // effect is taken — a screenshot, a recording and a clock step show
+    // what is drawn (`dispatch::the_map`).
     let (result, side_effect, close_after) = {
-        let mut effects = ConsoleEffects::new(doc);
+        let mut map = doc.suspended();
+        let mut effects = ConsoleEffects::new(&mut map);
         let result = (cmd.execute)(&Args::new(&args), &mut effects);
         (result, effects.side_effect.take(), effects.close_console)
     };

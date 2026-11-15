@@ -80,8 +80,11 @@ pub(super) fn take(ctx: &mut InputHandlerContext<'_>, line: &EditLine) -> ExecRe
             let selection: Vec<NodeId> = doc.selection.iter().collect();
             let registry = ctx.edits;
             let animating = doc.is_animating();
+            // What it would reach on the map itself, as `apply` reaches
+            // it: the presentation layer is aside while it reads.
+            let mut doc = doc.suspended();
             with_drawn(ctx.view.as_mut(), ctx.renderer, |drawn| {
-                let geometry = drawn.synced(doc);
+                let geometry = drawn.synced(&mut doc);
                 match registry.find(doc.doc(), id) {
                     Some((def, tier)) => {
                         inspect(doc.doc(), geometry, registry, def, tier, &selection, animating)

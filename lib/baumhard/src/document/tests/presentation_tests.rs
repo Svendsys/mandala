@@ -296,6 +296,49 @@ fn test_a_transaction_under_presentations_is_the_transaction_without_them() {
     assert_eq!(with.save_json().unwrap(), written(&without));
 }
 
+/// An animated transaction's stage, written part-way at each frame, is
+/// drawn under the layer at every frame: the node is where the stage
+/// has it, lifted. A part-way write changes elements and leaves the
+/// tree's stamp where it was, so the stamp alone would have the layer
+/// write its old application back over the frame.
+///
+/// Control: with a restore that goes by the tree's stamp alone, the
+/// node stays at 300 through every frame and jumps at the commit.
+#[test]
+fn test_a_stage_written_part_way_is_drawn_under_the_layer() {
+    use crate::document::writer::transaction::TransactionKind;
+    use crate::engine::interpolate::Snap;
+    let mut doc = performed();
+    let two = n(&doc, 2);
+    assert_eq!(
+        node(&doc, 2).1.position,
+        Vec2::new(300.0, -5.0),
+        "precondition: lifted from (300, 0)"
+    );
+    let tx = doc.begin(ChangeSource::Edit, TransactionKind::Animated).unwrap();
+    doc.stage(&tx, place(vec![two], Vec2::new(340.0, 40.0))).unwrap();
+    doc.take_changes();
+    for (t, x, y) in [(0.25, 310.0, 5.0), (0.5, 320.0, 15.0), (0.75, 330.0, 25.0)] {
+        doc.stage_progress(&tx, t, Snap::End).unwrap();
+        assert_eq!(
+            node(&doc, 2).1.position,
+            Vec2::new(x, y),
+            "at {t}: the stage, lifted"
+        );
+        let records = doc.take_changes();
+        assert!(
+            records
+                .iter()
+                .any(|record| record.touched.iter().any(|(id, _)| *id == two)),
+            "at {t}: the frame is on the feed"
+        );
+        assert_eq!(doc.save_json().unwrap(), written(&map()), "a save writes neither");
+    }
+    doc.commit(tx);
+    assert_eq!(node(&doc, 2).1.position, Vec2::new(340.0, 35.0));
+    assert_eq!(doc.history().count(), 1);
+}
+
 /// The derived state — the ident index, the incoming links, the budget —
 /// describes the map, never the layer: under a presentation that
 /// rewrites a span's text (more bytes than the map holds there), an
