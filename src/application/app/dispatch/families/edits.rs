@@ -15,10 +15,11 @@
 //! **It resolves against the map as it stands, drawn as it stands.** An
 //! edit that is still animating is fast-forwarded and committed first
 //! (D28), the presentation layer is set aside (`dispatch::the_map`), and
-//! the view is brought up to the document before anything is read: a filter reads the values the last edit left, and a handler
-//! reads where they are drawn — the step before it in a macro included —
-//! never a frame of an animation or a projection a change has not
-//! reached.
+//! the view is brought up to the document before anything is read: a
+//! filter reads the values the last edit left, and a handler reads
+//! where they are drawn — the step before it in a macro included —
+//! never a frame of an animation, a performance of the map, or a
+//! projection a change has not reached.
 
 use baumhard::arena::NodeId;
 use baumhard::document::ids::NodeIdent;

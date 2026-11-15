@@ -255,10 +255,11 @@ hit.node.node: 247
 
 **The map, or what is drawn.** A presentation (`act.console "present start
 <id> <node>"`) shows a node otherwise than the map has it — lifted, faded,
-concealed — and is never saved. While one plays, `query.document` and `scene.node_geometry`'s `model` answer **the map
-itself**; every other `scene.*` field and every screenshot answer **what is
-drawn**; `query.animations` lists what is playing. `format/ipc.md` "The map
-itself, or what is drawn" has every command's row.
+concealed — and is never saved. While one plays, `query.document` and
+`scene.node_geometry`'s `model` answer **the map itself**; every other
+`scene.*` field and every screenshot answer **what is drawn**;
+`query.animations` lists what is playing. `format/ipc.md` "The map itself, or
+what is drawn" has every command's row.
 
 **Two coordinate spaces.** `canvas` is the map's world space (node positions,
 the default for `scene.*`, `act.action x/y` and capture `region`). `surface`

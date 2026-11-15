@@ -1274,7 +1274,8 @@ the screen chrome, and the app's mental state. Eight commands:
 `query.document`, `query.selection`, `query.camera`, `query.mode`,
 `query.status`, `query.editors`, `query.undo`, `query.animations`.
 Which of them answer the map itself while a presentation plays, and
-which what is drawn: [The map itself, or what is drawn](#the-map-itself-or-what-is-drawn).
+which what is drawn, is under
+[The map itself, or what is drawn](#the-map-itself-or-what-is-drawn).
 
 **Zero mutation, by construction.** A query reaches the app through
 `observe()` (`&`), and the only reads the execution context offers are
@@ -1305,9 +1306,10 @@ this one shape.
 **Errors.** Before the app exists every query answers `no_document`.
 After it, the four queries that read the document (`query.document`,
 `query.selection`, `query.undo`, `query.animations`) answer
-`no_document` when its initial load failed. `query.camera`, `query.mode`, `query.status` and
-`query.editors` need no document and answer regardless. A query's own
-parameter failures are `invalid_params`, naming the parameter.
+`no_document` when its initial load failed. `query.camera`,
+`query.mode`, `query.status` and `query.editors` need no document and
+answer regardless. A query's own parameter failures are
+`invalid_params`, naming the parameter.
 
 ### `query.document`
 

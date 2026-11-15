@@ -877,7 +877,8 @@ crate. The tests that hold those properties to account — sweeps, named
 seeds, findings and their controls — are not reused, and live in a
 `#[cfg(test)]` sibling of their module (`format_fuzz_tests`,
 `edit_fuzz_tests`, `presentation_fuzz_tests`, `flow_fuzz_tests`,
-`glyph_layer_fuzz_tests`, `choices_tests`, `fuzz_seed_tests`). A `cfg(test)` tree carries no bench obligation
+`glyph_layer_fuzz_tests`, `choices_tests`, `fuzz_seed_tests`). A
+`cfg(test)` tree carries no bench obligation
 (`lib/baumhard/CONVENTIONS.md` §B8), so this is a stated rule, not an
 exemption from the census: a fuzz property's test is a sibling, never a
 plain `#[test]` beside the `pub` property it holds.

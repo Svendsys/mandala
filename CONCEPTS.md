@@ -2286,8 +2286,9 @@ and placement by `Arc`, so keeping it never shapes.
   C1 decision record says: a glyph's rasterization depends on the zoom
   and on its pen's subpixel position.
 
-`src/application/renderer/layers/`. The app's projector is wired to it
-by V1-C3; until then the window and every capture draw it empty.
+`src/application/renderer/layers/`. The view's sync (`MapView::sync`)
+is what feeds it: the projector's journals, the overlays' and the
+glyph-layer presentations', each pass.
 
 ### `AppScene` and scene host
 
