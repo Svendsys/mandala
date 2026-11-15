@@ -5749,9 +5749,12 @@ fn test_flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a_s
 /// Controls, each alone measuring in `f32`: the gap the pairwise rule
 /// solves (`pair`), red; its straight-path model (`along`), red; the
 /// junctions' clearance (`box_gap`), red; the earlier inks' nearness,
-/// red on the three letters. `separation` measuring so is green: where
-/// it is apart it answers what `box_gap` answers, as its doc says, and no
-/// placement here or in the sweep on #360 moves with it.
+/// red on the three letters. `separation` measuring so is green, and no
+/// test holds that site: a frame then moves by a few millionths of its
+/// outline's size at the most (72 of 3,888 did in review 5912075684's
+/// sweep on #360, this test's first among them), far inside what is held
+/// here. It takes the helper so that it answers what `box_gap` answers
+/// where the boxes are apart, as its doc says.
 pub fn do_flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a_smaller() {
     use crate::flow::place_on_closed;
     let text = style(16.0);

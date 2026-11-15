@@ -488,6 +488,18 @@ fn clusters_of(glyphs: &[GlyphMetrics], range: Range<usize>) -> Vec<Cluster> {
 /// have: such a length, of an `apart` that is finite, is taken in `f64`.
 /// One measure for the pitched lay's gaps and a frame's ([`pitch`],
 /// [`halves`]).
+///
+/// The rule: a frame's rule measures every corner distance by this, with
+/// two exceptions. Where a length that is not finite is the site's own
+/// signal — the closed form's root and the model's (`line_root`,
+/// `model_root`), which then give way to the rule read from the path — it
+/// stays one. And an ornament ring's walk (`ink_gap_at` and its seam) is
+/// not righted by this alone (#363). At two of its sites no test can hold
+/// it: `separation`, which answers `box_gap` where the boxes are apart,
+/// and the model lay's nearness (`model_letter`), the stepping lay's own
+/// test. There it keeps two measures of one thing equal past that root,
+/// and a frame laid with either in `f32` moves by a few millionths of its
+/// outline's size at the most.
 fn corner_distance(apart: Vec2) -> f32 {
     let length = apart.length();
     if length.is_finite() || !apart.is_finite() {

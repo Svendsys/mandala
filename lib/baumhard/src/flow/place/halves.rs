@@ -1885,10 +1885,7 @@ impl<'w> InkLay<'w> {
         )?;
         let clear = g.max(2.0 * TOUCH);
         let near = |e: &Set| {
-            ((set.at - e.at).abs() - (set.half + e.half))
-                .max(Vec2::ZERO)
-                .length()
-                < clear - NEARER
+            corner_distance(((set.at - e.at).abs() - (set.half + e.half)).max(Vec2::ZERO)) < clear - NEARER
         };
         (!self.earlier.iter().flatten().any(near)).then_some(set)
     }
