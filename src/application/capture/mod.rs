@@ -144,9 +144,13 @@ pub(crate) struct Target {
 /// `overwrite` (or the artifacts dir, which is the app's own) allows
 /// it, with nothing at it or at its sidecar's name yet.
 ///
-/// The existence check is for the common case and the message; the
-/// write itself refuses again atomically ([`guarded_file::publish`]),
-/// so a file appearing in between is still never clobbered.
+/// The look at each file is the writer's own ([`guarded_file::check`]),
+/// taken before a frame is drawn, so the refusal is the one the write
+/// would give, in the same words: a symlink or a directory there, or an
+/// existing file without `overwrite`. It is for the common case and the
+/// message; the write itself refuses again atomically
+/// ([`guarded_file::publish`]), so a file appearing in between is still
+/// never clobbered.
 pub(crate) fn resolve(
     destination: Destination,
     sidecar: bool,
@@ -171,21 +175,39 @@ pub(crate) fn resolve(
         }
     };
     let sidecar = sidecar.then(|| sidecar_path_for(&path));
-    if !overwrite {
-        for target in std::iter::once(&path).chain(sidecar.as_ref()) {
-            if std::fs::symlink_metadata(target).is_ok() {
-                return Err(CaptureError::Invalid {
-                    param: "path",
-                    message: format!("`{}` exists; set `overwrite` to replace it", target.display()),
-                });
-            }
-        }
-    }
+    look(&path, sidecar.as_ref(), overwrite)?;
     Ok(Target {
         path,
         sidecar,
         overwrite,
     })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+/// The writer's look ([`guarded_file::check`]) at the PNG's file and,
+/// when one will be written, the sidecar's: both, before either is
+/// written, so a sidecar in the way leaves no PNG behind. Taken twice
+/// (ruling B38.1, second addendum §8): by [`resolve`] before the frame
+/// is drawn, and by [`write()`] right before its first write, for a file
+/// that appeared in between.
+fn look(path: &Path, sidecar: Option<&PathBuf>, overwrite: bool) -> Result<(), CaptureError> {
+    for target in std::iter::once(path).chain(sidecar.map(PathBuf::as_path)) {
+        guarded_file::check(target, overwrite).map_err(refused)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+/// The writer's refusal as this command's: a path that is the caller's
+/// mistake is `invalid_params` on `path`, in the writer's words.
+fn refused(refusal: PublishRefusal) -> CaptureError {
+    match refusal {
+        PublishRefusal::Invalid(message) => CaptureError::Invalid {
+            param: "path",
+            message,
+        },
+        PublishRefusal::Internal(message) => CaptureError::Internal(message),
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -195,9 +217,10 @@ pub(crate) fn resolve(
 /// `sidecar` is the map to write, present exactly when the target names
 /// a sidecar path.
 ///
-/// A sidecar that fails after its PNG was written says so: the PNG is
-/// good and stays. `progress` is called as the PNG encodes
-/// ([`png::encode`]).
+/// Both files are looked at again first ([`look`]): one that appeared
+/// since [`resolve`] is refused with nothing written. A sidecar that
+/// still fails after its PNG was written says so: the PNG is good and
+/// stays. `progress` is called as the PNG encodes ([`png::encode`]).
 pub(crate) fn write(
     target: &Target,
     pixels: &CapturedPixels,
@@ -205,28 +228,23 @@ pub(crate) fn write(
     artifacts: &mut Artifacts,
     progress: &mut dyn FnMut(),
 ) -> Result<(), CaptureError> {
-    let refused = |refusal: PublishRefusal| match refusal {
-        PublishRefusal::Invalid(message) => CaptureError::Invalid {
-            param: "path",
-            message,
-        },
-        PublishRefusal::Internal(message) => CaptureError::Internal(message),
-    };
+    let sidecar = sidecar.zip(target.sidecar.as_ref());
+    look(&target.path, sidecar.map(|(_, path)| path), target.overwrite)?;
     let png_bytes = guarded_file::publish(&target.path, target.overwrite, |out| {
         png::encode(pixels, out, &mut *progress)
     })
     .map_err(refused)?;
     let mut written = vec![(target.path.clone(), png_bytes)];
-    if let (Some(sidecar), Some(sidecar_path)) = (sidecar, target.sidecar.as_ref()) {
+    if let Some((sidecar, sidecar_path)) = sidecar {
         let json_bytes = guarded_file::publish(sidecar_path, target.overwrite, |out| {
             serde_json::to_writer(out, sidecar).map_err(|e| e.to_string())
         })
         .map_err(|refusal| {
             artifacts.record(&written);
-            let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
             CaptureError::Internal(format!(
-                "the PNG was written to `{}`, but its sidecar was not: {message}",
-                target.path.display()
+                "the PNG was written to `{}`, but its sidecar was not: {}",
+                target.path.display(),
+                refusal.message()
             ))
         })?;
         written.push((sidecar_path.clone(), json_bytes));
@@ -387,6 +405,222 @@ mod tests {
             matches!(relative, Err(CaptureError::Invalid { param: "path", .. })),
             "{relative:?}"
         );
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// **The look before the frame is the writer's own, in the writer's
+    /// words**: an existing PNG, or an existing sidecar beside a new one,
+    /// is refused with the message [`guarded_file::publish`] gives,
+    /// ending in the remedy the writer publishes
+    /// (`guarded_file::OVERWRITE_HINT`, which `mandalactl` rewrites into
+    /// its own spelling); a directory or a symlink there, at the PNG's
+    /// name or at the sidecar's, is named as what it is, with or without
+    /// `overwrite`; a directory that is not there is refused, and so is
+    /// a sidecar name the filesystem cannot hold (third addendum §14);
+    /// and with `overwrite` an existing file passes.
+    ///
+    /// Controls: a refusal composed here in other words fails the first
+    /// two; a look that only asks whether something exists, and only
+    /// without `overwrite`, calls the directory and the links existing
+    /// files, lets them pass with `overwrite`, and passes the missing
+    /// directory; a look that reads "name too long" as "nothing there"
+    /// passes the long name.
+    #[test]
+    fn test_resolve_refuses_in_the_writers_own_words() {
+        let dir = scratch_dir("resolve-words");
+        let mut artifacts = Artifacts::under(dir.join("unused"), artifacts::BUDGET_BYTES);
+        let mut look = |path: &Path, overwrite: bool, sidecar: bool| {
+            let destination = Destination::Path {
+                path: path.to_path_buf(),
+                overwrite,
+            };
+            resolve(destination, sidecar, &mut artifacts)
+        };
+        let invalid = |message: String| {
+            Err(CaptureError::Invalid {
+                param: "path",
+                message,
+            })
+        };
+        let exists = |at: &Path| format!("`{}` exists; {}", at.display(), guarded_file::OVERWRITE_HINT);
+
+        let taken = dir.join("taken.png");
+        std::fs::write(&taken, "precious").expect("seed");
+        assert_eq!(look(&taken, false, false), invalid(exists(&taken)));
+        assert_eq!(
+            look(&taken, true, false).map(|target| target.path),
+            Ok(taken.clone())
+        );
+
+        let free = dir.join("free.png");
+        let beside = sidecar_path_for(&free);
+        std::fs::write(&beside, "precious").expect("seed");
+        assert_eq!(look(&free, false, true), invalid(exists(&beside)));
+        assert_eq!(
+            look(&free, false, false).map(|target| target.path),
+            Ok(free.clone()),
+            "a sidecar that will not be written is not in the way"
+        );
+
+        let folder = dir.join("folder.png");
+        std::fs::create_dir(&folder).expect("a directory");
+        for overwrite in [false, true] {
+            assert_eq!(
+                look(&folder, overwrite, false),
+                invalid(format!("`{}` is a directory", folder.display())),
+                "overwrite={overwrite}"
+            );
+        }
+        let nowhere = dir.join("missing").join("shot.png");
+        for overwrite in [false, true] {
+            assert_eq!(
+                look(&nowhere, overwrite, true),
+                invalid(format!(
+                    "the parent directory of `{}` does not exist",
+                    nowhere.display()
+                )),
+                "overwrite={overwrite}"
+            );
+        }
+        #[cfg(unix)]
+        {
+            let link = dir.join("link.png");
+            std::os::unix::fs::symlink(&taken, &link).expect("symlink");
+            let dangling = dir.join("dangling.png");
+            std::os::unix::fs::symlink(dir.join("nowhere.png"), &dangling).expect("symlink");
+            let linked_side = dir.join("side.png");
+            let side_link = sidecar_path_for(&linked_side);
+            std::os::unix::fs::symlink(&taken, &side_link).expect("symlink");
+            for overwrite in [false, true] {
+                for (path, refused) in [(&link, &link), (&dangling, &dangling), (&linked_side, &side_link)] {
+                    assert_eq!(
+                        look(path, overwrite, true),
+                        invalid(format!(
+                            "`{}` is a symlink, which is never followed",
+                            refused.display()
+                        )),
+                        "overwrite={overwrite}"
+                    );
+                }
+            }
+            assert_eq!(std::fs::read_to_string(&taken).expect("kept"), "precious");
+
+            // An image name at the directory's limit: the sidecar's is
+            // fourteen bytes over it. The limit is found, not assumed.
+            let limit = (1..=255)
+                .rev()
+                .find(|len| {
+                    let probe = dir.join("p".repeat(*len));
+                    let made = std::fs::write(&probe, b"").is_ok();
+                    let _ = std::fs::remove_file(&probe);
+                    made
+                })
+                .expect("a directory that takes a name");
+            let at_the_limit = dir.join(format!("{}.png", "a".repeat(limit - 4)));
+            assert_eq!(
+                look(&at_the_limit, false, true),
+                invalid(format!(
+                    "a name in `{}` is too long for this filesystem, or is not one it allows",
+                    sidecar_path_for(&at_the_limit).display()
+                ))
+            );
+            assert_eq!(
+                look(&at_the_limit, false, false).map(|target| target.path),
+                Ok(at_the_limit.clone()),
+                "precondition: the image's own name fits"
+            );
+        }
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// **A file that appears while the frame is drawn is refused before
+    /// the first write, with nothing written** (ruling B38.1, second
+    /// addendum §8): `resolve` passes, then a file appears at the PNG's
+    /// name, or at the sidecar's, and `write` looks again and refuses it
+    /// in the writer's words, leaving it and writing no PNG.
+    ///
+    /// Control: a `write` that does not look again writes the PNG and
+    /// only then finds the sidecar in the way.
+    #[test]
+    fn test_a_file_that_appears_after_resolve_is_refused_before_the_first_write() {
+        let dir = scratch_dir("second-look");
+        let mut artifacts = Artifacts::under(dir.join("unused"), artifacts::BUDGET_BYTES);
+        for appears_at_the_sidecar in [false, true] {
+            let path = dir.join(format!("shot-{appears_at_the_sidecar}.png"));
+            let destination = Destination::Path {
+                path: path.clone(),
+                overwrite: false,
+            };
+            let target =
+                resolve(destination, true, &mut artifacts).expect("precondition: nothing is in the way yet");
+            let appeared = match appears_at_the_sidecar {
+                true => sidecar_path_for(&path),
+                false => path.clone(),
+            };
+            std::fs::write(&appeared, "appeared").expect("appears");
+            let refused = write(&target, &pixels(), Some(&sidecar()), &mut artifacts, &mut || {});
+            assert_eq!(
+                refused,
+                Err(CaptureError::Invalid {
+                    param: "path",
+                    message: format!(
+                        "`{}` exists; {}",
+                        appeared.display(),
+                        guarded_file::OVERWRITE_HINT
+                    ),
+                })
+            );
+            assert_eq!(std::fs::read_to_string(&appeared).expect("kept"), "appeared");
+            let name = appeared
+                .file_name()
+                .expect("named")
+                .to_string_lossy()
+                .into_owned();
+            assert_eq!(names_in(&dir), vec![name], "nothing else was written");
+            std::fs::remove_file(&appeared).expect("clear");
+        }
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// **A sidecar that fails after the PNG has landed says the PNG was
+    /// written**, and where, and is an internal error: the PNG is good
+    /// and stays. Staged with no seam, through the hook `write` already
+    /// has: its `progress` callback runs while the PNG encodes, after
+    /// the second look, and here it puts a file at the sidecar's name.
+    /// The PNG is published, the sidecar's write finds the name taken.
+    /// `mandalactl` says the same for a browser's screenshot.
+    ///
+    /// Control: a sidecar refusal mapped the way the PNG's is does not
+    /// say the PNG was written.
+    #[test]
+    fn test_a_sidecar_that_fails_after_the_png_says_the_png_was_written() {
+        let dir = scratch_dir("sidecar-after");
+        let mut artifacts = Artifacts::under(dir.join("unused"), artifacts::BUDGET_BYTES);
+        let path = dir.join("shot.png");
+        let beside = sidecar_path_for(&path);
+        let destination = Destination::Path {
+            path: path.clone(),
+            overwrite: false,
+        };
+        let target = resolve(destination, true, &mut artifacts).expect("precondition: nothing is in the way");
+        let mut planted = 0;
+        let failed = write(&target, &pixels(), Some(&sidecar()), &mut artifacts, &mut || {
+            std::fs::write(&beside, "appeared").expect("appears");
+            planted += 1;
+        });
+        assert!(planted > 0, "precondition: the PNG's encoding called `progress`");
+        assert!(path.is_file(), "precondition: the PNG landed: {failed:?}");
+        assert_eq!(
+            failed,
+            Err(CaptureError::Internal(format!(
+                "the PNG was written to `{}`, but its sidecar was not: `{}` exists; {}",
+                path.display(),
+                beside.display(),
+                guarded_file::OVERWRITE_HINT
+            )))
+        );
+        assert_eq!(std::fs::read_to_string(&beside).expect("kept"), "appeared");
+        assert_eq!(names_in(&dir), vec!["shot.png", "shot.png.geometry.json"]);
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 

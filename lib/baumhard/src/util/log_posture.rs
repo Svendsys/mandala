@@ -335,11 +335,11 @@ mod tests {
     const INVOCATION_FLOOR: usize = 130;
 
     /// Directories the gate must have read at least one invocation
-    /// from. The three of the five `SHIPPED_ROOTS` that hold any
-    /// (`mandala_derive`, `maptool` and `mandalactl` log nothing at
-    /// these levels today), and the wasm32-only directory, which is
-    /// the witness that the browser half is read and not only
-    /// claimed.
+    /// from. The two of the six `SHIPPED_ROOTS` that hold any
+    /// (`guarded_file`, `mandala_derive`, `maptool` and `mandalactl`
+    /// log nothing at these levels today), and the wasm32-only
+    /// directory, which is the witness that the browser half is read
+    /// and not only claimed.
     const WITNESS_DIRS: &[&str] = &[
         "lib/baumhard/src/",
         "src/application/",

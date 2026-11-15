@@ -688,7 +688,7 @@ impl Recording {
                 // frame's, and the manifest of what landed is a
                 // courtesy to whoever reads the directory.
                 let _ = self.write_manifest(now_ms, None);
-                Err(message_of(refusal))
+                Err(refusal.message())
             }
         }
     }
@@ -748,7 +748,7 @@ impl Recording {
         self.manifest_bytes = guarded_file::publish(&path, true, |out| {
             serde_json::to_writer(out, &manifest).map_err(|e| e.to_string())
         })
-        .map_err(message_of)?;
+        .map_err(PublishRefusal::message)?;
         Ok(())
     }
 }
@@ -765,11 +765,6 @@ pub(crate) fn dir_bytes(dir: &Path) -> u64 {
             .map(|meta| meta.len())
             .sum()
     })
-}
-
-fn message_of(refusal: PublishRefusal) -> String {
-    let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
-    message
 }
 
 /// The app's one recording: in progress, or how the last one ended.
@@ -811,7 +806,11 @@ pub(crate) struct MadeDir {
 /// A caller's path is absolute and is not a symlink; a directory
 /// already there must be empty, and one that is not there yet is made
 /// if its parent exists (`mkdir`, never `mkdir -p`, so a typo in the
-/// middle of a path is a refusal and not a new tree).
+/// middle of a path is a refusal and not a new tree). This is a look
+/// at a directory to make, so it is not the file writer's
+/// (`guarded_file::check` refuses a directory); the two refusals it
+/// shares with that look, a symlink and a missing parent, are said in
+/// the writer's own sentences.
 pub(crate) fn make_dir(
     destination: RecordDestination,
     artifacts: &mut Artifacts,
@@ -835,9 +834,7 @@ pub(crate) fn make_dir(
     }
     let shown = path.display();
     match std::fs::symlink_metadata(&path) {
-        Ok(meta) if meta.file_type().is_symlink() => Err(invalid(format!(
-            "`{shown}` is a symlink, which is never followed"
-        ))),
+        Ok(meta) if meta.file_type().is_symlink() => Err(invalid(PublishRefusal::symlink(&path).message())),
         Ok(meta) if !meta.is_dir() => Err(invalid(format!("`{shown}` exists and is not a directory"))),
         Ok(_) => {
             let mut entries = std::fs::read_dir(&path)
@@ -859,9 +856,9 @@ pub(crate) fn make_dir(
                 in_artifacts: false,
                 created: true,
             }),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(invalid(format!(
-                "the parent directory of `{shown}` does not exist"
-            ))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Err(invalid(PublishRefusal::no_parent(&path).message()))
+            }
             Err(e) => Err(CaptureError::Internal(format!("could not make `{shown}`: {e}"))),
         },
         Err(e) => Err(CaptureError::Internal(format!("could not read `{shown}`: {e}"))),
