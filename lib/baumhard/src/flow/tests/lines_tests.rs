@@ -460,7 +460,7 @@ fn test_flow_lines_fill_a_frame_as_wide_as_an_f32_reaches() {
     do_flow_lines_fill_a_frame_as_wide_as_an_f32_reaches();
 }
 
-/// A `Once` filler round a frame `1e30` wide (ruling R27) fills its
+/// A `Once` filler round a frame `1e18` wide (ruling R27) fills its
 /// spans and ends: before each line it counts copies one on from the
 /// last, stops where a copy's steps are lost below an `f32`'s precision
 /// and move it nowhere, and lays no more than the placement holds —
@@ -472,7 +472,7 @@ fn test_flow_lines_fill_a_frame_as_wide_as_an_f32_reaches() {
 /// move, the placement never returns.
 pub fn do_flow_lines_fill_a_frame_as_wide_as_an_f32_reaches() {
     let shape = outline(
-        Rect::new(Vec2::ZERO, Vec2::new(1.0e30, 40.0)),
+        Rect::new(Vec2::ZERO, Vec2::new(1.0e18, 40.0)),
         Shape::Rectangle {
             radius: Percent::new(50),
         },

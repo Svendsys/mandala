@@ -15,7 +15,9 @@ use crate::flow::tests::flow_fuzz::{
     check_flow_generated_in, check_flow_structured_as_found, check_placement, check_run, every_face,
 };
 use crate::flow::tests::support::{real_run, style, with_fonts};
-use crate::flow::{shape_box, shape_run, FlowSpan, PlacedGlyph, PlacedRun, RingLayout, FILLER_SPAN};
+use crate::flow::{
+    shape_box, shape_run, FlowSpan, Outline, PlacedGlyph, PlacedRun, Rect, RingLayout, FILLER_SPAN,
+};
 use crate::font::fonts::AppFont;
 use crate::util::tests::choices::Choices;
 
@@ -25,10 +27,11 @@ use crate::util::tests::choices::Choices;
 ///
 /// - **1021**, on every host: a `Spread` of seven glyphs along a quadratic
 ///   from (1, 1) by (−2.4 × 10³⁸, −587) to (−10³⁰, 1), whose natural length
-///   fits its 2.4 × 10³⁸, was cut to nothing. The curve's speed bound,
-///   twice its first leg, was past the largest `f32`, so its path built no
-///   table and had no length; the bound saturates now
-///   (`Curve::speed_bound`).
+///   fits its 2.4 × 10³⁸, was cut to nothing with nothing said. The
+///   curve's speed bound, twice its first leg, was past the largest `f32`,
+///   so its path built no table and had no length. Such a curve is longer
+///   than placement lays, and its path says so now (`ArcPath::too_long`,
+///   #363): nothing is laid along it, by name.
 /// - **2970** and **4284**, with host faces that shape their text: a
 ///   frame's line on a part some 10³³ along its half, where an `f32` sets
 ///   every letter at one center, so no gap moved its end; the tracking
@@ -47,8 +50,9 @@ use crate::util::tests::choices::Choices;
 /// (#310, ruling B17.2c), by
 /// `test_flow_structured_finding_a_ring_whose_inks_its_floats_cannot_part_replays_short_at_its_cap`.
 ///
-/// Controls: with the speed bound not saturated, red at 1021 ("its natural
-/// length fits, and it was cut"); without both the tracking solve's stop
+/// Controls: with a curve no count tables building no stretch, so that
+/// its path is not too long, red at 1021 ("1 glyphs laid along a path
+/// longer than placement lays"); without both the tracking solve's stop
 /// and its reading of a lay past every `f32`, red at 2970 where host faces
 /// shape its text, as here (either alone holds it finite).
 #[test]
@@ -110,13 +114,23 @@ fn test_the_pair_model_sets_the_first_root_at_what_is_owed() {
 /// generator; among them, far-out frames with sides and far-out `Repeat`s
 /// along a path (#313), each laid within the per-input bound.
 ///
+/// And each placement is held to the longest path placement lays (#363,
+/// ruling B42.1 §6; `held_to_the_limit`): along a path clearly past it
+/// nothing is laid and the placement says why, along one clearly within
+/// it the placement does not say so.
+///
 /// Precondition: the seeds draw far-out frames with sides and far-out
-/// `Repeat`s. Control: with `far_out` drawing nothing, red.
+/// `Repeat`s, and placements along paths clearly within the limit, ten or
+/// more, and clearly past it, two or more (20 and 4 as the generator
+/// stands). Controls: with `far_out` drawing nothing, red; with no path
+/// too long, red at seed 79 ("116 glyphs laid along a path longer than
+/// placement lays").
 #[test]
 fn test_generated_flows_hold_every_flow_property() {
-    use crate::flow::tests::flow_fuzz::{FAR_FRAMES, FAR_REPEATS};
+    use crate::flow::tests::flow_fuzz::{FAR_FRAMES, FAR_REPEATS, HELD_TO_THE_LIMIT};
     FAR_FRAMES.with(|n| n.set(0));
     FAR_REPEATS.with(|n| n.set(0));
+    HELD_TO_THE_LIMIT.with(|held| held.set((0, 0)));
     for seed in 0..100 {
         if let Err(why) = check_flow_generated(&mut Choices::seeded(seed)) {
             panic!("seed {seed}: {why}");
@@ -126,6 +140,12 @@ fn test_generated_flows_hold_every_flow_property() {
     assert!(
         frames > 0 && repeats > 0,
         "precondition: the seeds draw far-out frames with sides ({frames}) and far-out repeats along a path ({repeats})"
+    );
+    let (within, past) = HELD_TO_THE_LIMIT.with(std::cell::Cell::get);
+    assert!(
+        within >= 10 && past >= 2,
+        "precondition: the seeds hold placements along paths clearly within the limit ({within}) and \
+         clearly past it ({past})"
     );
 }
 
@@ -862,19 +882,28 @@ fn test_a_real_zero_width_tab_stop_the_up_front_check_lets_through_is_laid_out_a
 /// fills such a path walks past every `f32` when the solver doubles its
 /// guess; `solve_gap` took that `NaN` miss for a fitting low side, kept
 /// doubling to an infinite gap, and the walk answered `NaN` from there.
-/// A miss that is not a number now overshoots. The input as the fuzzer
-/// found it is replayed beside the case it comes down to.
+/// A miss that is not a number now overshoots, as one a spent budget
+/// leaves still does.
+///
+/// Since #363 an outline that long is not laid at all: it is longer than
+/// placement lays (`MAX_PATH_LENGTH`), and each placement round it lays
+/// nothing and says why. The input as the fuzzer found it is replayed
+/// beside the case it comes down to. Control: the limit not held, red
+/// (the replay: "76 glyphs laid along a path longer than placement
+/// lays").
 #[test]
-fn test_a_spread_around_an_outline_near_the_largest_f32_places_every_glyph_finite() {
+fn test_a_spread_around_an_outline_near_the_largest_f32_is_too_long_to_lay() {
     use crate::document::values::{Direction, Edge, FitMode, StartPoint};
-    use crate::flow::{place_on_closed, Outline, Rect, RingLayout};
+    use crate::flow::place::ring::RingLoss;
+    use crate::flow::place::{place_on_closed_traced, Trace};
+    use crate::flow::{Outline, Rect, RingLayout};
     let found = include_bytes!("fuzz_findings/spread_gap_past_the_largest_f32");
     if let Err(why) = check_flow_structured_as_found(found) {
         panic!("the fuzzer's input: {why}");
     }
     let plain = style(16.0);
     // The outline the input drew: a rounded rectangle 1.78e38 on a side,
-    // its perimeter 2.8e38, finite.
+    // its perimeter 2.8e38.
     let path = Outline::RoundedRect {
         rect: Rect::new(Vec2::splat(-8.908107e37), Vec2::splat(1.7816215e38)),
         radius: 8.908107e37,
@@ -885,9 +914,10 @@ fn test_a_spread_around_an_outline_near_the_largest_f32_places_every_glyph_finit
     };
     for fit in [FitMode::Spread, FitMode::Fit { min: 1.0, max: 1.0 }] {
         for direction in [Direction::Clockwise, Direction::CounterClockwise] {
-            let placed = with_fonts(|fs| {
+            let mut trace = Trace::default();
+            let (run, placed) = with_fonts(|fs| {
                 let run = real_run("abc", &plain, fs);
-                let (replaced, placed) = place_on_closed(
+                let (replaced, placed) = place_on_closed_traced(
                     &run,
                     &path,
                     start,
@@ -897,16 +927,18 @@ fn test_a_spread_around_an_outline_near_the_largest_f32_places_every_glyph_finit
                     false,
                     &plain,
                     fs,
+                    Some(&mut trace),
                 );
                 (replaced.unwrap_or(run), placed)
             });
-            let (run, placed) = placed;
             assert!(
-                placed.glyphs.len() == 3,
-                "precondition: {fit:?} {direction:?} places all three glyphs ({})",
-                placed.glyphs.len()
+                placed.glyphs.is_empty() && placed.truncated && trace.ring == Some(RingLoss::TooLong),
+                "{fit:?} {direction:?}: {} glyphs, truncated {}, {:?}",
+                placed.glyphs.len(),
+                placed.truncated,
+                trace.ring
             );
-            if let Err(why) = check_placement(&run, &placed, true, "around the outline") {
+            if let Err(why) = check_placement(&run, &placed, false, "around the outline") {
                 panic!("{fit:?} {direction:?}: {why}");
             }
         }
@@ -934,19 +966,49 @@ fn test_a_spread_around_an_outline_near_the_largest_f32_places_every_glyph_finit
 /// Precondition: each input lays the cap. Control: with every walk
 /// stepping afresh, or a step's start looked up per chord, the counts
 /// pass their bounds.
+///
+/// Since #363 a path 10³⁰ long is longer than placement lays, and each
+/// input as found lays nothing along it and says why: both are replayed
+/// for that. The bounds are held on the same inputs with the floats that
+/// set their curves that far out shortened to 10¹⁷
+/// (`…_within_the_limit`), which lay the cap as the inputs did.
 #[test]
-fn test_a_repeat_along_a_curve_as_long_as_an_f32_walks_each_glyph_thrice_at_most() {
+fn test_a_repeat_along_a_curve_as_long_as_placement_lays_walks_each_glyph_thrice_at_most() {
     use crate::flow::path::PATH_LOOKUPS;
     use crate::flow::place::{GLYPHS_PLACED, MAX_RUN_ON_STEPS, STEPS_TAKEN};
     use crate::flow::MAX_PLACED_GLYPHS;
+    for (what, found) in [
+        (
+            "the CI input as found",
+            &include_bytes!("fuzz_findings/repeat_along_a_curve_past_the_root_of_the_largest_f32")[..],
+        ),
+        (
+            "the review's cubic as found",
+            &include_bytes!("fuzz_findings/repeat_along_a_cubic_past_the_root_of_the_largest_f32")[..],
+        ),
+    ] {
+        GLYPHS_PLACED.with(|count| count.set(0));
+        if let Err(why) = check_flow_structured_as_found(found) {
+            panic!("{what}: {why}");
+        }
+        assert_eq!(
+            GLYPHS_PLACED.with(std::cell::Cell::get),
+            0,
+            "{what}: its path is longer than placement lays, and nothing is laid along it"
+        );
+    }
     let findings: [(&str, &[u8]); 2] = [
         (
             "the CI input",
-            include_bytes!("fuzz_findings/repeat_along_a_curve_past_the_root_of_the_largest_f32"),
+            include_bytes!(
+                "fuzz_findings/repeat_along_a_curve_past_the_root_of_the_largest_f32_within_the_limit"
+            ),
         ),
         (
             "the review's cubic",
-            include_bytes!("fuzz_findings/repeat_along_a_cubic_past_the_root_of_the_largest_f32"),
+            include_bytes!(
+                "fuzz_findings/repeat_along_a_cubic_past_the_root_of_the_largest_f32_within_the_limit"
+            ),
         ),
     ];
     for (what, found) in findings {
@@ -979,29 +1041,59 @@ fn test_a_repeat_along_a_curve_as_long_as_an_f32_walks_each_glyph_thrice_at_most
 
 /// The finding above along an open line, where `solve_gap` still lays
 /// a `Spread` (a frame round a closed outline is laid along its halves
-/// now, #291): along a line as long as an `f32` goes, a `Spread` — and a
+/// now, #291): along a line as long as placement lays, a `Spread` — and a
 /// `Fit` held at scale 1 — of three letters places every glyph, finite,
-/// and cuts nothing (`check_placement`'s whole-placement property). A
-/// line longer than `√f32::MAX` (about `1.8e19`) once measured its
-/// length infinite, kept no stretch, and placed nothing; the lines here
-/// run from there to the largest. Control: with path lengths measured
-/// by `Vec2::length`, which overflows there, the property sees the cut.
+/// and cuts nothing (`check_placement`'s whole-placement property): lines
+/// 2 × 10¹⁵, 2 × 10¹⁸ and 9.2 × 10¹⁸ long, the last the longest there is.
+/// A line longer than that lays nothing and says why (#363), from one a
+/// float longer to the longest an `f32` holds: among them the lines past
+/// `√f32::MAX` (about `1.8e19`), which once measured their length
+/// infinite, kept no stretch, and placed nothing with nothing said.
+/// Controls: the limit not held, red (the lines past it are laid); the
+/// limit held at half what it is, red (the longest line within it is
+/// cut).
 #[test]
-fn test_a_spread_along_a_line_as_long_as_an_f32_places_every_glyph() {
+fn test_a_spread_along_a_line_as_long_as_placement_lays_places_every_glyph() {
     use crate::document::values::FitMode;
-    use crate::flow::{place_on_open, Curve};
+    use crate::flow::place::ring::RingLoss;
+    use crate::flow::place::{place_on_open_traced, Trace};
+    use crate::flow::{Curve, MAX_PATH_LENGTH};
     let plain = style(16.0);
-    for reach in [1.0e19_f32, 1.0e20, 1.0e30, 1.7e38] {
+    let half = 0.5 * MAX_PATH_LENGTH;
+    for (reach, laid) in [
+        (1.0e15_f32, true),
+        (1.0e18, true),
+        (half, true),
+        (half.next_up(), false),
+        (1.0e19, false),
+        (1.0e20, false),
+        (1.0e30, false),
+        (1.7e38, false),
+    ] {
         let curve = Curve::Line(Vec2::new(-reach, 0.0), Vec2::new(reach, 0.0));
         for fit in [FitMode::Spread, FitMode::Fit { min: 1.0, max: 1.0 }] {
+            let mut trace = Trace::default();
             let (run, placed) = with_fonts(|fs| {
                 let run = real_run("abc", &plain, fs);
-                let (replaced, placed) = place_on_open(&run, &curve, &fit, 0.0, &plain, fs);
+                let (replaced, placed) =
+                    place_on_open_traced(&run, &curve, &fit, 0.0, &plain, fs, Some(&mut trace));
                 (replaced.unwrap_or(run), placed)
             });
-            if let Err(why) = check_placement(&run, &placed, true, "along the line") {
+            if let Err(why) = check_placement(&run, &placed, laid, "along the line") {
                 panic!("{reach:e} {fit:?}: {why}");
             }
+            assert_eq!(
+                (
+                    placed.glyphs.is_empty(),
+                    placed.truncated,
+                    trace.ring == Some(RingLoss::TooLong)
+                ),
+                (!laid, !laid, !laid),
+                "{reach:e} {fit:?}: {} glyphs, truncated {}, {:?}",
+                placed.glyphs.len(),
+                placed.truncated,
+                trace.ring
+            );
         }
     }
 }
@@ -1044,82 +1136,44 @@ fn test_a_spread_across_the_canvas_places_every_glyph() {
 /// The coordinator's flow_structured finding on #294 (CI run
 /// 41245750394, a libFuzzer timeout at aef0eba4): a `Repeat` of an
 /// ornament, eighteen glyphs, along a cubic with a control point at
-/// `-1e30`. The walk lays the `MAX_PLACED_GLYPHS` cap (a million glyphs
-/// then, 65,536 since ruling R41),
-/// every one stepped by its ink (ruling R31), and on a path that far
-/// out its points are an `f32` step or two apart where the walk is, so
-/// no glyph's ink gap could come within `INK_TOLERANCE` of what it
-/// owes: each took every one of `INK_TURNS` turns, and each turn every
-/// one of `INK_ROUNDS` rounds of bisection — 319 path lookups a glyph.
-/// A round that leaves its bracket as it was, and a turn that leaves
-/// its center where it was, leave them so every round and turn after,
-/// so each stops there, which changes no position.
+/// `-1e30`. The walk laid the `MAX_PLACED_GLYPHS` cap (a million glyphs
+/// then, 65,536 since ruling R41), every one stepped by its ink (ruling
+/// R31), and on a path that far out no glyph's ink gap could come within
+/// `INK_TOLERANCE` of what it owes: each took every one of `INK_TURNS`
+/// turns, and each turn every one of `INK_ROUNDS` rounds of bisection —
+/// 319 path lookups a glyph. A round that leaves its bracket as it was,
+/// and a turn that leaves its center where it was, leave them so every
+/// round and turn after, so each stops there, which changes no position;
+/// and since #333 the whole-glyph placement laid beside the walk
+/// (`place_pitched`) stops solving its slack where its floats cannot see
+/// it.
 ///
-/// So an ink-stepped glyph costs at most 24 path lookups here. Precondition:
-/// the input lays the cap, and is an ornament (no `STEPS_TAKEN` for most
-/// glyphs, which an ornament takes by its ink). Control: with either
-/// stop removed, the lookups pass their bound.
+/// Since #363 a cubic 10³⁰ long is longer than placement lays: the input
+/// lays nothing along it, as text or as whole glyphs, and says why,
+/// which is what is held here. The cost it was found by needed that
+/// length: its gaps' squares passed every `f32`. The same input with its
+/// control point shortened to 10¹⁷, within the limit, lays the cap at 11
+/// path lookups a glyph, and at 26 with both stops taken out — either
+/// way inside the 24 a glyph and a run-on probe this test held, so no
+/// bound is held on it: none would fail for its stops.
 ///
-/// Since #333 a face draws one of its glyphs with no outline, a host's
-/// color emoji, which is inked as its box, and the whole-glyph placement
-/// the replay lays beside the walk (`place_pitched`) lays it 65,536 times
-/// along the same path, whose floats cannot see its slack either: its
-/// solve stops by its third round there, and it is held to a bound of
-/// its own, the walk's count leaving it out. Control: the slack's rounds
-/// without their stops, the loop before #333, red: "the whole-glyph
-/// placement: 8181179 path lookups for 65536 glyphs placed, at most
-/// 3145788".
+/// Control: the limit not held, red ("65520 glyphs laid along a path
+/// longer than placement lays").
 #[test]
-fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solving_them() {
-    use crate::flow::path::PATH_LOOKUPS;
-    use crate::flow::place::{GLYPHS_PLACED, MAX_RUN_ON_STEPS, STEPS_TAKEN};
-    use crate::flow::MAX_PLACED_GLYPHS;
+fn test_a_repeat_of_an_ornament_along_a_cubic_too_long_to_lay_lays_nothing_and_says_so() {
+    use crate::flow::tests::flow_fuzz::HELD_TO_THE_LIMIT;
     let found = include_bytes!("fuzz_findings/repeat_of_an_ornament_along_a_cubic_its_floats_cannot_resolve");
-    use crate::flow::place::pitch::{REFINE, SLACK_ROUNDS};
-    use crate::flow::tests::flow_fuzz::{PITCHED_GLYPHS, PITCHED_LOOKUPS};
-    let counters = [
-        &STEPS_TAKEN,
-        &GLYPHS_PLACED,
-        &PATH_LOOKUPS,
-        &PITCHED_LOOKUPS,
-        &PITCHED_GLYPHS,
-    ];
-    for counter in counters {
-        counter.with(|count| count.set(0));
-    }
+    HELD_TO_THE_LIMIT.with(|held| held.set((0, 0)));
+    // The replay holds each placement to the limit: past it, nothing laid
+    // and the reason named (`held_to_the_limit`).
     if let Err(why) = check_flow_structured_as_found(found) {
         panic!("the fuzzer's input: {why}");
     }
-    let [steps, placed, lookups, pitched, pitched_glyphs] =
-        counters.map(|counter| counter.with(std::cell::Cell::get));
-    // The walk's: the whole-glyph placement the replay lays beside it is
-    // a placement of its own, held to its own bound below (#296), and
-    // lays this input's glyphs too where a face draws one of them with no
-    // outline, a bitmap, and inks it as its box (#333).
-    let lookups = lookups - pitched;
+    let (_, past) = HELD_TO_THE_LIMIT.with(std::cell::Cell::get);
     assert!(
-        placed + 64 > MAX_PLACED_GLYPHS && steps < placed / 4 + MAX_RUN_ON_STEPS,
-        "precondition: the input lays the cap of an ornament ({placed} glyphs, {steps} box steps)"
-    );
-    // The readable walk's run-on probe past the text's end is a bound
-    // of its own (`MAX_RUN_ON_STEPS` steps), a few lookups a step.
-    assert!(
-        lookups <= 24 * placed + 8 * MAX_RUN_ON_STEPS,
-        "{lookups} path lookups for {placed} glyphs placed"
-    );
-    // The whole-glyph placement stops solving its slack too (#333): an
-    // ink is placed in `4 + REFINE` lookups a lay at most — its point, its
-    // direction, its guess, and its gap's first measure and refinements —
-    // and it is laid once to count the inks, once at the least slack, in
-    // the slack's rounds, which stop by the third where the floats cannot
-    // see the slack (the first move answered, the second not), and once
-    // as kept; each lay's two ends a solve of `1 + REFINE` measures each.
-    let rounds = SLACK_ROUNDS.min(3);
-    let lays = 1 + 1 + rounds + 1;
-    let bound = (4 + REFINE) * lays * pitched_glyphs + 2 * (1 + REFINE) * lays;
-    assert!(
-        pitched_glyphs > 0 && pitched <= bound,
-        "the whole-glyph placement: {pitched} path lookups for {pitched_glyphs} glyphs placed, at most {bound}"
+        past >= 2,
+        "precondition: its cubic's placements, as text and as whole glyphs, are held as clearly past the \
+         limit ({past})"
     );
 }
 
@@ -1270,8 +1324,8 @@ fn test_a_shrunk_frame_lays_a_bounded_number_of_lines() {
 /// input no one of R38.3's changes reverted alone, nor the slack cap and
 /// the damping together, cuts the frame again: the replay holds the input
 /// to the property, whose "it was cut" branch is shown red by
-/// `test_a_spread_along_a_line_as_long_as_an_f32_places_every_glyph` under
-/// the PR's control C30.
+/// `test_a_spread_along_a_line_as_long_as_placement_lays_places_every_glyph`
+/// with the limit held at half what it is.
 #[test]
 fn test_a_frame_whose_other_line_can_give_the_clearance_is_not_cut() {
     let found = include_bytes!("fuzz_findings/fit_frame_pressed_by_a_clearance_its_other_line_could_give");
@@ -3896,12 +3950,20 @@ fn test_the_flow_properties_find_an_input_past_the_timeout() {
 ///
 /// Precondition: the ring is laid, its estimate past the harness's cap,
 /// and its cap, not its budget, stops it. Controls: with the cap not read
-/// by its first walk, red (its budget stops it instead, 3,972 glyphs
+/// by its first walk, red (its budget stops it instead, 7,560 glyphs
 /// placed, past the cap of 149); with the cap's stop not reported, red
 /// (the fuzz property: "a ring cut at 147 glyphs of 3 a copy, its cap
 /// 149, reported nothing: capped silently"); with its budget scaled past
 /// its cap, red (the fuzz property: 196,608,000 glyph steps budgeted for
 /// 65,536 glyphs, past the 447,000 its cap of 149 gives).
+///
+/// Since #363 the ellipse the input drew, 3.4 × 10²¹ round, is longer
+/// than placement lays, and its ring lays nothing and says why: the input
+/// as found is replayed for that. What is held here is held on the same
+/// input with its outline's floats shortened a thousandfold
+/// (`…_within_the_limit`): an ellipse 2 by 1.7 × 10¹⁸, 10¹⁸ from the
+/// origin, whose table is as large and whose floats part its inks no
+/// better.
 ///
 /// [`MAX_RING_GLYPHS`]: crate::flow::tests::flow_fuzz::MAX_RING_GLYPHS
 /// [`MAX_PLACED_GLYPHS`]: crate::flow::MAX_PLACED_GLYPHS
@@ -3913,7 +3975,17 @@ fn test_flow_structured_finding_a_ring_whose_inks_its_floats_cannot_part_replays
     use crate::flow::place::{LAST_RING, LAST_RING_ESTIMATE, RINGS_STOPPED, RING_CROSSED};
     use crate::flow::tests::flow_fuzz::{ring_cap, MAX_RING_GLYPHS};
     use crate::flow::MAX_PLACED_GLYPHS;
-    let found = include_bytes!("fuzz_findings/structured_ring_whose_inks_its_floats_cannot_part");
+    let as_found = include_bytes!("fuzz_findings/structured_ring_whose_inks_its_floats_cannot_part");
+    LAST_RING.with(|last| last.set(None));
+    if let Err(why) = check_flow_structured_as_found(as_found) {
+        panic!("the fuzzer's input as found: {why}");
+    }
+    assert!(
+        LAST_RING.with(std::cell::Cell::get).is_none(),
+        "the input as found: its outline is longer than placement lays, and no ring is laid round it"
+    );
+    let found =
+        include_bytes!("fuzz_findings/structured_ring_whose_inks_its_floats_cannot_part_within_the_limit");
     for counter in [&PATH_LOOKUPS, &RINGS_STOPPED] {
         counter.with(|count| count.set(0));
     }
@@ -4135,14 +4207,19 @@ fn test_flow_structured_finding_a_line_root_owed_little_of_a_wide_gap_replays() 
 /// 47d609c4 and 3fcf59f2. The square is taken in `f64` where `f32` has
 /// none.
 ///
-/// So the ring is laid as any other its path holds more of than its cap:
-/// its straight sides alone hold some 81,000 gaps of 10³⁰, it lays its
-/// cap of 154, and says it was cut short (ruling B18.1 §9.2: a cut says
-/// so). At 59826cfd it laid 8 glyphs, 4 of them at `NaN`, and reported
-/// nothing.
+/// Until #363 the ring was then laid as any other its path holds more of
+/// than its cap, 154 glyphs, cut short and saying so; at 59826cfd it laid
+/// 8 glyphs, 4 of them at `NaN`, and reported nothing. Its outline is
+/// 1.6 × 10³⁵ round, longer than placement lays (`MAX_PATH_LENGTH`), so
+/// since #363 nothing is laid round it and the ring says why. The same
+/// ring round the outline a part in 10¹⁷ the size, within the limit, lays
+/// an ink a run: its gap of 10³⁰ is wider than any run, and no two of its
+/// inks are set a gap apart.
 ///
-/// Control: with the square taken in `f32` alone, red, the replay and the
-/// case both ("around an outline: a glyph placed at [NaN, NaN]").
+/// Controls: the limit not held, red on the outline as drawn ("nothing
+/// laid, and the ring says its path is too long": 154 laid); a ring's
+/// report left out (`place`, which a directional ring round an outline
+/// with no run to lay falls back to), red there too (nothing said).
 #[test]
 fn test_flow_structured_every_face_finding_a_directional_ring_whose_gap_is_past_the_root_of_the_largest_f32()
 {
@@ -4169,12 +4246,12 @@ fn test_flow_structured_every_face_finding_a_directional_ring_whose_gap_is_past_
         }
     }
     // The outline the input drew, its width its height's rather than no
-    // number, and the layout: no spans, the vertical text all round.
+    // number, and the layout: no spans, the vertical text all round. It
+    // is 1.6 × 10³⁵ round, longer than placement lays (#363): nothing is
+    // laid round it, and the ring says why. A part in 10¹⁷ the size it is
+    // within the limit, its gap still past the root of the largest `f32`
+    // and wider than any of its runs, and it lays an ink a run.
     let (side, radius, spacing, cap) = (4.510_807_4e34_f32, 1.240_472_1e34_f32, 1e30_f32, 154);
-    let path = Outline::RoundedRect {
-        rect: Rect::new(Vec2::ZERO, Vec2::splat(side)),
-        radius,
-    };
     let layout = RingLayout {
         spacing,
         directional: DirectionalGlyphs {
@@ -4187,48 +4264,234 @@ fn test_flow_structured_every_face_finding_a_directional_ring_whose_gap_is_past_
         (spacing * spacing).is_infinite(),
         "precondition: the gap has no `f32` square"
     );
-    // Its straight sides alone hold more gaps than its cap holds inks.
-    let gaps = 4.0 * f64::from(side - 2.0 * radius) / f64::from(spacing);
-    assert!(
-        gaps > 100.0 * cap as f64,
-        "precondition: the outline holds {gaps} gaps, far past its cap of {cap}"
-    );
     let plain = style(16.0);
-    for outward in [false, true] {
-        let mut trace = Trace::default();
-        let (run, placed) = with_fonts(|fs| {
-            let run = real_run("", &plain, fs);
-            let (replaced, placed) = place_on_closed_capped(
-                &run,
-                &path,
-                StartPoint {
-                    edge: Edge::Top,
-                    at: 0.0,
-                },
-                Direction::Clockwise,
-                &FitMode::Repeat,
-                &layout,
-                outward,
-                &plain,
-                fs,
-                cap,
-                Some(&mut trace),
-            );
-            (replaced.unwrap_or(run), placed)
-        });
-        if let Err(why) = check_placement(&run, &placed, false, "around an outline") {
-            panic!("outward {outward}: {why}");
-        }
+    for (scale, laid) in [(1.0_f32, false), (1.0e-17, true)] {
+        let path = Outline::RoundedRect {
+            rect: Rect::new(Vec2::ZERO, Vec2::splat(side * scale)),
+            radius: radius * scale,
+        };
+        let round = f64::from(side * scale) * 4.0 - f64::from(radius * scale) * (8.0 - std::f64::consts::TAU);
         assert_eq!(
-            placed.glyphs.len(),
-            cap,
-            "outward {outward}: the ring lays its cap, a glyph an ink"
+            round <= f64::from(crate::flow::MAX_PATH_LENGTH),
+            laid,
+            "precondition: the outline, {round:e} round, is within what placement lays or past it"
         );
-        assert!(
-            placed.truncated && trace.ring == Some(RingLoss::Short),
-            "outward {outward}: a ring held to its cap says it was cut short (truncated {}, {:?})",
-            placed.truncated,
-            trace.ring
+        for outward in [false, true] {
+            let mut trace = Trace::default();
+            let (run, placed) = with_fonts(|fs| {
+                let run = real_run("", &plain, fs);
+                let (replaced, placed) = place_on_closed_capped(
+                    &run,
+                    &path,
+                    StartPoint {
+                        edge: Edge::Top,
+                        at: 0.0,
+                    },
+                    Direction::Clockwise,
+                    &FitMode::Repeat,
+                    &layout,
+                    outward,
+                    &plain,
+                    fs,
+                    cap,
+                    Some(&mut trace),
+                );
+                (replaced.unwrap_or(run), placed)
+            });
+            if let Err(why) = check_placement(&run, &placed, false, "around an outline") {
+                panic!("{round:e} round, outward {outward}: {why}");
+            }
+            if laid {
+                assert_eq!(
+                    (placed.glyphs.len(), placed.truncated, trace.ring),
+                    (4, false, None),
+                    "{round:e} round, outward {outward}: an ink a run, whole"
+                );
+            } else {
+                assert_eq!(
+                    (placed.glyphs.len(), placed.truncated, trace.ring),
+                    (0, true, Some(RingLoss::TooLong)),
+                    "{round:e} round, outward {outward}: nothing laid, and the ring says its path is too long"
+                );
+            }
+        }
+    }
+}
+
+/// What a structured input laid round its outline, read off the
+/// harness's own record: the outline it drew, how many glyphs were laid
+/// of how many, and whether the placement said it was cut; and how many
+/// placements the input's replay held to the longest path placement lays,
+/// clearly within it and clearly past it.
+type LaidRound = (Outline, usize, usize, bool, (usize, usize));
+
+/// `bytes` replayed through the flow_structured target's properties
+/// (`check_flow_structured`), and what it laid ([`LaidRound`]).
+fn replayed_round(name: &str, bytes: &[u8]) -> LaidRound {
+    use crate::flow::tests::flow_fuzz::{check_flow_structured, HELD_TO_THE_LIMIT, LAST_FRAME_LAID};
+    HELD_TO_THE_LIMIT.with(|held| held.set((0, 0)));
+    LAST_FRAME_LAID.with(|last| last.set(None));
+    if let Err(why) = check_flow_structured(bytes) {
+        panic!("{name}: {why}");
+    }
+    let (path, placed, run, truncated) = LAST_FRAME_LAID
+        .with(|last| last.take())
+        .unwrap_or_else(|| panic!("precondition: {name} lays a placement round an outline"));
+    (
+        path,
+        placed,
+        run,
+        truncated,
+        HELD_TO_THE_LIMIT.with(std::cell::Cell::get),
+    )
+}
+
+/// The four defects of #363, each as a structured input: a placement
+/// round an outline too large for the engine's `f32` arithmetic. At
+/// 0debe7d9 each was laid, and wrong, with nothing said:
+///
+/// - **a ring round an outline longer than the largest `f32`**: `aaa`
+///   spaced 10³⁷, `Repeat`, round a box 1.5 × 10³⁸ by 10³⁸, 5 × 10³⁸
+///   round. Its path's length was infinite; a ring of text like it laid
+///   38 glyphs, three of them at positions that are not finite.
+/// - **a directional ring round an outline past half the largest
+///   `f32`**: the vertical text `a` round a box 6 × 10³⁷ a side, its
+///   corners a quarter of that. A place on it and its length summed past
+///   the largest `f32`: 40 of its 160 glyphs were set at positions that
+///   are not finite.
+/// - **an ornament ring round an outline past the root of the largest
+///   `f32`**: `─` spaced 10²⁴, `Repeat`, round a box 10²⁵ across. The
+///   distance between two of its inks had no `f32` square, and inks were
+///   set nearer than their spacing: 32 glyphs, two of them 7.6 × 10²³
+///   apart.
+/// - **a frame round an ellipse past the root of the largest `f32`**:
+///   `aaa aa a`, `Spread`, round an ellipse 10²⁵ by 6 × 10²⁴. A frame
+///   like it sat 0.28 of its outline's size from where it sits round a
+///   smaller ellipse.
+///
+/// Each outline is longer than placement lays (`MAX_PATH_LENGTH`,
+/// ruling B42.1), so each lays nothing now and says so by name: the
+/// replay holds it to that (`held_to_the_limit`), and here the outline
+/// each input draws, that it is clearly past the limit by its own
+/// numbers, and that none of its glyphs is laid and it is cut.
+///
+/// Controls: with no path too long (`ArcPath::from_stretches` keeping
+/// its stretches whatever their length), red ("39 glyphs laid along a
+/// path longer than placement lays", on the first); with a path too long
+/// building no stretch and not saying so, red ("nothing laid along a path
+/// longer than placement lays, and the placement does not say why").
+#[test]
+fn test_flow_structured_findings_round_outlines_too_large_for_f32_lay_nothing_and_say_so() {
+    use crate::flow::tests::flow_fuzz::{limit_of, outline_length, Limit};
+    let boxed = |w: f32, h: f32, radius: f32| Outline::RoundedRect {
+        rect: Rect::new(Vec2::ZERO, Vec2::new(w, h)),
+        radius,
+    };
+    let findings: [(&str, &[u8], Outline, usize); 4] = [
+        (
+            "structured_ring_round_an_outline_longer_than_the_largest_f32",
+            include_bytes!("fuzz_findings/structured_ring_round_an_outline_longer_than_the_largest_f32"),
+            boxed(1.5e38, 1.0e38, 0.0),
+            3,
+        ),
+        (
+            "structured_directional_ring_round_an_outline_past_half_the_largest_f32",
+            include_bytes!(
+                "fuzz_findings/structured_directional_ring_round_an_outline_past_half_the_largest_f32"
+            ),
+            boxed(6.0e37, 6.0e37, 1.5e37),
+            3,
+        ),
+        (
+            "structured_ornament_ring_round_an_outline_past_the_root_of_the_largest_f32",
+            include_bytes!(
+                "fuzz_findings/structured_ornament_ring_round_an_outline_past_the_root_of_the_largest_f32"
+            ),
+            boxed(1.0e25, 0.6e25, 0.0),
+            1,
+        ),
+        (
+            "structured_frame_round_an_ellipse_past_the_root_of_the_largest_f32",
+            include_bytes!(
+                "fuzz_findings/structured_frame_round_an_ellipse_past_the_root_of_the_largest_f32"
+            ),
+            Outline::Ellipse {
+                rect: Rect::new(Vec2::ZERO, Vec2::new(1.0e25, 0.6e25)),
+            },
+            8,
+        ),
+    ];
+    for (name, bytes, outline, glyphs) in findings {
+        assert_eq!(
+            limit_of(outline_length(&outline)),
+            Limit::Past,
+            "precondition: {name}: its outline is clearly longer than placement lays"
         );
+        assert_eq!(
+            replayed_round(name, bytes),
+            (outline, 0, glyphs, true, (0, 1)),
+            "{name}: its outline, none of its {glyphs} glyphs laid, cut, and held as past the limit"
+        );
+    }
+}
+
+/// The two flow_structured seeds either side of the longest path
+/// placement lays (`MAX_PATH_LENGTH`, 2⁶³; ruling B42.1 §6): `aaa aa a`,
+/// `Spread`, round a square whose four sides sum to 0.995 of the limit,
+/// and round one whose sides sum to 1.005 of it. The first is laid as any
+/// frame is — every glyph with ink, whole — and owes what any frame owes;
+/// the second lays nothing and says why. Each is clearly on its side of
+/// the limit by its own numbers, and the replay holds it there.
+///
+/// Controls: the limit held at half what it is, red on the first ("a
+/// placement along a path within what placement lays says it is too
+/// long"); at twice, red on the second ("7 glyphs laid along a path
+/// longer than placement lays").
+#[test]
+fn test_the_flow_seeds_either_side_of_the_longest_path_laid_are_laid_and_not() {
+    use crate::flow::tests::flow_fuzz::{limit_of, outline_length, Limit};
+    use crate::flow::MAX_PATH_LENGTH;
+    let seeds = crate::util::doc_fixtures::repo_path("fuzz/seeds/flow_structured");
+    for (name, share, standing) in [
+        (
+            "frame_round_an_outline_just_within_the_longest_path_laid",
+            0.995_f32,
+            Limit::Within,
+        ),
+        (
+            "frame_round_an_outline_just_past_the_longest_path_laid",
+            1.005,
+            Limit::Past,
+        ),
+    ] {
+        let bytes =
+            std::fs::read(seeds.join(name)).unwrap_or_else(|e| panic!("{name} must be readable: {e}"));
+        let side = share * 0.25 * MAX_PATH_LENGTH;
+        let outline = Outline::RoundedRect {
+            rect: Rect::new(Vec2::ZERO, Vec2::splat(side)),
+            radius: 0.0,
+        };
+        assert_eq!(
+            limit_of(outline_length(&outline)),
+            standing,
+            "precondition: {name}: a square {side} a side stands {standing:?} the limit"
+        );
+        let (path, placed, run, truncated, held) = replayed_round(name, &bytes);
+        assert_eq!((path, run), (outline, 8), "{name}: its outline and its 8 glyphs");
+        if standing == Limit::Within {
+            // Its two spaces part its lines or end them: six inks, and
+            // the one space between two words of a line.
+            assert_eq!(
+                (placed, truncated, held),
+                (7, false, (1, 0)),
+                "{name}: laid whole, and held as within the limit"
+            );
+        } else {
+            assert_eq!(
+                (placed, truncated, held),
+                (0, true, (0, 1)),
+                "{name}: nothing laid, cut, and held as past the limit"
+            );
+        }
     }
 }

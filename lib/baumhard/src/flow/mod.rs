@@ -59,7 +59,7 @@ pub(crate) use path::ArcPath;
 /// A curve in its own frame, in `f64`: what a path's distances are
 /// measured on, its table's and the projection's samples' (#313, #356).
 pub(crate) use path::Local;
-pub use path::MAX_TABLE_SAMPLES;
+pub use path::{MAX_PATH_LENGTH, MAX_TABLE_SAMPLES};
 /// A run with every glyph's ink measured, text too: what a text ring's
 /// paths stop at (#296).
 pub(crate) use place::halves::inked;

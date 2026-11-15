@@ -33,7 +33,7 @@ const BUDGETS: [usize; 14] = [
 ];
 
 /// The cap every ring of the grid is laid with (ruling B17.2a), past the
-/// glyphs of every one of its outlines but those 10²² across, which hold
+/// glyphs of every one of its outlines but those 10¹⁸ across, which hold
 /// the engine's cap's of any copy: their rings, at their own budget, run
 /// to the cap and stop, short — at the engine's cap, 65,536 glyphs, some
 /// 25 s each in a debug build, a value the cap's arithmetic proves
@@ -58,9 +58,11 @@ const REVIEW_BUDGETS: [usize; 2] = [861, 867];
 
 /// The grid's outlines: an ellipse, a sharp rectangle and a rounded one,
 /// each 2,000 across at the origin, 2,000 across 10⁷ from it — where an
-/// `f32` sets a point to the nearest unit — and 10²² across, where the
-/// floats of a point some 10²² from the origin set an ornament's glyphs
-/// apart by bisection that barely moves them (the ring of seed 2771).
+/// `f32` sets a point to the nearest unit — and 10¹⁸ across, a third and
+/// more of the longest outline placement lays (#363), where the floats of
+/// a point that far from the origin, some 10¹¹ apart, set an ornament's
+/// glyphs apart by bisection that barely moves them (as round the ring of
+/// seed 2771, which was 10²¹ across).
 fn outlines() -> Vec<(String, bool, Outline)> {
     let shapes = [
         ("ellipse", Shape::Ellipse),
@@ -80,7 +82,7 @@ fn outlines() -> Vec<(String, bool, Outline)> {
     let places = [
         ("2,000 at the origin", Vec2::ZERO, 2_000.0, false),
         ("2,000 at 10⁷", Vec2::splat(1e7), 2_000.0, false),
-        ("10²² across", Vec2::ZERO, 1e22, true),
+        ("10¹⁸ across", Vec2::ZERO, 1e18, true),
     ];
     let mut out = Vec::new();
     for (shape_name, shape) in shapes {
@@ -177,7 +179,7 @@ fn ring(text: &str, shape: &Outline, outward: bool, budget: Option<usize>, cap: 
 }
 
 /// One case of the grid: a ring laid at each of its budgets and caps,
-/// the last at its own, whether its outline is one of those 10²²
+/// the last at its own, whether its outline is one of those 10¹⁸
 /// across, and its text.
 struct Case {
     far: bool,
@@ -307,14 +309,21 @@ fn case_of(text: &str) -> &'static Case {
 ///
 /// Controls: with the budget read only between a seam's measures, not
 /// before each body they walk, red (crossed); with nothing held back for
-/// phase 2, or its run on alone not held back, red (`PAST_BUDGET`: 90
-/// rings, all 10²² across, for the run on); with phase 2's solves, or
-/// `even_out`'s rounds, not reading the budget, red (late, 10 rings each)
-/// — and with them not reading it and the whole run on held through phase
-/// 2 as before, still red (late, 8 rings), where `PAST_BUDGET` was green;
-/// with the first walk's stop, or its stop at the cap, not reported, red
-/// (silent: 121 rings for the first walk's, 84 of them 10²² across, which
-/// a check of only the rings whose own reports nothing does not see).
+/// phase 2, or its run on alone not held back, red (`PAST_BUDGET`); with
+/// phase 2's solves, or `even_out`'s rounds, not reading the budget, red
+/// (late) — and with them not reading it and the whole run on held
+/// through phase 2 as before, still red (late), where `PAST_BUDGET` was
+/// green; with the first walk's stop, or its stop at the cap, not
+/// reported, red (silent: 153 rings for the first walk's and 136 for the
+/// cap's, which a check of only the rings whose own reports nothing does
+/// not see).
+///
+/// The grid's far outlines were 10²² across until #363, which lays
+/// nothing round an outline that long. Of these controls the last two
+/// were run again round the outlines 10¹⁸ across; the rest were last
+/// counted round the 10²² ones (90 rings for the run on, every one of
+/// them far; 10 late for the solves and 10 for the rounds, and 8 with the
+/// run on held as before).
 #[test]
 fn test_flow_ring_budget_a_ring_past_its_budget_takes_its_overshoot_at_most() {
     let cases = grid();

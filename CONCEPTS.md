@@ -1657,6 +1657,14 @@ element.
   move. One placement places at most `MAX_PLACED_GLYPHS`, 65,536
   glyphs (ruling R41), text, repeat copies, fillers and sides together;
   past it the flow stops and reports `PlacedRun::truncated`.
+  And one path is at most `MAX_PATH_LENGTH`, 2⁶³, long (#363, ruling
+  B42.1): half the square root of the largest `f32`, so that every
+  distance between two of its points has an `f32` square and every sum
+  of two places along it is one. A longer path — a Bézier counted by its
+  control polygon — is built with no stretch (`ArcPath::too_long`), and
+  whatever would be laid along it, a ring, a frame, an open path's text
+  or a pitched pattern, lays nothing and says so by one name
+  (`RingLoss::TooLong`, with `PlacedRun::truncated`).
 - **Outlines** (`outline`, `offset`, `ring_offset`): a node's
   rectangle shaped as a rounded rectangle (radius a percentage of half
   the shorter side) or the inscribed ellipse; ring *k* runs around the

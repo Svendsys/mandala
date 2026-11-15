@@ -46,8 +46,8 @@ use crate::flow::path::ArcPath;
 use crate::flow::place::halves::{resolved, BOXES_A_STEP};
 use crate::flow::place::ring::{ring_glyphs, steps_of, RingLoss, RingWork, GLYPHS_A_STEP};
 use crate::flow::place::{
-    cluster_ink, clusters_of, corner_distance, Cluster, PlacedGlyph, PlacedRun, Trace, MAX_PLACED_GLYPHS,
-    MIN_TABLE_SPACING,
+    cluster_ink, clusters_of, corner_distance, too_long_to_lay, Cluster, PlacedGlyph, PlacedRun, Trace,
+    MAX_PLACED_GLYPHS, MIN_TABLE_SPACING,
 };
 use crate::flow::shape::{Ink, ShapedRun};
 
@@ -410,7 +410,9 @@ pub(super) struct Pitched {
 /// A run with no ink — text, or only spaces — has no pitch, and is
 /// placed empty: [`place_on_open`](crate::flow::place_on_open) lays it.
 /// So is a path that is not finite, and one too short to hold one ink
-/// with no gap at all. Never more than [`MAX_PLACED_GLYPHS`] glyphs; a
+/// with no gap at all. A path longer than placement lays
+/// ([`MAX_PATH_LENGTH`](crate::flow::MAX_PATH_LENGTH)) is placed empty
+/// too, and that is a loss: the placement is `truncated`. Never more than [`MAX_PLACED_GLYPHS`] glyphs; a
 /// placement held to it is `truncated`, its gaps spread over the inks it
 /// holds.
 ///
@@ -514,8 +516,11 @@ pub(crate) fn place_pitched_capped(
         return PlacedRun::default();
     }
     let arc = ArcPath::open(path, (0.25 * run.line_height).max(MIN_TABLE_SPACING));
+    if arc.too_long() {
+        return too_long_to_lay(trace, arc.table_samples());
+    }
     let length = arc.length();
-    if !length.is_finite() || length <= 0.0 {
+    if length <= 0.0 {
         return PlacedRun::default();
     }
     let curves = path.as_ref();

@@ -5075,14 +5075,14 @@ impl Layout<'_> {
                 } else {
                     shortfall
                 };
-                // A break wider than any `f32` — two word gaps of a line
-                // tracked over an outline as long as an `f32` — is short
-                // by an infinite amount, and an infinite step shared by
-                // a share of zero, or held to a line's slack, is not a
-                // number: the step is held to the largest `f32`, past
-                // which a clearance presses its line to a point however
-                // much more it is (the probe in
-                // `test_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely`).
+                // A break wider than any `f32` is short by an infinite
+                // amount, and an infinite step shared by a share of
+                // zero, or held to a line's slack, is not a number: the
+                // step is held to the largest `f32`, past which a
+                // clearance presses its line to a point however much
+                // more it is. (Found on two word gaps of a line tracked
+                // over an outline as long as an `f32`, which is not laid
+                // since #363.)
                 // A step that is not a number — a shortfall that is not
                 // one — grows by the least.
                 let mut step = if damped.is_nan() {
@@ -6816,6 +6816,12 @@ pub(super) fn place_halves(
     // frame: R27 sizes and parts its text on them, and its lines are laid
     // along them (#309).
     let level = frame_halves(outline, table_spacing(run, fit, flow));
+    // An outline too long to lay is not laid (#363): its halves are one
+    // outline's, and either says so.
+    if level.iter().any(|(path, _)| path.too_long()) {
+        let tables = level.iter().map(|(path, _)| path.table_samples()).sum();
+        return (None, too_long_to_lay(trace, tables));
+    }
     // Their tables, counted as they are built (ruling B16.3a): before the
     // budget is first read, so within what the frame may take past it
     // ([`overshoot_steps`]).
@@ -6853,8 +6859,8 @@ pub(super) fn place_halves(
     let halves = Halves::new(outline, level);
     // An outline whose halves cannot be measured — one with a side that
     // is not a number — keeps R27's placement, which holds every
-    // position finite there. (`place_on_closed` shrinks an outline too
-    // large for its length to be an `f32` before it reaches here.)
+    // position finite there. (An outline of numbers too large for its
+    // length to be an `f32` is too long to lay, above.)
     let ends = [
         halves.junctions[0],
         halves.junctions[1],

@@ -30,7 +30,7 @@ const POINTS: f32 = 16.0;
 const BUDGETS: [usize; 9] = [1, 300, 1_000, 2_000, 4_000, 8_000, 16_000, 64_000, 200_000];
 
 /// The cap every placement of the grid is laid with, past the glyphs of
-/// every one of its paths but the one 10²² long, which holds the
+/// every one of its paths but the one 10¹⁸ long, which holds the
 /// engine's cap of any copy: laid at its own budget, it runs to the cap
 /// and stops, short — at the engine's cap, 65,536 glyphs, a value the
 /// cap's arithmetic proves (ruling B17.2c), not one the grid needs laid.
@@ -66,7 +66,7 @@ fn fits() -> [(&'static str, FitMode); 5] {
 
 /// The grid's paths: a line and a cubic 2,000 long at the origin, the
 /// same 10⁷ from it — where an `f32` sets a point to the nearest unit —
-/// and a line 10²² long, where the floats of a point some 10²² from the
+/// and a line 10¹⁸ long, where the floats of a point some 10¹⁸ from the
 /// origin set an ornament's glyphs apart by bisection that barely moves
 /// them (the cost shape of seed 2771's ring, review 5761697746).
 fn paths() -> Vec<(String, bool, Curve)> {
@@ -97,19 +97,19 @@ fn paths() -> Vec<(String, bool, Curve)> {
         ),
         ("a 2,000 cubic at 10⁷".to_string(), false, cubic(Vec2::splat(1e7))),
         (
-            "a cubic 10²² across".to_string(),
+            "a cubic 10¹⁸ across".to_string(),
             true,
             Curve::Cubic(
                 Vec2::ZERO,
-                Vec2::new(3.5e21, -3e21),
-                Vec2::new(6.5e21, 3e21),
-                Vec2::new(1e22, 0.0),
+                Vec2::new(3.5e17, -3e17),
+                Vec2::new(6.5e17, 3e17),
+                Vec2::new(1e18, 0.0),
             ),
         ),
         (
-            "a line 10²² long".to_string(),
+            "a line 10¹⁸ long".to_string(),
             true,
-            line(Vec2::ZERO, Vec2::new(1e22, 3e21)),
+            line(Vec2::ZERO, Vec2::new(1e18, 3e17)),
         ),
     ]
 }
@@ -182,7 +182,7 @@ fn open(text: &str, curve: &Curve, fit: &FitMode, budget: Option<usize>, cap: us
 }
 
 /// One case of the grid: a placement laid at each of its budgets and
-/// caps, the last at its own, and whether its path is the one 10²² long.
+/// caps, the last at its own, and whether its path is the one 10¹⁸ long.
 struct Case {
     far: bool,
     laid: Vec<Laid>,
@@ -282,7 +282,7 @@ const LONG_FIT_BUDGETS: std::ops::RangeInclusive<usize> = 500..=4_000;
 /// or its cap.
 ///
 /// Preconditions: a quarter of the placements or more have a walk stopped
-/// by their budget, and at their own budget the paths 10²² across run to
+/// by their budget, and at their own budget the paths 10¹⁸ across run to
 /// the grid's cap and no other placement is stopped.
 ///
 /// Controls: see the pull request of #313.
@@ -812,7 +812,7 @@ fn test_flow_open_budget_a_pitched_pattern_of_wide_clusters_holds_its_glyphs() {
 
 /// #313, as ruling B17.1a has it for a ring's copies: a `Once` with a
 /// filler is budgeted by the copies of its filler its path holds past its
-/// text, not by its text alone — along the cubic 10²² across, which holds
+/// text, not by its text alone — along the cubic 10¹⁸ across, which holds
 /// the grid's cap of copies, its budget is past its text's.
 ///
 /// Control: see the pull request of #313.
@@ -822,7 +822,7 @@ fn test_flow_open_budget_a_once_with_a_filler_is_budgeted_by_its_copies() {
     let fillers: Vec<&Laid> = grid()
         .iter()
         .filter_map(|case| case.laid.last())
-        .filter(|own| own.what.contains("Once with a filler along a cubic 10²² across"))
+        .filter(|own| own.what.contains("Once with a filler along a cubic 10¹⁸ across"))
         .collect();
     assert!(
         fillers.len() == 2 && fillers.iter().all(|own| own.placed.glyphs.len() > own.text),

@@ -185,11 +185,6 @@ const INK_TURNS: usize = 12;
 /// gap owed for [`PathWalk::ink_gap_at`] to keep it, in points.
 pub(crate) const INK_TOLERANCE: f32 = 1e-3;
 
-/// The most times a frame's outline is halved for its length to be an
-/// `f32` ([`place_on_closed`]): the largest outline's perimeter is about
-/// `2 · f32::MAX`, so one halving does; more are slack.
-const MAX_SHRINKS: usize = 8;
-
 /// The rounds of Newton's method [`PathWalk::level_len`] takes.
 pub(crate) const LEVEL_ROUNDS: usize = 4;
 
@@ -489,17 +484,19 @@ fn clusters_of(glyphs: &[GlyphMetrics], range: Range<usize>) -> Vec<Cluster> {
 /// One measure for the pitched lay's gaps and a frame's ([`pitch`],
 /// [`halves`]).
 ///
-/// The rule: a frame's rule measures every corner distance by this, with
-/// two exceptions. Where a length that is not finite is the site's own
-/// signal — the closed form's root and the model's (`line_root`,
-/// `model_root`), which then give way to the rule read from the path — it
-/// stays one. And an ornament ring's walk (`ink_gap_at` and its seam) is
-/// not righted by this alone (#363). At two of its sites no test can hold
-/// it: `separation`, which answers `box_gap` where the boxes are apart,
-/// and the model lay's nearness (`model_letter`), the stepping lay's own
-/// test. There it keeps two measures of one thing equal past that root,
-/// and a frame laid with either in `f32` moves by a few millionths of its
-/// outline's size at the most.
+/// No two points of a path placement lays are that far apart
+/// ([`MAX_PATH_LENGTH`](crate::flow::MAX_PATH_LENGTH), #363): what is,
+/// lies off the path. A pitched lay reaches it — its inks lie back off
+/// the path's ends as far as its ends' boxes do, and its solves try an
+/// ink a whole gap on, at a spacing past that root. A frame's inks lie
+/// along its outline, their boxes no further apart than it is across, and
+/// there only the pairwise rule's model of a straight path (`along`)
+/// reaches it, stepping on past the outline, where infinity would read
+/// as far as the longer distance does: no frame is laid otherwise for it,
+/// and its rule measures by this so that every corner distance has one
+/// measure. Where a length that is not finite is a site's own signal —
+/// the closed form's root and the model's (`line_root`, `model_root`),
+/// which then give way to the rule read from the path — it stays one.
 fn corner_distance(apart: Vec2) -> f32 {
     let length = apart.length();
     if length.is_finite() || !apart.is_finite() {
@@ -723,7 +720,11 @@ pub(crate) struct Trace {
     /// budget or its cap left it, when either stopped any of its work
     /// (#310): `None` when its work fit. Its `spent`, `budget` and
     /// `glyphs` are its own, as a frame's are. A frame reports what it
-    /// left in `unheld` and `cut_apart` instead.
+    /// left in `unheld` and `cut_apart` instead. For every placement, a
+    /// frame's too, that its path is longer than placement lays
+    /// ([`RingLoss::TooLong`], #363): nothing is laid, and of the trace
+    /// only this and its paths' tables, in `tables` and `spent`, are
+    /// filled.
     pub(crate) ring: Option<RingLoss>,
 }
 
@@ -2784,30 +2785,6 @@ fn lay_on_closed(
     mut trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
     if !matches!(fit, FitMode::Repeat) {
-        // A frame whose outline is too large for its length to be an
-        // `f32` is laid on the outline shrunk about its center until its
-        // length is one, and its positions grown back: every position
-        // finite, the lines where they would lie, spread to the outline.
-        // Only a rounded rectangle's can be, which builds no table to say
-        // so (`closed_length_is_finite`, #309).
-        if !ArcPath::closed_length_is_finite(path, start, direction) {
-            let center = path.rect().center();
-            let mut factor = 1.0_f32;
-            let mut small = *path;
-            for _ in 0..MAX_SHRINKS {
-                if ArcPath::closed_length_is_finite(&small, start, direction) {
-                    break;
-                }
-                factor *= 0.5;
-                small = path.scaled(factor);
-            }
-            let (replaced, mut placed) =
-                halves::place_halves(run, &small, fit, layout, outward, flow, fs, trace);
-            for glyph in &mut placed.glyphs {
-                glyph.pos = center + (glyph.pos - center) / factor;
-            }
-            return (replaced, placed);
-        }
         return halves::place_halves(run, path, fit, layout, outward, flow, fs, trace);
     }
     if layout.directional.is_set() {
@@ -2902,6 +2879,30 @@ pub(crate) fn place_on_open_capped(
     #[cfg(test)]
     identity::note(&laid);
     laid
+}
+
+/// What a placement along a path too long to lay is
+/// ([`ArcPath::too_long`], #363): nothing laid, cut
+/// ([`PlacedRun::truncated`]), and the reason by name in `trace`
+/// ([`RingLoss::TooLong`]) — the one report every kind of placement
+/// makes of it: a ring, a frame, a placement along an open path and a
+/// pitched one. The path's own build decides which path is one
+/// ([`MAX_PATH_LENGTH`](crate::flow::MAX_PATH_LENGTH)); a placement only
+/// reads its answer. All it took is building its paths, their tables of
+/// `tables` samples, which the trace counts as every placement's does
+/// (ruling B16.3a).
+///
+/// Cost: O(1).
+pub(crate) fn too_long_to_lay(trace: Option<&mut Trace>, tables: usize) -> PlacedRun {
+    if let Some(trace) = trace {
+        trace.ring = Some(RingLoss::TooLong);
+        trace.tables = tables;
+        trace.spent = halves::table_steps(tables);
+    }
+    PlacedRun {
+        glyphs: Vec::new(),
+        truncated: true,
+    }
 }
 
 /// Test seam (#309, review 5810838863): a `w`-wide cluster's step from `s`
@@ -3157,6 +3158,9 @@ fn place(
     cap: usize,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
+    if path.too_long() {
+        return (None, too_long_to_lay(trace, path.table_samples()));
+    }
     let memo = StepMemo::default();
     // Every placement here is budgeted as a frame is, by the glyphs it
     // will lay, at most `cap`: a ring of repeats (#310; rulings B17.1a,

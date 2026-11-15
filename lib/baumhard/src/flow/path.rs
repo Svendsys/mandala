@@ -29,6 +29,52 @@ use crate::flow::outline::Outline;
 /// rather than allocating without bound.
 pub const MAX_TABLE_SAMPLES: usize = 1 << 20;
 
+/// The longest path placement lays: 2⁶³ canvas units, about 9.22 × 10¹⁸
+/// (#363, ruling B42.1). A longer one is no path — it has no length, lays
+/// nothing, and its placement says why (`RingLoss::TooLong`, with
+/// [`PlacedRun::truncated`](crate::flow::PlacedRun::truncated)).
+///
+/// The number is half the square root of the largest `f32`, to the float:
+/// that root is the last float under 2⁶⁴. A path is walked by a place
+/// along it held in an `f32`, and what is set along it is measured in
+/// `f32` too, so three things must hold of a path for its placement to
+/// be right, and within this length they do by construction:
+///
+/// - **Every distance has a square.** No two points of a path are
+///   further apart than the path is long, as it is measured for this
+///   limit: a line and an arc by their length; an ellipse by its table,
+///   which is longer than its longer axis; a Bézier by its control
+///   polygon, which no chord and no arc of it exceeds, where its table
+///   can fall short of its arc. So two points of a path within the
+///   limit, each set off it by less than a quarter of the limit — an
+///   ink's half extent, a frame's band, both nothing beside it — are
+///   under 1.5 × 2⁶³ apart, and the square of that, 2.25 × 2¹²⁶, is an
+///   `f32`. Past the root of the largest `f32` a chord's square is not
+///   one: an ornament ring's inks were set by a distance that read
+///   infinite, and an ellipse's support by a radius squared.
+/// - **Every sum of two places is a place.** A place along a path is at
+///   most its length, and a closed path's places are added where a run
+///   starts part way round it or a place is unwrapped across its seam: at
+///   most 2⁶⁴, where past half the largest `f32` a directional ring's
+///   runs started at infinity and were laid at `NaN`.
+/// - **Its length is a number.** Past the largest `f32` a path's length
+///   read infinite, its walk never ended, and its last glyphs were laid
+///   at `NaN`.
+///
+/// Every path is built in one place, which is where the limit is held;
+/// nothing that lays one asks again.
+///
+/// What it does not bound keeps its own care. A `spacing` is not a path's
+/// length, and a pitched pattern lies back off its path's ends as far as
+/// its ends' boxes do ([`PathEnd::back`](crate::flow::PathEnd::back)):
+/// the gaps of either can pass that root on a path within the limit, and
+/// are measured so that they may (`place::corner_distance`, and in
+/// `place::pitch` the mean of a pattern's gaps and the step between two
+/// of its inks). And a cubic's derivative is three times a leg of it,
+/// past that root where one leg is most of its polygon: it is read for
+/// its direction alone (`direction_of`).
+pub const MAX_PATH_LENGTH: f32 = 9_223_372_036_854_775_808.0;
+
 /// The fewest samples a table holds, so a tiny curve is still walked
 /// along its shape rather than along one chord.
 const MIN_TABLE_SAMPLES: usize = 8;
@@ -111,6 +157,23 @@ impl Param {
         match *self {
             Param::Ellipse { radii, .. } => Local::Ellipse(radii.as_dvec2()),
             Param::Curve { local, .. } => local,
+        }
+    }
+
+    /// Whether the curve's own numbers are finite: an ellipse's center
+    /// and radii, a Bézier's control points (its start, and their offsets
+    /// from it, which are finite where they are).
+    fn is_finite(&self) -> bool {
+        match *self {
+            Param::Ellipse { center, radii } => center.is_finite() && radii.is_finite(),
+            Param::Curve { at, local, .. } => {
+                at.is_finite()
+                    && match local {
+                        Local::Line(b) | Local::Ellipse(b) => b.is_finite(),
+                        Local::Quadratic(c, b) => c.is_finite() && b.is_finite(),
+                        Local::Cubic(c1, c2, b) => c1.is_finite() && c2.is_finite() && b.is_finite(),
+                    }
+            }
         }
     }
 
@@ -296,6 +359,37 @@ impl Stretch {
         }
     }
 
+    /// How long the stretch counts toward [`MAX_PATH_LENGTH`]: no less
+    /// than the distance between any two of its points. A line's and an
+    /// arc's length; an ellipse's table's, which is longer than its longer
+    /// axis — or, of one too large to table, four of its longer radius,
+    /// which its perimeter is more than; a Bézier's control polygon, in
+    /// its own frame — its arc is no longer and its table, a polyline
+    /// through it, may be shorter. Not finite where a line's or an arc's
+    /// length is not.
+    ///
+    /// Cost: O(1).
+    fn span(&self) -> f64 {
+        match self {
+            Stretch::Table {
+                param: Param::Curve { local, .. },
+                ..
+            } => match *local {
+                Local::Line(b) => b.length(),
+                Local::Quadratic(c, b) => c.length() + (b - c).length(),
+                Local::Cubic(c1, c2, b) => c1.length() + (c2 - c1).length() + (b - c2).length(),
+                // A curve's frame is never an ellipse's.
+                Local::Ellipse(_) => f64::from(self.len()),
+            },
+            Stretch::Table {
+                param: Param::Ellipse { radii, .. },
+                distances,
+                ..
+            } if distances.is_empty() => 4.0 * f64::from(radii.max_element()),
+            _ => f64::from(self.len()),
+        }
+    }
+
     /// The point `s` along the stretch and the unit direction of travel
     /// there.
     fn at(&self, s: f32) -> (Vec2, Vec2) {
@@ -382,6 +476,9 @@ pub(crate) struct ArcPath {
     /// The reads walked off this path so far ([`reads`](Self::reads)):
     /// what a `Repeat` ring's work is counted in (#310).
     reads: Cell<usize>,
+    /// Whether it was built longer than [`MAX_PATH_LENGTH`], and so with
+    /// no stretch ([`too_long`](Self::too_long)).
+    too_long: bool,
 }
 
 /// A bend of a closed path between two straight sides (#308): a sharp
@@ -500,6 +597,13 @@ impl EllipseForm {
     /// The offset curve `u` on from the point the form was taken at, by
     /// the ellipse's parameter in the way the path runs: its point, its
     /// outward normal, the way it moves and how fast, a unit of `u`.
+    ///
+    /// How its direction turns is a quotient by its speed cubed, and a
+    /// speed past the cube root of the largest `f32` — a radius past some
+    /// 7 × 10¹² — has no `f32` cube: the velocity is not a number there.
+    /// The frame's rule, which reads it, then reads the path instead, and
+    /// the frame is laid as round a smaller ellipse
+    /// (`test_flow_halves_lays_a_frame_as_long_as_placement_lays_as_it_lays_a_smaller`).
     ///
     /// Cost: O(1), no path lookup.
     pub(crate) fn on(&self, u: f32) -> FormPoint {
@@ -710,6 +814,16 @@ impl ArcPath {
     /// path, and one with some keeps only those. An `origin` that is not
     /// finite is replaced by `Vec2::ZERO`. Geometry is checked at load;
     /// this keeps a hand-built or fuzzed one from placing glyphs at `NaN`.
+    ///
+    /// **The one place a path's length is held to [`MAX_PATH_LENGTH`]**
+    /// (#363): every path — a closed outline, a frame's halves, a
+    /// directional ring's, an open path, a pitched one — is built here.
+    /// Its stretches are summed in `f64`, each as long as it counts toward
+    /// the limit ([`Stretch::span`]), the dropped ones too: a stretch too
+    /// long for its length to be an `f32` is dropped as not walkable, and
+    /// is the longest of all. A path whose sum is past the limit keeps no
+    /// stretch — it is an empty path, at its origin — and says so
+    /// ([`too_long`](Self::too_long)), for what lays it to report.
     fn from_stretches(stretches: impl IntoIterator<Item = Stretch>, origin: Vec2, winding: f32) -> Self {
         let mut path = ArcPath {
             stretches: Vec::new(),
@@ -721,10 +835,17 @@ impl ArcPath {
             cursor: Cell::new(0),
             corners: Vec::new(),
             reads: Cell::new(0),
+            too_long: false,
         };
+        let mut long = 0.0_f64;
         for stretch in stretches {
             if let Stretch::Table { params, .. } = &stretch {
                 path.table_samples += params.len();
+            }
+            // A span that is not a number, or below none, is no length.
+            let span = stretch.span();
+            if span > 0.0 {
+                long += span;
             }
             let len = stretch.len();
             if stretch.is_walkable() {
@@ -732,6 +853,12 @@ impl ArcPath {
                 path.length += len;
                 path.stretches.push(stretch);
             }
+        }
+        if long > f64::from(MAX_PATH_LENGTH) {
+            path.stretches.clear();
+            path.starts.clear();
+            path.length = 0.0;
+            path.too_long = true;
         }
         path.corners = path.find_corners();
         path
@@ -753,7 +880,7 @@ impl ArcPath {
     /// Cost: O(stretches), and O(stretches) more for each corner's sides.
     fn find_corners(&self) -> Vec<Corner> {
         let n = self.stretches.len();
-        if self.winding == 0.0 || n < 2 || !self.length.is_finite() {
+        if self.winding == 0.0 || n < 2 {
             return Vec::new();
         }
         // The length of the straight side stretch `k` lies on, running
@@ -866,8 +993,15 @@ impl ArcPath {
     /// 7% to 16% long 10⁷ from the origin, from 24% short to 31% long at
     /// 10⁸, and at 10¹⁰ more than twice as long or nothing at all. Its
     /// points are unchanged: its center plus its radii by the cosine and
-    /// sine of `φ`, in `f32`. One whose points pass the largest `f32` has
-    /// no length. A circle's length is its radius times a turn, in `f32`.
+    /// sine of `φ`, in `f32`. A circle's length is its radius times a turn,
+    /// in `f32`.
+    ///
+    /// An outline longer than [`MAX_PATH_LENGTH`] is no path: it has no
+    /// length and says it is too long ([`too_long`](Self::too_long), #363).
+    /// So every point a closed path answers is finite: an ellipse sets a
+    /// point past the largest `f32` only where a radius is at least half
+    /// the spacing of the floats there, some 10³¹, and its table is then
+    /// far longer than the limit.
     ///
     /// Cost: O(1) for a rounded rectangle or a circle; one table of
     /// `O(perimeter / spacing)` samples, at most [`MAX_TABLE_SAMPLES`],
@@ -907,11 +1041,6 @@ impl ArcPath {
                     (Vec2::new(min.x + r, max.y - r), half_pi),
                     (Vec2::new(min.x + r, min.y + r), std::f32::consts::PI),
                 ];
-                let line = |from: Vec2, to: Vec2| Stretch::Line {
-                    from,
-                    dir: direction_of(to - from).unwrap_or(Vec2::X),
-                    len: length_of(to - from),
-                };
                 let corner = |i: usize, clockwise: bool| {
                     let (center, angle) = corners[i];
                     Stretch::Arc {
@@ -999,30 +1128,6 @@ impl ArcPath {
         }
     }
 
-    /// Whether the length of `outline` walked from `start` in `direction`
-    /// ([`ArcPath::closed`]) is finite: what [`ArcPath::length`] of that
-    /// path answers, at any spacing.
-    ///
-    /// An ellipse's always is, so none is built for it. Its path is one
-    /// stretch, kept only where its length is finite and else dropped,
-    /// leaving a path of no length ([`ArcPath::from_stretches`]). Only a
-    /// rounded rectangle's nine stretches, each of finite length, can sum
-    /// past `f32::MAX`, and its path is built (no table) to find out.
-    ///
-    /// Cost: O(1).
-    pub(crate) fn closed_length_is_finite(
-        outline: &Outline,
-        start: StartPoint,
-        direction: Direction,
-    ) -> bool {
-        match outline {
-            Outline::Ellipse { .. } => true,
-            Outline::RoundedRect { .. } => ArcPath::closed(outline, start, direction, 1.0)
-                .length()
-                .is_finite(),
-        }
-    }
-
     /// `path` — one curve, or a chain of curves each starting where the
     /// last ended — walked from its source end, each curve tabled no
     /// coarser than `spacing` unless it is a straight line.
@@ -1059,25 +1164,39 @@ impl ArcPath {
     /// along the path are nearer than an ulp there land on one float, and
     /// are placed there.
     ///
+    /// Curves that together count longer than [`MAX_PATH_LENGTH`] — a line
+    /// by its length, a Bézier by its control polygon — are no path: it
+    /// has no length and says it is too long ([`too_long`](Self::too_long),
+    /// #363).
+    ///
     /// Cost: O(1) a line; one table of `O(length / spacing)` samples, at
     /// most [`MAX_TABLE_SAMPLES`], a Bézier.
     pub(crate) fn open(path: &(impl AsRef<[Curve]> + ?Sized), spacing: f32) -> Self {
         let curves = path.as_ref();
         let origin = curves.first().map_or(Vec2::ZERO, |c| c.point(0.0));
         let stretches = curves.iter().filter_map(|curve| match *curve {
-            Curve::Line(a, b) => Some(Stretch::Line {
-                from: a,
-                dir: direction_of(b - a).unwrap_or(Vec2::X),
-                len: length_of(b - a),
-            }),
+            Curve::Line(a, b) => Some(line(a, b)),
             _ => table(Param::curve(*curve), 0.0, 1.0, curve.speed_bound(), spacing),
         });
         ArcPath::from_stretches(stretches, origin, 0.0)
     }
 
-    /// The path's length, `P`.
+    /// The path's length, `P`: finite, and at most [`MAX_PATH_LENGTH`].
+    /// None for a path built longer than that, which keeps no stretch
+    /// ([`too_long`](Self::too_long)).
     pub(crate) fn length(&self) -> f32 {
         self.length
+    }
+
+    /// Whether the outline or the curves the path was built from are
+    /// longer than [`MAX_PATH_LENGTH`], as its build counts them
+    /// (`from_stretches`): the path then has no stretch and no length, and
+    /// what would be laid along it is not laid and says so
+    /// (`RingLoss::TooLong`).
+    ///
+    /// Cost: O(1).
+    pub(crate) fn too_long(&self) -> bool {
+        self.too_long
     }
 
     /// How many samples were built into arc-length tables for this
@@ -1160,8 +1279,9 @@ impl ArcPath {
             return 0.0;
         }
         let step = self.length / NEAREST_SAMPLES as f32;
-        // Not squared: on an outline some 10³⁷ across every squared
-        // distance is infinite, and the first sample was taken for all.
+        // Not squared: from a point further off than the root of the
+        // largest `f32` every squared distance is infinite, and the first
+        // sample was taken for all.
         let distance = |s: f32| length_of(self.at(s).0 - p);
         let mut best = (f32::INFINITY, 0.0_f32);
         for k in 0..=NEAREST_SAMPLES {
@@ -1281,8 +1401,9 @@ impl ArcPath {
                 }
                 Stretch::Table { .. } => return None,
             };
-            // Measured so that an outline some 10³⁷ across, whose squared
-            // distances pass every `f32`, still tells near from far.
+            // Measured so that a point further off than the root of the
+            // largest `f32`, whose squared distances pass every `f32`,
+            // still tells near from far.
             let d = length_of(at - p);
             if best.is_none_or(|(near, _)| d < near) {
                 best = Some((d, start + local));
@@ -1681,9 +1802,14 @@ const INSIDE_TURN: f32 = 0.49 * std::f32::consts::PI;
 /// `v`'s length, finite wherever it is: [`Vec2::length`], or, for a
 /// vector longer than `√f32::MAX` (about `1.8e19`) — whose squared
 /// length passes every `f32`, so `Vec2::length` answers infinity — the
-/// length measured scaled down by its largest component. Without it, a
-/// path drawn that far had no length and placed nothing. Every shorter
+/// length measured scaled down by its largest component. Every shorter
 /// vector measures as `Vec2::length` measures it, to the bit.
+///
+/// No two points of a path placement lays are that far apart
+/// ([`MAX_PATH_LENGTH`]). What is: a stretch of a path being built,
+/// measured here before the path is found too long; the derivative of a
+/// cubic, three times a leg of it ([`direction_of`]); and a point as far
+/// from a path as [`ArcPath::nearest`] may be asked about.
 ///
 /// Cost: O(1).
 pub(crate) fn length_of(v: Vec2) -> f32 {
@@ -1750,6 +1876,23 @@ fn ellipse_walk(center: Vec2, radii: Vec2) -> EllipseWalk {
     }
 }
 
+/// The straight stretch from `from` to `to`. Its length is not a number
+/// where either end is not finite: it is no line then, and counts nothing
+/// toward the longest path placement lays, where a line between finite
+/// ends too far apart for their distance to be an `f32` is infinitely
+/// long, and is the longest of all ([`ArcPath::too_long`], #363).
+fn line(from: Vec2, to: Vec2) -> Stretch {
+    Stretch::Line {
+        from,
+        dir: direction_of(to - from).unwrap_or(Vec2::X),
+        len: if from.is_finite() && to.is_finite() {
+            length_of(to - from)
+        } else {
+            f32::NAN
+        },
+    }
+}
+
 /// The steps a table walking from `from` to `to` is cut into, its
 /// samples one more ([`table`]): no neighbors more than `spacing` apart,
 /// given that the curve moves at most `speed` over the range, and from
@@ -1772,9 +1915,13 @@ fn table_count(speed: f32, from: f32, to: f32, spacing: f32) -> Option<usize> {
 /// enough that no neighbors are more than `spacing` apart, given that the
 /// curve moves at most `speed` per unit of the full parameter range.
 ///
-/// `None`, building nothing, when `speed` or the parameter range is not
-/// finite: a curve with no finite speed bound has a control point that is
-/// not finite, so every sample would be too.
+/// Where `speed` or the parameter range is not finite it builds no
+/// table. A curve whose own numbers are not finite is then no stretch at
+/// all (`None`): every sample would be at none. One whose numbers are
+/// finite — a Bézier with a leg past the largest `f32`, an ellipse whose
+/// radius times a turn is — is a stretch with no table: not walkable, and
+/// longer than any path placement lays, which its path says of it
+/// ([`ArcPath::too_long`], #363).
 ///
 /// Its distances are its chords between its points in its own frame
 /// ([`Local`]): a Bézier's offsets from its start, an ellipse's from its
@@ -1782,34 +1929,26 @@ fn table_count(speed: f32, from: f32, to: f32, spacing: f32) -> Option<usize> {
 /// bound [`ArcPath::open`] states for a Bézier and [`ArcPath::closed`] for
 /// an ellipse (#313, ruling B18.1 §6; #356).
 fn table(param: Param, from: f32, to: f32, speed: f32, spacing: f32) -> Option<Stretch> {
-    let count = table_count(speed, from, to, spacing)?;
+    let Some(count) = table_count(speed, from, to, spacing) else {
+        return param.is_finite().then(|| Stretch::Table {
+            param,
+            params: Vec::new(),
+            distances: Vec::new(),
+            cursor: Cell::new(0),
+        });
+    };
     #[cfg(test)]
     TABLE_SAMPLES.with(|samples| samples.set(samples.get() + count + 1));
     let mut params = Vec::with_capacity(count + 1);
     let mut distances = Vec::with_capacity(count + 1);
     let t_at = |i: usize| from + (to - from) * (i as f32 / count as f32);
     let local = param.local();
-    // A path whose points are not all finite has no length, as when its
-    // distances were summed between its points (#356): an ellipse so far
-    // out that its center and radii pass the largest `f32` may set a point
-    // past it, which its offsets from the center, all finite, would not
-    // show. Only such an ellipse's points are looked at; a Bézier's lie in
-    // the hull of its control points, which are finite.
-    let unbounded = match param {
-        Param::Ellipse { center, radii } => {
-            (center.abs().as_dvec2() + radii.abs().as_dvec2()).max_element() > f64::from(f32::MAX)
-        }
-        Param::Curve { .. } => false,
-    };
     let mut previous = local.at(from);
     let mut walked = 0.0_f64;
     for i in 0..=count {
         let t = t_at(i);
         let point = local.at(t);
         walked += (point - previous).length();
-        if unbounded && !param.point(t).is_finite() {
-            walked = f64::INFINITY;
-        }
         previous = point;
         params.push(t);
         distances.push(walked as f32);
