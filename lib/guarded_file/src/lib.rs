@@ -64,14 +64,15 @@
 //! on both.
 //!
 //! **What a write leaves behind when it does not finish.** A write that
-//! is refused or fails removes what it created, and so does a
-//! [`PrivateDir`] whose holder panics. A process killed outright
-//! (`SIGKILL`, or `SIGINT` where nothing handles it, as in
-//! `mandalactl`) runs no cleanup, and neither does a producer that
-//! panics inside [`publish`]: the `.mandala-write-<pid>-<n>.tmp` file,
-//! or the `.d` directory and what was written in it, stays beside the
-//! destination. It is never the destination, a later write passes over
-//! its name, and removing it is by hand.
+//! is refused or fails removes what it created, and so does one that
+//! panics, in the producer or in whoever holds a [`PrivateDir`]: the
+//! temp file and the private directory are each removed by a `Drop`,
+//! which the unwind runs. A process killed outright (`SIGKILL`, or
+//! `SIGINT` where nothing handles it, as in `mandalactl`) runs no
+//! cleanup: the `.mandala-write-<pid>-<n>.tmp` file, or the `.d`
+//! directory and what was written in it, stays beside the destination.
+//! It is never the destination, a later write passes over its name,
+//! and removing it is by hand.
 //!
 //! The browser has no files, and no process id for the temp file's
 //! name: there, [`publish`] and [`PrivateDir::beside`] refuse every
@@ -252,22 +253,23 @@ fn checked_parent(path: &Path, overwrite: bool) -> Result<&Path, PublishRefusal>
 ///
 /// **Atomic, and it never follows a symlink.** The bytes go to a
 /// sibling temp file created exclusively (`create_exclusive`), are
-/// flushed and `fsync`ed, and only then published under the
-/// destination name. The temp file's name is this process's and this
-/// write's (`.mandala-write-<pid>-<n>.tmp`); a name already taken — a
-/// crashed process's leftover under a reused pid, or one someone
-/// planted — is passed over for the next and left as it is. A failure
-/// at any point (the producer, a full disk) removes the temp file and
-/// leaves the destination exactly as it was, so an earlier good file
-/// is never replaced by a truncated one and a retry never trips over a
-/// half-written file. Publishing is `rename(2)` with `overwrite`,
-/// which replaces the directory entry itself and cannot write through
-/// a symlink; without it, `link(2)`, which fails if the name exists,
-/// so a file created in the window since the check is not clobbered.
-/// (A filesystem without hard links falls back to a check and a
-/// rename.) The up-front look ([`check`]) is for the error message: it
-/// names a symlink, a directory or an existing file before any bytes
-/// are written, but the guarantees above do not rest on it.
+/// flushed and `fsync`ed, and only then published under the destination
+/// name. The temp file's name is this process's and this write's
+/// (`.mandala-write-<pid>-<n>.tmp`); a name already taken — a crashed
+/// process's leftover under a reused pid, or one someone planted — is
+/// passed over for the next and left as it is. A failure at any point
+/// (the producer, a full disk, a refused publish, a panic in the
+/// producer) removes the temp file and leaves the destination exactly
+/// as it was, so an earlier good file is never replaced by a truncated
+/// one and a retry never trips over a half-written file. Publishing is
+/// `rename(2)` with `overwrite`, which replaces the directory entry
+/// itself and cannot write through a symlink; without it, `link(2)`,
+/// which fails if the name exists, so a file created in the window
+/// since the check is not clobbered. (A filesystem without hard links
+/// falls back to a check and a rename.) The up-front look ([`check`])
+/// is for the error message: it names a symlink, a directory or an
+/// existing file before any bytes are written, but the guarantees above
+/// do not rest on it.
 ///
 /// `path` should be absolute where it comes from someone else; the
 /// app's callers check that, each in its own words.
@@ -280,32 +282,47 @@ pub fn publish(
     overwrite: bool,
     produce: impl FnOnce(&mut dyn Write) -> Result<(), String>,
 ) -> Result<u64, PublishRefusal> {
-    let shown = path.display();
     let parent = checked_parent(path, overwrite)?;
     let (temp, file) =
         claim(parent, ".tmp", create_exclusive).map_err(|e| claim_refusal(e, parent, path, "a temp file"))?;
-    let discard_temp = || {
-        // Best effort: the refusal is what matters, and a temp file
-        // that outlives it is named `.mandala-write-*.tmp`.
-        let _ = std::fs::remove_file(&temp);
+    let mut temp = TempFile {
+        path: temp,
+        published: false,
     };
-    let bytes = match produce_into(file, produce) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            discard_temp();
-            return Err(PublishRefusal::Internal(format!(
-                "could not write `{shown}`: {e}"
-            )));
-        }
-    };
-    commit(&temp, path, overwrite).inspect_err(|_| discard_temp())?;
+    let bytes = produce_into(file, produce)
+        .map_err(|e| PublishRefusal::Internal(format!("could not write `{}`: {e}", path.display())))?;
+    commit(&temp.path, path, overwrite)?;
+    temp.published = true;
     Ok(bytes)
+}
+
+/// A temp file [`publish`] created, removed when dropped unless it was
+/// published: a failed producer, a refused publish and a panic in the
+/// producer all leave by this one path. Once published the name is no
+/// longer this write's (a rename moved it, a link's unlink removed it),
+/// so it is not touched again.
+#[cfg(not(target_arch = "wasm32"))]
+struct TempFile {
+    path: PathBuf,
+    published: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        if !self.published {
+            // Best effort: the refusal is what matters, and a temp file
+            // that outlives it is named `.mandala-write-*.tmp`.
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
 }
 
 /// Publish the finished file at `temp` (this write's own, in the
 /// destination's directory) under `path`: `rename(2)` with `overwrite`,
 /// `link(2)` and an unlink of `temp` without it. A failure leaves
-/// `path` as it was and `temp` for the caller to remove.
+/// `path` as it was and `temp` for the caller to remove ([`TempFile`]
+/// and [`PrivateDir`] do, when dropped).
 #[cfg(not(target_arch = "wasm32"))]
 fn commit(temp: &Path, path: &Path, overwrite: bool) -> Result<(), PublishRefusal> {
     let published = if overwrite {
@@ -781,6 +798,48 @@ mod tests {
         );
         assert_eq!(std::fs::read_to_string(&planted).expect("kept"), "precious");
         assert_eq!(std::fs::read_to_string(&path).expect("written"), "{}");
+    }
+
+    /// **A producer that panics leaves nothing beside the destination,
+    /// and the destination as it was**: the unwind drops the write's
+    /// temp file, with no destination yet and with an earlier good file
+    /// there under `overwrite`.
+    ///
+    /// Control: a [`TempFile`] whose `Drop` removes nothing leaves the
+    /// `.tmp` file.
+    #[test]
+    fn test_a_producer_that_panics_leaves_no_temp_file_and_the_destination_alone() {
+        let _serial = serial();
+        let scratch = Scratch::new("producer-panic");
+        let dir = &scratch.0;
+        let path = dir.join("model.json");
+        for (overwrite, before) in [(false, vec![]), (true, vec!["model.json".to_string()])] {
+            if overwrite {
+                std::fs::write(&path, "previous good export").expect("seed");
+            }
+            let caught = std::panic::catch_unwind(|| {
+                publish(&path, overwrite, |out| {
+                    out.write_all(&[b'x'; 1 << 16]).expect("part of the output");
+                    assert_eq!(
+                        names_in(dir).len(),
+                        before.len() + 1,
+                        "precondition: the temp file is there while the producer writes"
+                    );
+                    panic!("the producer panics (this test's own)")
+                })
+            });
+            assert!(caught.is_err(), "precondition: the producer panicked");
+            assert_eq!(
+                names_in(dir),
+                before,
+                "overwrite={overwrite}: no temp file is left"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("kept"),
+            "previous good export",
+            "the earlier export is as it was"
+        );
     }
 
     /// **A file that appears after the up-front look is not replaced**

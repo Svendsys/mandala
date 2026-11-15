@@ -144,9 +144,13 @@ pub(crate) struct Target {
 /// `overwrite` (or the artifacts dir, which is the app's own) allows
 /// it, with nothing at it or at its sidecar's name yet.
 ///
-/// The existence check is for the common case and the message; the
-/// write itself refuses again atomically ([`guarded_file::publish`]),
-/// so a file appearing in between is still never clobbered.
+/// The look at each file is the writer's own ([`guarded_file::check`]),
+/// taken before a frame is drawn, so the refusal is the one the write
+/// would give, in the same words: a symlink or a directory there, or an
+/// existing file without `overwrite`. It is for the common case and the
+/// message; the write itself refuses again atomically
+/// ([`guarded_file::publish`]), so a file appearing in between is still
+/// never clobbered.
 pub(crate) fn resolve(
     destination: Destination,
     sidecar: bool,
@@ -171,21 +175,27 @@ pub(crate) fn resolve(
         }
     };
     let sidecar = sidecar.then(|| sidecar_path_for(&path));
-    if !overwrite {
-        for target in std::iter::once(&path).chain(sidecar.as_ref()) {
-            if std::fs::symlink_metadata(target).is_ok() {
-                return Err(CaptureError::Invalid {
-                    param: "path",
-                    message: format!("`{}` exists; set `overwrite` to replace it", target.display()),
-                });
-            }
-        }
+    for target in std::iter::once(&path).chain(sidecar.as_ref()) {
+        guarded_file::check(target, overwrite).map_err(refused)?;
     }
     Ok(Target {
         path,
         sidecar,
         overwrite,
     })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+/// The writer's refusal as this command's: a path that is the caller's
+/// mistake is `invalid_params` on `path`, in the writer's words.
+fn refused(refusal: PublishRefusal) -> CaptureError {
+    match refusal {
+        PublishRefusal::Invalid(message) => CaptureError::Invalid {
+            param: "path",
+            message,
+        },
+        PublishRefusal::Internal(message) => CaptureError::Internal(message),
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -205,13 +215,6 @@ pub(crate) fn write(
     artifacts: &mut Artifacts,
     progress: &mut dyn FnMut(),
 ) -> Result<(), CaptureError> {
-    let refused = |refusal: PublishRefusal| match refusal {
-        PublishRefusal::Invalid(message) => CaptureError::Invalid {
-            param: "path",
-            message,
-        },
-        PublishRefusal::Internal(message) => CaptureError::Internal(message),
-    };
     let png_bytes = guarded_file::publish(&target.path, target.overwrite, |out| {
         png::encode(pixels, out, &mut *progress)
     })
@@ -387,6 +390,84 @@ mod tests {
             matches!(relative, Err(CaptureError::Invalid { param: "path", .. })),
             "{relative:?}"
         );
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// **The look before the frame is the writer's own, in the writer's
+    /// words**: an existing PNG, or an existing sidecar beside a new one,
+    /// is refused with the message [`guarded_file::publish`] gives,
+    /// ending in the remedy the writer publishes
+    /// (`guarded_file::OVERWRITE_HINT`, which `mandalactl` rewrites into
+    /// its own spelling); a directory or a symlink there is named as
+    /// what it is, with or without `overwrite`; and with `overwrite` an
+    /// existing file passes.
+    ///
+    /// Controls: a refusal composed here in other words fails the first
+    /// two; a look that only asks whether something exists, and only
+    /// without `overwrite`, calls the directory and the link existing
+    /// files and lets them pass with `overwrite`.
+    #[test]
+    fn test_resolve_refuses_in_the_writers_own_words() {
+        let dir = scratch_dir("resolve-words");
+        let mut artifacts = Artifacts::under(dir.join("unused"), artifacts::BUDGET_BYTES);
+        let mut look = |path: &Path, overwrite: bool, sidecar: bool| {
+            let destination = Destination::Path {
+                path: path.to_path_buf(),
+                overwrite,
+            };
+            resolve(destination, sidecar, &mut artifacts)
+        };
+        let invalid = |message: String| {
+            Err(CaptureError::Invalid {
+                param: "path",
+                message,
+            })
+        };
+        let exists = |at: &Path| format!("`{}` exists; {}", at.display(), guarded_file::OVERWRITE_HINT);
+
+        let taken = dir.join("taken.png");
+        std::fs::write(&taken, "precious").expect("seed");
+        assert_eq!(look(&taken, false, false), invalid(exists(&taken)));
+        assert_eq!(
+            look(&taken, true, false).map(|target| target.path),
+            Ok(taken.clone())
+        );
+
+        let free = dir.join("free.png");
+        let beside = sidecar_path_for(&free);
+        std::fs::write(&beside, "precious").expect("seed");
+        assert_eq!(look(&free, false, true), invalid(exists(&beside)));
+        assert_eq!(
+            look(&free, false, false).map(|target| target.path),
+            Ok(free.clone()),
+            "a sidecar that will not be written is not in the way"
+        );
+
+        let folder = dir.join("folder.png");
+        std::fs::create_dir(&folder).expect("a directory");
+        for overwrite in [false, true] {
+            assert_eq!(
+                look(&folder, overwrite, false),
+                invalid(format!("`{}` is a directory", folder.display())),
+                "overwrite={overwrite}"
+            );
+        }
+        #[cfg(unix)]
+        {
+            let link = dir.join("link.png");
+            std::os::unix::fs::symlink(&taken, &link).expect("symlink");
+            for overwrite in [false, true] {
+                assert_eq!(
+                    look(&link, overwrite, false),
+                    invalid(format!(
+                        "`{}` is a symlink, which is never followed",
+                        link.display()
+                    )),
+                    "overwrite={overwrite}"
+                );
+            }
+            assert_eq!(std::fs::read_to_string(&taken).expect("kept"), "precious");
+        }
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
