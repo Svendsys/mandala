@@ -312,8 +312,8 @@ the parity trajectory (or why none is owed):
 
 ## Common tasks
 
-- **Run tests**: `./test.sh` runs `cargo test --workspace` — all six
-  members, `mandala`, `baumhard`, `mandala_derive`, `maptool`,
+- **Run tests**: `./test.sh` runs `cargo test --workspace` — all seven
+  members, `mandala`, `baumhard`, `guarded_file`, `mandala_derive`, `maptool`,
   `mandalactl` and the generated `workspace-hack` (below) — prints a test count, then type-checks the benchmark targets
   (`cargo check --workspace --benches`, which runs no benchmark) and
   `wasm32-unknown-unknown`, so neither a drifted `do_*()` nor
@@ -443,11 +443,13 @@ the parity trajectory (or why none is owed):
   table that sets `debug`.
 - **Target a specific test**: `cargo test -p baumhard --lib <pattern>`,
   `cargo test -p mandala <pattern>`,
+  `cargo test -p guarded_file`,
   `cargo test -p mandala_derive`, `cargo test -p maptool` or
   `cargo test -p mandalactl`. `--lib` narrows to a library target, so
-  it belongs only to the four members that have one — baumhard,
-  mandala_derive, mandalactl (a `src/lib.rs` beside its binary) and the
-  generated `workspace-hack` (an empty `src/lib.rs`, and no tests).
+  it belongs only to the five members that have one — baumhard,
+  guarded_file, mandala_derive, mandalactl (a `src/lib.rs` beside its
+  binary) and the generated `workspace-hack` (an empty `src/lib.rs`, and
+  no tests).
   `mandala` and `maptool` are binary crates, where adding it narrows nothing and
   exits 101 with `no library targets found in package 'mandala'`
   before a test runs (#148).

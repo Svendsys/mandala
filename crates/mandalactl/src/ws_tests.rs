@@ -459,7 +459,7 @@ fn test_a_screenshot_over_ws_needs_a_path_and_refuses_a_file_in_the_way() {
     let outcome = relay.invoke(&format!("capture.screenshot {}", path.display()));
     assert_eq!(outcome.exit, Exit::CommandError, "{}", outcome.err);
     assert!(
-        outcome.err.contains("exists") && outcome.err.contains("overwrite=true"),
+        outcome.err.contains("exists") && outcome.err.contains("`overwrite`"),
         "{}",
         outcome.err
     );
@@ -470,15 +470,21 @@ fn test_a_screenshot_over_ws_needs_a_path_and_refuses_a_file_in_the_way() {
     assert_eq!(app.requests().len(), 2, "overwrite stayed on the client's side");
 }
 
-/// **The client's write never follows a symlink**, the guarantee
-/// native's writer gives (`format/ipc.md` §`capture.screenshot`): a
-/// dangling one is not resolved into a new file at its target, and one
-/// pointing at a file is not written through even with `overwrite`.
-/// The control is the neighbor test's plain file, which `overwrite`
-/// does replace.
+/// **A symlink at the path leads to the file written, and the
+/// no-clobber rule is held to that file** (ruling B38.1 §6, as for
+/// `maptool export`): the path is this command line's, so it is
+/// resolved to its real file first. A dangling link is refused, with or
+/// without `overwrite`, and nothing is created at its target; a link to
+/// a file is refused without `overwrite`, and with it the file it leads
+/// to is replaced while the link stays a link to it. The guarded writer
+/// itself still never writes through a link (`guarded_file`'s tests).
+///
+/// Control: without the `real_file` step every link is refused as a
+/// symlink, the dangling one included, and the target keeps `keep`
+/// even with `overwrite`.
 #[cfg(unix)]
 #[test]
-fn test_a_screenshot_over_ws_never_writes_through_a_symlink() {
+fn test_a_screenshot_over_ws_writes_through_a_link_only_with_overwrite() {
     let relay = Relay::start();
     let app = screenshot_app(&relay, true);
     let dir = tempfile::tempdir().expect("a directory");
@@ -489,7 +495,7 @@ fn test_a_screenshot_over_ws_never_writes_through_a_symlink() {
     for extra in ["", " overwrite=true"] {
         let outcome = relay.invoke(&format!("capture.screenshot {}{extra}", dangling.display()));
         assert_eq!(outcome.exit, Exit::CommandError, "{extra}: {}", outcome.err);
-        assert!(outcome.err.contains("symlink"), "{}", outcome.err);
+        assert!(outcome.err.contains("does not exist"), "{}", outcome.err);
         assert!(!nowhere.exists(), "{extra}: the link's target was not created");
     }
 
@@ -497,28 +503,40 @@ fn test_a_screenshot_over_ws_never_writes_through_a_symlink() {
     std::fs::write(&target, b"keep").expect("writes");
     let link = dir.path().join("link.png");
     std::os::unix::fs::symlink(&target, &link).expect("symlinks");
-    let outcome = relay.invoke(&format!("capture.screenshot {} overwrite=true", link.display()));
+    let outcome = relay.invoke(&format!("capture.screenshot {}", link.display()));
     assert_eq!(outcome.exit, Exit::CommandError, "{}", outcome.err);
+    assert!(outcome.err.contains("exists"), "{}", outcome.err);
     assert_eq!(std::fs::read(&target).expect("kept"), b"keep");
-    assert!(std::fs::symlink_metadata(&link)
-        .expect("still there")
-        .file_type()
-        .is_symlink());
+
+    let outcome = relay.invoke(&format!("capture.screenshot {} overwrite=true", link.display()));
+    assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
+    assert!(
+        std::fs::read(&target).expect("replaced").starts_with(b"\x89PNG"),
+        "the file the link leads to holds the screenshot"
+    );
+    assert_eq!(std::fs::read_link(&link).expect("still a link"), target);
     assert_eq!(
         app.requests().len(),
-        3,
-        "each capture ran; only the write was refused"
+        4,
+        "each capture ran; only the writes were refused"
     );
 }
 
-/// **Whatever is already at the write's sibling name is left alone**:
-/// the client writes `<path>.<pid>.partial` first, and an entry there
-/// that it did not create — a crash's leftover, the user's own file, a
-/// planted link — is refused by name, never removed or written through.
-/// The control is the same capture once the name is free, which writes.
+/// **Nothing beside the path is in the way or touched.** Until #357 the
+/// client wrote `<path>.<pid>.partial` first, and an entry already
+/// there — a crash's leftover under a reused pid, the user's own file,
+/// a planted link — refused the capture. The write is now the guarded
+/// writer's, whose temp names are its own and pass over a taken one
+/// (`guarded_file`'s tests pin the exact next name), so that entry
+/// neither refuses the capture nor is removed or written through, with
+/// or without `overwrite`, and the write leaves nothing of its own
+/// behind.
+///
+/// Control: the client's former writer refuses both captures, naming
+/// the partial.
 #[cfg(unix)]
 #[test]
-fn test_a_screenshot_over_ws_leaves_an_entry_at_its_partial_name_alone() {
+fn test_a_screenshot_over_ws_is_not_stopped_by_an_entry_beside_its_path() {
     let relay = Relay::start();
     let _app = screenshot_app(&relay, false);
     let dir = tempfile::tempdir().expect("a directory");
@@ -532,24 +550,35 @@ fn test_a_screenshot_over_ws_leaves_an_entry_at_its_partial_name_alone() {
     std::os::unix::fs::symlink(&target, &partial).expect("symlinks");
     for extra in ["", " overwrite=true"] {
         let outcome = relay.invoke(&format!("capture.screenshot {}{extra}", path.display()));
-        assert_eq!(outcome.exit, Exit::CommandError, "{extra}: {}", outcome.err);
-        assert!(outcome.err.contains("partial"), "{}", outcome.err);
+        assert_eq!(outcome.exit, Exit::Success, "{extra}: {}", outcome.err);
+        assert!(
+            std::fs::read(&path).expect("written").starts_with(b"\x89PNG"),
+            "{extra}: the screenshot was written"
+        );
         assert!(
             std::fs::symlink_metadata(&partial)
                 .expect("still there")
                 .file_type()
                 .is_symlink(),
-            "{extra}: the entry at the partial name was removed"
+            "{extra}: the entry beside the path was removed"
         );
         assert_eq!(std::fs::read(&target).expect("kept"), b"keep");
-        assert!(!path.exists(), "{extra}: nothing was published");
     }
-    // Control: the name free, the capture writes.
-    std::fs::remove_file(&partial).expect("removes");
-    let outcome = relay.invoke(&format!("capture.screenshot {}", path.display()));
-    assert_eq!(outcome.exit, Exit::Success, "{}", outcome.err);
-    assert!(path.exists());
-    assert!(!partial.exists(), "the client's own partial is cleaned up");
+    let mut names: Vec<String> = std::fs::read_dir(dir.path())
+        .expect("readable")
+        .map(|entry| {
+            entry
+                .expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    let partial_name = partial.file_name().expect("named").to_string_lossy().into_owned();
+    let mut expected = vec!["precious".to_string(), "shot.png".to_string(), partial_name];
+    expected.sort();
+    assert_eq!(names, expected, "the write left nothing of its own behind");
 }
 
 #[test]

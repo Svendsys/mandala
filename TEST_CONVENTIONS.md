@@ -468,10 +468,10 @@ re-litigate them without a strong reason.
 ## §T11 Running the suite
 
 - `./test.sh` — full suite across every workspace member —
-  `mandala`, `baumhard`, `mandala_derive`, `maptool`, `mandalactl`, and
-  the generated `workspace-hack`, which has no tests (#284) — then a test
-  count, then the bench-target type-check and the wasm32 type-check
-  gate. Read that order literally: the count prints where the
+  `mandala`, `baumhard`, `guarded_file`, `mandala_derive`, `maptool`,
+  `mandalactl`, and the generated `workspace-hack`, which has no tests
+  (#284) — then a test count, then the bench-target type-check and
+  the wasm32 type-check gate. Read that order literally: the count prints where the
   *suite* ends, not where the run does, so a `== N tests passed ==`
   scrolling past still has two gates to clear. It is a convenience
   either way and cannot fail the run. The wasm32 gate is skipped
@@ -525,12 +525,13 @@ re-litigate them without a strong reason.
   keeps §B8's `do_*()` contract enforceable now that its two named
   mechanisms are off limits.
 - `cargo test -p baumhard --lib <pattern>`,
-  `cargo test -p mandala <pattern>`,
+  `cargo test -p mandala <pattern>`, `cargo test -p guarded_file`,
   `cargo test -p mandala_derive`, `cargo test -p maptool` or
   `cargo test -p mandalactl` — targeted subset while iterating.
-  `--lib` selects a library target, so it belongs only to the four
-  members that have one, baumhard, mandala_derive, mandalactl and the
-  generated `workspace-hack` (an empty `src/lib.rs`, and no tests);
+  `--lib` selects a library target, so it belongs only to the five
+  members that have one, baumhard, guarded_file, mandala_derive,
+  mandalactl and the generated `workspace-hack` (an empty `src/lib.rs`,
+  and no tests);
   `mandala` and `maptool` are binary crates, where
   adding it narrows nothing and exits 101 with `no library targets
   found in package 'mandala'` before a test runs. Both this document

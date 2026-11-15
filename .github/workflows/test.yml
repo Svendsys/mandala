@@ -172,7 +172,10 @@ jobs:
   #   loopback scenarios against a fake app on a real pipe, and
   #   `tests/binary.rs` driving the shipped binary over one. Path
   #   expectations are spelled per platform, and the handful of tests
-  #   that are Unix-only by nature say why beside their `cfg`.
+  #   that are Unix-only by nature say why beside their `cfg`;
+  # - `guarded_file`'s tests (#357): the one writer of a caller-named
+  #   file, which `mandalactl` writes through on Windows too. Its symlink
+  #   and no-hard-link tests are Unix and Linux only, and say why.
   #
   # Same triggers as the Linux job, so a pull request cannot merge red on
   # the platform this code is for.
@@ -198,7 +201,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Clippy, Windows (hard)
-        run: cargo clippy -p mandala -p mandalactl --all-targets -- -D warnings
+        run: cargo clippy -p mandala -p mandalactl -p guarded_file --all-targets -- -D warnings
 
       # A filter that matches nothing passes with "0 passed", which would
       # turn this job green while testing nothing — a renamed module, a
@@ -238,3 +241,22 @@ jobs:
               exit 1
             fi
           done
+
+      # The same zero-count guard, and a named test that must have run:
+      # the private directory `ffmpeg` writes into, on Windows.
+      - name: The guarded_file tests, Windows
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p guarded_file 2>&1 | tee guarded-file-tests.log
+          count=$(grep -Eo 'test result: ok\. [0-9]+ passed' guarded-file-tests.log | awk '{ sum += $4 } END { print sum + 0 }')
+          echo "guarded_file tests passed: $count"
+          if [ "$count" -eq 0 ]; then
+            echo "FAILED: guarded_file ran no tests"
+            exit 1
+          fi
+          ran='tests::test_a_private_dir_passes_over_a_taken_name_and_leaves_only_what_it_published ... ok'
+          if ! grep -qF "$ran" guarded-file-tests.log; then
+            echo "FAILED: expected \"$ran\" in the guarded_file run"
+            exit 1
+          fi

@@ -311,7 +311,9 @@ mandalactl record assemble <dir> [out=<file>] [format=gif|mp4] [width=<px>] [fps
     mp4            H.264 through the host's ffmpeg, which must be on PATH (never required for the GIF).
 
     out=           the file to write; default <dir>/recording.gif (or .mp4). An existing file is kept
-                   unless overwrite=true.
+                   unless overwrite=true. A symlink leads to the file written, held to the same rule
+                   (a dangling one is refused); overwrite=true replaces that file, and the link stays
+                   a link. Written whole or not at all: a failure leaves what was there.
     width=         scale the frames down to this many pixels wide, keeping their shape. The way to bring a
                    GIF under GitHub's 10 MiB inline limit, which the result warns about.
     fps=           show at most this many frames a second (1-60): fewer frames, same speed.

@@ -2399,14 +2399,16 @@ half both surfaces call: it syncs the view, then the layer renderer
 draws the glyph layers through the capture's camera
 (`LayerRenderer::encode`) — the same layers the window draws, at any
 zoom, with nothing projected again. Every caller-chosen path is written through
-baumhard's `util::guarded_file::publish` — atomic, never through a
-symlink (a link at the path is refused), no file replaced unasked —
-the writer the IPC `to_file` sidecar uses too. A map's save and
-`maptool`'s outputs go through the same writer, but name their file
-differently: they first resolve a link to its real file
-(`guarded_file::real_file`), always replace that file, and hold the
-extension rule to it — a map's save writes only into a
-`.mandala.json`, `maptool export` never into one.
+`guarded_file::publish` (the `lib/guarded_file` crate, which baumhard
+re-exports as `util::guarded_file`) — atomic, never through a symlink
+(a link at the path is refused), no file replaced unasked — the writer
+the IPC `to_file` sidecar uses too. A map's save, `maptool`'s outputs
+and `mandalactl`'s files go through the same writer, but name their
+file differently: they first resolve a link to its real file
+(`guarded_file::real_file`). A map's save and `maptool` always replace
+that file and hold the extension rule to it — a map's save writes only
+into a `.mandala.json`, `maptool export` never into one; `mandalactl`
+replaces it only with `overwrite=true`.
 
 A frame the renderer skips (`FrameSkip`: not started, font system
 contended, glyph prepare failed) is reported as not rendered and
@@ -3088,7 +3090,11 @@ PR that adds it. The sibling of `maptool`, not a mode of it: `maptool` reads
 `.mandala.json` files and never talks to a process. Its one client-side
 command, `record assemble <dir>`, turns a recording's frames and manifest
 (see [Frame-sequence recording](#frame-sequence-recording)) into a GIF, or an
-MP4 through the host's `ffmpeg`, and never opens the socket.
+MP4 through the host's `ffmpeg`, and never opens the socket. Its file, and a
+screenshot it writes over `--ws`, go through the app's own writer, the
+`guarded_file` crate (a crate of its own so this one needs no baumhard);
+`ffmpeg` writes only inside a directory the run created for it alone
+(`guarded_file::PrivateDir`).
 
 `crates/mandalactl/`. Protocol: [`format/ipc.md`](./format/ipc.md); the full
 agent-facing reference is `mandalactl --help`.
@@ -3115,7 +3121,7 @@ line of which matches through a command and replaces its spans as one
 changes — then prints the map, writes it back (`-i`, through
 `format::file::write`, as the app's save does: a link is resolved to
 its real file, which must itself be a `.mandala.json`, and that file
-is replaced atomically through baumhard's `util::guarded_file`) or prints
+is replaced atomically through `guarded_file`, re-exported as baumhard's `util::guarded_file`) or prints
 what `-i` would change in the file on disk as a diff (`--dry-run`).
 There is no `convert`: there is no older format to convert from.
 `maptool --help` is the reference.

@@ -30,13 +30,15 @@ on:
   pull_request:
     # Everything a target's build reads: all of baumhard's source (a
     # surface's code calls into modules no narrower list keeps up with),
-    # its build script (the fonts shaping reads), the manifests and
+    # its build script (the fonts shaping reads), the source of the path
+    # crate it depends on (`lib/guarded_file`), the manifests and
     # lockfiles that pick its dependencies, the fuzzing itself, and the
     # repository's maps, which the loader targets read as seeds.
     paths:
       - "lib/baumhard/src/**"
       - "lib/baumhard/build.rs"
       - "lib/baumhard/Cargo.toml"
+      - "lib/guarded_file/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "fuzz/**"

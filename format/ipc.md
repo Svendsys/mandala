@@ -1285,8 +1285,8 @@ The open document: `file_path`, `dirty`, `name`, `nodes`, `revision`,
 |---|---|---|---|
 | `fields` | array | no | Which parts to return, as strings from the list below. Default: every part but `document`, the one whose size is unbounded. Empty, mistyped or unknown words are `invalid_params`. Replies carry the parts in the order below, whatever order they were asked for. |
 | `pointer` | string | no | An RFC 6901 JSON Pointer into the saved map (`"/name"`, `"/nodes/0"`, `"/palettes"`). The reply's `document` is then the value found there. Implies `fields: ["document"]` when `fields` is omitted, and is `invalid_params` when `fields` lacks `document`. A pointer that resolves to nothing is `not_found`, and is reported before anything is written to `to_file`. The pointer is resolved against one save of the map. |
-| `to_file` | string | no | An absolute path. The file sidecar of [Large payloads](#large-payloads): the fields are written there as JSON and the reply is only `path` and `bytes`. Use it when `document` may exceed the 8 MiB reply cap. The write is **atomic**: the bytes go to a temp file in the same directory (created exclusively and with `O_NOFOLLOW`), are flushed and `fsync`ed, and are then renamed into place. A failure partway (a full disk) removes the temp file and leaves the destination exactly as it was, so an earlier good export is never replaced by truncated JSON. A replaced file takes the default permissions of a new file. Native only. |
-| `overwrite` | boolean | no | Only with `to_file`. Allow replacing an existing file; default `false`, where an existing file is `invalid_params`. Without it the file is published with `link(2)`, which fails if the name exists, so a file created in the meantime is not clobbered. A symlink or a directory at the path is `invalid_params` either way, and a symlink is never written through: the temp file is created with `O_NOFOLLOW` and published by `rename(2)`, which replaces the directory entry itself. A missing parent directory is `invalid_params`. Native only. |
+| `to_file` | string | no | An absolute path. The file sidecar of [Large payloads](#large-payloads): the fields are written there as JSON and the reply is only `path` and `bytes`. Use it when `document` may exceed the 8 MiB reply cap. The write is **atomic**: the bytes go to a temp file of this write's own in the same directory (created exclusively, which never follows a symlink at its name), are flushed and `fsync`ed, and are then renamed into place. A failure partway (a full disk) removes the temp file and leaves the destination exactly as it was, so an earlier good export is never replaced by truncated JSON. A replaced file takes the default permissions of a new file. Native only. |
+| `overwrite` | boolean | no | Only with `to_file`. Allow replacing an existing file; default `false`, where an existing file is `invalid_params`. Without it the file is published with `link(2)`, which fails if the name exists, so a file created in the meantime is not clobbered. A symlink or a directory at the path is `invalid_params` either way, and a symlink is never written through: the temp file is created exclusively (`O_CREAT|O_EXCL`, which fails on a symlink wherever it points) and published by `rename(2)`, which replaces the directory entry itself. A missing parent directory is `invalid_params`. Native only. |
 
 | result field | type | meaning |
 |---|---|---|
@@ -1880,7 +1880,7 @@ client's, which writes on the page's behalf (below).
 
 | param | type | default | meaning |
 |---|---|---|---|
-| `path` | string | server-chosen file in the per-session artifacts dir | Absolute path for the PNG. Parent dir must exist. Write guards (same-user trust tier, but an LLM composing a path clobbers by accident far more readily than a human): the server does **not** follow a symlink at `path` (`O_NOFOLLOW`), and refuses to overwrite an existing file **outside** the per-session artifacts dir unless `overwrite: true` is set — an unset `overwrite` hitting an existing external file (or an existing sidecar beside it) is `invalid_params`, and nothing is written. The write is atomic: a failure leaves whatever was at `path` as it was. |
+| `path` | string | server-chosen file in the per-session artifacts dir | Absolute path for the PNG. Parent dir must exist. Write guards (same-user trust tier, but an LLM composing a path clobbers by accident far more readily than a human): the server does **not** follow a symlink at `path` (one there is `invalid_params`), and refuses to overwrite an existing file **outside** the per-session artifacts dir unless `overwrite: true` is set — an unset `overwrite` hitting an existing external file (or an existing sidecar beside it) is `invalid_params`, and nothing is written. The write is atomic: a failure leaves whatever was at `path` as it was. |
 | `overwrite` | boolean | `false` | Allow overwriting an existing file outside the artifacts dir. Inside the artifacts dir, overwrite is always allowed. Only valid with `path`. |
 | `width`, `height` | integer | current surface size | The view's size, in window pixels; sent together. Camera center and zoom are preserved, so a larger view shows more canvas. Each side must lie in `1..=16384`, and the image (`width × height × scale²`) must not exceed **67,108,864** pixels (64 Mpx, ~8K square) nor the GPU's largest texture side; a request over any bound is `invalid_params`, never a best-effort giant allocation (degrade-don't-crash — an offscreen texture is a real GPU allocation). |
 | `region` | object | — | `{"x","y","w","h"}` in the `space` coordinate space, `w` and `h` positive: frame this rect instead of the current camera view. `width`/`height` still set the view's size; the aspect rule below governs mismatches. A region so large it would need a zoom below the minimum (`0.05`) is `invalid_params` (it could not be shown whole); one so small it needs more than the maximum (`5.0`) is framed at the maximum, still whole. |
@@ -2578,11 +2578,15 @@ a client does:
   same, with one client-side difference: `capture.screenshot <path>`
   requires the path, takes `path` and `overwrite` off the request, and
   writes the PNG the page returns inline — and its sidecar, as
-  `<path>.geometry.json` — with the native writer's guards: a symlink
-  at either path is never followed, `overwrite=true` included; an
-  existing file is refused unless `overwrite=true`; and the write is
-  atomic (a sibling file, synced, then moved or linked into place), so
-  a failure leaves what was there. A refusal is exit `1`, and the
+  `<path>.geometry.json` — through the native writer (`guarded_file`),
+  with one difference the command line earns: the path is the
+  client's own, so a symlink at either path leads to the file written,
+  as for `maptool export` (a dangling one is refused). An existing file,
+  the one a link leads to included, is refused unless `overwrite=true`,
+  which replaces it and leaves a link a link; and the write is atomic
+  (a temp file of this write's own beside it, synced, then moved or
+  linked into place), so a failure leaves what was there. A refusal is
+  exit `1`, and the
   capture may be repeated; its output,
   `--json` included, then names `path` and `sidecar_path` as a native
   reply does, in place of `png_base64` and `sidecar`. A `rendered: false`

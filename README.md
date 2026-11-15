@@ -122,6 +122,9 @@ turns the same loop into a short captioned GIF for a human to review;
   `apply` (`maptool --help`).
 - [`crates/mandalactl/`](crates/mandalactl/) — CLI client for a running
   app's `--ipc` socket (see "Driving the app from a terminal").
+- [`lib/guarded_file/`](lib/guarded_file/) — the one writer of a file at
+  a path someone else named: atomic, never through a symlink, never over
+  a file unasked. The app, `maptool` and `mandalactl` all write through it.
 - [`lib/mandala_derive/`](lib/mandala_derive/) — proc-macro support.
 
 ## License

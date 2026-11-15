@@ -82,6 +82,7 @@ dependencies = [
  "cosmic-text",
  "env_logger",
  "glam",
+ "guarded_file",
  "lazy_static",
  "log",
  "ordered-float",
@@ -89,7 +90,6 @@ dependencies = [
  "path-slash",
  "rand 0.10.3",
  "rustc-hash",
- "rustix",
  "serde",
  "serde_json",
  "serde_path_to_error",
@@ -365,6 +365,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc148d4ddd3930c52f9e5ae79b89805c6f07e9ff417e7b083e0348cea60a5aba"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "guarded_file"
+version = "0.1.0"
+dependencies = [
+ "workspace-hack",
 ]
 
 [[package]]

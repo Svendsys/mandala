@@ -1228,6 +1228,11 @@ mod tests {
             Some(&false),
             "mandala_derive has no benches"
         );
+        assert_eq!(
+            targets.get("guarded_file"),
+            Some(&false),
+            "guarded_file has no benches"
+        );
     }
 
     /// The manifests answer both ways for the real workspace, named
@@ -1249,6 +1254,11 @@ mod tests {
             targets.get("mandalactl"),
             Some(&true),
             "mandalactl has a `src/lib.rs` beside its binary: the app crate's tests read its verb table"
+        );
+        assert_eq!(
+            targets.get("guarded_file"),
+            Some(&true),
+            "guarded_file is a library"
         );
     }
 }

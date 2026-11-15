@@ -576,81 +576,13 @@ fn screenshot_sink(target: &Target, prepared: &mut Prepared) -> Result<Option<Sc
     Ok(Some(ScreenshotSink { path, overwrite }))
 }
 
-/// Why `path` cannot take a screenshot file, if it cannot: a symlink
-/// (never followed, with or without `overwrite`), a directory, or an
-/// existing file without `overwrite`. The guarantees of native's
-/// writer (baumhard's `guarded_file::publish`, `format/ipc.md`
-/// §`capture.screenshot`), given by the client that writes on the
-/// browser's behalf. `symlink_metadata`, not `exists`, which is
-/// `false` for a dangling symlink.
-fn in_the_way(path: &Path, overwrite: bool) -> Option<String> {
-    let shown = path.display();
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => Some(format!(
-            "{shown} is a symlink, which is never followed (the capture succeeded and may be repeated)"
-        )),
-        Ok(meta) if meta.is_dir() => Some(format!("{shown} is a directory")),
-        Ok(_) if !overwrite => Some(format!(
-            "{shown} exists; pass overwrite=true to replace it (the capture succeeded and may be repeated)"
-        )),
-        _ => None,
-    }
-}
-
-/// Write `bytes` at `path` without following a symlink there and
-/// without replacing a file unless `overwrite`, atomically: the bytes
-/// go to a sibling file created exclusively (`create_new`, which a
-/// symlink at that name fails too), are synced, and are then published
-/// under `path` — by `rename` with `overwrite`, which replaces the
-/// directory entry and cannot write through a symlink; without it by
-/// `hard_link`, which fails if the name exists, so a file created
-/// since [`in_the_way`] looked is not clobbered. A failure leaves
-/// whatever was at `path` as it was, and whatever was at the sibling
-/// name too: one this call did not create is refused, never removed.
-fn write_guarded(path: &Path, bytes: &[u8], overwrite: bool) -> Result<(), String> {
-    let shown = path.display();
-    let partial = {
-        let mut name = path.as_os_str().to_owned();
-        name.push(format!(".{}.partial", std::process::id()));
-        PathBuf::from(name)
-    };
-    // Whatever is already at the sibling name is not this call's: it
-    // is refused by name and left alone, never removed.
-    let synced = {
-        let mut file = std::fs::File::options()
-            .write(true)
-            .create_new(true)
-            .open(&partial)
-            .map_err(|e| match e.kind() {
-                std::io::ErrorKind::AlreadyExists => format!(
-                "{} is in the way of writing {shown}: something is already at that name, and it is left as \
-                 it is. Remove it and repeat the capture",
-                partial.display()
-            ),
-                _ => format!(
-                    "could not write {shown}: could not create {}: {e}",
-                    partial.display()
-                ),
-            })?;
-        // Synced, and closed at the end of this block before it is
-        // published: Windows refuses to rename an open file.
-        file.write_all(bytes).and_then(|()| file.sync_all())
-    };
-    let published = synced.and_then(|()| {
-        if overwrite {
-            std::fs::rename(&partial, path)
-        } else {
-            std::fs::hard_link(&partial, path)
-        }
-    });
-    // This call created the partial: gone already after a rename; the
-    // link's twin, or a failure's leftover, otherwise.
-    let _ = std::fs::remove_file(&partial);
-    published.map_err(|e| match e.kind() {
-        std::io::ErrorKind::AlreadyExists => in_the_way(path, overwrite)
-            .unwrap_or_else(|| format!("{shown} appeared while it was being written")),
-        _ => format!("could not write {shown}: {e}"),
-    })
+/// A refused screenshot write, said with what the caller may do about
+/// it: the capture read nothing from the app's state, so repeating it
+/// is safe.
+fn refused(why: guarded_file::PublishRefusal) -> String {
+    let (guarded_file::PublishRefusal::Invalid(message) | guarded_file::PublishRefusal::Internal(message)) =
+        why;
+    format!("{message} (the capture succeeded and may be repeated)")
 }
 
 impl ScreenshotSink {
@@ -660,8 +592,7 @@ impl ScreenshotSink {
     /// output, `--json` included, names files on either transport. A
     /// reply with `rendered: false` writes nothing, as a native app
     /// writes nothing. `Err` when the file is in the way or the write
-    /// fails: the capture read nothing from the app's state, so
-    /// repeating it is safe.
+    /// fails, said by [`refused`].
     fn write(self, exchange: Exchange) -> Result<Exchange, String> {
         let Exchange { mut reply, line } = exchange;
         let Some(encoded) = reply.result.get("png_base64").and_then(Value::as_str) else {
@@ -677,16 +608,30 @@ impl ScreenshotSink {
                 .unwrap_or_default()
         ));
         let sidecar = reply.result.get("sidecar").map(Value::to_string);
-        // Both refused before either is written, so a sidecar in the
-        // way leaves no orphan PNG behind.
-        for file in std::iter::once(&self.path).chain(sidecar.as_ref().map(|_| &sidecar_path)) {
-            if let Some(why) = in_the_way(file, self.overwrite) {
-                return Err(why);
-            }
+        // Each path is one this command line named, so a symlink there
+        // leads to the file written, as for `maptool export`: resolved
+        // to its real file first, and the no-clobber rule held to that
+        // file (`guarded_file::real_file`, ruling B38.1 §6). Both are
+        // refused before either is written, so a sidecar in the way
+        // leaves no orphan PNG behind; the writes refuse again,
+        // atomically (`guarded_file::publish`).
+        let png_file = guarded_file::real_file(&self.path).map_err(refused)?;
+        let sidecar_file = match &sidecar {
+            Some(text) => Some((guarded_file::real_file(&sidecar_path).map_err(refused)?, text)),
+            None => None,
+        };
+        for file in std::iter::once(&png_file).chain(sidecar_file.as_ref().map(|(file, _)| file)) {
+            guarded_file::check(file, self.overwrite).map_err(refused)?;
         }
-        write_guarded(&self.path, &png, self.overwrite)?;
-        if let Some(sidecar) = &sidecar {
-            write_guarded(&sidecar_path, sidecar.as_bytes(), self.overwrite)?;
+        let write = |file: &Path, bytes: &[u8]| {
+            guarded_file::publish(file, self.overwrite, |out| {
+                out.write_all(bytes).map_err(|e| e.to_string())
+            })
+            .map_err(refused)
+        };
+        write(&png_file, &png)?;
+        if let Some((file, text)) = &sidecar_file {
+            write(file, text.as_bytes())?;
         }
         let rewrite = |result: &mut Value| {
             if let Some(object) = result.as_object_mut() {

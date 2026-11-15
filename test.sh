@@ -17,10 +17,10 @@ usage() {
 Usage: ./test.sh [--coverage] [--lint] [--bench] [--help]
 
   (no flags)   Run the full test suite across every workspace member
-               (mandala, baumhard, mandala_derive, maptool, mandalactl and
-               the generated workspace-hack, which has no tests), then
-               type-check the benchmark targets and the WASM target so
-               neither can rot silently between merges.
+               (mandala, baumhard, guarded_file, mandala_derive, maptool,
+               mandalactl and the generated workspace-hack, which has no
+               tests), then type-check the benchmark targets and the
+               WASM target so neither can rot silently between merges.
   --coverage   Run the suite under cargo-llvm-cov and emit HTML + LCOV.
   --lint       Also run cargo fmt --check, cargo clippy and cargo doc.
                fmt, both clippy legs and both doc legs (host:
