@@ -348,9 +348,9 @@ fn test_a_stage_written_part_way_is_drawn_under_the_layer() {
 /// rewrites a span's text (more bytes than the map holds there), an
 /// edit and its undo leave them exactly as they leave them without it.
 ///
-/// Control: accounting a presentation's journal as the writer accounts
-/// an edit's makes the budget's text count differ by the bytes the
-/// presentation shows.
+/// Controls, each seen red: with the writer's funnel not taking the
+/// layer out, the edit is accounted on what the presentation shows; with
+/// a suspension guard whose drop does nothing, the layer stays out.
 #[test]
 fn test_the_derived_state_is_the_maps_under_presentations() {
     let wordy = presentation(
@@ -1131,8 +1131,8 @@ fn test_own_is_the_maps_element_under_whatever_plays() {
 /// can write, and nothing gives a portal end a marker: a load refuses a
 /// mutation of another kind than the target's.
 ///
-/// Controls: with the filter not walked, `peek` is not named; with any
-/// `set_hidden` counted, the second row reveals.
+/// Controls: with the filter not walked, `peek` is not named; with the
+/// mutations not walked, `go` is not, and nothing is revealed.
 #[test]
 fn test_a_presentation_mentions_the_verbs_it_names_and_what_it_can_show() {
     use crate::document::edit::Shows;

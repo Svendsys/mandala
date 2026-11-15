@@ -57,20 +57,24 @@ draws them.
   every passing assertion owes.
 - **`format/`** — the file format specifications. `format/schema.md` is
   the `.mandala.json` format (V1) and its primary reference;
-  `format/projection.md` is where a map is drawn, `format/ipc.md` the
-  control protocol, `format/macros.md` and `format/fonts.md` their
-  concepts. Read this before changing the data model.
+  `format/projection.md` is where a map is drawn, `format/edits.md`
+  and `format/presentations.md` the two kinds of behavior a map, the
+  user and the app define (a saved, undoable change; a performance that
+  is never saved), `format/ipc.md` the control protocol,
+  `format/macros.md` and `format/fonts.md` their concepts. Read this
+  before changing the data model.
 - **`crates/maptool/`** — CLI tool for `.mandala.json` files, a client
   of the same `Document` the app edits: `show` (the node tree), `grep`
   (by regex, every string a map draws as glyphs: spans, own `content`,
   `once` fillers, frame ornaments), `export` (Markdown), `verify` (the loader's
   verdict, with its JSON path, plus warnings for what loads but is
-  probably a mistake; a verb an edit in the map names, anywhere in it
-  (its filter or its body), counts as referred to, whether or not
-  anything runs the edit, and an edit in the map that can unhide a node
-  or give a portal end a marker silences those two warnings; App and
-  User edits, which also run on a map, are outside what a map file can
-  be judged on and are not read) and
+  probably a mistake; a verb an edit or a presentation in the map
+  names, anywhere in it (its filter or its body), counts as referred
+  to, whether or not anything runs it, and an edit in the map that can
+  unhide a node or give a portal end a marker — or a presentation in it
+  that can unhide a node — silences that warning; the App's and the
+  User's edits and presentations, which also run on a map, are outside
+  what a map file can be judged on and are not read) and
   `apply` (pipe matching sections' text through
   a command, as one `EditRequest` through `Document::apply`; `-i`
   writes the map back as the app's save does — through a link to its
@@ -487,8 +491,9 @@ the parity trajectory (or why none is owed):
 - **Fuzz an untrusted-input surface**: `scripts/fuzz.sh <target>
   <seconds>` runs one coverage-guided target of `fuzz/` for that long
   (`scripts/fuzz.sh --list` names them: the `.mandala.json` loader,
-  TextFlow shaping, authored glyph-layer mutations, each raw and
-  structure-aware). `fuzz/` is outside the workspace, on the nightly
+  TextFlow shaping, authored glyph-layer mutations, edits and
+  presentations, each raw and structure-aware, and the projection
+  under edit sequences). `fuzz/` is outside the workspace, on the nightly
   its own `rust-toolchain.toml` pins, and needs `cargo install
   cargo-fuzz --version 0.13.2 --locked`; `./test.sh` never builds it.
   The properties every input is held to, and every finding's

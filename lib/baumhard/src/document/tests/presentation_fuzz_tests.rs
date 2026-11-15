@@ -16,11 +16,10 @@ use crate::util::tests::choices::Choices;
 /// one — it starts instances, changes the map under them, and writes
 /// every play, both layers, both bodies and both sides of the bounds.
 ///
-/// Controls, each seen red: with `format::save` reading the tree as it
-/// stands, a seed is refused with "the map saves to other bytes under
-/// what plays"; with the
-/// writer's funnel leaving the layer applied across a change, one is
-/// with "the history holds another change under what plays".
+/// Controls, each seen red at seed 20: with `format::save` reading the
+/// tree as it stands, a frame "saves to other bytes under what plays";
+/// with the writer's funnel leaving the layer applied across a change,
+/// the map does after the edit `cascade`.
 #[test]
 fn test_generated_presentations_hold_every_property() {
     let mut played = Played::default();
