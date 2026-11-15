@@ -69,7 +69,12 @@ rise and fall together.
 Missing primitives are added to Baumhard, not to `src/application/`. If
 app code is about to grow a second implementation of something Baumhard
 nearly does, extend Baumhard. Extending the foundation is the work, not
-a detour from it.
+a detour from it. The one exception is a primitive `mandalactl` needs
+too, since it takes no baumhard dependency: that primitive is a small
+crate of its own, which baumhard re-exports so the app reaches it in
+the usual place — `lib/guarded_file`, the one writer of a file at a
+path someone else named (#357), is the instance. It is still one
+implementation, never a second copy in `mandalactl`.
 
 ## §2 All tasks are integration tasks
 

@@ -1605,6 +1605,150 @@ fn test_projection_untangle_stops_when_no_round_can_part_its_paths() {
     );
 }
 
+/// A junction's samples do not move with where it lies (#356): a lane's
+/// curves sampled from its skip on keep the same samples at the origin and
+/// moved 2²³ to 2⁶³ units of their own scale from it, where every control
+/// point is still exactly a float, so the curves are the same curves —
+/// `sample` measures how far along a sample lies in the curve's own frame
+/// (`flow::Local`). Summed between points as large as where the curve
+/// lies, that distance counted their rounding: far out the skip was
+/// reached early, and more samples were kept than at the origin.
+///
+/// Control: `sample` measuring along between its points as `f32`, where
+/// they lie, red far out (2,627 samples kept 2²³ from the origin, against
+/// 2,598 at it).
+#[test]
+fn test_projection_a_far_out_junction_keeps_the_samples_it_keeps_at_the_origin() {
+    for scale in [0, 10, 20, 30, 40] {
+        // A unit at which every control point, moved by `far`, is a float.
+        let unit = 2f32.powi(scale);
+        let far = 2f32.powi(scale + 23);
+        let cubic = |at: f32| {
+            let point = |x: f32, y: f32| Vec2::new(at + x * unit, at + y * unit);
+            Curve::Cubic(
+                point(0.0, 0.0),
+                point(3_000.0, -2_000.0),
+                point(7_000.0, 2_000.0),
+                point(10_000.0, 0.0),
+            )
+        };
+        let lead = |at: f32| Curve::Line(Vec2::splat(at), Vec2::new(at + 64.0 * unit, at));
+        let (step, skip) = (4.0 * unit, 2_000.0 * unit);
+        let kept = |at: f32| sample(&[lead(at), cubic(at)], step, skip).len();
+        let (here, there) = (kept(0.0), kept(far));
+        let all = sample(&[lead(0.0), cubic(0.0)], step, 0.0).len();
+        assert!(
+            here > 0 && here < all,
+            "precondition: the skip keeps some samples and drops some ({here} of {all})"
+        );
+        assert_eq!(
+            here,
+            there,
+            "at 2^{} from the origin: {there} samples kept, against {here} at it",
+            scale + 23
+        );
+    }
+}
+
+/// How far along `curve` its points at `t = i / n` lie, `i` from 0 below
+/// `n` (each `t` an `f32`, as `sample` takes them): the polyline through
+/// them, in `f64`, the oracle `sample` is held to (#356). It shares no
+/// arithmetic with `sample`: a point is found by de Casteljau's
+/// construction on the control points' offsets from the start, where
+/// `sample` takes the Bernstein form (`flow::Local`).
+fn along_polyline(curve: &Curve, n: usize) -> (Vec<f64>, f64) {
+    let points: Vec<glam::DVec2> = match *curve {
+        Curve::Line(a, b) => vec![a, b],
+        Curve::Quadratic(a, b, c) => vec![a, b, c],
+        Curve::Cubic(a, b, c, d) => vec![a, b, c, d],
+    }
+    .into_iter()
+    .map(|p| p.as_dvec2() - curve.point(0.0).as_dvec2())
+    .collect();
+    let reach = points.iter().map(|p| p.length()).fold(0.0, f64::max);
+    let at = |t: f64| {
+        let mut row = points.clone();
+        while row.len() > 1 {
+            row = row.windows(2).map(|w| w[0] + (w[1] - w[0]) * t).collect();
+        }
+        row[0]
+    };
+    let mut along = Vec::with_capacity(n);
+    let (mut last, mut walked) = (glam::DVec2::ZERO, 0.0_f64);
+    for i in 0..n {
+        let here = at(f64::from(i as f32 / n as f32));
+        walked += (here - last).length();
+        last = here;
+        along.push(walked);
+    }
+    (along, reach)
+}
+
+/// How far along a curve `sample` measures each sample is the polyline
+/// through its samples, to the bound `sample` states (#356): within
+/// `(n + 1)·2⁻⁴⁷·(R + L)`, at every distance from the origin. Lines,
+/// quadratics and cubics 100 to 409,600 across, at the origin and every
+/// hundredfold from 10⁶ to 10²² from it, at a step of a 37th, a 1,000th
+/// and a 60,000th of their size (up to `SAMPLE_CAP` samples), each with
+/// its skip set at the distance its oracle (`along_polyline`) gives a
+/// third and two thirds of the way along: the first sample kept lies at
+/// or past the skip, and the one before it short of it, each to within
+/// that bound. A curve sampled fewer than three times is left out: far
+/// out, where the floats set its control points onto one, it is a point.
+///
+/// Controls, both red already at the origin: `along` summed in `f32` (a
+/// line 100 across at 1,000 samples, its skip at 33.3: the sample before
+/// it kept); its distance summed between its points as `f32`, where they
+/// lie, as before #356 (a cubic 100 across at 1,287 samples, its skip at
+/// 33.81273: the sample at it dropped).
+#[test]
+fn test_projection_a_samples_distance_along_is_its_polyline_at_every_magnitude() {
+    let (mut checked, mut inside) = (0usize, 0usize);
+    for at in std::iter::once(0.0_f32).chain((6..=22).step_by(2).map(|k| 10f32.powi(k))) {
+        for doubled in 0..=12 {
+            let size = 100.0 * (1u32 << doubled) as f32;
+            let p = |x: f32, y: f32| Vec2::new(at + x * size, at + y * size);
+            let curves = [
+                Curve::Line(p(0.0, 0.0), p(0.8, 0.6)),
+                Curve::Quadratic(p(0.0, 0.0), p(0.5, 1.0), p(1.0, 0.0)),
+                Curve::Cubic(p(0.0, 0.0), p(0.3, -0.2), p(0.7, 0.2), p(1.0, 0.0)),
+            ];
+            for curve in &curves {
+                for samples in [37.0_f32, 1_000.0, 60_000.0] {
+                    let step = size / samples;
+                    let n = sample(std::slice::from_ref(curve), step, 0.0).len();
+                    if n < 3 {
+                        continue;
+                    }
+                    let (along, reach) = along_polyline(curve, n);
+                    let length = along[n - 1];
+                    let bound = (n + 1) as f64 * 2f64.powi(-47) * (reach + length);
+                    for j in [n / 3, 2 * n / 3] {
+                        let skip = along[j] as f32;
+                        let kept = sample(std::slice::from_ref(curve), step, skip).len();
+                        let first = n - kept;
+                        let skip = f64::from(skip);
+                        let past = first == n || along[first] >= skip - bound;
+                        let short = first == 0 || along[first - 1] < skip + bound;
+                        assert!(
+                            past && short,
+                            "{curve:?} at {n} samples, skip {skip}: the first kept is {first}, along {:?}, past {bound}",
+                            &along[first.saturating_sub(1)..(first + 1).min(n)]
+                        );
+                        checked += 1;
+                        inside += usize::from(first > 0 && first < n);
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(
+        checked, 954,
+        "every curve with three samples or more is checked twice"
+    );
+    assert_eq!(inside, checked, "precondition: every skip lies inside its curve");
+}
+
 #[test]
 fn test_projection_a_lanes_fixed_samples_are_in_every_round() {
     // What the stop rests on: every sample `fixed_samples` reads is one
@@ -1684,6 +1828,535 @@ fn test_projection_a_lanes_fixed_samples_are_in_every_round() {
         with_last > 0 && without_last > 0,
         "precondition: last leads read ({with_last}) and not ({without_last})"
     );
+}
+
+#[test]
+fn test_projection_fixed_samples_keeps_its_rounding_margin_back() {
+    // The margin `fixed_samples` keeps back for rounding, held where it
+    // decides (#356): lanes of one cubic and a last lead, the cubic's first
+    // three control points one point, so that it moves fastest into its
+    // end and its last sample falls short of it by all three steps the
+    // stop allows — and, its parameter an `f32` up to 2⁻²⁵ short of
+    // `1 − 1/n`, by a little more. 48 of them along the x axis, 6,000 to
+    // 21,557 steps long, each held out so that a round's samples start
+    // from its chord less three steps, or from the nearest distance under
+    // it that a hold gives. In 8 the round at full handles does not take
+    // the last lead, though in exact arithmetic the chord less three steps
+    // reaches the skip: the margin is what keeps the stop from reading it.
+    // A 65,536th of the chord nearer, fourteen margins, and the stop reads
+    // the last lead of every one, as every round takes it.
+    //
+    // No junction makes such a lane. Its start has no direction, and its
+    // end's is a third longer than a unit, so that the handles put the
+    // cubic's second and third control points on its first. With unit
+    // directions the handle into the last lead is at most 0.5523 of its
+    // curve's chord, that curve's last sample falls short by not much
+    // more than half the three steps, and the rest is many times the
+    // margin of a lane of a few curves.
+    //
+    // The failing input is the margin zeroed: the stop then reads the last
+    // lead of the 8, which their round at full handles does not take.
+    let width = 1.0_f32;
+    let step = 0.25 * width;
+    let lead = 1.0_f32;
+    // 1/√0.5523, the handles' share: the end's handle reaches the start.
+    let long = 1.345_589_2_f32;
+    let taken = |lane: &Lane, k: i32| {
+        sample(
+            &path_through(lane.start, lane.end, &lane.via, 0.5_f32.powi(k)),
+            step,
+            CLEARANCE * lane.hold.max(lane.width),
+        )
+    };
+    let same = |p: &Vec2, q: &Vec2| p.x.to_bits() == q.x.to_bits() && p.y.to_bits() == q.y.to_bits();
+    let mut past = 0;
+    for case in 0..48 {
+        let span = step * (6_000 + 331 * case) as f32;
+        let mut lane = Lane {
+            start: (Vec2::ZERO, Vec2::ZERO, 0.0),
+            hold: 0.0,
+            end: (Vec2::new(span + long * lead, 0.0), Vec2::new(-long, 0.0), lead),
+            via: Vec::new(),
+            width,
+            straight: false,
+        };
+        let curves = path_through(lane.start, lane.end, &lane.via, 1.0);
+        let [Curve::Cubic(a, b, c, d), last @ Curve::Line(..)] = curves[..] else {
+            panic!("precondition: case {case} is one cubic and a last lead: {curves:?}");
+        };
+        let chord = (d.as_dvec2() - a.as_dvec2()).length();
+        assert!(
+            a == b && f64::from(a.distance(c)) <= 1.0e-6 * chord,
+            "precondition: case {case}: the cubic's first three control points meet: {curves:?}"
+        );
+        // The longest hold whose skip is at most the chord less three steps.
+        let reach = chord - 3.0 * f64::from(step);
+        let mut hold = (reach / f64::from(CLEARANCE)) as f32;
+        while f64::from(CLEARANCE * hold) > reach {
+            hold = f32::from_bits(hold.to_bits() - 1);
+        }
+        lane.hold = hold;
+        assert!(
+            f64::from(CLEARANCE * hold) > reach * (1.0 - 2f64.powi(-22)),
+            "precondition: case {case}: the skip is within two floats of the chord less three steps"
+        );
+        // A 65,536th of the chord nearer: fourteen margins clear of it.
+        let nearer = Lane {
+            hold: hold * (1.0 - 2f32.powi(-16)),
+            ..lane.clone()
+        };
+        for (lane, clear) in [(&lane, false), (&nearer, true)] {
+            let fixed = fixed_samples(lane);
+            for k in 0..=12 {
+                let round = taken(lane, k);
+                assert!(
+                    fixed.iter().all(|p| round.iter().any(|q| same(p, q))),
+                    "case {case}: a fixed sample not taken at share 2^-{k}: {lane:?}"
+                );
+            }
+            if clear {
+                assert!(
+                    fixed.iter().any(|p| same(p, &last.point(0.0))),
+                    "case {case}: a skip a 65,536th of the chord under it and the last lead is read: {lane:?}"
+                );
+            }
+        }
+        if !taken(&lane, 0).iter().any(|q| same(q, &last.point(0.0))) {
+            past += 1;
+        }
+    }
+    assert_eq!(
+        past, 8,
+        "the lanes whose chord less three steps reaches the skip, and whose round at full handles \
+         does not take the last lead"
+    );
+}
+
+#[test]
+fn test_projection_fixed_samples_keeps_a_margin_for_each_curve() {
+    // The part of `fixed_samples`' margin that grows with the curves, held
+    // where it decides (#356, ruling B37.1 §3): a lane whose chords, as
+    // the condition adds them in `f32`, sum to more than they are. A first
+    // lead just past 2²⁸ long, where an `f32` is 32 apart, then 600 cubics
+    // up and down between two points 16.25 apart: each joins a sum that
+    // can only step by 32, and rounds it up by 15.75. The condition's sum
+    // is 9,450 past the chords' own, 295 units in its last place. What
+    // the condition allows a round to fall short by, three steps a cubic
+    // and three of the lead's length over the cap, is 8,635 more than a
+    // round does: 270 units. The 25 between is more than the margin's
+    // constant, 7. The skip is set at the first float no round reaches,
+    // so that all of the 25 stand between the condition's sum and it.
+    //
+    // It takes hundreds of curves and no fewer. A sum's rounding outgrows
+    // a curve's three steps only past 2²⁵ steps; a round samples a curve
+    // at most 65,536 times, so what carries the sum there is allowed two
+    // of its length over that count or more, 512 times what one addition
+    // can round by.
+    //
+    // No junction makes this lane: its far end's direction is three long,
+    // so that its last lead takes the rest of the way. And what it holds
+    // is that the part is needed, not its size: the margin at these 601
+    // curves is more than 24 units, where the constant is 7; and a
+    // 4,096th of the chord nearer the stop reads the last lead, which
+    // bounds the part under three and a half units a curve, where the
+    // argument in `fixed_samples`' doc gives `1 + 2⁻¹⁴` and the code keeps
+    // two.
+    //
+    // The failing inputs are the margin's part for each curve dropped,
+    // its constant alone kept, and a margin of 24 units whatever the
+    // curves: the stop then reads a last lead no round takes.
+    let width = 1.0_f32;
+    let step = 0.25 * width;
+    let far = 2f32.powi(28) + 1024.0;
+    let rise = 16.25_f32;
+    let cubics = 600;
+    let end = Vec2::new(4.0 * far, 0.0);
+    // Point `k` as `path_through` sets it, `k / 600` of the way to `end`,
+    // moved onto `(far, rise)` or `(far, 0)` in turn.
+    let via: Vec<Vec2> = (1..cubics)
+        .map(|k| {
+            let along = end * (k as f32 / cubics as f32);
+            Vec2::new(far, if k % 2 == 1 { rise } else { 0.0 }) - along
+        })
+        .collect();
+    let mut lane = Lane {
+        start: (Vec2::ZERO, Vec2::X, far),
+        hold: 0.0,
+        end: (end, Vec2::new(-3.0, 0.0), far),
+        via,
+        width,
+        straight: false,
+    };
+    let curves = path_through(lane.start, lane.end, &lane.via, 1.0);
+    let Some((last @ Curve::Line(..), before)) = curves.split_last() else {
+        panic!("precondition: the lane ends on a last lead");
+    };
+    assert!(
+        before.len() == cubics + 1 && before[0] == Curve::Line(Vec2::ZERO, Vec2::new(far, 0.0)),
+        "precondition: a first lead just past 2^28 long, then 600 cubics"
+    );
+    for (k, curve) in before[1..].iter().enumerate() {
+        let (low, high) = (Vec2::new(far, 0.0), Vec2::new(far, rise));
+        let (a, d) = if k % 2 == 0 { (low, high) } else { (high, low) };
+        assert_eq!(
+            *curve,
+            Curve::Cubic(a, a, d, d),
+            "precondition: cubic {k} runs straight between the two points, at rest at each"
+        );
+    }
+    for k in 1..=12 {
+        assert_eq!(
+            path_through(lane.start, lane.end, &lane.via, 0.5_f32.powi(k)),
+            curves,
+            "precondition: the curves are the same at share 2^-{k}"
+        );
+    }
+    // The chords as the condition adds them, and as they are.
+    let chord = |curve: &Curve| curve.point(0.0).distance(curve.point(1.0));
+    let summed = before.iter().fold(0.0_f32, |sum, curve| sum + chord(curve));
+    let exact: f64 = before.iter().map(|curve| f64::from(chord(curve))).sum();
+    let unit = f64::from(f32::EPSILON) * f64::from(summed);
+    assert!(
+        f64::from(summed) - exact > 290.0 * unit,
+        "precondition: the chords' f32 sum {summed} is 290 units or more past their sum {exact}"
+    );
+    // What the condition allows a round to fall short by: three steps a
+    // cubic, and three of the lead's length over the cap.
+    let allowed = 3.0 * f64::from(far) / 65_536.0 + cubics as f64 * 3.0 * f64::from(step);
+    let taken = |lane: &Lane, k: i32| {
+        sample(
+            &path_through(lane.start, lane.end, &lane.via, 0.5_f32.powi(k)),
+            step,
+            CLEARANCE * lane.hold.max(lane.width),
+        )
+    };
+    let bits = |p: &Vec2| (p.x.to_bits(), p.y.to_bits());
+    // The least hold whose skip a round does not reach: the first float
+    // past what it measures to the last lead. Every round measures the
+    // same, its curves being the same.
+    let takes_last = |hold: f32| {
+        let held = Lane { hold, ..lane.clone() };
+        taken(&held, 0).iter().any(|q| bits(q) == bits(&last.point(0.0)))
+    };
+    let (mut reached, mut hold) = (
+        ((exact - allowed) / f64::from(CLEARANCE)) as f32,
+        summed / CLEARANCE,
+    );
+    assert!(
+        takes_last(reached) && !takes_last(hold),
+        "precondition: a round reaches the chords' sum less what the condition allows, and not their f32 sum"
+    );
+    while hold.to_bits() - reached.to_bits() > 1 {
+        let between = f32::from_bits(reached.to_bits().midpoint(hold.to_bits()));
+        if takes_last(between) {
+            reached = between;
+        } else {
+            hold = between;
+        }
+    }
+    lane.hold = hold;
+    let needed = (f64::from(summed) - allowed - f64::from(CLEARANCE * hold)) / unit;
+    assert!(
+        needed > 24.5,
+        "precondition: the condition's sum, less what it allows, is {needed} units past the skip, \
+         24.5 or more"
+    );
+    let nearer = Lane {
+        hold: hold * (1.0 - 2f32.powi(-12)),
+        ..lane.clone()
+    };
+    for (lane, clear) in [(&lane, false), (&nearer, true)] {
+        let fixed = fixed_samples(lane);
+        for k in 0..=12 {
+            let round: rustc_hash::FxHashSet<(u32, u32)> = taken(lane, k).iter().map(bits).collect();
+            assert!(
+                fixed.iter().all(|p| round.contains(&bits(p))),
+                "a fixed sample not taken at share 2^-{k}, held out {}",
+                lane.hold
+            );
+        }
+        if clear {
+            assert!(
+                fixed.iter().any(|p| bits(p) == bits(&last.point(0.0))),
+                "a skip a 4,096th of the chord under it and the last lead is read"
+            );
+        }
+    }
+}
+
+/// A lane to a point `across` away along the x axis, leaving along
+/// `leaves` and arriving along the axis, so that the handle at its far
+/// end reaches on past it: with `across` at 1.2·10¹⁹, the leg between its
+/// one cubic's handles is past the square root of the largest `f32`.
+fn overreaching_lane(across: f32, leaves: Vec2) -> Lane {
+    Lane {
+        start: (Vec2::ZERO, leaves, 0.5),
+        hold: 0.0,
+        end: (Vec2::new(across, 0.0), Vec2::X, 2.0),
+        via: Vec::new(),
+        width: 1.0,
+        straight: false,
+    }
+}
+
+#[test]
+fn test_projection_fixed_samples_reads_no_last_lead_past_a_skipped_curve() {
+    // A round takes no sample of a curve whose reach is not finite, and
+    // adds no distance for it (`sample`); the stop's chord says nothing of
+    // such a curve (#356, ruling B37.1 §1). A lane 1.2·10¹⁹ long: at full
+    // handles and at half, the leg between its cubic's handles is past the
+    // square root of the largest `f32`, its distance is not finite, and
+    // the round takes nothing of the lane; from a quarter of its handles
+    // on the round walks it and takes the last lead. So the last lead is
+    // in some rounds and not in others, and `fixed_samples` reads none of
+    // it.
+    // The failing input is the stop asked without regard to the reach: it
+    // reads the last lead by the chord, 1.2·10¹⁹ against a skip of 1.25.
+    let step = 0.25;
+    let taken = |lane: &Lane, k: i32| {
+        sample(
+            &path_through(lane.start, lane.end, &lane.via, 0.5_f32.powi(k)),
+            step,
+            CLEARANCE * lane.hold.max(lane.width),
+        )
+    };
+    let same = |p: &Vec2, q: &Vec2| p.x.to_bits() == q.x.to_bits() && p.y.to_bits() == q.y.to_bits();
+    let lane = overreaching_lane(1.2e19, -Vec2::X);
+    let curves = path_through(lane.start, lane.end, &lane.via, 1.0);
+    let [_, Curve::Cubic(_, b, c, _), last @ Curve::Line(..)] = curves[..] else {
+        panic!("precondition: a lead, one cubic and a last lead: {curves:?}");
+    };
+    assert!(
+        b.is_finite() && c.is_finite() && !b.distance(c).is_finite(),
+        "precondition: at full handles the leg from {b} to {c} has no finite distance"
+    );
+    assert!(
+        taken(&lane, 0).is_empty() && taken(&lane, 1).is_empty(),
+        "precondition: the rounds at full and at half handles take nothing"
+    );
+    assert!(
+        taken(&lane, 2).iter().any(|q| same(q, &last.point(0.0))),
+        "precondition: the round at a quarter of the handles takes the last lead"
+    );
+    let fixed = fixed_samples(&lane);
+    assert!(
+        !fixed.iter().any(|p| same(p, &last.point(0.0))),
+        "the last lead of a lane a round skips a curve of is read: {fixed:?}"
+    );
+    for k in 0..=12 {
+        let round = taken(&lane, k);
+        assert!(
+            fixed.iter().all(|p| round.iter().any(|q| same(p, q))),
+            "a fixed sample not taken at share 2^-{k}"
+        );
+    }
+    // A lane under half as long, its polygon a hundredth under the bound:
+    // every round walks its cubic, and its last lead is read.
+    let lane = overreaching_lane(5.7e18, -Vec2::X);
+    let curves = path_through(lane.start, lane.end, &lane.via, 1.0);
+    let last = curves[2];
+    let fixed = fixed_samples(&lane);
+    assert!(
+        fixed.iter().any(|p| same(p, &last.point(0.0))),
+        "the last lead of a lane 5.7e18 long, which every round walks, is not read"
+    );
+    for k in 0..=12 {
+        let round = taken(&lane, k);
+        assert!(
+            fixed.iter().all(|p| round.iter().any(|q| same(p, q))),
+            "the shorter lane: a fixed sample not taken at share 2^-{k}"
+        );
+    }
+}
+
+#[test]
+fn test_projection_fixed_samples_holds_its_bound_on_a_curves_polygon() {
+    // The bound `fixed_samples` keeps on a curve's polygon, held from both
+    // sides (#356, review 5910335535): the float `2⁶⁴ − 7·2⁴⁰`, the first
+    // under which the argument in its doc shows no round passing over the
+    // curve. Two lanes with no first lead, each one cubic at rest at its
+    // start, along the x axis.
+    //
+    // The first ends at the bound, at rest there too: its polygon is the
+    // bound itself, every round walks it, and its last lead is read. The
+    // failing input is the bound one float lower: the last lead is not
+    // read, where every round takes it.
+    //
+    // The second ends at the square root of the largest `f32`, its far
+    // handle a float and a half of that past it: the polygon reads `2⁶⁴`,
+    // seven floats over the bound, and the rounds at full and at half
+    // handles find the leg between the handles too long and take nothing.
+    // Its last lead is not read. The failing input is the bound at `2⁶⁴`:
+    // the last lead is read, where two rounds do not take it.
+    //
+    // The six floats between the two rest on the argument.
+    let step = 0.25;
+    let taken = |lane: &Lane, k: i32| {
+        sample(
+            &path_through(lane.start, lane.end, &lane.via, 0.5_f32.powi(k)),
+            step,
+            CLEARANCE * lane.hold.max(lane.width),
+        )
+    };
+    let bits = |p: &Vec2| (p.x.to_bits(), p.y.to_bits());
+    let lane_to = |end: (Vec2, Vec2, f32)| Lane {
+        start: (Vec2::ZERO, Vec2::ZERO, 0.0),
+        hold: 0.0,
+        end,
+        via: Vec::new(),
+        width: 1.0,
+        straight: false,
+    };
+    // The polygon as the stop reckons it.
+    let polygon = |lane: &Lane| {
+        let curves = path_through(lane.start, lane.end, &lane.via, 1.0);
+        let [Curve::Cubic(a, b, c, d), last @ Curve::Line(..)] = curves[..] else {
+            panic!("precondition: one cubic and a last lead: {curves:?}");
+        };
+        (
+            2.0 * (a.distance(b) + c.distance(d)) + a.distance(d),
+            last.point(0.0),
+        )
+    };
+    let bound = f32::from_bits(2f32.powi(64).to_bits() - 7);
+    let root = f32::MAX.sqrt();
+    assert!(
+        bound.to_bits() + 6 == root.to_bits(),
+        "precondition: the bound is six floats under the square root of the largest f32"
+    );
+
+    let at_bound = lane_to((Vec2::new(bound, 0.0), Vec2::ZERO, 2.0));
+    let (reads, last) = polygon(&at_bound);
+    assert_eq!(
+        reads.to_bits(),
+        bound.to_bits(),
+        "precondition: the first lane's polygon is the bound"
+    );
+    let fixed = fixed_samples(&at_bound);
+    for k in 0..=12 {
+        let points = taken(&at_bound, k);
+        let round: rustc_hash::FxHashSet<(u32, u32)> = points.iter().map(bits).collect();
+        assert!(
+            points.len() >= 65_535 && round.contains(&bits(&last)),
+            "precondition: the round at share 2^-{k} walks the first lane, at the sampling's cap, \
+             and takes its last lead ({} points)",
+            points.len()
+        );
+        assert!(
+            fixed.iter().all(|p| round.contains(&bits(p))),
+            "the first lane: a fixed sample not taken at share 2^-{k}"
+        );
+    }
+    assert!(
+        fixed.iter().any(|p| bits(p) == bits(&last)),
+        "the last lead of a lane whose polygon is the bound, which every round walks, is not read"
+    );
+
+    let over = 1.5 * 3.0 / 0.5523 * 2f32.powi(-24);
+    let past_bound = lane_to((Vec2::new(root, 0.0), Vec2::new(over, 0.0), 2.0));
+    let (reads, last) = polygon(&past_bound);
+    assert_eq!(
+        reads.to_bits(),
+        2f32.powi(64).to_bits(),
+        "precondition: the second lane's polygon reads 2^64"
+    );
+    assert!(
+        taken(&past_bound, 0).is_empty() && taken(&past_bound, 1).is_empty(),
+        "precondition: the rounds at full and at half handles take nothing of the second lane"
+    );
+    assert!(
+        taken(&past_bound, 2).iter().any(|q| bits(q) == bits(&last)),
+        "precondition: the round at a quarter of the handles takes its last lead"
+    );
+    let fixed = fixed_samples(&past_bound);
+    assert!(
+        !fixed.iter().any(|p| bits(p) == bits(&last)),
+        "the last lead of a lane whose polygon reads 2^64, which two rounds pass over, is read"
+    );
+}
+
+#[test]
+fn test_projection_untangle_answers_as_its_rounds_beside_a_skipped_curve() {
+    // What the stop is for (#347), on a junction it used to answer wrongly
+    // (#356, ruling B37.1 §1): two paths that one halving parts, beside
+    // two to one point 1.2·10¹⁹ away, whose curves a round at full handles
+    // skips. The far paths' last leads meet; read as taken in every round,
+    // they made two paths too near in every round to come, as many as the
+    // first round found, and the rounds stopped there, at full handles.
+    // No round takes those samples at the handles the far paths keep.
+    let near = |x: f32, turn: f32| Lane {
+        start: (Vec2::ZERO, Vec2::from_angle(turn).rotate(Vec2::Y), 4.0),
+        hold: 0.0,
+        end: (Vec2::new(x, 20.0), -Vec2::Y, 4.0),
+        via: Vec::new(),
+        width: 3.0,
+        straight: false,
+    };
+    let lanes = vec![
+        near(-40.0, 1.2),
+        near(-30.0, -1.2),
+        overreaching_lane(1.2e19, -Vec2::X),
+        overreaching_lane(1.2e19, -Vec2::Y),
+    ];
+    let every_round = untangle_afresh(&lanes);
+    assert_eq!(
+        every_round,
+        [0.5, 0.5, 1.0, 1.0],
+        "precondition: measured every round, one halving parts the two near paths"
+    );
+    assert_eq!(
+        untangle(&lanes),
+        every_round,
+        "the stop's answer against every round's"
+    );
+}
+
+#[test]
+fn test_projection_near_pairs_finds_the_pairs_past_the_last_cell() {
+    // Points 2·10¹⁹ out along x, either way, where a point's cell is past
+    // the largest index or the least and is held at it: the cells round
+    // one are looked up without stepping past that index, and the grid
+    // finds the pairs that measuring point by point finds (#356, review
+    // 5910335535). Three lanes of points up the line: the first from 0 to
+    // 1.2 and the second from 1.3 to 2.4, a tenth apart, so that with
+    // cells 1.25 on a side they share no cell and are near only across
+    // one's edge; the third 1,000 further on.
+    //
+    // The failing inputs: a neighbor's index found by adding to the
+    // largest, or to the least with the largest alone held — an overflow,
+    // which a debug build stops at — and one cell looked in for the nine,
+    // which finds no pair.
+    let widths = [1.0_f32; 3];
+    let side = CLEARANCE * widths[0];
+    for out in [2.0e19_f32, -2.0e19] {
+        let run = |from: f32, count: usize| -> Vec<Vec2> {
+            (0..count)
+                .map(|k| Vec2::new(out, from + 0.1 * k as f32))
+                .collect()
+        };
+        let samples = vec![run(0.0, 13), run(1.3, 12), run(1_000.0, 13)];
+        assert!(
+            (out / side).abs() > i64::MAX as f32,
+            "precondition: at {out}, the points' cells are past the last index"
+        );
+        let rows = |lane: &[Vec2]| -> Vec<f32> { lane.iter().map(|p| (p.y / side).floor()).collect() };
+        assert!(
+            rows(&samples[0]).iter().all(|&row| row == 0.0)
+                && rows(&samples[1]).iter().all(|&row| row == 1.0),
+            "precondition: the first lane's points lie in one row of cells, the second's in the next"
+        );
+        let pairwise = near_pairwise(&samples, &widths);
+        assert_eq!(
+            pairwise.iter().copied().collect::<Vec<_>>(),
+            [(0, 1)],
+            "precondition: at {out}, the first two lanes are near, the third clear of both"
+        );
+        assert_eq!(
+            near_pairs(&samples, &widths, &[true; 3], &Default::default()),
+            pairwise,
+            "at {out}: the grid's pairs against every pair measured"
+        );
+    }
 }
 
 #[test]

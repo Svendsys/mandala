@@ -317,8 +317,7 @@ fn export(args: &[String]) -> Result<String, CliError> {
 
 /// A refusal of the guarded writer as `verb`'s failure, home folded.
 fn failed(verb: &str, refusal: PublishRefusal) -> CliError {
-    let (PublishRefusal::Invalid(message) | PublishRefusal::Internal(message)) = refusal;
-    CliError::Failed(collapse_home_in(&format!("{verb}: {message}")))
+    CliError::Failed(collapse_home_in(&format!("{verb}: {}", refusal.message())))
 }
 
 /// `apply <map> <pattern> [-i] [--dry-run] -- <cmd> [args...]`.

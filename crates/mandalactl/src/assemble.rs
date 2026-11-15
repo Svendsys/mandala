@@ -37,13 +37,14 @@
 //! that needs nothing.
 
 use std::fs::File;
-use std::io::{BufReader, BufWriter, Write};
+use std::io::{BufReader, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{json, Value};
 
 use crate::cli::Invocation;
+use crate::destination::Destination;
 use crate::params::{tokenize, Token};
 use crate::render;
 use crate::run::{Exit, Io};
@@ -566,9 +567,17 @@ pub fn ffmpeg_list(dir: &Path, manifest: &Manifest) -> String {
 
 /// `ffmpeg`'s arguments: read `list`, write `out` as H.264 in an MP4
 /// that any player opens (yuv420p, even sides, the index up front) at
-/// `fps`, scaled to `scale_to`'s width when given. `out` is a file of
-/// ours (the `.partial` beside the real one), so it is always replaced,
-/// and its format is named because its name does not say.
+/// `fps`, scaled to `scale_to`'s width when given. Its format is named
+/// because its name does not say.
+///
+/// `out` is a name in a directory this run created for `ffmpeg` alone
+/// ([`guarded_file::PrivateDir`]), where nothing is yet. Safety rests
+/// wholly on that directory, not on a flag: `ffmpeg` is not trusted to
+/// refuse. `-n` in place of `-y` only states what is true of this
+/// call, that there is nothing to overwrite. Given an output that
+/// exists, `ffmpeg -n` (6.1.1) writes nothing and exits `0`, which
+/// reads as success; given a dangling symlink, it follows the link and
+/// writes the video into the file the link names.
 pub fn ffmpeg_args(list: &Path, out: &Path, fps: u32, scale_to: Option<u32>) -> Vec<String> {
     let mut filters = Vec::new();
     if let Some(width) = scale_to {
@@ -577,7 +586,7 @@ pub fn ffmpeg_args(list: &Path, out: &Path, fps: u32, scale_to: Option<u32>) -> 
     filters.push("pad=ceil(iw/2)*2:ceil(ih/2)*2".to_string());
     filters.push("format=yuv420p".to_string());
     let mut args: Vec<String> = [
-        "-y",
+        "-n",
         "-hide_banner",
         "-loglevel",
         "error",
@@ -602,70 +611,38 @@ pub fn ffmpeg_args(list: &Path, out: &Path, fps: u32, scale_to: Option<u32>) -> 
     args
 }
 
-/// Create `path` for writing only if nothing is there: no file, no
-/// symlink (dangling or not), no hard link to someone else's file.
-fn open_exclusive(path: &Path) -> std::io::Result<File> {
-    File::options().write(true).create_new(true).open(path)
-}
+/// The names `ffmpeg`'s frame list and its video take inside the
+/// directory this run made for it.
+const FFMPEG_LIST: &str = "frames.txt";
+const FFMPEG_VIDEO: &str = "video.mp4";
 
-/// A new file for `ffmpeg`'s frame list in the temp dir, made
-/// exclusively — `O_EXCL` neither follows a symlink nor reuses a name
-/// someone planted — under a name that is this process's and this
-/// moment's, tried a few times if taken.
-fn create_temp_list() -> Result<(PathBuf, File), String> {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    claim_first((0..16u32).map(|attempt| {
-        std::env::temp_dir().join(format!(
-            "mandalactl-{}-{nanos}-{attempt}-frames.txt",
-            std::process::id()
-        ))
-    }))
-}
-
-/// The first of `candidates` nothing is at yet, created and opened
-/// through [`open_exclusive`]; one that is taken — planted or not — is
-/// passed over, never opened.
-fn claim_first(candidates: impl IntoIterator<Item = PathBuf>) -> Result<(PathBuf, File), String> {
-    for path in candidates {
-        match open_exclusive(&path) {
-            Ok(file) => return Ok((path, file)),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => {
-                return Err(format!(
-                    "could not make ffmpeg's frame list `{}`: {e}",
-                    path.display()
-                ))
-            }
-        }
-    }
-    Err("could not find a free name for ffmpeg's frame list in the temp dir".into())
-}
-
-/// Run the host's `ffmpeg` over the recording. Missing is a refusal
-/// that names the GIF, which needs nothing; a failure carries what
-/// `ffmpeg` said.
-fn run_ffmpeg(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) -> Result<(), String> {
-    let (list_path, list_file) = create_temp_list()?;
-    let list = ffmpeg_list(dir, manifest);
+/// Run the host's `ffmpeg` over the recording, writing [`FFMPEG_VIDEO`]
+/// into `private`, a directory this run created for it alone: its frame
+/// list goes there too, so `ffmpeg` opens nothing outside it. Missing is
+/// a refusal that names the GIF, which needs nothing; a failure carries
+/// what `ffmpeg` said.
+fn run_ffmpeg(dir: &Path, manifest: &Manifest, private: &Path, options: &Options) -> Result<(), String> {
+    let list_path = private.join(FFMPEG_LIST);
     // Written and closed before ffmpeg reads it.
-    std::io::Write::write_all(&mut { list_file }, list.as_bytes()).map_err(|e| {
-        let _ = std::fs::remove_file(&list_path);
-        format!(
-            "could not write ffmpeg's frame list `{}`: {e}",
-            list_path.display()
-        )
-    })?;
+    File::options()
+        .write(true)
+        .create_new(true)
+        .open(&list_path)
+        .and_then(|mut file| file.write_all(ffmpeg_list(dir, manifest).as_bytes()))
+        .map_err(|e| {
+            format!(
+                "could not write ffmpeg's frame list `{}`: {e}",
+                list_path.display()
+            )
+        })?;
     let outcome = Command::new("ffmpeg")
         .args(ffmpeg_args(
             &list_path,
-            out,
+            &private.join(FFMPEG_VIDEO),
             options.fps.unwrap_or(manifest.fps),
             options.width.filter(|w| *w < manifest.width),
         ))
         .output();
-    let _ = std::fs::remove_file(&list_path);
     match outcome {
         Ok(done) if done.status.success() => Ok(()),
         Ok(done) => Err(format!(
@@ -684,29 +661,27 @@ fn run_ffmpeg(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) ->
 
 /// Assemble the recording in `dir` as `options` says, into `out`.
 ///
-/// The file is made without clobbering: refused when it exists unless
-/// `overwrite`; written beside its final name and moved into place, so
-/// a failure leaves nothing half-written where a good file was.
+/// The file is written by the workspace's guarded writer
+/// (`guarded_file`), so it holds that writer's guarantees. `out` is a
+/// path this command line named, so a symlink there leads to the file
+/// written, as for `maptool export`: it is resolved to its real file
+/// first, and a dangling link, or one to something that is not a file,
+/// is refused (ruling B38.1 §6). That real file is never replaced
+/// unless `overwrite` (the link, if any, stays a link), and an existing
+/// one is refused before any frame is read and before `ffmpeg` runs; a
+/// refusal names the path as typed ([`Destination`]). The GIF is
+/// written to a temp file of this run's beside it and moved into place;
+/// `ffmpeg` writes inside a directory this run created for it alone,
+/// and its video is moved into place the same way. A failure leaves the
+/// real file as it was, and removes only what this run created.
 pub fn assemble(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) -> Result<Assembled, String> {
     if manifest.frames.is_empty() {
         return Err("the recording holds no frames; there is nothing to assemble".into());
     }
-    if !options.overwrite && std::fs::symlink_metadata(out).is_ok() {
-        return Err(format!(
-            "`{}` exists; pass overwrite=true to replace it",
-            out.display()
-        ));
-    }
+    let destination = Destination::resolve(out)?;
+    destination.check(options.overwrite)?;
+    let (real, said) = (destination.real(), |why| destination.say(why));
     let size = output_size(manifest, options);
-    let partial = {
-        let mut name = out.as_os_str().to_owned();
-        name.push(".partial");
-        PathBuf::from(name)
-    };
-    let discard = |why: String| {
-        let _ = std::fs::remove_file(&partial);
-        why
-    };
     match options.format {
         Format::Gif => {
             let times: Vec<f64> = manifest.frames.iter().map(|f| f.t_ms).collect();
@@ -716,26 +691,10 @@ pub fn assemble(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) 
                 spacing_for(options.fps),
                 options.max_frames,
             );
-            let file = File::options()
-                .write(true)
-                .create_new(true)
-                .open(&partial)
-                .map_err(|e| match e.kind() {
-                    std::io::ErrorKind::AlreadyExists => format!(
-                        "`{}` is in the way: an earlier run was interrupted. Delete it and run again",
-                        partial.display()
-                    ),
-                    _ => format!("could not create `{}`: {e}", partial.display()),
-                })?;
-            let mut writer = BufWriter::new(file);
-            write_gif(dir, manifest, &plan, size, &mut writer).map_err(discard)?;
-            let file = writer
-                .into_inner()
-                .map_err(|e| discard(format!("could not write `{}`: {e}", partial.display())))?;
-            file.sync_all()
-                .map_err(|e| discard(format!("could not write `{}`: {e}", partial.display())))?;
-            std::fs::rename(&partial, out)
-                .map_err(|e| discard(format!("could not move the GIF into `{}`: {e}", out.display())))?;
+            let bytes = guarded_file::publish(real, options.overwrite, |writer| {
+                write_gif(dir, manifest, &plan, size, writer)
+            })
+            .map_err(said)?;
             let shown_cs: u64 = plan.frames.iter().map(|f| u64::from(f.delay_cs)).sum();
             let cap_hit = plan.spacing_cs > spacing_for(options.fps) + 1e-9;
             Ok(Assembled {
@@ -746,17 +705,21 @@ pub fn assemble(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) 
                 width: size.0,
                 height: size.1,
                 duration_ms: shown_cs as f64 * 10.0,
-                bytes: std::fs::metadata(out).map_or(0, |m| m.len()),
+                bytes,
                 cap_hit,
             })
         }
         Format::Mp4 => {
-            // `ffmpeg` writes beside the final name, and the file is
-            // moved into place only once it has finished: a failure
-            // never leaves a truncated video where a good one was.
-            run_ffmpeg(dir, manifest, &partial, options).map_err(discard)?;
-            std::fs::rename(&partial, out)
-                .map_err(|e| discard(format!("could not move the video into `{}`: {e}", out.display())))?;
+            // `ffmpeg` writes inside a directory of this run's beside
+            // the real file, and its video is moved into place only once
+            // it has finished: a failure never leaves a truncated video
+            // where a good one was. Dropping `private`, on either path,
+            // removes the directory and only it.
+            let private = guarded_file::PrivateDir::beside(real).map_err(said)?;
+            run_ffmpeg(dir, manifest, private.path(), options)?;
+            let bytes = private
+                .publish(FFMPEG_VIDEO, real, options.overwrite)
+                .map_err(said)?;
             Ok(Assembled {
                 out: out.to_path_buf(),
                 format: "mp4",
@@ -765,7 +728,7 @@ pub fn assemble(dir: &Path, manifest: &Manifest, out: &Path, options: &Options) 
                 width: size.0,
                 height: size.1,
                 duration_ms: end_ms(manifest),
-                bytes: std::fs::metadata(out).map_or(0, |m| m.len()),
+                bytes,
                 cap_hit: false,
             })
         }
@@ -1346,6 +1309,22 @@ mod tests {
         (temp, dir)
     }
 
+    /// What the guarded writer's temp files and directories left in
+    /// `dir` (`.mandala-write-*`): nothing, after any run.
+    fn writers_leftovers(dir: &Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .expect("readable")
+            .map(|entry| {
+                entry
+                    .expect("an entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .filter(|name| name.starts_with(".mandala-write-"))
+            .collect()
+    }
+
     fn options() -> Options {
         Options {
             out: None,
@@ -1417,8 +1396,9 @@ mod tests {
             bytes.windows(11).any(|w| w == b"NETSCAPE2.0"),
             "it loops: the Netscape extension is there"
         );
-        assert!(
-            !dir.join("out.gif.partial").exists(),
+        assert_eq!(
+            writers_leftovers(&dir),
+            Vec::<String>::new(),
             "nothing half-written is left"
         );
     }
@@ -1466,7 +1446,7 @@ mod tests {
         std::fs::write(&precious, "precious").expect("seed");
         let refused = assemble(&dir, &manifest, &precious, &options());
         assert!(
-            matches!(&refused, Err(m) if m.contains("overwrite=true")),
+            matches!(&refused, Err(m) if m.contains("exists; pass overwrite=true")),
             "{refused:?}"
         );
         assert_eq!(std::fs::read_to_string(&precious).expect("read"), "precious");
@@ -1498,7 +1478,11 @@ mod tests {
             "{sized:?}"
         );
         assert!(!dir.join("a.gif").exists() && !dir.join("b.gif").exists());
-        assert!(!dir.join("a.gif.partial").exists() && !dir.join("b.gif.partial").exists());
+        assert_eq!(
+            writers_leftovers(&dir),
+            Vec::<String>::new(),
+            "no temp file is left"
+        );
 
         let empty = Manifest {
             frames: Vec::new(),
@@ -1556,11 +1540,16 @@ mod tests {
 
     #[test]
     fn test_the_ffmpeg_arguments_make_an_mp4_any_player_opens() {
-        let args = ffmpeg_args(Path::new("/l.txt"), Path::new("/o.mp4.partial"), 30, Some(640));
+        let args = ffmpeg_args(
+            Path::new("/d/frames.txt"),
+            Path::new("/d/video.mp4"),
+            30,
+            Some(640),
+        );
         assert_eq!(
             args,
             [
-                "-y",
+                "-n",
                 "-hide_banner",
                 "-loglevel",
                 "error",
@@ -1569,7 +1558,7 @@ mod tests {
                 "-safe",
                 "0",
                 "-i",
-                "/l.txt",
+                "/d/frames.txt",
                 "-vf",
                 "scale=640:-2,pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p",
                 "-r",
@@ -1580,99 +1569,26 @@ mod tests {
                 "+faststart",
                 "-f",
                 "mp4",
-                "/o.mp4.partial"
+                "/d/video.mp4"
             ]
         );
         let unscaled = ffmpeg_args(Path::new("/l.txt"), Path::new("/o"), 12, None);
         assert!(unscaled.contains(&"pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p".to_string()));
     }
 
-    /// The frame list lands in the temp dir under a name of its own each
-    /// time, opened through [`open_exclusive`].
-    #[test]
-    fn test_each_ffmpeg_list_is_a_new_file_of_its_own_in_the_temp_dir() {
-        let (path, mut file) = create_temp_list().expect("a list");
-        file.write_all(b"x").expect("written");
-        assert!(path.starts_with(std::env::temp_dir()));
-        let again = create_temp_list().expect("another");
-        assert_ne!(path, again.0, "each is a name of its own");
-        for p in [&path, &again.0] {
-            let _ = std::fs::remove_file(p);
-        }
-    }
+    /// Set to make a missing `ffmpeg` a failure rather than a skip, as
+    /// `MANDALA_REQUIRE_GPU` does for a missing adapter. CI sets it.
+    const REQUIRE_FFMPEG: &str = "MANDALA_REQUIRE_FFMPEG";
 
-    /// A victim file of yours, a name in the temp dir someone planted to
-    /// point at it, and whether the list's open wrote through it.
-    fn planted(kind: &str, plant: impl FnOnce(&Path, &Path) -> std::io::Result<()>) -> (bool, String) {
-        let victim = tempfile::NamedTempFile::new().expect("a victim");
-        std::fs::write(victim.path(), "precious").expect("seed");
-        let name = std::env::temp_dir().join(format!("mandalactl-planted-{kind}-{}.txt", std::process::id()));
-        let _ = std::fs::remove_file(&name);
-        plant(victim.path(), &name).expect("plant");
-        let refused = open_exclusive(&name)
-            .map(|mut f| f.write_all(b"overwritten"))
-            .is_err();
-        let _ = std::fs::remove_file(&name);
-        (refused, std::fs::read_to_string(victim.path()).expect("read"))
-    }
-
-    /// The list's open never writes through a name someone planted as a
-    /// hard link to a file of yours — the planting that needs no
-    /// privilege on either platform. The failing input is
-    /// `open_exclusive` with `create(true)` in place of
-    /// `create_new(true)`: it opens the link and writes into the victim.
-    #[test]
-    fn test_the_ffmpeg_list_is_never_written_through_a_planted_hard_link() {
-        let (refused, victim) = planted("link", |victim, name| std::fs::hard_link(victim, name));
-        assert!(refused, "a name that exists is refused");
-        assert_eq!(victim, "precious");
-    }
-
-    /// The list's names are claimed through the seam: a first candidate
-    /// planted as a hard link to a file of yours is passed over for the
-    /// next, and the victim is never written. The failing input is a
-    /// `claim_first` that opens a name any other way than
-    /// [`open_exclusive`] — it takes the planted name and writes into the
-    /// victim — so the list cannot quietly stop going through the seam.
-    #[test]
-    fn test_the_ffmpeg_list_passes_over_a_planted_name_for_the_next() {
-        let dir = tempfile::tempdir().expect("a directory");
-        let victim = dir.path().join("yours.txt");
-        std::fs::write(&victim, "precious").expect("seed");
-        let planted = dir.path().join("frames-0.txt");
-        std::fs::hard_link(&victim, &planted).expect("plant");
-        let free = dir.path().join("frames-1.txt");
-        let (claimed, mut file) = claim_first([planted.clone(), free.clone()]).expect("a free name");
-        file.write_all(b"file 'a.png'\n").expect("written");
-        assert_eq!(claimed, free, "the planted name is passed over");
-        assert_eq!(std::fs::read_to_string(&victim).expect("read"), "precious");
-    }
-
-    /// The same for a planted symlink, dangling or not.
-    ///
-    /// Unix-only because planting a symlink on Windows takes a privilege
-    /// (`SeCreateSymbolicLinkPrivilege`, or developer mode) a test cannot
-    /// count on; the hard-link test above plants the name the way Windows
-    /// lets anyone, and runs on both.
-    #[test]
-    #[cfg(unix)]
-    fn test_the_ffmpeg_list_is_never_written_through_a_planted_symlink() {
-        let (refused, victim) = planted("symlink", |victim, name| std::os::unix::fs::symlink(victim, name));
-        assert!(refused, "create_new refuses a symlink");
-        assert_eq!(victim, "precious");
-        // Dangling: its target does not exist yet, in a directory that
-        // does, so an open that followed it would create the file there.
-        let dir = tempfile::tempdir().expect("a directory");
-        let target = dir.path().join("made-through-the-link.txt");
-        let (refused, _) = planted("dangling", |_, name| std::os::unix::fs::symlink(&target, name));
-        assert!(refused, "a dangling symlink is refused too");
-        assert!(!target.exists(), "nothing was created through it");
-    }
-
-    /// With a real `ffmpeg` on the host the MP4 is made and is a video;
-    /// without one the test says so and has nothing to check (the
-    /// refusal path is tested below with a name that is certainly not
-    /// there).
+    /// With a real `ffmpeg` on the host the MP4 is made and is a video,
+    /// and the directory `ffmpeg` worked in is gone: the one test that
+    /// runs the real program over what it is handed (`-n`, the frame
+    /// list and the video inside the private directory). Without one it
+    /// fails when [`REQUIRE_FFMPEG`] is set, and otherwise prints a
+    /// `SKIPPED:` note — through the stderr handle, past libtest's
+    /// capture, where `./test.sh` counts it, the shape of baumhard's
+    /// `util::test_skip`, which this crate does not depend on — and has
+    /// nothing to check.
     #[test]
     fn test_an_mp4_is_made_when_ffmpeg_is_on_the_host() {
         let present = Command::new("ffmpeg")
@@ -1680,7 +1596,17 @@ mod tests {
             .output()
             .is_ok_and(|o| o.status.success());
         if !present {
-            eprintln!("skipped: no `ffmpeg` on PATH (format=mp4 is the host's)");
+            assert!(
+                std::env::var_os(REQUIRE_FFMPEG).is_none(),
+                "no `ffmpeg` on PATH, and {REQUIRE_FFMPEG} is set, so this test may not skip"
+            );
+            let mut stderr = std::io::stderr().lock();
+            let _ = writeln!(
+                stderr,
+                "SKIPPED: mandalactl: no `ffmpeg` on PATH, so format=mp4 was not run end to end. \
+                 Install it, or set {REQUIRE_FFMPEG} to make this a failure."
+            );
+            let _ = stderr.flush();
             return;
         }
         let (_keep, dir) = recording("assemble-mp4", &[[255, 0, 0], [0, 255, 0]], &[0.0, 500.0], 1000.0);
@@ -1700,6 +1626,18 @@ mod tests {
         let bytes = std::fs::read(&out).expect("written");
         assert!(bytes.windows(4).any(|w| w == b"ftyp"), "an MP4 container");
         assert!(made.bytes > 0);
+        let left: Vec<String> = std::fs::read_dir(&dir)
+            .expect("readable")
+            .map(|entry| {
+                entry
+                    .expect("an entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .filter(|name| name.starts_with(".mandala-write-"))
+            .collect();
+        assert_eq!(left, Vec::<String>::new(), "the private directory is removed");
     }
 
     // — the command line —
@@ -1891,7 +1829,7 @@ mod tests {
 
         let (exit, _, err) = run_line(&["assemble", &relative], &cwd, false);
         assert_eq!(exit, Exit::CommandError, "an existing file is not clobbered");
-        assert!(err.contains("overwrite=true"), "{err}");
+        assert!(err.contains("exists; pass overwrite=true"), "{err}");
 
         let (exit, _, err) = run_line(&["assemble", "no-such-recording"], &cwd, false);
         assert_eq!(exit, Exit::CommandError);
@@ -1997,20 +1935,6 @@ mod tests {
         let refused = parse_manifest(&manifest_text(&frame(0.0, "a\\nfile 'b'.png")));
         assert!(
             matches!(&refused, Err(m) if m.contains("plain file name")),
-            "{refused:?}"
-        );
-    }
-
-    /// A stale `.partial` from an interrupted run is named in the
-    /// refusal, so the way out is in the message.
-    #[test]
-    fn test_a_leftover_partial_file_is_named_in_the_refusal() {
-        let (_keep, dir) = recording("assemble-partial", &[[1, 2, 3]], &[0.0], 100.0);
-        let manifest = read_manifest(&dir.join(MANIFEST_FILE)).expect("manifest");
-        std::fs::write(dir.join("x.gif.partial"), "stale").expect("seed");
-        let refused = assemble(&dir, &manifest, &dir.join("x.gif"), &options());
-        assert!(
-            matches!(&refused, Err(m) if m.contains("x.gif.partial") && m.contains("interrupted")),
             "{refused:?}"
         );
     }

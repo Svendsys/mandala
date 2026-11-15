@@ -48,6 +48,7 @@ mod cli;
 // fully armed.
 #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 mod client;
+mod destination;
 mod help;
 mod params;
 mod render;

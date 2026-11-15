@@ -67,7 +67,11 @@ pub mod grapheme_chad;
 /// Writing a file at a path the program did not choose: atomic, never
 /// through a symlink, never over a file unasked. The one such writer
 /// in the workspace; the browser has no files, and it refuses there.
-pub mod guarded_file;
+/// The `guarded_file` crate (`lib/guarded_file`), re-exported here so
+/// the app and `maptool` reach it where they always did; a crate of its
+/// own because `mandalactl` uses it too and takes no baumhard
+/// dependency.
+pub use guarded_file;
 /// Every crate `Cargo.lock` holds at two versions, each with the reason
 /// it stays (#284), held against the lockfile so a `cargo update` cannot
 /// bring a removed one back unnoticed. Test-only and native-only for the

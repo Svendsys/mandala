@@ -9,10 +9,14 @@
 //! Every test here sets a test seam or reads a test counter, so none has a
 //! `do_*` twin.
 //!
-//! The far frames' perimeters here are overmeasured until #356 (their
-//! ellipses' tables sum rounding as length, +12% to +60% from 10⁷ to
-//! 10¹⁰), and counted work bounds them regardless: every pin here — reads
-//! a step, `SIDE_EDGE`, `TRACK_EDGE` — is in counted reads and steps.
+//! The far ellipses' paths are as long as their outlines: their tables
+//! measure from their centers (#356). Until they did, they summed their
+//! points' rounding as length — from 10⁷ from the origin on, anything
+//! from 24% short to more than twice as long, or nothing at all — and
+//! their frames laid copies along a path of another length than their
+//! outline's. Nothing here rested on that length: each pin (reads a step,
+//! `SIDE_EDGE`, `TRACK_EDGE`) is in counted reads and steps, and each band
+//! in reads a step or a cluster.
 
 use glam::Vec2;
 

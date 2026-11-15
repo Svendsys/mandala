@@ -10,7 +10,9 @@
 //! them: `fuzz/Cargo.lock` locks every package it shares with the
 //! workspace at a version and source the workspace's lockfile does, and
 //! every input `scripts/fuzz.sh` feeds a target fits that target's
-//! `-max_len`. Native only: it reads the files.
+//! `-max_len`; and the fuzz workflow's paths filter names every package
+//! that lockfile takes from this repository. Native only: it reads the
+//! files.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -758,19 +760,7 @@ fn path_package_dev_only() -> BTreeMap<String, BTreeSet<String>> {
         for entry in std::fs::read_dir(&root).expect("the member directories list") {
             let manifest = entry.expect("an entry").path().join("Cargo.toml");
             let Ok(text) = std::fs::read_to_string(&manifest) else { continue };
-            let name = text
-                .split("[package]")
-                .nth(1)
-                .and_then(|package| {
-                    package.lines().find_map(|line| {
-                        line.trim()
-                            .strip_prefix("name = \"")
-                            .and_then(|rest| rest.strip_suffix('"'))
-                    })
-                })
-                .unwrap_or_else(|| panic!("{} names its package", manifest.display()))
-                .to_string();
-            out.insert(name, dev_only_dependencies(&text));
+            out.insert(package_name(&text, &manifest), dev_only_dependencies(&text));
         }
     }
     for dir in
@@ -779,21 +769,137 @@ fn path_package_dev_only() -> BTreeMap<String, BTreeSet<String>> {
         let manifest = repo_path(&dir).join("Cargo.toml");
         let text =
             std::fs::read_to_string(&manifest).unwrap_or_else(|e| panic!("{}: {e}", manifest.display()));
-        let name = text
-            .split("[package]")
-            .nth(1)
-            .and_then(|package| {
-                package.lines().find_map(|line| {
-                    line.trim()
-                        .strip_prefix("name = \"")
-                        .and_then(|rest| rest.strip_suffix('"'))
-                })
-            })
-            .unwrap_or_else(|| panic!("{} names its package", manifest.display()))
-            .to_string();
-        out.insert(name, BTreeSet::new());
+        out.insert(package_name(&text, &manifest), BTreeSet::new());
     }
     out
+}
+
+/// The `[package]` name a manifest declares; `manifest` is where it was
+/// read from, for the panic when it declares none.
+fn package_name(text: &str, manifest: &std::path::Path) -> String {
+    text.split("[package]")
+        .nth(1)
+        .and_then(|package| {
+            package.lines().find_map(|line| {
+                line.trim()
+                    .strip_prefix("name = \"")
+                    .and_then(|rest| rest.strip_suffix('"'))
+            })
+        })
+        .unwrap_or_else(|| panic!("{} names its package", manifest.display()))
+        .to_string()
+}
+
+/// Where each package this repository holds lives, by package name, as
+/// a directory relative to the repository root: the workspace members
+/// under `lib/` and `crates/`, the paths the root manifest's
+/// `[patch.crates-io]` names, and `fuzz/` itself.
+fn path_package_dirs() -> BTreeMap<String, String> {
+    let mut dirs = vec!["fuzz".to_string()];
+    for parent in ["lib", "crates"] {
+        for entry in std::fs::read_dir(repo_path(parent)).expect("the member directories list") {
+            let name = entry.expect("an entry").file_name();
+            dirs.push(format!("{parent}/{}", name.to_string_lossy()));
+        }
+    }
+    dirs.extend(patched_paths(
+        &std::fs::read_to_string(repo_path("Cargo.toml")).expect("the root manifest reads"),
+    ));
+    dirs.into_iter()
+        .filter_map(|dir| {
+            let manifest = repo_path(&dir).join("Cargo.toml");
+            let text = std::fs::read_to_string(&manifest).ok()?;
+            Some((package_name(&text, &manifest), dir))
+        })
+        .collect()
+}
+
+/// The entries of a workflow's one `paths:` filter, unquoted.
+fn workflow_paths(workflow: &str) -> Vec<String> {
+    workflow
+        .lines()
+        .skip_while(|line| line.trim() != "paths:")
+        .skip(1)
+        .map_while(|line| line.trim().strip_prefix("- "))
+        .map(|entry| entry.trim_matches('"').to_string())
+        .collect()
+}
+
+/// Each of `packages` whose source no entry of `filter` covers, named
+/// with its directory: a package whose code could change without the
+/// filter seeing it. The source is covered by the whole directory
+/// (`<dir>/**`) or by its `src/` (`<dir>/src/**`); an entry for a
+/// manifest or a build script alone is not enough. A package with no
+/// known directory is named as such.
+fn unwatched(packages: &BTreeSet<String>, dirs: &BTreeMap<String, String>, filter: &[String]) -> Vec<String> {
+    packages
+        .iter()
+        .filter_map(|name| match dirs.get(name) {
+            None => Some(format!("{name}: no directory in this repository declares it")),
+            Some(dir) => {
+                let covers =
+                    |entry: &String| *entry == format!("{dir}/**") || *entry == format!("{dir}/src/**");
+                (!filter.iter().any(covers))
+                    .then(|| format!("{name}: neither `{dir}/**` nor `{dir}/src/**` is in the filter"))
+            }
+        })
+        .collect()
+}
+
+/// **The fuzz workflow's paths filter sees every package its build
+/// takes from this repository.** Those are the packages
+/// `fuzz/Cargo.lock` lists with no `source`; a change to one that the
+/// filter of `.github/workflows/fuzz.yml` does not name would run no
+/// smoke. The vendored cosmic-text and the workspace-hack were missed
+/// that way until #357.
+///
+/// Controls: an entry taken out of the workflow's filter fails this,
+/// naming the package, and so does one narrowed to less than the
+/// source (`lib/baumhard/src/**` gone with the manifest and the build
+/// script still listed; `lib/guarded_file/**` narrowed to its
+/// `Cargo.toml`); the last assertion holds the same on the filter as
+/// read, less its `vendor/` entries, so a check that sees no gap
+/// anywhere cannot pass.
+#[test]
+fn test_the_fuzz_workflow_watches_every_path_package_of_its_lockfile() {
+    let lock = std::fs::read_to_string(repo_path("fuzz/Cargo.lock")).expect("fuzz/Cargo.lock reads");
+    let packages: BTreeSet<String> = locked(&lock)
+        .into_iter()
+        .filter(|(_, locks)| locks.iter().any(|(_, source)| source.is_none()))
+        .map(|(name, _)| name)
+        .collect();
+    assert!(
+        packages.contains("baumhard")
+            && packages.contains("mandala-fuzz")
+            && packages.contains("cosmic-text"),
+        "precondition: the lockfile's path packages are read ({packages:?})"
+    );
+    let workflow =
+        std::fs::read_to_string(repo_path(".github/workflows/fuzz.yml")).expect("the fuzz workflow reads");
+    let filter = workflow_paths(&workflow);
+    assert!(
+        filter.iter().any(|entry| entry == "fuzz/**"),
+        "precondition: the workflow's paths filter is read ({filter:?})"
+    );
+    let dirs = path_package_dirs();
+    assert_eq!(
+        unwatched(&packages, &dirs, &filter),
+        Vec::<String>::new(),
+        "fuzz.yml's `paths:` misses a package its build reads"
+    );
+    let without_vendor: Vec<String> = filter
+        .iter()
+        .filter(|entry| !entry.starts_with("vendor/"))
+        .cloned()
+        .collect();
+    assert_eq!(
+        unwatched(&packages, &dirs, &without_vendor),
+        vec![
+            "cosmic-text: neither `vendor/cosmic-text/**` nor `vendor/cosmic-text/src/**` is in the filter"
+                .to_string()
+        ],
+        "a filter that misses one is caught, and only that one"
+    );
 }
 
 /// The paths of the root manifest's `[patch.crates-io]` entries, as

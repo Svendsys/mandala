@@ -30,13 +30,19 @@ on:
   pull_request:
     # Everything a target's build reads: all of baumhard's source (a
     # surface's code calls into modules no narrower list keeps up with),
-    # its build script (the fonts shaping reads), the manifests and
+    # its build script (the fonts shaping reads), the other packages the
+    # build takes from this repository rather than a registry (the ones
+    # `fuzz/Cargo.lock` lists with no `source`: `lib/guarded_file`, the
+    # vendored cosmic-text and the workspace-hack), the manifests and
     # lockfiles that pick its dependencies, the fuzzing itself, and the
     # repository's maps, which the loader targets read as seeds.
     paths:
       - "lib/baumhard/src/**"
       - "lib/baumhard/build.rs"
       - "lib/baumhard/Cargo.toml"
+      - "lib/guarded_file/**"
+      - "vendor/cosmic-text/**"
+      - "crates/workspace-hack/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "fuzz/**"
@@ -141,11 +147,19 @@ jobs:
         run: echo "$HOME/.cargo-fuzz/bin" >> "$GITHUB_PATH"
 
       # One build cache for every target, saved by one entry and restored
-      # by all six. It holds the registry dependencies' build alone:
-      # rust-cache prunes the artifacts of path packages before it saves,
-      # and baumhard and mandala-fuzz are path packages here, so every job
-      # still compiles those two. (After a restore that matched its key in
-      # full, it does not save again.)
+      # by every target in the matrix. Before it saves, rust-cache v2
+      # prunes the build of the packages under the workspace root, which
+      # for `workspaces: fuzz` is mandala-fuzz alone, and keeps every
+      # package whose manifest is outside it
+      # (`getPackagesOutsideWorkspaceRoot`, its `src/save.ts`): the
+      # registry dependencies, and the four other packages
+      # `fuzz/Cargo.lock` lists with no `source` (baumhard, guarded_file,
+      # the vendored cosmic-text and the workspace-hack). So mandala-fuzz
+      # is compiled by every job. The other four are saved, but a fresh
+      # checkout's sources are newer than the cached build, so cargo most
+      # likely rebuilds them as well; that last part was not measured.
+      # (After a restore that matched its key in full, it does not save
+      # again: `isCacheUpToDate`, in the same file.)
       - name: Cache the fuzz build
         uses: Swatinem/rust-cache@v2
         with:

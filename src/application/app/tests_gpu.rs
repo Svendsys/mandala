@@ -42,6 +42,7 @@ use crate::application::view::{inspect, MapView};
 use baumhard::arena::NodeId;
 use baumhard::document::format;
 use baumhard::document::ids::{Document, NodeIdent};
+use baumhard::font::fonts;
 use baumhard::projection::Layer;
 
 fn map_path(name: &str) -> String {
@@ -713,6 +714,112 @@ fn test_a_zoom_through_act_action_and_a_capture_draws_the_frame() {
     );
 }
 
+/// **A capture whose path is refused draws no frame** (ruling B38.1,
+/// third addendum §15, fourth §19): `capture.screenshot` to a path
+/// where a file already is, and to one whose directory is not there,
+/// is refused as `invalid_params` in the writer's words, and no frame
+/// was attempted for it. `capture_flow::capture` resolves the
+/// destination in `draw`'s `before_draw`; this is what holds it there.
+///
+/// **How "no frame" is seen, on every run.** The renderer's own count
+/// of the frames its glyph pass prepared (`Renderer::glyph_run_counts`)
+/// does not move for a frame that was attempted and then skipped
+/// because another test's shaping held the font system, and a refused
+/// capture's reply carries no sign of such a skip. So the test holds a
+/// read guard on the font system across each refused capture. No other
+/// thread can hold the write guard meanwhile, so no attempt can be
+/// skipped as contended; and an attempt on this thread asks for the
+/// write guard while the thread holds a read guard, which the lock
+/// refuses with a panic (`fonts::try_acquire_font_system_write`) before
+/// the frame is prepared. A refused capture that comes back with its
+/// reply under the guard therefore attempted no frame, and the count
+/// is read as well.
+///
+/// Controls, in the test: a capture to a free path is written and the
+/// count has moved, so a count that never moves cannot pass; and a
+/// capture to a free path under the read guard does not come back, it
+/// panics on the lock's re-entry check, so a guard under which a frame
+/// is quietly skipped cannot pass. Control, run: `resolve` called after
+/// `draw` panics on that check at the first refused capture.
+#[test]
+fn test_a_capture_whose_path_is_refused_draws_no_frame() {
+    let Some(mut app) = headless_app(&map_path("testament.mandala.json")) else {
+        return;
+    };
+    let init = &mut app.init;
+    frame(init);
+
+    let taken = TempFile::new("refused-taken", "png");
+    std::fs::write(taken.as_str(), "precious").expect("seed");
+    let nowhere = TempFile::new("refused-missing", "dir");
+    let under_nowhere = format!("{}/shot.png", nowhere.as_str());
+    let prepared_before = init.renderer.glyph_run_counts().prepares;
+    for (path, why) in [
+        (
+            taken.as_str().to_string(),
+            format!("`{}` exists; set `overwrite` to replace it", taken.as_str()),
+        ),
+        (
+            under_nowhere.clone(),
+            format!("the parent directory of `{under_nowhere}` does not exist"),
+        ),
+    ] {
+        let reply = {
+            let _no_writer = fonts::acquire_font_system_read("tests_gpu (a refused capture)");
+            act(init, screenshot_request(&path)).0
+        };
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert_eq!(reply["error"]["code"], "invalid_params", "{reply}");
+        assert_eq!(reply["error"]["message"], why.as_str(), "{reply}");
+        assert_eq!(
+            init.renderer.glyph_run_counts().prepares,
+            prepared_before,
+            "no frame was prepared for the refused capture to {path}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(taken.as_str()).expect("kept"),
+        "precious",
+        "the file in the way is as it was"
+    );
+
+    let free = TempFile::new("refused-then-free", "png");
+    let _sidecar = free.sibling(".geometry.json");
+    let reply = capture_screenshot(init, free.as_str());
+    assert_eq!(reply["result"]["rendered"], true, "{reply}");
+    assert!(
+        init.renderer.glyph_run_counts().prepares > prepared_before,
+        "control: a capture that is written prepares a frame, and the count shows it"
+    );
+
+    // Last, because the panic it provokes leaves the capture half done.
+    // The lock's check runs before the lock is asked for, so no write
+    // guard is held when it panics and the lock is not poisoned.
+    let drawn = TempFile::new("refused-under-the-guard", "png");
+    let _sidecar = drawn.sibling(".geometry.json");
+    let attempted = {
+        let _no_writer = fonts::acquire_font_system_read("tests_gpu (a capture that draws)");
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            act(init, screenshot_request(drawn.as_str())).0
+        }))
+    };
+    let panic = attempted.expect_err("control: under the read guard a capture that draws does not come back");
+    let said = panic
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| panic.downcast_ref::<&str>().copied())
+        .unwrap_or("a panic that is not a message");
+    assert!(
+        said.contains("FONT_SYSTEM write acquire while holding a read guard"),
+        "control: and the panic is the lock's re-entry check: {said}"
+    );
+}
+
+/// The `capture.screenshot path=<path>` request frame.
+fn screenshot_request(path: &str) -> Value {
+    json!({"id": 2, "cmd": "capture.screenshot", "path": path})
+}
+
 /// `capture.screenshot path=<path>` through the real decoder and
 /// executor, retried while the engine reports the one transient skip
 /// — `font_system_contended`, the font lock held by another test's
@@ -733,7 +840,7 @@ fn capture_screenshot(init: &mut InitState, path: &str) -> Value {
     /// The pause between tries, so a wait spends its time asleep rather
     /// than spinning against the holder.
     const BACKOFF: Duration = Duration::from_millis(1);
-    let request = json!({"id": 2, "cmd": "capture.screenshot", "path": path});
+    let request = screenshot_request(path);
     let deadline = Instant::now() + PATIENCE;
     let mut attempts = 0_usize;
     loop {
