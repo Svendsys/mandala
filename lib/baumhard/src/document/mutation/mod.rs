@@ -24,8 +24,10 @@
 //! - [`compose`](crate::document::mutation::compose): the composite builders, the one sanctioned shape of
 //!   each change that takes more than one field write.
 //!
-//! The vocabulary is built by code and never read from a file in V1 —
-//! authored edits are V1-D1's — so nothing here parses a string. Nothing
+//! The vocabulary is built by code and never read from a file: an
+//! authored edit is read in a spelling of its own, with names, and made
+//! into these ops when it runs (`document::edit`) — so nothing here
+//! parses a string. Nothing
 //! here writes a document either: running the steps of a request is the
 //! [writer's](crate::document::writer).
 

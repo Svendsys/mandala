@@ -196,16 +196,6 @@ pub(crate) struct OnDto<'a> {
     pub hover: Option<Cow<'a, str>>,
 }
 
-/// An edit definition. Only its identity for now.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct EditDto {
-    /// The id the file names it by.
-    pub id: String,
-    /// The name shown to the user.
-    pub name: String,
-}
-
 /// A presentation definition. Only its identity for now.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1552,9 +1542,9 @@ pub(crate) struct MapHeaderDto<'a> {
         deserialize_with = "present"
     )]
     pub defaults: Option<DefaultsDto<'a>>,
-    /// The edits the map defines.
+    /// The edits the map defines (`format/edits.md`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub edits: Vec<EditDto>,
+    pub edits: Vec<crate::document::format::edits::EditDto>,
     /// The presentations the map defines.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub presentations: Vec<PresentationDto>,

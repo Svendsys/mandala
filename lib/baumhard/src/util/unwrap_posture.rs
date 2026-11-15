@@ -193,6 +193,7 @@ fn is_ident_byte(byte: u8) -> bool {
 /// `log_posture`, which walks the same files for a different rule.
 pub(crate) const SHIPPED_ROOTS: &[&str] = &[
     "lib/baumhard/src/",
+    "lib/guarded_file/src/",
     "lib/mandala_derive/src/",
     "src/application/",
     "crates/maptool/src/",

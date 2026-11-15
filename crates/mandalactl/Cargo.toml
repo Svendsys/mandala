@@ -13,7 +13,8 @@ license.workspace = true
 # tests, which drive `run` in-process.
 #
 # No `baumhard` and no logger: nothing here touches a map or a
-# degrade path that logs. No `tokio` either; the client is plain
+# degrade path that logs. (Its files are written by `guarded_file`, the
+# writer baumhard re-exports, below.) No `tokio` either; the client is plain
 # blocking `std::os::unix::net` I/O, the way the server's boundary
 # threads are (CODE_CONVENTIONS §3).
 
@@ -27,6 +28,11 @@ serde_json.workspace = true
 # lean (`format/ipc.md` §`capture.record_start`).
 png.workspace = true
 gif = "0.14.2"
+# The workspace's one writer of a file at a path someone else named
+# (`lib/guarded_file`, #357): a screenshot over `--ws` and `record
+# assemble`'s GIF and MP4 are written with the app's guarantees. Its own
+# crate, not baumhard's, so this one still takes no baumhard.
+guarded_file.workspace = true
 
 # The Windows client for the app's named pipe (`src/client.rs`, #169):
 # std can open a named pipe as a file but cannot bound a read or a write

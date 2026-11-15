@@ -261,7 +261,7 @@ built-in value, unless the table gives a default of its own.
 | `background` | [background](#background) | no | `"#000000"` | The one color drawn behind the whole canvas. Every other color a map draws comes from a glyph. The default, black, is written by leaving the key out. |
 | `palettes` | object: name to array of [palette groups](#palette-group) | no | none | The palettes. |
 | `defaults` | [defaults](#defaults) | no | nothing set | Per-field defaults, consulted after the element and its owners and before the built-in value. |
-| `edits` | array of [definitions](#definitions) | no | `[]` | The edits the map defines. V1-D1 extends this schema. |
+| `edits` | array of [edits](./edits.md#edit) | no | `[]` | The edits the map defines: named, saved, undoable changes (`format/edits.md`). |
 | `presentations` | array of [definitions](#definitions) | no | `[]` | The presentations the map defines. V1-D2 extends this schema. |
 | `verbs` | array of [definitions](#definitions) | no | `[]` | The verbs the map defines. V1-D3 extends this schema. |
 | `nodes` | array of [nodes](#node) | no | `[]` | Every node of the map, flat, in depth-first pre-order ([The node list](#the-node-list)). |
@@ -317,9 +317,11 @@ palette.
 
 ### Definitions
 
-An entry of `edits`, `presentations` or `verbs`. Ids are unique within
-their list. A verb is named by its `id` from a node's `on` and from a
-span's `link`; the same string in two different lists is two things.
+An entry of `presentations` or `verbs`. Ids are unique within their
+list. A verb is named by its `id` from a node's `on` and from a span's
+`link`; the same string in two different lists is two things. An entry
+of `edits` has these two keys and more, and its own page,
+[`edits.md`](./edits.md); its id is unique within `edits` the same way.
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
@@ -1027,6 +1029,7 @@ its path.
 | A node's `id` and `parent`, a link's `to` | `1` to `4294967294` (`MAX_NODE_IDENT`); a larger integer is this bound, not another error |
 | `channel` (node, section, ring) | `0` to `4294967295` (`MAX_CHANNEL`), the most a `usize` holds on wasm32, so every target accepts the same files |
 | `palettes`, theme variables, theme variants, `verbs`, `edits`, `presentations` | at most 65536 each, the most an index addresses |
+| An edit's `animate.ms` and `animate.delay_ms` | at most 60000 each (`MAX_ANIMATE_MS`, one minute; [`edits.md`](./edits.md#bounds)) |
 
 ## Errors
 
@@ -1105,15 +1108,17 @@ would have had in the file.
 | The number of nodes | None beyond the ids there are and, on wasm32, the element bound above. |
 | A node's JSON nesting | At most 9 levels below the node object, by the schema: a portal end's label's span's link target is the deepest. The JSON reader allows 128, and reads each node on its own, so a valid file never comes near it; a text that does is refused, never a crash. |
 | Counts an index addresses | Palettes, theme variables and variants, verbs, edits, presentations: at most 65,536 each. |
+| A definition's nesting | An edit's `mutator` nests at most 32 levels and has at most 65,536 parts ([`edits.md`](./edits.md#bounds)). Inside `edits` a text nesting deeper than any such definition can is refused as too deep a definition, before the JSON reader's own limit. |
 | Rows | No bound on sections, spans, rings or links per element. |
 | Glyphs one path places | At most 65,536 (`MAX_PLACED_GLYPHS`) for one path's flow: a ring, a frame's two lines with its sides, a connector's or a link's flow. Text, `repeat` copies, `once` fillers and sides all count. A flow that would place more stops there and the placement says it was cut; the map is not refused. |
 
 ## Predicates
 
-Values inside a predicate saved in a map (V1-D1) are spelled as they are
-everywhere else in this file: colors as above; palettes, variables,
-fonts and verbs by name, never by index. The strictness gate refuses any
-type in this format that holds an index.
+Values inside a predicate saved in a map — an edit's `filter`
+([`edits.md`](./edits.md#filter)) — are spelled as they are everywhere
+else in this file: colors as above; palettes, variables, fonts and verbs
+by name, never by index. The strictness gate refuses any type in this
+format that holds an index.
 
 ## Example
 

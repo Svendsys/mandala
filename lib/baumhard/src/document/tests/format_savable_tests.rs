@@ -8,6 +8,7 @@
 //! The documents are built through the test builder, unchecked, because
 //! they are exactly the ones the mutations (V1-B3) refuse to make.
 
+use crate::document::edit::{EditBody, Reach, Target};
 use crate::document::element::{
     DefaultsData, DocElement, FlowStyle, FrameData, FrameStyle, PaletteData, PaletteGroup, PortalEndData,
     RingData, RingStyle, SectionData, SpanData, TextStyle, ThemeData, ThemeVariant,
@@ -197,6 +198,12 @@ fn test_two_definitions_of_one_id_have_no_spelling() {
     let edit = |id: &str| EditDef {
         id: id.to_string(),
         name: "n".to_string(),
+        description: String::new(),
+        reach: Reach::SelfNode,
+        target: Target::Node,
+        filter: None,
+        body: EditBody::Handler("flower".to_string()),
+        animate: None,
     };
     builder.definitions(Definitions {
         edits: vec![edit("a"), edit("b"), edit("a")],

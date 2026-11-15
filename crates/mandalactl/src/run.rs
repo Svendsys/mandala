@@ -4,7 +4,13 @@
 //! the request, talk to the app, print the reply.
 //!
 //! **The exit code is the contract.** `0` — the app answered
-//! `ok:true`. `1` — it answered `ok:false` ("the server said no").
+//! `ok:true`. `1` — the command was refused: the app answered
+//! `ok:false` ("the server said no"), or this client refused or failed
+//! its own part of it, whether or not anything was sent — a file it
+//! would not write (`record assemble`'s output, a `--ws` screenshot's),
+//! a recording it could not assemble, a `--wait-settled` the app cannot
+//! serve. One command, one exit code, whichever side writes the file
+//! (ruling B38.1, second addendum §9).
 //! `2` — it could not be reached, or the request did not go out whole:
 //! not running, busy, refused, or speaking another protocol — nothing
 //! can have run, so repeating is safe. `3` — the command line was wrong
@@ -20,8 +26,9 @@
 //! **Errors are `String`s, classified by the stage that made them**
 //! (CODE_CONVENTIONS §9 allows no error types): a failure while
 //! reading the command line is a `3`, one before the request left a
-//! `2`, one after it left a `4`, and a reply with `ok:false` a `1` — no
-//! enum of causes is needed because the stage already says which.
+//! `2`, one after it left a `4`, and a reply with `ok:false`, or this
+//! client's own refusal of the command, a `1` — no enum of causes is
+//! needed because the stage already says which.
 //!
 //! All output goes through the writers in [`Io`], so a test reads
 //! exactly what a shell would have shown.
@@ -37,6 +44,7 @@ use crate::assemble;
 use crate::bridge;
 use crate::cli::{self, Invocation, Options, Parsed};
 use crate::client::{Connection, Exchange, Outcome, Target, Watched};
+use crate::destination::Destination;
 use crate::help;
 use crate::params::{build_params, tokenize, Signature, Token};
 use crate::render;
@@ -48,7 +56,8 @@ use crate::wire::{self, base64_decode, ErrorBody, Outgoing, Reply, PROTOCOL, REQ
 pub enum Exit {
     /// The app answered `ok:true`.
     Success,
-    /// The app answered `ok:false`.
+    /// The command was refused: the app answered `ok:false`, or this
+    /// client refused or failed its own part of it.
     CommandError,
     /// The app could not be reached or understood, and the request did
     /// not go out whole: nothing ran.
@@ -201,6 +210,13 @@ fn invoke(invocation: Invocation, env: Env<'_>, io: &mut Io<'_>) -> Exit {
         Ok(sink) => sink,
         Err(why) => return usage(io, &why),
     };
+    // Its files are looked at before the capture is asked for, so a
+    // write the look can see would be refused costs no capture and no
+    // transfer.
+    if let Some(Err(why)) = sink.as_ref().map(|sink| sink.files(sink.sidecar)) {
+        emit(io.err, &format!("mandalactl: {why} (nothing was sent)\n"));
+        return Exit::CommandError;
+    }
     let (mut connection, note) = match Connection::open(&target, options.timeout, options.force) {
         Ok(opened) => opened,
         Err(why) => return transport(io, &why),
@@ -544,14 +560,19 @@ fn target(options: &Options, env: Env<'_>) -> Result<Target, String> {
 
 /// The file a browser app's screenshot is written to by this client.
 struct ScreenshotSink {
+    /// The path as typed, which the output reports.
     path: PathBuf,
     overwrite: bool,
+    /// Whether the request asks for the geometry sidecar (it does
+    /// unless `sidecar=false`), and so whether one will be written.
+    sidecar: bool,
 }
 
 /// For `capture.screenshot` over `--ws`: the `path` the typed arguments
 /// carry (absolute by now), required, and `overwrite`, both taken off
 /// the request — the browser app declares neither and would refuse
-/// them. `raw` frames are sent as written. `None` for every other
+/// them — and whether the request, which keeps its `sidecar`, asks for
+/// one. `raw` frames are sent as written. `None` for every other
 /// command and transport.
 fn screenshot_sink(target: &Target, prepared: &mut Prepared) -> Result<Option<ScreenshotSink>, String> {
     let Prepared::Typed { command, params, .. } = prepared else {
@@ -573,95 +594,71 @@ fn screenshot_sink(target: &Target, prepared: &mut Prepared) -> Result<Option<Sc
         .remove("overwrite")
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
-    Ok(Some(ScreenshotSink { path, overwrite }))
+    let sidecar = params.get("sidecar").and_then(Value::as_bool).unwrap_or(true);
+    Ok(Some(ScreenshotSink {
+        path,
+        overwrite,
+        sidecar,
+    }))
 }
 
-/// Why `path` cannot take a screenshot file, if it cannot: a symlink
-/// (never followed, with or without `overwrite`), a directory, or an
-/// existing file without `overwrite`. The guarantees of native's
-/// writer (baumhard's `guarded_file::publish`, `format/ipc.md`
-/// §`capture.screenshot`), given by the client that writes on the
-/// browser's behalf. `symlink_metadata`, not `exists`, which is
-/// `false` for a dangling symlink.
-fn in_the_way(path: &Path, overwrite: bool) -> Option<String> {
-    let shown = path.display();
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => Some(format!(
-            "{shown} is a symlink, which is never followed (the capture succeeded and may be repeated)"
-        )),
-        Ok(meta) if meta.is_dir() => Some(format!("{shown} is a directory")),
-        Ok(_) if !overwrite => Some(format!(
-            "{shown} exists; pass overwrite=true to replace it (the capture succeeded and may be repeated)"
-        )),
-        _ => None,
-    }
+/// `<path>.geometry.json`: the sidecar's name, beside `path` **as
+/// typed** (ruling B38.1, addendum §2). Where `path` is a symlink the
+/// image is written to the file it leads to, and the sidecar beside the
+/// link, so whoever opens the image by the name they typed finds its
+/// sidecar by that name too.
+fn sidecar_path(path: &Path) -> PathBuf {
+    path.with_file_name(format!(
+        "{}.geometry.json",
+        path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
+    ))
 }
 
-/// Write `bytes` at `path` without following a symlink there and
-/// without replacing a file unless `overwrite`, atomically: the bytes
-/// go to a sibling file created exclusively (`create_new`, which a
-/// symlink at that name fails too), are synced, and are then published
-/// under `path` — by `rename` with `overwrite`, which replaces the
-/// directory entry and cannot write through a symlink; without it by
-/// `hard_link`, which fails if the name exists, so a file created
-/// since [`in_the_way`] looked is not clobbered. A failure leaves
-/// whatever was at `path` as it was, and whatever was at the sibling
-/// name too: one this call did not create is refused, never removed.
-fn write_guarded(path: &Path, bytes: &[u8], overwrite: bool) -> Result<(), String> {
-    let shown = path.display();
-    let partial = {
-        let mut name = path.as_os_str().to_owned();
-        name.push(format!(".{}.partial", std::process::id()));
-        PathBuf::from(name)
-    };
-    // Whatever is already at the sibling name is not this call's: it
-    // is refused by name and left alone, never removed.
-    let synced = {
-        let mut file = std::fs::File::options()
-            .write(true)
-            .create_new(true)
-            .open(&partial)
-            .map_err(|e| match e.kind() {
-                std::io::ErrorKind::AlreadyExists => format!(
-                "{} is in the way of writing {shown}: something is already at that name, and it is left as \
-                 it is. Remove it and repeat the capture",
-                partial.display()
-            ),
-                _ => format!(
-                    "could not write {shown}: could not create {}: {e}",
-                    partial.display()
-                ),
-            })?;
-        // Synced, and closed at the end of this block before it is
-        // published: Windows refuses to rename an open file.
-        file.write_all(bytes).and_then(|()| file.sync_all())
-    };
-    let published = synced.and_then(|()| {
-        if overwrite {
-            std::fs::rename(&partial, path)
-        } else {
-            std::fs::hard_link(&partial, path)
-        }
-    });
-    // This call created the partial: gone already after a rename; the
-    // link's twin, or a failure's leftover, otherwise.
-    let _ = std::fs::remove_file(&partial);
-    published.map_err(|e| match e.kind() {
-        std::io::ErrorKind::AlreadyExists => in_the_way(path, overwrite)
-            .unwrap_or_else(|| format!("{shown} appeared while it was being written")),
-        _ => format!("could not write {shown}: {e}"),
-    })
+/// A refusal at the write, after the capture and before anything was
+/// written, said with what the caller may do about it: the capture
+/// read nothing from the app's state, so repeating it is safe.
+fn refused(said: String) -> String {
+    format!("{said} (the capture succeeded and may be repeated)")
 }
 
 impl ScreenshotSink {
-    /// Write the PNG the reply carries, and its sidecar beside it, and
-    /// rewrite the reply the way a native app's reads: `path` and
-    /// `sidecar_path` in place of `png_base64` and `sidecar`, so the
-    /// output, `--json` included, names files on either transport. A
-    /// reply with `rendered: false` writes nothing, as a native app
-    /// writes nothing. `Err` when the file is in the way or the write
-    /// fails: the capture read nothing from the app's state, so
-    /// repeating it is safe.
+    /// The PNG's file and, `with_sidecar`, its sidecar's: each resolved
+    /// and looked at, both before either is written, so a sidecar in the
+    /// way leaves no orphan PNG behind. Each path is one this command
+    /// line named, so a symlink there leads to the file written, as for
+    /// `maptool export` ([`Destination`], ruling B38.1 §6), and the
+    /// no-clobber rule is held to that file.
+    ///
+    /// Called twice (ruling B38.1, second addendum §8, the sequence a
+    /// native app follows too). Before the capture is requested, for
+    /// the sidecar the request asks for: a write the look can see would
+    /// be refused then sends nothing. And at the write, right before
+    /// the first file is written, for the sidecar the reply carries,
+    /// where it catches a file that appeared during the capture. Either
+    /// look only saves work and names the file; the guarantee is the
+    /// write's own, atomic refusal (`guarded_file::publish`).
+    fn files(&self, with_sidecar: bool) -> Result<(Destination, Option<Destination>), String> {
+        let png = Destination::resolve(&self.path)?;
+        let sidecar = with_sidecar
+            .then(|| Destination::resolve(&sidecar_path(&self.path)))
+            .transpose()?;
+        for file in std::iter::once(&png).chain(&sidecar) {
+            file.check(self.overwrite)?;
+        }
+        Ok((png, sidecar))
+    }
+
+    /// Write the PNG the reply carries, and its sidecar beside the path
+    /// typed ([`sidecar_path`]), and rewrite the reply the way a native
+    /// app's reads: `path` and `sidecar_path` in place of `png_base64`
+    /// and `sidecar`, so the output, `--json` included, names files on
+    /// either transport. A reply with `rendered: false` writes nothing,
+    /// as a native app writes nothing. `Err` when a file appeared in the
+    /// way during the capture, or the PNG's write fails, said by
+    /// [`refused`]; and when the sidecar's write fails after the PNG has
+    /// landed, in a native app's words for it: the PNG was written, at
+    /// the path typed, and its sidecar was not. Repeating the capture
+    /// then needs `overwrite=true`, so that message does not offer it.
     fn write(self, exchange: Exchange) -> Result<Exchange, String> {
         let Exchange { mut reply, line } = exchange;
         let Some(encoded) = reply.result.get("png_base64").and_then(Value::as_str) else {
@@ -669,24 +666,23 @@ impl ScreenshotSink {
         };
         let png =
             base64_decode(encoded).map_err(|why| format!("the app's png_base64 did not decode: {why}"))?;
-        let sidecar_path = self.path.with_file_name(format!(
-            "{}.geometry.json",
-            self.path
-                .file_name()
-                .map(|n| n.to_string_lossy())
-                .unwrap_or_default()
-        ));
+        let sidecar_path = sidecar_path(&self.path);
         let sidecar = reply.result.get("sidecar").map(Value::to_string);
-        // Both refused before either is written, so a sidecar in the
-        // way leaves no orphan PNG behind.
-        for file in std::iter::once(&self.path).chain(sidecar.as_ref().map(|_| &sidecar_path)) {
-            if let Some(why) = in_the_way(file, self.overwrite) {
-                return Err(why);
-            }
-        }
-        write_guarded(&self.path, &png, self.overwrite)?;
-        if let Some(sidecar) = &sidecar {
-            write_guarded(&sidecar_path, sidecar.as_bytes(), self.overwrite)?;
+        let (png_file, sidecar_file) = self.files(sidecar.is_some()).map_err(refused)?;
+        let publish = |file: &Destination, bytes: &[u8]| {
+            guarded_file::publish(file.real(), self.overwrite, |out| {
+                out.write_all(bytes).map_err(|e| e.to_string())
+            })
+            .map_err(|why| file.say(why))
+        };
+        publish(&png_file, &png).map_err(refused)?;
+        if let (Some(file), Some(text)) = (&sidecar_file, &sidecar) {
+            publish(file, text.as_bytes()).map_err(|why| {
+                format!(
+                    "the PNG was written to `{}`, but its sidecar was not: {why}",
+                    self.path.display()
+                )
+            })?;
         }
         let rewrite = |result: &mut Value| {
             if let Some(object) = result.as_object_mut() {

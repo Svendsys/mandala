@@ -2359,6 +2359,7 @@ mod tests {
         "u32",
         "u64",
         "u8",
+        "usize",
     ];
 
     /// **The walker's blind spot, made visible.** The walk stops at

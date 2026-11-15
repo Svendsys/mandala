@@ -501,6 +501,64 @@ fn test_projection_nodes_in_agrees_with_a_scan_of_every_body() {
     );
 }
 
+/// `Projector::nodes_meeting` answers as a scan of every body's drawn
+/// rectangle would: insides overlapping, a shared edge not, and the
+/// outline shape not consulted — an ellipse's corners count. Over random
+/// maps and rectangles, and rectangles that only touch a body's edge.
+///
+/// Control: answered by `nodes_in`, the shape test and the inclusive
+/// edges disagree with the scan.
+#[test]
+fn test_projection_nodes_meeting_agrees_with_a_scan_of_every_rectangle() {
+    let mut rng = Lcg(0x6eed);
+    let (mut asked, mut found_any, mut edges) = (0, 0, 0);
+    for _ in 0..12 {
+        let (p, bodies) = random_bodies(&mut rng, 40);
+        let mut rects = Vec::new();
+        for _ in 0..40 {
+            let at = Vec2::new(rng.coord(-4000, 4000), rng.coord(-4000, 4000));
+            let size = Vec2::new(rng.coord(0, 3000), rng.coord(0, 3000));
+            rects.push(Rect::new(at, size));
+        }
+        for &(_, body, _) in bodies.iter().take(8) {
+            rects.push(Rect::new(
+                body.origin - Vec2::new(50.0, 0.0),
+                Vec2::new(50.0, 10.0),
+            ));
+            rects.push(Rect::new(
+                Vec2::new(body.max().x, body.origin.y),
+                Vec2::new(40.0, 40.0),
+            ));
+            rects.push(Rect::new(body.origin, Vec2::new(1.0, 1.0)));
+            edges += 2;
+        }
+        for rect in rects {
+            let mut want: Vec<NodeId> = bodies
+                .iter()
+                .filter(|(_, b, _)| {
+                    rect.origin.x < b.max().x
+                        && b.origin.x < rect.max().x
+                        && rect.origin.y < b.max().y
+                        && b.origin.y < rect.max().y
+                })
+                .map(|(id, _, _)| *id)
+                .collect();
+            want.sort_unstable();
+            assert_eq!(
+                p.projector.nodes_meeting(rect),
+                want,
+                "rectangles meeting {rect:?}"
+            );
+            asked += 1;
+            found_any += usize::from(!want.is_empty());
+        }
+    }
+    assert!(
+        edges > 0 && found_any > asked / 4 && found_any < asked,
+        "hits and misses: {found_any} of {asked}"
+    );
+}
+
 /// A rubber band visits only the cells it covers and tries only the
 /// bodies listed there: over a grid of a hundred far-apart nodes, a band
 /// around one tries that one, not the hundred.

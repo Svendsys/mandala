@@ -1698,6 +1698,7 @@ name = "test_bench"
         );
         for expected in [
             "lib/baumhard/Cargo.toml",
+            "lib/guarded_file/Cargo.toml",
             "lib/mandala_derive/Cargo.toml",
             "crates/maptool/Cargo.toml",
             "crates/mandalactl/Cargo.toml",
@@ -1721,11 +1722,12 @@ name = "test_bench"
     /// dependency updates a number here, which is the intended
     /// trade: manifest edits in this workspace are rare and are
     /// exactly what these tests exist to look at.
-    const DECLARATIONS_PER_MANIFEST: [(&str, usize); 5] = [
+    const DECLARATIONS_PER_MANIFEST: [(&str, usize); 6] = [
         ("Cargo.toml", 29),
-        ("crates/mandalactl/Cargo.toml", 8),
+        ("crates/mandalactl/Cargo.toml", 9),
         ("crates/maptool/Cargo.toml", 3),
         ("lib/baumhard/Cargo.toml", 31),
+        ("lib/guarded_file/Cargo.toml", 1),
         ("lib/mandala_derive/Cargo.toml", 3),
     ];
 
@@ -2023,7 +2025,7 @@ name = "test_bench"
         let manifests = workspace_manifests();
         assert_eq!(
             manifests.len(),
-            5,
+            6,
             "precondition: the hand-written members are read"
         );
         let config = std::fs::read_to_string(repo_path(".config/hakari.toml"))

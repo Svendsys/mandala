@@ -1216,14 +1216,14 @@ body that runs macro steps.
 | param | type | required | meaning |
 |---|---|---|---|
 | `macro_id` | string | one of | Run the registered macro with this id (named `macro_id`, not `id`, per the [reserved-word rule](#request)). It runs under the tier its loader pinned (see [Trust model](#trust-model)). An id registered in no tier is `not_found`. |
-| `steps` | array | one of | Run these steps, an anonymous macro in the on-disk step form of `format/macros.md`: `{"kind": "Action", "action": …}`, `{"kind": "CustomMutation", "id": …, "target"?: …}`, `{"kind": "ConsoleLine", "line": …}`. They run at the `User` tier: the IPC client authored them, and IPC executes as `User`. A list that does not parse is `invalid_params` naming `steps`. |
+| `steps` | array | one of | Run these steps, an anonymous macro in the on-disk step form of `format/macros.md`: `{"kind": "Action", "action": …}`, `{"kind": "Edit", "id": …, "target"?: …}`, `{"kind": "ConsoleLine", "line": …}`. They run at the `User` tier: the IPC client authored them, and IPC executes as `User`. A list that does not parse is `invalid_params` naming `steps`. |
 
 Exactly one of `macro_id` / `steps`: neither, or both, is
 `invalid_params`.
 
 Result: `ran` (boolean), the dispatcher's any-step-executed flag. A
-step that did not apply does not count: an unhandled Action, a
-skipped custom mutation, or a `ConsoleLine` that failed (also
+step that did not apply does not count: an unhandled Action, an
+`Edit` step that was skipped or refused, or a `ConsoleLine` that failed (also
 reported as a `console_error` warning). A privilege-gate abort is not
 an error. The steps before it ran, so
 the reply is `ok:true` and carries a `macro_gate_rejected` warning
@@ -1285,8 +1285,8 @@ The open document: `file_path`, `dirty`, `name`, `nodes`, `revision`,
 |---|---|---|---|
 | `fields` | array | no | Which parts to return, as strings from the list below. Default: every part but `document`, the one whose size is unbounded. Empty, mistyped or unknown words are `invalid_params`. Replies carry the parts in the order below, whatever order they were asked for. |
 | `pointer` | string | no | An RFC 6901 JSON Pointer into the saved map (`"/name"`, `"/nodes/0"`, `"/palettes"`). The reply's `document` is then the value found there. Implies `fields: ["document"]` when `fields` is omitted, and is `invalid_params` when `fields` lacks `document`. A pointer that resolves to nothing is `not_found`, and is reported before anything is written to `to_file`. The pointer is resolved against one save of the map. |
-| `to_file` | string | no | An absolute path. The file sidecar of [Large payloads](#large-payloads): the fields are written there as JSON and the reply is only `path` and `bytes`. Use it when `document` may exceed the 8 MiB reply cap. The write is **atomic**: the bytes go to a temp file in the same directory (created exclusively and with `O_NOFOLLOW`), are flushed and `fsync`ed, and are then renamed into place. A failure partway (a full disk) removes the temp file and leaves the destination exactly as it was, so an earlier good export is never replaced by truncated JSON. A replaced file takes the default permissions of a new file. Native only. |
-| `overwrite` | boolean | no | Only with `to_file`. Allow replacing an existing file; default `false`, where an existing file is `invalid_params`. Without it the file is published with `link(2)`, which fails if the name exists, so a file created in the meantime is not clobbered. A symlink or a directory at the path is `invalid_params` either way, and a symlink is never written through: the temp file is created with `O_NOFOLLOW` and published by `rename(2)`, which replaces the directory entry itself. A missing parent directory is `invalid_params`. Native only. |
+| `to_file` | string | no | An absolute path. The file sidecar of [Large payloads](#large-payloads): the fields are written there as JSON and the reply is only `path` and `bytes`. Use it when `document` may exceed the 8 MiB reply cap. The write is **atomic**: the bytes go to a temp file of this write's own in the same directory (created exclusively, which never follows a symlink at its name), are flushed and `fsync`ed, and are then renamed into place. A failure partway (a full disk) removes the temp file and leaves the destination exactly as it was, so an earlier good export is never replaced by truncated JSON. A replaced file takes the default permissions of a new file. Native only. |
+| `overwrite` | boolean | no | Only with `to_file`. Allow replacing an existing file; default `false`, where an existing file is `invalid_params`. Without it the file is published with `link(2)`, which fails if the name exists, so a file created in the meantime is not clobbered. A symlink or a directory at the path is `invalid_params` either way, and a symlink is never written through: the temp file is created exclusively (`O_CREAT|O_EXCL`, which fails on a symlink wherever it points) and published by `rename(2)`, which replaces the directory entry itself. A missing parent directory is `invalid_params`. Native only. |
 
 | result field | type | meaning |
 |---|---|---|
@@ -1880,7 +1880,7 @@ client's, which writes on the page's behalf (below).
 
 | param | type | default | meaning |
 |---|---|---|---|
-| `path` | string | server-chosen file in the per-session artifacts dir | Absolute path for the PNG. Parent dir must exist. Write guards (same-user trust tier, but an LLM composing a path clobbers by accident far more readily than a human): the server does **not** follow a symlink at `path` (`O_NOFOLLOW`), and refuses to overwrite an existing file **outside** the per-session artifacts dir unless `overwrite: true` is set — an unset `overwrite` hitting an existing external file (or an existing sidecar beside it) is `invalid_params`, and nothing is written. The write is atomic: a failure leaves whatever was at `path` as it was. |
+| `path` | string | server-chosen file in the per-session artifacts dir | Absolute path for the PNG. Parent dir must exist. Write guards (same-user trust tier, but an LLM composing a path clobbers by accident far more readily than a human): the server does **not** follow a symlink at `path` (one there is `invalid_params`, with or without `overwrite`. The transports differ here: over `--ws` it is `mandalactl` that writes the file, and there a link at `path` leads to the file written — an existing one is replaced given `overwrite=true`, the link stays a link, and the sidecar, named after `path` as typed, sits beside the link; see [Client](#client-mandalactl)), and refuses to overwrite an existing file **outside** the per-session artifacts dir unless `overwrite: true` is set — an unset `overwrite` hitting an existing external file (or an existing sidecar beside it) is `invalid_params`, and nothing is written. The write is atomic: a failure leaves whatever was at `path` as it was. |
 | `overwrite` | boolean | `false` | Allow overwriting an existing file outside the artifacts dir. Inside the artifacts dir, overwrite is always allowed. Only valid with `path`. |
 | `width`, `height` | integer | current surface size | The view's size, in window pixels; sent together. Camera center and zoom are preserved, so a larger view shows more canvas. Each side must lie in `1..=16384`, and the image (`width × height × scale²`) must not exceed **67,108,864** pixels (64 Mpx, ~8K square) nor the GPU's largest texture side; a request over any bound is `invalid_params`, never a best-effort giant allocation (degrade-don't-crash — an offscreen texture is a real GPU allocation). |
 | `region` | object | — | `{"x","y","w","h"}` in the `space` coordinate space, `w` and `h` positive: frame this rect instead of the current camera view. `width`/`height` still set the view's size; the aspect rule below governs mismatches. A region so large it would need a zoom below the minimum (`0.05`) is `invalid_params` (it could not be shown whole); one so small it needs more than the maximum (`5.0`) is framed at the maximum, still whole. |
@@ -1889,6 +1889,41 @@ client's, which writes on the page's behalf (below).
 | `scale` | number | `1.0` | Image pixels per view pixel, in `0.1..=4.0`. It changes the resolution and nothing else: the image is `round(width × scale) × round(height × scale)` pixels of the same view, with the same elements in it — zoom windows and connection glyph sizes are decided at the view's zoom, never at `zoom × scale`. Outside the range is `invalid_params`. |
 | `format` | string | `"png"` | `"png"` is the only value at pin time; the param exists so adding one is non-breaking. |
 | `sidecar` | boolean | `true` | Write the geometry sidecar next to the PNG (`<path>.geometry.json`). |
+
+**The two files, one sequence.** The PNG and, when `sidecar` is set,
+the sidecar are written the same way whichever side writes them: the
+app, or `mandalactl` for a browser app ([Client](#client-mandalactl)).
+
+1. Both destinations are looked at before the work: before the frame
+   is drawn, or over `--ws` before the capture is requested. Refused
+   then, with nothing drawn, sent or written: a file in the way
+   without `overwrite`, a directory there, a parent directory that
+   does not exist, a path that runs through a file, and a name the
+   filesystem cannot hold (`invalid_params` from the app; exit `1`
+   from `mandalactl`, its message ending "(nothing was sent)"). Only
+   "not found" is read as a free place: a path the system will not let
+   the look see is refused then too, in the system's words (`internal`
+   from the app). What the look cannot see is found at the write, and
+   reported in the system's words: a full disk, a directory that takes
+   no new file.
+2. Both are looked at again right before the first write, so a file
+   that appeared meanwhile is refused with nothing written.
+3. The PNG is published, then the sidecar, each atomically: a failure
+   leaves what was at that name.
+4. If the sidecar's write fails after the PNG has landed, the error
+   says so, naming the PNG: "the PNG was written to `<path>`, but its
+   sidecar was not: …" (`internal` from the app, exit `1` from
+   `mandalactl`). The PNG is good and stays; repeating the capture to
+   the same `path` then needs `overwrite`.
+
+Two things differ between the transports, by design. A symlink at
+`path`, or at the sidecar's name, is refused by the app, with or
+without `overwrite`; over `--ws`, where the path is `mandalactl`'s own
+command line's, a link leads to the file written (the `path` row
+above). And the remedy for a file in the way is spelled as each side
+spells its option: "set `overwrite` to replace it" in the app's
+message, which `mandalactl` prints as received over `--ipc`, and "pass
+overwrite=true to replace it" where `mandalactl` writes the file.
 
 **Result** (plus `revision` and `document_revision` at the envelope level, as on every reply):
 
@@ -2181,9 +2216,9 @@ disposition: [`work_plans/LLM_IPC.md`](../work_plans/LLM_IPC.md) §D9.
 
 **One clock for what behaves, the wall clock for what measures.**
 Everything the app *does* by time reads the app clock: double-click
-and long-press timing, a recording's frame times, `ping` (and, when
-V1-D1 (#250) and V1-D2 (#251) bring them back, the animation tick of an
-edit or a presentation). Everything that
+and long-press timing, a recording's frame times, `ping`, and the
+animation tick of an animated edit (and, with V1-D2 (#251), of a
+presentation): a step lands an animation on exact instants. Everything that
 *measures* — the FPS overlay, the `FreezeWatchdog`, an encode's
 cost, a `clock.wait` deadline —
 reads the wall clock in both modes, because a stepped or frozen clock
@@ -2264,8 +2299,9 @@ step names.
   typed by an injected key the step itself landed — is `busy`.
 
 - **`clock.wait`** — params: `until` (`"settled"`; the
-  `"animations_complete"` condition returns with the animations of
-  V1-D1 (#250)), `timeout_ms` (integer, default `10_000`,
+  `"animations_complete"` condition returns with V1-D2's (#251)
+  presentations; a real-time animated edit keeps `settled` from holding
+  until it ends), `timeout_ms` (integer, default `10_000`,
   `1..=60_000`; a value outside it is `invalid_params`, as IPC-07 and
   IPC-08 made their bounds; always **wall-clock** milliseconds — the
   deadline is a client-liveness guard, so a frozen virtual clock must
@@ -2301,7 +2337,8 @@ Wait conditions, defined against the frame (above) and CONCEPTS §5
 "Event loop and `drain_frame`":
 
 - **`settled`** — at an evaluation point, all of: (a)
-  `needs_continuation()` is false; (b) **in real time**, no IPC-injected
+  `needs_continuation()` is false — in real time that includes an
+  animated edit still running; (b) **in real time**, no IPC-injected
   input remains queued; (c) **no redraw is owed**: every redraw the
   app has asked for — every pixels-affecting command's, and every
   input handler's — has been drawn by a render that ran after it; and
@@ -2578,16 +2615,34 @@ a client does:
   same, with one client-side difference: `capture.screenshot <path>`
   requires the path, takes `path` and `overwrite` off the request, and
   writes the PNG the page returns inline — and its sidecar, as
-  `<path>.geometry.json` — with the native writer's guards: a symlink
-  at either path is never followed, `overwrite=true` included; an
-  existing file is refused unless `overwrite=true`; and the write is
-  atomic (a sibling file, synced, then moved or linked into place), so
-  a failure leaves what was there. A refusal is exit `1`, and the
-  capture may be repeated; its output,
-  `--json` included, then names `path` and `sidecar_path` as a native
-  reply does, in place of `png_base64` and `sidecar`. A `rendered: false`
-  reply writes nothing. The framing parameters are sent as given, for
-  the page to refuse as the stray parameters they are there.
+  `<path>.geometry.json` — through the native writer (`guarded_file`),
+  with one difference the command line earns: the path is the client's
+  own, so a symlink at either path leads to the file written, as for
+  `maptool export` (a dangling one is refused), where a native app over
+  `--ipc` refuses every link. The sidecar's name follows the path as
+  typed: through a link, the image goes to the file the link leads to
+  and the sidecar beside the link, so whoever opens the image by the
+  name they typed finds its sidecar by that name. An existing file, the
+  one a link leads to included, is refused unless `overwrite=true`,
+  which replaces it and leaves a link a link. The sequence is the one a
+  native app follows (§`capture.screenshot`, "The two files, one
+  sequence"): the PNG's file, and the sidecar's unless `sidecar=false`,
+  are looked at before the capture is requested, so a write the look can
+  see would be refused sends nothing (exit `1`, the message ending
+  "(nothing was sent)"): a file in the way, a directory there, a link
+  that leads nowhere, a parent directory that does not exist, a path
+  that runs through a file, a name the filesystem cannot hold, a path
+  the system will not let it look at. The write is atomic (a temp file
+  of this write's own beside it, synced, then moved or linked into
+  place), so a failure leaves what was there. A file that appeared
+  during the capture is refused at the write, before either file is
+  written, also exit `1`, and the capture may be repeated; a sidecar
+  that fails after the PNG has landed says the PNG was written, at the
+  path typed, and that its sidecar was not. The output, `--json`
+  included, then names `path` and `sidecar_path` as a native reply does,
+  in place of `png_base64` and `sidecar`. A `rendered: false` reply
+  writes nothing. The framing parameters are sent as given, for the page
+  to refuse as the stray parameters they are there.
 - **Paths:** a relative path argument (`path=`, `to_file=`) is made
   absolute against the client's working directory before it is sent,
   because the server requires absolute paths and has no working directory
@@ -2640,25 +2695,28 @@ a client does:
   must not be repeated. The flag is refused up front (exit 3), through `raw`
   as well, for a command the client knows only reads.
 - **Exit codes:** `0` the reply was `ok:true` (warnings do not change it);
-  `1` it was `ok:false`; `2` the app could not be reached or the request
-  did not go out whole (not running, stale socket, busy or refused,
-  wrong protocol), so nothing ran; `3` the command line was wrong and
-  nothing was sent; `4` the request went out whole and no reply was read
-  (the deadline passed, the connection closed, `shutdown` arrived, or the
-  reply was unreadable), so it may have run. The split exists for the
-  caller's retry: `2` is safe to repeat, `4` calls for a read of the app's
-  state first. The boundary is the end of the request's JSON body, not
-  its newline: a body cut short cannot decode, so nothing runs, but the
-  server also runs a final line its peer closes without terminating
-  (`read_capped_line`), so a send that fails on the one-byte terminator
-  after the whole body went out is a `4`. Over `--ws` the boundary is
-  the whole WebSocket frame, header and mask included: a frame cut
-  short names a length it never reaches and is never delivered, so a
-  send that stopped inside it is a `2`, and one that failed after it a
-  `4`.
-  Errors go to stderr as `error: <code>: <message>`, warnings as
-  `warning: <code>: <message>`. `--json` prints each reply line exactly as
-  received, one per request.
+  `1` it was `ok:false`, or the client refused or failed its own part of
+  the command, whether or not anything was sent (a file it would not
+  write for a `--ws` screenshot or for `record assemble`, a recording
+  that could not be assembled, a `--wait-settled` the app cannot serve):
+  one command, one exit code, whichever side refuses it; `2` the app
+  could not be reached or the request did not go out whole (not running,
+  stale socket, busy or refused, wrong protocol), so nothing ran; `3`
+  the command line was wrong and nothing was sent; `4` the request went
+  out whole and no reply was read (the deadline passed, the connection
+  closed, `shutdown` arrived, or the reply was unreadable), so it may
+  have run. The split exists for the caller's retry: `2` is safe to
+  repeat, `4` calls for a read of the app's state first. The boundary is
+  the end of the request's JSON body, not its newline: a body cut short
+  cannot decode, so nothing runs, but the server also runs a final line
+  its peer closes without terminating (`read_capped_line`), so a send
+  that fails on the one-byte terminator after the whole body went out is
+  a `4`. Over `--ws` the boundary is the whole WebSocket frame, header
+  and mask included: a frame cut short names a length it never reaches
+  and is never delivered, so a send that stopped inside it is a `2`, and
+  one that failed after it a `4`. Errors go to stderr as
+  `error: <code>: <message>`, warnings as `warning: <code>: <message>`.
+  `--json` prints each reply line exactly as received, one per request.
 
 The client's table of commands (`verbs::VERBS`) is held to the registry in
 both directions by tests in the app crate, so it is as honest as `describe`

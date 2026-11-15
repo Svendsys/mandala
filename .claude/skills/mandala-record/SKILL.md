@@ -163,15 +163,16 @@ real time is mostly a statement about llvmpipe. State the choice in the
 caption — "stepped: eight ZoomIn steps 100 ms apart on the virtual clock; the
 real-time feel is not what this shows" — so nobody mistakes smooth for fast.
 
-**Under a virtual clock frames exist only while it steps.** An animation
-(`timing.duration_ms > 0`) does not move until you `clock.step ms=<n>` past
-it, and the beats step for you. A recording with no steps between `@record`
+**Under a virtual clock frames exist only while it steps.** An animation —
+an animated edit (`format/edits.md`, `animate.ms > 0`), run with
+`act.console 'edit apply <id> <node-id>'` — does not move until you
+`clock.step ms=<n>` past it, and the beats step for you. A recording with no steps between `@record`
 and `@stop` is two beats and a jump — correct for an *instant* change, wrong
 for an animation. Check what the thing you demonstrate actually does before
 you choose: **a single `ZoomIn` is instant** (one 1.1× jump, no animation —
 `apply_zoom_step`), so the worked example below shows it as a ramp of steps.
-Animations return with edits and presentations (V1-D1, V1-D2); until
-then nothing on a map animates by itself.
+An animated edit is the one thing that animates today (presentations
+are V1-D2's); nothing on a map animates by itself.
 
 **Two traps found while writing this.** `input.wheel 26` is one notch, not
 twenty-six — it moved zoom 0.05 → 0.055; to repeat an action, repeat the

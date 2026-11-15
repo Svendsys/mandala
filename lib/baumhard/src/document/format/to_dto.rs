@@ -40,10 +40,10 @@ use crate::document::element::{
 };
 use crate::document::format::context::tree_excerpt;
 use crate::document::format::dto::{
-    AlignDto, AnchorDto, CapDto, DefaultsDto, DirectionDto, EditDto, FlowDefaultsDto, FrameDefaultsDto,
-    FrameDto, LabelDefaultsDto, LabelDto, LinkDto, LinkKindDto, LinkTargetDto, MapHeaderDto, NodeDefaultsDto,
-    NodeDto, OnDto, PaletteGroupDto, PathDto, PortalEndDefaultsDto, PortalEndDto, PresentationDto,
-    RingDefaultsDto, RingDto, SectionDto, SpanDto, TextDefaultsDto, ThemeDto, VerbDto, ZoomDto,
+    AlignDto, AnchorDto, CapDto, DefaultsDto, DirectionDto, FlowDefaultsDto, FrameDefaultsDto, FrameDto,
+    LabelDefaultsDto, LabelDto, LinkDto, LinkKindDto, LinkTargetDto, MapHeaderDto, NodeDefaultsDto, NodeDto,
+    OnDto, PaletteGroupDto, PathDto, PortalEndDefaultsDto, PortalEndDto, PresentationDto, RingDefaultsDto,
+    RingDto, SectionDto, SpanDto, TextDefaultsDto, ThemeDto, VerbDto, ZoomDto,
 };
 use crate::document::format::error::{render_path, NodeContext, SaveError, SaveErrorKind, Seg};
 use crate::document::format::index::FORMAT;
@@ -258,7 +258,7 @@ impl<'a> Saver<'a> {
         };
         let palettes = self.palettes()?;
         let defaults = self.key("defaults", |s| s.defaults(doc.defaults()))?;
-        let edits = self.definitions("edits", definitions.edits.iter().map(|d| (&d.id, &d.name)))?;
+        self.definitions("edits", definitions.edits.iter().map(|d| (&d.id, &d.name)))?;
         let presentations = self.definitions(
             "presentations",
             definitions.presentations.iter().map(|d| (&d.id, &d.name)),
@@ -271,7 +271,11 @@ impl<'a> Saver<'a> {
             background,
             palettes,
             defaults,
-            edits: edits.into_iter().map(|(id, name)| EditDto { id, name }).collect(),
+            edits: definitions
+                .edits
+                .iter()
+                .map(crate::document::edit::load::to_dto)
+                .collect(),
             presentations: presentations
                 .into_iter()
                 .map(|(id, name)| PresentationDto { id, name })

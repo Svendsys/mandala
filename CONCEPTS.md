@@ -916,7 +916,7 @@ JSON path (`bounds::check_zoom_window`), and `maptool verify` prints
 that refusal.
 
 The seam waiting here is **zoom-triggered LOD
-mutations**: an edit (V1-D1) bound to a zoom threshold could
+mutations**: an edit (`format/edits.md`) bound to a zoom threshold could
 swap a node's content entirely at the transition, so a cluster
 summary becomes a detail view as you zoom in.
 `GlyphAreaField::ZoomVisibility` already carries the mutator
@@ -1474,7 +1474,7 @@ and a request cannot declare them). Nothing outside `document` holds a
   it held out of the tree. `is_dirty` compares the history position
   with the saved one by identity, so undoing back to the saved state is
   clean and a different change of the same length is not.
-- **Transactions** (`begin`, `stage`, `apply_in`, `interpolate`,
+- **Transactions** (`begin`, `stage`, `apply_in`, `stage_progress`,
   `commit`, `cancel`) are live interaction: a stage replaces the one
   before it, so a drag stages the whole offset every frame and the
   document is exact at each; a base call (`apply_in`) stays across
@@ -1500,6 +1500,39 @@ and a request cannot declare them). Nothing outside `document` holds a
   revert and re-apply around each change.
 
 `lib/baumhard/src/document/writer/`.
+
+### Edits — `EditDef`, `Reach`, `Target`, the edit funnel
+
+**A named, saved, undoable change to the map** (design §10.1, D6;
+V1-D1, #250; [`format/edits.md`](./format/edits.md)). From the nodes
+of the selection an edit takes a node set (`Reach`: self, children,
+descendants, subtree, parent, siblings), the elements of one kind in
+it (`Target`), keeps those a filter passes, and changes each once:
+
+- **mutations** — one `Macro` at each element, root only;
+- **a mutator** — the V1-A1 AST, anchored at each element;
+- **a handler** — a Rust layout (`edit_handlers`: `flower`, `cascade`)
+  that reads `&Document` and the projector's drawn rectangles
+  (`projection::Geometry`) and returns its walks, one per write; it
+  cannot write, the type says so. A layout places no node over another
+  drawn node — a flower on one circle, or a fan where the full circle is
+  blocked; a node moved by hand goes where it is put.
+
+An edit is written with **names** (`var(accent)`, a palette, a font, a
+verb) and resolved against the open map each time it runs, because the
+App tier (`assets/edits.json`) and the User tier (`edits.json`) are
+read before any map is. A map's own `edits` win by id over both.
+
+Every route — a key in `edit_bindings`, a macro's `Edit` step, the
+console's `edit apply` — runs **one funnel**,
+`app::dispatch::families::edits::run_edit`: one `EditRequest`, applied
+as one history entry, or, when the edit animates, staged in an animated
+transaction that the frame's tick (`app::animation`) writes part-way
+on the app clock (`Document::stage_progress`) and commits as one entry.
+Another change, or an undo, finishes it first (D28).
+
+`lib/baumhard/src/document/edit/`, `lib/baumhard/src/edit_handlers.rs`,
+`src/application/edits.rs`.
 
 ### TextFlow — `FlowSpan`, `ShapedRun`, `ShapedBox`, `PlacedRun`, `Outline`, `Curve`
 
@@ -1629,7 +1662,9 @@ element.
   the shorter side) or the inscribed ellipse; ring *k* runs around the
   outline grown past the rings inside it. Lines and circular arcs are
   walked exactly by arc length, ellipses and Béziers through a table
-  whose points are evaluated on the curve itself.
+  whose points are evaluated on the curve itself and whose distances
+  are measured in the curve's own frame, from its start or its center
+  (#313, #356), so a length does not depend on where the curve lies.
 - **Fit modes** say what happens when text and path differ in length:
   `Once` (with an optional filler, appended to the run in the flow's
   style), `Repeat` (reusing the run's glyph indices; around a closed
@@ -1852,8 +1887,9 @@ The glyph vocabulary — commands, deltas and glyph-run mutations — and
 the `MutatorNode` AST that carries it, with runtime holes a
 `BuildContext` fills, are kept (D24) and published in
 [`format/mutations.md`](./format/mutations.md). Nothing in a
-`.mandala.json` holds a glyph mutation today: the authored carrier is
-the **edit** (V1-D1, #250), and presentations are V1-D2's.
+`.mandala.json` holds a glyph mutation today: an **edit** changes the
+map in the document's vocabulary ([`format/edits.md`](./format/edits.md)),
+and glyph-layer effects are presentations, V1-D2's.
 
 ## §5 The application runtime
 
@@ -2399,14 +2435,16 @@ half both surfaces call: it syncs the view, then the layer renderer
 draws the glyph layers through the capture's camera
 (`LayerRenderer::encode`) — the same layers the window draws, at any
 zoom, with nothing projected again. Every caller-chosen path is written through
-baumhard's `util::guarded_file::publish` — atomic, never through a
-symlink (a link at the path is refused), no file replaced unasked —
-the writer the IPC `to_file` sidecar uses too. A map's save and
-`maptool`'s outputs go through the same writer, but name their file
-differently: they first resolve a link to its real file
-(`guarded_file::real_file`), always replace that file, and hold the
-extension rule to it — a map's save writes only into a
-`.mandala.json`, `maptool export` never into one.
+`guarded_file::publish` (the `lib/guarded_file` crate, which baumhard
+re-exports as `util::guarded_file`) — atomic, never through a symlink
+(a link at the path is refused), no file replaced unasked — the writer
+the IPC `to_file` sidecar uses too. A map's save, `maptool`'s outputs
+and `mandalactl`'s files go through the same writer, but name their
+file differently: they first resolve a link to its real file
+(`guarded_file::real_file`). A map's save and `maptool` always replace
+that file and hold the extension rule to it — a map's save writes only
+into a `.mandala.json`, `maptool export` never into one; `mandalactl`
+replaces it only with `overwrite=true`.
 
 A frame the renderer skips (`FrameSkip`: not started, font system
 contended, glyph prepare failed) is reported as not rendered and
@@ -2567,7 +2605,7 @@ Some(&DispatchHit { click_hit, canvas_pos }))`.
    `~/.config/mandala/macros.json` on native. See
    `crate::application::macros` for `Macro`, `MacroStep`,
    `MacroRegistry`, and `dispatch_macro`. Steps fan out to
-   `dispatch_action`, the edit step (V1-D1), or
+   `dispatch_action`, the `Edit` step, or
    `execute_console_line` depending on `MacroStep` kind, so plugin
    authors and macro recorders share one runtime path. That path is
    `run_macro_steps`, the gated step loop `dispatch_macro` calls
@@ -2576,8 +2614,8 @@ Some(&DispatchHit { click_hit, canvas_pos }))`.
    arrives. **Unknown
    macro id falls through** to the edit tier, so a typo'd or
    half-loaded macros file doesn't swallow the keystroke.
-3. `keybinds.edit_for(...)` — edit bindings, which fire nothing until
-   V1-D1 (#250) rebuilds edits.
+3. `keybinds.edit_for(...)` — edit bindings, run at the selection
+   through the edit funnel (`dispatch::families::edits::run_edit`).
 
 **Built-in Actions win on collision.** A key combo bound to both
 `Action::Copy` (in `copy: ["Ctrl+C"]`) and a macro on `"Ctrl+C"` in
@@ -3066,20 +3104,20 @@ app exits.
 The shell is an agent's native tool, and hand-built JSON over `nc` is the
 fragile incantation it replaces. `name=value` arguments are typed from the
 command's declared parameter types, so `x=412` is a number and `text=412` a
-string; a command newer than the build is typed from the app's own
-`describe`, so the client needs no release to call it. `--wait-settled`
-issues the command and then `clock.wait until=settled`. Every wait has a
-deadline and a message naming what to suspect, and the exit code is the
-contract: `0` answered, `1` the app said no, `2` the app could not be
-reached or the request did not go out whole (nothing ran), `3` a bad command
-line, `4` the request was sent and no answer was read (it may have run: read
-the app's state before repeating it). `--wait-settled` first checks that the
-app serves `clock.wait`, so a missing wait is reported before the command
-runs rather than after it succeeded; a wait that fails once the command
-succeeded is a `4` that says so. A refusal for `busy` (the single-controller
-slot) is retried briefly, because two invocations in a row can find the
-previous controller not yet noticed as gone; a refusal for any other reason
-is reported as it is.
+string; a command newer than the build is typed from the app's own `describe`,
+so the client needs no release to call it. `--wait-settled` issues the command
+and then `clock.wait until=settled`. Every wait has a deadline and a message
+naming what to suspect, and the exit code is the contract: `0` answered, `1`
+refused (the app said no, or `mandalactl`'s own write was), `2` the app could
+not be reached or the request did not go out whole (nothing ran), `3` a bad
+command line, `4` the request was sent and no answer was read (it may have
+run: read the app's state before repeating it). `--wait-settled` first checks
+that the app serves `clock.wait`, so a missing wait is reported before the
+command runs rather than after it succeeded; a wait that fails once the
+command succeeded is a `4` that says so. A refusal for `busy` (the
+single-controller slot) is retried briefly, because two invocations in a row
+can find the previous controller not yet noticed as gone; a refusal for any
+other reason is reported as it is.
 
 `verbs::VERBS` is the table of commands the build knows, for `--help` and for
 bare (positional) arguments. The app crate's tests hold it against the IPC
@@ -3088,7 +3126,11 @@ PR that adds it. The sibling of `maptool`, not a mode of it: `maptool` reads
 `.mandala.json` files and never talks to a process. Its one client-side
 command, `record assemble <dir>`, turns a recording's frames and manifest
 (see [Frame-sequence recording](#frame-sequence-recording)) into a GIF, or an
-MP4 through the host's `ffmpeg`, and never opens the socket.
+MP4 through the host's `ffmpeg`, and never opens the socket. Its file, and a
+screenshot it writes over `--ws`, go through the app's own writer, the
+`guarded_file` crate (a crate of its own so this one needs no baumhard);
+`ffmpeg` writes only inside a directory the run created for it alone
+(`guarded_file::PrivateDir`).
 
 `crates/mandalactl/`. Protocol: [`format/ipc.md`](./format/ipc.md); the full
 agent-facing reference is `mandalactl --help`.
@@ -3109,15 +3151,29 @@ the node (`#3 links[1].ends[0]: …`, `#3 connector.content: …`,
 as Markdown and `verify` the loader's verdict plus warnings for what
 loads but is probably a mistake (a verb nothing refers to, a node saved
 hidden that nothing can reveal, a visible frame with no rings, a portal
-whose ends both draw nothing). `apply` pipes the text of each section a
+whose ends both draw nothing). What it counts includes the map's edits
+(`EditDef::mentions`, one walk that names every edit step, so a step
+added to the format does not compile there until it is counted): a verb
+an edit names — `set_click`, `set_hover`, a span's `set_link` to a
+verb, a filter's `on_click` or `on_hover`, anywhere in it (its filter
+or its body), at any depth — is referred to, whether or not anything
+runs the edit, since keybinds, the console and macros run edits from
+outside the map. In general, which elements an edit reaches is decided
+when it runs, so `verify` does not narrow by reach: with an edit in the
+map that writes `set_hidden: false` no hidden node is reported, and
+with one that writes a portal end's non-empty `set_content` no empty
+portal is. No edit can add a ring, so none can make an empty frame
+draw something, and that warning stands. Only the map's own edits are
+read: the App and User tiers also run on a map, and are outside what a
+map file can be judged on. `apply` pipes the text of each section a
 line of which matches through a command and replaces its spans as one
 `EditRequest` through `Document::apply` — the only way a document
 changes — then prints the map, writes it back (`-i`, through
 `format::file::write`, as the app's save does: a link is resolved to
 its real file, which must itself be a `.mandala.json`, and that file
-is replaced atomically through baumhard's `util::guarded_file`) or prints
-what `-i` would change in the file on disk as a diff (`--dry-run`).
-There is no `convert`: there is no older format to convert from.
-`maptool --help` is the reference.
+is replaced atomically through `guarded_file`, re-exported as
+baumhard's `util::guarded_file`) or prints what `-i` would change in
+the file on disk as a diff (`--dry-run`). There is no `convert`: there
+is no older format to convert from. `maptool --help` is the reference.
 
 ---

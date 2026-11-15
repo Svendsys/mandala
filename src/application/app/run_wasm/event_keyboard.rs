@@ -67,7 +67,11 @@ impl super::Borrowed<'_> {
             }
         }
         if let Some(edit) = keybinds.edit_for(&k, ctrl, shift, alt) {
-            let _ = edits::fire(edit);
+            let now_ms = input.clock.now_ms();
+            let (document, registry) = (&mut input.document, &input.edits);
+            edits::with_drawn(input.view.as_mut(), renderer, |drawn| {
+                edits::run_key(document, drawn, registry, edit, now_ms)
+            });
         }
         true
     }

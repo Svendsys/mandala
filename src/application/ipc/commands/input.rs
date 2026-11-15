@@ -154,7 +154,7 @@ pub(super) const FAMILY: Family = Family {
         CommandSpec {
             name: "input.key",
             summary: "Press, release or tap a key, as KeyboardInput: the modal steals, the keybind \
-                      table, macros and custom mutations resolve it as they do a keystroke.",
+                      table, macros and edits resolve it as they do a keystroke.",
             params: &[
                 ParamSpec::new(
                     "key",

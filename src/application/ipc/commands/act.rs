@@ -126,7 +126,7 @@ pub(super) const FAMILY: Family = Family {
                     ParamType::Array,
                     false,
                     "Run these steps, in the on-disk step form ({\"kind\": \"Action\" | \
-                     \"CustomMutation\" | \"ConsoleLine\", …}). Exactly one of macro_id / steps.",
+                     \"Edit\" | \"ConsoleLine\", …}). Exactly one of macro_id / steps.",
                 ),
             ],
             result: &[ResultSpec::new(
@@ -306,7 +306,7 @@ fn run_macro(call: &mut Call<'_>) -> Reply {
                     "steps",
                     format!(
                         "not a step list: {e}. Each step is {{\"kind\": \"Action\", \"action\": …}}, \
-                         {{\"kind\": \"CustomMutation\", \"id\": …}} or {{\"kind\": \"ConsoleLine\", \"line\": …}} \
+                         {{\"kind\": \"Edit\", \"id\": …}} or {{\"kind\": \"ConsoleLine\", \"line\": …}} \
                          (format/macros.md)"
                     ),
                 )
@@ -493,7 +493,7 @@ mod tests {
             );
         }
         let (reply, _) = run_detached(
-            r#"{"id":1,"cmd":"act.macro","steps":[{"kind":"Action","action":"Undo"},{"kind":"ConsoleLine","line":"help"},{"kind":"CustomMutation","id":"m","target":{"node_id":"1.2"}}]}"#,
+            r#"{"id":1,"cmd":"act.macro","steps":[{"kind":"Action","action":"Undo"},{"kind":"ConsoleLine","line":"help"},{"kind":"Edit","id":"m","target":{"node_id":12}}]}"#,
         );
         assert_eq!(
             reply["error"]["code"],

@@ -65,7 +65,13 @@ draws them.
   (by regex, every string a map draws as glyphs: spans, own `content`,
   `once` fillers, frame ornaments), `export` (Markdown), `verify` (the loader's
   verdict, with its JSON path, plus warnings for what loads but is
-  probably a mistake) and `apply` (pipe matching sections' text through
+  probably a mistake; a verb an edit in the map names, anywhere in it
+  (its filter or its body), counts as referred to, whether or not
+  anything runs the edit, and an edit in the map that can unhide a node
+  or give a portal end a marker silences those two warnings; App and
+  User edits, which also run on a map, are outside what a map file can
+  be judged on and are not read) and
+  `apply` (pipe matching sections' text through
   a command, as one `EditRequest` through `Document::apply`; `-i`
   writes the map back as the app's save does — through a link to its
   real file, which must itself be a `.mandala.json` — and `--dry-run`
@@ -73,18 +79,19 @@ draws them.
   older format remains to convert from.
 - **`crates/mandalactl/`** — CLI client for a *running* app's `--ipc`
   socket: one invocation, one command, JSON or `path: value` lines on
-  stdout, exit code `0` / `1` (the app said no) / `2` (could not reach
-  it, nothing ran) / `3` (bad command line) / `4` (sent, not confirmed:
-  it may have run). The sibling of `maptool`, not a mode of
-  it: `maptool` reads files and never talks to a process, `mandalactl`
-  talks to a process and never reads a map. (Its one client-side
-  command, `record assemble <dir>`, reads a *recording's* frames and
-  manifest, never a map and never the socket: it turns the frames of
-  `capture.record_start` / `capture.record_stop` into a GIF, or an MP4
-  through the host's `ffmpeg`.) `mandalactl --help` is the
-  agent-facing reference; `verbs::VERBS` is its command table, and the
-  app crate's tests hold it to the IPC registry in both directions, so
-  **a new IPC command ships its `mandalactl` verb in the same PR**.
+  stdout, exit code `0` / `1` (refused: the app said no, or
+  `mandalactl`'s own write was) / `2` (could not reach it, nothing ran)
+  / `3` (bad command line) / `4` (sent, not confirmed: it may have run).
+  The sibling of `maptool`, not a mode of it: `maptool` reads files and
+  never talks to a process, `mandalactl` talks to a process and never
+  reads a map. (Its one client-side command, `record assemble <dir>`,
+  reads a *recording's* frames and manifest, never a map and never the
+  socket: it turns the frames of `capture.record_start` /
+  `capture.record_stop` into a GIF, or an MP4 through the host's
+  `ffmpeg`.) `mandalactl --help` is the agent-facing reference;
+  `verbs::VERBS` is its command table, and the app crate's tests hold it
+  to the IPC registry in both directions, so **a new IPC command ships
+  its `mandalactl` verb in the same PR**.
 - **`lib/baumhard/src/document/`** — the document: its elements, the
   one writer every change goes through, its history and change feed,
   and the `.mandala.json` loader and saver (`format/`).
@@ -109,8 +116,9 @@ the parity trajectory (or why none is owed):
   elevated (run-as-administrator) launch makes the Administrators
   group its owner, so any other elevated process of a member of that
   group can connect too. The Windows half runs on CI's `windows-ipc`
-  job (`.github/workflows/test.yml`: clippy, the `ipc::` tests and
-  `mandalactl`'s whole test target), not in `./test.sh`, which cannot
+  job (`.github/workflows/test.yml`: clippy, the `ipc::` tests,
+  `mandalactl`'s whole test target, and `guarded_file`'s, which
+  `mandalactl` writes through), not in `./test.sh`, which cannot
   run it from Linux; locally
   `cargo check --target x86_64-pc-windows-gnu -p mandala` type-checks
   it. **The protocol is not gated, since IPC-15 (#75)**: the
@@ -288,18 +296,25 @@ the parity trajectory (or why none is owed):
   draining a drag state — not a frame: the browser's frame exists
   (`run_wasm/event_redraw_requested.rs`) and runs an injected sample
   and the view's sync.
-- **Animations** — none run, on either target, since V1-C3 (#244).
-  Animated edits return with V1-D1 (#250) and presentations with
-  V1-D2 (#251), each as a transaction on the document's writer.
+- **Animations** — not gated: an animated edit (V1-D1, #250) runs on
+  both targets, as a transaction on the document's writer that the
+  frame's tick (`app/animation.rs`: `tick`, `keeps_ticking`) writes on
+  the app clock and commits as one history entry — native's from the
+  heartbeat's frame, the browser's from its redraw
+  (`run_wasm/event_redraw_requested.rs`), which asks for the next
+  frame while `keeps_ticking` says one is owed, and from its clock
+  step (`run_wasm/step.rs`). No parity is owed. Presentations, the
+  other kind of animation, return with V1-D2 (#251).
 - **Virtual-clock stepping: the native frame it steps**
   (`src/application/app/heartbeat.rs`; IPC-09/#69) — what a step
   runs at each heartbeat on native is native's whole frame: the
-  rubber band and the view's sync, the recorder's frame, the freeze
-  watchdog's tick. **The step itself is not gated, since IPC-15
+  animation tick, the rubber band and the view's sync, the recorder's
+  frame, the freeze watchdog's tick. **The step itself is not gated, since IPC-15
   (#75)**: the schedule (`app/step.rs`: `run_step`, the `Steps`
   trait, `Beat`) is one body both targets run, the browser
   implements it over its own frame (`run_wasm/step.rs`: one injected
-  sample, then the view's sync, at each virtual instant), and
+  sample, the animation tick, then the view's sync, at each virtual
+  instant), and
   `clock.set_mode` / `clock.step` / `clock.wait` are served over the
   browser transport. The clock was never gated:
   `AppClock` (`src/application/clock.rs`) compiles for both targets,
@@ -312,9 +327,10 @@ the parity trajectory (or why none is owed):
 
 ## Common tasks
 
-- **Run tests**: `./test.sh` runs `cargo test --workspace` — all six
-  members, `mandala`, `baumhard`, `mandala_derive`, `maptool`,
-  `mandalactl` and the generated `workspace-hack` (below) — prints a test count, then type-checks the benchmark targets
+- **Run tests**: `./test.sh` runs `cargo test --workspace` — all seven
+  members, `mandala`, `baumhard`, `guarded_file`, `mandala_derive`,
+  `maptool`, `mandalactl` and the generated `workspace-hack` (below) —
+  prints a test count, then type-checks the benchmark targets
   (`cargo check --workspace --benches`, which runs no benchmark) and
   `wasm32-unknown-unknown`, so neither a drifted `do_*()` nor
   cross-platform drift can pass a green run. **With one caveat about
@@ -331,56 +347,58 @@ the parity trajectory (or why none is owed):
   `MANDALA_REQUIRE_WASM_PROBE` so it cannot skip there. So does
   `lib/baumhard/tests/font_state.rs`'s host test where fontdb does not
   read `FONTCONFIG_FILE` (off Linux), which CI's
-  `MANDALA_REQUIRE_FONTCONFIG_HOSTS` turns into a failure. **And for
-  the GPU-backed tests** (`src/application/app/tests_gpu.rs`,
-  TEST_CONVENTIONS §T8): they build the real app headless on whatever
-  adapter the machine has — Mesa's lavapipe on a GPU-less box,
-  `apt-get install mesa-vulkan-drivers`; an agent container needs the
-  apt-over-HTTPS recipe in the `mandala-drive` skill — and skip with a
-  `SKIPPED:` note without one, so a green run on a box with no adapter
-  has proved nothing about the code behind `&mut Renderer`. The note
-  is written past libtest's per-test capture
+  `MANDALA_REQUIRE_FONTCONFIG_HOSTS` turns into a failure. So do
+  `guarded_file`'s no-hard-link test, which needs a C compiler, and
+  `mandalactl`'s real-`ffmpeg` test, which needs `ffmpeg`; CI sets
+  `MANDALA_REQUIRE_CC` and `MANDALA_REQUIRE_FFMPEG`, each of which turns
+  its test's skip into a failure. **And for the GPU-backed tests**
+  (`src/application/app/tests_gpu.rs`, TEST_CONVENTIONS §T8): they build
+  the real app headless on whatever adapter the machine has — Mesa's
+  lavapipe on a GPU-less box, `apt-get install mesa-vulkan-drivers`; an
+  agent container needs the apt-over-HTTPS recipe in the `mandala-drive`
+  skill — and skip with a `SKIPPED:` note without one, so a green run on
+  a box with no adapter has proved nothing about the code behind
+  `&mut Renderer`. The note is written past libtest's per-test capture
   (`baumhard::util::test_skip`), so it shows in a plain run and the
-  summary counts the `SKIPPED:` lines beside the pass count. CI
-  installs lavapipe and sets `MANDALA_REQUIRE_GPU`, so they cannot
-  skip there.
+  summary counts the `SKIPPED:` lines beside the pass count. CI installs
+  lavapipe and sets `MANDALA_REQUIRE_GPU`, so they cannot skip there.
   The test count itself is not a gate — a summary-format change makes it
-  print "count unavailable" rather than ending the run, which is
-  what it used to do, silently, under `set -euo pipefail`. Flags: `--coverage`
+  print "count unavailable" rather than ending the run, which is what it
+  used to do, silently, under `set -euo pipefail`. Flags: `--coverage`
   (runs under `cargo-llvm-cov`, outputs
   `target/llvm-cov/html/index.html`), `--lint` (runs
-  `cargo fmt --check`, `cargo clippy` and `cargo doc`. `fmt`, both
-  `doc` legs and both `clippy` legs are **hard gates** — their
-  baselines are zero (#130, #134 for the first two; `clippy` followed
-  once its warnings were cleared), a regression prints a `FAILED:`
-  line and the run exits non-zero at the end, after every other gate
-  has reported. `clippy` runs with `-D warnings`, because `cargo
-  clippy` exits 0 on warnings. `fmt` runs
-  **once** — rustfmt parses rather than compiles, so it is
-  target-independent and there is no wasm32 leg for it. `clippy` and
-  `doc` run **twice**, on the host target and on
-  `wasm32-unknown-unknown`: a host-target compile drops everything
-  under `#[cfg(target_arch = "wasm32")]`, so without the second leg the
-  browser half of the app — its lints and its intra-doc links alike —
-  is invisible. The wasm32 clippy leg is `--workspace` so baumhard is
+  `cargo fmt --check`, `cargo clippy` and `cargo doc`. `fmt`, both `doc`
+  legs and both `clippy` legs are **hard gates** — their baselines are
+  zero (#130, #134 for the first two; `clippy` followed once its
+  warnings were cleared), a regression prints a `FAILED:` line and the
+  run exits non-zero at the end, after every other gate has reported.
+  `clippy` runs with `-D warnings`, because `cargo clippy` exits 0 on
+  warnings. `fmt` runs **once** — rustfmt parses rather than compiles,
+  so it is target-independent and there is no wasm32 leg for it.
+  `clippy` and `doc` run **twice**, on the host target and on
+  `wasm32-unknown-unknown`: a host-target compile drops everything under
+  `#[cfg(target_arch = "wasm32")]`, so without the second leg the
+  browser half of the app — its lints and its intra-doc links alike — is
+  invisible. The wasm32 clippy leg is `--workspace` so baumhard is
   covered too, minus `--all-targets` (criterion and rayon refuse to
   build for wasm32) and minus the generated `workspace-hack`, which is
   native only (`--exclude workspace-hack`, as on the wasm32 check; see
-  "Change a dependency" below); the host doc leg is `--workspace` with private
-  items, while the wasm32 doc leg narrows to `-p mandala`, because
-  baumhard cannot be documented standalone for wasm32 — its `rand` →
-  `getrandom` edge needs the `wasm_js` feature that only the root
-  manifest declares — and maptool, mandalactl and mandala_derive have
-  no wasm32 half to document. Both wasm32 legs are skipped with a note when the
-  target isn't installed. CI runs `./test.sh --lint`, so these gates
-  hold on every pull request and not only on the machine of whoever
-  remembered the flag. They can be hard because the toolchain is
-  pinned in `rust-toolchain.toml`: a new stable release cannot add a
-  lint until the pin is bumped, and bumping it is a change of its own
-  that fixes what the new lints report), `--bench` (runs the criterion
-  benches after tests — **maintainers only**; §6 and `AGENTS.md`
-  forbid it to agents, who need the type-check above and nothing
-  else).
+  "Change a dependency" below); the host doc leg is `--workspace` with
+  private items, while the wasm32 doc leg narrows to
+  `-p mandala -p guarded_file`, because baumhard cannot be documented
+  standalone for wasm32 — its `rand` → `getrandom` edge needs the
+  `wasm_js` feature that only the root manifest declares — and maptool,
+  mandalactl and mandala_derive have no wasm32 half to document;
+  guarded_file has one, the browser's stubs of its writer. Both wasm32
+  legs are skipped with a note when the target isn't installed. CI runs
+  `./test.sh --lint`, so these gates hold on every pull request and not
+  only on the machine of whoever remembered the flag. They can be hard
+  because the toolchain is pinned in `rust-toolchain.toml`: a new stable
+  release cannot add a lint until the pin is bumped, and bumping it is a
+  change of its own that fixes what the new lints report), `--bench`
+  (runs the criterion benches after tests — **maintainers only**; §6 and
+  `AGENTS.md` forbid it to agents, who need the type-check above and
+  nothing else).
 - **Build releases**: `./build.sh` builds both the native binary
   (`target/release/mandala`) and the WASM bundle (`dist/` via
   `trunk build --release`), replacing prior output for the chosen
@@ -442,21 +460,21 @@ the parity trajectory (or why none is owed):
   the file, and fails on any other `profile.dev*` or `profile.test`
   table that sets `debug`.
 - **Target a specific test**: `cargo test -p baumhard --lib <pattern>`,
-  `cargo test -p mandala <pattern>`,
+  `cargo test -p mandala <pattern>`, `cargo test -p guarded_file`,
   `cargo test -p mandala_derive`, `cargo test -p maptool` or
   `cargo test -p mandalactl`. `--lib` narrows to a library target, so
-  it belongs only to the four members that have one — baumhard,
-  mandala_derive, mandalactl (a `src/lib.rs` beside its binary) and the
-  generated `workspace-hack` (an empty `src/lib.rs`, and no tests).
-  `mandala` and `maptool` are binary crates, where adding it narrows nothing and
-  exits 101 with `no library targets found in package 'mandala'`
-  before a test runs (#148).
-  `test_no_documented_command_targets_a_lib_the_package_lacks` holds
-  this bullet and TEST_CONVENTIONS §T11's copy of it against the real
-  manifests — every code span and every fenced line in those two
-  sections — so the flag cannot come back to either of them on a
-  member that has no library target. It reads nothing else: the rest
-  of this file, and every other document, is on your own care.
+  it belongs only to the five members that have one — baumhard,
+  guarded_file, mandala_derive, mandalactl (a `src/lib.rs` beside its
+  binary) and the generated `workspace-hack` (an empty `src/lib.rs`,
+  and no tests). `mandala` and `maptool` are binary crates, where adding
+  it narrows nothing and exits 101 with
+  `no library targets found in package 'mandala'` before a test runs
+  (#148). `test_no_documented_command_targets_a_lib_the_package_lacks`
+  holds this bullet and TEST_CONVENTIONS §T11's copy of it against the
+  real manifests — every code span and every fenced line in those two
+  sections — so the flag cannot come back to either of them on a member
+  that has no library target. It reads nothing else: the rest of this
+  file, and every other document, is on your own care.
 - **Fuzz an untrusted-input surface**: `scripts/fuzz.sh <target>
   <seconds>` runs one coverage-guided target of `fuzz/` for that long
   (`scripts/fuzz.sh --list` names them: the `.mandala.json` loader,

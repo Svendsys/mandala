@@ -42,6 +42,15 @@ pub(in crate::application::app) fn dispatch_compatible(
     core: &mut InputContextCore<'_>,
     hit: Option<&cross_dispatch::DispatchHit>,
 ) -> DispatchOutcome {
+    // Settle an animated edit first, so whatever this Action reads to
+    // build its change — a copy, a field's value, a structure — reads
+    // the map the edit leaves (D28); the writer would fast-forward it
+    // only at `apply` or `begin`, after the read.
+    if !leaves_animation_running(action) {
+        if let Some(doc) = core.document.as_deref_mut() {
+            doc.finish_animation();
+        }
+    }
     if let Some(outcome) = families::structure::dispatch(action, core, hit) {
         return outcome;
     }
@@ -164,4 +173,35 @@ fn select(core: &mut InputContextCore<'_>, step: SelectionMove) -> DispatchOutco
     };
     cross_dispatch::apply_selection_move(step, &mut vc);
     DispatchOutcome::Handled
+}
+
+/// Whether `action` leaves an animated edit running: it moves the
+/// camera, changes the selection, or toggles a readout, and reads
+/// nothing of the map that the edit is changing, so it does not cut the
+/// animation short. Every other Action settles it first
+/// ([`dispatch_compatible`]).
+fn leaves_animation_running(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::PanCanvas
+            | Action::ZoomIn
+            | Action::ZoomOut
+            | Action::ZoomReset
+            | Action::ZoomFit
+            | Action::PanCameraNorth
+            | Action::PanCameraSouth
+            | Action::PanCameraEast
+            | Action::PanCameraWest
+            | Action::CenterOnSelection
+            | Action::JumpToRoot
+            | Action::SelectAll
+            | Action::DeselectAll
+            | Action::InvertSelection
+            | Action::SelectParent
+            | Action::SelectChild
+            | Action::SelectNextSibling
+            | Action::SelectPrevSibling
+            | Action::ToggleFps
+            | Action::ToggleFpsDebug
+    )
 }

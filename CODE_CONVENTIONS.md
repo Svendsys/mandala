@@ -69,7 +69,12 @@ rise and fall together.
 Missing primitives are added to Baumhard, not to `src/application/`. If
 app code is about to grow a second implementation of something Baumhard
 nearly does, extend Baumhard. Extending the foundation is the work, not
-a detour from it.
+a detour from it. The one exception is a primitive `mandalactl` needs
+too, since it takes no baumhard dependency: that primitive is a small
+crate of its own, which baumhard re-exports so the app reaches it in
+the usual place — `lib/guarded_file`, the one writer of a file at a
+path someone else named (#357), is the instance. It is still one
+implementation, never a second copy in `mandalactl`.
 
 ## §2 All tasks are integration tasks
 
@@ -278,9 +283,9 @@ decision, not a drive-by edit.
   MUST be gated at *every site that applies it*** (look up the
   existing `allows_*` pattern on `SourceTier` and extend it).
   "Every site" is the load-bearing phrase: `dispatch_macro` is not
-  the only route from a `.mandala.json` to an edit. When V1-D1
-  (#250) brings back the edit by id (`MacroStep::CustomMutation`)
-  and V1-D3 (#252) the node's click trigger, there are three — the
+  the only route from a `.mandala.json` to an edit. With the edit by
+  id (`MacroStep::Edit`, V1-D1) and, when V1-D3 (#252) lands, the
+  node's click trigger, there are three — the
   keybind and macro tier, which `dispatch_macro`'s gates cover; the
   click trigger, authored **in the map** and carrying no
   `SourceTier`, the one a hostile map would take; and the console,

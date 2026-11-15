@@ -1061,7 +1061,7 @@ fn share(a: f32, b: f32) -> f32 {
 
 /// The distance between two boxes, `(min, max)` each: 0 where they meet.
 fn box_gap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> f32 {
-    (b.0 - a.1).max(a.0 - b.1).max(Vec2::ZERO).length()
+    corner_distance((b.0 - a.1).max(a.0 - b.1).max(Vec2::ZERO))
 }
 
 /// How far apart two boxes, `(min, max)` each, are: their distance
@@ -1072,7 +1072,7 @@ fn box_gap(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> f32 {
 fn separation(a: (Vec2, Vec2), b: (Vec2, Vec2)) -> f32 {
     let apart = (b.0 - a.1).max(a.0 - b.1);
     if apart.x > 0.0 || apart.y > 0.0 {
-        apart.max(Vec2::ZERO).length()
+        corner_distance(apart.max(Vec2::ZERO))
     } else {
         apart.x.max(apart.y)
     }
@@ -1804,9 +1804,7 @@ impl<'w> InkLay<'w> {
                 let clear = g.max(2.0 * TOUCH);
                 for _ in 0..EARLIER {
                     let near = |e: &Set| {
-                        ((set.at - e.at).abs() - (set.half + e.half))
-                            .max(Vec2::ZERO)
-                            .length()
+                        corner_distance(((set.at - e.at).abs() - (set.half + e.half)).max(Vec2::ZERO))
                             < clear - NEARER
                     };
                     let Some(e) = self.earlier.iter().flatten().find(|e| near(e)).copied() else {
@@ -1887,10 +1885,7 @@ impl<'w> InkLay<'w> {
         )?;
         let clear = g.max(2.0 * TOUCH);
         let near = |e: &Set| {
-            ((set.at - e.at).abs() - (set.half + e.half))
-                .max(Vec2::ZERO)
-                .length()
-                < clear - NEARER
+            corner_distance(((set.at - e.at).abs() - (set.half + e.half)).max(Vec2::ZERO)) < clear - NEARER
         };
         (!self.earlier.iter().flatten().any(near)).then_some(set)
     }
@@ -2105,7 +2100,7 @@ fn pair(
 ) -> Set {
     let reach = last.half + half;
     let set_at = |c: f32| lay.set_at(c, half, rise);
-    let gap_of = |set: &Set| ((set.at - last.at).abs() - reach).max(Vec2::ZERO).length();
+    let gap_of = |set: &Set| corner_distance(((set.at - last.at).abs() - reach).max(Vec2::ZERO));
     let stride = owed + 2.0 * reach.max_element() + INK_TOLERANCE;
     // Too near: the last ink's own center, where the gap is none; then
     // the furthest tried that is too near, with its miss.
@@ -2221,7 +2216,7 @@ fn pair(
 ///
 /// Cost: O(1): [`ALONG_DOUBLINGS`] and [`ALONG_ROUNDS`] rounds at most.
 fn along(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f32 {
-    let miss = |d: f32| ((delta + dir * d).abs() - reach).max(Vec2::ZERO).length() - owed;
+    let miss = |d: f32| corner_distance(((delta + dir * d).abs() - reach).max(Vec2::ZERO)) - owed;
     let at = miss(0.0);
     if !at.is_finite() {
         return f32::NAN;
