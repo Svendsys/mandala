@@ -31,7 +31,7 @@ fn map_naming(slot: usize, name: &str) -> String {
         pick(5, "v"),
     );
     format!(
-        r##"{{"format":1,"name":"t","theme":{{"active":"{variant}","variants":{{"{variant}":{{"{variable}":"#000000"}}}}}},"palettes":{{"{palette}":[{{"frame":"#000000","text":"#000000"}}]}},"edits":[{{"id":"{edit}","name":"E"}}],"presentations":[{{"id":"{presentation}","name":"S"}}],"verbs":[{{"id":"{verb}","name":"V"}}]}}"##
+        r##"{{"format":1,"name":"t","theme":{{"active":"{variant}","variants":{{"{variant}":{{"{variable}":"#000000"}}}}}},"palettes":{{"{palette}":[{{"frame":"#000000","text":"#000000"}}]}},"edits":[{{"id":"{edit}","name":"E","reach":"self","target":"node","handler":"flower"}}],"presentations":[{{"id":"{presentation}","name":"S"}}],"verbs":[{{"id":"{verb}","name":"V"}}]}}"##
     )
 }
 

@@ -88,6 +88,11 @@ pub enum ConsoleSideEffect {
     /// line's output. A step runs frames and owes the window one; a
     /// read or a switch changes nothing a frame shows.
     Clock(commands::clock::ClockLine),
+    /// List, run, describe or inspect an edit. Set by the `edit` verb,
+    /// which only reads the line; the executor runs it against the
+    /// app's edit registry and the open map (`app::console_input`), and
+    /// its report becomes the line's output.
+    Edit(commands::edit::EditLine),
 }
 
 impl std::fmt::Debug for ConsoleSideEffect {
@@ -103,6 +108,7 @@ impl std::fmt::Debug for ConsoleSideEffect {
             Self::Screenshot(line) => f.debug_tuple("Screenshot").field(line).finish(),
             Self::Record(line) => f.debug_tuple("Record").field(line).finish(),
             Self::Clock(line) => f.debug_tuple("Clock").field(line).finish(),
+            Self::Edit(line) => f.debug_tuple("Edit").field(line).finish(),
         }
     }
 }

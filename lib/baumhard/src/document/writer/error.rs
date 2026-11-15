@@ -27,7 +27,7 @@ pub enum ApplyError {
     /// cancelled, cancelled by an undo or a redo, or fast-forwarded and
     /// committed when another change arrived during its animation.
     TransactionClosed,
-    /// [`Document::interpolate`](crate::document::ids::Document::interpolate)
+    /// [`Document::stage_progress`](crate::document::ids::Document::stage_progress)
     /// on a transaction that is not animated.
     NotAnimated,
     /// A change declared a source no change may declare:

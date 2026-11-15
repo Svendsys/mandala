@@ -9,6 +9,11 @@
 pub mod bounds_tests;
 pub mod deep_tests;
 pub mod deps_tests;
+pub mod edit_fuzz;
+#[cfg(test)]
+mod edit_fuzz_tests;
+#[cfg(test)]
+mod edit_tests;
 pub mod element_tests;
 #[cfg(test)]
 mod format_color_tests;

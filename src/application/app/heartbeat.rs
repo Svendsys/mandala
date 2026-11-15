@@ -31,9 +31,11 @@
 //! construction: a step makes progress, so only a single stuck heartbeat
 //! can trip the threshold.
 //!
-//! The animations that ran on this frame — the presentation layer and
-//! animated edits — return with V1-D1 (#250), which owns the per-frame
-//! tick, and V1-D2 (#251).
+//! The time-driven half also writes the running animations at the
+//! frame's instant (`app::animation`): an animated edit today, V1-D2's
+//! presentations beside it. In real time that is every loop iteration;
+//! under a virtual clock, the step's heartbeats and boundary ticks, so a
+//! stepped animation lands on exact instants.
 //!
 //! Native-only: the input-driven half is made of native's drag state.
 //! The step's schedule is not — [`run_step`] and the [`Steps`] trait it
@@ -50,14 +52,20 @@ use super::capture_flow::CaptureScene;
 use super::input_context::InputHandlerContext;
 use super::ipc_scene::surface_of;
 use super::step::{run_step, Beat, Steps};
-use super::{drain_frame, record_flow};
+use super::{animation, drain_frame, record_flow};
 
 /// Whether the loop owes another iteration without further input: a
-/// queued injected sample, under a real clock. Under a virtual clock a
-/// queued sample is owed to a future instant only a step reaches, and a
-/// loop that polled for it would spin with nothing to do.
-pub(super) fn needs_continuation(injected: &InjectedQueue, clock: &AppClock) -> bool {
-    !injected.is_empty() && clock.mode() == ClockMode::Real
+/// queued injected sample, or a running animation
+/// ([`animation::keeps_ticking`]), under a real clock. Under a virtual
+/// clock a queued sample and an animation's next frame are owed to
+/// future instants only a step reaches, and a loop that polled for them
+/// would spin with nothing to do.
+pub(super) fn needs_continuation(
+    injected: &InjectedQueue,
+    clock: &AppClock,
+    document: Option<&crate::application::document::MindMapDocument>,
+) -> bool {
+    (!injected.is_empty() && clock.mode() == ClockMode::Real) || animation::keeps_ticking(document, clock)
 }
 
 impl InputHandlerContext<'_> {
@@ -88,7 +96,8 @@ impl InputHandlerContext<'_> {
 
     /// The frame up to the recorder: one injected-input sample when the
     /// frame lands one — ahead of the drains, where a winit event lands —
-    /// then [`Self::drain_inputs`]. The recorder runs in
+    /// the animations written at the frame's instant when it moves time,
+    /// then [`Self::drain_inputs`], whose view sync draws both. The recorder runs in
     /// [`Self::record_tick`], after whatever the caller orders between the
     /// two (the event loop runs the IPC drain there). Returns whether the
     /// view changed.
@@ -98,6 +107,9 @@ impl InputHandlerContext<'_> {
             if let Some(sample) = self.injected.pop(|point| surface_of(renderer, point)) {
                 let _ = self.apply_injected(sample);
             }
+        }
+        if beat.moves_time(self.clock) {
+            animation::tick(self.document.as_mut(), self.clock);
         }
         self.drain_inputs()
     }
@@ -384,12 +396,21 @@ mod tests {
         let empty = InjectedQueue::default();
         let real = AppClock::default();
         let frozen = virtual_clock();
-        assert!(needs_continuation(&queued, &real), "queued input on a real clock");
         assert!(
-            !needs_continuation(&queued, &frozen),
+            needs_continuation(&queued, &real, None),
+            "queued input on a real clock"
+        );
+        assert!(
+            !needs_continuation(&queued, &frozen, None),
             "queued input on a virtual clock"
         );
-        assert!(!needs_continuation(&empty, &real), "nothing on a real clock");
-        assert!(!needs_continuation(&empty, &frozen), "nothing on a virtual clock");
+        assert!(
+            !needs_continuation(&empty, &real, None),
+            "nothing on a real clock"
+        );
+        assert!(
+            !needs_continuation(&empty, &frozen, None),
+            "nothing on a virtual clock"
+        );
     }
 }

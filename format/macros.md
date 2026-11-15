@@ -152,10 +152,10 @@ assigned by the loader, not the file.
     ]
   },
   {
-    "id": "tag-as-inbox",
-    "name": "Tag as Inbox",
+    "id": "grow-and-save",
+    "name": "Grow and save",
     "steps": [
-      { "kind": "CustomMutation", "id": "set-tag-inbox" },
+      { "kind": "Edit", "id": "grow-font-2pt" },
       { "kind": "ConsoleLine", "line": "save" }
     ]
   }
@@ -196,23 +196,26 @@ when the matching modal is open.
 Some Actions are gated for non-User tiers — see
 [Privilege model](#privilege-model--read-this-before-shipping-a-non-user-loader).
 
-#### `CustomMutation`
+#### `Edit`
 
-Fire an edit by id, against a resolvable target node: the path a key
-bound in `edit_bindings` takes (`dispatch::families::edits`). Edits are
-rebuilt on the document's one writer by V1-D1 (#250), which also renames
-this step; until then the step is answered unhandled, logs a `debug!`
-naming its owner, and does not count as run.
+Run an edit ([`edits.md`](./edits.md)) by id at a target: the funnel a
+key bound in `edit_bindings` and the console's `edit apply` take
+(`dispatch::families::edits::run_edit`). The edit is found across its
+tiers (App < User < Map), resolved against the open map, and applied
+as one history entry — or, when it animates, staged and committed as
+one entry at its end. Every tier may run one: an edit is an undoable
+document change with no I/O. A step whose edit is unknown, or names
+something the map lacks, is logged and does not count as run.
 
 ```json
-{ "kind": "CustomMutation", "id": "nudge-right" }
+{ "kind": "Edit", "id": "nudge-right-50" }
 ```
 
 ```json
 {
-  "kind": "CustomMutation",
-  "id": "highlight-trunk",
-  "target": { "node_id": "1.2.3" }
+  "kind": "Edit",
+  "id": "flower",
+  "target": { "node_id": 12 }
 }
 ```
 
@@ -223,7 +226,8 @@ naming its owner, and does not count as run.
 
 `MacroTarget` is one of:
 - `"current_selection"` — the current selection.
-- `{ "node_id": "..." }` — the named node.
+- `{ "node_id": <integer> }` — the node with that id; a map without
+  it skips the step.
 
 #### `ConsoleLine`
 
@@ -271,8 +275,8 @@ tiers in order:
 1. `keybinds.action_for_context(...)` — built-in `Action` variants.
 2. `keybinds.macro_for(...)` — user-defined macros from
    `macro_bindings`. Unknown macro ids fall through to tier 3.
-3. `keybinds.edit_for(...)` — edits from `edit_bindings`, fired by
-   V1-D1 (#250).
+3. `keybinds.edit_for(...)` — edits from `edit_bindings`, run at the
+   selection ([`edits.md`](./edits.md)).
 
 A built-in `Action` wins over a colliding macro binding. To
 override a built-in Action with a macro, first unbind the Action's

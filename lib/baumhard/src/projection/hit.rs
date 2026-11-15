@@ -58,14 +58,21 @@ pub(crate) struct BodyIndex {
     /// test that holds a move to its own cells reads. Test builds only.
     #[cfg(test)]
     pub(crate) cell_writes: usize,
-    /// How many cells `within` has visited: what the test that holds a
-    /// rubber band to its own cells reads. Test builds only.
+    /// How many cells `within`, `each_within` and `meeting` (their shared
+    /// `candidates`) have visited: what the test that holds a rubber band
+    /// to its own cells reads. Test builds only.
     #[cfg(test)]
     pub(crate) within_cells: std::cell::Cell<usize>,
-    /// How many bodies `within` has tried against its rectangle. Test
-    /// builds only.
+    /// How many bodies `within` and `each_within` (their shared
+    /// `overlaps`) have tried against their rectangles. Test builds only.
     #[cfg(test)]
     pub(crate) within_tried: std::cell::Cell<usize>,
+    /// How many bodies `meeting` has tried against its rectangle, in the
+    /// cells' branch and the every-body branch alike: what the test that
+    /// holds a blocked flower to its own neighborhood reads. Test builds
+    /// only.
+    #[cfg(test)]
+    pub(crate) meeting_tried: std::cell::Cell<usize>,
 }
 
 /// The cell coordinate of `v`, clamped to the grid.
@@ -211,6 +218,29 @@ impl BodyIndex {
         found
     }
 
+    /// Every body whose drawn **rectangle** `rect` meets, in ascending
+    /// node id: their insides overlap, so a shared edge does not meet,
+    /// and the outline shape is not consulted — what a layout keeps its
+    /// nodes clear of. The bodies tried are [`Self::within`]'s. O(the
+    /// bodies tried), plus a sort of them.
+    pub(crate) fn meeting(&self, rect: Rect) -> Vec<NodeId> {
+        let mut found = Vec::new();
+        self.candidates(rect, |node| found.push(node));
+        found.sort_unstable();
+        found.dedup();
+        found.retain(|node| {
+            #[cfg(test)]
+            self.meeting_tried.set(self.meeting_tried.get() + 1);
+            self.bodies.get(node).is_some_and(|&(body, _, _)| {
+                rect.origin.x < body.max().x
+                    && body.origin.x < rect.max().x
+                    && rect.origin.y < body.max().y
+                    && body.origin.y < rect.max().y
+            })
+        });
+        found
+    }
+
     /// Each body [`Self::within`] finds, passed to `f` as it is found and
     /// nothing collected: a body in more than one of the cells tried is
     /// passed once for each, in no set order. For a caller that asks of
@@ -303,6 +333,15 @@ impl Projector {
     /// rectangle spanning more cells than the index lists per body.
     pub fn nodes_in(&self, rect: Rect) -> Vec<NodeId> {
         self.bodies.within(rect)
+    }
+
+    /// The visible nodes whose drawn rectangles `rect` meets: their
+    /// insides overlap, so a shared edge does not count, and the outline
+    /// shape is not consulted. In ascending node id. Cost: the body
+    /// index's cells under `rect`, or every body for a rectangle spanning
+    /// more cells than the index lists per body, as [`Self::nodes_in`].
+    pub fn nodes_meeting(&self, rect: Rect) -> Vec<NodeId> {
+        self.bodies.meeting(rect)
     }
 
     /// The smallest visible node whose body holds `point` by its shape —

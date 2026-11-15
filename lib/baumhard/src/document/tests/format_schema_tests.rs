@@ -24,11 +24,11 @@ fn first_cell(row: &str) -> Option<String> {
     Some(inner[..end].trim().trim_matches('`').to_string())
 }
 
-/// Every `###` section's tables, by heading: the first column of each
-/// row of a table headed `| Key |`, in order, a second such table in a
-/// section appended to the first.
-fn documented_keys() -> BTreeMap<String, Vec<String>> {
-    let path = format_doc_path("schema.md");
+/// Every `###` section's tables in the format doc `doc`, by heading: the
+/// first column of each row of a table headed `| Key |`, in order, a
+/// second such table in a section appended to the first.
+fn documented_keys(doc: &str) -> BTreeMap<String, Vec<String>> {
+    let path = format_doc_path(doc);
     let text =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{} must be readable: {e}", path.display()));
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -64,7 +64,7 @@ const SECTIONS: &[(&str, &[&str])] = &[
     ("Top level", &["MapHeaderDto"]),
     ("Theme", &["ThemeDto"]),
     ("Palette group", &["PaletteGroupDto"]),
-    ("Definitions", &["EditDto", "PresentationDto", "VerbDto"]),
+    ("Definitions", &["PresentationDto", "VerbDto"]),
     ("Defaults", &["DefaultsDto"]),
     ("Node defaults", &["NodeDefaultsDto"]),
     ("Text style", &["TextDefaultsDto"]),
@@ -85,6 +85,15 @@ const SECTIONS: &[(&str, &[&str])] = &[
     ("Cap", &["CapDto"]),
     ("Label", &["LabelDto"]),
     ("Portal end", &["PortalEndDto"]),
+];
+
+/// The `###` headings of `format/edits.md` that hold a table of keys, and
+/// the DTO each describes: an edit is documented there (V1-D1).
+const EDIT_SECTIONS: &[(&str, &[&str])] = &[
+    ("Edit", &["EditDto"]),
+    ("Animate", &["AnimateDto"]),
+    ("Filter", &["FilterDto"]),
+    ("Edits file", &["EditsFileDto"]),
 ];
 
 /// The DTOs whose keys share one table, "Start point"'s second:
@@ -111,12 +120,21 @@ fn members(graph: &TypeGraph, dto: &str) -> Vec<String> {
 #[test]
 fn test_the_schema_tables_list_every_key_in_the_order_the_saver_writes_them() {
     let graph = TypeGraph::build(&crate_src_root());
-    let documented = documented_keys();
+    let documented = documented_keys("schema.md");
+    let edits_documented = documented_keys("edits.md");
 
-    for (heading, dtos) in SECTIONS {
+    for (doc, documented, heading, dtos) in SECTIONS
+        .iter()
+        .map(|(heading, dtos)| ("schema.md", &documented, heading, dtos))
+        .chain(
+            EDIT_SECTIONS
+                .iter()
+                .map(|(heading, dtos)| ("edits.md", &edits_documented, heading, dtos)),
+        )
+    {
         let listed = documented
             .get(*heading)
-            .unwrap_or_else(|| panic!("format/schema.md has no table under `### {heading}`"));
+            .unwrap_or_else(|| panic!("format/{doc} has no table under `### {heading}`"));
         for dto in *dtos {
             let mut keys = members(&graph, dto);
             if *dto == "MapHeaderDto" {
@@ -147,6 +165,7 @@ fn test_the_schema_tables_list_every_key_in_the_order_the_saver_writes_them() {
     // Every struct the loader reads is described somewhere.
     let described: BTreeSet<&str> = SECTIONS
         .iter()
+        .chain(EDIT_SECTIONS)
         .flat_map(|(_, dtos)| dtos.iter().copied())
         .chain(SPELLING_OBJECTS.iter().copied())
         .collect();
