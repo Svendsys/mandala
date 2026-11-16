@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 /// Every minimized input a fuzz target found, by the symptom it had.
 /// Each is replayed through every property here; its own test below
 /// pins the symptom. The fuzz targets read these files as seeds.
-const FINDINGS: [(&str, &[u8]); 3] = [
+const FINDINGS: [(&str, &[u8]); 4] = [
     (
         "c1_control_saved_raw",
         include_bytes!("fuzz_findings/c1_control_saved_raw.mandala.json"),
@@ -40,7 +40,37 @@ const FINDINGS: [(&str, &[u8]); 3] = [
         "a_fault_inside_the_first_of_two_keys",
         include_bytes!("fuzz_findings/a_fault_inside_the_first_of_two_keys.mandala.json"),
     ),
+    (
+        "a_handler_name_shown_raw",
+        include_bytes!("fuzz_findings/a_handler_name_shown_raw.mandala.json"),
+    ),
 ];
+
+/// The fourth finding (CI's load_raw job on #365, minimized): an edit
+/// whose handler is `flo` and U+202E, raw in the file, which this build
+/// does not have. The refusal named it as the file wrote it, the bidi
+/// control raw in a message a terminal or a dialog prints — `InvalidEdit`
+/// alone of the refusals that quote the file showed its message as
+/// written (since #331). It is shown as file text is now, escaped.
+///
+/// Control: `InvalidEdit`'s message shown as written, red.
+#[test]
+fn test_a_handler_name_from_the_file_is_escaped_in_its_refusal() {
+    let text = std::str::from_utf8(FINDINGS[3].1).unwrap();
+    assert!(
+        text.contains("flo\u{202e}"),
+        "precondition: the finding names a handler with U+202E raw"
+    );
+    let error = load(text).unwrap_err();
+    assert!(
+        matches!(error.kind, LoadErrorKind::InvalidEdit { .. }),
+        "{error:?}"
+    );
+    assert_eq!(error.path, "edits[1].handler");
+    let shown = error.to_string();
+    assert!(!shown.contains('\u{202e}'), "shown raw: {shown:?}");
+    assert!(shown.contains("`flo\\u202e`"), "{shown}");
+}
 
 /// The second finding: malformed text inside `nodes[1]` was refused at
 /// the path `nodes[1]` with no node context, where every error inside a
