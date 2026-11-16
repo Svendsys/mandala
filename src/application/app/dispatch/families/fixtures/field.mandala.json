@@ -27,6 +27,45 @@
       "size": 14.0
     }
   },
+  "edits": [
+    {
+      "id": "fade-opaque",
+      "name": "Fade what is opaque",
+      "reach": "self",
+      "target": "node",
+      "filter": {
+        "fields": [
+          [
+            {
+              "opacity": 0.5
+            },
+            {
+              "GreaterThan": false
+            }
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "node": {
+            "set_opacity": 0.9
+          }
+        }
+      ]
+    }
+  ],
+  "verbs": [
+    {
+      "id": "fade",
+      "name": "Fade",
+      "steps": [
+        {
+          "edit": "fade-opaque",
+          "on": "self"
+        }
+      ]
+    }
+  ],
   "nodes": [
     {
       "id": 1,
