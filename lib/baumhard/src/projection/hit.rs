@@ -38,7 +38,7 @@ const CELL: f32 = 256.0;
 
 /// A body spanning more cells than this is kept in a list of its own,
 /// tried on every query, rather than in every cell it covers.
-const MAX_CELLS: i64 = 64;
+const MAX_CELLS: u64 = 64;
 
 /// Where the visible nodes' bodies are, for the hit test: each node's
 /// drawn rectangle and hit shape, in a grid of cells, so a query tries
@@ -96,9 +96,16 @@ pub(crate) fn span(rect: Rect) -> Option<((i32, i32), (i32, i32))> {
     Some(((x0, y0), (x1, y1)))
 }
 
-/// How many cells the span from `(x0, y0)` to `(x1, y1)` holds.
-pub(crate) fn cell_count((x0, y0): (i32, i32), (x1, y1): (i32, i32)) -> i64 {
-    (i64::from(x1) - i64::from(x0) + 1) * (i64::from(y1) - i64::from(y0) + 1)
+/// How many cells the span from `(x0, y0)` to `(x1, y1)` holds: none
+/// where it ends before it starts on either axis. An axis of the grid is
+/// 2³² cells, so a span holds at most 2⁶⁴ of them: the count is exact for
+/// every span but the whole grid's, which is one more than a `u64`
+/// counts and is given as [`u64::MAX`]. No span, however large, overflows
+/// it (#364). O(1).
+pub(crate) fn cell_count((x0, y0): (i32, i32), (x1, y1): (i32, i32)) -> u64 {
+    // Two `i32`s are less than 2³² apart, which an `i64` holds.
+    let along = |from: i32, to: i32| (i64::from(to) - i64::from(from) + 1).max(0).unsigned_abs();
+    along(x0, x1).saturating_mul(along(y0, y1))
 }
 
 /// The cells `rect` covers, when they are few enough to list.

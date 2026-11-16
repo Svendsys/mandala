@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 /// Every minimized input a fuzz target found, by the symptom it had.
 /// Each is replayed through every property here; its own test below
 /// pins the symptom. The fuzz targets read these files as seeds.
-const FINDINGS: [(&str, &[u8]); 3] = [
+const FINDINGS: [(&str, &[u8]); 4] = [
     (
         "c1_control_saved_raw",
         include_bytes!("fuzz_findings/c1_control_saved_raw.mandala.json"),
@@ -40,7 +40,48 @@ const FINDINGS: [(&str, &[u8]); 3] = [
         "a_fault_inside_the_first_of_two_keys",
         include_bytes!("fuzz_findings/a_fault_inside_the_first_of_two_keys.mandala.json"),
     ),
+    // A projection finding, written by hand from #364's: a map that loads
+    // and made the projection panic.
+    (
+        "a_ring_past_the_body_index_cells",
+        include_bytes!("fuzz_findings/a_ring_past_the_body_index_cells.mandala.json"),
+    ),
 ];
+
+/// The finding of #364: a map that loads made the projection panic,
+/// counting the cells of a region too large for the product to fit an
+/// `i64` (attempt to multiply with overflow); a release build wrapped the
+/// count, took the region for a small one and filed it under every cell.
+/// The map is one node whose last ring is 600 `gap`s of 10⁹ out, the most
+/// a length is held to wherever the loader bounds one, its dots spaced to
+/// run all the way round: a region 1.2·10¹² across. It loads and is inside
+/// the projection's work bound, so both loader targets project it, and it
+/// holds every property.
+///
+/// Controls: with the count the product of two spans in `i64`, as it was,
+/// a debug build panics in the first projection here (attempt to multiply
+/// with overflow), and a release build's ends in a failed allocation.
+/// With the bound refusing a `gap` past its extent, red on the
+/// precondition that the map is inside it.
+#[test]
+fn test_a_ring_past_the_body_index_cells_is_projected() {
+    use crate::projection::tests::projection_fuzz::within_bound;
+    use crate::projection::tests::support::Projected;
+    let finding = FINDINGS[3].1;
+    let doc = load(std::str::from_utf8(finding).unwrap()).expect("the finding loads");
+    assert!(
+        within_bound(&doc),
+        "precondition: inside the projection's work bound, so the loader targets project it"
+    );
+    let node = doc.node_by_ident(crate::document::ids::NodeIdent(1)).unwrap();
+    let region = Projected::new(doc).projector.regions.get(node).1;
+    let across = region.map(|(rect, _)| rect.size.min_element());
+    assert!(
+        across.is_some_and(|across| across > 1.0e12),
+        "precondition: the ring's box is 600 gaps out each way, {region:?}"
+    );
+    check_load_bytes(finding).unwrap();
+}
 
 /// The second finding: malformed text inside `nodes[1]` was refused at
 /// the path `nodes[1]` with no node context, where every error inside a

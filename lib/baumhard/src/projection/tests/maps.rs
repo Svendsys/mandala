@@ -108,6 +108,21 @@ pub fn two_paths(at: Vec2, blocker: Value, path: Value) -> Document {
     ]}))
 }
 
+/// Lengths a map can carry that put a rectangle past what an `i64` counts
+/// of the body index's cells (#364): 4·10¹¹, the least found to; the nine
+/// frame insets the defect was seen at, 5·10¹¹ to 10³⁷; and 4·10³⁷, found
+/// beside them. A box that far each way from a node spans at least
+/// 3,125,000,000 cells a side.
+pub const HUGE_LENGTHS: [f32; 11] = [
+    4.0e11, 5.0e11, 6.0e11, 1.0e12, 1.0e13, 1.0e16, 1.0e19, 1.0e25, 1.0e30, 1.0e37, 4.0e37,
+];
+
+/// A node's drawn rectangle, 100 by 40 at the origin, grown by `length`
+/// each way: the box round a ring set `length` out from it.
+pub fn huge_box(length: f32) -> crate::flow::Rect {
+    crate::flow::Rect::new(Vec2::ZERO, Vec2::new(100.0, 40.0)).grown(length)
+}
+
 /// `fields` with `more` merged in.
 pub fn merged(mut fields: Value, more: Value) -> Value {
     if let (Some(out), Some(more)) = (fields.as_object_mut(), more.as_object()) {

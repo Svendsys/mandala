@@ -7,7 +7,7 @@
 
 use serde_json::json;
 
-use crate::projection::tests::maps::{load_map, node};
+use crate::projection::tests::maps::{load_map, node, HUGE_LENGTHS};
 use crate::projection::tests::projection_fuzz::{
     check_projects, projection_counts, under_ceiling, within_bound, EXTENT, MAX_UNITS, MAX_UNTANGLE_SAMPLES,
 };
@@ -79,6 +79,54 @@ fn test_the_projection_bound_refuses_far_coordinates_a_second_text_ring_and_too_
         most - 1
     );
     assert!(!within_bound(&chain(most + 1)), "one connector more is outside");
+}
+
+/// The bound is on what a map's work grows with — its coordinates, its
+/// rings of text, its units — and not on a frame's `inset` or `gap` or on
+/// a `spacing`: a map is inside it whatever they are, so the loader
+/// targets project it and hold the projection to it (#364, where a map
+/// with an `inset` of 5·10¹¹ loaded and made the projection panic).
+///
+/// Controls: with the bound refusing a frame's `inset`, its `gap` or its
+/// `spacing`, a ring's `spacing`, a connector's or a link's past `EXTENT`,
+/// each in turn, red on the map named for it.
+#[test]
+fn test_the_projection_bound_holds_a_map_whatever_its_inset_gap_and_spacing() {
+    let ring = json!({"fit": "repeat", "size": 0.25, "spans": [{"text": "·"}]});
+    let framed = |frame: serde_json::Value| json!({"nodes": [node(1, None, json!({ "frame": frame }))]});
+    let path = |end: serde_json::Value| {
+        let mut far = json!({"position": [500.0, 0.0]});
+        for (key, value) in end.as_object().into_iter().flatten() {
+            far[key] = value.clone();
+        }
+        json!({"nodes": [node(1, None, json!({})), node(2, Some(1), far)]})
+    };
+    for length in HUGE_LENGTHS.into_iter().chain([f32::MAX]) {
+        let mut spaced = ring.clone();
+        spaced["spacing"] = json!(length);
+        for (what, map) in [
+            ("inset", framed(json!({"inset": length, "rings": [ring.clone()]}))),
+            ("gap", framed(json!({"gap": length, "rings": [{}, ring.clone()]}))),
+            ("ring spacing", framed(json!({"rings": [spaced]}))),
+            (
+                "frame spacing",
+                framed(json!({"spacing": length, "rings": [ring.clone()]})),
+            ),
+            (
+                "connector spacing",
+                path(json!({"connector": {"spacing": length}})),
+            ),
+            (
+                "link spacing",
+                path(json!({"links": [{"to": 1, "kind": "line", "spacing": length}]})),
+            ),
+        ] {
+            assert!(
+                within_bound(&load_map(map)),
+                "a map whose {what} is {length} is inside the bound"
+            );
+        }
+    }
 }
 
 /// `copies` of the first seed's map (`line_link_beside_connector_1`) side

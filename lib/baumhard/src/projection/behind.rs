@@ -178,7 +178,7 @@ impl PathCells {
             each(&[(path, *b, 0)]);
         }
         match span(rect) {
-            Some(((x0, y0), (x1, y1))) if cell_count((x0, y0), (x1, y1)) <= self.cells.len() as i64 => {
+            Some(((x0, y0), (x1, y1))) if cell_count((x0, y0), (x1, y1)) <= self.cells.len() as u64 => {
                 for x in x0..=x1 {
                     for y in y0..=y1 {
                         each(self.cells.get(&(x, y)).map_or(&[], Vec::as_slice));

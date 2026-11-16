@@ -810,16 +810,18 @@ What they hold, in short (each module's docs are the full list):
   sections, rings, connectors and links): no panic, a group per visible
   node in every layer, every run's box finite, the same layers projected
   twice, hits that do not panic, and one generated edit kept equal to a
-  full projection. A map outside the bound is skipped and counted, and
-  the targets print the counts at every power of two and every 256
-  inputs, so even a slow run reports its skipped fraction; the suite
-  holds the structured maps to fewer than half skipped. The engine
-  bounds a placement and a frame, never a whole map (#316), which is why
-  the bound is the harness's. `projection_edits` runs the oracle — the
-  updated layers equal a full projection — after every step of a
-  generated edit sequence: field and structural edits, a rebinding near
-  the root, theme and palette changes, transaction stages, undos and
-  redos.
+  full projection. A frame's `inset` and `gap` and a `spacing` are not
+  coordinates of the bound: a map is projected whatever they are (#364,
+  where one made the projection panic). A map outside the bound is
+  skipped and counted, and the targets print the counts at every power
+  of two and every 256 inputs, so even a slow run reports its skipped
+  fraction; the suite holds the structured maps to fewer than half
+  skipped. The engine bounds a placement and a frame, never a whole map
+  (#316), which is why the bound is the harness's. `projection_edits`
+  runs the oracle — the updated layers equal a full projection — after
+  every step of a generated edit sequence: field and structural edits, a
+  rebinding near the root, theme and palette changes, transaction
+  stages, undos and redos.
 - **TextFlow.** No panic; every glyph names its span (or the filler) and
   whole characters of its text; every metric, placed position and box
   size is finite; no placement exceeds `MAX_PLACED_GLYPHS`; a span
@@ -877,11 +879,13 @@ chains with a link on every node, wide fans, dense rows (empty
 sections, empty rings, portal links), one input per refusal the
 reference model names, two per bounded field — one inside its bound
 (a choice from the value just past it) and one past it, so a dropped
-check fails on the seed itself — the authored mutation spellings of
-`format/mutations.md` with hostile values, hostile strings. The run
-script adds each surface's fixtures and findings where they live (the
-format's fixtures, `maps/*.mandala.json`, the `fuzz_findings`
-directories), never copied. `test_every_fuzz_seed_holds_its_targets_properties`
+check fails on the seed itself — a map whose default `spacing` puts a
+path's glyph past the body index's cells (#364), the authored mutation
+spellings of `format/mutations.md` with hostile values, hostile
+strings. The run script adds each surface's fixtures and findings where
+they live (the format's fixtures, `maps/*.mandala.json`, the
+`fuzz_findings` directories), never copied.
+`test_every_fuzz_seed_holds_its_targets_properties`
 replays every committed seed through its target's properties and holds
 the targets in `fuzz/fuzz_targets/`, their bin entries and its own table of
 targets to one another, both ways.
