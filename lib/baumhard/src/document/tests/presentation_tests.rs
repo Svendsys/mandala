@@ -1251,10 +1251,9 @@ fn test_a_start_past_the_platform_budget_is_refused_in_the_writers_words() {
 ///   undo makes room.
 ///
 /// Controls, each seen red: each application judged against the map
-/// alone (the writer's `within_budget`) starts both instances of the
-/// first start; a restore that judges each against the map alone shows
-/// both after the edit, the tree then holding more text than the
-/// platform holds.
+/// alone (the writer's `within_budget`), and a restore that does not
+/// carry forward the cost of the instances before each, both start both
+/// instances of the first start.
 #[test]
 fn test_instances_that_fit_alone_and_not_together_are_held_to_the_budget_together() {
     let wordy = presentation(

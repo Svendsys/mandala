@@ -175,20 +175,25 @@ committed map ⊕ open transaction ⊕ presentation layer   →  what is drawn
 - On wasm32 a presentation is held to the platform's bounds as an edit
   is ([Limits](./schema.md#limits)): what it shows may not take
   the map past them. The instances are held to them together, in the
-  order they started: each is judged on top of the map and of every
-  instance started before it, never against the map alone, so a start
-  on N nodes — N instances — must fit as a whole, and so must several
-  presentations playing at once.
+  order they started: each is judged, at the most it will show (its
+  change written whole), on top of the map and of every instance
+  started before it as that one stands — an instance whose text has
+  not yet switched (`snap`) still shows the text under it, and frees
+  no room until it switches. So a start on N nodes — N instances —
+  must fit as a whole, and so must several presentations playing at
+  once; when an instance switches, every one after it is judged
+  again.
   - **At a start**, nothing starts, and the refusal is the answer where
     the start was asked for — the console line's error, and so
     `act.console`'s — naming the presentation and then the writer's own
     words:
     ``presentation `wordy`: the map would hold N bytes of text; this platform holds at most M``.
-    A start is judged with the instances before it at what they cost
-    on the map and each new instance at what it costs on the map
-    alone; one that writes an element an older instance writes too may
-    cost more once it stands on that one's, and then starts and shows
-    nothing, as below.
+    A start is judged where the layer puts it: its instances join the
+    end of the layer, on top of the ones already playing as they
+    stand, and if one does not fit the start is taken back whole.
+    While the layer is set aside (a change being built from the map),
+    a start is judged on the map, its new instances one over another,
+    and the layer is judged whole when it comes back, as below.
   - **While it plays** — an edit under it grew the map, or the
     instances before it now leave no room, so writing the instance
     back on would pass the bounds — the edit stands and the instance
