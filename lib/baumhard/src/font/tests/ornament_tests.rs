@@ -539,7 +539,7 @@ fn test_no_text_glyph_is_drawn_by_an_ornament_face() {
 /// fallback list, red on the pinned faces' punctuation, drawn in
 /// `African` and Noto Sans Devanagari; with that and the generic
 /// families left as cosmic-text's names, red on every unpinned glyph; and
-/// with [`mapped`]'s symbol-font read taken out, red on `Symbols1`'s `L`
+/// with `mapped`'s symbol-font read taken out, red on `Symbols1`'s `L`
 /// and `G` drawn in its own face — a face that lacks `a`, so only the
 /// read of `c`'s own glyphs sees it — and on Scrapbook Chinese's every
 /// missing character.
