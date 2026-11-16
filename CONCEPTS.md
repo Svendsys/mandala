@@ -1578,7 +1578,12 @@ presentation changes what is drawn and is stopped.
   what a run mutation can change (opacity, origin, overrides), so that
   ending the last instance leaves the run, to the bit, what the
   projector and the overlays alone make it; a pass costs the runs it
-  names, never the layer.
+  names, never the layer. Everything an instance writes but a `null`
+  color blends from what is drawn: before it is applied, a run with no
+  overrides is given neutral ones, and each glyph it colors that
+  nothing has colored yet is given its own color (`RunShape::own_colors`, from the
+  one `own_color` the renderer also draws by), so one presentation
+  fades a glyph from its resting color (#369).
 - **Reading the map, not the performance.** A change is often built
   from values read first — a copy, a paste beside a node, a layout.
   The funnels an input reaches the map through — an Action
