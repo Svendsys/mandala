@@ -30,8 +30,8 @@ use crate::document::mutation::ops::{
 };
 use crate::document::place::{nameable_font, Unit};
 use crate::document::values::{
-    Anchor, ColorRef, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteId, Percent, PlainColor,
-    Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
+    check_link_url, Anchor, ColorRef, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteId, Percent,
+    PlainColor, Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
 };
 use crate::engine::builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
 use crate::engine::predicate::Predicate;
@@ -345,7 +345,13 @@ fn span_op(dto: &SpanOpDto, names: Names<'_>) -> Resolved<SpanOp> {
             end: *end,
         },
         SpanOpDto::SetLink(target) => SpanOp::SetLink(opt(target, |target| match target {
-            LinkTargetDto::Url(url) => Ok(LinkTarget::Url(url.to_string())),
+            LinkTargetDto::Url(url) => match check_link_url(url) {
+                Ok(url) => Ok(LinkTarget::Url(url.to_string())),
+                Err(_) => Err(Fault::Invalid {
+                    field: "set_link",
+                    message: "a link opens an `http`, `https` or `mailto` address",
+                }),
+            },
             LinkTargetDto::Verb(id) => verb("set_link", id, names).map(LinkTarget::Verb),
         })?),
         SpanOpDto::Text(op) => SpanOp::Text(text_op(op, DocKind::Span, names)?),

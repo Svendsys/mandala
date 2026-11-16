@@ -45,6 +45,7 @@ use baumhard::document::format;
 use baumhard::document::format::file::MAP_EXTENSION;
 use baumhard::document::ids::Document;
 use baumhard::document::presentation::{InstanceId, PresentError, PresentationDef};
+use baumhard::document::verb::{RunId, Runs};
 use baumhard::document::writer::error::ApplyError;
 use baumhard::document::writer::feed::ChangeRecord;
 use baumhard::document::writer::transaction::{Transaction, TransactionKind};
@@ -118,6 +119,24 @@ pub struct MindMapDocument {
     load_failure: bool,
     /// Which document of the process this is ([`Self::generation`]).
     generation: u64,
+    /// The map verbs running on it (design §11; V1-D3), which the
+    /// frame resumes (`families::verbs`). They name its nodes, so they
+    /// go with it when it is replaced.
+    runs: Runs,
+    /// The node the pointer rests on whose `on.hover` names a verb, and
+    /// the held run that hover invoked, which leaving it releases.
+    hover: Option<Hover>,
+}
+
+/// A hover held on a node (design §11.2): the node, and the run its
+/// `on.hover` verb was invoked as — `None` when the invocation was
+/// refused, so that leaving the node has nothing to release.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Hover {
+    /// The node the pointer rests on.
+    pub node: NodeId,
+    /// The held run.
+    pub run: Option<RunId>,
 }
 
 /// The generation the next [`MindMapDocument`] gets.
@@ -138,6 +157,8 @@ impl MindMapDocument {
             clipboard: None,
             load_failure: false,
             generation: NEXT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            runs: Runs::default(),
+            hover: None,
         }
     }
 
@@ -550,14 +571,6 @@ impl MindMapDocument {
     /// already playing (`Document::start_presentation`). Never a change
     /// of the map: no history entry, no revision, no status line. A
     /// refusal starts nothing and is returned for the caller to show.
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(
-            dead_code,
-            reason = "what starts and stops a presentation today is the console shell, which is native; \
-                      the map's triggers (V1-D3, #252) do on both targets"
-        )
-    )]
     pub fn start_presentation(
         &mut self,
         def: &PresentationDef,
@@ -570,16 +583,45 @@ impl MindMapDocument {
     /// Stop the presentation `id` on `nodes` at `now_ms`: each instance
     /// there plays its way out (`Document::stop_presentation`). Returns
     /// how many it stopped.
-    #[cfg_attr(
-        target_arch = "wasm32",
-        expect(
-            dead_code,
-            reason = "what starts and stops a presentation today is the console shell, which is native; \
-                      the map's triggers (V1-D3, #252) do on both targets"
-        )
-    )]
     pub fn stop_presentation(&mut self, id: &str, nodes: &[NodeId], now_ms: f64) -> usize {
         self.doc.stop_presentation(id, nodes, now_ms)
+    }
+
+    /// Stop the instances `ids` that still play, at `now_ms`
+    /// (`Document::stop_instances`): what a held verb run's release
+    /// stops. Returns how many it stopped.
+    pub fn stop_instances(&mut self, ids: &[InstanceId], now_ms: f64) -> usize {
+        self.doc.stop_instances(ids, now_ms)
+    }
+
+    /// The verb runs active on the map, taken out for the runner
+    /// (`families::verbs`) to drive while it lends the document to the
+    /// runs' steps; [`Self::put_runs`] gives them back. Nothing else
+    /// holds them in between: a step reaches the map, never the runs.
+    pub(in crate::application) fn take_runs(&mut self) -> Runs {
+        std::mem::take(&mut self.runs)
+    }
+
+    /// Give back the runs [`Self::take_runs`] took, with what the runner
+    /// did to them.
+    pub(in crate::application) fn put_runs(&mut self, runs: Runs) {
+        self.runs = runs;
+    }
+
+    /// The verb runs active on the map, to read. O(1).
+    pub fn runs(&self) -> &Runs {
+        &self.runs
+    }
+
+    /// The hover held on a node, if any. O(1).
+    pub fn hover(&self) -> Option<Hover> {
+        self.hover
+    }
+
+    /// Set the hover held on a node: the runner's, when the pointer
+    /// enters or leaves one (`families::verbs::hover`).
+    pub(in crate::application) fn set_hover(&mut self, hover: Option<Hover>) {
+        self.hover = hover;
     }
 
     /// Bring every presentation instance to `now_ms`
@@ -626,12 +668,13 @@ impl MindMapDocument {
         MapItself { doc: self }
     }
 
-    /// Whether an animation is moving: an animated edit is running, or
-    /// a presentation instance is on its way in or out. What
-    /// `clock.wait until=animations_complete` waits out. O(the
-    /// instances).
+    /// Whether an animation is moving: an animated edit is running, a
+    /// presentation instance is on its way in or out, or a verb run waits
+    /// on the clock to go on with its steps. What `clock.wait
+    /// until=animations_complete` waits out. O(the instances and the
+    /// runs).
     pub fn animations_moving(&self) -> bool {
-        self.is_animating() || self.presentations_moving()
+        self.is_animating() || self.presentations_moving() || self.runs.waiting()
     }
 
     /// Whether a presentation plays on with nobody stopping it: a `loop`

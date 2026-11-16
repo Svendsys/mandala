@@ -159,6 +159,14 @@ pub enum MutationError {
         /// Its index.
         index: usize,
     },
+    /// A span link to an address of a scheme a link may not open: only
+    /// `http`, `https` and `mailto` (#252 §3).
+    LinkScheme {
+        /// Where.
+        at: MutatorPath,
+        /// The scheme it wrote, or all of it when it has no `:`.
+        scheme: String,
+    },
     /// A link whose target is not a node of the document.
     LinkTarget {
         /// Where.
@@ -293,6 +301,11 @@ impl fmt::Display for MutationError {
                 write!(f, "{at}: the document has no {what} {index}")
             }
             MutationError::LinkTarget { at, to } => write!(f, "{at}: link target {to} is not a node"),
+            MutationError::LinkScheme { at, scheme } => write!(
+                f,
+                "{at}: a link opens an `http`, `https` or `mailto` address, and this one is `{}`",
+                crate::document::format::context::shown(scheme)
+            ),
             MutationError::Instruction { at } => {
                 write!(
                     f,

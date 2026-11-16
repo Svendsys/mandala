@@ -52,8 +52,8 @@ precedence (a later writer overrides an earlier one with the same
 
 **A map carries no macros.** The old format's map and node-inline
 tiers were deleted with it (V1-C3, #244); a map's own behavior is its
-verbs (V1-D3, #252), which replace them. Opening another map therefore
-leaves the registry as it was.
+verbs ([`verbs.md`](./verbs.md), V1-D3), which replace them. Opening
+another map therefore leaves the registry as it was.
 
 The `SourceTier` of a macro is **loader-pinned** — assigned at the
 loader call site, never read from the on-disk content. A user
@@ -117,10 +117,13 @@ commits to the allocation.
 
 **A map carries no macros and binds no keys** since V1-C3: the map and
 node-inline tiers went with the old format. What a third-party map can
-do is be drawn. Its own behavior returns as verbs and triggers (V1-D3,
-#252), which bring their own gate; until then the capability surface of
-this document is the user's file and the application bundle, both of
-which the user owns.
+do is be drawn, and run its verbs ([`verbs.md`](./verbs.md), V1-D3) from
+its triggers and links: start and stop its own presentations, apply its
+own edits, wait, and open an `http`, `https` or `mailto` link a click
+lands on. A verb has no step that runs a console line or an Action, or
+touches a file or the process — the format has no spelling for one —
+so the capability surface of this document is the user's file and the
+application bundle, both of which the user owns.
 
 **What is not yet closed**, so nobody reads the section above as a
 finished job:
@@ -228,6 +231,35 @@ something the map lacks, is logged and does not count as run.
 - `"current_selection"` — the current selection.
 - `{ "node_id": <integer> }` — the node with that id; a map without
   it skips the step.
+
+#### `Verb`
+
+Run one of the open map's verbs ([`verbs.md`](./verbs.md)) by id,
+through the runner a node's click takes
+(`dispatch::families::verbs`): its steps run up to its first `wait`,
+and the frame goes on with it. Every tier may run one: a map verb is
+sandboxed — it starts and stops the map's presentations, applies the
+map's edits and waits, and nothing else. A step whose verb the map does
+not define, or that acts on the node it is run on and is given none, is
+logged and does not count as run.
+
+```json
+{ "kind": "Verb", "id": "reveal" }
+```
+
+```json
+{ "kind": "Verb", "id": "next-1", "target": { "node_id": 4 } }
+```
+
+| field | type | notes |
+|---|---|---|
+| `id` | `string` | Required. The map verb's id. |
+| `target` | `MacroTarget` | Optional, defaults to `"current_selection"`. The node the verb runs on: its `self`. |
+
+With `"current_selection"` the verb runs on the one selected element's
+node, or on no node when nothing is selected; with more than one
+selected the step is skipped, since a verb runs on one node. A
+`{ "node_id": n }` the map lacks skips the step.
 
 #### `ConsoleLine`
 

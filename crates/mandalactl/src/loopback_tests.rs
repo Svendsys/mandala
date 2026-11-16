@@ -124,6 +124,34 @@ fn test_warnings_go_to_stderr_and_do_not_change_the_exit_code() {
     assert_eq!(outcome.err, "warning: macro_gate_rejected: step refused\n");
 }
 
+/// `act.verb` takes the map verb's id and the node's id as bare words,
+/// in that order, the node's as a number; and `node=` names it. The
+/// reply prints as its fields.
+#[test]
+fn test_a_map_verb_is_sent_by_id_and_node() {
+    let server = FakeServer::always(json!({"changes_the_map": false}));
+    let outcome = against(&server, "act.verb next-1 4");
+    assert_eq!(outcome.exit, Exit::Success);
+    assert_eq!(outcome.out, "changes_the_map: false\n");
+    assert_eq!(
+        server.requests()[0],
+        json!({"id": 1, "cmd": "act.verb", "verb": "next-1", "node": 4})
+    );
+    let outcome = against(&server, "act.verb begin");
+    assert_eq!(outcome.exit, Exit::Success);
+    assert_eq!(
+        server.requests()[1],
+        json!({"id": 1, "cmd": "act.verb", "verb": "begin"})
+    );
+    let _ = against(&server, "act.verb reveal node=7");
+    assert_eq!(server.requests()[2]["node"], json!(7));
+    // Control: a node id that is not a number is refused before
+    // anything is sent.
+    let refused = against(&server, "act.verb reveal x");
+    assert_eq!(refused.exit, Exit::UsageError);
+    assert_eq!(server.requests().len(), 3);
+}
+
 #[test]
 fn test_console_output_prints_as_bare_lines() {
     let server = FakeServer::always(json!({"output": ["section 0 of 3", "visible"]}));

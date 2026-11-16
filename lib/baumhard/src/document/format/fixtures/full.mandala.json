@@ -350,11 +350,61 @@
   "verbs": [
     {
       "id": "glow",
-      "name": "Glow"
+      "name": "Glow",
+      "description": "Conceals what is below the node, for a while.",
+      "steps": [
+        {
+          "present": "intro",
+          "on": "children"
+        },
+        {
+          "wait": 150
+        },
+        {
+          "stop": "intro",
+          "on": "descendants"
+        }
+      ]
     },
     {
       "id": "reveal",
-      "name": "Reveal chapter two"
+      "name": "Reveal chapter two",
+      "steps": [
+        {
+          "present": "shimmer",
+          "on": {
+            "nodes": [
+              2,
+              3
+            ]
+          }
+        },
+        {
+          "edit": "grow",
+          "on": "selection"
+        },
+        {
+          "verb": "glow"
+        },
+        {
+          "stop": "shimmer",
+          "on": {
+            "channel": 1,
+            "within": "map"
+          }
+        },
+        {
+          "edit": "flower",
+          "on": {
+            "channel": 0,
+            "within": "self"
+          }
+        },
+        {
+          "present": "intro",
+          "on": "self"
+        }
+      ]
     }
   ],
   "nodes": [

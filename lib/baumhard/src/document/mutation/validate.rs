@@ -43,8 +43,8 @@ use crate::document::mutation::ops::{
 use crate::document::place::{name_fault, nameable_font, sizes_its_own_text, Unit};
 use crate::document::shape::validate_shape;
 use crate::document::values::{
-    ColorRef, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, PlainColor, Sides, StartPoint, VarId,
-    VerbId, ZoomWindow,
+    check_link_url, ColorRef, FitMode, FontSize, LinkKind, LinkTarget, PaletteId, PlainColor, Sides,
+    StartPoint, VarId, VerbId, ZoomWindow,
 };
 use crate::engine::journal::{Journal, Touch};
 use crate::engine::key::BranchKey;
@@ -360,10 +360,21 @@ impl<'d> Validator<'d> {
         group.title.as_ref().map_or(Ok(()), |title| self.plain(title))
     }
 
+    /// A link: to a verb the document has, or to an address of a scheme
+    /// a link may open (the loader's rule, so a mutation cannot leave a
+    /// map a load refuses).
     fn link_target(&self, link: Option<&LinkTarget>) -> Result<(), MutationError> {
         match link {
             Some(LinkTarget::Verb(verb)) => self.verb(Some(*verb)),
-            _ => Ok(()),
+            Some(LinkTarget::Url(url)) => {
+                check_link_url(url)
+                    .map(drop)
+                    .map_err(|scheme| MutationError::LinkScheme {
+                        at: self.at(),
+                        scheme: scheme.to_string(),
+                    })
+            }
+            None => Ok(()),
         }
     }
 

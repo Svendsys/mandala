@@ -42,6 +42,8 @@ fn document() -> (Document, Example) {
         verbs: vec![VerbDef {
             id: "go".to_string(),
             name: "Go".to_string(),
+            description: String::new(),
+            steps: Vec::new(),
         }],
         ..Definitions::default()
     });

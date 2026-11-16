@@ -196,16 +196,6 @@ pub(crate) struct OnDto<'a> {
     pub hover: Option<Cow<'a, str>>,
 }
 
-/// A verb definition. Only its identity for now.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct VerbDto {
-    /// The id the file names it by.
-    pub id: String,
-    /// The name shown to the user.
-    pub name: String,
-}
-
 /// The theme: `{ "active": "dark", "variants": { "dark": { "bg": "#101014" } } }`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1538,7 +1528,7 @@ pub(crate) struct MapHeaderDto<'a> {
     /// The presentations the map defines (`format/presentations.md`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub presentations: Vec<crate::document::format::presentations::PresentationDto>,
-    /// The verbs the map defines.
+    /// The verbs the map defines (`format/verbs.md`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub verbs: Vec<VerbDto>,
+    pub verbs: Vec<crate::document::format::verbs::VerbDto>,
 }

@@ -341,6 +341,29 @@ pub enum LinkTarget {
     Verb(VerbId),
 }
 
+/// The schemes a link's [`LinkTarget::Url`] may have (#252 §3): web
+/// addresses and mail. Anything else — `file`, `javascript`, a custom
+/// handler — is refused at load and at apply, so no map leads a click to
+/// it.
+pub const LINK_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
+
+/// `url` if a link may lead there: its scheme — what it writes before its
+/// first `:` — is one of [`LINK_SCHEMES`], in any case (a scheme is
+/// case-insensitive). Otherwise the scheme it wrote, or the whole of it
+/// when it has no `:`, for the refusal to name. O(the scheme's length).
+pub fn check_link_url(url: &str) -> Result<&str, &str> {
+    let scheme = url.split_once(':').map_or(url, |(scheme, _)| scheme);
+    if LINK_SCHEMES
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(scheme))
+        && scheme.len() < url.len()
+    {
+        Ok(url)
+    } else {
+        Err(scheme)
+    }
+}
+
 /// A verb: an index into
 /// [`Definitions::verbs`](crate::document::ids::Definitions::verbs).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]

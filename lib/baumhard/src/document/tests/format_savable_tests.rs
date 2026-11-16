@@ -218,6 +218,8 @@ fn test_two_definitions_of_one_id_have_no_spelling() {
     let verb = |id: &str| VerbDef {
         id: id.to_string(),
         name: "n".to_string(),
+        description: String::new(),
+        steps: Vec::new(),
     };
     builder.definitions(Definitions {
         verbs: vec![verb("v"), verb("v")],
@@ -644,7 +646,7 @@ fn test_a_map_past_the_element_bound_is_refused_at_the_element_past_it() {
     );
     // A definition counts as an element does, at its list.
     let json = map_with(
-        r#","verbs":[{"id":"a","name":"A"},{"id":"b","name":"B"}]"#,
+        r#","verbs":[{"id":"a","name":"A", "steps": []},{"id":"b","name":"B", "steps": []}]"#,
         &node_of(1, ""),
     );
     let defined = load(&json).expect("the map loads");

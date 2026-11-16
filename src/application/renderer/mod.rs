@@ -883,6 +883,16 @@ impl Renderer {
     /// redraw requests, while native's loop runs `ControlFlow::Poll`
     /// and never asks. Lint armed on wasm32 so the day that changes,
     /// wasm32 says so.
+    /// Show `icon` as the pointer over the canvas: the browser's half of
+    /// the hand over what a click triggers something on (#252 §3). Native
+    /// sets the cursor through its shell, which owns the window there.
+    #[cfg(target_arch = "wasm32")]
+    pub fn set_cursor(&self, icon: winit::window::CursorIcon) {
+        match &self.sink {
+            Sink::Window { window, .. } => window.set_cursor(icon),
+        }
+    }
+
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn request_redraw(&self) {
         match &self.sink {

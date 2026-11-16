@@ -3,7 +3,8 @@
 //! Edits — named, saved, undoable map changes (design §10.1, V1-D1) —
 //! and **the one funnel every route runs them through**: a key bound in
 //! `edit_bindings`, a macro's `Edit` step (and so IPC `act.macro`), and
-//! the console's `edit apply`. A verb step (V1-D3) is the next caller.
+//! the console's `edit apply`, and a map verb's `edit` step
+//! (`families::verbs`, V1-D3), recorded as the verb's.
 //!
 //! [`run_edit`] finds the edit by id across its tiers
 //! (`application::edits`), resolves it against the open map at the

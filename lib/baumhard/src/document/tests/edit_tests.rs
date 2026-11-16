@@ -40,7 +40,7 @@ fn refusal(json: &str) -> (String, LoadErrorKind) {
 /// connector with a label, and child 4; node 5 is the other top-level
 /// node.
 const MAP: &str = r##"{"format":1,"name":"t","theme":{"active":"d","variants":{"d":{"accent":"#ff0000","bg":"#000000"}}},
-"verbs":[{"id":"go","name":"Go"}],
+"verbs":[{"id":"go","name":"Go", "steps": []}],
 "nodes":[
 {"id":1,"position":[0,0],"size":20.0,"sections":[{"spans":[{"text":"a","size":30.0},{"text":"b"}]},{"channel":1,"spans":[{"text":"c"}]}],
  "frame":{"rings":[{"spans":[{"text":"r0"}]},{"channel":1,"spans":[{"text":"r1"}]}]},

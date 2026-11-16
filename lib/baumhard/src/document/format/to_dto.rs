@@ -43,7 +43,7 @@ use crate::document::format::dto::{
     AlignDto, AnchorDto, CapDto, DefaultsDto, DirectionDto, FlowDefaultsDto, FrameDefaultsDto, FrameDto,
     LabelDefaultsDto, LabelDto, LinkDto, LinkKindDto, LinkTargetDto, MapHeaderDto, NodeDefaultsDto, NodeDto,
     OnDto, PaletteGroupDto, PathDto, PortalEndDefaultsDto, PortalEndDto, RingDefaultsDto, RingDto,
-    SectionDto, SpanDto, TextDefaultsDto, ThemeDto, VerbDto, ZoomDto,
+    SectionDto, SpanDto, TextDefaultsDto, ThemeDto, ZoomDto,
 };
 use crate::document::format::error::{render_path, NodeContext, SaveError, SaveErrorKind, Seg};
 use crate::document::format::index::FORMAT;
@@ -281,7 +281,15 @@ impl<'a> Saver<'a> {
                 .iter()
                 .map(crate::document::presentation::load::to_dto)
                 .collect(),
-            verbs: verbs.into_iter().map(|(id, name)| VerbDto { id, name }).collect(),
+            verbs: verbs
+                .into_iter()
+                .zip(&definitions.verbs)
+                .map(|(_, def)| {
+                    crate::document::verb::load::to_dto(def, definitions).ok_or_else(|| {
+                        self.error_at("verbs", SaveErrorKind::UnknownStepName { list: "verbs" })
+                    })
+                })
+                .collect::<SaveResult<Vec<_>>>()?,
         })
     }
 

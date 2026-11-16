@@ -515,13 +515,16 @@ fn test_demo_maps_draw_every_ring_and_path() {
 }
 
 /// What a demo map's presentations are held to: the node they are
-/// started on, the frame's time on their timeline, per presentation in
+/// started on — by a click on its section `section`, which runs the
+/// node's `on.click` verb — the frame's time on their timeline, per
+/// presentation in
 /// start order its layer, its progress then and — on the glyph layer —
 /// the words each of its ranges names, and the colors the glyphs they
 /// color rest in, as the map spells them: what a color fades from.
 struct Presented {
     map: &'static str,
     node: u64,
+    section: u64,
     at_ms: u64,
     presentations: &'static [(&'static str, &'static str, f32, &'static [&'static str])],
     /// `([start, end], #rrggbbaa)`: the glyphs of the run, and the color
@@ -544,6 +547,7 @@ const PRESENTED: [Presented; 2] = [
     Presented {
         map: "frames",
         node: 2,
+        section: 0,
         at_ms: 0,
         presentations: &[("an-ellipse", "glyph", 1.0, &["an ellipse"])],
         rest: &[],
@@ -551,6 +555,7 @@ const PRESENTED: [Presented; 2] = [
     Presented {
         map: "dickinson",
         node: 1,
+        section: 0,
         at_ms: 1200,
         presentations: &[
             ("hope-swells", "glyph", 0.84375, &["Hope"]),
@@ -599,11 +604,11 @@ fn text_of(run: &GlyphRunData, spans: &[String], range: std::ops::Range<usize>) 
 
 /// **The demo maps' presentations are drawn through the path the app
 /// runs a presentation by, at a fixed time on their timeline**: the
-/// real app loads the map and projects it, the console's `present`
-/// verb starts each presentation the map carries, the clock is stepped
-/// to the frame's time, and the frame is drawn. (What starts them when
-/// a map opens is a trigger, V1-D3's; until then the console is the
-/// route a person has.)
+/// real app loads the map and projects it, a click on the node runs the
+/// node's `on.click` verb, which starts each presentation the map
+/// carries in the order listed (V1-D3: Dickinson's `feathers-line`
+/// before `feathers-trail`), the clock is stepped to the frame's time,
+/// and the frame is drawn.
 ///
 /// Held: the map carries exactly the presentations listed; with
 /// nothing playing no span holds Dickinson's trail and none is drawn;
@@ -712,12 +717,20 @@ fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
                 .collect()
         };
 
-        for id in &listed {
-            ipc(
-                init,
-                json!({"id": 1, "cmd": "act.console", "line": format!("present start {id} {}", case.node)}),
-            );
-        }
+        // Started by the map's own trigger (V1-D3): a click on the node
+        // runs its `on.click` verb, which starts each presentation in
+        // the order the case lists them. The click selects the node too,
+        // which is drawn on the same runs, so the selection is cleared
+        // before anything is read.
+        let clicked = ipc(
+            init,
+            json!({"id": 1, "cmd": "input.click_node", "node_id": case.node, "section": case.section}),
+        );
+        assert_eq!(clicked["applied"], json!(true), "{name}: {clicked}");
+        ipc(
+            init,
+            json!({"id": 1, "cmd": "act.action", "action": "DeselectAll"}),
+        );
         if case.at_ms > 0 {
             ipc(init, json!({"id": 1, "cmd": "clock.step", "ms": case.at_ms}));
         }

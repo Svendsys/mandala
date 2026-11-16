@@ -1,0 +1,115 @@
+{
+  "format": 1,
+  "name": "Reveal",
+  "presentations": [
+    {
+      "id": "concealed",
+      "name": "Concealed",
+      "description": "Hides a node until it is stopped; the node then fades in.",
+      "play": "hold",
+      "target": "node",
+      "mutations": [
+        {
+          "node": {
+            "set_hidden": true
+          }
+        },
+        {
+          "node": {
+            "set_opacity": 0.0
+          }
+        }
+      ],
+      "return": {
+        "ms": 400,
+        "easing": "ease_out"
+      }
+    }
+  ],
+  "verbs": [
+    {
+      "id": "begin",
+      "name": "Begin",
+      "description": "Conceals every channel-1 node: the days, until each is revealed.",
+      "steps": [
+        {
+          "present": "concealed",
+          "on": {
+            "channel": 1,
+            "within": "map"
+          }
+        }
+      ]
+    },
+    {
+      "id": "next-1",
+      "name": "The first day",
+      "steps": [
+        {
+          "stop": "concealed",
+          "on": {
+            "nodes": [
+              2
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "next-2",
+      "name": "The second day",
+      "steps": [
+        {
+          "stop": "concealed",
+          "on": {
+            "nodes": [
+              3
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "next-3",
+      "name": "The third day",
+      "steps": [
+        {
+          "stop": "concealed",
+          "on": {
+            "nodes": [
+              4
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "sections": [{"spans": [{"text": "In the beginning", "size": 24.0}]}]
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "channel": 1,
+      "position": [360.0, -140.0],
+      "sections": [{"spans": [{"text": "the light"}]}]
+    },
+    {
+      "id": 3,
+      "parent": 1,
+      "channel": 1,
+      "position": [360.0, 0.0],
+      "sections": [{"spans": [{"text": "the firmament"}]}]
+    },
+    {
+      "id": 4,
+      "parent": 1,
+      "channel": 1,
+      "position": [360.0, 140.0],
+      "sections": [{"spans": [{"text": "the dry land"}]}]
+    }
+  ]
+}

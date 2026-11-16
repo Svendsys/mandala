@@ -151,16 +151,16 @@ branches that each added a node.
 |---|---|
 | a node's `parent` | on the chain, as above |
 | a link's `to` | names a node anywhere in the list but the link's own; a later node is fine |
-| a verb target | not at load: a missing node is skipped with a warning when it runs (D27) |
+| a verb target (`{ "nodes": [ids] }`) | not at load: a missing node is skipped with a warning when it runs (D27); the id must be one a node can carry, `1` to `4294967294` |
 | IPC, the console, `mandalactl` | through the document's ident index |
 
 The counter that gives a new node its id is not saved; a loaded map
 starts it one above the highest node id in the list **and** above every
-node id a verb names, so a node deleted while something still names it
-never has its id given to a new node after a reload. (Verbs carry no
-targets yet, and a presentation names no node: it plays on the nodes it
-is started on. A node's `parent` and a link's `to` always name a node
-in the list.)
+node id a verb's `{ "nodes": [ids] }` target names, so a node deleted
+while a verb still names it never has its id given to a new node after a
+reload. (A presentation names no node: it plays on the nodes it is
+started on. A node's `parent` and a link's `to` always name a node in
+the list.)
 
 ## How a file is written
 
@@ -264,7 +264,7 @@ built-in value, unless the table gives a default of its own.
 | `defaults` | [defaults](#defaults) | no | nothing set | Per-field defaults, consulted after the element and its owners and before the built-in value. |
 | `edits` | array of [edits](./edits.md#edit) | no | `[]` | The edits the map defines: named, saved, undoable changes (`format/edits.md`). |
 | `presentations` | array of [presentations](./presentations.md#presentation) | no | `[]` | The presentations the map defines: performances that are never saved into the map's content (`format/presentations.md`). |
-| `verbs` | array of [definitions](#definitions) | no | `[]` | The verbs the map defines. V1-D3 extends this schema. |
+| `verbs` | array of [verbs](./verbs.md#verb) | no | `[]` | The verbs the map defines: its interface, which its triggers and links, the console, IPC and macros invoke (`format/verbs.md`). |
 | `nodes` | array of [nodes](#node) | no | `[]` | Every node of the map, flat, in depth-first pre-order ([The node list](#the-node-list)). |
 
 ### Theme
@@ -318,17 +318,13 @@ palette.
 
 ### Definitions
 
-An entry of `verbs`. Ids are unique within the list. A verb is named
-by its `id` from a node's `on` and from a span's `link`; the same
-string in two different lists is two things. An entry of `edits` or of
-`presentations` has these two keys and more, and a page of its own —
-[`edits.md`](./edits.md), [`presentations.md`](./presentations.md) —
-and its id is unique within its list the same way.
-
-| Key | Type | Required | Default | Meaning |
-|---|---|---|---|---|
-| `id` | string | yes | | The id the file names it by. |
-| `name` | string | yes | | The name shown to the user. |
+The entries of `edits`, `presentations` and `verbs` each have an `id`
+and a `name`, and a page of their own — [`edits.md`](./edits.md),
+[`presentations.md`](./presentations.md), [`verbs.md`](./verbs.md).
+Ids are unique within each list; the same string in two different lists
+is two things. A verb is named by its `id` from a node's `on`, from a
+span's `link` and from another verb's `verb` step; a presentation and
+an edit by theirs from a verb's steps.
 
 ### Defaults
 
@@ -535,7 +531,7 @@ Exactly one of the two keys.
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
-| `url` | string | one of the two | | A web address. |
+| `url` | string | one of the two | | An address to open: its scheme — what it writes before its first `:`, in any case — is `http`, `https` or `mailto`. Any other is refused at its path (`LinkScheme`), and an edit or a presentation that writes one is refused too ([`verbs.md`](./verbs.md#links)). |
 | `verb` | string | one of the two | | The id of a verb in `verbs`. |
 
 ### Frame
@@ -1032,6 +1028,9 @@ its path.
 | `channel` (node, section, ring) | `0` to `4294967295` (`MAX_CHANNEL`), the most a `usize` holds on wasm32, so every target accepts the same files |
 | `palettes`, theme variables, theme variants, `verbs`, `edits`, `presentations` | at most 65536 each, the most an index addresses |
 | An edit's `animate.ms` and `animate.delay_ms` | at most 60000 each (`MAX_ANIMATE_MS`, one minute; [`edits.md`](./edits.md#bounds)) |
+| A verb's `wait` | at most 60000 (`MAX_ANIMATE_MS`; ruling D3.1, [`verbs.md`](./verbs.md#bounds)) |
+| A verb's calls | acyclic, at most 8 verbs deep (`MAX_VERB_DEPTH`) |
+| A verb's parts, its calls expanded | at most 65536 (`MAX_DEFINITION_PARTS`; ruling D3.1) |
 
 ## Errors
 
@@ -1039,7 +1038,7 @@ A load returns a `LoadError`: a `path`, the `node` it is in, a
 `position` in the text, and a `kind`. Rendered, it reads
 
 ```text
-nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 63)
+nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 64)
 ```
 
 - **The `path`** writes keys after a dot and array positions in
@@ -1176,7 +1175,8 @@ node 5 was made after node 3 but sits under node 2.
   "verbs": [
     {
       "id": "reveal-days",
-      "name": "Reveal the days"
+      "name": "Reveal the days",
+      "steps": []
     }
   ],
   "nodes": [
@@ -1226,23 +1226,23 @@ node 5 was made after node 3 but sits under node 2.
 }
 ```
 
-How it reads, node by node (the nodes start on line 46; each line is
+How it reads, node by node (the nodes start on line 47; each line is
 where the node's block opens):
 
 | Line | Node | Parent | The chain before it | Accepted because |
 |---|---|---|---|---|
-| 46 | 1 | none | empty | a top-level node may always start |
-| 56 | 2 | 1 | 1 | 1 is the node before it |
-| 63 | 5 | 2 | 1, 2 | 2 is the node before it |
-| 69 | 3 | 1 | 1, 2, 5 | 1 is on the chain, which closes 5 and 2; its previous sibling, 2, has channel 0, as 3 does |
-| 76 | 4 | 1 | 1, 3 | 1 is on the chain, which closes 3; channel 1 is not below 3's channel 0 |
-| 83 | 6 | none | 1, 4 | a top-level node, which closes 4 and 1; the previous one, 1, has channel 0, as 6 does |
+| 47 | 1 | none | empty | a top-level node may always start |
+| 57 | 2 | 1 | 1 | 1 is the node before it |
+| 64 | 5 | 2 | 1, 2 | 2 is the node before it |
+| 70 | 3 | 1 | 1, 2, 5 | 1 is on the chain, which closes 5 and 2; its previous sibling, 2, has channel 0, as 3 does |
+| 77 | 4 | 1 | 1, 3 | 1 is on the chain, which closes 3; channel 1 is not below 3's channel 0 |
+| 84 | 6 | none | 1, 4 | a top-level node, which closes 4 and 1; the previous one, 1, has channel 0, as 6 does |
 
 Edits that make it invalid, and what the loader says:
 
 - Move node 3's block below node 4's:
-  `nodes[4]: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 76)`
+  `nodes[4]: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 77)`
 - Give node 5 `"parent": 3`:
-  `nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 63)`
+  `nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 64)`
 - Move node 5's block to the end of the list:
-  `nodes[5].parent: node 2 (nodes[1]) is earlier, but its subtree has ended; a node here can name 6, or none for a new root (node 5 "the firmament", line 82)`
+  `nodes[5].parent: node 2 (nodes[1]) is earlier, but its subtree has ended; a node here can name 6, or none for a new root (node 5 "the firmament", line 83)`

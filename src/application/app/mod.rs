@@ -656,6 +656,11 @@ mod tests_edits;
 #[cfg(not(target_arch = "wasm32"))]
 mod tests_presentations;
 
+// Map verbs, their triggers and links (V1-D3).
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_verbs;
+
 // The GPU-backed half of the suite (TEST_CONVENTIONS §T8): a whole
 // native app with no window on whatever adapter the machine has —
 // Mesa's lavapipe on a GPU-less box — skipped with a note where there
@@ -690,3 +695,6 @@ mod tests_gpu_presentations;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests_gpu_structure;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_gpu_verbs;

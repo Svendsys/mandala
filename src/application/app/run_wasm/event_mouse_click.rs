@@ -24,9 +24,10 @@
 use crate::application::platform::input::{ElementState, MouseButton};
 
 use crate::application::app::dispatch::cross_dispatch::click_selection;
+use crate::application::app::dispatch::families::edits::Projected;
 use crate::application::app::dispatch::families::verbs;
 use crate::application::app::dispatch::DispatchOutcome;
-use crate::application::app::{compute_click_hit, dispatch, is_double_click, ClickHit, LastClick};
+use crate::application::app::{compute_click_hit, dispatch, is_double_click, LastClick};
 use std::sync::atomic::AtomicBool;
 
 /// One-shot latch for the double-click input class. See
@@ -131,7 +132,7 @@ impl super::Borrowed<'_> {
             return;
         }
 
-        input.pending_click = Some(hit);
+        input.pending_click = Some((hit, input.cursor_pos));
         input.last_click = Some(LastClick {
             time: now,
             screen_pos: input.cursor_pos,
@@ -139,20 +140,35 @@ impl super::Borrowed<'_> {
         });
     }
 
-    /// A release clicks what its press hit: the selection updates as
-    /// native's `handle_click` updates it — Shift held or not — and the
-    /// view syncs when it changed. A click on a node that names an
-    /// `on.click` verb notes it for V1-D3 (#252), which runs it.
+    /// A release clicks what its press hit, as native's `handle_click`
+    /// does: first what the click triggers runs — a linked span's verb or
+    /// address, or the node's `on.click` verb (`families::verbs`) — then
+    /// the selection updates, Shift held or not, and the view syncs when
+    /// either changed anything.
     fn handle_mouse_released(&mut self) {
-        let Some(hit) = self.input.pending_click.take() else {
+        let Some((hit, press)) = self.input.pending_click.take() else {
             return;
         };
         let shift = self.input.modifiers.shift_key();
-        let doc = &mut self.input.document;
-        if let ClickHit::Element(element) = hit {
-            verbs::node_clicked(doc.doc(), element);
-        }
-        if click_selection(&mut doc.selection, hit, shift) {
+        let now_ms = self.input.clock.now_ms();
+        let canvas_pos = self.renderer.screen_to_canvas(press.0 as f32, press.1 as f32);
+        let input = &mut *self.input;
+        let triggered = match input.view.as_mut() {
+            Some(view) => {
+                let landed = view.hit(canvas_pos);
+                verbs::Host {
+                    doc: &mut input.document,
+                    drawn: &mut Projected {
+                        view,
+                        renderer: &mut *self.renderer,
+                    },
+                    edits: &input.edits,
+                }
+                .click(landed.as_ref(), now_ms)
+            }
+            None => false,
+        };
+        if click_selection(&mut input.document.selection, hit, shift) || triggered {
             self.sync_view();
         }
     }

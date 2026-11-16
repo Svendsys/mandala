@@ -356,6 +356,45 @@ pub enum LoadErrorKind {
         /// The rule it breaks.
         message: String,
     },
+    /// A verb's step is one the verb format refuses (`format/verbs.md`):
+    /// `message` says which rule.
+    InvalidVerb {
+        /// The rule it breaks.
+        message: String,
+    },
+    /// A verb's `present` or `stop` names a presentation the map does
+    /// not define. A verb names the map's own (design §11.3).
+    UnknownPresentation {
+        /// The presentation id.
+        id: String,
+    },
+    /// A verb's `edit` names an edit the map does not define. A verb
+    /// names the map's own (design §11.3).
+    UnknownEdit {
+        /// The edit id.
+        id: String,
+    },
+    /// A verb's `verb` step closes a cycle of calls: running it would
+    /// never end. The path is the step that closes it.
+    VerbCycle {
+        /// The verbs of the cycle, by id, from the first to the one
+        /// that calls it again.
+        cycle: Vec<String>,
+    },
+    /// A verb's calls go more than
+    /// [`MAX_VERB_DEPTH`](crate::document::verb::MAX_VERB_DEPTH) verbs
+    /// deep. The path is the verb.
+    VerbTooDeep {
+        /// The most verbs a chain of calls may hold.
+        max: usize,
+    },
+    /// A link's `url` is not one the app opens: only `http`, `https` and
+    /// `mailto` are.
+    LinkScheme {
+        /// What the link wrote before its first `:`, or all of it when
+        /// it has none.
+        scheme: String,
+    },
     /// The loader built something the document refuses: a row that
     /// breaks the shape rules, a tree that is not a document, an insert
     /// the tree rejects. The loader checks everything the document
@@ -455,9 +494,27 @@ impl fmt::Display for LoadErrorKind {
             // Its message holds what the file wrote, a handler's name or a
             // name it gave a field — an edit's or a presentation's — and is
             // shown as file text is.
-            LoadErrorKind::InvalidEdit { message } | LoadErrorKind::InvalidPresentation { message } => {
+            LoadErrorKind::InvalidEdit { message }
+            | LoadErrorKind::InvalidPresentation { message }
+            | LoadErrorKind::InvalidVerb { message } => {
                 write!(f, "{}", shown(message))
             }
+            LoadErrorKind::UnknownPresentation { id } => {
+                write!(f, "the map defines no presentation `{}`", shown(id))
+            }
+            LoadErrorKind::UnknownEdit { id } => write!(f, "the map defines no edit `{}`", shown(id)),
+            LoadErrorKind::VerbCycle { cycle } => {
+                let names: Vec<String> = cycle.iter().map(|id| format!("`{}`", shown(id))).collect();
+                write!(f, "these calls never end: {}", names.join(" runs "))
+            }
+            LoadErrorKind::VerbTooDeep { max } => {
+                write!(f, "a verb's calls go at most {max} verbs deep")
+            }
+            LoadErrorKind::LinkScheme { scheme } => write!(
+                f,
+                "a link opens an `http`, `https` or `mailto` address, and this one is `{}`",
+                shown(scheme)
+            ),
             LoadErrorKind::DanglingLink { to } => write!(f, "no node has the id {to}"),
             LoadErrorKind::SelfLink => f.write_str("a link cannot lead to the node that holds it"),
             LoadErrorKind::UnknownVerb { id } => write!(f, "the map defines no verb `{}`", shown(id)),
@@ -621,6 +678,12 @@ pub enum SaveErrorKind {
         /// The index it holds.
         index: u16,
     },
+    /// A verb's step names a presentation or a verb the map does not
+    /// define, by its index. A load never makes one.
+    UnknownStepName {
+        /// Which list: `"presentations"` or `"verbs"`.
+        list: &'static str,
+    },
     /// Two theme variants, two theme variables or two palettes have one
     /// name. The file keys them by name.
     DuplicateName {
@@ -703,6 +766,9 @@ impl fmt::Display for SaveErrorKind {
             }
             SaveErrorKind::UnknownPalette { index } => write!(f, "the map defines no palette {index}"),
             SaveErrorKind::UnknownVerb { index } => write!(f, "the map defines no verb {index}"),
+            SaveErrorKind::UnknownStepName { list } => {
+                write!(f, "a step names an entry of `{list}` the map does not define")
+            }
             SaveErrorKind::DuplicateName { name } => {
                 write!(f, "two entries are named `{}`, and the file keys them by name", shown(name))
             }

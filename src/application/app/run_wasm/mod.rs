@@ -73,11 +73,15 @@ pub(super) struct WasmInputState {
     pub view: Option<MapView>,
     pub last_click: Option<LastClick>,
     pub cursor_pos: (f64, f64),
-    /// What the left press hit, held until its release clicks it:
-    /// `None` on init, after a release consumed it, and while no press
-    /// is down. The browser's whole drag-state machine — it has no
-    /// drag to promote a press into.
-    pub pending_click: Option<ClickHit>,
+    /// What the left press hit, and where it was pressed (surface
+    /// pixels), held until its release clicks it: `None` on init, after a
+    /// release consumed it, and while no press is down. The browser's
+    /// whole drag-state machine — it has no drag to promote a press into.
+    pub pending_click: Option<(ClickHit, (f64, f64))>,
+    /// Whether the pointer shows the hand: it is over what a click
+    /// triggers something on (`families::verbs::points_at`). The peer of
+    /// native's `cursor_is_hand`.
+    pub cursor_is_hand: bool,
     pub modifiers: crate::application::platform::input::Modifiers,
     /// High-level interaction mode. Cross-platform field; the browser
     /// initializes it to `Default`.
@@ -90,13 +94,14 @@ pub(super) struct WasmInputState {
     /// `InputHandlerContext::edits`.
     pub edits: crate::application::edits::EditRegistry,
     /// The presentations' App and User tiers. Mirrors native's
-    /// `InputHandlerContext::presentations`. Nothing in the browser
-    /// starts a presentation yet: the console shell that does is native
-    /// (`CLAUDE.md` "Dual-target status"), and a map's triggers are
-    /// V1-D3 (#252), which reads this.
+    /// `InputHandlerContext::presentations`. The browser has no console
+    /// to start one of them by id (`CLAUDE.md` "Dual-target status"); a
+    /// map's verbs start the map's own (design §11.3), so nothing in the
+    /// browser reads these tiers yet.
     #[expect(
         dead_code,
-        reason = "read by the map's triggers (V1-D3, #252); the console shell that reads it today is native"
+        reason = "the App and User presentations are started by id from the console, whose shell is native; \
+                  a map's verbs start the map's own presentations (design §11.3)"
     )]
     pub presentations: crate::application::presentations::PresentationRegistry,
     /// Touch gesture recognizer. Cross-platform peer of native's
@@ -188,6 +193,25 @@ impl Borrowed<'_> {
             None => false,
         }
     }
+
+    /// Write the animations at the clock's reading — the verbs a `wait`
+    /// suspended, the presentation instances, the animated edit — the
+    /// one body both targets' frames run (`app::animation::tick`).
+    pub(super) fn tick_animations(&mut self) -> bool {
+        let input = &mut *self.input;
+        crate::application::app::dispatch::families::edits::with_drawn(
+            input.view.as_mut(),
+            self.renderer,
+            |drawn| {
+                crate::application::app::animation::tick(
+                    Some(&mut input.document),
+                    drawn,
+                    &input.edits,
+                    &input.clock,
+                )
+            },
+        )
+    }
 }
 
 impl WasmInputState {
@@ -210,6 +234,8 @@ impl WasmInputState {
             modifiers: &self.modifiers,
             macros: &mut self.macros,
             interaction_mode: &mut self.interaction_mode,
+            edits: &self.edits,
+            clock: &self.clock,
         }
     }
 
@@ -280,6 +306,15 @@ impl<'a> super::dispatch::macro_core::MacroDispatchTarget for WasmMacroDispatchT
         let (document, registry) = (&mut input.document, &input.edits);
         super::dispatch::families::edits::with_drawn(input.view.as_mut(), self.renderer, |drawn| {
             super::dispatch::families::edits::run_step(document, drawn, registry, id, at, now_ms)
+        })
+    }
+
+    fn run_verb(&mut self, id: &str, at: &crate::application::macros::MacroTarget) -> bool {
+        let input = &mut *self.input;
+        let now_ms = input.clock.now_ms();
+        let (document, registry) = (&mut input.document, &input.edits);
+        super::dispatch::families::edits::with_drawn(input.view.as_mut(), self.renderer, |drawn| {
+            super::dispatch::families::verbs::run_step(document, drawn, registry, id, at, now_ms)
         })
     }
 
@@ -694,6 +729,7 @@ pub(super) fn run(mut app: Application) {
             last_click: None,
             cursor_pos: (0.0, 0.0),
             pending_click: None,
+            cursor_is_hand: false,
             modifiers: crate::application::platform::input::Modifiers::empty(),
             interaction_mode: super::InteractionMode::Default,
             macros,

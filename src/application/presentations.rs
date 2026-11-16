@@ -62,8 +62,8 @@ pub(crate) struct PresentationRegistry {
         target_arch = "wasm32",
         expect(
             dead_code,
-            reason = "what starts and stops a presentation today is the console shell, which is native; \
-                      the map's triggers (V1-D3, #252) do on both targets"
+            reason = "the App and User tiers are started by id from the console, whose shell is native; \
+                      a map's verbs start the map's own presentations (design §11.3)"
         )
     )]
     app: Vec<PresentationDef>,
@@ -103,8 +103,8 @@ impl PresentationRegistry {
         target_arch = "wasm32",
         expect(
             dead_code,
-            reason = "what starts and stops a presentation today is the console shell, which is native; \
-                      the map's triggers (V1-D3, #252) do on both targets"
+            reason = "the App and User tiers are started by id from the console, whose shell is native; \
+                      a map's verbs start the map's own presentations (design §11.3)"
         )
     )]
     pub(crate) fn find<'a>(
@@ -127,8 +127,8 @@ impl PresentationRegistry {
         target_arch = "wasm32",
         expect(
             dead_code,
-            reason = "what starts and stops a presentation today is the console shell, which is native; \
-                      the map's triggers (V1-D3, #252) do on both targets"
+            reason = "the App and User tiers are started by id from the console, whose shell is native; \
+                      a map's verbs start the map's own presentations (design §11.3)"
         )
     )]
     pub(crate) fn list<'a>(&'a self, doc: &'a Document) -> Vec<(&'a PresentationDef, PresentationTier)> {

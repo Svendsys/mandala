@@ -60,16 +60,7 @@ impl NodeIdent {
 
 pub use crate::document::edit::EditDef;
 pub use crate::document::presentation::PresentationDef;
-
-/// A verb the map defines (§11.1). Only its identity for now; V1-D3
-/// completes it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct VerbDef {
-    /// The id the file and the triggers name it by.
-    pub id: String,
-    /// The name shown to the user.
-    pub name: String,
-}
+pub use crate::document::verb::VerbDef;
 
 /// What a document carries beside its tree: definitions that are
 /// loaded, validated, saved and invoked, but not changed by any V1 code
@@ -86,6 +77,20 @@ pub struct Definitions {
     /// The verbs. A [`VerbId`](crate::document::values::VerbId) indexes
     /// this list.
     pub verbs: Vec<VerbDef>,
+}
+
+impl Definitions {
+    /// The verb the map defines with `id`, and its index: what the
+    /// console, IPC and a macro name a verb by. O(verbs).
+    pub fn verb_by_id(&self, id: &str) -> Option<(crate::document::values::VerbId, &VerbDef)> {
+        self.verbs
+            .iter()
+            .enumerate()
+            .find(|(_, verb)| verb.id == id)
+            .and_then(|(index, verb)| {
+                Some((crate::document::values::VerbId(u16::try_from(index).ok()?), verb))
+            })
+    }
 }
 
 /// Why a tree could not become a [`Document`].
@@ -144,12 +149,12 @@ pub(crate) fn first_free_ident(highest: u32, named: impl IntoIterator<Item = u32
 /// Every node ident `definitions` name: the hook through which a
 /// definition's targets reach the ident counter ([`first_free_ident`]).
 ///
-/// **Today it names none.** An edit (V1-D1) reaches its nodes from
-/// where it runs and names none — a span link it sets names a URL or a
-/// verb — a presentation (V1-D2) plays on the nodes it is started on
-/// and names none either, and a verb carries only an id and a name
-/// until V1-D3 gives it targets; those land here, and nowhere else. No
-/// other field of a saved map can name a
+/// **The verbs' `nodes` targets are what it names** (V1-D3): every id a
+/// step's `{ "nodes": [ids] }` lists. An edit (V1-D1) reaches its nodes
+/// from where it runs and names none — a span link it sets names a URL
+/// or a verb — and a presentation (V1-D2) plays on the nodes it is
+/// started on and names none either. No other field of a saved map can
+/// name a
 /// node that is not in it. A node's `parent` and a link's `to` must name
 /// a node of the map on load and in
 /// [`check_savable`](crate::document::format::check_savable), so no
@@ -157,14 +162,14 @@ pub(crate) fn first_free_ident(highest: u32, named: impl IntoIterator<Item = u32
 /// links into a removed node in the same request. Both are therefore
 /// covered by the highest node ident.
 pub(crate) fn idents_named_by(definitions: &Definitions) -> impl Iterator<Item = u32> + '_ {
-    // The targets V1-D3 adds are named here, as `definitions.verbs`
-    // grows them.
+    // Every field by name: a definition list added later is looked at
+    // here, or fails to compile.
     let Definitions {
         edits: _,
         presentations: _,
-        verbs: _,
+        verbs,
     } = definitions;
-    std::iter::empty()
+    crate::document::verb::named_idents(verbs)
 }
 
 /// A map: a `Tree<DocElement>` whose root is the

@@ -178,12 +178,31 @@ impl MindMapDocument {
                     "easing": animation.animate.easing.spelling(),
                 })
             });
+        let verbs: Vec<Value> = self
+            .runs()
+            .runs()
+            .map(|run| {
+                let verb = self.doc.definitions().verbs.get(usize::from(run.verb.0));
+                let node = match run.self_node.and_then(|node| self.doc.get(node)) {
+                    Some(baumhard::document::element::DocElement::Node(node)) => json!(node.ident.0),
+                    _ => Value::Null,
+                };
+                json!({
+                    "id": run.id.0,
+                    "verb": verb.map(|verb| verb.id.as_str()),
+                    "node": node,
+                    "held": run.held,
+                    "resumes_at_ms": run.resumes_at_ms,
+                })
+            })
+            .collect();
         json!({
             "moving": self.animations_moving(),
             "epoch": self.doc.presentation_epoch(),
             "edit": edit,
             "count": presentations.len(),
             "presentations": presentations,
+            "verbs": verbs,
         })
     }
 

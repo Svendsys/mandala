@@ -75,6 +75,8 @@ pub mod shape;
 pub mod tests;
 /// Typed values: colors, sizes, shapes, anchors, modes.
 pub mod values;
+/// Verbs: the map's public interface, and how they run (§11, V1-D3).
+pub mod verb;
 /// The writer: apply, the history, transactions and the change feed —
 /// the only way a document changes after load.
 pub mod writer;

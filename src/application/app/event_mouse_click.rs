@@ -13,8 +13,9 @@
 use crate::application::platform::input::{ElementState, MouseButton};
 
 use super::console_input::save_console_history;
-use super::dispatch::cross_dispatch::{click_selection, view_ctx};
-use super::dispatch::families::verbs;
+use super::dispatch::cross_dispatch::click_selection;
+use super::dispatch::families::edits::Projected;
+use super::dispatch::families::verbs::Host;
 use super::input_context::InputHandlerContext;
 use super::{compute_click_hit, is_double_click, ClickHit, DragState, HeldInput, InteractionMode, LastClick};
 use crate::application::console::ConsoleState;
@@ -199,7 +200,7 @@ fn handle_left_press(ctx: &mut InputHandlerContext<'_>) {
 /// ends.
 fn handle_left_release(ctx: &mut InputHandlerContext<'_>) {
     match std::mem::replace(ctx.drag_state, DragState::None) {
-        DragState::Pending { hit, .. } => handle_click(hit, ctx.modifiers.shift_key(), ctx),
+        DragState::Pending { hit, start_pos } => handle_click(hit, start_pos, ctx.modifiers.shift_key(), ctx),
         DragState::SelectingRect {
             start_canvas,
             current_canvas,
@@ -212,20 +213,31 @@ fn handle_left_release(ctx: &mut InputHandlerContext<'_>) {
     }
 }
 
-/// A click on `hit` — Shift held or not — updates the selection
-/// (`click_selection`) and syncs the view when it changed. A click on a
-/// node that names an `on.click` verb notes it for V1-D3, which runs it.
-pub(super) fn handle_click(hit: ClickHit, shift: bool, ctx: &mut InputHandlerContext<'_>) {
-    let Some(doc) = ctx.document.as_mut() else {
+/// A click on `hit`, pressed at `press` (surface pixels) — Shift held or
+/// not — first runs what it triggers: a linked span's verb or address,
+/// or the clicked node's `on.click` verb (`families::verbs`). Then it
+/// updates the selection (`click_selection`), as a click always does, and
+/// syncs the view when either changed anything.
+pub(super) fn handle_click(hit: ClickHit, press: (f64, f64), shift: bool, ctx: &mut InputHandlerContext<'_>) {
+    let canvas_pos = ctx.renderer.screen_to_canvas(press.0 as f32, press.1 as f32);
+    let now_ms = ctx.clock.now_ms();
+    let (Some(doc), Some(view)) = (ctx.document.as_mut(), ctx.view.as_mut()) else {
         return;
     };
-    if let ClickHit::Element(element) = hit {
-        verbs::node_clicked(doc.doc(), element);
+    // What the press landed on, as the trigger reads it: the span under
+    // it as well as the element (`compute_click_hit` keeps the element).
+    let landed = view.hit(canvas_pos);
+    let triggered = Host {
+        doc: &mut *doc,
+        drawn: &mut Projected {
+            view: &mut *view,
+            renderer: &mut *ctx.renderer,
+        },
+        edits: ctx.edits,
     }
-    if click_selection(&mut doc.selection, hit, shift) {
-        if let Some(mut vc) = view_ctx!(ctx, doc) {
-            vc.sync();
-        }
+    .click(landed.as_ref(), now_ms);
+    if click_selection(&mut doc.selection, hit, shift) || triggered {
+        view.sync(doc, ctx.renderer);
     }
 }
 

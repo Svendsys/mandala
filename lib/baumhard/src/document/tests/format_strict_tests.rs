@@ -409,6 +409,9 @@ const HAND_SPELLED: &[(&str, usize)] = &[
     ("StartDto", 1),
     ("LineSpanDto", 0),
     ("SidesDto", 1),
+    // A verb step's target: a string, or `{"nodes": [ids]}` (an object
+    // and an array) or `{"channel": n, "within": "…"}`.
+    ("StepTargetDto", 2),
 ];
 
 /// How a JSON nesting walk over the DTO graph went wrong.
@@ -509,7 +512,9 @@ fn test_a_node_nests_at_most_nine_levels_by_its_schema() {
     // holds no part that holds its own kind, and its deepest value is a
     // filter's test of a fit, `presentations[i].filter.fields[j][0]` as
     // `{"fit": {"fit": {"min", "max"}}}`, seven below the top-level
-    // object.
+    // object. A verb holds no part that holds a verb (a `verb` step
+    // names one by id), and its deepest value is a step's `nodes`,
+    // `verbs[i].steps[j].on.nodes`, six below it.
     let header = graph.get("MapHeaderDto").unwrap();
     let depth_below = |member: &str| {
         let field = header
@@ -523,12 +528,13 @@ fn test_a_node_nests_at_most_nine_levels_by_its_schema() {
     let mut deepest_value = 0;
     for field in &header.fields {
         let member = field.member.as_deref().unwrap_or_default();
-        if !["edits", "presentations"].contains(&member) {
+        if !["edits", "presentations", "verbs"].contains(&member) {
             deepest_value = deepest_value.max(depth_below(member).unwrap());
         }
     }
     assert_eq!(1 + deepest_value, 5);
     assert_eq!(depth_below("presentations").map(|depth| 1 + depth), Ok(8));
+    assert_eq!(depth_below("verbs").map(|depth| 1 + depth), Ok(7));
     // An edit's mutator holds mutators, so `edits` nests as deep as the
     // definition bound lets it (`bounds::MAX_DEFINITION_DEPTH`), which
     // the loader holds it to itself (`document::edit::load`). That is

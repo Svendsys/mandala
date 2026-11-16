@@ -15,6 +15,7 @@ use glam::Vec2;
 use crate::application::common::RenderDecree;
 use crate::application::keybinds::{Action, MouseGesture, ResolvedKeybinds};
 
+use crate::application::app::dispatch::families::edits::Projected;
 use crate::application::app::dispatch::families::verbs;
 use crate::application::app::input_context_core::InputContextCore;
 use crate::application::app::touch_gesture::{Phase, RecognizedGesture, TouchGestureRecognizer};
@@ -156,23 +157,31 @@ fn camera_step_decrees(
     (translate, zoom)
 }
 
-/// A tap selects as a click without Shift does, through the same hit
-/// chain (`compute_click_hit`), and syncs the view when the selection
-/// changed.
+/// A tap is a click without Shift (#252 §3: touch has no hover): it runs
+/// what it triggers — a linked span's verb or address, or the node's
+/// `on.click` verb (`families::verbs`) — then selects through the same
+/// hit chain (`compute_click_hit`), and syncs the view when either
+/// changed anything.
 fn apply_tap_select(screen_pos: (f64, f64), core: &mut InputContextCore<'_>) {
     let canvas_pos = core
         .renderer
         .screen_to_canvas(screen_pos.0 as f32, screen_pos.1 as f32);
-    let Some(doc) = core.document.as_deref_mut() else {
+    let now_ms = core.clock.now_ms();
+    let (Some(doc), Some(view)) = (core.document.as_deref_mut(), core.view.as_mut()) else {
         return;
     };
-    let hit = compute_click_hit(Some(&*doc), core.view.as_mut(), canvas_pos);
-    if let ClickHit::Element(element) = hit {
-        verbs::node_clicked(doc.doc(), element);
+    let landed = view.hit(canvas_pos);
+    let triggered = verbs::Host {
+        doc: &mut *doc,
+        drawn: &mut Projected {
+            view: &mut *view,
+            renderer: &mut *core.renderer,
+        },
+        edits: core.edits,
     }
-    if click_selection(&mut doc.selection, hit, false) {
-        if let Some(mut vc) = super::view_ctx!(core, doc) {
-            vc.sync();
-        }
+    .click(landed.as_ref(), now_ms);
+    let hit = compute_click_hit(Some(&*doc), Some(&mut *view), canvas_pos);
+    if click_selection(&mut doc.selection, hit, false) || triggered {
+        view.sync(doc, core.renderer);
     }
 }

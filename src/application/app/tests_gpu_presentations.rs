@@ -485,6 +485,7 @@ const LINES: &[(&str, &[&str])] = &[
         "present",
         &["present list", "present start lift", "present stop p-node"],
     ),
+    ("verb", &["verb list", "verb run no-such", "verb run no-such 1"]),
     (
         "font",
         &[
@@ -930,7 +931,7 @@ fn test_a_presentation_from_the_console_is_drawn_reported_and_never_in_the_docum
     let idle = result(init, json!({"id": 1, "cmd": "query.animations"}));
     assert_eq!(
         idle,
-        json!({"moving": false, "epoch": idle["epoch"], "edit": null, "count": 0, "presentations": []})
+        json!({"moving": false, "epoch": idle["epoch"], "edit": null, "count": 0, "presentations": [], "verbs": []})
     );
     assert!(at_rest(init), "nothing moves: the wait holds at once");
 

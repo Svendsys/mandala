@@ -69,7 +69,8 @@ refuses a key it does not define.
 
 A presentation has no `reach`: it plays on the nodes it is started on.
 Which nodes those are is the caller's to say — the console's
-`present start`, and a verb's `present` step (V1-D3).
+`present start`, and a verb's `present` step
+([`verbs.md`](./verbs.md)).
 
 ## Lifecycle
 
@@ -94,9 +95,9 @@ fully written.
   instance**: it turns to its way in from the current `t`. It never
   stacks a second instance on the same node.
 - **A `while` and a `hold` differ in who stops them.** Both hold at 1
-  until stopped; a held trigger (a hover, V1-D3) stops the `while`
-  presentations it started when it ends, and a `hold` stays until it is
-  stopped by name.
+  until stopped; a held trigger (a hover, [`verbs.md`](./verbs.md#held-runs))
+  stops the `while` presentations it started when it ends, and a `hold`
+  stays until it is stopped by name.
 - **Time is the app's clock** ([`ipc.md`](./ipc.md#clock--determinism-ipc-09)).
   Under a virtual clock (`--headless`, `clock.step`) an instance is at
   an exact `t` at every instant: a direction that ends between two
@@ -306,14 +307,17 @@ so the refusal is always this one.
 - Console: `present start <id> [node-id …]`, `present stop <id>
   [node-id …]` (the selection when no node is named) and `present
   list` (the definitions that run on this map, then the instances
-  playing: the node, `t`, and which way each is going). It is how a
-  presentation is started today: nothing in a map starts one when the
-  map opens or a node is clicked until verbs have steps (V1-D3). The
-  demo maps that carry presentations name the node to start each on in
-  its `description` — `present start an-ellipse 2` on
-  `maps/demos/frames.mandala.json`.
+  playing: the node, `t`, and which way each is going). It starts any
+  presentation by id, the App's and the User's included.
 - IPC: [`query.animations`](./ipc.md#queryanimations) lists the
   instances playing and an animated edit that is running, and
   `clock.wait until=animations_complete` waits for them to come to
   rest. `act.console` runs the console lines above.
-- Verbs: a map verb's `present` and `stop` steps (V1-D3).
+- Verbs: a map verb's `present` and `stop` steps
+  ([`verbs.md`](./verbs.md)), which name the map's own presentations,
+  run by a node's click or hover, a span's link, the console's `verb
+  run`, IPC's `act.verb` and a macro's `Verb` step. The demo maps start
+  theirs from a click: `maps/demos/frames.mandala.json`'s ellipse
+  (node 2) swells `an-ellipse`, and `maps/demos/dickinson.mandala.json`'s
+  first node starts `hope-swells`, then `feathers-line`,
+  `feathers-trail` and `feathers-lift`, in that order.

@@ -156,6 +156,8 @@ impl<'a> InputHandlerContext<'a> {
                 modifiers: &*self.modifiers,
                 macros: &mut *self.macros,
                 interaction_mode: &mut *self.interaction_mode,
+                edits: self.edits,
+                clock: &*self.clock,
             },
             super::input_context_core::NativeContextExt {
                 drag_state: &mut *self.drag_state,
@@ -322,11 +324,13 @@ impl InputHandlerContext<'_> {
     /// `WindowEvent::CursorMoved`. Returns whether to request a redraw.
     pub(super) fn on_cursor_moved(&mut self, position: PhysicalPosition<f64>) -> bool {
         let shell = self.shell;
-        event_cursor_moved::handle_cursor_moved(position, shell, self);
-        // Hover that doesn't drag changes no pixels — no redraw
-        // needed. An active drag (a pan, a rubber band) requires a
-        // fresh frame so the camera or the band tracks the cursor.
-        !matches!(*self.drag_state, DragState::None)
+        let hover_changed = event_cursor_moved::handle_cursor_moved(position, shell, self);
+        // A move that neither drags nor moves the hover changes no
+        // pixels — no redraw needed. An active drag (a pan, a rubber
+        // band) requires a fresh frame so the camera or the band tracks
+        // the cursor; a hover that changed may have started or stopped
+        // what its node's verb plays.
+        hover_changed || !matches!(*self.drag_state, DragState::None)
     }
 
     /// `WindowEvent::KeyboardInput`. A press reaches the full

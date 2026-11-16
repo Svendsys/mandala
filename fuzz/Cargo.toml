@@ -135,3 +135,17 @@ path = "fuzz_targets/presentations_structured.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "verbs_raw"
+path = "fuzz_targets/verbs_raw.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verbs_structured"
+path = "fuzz_targets/verbs_structured.rs"
+test = false
+doc = false
+bench = false

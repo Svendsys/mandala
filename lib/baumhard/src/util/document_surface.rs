@@ -290,6 +290,51 @@ const EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
         "an iterator of node ids a definition names, by value",
     ),
     (
+        "verb/mod.rs",
+        "named_idents",
+        IMPL_TRAIT,
+        "an iterator of the node ids the verbs' targets name, by value",
+    ),
+    (
+        "verb/run.rs",
+        "Runs::runs",
+        IMPL_TRAIT,
+        "an iterator of the runs, as copies holding ids",
+    ),
+    (
+        "verb/run.rs",
+        "Performer::stop",
+        HANDS,
+        "the performer is the app's own code: a step hands it a presentation's id and the nodes it resolved, \
+         by shared reference, and the app stops the instances through the document's own API",
+    ),
+    (
+        "verb/run.rs",
+        "Performer::edit",
+        HANDS,
+        "the performer is the app's own code: a step hands it an edit's id and the nodes it resolved, by \
+         shared reference, and the app applies the edit through its one funnel to `Document::apply`",
+    ),
+    (
+        "verb/run.rs",
+        "Runs::invoke",
+        LENDS,
+        "the performer is the caller's own: the runner lends it the steps' resolved targets and asks it to \
+         act, and never holds a document",
+    ),
+    (
+        "verb/run.rs",
+        "Runs::tick",
+        LENDS,
+        "the performer is the caller's own, as for `Runs::invoke`",
+    ),
+    (
+        "verb/run.rs",
+        "Runs::release",
+        LENDS,
+        "the performer is the caller's own, as for `Runs::invoke`",
+    ),
+    (
         "format/index.rs",
         "parse_extent",
         PARAM,

@@ -177,6 +177,17 @@ impl CommandTarget for IpcCommandTarget<'_, '_> {
         ran
     }
 
+    fn run_verb(&mut self, verb: &str, node: Option<u32>) -> Result<(), String> {
+        let input = &mut *self.app.input;
+        let now_ms = input.clock.now_ms();
+        let (document, registry) = (&mut input.document, &input.edits);
+        let ran = dispatch::families::edits::with_drawn(input.view.as_mut(), self.app.renderer, |drawn| {
+            dispatch::families::verbs::run_named(document, drawn, registry, verb, node, now_ms)
+        });
+        self.changed_view |= ran.is_ok();
+        ran
+    }
+
     fn observed(&self) -> Option<Observed<'_>> {
         Some(self.app.observed())
     }

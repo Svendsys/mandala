@@ -19,7 +19,7 @@ use crate::document::format::error::{LoadErrorKind, Seg};
 use crate::document::format::from_dto::{sorted_names, Builder, LoadResult};
 use crate::document::format::index::FORMAT;
 use crate::document::format::spelling::{BackgroundDto, HexDto, Named};
-use crate::document::ids::{Definitions, VerbDef};
+use crate::document::ids::Definitions;
 use crate::document::keyed::KeyedSet;
 use crate::document::place::{name_fault, NameFault, Unit};
 use crate::document::values::{PlainColor, Rgba, VerbId};
@@ -291,7 +291,8 @@ impl Builder {
     }
 
     /// The edits, presentations and verbs: ids unique within each list,
-    /// and the verbs numbered in file order.
+    /// the verbs numbered in file order, and the verbs' steps read
+    /// against the edits and the presentations (`document::verb::load`).
     ///
     /// Each definition counts against
     /// [`MAX_ELEMENTS`](crate::document::format::MAX_ELEMENTS) as an
@@ -327,10 +328,16 @@ impl Builder {
                 self.verbs.insert(id.clone(), VerbId(index));
             }
         }
+        let ids: Vec<String> = verbs.into_iter().map(|(id, _)| id).collect();
+        let verbs = crate::document::verb::load::definitions(&dto.verbs, &ids, &presentations, &edits)
+            .map_err(|(mut segs, kind)| {
+                segs.insert(0, Seg::Key("verbs"));
+                self.error_under(&segs, kind)
+            })?;
         Ok(Definitions {
             edits,
             presentations,
-            verbs: verbs.into_iter().map(|(id, name)| VerbDef { id, name }).collect(),
+            verbs,
         })
     }
 

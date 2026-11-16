@@ -305,7 +305,7 @@ fn test_verify_prints_each_kind_of_warning() {
         "warned.mandala.json",
         r#"{"format": 1, "name": "w",
             "defaults": {"portal_end": {"content": ""}},
-            "verbs": [{"id": "used", "name": "Used"}, {"id": "unused", "name": "Unused"}],
+            "verbs": [{"id": "used", "name": "Used", "steps": []}, {"id": "unused", "name": "Unused", "steps": []}],
             "nodes": [
               {"id": 1, "position": [0, 0], "hidden": true, "on": {"click": "used"},
                "frame": {}, "links": [{"to": 2, "kind": "portal"}]},
@@ -551,10 +551,10 @@ fn test_apply_dry_run_prints_the_diff_and_writes_nothing() {
         run.stdout,
         format!(
             "--- {0}\t\n+++ {0}\t\n\
-             @@ -60 +60 @@\n\
+             @@ -61 +61 @@\n\
              -      \"sections\": [{{\"spans\": [{{\"text\": \"the heaven\"}}]}}],\n\
              +      \"sections\": [{{\"spans\": [{{\"text\": \"THE HEAVEN\"}}]}}],\n\
-             @@ -73 +73 @@\n\
+             @@ -74 +74 @@\n\
              -      \"sections\": [{{\"spans\": [{{\"text\": \"the earth\"}}]}}],\n\
              +      \"sections\": [{{\"spans\": [{{\"text\": \"THE EARTH\"}}]}}],\n",
             arg(&map)

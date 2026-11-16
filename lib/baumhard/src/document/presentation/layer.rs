@@ -503,6 +503,29 @@ impl Document {
         stopped
     }
 
+    /// Stop each of the instances `ids` that still plays, at the clock
+    /// reading `now_ms`, as [`Self::stop_presentation`] stops one: it
+    /// plays its way out from where it is. An id no instance has any more
+    /// — one that ended — is passed over, so a stop never reaches an
+    /// instance started since on the same node. What a held verb run's
+    /// release stops (design §11.2: leaving a hovered node stops every
+    /// `while` instance its verb started). Returns how many it stopped.
+    ///
+    /// Cost: O(the instances × `ids`).
+    pub fn stop_instances(&mut self, ids: &[InstanceId], now_ms: f64) -> usize {
+        let mut stopped = 0;
+        for instance in &mut self.presentations.instances {
+            if ids.contains(&instance.id) {
+                instance.life.stop(now_ms);
+                stopped += 1;
+            }
+        }
+        if stopped > 0 {
+            self.presentations.epoch += 1;
+        }
+        stopped
+    }
+
     /// Bring every instance to the clock reading `now_ms`: write the
     /// document-layer instances whose progress moved — back out from the
     /// oldest that moved through the newest, then on again (see the

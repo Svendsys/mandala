@@ -27,6 +27,11 @@ by V1-E4 (#256).
   performances a map, the user or the app defines, played on nodes and
   never saved — a lift, a fade, a reveal, a word that swells — on the
   document or on the glyph runs (V1-D2, #251)
+- [`verbs.md`](./verbs.md) — verbs: a map's public interface, named
+  sequences of steps that start and stop its presentations, apply its
+  edits and wait, invoked by a node's click and hover, a span's link,
+  the console, IPC and macros; and links that open an address (V1-D3,
+  #252)
 - [`mutations.md`](./mutations.md) — the glyph mutation vocabulary
   (`GfxMutation`, the `MutatorNode` AST) that glyph trees are edited
   with, and the document's kinds and predicate fields
