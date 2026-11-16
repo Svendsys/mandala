@@ -49,22 +49,38 @@ impl Rect {
     /// A negative `d` shrinks it, and a side shrunk past zero stays at
     /// zero, centered; a `d` that is no number shrinks it so too.
     ///
-    /// **Past what an `f32` holds** (#364), an axis whose center is a
-    /// finite number saturates rather than leave a far corner that is no
-    /// number (an origin of −∞ plus a size of +∞). Its origin is the near
-    /// edge it reaches, held to `f32::MIN`; its size runs from there to
-    /// the far edge it reaches, `+∞` where that width is past `f32`. Every
-    /// corner is then a number, the far one `+∞` at most, and the box
-    /// covers every point it reaches: on an axis of width `+∞`, every
-    /// point from its near edge on — past its far edge too, as no finite
-    /// width can reach that edge from the near one. It is a rectangle
-    /// reaching `+∞`, which the indices take as a rectangle that far
-    /// (`hit::is_rectangle`). Grown by `+∞` it runs from `f32::MIN` to
-    /// `+∞`: every finite point.
+    /// **Past what an `f32` holds** (#364), an axis saturates rather than
+    /// leave a corner that is no number (an origin of −∞ plus a size of
+    /// +∞, or +∞ minus +∞). Its origin is the near edge it reaches, held
+    /// to `f32::MIN`; its size runs from there to the far edge it reaches,
+    /// `+∞` where that width or that edge is past `f32`. Every corner is
+    /// then a number, the far one `+∞` at most, and the box covers every
+    /// point it reaches: on an axis of width `+∞`, every point from its
+    /// near edge on — past its far edge too, wherever the width it reaches
+    /// is more than `f32::MAX`, as no finite width reaches that edge from
+    /// the near one. It is a rectangle reaching `+∞`, which the indices
+    /// take as a rectangle that far (`hit::is_rectangle`). Grown by `+∞`
+    /// it runs from `f32::MIN` to `+∞`: every finite point. The edges come
+    /// from the center where an `f32` holds it, and otherwise — a size of
+    /// `+∞`, as this saturation gives, or a far corner past `f32` — from
+    /// the origin and the far corner. So `grown` of a rectangle, by any
+    /// `d`, is a rectangle: grown again, it covers what it reaches.
     ///
-    /// An axis that grows within `f32`, and one whose center is itself
-    /// past `f32` or no number, is computed as it always was, to the bit:
-    /// its size never negative. O(1).
+    /// Computed as it always was, to the bit:
+    ///
+    /// - an axis that grows within `f32`, which is every axis of a
+    ///   loadable map;
+    /// - a shrink to nothing, or a `d` that is no number, which leaves the
+    ///   axis empty at its center — `+∞` where the center is past `f32`,
+    ///   as a box reaching `+∞` shrunk by `+∞` is;
+    /// - an axis that is no rectangle — an origin or a size that is no
+    ///   number, or a negative size — as there is nothing it reaches.
+    ///
+    /// An axis at ±∞ (an origin of ±∞, which covers no finite point)
+    /// keeps its origin and grows its size as it always did, except where
+    /// the far corner would be no number: grown to a width of `+∞` at −∞,
+    /// it stays a point there, its width `0`, and at +∞ its origin stays
+    /// +∞ whatever its width. O(1).
     pub fn grown(&self, d: f32) -> Rect {
         let size = (self.size + Vec2::splat(2.0 * d)).max(Vec2::ZERO);
         let center = self.center();
@@ -72,26 +88,65 @@ impl Rect {
         if origin.is_finite() && size.is_finite() {
             return Rect { origin, size };
         }
-        // An axis past `f32`: its near edge from the half width, which an
-        // `f32` holds wherever `d` does, and its size from the near edge
-        // to the far one, `+∞` where the far edge is past `f32` too. Its
-        // center finite, the near edge is at most the far one.
-        let half = (self.size * 0.5 + Vec2::splat(d)).max(Vec2::ZERO);
-        let axis = |origin: f32, size: f32, center: f32, half: f32| {
-            if (origin.is_finite() && size.is_finite()) || !center.is_finite() {
-                (origin, size)
-            } else {
-                let near = (center - half).max(f32::MIN);
-                (near, (center + half) - near)
-            }
-        };
-        let (x, width) = axis(origin.x, size.x, center.x, half.x);
-        let (y, height) = axis(origin.y, size.y, center.y, half.y);
+        let (x, width) = grown_axis(self.origin.x, self.size.x, d, (origin.x, size.x), center.x);
+        let (y, height) = grown_axis(self.origin.y, self.size.y, d, (origin.y, size.y), center.y);
         Rect {
             origin: Vec2::new(x, y),
             size: Vec2::new(width, height),
         }
     }
+}
+
+/// One axis of [`Rect::grown`] that the plain arithmetic does not hold:
+/// `origin` and `size` grown by `d`, given what the plain arithmetic gave
+/// (`plain`, its origin and size) and the axis's `center`. See
+/// [`Rect::grown`] for what each case gives and why. O(1).
+fn grown_axis(origin: f32, size: f32, d: f32, plain: (f32, f32), center: f32) -> (f32, f32) {
+    let (plain_origin, plain_size) = plain;
+    if plain_origin.is_finite() && plain_size.is_finite() {
+        // This axis grew within `f32`; the other did not.
+        return plain;
+    }
+    if origin.is_nan() || !(size >= 0.0) {
+        // No rectangle on this axis: as it always was.
+        return plain;
+    }
+    if origin.is_infinite() {
+        // At ±∞: the origin kept, the width as it always grew, but none
+        // that would make the far corner −∞ + +∞.
+        return if (origin + plain_size).is_nan() {
+            (origin, 0.0)
+        } else {
+            (origin, plain_size)
+        };
+    }
+    if center.is_finite() {
+        // The near edge from the half width, which an `f32` holds wherever
+        // `d` does; the size from the near edge to the far one, `+∞` where
+        // that width is past `f32`. A finite center lies between them.
+        let half = (size * 0.5 + d).max(0.0);
+        let near = (center - half).max(f32::MIN);
+        return (near, (center + half) - near);
+    }
+    // The origin finite and the center past `f32`: a size more than twice
+    // the room from the origin to `f32::MAX`, `+∞` among them, as
+    // `origin + size / 2` overflows. Shrunk to nothing, or by a `d` that
+    // is no number, it is empty at its center, `+∞`, as it always was —
+    // as is a size of `+∞` shrunk by `+∞`, which reaches no width a
+    // number gives. The half width is read, not `size + 2·d`, as `2·d`
+    // overflows where the shrink it is does not empty a size of `+∞`.
+    if !(size * 0.5 + d >= 0.0) {
+        return plain;
+    }
+    // Otherwise the edges from the origin and the far corner: the near one
+    // held to `f32::MIN`, the far one past `f32` (it lies past the center),
+    // so the size is `+∞` — or nothing, at `+∞`, where the near edge is
+    // past `f32` too.
+    let near = (origin - d).max(f32::MIN);
+    if near == f32::INFINITY {
+        return (near, 0.0);
+    }
+    (near, (origin + size + d) - near)
 }
 
 /// A closed outline: what a frame's ring is placed around.

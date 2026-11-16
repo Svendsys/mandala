@@ -14,7 +14,7 @@ use crate::document::tests::writer_support::{request, single};
 use crate::flow::Rect;
 use crate::gfx_structs::run::RunShape;
 use crate::gfx_structs::shape::NodeShape;
-use crate::projection::hit::{cell_count, cells, span, BodyIndex};
+use crate::projection::hit::{cell_count, cells, is_rectangle, span, BodyIndex};
 use crate::projection::tests::maps::{huge_box, ident, kid, kids, load_map, node, HUGE_LENGTHS};
 use crate::projection::tests::support::Projected;
 use crate::projection::Layer;
@@ -904,6 +904,57 @@ fn test_projection_a_query_past_the_cells_tries_every_body() {
             every,
             "rectangles meeting {rect:?}"
         );
+    }
+}
+
+/// `Rect::grown` is closed over the rectangles the indices take
+/// ([`is_rectangle`], #364): a rectangle — finite, at the edges of
+/// `f32`, reaching +∞ as grown past `f32` gives one, with a size of +∞,
+/// with a center past `f32`, empty, or at ±∞ — grown by any length from
+/// −∞ to +∞, and by one that is no number, is a rectangle, and so is
+/// that grown again by any of them. What the hide stage relies on to
+/// hand the paths' index no box that is no rectangle.
+///
+/// Controls: with `grown` saturating only an axis whose center is
+/// finite, as it first did, red on the finite box grown by 1.8·10³⁸, then
+/// by −10³⁰: a center of +∞ less a width of +∞, an origin that is no
+/// number. With an axis at ±∞ grown as it always was, red on the
+/// rectangle reaching +∞ shrunk by +∞ — a point at +∞ — then grown by
+/// 1.8·10³⁸, its origin +∞ less a width of +∞.
+#[test]
+fn test_projection_a_rectangle_grown_by_any_length_is_a_rectangle() {
+    let (max, inf, nan) = (f32::MAX, f32::INFINITY, f32::NAN);
+    let rect = |x: f32, y: f32, w: f32, h: f32| Rect::new(Vec2::new(x, y), Vec2::new(w, h));
+    let near = rect(10.0, -20.0, 30.0, 4.0);
+    let rectangles = [
+        near,
+        rect(-max, -max, 1.0e38, 1.0e38),
+        rect(max - 1.0e38, max - 1.0e38, 1.0e38, 1.0e38),
+        near.grown(1.8e38),
+        rect(0.0, 0.0, inf, 10.0),
+        rect(3.0e38, 0.0, 1.0e38, 10.0),
+        rect(5.0, 5.0, 0.0, 0.0),
+        rect(-inf, 0.0, 10.0, 10.0),
+        rect(inf, 0.0, 10.0, 10.0),
+        rect(inf, 0.0, inf, 10.0),
+        rect(0.0, -inf, 10.0, 10.0),
+    ];
+    let lengths = [
+        -inf, -max, -1.8e38, -1.0e30, -5.0, -0.0, 0.0, 5.0, 1.0e9, 1.0e30, 1.7e38, 1.8e38, max, inf, nan,
+    ];
+    for r in rectangles {
+        assert!(is_rectangle(r), "precondition: {r:?} is a rectangle");
+        for a in lengths {
+            let once = r.grown(a);
+            assert!(is_rectangle(once), "{r:?} grown by {a} is a rectangle: {once:?}");
+            for b in lengths {
+                let twice = once.grown(b);
+                assert!(
+                    is_rectangle(twice),
+                    "{r:?} grown by {a}, then by {b}, is a rectangle: {twice:?}"
+                );
+            }
+        }
     }
 }
 
