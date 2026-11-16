@@ -810,7 +810,10 @@ What they hold, in short (each module's docs are the full list):
   sections, rings, connectors and links): no panic, a group per visible
   node in every layer, every run's box finite, the same layers projected
   twice, hits that do not panic, and one generated edit kept equal to a
-  full projection. A map outside the bound is skipped and counted, and
+  full projection. A frame's `inset` and `gap` and a `spacing` are not
+  coordinates of the bound: the loader holds them to the canvas bound,
+  and a map at it is projected (#364, where one past it made the
+  projection panic). A map outside the bound is skipped and counted, and
   the targets print the counts at every power of two and every 256
   inputs, so even a slow run reports its skipped fraction; the suite
   holds the structured maps to fewer than half skipped. The engine

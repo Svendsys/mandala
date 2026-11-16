@@ -105,10 +105,21 @@ impl NodeShape {
     /// it is the internally consistent answer, even though a
     /// point-sized node under the cursor is then not matched.
     ///
+    /// An AABB that is no rectangle — a corner that is no number, or a
+    /// `max` before its `min` on either axis — overlaps nothing, as a
+    /// [`Rect`](crate::flow::Rect)'s size is never negative: it is not
+    /// normalized into the rectangle its corners would span. A corner at
+    /// ±∞ is a rectangle that far, and is tried (#364).
+    ///
     /// O(1). No allocation.
     #[inline]
     pub fn intersects_local_aabb(self, min: Vec2, max: Vec2, bounds: Vec2) -> bool {
         if bounds.x <= 0.0 || bounds.y <= 0.0 {
+            return false;
+        }
+        // Written so a NaN corner fails it too, which the ellipse's
+        // clamp below would otherwise panic on.
+        if !(min.x <= max.x && min.y <= max.y) {
             return false;
         }
         // First, AABB–AABB overlap. Bails on any shape whose bounds

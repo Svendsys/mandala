@@ -163,3 +163,48 @@ pub fn do_shape_ellipse_intersects_aabb_fully_outside() {
     let max = Vec2::new(300.0, 300.0);
     assert!(!NodeShape::Ellipse.intersects_local_aabb(min, max, b));
 }
+
+/// An AABB that is no rectangle overlaps nothing, either shape (#364): a
+/// corner that is no number, or a `max` before its `min` on either axis —
+/// which a selection rectangle's size, never negative, cannot be — rather
+/// than the ellipse's clamp panicking on it or the rectangle answering by
+/// whichever comparisons a NaN fails. An AABB with a corner at ±∞ is a
+/// rectangle that far and overlaps both.
+///
+/// Control: with the check of the corners' order taken out, the ellipse
+/// panics on the first NaN corner (`f32::clamp`), and the rectangle,
+/// that row taken out, overlaps the reversed AABB.
+#[test]
+pub fn test_shape_an_aabb_that_is_no_rectangle_overlaps_nothing() {
+    do_shape_an_aabb_that_is_no_rectangle_overlaps_nothing();
+}
+
+pub fn do_shape_an_aabb_that_is_no_rectangle_overlaps_nothing() {
+    let b = Vec2::new(100.0, 100.0);
+    let nan = f32::NAN;
+    let none: [(&str, Vec2, Vec2); 6] = [
+        ("a NaN min", Vec2::new(nan, 10.0), Vec2::new(60.0, 60.0)),
+        ("a NaN max", Vec2::new(10.0, 10.0), Vec2::new(60.0, nan)),
+        (
+            "a glyph's box grown past f32",
+            Vec2::splat(f32::NEG_INFINITY),
+            Vec2::splat(nan),
+        ),
+        ("reversed across", Vec2::new(60.0, 10.0), Vec2::new(40.0, 60.0)),
+        ("reversed down", Vec2::new(10.0, 60.0), Vec2::new(60.0, 40.0)),
+        ("reversed both ways", Vec2::splat(60.0), Vec2::splat(40.0)),
+    ];
+    for shape in [NodeShape::Rectangle, NodeShape::Ellipse] {
+        for (what, min, max) in none {
+            assert!(!shape.intersects_local_aabb(min, max, b), "{shape:?}: {what}");
+        }
+        assert!(
+            shape.intersects_local_aabb(Vec2::splat(f32::NEG_INFINITY), Vec2::splat(f32::INFINITY), b),
+            "{shape:?}: an AABB with its corners at infinity"
+        );
+        assert!(
+            shape.intersects_local_aabb(Vec2::splat(40.0), Vec2::splat(60.0), b),
+            "precondition: {shape:?} overlaps the AABB its corners span the right way round"
+        );
+    }
+}
