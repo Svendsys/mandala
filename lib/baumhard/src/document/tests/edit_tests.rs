@@ -1966,3 +1966,50 @@ fn test_the_registry_holds_flower_and_cascade() {
         .request(&map(), &Boxes::of(&map()), &handlers, &[])
         .unwrap();
 }
+
+/// Every part of a refused run that may hold what a map wrote — the
+/// edit's id, the name it gives a field, a handler's name, a message that
+/// quotes one — is shown as file text is, every control, line separator
+/// and bidi control escaped, as a load's refusal shows it (#365).
+///
+/// Control: `EditError`'s parts shown as written, red.
+#[test]
+fn test_a_refused_runs_text_from_the_map_is_escaped() {
+    let raw = "a\u{202e}b\u{2028}c\u{85}d\u{1b}e";
+    let errors = [
+        EditError::UnknownName {
+            edit: raw.to_string(),
+            field: "color",
+            name: format!("theme variable `{raw}`"),
+        },
+        EditError::Value {
+            edit: raw.to_string(),
+            field: "span",
+            message: raw.to_string(),
+        },
+        EditError::UnknownHandler {
+            edit: raw.to_string(),
+            handler: raw.to_string(),
+        },
+        EditError::Handler {
+            edit: raw.to_string(),
+            message: raw.to_string(),
+        },
+        EditError::Build {
+            edit: raw.to_string(),
+            message: raw.to_string(),
+        },
+    ];
+    let dangerous = |c: char| {
+        c.is_control()
+            || matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+    };
+    for error in errors {
+        let shown = error.to_string();
+        assert!(!shown.chars().any(dangerous), "{error:?} shows {shown:?}");
+        assert!(
+            shown.contains("a\\u202eb"),
+            "{error:?} shows its text escaped: {shown}"
+        );
+    }
+}

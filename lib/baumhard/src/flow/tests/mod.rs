@@ -17,6 +17,8 @@ pub mod flow_fuzz;
 #[cfg(test)]
 mod flow_fuzz_tests;
 pub mod halves_tests;
+/// The longest path placement lays (#363).
+pub mod limit_tests;
 pub mod lines_tests;
 /// A placement along an open path's work budget (#313).
 #[cfg(test)]

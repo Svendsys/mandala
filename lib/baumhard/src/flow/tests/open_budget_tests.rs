@@ -30,7 +30,7 @@ const POINTS: f32 = 16.0;
 const BUDGETS: [usize; 9] = [1, 300, 1_000, 2_000, 4_000, 8_000, 16_000, 64_000, 200_000];
 
 /// The cap every placement of the grid is laid with, past the glyphs of
-/// every one of its paths but the one 10²² long, which holds the
+/// every one of its paths but the one 10¹⁸ long, which holds the
 /// engine's cap of any copy: laid at its own budget, it runs to the cap
 /// and stops, short — at the engine's cap, 65,536 glyphs, a value the
 /// cap's arithmetic proves (ruling B17.2c), not one the grid needs laid.
@@ -66,9 +66,13 @@ fn fits() -> [(&'static str, FitMode); 5] {
 
 /// The grid's paths: a line and a cubic 2,000 long at the origin, the
 /// same 10⁷ from it — where an `f32` sets a point to the nearest unit —
-/// and a line 10²² long, where the floats of a point some 10²² from the
-/// origin set an ornament's glyphs apart by bisection that barely moves
-/// them (the cost shape of seed 2771's ring, review 5761697746).
+/// and a line and a cubic 10¹⁸ long, where the floats of a point some
+/// 10¹⁸ from the origin set an ornament's glyphs apart by bisection that
+/// barely moves them (the cost shape of seed 2771's ring, review
+/// 5761697746). The far two were 10²² long until #363, which lays
+/// nothing along a path that long. The controls of #313's pull request
+/// for the tests that lay along them were run again along the 10¹⁸ ones,
+/// and are red there; each test's doc gives the counts.
 fn paths() -> Vec<(String, bool, Curve)> {
     let line = |at: Vec2, to: Vec2| Curve::Line(at, at + to);
     let cubic = |at: Vec2| {
@@ -97,19 +101,19 @@ fn paths() -> Vec<(String, bool, Curve)> {
         ),
         ("a 2,000 cubic at 10⁷".to_string(), false, cubic(Vec2::splat(1e7))),
         (
-            "a cubic 10²² across".to_string(),
+            "a cubic 10¹⁸ across".to_string(),
             true,
             Curve::Cubic(
                 Vec2::ZERO,
-                Vec2::new(3.5e21, -3e21),
-                Vec2::new(6.5e21, 3e21),
-                Vec2::new(1e22, 0.0),
+                Vec2::new(3.5e17, -3e17),
+                Vec2::new(6.5e17, 3e17),
+                Vec2::new(1e18, 0.0),
             ),
         ),
         (
-            "a line 10²² long".to_string(),
+            "a line 10¹⁸ long".to_string(),
             true,
-            line(Vec2::ZERO, Vec2::new(1e22, 3e21)),
+            line(Vec2::ZERO, Vec2::new(1e18, 3e17)),
         ),
     ]
 }
@@ -182,7 +186,7 @@ fn open(text: &str, curve: &Curve, fit: &FitMode, budget: Option<usize>, cap: us
 }
 
 /// One case of the grid: a placement laid at each of its budgets and
-/// caps, the last at its own, and whether its path is the one 10²² long.
+/// caps, the last at its own, and whether its path is the one 10¹⁸ long.
 struct Case {
     far: bool,
     laid: Vec<Laid>,
@@ -282,10 +286,20 @@ const LONG_FIT_BUDGETS: std::ops::RangeInclusive<usize> = 500..=4_000;
 /// or its cap.
 ///
 /// Preconditions: a quarter of the placements or more have a walk stopped
-/// by their budget, and at their own budget the paths 10²² across run to
+/// by their budget, and at their own budget the paths 10¹⁸ across run to
 /// the grid's cap and no other placement is stopped.
 ///
-/// Controls: see the pull request of #313.
+/// Controls, run along the grid as it stands, its far paths 10¹⁸ long
+/// (they were 10²² until #363): with `walk_bodies` reading no budget,
+/// red (crossed, 86 placements; past the bound, 39); with nothing held
+/// back for phase 2, red (1,218 faults over the 796 placements); with
+/// the run on not held back, red (142 faults, 115 of them over the phase
+/// 2 hold); with `once_text` reporting no `Short`, red (silent, 313);
+/// with a `Fit`'s measure as read unguarded, red (4: 2 crossed, 2 past
+/// the bound); with open placements unbudgeted, red at the first
+/// precondition (none stopped). Phase 2's solves not reading the budget
+/// stays green, as #313's pull request found: its spread is the plain
+/// solve.
 #[test]
 fn test_flow_open_budget_a_placement_past_its_budget_takes_its_overshoot_at_most() {
     let cases = grid();
@@ -368,8 +382,12 @@ fn test_flow_open_budget_a_placement_past_its_budget_takes_its_overshoot_at_most
 /// read cannot be afforded.
 ///
 /// Controls: with each of the two left unreported, red (that one); with
-/// an ornament's measure stopped by its budget left unreported, red on
-/// the ornament's `Fit`.
+/// an ornament's measure stopped by its budget left unreported — the
+/// report of a `Fit`'s round, which is the same — red on the ornament's
+/// `Fit`. Run again along the paths 10¹⁸ long (#363): `Short` and
+/// `Uneven` each unreported, red (none left so); a `Fit`'s round
+/// unguarded, red (none left `Uneven`); open placements unbudgeted, red
+/// (none left `Short`).
 #[test]
 fn test_flow_open_budget_a_spent_placement_says_how_it_was_left() {
     let laid: Vec<&Laid> = grid().iter().flat_map(|case| &case.laid).collect();
@@ -693,7 +711,12 @@ fn pitched_grid() -> &'static [(bool, Vec<Pitched>)] {
 /// their budget or their cap, and every one along a path at the origin is
 /// laid whole at its own budget.
 ///
-/// Controls: see the pull request of #313.
+/// Controls (#313's pull request), run again along the grid's paths as
+/// they stand, the far two 10¹⁸ long (#363): the whole-glyph `go`
+/// holding nothing, red (39 of 288 past their budget); the setup check
+/// off, red (30 of 288); the whole-glyph stop not reported, red at the
+/// first precondition (none short). With the glyph term off this grid
+/// stays green; the wide clusters' test below holds that term.
 #[test]
 fn test_flow_open_budget_a_pitched_pattern_takes_its_budget_at_most() {
     let cases = pitched_grid();
@@ -778,7 +801,9 @@ fn test_flow_open_budget_a_pitched_pattern_counts_the_gaps_it_measures() {
 /// construction — the four lays it holds back for besides cover some
 /// thirty glyphs an ink at their most reads and gaps, and no more.
 ///
-/// Control: see the pull request of #313.
+/// Control: the glyph term off, red ("4772 glyph steps past what its last
+/// read of its budget held back for"), as #313's pull request found it,
+/// and again with #363.
 #[test]
 fn test_flow_open_budget_a_pitched_pattern_of_wide_clusters_holds_its_glyphs() {
     use crate::flow::place::pitch::PITCH_EDGE;
@@ -812,17 +837,20 @@ fn test_flow_open_budget_a_pitched_pattern_of_wide_clusters_holds_its_glyphs() {
 
 /// #313, as ruling B17.1a has it for a ring's copies: a `Once` with a
 /// filler is budgeted by the copies of its filler its path holds past its
-/// text, not by its text alone — along the cubic 10²² across, which holds
+/// text, not by its text alone — along the cubic 10¹⁸ across, which holds
 /// the grid's cap of copies, its budget is past its text's.
 ///
-/// Control: see the pull request of #313.
+/// Controls, run along the cubic 10¹⁸ across (#363; it was 10²²): a
+/// filler's copies not scaled, red (budgeted 720,000, its text's alone,
+/// for 1,024 glyphs placed); open placements unbudgeted, red (the same
+/// budget, for 65,536).
 #[test]
 fn test_flow_open_budget_a_once_with_a_filler_is_budgeted_by_its_copies() {
     use crate::flow::place::halves::frame_budget;
     let fillers: Vec<&Laid> = grid()
         .iter()
         .filter_map(|case| case.laid.last())
-        .filter(|own| own.what.contains("Once with a filler along a cubic 10²² across"))
+        .filter(|own| own.what.contains("Once with a filler along a cubic 10¹⁸ across"))
         .collect();
     assert!(
         fillers.len() == 2 && fillers.iter().all(|own| own.placed.glyphs.len() > own.text),

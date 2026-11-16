@@ -384,10 +384,13 @@ pub fn do_flow_table_spacing_has_a_floor() {
 
 /// Outlines from the small to the largest `f32`, round and not, centered
 /// at the origin and far from it, with radii and sizes that are not
-/// numbers: what [`do_flow_a_closed_paths_table_samples_are_known_before_it_is_built`]
-/// and [`do_flow_a_closed_paths_length_is_finite_as_its_build_says`] walk.
+/// numbers, two of the sizes either side of the longest path placement
+/// lays (a square 2 × 10¹⁸ a side is 8 × 10¹⁸ round, one 3 × 10¹⁸ a side
+/// 1.2 × 10¹⁹): what
+/// [`do_flow_a_closed_paths_table_samples_are_known_before_it_is_built`]
+/// and [`do_flow_a_closed_path_is_within_the_limit_or_too_long`] walk.
 fn closed_outlines() -> Vec<Outline> {
-    let sizes = [0.5, 200.0, 1e5, 1e30, 1.5e38, f32::MAX, f32::NAN];
+    let sizes = [0.5, 200.0, 1e5, 2e18, 3e18, 1e30, 1.5e38, f32::MAX, f32::NAN];
     let mut outlines = Vec::new();
     for (i, &w) in sizes.iter().enumerate() {
         for (j, &h) in sizes.iter().enumerate() {
@@ -447,25 +450,38 @@ pub fn do_flow_a_closed_paths_table_samples_are_known_before_it_is_built() {
 }
 
 #[test]
-fn test_flow_a_closed_paths_length_is_finite_as_its_build_says() {
-    do_flow_a_closed_paths_length_is_finite_as_its_build_says();
+fn test_flow_a_closed_path_is_within_the_limit_or_too_long() {
+    do_flow_a_closed_path_is_within_the_limit_or_too_long();
 }
 
-/// `ArcPath::closed_length_is_finite` answers whether `ArcPath::closed`'s
-/// path has a finite length as the path built says, from every edge both
-/// ways, over `closed_outlines`: an ellipse's always is, so none is
-/// built for it (#309) — the frame's probe that asked was the largest
-/// table of its setup, at the finest spacing, and the answer always yes.
-/// Rounded rectangles answer both ways (sides of 1.5 × 10³⁸ sum past
-/// `f32::MAX`). Ellipses so far out that their radii are below their
-/// floats' spacing there, whose points all round onto their center, have
-/// their perimeter, measured from their center (#356): until their tables
-/// were, the rounding was all the table summed, and they had none.
+/// A closed path is no longer than `MAX_PATH_LENGTH`, or it is too long
+/// and has no length (#363, ruling B42.1): over `closed_outlines`, from
+/// every edge both ways, the path `ArcPath::closed` builds has a finite
+/// length within the limit, and says it is too long exactly where its
+/// outline is. Which outline is, is read off the outline's own numbers in
+/// `f64`, none of it the path's: a rounded rectangle's perimeter, its
+/// arcs and its sides between them — each as far as its corners lie apart
+/// as their floats hold them, to sixteen of their spacing, which far from
+/// the origin is all a side is; an ellipse's, which is more than four of
+/// its longer radius and less than a turn of it. Outlines whose corners
+/// are not finite, and those between their two bounds, are held to the
+/// first claim alone.
 ///
-/// Control: `closed_length_is_finite` answering `true` for a rounded
-/// rectangle too, red on the overflowing ones.
-pub fn do_flow_a_closed_paths_length_is_finite_as_its_build_says() {
-    let (mut infinite, mut collapsed) = (0, 0);
+/// Ellipses so far out that their radii are below their floats' spacing
+/// there, whose points all round onto their center, have their perimeter,
+/// measured from their center (#356): until their tables were, the
+/// rounding was all the table summed, and they had none.
+///
+/// Controls: the limit not held (`from_stretches` keeping every path),
+/// red on a length that is not finite; the limit held at half and at
+/// twice what it is, each red on an outline between the two (a box 6 ×
+/// 10¹⁸ round, and a rounded one 9.5 × 10¹⁸ round); an
+/// ellipse's table measured between its points as `f32`, red on the
+/// collapsed ones.
+pub fn do_flow_a_closed_path_is_within_the_limit_or_too_long() {
+    use crate::flow::MAX_PATH_LENGTH;
+    let limit = f64::from(MAX_PATH_LENGTH);
+    let (mut too_long, mut laid, mut collapsed) = (0, 0, 0);
     let edges = [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left];
     for (n, path) in closed_outlines().iter().enumerate() {
         let direction = if n % 2 == 0 {
@@ -475,28 +491,77 @@ pub fn do_flow_a_closed_paths_length_is_finite_as_its_build_says() {
         };
         let from = start(edges[n % 4], 0.7);
         let built = ArcPath::closed(path, from, direction, 1e30);
-        assert_eq!(
-            ArcPath::closed_length_is_finite(path, from, direction),
-            built.length().is_finite(),
-            "{path:?}"
+        assert!(
+            built.length().is_finite() && built.length() <= MAX_PATH_LENGTH,
+            "{path:?}: a length of {}",
+            built.length()
         );
-        infinite += usize::from(!built.length().is_finite());
+        assert!(
+            !built.too_long() || built.length() == 0.0,
+            "{path:?}: too long, and {} long",
+            built.length()
+        );
+        too_long += usize::from(built.too_long());
+        laid += usize::from(built.length() > 0.0);
+        // How long the outline is at the least and at the most, from its
+        // own numbers: `None` where its corners are not finite.
+        let rect = path.rect();
+        let (w, h) = (f64::from(rect.size.x), f64::from(rect.size.y));
+        let cornered = rect.origin.is_finite() && rect.max().is_finite() && rect.center().is_finite();
+        let bounds = match path {
+            _ if !cornered || !(w >= 0.0 && h >= 0.0) => None,
+            Outline::RoundedRect { radius, .. } => {
+                let r = if radius.is_nan() {
+                    0.0
+                } else {
+                    f64::from(*radius).clamp(0.0, 0.5 * w.min(h))
+                };
+                let across = rect.max().as_dvec2() - rect.origin.as_dvec2();
+                let sides = (across.x - 2.0 * r).abs() + (across.y - 2.0 * r).abs();
+                let perimeter = 2.0 * sides + std::f64::consts::TAU * r;
+                // The spacing of the floats its corners are set in.
+                let reach = rect.origin.abs().max(rect.max().abs()).max_element();
+                let grain = 16.0 * f64::from(reach.next_up() - reach);
+                Some((perimeter - grain, perimeter + grain))
+            }
+            Outline::Ellipse { .. } => {
+                let longer = 0.5 * w.max(h);
+                Some((4.0 * longer, std::f64::consts::TAU * longer))
+            }
+        };
+        if let Some((least, most)) = bounds {
+            if least > limit * (1.0 + 1e-6) {
+                assert!(
+                    built.too_long(),
+                    "{path:?}: at least {least:e} round, and not too long"
+                );
+            }
+            if most < limit * (1.0 - 1e-6) {
+                assert!(
+                    !built.too_long(),
+                    "{path:?}: at most {most:e} round, and too long"
+                );
+            }
+        }
         if let Outline::Ellipse { rect } = path {
-            assert!(built.length().is_finite(), "{path:?}: {}", built.length());
             // Its points all one float: its radii below the spacing of the
             // floats about its center.
             let center = rect.center();
             let radii = rect.size * 0.5;
             let spacing = |v: f32| f32::from_bits(v.abs().to_bits() + 1) - v.abs();
-            if built.table_samples() > 0 && radii.x < spacing(center.x) && radii.y < spacing(center.y) {
+            if built.table_samples() > 0
+                && !built.too_long()
+                && radii.x < spacing(center.x)
+                && radii.y < spacing(center.y)
+            {
                 assert!(built.length() > 0.0, "{path:?}: its perimeter, not none");
                 collapsed += 1;
             }
         }
     }
     assert!(
-        infinite > 0 && collapsed > 0,
-        "infinite {infinite}, collapsed {collapsed}"
+        too_long > 0 && laid > 0 && collapsed > 0,
+        "too long {too_long}, laid {laid}, collapsed {collapsed}"
     );
 }
 
@@ -662,20 +727,21 @@ pub fn do_flow_an_ellipses_length_is_its_ellipses_at_every_magnitude() {
 }
 
 #[test]
-fn test_flow_an_ellipse_whose_points_pass_the_largest_f32_has_no_length() {
-    do_flow_an_ellipse_whose_points_pass_the_largest_f32_has_no_length();
+fn test_flow_an_ellipse_whose_points_pass_the_largest_f32_is_too_long() {
+    do_flow_an_ellipse_whose_points_pass_the_largest_f32_is_too_long();
 }
 
 /// An ellipse whose center and radii together pass the largest `f32`,
-/// though each is finite and its table is built, sets points past it: its
-/// path has no length, as when its table summed the distances between
-/// those points (#356), and nothing is laid along it. Its distances are
-/// measured from its center now, all finite, so its points are looked at
-/// for that.
+/// though each is finite and its table is built, would set points past
+/// it. It is too long (#363): a point passes the largest `f32` only where
+/// a radius is half the floats' spacing there or more, and its table,
+/// measured from its center and all finite (#356), is then far past the
+/// limit. So its path has no stretch to set a point along, and answers
+/// its origin, the middle of the canvas for one that is not finite.
 ///
-/// Control: with its points not looked at, red (a perimeter of some
-/// 2.3·10³⁸ along points not all finite).
-pub fn do_flow_an_ellipse_whose_points_pass_the_largest_f32_has_no_length() {
+/// Control: the limit not held, red (a perimeter of some 2.3 × 10³⁸ along
+/// points not all finite).
+pub fn do_flow_an_ellipse_whose_points_pass_the_largest_f32_is_too_long() {
     let center = Vec2::splat(3.3e38);
     let radii = Vec2::new(5e37, 2e37);
     let path = Outline::Ellipse {
@@ -687,41 +753,54 @@ pub fn do_flow_an_ellipse_whose_points_pass_the_largest_f32_has_no_length() {
         (center + radii).x.is_infinite(),
         "precondition: its points pass the largest f32"
     );
+    assert!(built.too_long(), "{path:?}: too long");
     assert_eq!(built.length(), 0.0, "{path:?}: no length");
+    for s in [0.0, 1.0e30, f32::MAX] {
+        assert!(built.at(s).0.is_finite(), "{path:?}: a finite point at {s}");
+    }
 }
 
 #[test]
-fn test_flow_a_curve_faster_than_the_largest_f32_is_tabled() {
-    do_flow_a_curve_faster_than_the_largest_f32_is_tabled();
+fn test_flow_a_curve_faster_than_the_largest_f32_is_too_long() {
+    do_flow_a_curve_faster_than_the_largest_f32_is_too_long();
 }
 
-/// A curve whose every control point and leg is finite but whose speed
-/// bound — the degree times its longest leg — is past the largest `f32`
-/// still builds its table: the bound saturates there, and its path has
-/// its length. Seed 1021 of the structured flow generator: a quadratic
-/// from (1, 1) by (−2.4 × 10³⁸, −587) to (−10³⁰, 1), 2.4 × 10³⁸ long,
-/// whose bound of twice its first leg was infinite, so that it built no
-/// table and its `Spread` was cut to nothing though its text fit.
+/// A curve whose every control point is finite but whose speed bound —
+/// the degree times its longest leg — is past the largest `f32`, or which
+/// has a leg longer than it, is tabled by no count: it builds no table,
+/// and its path says it is too long (#363), where it was a path of no
+/// length with nothing said. Seed 1021 of the structured flow generator:
+/// a quadratic from (1, 1) by (−2.4 × 10³⁸, −587) to (−10³⁰, 1), whose
+/// bound of twice its first leg is infinite and whose `Spread` was cut to
+/// nothing though its text fit. And a cubic between control points
+/// 6 × 10³⁸ apart, whose leg has no `f32` length.
 ///
-/// Control: with the bound not saturated, no table and no length.
-pub fn do_flow_a_curve_faster_than_the_largest_f32_is_tabled() {
-    let curve = Curve::Quadratic(
+/// Control: `table` answering no stretch for a curve it cannot count
+/// samples for, red: a path of no length that is not too long.
+pub fn do_flow_a_curve_faster_than_the_largest_f32_is_too_long() {
+    let fast = Curve::Quadratic(
         Vec2::new(1.0, 1.0),
         Vec2::new(-2.409_018_9e38, -587.0),
         Vec2::new(-1e30, 1.0),
     );
     assert_eq!(
-        curve.speed_bound(),
-        f32::MAX,
-        "the bound saturates at the largest f32"
+        fast.speed_bound(),
+        f32::INFINITY,
+        "its bound is past the largest f32"
     );
-    let path = ArcPath::open(&curve, 4.8);
-    assert!(path.table_samples() > 0, "the curve builds its table");
-    assert!(
-        path.length().is_finite() && path.length() > 2.4e38,
-        "its path is as long as it is: {}",
-        path.length()
+    let long = Curve::Cubic(
+        Vec2::new(-3.0e38, 0.0),
+        Vec2::new(3.0e38, 10.0),
+        Vec2::new(3.0e38, 20.0),
+        Vec2::new(-3.0e38, 30.0),
     );
+    assert!(long.speed_bound().is_nan(), "a leg of it has no length");
+    for (name, curve) in [("the fast quadratic", fast), ("the long cubic", long)] {
+        let path = ArcPath::open(&curve, 4.8);
+        assert_eq!(path.table_samples(), 0, "{name} builds no table");
+        assert!(path.too_long(), "{name} is too long");
+        assert_eq!(path.length(), 0.0, "{name} has no length");
+    }
 }
 
 #[test]
@@ -856,16 +935,24 @@ pub fn do_flow_path_nearest_finds_its_own_points() {
 }
 
 #[test]
-fn test_flow_path_measures_past_the_root_of_the_largest_f32() {
-    do_flow_path_measures_past_the_root_of_the_largest_f32();
+fn test_flow_path_measures_a_path_as_long_as_placement_lays() {
+    do_flow_path_measures_a_path_as_long_as_placement_lays();
 }
 
-/// A vector, a line, a curve and an outline longer than `√f32::MAX`
-/// (about `1.8e19`) — whose squared length passes every `f32` — measure
-/// their lengths, each against the same length worked in `f64`, and
-/// walk to their ends. Control: measured by `Vec2::length`, each is
-/// infinite or not walked at all.
-pub fn do_flow_path_measures_past_the_root_of_the_largest_f32() {
+/// A line, a curve and an outline nearly as long as placement lays
+/// ([`MAX_PATH_LENGTH`](crate::flow::MAX_PATH_LENGTH), 2⁶³) measure their
+/// lengths, each against the same length worked in `f64`, and walk to
+/// their ends; the same four times the size, past it, have no length and
+/// are too long. And a vector longer than `√f32::MAX` (about `1.8e19`) —
+/// whose squared length passes every `f32`, and which no path placement
+/// lays holds — still measures its length and its direction
+/// (`length_of`, `direction_of`): what a stretch is measured by before
+/// its path is found too long.
+///
+/// Controls: with `length_of` answering `Vec2::length`, red ("a vector":
+/// infinite); with the limit held at half what it is, red ("a line is
+/// within the limit, and not too long").
+pub fn do_flow_path_measures_a_path_as_long_as_placement_lays() {
     let near = |got: f32, want: f64, what: &str| {
         assert!(
             ((got as f64) - want).abs() <= want * 1e-5,
@@ -903,53 +990,82 @@ pub fn do_flow_path_measures_past_the_root_of_the_largest_f32() {
         None,
         "an underflowing vector has no direction"
     );
-    // A line from -1e20 to 1e20, and a diagonal one.
-    let (a, b) = (Vec2::new(-1.0e20, 0.0), Vec2::new(1.0e20, 0.0));
-    let line = ArcPath::open(&Curve::Line(a, b), 1.0);
-    near(line.length(), 2.0e20, "a line");
-    assert!(
-        line.at(line.length()).0.distance(b) <= 1.0e15,
-        "the line walks to its end"
-    );
-    let (a, b) = (Vec2::splat(-1.0e37), Vec2::splat(1.0e37));
-    near(
-        ArcPath::open(&Curve::Line(a, b), 1.0).length(),
-        2.0e37 * std::f64::consts::SQRT_2,
-        "a diagonal line",
-    );
-    // A curve with a control point far out: its length lies between its
-    // chord and its control polygon.
-    let (a, c, b) = (
-        Vec2::new(0.0, 0.0),
-        Vec2::new(5.0e25, 0.0),
-        Vec2::new(0.0, 1.0e25),
-    );
-    let curve = ArcPath::open(&Curve::Quadratic(a, c, b), 1.0);
-    let polygon = (c - a).as_dvec2().length() + (b - c).as_dvec2().length();
-    let chord = (b - a).as_dvec2().length();
-    assert!(
-        (curve.length() as f64) >= chord && (curve.length() as f64) <= polygon * (1.0 + 1e-5),
-        "a curve {:e}, between {chord:e} and {polygon:e}",
-        curve.length()
-    );
-    // A rounded rectangle 1e30 wide.
-    let (w, h, r) = (1.0e30_f64, 40.0_f64, 10.0_f64);
-    let rounded = outline(
-        Rect::new(Vec2::ZERO, Vec2::new(w as f32, h as f32)),
-        Shape::Rectangle {
-            radius: Percent::new(50),
-        },
-    );
+    let limit = f64::from(crate::flow::MAX_PATH_LENGTH);
     let start = StartPoint {
         edge: Edge::Top,
         at: 0.0,
     };
-    let path = ArcPath::closed(&rounded, start, Direction::Clockwise, 1.0);
-    near(
-        path.length(),
-        2.0 * (w - 2.0 * r) + 2.0 * (h - 2.0 * r) + 2.0 * PI as f64 * r,
-        "an outline",
-    );
+    for (scale, laid) in [(1.0_f32, true), (4.0, false)] {
+        let held = |path: &ArcPath, want: f64, what: &str| {
+            assert_eq!(
+                want <= limit,
+                laid,
+                "precondition: {what} at {scale}×, {want:e} long, is {} the limit",
+                if laid { "within" } else { "past" }
+            );
+            if laid {
+                assert!(!path.too_long(), "{what} is within the limit, and not too long");
+                near(path.length(), want, what);
+            } else {
+                assert!(path.too_long(), "{what} at {scale}× is too long");
+                assert_eq!(path.length(), 0.0, "{what} at {scale}× has no length");
+            }
+        };
+        // A line from -4e18 to 4e18, and a diagonal one.
+        let (a, b) = (Vec2::new(-4.0e18, 0.0) * scale, Vec2::new(4.0e18, 0.0) * scale);
+        let line = ArcPath::open(&Curve::Line(a, b), 1.0);
+        held(&line, 8.0e18 * f64::from(scale), "a line");
+        if laid {
+            assert!(
+                line.at(line.length()).0.distance(b) <= 1.0e13,
+                "the line walks to its end"
+            );
+        }
+        let (a, b) = (Vec2::splat(-3.0e18) * scale, Vec2::splat(3.0e18) * scale);
+        held(
+            &ArcPath::open(&Curve::Line(a, b), 1.0),
+            6.0e18 * std::f64::consts::SQRT_2 * f64::from(scale),
+            "a diagonal line",
+        );
+        // A curve with a control point far out: its length lies between
+        // its chord and its control polygon, and it counts toward the
+        // limit by its polygon.
+        let (a, c, b) = (
+            Vec2::ZERO,
+            Vec2::new(4.0e18, 0.0) * scale,
+            Vec2::new(0.0, 8.0e17) * scale,
+        );
+        let curve = ArcPath::open(&Curve::Quadratic(a, c, b), 1.0);
+        let polygon = (c - a).as_dvec2().length() + (b - c).as_dvec2().length();
+        let chord = (b - a).as_dvec2().length();
+        assert_eq!(
+            polygon <= limit,
+            laid,
+            "precondition: the curve's control polygon at {scale}×, {polygon:e}"
+        );
+        assert_eq!(curve.too_long(), !laid, "a curve at {scale}×");
+        if laid {
+            assert!(
+                (curve.length() as f64) >= chord && (curve.length() as f64) <= polygon * (1.0 + 1e-5),
+                "a curve {:e}, between {chord:e} and {polygon:e}",
+                curve.length()
+            );
+        }
+        // A rounded rectangle 4e18 wide.
+        let (w, h, r) = (4.0e18_f64 * f64::from(scale), 40.0_f64, 10.0_f64);
+        let rounded = outline(
+            Rect::new(Vec2::ZERO, Vec2::new(w as f32, h as f32)),
+            Shape::Rectangle {
+                radius: Percent::new(50),
+            },
+        );
+        let path = ArcPath::closed(&rounded, start, Direction::Clockwise, 1.0);
+        held(
+            &path,
+            2.0 * (w - 2.0 * r) + 2.0 * (h - 2.0 * r) + 2.0 * PI as f64 * r,
+            "an outline",
+        );
+    }
 }
 
 /// A path looked up forward a little at a time — as a walk looks it up —

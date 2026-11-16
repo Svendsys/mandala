@@ -331,7 +331,9 @@ pub(crate) fn ring_work_steps(glyphs: usize, copy: usize, tables: usize) -> usiz
 
 /// How a ring's budget, or its cap, left it (#310), when it stopped its
 /// work (`Trace::ring`) — or a placement's along an open path, which is
-/// never closed, and so short or uneven (#313).
+/// never closed, and so short or uneven (#313) — or that its path is too
+/// long to lay ([`RingLoss::TooLong`], #363), which any placement's can
+/// be, a frame's among them. The worst stands, the last the worst.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum RingLoss {
     /// Phase 2's spacing was not solved to the end: the ring is laid at
@@ -351,6 +353,12 @@ pub(crate) enum RingLoss {
     /// text, or its copies, were laid: the longest prefix of them in
     /// reading order its walk kept, or its text without its copies.
     Short,
+    /// Its path is longer than placement lays
+    /// ([`MAX_PATH_LENGTH`](crate::flow::MAX_PATH_LENGTH), #363): nothing
+    /// is laid. The one loss that is not its budget's or its cap's, and
+    /// the one every kind of placement reports by this name: a ring, a
+    /// frame, a placement along an open path and a pitched one.
+    TooLong,
 }
 
 /// A `Repeat` ring's work (#310), or a placement's along an open path, in

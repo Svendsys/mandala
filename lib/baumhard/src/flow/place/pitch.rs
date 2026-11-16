@@ -46,8 +46,8 @@ use crate::flow::path::ArcPath;
 use crate::flow::place::halves::{resolved, BOXES_A_STEP};
 use crate::flow::place::ring::{ring_glyphs, steps_of, RingLoss, RingWork, GLYPHS_A_STEP};
 use crate::flow::place::{
-    cluster_ink, clusters_of, corner_distance, Cluster, PlacedGlyph, PlacedRun, Trace, MAX_PLACED_GLYPHS,
-    MIN_TABLE_SPACING,
+    cluster_ink, clusters_of, corner_distance, too_long_to_lay, Cluster, PlacedGlyph, PlacedRun, Trace,
+    MAX_PLACED_GLYPHS, MIN_TABLE_SPACING,
 };
 use crate::flow::shape::{Ink, ShapedRun};
 
@@ -151,6 +151,12 @@ pub(crate) struct Solved {
 thread_local! {
     /// The last [`place_pitched`]'s [`Solved`] on this thread.
     pub(crate) static SOLVED: std::cell::Cell<Option<Solved>> = const { std::cell::Cell::new(None) };
+    /// The most rounds whose lay did not answer their move ([`STALLED`])
+    /// any one solve of a count's slack took on this thread on a path
+    /// whose float steps are wider than the pattern's end gap: one, where
+    /// the floats cannot resolve its gaps and the solve stops at the first
+    /// such round (#333). Test-only: what holds that stop.
+    pub(crate) static MOST_UNRESOLVED_UNANSWERED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// What a [`place_pitched`] placement keeps its glyphs clear of at one
@@ -410,15 +416,17 @@ pub(super) struct Pitched {
 /// A run with no ink — text, or only spaces — has no pitch, and is
 /// placed empty: [`place_on_open`](crate::flow::place_on_open) lays it.
 /// So is a path that is not finite, and one too short to hold one ink
-/// with no gap at all. Never more than [`MAX_PLACED_GLYPHS`] glyphs; a
-/// placement held to it is `truncated`, its gaps spread over the inks it
-/// holds.
+/// with no gap at all. A path longer than placement lays
+/// ([`MAX_PATH_LENGTH`](crate::flow::MAX_PATH_LENGTH)) is placed empty
+/// too, and that is a loss: the placement is `truncated`. Never more than
+/// [`MAX_PLACED_GLYPHS`] glyphs; a placement held to it is `truncated`,
+/// its gaps spread over the inks it holds.
 ///
 /// Cost: O(clusters) to read the pattern; O(inks) path lookups to count
 /// the inks, and as many again for each of a few rounds of the slack for
-/// each of the two counts nearest, each ink a few gap measures where the path bends; and
-/// O(`ends`' boxes) per end measure. Allocates the placement and one
-/// scratch vector of positions.
+/// each of the two counts nearest, each ink a few gap measures where the
+/// path bends; and O(`ends`' boxes) per end measure. Allocates the
+/// placement and one scratch vector of positions.
 pub fn place_pitched(
     run: &ShapedRun,
     path: &(impl AsRef<[Curve]> + ?Sized),
@@ -514,8 +522,11 @@ pub(crate) fn place_pitched_capped(
         return PlacedRun::default();
     }
     let arc = ArcPath::open(path, (0.25 * run.line_height).max(MIN_TABLE_SPACING));
+    if arc.too_long() {
+        return too_long_to_lay(trace, arc.table_samples());
+    }
     let length = arc.length();
-    if !length.is_finite() || length <= 0.0 {
+    if length <= 0.0 {
         return PlacedRun::default();
     }
     let curves = path.as_ref();
@@ -927,7 +938,12 @@ pub(super) fn pitch(
             };
         }
         #[cfg(test)]
-        unanswered_for.push((n, unanswered_rounds));
+        {
+            unanswered_for.push((n, unanswered_rounds));
+            if resolved(0.0, track.magnitude()) > end_gap {
+                MOST_UNRESOLVED_UNANSWERED.with(|most| most.set(most.get().max(unanswered_rounds)));
+            }
+        }
         Some(best.1)
     };
     let candidates: Vec<(usize, f32)> = [fitted, fitted + 1]

@@ -1,0 +1,136 @@
+{
+  "format": 1,
+  "name": "Testament",
+  "theme": {
+    "active": "dark",
+    "variants": {
+      "dark": {
+        "accent": "#d4a24c",
+        "bg": "#101014",
+        "fg": "#e0e0e0"
+      },
+      "light": {
+        "accent": "#8a5a00",
+        "bg": "#f6f3ec",
+        "fg": "#202024"
+      }
+    }
+  },
+  "background": "var(bg)",
+  "palettes": {
+    "mono": [
+      {
+        "frame": "#808080",
+        "text": "#ffffff80"
+      
+      }
+    ]
+  },
+  "defaults": {
+    "node": {
+      "shape": {
+        "rectangle": {
+          "radius": 10
+        }
+      },
+      "font": "Publ",
+      "italic": false
+    }
+  },
+  "edits": [
+    {
+      "id": "grow",
+      "name": "Grow the text",
+      "description": "Every span of the subtree two points larger, but the large ones.",
+      "reach": "subtree",
+      "target": "spans",
+      "filter": {
+        "fields": [
+          [
+            {
+              "font_size": {
+                "pt": 30.0
+              }
+            },
+            {
+              "LessThan": false
+            }
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "span": {
+            "text": {
+              "grow_size": 2.0
+            }
+          }
+        },
+        {
+          "span": {
+            "insert_text": {
+              "at": 0,
+              "text": "» "
+            }
+          }
+        },
+        {
+          "span": {
+            "delete_text": {
+              "start": 0,
+              "end": 0
+            }
+          }
+        }
+      ],
+      "animate": {
+        "ms": 200,
+        "delay_ms": 50,
+        "easing": "ease_out",
+        "snap": "start"
+      }
+    },
+    {
+      "id": "benlower",
+      "name": "Flower",
+      "reach": "self",
+      "target": "node",
+      "handler": "flo‮",
+      "animate": {
+        "ms": 400
+      }
+    }
+  ],
+  "presentations": [
+    {
+      "id": "intro",
+      "name": "Introduction"
+    }
+  ],
+  "verbs": [
+    {
+      "id": "glow",
+      "name": "Glow"
+    },
+    {
+      "id": "reveal",
+      "name": "Reveal chapter two"
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "sections": [{"spans": [{"text": "the heaven and the earth"}]}],
+      "connector": {"fit": "once", "spacing": 0.0, "size": 12.0, "color": "#888888", "content": "·", "anchors": ["bottom", "top"], "control_points": [[10.0, 10.0]], "visible": false, "zoom": {"max": 4.0}, "spans": [{"text": "─"}], "cap_start": {"spans": [{"text": "("}]}, "cap_end": {"spans": [{"text": ")"}]}, "label": {"t": 0.5, "spans": [{"text": "child of"}]}}
+    },
+    {
+      "id": 4,
+      "parent": 2,
+      "channel": 3,
+      "position": [0.0,0.0],
+      "palette": "mono",
+      "sections": [{"spans": [{"text": "elsewhere"}]}]
+    }
+  ]
+}
