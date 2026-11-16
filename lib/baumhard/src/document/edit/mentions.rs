@@ -73,15 +73,15 @@ impl EditDef {
 /// One walk of a definition — an edit, or a presentation, whose filter
 /// and mutations are spelled as an edit's are: where its verb ids go,
 /// and what it has found it can show.
-pub(crate) struct Walk<'a, 'f> {
+pub(in crate::document) struct Walk<'a, 'f> {
     verb: &'f mut dyn FnMut(&'a str),
-    pub(crate) shows: Shows,
+    pub(in crate::document) shows: Shows,
 }
 
 impl<'a, 'f> Walk<'a, 'f> {
     /// A walk that hands each verb id it meets to `verb`, having found
     /// nothing yet.
-    pub(crate) fn new(verb: &'f mut dyn FnMut(&'a str)) -> Self {
+    pub(in crate::document) fn new(verb: &'f mut dyn FnMut(&'a str)) -> Self {
         Walk {
             verb,
             shows: Shows::default(),
@@ -120,7 +120,7 @@ impl<'a, 'f> Walk<'a, 'f> {
         children.iter().for_each(|child| self.mutator(child));
     }
 
-    pub(crate) fn filter(&mut self, filter: &'a FilterDto) {
+    pub(in crate::document) fn filter(&mut self, filter: &'a FilterDto) {
         let FilterDto {
             fields,
             always_match: _,
@@ -169,7 +169,7 @@ impl<'a, 'f> Walk<'a, 'f> {
         }
     }
 
-    pub(crate) fn mutations(&mut self, mutations: &'a [MutationDto]) {
+    pub(in crate::document) fn mutations(&mut self, mutations: &'a [MutationDto]) {
         for mutation in mutations {
             match mutation {
                 MutationDto::Node(op) => self.node(op),

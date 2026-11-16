@@ -39,19 +39,15 @@ pub mod lifecycle;
 pub(crate) mod load;
 mod mentions;
 
-pub use layer::{InstanceId, InstanceInfo, Suspended};
+pub use layer::{InstanceId, InstanceInfo};
 pub use lifecycle::Direction;
 pub use load::{parse_presentations, PresentationsError};
 
 use crate::document::edit::resolve::Fault;
 use crate::document::edit::{Animate, Easing, Filter, Mutations, Target};
-use crate::document::format::presentations::{GlyphOpDto, LayerDto, PlayDto, RunOverrideDto};
-use crate::document::values::Rgba;
+use crate::document::format::presentations::{GlyphOpDto, LayerDto, PlayDto};
 use crate::document::writer::error::ApplyError;
 use crate::engine::interpolate::Snap;
-use crate::gfx_structs::mutator::GfxMutation;
-use crate::gfx_structs::run::RunOverrideOp;
-use glam::Vec2;
 use std::fmt;
 
 /// How an instance lives (design §10.2, #251 §2).
@@ -76,16 +72,12 @@ pub enum PresentationLayer {
     Glyph,
 }
 
-/// A glyph-layer body, as a file writes it.
+/// A glyph-layer body, as a file writes it: run mutations in the
+/// document's own words, since the document names no glyph type. What
+/// they are on a run is
+/// [`projection::glyph_mutations`](crate::projection::glyph_mutations).
 #[derive(Clone, Debug, PartialEq)]
 pub struct GlyphOps(pub(crate) Vec<GlyphOpDto>);
-
-impl GlyphOps {
-    /// The run mutations these ops are, in order. O(the ops).
-    pub fn mutations(&self) -> Vec<GfxMutation> {
-        self.0.iter().map(glyph_mutation).collect()
-    }
-}
 
 /// What a presentation writes on the elements it plays on.
 #[derive(Clone, Debug, PartialEq)]
@@ -224,30 +216,6 @@ pub(crate) const LOOP_TAKES_NO_TIME: &str =
 /// instant: every lifecycle but a loop whose cycle takes no time. O(1).
 pub(crate) fn takes_time(play: Play, animate: &Animate, out: &Animate) -> bool {
     play != Play::Loop || lifecycle::span_ms(animate) + lifecycle::span_ms(out) > 0.0
-}
-
-/// The run mutation `dto` spells.
-fn glyph_mutation(dto: &GlyphOpDto) -> GfxMutation {
-    let range = |[start, end]: [usize; 2]| start..end;
-    match dto {
-        GlyphOpDto::Opacity(opacity) => GfxMutation::RunOpacity(*opacity),
-        GlyphOpDto::Origin([x, y]) => GfxMutation::RunOrigin(Vec2::new(*x, *y)),
-        GlyphOpDto::Overrides(op) => GfxMutation::RunOverrides(match op {
-            RunOverrideDto::Offset { range: r, value } => RunOverrideOp::Offset {
-                range: range(*r),
-                value: Vec2::new(value[0], value[1]),
-            },
-            RunOverrideDto::Color { range: r, value } => RunOverrideOp::Color {
-                range: range(*r),
-                value: value.map(|hex| Rgba(hex.0)),
-            },
-            RunOverrideDto::Scale { range: r, value } => RunOverrideOp::Scale {
-                range: range(*r),
-                value: *value,
-            },
-            RunOverrideDto::Clear => RunOverrideOp::Clear,
-        }),
-    }
 }
 
 /// How a presentations file spells `dto`: the name its `serde` form

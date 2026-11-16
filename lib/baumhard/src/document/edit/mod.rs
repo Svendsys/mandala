@@ -31,7 +31,7 @@
 //! edit, the field and the name, and nothing is applied.
 
 pub(crate) mod load;
-pub(crate) mod mentions;
+pub(in crate::document) mod mentions;
 pub(crate) mod reach;
 pub(crate) mod resolve;
 

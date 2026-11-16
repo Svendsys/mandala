@@ -62,7 +62,7 @@ use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
 use baumhard::gfx_structs::tree::GfxTree;
-use baumhard::projection::{GlyphLayers, Layer, Projector};
+use baumhard::projection::{glyph_mutations, GlyphLayers, Layer, Projector};
 use glam::Vec2;
 
 use super::gpu_harness::headless_app;
@@ -672,7 +672,7 @@ fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
                 panic!("{name}: `{id}` is a glyph-layer presentation");
             };
             let mut named = Vec::new();
-            for mutation in ops.mutations() {
+            for mutation in glyph_mutations(ops) {
                 let GfxMutation::RunOverrides(op) = mutation else {
                     panic!("{name}: `{id}` writes overrides only: {mutation:?}");
                 };

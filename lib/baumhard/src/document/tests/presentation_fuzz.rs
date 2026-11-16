@@ -29,7 +29,7 @@
 //!   leaves with nothing playing, and so do its undo and its redo;
 //! - **a glyph-layer body is run mutations**: what it spells holds
 //!   every property of authored run mutations
-//!   ([`glyph_layer_fuzz`]).
+//!   ([`check_glyph_body`]).
 //!
 //! The fuzz targets (`fuzz/fuzz_targets/presentations_*.rs`) are thin
 //! wrappers over [`check_presentations_json`] and
@@ -48,7 +48,7 @@ use crate::document::tests::edit_fuzz::{self, Boxes, FIELDS, MUTATIONS, TARGETS}
 use crate::document::writer::ChangeSource;
 use crate::edit_handlers::registry;
 use crate::engine::journal::Touch;
-use crate::gfx_structs::tests::glyph_layer_fuzz;
+use crate::projection::tests::presentation_glyphs::check_glyph_body;
 use crate::util::tests::choices::Choices;
 
 /// The map presentations play on: the format's fullest fixture.
@@ -344,7 +344,10 @@ fn edit_under(
     };
     let here = request(&maps.plain);
     let there = if from_the_map {
-        request(&maps.performed.suspended())
+        maps.performed.suspend_presentations();
+        let there = request(&maps.performed);
+        maps.performed.resume_presentations();
+        there
     } else {
         request(&maps.performed)
     };
@@ -438,7 +441,7 @@ fn check_text(
     let mut readings: Vec<f64> = frames.to_vec();
     for def in defs.iter().take(MAX_PLAYED) {
         if let PresentationBody::Glyph(ops) = &def.body {
-            glyph_layer_fuzz::check_mutations(&ops.mutations())
+            check_glyph_body(ops)
                 .map_err(|why| format!("presentation `{}`: its run mutations: {why}", def.id))?;
         }
         let playing = maps.performed.presentations().count();

@@ -272,6 +272,12 @@ const EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
         "an iterator of shared palette references, over a tree",
     ),
     (
+        "presentation/layer.rs",
+        "Document::presentations",
+        IMPL_TRAIT,
+        "an iterator of the instances playing, as copies holding ids and shared references",
+    ),
+    (
         "deps.rs",
         "inputs_changed",
         IMPL_TRAIT,

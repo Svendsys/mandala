@@ -58,7 +58,8 @@ use crate::document::mutation::ops::DocMutatorTree;
 use crate::document::mutation::validate::{validate_applied, validate_for_presentation};
 use crate::document::presentation::lifecycle::{Direction, Lifecycle};
 use crate::document::presentation::{
-    takes_time, Play, PresentError, PresentationBody, PresentationDef, PresentationLayer, LOOP_TAKES_NO_TIME,
+    takes_time, GlyphOps, Play, PresentError, PresentationBody, PresentationDef, PresentationLayer,
+    LOOP_TAKES_NO_TIME,
 };
 use crate::document::writer::error::ApplyError;
 use crate::document::writer::feed::field_inputs;
@@ -70,7 +71,6 @@ use crate::engine::journal::{Journal, JournalBuilder, Touch};
 use crate::engine::key::BranchKey;
 use crate::engine::mutator::Mutator;
 use crate::engine::tree::{MutatorTree, Tree};
-use crate::gfx_structs::mutator::GfxMutation;
 use log::{error, warn};
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
@@ -108,9 +108,9 @@ pub struct InstanceInfo<'a> {
     /// The elements it plays on: its target within its node, as its
     /// filter kept them when it started, in tree order.
     pub elements: &'a [NodeId],
-    /// A glyph-layer instance's run mutations; `None` on the document
-    /// layer.
-    pub glyph: Option<&'a [GfxMutation]>,
+    /// A glyph-layer instance's body, in the document's words
+    /// ([`GlyphOps`]); `None` on the document layer.
+    pub glyph: Option<&'a GlyphOps>,
     /// Why the document refuses what it writes, on the map as it now
     /// stands: it is applied nowhere until an edit makes room for it.
     pub refusal: Option<&'a ApplyError>,
@@ -131,8 +131,8 @@ enum Body {
     /// One macro of the definition's mutations, keyed to its target's
     /// kind: applied at each element.
     Document(DocMutatorTree),
-    /// The run mutations, in order.
-    Glyph(Vec<GfxMutation>),
+    /// The run mutations, in order, as the definition spells them.
+    Glyph(GlyphOps),
 }
 
 /// A document-layer instance's current application.
@@ -289,7 +289,7 @@ impl Document {
                     BranchKey::new(def.target.kind(), 0),
                 )))
             }
-            (PresentationLayer::Glyph, PresentationBody::Glyph(ops)) => Body::Glyph(ops.mutations()),
+            (PresentationLayer::Glyph, PresentationBody::Glyph(ops)) => Body::Glyph(ops.clone()),
             (PresentationLayer::Document, PresentationBody::Glyph(_)) => {
                 return Err(value(
                     "layer",
@@ -323,7 +323,7 @@ impl Document {
         for &given in nodes {
             let Some(node) = self.owning_node(given) else {
                 warn!(
-                    "presentation `{}`: {given} is not in a node of this map; skipped",
+                    "presentation: `{}` skips {given}, which is not in a node of this map",
                     def.id
                 );
                 continue;
@@ -482,7 +482,7 @@ impl Document {
             elements: &instance.elements,
             glyph: match &instance.started.body {
                 Body::Document(_) => None,
-                Body::Glyph(ops) => Some(ops.as_slice()),
+                Body::Glyph(ops) => Some(ops),
             },
             refusal: instance.refusal.as_ref(),
         })
@@ -522,8 +522,9 @@ impl Document {
     /// matches the first. **A suspension that is never resumed leaves
     /// the layer out**: nothing of it is drawn, though every instance is
     /// still listed. A caller that can return early or unwind between
-    /// the two holds [`Self::suspended`]'s guard instead, which resumes
-    /// when it is dropped.
+    /// the two holds a guard of its own that resumes when it is dropped,
+    /// as the app's funnels do: the document hands out no way into
+    /// itself, and a guard that derefs to it would be one.
     ///
     /// The feed gets one record of what coming out changed, so a
     /// projection made in between is of the map itself.
@@ -589,15 +590,6 @@ impl Document {
             None => {}
         }
         self.push_change(ChangeSource::Presentation, change);
-    }
-
-    /// [`Self::suspend_presentations`], as a guard: the document with
-    /// its layer set aside, which is put back when the guard is dropped
-    /// — at the end of its scope, on an early return, and while a panic
-    /// unwinds.
-    pub fn suspended(&mut self) -> Suspended<'_> {
-        self.suspend_presentations();
-        Suspended { doc: self }
     }
 
     /// The map itself, to read: this document when no presentation is
@@ -705,7 +697,7 @@ impl Document {
             work::count(work::Kind::Lifted);
             if let Err(error) = applied.journal.revert(&mut self.tree) {
                 error!(
-                    "presentation `{}`: could not be written back out: {error}",
+                    "presentation: `{}` could not be written back out: {error}",
                     instance.started.id
                 );
             }
@@ -887,7 +879,7 @@ impl Document {
                 if t < 1.0 {
                     if let Err(error) = journal.write_interpolated(&mut self.tree, t, snap) {
                         error!(
-                            "presentation `{}`: could not be written at {t}: {error}",
+                            "presentation: `{}` could not be written at {t}: {error}",
                             started.id
                         );
                     }
@@ -897,7 +889,7 @@ impl Document {
             Err(refusal) => {
                 if instance.refusal.as_ref() != Some(&refusal) {
                     warn!(
-                        "presentation `{}`: not applied on the map as it stands: {refusal}",
+                        "presentation: `{}` is not applied on the map as it stands: {refusal}",
                         started.id
                     );
                 }
@@ -1001,33 +993,6 @@ fn touch_all(tree: &Tree<DocElement>, applied: &Applied, change: &mut Change) {
             change.touched.push((element, Touch::Field));
             field_inputs(&applied.journal, element, false, &mut change.inputs);
         }
-    }
-}
-
-/// A document with its presentation layer set aside
-/// ([`Document::suspended`]): reads through it see the map itself, and
-/// the layer comes back when it is dropped.
-pub struct Suspended<'d> {
-    doc: &'d mut Document,
-}
-
-impl std::ops::Deref for Suspended<'_> {
-    type Target = Document;
-
-    fn deref(&self) -> &Document {
-        self.doc
-    }
-}
-
-impl std::ops::DerefMut for Suspended<'_> {
-    fn deref_mut(&mut self) -> &mut Document {
-        self.doc
-    }
-}
-
-impl Drop for Suspended<'_> {
-    fn drop(&mut self) {
-        self.doc.resume_presentations();
     }
 }
 

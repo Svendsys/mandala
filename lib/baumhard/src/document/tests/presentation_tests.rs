@@ -9,6 +9,7 @@
 use crate::arena::NodeId;
 use crate::document::bounds::{BoundError, MAX_ANIMATE_MS, MAX_DEFINITION_PARTS};
 use crate::document::element::{DocElement, DocKind};
+use crate::document::format::presentations::GlyphOpDto;
 use crate::document::format::{load, Limits, LoadErrorKind};
 use crate::document::ids::Document;
 use crate::document::mutation::compose::{delete, insert_text};
@@ -25,9 +26,7 @@ use crate::document::writer::error::ApplyError;
 use crate::document::writer::feed::ChangeRecord;
 use crate::document::writer::{ChangeSource, EditRequest, Revision};
 use crate::engine::journal::Touch;
-use crate::gfx_structs::mutator::GfxMutation;
 use glam::Vec2;
-use std::panic::{catch_unwind, AssertUnwindSafe};
 
 /// One presentation, from the JSON of its definition.
 fn presentation(json: &str) -> PresentationDef {
@@ -350,7 +349,7 @@ fn test_a_stage_written_part_way_is_drawn_under_the_layer() {
 ///
 /// Controls, each seen red: with the writer's funnel not taking the
 /// layer out, the edit is accounted on what the presentation shows; with
-/// a suspension guard whose drop does nothing, the layer stays out.
+/// a resume that does not apply the layer, it stays out.
 #[test]
 fn test_the_derived_state_is_the_maps_under_presentations() {
     let wordy = presentation(
@@ -376,7 +375,9 @@ fn test_the_derived_state_is_the_maps_under_presentations() {
     // The builder reads the section's text to place the insert, so it
     // reads the map: the layer is aside while it does.
     let type_into = |doc: &mut Document| {
-        let steps = insert_text(&doc.suspended(), section, 0, "xyz".to_string()).unwrap();
+        doc.suspend_presentations();
+        let steps = insert_text(doc, section, 0, "xyz".to_string()).unwrap();
+        doc.resume_presentations();
         doc.apply(EditRequest::new(steps, "type"), ChangeSource::Input)
             .unwrap();
     };
@@ -1029,51 +1030,6 @@ fn test_a_suspension_shows_the_map_and_comes_back() {
     assert_eq!(opacity(&doc, 5), 0.5);
 }
 
-/// The guard puts the layer back when it is dropped: at the end of its
-/// scope, on an early return, and while a panic unwinds.
-///
-/// Control: a guard whose drop does nothing leaves the document
-/// suspended, and node 3 shown, after each.
-#[test]
-fn test_a_suspension_guard_resumes_however_its_scope_ends() {
-    fn early(doc: &mut Document, leave: bool) -> Option<f32> {
-        let map = doc.suspended();
-        let opacity = node(&map, 3).1.opacity;
-        if leave {
-            return None;
-        }
-        Some(opacity)
-    }
-    let mut doc = performed();
-    {
-        let map = doc.suspended();
-        assert!(!node(&map, 3).1.hidden, "through the guard: the map");
-        assert!(map.presentations_suspended());
-    }
-    assert!(
-        node(&doc, 3).1.hidden && !doc.presentations_suspended(),
-        "scope end"
-    );
-    assert_eq!(
-        early(&mut doc, false),
-        Some(1.0),
-        "the map's opacity, not the layer's 0"
-    );
-    assert_eq!(early(&mut doc, true), None);
-    assert!(
-        node(&doc, 3).1.hidden && !doc.presentations_suspended(),
-        "early return"
-    );
-    let unwound = catch_unwind(AssertUnwindSafe(|| {
-        let map = doc.suspended();
-        assert!(!node(&map, 3).1.hidden);
-        panic!("an action failed half way");
-    }));
-    assert!(unwound.is_err());
-    assert!(node(&doc, 3).1.hidden && !doc.presentations_suspended(), "panic");
-    assert_eq!(doc.save_json().unwrap(), written(&map()));
-}
-
 /// `own` is the map's element under whatever plays on it — one
 /// instance or two, part-way or whole — and the tree's where nothing
 /// does; it follows the map when an edit changes it.
@@ -1114,10 +1070,9 @@ fn test_own_is_the_maps_element_under_whatever_plays() {
     assert_eq!(own(&doc, two), (Vec2::new(340.0, 40.0), 1.0, false));
     assert_eq!(node(&doc, 2).1.position, Vec2::new(340.0, 35.0));
     // Set aside, the tree is the map.
-    {
-        let map = doc.suspended();
-        assert_eq!(own(&map, two), (Vec2::new(340.0, 40.0), 1.0, false));
-    }
+    doc.suspend_presentations();
+    assert_eq!(own(&doc, two), (Vec2::new(340.0, 40.0), 1.0, false));
+    doc.resume_presentations();
     // An element the tree no longer holds has no element of the map's.
     let steps = delete(&doc, &[four]).unwrap();
     doc.apply(EditRequest::new(steps, "delete"), ChangeSource::Action)
@@ -1287,8 +1242,8 @@ fn test_a_glyph_layer_instance_never_touches_the_document() {
         let ops = instance
             .glyph
             .expect("a glyph instance carries its run mutations");
-        assert_eq!(ops.len(), 3);
-        assert_eq!(ops[0], GfxMutation::RunOpacity(0.5));
+        assert_eq!(ops.0.len(), 3);
+        assert_eq!(ops.0[0], GlyphOpDto::Opacity(0.5));
         assert_eq!(instance.snap, crate::engine::interpolate::Snap::Start);
     }
     assert!(

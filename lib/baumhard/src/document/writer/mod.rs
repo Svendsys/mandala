@@ -454,7 +454,7 @@ impl Document {
     /// each entry's in the order it wrote them: for the tests that hold
     /// a change made under presentations to the one made without them,
     /// image for image. No allocation.
-    pub(crate) fn applied_journals(
+    pub(in crate::document) fn applied_journals(
         &self,
     ) -> impl Iterator<Item = &crate::engine::journal::Journal<crate::document::element::DocElement>> + '_
     {

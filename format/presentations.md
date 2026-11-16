@@ -183,7 +183,7 @@ committed map ⊕ open transaction ⊕ presentation layer   →  what is drawn
     with ``— not applied: the map would hold N bytes of text; this
     platform holds at most M``, `query.animations` carries it as
     `refusal`, and the log has one warning when it begins
-    (``presentation `wordy`: not applied on the map as it stands: …``).
+    (``presentation: `wordy` is not applied on the map as it stands: …``).
 
 ### The glyph layer
 

@@ -141,8 +141,8 @@ fn test_presentation_a_suspension_reads_the_map_and_brings_the_layer_back() {
 }
 
 /// With every node dimmed and lifted, the layer is set aside for a
-/// read: under the guard every node is the map's own, and once it is
-/// dropped every node is drawn as before, with nothing left on the
+/// read: while it is aside every node is the map's own, and once it is
+/// resumed every node is drawn as before, with nothing left on the
 /// change feed for a view that drained it before the read.
 pub fn do_presentation_a_suspension_reads_the_map_and_brings_the_layer_back() {
     let (mut doc, nodes) = row();
@@ -152,12 +152,11 @@ pub fn do_presentation_a_suspension_reads_the_map_and_brings_the_layer_back() {
         .expect("starts");
     doc.tick_presentations(200.0);
     doc.take_changes();
-    {
-        let map = doc.suspended();
-        for (i, &node) in nodes.iter().enumerate() {
-            assert_eq!(shown(&map, node), (Vec2::new((i * 300) as f32, 0.0), 1.0));
-        }
+    doc.suspend_presentations();
+    for (i, &node) in nodes.iter().enumerate() {
+        assert_eq!(shown(&doc, node), (Vec2::new((i * 300) as f32, 0.0), 1.0));
     }
+    doc.resume_presentations();
     for (i, &node) in nodes.iter().enumerate() {
         assert_eq!(shown(&doc, node), (Vec2::new((i * 300) as f32, -8.0), 0.5));
     }

@@ -290,3 +290,54 @@ fn test_an_animated_edit_runs_under_a_presentation_and_commits_the_map_alone() {
     );
     assert_eq!(doc.doc().presentations().count(), 1);
 }
+
+/// The app's guard (`MindMapDocument::suspended`) puts the presentation
+/// layer back when it is dropped: at the end of its scope, on an early
+/// return, and while a panic unwinds. Through it the document reads as
+/// the map itself; after each, it reads as what is drawn again, and the
+/// save is the map's throughout. It is what the funnels that build a
+/// change from the map hold (ruling D2.1 §2 on #251): the document's own
+/// surface hands out no guard, which would be a way into the document
+/// beside `Document::apply`.
+///
+/// Control, seen red: a guard whose drop does nothing leaves the
+/// document suspended, and the node shown, after each.
+#[test]
+fn test_a_suspension_guard_resumes_however_its_scope_ends() {
+    fn early(doc: &mut MindMapDocument, node: NodeId, leave: bool) -> Option<f32> {
+        let map = doc.suspended();
+        let opacity = shown(&map, node).1;
+        if leave {
+            return None;
+        }
+        Some(opacity)
+    }
+    let mut doc = testament();
+    let node = a_node(&doc);
+    let before = doc.save_json().expect("saves");
+    doc.start_presentation(&bundled("concealed"), &[node], 0.0)
+        .expect("starts");
+    assert_eq!(shown(&doc, node).1, 0.0, "precondition: concealed");
+    let resumed = |doc: &MindMapDocument| shown(doc, node).1 == 0.0 && !doc.doc().presentations_suspended();
+    {
+        let map = doc.suspended();
+        assert_eq!(shown(&map, node).1, 1.0, "through the guard: the map");
+        assert!(map.doc().presentations_suspended());
+    }
+    assert!(resumed(&doc), "scope end");
+    assert_eq!(
+        early(&mut doc, node, false),
+        Some(1.0),
+        "the map's opacity, not the layer's 0"
+    );
+    assert_eq!(early(&mut doc, node, true), None);
+    assert!(resumed(&doc), "early return");
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let map = doc.suspended();
+        assert_eq!(shown(&map, node).1, 1.0);
+        panic!("an action failed half way");
+    }));
+    assert!(unwound.is_err());
+    assert!(resumed(&doc), "panic");
+    assert_eq!(doc.save_json().expect("saves"), before);
+}

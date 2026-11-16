@@ -59,7 +59,7 @@ use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::mutator::{GfxMutation, GfxMutator};
 use baumhard::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunOverrideOp};
 use baumhard::gfx_structs::tree::{GfxMutatorTree, GfxTree};
-use baumhard::projection::{GlyphLayers, Layer, LayerChanges, Projector, RUN_CHANNEL};
+use baumhard::projection::{glyph_mutations, GlyphLayers, Layer, LayerChanges, Projector, RUN_CHANNEL};
 use glam::Vec2;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -193,6 +193,9 @@ fn writes_overrides(ops: &[GfxMutation]) -> bool {
 struct Shown {
     /// The elements it plays on.
     elements: Vec<NodeId>,
+    /// Its run mutations: what its body spells
+    /// (`projection::glyph_mutations`), read once, when it is first seen.
+    mutations: Vec<GfxMutation>,
     /// The progress it was written at.
     t: f32,
     /// The snap it was written with.
@@ -409,6 +412,7 @@ impl Stage {
                         instance.id,
                         Shown {
                             elements: instance.elements.to_vec(),
+                            mutations: instance.glyph.map(glyph_mutations).unwrap_or_default(),
                             t: instance.t,
                             snap: instance.snap,
                         },
@@ -497,7 +501,11 @@ impl Stage {
             let Some(per_layer) = on.get(&instance.id) else {
                 continue;
             };
-            let Some(ops) = instance.glyph else {
+            let Some(ops) = self
+                .shown
+                .get(&instance.id)
+                .map(|shown| shown.mutations.as_slice())
+            else {
                 continue;
             };
             for layer in Layer::ALL {
