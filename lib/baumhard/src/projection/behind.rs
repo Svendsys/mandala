@@ -115,11 +115,10 @@ fn meet(a: &Rect, b: &Rect) -> bool {
 
 impl PathCells {
     /// Set where `path`'s glyphs are: `boxes`, each a glyph's box grown by
-    /// the path's gap. A box that is no rectangle
-    /// ([`is_rectangle`](crate::projection::hit::is_rectangle)) is left
-    /// out, as the regions' index finds nothing for it, so the hide stage
-    /// and the index agree on it; one reaching ±∞ is kept apart, as any
-    /// box past the cells is. O(its old and new cells).
+    /// the path's gap. A box that is no rectangle ([`is_rectangle`]) is
+    /// left out, as the regions' index finds nothing for it, so the hide
+    /// stage and the index agree on it; one reaching ±∞ is kept apart, as
+    /// any box past the cells is. O(its old and new cells).
     pub(crate) fn set(&mut self, path: NodeId, boxes: &[Rect]) {
         self.remove(path);
         let mut here: FxHashMap<Cell, Rect> = FxHashMap::default();
