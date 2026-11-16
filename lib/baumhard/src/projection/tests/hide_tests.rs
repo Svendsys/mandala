@@ -26,7 +26,8 @@ use crate::projection::behind::PathCells;
 use crate::projection::hit::{cell_count, cells as grid_cells, span};
 use crate::projection::state::UnitBody;
 use crate::projection::tests::maps::{
-    blocker_text, huge_box, ident, kid, load_map, merged, node, two_paths, AWAY, HUGE_LENGTHS, ON_P, ON_Q,
+    blocker_text, grown_boxes, huge_box, ident, kid, load_map, merged, node, two_paths, AWAY, HUGE_LENGTHS,
+    ON_P, ON_Q,
 };
 use crate::projection::tests::support::Projected;
 use crate::projection::{Layer, Projector, Stage};
@@ -1651,25 +1652,6 @@ fn test_projection_a_path_spaced_past_the_cells_is_hidden_by_any_node_in_its_gap
     }
 }
 
-/// The boxes the hide stage tries `path`'s laid glyphs by: each glyph's
-/// box grown by the path's gap.
-fn grown_boxes(p: &Projected, path: NodeId) -> Vec<Rect> {
-    use crate::projection::stages::{gap_and_size, glyph_ink};
-    let Some(UnitBody::Line(line)) = p.projector.units.get(&path).map(|u| &u.body) else {
-        panic!("{path:?} is a line");
-    };
-    let gap = gap_and_size(line).0.max(0.0);
-    let Some(RunShape::Path { run: shaped, placed }) = line.laid[0].as_ref().map(|run| run.shaped()) else {
-        panic!("{path:?}'s body is laid");
-    };
-    placed
-        .glyphs
-        .iter()
-        .filter_map(|g| glyph_ink(shaped, g))
-        .map(|ink| ink.grown(gap))
-        .collect()
-}
-
 /// A connector spaced so far that its glyphs' boxes, grown by its gap,
 /// are past what an `f32` holds — 1.8·10³⁸ and `f32::MAX`, which the
 /// loader lets through — has boxes with no far corner: `Rect::grown` gives
@@ -1699,7 +1681,8 @@ fn test_projection_a_path_spaced_past_what_a_box_holds_is_hidden_by_no_node() {
     ];
     let hide = |hidden| single(DocKind::Node, DocMutation::Node(NodeOp::SetHidden(hidden)));
     for (what, blocker) in blockers {
-        for spacing in [1.6e38, 1.8e38, f32::MAX] {
+        // Each spacing, and whether its boxes have a far corner.
+        for (spacing, finite) in [(1.6e38, true), (1.8e38, false), (f32::MAX, false)] {
             let mut p = Projected::new(two_paths(AWAY, blocker.clone(), json!({"spacing": spacing})));
             let path = path_of(&p, 2);
             let laid = laid_glyphs(&p, path);
@@ -1708,7 +1691,6 @@ fn test_projection_a_path_spaced_past_what_a_box_holds_is_hidden_by_no_node() {
                 "precondition: a path spaced {spacing} lays a glyph, {laid}"
             );
             let boxes = grown_boxes(&p, path);
-            let finite = spacing < 1.7e38;
             assert!(
                 !boxes.is_empty() && boxes.iter().all(|b| b.max().is_finite() == finite),
                 "precondition: spaced {spacing}, the glyphs' boxes have a far corner: {finite}, {boxes:?}"

@@ -123,6 +123,27 @@ pub fn huge_box(length: f32) -> crate::flow::Rect {
     crate::flow::Rect::new(Vec2::ZERO, Vec2::new(100.0, 40.0)).grown(length)
 }
 
+/// The boxes the hide stage tries `path`'s laid glyphs by: each glyph's
+/// box grown by the path's gap.
+pub fn grown_boxes(p: &crate::projection::tests::support::Projected, path: NodeId) -> Vec<crate::flow::Rect> {
+    use crate::gfx_structs::run::RunShape;
+    use crate::projection::stages::{gap_and_size, glyph_ink};
+    use crate::projection::state::UnitBody;
+    let Some(UnitBody::Line(line)) = p.projector.units.get(&path).map(|u| &u.body) else {
+        panic!("{path:?} is a line");
+    };
+    let gap = gap_and_size(line).0.max(0.0);
+    let Some(RunShape::Path { run: shaped, placed }) = line.laid[0].as_ref().map(|run| run.shaped()) else {
+        panic!("{path:?}'s body is laid");
+    };
+    placed
+        .glyphs
+        .iter()
+        .filter_map(|g| glyph_ink(shaped, g))
+        .map(|ink| ink.grown(gap))
+        .collect()
+}
+
 /// `fields` with `more` merged in.
 pub fn merged(mut fields: Value, more: Value) -> Value {
     if let (Some(out), Some(more)) = (fields.as_object_mut(), more.as_object()) {

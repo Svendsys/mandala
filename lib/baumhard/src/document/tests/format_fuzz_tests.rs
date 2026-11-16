@@ -119,6 +119,11 @@ fn test_a_path_spaced_past_what_a_box_holds_is_projected() {
         |run: Option<&crate::gfx_structs::run::GlyphRunData>| run.map_or(0, |r| r.shaped().glyph_count());
     let laid = count(p.projector.laid(path));
     assert!(laid >= 1, "precondition: the path lays a glyph, {laid}");
+    let boxes = crate::projection::tests::maps::grown_boxes(&p, path);
+    assert!(
+        !boxes.is_empty() && boxes.iter().all(|b| !b.max().is_finite()),
+        "precondition: each glyph's box, grown by the path's gap, has no far corner, {boxes:?}"
+    );
     let drawn = count(p.projector.units[&path].slots[0].want.as_ref());
     assert_eq!(drawn, laid, "the path is drawn whole");
     check_load_bytes(finding).unwrap();
