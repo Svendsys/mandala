@@ -26,10 +26,13 @@
 //! - **a change is the map's own** (ruling D2.1 §2 on #251): an edit
 //!   built from the map itself and applied under what plays leaves the
 //!   history journals, image for image, and the saved bytes that it
-//!   leaves with nothing playing, and so do its undo and its redo;
-//! - **a glyph-layer body is run mutations**: what it spells holds
-//!   every property of authored run mutations
-//!   ([`check_glyph_body`]).
+//!   leaves with nothing playing, and so do its undo and its redo.
+//!
+//! A glyph-layer body is not held to the run-mutation properties here:
+//! they hold for every run mutation, whatever spells it, and the
+//! glyph_mutation targets hold them
+//! (`gfx_structs::tests::glyph_layer_fuzz`). What a body's ops are on a
+//! run is held by `projection::tests::presentation_glyph_tests`.
 //!
 //! The fuzz targets (`fuzz/fuzz_targets/presentations_*.rs`) are thin
 //! wrappers over [`check_presentations_json`] and
@@ -43,12 +46,11 @@ use crate::document::edit::{parse_edits, EditDef};
 use crate::document::element::{DocElement, DocKind};
 use crate::document::format::{load, save, LoadErrorKind};
 use crate::document::ids::Document;
-use crate::document::presentation::{parse_presentations, PresentationBody};
+use crate::document::presentation::parse_presentations;
 use crate::document::tests::edit_fuzz::{self, Boxes, FIELDS, MUTATIONS, TARGETS};
 use crate::document::writer::ChangeSource;
 use crate::edit_handlers::registry;
 use crate::engine::journal::Touch;
-use crate::projection::tests::presentation_glyphs::check_glyph_body;
 use crate::util::tests::choices::Choices;
 
 /// The map presentations play on: the format's fullest fixture.
@@ -440,10 +442,6 @@ fn check_text(
     let mut played = Played::default();
     let mut readings: Vec<f64> = frames.to_vec();
     for def in defs.iter().take(MAX_PLAYED) {
-        if let PresentationBody::Glyph(ops) = &def.body {
-            check_glyph_body(ops)
-                .map_err(|why| format!("presentation `{}`: its run mutations: {why}", def.id))?;
-        }
         let playing = maps.performed.presentations().count();
         if maps.performed.start_presentation(def, &anchors, 0.0).is_err() {
             // All or nothing: a refused start starts no instance.

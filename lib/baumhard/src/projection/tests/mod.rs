@@ -31,9 +31,6 @@ mod oracle_tests;
 /// op.
 #[cfg(test)]
 mod presentation_glyph_tests;
-/// A glyph-layer presentation's body, held to the fuzz properties of run
-/// mutations.
-pub mod presentation_glyphs;
 /// The projection's fuzz properties: a loaded map projects, and
 /// edit sequences keep it equal to a full projection.
 pub mod projection_fuzz;

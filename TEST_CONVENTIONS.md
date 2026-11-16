@@ -865,8 +865,9 @@ What they hold, in short (each module's docs are the full list):
   playing, as do its undo and its redo — the differential of ruling
   D2.1 on #251, which `test_the_differential_reports_a_change_built_from_what_plays`
   shows red for an edit built from the map as it is drawn. A
-  glyph-layer body's run mutations are held to the glyph-layer
-  properties above.
+  glyph-layer body's run mutations are not checked again here: the
+  glyph-layer properties above hold for every run mutation, whatever
+  spells it, so no body could turn such a check red.
 
 **Where their tests live.** A property module is `pub`, in its
 surface's tests tree (`format_fuzz`, `edit_fuzz`, `presentation_fuzz`,
