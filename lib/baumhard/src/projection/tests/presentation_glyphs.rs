@@ -5,7 +5,7 @@
 //! (`document::tests::presentation_fuzz`) check of every glyph-layer
 //! definition that reads. The document names no glyph type, so the
 //! check goes through here, where a body becomes run mutations
-//! ([`glyph_mutations`]).
+//! ([`glyph_mutations`](crate::projection::glyph_mutations)).
 
 use crate::document::presentation::GlyphOps;
 use crate::gfx_structs::tests::glyph_layer_fuzz;

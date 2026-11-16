@@ -2,11 +2,11 @@
 
 //! A glyph-layer presentation's body as run mutations (#251 §4, ruling
 //! D2.1 §1). The document holds a glyph-layer body in its own words —
-//! [`GlyphOps`], what a presentations file spells — and lists the
-//! instances that play it; it names no glyph type. What those words
-//! mean on a run is said here, beside the rest of what the document
-//! becomes on the glyph layers, and whoever writes the glyph layers
-//! reads it.
+//! [`GlyphOps`](crate::document::presentation::GlyphOps), what a
+//! presentations file spells — and lists the instances that play it;
+//! it names no glyph type. What those words mean on a run is said here,
+//! beside the rest of what the document becomes on the glyph layers,
+//! and whoever writes the glyph layers reads it.
 
 use crate::document::format::presentations::{GlyphOpDto, RunOverrideDto};
 use crate::document::presentation::GlyphOps;
