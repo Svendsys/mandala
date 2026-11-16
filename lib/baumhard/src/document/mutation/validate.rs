@@ -28,7 +28,7 @@
 use crate::arena::NodeId;
 use crate::document::bounds::{
     check_canvas_coord, check_channel, check_control_points, check_extent, check_fit, check_font_size_pt,
-    check_non_negative, check_ornament, check_rel_size, check_unit_interval, check_zoom_window, BoundError,
+    check_ornament, check_rel_size, check_unit_interval, check_zoom_window, BoundError,
 };
 use crate::document::element::{
     DefaultsData, DocElement, DocKind, FlowStyle, FrameStyle, LabelStyle, NodeStyle, PaletteGroup, PathData,
@@ -251,8 +251,8 @@ impl<'d> Validator<'d> {
                 FrameOp::SetVisible(_) | FrameOp::SetDirection(_) => Ok(()),
                 FrameOp::SetStart(start) => self.start(start.as_ref()),
                 FrameOp::SetFit(fit) => self.fit("frame.fit", fit.as_ref()),
-                FrameOp::SetGap(gap) => self.non_negative("frame.gap", *gap),
-                FrameOp::SetInset(inset) => self.non_negative("frame.inset", *inset),
+                FrameOp::SetGap(gap) => self.length("frame.gap", *gap),
+                FrameOp::SetInset(inset) => self.length("frame.inset", *inset),
                 FrameOp::Layout(op) => self.layout_op("frame", op),
                 FrameOp::Text(op) => self.text_op(op, Unit::of_tier(DocKind::Frame)),
             },
@@ -395,8 +395,11 @@ impl<'d> Validator<'d> {
         }
     }
 
-    fn non_negative(&self, field: &'static str, value: Option<f32>) -> Result<(), MutationError> {
-        value.map_or(Ok(()), |v| self.bound(field, check_non_negative(v)))
+    /// A length on the canvas — a frame's `gap` or `inset`, a `spacing` —
+    /// held to the bound the loader holds it to, so every value an edit
+    /// writes loads again (#364).
+    fn length(&self, field: &'static str, value: Option<f32>) -> Result<(), MutationError> {
+        value.map_or(Ok(()), |v| self.bound(field, check_extent(v)))
     }
 
     fn unit_interval(&self, field: &'static str, value: Option<f32>) -> Result<(), MutationError> {
@@ -511,7 +514,7 @@ impl<'d> Validator<'d> {
     fn path_op(&self, op: &PathOp) -> Result<(), MutationError> {
         match op {
             PathOp::SetFit(fit) => self.fit("path.fit", fit.as_ref()),
-            PathOp::SetSpacing(spacing) => self.non_negative("path.spacing", *spacing),
+            PathOp::SetSpacing(spacing) => self.length("path.spacing", *spacing),
             PathOp::SetSize(size) => self.points("path.size", *size),
             PathOp::SetColor(color) => self.color(color.as_ref()),
             PathOp::SetContent(_)
@@ -544,7 +547,7 @@ impl<'d> Validator<'d> {
 
     fn flow(&self, flow: &FlowStyle) -> Result<(), MutationError> {
         self.fit("path.fit", flow.fit.as_ref())?;
-        self.non_negative("path.spacing", flow.spacing)?;
+        self.length("path.spacing", flow.spacing)?;
         self.points("path.size", flow.size)?;
         self.color(flow.color.as_ref())
     }
@@ -562,8 +565,8 @@ impl<'d> Validator<'d> {
     fn frame_style(&self, style: &FrameStyle) -> Result<(), MutationError> {
         self.start(style.start.as_ref())?;
         self.fit("frame.fit", style.fit.as_ref())?;
-        self.non_negative("frame.gap", style.gap)?;
-        self.non_negative("frame.inset", style.inset)?;
+        self.length("frame.gap", style.gap)?;
+        self.length("frame.inset", style.inset)?;
         self.layout("frame", &style.ring_layout)?;
         self.text_style(&style.text, Unit::of_tier(DocKind::Frame))
     }
@@ -591,7 +594,7 @@ impl<'d> Validator<'d> {
         } else {
             "ring.spacing"
         };
-        self.non_negative(field, spacing)
+        self.length(field, spacing)
     }
 
     fn sides(&self, tier: &'static str, sides: Option<&Sides>) -> Result<(), MutationError> {

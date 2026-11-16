@@ -379,6 +379,34 @@ fn test_verify_exits_1_with_the_loaders_path_on_a_refused_map() {
     );
 }
 
+/// `verify` agrees with the loader on a frame's `inset` and `gap` and a
+/// `spacing` (#364): each is held to the canvas bound, a map with one past
+/// it is refused with the loader's path and bound, exit 1, and the same
+/// map at the bound passes.
+#[test]
+fn test_verify_refuses_an_inset_a_gap_and_a_spacing_past_the_canvas() {
+    let dir = TempDir::new("maptool-verify-canvas");
+    let map = |key: &str, value: &str| {
+        format!(
+            r#"{{"format": 1, "name": "c", "nodes": [
+                 {{"id": 1, "position": [0, 0], "frame": {{"{key}": {value}}}}},
+                 {{"id": 2, "parent": 1, "position": [500, 0], "connector": {{"spacing": {value}}}}}
+               ]}}"#
+        )
+    };
+    for key in ["inset", "gap", "spacing"] {
+        let past = write(&dir, &format!("{key}.mandala.json"), &map(key, "2e9"));
+        let run = maptool(&["verify", arg(&past)]);
+        assert_eq!((run.status, run.stdout.as_str()), (1, ""), "{key}");
+        let refusal =
+            format!("{key}.mandala.json: nodes[0].frame.{key}: 2000000000 is above the maximum 1000000000");
+        assert!(run.stderr.contains(&refusal), "{key}: {}", run.stderr);
+        let at = write(&dir, &format!("{key}_at.mandala.json"), &map(key, "1e9"));
+        let run = maptool(&["verify", arg(&at)]);
+        assert_eq!(run.status, 0, "{key} at the bound: {}", run.stderr);
+    }
+}
+
 /// `export` refuses an output path that names a map, so a slip of the
 /// command line cannot replace a map with Markdown, and writes nothing.
 /// The command line is well formed, so it is exit 1 with no usage text.

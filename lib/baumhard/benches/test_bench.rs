@@ -356,6 +356,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("shape_ellipse_intersects_aabb_fully_outside", |b| {
         b.iter(do_shape_ellipse_intersects_aabb_fully_outside)
     });
+    c.bench_function("shape_an_aabb_that_is_no_rectangle_overlaps_nothing", |b| {
+        b.iter(do_shape_an_aabb_that_is_no_rectangle_overlaps_nothing)
+    });
     // glyph_tree //
     c.bench_function("basics_solo_mutation", |b| b.iter(do_basics_solo_mutation));
     c.bench_function("model_block_commands", |b| b.iter(do_model_block_commands));

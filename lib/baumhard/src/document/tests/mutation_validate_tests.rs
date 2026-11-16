@@ -143,8 +143,16 @@ pub fn do_document_validate_refuses_every_literal_out_of_bounds() {
             color: None,
         })
     };
+    // A frame's `gap` and `inset` and a `spacing` are held to the canvas
+    // bound the loader holds them to (#364).
+    let past = f32::from_bits(MAX_CANVAS_COORD.to_bits() + 1);
     #[rustfmt::skip]
     let cases: Vec<(DocKind, DocMutation, DocMutation, &str)> = vec![
+        (DocKind::Frame, DocMutation::Frame(FrameOp::SetGap(Some(past))), DocMutation::Frame(FrameOp::SetGap(Some(MAX_CANVAS_COORD))), "frame.gap"),
+        (DocKind::Frame, DocMutation::Frame(FrameOp::SetInset(Some(past))), DocMutation::Frame(FrameOp::SetInset(Some(MAX_CANVAS_COORD))), "frame.inset"),
+        (DocKind::Frame, DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSpacing(Some(past)))), DocMutation::Frame(FrameOp::Layout(LayoutOp::SetSpacing(Some(MAX_CANVAS_COORD)))), "frame.spacing"),
+        (DocKind::Ring, DocMutation::Ring(RingOp::Layout(LayoutOp::SetSpacing(Some(past)))), DocMutation::Ring(RingOp::Layout(LayoutOp::SetSpacing(Some(MAX_CANVAS_COORD)))), "ring.spacing"),
+        (DocKind::Link, DocMutation::Path(PathOp::SetSpacing(Some(past))), DocMutation::Path(PathOp::SetSpacing(Some(MAX_CANVAS_COORD))), "path.spacing"),
         (DocKind::Node, DocMutation::Node(NodeOp::SetPosition(Vec2::new(2.0e9, 0.0))), DocMutation::Node(NodeOp::SetPosition(Vec2::splat(MAX_CANVAS_COORD))), "node.position"),
         (DocKind::Node, DocMutation::Node(NodeOp::Nudge(Vec2::new(f32::NAN, 0.0))), DocMutation::Node(NodeOp::Nudge(Vec2::new(1.0e30, 0.0))), "node.nudge"),
         (DocKind::Node, DocMutation::Node(NodeOp::SetMinSize(Some(Vec2::new(-1.0, 1.0)))), DocMutation::Node(NodeOp::SetMinSize(Some(Vec2::ZERO))), "node.min_size"),

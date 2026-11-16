@@ -385,11 +385,11 @@ text-style `size` is a [fraction](#size-units).
 | `start` | [start point](#start-point) | no | unset | Where a `repeat` ring starts; a ring in another mode ignores it. |
 | `direction` | `"clockwise"` or `"counterclockwise"` | no | unset | Which way a `repeat` ring goes around; every stretch still [reads forward](#readable-path-text). A ring in another mode is [two lines](#readable-path-text) and ignores it. |
 | `fit` | [fit](#fit) | no | unset | |
-| `gap` | number `>= 0` | no | unset | |
-| `inset` | number `>= 0` | no | unset | |
+| `gap` | number `0` to `1e9` | no | unset | |
+| `inset` | number `0` to `1e9` | no | unset | |
 | `span` | [span](#span-of-a-line) | no | unset | |
 | `sides` | [sides](#sides) | no | unset | |
-| `spacing` | number `>= 0` | no | unset | |
+| `spacing` | number `0` to `1e9` | no | unset | |
 | `font` | string | no | unset | |
 | `size` | number, `(0, 1]` | no | unset | A fraction of the node's shorter side. |
 | `color` | [color](#colors) | no | unset | |
@@ -407,7 +407,7 @@ of: the ring's, its frame's, `defaults.ring`'s, `defaults.frame`'s.
 | `fit` | [fit](#fit) | no | unset | |
 | `span` | [span](#span-of-a-line) | no | unset | |
 | `sides` | [sides](#sides) | no | unset | |
-| `spacing` | number `>= 0` | no | unset | |
+| `spacing` | number `0` to `1e9` | no | unset | |
 | `font` | string | no | unset | |
 | `size` | number, `(0, 1]` | no | unset | A fraction of the node's shorter side. |
 | `color` | [color](#colors) | no | unset | |
@@ -421,7 +421,7 @@ of: the ring's, its frame's, `defaults.ring`'s, `defaults.frame`'s.
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
 | `fit` | [fit](#fit) | no | unset | |
-| `spacing` | number `>= 0` | no | unset | Extra space between glyphs. |
+| `spacing` | number `0` to `1e9` | no | unset | Extra space between glyphs. |
 | `size` | number | no | unset | Points. |
 | `color` | [color](#colors) | no | unset | |
 | `content` | string | no | unset | The text drawn when the path has no spans. |
@@ -553,11 +553,11 @@ key is unset when absent; the built-in values that then apply are
 | `start` | [start point](#start-point) | no | unset | Where a `repeat` ring starts on the outline; a ring in another mode is [two lines](#readable-path-text) and ignores it. |
 | `direction` | `"clockwise"` or `"counterclockwise"` | no | unset | Which way a `repeat` ring goes around; every stretch still [reads forward](#readable-path-text). A ring in another mode is [two lines](#readable-path-text) and ignores it. |
 | `fit` | [fit](#fit) | no | unset | What the rings do when text and outline differ in length. |
-| `gap` | number `>= 0` | no | unset | The space between rings, canvas units. |
-| `inset` | number `>= 0` | no | unset | The first ring's distance from the outline, canvas units. |
+| `gap` | number `0` to `1e9` | no | unset | The space between rings, canvas units. |
+| `inset` | number `0` to `1e9` | no | unset | The first ring's distance from the outline, canvas units. |
 | `span` | [span](#span-of-a-line) | no | unset | How much of its half each of a ring's two lines covers. |
 | `sides` | [sides](#sides) | no | unset | An ornament in the breaks between a ring's two lines. |
-| `spacing` | number `>= 0` | no | unset | On a `repeat` ring, the space added between every two of its glyph steps, ink to ink, canvas units: a copy of `"✦ "`, two steps, is parted from the next by twice it. |
+| `spacing` | number `0` to `1e9` | no | unset | On a `repeat` ring, the space added between every two of its glyph steps, ink to ink, canvas units: a copy of `"✦ "`, two steps, is parted from the next by twice it. |
 | `font` | string | no | unset | |
 | `size` | number, `(0, 1]` | no | unset | A fraction of the node's shorter side. |
 | `color` | [color](#colors) | no | unset | |
@@ -573,7 +573,7 @@ key is unset when absent; the built-in values that then apply are
 | `fit` | [fit](#fit) | no | the frame's | Overrides the frame's fit. |
 | `span` | [span](#span-of-a-line) | no | the frame's | Overrides the frame's span. |
 | `sides` | [sides](#sides) | no | the frame's | Overrides the frame's sides. |
-| `spacing` | number `>= 0` | no | the frame's | Overrides the frame's spacing. |
+| `spacing` | number `0` to `1e9` | no | the frame's | Overrides the frame's spacing. |
 | `font` | string | no | unset | |
 | `size` | number, `(0, 1]` | no | unset | The ring's size: a fraction of the node's shorter side, the one `size` a ring has. |
 | `color` | [color](#colors) | no | unset | |
@@ -592,7 +592,7 @@ portal is a connector with `visible: false` plus a portal link.
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
 | `fit` | [fit](#fit) | no | unset | |
-| `spacing` | number `>= 0` | no | unset | Extra space between glyphs. |
+| `spacing` | number `0` to `1e9` | no | unset | Extra space between glyphs. |
 | `size` | number | no | unset | Points. |
 | `color` | [color](#colors) | no | unset | |
 | `content` | string | no | unset | The text drawn when the path has no spans. |
@@ -619,7 +619,7 @@ line link only; naming one on a portal link is an error, and so is
 | `to` | integer | yes | | The `id` of the node it leads to. |
 | `kind` | `"line"` or `"portal"` | yes | | Whether it draws a path or two portal ends. |
 | `fit` | [fit](#fit) | no | unset | Line only. The path keys, as for a [connector](#connector). |
-| `spacing` | number `>= 0` | no | unset | Line only. |
+| `spacing` | number `0` to `1e9` | no | unset | Line only. |
 | `size` | number | no | unset | Line only. Points. |
 | `color` | [color](#colors) | no | unset | Line only. |
 | `content` | string | no | unset | Line only. |
@@ -1021,7 +1021,7 @@ its path.
 | Font size in points | `0.5` to `4096` |
 | Font size as a fraction (inside a frame) | above `0`, at most `1` |
 | `opacity`, a label's `t`, `border_t`, a start point's `at`, a numeric `span` | `0` to `1` |
-| `gap`, `inset`, `spacing` | `>= 0` |
+| `gap`, `inset`, `spacing` (on a frame, a ring, a connector or a link, and in `defaults`) | `0` to 1e9, the canvas bound, as a `min_size` |
 | A [sides](#sides) `content`, and a `once` `filler` | something to draw, at most 256 bytes |
 | A `zoom` bound | above `0`, and `min` not above `max` (the bound the mutations hold an edit to) |
 | `fit` bounds | `0 < min <= max` |

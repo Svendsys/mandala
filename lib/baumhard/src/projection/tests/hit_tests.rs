@@ -13,7 +13,9 @@ use crate::document::mutation::ops::{DocMutation, NodeOp};
 use crate::document::tests::writer_support::{request, single};
 use crate::flow::Rect;
 use crate::gfx_structs::run::RunShape;
-use crate::projection::tests::maps::{ident, kid, kids, load_map, node};
+use crate::gfx_structs::shape::NodeShape;
+use crate::projection::hit::{cell_count, cells, span, BodyIndex};
+use crate::projection::tests::maps::{huge_box, ident, kid, kids, load_map, node, HUGE_LENGTHS};
 use crate::projection::tests::support::Projected;
 use crate::projection::Layer;
 
@@ -621,4 +623,392 @@ fn test_projection_nodes_in_visits_only_the_cells_it_covers() {
         1,
         "the one body listed in them, of a hundred"
     );
+}
+
+/// A span of the body index's cells: its first and its last.
+type Span = ((i32, i32), (i32, i32));
+
+/// A span of cells is counted exactly, whatever its size (#364): each
+/// count here is written out, not worked out, and the rows run from one
+/// cell through the first counts an `i64` cannot hold to the whole grid,
+/// whose 2⁶⁴ cells are the one count given as `u64::MAX`. A span that ends
+/// before it starts holds none.
+///
+/// Controls: with the count the product of the two spans in `i64`, as it
+/// was, a negative count read as none, as its signed comparisons read it:
+/// a debug build panics at "the least square past an i64" (attempt to
+/// multiply with overflow), and a release build, which wraps the product,
+/// is red on that row, which it counts as 0. With the product wrapped in
+/// `u64`, red on the whole grid; with a span that ends before it starts
+/// given a length, red on "ends before it starts across"; with a span's
+/// last cell not counted, red on "one cell".
+#[test]
+fn test_projection_a_span_of_cells_is_counted_whatever_its_size() {
+    const MIN: i32 = i32::MIN;
+    const MAX: i32 = i32::MAX;
+    let rows: [(Span, u64, &str); 13] = [
+        (((0, 0), (0, 0)), 1, "one cell"),
+        (((-3, -2), (4, 5)), 64, "eight by eight, the most a body lists"),
+        (((0, 0), (8, 7)), 72, "one column more"),
+        (((MIN, 0), (MAX, 0)), 4_294_967_296, "one row of the whole grid"),
+        (
+            ((0, 0), (MAX, MAX)),
+            4_611_686_018_427_387_904,
+            "a quarter of the grid",
+        ),
+        (
+            ((-1_518_500_250, -1_518_500_250), (1_518_500_248, 1_518_500_248)),
+            9_223_372_030_926_249_001,
+            "the largest square an i64 counts",
+        ),
+        (
+            ((-1_518_500_250, -1_518_500_250), (1_518_500_249, 1_518_500_249)),
+            9_223_372_037_000_250_000,
+            "the least square past an i64",
+        ),
+        (
+            ((MIN, 0), (MAX, MAX)),
+            9_223_372_036_854_775_808,
+            "half the grid, one past an i64",
+        ),
+        (
+            ((MIN, MIN), (MAX, MAX - 1)),
+            18_446_744_069_414_584_320,
+            "the grid less a row, the largest exact count",
+        ),
+        (
+            ((MIN, MIN), (MAX, MAX)),
+            u64::MAX,
+            "the whole grid, one more than a u64 counts",
+        ),
+        (((6, 0), (4, 9)), 0, "ends before it starts across"),
+        (((0, 6), (9, 4)), 0, "ends before it starts down"),
+        (((10, 10), (0, 0)), 0, "ends before it starts both ways"),
+    ];
+    for ((from, to), want, what) in rows {
+        assert_eq!(cell_count(from, to), want, "{what}: {from:?} to {to:?}");
+    }
+}
+
+/// How many cells the span from `from` to `to` holds, in `i128`, which
+/// holds the whole grid's 2⁶⁴ with room: what a rectangle's count is held
+/// to, by arithmetic that cannot overflow.
+fn counted_wide((x0, y0): (i32, i32), (x1, y1): (i32, i32)) -> i128 {
+    (i128::from(x1) - i128::from(x0) + 1) * (i128::from(y1) - i128::from(y0) + 1)
+}
+
+/// The rectangles past the cells that the index's tests set and ask with:
+/// [`huge_box`] of each of [`HUGE_LENGTHS`], and one as large as `f32`
+/// goes.
+fn past_the_cells() -> Vec<Rect> {
+    let mut rects: Vec<Rect> = HUGE_LENGTHS.into_iter().map(huge_box).collect();
+    rects.push(Rect::new(Vec2::splat(-f32::MAX / 2.0), Vec2::splat(f32::MAX)));
+    rects
+}
+
+/// A rectangle lists its cells while they are at most 64, and none past
+/// that, however far past (#364): the box round a ring set out from its
+/// node by each length #364 was found at, 4·10¹¹ to 4·10³⁷ — which the
+/// index holds whatever the loader admits — and one as
+/// large as `f32` goes, span more cells than an `i64` counts and list
+/// none. The edges: the largest box that lists its cells and the one a
+/// column wider; the largest length whose box an `i64` still counts,
+/// 8.8·10¹⁸ cells; a box whose far corner is past `f32`, held in the
+/// grid's last cell; and a rectangle that is not finite, which has no
+/// span at all.
+///
+/// Controls: as the count's. A debug build panics at the first length,
+/// and a release build is red on its count, 0 for 9765624606250003969.
+/// With the count taken in `f64`, red on the count of the box 3.8·10¹¹
+/// out; with the rule's comparison made in `i64` again, red on "lists no
+/// cells"; with the grid's last cell one step nearer, red on the cells of
+/// the box 6·10¹¹ out; with a far corner past `f32` given no span, red on
+/// the grid's last cell; with a span given to a rectangle that is not
+/// finite, red on it; with the rule at 63 cells, or at 72, red on the two
+/// boxes beside it.
+#[test]
+fn test_projection_a_rectangle_past_the_cells_lists_none() {
+    const MIN: i32 = i32::MIN;
+    const MAX: i32 = i32::MAX;
+    let most = Rect::new(Vec2::ZERO, Vec2::splat(2047.0));
+    assert_eq!(
+        cells(most),
+        Some(((0, 0), (7, 7))),
+        "eight cells by eight are listed"
+    );
+    let wider = Rect::new(Vec2::ZERO, Vec2::new(2048.0, 2047.0));
+    assert_eq!(
+        span(wider),
+        Some(((0, 0), (8, 7))),
+        "precondition: a column wider"
+    );
+    assert_eq!(cells(wider), None, "seventy-two cells are not listed");
+
+    let (from, to) = span(huge_box(3.8e11)).expect("a finite rectangle has a span");
+    assert_eq!(
+        cell_count(from, to),
+        8_813_477_043_437_506_561,
+        "the box 3.8e11 out, the largest here an i64 counts"
+    );
+
+    // The spans of the first two lengths, written out; every larger box is
+    // the whole grid.
+    let spans = [
+        ((-1_562_499_968, -1_562_499_968), (1_562_499_968, 1_562_499_968)),
+        ((-1_953_124_992, -1_953_124_992), (1_953_124_992, 1_953_124_992)),
+    ];
+    for (k, rect) in past_the_cells().into_iter().enumerate() {
+        let (from, to) = span(rect).expect("a finite rectangle has a span");
+        let whole = ((MIN, MIN), (MAX, MAX));
+        assert_eq!(
+            (from, to),
+            spans.get(k).copied().unwrap_or(whole),
+            "the cells of {rect:?}"
+        );
+        assert_eq!(
+            i128::from(cell_count(from, to)),
+            counted_wide(from, to).min(i128::from(u64::MAX)),
+            "the cells of {rect:?}, counted"
+        );
+        assert_eq!(cells(rect), None, "{rect:?} lists no cells");
+    }
+
+    let far = Rect::new(Vec2::splat(f32::MAX), Vec2::splat(f32::MAX));
+    assert!(!far.max().is_finite(), "precondition: its far corner is past f32");
+    assert_eq!(
+        cells(far),
+        Some(((MAX, MAX), (MAX, MAX))),
+        "held in the grid's last cell"
+    );
+
+    for rect in [
+        Rect::new(Vec2::splat(f32::NEG_INFINITY), Vec2::splat(10.0)),
+        Rect::new(Vec2::ZERO, Vec2::splat(f32::INFINITY)),
+        Rect::new(Vec2::new(f32::NAN, 0.0), Vec2::splat(10.0)),
+        Rect::new(Vec2::ZERO, Vec2::new(10.0, f32::NAN)),
+    ] {
+        assert_eq!(span(rect), None, "{rect:?} is not finite and has no span");
+    }
+}
+
+/// A body past the cells takes the rule the index has for more cells than
+/// it lists (#364): it is kept apart, written into no cell, and tried by
+/// every query — found at a point far from every other body, found by a
+/// rubber band and by a layout's rectangle, the larger of two bodies
+/// holding one point — and taken out, it leaves the index as it was. A
+/// body that is not finite is kept apart the same way.
+///
+/// Controls: as the count's. A debug build panics at the first body, and
+/// a release build is red on the precondition that the body lists no
+/// cells (past which the index would file it under every cell it covers,
+/// some 10¹⁹ of them). And each rule of the index broken in turn: a body
+/// kept apart also written into a cell, or not kept at all; the bodies
+/// kept apart left out of a point's candidates, or of a rectangle's, or
+/// passed twice; a rectangle's cells left out; the larger of two bodies
+/// taken; the rectangle test of a layout's query turned round; a body
+/// kept apart left in the index, or in its list, when taken out; a body
+/// that is not finite dropped. Each is red on the assertion it is named
+/// in.
+#[test]
+fn test_projection_a_body_past_the_cells_is_kept_apart_and_tried_by_every_query() {
+    let doc = load_map(json!({"nodes": [node(1, None, json!({})), node(2, None, json!({}))]}));
+    let (huge, small) = (ident(&doc, 1), ident(&doc, 2));
+    let mut both = vec![huge, small];
+    both.sort_unstable();
+    let near = Rect::new(Vec2::new(10.0, 10.0), Vec2::new(20.0, 20.0));
+    // Inside every body here, and a thousand cells from the small one's.
+    let far = Vec2::new(3.0e5, -2.0e5);
+    let at_far = Rect::new(far, Vec2::splat(1.0));
+    let mut alone = BodyIndex::default();
+    alone.set(small, near, NodeShape::Rectangle);
+    assert_eq!(
+        alone.cell_writes, 1,
+        "precondition: the small body is in one cell"
+    );
+    for rect in past_the_cells() {
+        assert_eq!(
+            cells(rect),
+            None,
+            "precondition: {rect:?} lists no cells; listed, it would be filed under every one"
+        );
+        let mut index = BodyIndex::default();
+        index.set(small, near, NodeShape::Rectangle);
+        index.set(huge, rect, NodeShape::Rectangle);
+        assert_eq!(
+            index.cell_writes, 1,
+            "the body past the cells is written into none"
+        );
+        assert_eq!(index.get(huge), Some((rect, NodeShape::Rectangle)), "and is kept");
+        assert_eq!(index.at(far), Some(huge), "found far from any listed body");
+        assert_eq!(
+            index.at(near.center()),
+            Some(small),
+            "of two bodies holding a point, the smaller"
+        );
+        assert_eq!(index.within(at_far), vec![huge], "a rubber band far out");
+        assert_eq!(index.within(near), both, "a rubber band over both");
+        assert_eq!(index.meeting(at_far), vec![huge], "a rectangle far out meets it");
+        let mut found = Vec::new();
+        index.each_within(at_far, |node| found.push(node));
+        assert_eq!(found, vec![huge], "passed once, from the list apart");
+
+        index.remove(huge);
+        assert_eq!(index.get(huge), None, "taken out, it is not kept");
+        assert_eq!(index.same_as(&alone), Ok(()), "and the index is as it was");
+    }
+
+    // A body that is not finite has no span, and is kept apart as well.
+    let endless = Rect::new(Vec2::ZERO, Vec2::splat(f32::INFINITY));
+    let inside = Rect::new(Vec2::new(3.0e5, 2.0e5), Vec2::splat(1.0));
+    let mut index = BodyIndex::default();
+    index.set(huge, endless, NodeShape::Rectangle);
+    assert_eq!(
+        index.within(inside),
+        vec![huge],
+        "a body that is not finite is tried by a query"
+    );
+}
+
+/// A query past the cells tries every body, by the rule for a rectangle
+/// spanning more cells than the index lists (#364): a rubber band, and a
+/// layout's rectangle, as large as each length #364 was found at, which
+/// the index holds whatever the loader admits, answer
+/// as a scan of every body does.
+///
+/// Controls: as the count's. A debug build panics at the first query,
+/// and a release build is red on the precondition that the rectangle
+/// lists no cells (past which the query would visit every one). With a
+/// query past the cells handed no body, red on the rubber band; with the
+/// rectangle test of a layout's query turned round, red on the
+/// rectangles meeting.
+#[test]
+fn test_projection_a_query_past_the_cells_tries_every_body() {
+    let mut rng = Lcg(0x364);
+    let (p, bodies) = random_bodies(&mut rng, 40);
+    let mut every: Vec<NodeId> = bodies.iter().map(|(id, ..)| *id).collect();
+    every.sort_unstable();
+    for rect in past_the_cells() {
+        assert_eq!(
+            cells(rect),
+            None,
+            "precondition: {rect:?} lists no cells; listed, a query would visit every one"
+        );
+        assert_eq!(
+            covered_by_brute_force(&bodies, rect),
+            every,
+            "precondition: {rect:?} covers every body"
+        );
+        assert_eq!(p.projector.nodes_in(rect), every, "a rubber band over {rect:?}");
+        assert_eq!(
+            p.projector.nodes_meeting(rect),
+            every,
+            "rectangles meeting {rect:?}"
+        );
+    }
+}
+
+/// A query that is no rectangle on the canvas finds nothing (#364): one
+/// with a part that is no number — its origin, its size, or the far
+/// corner of a glyph's box grown past what an `f32` holds (an origin of
+/// −∞ and a size of +∞) — or one whose size is negative, which a [`Rect`]
+/// never has and which is not normalized into the rectangle its corners
+/// span. A rubber band and a layout's rectangle of each find no node — not
+/// the round one, the square one, or the one too large for the cells —
+/// where a rectangle round all three finds all three, and so does one
+/// reaching +∞, a rectangle that far.
+///
+/// Controls: with such a query given candidates, as it was, a negative
+/// size meets the node too large for the cells, which every query tries,
+/// red on the layout's rectangle. With that and the shape's check of its
+/// corners' order both taken out, the corner that is no number panics on
+/// the round node (`f32::clamp`). With no part of a query let reach +∞,
+/// red on the rectangle reaching it. The shape's check alone is held by
+/// its own test.
+#[test]
+fn test_projection_a_query_that_is_no_rectangle_finds_nothing() {
+    let doc = load_map(json!({"nodes": [
+        node(1, None, json!({"position": [0.0, 0.0], "min_size": [100.0, 40.0], "shape": "ellipse"})),
+        node(2, None, json!({"position": [300.0, 0.0], "min_size": [100.0, 40.0]})),
+        node(3, None, json!({"position": [0.0, 2000.0], "min_size": [1.0e5, 1.0e5]})),
+    ]}));
+    let mut every: Vec<NodeId> = (1..=3).map(|id| ident(&doc, id)).collect();
+    every.sort_unstable();
+    let p = Projected::new(doc);
+    let (rect, _) = p
+        .projector
+        .bodies
+        .get(ident(&p.doc, 3))
+        .expect("node 3 has a body");
+    assert_eq!(
+        cells(rect),
+        None,
+        "precondition: node 3 is too large for the cells"
+    );
+    let round = Rect::new(Vec2::splat(-1.0e3), Vec2::splat(2.0e5));
+    assert_eq!(
+        p.projector.nodes_in(round),
+        every,
+        "precondition: a rectangle round all three finds them"
+    );
+    let spanned = Rect::new(Vec2::splat(1.0e4), Vec2::splat(5.0e4));
+    assert_eq!(
+        p.projector.nodes_in(spanned),
+        vec![ident(&p.doc, 3)],
+        "precondition: the rectangle the negative sizes' corners span finds node 3"
+    );
+    let nan = f32::NAN;
+    let inf = f32::INFINITY;
+    let queries = [
+        (
+            "a corner that is no number",
+            Rect::new(Vec2::new(nan, -1.0e3), Vec2::splat(2.0e5)),
+        ),
+        (
+            "a size that is no number",
+            Rect::new(Vec2::splat(-1.0e3), Vec2::new(2.0e5, nan)),
+        ),
+        (
+            "a glyph's box grown past f32",
+            Rect::new(Vec2::splat(10.0), Vec2::splat(10.0)).grown(f32::MAX),
+        ),
+        // Inside node 3, the node too large for the cells, which every
+        // query tries.
+        (
+            "a negative size across",
+            Rect::new(Vec2::new(6.0e4, 1.0e4), Vec2::new(-5.0e4, 5.0e4)),
+        ),
+        (
+            "a negative size down",
+            Rect::new(Vec2::new(1.0e4, 6.0e4), Vec2::new(5.0e4, -5.0e4)),
+        ),
+        (
+            "a negative size both ways",
+            Rect::new(Vec2::splat(6.0e4), Vec2::splat(-5.0e4)),
+        ),
+    ];
+    // One reaching infinity is a rectangle that far, and finds what it
+    // covers.
+    let reaching = Rect::new(Vec2::splat(-1.0e3), Vec2::splat(inf));
+    assert_eq!(
+        p.projector.nodes_in(reaching),
+        every,
+        "a rubber band reaching +inf"
+    );
+    assert_eq!(
+        p.projector.nodes_meeting(reaching),
+        every,
+        "a layout's rectangle reaching +inf"
+    );
+    for (what, rect) in queries {
+        assert_eq!(
+            p.projector.nodes_in(rect),
+            Vec::<NodeId>::new(),
+            "a rubber band with {what}"
+        );
+        assert_eq!(
+            p.projector.nodes_meeting(rect),
+            Vec::<NodeId>::new(),
+            "a layout's rectangle with {what}"
+        );
+    }
 }

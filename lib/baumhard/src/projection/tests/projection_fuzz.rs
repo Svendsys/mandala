@@ -34,18 +34,23 @@
 //! [`EXTENT`](crate::projection::tests::projection_fuzz::EXTENT); and it
 //! draws at most
 //! [`MAX_UNITS`](crate::projection::tests::projection_fuzz::MAX_UNITS)
-//! sections, rings, connectors and links. The coordinates bound how long
-//! a path is in map units, not how many glyphs or samples it takes: those
-//! go by its length over its size, and a link at the smallest sizes a few
-//! thousand units long reaches the cap of a placement (R41) and of a
-//! curve's samples in `untangle`. What one such path costs is bounded by
-//! those caps — its glyphs at a placement's, and in `untangle` at most
-//! `UNTANGLE_ROUNDS` rounds of each of its curves sampled to the cap, one
-//! round where its nearness is certain from samples no halving moves
-//! (#346) — not by this bound. Each is shaped and placed in every full
-//! projection the check makes, so the work grows with their count:
-//! libFuzzer reported a 4,000-node chain with a link on every node, 8,000
-//! paths, as a slow unit of 16 to 18 s against its 20 s timeout.
+//! sections, rings, connectors and links. A frame's `inset` and `gap` and
+//! a `spacing` are not part of it: the loader holds them to the canvas
+//! bound (#364), and what they add to a placement within it its own cap
+//! bounds (R41), as it bounds a ring of small glyphs round a node inside
+//! the extent. The
+//! coordinates bound how long a path is in map units, not how many glyphs
+//! or samples it takes: those go by its length over its size, and a link
+//! at the smallest sizes a few thousand units long reaches the cap of a
+//! placement (R41) and of a curve's samples in `untangle`. What one such
+//! path costs is bounded by those caps — its glyphs at a placement's, and
+//! in `untangle` at most `UNTANGLE_ROUNDS` rounds of each of its curves
+//! sampled to the cap, one round where its nearness is certain from
+//! samples no halving moves (#346) — not by this bound. Each is shaped and
+//! placed in every full projection the check makes, so the work grows with
+//! their count: libFuzzer reported a 4,000-node chain with a link on every
+//! node, 8,000 paths, as a slow unit of 16 to 18 s against its 20 s
+//! timeout.
 //!
 //! **The untangling ceiling** (#346). What `untangle` samples cannot be
 //! told before the paths are laid out — a path's width comes from its
