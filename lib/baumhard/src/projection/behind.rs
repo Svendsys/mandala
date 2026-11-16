@@ -399,11 +399,9 @@ impl Projector {
     /// grown by its gap, meet the box round the label's text are left out
     /// too (#340), a cap's as its body's, so the path stops one gap short
     /// of its label on each side; a label hidden hides nothing of its
-    /// path. A gap too large for a box to hold covers the whole canvas:
-    /// every node hides the path (#364). Records reading the region,
-    /// opacity and zoom window of each node it meets, and sets where its
-    /// glyphs and its label are. A path not drawn has nothing hidden, and
-    /// leaves the paths' index.
+    /// path. Records reading the region, opacity and zoom window of each
+    /// node it meets, and sets where its glyphs and its label are. A path
+    /// not drawn has nothing hidden, and leaves the paths' index.
     ///
     /// Cost: O(its glyphs and its label's, and the regions in each glyph's
     /// cells and its label's).
@@ -474,19 +472,7 @@ impl Projector {
                     shown.push(*g);
                     continue;
                 };
-                // A gap too large for a box to hold covers the whole canvas
-                // (#364): `Rect::grown` by a gap past about 1.7e38 has an
-                // origin of -inf and a size of +inf, whose far corner is no
-                // number. Held to f32::MAX / 4, the box stays finite — its
-                // size at most the ink's and f32::MAX / 2, its corners within
-                // f32::MAX / 4 of the glyph — and it reaches every region a
-                // map can place, as positions are held to 1e9 and every
-                // region holds its node: every node hides the glyph, and
-                // the hidden set never shrinks as the gap grows. The loader
-                // and the mutations hold a `spacing` to the canvas bound,
-                // so no document reaches this; it stays as the defense the
-                // stage owes whatever gap it is given.
-                let grown = ink.grown(gap.min(f32::MAX / 4.0));
+                let grown = ink.grown(gap);
                 boxes.push(grown);
                 let by_node = behind(grown, run.zoom());
                 let by_label = own_label.is_some_and(|text| meet(&grown, &text));

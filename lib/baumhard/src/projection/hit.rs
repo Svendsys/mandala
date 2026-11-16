@@ -112,8 +112,9 @@ pub(crate) fn cell_count((x0, y0): (i32, i32), (x1, y1): (i32, i32)) -> u64 {
 /// number — its origin, its size, or its far corner, which an origin of
 /// −∞ and a size of +∞ sum to — and its size is not negative, which a
 /// [`Rect`]'s never is. One reaching ±∞ is a rectangle that far. A query
-/// that is no rectangle finds nothing, in both indices, and is not
-/// normalized into the rectangle its corners would span (#364). O(1).
+/// of the body index that is no rectangle finds nothing, and is not
+/// normalized into the rectangle its corners would span; a path's box
+/// that is no rectangle is left out of the paths' index (#364). O(1).
 pub(crate) fn is_rectangle(rect: Rect) -> bool {
     !rect.origin.is_nan()
         && !rect.size.is_nan()

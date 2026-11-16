@@ -1389,10 +1389,11 @@ fn meeting(index: &PathCells, rect: Rect) -> Vec<NodeId> {
     found
 }
 
-/// A path with a glyph box past the cells — a glyph grown by a `spacing`
-/// a map could carry, 4·10¹¹ to 4·10³⁷ — is kept apart, as the body index
-/// keeps a body (#364): a region anywhere inside that box finds it, one
-/// outside does not, and it leaves the index whole.
+/// A path with a glyph box past the cells — a glyph grown by each length
+/// #364 was found at, 4·10¹¹ to 4·10³⁷, which the index holds whatever the
+/// loader admits — is kept apart, as the body index keeps a body (#364): a
+/// region anywhere inside that box finds it, one outside does not, and it
+/// leaves the index whole.
 ///
 /// Controls: with the cells' count the product of two spans in `i64`, as
 /// it was, a debug build panics at the first box set, and a release
@@ -1447,17 +1448,19 @@ fn test_projection_a_glyph_box_past_the_cells_is_found_by_every_region_inside_it
 
 /// A region past the cells finds exactly the paths it meets by scanning
 /// the cells that hold a path, visiting no more than those six, never by
-/// walking its own (#364): the box round a ring set out by each length a
-/// map could carry finds the five paths near the origin, and the one
-/// 3·10¹² out only once it reaches it.
+/// walking its own (#364): a region 4096 across finds the four paths it
+/// covers, and the box round a ring set out by each length #364 was found
+/// at — which the index holds whatever the loader admits — finds the five
+/// paths near the origin, and the one 3·10¹² out only once it reaches it.
 ///
 /// Controls: as the test above's. A debug build panics at the first
 /// region, and a release build is red on the precondition that the region
 /// spans more cells than hold a path (past which it would walk every one
 /// of its own). With the scan passing nothing, red on the cells visited;
 /// with it passing every path without trying its box against the region,
-/// red on the paths met; with each occupied cell scanned twice, red on
-/// the cells visited.
+/// red on the paths met; with each occupied cell scanned twice, or with
+/// every region walking its own cells, red on the cells visited (the
+/// moderate region's 289 against 6).
 #[test]
 fn test_projection_a_region_past_the_cells_scans_the_cells_that_hold_a_path() {
     let nodes: Vec<Value> = (1..=6).map(|id| node(id, None, json!({}))).collect();
@@ -1477,7 +1480,11 @@ fn test_projection_a_region_past_the_cells_scans_the_cells_that_hold_a_path() {
         index.set(path, &[glyph]);
         boxes.push(glyph);
     }
-    let mut regions: Vec<Rect> = HUGE_LENGTHS.into_iter().map(huge_box).collect();
+    // First a region 4096 across, 17 cells a side, which a walk of its own
+    // cells would visit 289 times; then the lengths #364 was found at.
+    let moderate = Rect::new(Vec2::ZERO, Vec2::splat(4096.0));
+    let mut regions: Vec<Rect> = vec![moderate];
+    regions.extend(HUGE_LENGTHS.into_iter().map(huge_box));
     regions.push(Rect::new(Vec2::splat(-f32::MAX / 2.0), Vec2::splat(f32::MAX)));
     let mut reached = 0;
     for region in regions {
@@ -1493,6 +1500,13 @@ fn test_projection_a_region_past_the_cells_scans_the_cells_that_hold_a_path() {
             .map(|(path, _)| *path)
             .collect();
         want.sort_unstable();
+        if region == moderate {
+            assert_eq!(
+                want.len(),
+                4,
+                "precondition: the moderate region covers four paths"
+            );
+        }
         reached += usize::from(want.len() == 6);
         index.meeting_cells.set(0);
         let met = meeting(&index, region);
@@ -1504,8 +1518,8 @@ fn test_projection_a_region_past_the_cells_scans_the_cells_that_hold_a_path() {
         assert_eq!(met, want, "the paths {region:?} meets");
     }
     assert!(
-        (1..12).contains(&reached),
-        "precondition: the far path is inside some regions and outside others, {reached} of 12"
+        (1..13).contains(&reached),
+        "precondition: the far path is inside some regions and outside others, {reached} of 13"
     );
 }
 
@@ -1612,6 +1626,79 @@ fn test_projection_a_ring_past_the_cells_hides_the_paths_inside_it() {
         );
     }
     p.check().unwrap();
+}
+
+/// Each laid glyph of `path`'s body by its box grown by the path's gap,
+/// as the hide stage tries it: read here from the run and its metrics,
+/// not through the stage.
+fn grown_glyph_boxes(p: &Projected, path: NodeId) -> Vec<Rect> {
+    use crate::projection::stages::{gap_and_size, glyph_ink};
+    let Some(UnitBody::Line(line)) = p.projector.units.get(&path).map(|u| &u.body) else {
+        panic!("{path:?} is a line");
+    };
+    let gap = gap_and_size(line).0.max(0.0);
+    let Some(RunShape::Path { run: shaped, placed }) = line.laid[0].as_ref().map(|run| run.shaped()) else {
+        panic!("{path:?}'s body is laid");
+    };
+    placed
+        .glyphs
+        .iter()
+        .filter_map(|g| glyph_ink(shaped, g))
+        .map(|ink| ink.grown(gap))
+        .collect()
+}
+
+/// A connector whose `spacing` puts its glyphs' boxes past the cells —
+/// each glyph is hidden by its box grown by the path's gap — is kept apart
+/// in the paths' index, and is hidden by a node that far from it as by one
+/// across it (#364): with a node 1000 away the path is hidden whole; that
+/// node hidden, it is drawn whole; shown again, the node's region finds
+/// the path, kept apart from the cells, and the oracle holds it hidden
+/// again. At spacings within the canvas bound: 1100, just past the cells,
+/// 5000, 10⁶ and the bound itself.
+///
+/// Controls: with a query past the cells handed no body, red on the
+/// glyphs drawn within the gap; with the paths kept apart not tried by a
+/// region, red on the path found and, that assertion taken out, on the
+/// oracle. With the first spacing moved to where its boxes list their
+/// cells, red on its precondition.
+#[test]
+fn test_projection_a_path_spaced_past_the_cells_is_hidden_by_any_node_in_its_gap() {
+    use crate::document::bounds::MAX_CANVAS_COORD;
+    for spacing in [1.1e3, 5.0e3, 1.0e6, MAX_CANVAS_COORD] {
+        let mut p = Projected::new(two_paths(AWAY, json!({}), json!({"spacing": spacing})));
+        let path = path_of(&p, 2);
+        let laid = laid_glyphs(&p, path);
+        assert!(
+            laid >= 1,
+            "precondition: a path spaced {spacing} lays a glyph, {laid}"
+        );
+        let boxes = grown_glyph_boxes(&p, path);
+        assert!(
+            !boxes.is_empty() && boxes.iter().all(|b| grid_cells(*b).is_none()),
+            "precondition: spaced {spacing}, every glyph's grown box lists no cells, {boxes:?}"
+        );
+        assert_eq!(
+            drawn_glyphs(&p, path),
+            0,
+            "within its gap of a node it does not end at, spaced {spacing}"
+        );
+
+        let blocker = ident(&p.doc, 3);
+        let hide = |hidden| single(DocKind::Node, DocMutation::Node(NodeOp::SetHidden(hidden)));
+        p.apply(request(hide(true), vec![blocker], "hide")).unwrap();
+        assert_eq!(
+            drawn_glyphs(&p, path),
+            laid,
+            "precondition: the node hidden, the path spaced {spacing} is drawn whole"
+        );
+        p.apply(request(hide(false), vec![blocker], "show")).unwrap();
+        assert!(
+            hidden_again(&p).contains(&path),
+            "the node's region finds the path spaced {spacing}, kept apart from the cells"
+        );
+        p.check().unwrap();
+    }
 }
 
 /// The frame of `maps/theme_demo.mandala.json`'s first node, as shipped:

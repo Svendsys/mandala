@@ -708,7 +708,8 @@ fn past_the_cells() -> Vec<Rect> {
 
 /// A rectangle lists its cells while they are at most 64, and none past
 /// that, however far past (#364): the box round a ring set out from its
-/// node by each length a map could carry, 4·10¹¹ to 4·10³⁷, and one as
+/// node by each length #364 was found at, 4·10¹¹ to 4·10³⁷ — which the
+/// index holds whatever the loader admits — and one as
 /// large as `f32` goes, span more cells than an `i64` counts and list
 /// none. The edges: the largest box that lists its cells and the one a
 /// column wider; the largest length whose box an `i64` still counts,
@@ -870,7 +871,8 @@ fn test_projection_a_body_past_the_cells_is_kept_apart_and_tried_by_every_query(
 
 /// A query past the cells tries every body, by the rule for a rectangle
 /// spanning more cells than the index lists (#364): a rubber band, and a
-/// layout's rectangle, as large as each length a map could carry, answer
+/// layout's rectangle, as large as each length #364 was found at, which
+/// the index holds whatever the loader admits, answer
 /// as a scan of every body does.
 ///
 /// Controls: as the count's. A debug build panics at the first query,

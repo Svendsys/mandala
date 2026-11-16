@@ -1367,20 +1367,22 @@ fn test_a_number_that_must_not_be_negative_is_refused() {
 /// A frame's `inset` and `gap` and every `spacing` are held to the canvas
 /// bound, as either part of a `min_size` is (#364): the bound itself loads,
 /// and the next `f32` past it is refused, naming the field and the bound —
-/// on a frame, a ring, a connector and a line link, and in `defaults` — as
-/// are the lengths #364's projection panicked at, 4·10¹¹ to 4·10³⁷, and
-/// `f32::MAX`.
+/// on a frame, a ring, a connector and a line link, and in `defaults`'
+/// frame, ring, connector and link — as are the lengths #364's projection
+/// panicked at, 4·10¹¹ to 4·10³⁷, and `f32::MAX`.
 ///
 /// Controls: with each of the loader's four sites (a frame's `gap`, its
 /// `inset`, a frame's or a ring's `spacing`, a path's `spacing`) held to
-/// `check_non_negative` again, as it was, red on that field's first row.
+/// `check_non_negative` again, as it was, red on that field's first row;
+/// with the rows before them taken out, red on `defaults.frame.spacing`
+/// and on `defaults.link.spacing`.
 #[test]
 fn test_an_inset_a_gap_and_a_spacing_past_the_canvas_are_refused() {
     let max = bounds::MAX_CANVAS_COORD;
     let next = f32::from_bits(max.to_bits() + 1);
     let number = |value: f32| serde_json::to_string(&value).unwrap();
     // Each field: the map with `#` for the number, and the refusal's path.
-    let fields: [(&str, &str); 10] = [
+    let fields: [(&str, &str); 12] = [
         (
             r#"{"id":1,"position":[0,0],"frame":{"inset":#}}"#,
             "nodes[0].frame.inset",
@@ -1409,6 +1411,8 @@ fn test_an_inset_a_gap_and_a_spacing_past_the_canvas_are_refused() {
         (r#"D{"frame":{"gap":#}}"#, "defaults.frame.gap"),
         (r#"D{"ring":{"spacing":#}}"#, "defaults.ring.spacing"),
         (r#"D{"connector":{"spacing":#}}"#, "defaults.connector.spacing"),
+        (r#"D{"frame":{"spacing":#}}"#, "defaults.frame.spacing"),
+        (r#"D{"link":{"spacing":#}}"#, "defaults.link.spacing"),
     ];
     let map = |template: &str, value: f32| match template.strip_prefix('D') {
         Some(defaults) => map_with(

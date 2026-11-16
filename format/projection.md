@@ -126,24 +126,22 @@ node to the node it leads to.
   a path shown on either side of a node stops at least one gap short of
   it — a gap, and up to one step more where the next glyph falls inside
   — as it stops short of its own frames. A glyph is drawn whole or not
-  at all, never clipped. A gap too large for a box to hold covers the
-  whole canvas: every node hides the path; no map reaches one, since a
-  `spacing` is held to the canvas bound at load (#364). The path's own
-  two nodes never hide it. A node hides a path only if it is drawn
-  wherever the path is: a node at opacity 0, or whose zoom window does
-  not hold the path's, hides nothing of it. A path whose two nodes both
-  lie inside another node's ringed region — a ringed container drawn
-  round them — is hidden whole. Hiding changes nothing in the document:
-  the glyphs are drawn again when the node moves off the path. A path's
-  label is hidden whole — never cut, nor slid along the path — where the
-  box round its text meets the region of a node the path does not end
-  at, drawn wherever the label is; a portal end is never hidden. A
-  path's own label, drawn, wins over its line as a node's text does: the
-  path's glyphs whose boxes, grown by its gap, meet the box round the
-  label's text are not drawn, so the path stops at least one gap short
-  of its label on each side and carries on past it. A cap is hidden as
-  the body is: a label at the path's end hides the arrow under it. A
-  label hidden behind another node hides nothing of its path.
+  at all, never clipped. The path's own two nodes never hide it. A node
+  hides a path only if it is drawn wherever the path is: a node at
+  opacity 0, or whose zoom window does not hold the path's, hides
+  nothing of it. A path whose two nodes both lie inside another node's
+  ringed region — a ringed container drawn round them — is hidden whole.
+  Hiding changes nothing in the document: the glyphs are drawn again
+  when the node moves off the path. A path's label is hidden whole —
+  never cut, nor slid along the path — where the box round its text
+  meets the region of a node the path does not end at, drawn wherever
+  the label is; a portal end is never hidden. A path's own label, drawn,
+  wins over its line as a node's text does: the path's glyphs whose
+  boxes, grown by its gap, meet the box round the label's text are not
+  drawn, so the path stops at least one gap short of its label on each
+  side and carries on past it. A cap is hidden as the body is: a label
+  at the path's end hides the arrow under it. A label hidden behind
+  another node hides nothing of its path.
 
 **Caps** are centered on the path's start (`cap_start`) and end
 (`cap_end`).

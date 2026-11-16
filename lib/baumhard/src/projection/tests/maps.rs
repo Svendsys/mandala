@@ -108,8 +108,10 @@ pub fn two_paths(at: Vec2, blocker: Value, path: Value) -> Document {
     ]}))
 }
 
-/// Lengths a map can carry that put a rectangle past what an `i64` counts
-/// of the body index's cells (#364): 4·10¹¹, the least found to; the nine
+/// The lengths #364 was found at, which the indices hold whatever the
+/// loader admits — it now refuses each of them, holding every length to
+/// the canvas bound — and which put a rectangle past what an `i64` counts
+/// of the body index's cells: 4·10¹¹, the least found to; the nine
 /// frame insets the defect was seen at, 5·10¹¹ to 10³⁷; and 4·10³⁷, found
 /// beside them. A box that far each way from a node spans at least
 /// 3,125,000,000 cells a side.
