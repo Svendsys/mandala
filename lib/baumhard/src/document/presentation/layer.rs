@@ -231,7 +231,7 @@ impl Document {
     ///   ([`validate_for_presentation`]).
     /// - **It is judged by putting it on the layer.** The new instances
     ///   join the end of the layer, and the layer is put back as every
-    ///   change puts it back ([`Self::restore_layer`]): each instance
+    ///   change puts it back (the writer's funnel): each instance
     ///   applied on top of the map and of every instance before it as it
     ///   stands, and judged there — on wasm32, against the platform's
     ///   bounds with all of them. If a new one comes back refused, the
