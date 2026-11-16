@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 /// Every minimized input a fuzz target found, by the symptom it had.
 /// Each is replayed through every property here; its own test below
 /// pins the symptom. The fuzz targets read these files as seeds.
-const FINDINGS: [(&str, &[u8]); 4] = [
+const FINDINGS: [(&str, &[u8]); 5] = [
     (
         "c1_control_saved_raw",
         include_bytes!("fuzz_findings/c1_control_saved_raw.mandala.json"),
@@ -45,6 +45,12 @@ const FINDINGS: [(&str, &[u8]); 4] = [
     (
         "a_ring_past_the_body_index_cells",
         include_bytes!("fuzz_findings/a_ring_past_the_body_index_cells.mandala.json"),
+    ),
+    // A second, written by hand from #364's edges: a map that loads and
+    // made the projection panic at `f32::MAX`.
+    (
+        "a_path_spaced_past_what_a_box_holds",
+        include_bytes!("fuzz_findings/a_path_spaced_past_what_a_box_holds.mandala.json"),
     ),
 ];
 
@@ -80,6 +86,41 @@ fn test_a_ring_past_the_body_index_cells_is_projected() {
         across.is_some_and(|across| across > 1.0e12),
         "precondition: the ring's box is 600 gaps out each way, {region:?}"
     );
+    check_load_bytes(finding).unwrap();
+}
+
+/// The second finding of #364: a map that loads made the projection
+/// panic at the far edge of a `spacing`. The connector from node 1 to
+/// node 2 is spaced `f32::MAX`, so each of its glyphs' boxes, grown by its
+/// gap, has an origin of -inf and a size of +inf and no far corner; node
+/// 3, 1000 away, is round and ringed, and trying such a box against its
+/// region clamped to no number. The map is inside the projection's work
+/// bound, so both loader targets project it, and it holds every property:
+/// the path is drawn whole, as a box that is not finite meets no region.
+///
+/// Controls: with such a box tried against the regions, as it was, the
+/// projection here panics (`f32::clamp`: "min > max, or either was NaN").
+/// With the bound refusing a connector's `spacing` past its extent, red
+/// on the precondition that the map is inside it.
+#[test]
+fn test_a_path_spaced_past_what_a_box_holds_is_projected() {
+    use crate::projection::tests::projection_fuzz::within_bound;
+    use crate::projection::tests::support::Projected;
+    let finding = FINDINGS[4].1;
+    let doc = load(std::str::from_utf8(finding).unwrap()).expect("the finding loads");
+    assert!(
+        within_bound(&doc),
+        "precondition: inside the projection's work bound, so the loader targets project it"
+    );
+    use crate::projection::tests::maps::{ident, kid};
+    let path = kid(&doc, ident(&doc, 2), crate::document::element::DocKind::Connector);
+    let p = Projected::new(doc);
+    let count =
+        |run: Option<&crate::gfx_structs::run::GlyphRunData>| run.map_or(0, |r| r.shaped().glyph_count());
+    let laid = count(p.projector.laid(path));
+    assert!(laid >= 1, "precondition: the path lays a glyph, {laid}");
+    let drawn = count(p.projector.units[&path].slots[0].want.as_ref());
+    assert_eq!(drawn, laid, "the path is drawn whole");
     check_load_bytes(finding).unwrap();
 }
 

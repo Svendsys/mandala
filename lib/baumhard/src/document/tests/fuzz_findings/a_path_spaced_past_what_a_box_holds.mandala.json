@@ -1,0 +1,5 @@
+{"format": 1, "name": "a path spaced past what a box holds", "nodes": [
+  {"id": 1, "position": [0.0, 0.0], "min_size": [100.0, 40.0]},
+  {"id": 2, "parent": 1, "position": [1000.0, 0.0], "min_size": [100.0, 40.0], "connector": {"straight": true, "spacing": 3.4028235e38}},
+  {"id": 3, "position": [480.0, 1000.0], "min_size": [60.0, 60.0], "shape": "ellipse", "frame": {"inset": 4.0, "rings": [{"fit": "repeat", "size": 0.05, "spans": [{"text": "·"}]}]}}
+]}
