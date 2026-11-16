@@ -289,7 +289,7 @@ fn test_a_transaction_under_presentations_is_the_transaction_without_them() {
     assert_eq!(with.commit(tx_with), without.commit(tx_without));
     assert_eq!(history_images(&with), history_images(&without));
     assert_eq!(with.save_json().unwrap(), written(&without));
-    // Cancelled: the map as before, the layer on it.
+    // Canceled: the map as before, the layer on it.
     let tx = with
         .begin(ChangeSource::Input, TransactionKind::Interactive)
         .unwrap();
@@ -1143,7 +1143,14 @@ fn test_a_presentation_mentions_the_verbs_it_names_and_what_it_can_show() {
 
 /// A node an edit removes takes its instance's application with it, and
 /// an undo brings both back; once the history can no longer bring the
-/// node back, the instance is dropped.
+/// node back, the instance is dropped. An edit that pushes the removal
+/// out of the history frees the node inside its own apply, and so ends
+/// the instance there: the presentation epoch advances inside that
+/// apply, though the edit wrote nothing of an instance's.
+///
+/// Controls, each seen red: the funnel not dropping the instances of
+/// freed nodes leaves the instance listed after that apply; dropping
+/// them without advancing the epoch leaves the epoch where it was.
 #[test]
 fn test_an_instance_follows_its_node_out_of_the_tree_and_back() {
     let mut doc = map();
@@ -1166,6 +1173,21 @@ fn test_an_instance_follows_its_node_out_of_the_tree_and_back() {
     doc.set_history_limit(0);
     doc.tick_presentations(10.0);
     assert_eq!(doc.presentations().count(), 0);
+
+    // Freed inside an edit's apply.
+    let mut doc = map();
+    doc.set_history_limit(1);
+    let (two, four) = (n(&doc, 2), n(&doc, 4));
+    doc.start_presentation(&fading("f", "hold", 0.5, 0, 0), &[four], 0.0)
+        .unwrap();
+    let steps = delete(&doc, &[four]).unwrap();
+    doc.apply(EditRequest::new(steps, "delete"), ChangeSource::Action)
+        .unwrap();
+    let before = doc.presentation_epoch();
+    assert_eq!(doc.presentations().count(), 1, "precondition: it waits");
+    doc.apply(fade(vec![two], 0.8), ChangeSource::Action).unwrap();
+    assert_eq!(doc.presentations().count(), 0, "the edit freed its node");
+    assert_eq!(doc.presentation_epoch(), before + 1);
 }
 
 /// On a target that holds maps to a budget (wasm32's bounds), a start

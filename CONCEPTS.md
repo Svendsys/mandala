@@ -1538,7 +1538,7 @@ Another change, or an undo, finishes it first (D28).
 ### Presentations — `PresentationDef`, the lifecycle, the two layers
 
 **A named way of showing the map otherwise than it is, for a while,
-that is never saved** (design §10.2, D7, D17; V1-D2, #251;
+that is never saved** (design §10.2, D6, D17; V1-D2, #251;
 [`format/presentations.md`](./format/presentations.md)): a node lifted
 under the pointer, a branch concealed until it is revealed, a word
 that swells. Where an edit changes the map and is undone, a

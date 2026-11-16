@@ -506,9 +506,10 @@ impl Document {
 
     /// How often the instances themselves have changed: advanced by
     /// every start and restart, every stop, and every clock reading at
-    /// which an instance moved, turned or ended. Never by an edit
-    /// underneath, and the document's revision never by any of these.
-    /// O(1).
+    /// which an instance moved, turned or ended. Never by an edit's own
+    /// writes underneath; an edit that frees the node an instance waits
+    /// on ends that instance, and that advances it. The document's
+    /// revision moves for none of these. O(1).
     pub fn presentation_epoch(&self) -> u64 {
         self.presentations.epoch
     }

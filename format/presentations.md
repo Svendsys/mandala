@@ -162,13 +162,18 @@ committed map ⊕ open transaction ⊕ presentation layer   →  what is drawn
 - **What reads the map to change it reads the map.** An action, a
   console line or an edit that builds its change from what it reads —
   a copy, a layout, a value to step from — reads with the layer set
-  aside, so nothing a presentation shows can be committed. Actions
-  that only move the camera, change the selection or read what is
-  drawn leave it applied.
+  aside, so nothing a presentation shows can be committed: each step,
+  given the same app state, builds the change it builds with nothing
+  playing. Actions that only move the camera, change the selection or
+  read what is drawn leave it applied, and a selection made by what is
+  drawn carries into the next step — `SelectAll` under a presentation
+  that folds a node does not select what is under the fold, so a change
+  after it reaches less than it would with nothing playing
+  ([`ipc.md`](./ipc.md), "The map itself, or what is drawn").
 - Two instances that write one field combine in the order they
   started: the later one starts from what the earlier one shows.
 - On wasm32 a presentation is held to the platform's bounds as an edit
-  is ([`validation.md`](./validation.md)): what it shows may not take
+  is ([Limits](./schema.md#limits)): what it shows may not take
   the map past them. The instances are held to them together, in the
   order they started: each is judged on top of the map and of every
   instance started before it, never against the map alone, so a start
@@ -231,15 +236,21 @@ data. They never touch the document.
   run combine in the order they started, so the second blends from the
   first's color. `maps/demos/dickinson.mandala.json` does:
   `feathers-rest` gives the letters of "feathers" the line's color and
-  the trail after them the same color at no opacity, and
-  `feathers-lift`, started after it, thins the letters and brings the
-  trail up from there.
+  the trail after them (which `feathers-trail` writes, below) the same
+  color at no opacity, and `feathers-lift`, started after it, thins the
+  letters and brings the trail up from there.
 - **A glyph the map does not draw has nothing to write on.** A run
   mutation moves, sizes and colors glyphs the run already holds; it
   adds none. A trail, a spark or an underline that a presentation
-  brings up is text of the element — the dots at the end of
-  Dickinson's first line are a span of it, saved at no opacity — which
-  the presentation then colors and moves.
+  brings up is text of the element, which the presentation then
+  colors and moves. Text a map saves is the map's — it is laid out,
+  exported, searched and copied with the rest — so text that is there
+  only to be performed is better written by a document-layer
+  presentation into a span the map saves empty. Dickinson's first line
+  does: its last span is empty, and `feathers-trail` writes the five
+  dots into it (`set_text`) while it plays. The line is aligned left
+  at the offset that centering gave it, so the trail added at its end
+  moves nothing before it.
 - When projection rewrites a run an instance plays on — its text
   changed, its node moved — the instance is written on it again, and
   on no other run. The selection's tint and a presentation share a

@@ -282,8 +282,10 @@ pub(super) const FAMILY: Family = Family {
                 ResultSpec::new(
                     "epoch",
                     ParamType::Integer,
-                    "The presentation epoch: advanced by every start, stop and move of an instance, never by an \
-                     edit; the document's revision never moves for a presentation.",
+                    "The presentation epoch: advanced by every start, stop and move of an instance, and by an \
+                     instance's end, never by an edit's own writes (an edit that frees the node an instance waits \
+                     on ends it, and that advances the epoch); the document's revision never moves for a \
+                     presentation.",
                 ),
                 ResultSpec::new(
                     "edit",

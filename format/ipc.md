@@ -1093,12 +1093,18 @@ and an edit each run with the presentations set aside, and the
 presentations come back when it returns: a copy takes the text the map
 holds, a paste lands beside where the node is, an edit's filter reads
 the opacity the map gives a node and not the one a presentation is
-fading it through. So a command sequence leaves the same map, the same
-history and the same saved bytes whether or not anything is playing —
+fading it through. So **each step** — an Action, a console line, an
+edit — given the same app state (the same selection, camera and mode)
+builds the same change, leaves the same history and the same saved
+bytes, whether or not anything is playing:
 `test_every_action_verb_and_edit_leaves_what_it_leaves_with_nothing_playing`
-walks every Action and every console verb to hold that. The exceptions
-are the Actions in the second row above, which read what can be seen
-because that is what they are for, and which change no document.
+walks every Action, every console verb and the bundled edits to hold
+that. The guarantee is per step, not per sequence. The Actions in the
+second row above read what can be seen, because that is what they are
+for, and change no document — but the selection they make carries
+into the next step: `SelectAll` under a presentation that folds a node
+leaves what is under the fold unselected, so a `color` after it
+recolors less than it would with nothing playing.
 
 ## `act` — dispatch bridge (IPC-03)
 
@@ -1439,7 +1445,7 @@ still running (`format/edits.md` "Animated edits").
 | result field | type | meaning |
 |---|---|---|
 | `moving` | boolean | Whether time moves what is drawn: an edit is animating, or an instance is on its way in or out. An instance that holds — a `hold` or a `while` fully in — is playing and not moving. `false` is what `clock.wait until=animations_complete` waits for. |
-| `epoch` | integer | The presentation epoch: it advances with every start, stop and move of an instance, and never with an edit. (The document's `revision` is the other way round: it never moves for a presentation.) |
+| `epoch` | integer | The presentation epoch: it advances with every start, stop and move of an instance, and with an instance's end, never with an edit's own writes — an edit that frees the node an instance waits on ends that instance, and that advances it. (The document's `revision` is the other way round: it never moves for a presentation.) |
 | `edit` | object | The animated edit running — `{"elapsed_ms", "t", "ms", "delay_ms", "easing"}`: how long ago it began by the app clock, its eased progress in `[0, 1]`, and its timing as the edit spells it — or `null`. |
 | `count` | integer | How many instances are playing. |
 | `presentations` | array | The instances, in start order, which is the order they are applied in. Each is `{"id", "presentation", "node", "layer", "play", "t", "direction", "moving", "elements", "refusal"}`: the instance's number (unique for the life of the document), the presentation's id, the node it plays on by integer id (`null` once an edit has taken the node out of the map; the instance comes back with an undo), `"document"` or `"glyph"`, the lifecycle (`"while"`, `"once"`, `"loop"`, `"hold"`), the eased progress in `[0, 1]` as of the last frame, `"in"` / `"hold"` / `"out"`, whether it is on its way, how many elements it plays on, and — when the document refuses what it would write, which leaves it playing and showing nothing — the refusal in the writer's words (`null` otherwise). |
