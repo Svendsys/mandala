@@ -8,6 +8,10 @@
 /// A frame's work budget: past it, and `untouched`'s share of it.
 #[cfg(test)]
 mod budget_tests;
+/// The classes of height a frame's touch checks can hold, placed where
+/// it lies, and what is held back for them (#371).
+#[cfg(test)]
+mod class_reach_tests;
 /// Directional rings (#324).
 pub mod directional_tests;
 pub mod fit_tests;

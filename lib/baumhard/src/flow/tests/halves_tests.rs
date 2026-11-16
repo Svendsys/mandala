@@ -3523,8 +3523,9 @@ pub(crate) fn demo_map_frames() -> Vec<(String, usize, usize, Looks, BandMeasure
 /// between a class and the finer ones, `TOUCH_LOOKS_A_CLASS_MEASURED` a
 /// box for each class the check held; and so, each part twice that,
 /// within `touch_looks` of its classes; and no side arc's check holding
-/// more classes than it was held back for (`height_classes`). What failed, with each part's
-/// ratio to its bound, where one did.
+/// more classes than it was held back for (`reachable_classes`), nor a
+/// check of `untouched` more than its share was (ruling B46.2). What
+/// failed, with each part's ratio to its bound, where one did.
 #[cfg(test)]
 pub(crate) fn looks_as_measured(looks: &Looks) -> Result<(), String> {
     use crate::flow::place::halves::{
@@ -3553,6 +3554,12 @@ pub(crate) fn looks_as_measured(looks: &Looks) -> Result<(), String> {
         broken.push(format!(
             "a side arc's check held {} classes of height, past the {} it was held back for",
             looks.classes, looks.reserved
+        ));
+    }
+    if looks.untouched.0 > looks.untouched.1 {
+        broken.push(format!(
+            "a check of `untouched` held {} classes of height, past the {} its share was held back for",
+            looks.untouched.0, looks.untouched.1
         ));
     }
     if !looks.within() {
