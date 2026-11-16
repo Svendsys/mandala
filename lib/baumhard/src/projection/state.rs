@@ -283,9 +283,10 @@ pub(crate) struct LineState {
     /// Its curves, once placed: empty until then.
     pub(crate) path: Vec<Curve>,
     /// Its body's, its caps' and its label's runs as laid, every glyph:
-    /// what its slots want but for the glyphs — and the label, whole — the
-    /// nodes it does not end at hide, which its hide stage leaves out
-    /// (#332).
+    /// what its slots want but for what its hide stage leaves out — the
+    /// glyphs, and the label, whole, the nodes it does not end at hide
+    /// (#332), and the glyphs within its gap of its own drawn label
+    /// (#340).
     pub(crate) laid: [Option<GlyphRunData>; 4],
 }
 
