@@ -12,26 +12,31 @@
 //!
 //! - **A verb nothing refers to.** A verb is referred to by a node's `on`
 //!   (`click`, `hover`), by a span's `link` (`{"verb": …}`), and by an
-//!   edit in the map that names it — a node's `set_click` or
-//!   `set_hover`, a span's `set_link` to `{"verb": …}`, or a filter's
-//!   `on_click` or `on_hover`, anywhere in it (its filter or its body)
-//!   ([`EditDef::mentions`](baumhard::document::edit::EditDef::mentions))
+//!   edit or a presentation in the map that names it — a node's
+//!   `set_click` or `set_hover`, a span's `set_link` to `{"verb": …}`, or
+//!   a filter's `on_click` or `on_hover`, anywhere in it (its filter or
+//!   its body)
+//!   ([`EditDef::mentions`](baumhard::document::edit::EditDef::mentions),
+//!   [`PresentationDef::mentions`](baumhard::document::presentation::PresentationDef::mentions))
 //!   — and by nothing else in the format. An edit refers to what it names
 //!   whether or not anything runs it: keybinds, the console and macros run
 //!   an edit by id from outside the map, so a file cannot say an edit is
-//!   never run. The issue's other half, a presentation nothing refers to,
-//!   has no meaning until something can refer to a presentation; E1.1
-//!   moves it to V1-D3 (#252), which adds the verb steps that will.
+//!   never run; the console starts a presentation the same way. The
+//!   issue's other half, a presentation nothing refers to, has no meaning
+//!   until something in a map can refer to a presentation; E1.1 moves it
+//!   to V1-D3 (#252), which adds the verb steps that will.
 //! - **A node saved hidden that nothing can reveal.** What reveals a node
-//!   is an edit that writes `set_hidden: false`, or a step of a
-//!   presentation or a verb — and those are an id and a name until V1-D2
-//!   and V1-D3 (#251, #252) give them steps. In general, which elements
+//!   is an edit that writes `set_hidden: false`, a presentation that
+//!   plays on nodes and writes it (V1-D2, #251: the node is shown for as
+//!   long as it plays), or a step of a verb — and a verb is an id and a
+//!   name until V1-D3 (#252) gives it steps. In general, which elements
 //!   an edit reaches is decided when it runs — by the anchors it is run
 //!   at, and by its filter and its mutator's keys against the map as it
-//!   stands then, which other edits change — so `verify` does not narrow
-//!   by reach: with an edit in the map that writes `set_hidden: false` no
-//!   hidden node is reported, and without one, as E1.1 rules, every node
-//!   saved with `"hidden": true` is, until D3 narrows it. The known case
+//!   stands then, which other edits change — and a presentation's by the
+//!   nodes it is started on, so `verify` does not narrow by reach: with
+//!   an edit or a presentation in the map that writes `set_hidden: false`
+//!   no hidden node is reported, and without one, as E1.1 rules, every
+//!   node saved with `"hidden": true` is, until D3 narrows it. The known case
 //!   where this is conservative is an edit whose filter fixes its node: on
 //!   `target: "node"`, a first test of `ident` `Equals` decides for every
 //!   node, and no op changes an id, so that edit only ever reaches the one
@@ -52,13 +57,16 @@
 //!   empty marker in the file is the author's choice; an edit counts only
 //!   if the marker it gives draws, so its `set_content: ""` (or `null`,
 //!   which inherits the defaults' empty content) does not. An edit cannot
-//!   give an end spans or change the defaults.
+//!   give an end spans or change the defaults. A presentation cannot
+//!   mark a portal end at all: it has no mutator, and none of its
+//!   targets is a portal end.
 //!
-//! The edits read are the map's own, its `edits`. The App and User
-//! tiers (`assets/edits.json`, the user's `edits.json`; `format/edits.md`
-//! "Where edits come from") also run on a map, and they are outside what
-//! a map file can be judged on: `verify` does not read them, and the
-//! hidden-node and portal warnings say "no edit in the map" for
+//! The edits and presentations read are the map's own, its `edits` and
+//! its `presentations`. The App and User tiers (`assets/edits.json`,
+//! the user's `edits.json`; `format/edits.md` "Where edits come from";
+//! and the presentations' likewise) also run on a map, and they are
+//! outside what a map file can be judged on: `verify` does not read
+//! them, and the hidden-node and portal warnings say "in the map" for
 //! that reason.
 //!
 //! Each warning names its place as `grep` does: `#<id>` and the path
@@ -77,23 +85,34 @@ use crate::map::{ident, is, link, text_owners, Nodes};
 /// pre-order — each node's own, then its frame's, then its links' — then
 /// the verbs', in the order `verbs` lists them.
 ///
-/// Cost: one walk of each edit, one scan of the verbs per verb an edit
-/// names, one walk of the nodes and every element below them, and one
-/// flag per verb.
+/// Cost: one walk of each edit and each presentation, one scan of the
+/// verbs per verb one of them names, one walk of the nodes and every
+/// element below them, and one flag per verb.
 pub fn warnings(doc: &Document) -> Vec<String> {
     let mut out = Vec::new();
     let definitions = doc.definitions();
     let mut referenced = vec![false; definitions.verbs.len()];
     let (mut reveals, mut marks_portal_ends) = (false, false);
+    // What each definition names and can show, an edit or a
+    // presentation: every field of `Shows` by name, so one added fails
+    // to compile here instead of going uncounted.
+    let mut name = |name: &str| {
+        if let Some(n) = definitions.verbs.iter().position(|verb| verb.id == name) {
+            referenced[n] = true;
+        }
+    };
+    let mut shown = Vec::new();
     for edit in &definitions.edits {
-        let Shows {
-            reveals: reveal,
-            marks_portal_ends: marks,
-        } = edit.mentions(|name| {
-            if let Some(n) = definitions.verbs.iter().position(|verb| verb.id == name) {
-                referenced[n] = true;
-            }
-        });
+        shown.push(edit.mentions(&mut name));
+    }
+    for presentation in &definitions.presentations {
+        shown.push(presentation.mentions(&mut name));
+    }
+    for Shows {
+        reveals: reveal,
+        marks_portal_ends: marks,
+    } in shown
+    {
         reveals |= reveal;
         marks_portal_ends |= marks;
     }
@@ -420,6 +439,54 @@ mod tests {
         assert_eq!(warned(&header(r#""◆""#), nodes), Vec::<String>::new());
         assert_eq!(warned(&header(r#""""#), nodes), warning);
         assert_eq!(warned(&header("null"), nodes), warning);
+    }
+
+    /// A presentation in the map refers to the verbs it names, as an
+    /// edit does — in its mutations and in its filter — and to nothing
+    /// else: `stay`, which nothing names, is still reported.
+    ///
+    /// Control: not reading the presentations (dropping the
+    /// `definitions.presentations` loop) reports `go` in both cases.
+    #[test]
+    fn test_verify_counts_a_verb_a_presentation_names() {
+        let verbs = r#""verbs": [{"id": "go", "name": "Go"}, {"id": "stay", "name": "Stay"}],"#;
+        let stay = [r#"verbs[1] "stay": defined, and nothing refers to it"#];
+        let node = r#"{"id": 1, "position": [0, 0]}"#;
+        let by_mutation = format!(
+            r#"{verbs} "presentations": [{{"id": "p", "name": "P", "play": "hold", "target": "node",
+                "mutations": [{{"node": {{"set_click": "go"}}}}]}}],"#
+        );
+        assert_eq!(warned(&by_mutation, node), stay);
+        let by_filter = format!(
+            r#"{verbs} "presentations": [{{"id": "p", "name": "P", "play": "hold", "target": "node",
+                "filter": {{"fields": [[{{"on_hover": "go"}}, {{"Equals": false}}]]}},
+                "mutations": [{{"node": {{"set_opacity": 0.5}}}}]}}],"#
+        );
+        assert_eq!(warned(&by_filter, node), stay);
+    }
+
+    /// A presentation that plays on nodes and writes `set_hidden: false`
+    /// can show a node saved hidden, so none is reported; one that
+    /// writes `set_hidden: true` reveals nothing, and neither does a
+    /// glyph-layer presentation, which writes runs that are drawn.
+    ///
+    /// Controls: counting any `set_hidden` as a reveal fails the second
+    /// assertion; not reading the presentations fails the first.
+    #[test]
+    fn test_verify_counts_a_presentation_that_reveals_a_node() {
+        let presentation = |hidden: bool| {
+            format!(
+                r#""presentations": [{{"id": "p", "name": "P", "play": "hold", "target": "node",
+                    "mutations": [{{"node": {{"set_hidden": {hidden}}}}}]}}],"#
+            )
+        };
+        let node = r#"{"id": 4, "position": [0, 0], "hidden": true}"#;
+        let warning = ["#4: hidden, and no edit in the map, verb or presentation can reveal it"];
+        assert_eq!(warned(&presentation(false), node), Vec::<String>::new());
+        assert_eq!(warned(&presentation(true), node), warning);
+        let glyph = r#""presentations": [{"id": "g", "name": "G", "play": "hold", "layer": "glyph",
+            "target": "sections", "glyph": [{"run_opacity": 1.0}]}],"#;
+        assert_eq!(warned(glyph, node), warning);
     }
 
     /// What one edit counts stays counted when later edits count

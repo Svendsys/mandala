@@ -29,6 +29,7 @@ use super::super::input_context_core::InputContextCore;
 use super::super::InteractionMode;
 use super::cross_dispatch::{self, view_ctx, DispatchOutcome, PanDir, SelectionMove, ZoomDir};
 use super::families;
+use super::the_map::OnTheMap;
 
 /// Cross-platform action dispatcher. Returns `Handled` when the arm body
 /// ran; `Unhandled` for variants this dispatcher doesn't own (NativeOnly
@@ -42,15 +43,29 @@ pub(in crate::application::app) fn dispatch_compatible(
     core: &mut InputContextCore<'_>,
     hit: Option<&cross_dispatch::DispatchHit>,
 ) -> DispatchOutcome {
+    let reads_the_map = !leaves_the_map_unread(action);
     // Settle an animated edit first, so whatever this Action reads to
     // build its change — a copy, a field's value, a structure — reads
     // the map the edit leaves (D28); the writer would fast-forward it
     // only at `apply` or `begin`, after the read.
-    if !leaves_animation_running(action) {
+    if reads_the_map {
         if let Some(doc) = core.document.as_deref_mut() {
             doc.finish_animation();
         }
     }
+    // And read the map itself, not what a presentation shows on it
+    // (`the_map`): the layer is aside until this returns.
+    let mut core = OnTheMap::when(core, reads_the_map);
+    dispatch_arms(action, &mut core, hit)
+}
+
+/// The arms of [`dispatch_compatible`]: the owner families first, then
+/// the cross-platform ones.
+fn dispatch_arms(
+    action: &Action,
+    core: &mut InputContextCore<'_>,
+    hit: Option<&cross_dispatch::DispatchHit>,
+) -> DispatchOutcome {
     if let Some(outcome) = families::structure::dispatch(action, core, hit) {
         return outcome;
     }
@@ -175,12 +190,12 @@ fn select(core: &mut InputContextCore<'_>, step: SelectionMove) -> DispatchOutco
     DispatchOutcome::Handled
 }
 
-/// Whether `action` leaves an animated edit running: it moves the
-/// camera, changes the selection, or toggles a readout, and reads
-/// nothing of the map that the edit is changing, so it does not cut the
-/// animation short. Every other Action settles it first
-/// ([`dispatch_compatible`]).
-fn leaves_animation_running(action: &Action) -> bool {
+/// Whether `action` reads nothing of the map to change it: it moves the
+/// camera, changes the selection, or toggles a readout — what it reads
+/// is what is drawn. So it leaves an animated edit running, and a
+/// presentation applied. Every other Action settles the edit and sets
+/// the presentation layer aside first ([`dispatch_compatible`]).
+fn leaves_the_map_unread(action: &Action) -> bool {
     matches!(
         action,
         Action::PanCanvas

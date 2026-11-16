@@ -1,0 +1,40 @@
+{
+  "presentations": [
+    {
+      "id": "concealed",
+      "name": "Concealed",
+      "description": "Hides a node until it is stopped; the node then fades in. Start it on the nodes a map reveals one by one.",
+      "play": "hold",
+      "target": "node",
+      "mutations": [
+        { "node": { "set_hidden": true } },
+        { "node": { "set_opacity": 0.0 } }
+      ],
+      "return": { "ms": 400, "easing": "ease_out" }
+    },
+    {
+      "id": "lift",
+      "name": "Lift",
+      "description": "Raises a node a little for as long as it plays: a hover's answer.",
+      "play": "while",
+      "target": "node",
+      "mutations": [
+        { "node": { "nudge": [0.0, -6.0] } }
+      ],
+      "animate": { "ms": 150, "easing": "ease_out" },
+      "return": { "ms": 300, "easing": "ease_in_out" }
+    },
+    {
+      "id": "pulse",
+      "name": "Pulse",
+      "description": "Dims a node and lets it come back, once: a click's answer.",
+      "play": "once",
+      "target": "node",
+      "mutations": [
+        { "node": { "set_opacity": 0.55 } }
+      ],
+      "animate": { "ms": 120, "easing": "ease_out" },
+      "return": { "ms": 240, "easing": "ease_in" }
+    }
+  ]
+}

@@ -4,12 +4,14 @@
 //! back byte for byte, the full fixture is read as it is written, and a
 //! document built in memory survives a save and a load.
 
+use crate::document::edit::Target;
 use crate::document::element::{
     CapData, DocElement, DocKind, FrameStyle, LabelData, LabelStyle, LinkData, NodeStyle, PathData,
     PortalEndStyle, RingLayoutStyle, RingStyle, TextStyle, ThemeData, ThemeVariant,
 };
 use crate::document::format::load;
 use crate::document::ids::Definitions;
+use crate::document::presentation::{Play, PresentationLayer, INSTANT};
 use crate::document::tests::format_support::{fixture, kid, kids, node, same_document, written, FIXTURES};
 use crate::document::tests::test_support::{example, node_data, DocumentBuilder};
 use crate::document::values::{
@@ -118,7 +120,29 @@ pub fn do_format_full_fixture_reads_as_written() {
             .collect::<Vec<_>>(),
         ["grow", "bend", "flower"]
     );
-    assert_eq!(definitions.presentations.len(), 1);
+    assert_eq!(
+        definitions
+            .presentations
+            .iter()
+            .map(|presentation| (
+                presentation.id.as_str(),
+                presentation.play,
+                presentation.layer,
+                presentation.target
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("intro", Play::Hold, PresentationLayer::Document, Target::Node),
+            ("shimmer", Play::Loop, PresentationLayer::Glyph, Target::Sections),
+        ]
+    );
+    // A direction a file leaves out is the default: an instant way in,
+    // and a way out as the way in.
+    let intro = &definitions.presentations[0];
+    assert_eq!(intro.animate, INSTANT);
+    assert_eq!(intro.ret.map(|out| out.ms), Some(400));
+    assert_eq!(definitions.presentations[1].ret, None);
+    assert_eq!(definitions.presentations[1].out().ms, 900);
     assert_eq!(
         definitions
             .verbs

@@ -19,7 +19,7 @@ use crate::document::format::error::{LoadErrorKind, Seg};
 use crate::document::format::from_dto::{sorted_names, Builder, LoadResult};
 use crate::document::format::index::FORMAT;
 use crate::document::format::spelling::{BackgroundDto, HexDto, Named};
-use crate::document::ids::{Definitions, PresentationDef, VerbDef};
+use crate::document::ids::{Definitions, VerbDef};
 use crate::document::keyed::KeyedSet;
 use crate::document::place::{name_fault, NameFault, Unit};
 use crate::document::values::{PlainColor, Rgba, VerbId};
@@ -313,7 +313,14 @@ impl Builder {
             edits.push(def);
             Ok(())
         })?;
-        let presentations = self.defined("presentations", &dto.presentations, |d| (&d.id, &d.name))?;
+        self.defined("presentations", &dto.presentations, |d| (&d.id, &d.name))?;
+        let mut presentations = Vec::with_capacity(dto.presentations.len());
+        self.each("presentations", &dto.presentations, |b, presentation| {
+            let def = crate::document::presentation::load::definition(presentation.clone())
+                .map_err(|(segs, kind)| b.error_under(&segs, kind))?;
+            presentations.push(def);
+            Ok(())
+        })?;
         let verbs = self.defined("verbs", &dto.verbs, |d| (&d.id, &d.name))?;
         for (index, (id, _)) in verbs.iter().enumerate() {
             if let Ok(index) = u16::try_from(index) {
@@ -322,10 +329,7 @@ impl Builder {
         }
         Ok(Definitions {
             edits,
-            presentations: presentations
-                .into_iter()
-                .map(|(id, name)| PresentationDef { id, name })
-                .collect(),
+            presentations,
             verbs: verbs.into_iter().map(|(id, name)| VerbDef { id, name }).collect(),
         })
     }

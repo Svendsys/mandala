@@ -72,6 +72,15 @@ pub mod mutation_ops_tests;
 pub mod mutation_validate_tests;
 #[cfg(test)]
 mod place_tests;
+// The presentations' fuzz properties, which the `fuzz/` targets call
+// (TEST_CONVENTIONS §T14). No doc comment here: the module's own docs
+// link by name, and rustdoc would read those links in this scope.
+pub mod presentation_fuzz;
+#[cfg(test)]
+mod presentation_fuzz_tests;
+pub mod presentation_layer_tests;
+#[cfg(test)]
+mod presentation_tests;
 pub mod resolve_tests;
 pub mod shape_tests;
 pub mod structure_tests;

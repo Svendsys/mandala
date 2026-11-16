@@ -1002,7 +1002,7 @@ fn test_a_top_level_node_has_no_connector() {
 fn test_an_id_in_a_list_of_definitions_is_unique_within_its_list() {
     let twice = |id: &str| LoadErrorKind::DuplicateDefinition { id: id.to_string() };
     for list in ["edits", "presentations", "verbs"] {
-        let more = if list == "edits" { EDIT_BODY } else { "" };
+        let more = definition_body(list);
         rejects(
             &map_with(
                 &format!(
@@ -1772,10 +1772,20 @@ fn test_more_theme_variants_than_an_index_addresses_is_refused() {
     );
 }
 
+/// What a definition of the list `key` has beside its id and name.
+fn definition_body(key: &str) -> &'static str {
+    match key {
+        "edits" => EDIT_BODY,
+        "presentations" => PRESENTATION_BODY,
+        _ => "",
+    }
+}
+
 /// `count` definitions of the list `key`, as the text of an array's
-/// elements: an edit has a reach, a target and a body besides.
+/// elements: an edit has a reach, a target and a body besides, and a
+/// presentation a lifecycle, a target and a body.
 fn definitions(key: &str, count: usize) -> String {
-    let more = if key == "edits" { EDIT_BODY } else { "" };
+    let more = definition_body(key);
     (0..count)
         .map(|n| format!(r#"{{"id":"d{n}","name":""{more}}}"#))
         .collect::<Vec<_>>()
@@ -1784,6 +1794,10 @@ fn definitions(key: &str, count: usize) -> String {
 
 /// What an edit has beside its id and name, in the shortest spelling.
 const EDIT_BODY: &str = r#","reach":"self","target":"node","handler":"flower""#;
+
+/// What a presentation has beside its id and name, in the shortest
+/// spelling.
+const PRESENTATION_BODY: &str = r#","play":"hold","target":"node","mutations":[]"#;
 
 #[test]
 fn test_more_definitions_than_an_index_addresses_are_refused() {

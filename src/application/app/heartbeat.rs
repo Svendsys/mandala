@@ -32,8 +32,8 @@
 //! can trip the threshold.
 //!
 //! The time-driven half also writes the running animations at the
-//! frame's instant (`app::animation`): an animated edit today, V1-D2's
-//! presentations beside it. In real time that is every loop iteration;
+//! frame's instant (`app::animation`): the presentation instances, and
+//! an animated edit. In real time that is every loop iteration;
 //! under a virtual clock, the step's heartbeats and boundary ticks, so a
 //! stepped animation lands on exact instants.
 //!

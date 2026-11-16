@@ -53,8 +53,8 @@
 // directory's `mod.rs` re-exports the public surface so callers stay
 // terse.
 pub(crate) mod dispatch;
-// The animation tick both targets' frames run (animated edits; V1-D2's
-// presentations join it).
+// The animation tick both targets' frames run: the presentation
+// instances and an animated edit.
 mod animation;
 
 // Native-only — interactive modal state machines absent on WASM.
@@ -651,6 +651,11 @@ mod tests;
 #[cfg(not(target_arch = "wasm32"))]
 mod tests_edits;
 
+// Presentations on the app clock (V1-D2).
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_presentations;
+
 // The GPU-backed half of the suite (TEST_CONVENTIONS §T8): a whole
 // native app with no window on whatever adapter the machine has —
 // Mesa's lavapipe on a GPU-less box — skipped with a note where there
@@ -679,6 +684,9 @@ mod tests_gpu_glyph_runs;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests_gpu_layers;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_gpu_presentations;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests_gpu_structure;

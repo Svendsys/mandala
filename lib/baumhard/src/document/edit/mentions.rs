@@ -18,7 +18,10 @@ use crate::document::format::edits::{
     NodeOpDto, PathOpDto, PortalEndOpDto, RingOpDto, SectionOpDto, SpanOpDto, TextOpDto,
 };
 
-/// What an edit can make drawn, as [`EditDef::mentions`] finds it.
+/// What an edit or a presentation can make drawn, as
+/// [`EditDef::mentions`] and
+/// [`PresentationDef::mentions`](crate::document::presentation::PresentationDef::mentions)
+/// find it.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Shows {
     /// Whether it writes `set_hidden: false`.
@@ -54,10 +57,7 @@ impl EditDef {
             body,
             animate: _,
         } = self;
-        let mut walk = Walk {
-            verb: &mut verb,
-            shows: Shows::default(),
-        };
+        let mut walk = Walk::new(&mut verb);
         if let Some(Filter(filter)) = filter {
             walk.filter(filter);
         }
@@ -70,14 +70,24 @@ impl EditDef {
     }
 }
 
-/// One walk of an edit: where its verb ids go, and what it has found it
-/// can show.
-struct Walk<'a, 'f> {
+/// One walk of a definition — an edit, or a presentation, whose filter
+/// and mutations are spelled as an edit's are: where its verb ids go,
+/// and what it has found it can show.
+pub(in crate::document) struct Walk<'a, 'f> {
     verb: &'f mut dyn FnMut(&'a str),
-    shows: Shows,
+    pub(in crate::document) shows: Shows,
 }
 
-impl<'a> Walk<'a, '_> {
+impl<'a, 'f> Walk<'a, 'f> {
+    /// A walk that hands each verb id it meets to `verb`, having found
+    /// nothing yet.
+    pub(in crate::document) fn new(verb: &'f mut dyn FnMut(&'a str)) -> Self {
+        Walk {
+            verb,
+            shows: Shows::default(),
+        }
+    }
+
     fn mutator(&mut self, mutator: &'a MutatorDto) {
         let children = match mutator {
             MutatorDto::Void {
@@ -110,7 +120,7 @@ impl<'a> Walk<'a, '_> {
         children.iter().for_each(|child| self.mutator(child));
     }
 
-    fn filter(&mut self, filter: &'a FilterDto) {
+    pub(in crate::document) fn filter(&mut self, filter: &'a FilterDto) {
         let FilterDto {
             fields,
             always_match: _,
@@ -159,7 +169,7 @@ impl<'a> Walk<'a, '_> {
         }
     }
 
-    fn mutations(&mut self, mutations: &'a [MutationDto]) {
+    pub(in crate::document) fn mutations(&mut self, mutations: &'a [MutationDto]) {
         for mutation in mutations {
             match mutation {
                 MutationDto::Node(op) => self.node(op),

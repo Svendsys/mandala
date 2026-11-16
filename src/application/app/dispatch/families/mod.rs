@@ -17,7 +17,10 @@
 //! | [`verbs`] | node click triggers, the macro verb step | V1-D3 (#252) |
 //!
 //! Presentations (V1-D2, #251) have no Action and no dispatch entry of
-//! their own: verbs start them.
+//! their own: the console's `present` verb starts and stops them
+//! (`console_input::presentations`), and V1-D3's verbs will. What they
+//! have here is [`the_map`](super::the_map): every Action that reads the
+//! map runs with them set aside.
 //!
 //! [`structure`] and [`field_nodes`] have landed: their Actions run
 //! ([`structure::dispatch`], [`field_nodes::dispatch`]), asked first on

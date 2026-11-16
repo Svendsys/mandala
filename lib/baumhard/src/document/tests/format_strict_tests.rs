@@ -503,19 +503,32 @@ fn test_a_node_nests_at_most_nine_levels_by_its_schema() {
     let graph = TypeGraph::build(&crate_src_root());
     assert_eq!(dto_depth(&graph, "NodeDto", &mut Vec::new()), Ok(9));
     // And the header's values are bounded too, `edits` aside: the
-    // deepest is `defaults.frame.fit` as `{"fit": {"min", "max"}}`, four
-    // below the top-level object (design B.7's table).
+    // deepest but the definitions is `defaults.frame.fit` as
+    // `{"fit": {"min", "max"}}`, four below the top-level object (design
+    // B.7's table). A presentation nests deeper, and as boundedly: it
+    // holds no part that holds its own kind, and its deepest value is a
+    // filter's test of a fit, `presentations[i].filter.fields[j][0]` as
+    // `{"fit": {"fit": {"min", "max"}}}`, seven below the top-level
+    // object.
     let header = graph.get("MapHeaderDto").unwrap();
-    let mut deepest_value = 0;
-    for field in header
-        .fields
-        .iter()
-        .filter(|f| f.member.as_deref() != Some("edits"))
-    {
+    let depth_below = |member: &str| {
+        let field = header
+            .fields
+            .iter()
+            .find(|f| f.member.as_deref() == Some(member))
+            .unwrap_or_else(|| panic!("the header has `{member}`"));
         let mut visiting = vec!["MapHeaderDto".to_string()];
-        deepest_value = deepest_value.max(type_depth(&graph, &field.ty.0, &mut visiting).unwrap());
+        type_depth(&graph, &field.ty.0, &mut visiting)
+    };
+    let mut deepest_value = 0;
+    for field in &header.fields {
+        let member = field.member.as_deref().unwrap_or_default();
+        if !["edits", "presentations"].contains(&member) {
+            deepest_value = deepest_value.max(depth_below(member).unwrap());
+        }
     }
     assert_eq!(1 + deepest_value, 5);
+    assert_eq!(depth_below("presentations").map(|depth| 1 + depth), Ok(8));
     // An edit's mutator holds mutators, so `edits` nests as deep as the
     // definition bound lets it (`bounds::MAX_DEFINITION_DEPTH`), which
     // the loader holds it to itself (`document::edit::load`). That is
@@ -526,6 +539,11 @@ fn test_a_node_nests_at_most_nine_levels_by_its_schema() {
         Ok(_) => None,
     };
     assert_eq!(cycle_end("EditDto").as_deref(), Some("MutatorDto"));
+    assert_eq!(
+        cycle_end("PresentationDto"),
+        None,
+        "a presentation holds no mutator"
+    );
     assert_eq!(cycle_end("MapHeaderDto").as_deref(), Some("MutatorDto"));
     // The deepest fixture node reaches the bound, and none passes it.
     let mut deepest = 0;

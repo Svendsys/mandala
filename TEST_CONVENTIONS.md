@@ -770,6 +770,8 @@ decoders and every regression test compile and run on stable, in every
 | `projection_edits` | the projection (B7): a generated map and edit sequences from choices | `projection::tests::projection_fuzz::check_projection_edits` |
 | `edits_raw` | authored edits (D1), any bytes as an edits file, each edit that reads run on a map | `document::tests::edit_fuzz::check_edits_json` |
 | `edits_structured` | the same, edits built from choices | `document::tests::edit_fuzz::check_edits_structured` |
+| `presentations_raw` | presentations (D2), any bytes as a presentations file, each one that reads played on a map with edits made under it | `document::tests::presentation_fuzz::check_presentations_json` |
+| `presentations_structured` | the same, presentations and the edits under them built from choices | `document::tests::presentation_fuzz::check_presentations_structured` |
 
 What they hold, in short (each module's docs are the full list):
 
@@ -861,16 +863,38 @@ What they hold, in short (each module's docs are the full list):
   sequence (`JSON_TREE`) builds, which a test holds to having what these
   properties can fail on: multi-glyph box and path runs, filler, boxes
   of positive size, and overrides already materialized.
+- **Edits.** No panic, in the reader, the resolution, the request or
+  the writer; a refusal names its JSON path under `edits[i]`; an edit
+  that reads, run on a map, applies whole — and undo takes the map back
+  to the byte — or is refused and leaves the map as it was; run
+  animated through any progress it ends in the map and the history of
+  the instant run.
+- **Presentations.** No panic, in the reader, a start, a frame at any
+  reading, a stop or a change made under what plays; a refusal names
+  its JSON path under `presentations[i]`; a frame a million million
+  milliseconds on is one frame's work, and `LIFECYCLE_MS` after a stop
+  nothing plays; at every step the map saves to the bytes it saves to
+  with nothing playing, its revision and history the same; and an edit
+  built from the map itself and applied under what plays leaves the
+  history, image for image, and the saved bytes it leaves with nothing
+  playing, as do its undo and its redo — the differential of ruling
+  D2.1 on #251, which `test_the_differential_reports_a_change_built_from_what_plays`
+  shows red for an edit built from the map as it is drawn. A
+  glyph-layer body's run mutations are not checked again here: the
+  glyph-layer properties above hold for every run mutation, whatever
+  spells it, so no body could turn such a check red.
 
 **Where their tests live.** A property module is `pub`, in its
-surface's tests tree (`format_fuzz`, `flow_fuzz`, `glyph_layer_fuzz`,
-and the choice decoder `util::tests::choices`), because its functions
+surface's tests tree (`format_fuzz`, `edit_fuzz`, `presentation_fuzz`,
+`flow_fuzz`, `glyph_layer_fuzz`, `projection_fuzz`, and the choice
+decoder `util::tests::choices`), because its functions
 are the reusable surface: the fuzz targets call them from outside the
 crate. The tests that hold those properties to account — sweeps, named
 seeds, findings and their controls — are not reused, and live in a
 `#[cfg(test)]` sibling of their module (`format_fuzz_tests`,
-`flow_fuzz_tests`, `glyph_layer_fuzz_tests`, `choices_tests`,
-`fuzz_seed_tests`). A `cfg(test)` tree carries no bench obligation
+`edit_fuzz_tests`, `presentation_fuzz_tests`, `flow_fuzz_tests`,
+`glyph_layer_fuzz_tests`, `choices_tests`, `fuzz_seed_tests`). A
+`cfg(test)` tree carries no bench obligation
 (`lib/baumhard/CONVENTIONS.md` §B8), so this is a stated rule, not an
 exemption from the census: a fuzz property's test is a sibling, never a
 plain `#[test]` beside the `pub` property it holds.
@@ -883,7 +907,9 @@ baumhard's, so a structured finding replays in `./test.sh` from its
 bytes, and the same generators run under a seeded source in the suite's
 own sweeps (`test_generated_maps_hold_every_loader_property`,
 `test_generated_flows_hold_every_flow_property`,
-`test_generated_glyph_mutations_hold_every_property`). A seed is written
+`test_generated_glyph_mutations_hold_every_property`,
+`test_generated_edits_hold_every_property`,
+`test_generated_presentations_hold_every_property`). A seed is written
 by hand with `choices::encode`, or taken from a sweep with
 `Choices::replay`.
 

@@ -149,6 +149,18 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Node, "edit help"),
     (Sel::Node, "edit inspect cascade extra"),
     (Sel::Node, "edit nope"),
+    // present — as `edit`: the verb only reads the line, and the
+    // executor runs it against the presentation registry on the app
+    // clock.
+    (Sel::Node, "present"),
+    (Sel::Node, "present list"),
+    (Sel::Node, "present LIST"),
+    (Sel::Node, "present start lift 1 2"),
+    (Sel::Node, "present stop lift"),
+    (Sel::Node, "present start"),
+    (Sel::Node, "present stop lift x"),
+    (Sel::Node, "present list extra"),
+    (Sel::Node, "present nope"),
 ];
 
 /// `(selection fixture, input line)` — the completion popup for
@@ -255,6 +267,10 @@ pub const COMPLETION_CORPUS: &[(Sel, &str)] = &[
     (Sel::None, "ed"),
     (Sel::None, "edit "),
     (Sel::None, "edit apply "),
+    // present
+    (Sel::None, "pres"),
+    (Sel::None, "present "),
+    (Sel::None, "present start "),
 ];
 
 /// The one outcome whose tail this machine chose rather than the

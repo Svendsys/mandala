@@ -131,9 +131,66 @@ impl MindMapDocument {
         })
     }
 
+    /// The animations as `query.animations` reports them: whether time
+    /// moves what is drawn, the presentation epoch, the animated edit
+    /// running (where it is at `now_ms`, the app clock's reading), and
+    /// every presentation instance playing, in start order — its
+    /// presentation, its node by id (`null` for a node an edit took out
+    /// of the map), its layer, its lifecycle, its progress as of the
+    /// last frame, which way it is going, how many elements it plays
+    /// on, and why the document refuses what it writes, if it does.
+    ///
+    /// Cost: O(the instances).
+    pub(crate) fn ipc_animations_json(&self, now_ms: f64) -> Value {
+        let presentations: Vec<Value> = self
+            .doc
+            .presentations()
+            .map(|instance| {
+                let node = match self.doc.get(instance.node) {
+                    Some(baumhard::document::element::DocElement::Node(node)) => json!(node.ident.0),
+                    _ => Value::Null,
+                };
+                json!({
+                    "id": instance.id.0,
+                    "presentation": instance.presentation,
+                    "node": node,
+                    "layer": instance.layer.spelling(),
+                    "play": instance.play.spelling(),
+                    "t": instance.t,
+                    "direction": instance.direction.name(),
+                    "moving": instance.moving,
+                    "elements": instance.elements.len(),
+                    "refusal": instance.refusal.map(ToString::to_string),
+                })
+            })
+            .collect();
+        let edit = self
+            .animation
+            .as_ref()
+            .filter(|_| self.is_animating())
+            .map(|animation| {
+                let elapsed = (now_ms - animation.started_ms).max(0.0);
+                json!({
+                    "elapsed_ms": elapsed,
+                    "t": animation.animate.progress(elapsed),
+                    "ms": animation.animate.ms,
+                    "delay_ms": animation.animate.delay_ms,
+                    "easing": animation.animate.easing.spelling(),
+                })
+            });
+        json!({
+            "moving": self.animations_moving(),
+            "epoch": self.doc.presentation_epoch(),
+            "edit": edit,
+            "count": presentations.len(),
+            "presentations": presentations,
+        })
+    }
+
     /// The model as a value: the map as a save would write it, a change
-    /// a transaction holds open included. `None` when the document cannot
-    /// be written, which the writer prevents.
+    /// a transaction holds open included, and nothing a presentation
+    /// shows (`format::save` reads the map itself). `None` when the
+    /// document cannot be written, which the writer prevents.
     fn ipc_model(&self) -> Option<Value> {
         let text = format::save(&self.doc).ok()?;
         serde_json::from_str(&text).ok()

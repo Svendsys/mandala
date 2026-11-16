@@ -23,6 +23,10 @@ by V1-E4 (#256).
 - [`edits.md`](./edits.md) — edits: named, saved, undoable changes a
   map, the user or the app defines, applied by the walker, optionally
   animated (V1-D1, #250)
+- [`presentations.md`](./presentations.md) — presentations: named
+  performances a map, the user or the app defines, played on nodes and
+  never saved — a lift, a fade, a reveal, a word that swells — on the
+  document or on the glyph runs (V1-D2, #251)
 - [`mutations.md`](./mutations.md) — the glyph mutation vocabulary
   (`GfxMutation`, the `MutatorNode` AST) that glyph trees are edited
   with, and the document's kinds and predicate fields

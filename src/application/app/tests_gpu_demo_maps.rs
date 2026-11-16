@@ -1,31 +1,39 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! The README's demo maps (`maps/demos/*.mandala.json`, #291), drawn by
-//! the real renderer (TEST_CONVENTIONS §T8) through a projection of
-//! their own, the committed path the README images are made by.
+//! the real renderer (TEST_CONVENTIONS §T8), two ways.
 //!
-//! The app does not draw through the projection yet (the projection is
-//! V1-B7, its wiring V1-C3), so this file holds the least drawing the
-//! demo maps need: each node's sections as boxes, each frame's rings
-//! round the node's outline with the ring's resolved fit, span, sides
-//! and spacing (`RingLayout::of`), and every run drawn at its node's
-//! opacity times its ancestors'. Each connector and line link is the
-//! projector's own (`Projector::project_full`, #296): its ends, its
-//! curve through its control points and its glyphs as the app lays
-//! them. The rest is a test's projection, not the app's: it reads what
-//! the demo maps hold and nothing more (no palettes' own projection, no
-//! portal ends), on the map's one background: the frame is cleared to
-//! it (V1-B12), and a demo map gives none, so it is black. What a demo
-//! map shows is what the format spells: a per-glyph override (a glyph's
-//! offset, scale or color, `format/mutations.md` "Glyph run mutations")
-//! has no spelling in a `.mandala.json` yet, so no demo map carries one
-//! and this projection applies none.
+//! **Each map as it is saved**, through a projection of this file's
+//! own, the committed path the README images are made by: each node's
+//! sections as boxes, each frame's rings round the node's outline with
+//! the ring's resolved fit, span, sides and spacing (`RingLayout::of`),
+//! and every run drawn at its node's opacity times its ancestors'. Each
+//! connector and line link is the projector's own
+//! (`Projector::project_full`, #296): its ends, its curve through its
+//! control points and its glyphs as the app lays them. The rest is a
+//! test's projection, not the app's: it reads what the demo maps hold
+//! and nothing more (no palettes' own projection, no portal ends), on
+//! the map's one background: the frame is cleared to it (V1-B12), and a
+//! demo map gives none, so it is black. It plays no presentation: what
+//! it draws is the map with nothing playing.
+//!
+//! **The maps that carry presentations, with them playing** (V1-D2,
+//! #251): a per-glyph effect — a word swelling, letters lifting, a
+//! trail fading — is a glyph-layer presentation, stored with the map
+//! (`format/presentations.md`). `frames` and `dickinson` carry theirs,
+//! and
+//! [`test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time`]
+//! draws them through the app itself: the app loads the map and
+//! projects it with its own projector, the console starts the
+//! presentations, the clock is stepped to a fixed time, and the frame
+//! is the app's.
 //!
 //! Every assertion is structural, never a pixel (§T10): each demo map
 //! loads, every ring and connector it holds is placed with no glyph
 //! lost, and the frame drawn holds a run for each, read back from the
 //! renderer. With `MANDALA_DEMO_OUT` set to a directory, each map's
-//! frame is also written there as `<name>.png` — the README images:
+//! frame is also written there as `<name>.png` — the README images —
+//! and a presented map's as `<name>-presented.png`:
 //!
 //! ```sh
 //! MANDALA_DEMO_OUT=target/demos cargo test -p mandala demo_maps
@@ -54,7 +62,7 @@ use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
 use baumhard::gfx_structs::tree::GfxTree;
-use baumhard::projection::{GlyphLayers, Layer, Projector};
+use baumhard::projection::{glyph_mutations, GlyphLayers, Layer, Projector};
 use glam::Vec2;
 
 use super::gpu_harness::headless_app;
@@ -126,6 +134,36 @@ fn in_points(mut style: ResolvedText, side: f32) -> ResolvedText {
         style.size = FontSize::Pt(fraction * side);
     }
     style
+}
+
+/// Where each glyph of `run` is laid out on the canvas: the run's origin
+/// and each glyph's place in its shaping, before an override moves it.
+fn laid_out(run: &GlyphRunData) -> Vec<Vec2> {
+    let origin = run.origin();
+    match run.shaped() {
+        RunShape::Box(shaped) => shaped
+            .buffer
+            .layout_runs()
+            .flat_map(|line| {
+                let top = line.line_top;
+                line.glyphs
+                    .iter()
+                    .map(move |glyph| origin + Vec2::new(glyph.x, top))
+            })
+            .collect(),
+        RunShape::Path { placed, .. } => placed.glyphs.iter().map(|glyph| origin + glyph.pos).collect(),
+    }
+}
+
+/// Every element below `id` and `id` itself, parents first.
+fn subtree_of(doc: &Document, id: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let mut stack = vec![id];
+    while let Some(at) = stack.pop() {
+        out.push(at);
+        stack.extend(doc.children(at));
+    }
+    out
 }
 
 /// The children of `id` of `kind`, in their row's order.
@@ -467,6 +505,360 @@ fn test_demo_maps_draw_every_ring_and_path() {
         if let Some(dir) = &out {
             std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
             let file = dir.join(format!("{name}.png"));
+            let mut handle =
+                std::fs::File::create(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+            crate::application::capture::png::encode(&pixels, &mut handle, &mut || {})
+                .unwrap_or_else(|e| panic!("{}: {e:?}", file.display()));
+            eprintln!("{name}: wrote {}", file.display());
+        }
+    }
+}
+
+/// What a demo map's presentations are held to: the node they are
+/// started on, the frame's time on their timeline, and, per
+/// presentation in start order, its layer, its progress then and — on
+/// the glyph layer — the words each of its ranges names.
+struct Presented {
+    map: &'static str,
+    node: u64,
+    at_ms: u64,
+    presentations: &'static [(&'static str, &'static str, f32, &'static [&'static str])],
+}
+
+/// The README's two presented maps (#251, the acceptance cases moved
+/// from #250). Frames: the words "an ellipse" of the ellipse's ring, at
+/// 1.15 times their size. Dickinson, 1200 ms on: "Hope" three quarters
+/// of the way through its swell (`f²(3 - 2f)` at `f = 0.75`), the line
+/// held where centering put it and the trail of dots written after
+/// "feathers" (two document-layer presentations: the map saves the line
+/// centered and the span empty), and the letters of "feathers" and the
+/// trail half way through their lift in time and three quarters in
+/// progress (`1 - (1 - f)²` at `f = 0.5`).
+const PRESENTED: [Presented; 2] = [
+    Presented {
+        map: "frames",
+        node: 2,
+        at_ms: 0,
+        presentations: &[("an-ellipse", "glyph", 1.0, &["an ellipse"])],
+    },
+    Presented {
+        map: "dickinson",
+        node: 1,
+        at_ms: 1200,
+        presentations: &[
+            ("hope-swells", "glyph", 0.84375, &["Hope"]),
+            ("feathers-line", "document", 1.0, &[]),
+            ("feathers-trail", "document", 1.0, &[]),
+            ("feathers-rest", "glyph", 1.0, &["feathers", "·····"]),
+            (
+                "feathers-lift",
+                "glyph",
+                0.75,
+                &[
+                    "f", "f", "f", "e", "e", "e", "a", "a", "a", "t", "t", "t", "h", "h", "h", "e", "e", "e",
+                    "r", "r", "r", "s", "s", "s", "·", "·", "·", "·", "·", "·", "·", "·", "·", "·",
+                ],
+            ),
+        ],
+    },
+];
+
+/// The text the placed glyphs `range` of `run` were shaped from, read
+/// off the run's own record of which span and which bytes each glyph
+/// came from.
+fn text_of(run: &GlyphRunData, spans: &[String], range: std::ops::Range<usize>) -> String {
+    let piece = |span: usize, bytes: &std::ops::Range<usize>| {
+        spans
+            .get(span)
+            .and_then(|text| text.get(bytes.clone()))
+            .unwrap_or("\u{fffd}")
+            .to_string()
+    };
+    match run.shaped() {
+        RunShape::Box(shaped) => range
+            .filter_map(|glyph| shaped.glyph_spans.get(glyph))
+            .map(|(span, bytes)| piece(*span, bytes))
+            .collect(),
+        RunShape::Path { run, placed } => range
+            .filter_map(|glyph| placed.glyphs.get(glyph))
+            .filter_map(|placed| run.glyphs.get(placed.glyph as usize))
+            .map(|glyph| piece(glyph.span, &glyph.bytes))
+            .collect(),
+    }
+}
+
+/// **The demo maps' presentations are drawn through the path the app
+/// runs a presentation by, at a fixed time on their timeline**: the
+/// real app loads the map and projects it, the console's `present`
+/// verb starts each presentation the map carries, the clock is stepped
+/// to the frame's time, and the frame is drawn. (What starts them when
+/// a map opens is a trigger, V1-D3's; until then the console is the
+/// route a person has.)
+///
+/// Held: the map carries exactly the presentations listed; with
+/// nothing playing no span holds Dickinson's trail and none is drawn;
+/// what plays moves no glyph of the run that was there before it (on
+/// Dickinson, `feathers-line` holds the line where centering put it
+/// while `feathers-trail` writes after it), read off the run's own
+/// layout and so for any face; every range of every run mutation names
+/// the words it is for, read off the shaped run; each instance is at the
+/// progress its timing puts it at; and the run on the glyph layer
+/// carries each scale at that progress, with no other glyph of it
+/// scaled. With `MANDALA_DEMO_OUT`
+/// set, the frame is written there as `<name>-presented.png`.
+///
+/// Controls, each seen red: a range moved by one glyph names another
+/// word; with the glyph-layer stage not stamping what plays, the run
+/// carries no scale; the trail saved in the map's span, as it once was,
+/// is drawn with nothing playing; `feathers-line`'s offset one unit off
+/// moves glyph 0 of the line.
+#[test]
+fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
+    use baumhard::document::presentation::PresentationBody;
+    use baumhard::gfx_structs::mutator::GfxMutation;
+    use baumhard::gfx_structs::run::RunOverrideOp;
+    use serde_json::json;
+
+    use super::ipc_target::IpcCommandTarget;
+    use super::step::Beat;
+    use crate::application::document::selection::every_node;
+    use crate::application::ipc::run_attached;
+
+    let out = std::env::var_os(OUT_ENV).map(PathBuf::from);
+    for case in PRESENTED {
+        let name = case.map;
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(DEMOS)
+            .join(format!("{name}.mandala.json"));
+        let Some(mut app) = headless_app(path.to_str().expect("a UTF-8 path")) else {
+            return;
+        };
+        let init = &mut app.init;
+        init.input_context().drain_frame(Beat::Loop);
+        let ipc = |init: &mut InitState, request: serde_json::Value| {
+            let reply = run_attached(&request.to_string(), &mut IpcCommandTarget::new(init)).0;
+            assert_eq!(reply["ok"], true, "{name}: {request}: {reply}");
+            reply["result"].clone()
+        };
+
+        // The map carries these, and no other.
+        let carried: Vec<String> = init
+            .document
+            .as_ref()
+            .expect("the map loaded")
+            .doc()
+            .definitions()
+            .presentations
+            .iter()
+            .map(|def| def.id.clone())
+            .collect();
+        let listed: Vec<&str> = case.presentations.iter().map(|(id, _, _, _)| *id).collect();
+        assert_eq!(carried, listed, "{name}: the presentations the map carries");
+        // With nothing playing the map draws, and holds, no text of a
+        // presentation's: Dickinson's trail of five dots is written by
+        // one, into a span the map saves empty. (The frames map's
+        // ornaments are single dots of its own.)
+        let found = |init: &mut InitState| {
+            let reply = ipc(init, json!({"id": 1, "cmd": "scene.find_text", "text": "·····"}));
+            reply["matches"].as_array().map_or(0, Vec::len)
+        };
+        assert_eq!(found(init), 0, "{name}: nothing playing, no trail is drawn");
+        let doc = init.document.as_ref().expect("the map loaded").doc();
+        let held: Vec<String> = every_node(doc)
+            .flat_map(|node| children_of(doc, node, DocKind::Section))
+            .flat_map(|section| children_of(doc, section, DocKind::Span))
+            .filter_map(|span| match doc.get(span) {
+                Some(DocElement::Span(span)) if span.text.contains("·····") => {
+                    Some(span.text.to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            held,
+            Vec::<String>::new(),
+            "{name}: the map itself holds no trail"
+        );
+
+        // Where every run of the node's elements is laid out now, with
+        // nothing playing, by element.
+        let laid_before: Vec<(NodeId, Vec<Vec2>)> = {
+            let view = init.view.as_ref().expect("the app has a view");
+            let doc = init.document.as_ref().expect("the map loaded").doc();
+            let node = doc
+                .node_by_ident(baumhard::document::ids::NodeIdent(case.node as u32))
+                .expect("the node the presentations start on");
+            subtree_of(doc, node)
+                .into_iter()
+                .filter_map(|element| {
+                    let (layer, glyph) = *view.projector().glyphs_of(element).first()?;
+                    let run = view.layers().tree(layer).get(glyph)?.get().glyph_run()?;
+                    Some((element, laid_out(run)))
+                })
+                .collect()
+        };
+
+        for id in &listed {
+            ipc(
+                init,
+                json!({"id": 1, "cmd": "act.console", "line": format!("present start {id} {}", case.node)}),
+            );
+        }
+        if case.at_ms > 0 {
+            ipc(init, json!({"id": 1, "cmd": "clock.step", "ms": case.at_ms}));
+        }
+        init.input_context().drain_frame(Beat::Loop);
+        let playing = ipc(init, json!({"id": 1, "cmd": "query.animations"}));
+        for (at, (id, layer, t, _)) in case.presentations.iter().enumerate() {
+            let instance = &playing["presentations"][at];
+            assert_eq!(
+                (&instance["presentation"], &instance["layer"], &instance["node"]),
+                (&json!(id), &json!(layer), &json!(case.node)),
+                "{name}: {instance}"
+            );
+            let reported = instance["t"].as_f64().expect("t") as f32;
+            assert!(
+                (reported - t).abs() < 1e-6,
+                "{name}: `{id}` is at {reported}, not {t}"
+            );
+        }
+
+        // The one run they play on, and the text it was shaped from.
+        let view = init.view.as_ref().expect("the app has a view");
+        let doc = init.document.as_ref().expect("the map loaded").doc();
+        let based = view.stage().based_runs();
+        assert_eq!(based.len(), 1, "{name}: they play on one run: {based:?}");
+        let (layer, glyph) = based[0];
+        let element = view
+            .projector()
+            .element_of(layer, glyph)
+            .expect("the run is an element's");
+        // What plays moves no glyph of the run that was there before it
+        // started: on Dickinson, the line is held where centering put it
+        // while the trail is written after it. Read off the run's own
+        // layout, so it holds for any face.
+        let before = laid_before
+            .iter()
+            .find(|(of, _)| *of == element)
+            .map(|(_, laid)| laid.clone())
+            .expect("the run was laid out before anything played");
+        {
+            let run = view
+                .layers()
+                .tree(layer)
+                .get(glyph)
+                .and_then(|node| node.get().glyph_run())
+                .expect("a run");
+            let now = laid_out(run);
+            assert!(
+                now.len() >= before.len(),
+                "{name}: {} glyphs, then {}",
+                before.len(),
+                now.len()
+            );
+            for (at, (was, is)) in before.iter().zip(&now).enumerate() {
+                assert!(
+                    (*is - *was).length() < 1e-3,
+                    "{name}: glyph {at} was laid out at {was}, and is at {is} while it plays"
+                );
+            }
+        }
+        let spans: Vec<String> = children_of(doc, element, DocKind::Span)
+            .into_iter()
+            .filter_map(|span| match doc.get(span) {
+                Some(DocElement::Span(span)) => Some(span.text.to_string()),
+                _ => None,
+            })
+            .collect();
+        let run = view
+            .layers()
+            .tree(layer)
+            .get(glyph)
+            .and_then(|node| node.get().glyph_run())
+            .expect("a run");
+
+        // Every range names the words it is for; and the scales and the
+        // offsets the run should carry now, glyph by glyph, with which
+        // glyphs a color was given.
+        let mut scales = vec![1.0_f32; run.shaped().glyph_count()];
+        let mut offsets = vec![Vec2::ZERO; scales.len()];
+        let mut colored = vec![false; scales.len()];
+        for (def, (id, layer, t, words)) in doc.definitions().presentations.iter().zip(case.presentations) {
+            let PresentationBody::Glyph(ops) = &def.body else {
+                assert_eq!(*layer, "document", "{name}: `{id}` is a glyph-layer presentation");
+                continue;
+            };
+            let mut named = Vec::new();
+            for mutation in glyph_mutations(ops) {
+                let GfxMutation::RunOverrides(op) = mutation else {
+                    panic!("{name}: `{id}` writes overrides only: {mutation:?}");
+                };
+                let range = match &op {
+                    RunOverrideOp::Offset { range, .. }
+                    | RunOverrideOp::Color { range, .. }
+                    | RunOverrideOp::Scale { range, .. } => range.clone(),
+                    RunOverrideOp::Clear => panic!("{name}: `{id}` clears nothing"),
+                };
+                assert!(
+                    range.end <= scales.len(),
+                    "{name}: `{id}`: {range:?} is inside the run's {} glyphs",
+                    scales.len()
+                );
+                named.push(text_of(run, &spans, range.clone()));
+                for glyph in range {
+                    match &op {
+                        RunOverrideOp::Scale { value, .. } => scales[glyph] = 1.0 + (value - 1.0) * t,
+                        RunOverrideOp::Offset { value, .. } => offsets[glyph] = *value * *t,
+                        RunOverrideOp::Color { .. } => colored[glyph] = true,
+                        RunOverrideOp::Clear => {}
+                    }
+                }
+            }
+            assert_eq!(named, *words, "{name}: the words `{id}`'s ranges name");
+        }
+        let carried = run.overrides();
+        assert_eq!(carried.len(), scales.len(), "{name}: an override a glyph");
+        for glyph in 0..scales.len() {
+            let (scale, offset, color) = (
+                carried.scale()[glyph],
+                carried.offset()[glyph],
+                carried.color()[glyph],
+            );
+            assert!(
+                (scale - scales[glyph]).abs() < 1e-5,
+                "{name}: glyph {glyph} is drawn at {scale} times its size, not {}",
+                scales[glyph]
+            );
+            assert!(
+                (offset - offsets[glyph]).length() < 1e-4,
+                "{name}: glyph {glyph} is moved by {offset}, not {}",
+                offsets[glyph]
+            );
+            assert_eq!(
+                color.is_some(),
+                colored[glyph],
+                "{name}: glyph {glyph} has a color of a presentation's: {color:?}"
+            );
+        }
+        assert!(
+            scales.iter().any(|scale| *scale != 1.0),
+            "{name}: precondition: something is scaled"
+        );
+
+        // And the frame is drawn, through the app's own camera fitted to
+        // the map.
+        ipc(init, json!({"id": 1, "cmd": "act.action", "action": "ZoomFit"}));
+        init.input_context().drain_frame(Beat::Loop);
+        let camera = *init.renderer.camera();
+        let pixels = draw(init, &camera);
+        let counts = init.renderer.glyph_run_counts();
+        assert!(
+            counts.runs_drawn > 0 && counts.instances > 0,
+            "{name}: drawn: {counts:?}"
+        );
+        if let Some(dir) = &out {
+            std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+            let file = dir.join(format!("{name}-presented.png"));
             let mut handle =
                 std::fs::File::create(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
             crate::application::capture::png::encode(&pixels, &mut handle, &mut || {})

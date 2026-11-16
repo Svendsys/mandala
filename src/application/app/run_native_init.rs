@@ -86,6 +86,9 @@ pub(super) struct InitState {
     /// The edits' App and User tiers and the handlers, loaded once at
     /// startup (`application::edits`); a map's own are its document's.
     pub(super) edits: crate::application::edits::EditRegistry,
+    /// The presentations' App and User tiers, loaded once at startup
+    /// (`application::presentations`); a map's own are its document's.
+    pub(super) presentations: crate::application::presentations::PresentationRegistry,
     /// Touch gesture state machine. Fed by `WindowEvent::Touch`
     /// events (winit); emits a tap, a long-press, a one-finger pan
     /// step or a two-finger pinch step. Cross-platform peer of WASM's
@@ -146,6 +149,7 @@ impl InitState {
             keybinds: &self.keybinds,
             macros: &mut self.macros,
             edits: &self.edits,
+            presentations: &self.presentations,
             artifacts: &mut self.artifacts,
             recorder: &mut self.recorder,
             watchdog: &self.watchdog,
@@ -196,6 +200,14 @@ impl InitState {
             continuing: self.needs_continuation(),
             redraw_owed: !self.redraws.is_current(),
             virtual_clock: self.clock.is_virtual(),
+            animating: self
+                .document
+                .as_ref()
+                .is_some_and(MindMapDocument::animations_moving),
+            looping: self
+                .document
+                .as_ref()
+                .is_some_and(MindMapDocument::presentation_loops),
         }
     }
 
@@ -322,6 +334,8 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
     let macros = crate::application::macros::loader::build_macro_registry();
     // The edits' App and User tiers, on both targets the same way.
     let edits = crate::application::edits::EditRegistry::load();
+    // And the presentations'.
+    let presentations = crate::application::presentations::PresentationRegistry::load();
 
     // Real, reading the wall clock, for a launch a person watches:
     // only `clock.set_mode` or the `clock` verb leaves it. Virtual with
@@ -363,6 +377,7 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
 
         macros,
         edits,
+        presentations,
         // Touch gesture recognizer. State machine starts Idle;
         // first `WindowEvent::Touch` lands a finger.
         touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),

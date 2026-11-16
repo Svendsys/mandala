@@ -9,10 +9,12 @@
 //! MindMapDocument ──take_changes()──▶ Projector::update ──▶ GlyphLayers
 //!        │ (once per change)                │ LayerChanges
 //!        └──▶ the IPC event stream          ▼
-//!                               overlays re-stamped on what changed
+//!                  glyph-layer presentations put back where a run is
+//!                  rewritten; overlays re-stamped on what changed;
+//!                  the presentations written again on those runs
 //!                                           │ their journals
 //!                                           ▼
-//!                       LayerRenderer::apply(projector's ++ overlays')
+//!          LayerRenderer::apply(projector's ++ overlays' ++ presentations')
 //!                                           │ LayerChanges
 //!                                           ▼
 //!                       chrome builders ──▶ LayerRenderer::apply_chrome
@@ -24,8 +26,10 @@
 //! document, one load of the renderer's state. After it, every change
 //! goes through [`MapView::sync`], which drains the document's change
 //! feed **once**, hands the records to the projector, re-stamps the
-//! overlays on exactly the runs the projector wrote, applies both sets of
-//! journals to the renderer, discards them, and keeps the records for
+//! overlays on exactly the runs the projector wrote, writes the
+//! glyph-layer presentations on exactly the runs that need them
+//! ([`present`]), applies every set of journals to the renderer, discards
+//! them, and keeps the records for
 //! the IPC event stream, which reads them at its next look at the app
 //! ([`MapView::pending_feed`]). There is no rebuild function. A camera change
 //! calls none of this: the renderer applies the camera when it draws
@@ -54,8 +58,11 @@ pub(crate) mod band;
 pub(crate) mod chrome;
 pub(crate) mod inspect;
 pub(crate) mod overlay;
+pub(crate) mod present;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_present;
 
 use baumhard::arena::NodeId;
 use baumhard::document::resolve::resolve_background;
@@ -115,6 +122,9 @@ pub(crate) struct MapView {
     /// The node a reparent or a connect would land on, while the pointer
     /// is over a valid one in either mode.
     hover_target: Option<NodeId>,
+    /// The glyph-layer presentation instances as they stand on the
+    /// layers ([`present`]).
+    stage: present::Stage,
     /// The tint of a reparent's or a connect's sources, stamped on
     /// [`Self::source_targets`] in place of the selection's.
     sources: Overlay,
@@ -205,6 +215,7 @@ impl MapView {
             highlight: Overlay::tint(SELECTION_HIGHLIGHT),
             hover: Overlay::tint(TARGET_HIGHLIGHT),
             hover_target: None,
+            stage: present::Stage::of(doc.doc()),
             sources: Overlay::tint(SOURCE_HIGHLIGHT),
             source_targets: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -228,8 +239,9 @@ impl MapView {
     ///
     /// Does nothing to any tree, and calls the renderer not at all, when
     /// the document did not change, the highlight's targets did not
-    /// either, and neither did its status line: what a frame with nothing
-    /// to do, a pan and a zoom cost. Returns whether it did anything —
+    /// either, no presentation instance started, ended or moved, and the
+    /// status line is the one shown: what a frame with nothing to do, a
+    /// pan and a zoom cost. Returns whether it did anything —
     /// whether the frame owes a redraw.
     ///
     /// The status line is the document's ([`MindMapDocument::status`],
@@ -243,7 +255,8 @@ impl MapView {
     /// journals.
     ///
     /// Cost: the projector's update (proportional to the changes and their
-    /// readers), the overlay's re-stamp (the runs named), each chrome
+    /// readers), the overlay's re-stamp (the runs named), the glyph-layer
+    /// presentations' rewrite (the runs [`present`] names), each chrome
     /// builder's reading of the changes, the renderer's apply (the
     /// elements the journals name); O(1) for the status line.
     pub(crate) fn sync(&mut self, doc: &mut MindMapDocument, renderer: &mut Renderer) -> bool {
@@ -257,7 +270,8 @@ impl MapView {
             .into_iter()
             .flat_map(LayerRenderer::journals_of);
         let stamped = pass.stamps.iter().flat_map(OverlayJournals::journals);
-        renderer.apply_layer_journals(&self.layers, projected.chain(stamped));
+        let presented = pass.presented.journals();
+        renderer.apply_layer_journals(&self.layers, projected.chain(stamped).chain(presented));
         if let Some(changes) = &pass.changes {
             renderer.set_background(resolve_background(doc.doc().tree(), &mut ()).0);
             if let Some(journal) = self.follow_chrome(changes, doc) {
@@ -358,6 +372,7 @@ impl MapView {
             band_targets,
             projector,
             layers,
+            stage,
             ..
         } = self;
         let mut targets: Vec<NodeId> = match band_targets {
@@ -372,27 +387,52 @@ impl MapView {
             (sources, source_targets.as_slice()),
             (highlight, &targets),
         ];
-        if changes.is_none() && overlays.iter().all(|(overlay, want)| overlay.targets() == *want) {
+        if changes.is_none()
+            && overlays.iter().all(|(overlay, want)| overlay.targets() == *want)
+            && stage.is_current(doc.doc())
+        {
             return None;
         }
         // Every overlay's targets that leave are cleared before any
         // overlay stamps the ones that came, so a node that passes from
         // one overlay to another in this pass ends with the second's tint.
-        let mut stamps = Vec::with_capacity(2 * overlays.len());
-        for (overlay, want) in &mut overlays {
+        // All of it is planned before any of it is written: a run a
+        // glyph-layer presentation plays on is put back to its base
+        // before an overlay writes it, and played on again after.
+        let mut plans = Vec::with_capacity(2 * overlays.len());
+        for (index, (overlay, want)) in overlays.iter_mut().enumerate() {
             let kept: Vec<NodeId> = overlay
                 .targets()
                 .iter()
                 .copied()
                 .filter(|t| want.contains(t))
                 .collect();
-            stamps.push(overlay.update(&kept, changes.as_ref(), doc.doc(), projector, layers));
+            plans.push((
+                index,
+                overlay.plan(&kept, changes.as_ref(), doc.doc(), projector, layers),
+            ));
         }
-        for (overlay, want) in &mut overlays {
-            stamps.push(overlay.update(want, None, doc.doc(), projector, layers));
+        for (index, (overlay, want)) in overlays.iter_mut().enumerate() {
+            plans.push((index, overlay.plan(want, None, doc.doc(), projector, layers)));
         }
+        let lifted = stage.lift(
+            doc.doc(),
+            projector,
+            changes.as_ref(),
+            plans.iter().flat_map(|(_, planned)| planned.runs()),
+            layers,
+        );
+        let stamps = plans
+            .into_iter()
+            .map(|(index, planned)| overlays[index].0.write(planned, layers))
+            .collect();
+        let presented = stage.stamp(lifted, doc.doc(), projector, layers);
         self.feed.extend(records);
-        Some(Pass { changes, stamps })
+        Some(Pass {
+            changes,
+            stamps,
+            presented,
+        })
     }
 
     /// Follow the interaction mode: a reparent's or a connect's sources
@@ -430,6 +470,7 @@ impl MapView {
         for stamps in pass.stamps {
             stamps.discard(&mut self.layers);
         }
+        pass.presented.discard(&mut self.layers);
     }
 
     /// The node whose body holds `point`, on the canvas — a path or a
@@ -487,12 +528,25 @@ impl MapView {
                 .map(|(_, j)| j.touched().count())
                 .sum()
         });
+        let rewritten = pass
+            .changes
+            .iter()
+            .flat_map(LayerRenderer::journals_of)
+            .flat_map(|(layer, journal)| journal.touched().map(move |(id, _)| (layer, id)))
+            .collect();
         let stamped = pass
             .stamps
             .iter()
             .flat_map(OverlayJournals::journals)
             .flat_map(|(layer, journal)| journal.touched().map(move |(id, _)| (layer, id)))
             .collect();
+        let mut presented: Vec<(baumhard::projection::Layer, NodeId)> = pass
+            .presented
+            .journals()
+            .flat_map(|(layer, journal)| journal.touched().map(move |(id, _)| (layer, id)))
+            .collect();
+        presented.sort_unstable_by_key(|&(layer, glyph)| (layer.index(), glyph));
+        presented.dedup();
         let chrome = match &pass.changes {
             Some(changes) => match self.follow_chrome(changes, doc) {
                 Some(journal) => {
@@ -507,7 +561,9 @@ impl MapView {
         self.finish(pass);
         Some(SyncReport {
             projected,
+            rewritten,
             stamped,
+            presented,
             chrome,
         })
     }
@@ -651,6 +707,13 @@ impl MapView {
         &self.layers
     }
 
+    /// The glyph-layer presentations' stage, for the tests that count
+    /// its work.
+    #[cfg(test)]
+    pub(crate) fn stage(&self) -> &present::Stage {
+        &self.stage
+    }
+
     /// The elements the highlight is stamped on now.
     #[cfg(test)]
     pub(crate) fn highlighted(&self) -> &[NodeId] {
@@ -664,6 +727,9 @@ struct Pass {
     changes: Option<LayerChanges>,
     /// What the overlays cleared, then what they stamped.
     stamps: Vec<OverlayJournals>,
+    /// What the glyph-layer presentations put back, then what they
+    /// wrote.
+    presented: present::StageJournals,
 }
 
 /// What [`MapView::sync_for_test`] saw a pass write.
@@ -671,8 +737,13 @@ struct Pass {
 pub(crate) struct SyncReport {
     /// How many element touches the projector's journals named.
     pub(crate) projected: usize,
+    /// The glyph elements the projector's journals named, by layer.
+    pub(crate) rewritten: Vec<(baumhard::projection::Layer, NodeId)>,
     /// The glyphs the overlay stamped or cleared, by layer.
     pub(crate) stamped: Vec<(baumhard::projection::Layer, NodeId)>,
+    /// The runs the glyph-layer presentations wrote — put back, or
+    /// played on — by layer, each once, in layer then id order.
+    pub(crate) presented: Vec<(baumhard::projection::Layer, NodeId)>,
     /// The chrome elements the chrome builders' journal touched.
     pub(crate) chrome: Vec<NodeId>,
 }

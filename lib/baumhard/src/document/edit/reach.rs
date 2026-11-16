@@ -19,7 +19,7 @@ use rustc_hash::FxHashSet;
 /// each once. O(the nodes reached and their children), plus the tree
 /// order's sort: `descendants` and `subtree` walk the anchors' subtrees,
 /// every other reach stays beside the anchors.
-pub(super) fn elements(
+pub(crate) fn elements(
     doc: &Document,
     anchors: &[NodeId],
     reach: Reach,

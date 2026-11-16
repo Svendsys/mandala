@@ -5,7 +5,9 @@
 //! hostile texts read as files, and each property shown to go red.
 
 use crate::document::bounds::{MAX_DEFINITION_DEPTH, MAX_DEFINITION_PARTS};
-use crate::document::tests::edit_fuzz::{check_edits_generated, check_edits_json, generate};
+use crate::document::tests::edit_fuzz::{
+    check_edits_built_from_what_plays, check_edits_generated, check_edits_json, generate,
+};
 use crate::util::tests::choices::Choices;
 
 #[test]
@@ -72,6 +74,28 @@ fn test_seed_and_hostile_edit_files_hold_every_property() {
     ] {
         check_edits_json(text.as_bytes()).unwrap_or_else(|why| panic!("{why}"));
     }
+}
+
+/// The differential goes red on an edit built from the map as it is
+/// drawn (ruling D2.1 §2 on #251): the app's own `flower` lays a node's
+/// children out round it from where they are, and under a performance
+/// that moves every node they are somewhere else; a filter that keeps
+/// the large spans keeps other spans where a presentation grows them.
+/// Built from the map itself, both pass.
+#[test]
+fn test_the_differential_reports_an_edit_built_from_what_plays() {
+    let bundled = std::fs::read_to_string(crate::util::doc_fixtures::repo_path("assets/edits.json"))
+        .expect("the bundled edits are in the repository");
+    let bundled = bundled.as_str();
+    check_edits_json(bundled.as_bytes()).unwrap_or_else(|why| panic!("{why}"));
+    let why = check_edits_built_from_what_plays(bundled).expect_err("a layout read off what plays");
+    assert!(why.contains("under a performance"), "{why}");
+    let filtered = r##"{"edits":[{"id":"large","name":"L","reach":"subtree","target":"spans",
+        "filter":{"fields":[[{"font_size":{"pt":20.0}},{"GreaterThan":false}]]},
+        "mutations":[{"span":{"text":{"set_color":"#102030"}}}]}]}"##;
+    check_edits_json(filtered.as_bytes()).unwrap_or_else(|why| panic!("{why}"));
+    let why = check_edits_built_from_what_plays(filtered).expect_err("a filter read off what plays");
+    assert!(why.contains("under a performance"), "{why}");
 }
 
 /// The path property goes red on a generated text the reader refuses

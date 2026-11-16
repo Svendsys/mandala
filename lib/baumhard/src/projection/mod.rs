@@ -84,6 +84,8 @@ mod hit;
 mod input;
 /// The five layers, and one update's journals of them.
 mod layers;
+/// A glyph-layer presentation's body as run mutations (#251).
+mod presentation;
 /// The projector's shaping cache: one shaping per key (#304, ruling B7.4).
 mod shapes;
 /// The stages of a node's and a unit's projection.
@@ -108,6 +110,7 @@ pub mod tests;
 pub use hit::Hit;
 pub use input::{Dependent, ProjectionInput, Stage};
 pub use layers::{GlyphLayers, Layer, LayerChanges, CHILD_GROUP_CHANNEL, RUN_CHANNEL};
+pub use presentation::glyph_mutations;
 
 use std::sync::Arc;
 
