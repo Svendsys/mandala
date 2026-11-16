@@ -9,7 +9,10 @@
 //! Runs are built from **synthetic** shapes — advances, positions and
 //! spans the test chooses — so expected bounds are literals worked by
 //! hand and no test shapes text through the font system it would
-//! otherwise be checking against (TEST_CONVENTIONS §T13, shape 6).
+//! otherwise be checking against (TEST_CONVENTIONS §T13, shape 6). The
+//! one exception is a run's own colors, which are what shaping records
+//! of each span's color: that test shapes for real, and its expected
+//! colors are the literals its spans are given.
 //!
 //! Follows the `do_*()` / `test_*()` split (§T2.2); the tests that
 //! drive a `debug_assert!` are plain `#[test]`s, a panic being the
@@ -691,6 +694,82 @@ pub fn do_run_override_ops_skip_filler_glyphs() {
     );
     let untouched = with_ops(shape, vec![]);
     assert!(element.same_state(&untouched), "the run is exactly as it was");
+}
+
+// ── own colors ────────────────────────────────────────────────────
+
+#[test]
+fn test_run_own_colors_follow_the_glyphs_the_run_draws() {
+    do_run_own_colors_follow_the_glyphs_the_run_draws();
+}
+
+/// A run's own colors — the colors its glyphs are drawn in with no
+/// override, which a glyph-layer presentation fades from — are indexed
+/// as its overrides are: a box run's in layout order, a path run's per
+/// placed glyph, so a placement that reorders, repeats or names a glyph
+/// the layout lacks has its colors follow it. Shaped for real, two spans
+/// in two colors (the second half transparent); expected values are
+/// those literals.
+pub fn do_run_own_colors_follow_the_glyphs_the_run_draws() {
+    use crate::document::values::Align;
+    use crate::flow::tests::support::{style, with_fonts};
+    use crate::flow::{shape_box, shape_run, FlowSpan};
+
+    const FIRST: Rgba = Rgba::new(0x10, 0x20, 0x30, 0xff);
+    const SECOND: Rgba = Rgba::new(0xa0, 0xb0, 0xc0, 0x80);
+    let (mut first, mut second) = (style(20.0), style(20.0));
+    first.color = FIRST;
+    second.color = SECOND;
+    let spans = [
+        FlowSpan {
+            text: "ab",
+            style: &first,
+            link: None,
+        },
+        FlowSpan {
+            text: "cd",
+            style: &second,
+            link: None,
+        },
+    ];
+    let (boxed, run) = with_fonts(|fs| {
+        (
+            shape_box(&spans, None, Align::Left, fs),
+            shape_run(&spans, 1.0, fs),
+        )
+    });
+    assert_eq!(
+        (boxed.glyph_spans.len(), run.glyphs.len()),
+        (4, 4),
+        "precondition: one glyph a letter"
+    );
+
+    let boxed = RunShape::Box(Arc::new(boxed));
+    assert_eq!(
+        boxed.own_colors(),
+        [Some(FIRST), Some(FIRST), Some(SECOND), Some(SECOND)],
+        "a box run's glyphs, in layout order, each in its span's color"
+    );
+
+    let placed = [3, 0, 0, 2, 9]
+        .into_iter()
+        .map(|glyph| PlacedGlyph {
+            glyph,
+            pos: Vec2::ZERO,
+        })
+        .collect();
+    let path = RunShape::Path {
+        run: Arc::new(run),
+        placed: Arc::new(PlacedRun {
+            glyphs: placed,
+            truncated: false,
+        }),
+    };
+    assert_eq!(
+        path.own_colors(),
+        [Some(SECOND), Some(FIRST), Some(FIRST), Some(SECOND), None],
+        "a path run's placed glyphs, each the color of the glyph it places; none for one the layout lacks"
+    );
 }
 
 // ── clone_from ────────────────────────────────────────────────────

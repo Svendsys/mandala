@@ -58,9 +58,9 @@
 
 use baumhard::document::values::Rgba;
 use baumhard::flow::{GlyphMetrics, PlacedGlyph};
-use baumhard::font::{Color, LayoutGlyph, COLOR_WHITE};
+use baumhard::font::LayoutGlyph;
 use baumhard::gfx_structs::camera::{Camera2D, Visibility};
-use baumhard::gfx_structs::run::{GlyphRunData, RunShape};
+use baumhard::gfx_structs::run::{own_color, GlyphRunData, RunShape};
 use baumhard::gfx_structs::zoom_visibility::ZoomVisibility;
 use glam::Vec2;
 use glyphon::CacheKey;
@@ -341,10 +341,12 @@ impl GlyphStyle<'_> {
             laid.font_weight,
             laid.cache_key_flags,
         );
-        let color = match self.colors.get(at.index).copied().flatten() {
-            Some(Rgba(rgba)) => rgba,
-            None => color_bytes(laid.color_opt.unwrap_or(COLOR_WHITE)),
-        };
+        let Rgba(color) = self
+            .colors
+            .get(at.index)
+            .copied()
+            .flatten()
+            .unwrap_or_else(|| own_color(laid));
         let alpha = (f32::from(color[3]) * self.opacity).round() as u8;
         sink(GlyphSprite {
             key,
@@ -368,9 +370,4 @@ impl GlyphStyle<'_> {
             || screen.x > w as f32 + margin
             || screen.y > h as f32 + margin
     }
-}
-
-/// A cosmic-text color as `[r, g, b, a]` bytes.
-fn color_bytes(color: Color) -> [u8; 4] {
-    [color.r(), color.g(), color.b(), color.a()]
 }
