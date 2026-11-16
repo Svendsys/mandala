@@ -156,8 +156,12 @@ fn test_generated_flows_hold_every_flow_property() {
 /// flow_structured_every_face target are where a span pins `Mandala
 /// Ornaments`, `Mandala Emoji` — the first compiled face with no outline
 /// and no space — `Inter Variable`, the first variable one, or `Scrapbook
-/// Chinese`, the first symbol font. The seeds are other inputs than the
-/// sweep above's, the list being longer.
+/// Chinese`, the first symbol font that maps the whole printable Latin-1
+/// range and so draws a text-shaped string entirely in its own glyphs
+/// (`Symbols1`, a symbol font holding only capital letters, is in
+/// `faces()`).
+/// The seeds are other inputs than the sweep above's, the list being
+/// longer.
 ///
 /// Precondition: each of [`later_faces`] is pinned by some seed's spans
 /// or flow, so the sweep cannot pass without meeting them. Controls: with
@@ -184,28 +188,82 @@ fn test_generated_flows_over_every_face_hold_every_flow_property() {
     }
 }
 
-/// `faces()` never changes length, as its doc says: a choice picks a face
-/// at its value modulo the list's length, so a face added anywhere moves
-/// every committed flow_structured seed and finding to another face, and
-/// silently, since each still passes. So the length is held to what it
-/// was when they were drawn. #355 is how it nearly
-/// moved: Scrapbook Chinese, left out only because it had no ids until
-/// then, gained them and would have joined it. A face a map can newly
-/// pin goes in `later_faces` instead. Control: `ScrapbookChinese` taken
-/// out of `later_faces`, red on the length.
+/// `faces()` never changes, as its doc says: a choice picks the face at
+/// its value modulo the list's length, so a face added anywhere, one
+/// taken out, or one renamed (the list sorts by name, and the build names
+/// each `AppFont` after its face's full name) moves committed
+/// flow_structured seeds and findings to other faces, and silently, since
+/// each still passes. So the list is held, face by face and in order, to
+/// what it was when they were drawn. #355 is how it nearly moved:
+/// Scrapbook Chinese, left out only because it had no ids until then,
+/// gained them and would have joined it. A face a map can newly pin goes
+/// in `later_faces` instead. Controls: `ScrapbookChinese` taken out of
+/// `later_faces`, red on the face added; and `Regal` in the literal
+/// spelled `Regal2`, red on the face that differs.
 #[test]
 fn test_the_structured_flow_face_list_keeps_the_faces_its_seeds_chose_from() {
-    let faces = crate::flow::tests::flow_fuzz::faces();
-    assert_eq!(
-        faces.len(),
-        FACES_THE_SEEDS_CHOSE_FROM,
-        "faces() changed length: {faces:?}"
-    );
+    let faces: Vec<String> = crate::flow::tests::flow_fuzz::faces()
+        .iter()
+        .map(|font| format!("{font:?}"))
+        .collect();
+    assert_eq!(faces, FACES_THE_SEEDS_CHOSE_FROM, "faces() changed");
 }
 
-/// The length of `faces()` when the flow_structured seeds and findings
-/// were drawn from it.
-const FACES_THE_SEEDS_CHOSE_FROM: usize = 51;
+/// `faces()` when the flow_structured seeds and findings were drawn from
+/// it, each face by its `AppFont` name.
+const FACES_THE_SEEDS_CHOSE_FROM: [&str; 51] = [
+    "African",
+    "AliceInWonderland",
+    "AlphaMusicMan",
+    "AlphaSports",
+    "AppleTea",
+    "ArigatouGozaimasu",
+    "CarnivaleeFreakshow",
+    "CarnivaleeFreakshowDemo",
+    "Casanova",
+    "ChubbyDotty",
+    "Critters1DCSemiBold",
+    "CulinaryArt",
+    "DenseLetters",
+    "DistorRegular",
+    "EgyptienneZierinitialien",
+    "Evilz",
+    "FabulousSteampunk",
+    "FasterOne",
+    "Flowers3",
+    "GalatiaSIL",
+    "GalatiaSILBold",
+    "Keyboard212",
+    "LittleCity2000",
+    "MexicanOrnaments",
+    "NIGHTCROW",
+    "Norse",
+    "NorseBold",
+    "NotoSansDevanagariRegular",
+    "NotoSansEgyptianHieroglyphsRegular",
+    "NotoSansHebrewRegular",
+    "NotoSerifTibetanRegular",
+    "Novem",
+    "PeasHeartsDelight2",
+    "PerpetratorItalic",
+    "PerpetratorRegular",
+    "PictoPeopleRegular",
+    "Pinewood",
+    "PublicPixel",
+    "RCRocketRegular",
+    "RazzleDazzle",
+    "Regal",
+    "Ships",
+    "SilhousTwo",
+    "Skullphabet",
+    "SuperPlumberBrothers",
+    "Symbols1",
+    "ToyTrain",
+    "TreeRoot",
+    "XTypewriter",
+    "XTypewriterBold",
+    "ZOEGERMANYFingeralphabetGraffiti",
+];
 
 #[test]
 fn test_hostile_strings_hold_every_flow_property() {

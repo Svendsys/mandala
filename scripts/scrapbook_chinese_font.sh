@@ -14,11 +14,13 @@
 # never loaded, no span could be pinned to it, and every launch logged a
 # WARN for it (#355).
 #
-# This script adds that one record, "ScrapbookChinese-Regular", on both of
-# the face's platforms — Macintosh Roman, and Windows Symbol, the encoding
-# of the face's character map, whose letters sit at U+F020..U+F0FF as a
-# symbol font's do — and changes nothing else: every other table is
-# copied as published, and of `head` only the whole-file checksum moves.
+# This script adds that name, "ScrapbookChinese-Regular", as one record on
+# each of the face's two name platforms — Macintosh Roman, and Windows
+# Symbol, the encoding of the face's character map, whose letters sit at
+# U+F020..U+F0FF as a symbol font's do — and changes nothing else: every
+# other table's contents are as published, and of `head` only the
+# whole-file checksum moves. (fontTools writes the tables in its own order,
+# at new offsets; their contents are what the face carries.)
 # The family, full name and unique id, which the build's `AppFont` name is
 # read from (`lib/baumhard/build.rs`), stay as published.
 #
@@ -31,15 +33,17 @@
 #
 #   pip install fonttools==4.68.0
 #
-# Exit codes: 0 written, 1 the source or the tool is not the pinned one,
-# 2 a bad command line.
+# Exit codes: 0 written, 1 the source is missing or the source or the tool
+# is not the pinned one, 2 a bad command line.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FACE="$ROOT/lib/baumhard/src/font/fonts/scrapbook-chinese-font/ScrapbookChinese-5X6B.ttf"
 
-if [ $# -gt 1 ]; then
+# It takes no options: an argument that begins with `-` is a bad command
+# line (a file so named is passed as `./-name`).
+if [ $# -gt 1 ] || [[ "${1:-}" == -* ]]; then
     echo "usage: $0 [ScrapbookChinese-5X6B.ttf]" >&2
     exit 2
 fi
@@ -54,6 +58,10 @@ trap 'rm -rf "$WORK"' EXIT
 
 if [ $# -eq 1 ]; then
     SOURCE="$1"
+    if [ ! -f "$SOURCE" ]; then
+        echo "$SOURCE: no such file (the published ScrapbookChinese-5X6B.ttf)" >&2
+        exit 1
+    fi
 else
     SOURCE="$WORK/source.ttf"
     if ! git -C "$ROOT" cat-file blob "$SOURCE_BLOB" > "$SOURCE" 2>/dev/null; then
@@ -63,14 +71,15 @@ else
     fi
 fi
 
-got="$(sha256sum "$SOURCE" | cut -d' ' -f1)"
+# Read on stdin, so a path that begins with `-` is not taken for an option.
+got="$(sha256sum < "$SOURCE" | cut -d' ' -f1)"
 if [ "$got" != "$SOURCE_SHA256" ]; then
     echo "$SOURCE: SHA-256 $got, not the pinned $SOURCE_SHA256" >&2
     exit 1
 fi
-have="$(python3 -I -c 'import fontTools; print(fontTools.version)')"
+have="$(python3 -I -c 'import fontTools; print(fontTools.version)' 2>/dev/null || true)"
 if [ "$have" != "$FONTTOOLS_VERSION" ]; then
-    echo "fontTools $have, not the pinned $FONTTOOLS_VERSION: pip install fonttools==$FONTTOOLS_VERSION" >&2
+    echo "fontTools ${have:-not installed}, not the pinned $FONTTOOLS_VERSION: pip install fonttools==$FONTTOOLS_VERSION" >&2
     exit 1
 fi
 

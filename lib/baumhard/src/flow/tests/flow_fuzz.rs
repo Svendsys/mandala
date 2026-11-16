@@ -1634,7 +1634,7 @@ fn plain_style() -> ResolvedText {
 /// and by `test_generated_flows_over_every_face_hold_every_flow_property`.
 /// A face a map can pin that this list lacks belongs there, not here.
 /// `test_the_structured_flow_face_list_keeps_the_faces_its_seeds_chose_from`
-/// holds the length.
+/// holds it, face by face.
 pub(crate) fn faces() -> Vec<AppFont> {
     let fallback: Vec<AppFont> = later_faces().collect();
     let mut faces: Vec<AppFont> = COMPILED_FONT_ID_MAP
@@ -1666,7 +1666,10 @@ pub(crate) fn later_faces() -> impl Iterator<Item = AppFont> {
 /// Emoji` is the first compiled face with no outline at all and no space,
 /// the kind of face unlike the others that gave the R24 findings; the
 /// default face, Inter, the first variable one; Scrapbook Chinese the
-/// first symbol font, its letters drawn from U+F000 above them; and all
+/// first symbol font that maps the whole printable Latin-1 range, so it
+/// draws a text-shaped string, spaces included, entirely in its own
+/// glyphs, each read from U+F000 above its character (`Symbols1`, in
+/// `faces()`, is a symbol font too, but holds only capital letters); and all
 /// four are on the untrusted surface, since a map's `font` can name any
 /// of them. Adding a face here moves the flow_structured_every_face
 /// seeds' faces, so its `pins_*` seeds are drawn again with it (#228,

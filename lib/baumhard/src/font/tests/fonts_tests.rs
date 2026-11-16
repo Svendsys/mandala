@@ -864,7 +864,7 @@ fn test_every_compiled_source_loads_every_face_it_holds() {
 /// on `ScrapbookChinese: faces [] loaded, of 1`.
 pub fn do_every_compiled_source_loads_every_face_it_holds() {
     fonts::init();
-    let fs = acquire_font_system_write("fonts_tests::do_*");
+    let fs = fonts::acquire_font_system_read("fonts_tests::do_*");
     let mut read = 0;
     let mut faults = Vec::new();
     for (font, source) in fonts::FONT_SOURCES.iter() {

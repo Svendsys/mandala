@@ -836,7 +836,7 @@ What they hold, in short (each module's docs are the full list):
   every machine. The host's faces come after every compiled one and none
   bears a compiled family's name, so what the sweep and the fuzz targets
   pin is drawn in the same faces wherever they run. The generator's face
-  list, `faces()`, never changes length, and a test holds it: a choice
+  list, `faces()`, never changes, and a test holds it face by face: a choice
   picks a face modulo it, so a face added moves every committed
   structured seed and finding to another face, and silently, since each
   still passes. Faces it lacks that a map can pin, the ornament

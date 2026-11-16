@@ -136,12 +136,19 @@ that no span can be pinned to.
 `Scrapbook Chinese` could not be named until #355. The face as published
 has no PostScript name, which the font system's loader requires, so it
 was compiled in but never loaded, and every launch logged a `WARN` for
-it. The compiled face is the published one with that one record added,
-by `scripts/scrapbook_chinese_font.sh`, which rebuilds it byte for byte
+it. The compiled face is the published one with a PostScript name
+added, on both of its name platforms, by
+`scripts/scrapbook_chinese_font.sh`, which rebuilds it byte for byte
 (its `info.txt` records both files). It is a symbol font: its glyphs,
 decorative characters in the manner of Chinese script and not a Chinese
 text face, are drawn for every printable character of U+0020–U+00FF,
-which the shaper reads at U+F020–U+F0FF in its character map.
+which the shaper reads at U+F020–U+F0FF in its character map. It also
+maps 24 C1 control code points (U+0082–U+008C, U+0091–U+009C, U+009F),
+which text that does not pin it never reaches: `Razzle Dazzle` maps all
+of U+0080–U+009F and comes before it in the last pass. What that pass
+newly meets in it is the private-use code points it lists at
+U+F020–U+F0FF, all but U+F034–U+F068, where `NIGHTCROW` comes first. No
+map, built-in style or chrome glyph uses either range.
 
 ## Weight within a pinned family
 
