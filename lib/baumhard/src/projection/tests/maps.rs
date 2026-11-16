@@ -144,6 +144,19 @@ pub fn grown_boxes(p: &crate::projection::tests::support::Projected, path: NodeI
         .collect()
 }
 
+/// How many glyphs of `path`'s body are laid, and how many of them the
+/// hide stage leaves to be drawn.
+pub fn body_glyphs(p: &crate::projection::tests::support::Projected, path: NodeId) -> (usize, usize) {
+    let count =
+        |run: Option<&crate::gfx_structs::run::GlyphRunData>| run.map_or(0, |r| r.shaped().glyph_count());
+    let drawn = p
+        .projector
+        .units
+        .get(&path)
+        .and_then(|u| u.slots[0].want.as_ref());
+    (count(p.projector.laid(path)), count(drawn))
+}
+
 /// `fields` with `more` merged in.
 pub fn merged(mut fields: Value, more: Value) -> Value {
     if let (Some(out), Some(more)) = (fields.as_object_mut(), more.as_object()) {
