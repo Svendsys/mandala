@@ -1163,6 +1163,18 @@ fn criterion_benchmark(c: &mut Criterion) {
         "no_compiled_family_has_a_slant_at_a_weight_its_other_slant_lacks",
         |b| b.iter(do_no_compiled_family_has_a_slant_at_a_weight_its_other_slant_lacks),
     );
+    // The compiled faces against the loader (#355): a header parse per
+    // compiled source, a face open per compiled face, and one read and
+    // scan of `format/fonts.md`.
+    c.bench_function("every_compiled_source_loads_every_face_it_holds", |b| {
+        b.iter(do_every_compiled_source_loads_every_face_it_holds)
+    });
+    c.bench_function("every_compiled_face_has_a_family_a_map_can_name", |b| {
+        b.iter(do_every_compiled_face_has_a_family_a_map_can_name)
+    });
+    c.bench_function("format_fonts_lists_exactly_the_families_a_map_can_name", |b| {
+        b.iter(do_format_fonts_lists_exactly_the_families_a_map_can_name)
+    });
     // The ornament fallback (#297): two character-map reads, one file
     // read and parse, and a pinned-family lookup under the font guard.
     c.bench_function("each_ornament_face_holds_exactly_its_listed_code_points", |b| {
