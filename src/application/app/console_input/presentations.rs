@@ -148,8 +148,8 @@ fn instance_line(doc: &Document, instance: &InstanceInfo<'_>) -> String {
 mod tests {
     use super::*;
     use crate::application::document::tests_common::load_test_doc;
-    use crate::application::edits::EditTier;
     use crate::application::presentations::PresentationRegistry;
+    use crate::application::presentations::PresentationTier;
 
     /// `present list` words an instance by its node's id, its progress
     /// and its direction, and the definitions by their lifecycle, layer
@@ -163,7 +163,7 @@ mod tests {
             .node_by_ident(NodeIdent(1))
             .expect("the test map has a node 1");
         let (lift, tier) = registry.find(doc.doc(), "lift").expect("bundled");
-        assert_eq!(tier, EditTier::App);
+        assert_eq!(tier, PresentationTier::App);
         let lift = lift.clone();
         doc.start_presentation(&lift, &[node], 0.0).unwrap();
         doc.tick_presentations(75.0);

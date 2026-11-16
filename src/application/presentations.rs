@@ -21,14 +21,40 @@
 
 use baumhard::document::ids::Document;
 use baumhard::document::presentation::{parse_presentations, PresentationDef};
-
-use crate::application::edits::EditTier;
+use rustc_hash::FxHashMap;
 
 /// The bundled presentations.
 const APP_PRESENTATIONS: &str = include_str!("../../assets/presentations.json");
 
 /// The `presentations.json` file name's label, for the log.
 const LABEL: &str = "presentations";
+
+/// Where a presentation came from, which `present list` reports: a
+/// tier of its own, beside the edits' (`EditTier`), as the two kinds of
+/// behavior are different lists everywhere (D6).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PresentationTier {
+    /// Bundled with the app: `assets/presentations.json`.
+    App,
+    /// The user's `presentations.json`, or
+    /// `localStorage["mandala_presentations"]` in the browser.
+    User,
+    /// The open map's own `presentations`.
+    Map,
+}
+
+impl PresentationTier {
+    /// The tier's name, as the console shows it.
+    // Read by the console's `present` verb, native as the console shell is.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            PresentationTier::App => "app",
+            PresentationTier::User => "user",
+            PresentationTier::Map => "map",
+        }
+    }
+}
 
 /// The App and User presentations, filled at startup on both targets.
 pub(crate) struct PresentationRegistry {
@@ -81,16 +107,22 @@ impl PresentationRegistry {
                       the map's triggers (V1-D3, #252) do on both targets"
         )
     )]
-    pub(crate) fn find<'a>(&'a self, doc: &'a Document, id: &str) -> Option<(&'a PresentationDef, EditTier)> {
+    pub(crate) fn find<'a>(
+        &'a self,
+        doc: &'a Document,
+        id: &str,
+    ) -> Option<(&'a PresentationDef, PresentationTier)> {
         let find = |list: &'a [PresentationDef]| list.iter().find(|def| def.id == id);
         find(&doc.definitions().presentations)
-            .map(|def| (def, EditTier::Map))
-            .or_else(|| find(&self.user).map(|def| (def, EditTier::User)))
-            .or_else(|| find(&self.app).map(|def| (def, EditTier::App)))
+            .map(|def| (def, PresentationTier::Map))
+            .or_else(|| find(&self.user).map(|def| (def, PresentationTier::User)))
+            .or_else(|| find(&self.app).map(|def| (def, PresentationTier::App)))
     }
 
     /// Every presentation that plays on `doc` — each id's winning
-    /// definition — by id. O(presentations log presentations).
+    /// definition — by id: one pass over the three tiers, lowest first,
+    /// a later tier's definition replacing an earlier one's in a map by
+    /// id, then the winners sorted. O(presentations log presentations).
     #[cfg_attr(
         target_arch = "wasm32",
         expect(
@@ -99,18 +131,28 @@ impl PresentationRegistry {
                       the map's triggers (V1-D3, #252) do on both targets"
         )
     )]
-    pub(crate) fn list<'a>(&'a self, doc: &'a Document) -> Vec<(&'a PresentationDef, EditTier)> {
-        let mut ids: Vec<&str> = doc
-            .definitions()
-            .presentations
-            .iter()
-            .chain(&self.user)
-            .chain(&self.app)
-            .map(|def| def.id.as_str())
-            .collect();
-        ids.sort_unstable();
-        ids.dedup();
-        ids.into_iter().filter_map(|id| self.find(doc, id)).collect()
+    pub(crate) fn list<'a>(&'a self, doc: &'a Document) -> Vec<(&'a PresentationDef, PresentationTier)> {
+        let tiers: [(&'a [PresentationDef], PresentationTier); 3] = [
+            (&self.app, PresentationTier::App),
+            (&self.user, PresentationTier::User),
+            (&doc.definitions().presentations, PresentationTier::Map),
+        ];
+        let mut winners: FxHashMap<&'a str, (&'a PresentationDef, PresentationTier)> = FxHashMap::default();
+        for (list, tier) in tiers {
+            for def in list {
+                // Within one tier the first of an id wins, as `find`
+                // reads it; a later tier replaces it whole.
+                match winners.get(def.id.as_str()) {
+                    Some((_, held)) if *held == tier => {}
+                    _ => {
+                        winners.insert(def.id.as_str(), (def, tier));
+                    }
+                }
+            }
+        }
+        let mut list: Vec<(&'a PresentationDef, PresentationTier)> = winners.into_values().collect();
+        list.sort_unstable_by(|(a, _), (b, _)| a.id.cmp(&b.id));
+        list
     }
 }
 
@@ -233,28 +275,37 @@ mod tests {
     }
 
     /// App < User < Map, by id, whole definition — and each tier is
-    /// reported.
+    /// reported; the list holds each id's winner, in id order.
+    ///
+    /// Control, seen red: the list reading the tiers map first lets the
+    /// app's `lift` win over the map's.
     #[test]
     fn test_a_later_tier_replaces_a_presentation_by_id() {
         let mut registry = PresentationRegistry::bundled();
         let blank = load(r#"{"format":1,"name":"t","nodes":[]}"#).unwrap();
         let (app, tier) = registry.find(&blank, "lift").unwrap();
-        assert_eq!((app.name.as_str(), tier), ("Lift", EditTier::App));
+        assert_eq!((app.name.as_str(), tier), ("Lift", PresentationTier::App));
         registry.user = vec![user("lift", "Mine")];
         let (mine, tier) = registry.find(&blank, "lift").unwrap();
-        assert_eq!((mine.name.as_str(), tier), ("Mine", EditTier::User));
+        assert_eq!((mine.name.as_str(), tier), ("Mine", PresentationTier::User));
         let map = map_with("lift", "The map's");
         let (theirs, tier) = registry.find(&map, "lift").unwrap();
-        assert_eq!((theirs.name.as_str(), tier), ("The map's", EditTier::Map));
+        assert_eq!((theirs.name.as_str(), tier), ("The map's", PresentationTier::Map));
         // The map's replaces the whole definition: its lifecycle, not
         // the user's.
         assert_eq!(theirs.play, Play::Once);
         // Control: an id only the app has is still the app's.
-        assert_eq!(registry.find(&map, "pulse").unwrap().1, EditTier::App);
+        assert_eq!(registry.find(&map, "pulse").unwrap().1, PresentationTier::App);
         assert!(registry.find(&map, "no-such").is_none());
         // The list holds each id once, the winner's.
         let list = registry.list(&map);
         assert_eq!(list.len(), 3);
         assert_eq!(list.iter().filter(|(def, _)| def.id == "lift").count(), 1);
+        // And each entry is what `find` answers for its id, in id order.
+        for (def, tier) in &list {
+            assert_eq!(registry.find(&map, &def.id), Some((*def, *tier)), "{}", def.id);
+        }
+        let ids: Vec<&str> = list.iter().map(|(def, _)| def.id.as_str()).collect();
+        assert_eq!(ids, ["concealed", "lift", "pulse"]);
     }
 }
