@@ -349,7 +349,7 @@ fn test_a_stage_written_part_way_is_drawn_under_the_layer() {
 ///
 /// Controls, each seen red: with the writer's funnel not taking the
 /// layer out, the edit is accounted on what the presentation shows; with
-/// a resume that does not apply the layer, it stays out.
+/// a resume that leaves the layer set aside, it stays out.
 #[test]
 fn test_the_derived_state_is_the_maps_under_presentations() {
     let wordy = presentation(
