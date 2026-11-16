@@ -126,8 +126,8 @@ impl Builder {
                 Some(fit) => Some(self.fit("fit", fit)?),
                 None => None,
             },
-            gap: self.opt_number("gap", frame.gap, bounds::check_non_negative)?,
-            inset: self.opt_number("inset", frame.inset, bounds::check_non_negative)?,
+            gap: self.opt_number("gap", frame.gap, bounds::check_extent)?,
+            inset: self.opt_number("inset", frame.inset, bounds::check_extent)?,
             ring_layout: self.ring_layout(frame.layout)?,
             text: self.text_style(frame.text, Unit::of_tier(DocKind::Frame))?,
         })
@@ -168,7 +168,7 @@ impl Builder {
         Ok(RingLayoutStyle {
             span,
             sides,
-            spacing: self.opt_number("spacing", layout.spacing, bounds::check_non_negative)?,
+            spacing: self.opt_number("spacing", layout.spacing, bounds::check_extent)?,
         })
     }
 
@@ -179,7 +179,7 @@ impl Builder {
                 Some(fit) => Some(self.fit("fit", fit)?),
                 None => None,
             },
-            spacing: self.opt_number("spacing", flow.spacing, bounds::check_non_negative)?,
+            spacing: self.opt_number("spacing", flow.spacing, bounds::check_extent)?,
             size: self.opt_number("size", flow.size, bounds::check_font_size_pt)?,
             color: match flow.color {
                 Some(color) => Some(self.color("color", color)?),

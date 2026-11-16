@@ -46,8 +46,8 @@ const FINDINGS: [(&str, &[u8]); 5] = [
         "a_ring_past_the_body_index_cells",
         include_bytes!("fuzz_findings/a_ring_past_the_body_index_cells.mandala.json"),
     ),
-    // A second, written by hand from #364's edges: a map that loads and
-    // made the projection panic at `f32::MAX`.
+    // A second, written by hand from #364's edges: a map that loaded and
+    // made the projection panic at `f32::MAX`, now refused at load.
     (
         "a_path_spaced_past_what_a_box_holds",
         include_bytes!("fuzz_findings/a_path_spaced_past_what_a_box_holds.mandala.json"),
@@ -89,40 +89,32 @@ fn test_a_ring_past_the_body_index_cells_is_projected() {
     check_load_bytes(finding).unwrap();
 }
 
-/// The second finding of #364: a map that loads made the projection
+/// The second finding of #364: a map that loaded made the projection
 /// panic at the far edge of a `spacing`. The connector from node 1 to
 /// node 2 is spaced `f32::MAX`, so each of its glyphs' boxes, grown by its
-/// gap, has an origin of -inf and a size of +inf and no far corner; node
-/// 3, 1000 away, is round and ringed, and trying such a box against its
-/// region clamped to no number. The map is inside the projection's work
-/// bound, so both loader targets project it, and it holds every property:
-/// the path is drawn whole, as a box that is not finite meets no region.
+/// gap, had no far corner, and node 3, 1000 away, round and ringed, clamped
+/// to no number trying it. A `spacing` is now held to the canvas bound at
+/// load, so the map is refused, naming the connector's `spacing` and the
+/// bound, and it holds every property of a refusal.
 ///
-/// Controls: with such a box tried against the regions, as it was, the
-/// projection here panics (`f32::clamp`: "min > max, or either was NaN").
-/// With the bound refusing a connector's `spacing` past its extent, red
-/// on the precondition that the map is inside it.
+/// Control: with a path's `spacing` held only to `check_non_negative` at
+/// load, as it was, red on the refusal.
 #[test]
-fn test_a_path_spaced_past_what_a_box_holds_is_projected() {
-    use crate::projection::tests::projection_fuzz::within_bound;
-    use crate::projection::tests::support::Projected;
+fn test_a_path_spaced_past_what_a_box_holds_is_refused() {
     let finding = FINDINGS[4].1;
-    let doc = load(std::str::from_utf8(finding).unwrap()).expect("the finding loads");
-    assert!(
-        within_bound(&doc),
-        "precondition: inside the projection's work bound, so the loader targets project it"
+    let error = load(std::str::from_utf8(finding).unwrap()).expect_err("the finding is refused");
+    assert_eq!(
+        (error.path.as_str(), &error.kind),
+        (
+            "nodes[1].connector.spacing",
+            &crate::document::format::LoadErrorKind::Bound {
+                error: crate::document::bounds::BoundError::Above {
+                    value: f32::MAX,
+                    max: crate::document::bounds::MAX_CANVAS_COORD,
+                },
+            }
+        )
     );
-    use crate::projection::tests::maps::{body_glyphs, grown_boxes, ident, kid};
-    let path = kid(&doc, ident(&doc, 2), crate::document::element::DocKind::Connector);
-    let p = Projected::new(doc);
-    let (laid, drawn) = body_glyphs(&p, path);
-    assert!(laid >= 1, "precondition: the path lays a glyph, {laid}");
-    let boxes = grown_boxes(&p, path);
-    assert!(
-        !boxes.is_empty() && boxes.iter().all(|b| !b.max().is_finite()),
-        "precondition: each glyph's box, grown by the path's gap, has no far corner, {boxes:?}"
-    );
-    assert_eq!(drawn, laid, "the path is drawn whole");
     check_load_bytes(finding).unwrap();
 }
 

@@ -26,8 +26,7 @@ use crate::projection::behind::PathCells;
 use crate::projection::hit::{cell_count, cells as grid_cells, span};
 use crate::projection::state::UnitBody;
 use crate::projection::tests::maps::{
-    blocker_text, grown_boxes, huge_box, ident, kid, load_map, merged, node, two_paths, AWAY, HUGE_LENGTHS,
-    ON_P, ON_Q,
+    blocker_text, huge_box, ident, kid, load_map, merged, node, two_paths, AWAY, HUGE_LENGTHS, ON_P, ON_Q,
 };
 use crate::projection::tests::support::Projected;
 use crate::projection::{Layer, Projector, Stage};
@@ -1605,150 +1604,26 @@ fn test_projection_a_ring_past_the_cells_hides_the_paths_inside_it() {
     p.check().unwrap();
 }
 
-/// A connector whose `spacing` puts its glyphs' boxes past the cells —
-/// each glyph is hidden by its box grown by the path's gap — projects,
-/// and is hidden by a node that far from it as by one across it (#364):
-/// with a node 1000 away the path is hidden whole; that node hidden, it is
-/// drawn whole; shown again, the node's region finds the path, kept apart
-/// from the cells, and the oracle holds it hidden again. At each length a
-/// map could carry, 4·10¹¹ to 4·10³⁷.
-///
-/// Controls: as the test above's. A debug build panics in the first
-/// projection, hiding the path, and a release build walks every cell the
-/// glyph's box covers there, which does not end (stopped after 300 s).
-/// With a query past the cells handed no body, red on the glyphs drawn
-/// within the gap; with the paths kept apart not tried by a region, red
-/// on the path found and, that assertion taken out, on the oracle.
-#[test]
-fn test_projection_a_path_spaced_past_the_cells_is_hidden_by_any_node_in_its_gap() {
-    for spacing in HUGE_LENGTHS {
-        let mut p = Projected::new(two_paths(AWAY, json!({}), json!({"spacing": spacing})));
-        let path = path_of(&p, 2);
-        let laid = laid_glyphs(&p, path);
-        assert!(
-            laid >= 1,
-            "precondition: a path spaced {spacing} lays a glyph, {laid}"
-        );
-        assert_eq!(
-            drawn_glyphs(&p, path),
-            0,
-            "within its gap of a node it does not end at, spaced {spacing}"
-        );
-
-        let blocker = ident(&p.doc, 3);
-        let hide = |hidden| single(DocKind::Node, DocMutation::Node(NodeOp::SetHidden(hidden)));
-        p.apply(request(hide(true), vec![blocker], "hide")).unwrap();
-        assert_eq!(
-            drawn_glyphs(&p, path),
-            laid,
-            "precondition: the node hidden, the path spaced {spacing} is drawn whole"
-        );
-        p.apply(request(hide(false), vec![blocker], "show")).unwrap();
-        assert!(
-            hidden_again(&p).contains(&path),
-            "the node's region finds the path spaced {spacing}, kept apart from the cells"
-        );
-        p.check().unwrap();
-    }
-}
-
-/// A connector spaced so far that its glyphs' boxes, grown by its gap,
-/// are past what an `f32` holds — 1.8·10³⁸ and `f32::MAX`, which the
-/// loader lets through — has boxes with no far corner: `Rect::grown` gives
-/// each an origin of −∞ and a size of +∞, which sum to no number. Such a
-/// box meets no node's region, as the paths' index leaves it out (#364):
-/// the path is drawn whole beside a node 1000 away — one with only text,
-/// one ringed, one round and ringed — and with that node across it, and
-/// an update holds what a full projection does once the node is hidden,
-/// shown again and moved across the path. The finite edge beside them,
-/// 1.6·10³⁸, is hidden by each node, as a path spaced past the cells is
-/// (the test above).
-///
-/// Controls: with such a box tried against the regions, as it was, the
-/// round node's region panics on it (`f32::clamp` of a box whose far
-/// corner is no number), and the others hide it in a full projection, red
-/// on the path drawn whole; that assertion taken out, red on the oracle
-/// after the node is shown again, whose update does not find the path.
-#[test]
-fn test_projection_a_path_spaced_past_what_a_box_holds_is_hidden_by_no_node() {
-    let blockers = [
-        ("a node with text", json!({})),
-        ("a ringed node", json!({"frame": dotted(0.05)})),
-        (
-            "a round ringed node",
-            json!({"shape": "ellipse", "frame": dotted(0.05)}),
-        ),
-    ];
-    let hide = |hidden| single(DocKind::Node, DocMutation::Node(NodeOp::SetHidden(hidden)));
-    for (what, blocker) in blockers {
-        // Each spacing, and whether its boxes have a far corner.
-        for (spacing, finite) in [(1.6e38, true), (1.8e38, false), (f32::MAX, false)] {
-            let mut p = Projected::new(two_paths(AWAY, blocker.clone(), json!({"spacing": spacing})));
-            let path = path_of(&p, 2);
-            let laid = laid_glyphs(&p, path);
-            assert!(
-                laid >= 1,
-                "precondition: a path spaced {spacing} lays a glyph, {laid}"
-            );
-            let boxes = grown_boxes(&p, path);
-            assert!(
-                !boxes.is_empty() && boxes.iter().all(|b| b.max().is_finite() == finite),
-                "precondition: spaced {spacing}, the glyphs' boxes have a far corner: {finite}, {boxes:?}"
-            );
-            let want = if finite { 0 } else { laid };
-            assert_eq!(
-                drawn_glyphs(&p, path),
-                want,
-                "{what} 1000 away, the path spaced {spacing}: glyphs drawn"
-            );
-            p.check().unwrap();
-            let node = ident(&p.doc, 3);
-            p.apply(request(hide(true), vec![node], "hide")).unwrap();
-            assert_eq!(
-                drawn_glyphs(&p, path),
-                laid,
-                "precondition: {what} hidden, the path spaced {spacing} is drawn whole"
-            );
-            p.apply(request(hide(false), vec![node], "show")).unwrap();
-            p.check().unwrap();
-            move_to(&mut p, 3, ON_P);
-            assert_eq!(
-                drawn_glyphs(&p, path),
-                want,
-                "{what} across the path spaced {spacing}: glyphs drawn"
-            );
-            p.check().unwrap();
-        }
-    }
-}
-
 /// The frame of `maps/theme_demo.mandala.json`'s first node, as shipped:
 /// a directional ring, a corner glyph at each corner of its outline.
 const SHIPPED_FRAME: &str = r#""frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.175, "color": "var(accent)", "spans": [{"text": "─"}], "vertical": "│", "corners": ["┌", "┐", "┘", "└"]}]}"#;
 
-/// The maps #364 was found on project: `theme_demo` with its first node's
-/// frame set out by each inset the defect was seen at — the shipped ring
-/// at nine insets from 5·10¹¹ to 10³⁷, and at 10²⁵ a plain ring spaced
-/// 10²⁵ and a frame's text — and the directional ring of 4·10³⁷ found
-/// beside them. The ring's box, where it is laid, is the node's region
-/// and reaches its inset out, and a rubber band as large covers every
-/// node; the first map's node is then moved, and the oracle holds the
-/// region set again.
+/// The maps #364 was found on: `theme_demo` with its first node's frame
+/// set out by each inset the defect was seen at — the shipped ring at
+/// nine insets from 5·10¹¹ to 10³⁷, and at 10²⁵ a plain ring spaced 10²⁵
+/// and a frame's text — and the directional ring of 4·10³⁷ found beside
+/// them, are each refused at load, naming the inset and the canvas bound.
+/// At the bound itself the shipped ring is laid: its box, the node's
+/// region, reaches its inset out and spans more cells than the index
+/// lists, a rubber band as large covers every node, and with the node
+/// moved the oracle holds the region set again.
 ///
-/// A ring is laid round each of these outlines today. One round an
-/// outline too long to lay draws nothing (ruling B42.1 on #363), so it
-/// has no region: that is allowed only of the insets whose outline is
-/// past that length, and the five up to 10¹⁶ must have theirs.
-///
-/// Controls: with the cells' count the product of two spans in `i64`, as
-/// it was, a debug build panics in the first map's projection, setting
-/// the node's region (attempt to multiply with overflow), and a release
-/// build files the region under every cell it covers until an allocation
-/// fails, which ends the process. With a query past the cells handed no
-/// body, red on the rubber band; with a body kept apart left in its list
-/// when it is set again, red on the oracle.
+/// Controls: with a frame's `inset` held only to `check_non_negative` at
+/// load, as it was, red on the first inset's refusal. With a query past
+/// the cells handed no body, red on the rubber band; with a body kept
+/// apart left in its list when it is set again, red on the oracle.
 #[test]
-fn test_projection_the_frame_insets_of_364_project() {
+fn test_projection_the_frame_insets_of_364_are_refused_and_the_bound_projects() {
     let path = crate::util::doc_fixtures::repo_path("maps/theme_demo.mandala.json");
     let text = std::fs::read_to_string(path).expect("the shipped map is read");
     assert!(
@@ -1799,36 +1674,49 @@ fn test_projection_the_frame_insets_of_364_project() {
             r#""fit": "repeat", "spacing": 0, "spans": [{"text": "ab"}], "vertical": "│""#,
         ),
     ));
-    for (k, (name, inset, frame)) in cases.iter().enumerate() {
+    use crate::document::bounds::{BoundError, MAX_CANVAS_COORD};
+    use crate::document::format::LoadErrorKind;
+    for (name, inset, frame) in &cases {
         let map = text.replacen(SHIPPED_FRAME, frame, 1);
-        let doc = crate::document::format::load(&map).unwrap_or_else(|e| panic!("{name} loads: {e}"));
-        let mut p = Projected::new(doc);
-        match rings_region(&p, 1) {
-            Some(region) => assert!(
-                region.size.min_element() >= *inset,
-                "{name}: the ring's box reaches its inset out, {region:?}"
-            ),
-            None => assert!(
-                *inset > 1.0e18,
-                "{name}: only a ring round an outline too long to lay has no region"
-            ),
-        }
-        let mut every: Vec<NodeId> = p.projector.nodes.keys().copied().collect();
-        every.sort_unstable();
-        assert_eq!(
-            p.projector.nodes_in(huge_box(*inset)),
-            every,
-            "{name}: a rubber band as large as the ring covers every node"
+        let error = crate::document::format::load(&map).expect_err(name);
+        let past = LoadErrorKind::Bound {
+            error: BoundError::Above {
+                value: *inset,
+                max: MAX_CANVAS_COORD,
+            },
+        };
+        assert!(
+            error.path.ends_with(".frame.inset") && error.kind == past,
+            "{name}: refused, naming the inset and the bound: {error:?}"
         );
-        if k == 0 {
-            let before = rings_region(&p, 1);
-            move_to(&mut p, 1, Vec2::new(1.0e6, -220.0));
-            assert_ne!(
-                rings_region(&p, 1),
-                before,
-                "precondition: {name}: the region moved with the node"
-            );
-            p.check().unwrap();
-        }
     }
+
+    let name = "the shipped ring, inset 1e9";
+    let map = text.replacen(SHIPPED_FRAME, &SHIPPED_FRAME.replace("7.0", "1e9"), 1);
+    let doc = crate::document::format::load(&map).unwrap_or_else(|e| panic!("{name} loads: {e}"));
+    let mut p = Projected::new(doc);
+    let region = rings_region(&p, 1).expect("the ring is laid, and is the node's region");
+    assert!(
+        region.size.min_element() >= MAX_CANVAS_COORD,
+        "{name}: the ring's box reaches its inset out, {region:?}"
+    );
+    assert_eq!(
+        grid_cells(region),
+        None,
+        "precondition: {name}: the region lists no cells"
+    );
+    let mut every: Vec<NodeId> = p.projector.nodes.keys().copied().collect();
+    every.sort_unstable();
+    assert_eq!(
+        p.projector.nodes_in(huge_box(MAX_CANVAS_COORD)),
+        every,
+        "{name}: a rubber band as large as the ring covers every node"
+    );
+    move_to(&mut p, 1, Vec2::new(1.0e6, -220.0));
+    assert_ne!(
+        rings_region(&p, 1),
+        Some(region),
+        "precondition: {name}: the region moved with the node"
+    );
+    p.check().unwrap();
 }
