@@ -232,18 +232,19 @@ data. They never touch the document.
   connector's or a link's body, a label. `"node"`, `"frame"` and
   `"spans"` draw none and are refused on the glyph layer; a span is a
   range of its section's run.
-- **Offsets, scales and the run's opacity and origin blend with `t`.**
-  A color override blends only where the glyph was already colored by
-  an override; otherwise it appears whole where `snap` puts it
-  (`"start"`: as soon as the instance moves; `"end"`: at `t = 1`).
-  To fade a glyph from its own color, give it that color with a `hold`
-  presentation first and start the fading one after it: instances on a
-  run combine in the order they started, so the second blends from the
-  first's color. `maps/demos/dickinson.mandala.json` does:
-  `feathers-rest` gives the letters of "feathers" the line's color and
-  the trail after them (which `feathers-trail` writes, below) the same
-  color at no opacity, and `feathers-lift`, started after it, thins the
-  letters and brings the trail up from there.
+- **Offsets, scales, colors and the run's opacity and origin blend
+  with `t`**, each from what the glyph shows when the instance is
+  written: at `t = 0` the run is drawn exactly as it was. A color fades
+  from the color the glyph is drawn in — its own (its span's), the
+  selection's tint, or what an instance started before this one shows —
+  to the op's, and back on the way out. A `null` color, which returns a
+  glyph to its own color, has nothing to fade: a glyph colored by
+  something else takes its own color where `snap` puts it (`"start"`:
+  as soon as the instance moves; `"end"`: at `t = 1`).
+  `maps/demos/dickinson.mandala.json`'s `feathers-lift` thins the
+  letters of "feathers" from the line's color, and brings the trail
+  after them (which `feathers-trail` writes, below) up from the color
+  its span is saved in, `#f4d69600`: the line's, at no opacity.
 - **A glyph the map does not draw has nothing to write on.** A run
   mutation moves, sizes and colors glyphs the run already holds; it
   adds none. A trail, a spark or an underline that a presentation
@@ -252,13 +253,13 @@ data. They never touch the document.
   exported, searched and copied with the rest — so text that is there
   only to be performed is better written by a document-layer
   presentation into a span the map saves empty. Dickinson's first line
-  does: its last span is empty, and `feathers-trail` writes the five
-  dots into it (`set_text`) while it plays. The line is saved centered,
-  as the rest of the map is; `feathers-line`, started before the trail,
-  aligns it left at the offset centering gave it (`set_align`,
-  `set_offset`) and lets its box shrink to its text (`set_min_size`
-  `[0, 0]`, so the node's bounds stay as they are at rest), so the
-  trail added at its end moves nothing before it.
+  does: its last span is empty, and transparent, and `feathers-trail`
+  writes the five dots into it (`set_text`) while it plays. The line is
+  saved centered, as the rest of the map is; `feathers-line`, started
+  before the trail, aligns it left at the offset centering gave it
+  (`set_align`, `set_offset`) and lets its box shrink to its text
+  (`set_min_size` `[0, 0]`, so the node's bounds stay as they are at
+  rest), so the trail added at its end moves nothing before it.
 - When projection rewrites a run an instance plays on — its text
   changed, its node moved — the instance is written on it again, and
   on no other run. The selection's tint and a presentation share a
