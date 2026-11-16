@@ -63,6 +63,11 @@ pub use path::{MAX_PATH_LENGTH, MAX_TABLE_SAMPLES};
 /// A run with every glyph's ink measured, text too: what a text ring's
 /// paths stop at (#296).
 pub(crate) use place::halves::inked;
+/// The last `Repeat` ring laid round a closed path on this thread, a test
+/// counter (#310): what the projection harness's bound is held to
+/// (ruling B47.1).
+#[cfg(test)]
+pub(crate) use place::LAST_RING;
 pub use place::{
     pattern_gap, place_at_point, place_on_closed, place_on_open, place_pitched, PathEnd, PlacedGlyph,
     PlacedRun, RingLayout, MAX_PLACED_GLYPHS,

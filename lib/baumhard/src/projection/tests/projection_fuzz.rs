@@ -34,17 +34,35 @@
 //! [`EXTENT`](crate::projection::tests::projection_fuzz::EXTENT); and it
 //! draws at most
 //! [`MAX_UNITS`](crate::projection::tests::projection_fuzz::MAX_UNITS)
-//! sections, rings, connectors and links. A frame's `inset` and `gap` and
-//! a `spacing` are not part of it: the loader holds them to the canvas
-//! bound (#364), and what they add to a placement within it its own cap
-//! bounds (R41), as it bounds a ring of small glyphs round a node inside
-//! the extent. The
-//! coordinates bound how long a path is in map units, not how many glyphs
-//! or samples it takes: those go by its length over its size, and a link
-//! at the smallest sizes a few thousand units long reaches the cap of a
-//! placement (R41) and of a curve's samples in `untangle`. What one such
-//! path costs is bounded by those caps — its glyphs at a placement's, and
-//! in `untangle` at most `UNTANGLE_ROUNDS` rounds of each of its curves
+//! sections, rings, connectors and links.
+//!
+//! **A frame's outline is a coordinate of the bound** (ruling B47.1).
+//! Each of its rings lies where the projection grows its node's outline
+//! to: by its frame's `inset`, a `gap` for each ring inside it and those
+//! rings' line heights (`stages::clearance`). The loader holds an `inset`
+//! and a `gap` to the canvas bound (#364), so a ring can lie 10¹² out, and
+//! the bound holds that reach within `EXTENT` as it holds every coordinate
+//! ([`outline_reach`](crate::projection::tests::projection_fuzz::outline_reach)).
+//! The cap of a placement (R41) bounds its glyphs, not their work: a
+//! ring's work is its glyphs times its path's reads a glyph, and its
+//! budget bounds that, 196,608,000 glyph steps at the cap (ruling B17.2c),
+//! far past the timeout. Inside the extent an `f32` point is a thousandth
+//! of a unit or finer, a glyph's ink is set apart from the last in a few
+//! reads, and the densest ring of dots the bound admits takes under five
+//! steps a glyph at the cap; 10¹⁰ out a point is a thousand units from
+//! the next, and each glyph of the same ring read its path a thousand
+//! times, 62 steps a glyph, every projection a check makes (#374;
+//! `test_every_dot_ring_the_bound_admits_takes_a_few_steps_a_glyph`). A
+//! `spacing` is not part of the bound: it parts a placement's glyphs, and
+//! moves no outline and no path.
+//!
+//! The coordinates bound how long a path is in map units, not how many
+//! glyphs or samples it takes: those go by its length over its size, and
+//! a link at the smallest sizes a few thousand units long reaches the cap
+//! of a placement (R41) and of a curve's samples in `untangle`. What one
+//! such path costs is bounded by those caps — its glyphs at a
+//! placement's, each read a few times where its points are near, and in
+//! `untangle` at most `UNTANGLE_ROUNDS` rounds of each of its curves
 //! sampled to the cap, one round where its nearness is certain from
 //! samples no halving moves (#346) — not by this bound. Each is shaped and
 //! placed in every full projection the check makes, so the work grows with
@@ -77,12 +95,17 @@ use std::cell::Cell;
 use glam::Vec2;
 use rustc_hash::FxHashMap;
 
+use crate::arena::NodeId;
 use crate::document::element::DocElement;
 use crate::document::ids::Document;
+use crate::document::resolve::resolve_frame;
 use crate::document::writer::transaction::TransactionKind;
 use crate::document::writer::ChangeSource;
 use crate::engine::interpolate::Snap;
+use crate::engine::tree::Tree;
 use crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS;
+use crate::flow::LINE_HEIGHT_FACTOR;
+use crate::font::fonts::MAX_FONT_SIZE_PT;
 use crate::projection::tests::corpus::{edit, edit_named, generated, EDITS};
 use crate::projection::tests::support::Projected;
 use crate::projection::Layer;
@@ -153,6 +176,7 @@ pub fn within_bound(doc: &Document) -> bool {
             DocElement::Link(l) => l.path.control_points.iter().all(|&p| near(p)),
             DocElement::Label(label) => label.style.offset.is_none_or(|o| o.abs() <= EXTENT),
             DocElement::PortalEnd(end) => end.style.offset.is_none_or(|o| o.abs() <= EXTENT),
+            DocElement::Frame(_) => outline_near(tree, id),
             DocElement::Ring(_) => {
                 let chars: usize = id
                     .children(arena)
@@ -173,6 +197,62 @@ pub fn within_bound(doc: &Document) -> bool {
         }
     }
     rings_with_text <= 1
+}
+
+/// The most line height a ring is placed at: its run's, its largest size
+/// times [`LINE_HEIGHT_FACTOR`], every size held to [`MAX_FONT_SIZE_PT`]
+/// as it is shaped, at whatever scale a `Fit` lays it.
+pub(crate) const MOST_RING_LINE_HEIGHT: f32 = LINE_HEIGHT_FACTOR * MAX_FONT_SIZE_PT;
+
+/// How far past its node's rectangle `frame`'s outermost ring's outline
+/// may lie (ruling B47.1): the clearance the projection grows the node's
+/// outline by for it (`stages::clearance`), its frame's `inset` and a
+/// `gap` for each ring inside it, as resolved, and the line heights of
+/// the rings inside it — each [`MOST_RING_LINE_HEIGHT`] at most, where
+/// it holds a span, and none where it holds none, which shapes a run of
+/// no glyphs. No ring of the frame lies further out than its outermost.
+/// `0` for a frame of no rings. O(its rings).
+pub(crate) fn outline_reach(tree: &Tree<DocElement>, frame: NodeId) -> f64 {
+    let arena = tree.arena();
+    let rings: Vec<NodeId> = frame
+        .children(arena)
+        .filter(|&ring| matches!(arena[ring].get(), DocElement::Ring(_)))
+        .collect();
+    let Some((_, inside)) = rings.split_last() else {
+        return 0.0;
+    };
+    let holding_spans = inside
+        .iter()
+        .filter(|ring| {
+            ring.children(arena)
+                .any(|span| matches!(arena[span].get(), DocElement::Span(_)))
+        })
+        .count();
+    let resolved = resolve_frame(tree, frame, &mut ());
+    f64::from(resolved.inset)
+        + holding_spans as f64 * f64::from(MOST_RING_LINE_HEIGHT)
+        + inside.len() as f64 * f64::from(resolved.gap)
+}
+
+/// Whether every ring of `frame` lies within [`EXTENT`] (ruling B47.1):
+/// its node's rectangle as the document gives it — from its `position`,
+/// `min_size` wide and high, nothing where it has none, as every other
+/// coordinate of the bound is read — grown by [`outline_reach`]. A frame
+/// with no node lays nothing. O(its rings).
+fn outline_near(tree: &Tree<DocElement>, frame: NodeId) -> bool {
+    let arena = tree.arena();
+    let Some(DocElement::Node(node)) = frame.parent(arena).map(|id| arena[id].get()) else {
+        return true;
+    };
+    let reach = outline_reach(tree, frame);
+    let size = node.min_size.unwrap_or(Vec2::ZERO);
+    let extent = f64::from(EXTENT);
+    [(node.position.x, size.x), (node.position.y, size.y)]
+        .into_iter()
+        .all(|(at, size)| {
+            let (at, size) = (f64::from(at), f64::from(size));
+            at - reach >= -extent && at + size + reach <= extent
+        })
 }
 
 /// The projection properties of a map the loader accepted (see the module

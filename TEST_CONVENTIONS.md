@@ -812,10 +812,15 @@ What they hold, in short (each module's docs are the full list):
   sections, rings, connectors and links): no panic, a group per visible
   node in every layer, every run's box finite, the same layers projected
   twice, hits that do not panic, and one generated edit kept equal to a
-  full projection. A frame's `inset` and `gap` and a `spacing` are not
-  coordinates of the bound: the loader holds them to the canvas bound,
-  and a map at it is projected (#364, where one past it made the
-  projection panic). A map outside the bound is skipped and counted, and
+  full projection. A frame's rings are coordinates of the bound (ruling
+  B47.1): its node's rectangle grown by its `inset`, a `gap` for each
+  ring inside its outermost and those rings' line heights is held within
+  `EXTENT` (`projection_fuzz::outline_reach`). The loader holds an
+  `inset` and a `gap` only to the canvas bound (#364), and a ring that far
+  out is past what the cap of a placement bounds the work of: the cap
+  bounds its glyphs, and there each glyph reads its path a thousand times
+  (#374). A `spacing` parts glyphs and moves no outline, and is not part
+  of the bound. A map outside the bound is skipped and counted, and
   the targets print the counts at every power of two and every 256
   inputs, so even a slow run reports its skipped fraction; the suite
   holds the structured maps to fewer than half skipped. The engine
