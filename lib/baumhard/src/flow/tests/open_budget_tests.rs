@@ -70,8 +70,9 @@ fn fits() -> [(&'static str, FitMode); 5] {
 /// 10¹⁸ from the origin set an ornament's glyphs apart by bisection that
 /// barely moves them (the cost shape of seed 2771's ring, review
 /// 5761697746). The far two were 10²² long until #363, which lays
-/// nothing along a path that long; the controls of #313's pull request
-/// were last run along those.
+/// nothing along a path that long. The controls of #313's pull request
+/// for the tests that lay along them were run again along the 10¹⁸ ones,
+/// and are red there; #363's pull request has the counts.
 fn paths() -> Vec<(String, bool, Curve)> {
     let line = |at: Vec2, to: Vec2| Curve::Line(at, at + to);
     let cubic = |at: Vec2| {

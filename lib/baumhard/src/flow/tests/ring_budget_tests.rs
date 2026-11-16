@@ -307,23 +307,23 @@ fn case_of(text: &str) -> &'static Case {
 /// a ring whose own is lossy included (ruling B17.1c): never capped
 /// silently, by its budget or its cap (ruling B17.2a).
 ///
-/// Controls: with the budget read only between a seam's measures, not
-/// before each body they walk, red (crossed); with nothing held back for
-/// phase 2, or its run on alone not held back, red (`PAST_BUDGET`); with
-/// phase 2's solves, or `even_out`'s rounds, not reading the budget, red
-/// (late) — and with them not reading it and the whole run on held
-/// through phase 2 as before, still red (late), where `PAST_BUDGET` was
-/// green; with the first walk's stop, or its stop at the cap, not
+/// Controls, run round the grid as it stands, its far outlines 10¹⁸
+/// across (they were 10²² until #363, which lays nothing round an outline
+/// that long): with the budget read only between a seam's measures, not
+/// before each body they walk, red (crossed, 35 rings); with nothing held
+/// back for phase 2, red at the first precondition (214 rings stopped, one
+/// short of a quarter), and with that precondition taken out, red
+/// (`PAST_BUDGET`, 153 rings; held, 226); with its run on alone not held
+/// back, red (`PAST_BUDGET`, 90 rings); with phase 2's solves, or
+/// `even_out`'s rounds, not reading the budget, red (late, 10 rings each)
+/// — and with them not reading it and the whole run on held through phase
+/// 2 as before, still red (late, 10 rings; held, 195; `PAST_BUDGET`, 2);
+/// with a closed ring's hold keeping its run on, red (held, 195 rings);
+/// with `lay_or_cut` returning its final lay's stop alone, red (silent, 17
+/// rings); with the first walk's stop, or its stop at the cap, not
 /// reported, red (silent: 153 rings for the first walk's and 136 for the
 /// cap's, which a check of only the rings whose own reports nothing does
 /// not see).
-///
-/// The grid's far outlines were 10²² across until #363, which lays
-/// nothing round an outline that long. Of these controls the last two
-/// were run again round the outlines 10¹⁸ across; the rest were last
-/// counted round the 10²² ones (90 rings for the run on, every one of
-/// them far; 10 late for the solves and 10 for the rounds, and 8 with the
-/// run on held as before).
 #[test]
 fn test_flow_ring_budget_a_ring_past_its_budget_takes_its_overshoot_at_most() {
     let cases = grid();

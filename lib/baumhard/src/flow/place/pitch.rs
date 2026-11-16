@@ -412,15 +412,15 @@ pub(super) struct Pitched {
 /// So is a path that is not finite, and one too short to hold one ink
 /// with no gap at all. A path longer than placement lays
 /// ([`MAX_PATH_LENGTH`](crate::flow::MAX_PATH_LENGTH)) is placed empty
-/// too, and that is a loss: the placement is `truncated`. Never more than [`MAX_PLACED_GLYPHS`] glyphs; a
-/// placement held to it is `truncated`, its gaps spread over the inks it
-/// holds.
+/// too, and that is a loss: the placement is `truncated`. Never more than
+/// [`MAX_PLACED_GLYPHS`] glyphs; a placement held to it is `truncated`,
+/// its gaps spread over the inks it holds.
 ///
 /// Cost: O(clusters) to read the pattern; O(inks) path lookups to count
 /// the inks, and as many again for each of a few rounds of the slack for
-/// each of the two counts nearest, each ink a few gap measures where the path bends; and
-/// O(`ends`' boxes) per end measure. Allocates the placement and one
-/// scratch vector of positions.
+/// each of the two counts nearest, each ink a few gap measures where the
+/// path bends; and O(`ends`' boxes) per end measure. Allocates the
+/// placement and one scratch vector of positions.
 pub fn place_pitched(
     run: &ShapedRun,
     path: &(impl AsRef<[Curve]> + ?Sized),

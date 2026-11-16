@@ -470,8 +470,12 @@ fn test_flow_lines_fill_a_frame_whose_floats_lose_a_fillers_steps() {
 /// too, and a line is laid at a point: what is owed there is an end, and
 /// finite positions, not a spacing.) Control: counting the copies before
 /// a line afresh from the span's start, with no stop for a copy that
-/// does not move, the placement never returns. (The frame was `1e30`
-/// wide until #363, and the control was last run round that one.)
+/// does not move and no read of the frame's budget — the count as it was
+/// before the review of #294 — the placement does not return (stopped
+/// after 300 s, where the test takes under a second). The same count
+/// within the glyph cap and the frame's budget returns: since ruling
+/// R46.1 the budget stops it too. (The frame was `1e30` wide until
+/// #363; the control was run again round this one.)
 pub fn do_flow_lines_fill_a_frame_whose_floats_lose_a_fillers_steps() {
     let shape = outline(
         Rect::new(Vec2::ZERO, Vec2::new(1.0e18, 40.0)),
