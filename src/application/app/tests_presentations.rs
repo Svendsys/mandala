@@ -341,3 +341,38 @@ fn test_a_suspension_guard_resumes_however_its_scope_ends() {
     assert!(resumed(&doc), "panic");
     assert_eq!(doc.save_json().expect("saves"), before);
 }
+
+/// **A suspension that is not given back is caught**: dropped any way
+/// but through `resume_presentations` — here by `drop`, as `let _ =`
+/// would — it fails a debug assertion (and logs an error), and the
+/// layer is left out, which is what the check exists to report. Given
+/// back, nothing is caught and the layer is back; let go on purpose
+/// (`forget`), nothing is caught either. A debug build's check, so a
+/// debug build's test.
+///
+/// Control, seen red: a `Suspension` with no `Drop` lets the dropped one
+/// pass unseen.
+#[cfg(debug_assertions)]
+#[test]
+fn test_a_suspension_dropped_without_resuming_is_caught() {
+    let mut doc = testament();
+    let node = a_node(&doc);
+    doc.start_presentation(&bundled("concealed"), &[node], 0.0)
+        .expect("starts");
+    let given_back = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let suspension = doc.suspend_presentations();
+        doc.resume_presentations(suspension);
+    }));
+    assert!(given_back.is_ok(), "given back, nothing is caught");
+    assert!(!doc.doc().presentations_suspended());
+    let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let suspension = doc.suspend_presentations();
+        drop(suspension);
+    }));
+    assert!(dropped.is_err(), "dropped without resuming, it is caught");
+    assert!(doc.doc().presentations_suspended(), "and the layer is left out");
+    let forgotten = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        doc.suspend_presentations().forget();
+    }));
+    assert!(forgotten.is_ok(), "let go on purpose, nothing is caught");
+}

@@ -86,8 +86,11 @@ impl Drop for OnTheMap<'_, '_> {
     /// Put the layer back, on the document the context holds.
     fn drop(&mut self) {
         if let Some(suspension) = self.suspended.take() {
-            if let Some(doc) = self.core.document.as_deref_mut() {
-                doc.resume_presentations(suspension);
+            match self.core.document.as_deref_mut() {
+                Some(doc) => doc.resume_presentations(suspension),
+                // What ran closed the map it set aside: there is no
+                // layer left to put back.
+                None => suspension.forget(),
             }
         }
     }

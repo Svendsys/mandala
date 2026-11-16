@@ -604,7 +604,7 @@ impl MindMapDocument {
     /// so cannot hold [`Self::suspended`]'s. Anything else holds that
     /// guard: a suspension never resumed leaves the layer out, so one is
     /// a value that must be given back, not a call that can be left
-    /// unmatched.
+    /// unmatched ([`Suspension`] says what catches one that is not).
     pub(in crate::application) fn suspend_presentations(&mut self) -> Suspension {
         self.doc.suspend_presentations();
         Suspension(())
@@ -612,8 +612,9 @@ impl MindMapDocument {
 
     /// Put the presentation layer back (`Document::resume_presentations`),
     /// taking back the [`Suspension`] that set it aside.
-    pub(in crate::application) fn resume_presentations(&mut self, _suspension: Suspension) {
+    pub(in crate::application) fn resume_presentations(&mut self, suspension: Suspension) {
         self.doc.resume_presentations();
+        suspension.given_back();
     }
 
     /// The map with its presentation layer set aside, as a guard: what
@@ -681,10 +682,45 @@ impl MindMapDocument {
 /// That the presentation layer of a [`MindMapDocument`] was set aside
 /// ([`MindMapDocument::suspend_presentations`]): only that call makes
 /// one, and only [`MindMapDocument::resume_presentations`] takes it
-/// back. Dropping one unused is a warning, and so an error under the
-/// gate's `-D warnings`.
+/// back. One is caught when it is not given back:
+///
+/// - discarding it where it is made is a warning (`#[must_use]`), and
+///   so an error under the gate's `-D warnings`;
+/// - dropping it any other way — `let _ =`, a `drop`, the end of a
+///   scope — logs an `error!` and, in a debug build, fails a
+///   `debug_assert!` (unless a panic is already unwinding, where a
+///   second one would abort): the layer stays out, which no reader of
+///   the map should be left with.
+///
+/// The one deliberate way to let one go without resuming is
+/// [`Self::forget`], for a guard whose document is gone.
 #[must_use = "a suspension never given back to `resume_presentations` leaves the presentation layer out"]
-pub(crate) struct Suspension(());
+pub(in crate::application) struct Suspension(());
+
+impl Suspension {
+    /// Given back: the layer is resumed, so dropping this is not a slip.
+    fn given_back(self) {
+        std::mem::forget(self);
+    }
+
+    /// Let this go without resuming, on purpose: the document it set
+    /// aside is no longer the one at hand (a guard whose context lost
+    /// its document), so there is nothing to give it back to.
+    pub(in crate::application) fn forget(self) {
+        std::mem::forget(self);
+    }
+}
+
+impl Drop for Suspension {
+    fn drop(&mut self) {
+        log::error!(
+            "document: a presentation suspension was dropped without being resumed; the layer stays out"
+        );
+        if !std::thread::panicking() {
+            debug_assert!(false, "a Suspension was dropped without `resume_presentations`");
+        }
+    }
+}
 
 /// The open map with its presentation layer set aside
 /// ([`MindMapDocument::suspended`]): it derefs to the document, which
