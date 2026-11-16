@@ -1466,6 +1466,77 @@ fn test_a_start_is_judged_on_the_instances_it_stands_on() {
     assert!(doc.presentations().all(|instance| instance.refusal.is_none()));
 }
 
+/// **A refused start restarts nothing, in what is drawn as in the
+/// lifecycle.** A start that restarts an instance on one node and is
+/// refused on another is taken back whole: the restarted instance is
+/// drawn again at the progress and snap it had — not as the restart drew
+/// it — at once and after a frame at the same instant, the tree holds the
+/// text it held, the feed holds none of the start's records, and the
+/// epoch has not moved.
+///
+/// `p` writes ten bytes on a span, in on `snap: start`, out on
+/// `snap: end`. On node 2 it is on its way out (`t = 0.75`), showing
+/// "two"; a start on nodes 2 and 4 restarts node 2's (in, `snap: start`:
+/// "0123456789") and is refused on node 4 (+6 on top of +7, within +7).
+///
+/// Controls, each seen red: the layer taken back from the first new
+/// instance only leaves node 2 showing "0123456789" after the refusal;
+/// with the start's records left in the feed, they are there to be
+/// taken.
+#[test]
+fn test_a_refused_start_leaves_a_restarted_instance_drawn_as_it_was() {
+    let p = presentation(
+        r#"{"id":"p","name":"P","play":"hold","target":"spans","mutations":[{"span":{"set_text":"0123456789"}}],
+"animate":{"ms":400,"snap":"start"},"return":{"ms":400,"snap":"end"}}"#,
+    );
+    let mut doc = map();
+    let text = doc.derived().budget.text;
+    let (two, four) = (n(&doc, 2), n(&doc, 4));
+    doc.set_limits(Limits {
+        bytes: Some(text + 7),
+        elements: None,
+    });
+    doc.start_presentation(&p, &[two], 0.0).unwrap();
+    doc.tick_presentations(400.0);
+    assert_eq!(doc.stop_presentation("p", &[two], 400.0), 1);
+    doc.tick_presentations(500.0);
+    let was = |doc: &Document| {
+        let instance = doc.presentations().next().expect("one instance");
+        (instance.t, instance.direction, instance.snap)
+    };
+    let before = was(&doc);
+    assert_eq!(
+        before,
+        (0.75, Direction::Out, crate::engine::interpolate::Snap::End)
+    );
+    assert_eq!(first_span(&doc, 2), "two", "precondition: on its way out");
+    assert_eq!(tree_text(&doc), text);
+    doc.take_changes();
+    let epoch = doc.presentation_epoch();
+
+    assert_eq!(
+        doc.start_presentation(&p, &[two, four], 500.0),
+        Err(PresentError::Refused {
+            presentation: "p".to_string(),
+            error: Box::new(ApplyError::TooMuchText {
+                bytes: text + 13,
+                max: text + 7
+            }),
+        })
+    );
+    assert_eq!(doc.presentations().count(), 1, "node 4's is not kept");
+    assert_eq!(was(&doc), before, "the restart is taken back");
+    assert_eq!(first_span(&doc, 2), "two", "and so is what it drew");
+    assert_eq!(tree_text(&doc), text);
+    assert_eq!(doc.take_changes(), [], "the feed holds none of it");
+    assert_eq!(doc.presentation_epoch(), epoch);
+    assert!(
+        !doc.tick_presentations(500.0),
+        "nothing moved at the same instant"
+    );
+    assert_eq!(first_span(&doc, 2), "two");
+}
+
 /// A glyph-layer instance lives in the layer and writes nothing to the
 /// document: it is listed with its elements and its run mutations, its
 /// progress moves with the clock and a frame in which it moved owes a

@@ -256,7 +256,9 @@ data. They never touch the document.
   dots into it (`set_text`) while it plays. The line is saved centered,
   as the rest of the map is; `feathers-line`, started before the trail,
   aligns it left at the offset centering gave it (`set_align`,
-  `set_offset`), so the trail added at its end moves nothing before it.
+  `set_offset`) and lets its box shrink to its text (`set_min_size`
+  `[0, 0]`, so the node's bounds stay as they are at rest), so the
+  trail added at its end moves nothing before it.
 - When projection rewrites a run an instance plays on — its text
   changed, its node moved — the instance is written on it again, and
   on no other run. The selection's tint and a presentation share a

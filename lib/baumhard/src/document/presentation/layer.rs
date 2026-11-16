@@ -244,7 +244,9 @@ impl Document {
     ///   before it, and the layer is judged whole when it comes back,
     ///   where one that does not fit shows nothing and says why.
     ///
-    /// All or nothing: a refusal starts no instance and restarts none.
+    /// All or nothing: a refusal starts no instance and restarts none,
+    /// in what is drawn as in the lifecycles, and leaves no record in the
+    /// change feed.
     ///
     /// Errors: [`PresentError::UnknownName`] and [`PresentError::Value`]
     /// for a name this map lacks, a value its field does not take, a
@@ -262,6 +264,8 @@ impl Document {
         nodes: &[NodeId],
         now_ms: f64,
     ) -> Result<Vec<InstanceId>, PresentError> {
+        // Where the feed stood: a refused start takes its records back.
+        let feed = (self.writer.feed.len(), self.writer.drains);
         let lifted = (self.presentations.suspensions == 0).then(|| self.lift_layer(0));
         let result = self.start_on_the_map(def, nodes, now_ms, lifted.is_none());
         let Some(lifted) = lifted else {
@@ -281,7 +285,7 @@ impl Document {
         let Some(refusal) = refused else {
             return self.started(Ok(plan.ids));
         };
-        self.take_back_start(&plan);
+        self.take_back_start(&plan, feed);
         Err(PresentError::Refused {
             presentation: def.id.clone(),
             error: Box::new(refusal),
@@ -302,23 +306,38 @@ impl Document {
 
     /// Take a refused start back off the layer: the instances it added
     /// written out of the tree and dropped, and the ones it restarted
-    /// living as they lived before it.
-    fn take_back_start(&mut self, plan: &StartPlan) {
+    /// living — and drawn — as they were before it. The layer is written
+    /// out from the first instance the start added or restarted, so a
+    /// restarted one is put back on at the progress and snap it had, not
+    /// left showing the restart. The tree is then what it was before the
+    /// start, so the records the start and its taking back left in the
+    /// feed are taken out of it too — when nothing drained the feed in
+    /// between, which nothing inside a start does (`feed` is where it
+    /// stood, and how often it had been drained, when the start began).
+    fn take_back_start(&mut self, plan: &StartPlan, feed: (usize, u64)) {
+        let restarted = |id: InstanceId| plan.restarted.iter().any(|(was, _)| *was == id);
         let from = self
             .presentations
             .instances
             .iter()
-            .position(|instance| instance.id >= plan.first_new)
+            .position(|instance| instance.id >= plan.first_new || restarted(instance.id))
             .unwrap_or(self.presentations.instances.len());
         let lifted = self.lift_layer(from);
-        self.presentations.instances.truncate(from);
+        self.presentations
+            .instances
+            .retain(|instance| instance.id < plan.first_new);
         for (id, life) in &plan.restarted {
             if let Some(instance) = self.presentations.instances.iter_mut().find(|i| i.id == *id) {
                 instance.life = *life;
             }
         }
         let change = self.restore_layer(from, lifted);
-        self.push_change(ChangeSource::Presentation, change);
+        let (len, drains) = feed;
+        if drains == self.writer.drains && len <= self.writer.feed.len() {
+            self.writer.feed.truncate(len);
+        } else {
+            self.push_change(ChangeSource::Presentation, change);
+        }
     }
 
     /// The body of [`Self::start_presentation`], with the layer out of
