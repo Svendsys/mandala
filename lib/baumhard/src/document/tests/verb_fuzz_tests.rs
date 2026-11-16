@@ -42,10 +42,10 @@ fn test_generated_verbs_hold_every_property() {
     assert!(total.waited >= 30, "{total:?}");
 }
 
-/// Hostile texts in the `verbs` place: nothing panics, and every one is
-/// read or refused within `verbs` — not JSON, the wrong type, nesting
-/// deeper than the reader follows, a step with a console line, a wait of
-/// every width.
+/// Hostile texts in the `verbs` place: nothing panics, and every one that
+/// is one JSON value is read or refused within `verbs` — not JSON, the
+/// wrong type, nesting deeper than the reader follows, a step with a
+/// console line, a wait of every width, a byte after the list.
 #[test]
 fn test_hostile_verbs_hold_every_property() {
     let deep = format!("{}{}", "[".repeat(200), "]".repeat(200));
@@ -69,6 +69,16 @@ fn test_hostile_verbs_hold_every_property() {
         check_verbs_json(text.as_bytes()).unwrap_or_else(|why| panic!("{text:.80}: {why}"));
     }
     check_verbs_json(&[0xff, 0xfe, 0x00]).expect("bytes that are no text are no input");
+    // A fuzz finding (verbs_raw, 300 s smoke): a valid list followed by a
+    // control byte is no `verbs` value, and the map around it is refused
+    // at the whole text, outside `verbs` — which the property must not
+    // call a defect. Control, seen red: without the one-value check, "a
+    // refusal of the verbs is at ``, outside `verbs`".
+    check_verbs_json(br#"[{"id": "x", "name": "N", "desc+iption": "", "steps": []}]"#)
+        .expect("a list with an unknown key is refused under verbs");
+    let mut trailing = br#"[{"id": "x", "name": "N", "steps": []}]"#.to_vec();
+    trailing.push(0x06);
+    check_verbs_json(&trailing).expect("a byte after the list is no verbs value");
     // A map whose verbs run: held to every run property, and it ran.
     let ran = check_verbs_text(
         r#"[{"id":"a","name":"A","steps":[{"present":"p","on":"self"},{"wait":5},{"edit":"e","on":{"nodes":[1,77]}},{"verb":"b"}]},

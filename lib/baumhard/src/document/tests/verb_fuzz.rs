@@ -174,12 +174,18 @@ pub struct Ran {
 }
 
 /// [`check_verbs_json`] for a text, with what it ran.
+///
+/// A text that is not one JSON value — trailing bytes after a list, a
+/// list left open — is no `verbs` value: in the map it breaks the text
+/// around it, so a refusal there may name the whole text. It is held to
+/// not panicking alone (`verb_fuzz_tests::test_hostile_verbs_hold_every_property`).
 pub fn check_verbs_text(verbs: &str) -> Result<Ran, String> {
     let map = map_with_verbs(verbs);
+    let one_value = serde_json::from_str::<serde::de::IgnoredAny>(verbs).is_ok();
     let loaded = match load(&map) {
         Ok(doc) => doc,
         Err(error) => {
-            if !error.path.starts_with("verbs") {
+            if one_value && !error.path.starts_with("verbs") {
                 return Err(format!(
                     "a refusal of the verbs is at `{}`, outside `verbs`: {error}",
                     error.path
