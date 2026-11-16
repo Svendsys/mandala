@@ -42,11 +42,10 @@
 //! rings' line heights (`stages::clearance`). The loader holds an `inset`
 //! and a `gap` to the canvas bound (#364), so a ring can lie 10¹² out, and
 //! the bound holds that reach within `EXTENT` as it holds every coordinate
-//! ([`outline_reach`](crate::projection::tests::projection_fuzz::outline_reach)).
-//! The cap of a placement (R41) bounds its glyphs, not their work: a
-//! ring's work is its glyphs times its path's reads a glyph, and its
-//! budget bounds that, 196,608,000 glyph steps at the cap (ruling B17.2c),
-//! far past the timeout. Inside the extent an `f32` point is a thousandth
+//! (`outline_reach`). The cap of a placement (R41) bounds its glyphs, not
+//! their work: a ring's work is its glyphs times its path's reads a glyph,
+//! and its budget bounds that, 196,608,000 glyph steps at the cap (ruling
+//! B17.2c), far past the timeout. Inside the extent an `f32` point is a thousandth
 //! of a unit or finer, a glyph's ink is set apart from the last in a few
 //! reads, and the densest ring of dots the bound admits takes under five
 //! steps a glyph at the cap; 10¹⁰ out a point is a thousand units from
