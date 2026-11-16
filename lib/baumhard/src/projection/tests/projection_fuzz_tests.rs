@@ -7,7 +7,8 @@
 
 use serde_json::json;
 
-use crate::projection::tests::maps::{load_map, node, HUGE_LENGTHS};
+use crate::document::bounds::MAX_CANVAS_COORD;
+use crate::projection::tests::maps::{load_map, node};
 use crate::projection::tests::projection_fuzz::{
     check_projects, projection_counts, under_ceiling, within_bound, EXTENT, MAX_UNITS, MAX_UNTANGLE_SAMPLES,
 };
@@ -83,9 +84,10 @@ fn test_the_projection_bound_refuses_far_coordinates_a_second_text_ring_and_too_
 
 /// The bound is on what a map's work grows with — its coordinates, its
 /// rings of text, its units — and not on a frame's `inset` or `gap` or on
-/// a `spacing`: a map is inside it whatever they are, so the loader
-/// targets project it and hold the projection to it (#364, where a map
-/// with an `inset` of 5·10¹¹ loaded and made the projection panic).
+/// a `spacing`, which the loader holds to the canvas bound (#364, where a
+/// map with an `inset` of 5·10¹¹ loaded and made the projection panic): a
+/// map with each at that bound is inside it, so the loader targets
+/// project it and hold the projection to it.
 ///
 /// Controls: with the bound refusing a frame's `inset`, its `gap` or its
 /// `spacing`, a ring's `spacing`, a connector's or a link's past `EXTENT`,
@@ -101,7 +103,7 @@ fn test_the_projection_bound_holds_a_map_whatever_its_inset_gap_and_spacing() {
         }
         json!({"nodes": [node(1, None, json!({})), node(2, Some(1), far)]})
     };
-    for length in HUGE_LENGTHS.into_iter().chain([f32::MAX]) {
+    for length in [0.0, MAX_CANVAS_COORD] {
         let mut spaced = ring.clone();
         spaced["spacing"] = json!(length);
         for (what, map) in [

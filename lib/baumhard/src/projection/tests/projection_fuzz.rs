@@ -35,9 +35,10 @@
 //! draws at most
 //! [`MAX_UNITS`](crate::projection::tests::projection_fuzz::MAX_UNITS)
 //! sections, rings, connectors and links. A frame's `inset` and `gap` and
-//! a `spacing` are not part of it: what they add to a placement its own
-//! cap bounds (R41), as it bounds a ring of small glyphs round a node
-//! inside the extent, so a map is projected whatever they are (#364). The
+//! a `spacing` are not part of it: the loader holds them to the canvas
+//! bound (#364), and what they add to a placement within it its own cap
+//! bounds (R41), as it bounds a ring of small glyphs round a node inside
+//! the extent. The
 //! coordinates bound how long a path is in map units, not how many glyphs
 //! or samples it takes: those go by its length over its size, and a link
 //! at the smallest sizes a few thousand units long reaches the cap of a
@@ -172,29 +173,6 @@ pub fn within_bound(doc: &Document) -> bool {
         }
     }
     rings_with_text <= 1
-}
-
-/// Whether `doc`, projected, draws a path with a glyph whose box, grown
-/// by the path's gap ([`grown_boxes`](crate::projection::tests::maps::grown_boxes)), is finite and spans more
-/// cells of the body index than an `i64` counts (#364) — counted here in
-/// `i128`, which holds the whole grid: what the structured loader seed
-/// named for it is held to. Test builds only. O(a full projection).
-#[cfg(test)]
-pub(crate) fn a_path_is_spaced_past_the_cells(doc: Document) -> bool {
-    use crate::projection::state::UnitBody;
-    let projected = Projected::new(doc);
-    let past = |rect| {
-        crate::projection::hit::span(rect).is_some_and(|((x0, y0), (x1, y1))| {
-            (i128::from(x1) - i128::from(x0) + 1) * (i128::from(y1) - i128::from(y0) + 1)
-                > i128::from(i64::MAX)
-        })
-    };
-    projected.projector.units.iter().any(|(&id, unit)| {
-        matches!(&unit.body, UnitBody::Line(line) if line.drawn)
-            && crate::projection::tests::maps::grown_boxes(&projected, id)
-                .into_iter()
-                .any(past)
-    })
 }
 
 /// The projection properties of a map the loader accepted (see the module

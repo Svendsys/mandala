@@ -254,18 +254,6 @@ fn test_the_structured_loader_seeds_hold_the_shapes_they_are_named_for() {
                         .as_ref()
                         .is_some_and(|read| read.faults.len() == 2 && read.faults[0] != read.faults[1])
             }
-            // A map that loads and is projected, whose default `spacing`
-            // puts a connector's glyph, grown by it as the hide stage
-            // tries it, past what an `i64` counts of the body index's
-            // cells (#364): counting them made the projection panic.
-            "path_spaced_past_the_body_index_cells" => {
-                got.outcome == "none: loaded"
-                    && spec.bounded == Some("defaults connector spacing")
-                    && crate::document::format::load(&format_fuzz::render(&spec, 0)).is_ok_and(|doc| {
-                        crate::projection::tests::projection_fuzz::within_bound(&doc)
-                            && crate::projection::tests::projection_fuzz::a_path_is_spaced_past_the_cells(doc)
-                    })
-            }
             // A bounded field written past its bound, refused as `Bound`
             // at its path, so a dropped check fails on the seed itself.
             n if n.starts_with("bounded_") && n.ends_with("_past") => {

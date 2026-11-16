@@ -709,7 +709,7 @@ fn frame_style(style: &FrameStyle) -> Result<(), String> {
     fit(&style.fit)?;
     for (field, value) in [("gap", style.gap), ("inset", style.inset)] {
         if let Some(value) = value {
-            named(field, bounds::check_non_negative(value))?;
+            named(field, bounds::check_extent(value))?;
         }
     }
     ring_layout(&style.ring_layout)?;
@@ -722,14 +722,14 @@ fn ring_style(style: &RingStyle) -> Result<(), String> {
     text_style(&style.text)
 }
 
-/// A frame's or a ring's layout: a span in `0..=1`, a spacing `>= 0`, a
+/// A frame's or a ring's layout: a span in `0..=1`, a spacing on the canvas, a
 /// sides ornament with something to draw and no longer than its bound.
 fn ring_layout(layout: &RingLayoutStyle) -> Result<(), String> {
     if let Some(span) = layout.span {
         named("span", bounds::check_unit_interval(span.get()))?;
     }
     if let Some(spacing) = layout.spacing {
-        named("spacing", bounds::check_non_negative(spacing))?;
+        named("spacing", bounds::check_extent(spacing))?;
     }
     match &layout.sides {
         Some(Sides::On { content, .. }) => named("sides", bounds::check_ornament(content)),
@@ -740,7 +740,7 @@ fn ring_layout(layout: &RingLayoutStyle) -> Result<(), String> {
 fn flow_style(style: &FlowStyle) -> Result<(), String> {
     fit(&style.fit)?;
     if let Some(spacing) = style.spacing {
-        named("spacing", bounds::check_non_negative(spacing))?;
+        named("spacing", bounds::check_extent(spacing))?;
     }
     match style.size {
         Some(size) => named("size", bounds::check_font_size_pt(size)),
@@ -1486,10 +1486,6 @@ fn extent(value: f32) -> bool {
     bounds::check_extent(value).is_ok()
 }
 
-fn non_negative(value: f32) -> bool {
-    bounds::check_non_negative(value).is_ok()
-}
-
 fn points(value: f32) -> bool {
     bounds::check_font_size_pt(value).is_ok()
 }
@@ -1534,7 +1530,6 @@ const fn float(ends: [f32; 2], holds: fn(f32) -> bool) -> Bounded {
 const COORD: [f32; 2] = [-bounds::MAX_CANVAS_COORD, bounds::MAX_CANVAS_COORD];
 const EXTENT: [f32; 2] = [0.0, bounds::MAX_CANVAS_COORD];
 const UNIT: [f32; 2] = [0.0, 1.0];
-const NON_NEGATIVE: [f32; 2] = [0.0, f32::MAX];
 const POINTS: [f32; 2] = [bounds::MIN_FONT_SIZE_PT, bounds::MAX_FONT_SIZE_PT];
 const FRACTION: [f32; 2] = [0.0, 1.0];
 const ZOOM_LOW: [f32; 2] = [0.0, f32::MAX];
@@ -1722,7 +1717,7 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         key: "frame",
         template: r#"{"gap": #}"#,
         path: ".frame.gap",
-        value: float(NON_NEGATIVE, non_negative),
+        value: float(EXTENT, extent),
     },
     BoundedField {
         name: "frame inset",
@@ -1730,7 +1725,7 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         key: "frame",
         template: r#"{"inset": #}"#,
         path: ".frame.inset",
-        value: float(NON_NEGATIVE, non_negative),
+        value: float(EXTENT, extent),
     },
     BoundedField {
         name: "frame size",
@@ -1810,7 +1805,7 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         key: "connector",
         template: r#"{"spacing": #}"#,
         path: ".connector.spacing",
-        value: float(NON_NEGATIVE, non_negative),
+        value: float(EXTENT, extent),
     },
     BoundedField {
         name: "connector size",
@@ -1994,7 +1989,7 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         key: "",
         template: r#", "spacing": #"#,
         path: ".spacing",
-        value: float(NON_NEGATIVE, non_negative),
+        value: float(EXTENT, extent),
     },
     BoundedField {
         name: "link size",
@@ -2170,7 +2165,7 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         key: "frame",
         template: r#"{"gap": #}"#,
         path: ".frame.gap",
-        value: float(NON_NEGATIVE, non_negative),
+        value: float(EXTENT, extent),
     },
     BoundedField {
         name: "defaults frame inset",
@@ -2178,7 +2173,7 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         key: "frame",
         template: r#"{"inset": #}"#,
         path: ".frame.inset",
-        value: float(NON_NEGATIVE, non_negative),
+        value: float(EXTENT, extent),
     },
     BoundedField {
         name: "defaults frame size",
@@ -2250,7 +2245,7 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         key: "connector",
         template: r#"{"spacing": #}"#,
         path: ".connector.spacing",
-        value: float(NON_NEGATIVE, non_negative),
+        value: float(EXTENT, extent),
     },
     BoundedField {
         name: "defaults connector size",
@@ -2282,7 +2277,7 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         key: "link",
         template: r#"{"spacing": #}"#,
         path: ".link.spacing",
-        value: float(NON_NEGATIVE, non_negative),
+        value: float(EXTENT, extent),
     },
     BoundedField {
         name: "defaults link size",
@@ -2380,7 +2375,7 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         key: "frame",
         template: r#"{"spacing": #}"#,
         path: ".frame.spacing",
-        value: float(NON_NEGATIVE, non_negative),
+        value: float(EXTENT, extent),
     },
     BoundedField {
         name: "frame sides",
@@ -2412,7 +2407,7 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         key: "frame",
         template: r#"{"rings": [{"spacing": #}]}"#,
         path: ".frame.rings[0].spacing",
-        value: float(NON_NEGATIVE, non_negative),
+        value: float(EXTENT, extent),
     },
     BoundedField {
         name: "ring sides",
@@ -2436,7 +2431,7 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         key: "frame",
         template: r#"{"spacing": #}"#,
         path: ".frame.spacing",
-        value: float(NON_NEGATIVE, non_negative),
+        value: float(EXTENT, extent),
     },
     BoundedField {
         name: "defaults frame sides",
@@ -2460,7 +2455,7 @@ pub static BOUNDED_FIELDS: [BoundedField; 115] = [
         key: "ring",
         template: r#"{"spacing": #}"#,
         path: ".ring.spacing",
-        value: float(NON_NEGATIVE, non_negative),
+        value: float(EXTENT, extent),
     },
     BoundedField {
         name: "defaults ring sides",

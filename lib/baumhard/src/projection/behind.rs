@@ -480,10 +480,12 @@ impl Projector {
                 // number. Held to f32::MAX / 4, the box stays finite — its
                 // size at most the ink's and f32::MAX / 2, its corners within
                 // f32::MAX / 4 of the glyph — and it reaches every region a
-                // loadable map can place, as positions are held to 1e9 and
-                // every region holds its node. So every node hides the
-                // glyph, as from 8.5e37 on, and the hidden set never shrinks
-                // as the gap grows.
+                // map can place, as positions are held to 1e9 and every
+                // region holds its node: every node hides the glyph, and
+                // the hidden set never shrinks as the gap grows. The loader
+                // and the mutations hold a `spacing` to the canvas bound,
+                // so no document reaches this; it stays as the defense the
+                // stage owes whatever gap it is given.
                 let grown = ink.grown(gap.min(f32::MAX / 4.0));
                 boxes.push(grown);
                 let by_node = behind(grown, run.zoom());
