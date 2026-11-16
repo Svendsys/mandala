@@ -444,13 +444,16 @@ fn test_the_flow_properties_find_a_check_past_the_classes_held_back_for_it() {
     );
 }
 
-/// `"omo omo omo omo omo omo"` at 22 pt laid inward as a `Fit` frame
-/// within ¼ to ×2 round a sharp `w` × 12 rectangle, a frame that shrinks,
-/// with its budget set to `budget` where given: the run as laid, its
-/// trace, how its builds held `untouched`'s share, and the most its work
-/// may take, its budget and its overshoot (`overshoot_steps` of its run
-/// as shaped).
+/// The text the shrinking frames here lay unless one names its own.
+const OMO: &str = "omo omo omo omo omo omo";
+
+/// `text` at 22 pt laid inward as a `Fit` frame within ¼ to ×2 round a
+/// sharp `w` × 12 rectangle, a frame that shrinks, with its budget set to
+/// `budget` where given: the run as laid, its trace, how its builds held
+/// `untouched`'s share, and the most its work may take, its budget and
+/// its overshoot (`overshoot_steps` of its run as shaped).
 fn shrinking_frame(
+    text: &str,
     w: f32,
     budget: Option<usize>,
 ) -> (
@@ -464,7 +467,6 @@ fn shrinking_frame(
     use crate::flow::tests::halves_tests::{frame_with, with_seam};
     use crate::flow::tests::support::{real_run, style, with_fonts};
     use crate::flow::{outline, Rect, RingLayout};
-    const TEXT: &str = "omo omo omo omo omo omo";
     let shape = outline(
         Rect::new(Vec2::ZERO, Vec2::new(w, 12.0)),
         Shape::Rectangle {
@@ -472,13 +474,13 @@ fn shrinking_frame(
         },
     );
     let fit = FitMode::Fit { min: 0.25, max: 2.0 };
-    let lay = || frame_with(TEXT, 22.0, &shape, &fit, &RingLayout::whole(), false);
+    let lay = || frame_with(text, 22.0, &shape, &fit, &RingLayout::whole(), false);
     let (run, _, trace) = match budget {
         Some(budget) => with_seam(&BUDGET_OVERRIDE, budget, lay),
         None => lay(),
     };
     let share = SHARE_CLASSES.with(std::cell::Cell::get);
-    let shaped = with_fonts(|fs| real_run(TEXT, &style(22.0), fs));
+    let shaped = with_fonts(|fs| real_run(text, &style(22.0), fs));
     let most = trace.budget + overshoot_steps(&shaped, None, true, trace.tables);
     (run, trace, share, most)
 }
@@ -497,14 +499,14 @@ fn shrinking_frame(
 /// share ends held for 1 class, a build before it took 2).
 #[test]
 fn test_flow_halves_untouched_s_share_covers_every_build_of_a_shrink() {
-    let (_, trace, share, most) = shrinking_frame(290.04, Some(5_000));
+    let (_, trace, share, most) = shrinking_frame(OMO, 290.04, Some(5_000));
     assert!(
         share.fell >= 1 && !share.kept_first,
         "precondition: the frame shrinks, a build taking fewer classes than one before it ({share:?})"
     );
     assert!(
         share.held >= share.most,
-        "the share ends held for {} classes, a build of the frame took {} ({share:?})",
+        "the share ends held for {}, a build of the frame took {} classes ({share:?})",
         share.held,
         share.most
     );
@@ -519,21 +521,26 @@ fn test_flow_halves_untouched_s_share_covers_every_build_of_a_shrink() {
 /// left no longer holds is refused (ruling B46.3, `Work::holds_share`):
 /// `"omo omo omo omo omo omo"` inward round a sharp 348.2 × 12 rectangle
 /// shrinks at its own budget; at a budget of 2,750 glyph steps its floor's
-/// build, after its reshape and inking, finds the budget less than its
-/// share, and is refused, and the frame keeps its first build, at R27's
-/// size, and ends within its budget and its overshoot. Precondition: at
-/// its own budget the frame shrinks.
+/// build holds the share as it was, 2 classes, but its own reshape and
+/// inking take what the frame has spent past the budget less that share,
+/// so it is refused, and the frame keeps its first build, at R27's size,
+/// and ends within its budget and its overshoot. The ruling's condition
+/// as it reads: the refusal fires whether or not the share grows, so a
+/// frame whose budget binds keeps R27's size here where, unrefused, it
+/// would keep the floor's — 11 of its 23 glyphs laid either way. (A share
+/// that grows is the case below.) Precondition: at its own budget the
+/// frame shrinks.
 ///
 /// Control: with no build refused, red (the floor's build is laid, and
 /// kept).
 #[test]
 fn test_flow_halves_a_shrink_s_build_the_budget_left_cannot_hold_the_share_for_is_refused() {
-    let (free, _, free_share, _) = shrinking_frame(348.2, None);
+    let (free, _, free_share, _) = shrinking_frame(OMO, 348.2, None);
     assert!(
         !free_share.kept_first && free_share.refused == 0,
         "precondition: at its own budget the frame shrinks ({free_share:?})"
     );
-    let (run, trace, share, most) = shrinking_frame(348.2, Some(2_750));
+    let (run, trace, share, most) = shrinking_frame(OMO, 348.2, Some(2_750));
     assert!(
         share.refused == 1 && share.kept_first,
         "at 2,750 glyph steps the floor's build is refused, and the frame keeps its first ({share:?})"
@@ -543,6 +550,47 @@ fn test_flow_halves_a_shrink_s_build_the_budget_left_cannot_hold_the_share_for_i
         "kept at R27's size, {}, above the size it shrinks to, {}",
         run.glyphs[0].size,
         free.glyphs[0].size
+    );
+    assert!(
+        trace.spent <= most,
+        "the frame took {} glyph steps, past the {most} its budget and overshoot give",
+        trace.spent
+    );
+}
+
+/// A build past a frame's first whose inks would grow `untouched`'s share
+/// past what the budget left is refused (ruling B46.3,
+/// `Work::holds_share`): `"Hxg ö̤ Hxg ö̤ Hxg ö̤ Hxg"` inward round a sharp
+/// 200 × 12 rectangle at a budget of 2,650 glyph steps. Its first build's
+/// inks take 1 class, its floor's 2: the share would grow from 288 steps
+/// to 354 with 2,326 spent, which 2,650 holds at 1 class and not at 2.
+/// The floor's build is refused, and no build past the first is held for
+/// with what the frame has spent and its share past its budget
+/// (`ShareTrace::room_past`). Precondition: the first build's inks take 1
+/// class.
+///
+/// Control: with the share the build would hold read without its classes
+/// (`holds_share` reading the share as held), red (the floor's build held
+/// for 2 classes, 32 steps past the budget).
+#[test]
+fn test_flow_halves_a_shrink_s_build_whose_share_would_grow_past_the_budget_is_refused() {
+    let (_, trace, share, most) = shrinking_frame(
+        "Hxg o\u{308}\u{324} Hxg o\u{308}\u{324} Hxg o\u{308}\u{324} Hxg",
+        200.0,
+        Some(2_650),
+    );
+    assert!(
+        share.first == 1,
+        "precondition: the first build's inks take 1 class ({share:?})"
+    );
+    assert!(
+        share.room_past.is_none_or(|past| past <= 0),
+        "a build past the first was held for {} steps past the budget ({share:?})",
+        share.room_past.unwrap_or(0)
+    );
+    assert!(
+        share.refused == 1 && share.kept_first,
+        "the floor's build, its share grown past the budget, is refused ({share:?})"
     );
     assert!(
         trace.spent <= most,

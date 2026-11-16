@@ -798,8 +798,10 @@ fn side_ink_reach(band: &Band, run: &ShapedRun, clusters: &[Cluster]) -> f64 {
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct ShareTrace {
-    /// The most classes of height the inks of any build the share was
-    /// held for can take placed ([`Layout::text_bound`]).
+    /// The classes of height the inks of the frame's first build can take
+    /// placed ([`Layout::text_bound`]), and the most those of any build
+    /// the share was held for can.
+    pub(crate) first: usize,
     pub(crate) most: usize,
     /// The classes the share was held for once the frame's builds were
     /// done and one was kept.
@@ -812,6 +814,11 @@ pub(crate) struct ShareTrace {
     pub(crate) fell: usize,
     /// Whether the build kept was the frame's first, at R27's size.
     pub(crate) kept_first: bool,
+    /// The most what the frame had spent and its share passed its budget
+    /// by, `spent + reserve − budget`, as a build past the first was held
+    /// for: none past it where at most 0. `None` where no build past the
+    /// first was held for.
+    pub(crate) room_past: Option<i64>,
 }
 
 /// Note in a test what a frame's inks wanted of its offset, `wanted`,
@@ -1634,11 +1641,13 @@ thread_local! {
     #[cfg(test)]
     pub(crate) static SHARE_CLASSES: std::cell::Cell<ShareTrace> = const {
         std::cell::Cell::new(ShareTrace {
+            first: 0,
             most: 0,
             held: 0,
             refused: 0,
             fell: 0,
             kept_first: false,
+            room_past: None,
         })
     };
     /// Test counter (#294, rulings R44.3, R46.1): the pairs of boxes
@@ -3534,7 +3543,14 @@ impl Work {
     /// Whether the budget still holds [`untouched`]'s share held for
     /// `classes` classes of height ([`hold_for`](Self::hold_for)) beside
     /// what the frame has spent: what a build of the frame past its first
-    /// is refused without (ruling B46.3, [`Layout::text_bound`]).
+    /// is refused without (ruling B46.3, [`Layout::text_bound`]). It fails
+    /// where the build's inks would grow the share past what the budget
+    /// left, and also where the share does not grow but the build's own
+    /// setup — its reshape, side run, inking and bands — took what the
+    /// frame has spent past the budget less the share: the ruling's
+    /// condition as it reads, `spent + new_reserve > budget`. So a frame
+    /// whose budget binds may keep R27's size where, unrefused, it would
+    /// have kept a smaller one.
     fn holds_share(&self, classes: usize) -> bool {
         let classes = classes.max(self.classes.get()).max(1);
         self.spent
@@ -3815,7 +3831,10 @@ impl Layout<'_> {
     /// cluster — the boxes [`untouched`] weighs — not by glyph: a base
     /// and its combining mark make one box taller than either.
     ///
-    /// Cost: O(clusters).
+    /// Cost: O(clusters · log clusters): a pass over the clusters, and a
+    /// sort of their classes' ranges (two to an inked cluster), counted
+    /// against the frame's budget as a touch check counts the sort and
+    /// sweep of as many boxes ([`weighing_steps`], ruling R46.1).
     fn text_bound<'c>(
         &self,
         run: &ShapedRun,
@@ -3832,12 +3851,10 @@ impl Layout<'_> {
             })
         };
         let inked: Vec<(Ink, f64)> = text.into_iter().filter_map(reach).collect();
-        let wants = inked
-            .iter()
-            .map(|&(_, at)| at)
-            .chain(ornament.into_iter().filter_map(reach).map(|(_, at)| at))
-            .fold(0.0, f64::max)
-            * (1.0 + REACH_SLACK);
+        let sides: Vec<f64> = ornament.into_iter().filter_map(reach).map(|(_, at)| at).collect();
+        self.work
+            .take(weighing_steps(inked.len().saturating_add(sides.len())));
+        let wants = inked.iter().map(|&(_, at)| at).chain(sides).fold(0.0, f64::max) * (1.0 + REACH_SLACK);
         let bound = f32_above(wants);
         let band_at = band_reach(self.halves.reach, f64::from(bound));
         let classes = reachable_classes(
@@ -7387,6 +7404,9 @@ pub(super) fn place_halves(
     // B46.3).
     let first_build = Cell::new(true);
     let refused = Cell::new(false);
+    // In a test: whether a build held for is past the first.
+    #[cfg(test)]
+    let trace_later = Cell::new(false);
     let build = |scale: f32, seed: Clear, cheap: bool, fs: &mut FontSystemLease| {
         #[cfg(test)]
         BUILDS.with(|count| count.set(count.get() + 1));
@@ -7455,12 +7475,24 @@ pub(super) fn place_halves(
             return None;
         }
         lay.offset_bound.set(bound);
+        #[cfg(test)]
+        let later = trace_later.replace(true);
         lay.work.hold_for(classes);
         #[cfg(test)]
         SHARE_CLASSES.with(|share| {
             let mut trace = share.get();
+            if !later {
+                trace.first = classes;
+            }
             trace.fell += usize::from(classes < trace.most);
             trace.most = trace.most.max(classes);
+            if later {
+                let work = &lay.work;
+                let past = i64::try_from(work.spent.get().saturating_add(work.reserve.get()))
+                    .unwrap_or(i64::MAX)
+                    - i64::try_from(work.budget.get()).unwrap_or(i64::MAX);
+                trace.room_past = Some(trace.room_past.map_or(past, |most| most.max(past)));
+            }
             share.set(trace);
         });
         // The frame's band curve, first at the offset its inks would want
