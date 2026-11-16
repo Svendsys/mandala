@@ -306,8 +306,9 @@ impl InputWork {
     /// no more than its budget and its overshoot, and no touch check of it
     /// looks at more than `touch_looks` pairs a box of the classes of
     /// height it holds, nor a side arc's check holds more classes than its
-    /// arc held back for — the two that overshoot rests on (rulings R48.2,
-    /// R51.2): properties.
+    /// arc held back for, nor a check of `untouched` more than its share
+    /// was held back for — what overshoot rests on (rulings R48.2, R51.2,
+    /// B46.2): properties.
     pub(crate) fn frame(
         &mut self,
         run: &ShapedRun,
@@ -336,6 +337,12 @@ impl InputWork {
             return Err(format!(
                 "{what}: a side arc's touch check held {} classes of height, past the {} its arc held back for (ruling R51.2)",
                 trace.looks.classes, trace.looks.reserved
+            ));
+        }
+        let (held, reserved) = trace.looks.untouched;
+        if held > reserved {
+            return Err(format!(
+                "{what}: a touch check of `untouched` held {held} classes of height, past the {reserved} its share was held back for (ruling B46.2)"
             ));
         }
         if trace.budget > budget {

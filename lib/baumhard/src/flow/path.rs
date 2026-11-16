@@ -1806,7 +1806,7 @@ const CORNER_TURN: f32 = 1e-6;
 /// ([`ArcPath::offset_at`]): a hair short of a quarter turn, past which
 /// the two sides run back side by side and their offsets inside meet far
 /// off or never.
-const INSIDE_TURN: f32 = 0.49 * std::f32::consts::PI;
+pub(crate) const INSIDE_TURN: f32 = 0.49 * std::f32::consts::PI;
 
 /// `v`'s length, finite wherever it is: [`Vec2::length`], or, for a
 /// vector longer than `√f32::MAX` (about `1.8e19`) — whose squared
