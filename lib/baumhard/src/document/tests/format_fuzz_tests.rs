@@ -96,12 +96,16 @@ fn test_a_ring_past_the_body_index_cells_is_projected() {
 /// 3, 1000 away, is round and ringed, and trying such a box against its
 /// region clamped to no number. The map is inside the projection's work
 /// bound, so both loader targets project it, and it holds every property:
-/// the path is drawn whole, as a box that is not finite meets no region.
+/// a gap too large for a box to hold covers the whole canvas, so node 3
+/// hides the path whole.
 ///
-/// Controls: with such a box tried against the regions, as it was, the
-/// projection here panics (`f32::clamp`: "min > max, or either was NaN").
-/// With the bound refusing a connector's `spacing` past its extent, red
-/// on the precondition that the map is inside it.
+/// Controls: with the gap not held to what a box holds and the box tried
+/// as `Rect::grown` gives it, as it was, the projection here panics
+/// (`f32::clamp`: "min > max, or either was NaN"); with the gap not held
+/// alone, red on the path hidden. With the bound refusing a connector's
+/// `spacing` past its extent, red on the precondition that the map is
+/// inside it; with the finding spaced 10, red on the precondition that
+/// its boxes have no far corner.
 #[test]
 fn test_a_path_spaced_past_what_a_box_holds_is_projected() {
     use crate::projection::tests::projection_fuzz::within_bound;
@@ -122,7 +126,7 @@ fn test_a_path_spaced_past_what_a_box_holds_is_projected() {
         !boxes.is_empty() && boxes.iter().all(|b| !b.max().is_finite()),
         "precondition: each glyph's box, grown by the path's gap, has no far corner, {boxes:?}"
     );
-    assert_eq!(drawn, laid, "the path is drawn whole");
+    assert_eq!(drawn, 0, "the node 1000 away hides the path whole");
     check_load_bytes(finding).unwrap();
 }
 

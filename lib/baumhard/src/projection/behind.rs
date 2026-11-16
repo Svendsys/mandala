@@ -71,7 +71,7 @@ use crate::flow::{PlacedRun, Rect};
 use crate::gfx_structs::run::{GlyphRunData, RunShape};
 use crate::gfx_structs::shape::NodeShape;
 use crate::projection::geometry::node_shape;
-use crate::projection::hit::{cell_count, cells, span, BodyIndex};
+use crate::projection::hit::{cell_count, cells, is_rectangle, span, BodyIndex};
 use crate::projection::input::{Dependent, ProjectionInput, Stage};
 use crate::projection::stages::{gap_and_size, glyph_ink, run_data, PhaseWork};
 use crate::projection::state::UnitBody;
@@ -101,6 +101,11 @@ pub(crate) struct PathCells {
     /// The paths with a glyph too large for the cells, each with the box
     /// round those glyphs: tried by every query.
     large: FxHashMap<NodeId, Rect>,
+    /// How many cells `each_meeting` has visited, its query's own walked
+    /// or the occupied ones scanned: what the test that holds a region
+    /// past the cells to the occupied cells reads. Test builds only.
+    #[cfg(test)]
+    pub(crate) meeting_cells: std::cell::Cell<usize>,
 }
 
 /// Whether `a` and `b` meet, edges included.
@@ -110,14 +115,16 @@ fn meet(a: &Rect, b: &Rect) -> bool {
 
 impl PathCells {
     /// Set where `path`'s glyphs are: `boxes`, each a glyph's box grown by
-    /// the path's gap. A box that is not finite is left out, and the hide
-    /// stage holds that it meets no region (#364). O(its old and new
-    /// cells).
+    /// the path's gap. A box that is no rectangle
+    /// ([`is_rectangle`](crate::projection::hit::is_rectangle)) is left
+    /// out, as the regions' index finds nothing for it, so the hide stage
+    /// and the index agree on it; one reaching ±∞ is kept apart, as any
+    /// box past the cells is. O(its old and new cells).
     pub(crate) fn set(&mut self, path: NodeId, boxes: &[Rect]) {
         self.remove(path);
         let mut here: FxHashMap<Cell, Rect> = FxHashMap::default();
         for b in boxes {
-            if !b.origin.is_finite() || !b.size.is_finite() {
+            if !is_rectangle(*b) {
                 continue;
             }
             match cells(*b) {
@@ -188,11 +195,17 @@ impl PathCells {
             Some(((x0, y0), (x1, y1))) if cell_count((x0, y0), (x1, y1)) <= self.cells.len() as u64 => {
                 for x in x0..=x1 {
                     for y in y0..=y1 {
+                        #[cfg(test)]
+                        self.meeting_cells.set(self.meeting_cells.get() + 1);
                         each(self.cells.get(&(x, y)).map_or(&[], Vec::as_slice));
                     }
                 }
             }
-            Some(_) => self.cells.values().for_each(|list| each(list)),
+            Some(_) => self.cells.values().for_each(|list| {
+                #[cfg(test)]
+                self.meeting_cells.set(self.meeting_cells.get() + 1);
+                each(list)
+            }),
             None => {}
         }
     }
@@ -387,11 +400,11 @@ impl Projector {
     /// grown by its gap, meet the box round the label's text are left out
     /// too (#340), a cap's as its body's, so the path stops one gap short
     /// of its label on each side; a label hidden hides nothing of its
-    /// path. A box that is not finite meets no node's region, as it is left
-    /// out of the paths' index (#364). Records reading the region, opacity
-    /// and zoom window of each node it meets, and sets where its glyphs and
-    /// its label are. A path not drawn has nothing hidden, and leaves the
-    /// paths' index.
+    /// path. A gap too large for a box to hold covers the whole canvas:
+    /// every node hides the path (#364). Records reading the region,
+    /// opacity and zoom window of each node it meets, and sets where its
+    /// glyphs and its label are. A path not drawn has nothing hidden, and
+    /// leaves the paths' index.
     ///
     /// Cost: O(its glyphs and its label's, and the regions in each glyph's
     /// cells and its label's).
@@ -408,15 +421,8 @@ impl Projector {
         let mut boxes = Vec::new();
         // Whether `rect`, of a run in `zoom`, meets the region of a node the
         // path does not end at that is drawn wherever the run is; each node
-        // met is read. A box that is not finite meets none, as the paths'
-        // index leaves it out (`PathCells::set`), so an update finds what a
-        // full projection does: a glyph's box grown by a gap past what an
-        // `f32` holds has an origin of -inf and a size of +inf, and no far
-        // corner (#364).
+        // met is read.
         let mut behind = |rect: Rect, zoom: Option<ZoomWindow>| {
-            if !rect.origin.is_finite() || !rect.size.is_finite() {
-                return false;
-            }
             let mut hidden = false;
             self.regions.each_within(rect, |node| {
                 if node == from || node == to {
@@ -469,7 +475,17 @@ impl Projector {
                     shown.push(*g);
                     continue;
                 };
-                let grown = ink.grown(gap);
+                // A gap too large for a box to hold covers the whole canvas
+                // (#364): `Rect::grown` by a gap past about 1.7e38 has an
+                // origin of -inf and a size of +inf, whose far corner is no
+                // number. Held to f32::MAX / 4, the box stays finite — its
+                // size at most the ink's and f32::MAX / 2, its corners within
+                // f32::MAX / 4 of the glyph — and it reaches every region a
+                // loadable map can place, as positions are held to 1e9 and
+                // every region holds its node. So every node hides the
+                // glyph, as from 8.5e37 on, and the hidden set never shrinks
+                // as the gap grows.
+                let grown = ink.grown(gap.min(f32::MAX / 4.0));
                 boxes.push(grown);
                 let by_node = behind(grown, run.zoom());
                 let by_label = own_label.is_some_and(|text| meet(&grown, &text));

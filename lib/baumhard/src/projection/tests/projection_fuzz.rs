@@ -175,14 +175,12 @@ pub fn within_bound(doc: &Document) -> bool {
 }
 
 /// Whether `doc`, projected, draws a path with a glyph whose box, grown
-/// by the path's gap as the hide stage tries it, is finite and spans more
+/// by the path's gap ([`grown_boxes`](crate::projection::tests::maps::grown_boxes)), is finite and spans more
 /// cells of the body index than an `i64` counts (#364) — counted here in
 /// `i128`, which holds the whole grid: what the structured loader seed
 /// named for it is held to. Test builds only. O(a full projection).
 #[cfg(test)]
 pub(crate) fn a_path_is_spaced_past_the_cells(doc: Document) -> bool {
-    use crate::gfx_structs::run::RunShape;
-    use crate::projection::stages::{gap_and_size, glyph_ink};
     use crate::projection::state::UnitBody;
     let projected = Projected::new(doc);
     let past = |rect| {
@@ -191,20 +189,11 @@ pub(crate) fn a_path_is_spaced_past_the_cells(doc: Document) -> bool {
                 > i128::from(i64::MAX)
         })
     };
-    projected.projector.units.values().any(|unit| {
-        let UnitBody::Line(line) = &unit.body else {
-            return false;
-        };
-        let gap = gap_and_size(line).0.max(0.0);
-        line.drawn
-            && line.laid.iter().flatten().any(|run| match run.shaped() {
-                RunShape::Path { run: shaped, placed } => placed
-                    .glyphs
-                    .iter()
-                    .filter_map(|glyph| glyph_ink(shaped, glyph))
-                    .any(|ink| past(ink.grown(gap))),
-                RunShape::Box(_) => false,
-            })
+    projected.projector.units.iter().any(|(&id, unit)| {
+        matches!(&unit.body, UnitBody::Line(line) if line.drawn)
+            && crate::projection::tests::maps::grown_boxes(&projected, id)
+                .into_iter()
+                .any(past)
     })
 }
 

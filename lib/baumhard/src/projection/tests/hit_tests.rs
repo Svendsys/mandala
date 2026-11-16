@@ -904,3 +904,109 @@ fn test_projection_a_query_past_the_cells_tries_every_body() {
         );
     }
 }
+
+/// A query that is no rectangle on the canvas finds nothing (#364): one
+/// with a part that is no number — its origin, its size, or the far
+/// corner of a glyph's box grown past what an `f32` holds (an origin of
+/// −∞ and a size of +∞) — or one whose size is negative, which a [`Rect`]
+/// never has and which is not normalized into the rectangle its corners
+/// span. A rubber band and a layout's rectangle of each find no node — not
+/// the round one, the square one, or the one too large for the cells —
+/// where a rectangle round all three finds all three, and so does one
+/// reaching +∞, a rectangle that far.
+///
+/// Controls: with such a query given candidates, as it was, a negative
+/// size meets the node too large for the cells, which every query tries,
+/// red on the layout's rectangle. With that and the shape's check of its
+/// corners' order both taken out, the corner that is no number panics on
+/// the round node (`f32::clamp`). With no part of a query let reach +∞,
+/// red on the rectangle reaching it. The shape's check alone is held by
+/// its own test.
+#[test]
+fn test_projection_a_query_that_is_no_rectangle_finds_nothing() {
+    let doc = load_map(json!({"nodes": [
+        node(1, None, json!({"position": [0.0, 0.0], "min_size": [100.0, 40.0], "shape": "ellipse"})),
+        node(2, None, json!({"position": [300.0, 0.0], "min_size": [100.0, 40.0]})),
+        node(3, None, json!({"position": [0.0, 2000.0], "min_size": [1.0e5, 1.0e5]})),
+    ]}));
+    let mut every: Vec<NodeId> = (1..=3).map(|id| ident(&doc, id)).collect();
+    every.sort_unstable();
+    let p = Projected::new(doc);
+    let (rect, _) = p
+        .projector
+        .bodies
+        .get(ident(&p.doc, 3))
+        .expect("node 3 has a body");
+    assert_eq!(
+        cells(rect),
+        None,
+        "precondition: node 3 is too large for the cells"
+    );
+    let round = Rect::new(Vec2::splat(-1.0e3), Vec2::splat(2.0e5));
+    assert_eq!(
+        p.projector.nodes_in(round),
+        every,
+        "precondition: a rectangle round all three finds them"
+    );
+    let spanned = Rect::new(Vec2::splat(1.0e4), Vec2::splat(5.0e4));
+    assert_eq!(
+        p.projector.nodes_in(spanned),
+        vec![ident(&p.doc, 3)],
+        "precondition: the rectangle the negative sizes' corners span finds node 3"
+    );
+    let nan = f32::NAN;
+    let inf = f32::INFINITY;
+    let queries = [
+        (
+            "a corner that is no number",
+            Rect::new(Vec2::new(nan, -1.0e3), Vec2::splat(2.0e5)),
+        ),
+        (
+            "a size that is no number",
+            Rect::new(Vec2::splat(-1.0e3), Vec2::new(2.0e5, nan)),
+        ),
+        (
+            "a glyph's box grown past f32",
+            Rect::new(Vec2::splat(10.0), Vec2::splat(10.0)).grown(f32::MAX),
+        ),
+        // Inside node 3, the node too large for the cells, which every
+        // query tries.
+        (
+            "a negative size across",
+            Rect::new(Vec2::new(6.0e4, 1.0e4), Vec2::new(-5.0e4, 5.0e4)),
+        ),
+        (
+            "a negative size down",
+            Rect::new(Vec2::new(1.0e4, 6.0e4), Vec2::new(5.0e4, -5.0e4)),
+        ),
+        (
+            "a negative size both ways",
+            Rect::new(Vec2::splat(6.0e4), Vec2::splat(-5.0e4)),
+        ),
+    ];
+    // One reaching infinity is a rectangle that far, and finds what it
+    // covers.
+    let reaching = Rect::new(Vec2::splat(-1.0e3), Vec2::splat(inf));
+    assert_eq!(
+        p.projector.nodes_in(reaching),
+        every,
+        "a rubber band reaching +inf"
+    );
+    assert_eq!(
+        p.projector.nodes_meeting(reaching),
+        every,
+        "a layout's rectangle reaching +inf"
+    );
+    for (what, rect) in queries {
+        assert_eq!(
+            p.projector.nodes_in(rect),
+            Vec::<NodeId>::new(),
+            "a rubber band with {what}"
+        );
+        assert_eq!(
+            p.projector.nodes_meeting(rect),
+            Vec::<NodeId>::new(),
+            "a layout's rectangle with {what}"
+        );
+    }
+}

@@ -1446,16 +1446,19 @@ fn test_projection_a_glyph_box_past_the_cells_is_found_by_every_region_inside_it
     }
 }
 
-/// A region past the cells finds the paths it meets by scanning the cells
-/// that hold a path, never by walking its own (#364): the box round a
-/// ring set out by each length a map could carry finds the five paths
-/// near the origin, and the one 3·10¹² out only once it reaches it.
+/// A region past the cells finds exactly the paths it meets by scanning
+/// the cells that hold a path, visiting no more than those six, never by
+/// walking its own (#364): the box round a ring set out by each length a
+/// map could carry finds the five paths near the origin, and the one
+/// 3·10¹² out only once it reaches it.
 ///
 /// Controls: as the test above's. A debug build panics at the first
 /// region, and a release build is red on the precondition that the region
 /// spans more cells than hold a path (past which it would walk every one
-/// of its own). With the scan passing nothing, or passing every path
-/// without trying its box against the region, red on the paths met.
+/// of its own). With the scan passing nothing, red on the cells visited;
+/// with it passing every path without trying its box against the region,
+/// red on the paths met; with each occupied cell scanned twice, red on
+/// the cells visited.
 #[test]
 fn test_projection_a_region_past_the_cells_scans_the_cells_that_hold_a_path() {
     let nodes: Vec<Value> = (1..=6).map(|id| node(id, None, json!({}))).collect();
@@ -1492,7 +1495,14 @@ fn test_projection_a_region_past_the_cells_scans_the_cells_that_hold_a_path() {
             .collect();
         want.sort_unstable();
         reached += usize::from(want.len() == 6);
-        assert_eq!(meeting(&index, region), want, "the paths {region:?} meets");
+        index.meeting_cells.set(0);
+        let met = meeting(&index, region);
+        assert_eq!(
+            index.meeting_cells.get(),
+            6,
+            "{region:?} visits the six cells that hold a path, and no others"
+        );
+        assert_eq!(met, want, "the paths {region:?} meets");
     }
     assert!(
         (1..12).contains(&reached),
@@ -1654,23 +1664,23 @@ fn test_projection_a_path_spaced_past_the_cells_is_hidden_by_any_node_in_its_gap
 
 /// A connector spaced so far that its glyphs' boxes, grown by its gap,
 /// are past what an `f32` holds — 1.8·10³⁸ and `f32::MAX`, which the
-/// loader lets through — has boxes with no far corner: `Rect::grown` gives
-/// each an origin of −∞ and a size of +∞, which sum to no number. Such a
-/// box meets no node's region, as the paths' index leaves it out (#364):
-/// the path is drawn whole beside a node 1000 away — one with only text,
-/// one ringed, one round and ringed — and with that node across it, and
-/// an update holds what a full projection does once the node is hidden,
-/// shown again and moved across the path. The finite edge beside them,
-/// 1.6·10³⁸, is hidden by each node, as a path spaced past the cells is
-/// (the test above).
+/// loader lets through — would have boxes with no far corner:
+/// `Rect::grown` gives each an origin of −∞ and a size of +∞, which sum to
+/// no number. A gap too large for a box to hold covers the whole canvas
+/// (#364): the path is hidden whole by a node 1000 away — one with only
+/// text, one ringed, one round and ringed — as at 1.6·10³⁸, whose boxes
+/// are still finite, and as by that node across it; and an update holds
+/// what a full projection does once the node is hidden, shown again and
+/// moved across the path.
 ///
-/// Controls: with such a box tried against the regions, as it was, the
-/// round node's region panics on it (`f32::clamp` of a box whose far
-/// corner is no number), and the others hide it in a full projection, red
-/// on the path drawn whole; that assertion taken out, red on the oracle
-/// after the node is shown again, whose update does not find the path.
+/// Controls: with the gap not held to what a box holds, as it was, and
+/// the box tried as `Rect::grown` gives it, the round node's region panics
+/// on it (`f32::clamp` of a corner that is no number); with the regions'
+/// index finding nothing for such a box, as it now does, red on the glyphs
+/// drawn. With a fixture's spacing moved to where its boxes are finite,
+/// red on its precondition.
 #[test]
-fn test_projection_a_path_spaced_past_what_a_box_holds_is_hidden_by_no_node() {
+fn test_projection_a_path_spaced_past_what_a_box_holds_is_hidden_by_every_node() {
     let blockers = [
         ("a node with text", json!({})),
         ("a ringed node", json!({"frame": dotted(0.05)})),
@@ -1695,10 +1705,9 @@ fn test_projection_a_path_spaced_past_what_a_box_holds_is_hidden_by_no_node() {
                 !boxes.is_empty() && boxes.iter().all(|b| b.max().is_finite() == finite),
                 "precondition: spaced {spacing}, the glyphs' boxes have a far corner: {finite}, {boxes:?}"
             );
-            let want = if finite { 0 } else { laid };
             assert_eq!(
                 drawn_glyphs(&p, path),
-                want,
+                0,
                 "{what} 1000 away, the path spaced {spacing}: glyphs drawn"
             );
             p.check().unwrap();
@@ -1714,7 +1723,7 @@ fn test_projection_a_path_spaced_past_what_a_box_holds_is_hidden_by_no_node() {
             move_to(&mut p, 3, ON_P);
             assert_eq!(
                 drawn_glyphs(&p, path),
-                want,
+                0,
                 "{what} across the path spaced {spacing}: glyphs drawn"
             );
             p.check().unwrap();

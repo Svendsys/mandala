@@ -108,6 +108,20 @@ pub(crate) fn cell_count((x0, y0): (i32, i32), (x1, y1): (i32, i32)) -> u64 {
     along(x0, x1).saturating_mul(along(y0, y1))
 }
 
+/// Whether `rect` is a rectangle on the canvas: no part of it is no
+/// number — its origin, its size, or its far corner, which an origin of
+/// −∞ and a size of +∞ sum to — and its size is not negative, which a
+/// [`Rect`]'s never is. One reaching ±∞ is a rectangle that far. A query
+/// that is no rectangle finds nothing, in both indices, and is not
+/// normalized into the rectangle its corners would span (#364). O(1).
+pub(crate) fn is_rectangle(rect: Rect) -> bool {
+    !rect.origin.is_nan()
+        && !rect.size.is_nan()
+        && !rect.max().is_nan()
+        && rect.size.x >= 0.0
+        && rect.size.y >= 0.0
+}
+
 /// The cells `rect` covers, when they are few enough to list.
 pub(crate) fn cells(rect: Rect) -> Option<((i32, i32), (i32, i32))> {
     span(rect).filter(|&(a, b)| cell_count(a, b) <= MAX_CELLS)
@@ -212,7 +226,8 @@ impl BodyIndex {
     /// id. **Inclusive**: a body whose edge `rect` only touches is in,
     /// and a zero-area `rect` is a point query that finds every body
     /// holding the point ([`NodeShape::intersects_local_aabb`]); a body
-    /// of zero area is never in, as it is never hit. A query covering at
+    /// of zero area is never in, as it is never hit, and a `rect` that is
+    /// no rectangle ([`is_rectangle`]) finds nothing. A query covering at
     /// most [`MAX_CELLS`] cells tries only the bodies of those cells and
     /// the large ones; a larger one tries every body. O(the bodies
     /// tried), plus a sort of what is found.
@@ -262,8 +277,12 @@ impl BodyIndex {
 
     /// The bodies `rect`'s cells hold, and the large ones — or every
     /// body, for a `rect` spanning more than [`MAX_CELLS`] cells — passed
-    /// to `f`, a body in more than one of those cells once for each.
+    /// to `f`, a body in more than one of those cells once for each. A
+    /// `rect` that is no rectangle ([`is_rectangle`]) has none.
     fn candidates(&self, rect: Rect, mut f: impl FnMut(NodeId)) {
+        if !is_rectangle(rect) {
+            return;
+        }
         match cells(rect) {
             Some(((x0, y0), (x1, y1))) => {
                 self.large.iter().copied().for_each(&mut f);
@@ -335,7 +354,10 @@ impl Projector {
     /// rectangle (D5) shaped by its outline — the area [`Self::hit`]
     /// falls back to — and not its frame's rings, which are glyphs set
     /// outside the outline. Inclusive of edges, in ascending node id; see
-    /// `BodyIndex::within` for the zero-area and zero-size cases. Cost:
+    /// `BodyIndex::within` for the zero-area and zero-size cases. A `rect`
+    /// with a part that is no number, or a negative size, covers nothing:
+    /// it is not normalized. One reaching ±∞ covers what it reaches.
+    /// Cost:
     /// the body index's cells under `rect`, or every body for a
     /// rectangle spanning more cells than the index lists per body.
     pub fn nodes_in(&self, rect: Rect) -> Vec<NodeId> {
@@ -344,7 +366,8 @@ impl Projector {
 
     /// The visible nodes whose drawn rectangles `rect` meets: their
     /// insides overlap, so a shared edge does not count, and the outline
-    /// shape is not consulted. In ascending node id. Cost: the body
+    /// shape is not consulted. In ascending node id; a `rect` that is no
+    /// rectangle meets none, as [`Self::nodes_in`]. Cost: the body
     /// index's cells under `rect`, or every body for a rectangle spanning
     /// more cells than the index lists per body, as [`Self::nodes_in`].
     pub fn nodes_meeting(&self, rect: Rect) -> Vec<NodeId> {

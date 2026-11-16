@@ -123,23 +123,27 @@ pub fn huge_box(length: f32) -> crate::flow::Rect {
     crate::flow::Rect::new(Vec2::ZERO, Vec2::new(100.0, 40.0)).grown(length)
 }
 
-/// The boxes the hide stage tries `path`'s laid glyphs by: each glyph's
-/// box grown by the path's gap.
+/// Each laid glyph of `path`'s body and caps, by its box grown by the
+/// path's whole gap: the box `Rect::grown` gives before the hide stage
+/// holds the gap to what a box can hold (#364). What the fixtures of #364
+/// are named for, so a test reads it here, in one place, and not the
+/// stage's own reading of it. Empty for a unit that is no line.
 pub fn grown_boxes(p: &crate::projection::tests::support::Projected, path: NodeId) -> Vec<crate::flow::Rect> {
     use crate::gfx_structs::run::RunShape;
     use crate::projection::stages::{gap_and_size, glyph_ink};
     use crate::projection::state::UnitBody;
     let Some(UnitBody::Line(line)) = p.projector.units.get(&path).map(|u| &u.body) else {
-        panic!("{path:?} is a line");
+        return Vec::new();
     };
     let gap = gap_and_size(line).0.max(0.0);
-    let Some(RunShape::Path { run: shaped, placed }) = line.laid[0].as_ref().map(|run| run.shaped()) else {
-        panic!("{path:?}'s body is laid");
-    };
-    placed
-        .glyphs
+    line.laid
         .iter()
-        .filter_map(|g| glyph_ink(shaped, g))
+        .flatten()
+        .filter_map(|run| match run.shaped() {
+            RunShape::Path { run: shaped, placed } => Some((shaped, placed)),
+            RunShape::Box(_) => None,
+        })
+        .flat_map(|(shaped, placed)| placed.glyphs.iter().filter_map(move |g| glyph_ink(shaped, g)))
         .map(|ink| ink.grown(gap))
         .collect()
 }
