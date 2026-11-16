@@ -2610,7 +2610,7 @@ pub(crate) enum Laid<'a> {
 /// placement any glyph of its run; besides, a `Once` along an open path
 /// fills the path with its filler past a text of nothing, and a
 /// directional ring lays its vertical text and its corners whatever its
-/// spans. A frame lays its filler and its sides only beside its text.
+/// spans — each where it is not empty. A frame lays its filler and its sides only beside its text.
 pub(crate) fn has_a_glyph_to_lay(run: &ShapedRun, laid: Laid<'_>) -> bool {
     match laid {
         Laid::Pitched => run.glyphs.iter().any(|glyph| !glyph.blank && glyph.ink.is_some()),
@@ -2619,7 +2619,16 @@ pub(crate) fn has_a_glyph_to_lay(run: &ShapedRun, laid: Laid<'_>) -> bool {
                 || matches!(fit, FitMode::Once { filler: Some(filler) } if !filler.is_empty())
         }
         Laid::Round(fit, layout) => {
-            !run.glyphs.is_empty() || (matches!(fit, FitMode::Repeat) && layout.directional.is_set())
+            let glyphs = &layout.directional;
+            let directional = glyphs
+                .vertical
+                .as_deref()
+                .is_some_and(|vertical| !vertical.is_empty())
+                || glyphs
+                    .corners
+                    .as_ref()
+                    .is_some_and(|corners| corners.iter().any(|corner| !corner.is_empty()));
+            !run.glyphs.is_empty() || (matches!(fit, FitMode::Repeat) && directional)
         }
     }
 }

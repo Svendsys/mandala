@@ -37,10 +37,10 @@ pub const MAX_TABLE_SAMPLES: usize = 1 << 20;
 /// The number is 2⁶³: half of 2⁶⁴, the first float past the square root
 /// of the largest `f32` — that root is the last float under 2⁶⁴, and half
 /// of it the last under 2⁶³, which the argument below does not need. A
-/// path is walked by a place
-/// along it held in an `f32`, and what is set along it is measured in
-/// `f32` too, so three things must hold of a path for its placement to
-/// be right, and within this length they do by construction:
+/// path is walked by a place along it held in an `f32`, and what is set
+/// along it is measured in `f32` too, so three things must hold of a path
+/// for its placement to be right, and within this length they do by
+/// construction:
 ///
 /// - **Every distance has a square.** No two points of a path are
 ///   further apart than the path is long, as it is measured for this
@@ -51,9 +51,10 @@ pub const MAX_TABLE_SAMPLES: usize = 1 << 20;
 ///   limit, each set off it by less than a quarter of the limit, are
 ///   under 1.5 × 2⁶³ apart, and the square of that, 2.25 × 2¹²⁶, is an
 ///   `f32`. An ink's half extent and a frame's band are set off it so:
-///   the shaper holds every font size to at most `MAX_FONT_SIZE_PT`. Past the root of the largest `f32` a chord's square is not
-///   one: an ornament ring's inks were set by a distance that read
-///   infinite, and an ellipse's support by a radius squared.
+///   the shaper holds every font size to at most `MAX_FONT_SIZE_PT`.
+///   Past the root of the largest `f32` a chord's square is not one: an
+///   ornament ring's inks were set by a distance that read infinite, and
+///   an ellipse's support by a radius squared.
 /// - **Every sum of two places is a place.** A place along a path is at
 ///   most its length, and a closed path's places are added where a run
 ///   starts part way round it or a place is unwrapped across its seam: at

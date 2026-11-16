@@ -44,8 +44,9 @@ type ClosedKind = (String, &'static str, FitMode, RingLayout, bool);
 /// `spacing`: a frame in each fit, with and without sides; a ring of
 /// text and one of an ornament; a directional ring of its vertical text
 /// alone, with spans, and with corners — and, with no glyph to lay, a
-/// frame of no text in each fit, with sides and a `Once`'s filler, and a
-/// ring of no text.
+/// frame of no text in each fit, with sides and a `Once`'s filler, a
+/// ring of no text, and a directional ring whose vertical text is empty
+/// and whose spans are none.
 fn closed_kinds(spacing: f32) -> Vec<ClosedKind> {
     let mut kinds: Vec<ClosedKind> = Vec::new();
     let sided = |sides: bool| RingLayout {
@@ -104,8 +105,18 @@ fn closed_kinds(spacing: f32) -> Vec<ClosedKind> {
             directional("│", false),
         ),
         ("a directional ring with corners", "abc", directional("│", true)),
+        (
+            "a directional ring of an empty vertical text and no spans",
+            "",
+            directional("", false),
+        ),
     ] {
-        let lays = !text.is_empty() || glyphs.is_set();
+        let lays = !text.is_empty()
+            || glyphs
+                .vertical
+                .as_deref()
+                .is_some_and(|vertical| !vertical.is_empty())
+            || glyphs.corners.is_some();
         kinds.push((
             format!("{name} spaced {spacing:e}"),
             text,
@@ -378,10 +389,10 @@ fn test_flow_limit_is_half_the_first_float_past_the_root_of_the_largest_f32() {
 
 /// The limit is the number its derivation gives (`MAX_PATH_LENGTH`'s
 /// doc): 2⁶³, half of 2⁶⁴, the first float past the root of the largest
-/// `f32`. So the distance between two points
-/// of a path that long, each a quarter of it off the path, has an `f32`
-/// square, and one float further than twice the limit has none; and two
-/// places along it sum to a number.
+/// `f32`. So the distance between two points of a path that long, each a
+/// quarter of it off the path, has an `f32` square, and one float further
+/// than twice the limit has none; and two places along it sum to a
+/// number.
 ///
 /// Controls: the constant at twice what it is, and at half, each red
 /// ("the limit is 2⁶³"): the rest is that number's arithmetic.
@@ -543,7 +554,7 @@ pub fn do_flow_limit_an_outline_past_the_limit_lays_nothing_and_says_so() {
             }
         }
     }
-    assert_eq!(laid, (5 * 12 + 4) * 2 * 2 * 15, "every placement is laid");
+    assert_eq!(laid, (5 * 12 + 4) * 2 * 2 * 16, "every placement is laid");
     assert_none(&found);
 }
 

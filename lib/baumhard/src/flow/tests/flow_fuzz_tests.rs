@@ -1177,13 +1177,14 @@ fn test_a_repeat_of_an_ornament_along_a_cubic_too_long_to_lay_lays_nothing_and_s
 /// the limit (#363): each of them past 9 × 10¹⁸, its control point at
 /// `-1e30` among them, set to its leading digits times 10¹⁴ — a cubic
 /// within the limit whose far points lie some 10¹⁴ from the origin, where
-/// the floats, 10⁷ apart, still cannot resolve the ornament's gaps. The walk
-/// lays the cap of it as the input did, and the whole-glyph placement
-/// the replay lays beside the walk (`place_pitched`, where a face draws
-/// one of the input's glyphs with no outline and inks it as its box,
-/// #333) lays 65,544 glyphs along it. Its floats cannot see the slack
-/// either, so each solve of a count's slack stops at the first round
-/// whose lay does not answer its move (`MOST_UNRESOLVED_UNANSWERED`).
+/// the floats, 10⁷ apart, still cannot resolve the ornament's gaps. The
+/// walk lays the cap of it as the input did, and the replay lays two
+/// whole-glyph placements beside the walk (`place_pitched`, where a face
+/// draws one of the input's glyphs with no outline and inks it as its
+/// box, #333): one of the cap, 65,536 glyphs, cut there, and one of 8.
+/// Their floats cannot see the slack either, so each solve of a count's
+/// slack stops at the first round whose lay does not answer its move
+/// (`MOST_UNRESOLVED_UNANSWERED`).
 ///
 /// The walk's own cost there is held by the test below, on a path where
 /// both of its ink solves' stops are what bound it.

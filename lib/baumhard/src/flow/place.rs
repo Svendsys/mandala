@@ -2808,7 +2808,7 @@ fn lay_on_closed(
     // comes here, to be laid as a ring of its spans (`directional::runs`);
     // its vertical text and its corners are glyphs it would lay, its
     // spans empty or not (#363, ruling B42.1 §3).
-    if arc.too_long() && layout.directional.is_set() {
+    if arc.too_long() && lays_a_directional_glyph(&layout.directional) {
         return (None, too_long_to_lay(trace, arc.table_samples()));
     }
     // A gap past the whole outline lays one copy: the walk stops at the
@@ -2927,6 +2927,23 @@ pub(crate) fn too_long_to_lay(trace: Option<&mut Trace>, tables: usize) -> Place
 /// Cost: O(1).
 fn lays_a_glyph(run: &ShapedRun, fit: &FitMode) -> bool {
     !run.glyphs.is_empty() || matches!(fit, FitMode::Once { filler: Some(filler) } if !filler.is_empty())
+}
+
+/// Whether a directional ring's own glyphs hold one to lay (#363): a
+/// vertical text or a corner that is not empty — as a `Once`'s filler
+/// lays one where it is not empty ([`lays_a_glyph`]). A `vertical` of
+/// nothing lays nothing round any outline.
+///
+/// Cost: O(1).
+fn lays_a_directional_glyph(glyphs: &DirectionalGlyphs) -> bool {
+    glyphs
+        .vertical
+        .as_deref()
+        .is_some_and(|vertical| !vertical.is_empty())
+        || glyphs
+            .corners
+            .as_ref()
+            .is_some_and(|corners| corners.iter().any(|corner| !corner.is_empty()))
 }
 
 /// Test seam (#309, review 5810838863): a `w`-wide cluster's step from `s`
