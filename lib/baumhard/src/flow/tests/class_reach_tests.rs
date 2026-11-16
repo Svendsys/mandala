@@ -443,3 +443,233 @@ fn test_the_flow_properties_find_a_check_past_the_classes_held_back_for_it() {
         "a check of `untouched` past its share's classes fails: {past_untouched:?}"
     );
 }
+
+/// `"omo omo omo omo omo omo"` at 22 pt laid inward as a `Fit` frame
+/// within ¼ to ×2 round a sharp `w` × 12 rectangle, a frame that shrinks,
+/// with its budget set to `budget` where given: the run as laid, its
+/// trace, how its builds held `untouched`'s share, and the most its work
+/// may take, its budget and its overshoot (`overshoot_steps` of its run
+/// as shaped).
+fn shrinking_frame(
+    w: f32,
+    budget: Option<usize>,
+) -> (
+    crate::flow::ShapedRun,
+    crate::flow::place::Trace,
+    crate::flow::place::halves::ShareTrace,
+    usize,
+) {
+    use crate::document::values::{FitMode, Percent, Shape};
+    use crate::flow::place::halves::{overshoot_steps, BUDGET_OVERRIDE, SHARE_CLASSES};
+    use crate::flow::tests::halves_tests::{frame_with, with_seam};
+    use crate::flow::tests::support::{real_run, style, with_fonts};
+    use crate::flow::{outline, Rect, RingLayout};
+    const TEXT: &str = "omo omo omo omo omo omo";
+    let shape = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(w, 12.0)),
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+    );
+    let fit = FitMode::Fit { min: 0.25, max: 2.0 };
+    let lay = || frame_with(TEXT, 22.0, &shape, &fit, &RingLayout::whole(), false);
+    let (run, _, trace) = match budget {
+        Some(budget) => with_seam(&BUDGET_OVERRIDE, budget, lay),
+        None => lay(),
+    };
+    let share = SHARE_CLASSES.with(std::cell::Cell::get);
+    let shaped = with_fonts(|fs| real_run(TEXT, &style(22.0), fs));
+    let most = trace.budget + overshoot_steps(&shaped, None, true, trace.tables);
+    (run, trace, share, most)
+}
+
+/// `untouched`'s share covers every build of a frame that shrinks, the
+/// one kept among them, whichever it is (ruling B46.3): held for no fewer
+/// classes than any build before held it for, so a build whose inks take
+/// fewer leaves it as it was. `"omo omo omo omo omo omo"` inward round a
+/// sharp 290.04 × 12 rectangle at a budget of 5,000 glyph steps shrinks,
+/// its last build laid taking one class fewer than the builds before it
+/// and the probe after it refused; the share it ends with is held for the
+/// most of them, and the frame ends within its budget and its overshoot.
+/// Precondition: a build fell, and the frame kept a build of its shrink.
+///
+/// Control: with the share held for each build's classes alone, red (the
+/// share ends held for 1 class, a build before it took 2).
+#[test]
+fn test_flow_halves_untouched_s_share_covers_every_build_of_a_shrink() {
+    let (_, trace, share, most) = shrinking_frame(290.04, Some(5_000));
+    assert!(
+        share.fell >= 1 && !share.kept_first,
+        "precondition: the frame shrinks, a build taking fewer classes than one before it ({share:?})"
+    );
+    assert!(
+        share.held >= share.most,
+        "the share ends held for {} classes, a build of the frame took {} ({share:?})",
+        share.held,
+        share.most
+    );
+    assert!(
+        trace.spent <= most,
+        "the frame took {} glyph steps, past the {most} its budget and overshoot give",
+        trace.spent
+    );
+}
+
+/// A build past a frame's first whose share the budget its builds before
+/// left no longer holds is refused (ruling B46.3, `Work::holds_share`):
+/// `"omo omo omo omo omo omo"` inward round a sharp 348.2 × 12 rectangle
+/// shrinks at its own budget; at a budget of 2,750 glyph steps its floor's
+/// build, after its reshape and inking, finds the budget less than its
+/// share, and is refused, and the frame keeps its first build, at R27's
+/// size, and ends within its budget and its overshoot. Precondition: at
+/// its own budget the frame shrinks.
+///
+/// Control: with no build refused, red (the floor's build is laid, and
+/// kept).
+#[test]
+fn test_flow_halves_a_shrink_s_build_the_budget_left_cannot_hold_the_share_for_is_refused() {
+    let (free, _, free_share, _) = shrinking_frame(348.2, None);
+    assert!(
+        !free_share.kept_first && free_share.refused == 0,
+        "precondition: at its own budget the frame shrinks ({free_share:?})"
+    );
+    let (run, trace, share, most) = shrinking_frame(348.2, Some(2_750));
+    assert!(
+        share.refused == 1 && share.kept_first,
+        "at 2,750 glyph steps the floor's build is refused, and the frame keeps its first ({share:?})"
+    );
+    assert!(
+        run.glyphs[0].size > free.glyphs[0].size,
+        "kept at R27's size, {}, above the size it shrinks to, {}",
+        run.glyphs[0].size,
+        free.glyphs[0].size
+    );
+    assert!(
+        trace.spent <= most,
+        "the frame took {} glyph steps, past the {most} its budget and overshoot give",
+        trace.spent
+    );
+}
+
+/// The offset a frame's inks want lies within the bound every offset it
+/// tries is held to (ruling B46.2's premise, held as B46.3 asks): over
+/// every frame of the demo maps, and `... .. .` round a sharp 400 × 200
+/// rectangle with `—|` on its sides, inward and outward, every offset
+/// `Layout::wants` and the side relay read is no further from none than
+/// the bound (`WANTS_PAST`). Precondition: each wanted an offset.
+///
+/// Control: with the bound read from the inks' half sizes alone, without
+/// the rise of their centers from their anchors (`ink_reach`'s anchor and
+/// center), red (the outward frame wants 0.039 past it). With it read
+/// without the ornament's inks, or without `REACH_SLACK`, it stays green:
+/// the bound is read from what bounds where an ink is placed as well as
+/// what it wants, and its anchor's and its center's sideways terms leave
+/// it from 3.5 pt to 19 pt above what any of the frames a sweep laid
+/// wants (the demo maps' and 50 round this rectangle: five texts, five
+/// ornaments, inward and outward), more than either term.
+#[test]
+fn test_flow_halves_every_offset_the_inks_want_lies_within_the_bound() {
+    use crate::document::values::{FitMode, Percent, Rgba, Shape};
+    use crate::flow::place::halves::WANTS_PAST;
+    use crate::flow::tests::halves_tests::{demo_map_frames, frame_with};
+    use crate::flow::{outline, Rect, RingLayout};
+    WANTS_PAST.with(|most| most.set(f64::NAN));
+    let frames = demo_map_frames();
+    let demo = WANTS_PAST.with(std::cell::Cell::get);
+    assert!(
+        !frames.is_empty() && !demo.is_nan(),
+        "precondition: the demo maps' frames want offsets"
+    );
+    assert!(
+        demo <= 0.0,
+        "a demo map's frame wanted an offset {demo} past its bound"
+    );
+    let shape = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(400.0, 200.0)),
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+    );
+    let layout = RingLayout {
+        sides: Some(("—|".to_string(), Rgba::opaque(0, 0, 0))),
+        ..RingLayout::whole()
+    };
+    for outward in [false, true] {
+        WANTS_PAST.with(|most| most.set(f64::NAN));
+        frame_with("... .. .", 16.0, &shape, &FitMode::Spread, &layout, outward);
+        let sided = WANTS_PAST.with(std::cell::Cell::get);
+        assert!(
+            !sided.is_nan(),
+            "precondition: the side frame, outward {outward}, wants offsets"
+        );
+        assert!(
+            sided <= 0.0,
+            "the side frame, outward {outward}, wanted an offset {sided} past its bound"
+        );
+    }
+}
+
+/// `"omo omo"` at `points` laid inward round a sharp 400 × 200 rectangle
+/// whose middle lies 2³⁰ from the origin on both axes — its inks placed
+/// either side of 2³⁰, where an `f32` is 64 apart below and 128 above —
+/// with combining circumflexes on its sides: its trace, and the worst
+/// weighing of its lines (`LINE_CLASSES`).
+fn far_frame(points: f32) -> (crate::flow::place::Trace, (usize, usize)) {
+    use crate::document::values::{FitMode, Percent, Rgba, Shape};
+    use crate::flow::place::halves::LINE_CLASSES;
+    use crate::flow::tests::halves_tests::frame_with;
+    use crate::flow::{outline, Rect, RingLayout};
+    let middle = 2.0_f32.powi(30);
+    let shape = outline(
+        Rect::new(Vec2::new(middle - 200.0, middle - 100.0), Vec2::new(400.0, 200.0)),
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+    );
+    let layout = RingLayout {
+        sides: Some(("\u{302}".to_string(), Rgba::opaque(0, 0, 0))),
+        ..RingLayout::whole()
+    };
+    LINE_CLASSES.with(|most| most.set((0, usize::MAX)));
+    let (_, _, trace) = frame_with("omo omo", points, &shape, &FitMode::Spread, &layout, false);
+    (trace, LINE_CLASSES.with(std::cell::Cell::get))
+}
+
+/// A frame some 10⁹ from the origin, inward round a sharp rectangle — its
+/// band curve folded inside each corner — with marks on its sides, holds
+/// both class properties (rulings B46.1, B46.2): no side arc's check holds
+/// more classes than its arc held back for, no weighing of its lines more
+/// than `untouched`'s share was held back for, and no check looks at more
+/// than `touch_looks` a box. `"omo omo"` at 300 pt: its inks lie either
+/// side of 2³⁰, where an `f32` is 64 apart below and 128 above, so its
+/// lines' boxes are placed of two classes where their inks as shaped are
+/// of one. Precondition: a weighing of its lines held two classes. (Its
+/// side arcs' checks end in their sweeps, holding no class, so of the two
+/// properties it is the lines' that this frame can break.)
+///
+/// Control: with the outline's reach left out of where its inks are
+/// placed (`Halves::reach` none), red (2 classes weighed, 1 held back
+/// for).
+#[test]
+fn test_flow_halves_a_frame_far_out_holds_both_class_properties() {
+    let (trace, (weighed, held)) = far_frame(300.0);
+    let looks = trace.looks;
+    assert!(
+        weighed == 2 && held != usize::MAX,
+        "precondition: a weighing of the lines held two classes ({weighed})"
+    );
+    assert!(
+        looks.classes <= looks.reserved,
+        "a side arc's check held {} classes, past the {} its arc held back for",
+        looks.classes,
+        looks.reserved
+    );
+    assert!(
+        weighed <= held,
+        "a weighing of the lines held {weighed} classes, past the {held} `untouched` was held back for"
+    );
+    assert!(
+        looks.untouched.0 <= looks.untouched.1 && looks.within(),
+        "a check of `untouched` past its share, or one past `touch_looks`: {looks:?}"
+    );
+}

@@ -555,8 +555,8 @@ pub(crate) fn check_steps(boxes: usize, classes: usize) -> usize {
 const PLACED_ROUNDING: f64 = 1.0 / (1_u64 << 22) as f64;
 
 /// What a placed extent's rounding is at the least, past its share
-/// ([`placement_error`]): more than 2⁻¹⁴⁶, sixteen times the most the
-/// derivation's subnormal parts add.
+/// ([`placement_error`]): more than 2⁻¹⁴⁶, sixteen times η, nearly three
+/// times the most the derivation's subnormal parts add, `6η`.
 const PLACED_FLOOR: f64 = 1.2e-44;
 
 /// How far an ink box's extent across an axis, as a frame places it and
@@ -652,7 +652,8 @@ fn held_offset(offset: f32, bound: f32) -> f32 {
 /// no ink to touch with ([`has_ink`]) is left out, as the check leaves it
 /// out: placed, it has none either, its two corners being one sum.
 ///
-/// Cost: a sort of a range of classes a size a axis.
+/// Cost: one range of classes for each size and axis, and a sort of each
+/// axis's ranges.
 pub(crate) fn reachable_classes(sizes: impl IntoIterator<Item = (Vec2, Option<f64>)>) -> usize {
     let infinite = strip_class(f32::INFINITY);
     let mut across: [Vec<(i32, i32)>; 2] = [Vec::new(), Vec::new()];
@@ -790,6 +791,43 @@ fn side_ink_reach(band: &Band, run: &ShapedRun, clusters: &[Cluster]) -> f64 {
             })
         })
         .fold(0.0, f64::max)
+}
+
+/// A frame's builds as [`untouched`]'s share was held for them (ruling
+/// B46.3, `SHARE_CLASSES`).
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct ShareTrace {
+    /// The most classes of height the inks of any build the share was
+    /// held for can take placed ([`Layout::text_bound`]).
+    pub(crate) most: usize,
+    /// The classes the share was held for once the frame's builds were
+    /// done and one was kept.
+    pub(crate) held: usize,
+    /// The builds past the first refused, the budget the builds before
+    /// them left too small for the share ([`Work::holds_share`]).
+    pub(crate) refused: usize,
+    /// The builds whose inks can take fewer classes than a build's
+    /// before them.
+    pub(crate) fell: usize,
+    /// Whether the build kept was the frame's first, at R27's size.
+    pub(crate) kept_first: bool,
+}
+
+/// Note in a test what a frame's inks wanted of its offset, `wanted`,
+/// against the bound every offset tried is held to (`WANTS_PAST`).
+#[cfg(test)]
+fn note_wants(wanted: f32, bound: f32) {
+    if wanted.is_finite() {
+        let past = f64::from(wanted.abs()) - f64::from(bound);
+        WANTS_PAST.with(|most| {
+            most.set(if most.get().is_nan() {
+                past
+            } else {
+                most.get().max(past)
+            })
+        });
+    }
 }
 
 /// `reach`, or infinite where it is not a number: a reach that does not
@@ -1108,7 +1146,13 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
 /// for each class of height it holds (ruling R51.2); the structured
 /// fuzzer draws long mixed side ornaments and texts of up to 16 sizes, as
 /// a map may hold (rulings R50.3, R51.2), so a geometry that breaks it is
-/// a finding.
+/// a finding. The first build holds `untouched`'s share after the frame's
+/// setup, its tables, R27's walks and reshape and the build's own shaping
+/// and inking have taken their steps, which may leave the budget less
+/// than the share; each of those is counted here in full, and the share
+/// is at most the budget, so the frame still ends within the two — and a
+/// build past the first whose share the budget left does not hold is
+/// refused (`Work::holds_share`, ruling B46.3).
 pub(crate) fn overshoot_steps(
     text: &ShapedRun,
     ornament: Option<&ShapedRun>,
@@ -1577,6 +1621,26 @@ thread_local! {
     /// for. `(0, 0)` where none was weighed.
     #[cfg(test)]
     pub(crate) static LINE_CLASSES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// Test counter (ruling B46.3): the most an offset a frame's inks
+    /// wanted on this thread — [`Layout::wants`], which the offset's
+    /// solves read, and the side relay's — passed the bound every offset
+    /// tried is held to ([`Layout::text_bound`]), `|wanted| − bound`: none
+    /// past it where at most 0. Not a number where nothing was wanted.
+    #[cfg(test)]
+    pub(crate) static WANTS_PAST: std::cell::Cell<f64> = const { std::cell::Cell::new(f64::NAN) };
+    /// Test counter (ruling B46.3): the builds of the last frame laid on
+    /// this thread, as `untouched`'s share was held for them
+    /// ([`ShareTrace`]).
+    #[cfg(test)]
+    pub(crate) static SHARE_CLASSES: std::cell::Cell<ShareTrace> = const {
+        std::cell::Cell::new(ShareTrace {
+            most: 0,
+            held: 0,
+            refused: 0,
+            fell: 0,
+            kept_first: false,
+        })
+    };
     /// Test counter (#294, rulings R44.3, R46.1): the pairs of boxes
     /// [`touching`] has looked at on this thread, each a [`box_gap`]
     /// weighed or a pair it passed over.
@@ -3455,14 +3519,28 @@ impl Work {
     /// before: read from each build's inks, before any of its lines is
     /// laid, so that every check `untouched` makes — of a part of the
     /// inks of whichever build the frame keeps, as placed — holds no more
-    /// (rulings R46.1, B46.2; #308). (Until B46.2 it was held for the last
-    /// build's alone, whichever was kept, and for its glyphs' inks as
+    /// (rulings R46.1, B46.2, B46.3; #308). A build past the first holds
+    /// it only where the budget left holds it ([`holds_share`](Self::holds_share)),
+    /// so it never grows past the budget. (Until B46.2 it was held for the
+    /// last build's alone, whichever was kept, and for its glyphs' inks as
     /// shaped, which its lines' boxes, each a cluster's ink placed, can
     /// pass.)
     fn hold_for(&self, classes: usize) {
         self.classes.set(classes.max(self.classes.get()).max(1));
         self.reserve
             .set(untouched_steps(self.glyphs.get(), self.classes.get()));
+    }
+
+    /// Whether the budget still holds [`untouched`]'s share held for
+    /// `classes` classes of height ([`hold_for`](Self::hold_for)) beside
+    /// what the frame has spent: what a build of the frame past its first
+    /// is refused without (ruling B46.3, [`Layout::text_bound`]).
+    fn holds_share(&self, classes: usize) -> bool {
+        let classes = classes.max(self.classes.get()).max(1);
+        self.spent
+            .get()
+            .saturating_add(untouched_steps(self.glyphs.get(), classes))
+            <= self.budget.get()
     }
 
     /// The share of the budget held back for [`untouched`].
@@ -3823,7 +3901,10 @@ impl Layout<'_> {
             .flat_map(|l| l.tracked.reaches.iter().copied())
             .collect();
         self.work.take(weighing_steps(reaches.len()));
-        offset_from(&reaches, self.outward, side)
+        let wanted = offset_from(&reaches, self.outward, side);
+        #[cfg(test)]
+        note_wants(wanted, self.offset_bound.get());
+        wanted
     }
 
     /// The line of `run` (inked) of `clusters` on half `k`, ready to lay:
@@ -6579,9 +6660,9 @@ fn offset_from(reaches: &[Reach], outward: bool, side: Option<SideWant>) -> f32 
 /// bend the ink nearest the outline turns with its line's letters, and
 /// the offset it wants swings past where it was laid by more than the
 /// change, so laying the frame again at what the last wanted would
-/// circle the answer and never reach it. Each offset tried past the
-/// first is held to within `bound` of none ([`held_offset`], ruling
-/// B46.2), which no offset the frame's inks want lies past.
+/// circle the answer and never reach it. Each offset tried is held to
+/// within `bound` of none ([`held_offset`], rulings B46.2, B46.3), which
+/// no offset the frame's inks want lies past.
 /// [`OFFSET_ROUNDS`] lays at most, fewer with `stop`; the lay whose miss
 /// is the least is kept. A miss that is not a number — no ink — keeps
 /// the lay.
@@ -6596,7 +6677,7 @@ pub(crate) fn solve_offset<T: Clone>(
     wants: impl Fn(&T) -> f32,
     stop: &dyn Fn() -> bool,
 ) -> (f32, T) {
-    let mut offset = start;
+    let mut offset = held_offset(start, bound);
     let mut laid = lay(offset, None);
     let mut best: Option<(f32, f32, T)> = None;
     let mut before: Option<(f32, f32)> = None;
@@ -6987,6 +7068,9 @@ struct Built {
     /// The most any offset its band curve is laid at may be, either way
     /// ([`Layout::offset_bound`], ruling B46.2).
     bound: f32,
+    /// Each span's band center its inks are anchored by
+    /// ([`Layout::centers`], ruling B46.3): what its bound was read with.
+    centers: Rc<[f32]>,
     /// The run as drawn, inked.
     drawn: ShapedRun,
     /// The side ornament's glyphs in it.
@@ -7295,7 +7379,14 @@ pub(super) fn place_halves(
     // their clearance grown from `seed`. With `cheap`, `None` when a line
     // does not fit its half less the seed at its font's gap (one `track`
     // a line), before any clearance is grown: what a shrink's probe
-    // looks at first (ruling R35.3).
+    // looks at first (ruling R35.3). `None` too for a build past the
+    // first that the budget left cannot hold `untouched`'s share for
+    // (ruling B46.3), which sets `refused`.
+    // Whether the next build is the frame's first, and whether a later
+    // build was refused, its share not held by the budget left (ruling
+    // B46.3).
+    let first_build = Cell::new(true);
+    let refused = Cell::new(false);
     let build = |scale: f32, seed: Clear, cheap: bool, fs: &mut FontSystemLease| {
         #[cfg(test)]
         BUILDS.with(|count| count.set(count.get() + 1));
@@ -7343,8 +7434,35 @@ pub(super) fn place_halves(
             parted.iter().flat_map(|(_, clusters, _)| clusters),
             ornament.iter().flatten(),
         );
+        // A build past the first — a shrink's — whose share the budget
+        // no longer holds beside what the builds before it spent is
+        // refused before any of its lines is laid (ruling B46.3): so the
+        // share never grows past the budget, and `untouched` runs within
+        // it whichever build is kept. The share is not held once for the
+        // whole shrink, for every scale it may build at: a build's inks
+        // are not its scale times the first's to `f32` rounding. The
+        // outline scaler sets their points to sixty-fourths of a point,
+        // and their extents at 40 pt times a scale from 0.05 to 0.97 lie
+        // up to 0.041 pt, 0.9%, from the scale times theirs at 40 pt.
+        if !first_build.replace(false) && !lay.work.holds_share(classes) {
+            #[cfg(test)]
+            SHARE_CLASSES.with(|share| {
+                let mut trace = share.get();
+                trace.refused += 1;
+                share.set(trace);
+            });
+            refused.set(true);
+            return None;
+        }
         lay.offset_bound.set(bound);
         lay.work.hold_for(classes);
+        #[cfg(test)]
+        SHARE_CLASSES.with(|share| {
+            let mut trace = share.get();
+            trace.fell += usize::from(classes < trace.most);
+            trace.most = trace.most.max(classes);
+            share.set(trace);
+        });
         // The frame's band curve, first at the offset its inks would want
         // each set at its half's apex (#308): what its lines are prepared
         // on, and its offset solved from.
@@ -7397,6 +7515,7 @@ pub(super) fn place_halves(
         Some(Built {
             offset: lay.offset.get(),
             bound,
+            centers: lay.centers.borrow().clone(),
             drawn,
             side,
             prepared,
@@ -7415,10 +7534,14 @@ pub(super) fn place_halves(
         .min(glyph_cap());
     lay.work.scale(glyphs);
     let zero: Clear = [[0.0; 2]; 2];
+    #[cfg(test)]
+    SHARE_CLASSES.with(|share| share.set(ShareTrace::default()));
     let Some(mut built) = build(1.0, zero, false, fs) else {
-        unreachable!("only a cheap build is refused")
+        unreachable!("only a cheap build, or one past the first, is refused")
     };
     let mut scale = 1.0_f32;
+    #[cfg(test)]
+    let mut kept_first = true;
     // A `Fit` frame that its halves do not hold at R27's size — a line
     // its half less the clearance cannot hold at its font's gap, a
     // junction left short of a break, two inks touching: a flat outline,
@@ -7436,38 +7559,54 @@ pub(super) fn place_halves(
         } else {
             1.0
         };
-        let Some(at_floor) = build(floor, zero, false, fs) else {
-            unreachable!("only a cheap build is refused")
-        };
-        if at_floor.holds() {
-            let (mut held, mut over) = (floor, 1.0_f32);
-            let mut best = at_floor;
-            for _ in 0..SHRINK_ROUNDS {
-                // Sub-percent precision in a last resort buys nothing a
-                // reader can see (ruling R42.2): the bracket within 1% of
-                // the scale held, or a size step under a quarter point,
-                // ends the shrink.
-                let step = over - held;
-                let precise = step <= SHRINK_PRECISION * held || step * fitted_size < SHRINK_LEAST_STEP_PT;
-                if lay.spent_all() || precise {
-                    break;
-                }
-                let mid = 0.5 * (held + over);
-                match build(mid, best.seed(), true, fs) {
-                    Some(probe) if probe.holds() => {
-                        (held, best) = (mid, probe);
+        // A floor's build the budget left cannot hold the share for is
+        // refused, and the frame keeps the build at R27's size (ruling
+        // B46.3).
+        match build(floor, zero, false, fs) {
+            None => {}
+            Some(at_floor) if at_floor.holds() => {
+                let (mut held, mut over) = (floor, 1.0_f32);
+                let mut best = at_floor;
+                for _ in 0..SHRINK_ROUNDS {
+                    // Sub-percent precision in a last resort buys nothing a
+                    // reader can see (ruling R42.2): the bracket within 1% of
+                    // the scale held, or a size step under a quarter point,
+                    // ends the shrink.
+                    let step = over - held;
+                    let precise =
+                        step <= SHRINK_PRECISION * held || step * fitted_size < SHRINK_LEAST_STEP_PT;
+                    if lay.spent_all() || precise {
+                        break;
                     }
-                    _ => over = mid,
+                    let mid = 0.5 * (held + over);
+                    match build(mid, best.seed(), true, fs) {
+                        Some(probe) if probe.holds() => {
+                            (held, best) = (mid, probe);
+                        }
+                        // A probe refused for its share ends the shrink.
+                        None if refused.get() => break,
+                        _ => over = mid,
+                    }
+                }
+                (built, scale) = (best, held);
+                #[cfg(test)]
+                {
+                    kept_first = false;
                 }
             }
-            (built, scale) = (best, held);
-        } else {
-            (built, scale) = (at_floor, floor);
+            Some(at_floor) => {
+                (built, scale) = (at_floor, floor);
+                #[cfg(test)]
+                {
+                    kept_first = false;
+                }
+            }
         }
     }
     let Built {
         offset,
         bound,
+        centers,
         drawn,
         side,
         prepared,
@@ -7477,11 +7616,20 @@ pub(super) fn place_halves(
         overlap,
     } = built;
     // The frame's band curve where the size kept laid it, a later probe's
-    // laid elsewhere (#308), and held to that size's bound (ruling
-    // B46.2); and none of a later probe's lines, which were laid from
-    // another run (#309).
+    // laid elsewhere (#308), held to that size's bound and its inks
+    // anchored by that size's band centers, which its bound was read with
+    // (rulings B46.2, B46.3); and none of a later probe's lines, which
+    // were laid from another run (#309).
     lay.offset.set(offset);
     lay.offset_bound.set(bound);
+    lay.centers.replace(centers);
+    #[cfg(test)]
+    SHARE_CLASSES.with(|share| {
+        let mut trace = share.get();
+        trace.held = lay.work.classes.get();
+        trace.kept_first = kept_first;
+        share.set(trace);
+    });
     lay.tracked.borrow_mut().clear();
     let side_of = side.as_ref().map(|range| (&drawn, range));
 
@@ -7653,6 +7801,8 @@ pub(super) fn place_halves(
             .collect();
         lay.work.walked(reaches.len());
         let wanted = offset_from(&reaches, outward, want);
+        #[cfg(test)]
+        note_wants(wanted, lay.offset_bound.get());
         if (wanted - offset).abs().partial_cmp(&tolerance) != Some(Ordering::Greater) || lay.spent_all() {
             break;
         }
