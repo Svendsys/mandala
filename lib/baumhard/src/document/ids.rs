@@ -39,6 +39,7 @@ use crate::document::keyed::KeyedMap;
 use crate::document::mutation::error::MutationError;
 use crate::document::mutation::inherited::inherited_seed;
 use crate::document::mutation::validate::validate;
+use crate::document::presentation::layer::Presentations;
 use crate::document::shape::{validate_shape, validate_subtree, ShapeError};
 use crate::document::values::PaletteId;
 use crate::document::writer::{Derived, Writer};
@@ -58,16 +59,7 @@ impl NodeIdent {
 }
 
 pub use crate::document::edit::EditDef;
-
-/// A presentation the map defines (§10.2). Only its identity for now;
-/// V1-D2 completes it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct PresentationDef {
-    /// The id the file and the verbs name it by.
-    pub id: String,
-    /// The name shown to the user.
-    pub name: String,
-}
+pub use crate::document::presentation::PresentationDef;
 
 /// A verb the map defines (§11.1). Only its identity for now; V1-D3
 /// completes it.
@@ -154,9 +146,10 @@ pub(crate) fn first_free_ident(highest: u32, named: impl IntoIterator<Item = u32
 ///
 /// **Today it names none.** An edit (V1-D1) reaches its nodes from
 /// where it runs and names none — a span link it sets names a URL or a
-/// verb — and a verb and a presentation carry only an id and a name
-/// until V1-D2 and V1-D3 give them targets; those land here, and nowhere
-/// else. No other field of a saved map can name a
+/// verb — a presentation (V1-D2) plays on the nodes it is started on
+/// and names none either, and a verb carries only an id and a name
+/// until V1-D3 gives it targets; those land here, and nowhere else. No
+/// other field of a saved map can name a
 /// node that is not in it. A node's `parent` and a link's `to` must name
 /// a node of the map on load and in
 /// [`check_savable`](crate::document::format::check_savable), so no
@@ -164,8 +157,8 @@ pub(crate) fn first_free_ident(highest: u32, named: impl IntoIterator<Item = u32
 /// links into a removed node in the same request. Both are therefore
 /// covered by the highest node ident.
 pub(crate) fn idents_named_by(definitions: &Definitions) -> impl Iterator<Item = u32> + '_ {
-    // The targets V1-D2 and V1-D3 add are named here, as
-    // `definitions.verbs` and `definitions.presentations` grow them.
+    // The targets V1-D3 adds are named here, as `definitions.verbs`
+    // grows them.
     let Definitions {
         edits: _,
         presentations: _,
@@ -176,9 +169,11 @@ pub(crate) fn idents_named_by(definitions: &Definitions) -> impl Iterator<Item =
 
 /// A map: a `Tree<DocElement>` whose root is the
 /// [`Map`](DocKind::Map), its ident index and counter, the definitions
-/// it carries, what it derives from its tree, and its
+/// it carries, what it derives from its tree, its
 /// [writer state](crate::document::writer) — the history, the revision, the
-/// change feed and the open transaction.
+/// change feed and the open transaction — and the
+/// [presentations](crate::document::presentation::layer) playing on it,
+/// which are no part of the map.
 ///
 /// Its fields are private to `document` (§8.4): outside it a document is
 /// read through its read API and changed through its writer alone.
@@ -190,6 +185,7 @@ pub struct Document {
     pub(in crate::document) definitions: Definitions,
     pub(in crate::document) derived: Derived,
     pub(in crate::document) writer: Writer,
+    pub(in crate::document) presentations: Presentations,
 }
 
 impl Document {
@@ -243,6 +239,7 @@ impl Document {
             definitions,
             derived,
             writer: Writer::default(),
+            presentations: Presentations::default(),
         })
     }
 
@@ -272,6 +269,7 @@ impl Document {
             definitions,
             derived,
             writer: Writer::default(),
+            presentations: Presentations::default(),
         })
     }
 

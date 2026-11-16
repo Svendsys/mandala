@@ -11,7 +11,11 @@ The custom-mutation *carrier* that used to wrap this vocabulary — the
 that fired it — was deleted with the old model in V1-C3 (#244). Edits
 replace it for changes to the map ([`edits.md`](./edits.md)), written
 in the document's vocabulary; glyph-layer effects are presentations'
-(V1-D2, #251). Nothing in `.mandala.json` holds a glyph mutation today.
+([`presentations.md`](./presentations.md#the-glyph-layer)), which name
+the three glyph-run mutations in a spelling of their own — snake_case
+keys, `[start, end]` ranges, `"#rrggbbaa"` colors — and nothing else
+of this vocabulary. Nothing in `.mandala.json` holds a mutation in the
+spelling below.
 
 ## Vocabulary
 
@@ -128,8 +132,10 @@ as an unknown variant.
 The glyph layers (design §12.1) are made of one element type besides
 areas and models: a **`GlyphRun`**, one whole TextFlow — a shaped box
 or a shaped run placed along a path. Three run mutations are
-*authored*: a glyph-layer presentation (V1-D2) will name them. The one
-that replaces a whole payload, `RunSet`, belongs to projection and is
+*authored*: a glyph-layer presentation names them, in its own spelling
+([`presentations.md`](./presentations.md#the-glyph-layer)); what
+follows is the vocabulary's own. The one that replaces a whole
+payload, `RunSet`, belongs to projection and is
 never authored; it has **no JSON spelling**, and `{"RunSet": …}` in a
 file is refused as an unknown variant.
 
@@ -384,8 +390,9 @@ The document (`lib/baumhard/src/document/`, V1-B1) is the engine's
 second element type. Its mutation vocabulary (`document::mutation`,
 V1-B3) is built by code; an edit authors it in a file of its own
 spelling, names in place of indices ([`edits.md`](./edits.md)), and
-presentations are V1-D2's. The two spellings below — kinds and
-predicate fields — are the in-memory types' own.
+a document-layer presentation authors it in that same spelling
+([`presentations.md`](./presentations.md)). The two spellings below —
+kinds and predicate fields — are the in-memory types' own.
 
 **Kinds.** A document mutator's `"kind"` is one of, in sibling order:
 `"map"`, `"theme"`, `"palette"`, `"defaults"`, `"section"`, `"span"`,

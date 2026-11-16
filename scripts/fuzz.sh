@@ -37,7 +37,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGETS=(load_raw load_structured flow_raw flow_structured flow_structured_every_face glyph_mutation_raw glyph_mutation_structured projection_edits edits_raw edits_structured)
+TARGETS=(load_raw load_structured flow_raw flow_structured flow_structured_every_face glyph_mutation_raw glyph_mutation_structured projection_edits edits_raw edits_structured presentations_raw presentations_structured)
 
 usage() {
   sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -99,6 +99,10 @@ case "$TARGET" in
   # mutations and one past it (owner, format Q4 on #250): 1.6 MB of text.
   edits_raw) MAX_LEN=2097152 ;;
   edits_structured) MAX_LEN=4096 ;;
+  # A presentation's seeds include the same parts bound and one past it
+  # (amendment on #251), in the same text.
+  presentations_raw) MAX_LEN=2097152 ;;
+  presentations_structured) MAX_LEN=4096 ;;
 esac
 
 EXTRA=()

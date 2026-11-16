@@ -66,6 +66,9 @@ pub(crate) mod index;
 mod load_map;
 mod load_node;
 pub(crate) mod load_style;
+/// A presentation as a file writes it (`format/presentations.md`,
+/// V1-D2).
+pub(crate) mod presentations;
 mod read;
 pub(crate) mod rows;
 pub(crate) mod spelling;
@@ -302,8 +305,10 @@ pub(crate) fn load_counting_checks(json: &str) -> Result<(Document, usize), Load
 fn load_counted(json: &str, limits: Limits) -> Result<(Document, usize), LoadError> {
     check_text_cap_against(json, limits.bytes)?;
     let index = index::index(json)?;
-    if let Some(edits) = index.value("edits") {
-        crate::document::edit::load::check_nesting(json, edits)?;
+    for key in ["edits", "presentations"] {
+        if let Some(list) = index.value(key) {
+            crate::document::edit::load::check_nesting(json, list, key)?;
+        }
     }
     let mut builder = begin_build(&index, limits)?;
     for (i, extent) in index.nodes.iter().enumerate() {
@@ -740,9 +745,17 @@ pub fn save(doc: &Document) -> Result<String, SaveError> {
 /// written unless [`check_savable`] passes first. A failure of `out` is
 /// [`SaveErrorKind::Io`] at the path of the node being written (empty
 /// for the header and the close).
+///
+/// **What is written is the map, never a performance of it** (D6): a
+/// document with presentations applied is read through
+/// [`Document::without_presentations`], at the cost of a copy of its
+/// tree. [`Document::save_json`], which holds the document exclusively,
+/// writes the same text without the copy, and with an open transaction's
+/// change left out besides.
 pub fn save_to(doc: &Document, out: &mut impl std::io::Write) -> Result<(), SaveError> {
-    check_savable(doc)?;
-    write_unchecked(doc, out)
+    let doc = doc.without_presentations();
+    check_savable(&doc)?;
+    write_unchecked(&doc, out)
 }
 
 /// The color `text` spells in the file's own spelling — `#rrggbb`,

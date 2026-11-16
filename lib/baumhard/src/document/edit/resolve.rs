@@ -80,14 +80,15 @@ pub(crate) enum Fault {
 }
 
 impl Fault {
-    /// The refusal of a run of the edit `edit`.
-    pub(crate) fn into_error(self, edit: &str) -> EditError {
-        let edit = edit.to_string();
+    /// The fault in words, for a refusal of a run: its field, and
+    /// either what it names that nothing defines (`Ok`: `theme variable
+    /// `accent``) or why its value is not one the field takes (`Err`).
+    /// One wording for an edit's refusal and a presentation's.
+    pub(crate) fn described(self) -> (&'static str, Result<String, String>) {
         match self {
-            Fault::Unknown { field, kind, name } => EditError::UnknownName {
-                edit,
+            Fault::Unknown { field, kind, name } => (
                 field,
-                name: format!(
+                Ok(format!(
                     "{} `{name}`",
                     match kind {
                         NameKind::Variable => "theme variable",
@@ -95,18 +96,19 @@ impl Fault {
                         NameKind::Verb => "verb",
                         NameKind::Font => "font family",
                     }
-                ),
-            },
-            Fault::Bound { field, error } => EditError::Value {
-                edit,
-                field,
-                message: error.to_string(),
-            },
-            Fault::Invalid { field, message } => EditError::Value {
-                edit,
-                field,
-                message: message.to_string(),
-            },
+                )),
+            ),
+            Fault::Bound { field, error } => (field, Err(error.to_string())),
+            Fault::Invalid { field, message } => (field, Err(message.to_string())),
+        }
+    }
+
+    /// The refusal of a run of the edit `edit`.
+    pub(crate) fn into_error(self, edit: &str) -> EditError {
+        let edit = edit.to_string();
+        match self.described() {
+            (field, Ok(name)) => EditError::UnknownName { edit, field, name },
+            (field, Err(message)) => EditError::Value { edit, field, message },
         }
     }
 }

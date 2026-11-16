@@ -289,6 +289,16 @@ pub const VERBS: &[Verb] = &[
         example: "mandalactl query.undo 5",
     },
     Verb {
+        name: "query.animations",
+        summary:
+            "What is animating: each presentation instance playing (node, t, direction) and a running animated edit.",
+        params: &[],
+        positional: &[],
+        effect: Effect::Reads,
+        render: Render::Flat,
+        example: "mandalactl query.animations",
+    },
+    Verb {
         name: "scene.dump",
         summary:
             "What is drawn: nodes, paths, labels, portals with canvas/surface rects, visibility and text.",
@@ -537,7 +547,7 @@ pub const VERBS: &[Verb] = &[
     Verb {
         name: "clock.wait",
         summary:
-            "Wait until the app is settled: no frames left to run, the latest one drawn; timeout_ms= is wall-clock, default 10000.",
+            "Wait until the app is settled (no frames left to run, the latest one drawn) or animations_complete (no animated edit or presentation still moving); timeout_ms= is wall-clock, default 10000.",
         params: &[param("until", STRING, true), param("timeout_ms", INTEGER, false)],
         positional: &["until"],
         effect: Effect::Reads,

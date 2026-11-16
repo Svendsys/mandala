@@ -17,6 +17,9 @@
 //!   dispatcher with the privilege-gate enforcement loop. Abstracted
 //!   over the `MacroDispatchTarget` trait so native and WASM share the
 //!   body byte-for-byte.
+//! - [`the_map`]: the guard that sets a document's presentation layer
+//!   aside while an Action that reads the map runs, so that nothing a
+//!   presentation shows is read into a change.
 //! - `native` (plain code-span — `cfg`-gated to native, so a link
 //!   would break the wasm32 doc build): the native-side
 //!   `dispatch_action` funnel that wraps `dispatch_compatible` and adds
@@ -27,6 +30,7 @@ pub(in crate::application::app) mod action_core;
 pub(in crate::application::app) mod cross_dispatch;
 pub(in crate::application::app) mod families;
 pub(in crate::application::app) mod macro_core;
+pub(in crate::application::app) mod the_map;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) mod native;

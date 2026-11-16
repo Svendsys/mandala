@@ -4,7 +4,8 @@ An **edit** is a named change to a map: saved with the map when the
 map defines it, undoable as one history entry, and optionally animated
 into place (design §10.1, D6; V1-D1). Edits are the "change the map"
 kind of behavior. Presentations, which perform a map without changing
-it, are another list and another page.
+it, are another list and another page
+([`presentations.md`](./presentations.md)).
 
 An edit runs at the selection. From each selected element's node it
 takes a set of nodes (`reach`), the elements of one kind within them

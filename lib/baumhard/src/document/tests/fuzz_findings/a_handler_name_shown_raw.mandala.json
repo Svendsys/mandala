@@ -104,7 +104,10 @@
   "presentations": [
     {
       "id": "intro",
-      "name": "Introduction"
+      "name": "Introduction",
+      "play": "hold",
+      "target": "node",
+      "mutations": [{"node": {"set_hidden": true}}]
     }
   ],
   "verbs": [

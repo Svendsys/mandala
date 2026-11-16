@@ -26,9 +26,14 @@
 //!   those elements").
 //!
 //! **Unstamping is `RunOverrideOp::Clear`.** The projector writes no
-//! override of its own in V1 (glyph-layer presentations arrive with
-//! V1-D2, #251, which stacks its own overrides on this mechanism), so a
-//! cleared run is the projector's run exactly.
+//! override of its own in V1, so a cleared run is the projector's run
+//! exactly. A glyph-layer presentation (V1-D2, #251) writes overrides
+//! too, on top of an overlay's: before an overlay stamps or clears a
+//! run a presentation plays on, the run is put back to what the
+//! projector and the overlays made it, and the presentation is written
+//! again once the overlay has written (`view::present`). That is why an
+//! update is two steps — [`Overlay::plan`], which names the runs it will
+//! write, and [`Overlay::write`], which writes them.
 //!
 //! An element's runs are those it *owns*: a node owns its sections' and
 //! its frame's rings' runs; a connector or a link owns its body, its caps
@@ -78,6 +83,27 @@ pub(crate) struct Overlay {
     stamped: FxHashMap<(Layer, NodeId), NodeId>,
 }
 
+/// What one [`Overlay::plan`] decided to write: the runs to clear, then
+/// the runs to stamp, per layer.
+pub(crate) struct Planned {
+    /// The runs to clear, indexed by `Layer::index`.
+    clear: [Vec<NodeId>; 5],
+    /// The runs to stamp, indexed by `Layer::index`.
+    stamp: [Vec<NodeId>; 5],
+}
+
+impl Planned {
+    /// Every run this will write, cleared or stamped. No allocation.
+    pub(crate) fn runs(&self) -> impl Iterator<Item = (Layer, NodeId)> + '_ {
+        Layer::ALL.into_iter().flat_map(move |layer| {
+            self.clear[layer.index()]
+                .iter()
+                .chain(&self.stamp[layer.index()])
+                .map(move |&glyph| (layer, glyph))
+        })
+    }
+}
+
 /// The journals one [`Overlay::update`] wrote, one per layer: what the
 /// layer renderer applies after the projector's, then discards.
 pub(crate) struct OverlayJournals {
@@ -124,6 +150,7 @@ impl Overlay {
     /// Bring the stamps up to date: with `targets` as the elements to
     /// stamp from now on, and `changes`, when an update was made, as what
     /// the projector just wrote. Returns the journals of what was written.
+    /// [`Self::plan`], then [`Self::write`].
     ///
     /// Cost: O(the runs of the targets that came or left, the runs
     /// `changes` names, and the depth from each named run's element to
@@ -137,6 +164,21 @@ impl Overlay {
         projector: &Projector,
         layers: &mut GlyphLayers,
     ) -> OverlayJournals {
+        let planned = self.plan(targets, changes, doc, projector, layers);
+        self.write(planned, layers)
+    }
+
+    /// The first half of [`Self::update`]: decide which runs to clear
+    /// and which to stamp, and take `targets` as the elements stamped
+    /// from now on. Writes no run.
+    pub(crate) fn plan(
+        &mut self,
+        targets: &[NodeId],
+        changes: Option<&LayerChanges>,
+        doc: &Document,
+        projector: &Projector,
+        layers: &GlyphLayers,
+    ) -> Planned {
         let mut stamp: [Vec<NodeId>; 5] = Default::default();
         let mut clear: [Vec<NodeId>; 5] = Default::default();
 
@@ -179,7 +221,14 @@ impl Overlay {
             self.targets.clear();
             self.targets.extend_from_slice(targets);
         }
+        Planned { clear, stamp }
+    }
 
+    /// The second half of [`Self::update`]: clear and stamp the runs
+    /// `planned` names, each by a glyph mutator the walker applies, and
+    /// return the journals.
+    pub(crate) fn write(&self, planned: Planned, layers: &mut GlyphLayers) -> OverlayJournals {
+        let Planned { clear, stamp } = planned;
         let mut out: [JournalBuilder<GfxElement>; 5] = std::array::from_fn(|_| JournalBuilder::new());
         for layer in Layer::ALL {
             let i = layer.index();

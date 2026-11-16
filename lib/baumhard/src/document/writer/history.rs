@@ -190,6 +190,11 @@ impl History {
         })
     }
 
+    /// The journals of the applied entries, oldest entry first.
+    pub(super) fn journals(&self) -> impl Iterator<Item = &Journal<DocElement>> + '_ {
+        self.applied.iter().flat_map(|entry| entry.journals.iter())
+    }
+
     /// How many entries a redo can reach. O(1).
     pub(super) fn redo_len(&self) -> usize {
         self.undone.len()

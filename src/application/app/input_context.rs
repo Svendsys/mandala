@@ -85,6 +85,9 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// Edit registry: the App and User tiers and the handlers, loaded
     /// at startup (`application::edits`).
     pub edits: &'a crate::application::edits::EditRegistry,
+    /// Presentation registry: the App and User tiers, loaded at startup
+    /// (`application::presentations`).
+    pub presentations: &'a crate::application::presentations::PresentationRegistry,
     /// Where a server-chosen screenshot lands, and the dir a
     /// caller-chosen path may overwrite into.
     pub artifacts: &'a mut crate::application::capture::artifacts::Artifacts,

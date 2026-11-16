@@ -93,6 +93,11 @@ pub enum ConsoleSideEffect {
     /// app's edit registry and the open map (`app::console_input`), and
     /// its report becomes the line's output.
     Edit(commands::edit::EditLine),
+    /// Start, stop or list presentations. Set by the `present` verb,
+    /// which only reads the line; the executor runs it against the
+    /// app's presentation registry and the open map, on the app clock
+    /// (`app::console_input`), and its report becomes the line's output.
+    Present(commands::present::PresentLine),
 }
 
 impl std::fmt::Debug for ConsoleSideEffect {
@@ -109,6 +114,7 @@ impl std::fmt::Debug for ConsoleSideEffect {
             Self::Record(line) => f.debug_tuple("Record").field(line).finish(),
             Self::Clock(line) => f.debug_tuple("Clock").field(line).finish(),
             Self::Edit(line) => f.debug_tuple("Edit").field(line).finish(),
+            Self::Present(line) => f.debug_tuple("Present").field(line).finish(),
         }
     }
 }

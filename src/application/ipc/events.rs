@@ -324,7 +324,15 @@ impl Tracker {
         if document {
             let source = match driver {
                 Driver::Ipc => "ipc",
-                Driver::App => now.changes.last().map_or("input", |record| record.source.name()),
+                // The newest record of the map's own: a presentation
+                // playing on the map records what it shows after every
+                // change under it, and changes no document.
+                Driver::App => now
+                    .changes
+                    .iter()
+                    .rev()
+                    .find(|record| record.source != baumhard::document::writer::ChangeSource::Presentation)
+                    .map_or("input", |record| record.source.name()),
             };
             push(
                 Class::DocumentChanged,
@@ -835,6 +843,84 @@ mod tests {
                 revision: 1,
                 document_revision: 1
             }
+        );
+    }
+
+    /// A presentation playing on the map raises no event by itself, and
+    /// a change made under it is reported as the change's own: the
+    /// record the layer adds after it, for what it now shows, is never
+    /// the source.
+    ///
+    /// Control, seen red: with the source read off the newest record,
+    /// whoever made it, the change below is reported as
+    /// `"presentation"`.
+    #[test]
+    fn test_a_change_under_a_presentation_is_the_changes_own() {
+        use baumhard::document::element::DocKind;
+        use baumhard::document::mutation::ops::{DocMutation, NodeOp};
+        use baumhard::document::presentation::parse_presentations;
+
+        let mut world = World::new();
+        world.change(ChangeSource::Action);
+        let node = crate::application::document::selection::every_node(world.doc.doc())
+            .next()
+            .expect("the change made a node");
+        let mut tracker = baselined(&world);
+        let dim = parse_presentations(
+            r#"{"presentations":[{"id":"dim","name":"Dim","play":"hold","target":"node",
+            "mutations":[{"node":{"set_opacity":0.5}}]}]}"#,
+        )
+        .expect("reads")
+        .remove(0);
+        world.doc.start_presentation(&dim, &[node], 0.0).expect("starts");
+        world.changes = world.doc.take_changes();
+        assert_eq!(
+            world.changes.last().map(|record| record.source),
+            Some(ChangeSource::Presentation),
+            "precondition: the start is on the feed, for the view"
+        );
+        let (revisions, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
+        assert!(changes.is_empty(), "{:?}", names(&changes));
+        assert_eq!(
+            revisions,
+            Revisions {
+                revision: 0,
+                document_revision: 1
+            },
+            "neither counter moves for a presentation"
+        );
+
+        // The node moves under the presentation: the layer records what
+        // it shows there now, after the change's own record.
+        let steps = baumhard::document::mutation::compose::set(
+            world.doc.doc(),
+            DocKind::Node,
+            vec![DocMutation::Node(NodeOp::Nudge(glam::Vec2::new(10.0, 0.0)))],
+            &[node],
+        )
+        .expect("composes");
+        world
+            .doc
+            .apply(
+                EditRequest {
+                    steps,
+                    label: "nudge".into(),
+                },
+                ChangeSource::Console,
+            )
+            .expect("applies");
+        world.changes = world.doc.take_changes();
+        let sources: Vec<ChangeSource> = world.changes.iter().map(|record| record.source).collect();
+        assert_eq!(
+            sources,
+            [ChangeSource::Console, ChangeSource::Presentation],
+            "precondition: the layer's record is the newest"
+        );
+        let (_, changes) = tracker.observe(&world.now(), ALL(), Driver::App);
+        assert_eq!(names(&changes), ["document_changed"]);
+        assert_eq!(
+            find(&changes, Class::DocumentChanged),
+            &json!({ "revision": 1, "document_revision": 2, "source": "console" })
         );
     }
 

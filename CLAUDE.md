@@ -57,20 +57,24 @@ draws them.
   every passing assertion owes.
 - **`format/`** — the file format specifications. `format/schema.md` is
   the `.mandala.json` format (V1) and its primary reference;
-  `format/projection.md` is where a map is drawn, `format/ipc.md` the
-  control protocol, `format/macros.md` and `format/fonts.md` their
-  concepts. Read this before changing the data model.
+  `format/projection.md` is where a map is drawn, `format/edits.md`
+  and `format/presentations.md` the two kinds of behavior a map, the
+  user and the app define (a saved, undoable change; a performance that
+  is never saved), `format/ipc.md` the control protocol,
+  `format/macros.md` and `format/fonts.md` their concepts. Read this
+  before changing the data model.
 - **`crates/maptool/`** — CLI tool for `.mandala.json` files, a client
   of the same `Document` the app edits: `show` (the node tree), `grep`
   (by regex, every string a map draws as glyphs: spans, own `content`,
   `once` fillers, frame ornaments), `export` (Markdown), `verify` (the loader's
   verdict, with its JSON path, plus warnings for what loads but is
-  probably a mistake; a verb an edit in the map names, anywhere in it
-  (its filter or its body), counts as referred to, whether or not
-  anything runs the edit, and an edit in the map that can unhide a node
-  or give a portal end a marker silences those two warnings; App and
-  User edits, which also run on a map, are outside what a map file can
-  be judged on and are not read) and
+  probably a mistake; a verb an edit or a presentation in the map
+  names, anywhere in it (its filter or its body), counts as referred
+  to, whether or not anything runs it, and an edit in the map that can
+  unhide a node or give a portal end a marker — or a presentation in it
+  that can unhide a node — silences that warning; the App's and the
+  User's edits and presentations, which also run on a map, are outside
+  what a map file can be judged on and are not read) and
   `apply` (pipe matching sections' text through
   a command, as one `EditRequest` through `Document::apply`; `-i`
   writes the map back as the app's save does — through a link to its
@@ -296,15 +300,24 @@ the parity trajectory (or why none is owed):
   draining a drag state — not a frame: the browser's frame exists
   (`run_wasm/event_redraw_requested.rs`) and runs an injected sample
   and the view's sync.
-- **Animations** — not gated: an animated edit (V1-D1, #250) runs on
-  both targets, as a transaction on the document's writer that the
-  frame's tick (`app/animation.rs`: `tick`, `keeps_ticking`) writes on
-  the app clock and commits as one history entry — native's from the
-  heartbeat's frame, the browser's from its redraw
-  (`run_wasm/event_redraw_requested.rs`), which asks for the next
-  frame while `keeps_ticking` says one is owed, and from its clock
-  step (`run_wasm/step.rs`). No parity is owed. Presentations, the
-  other kind of animation, return with V1-D2 (#251).
+- **Animations** — not gated: an animated edit (V1-D1, #250) and the
+  presentations (V1-D2, #251) run on both targets. The frame's tick
+  (`app/animation.rs`: `tick`, `keeps_ticking`) brings every
+  presentation instance to the app clock's reading and writes the
+  animated edit — a transaction on the document's writer, committed
+  as one history entry — native's from the heartbeat's frame, the
+  browser's from its redraw (`run_wasm/event_redraw_requested.rs`),
+  which asks for the next frame while `keeps_ticking` says one is
+  owed, and from its clock step (`run_wasm/step.rs`). The
+  presentation layer on the document, the glyph-layer stage in the
+  view (`view/present.rs`), the funnels that read the map itself
+  (`dispatch/the_map.rs`) and `query.animations` are one body for
+  both. What the browser lacks is a way to *start* one by hand: the
+  `present` console verb is native because the console shell is, and
+  its registry of the app's and the user's presentations
+  (`application/presentations.rs`) is loaded and waits for V1-D3's
+  verbs, which start presentations on both targets. No parity is
+  owed beyond the console's.
 - **Virtual-clock stepping: the native frame it steps**
   (`src/application/app/heartbeat.rs`; IPC-09/#69) — what a step
   runs at each heartbeat on native is native's whole frame: the
@@ -478,9 +491,10 @@ the parity trajectory (or why none is owed):
 - **Fuzz an untrusted-input surface**: `scripts/fuzz.sh <target>
   <seconds>` runs one coverage-guided target of `fuzz/` for that long
   (`scripts/fuzz.sh --list` names them: the `.mandala.json` loader,
-  TextFlow shaping, authored glyph-layer mutations, each raw and
-  structure-aware). `fuzz/` is outside the workspace, on the nightly
-  its own `rust-toolchain.toml` pins, and needs `cargo install
+  TextFlow shaping, authored glyph-layer mutations, edits and
+  presentations, each raw and structure-aware, and the projection
+  under edit sequences). `fuzz/` is outside the workspace, on the
+  nightly its own `rust-toolchain.toml` pins, and needs `cargo install
   cargo-fuzz --version 0.13.2 --locked`; `./test.sh` never builds it.
   The properties every input is held to, and every finding's
   regression test, live in baumhard's tests trees and run in

@@ -196,16 +196,6 @@ pub(crate) struct OnDto<'a> {
     pub hover: Option<Cow<'a, str>>,
 }
 
-/// A presentation definition. Only its identity for now.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct PresentationDto {
-    /// The id the file names it by.
-    pub id: String,
-    /// The name shown to the user.
-    pub name: String,
-}
-
 /// A verb definition. Only its identity for now.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1545,9 +1535,9 @@ pub(crate) struct MapHeaderDto<'a> {
     /// The edits the map defines (`format/edits.md`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edits: Vec<crate::document::format::edits::EditDto>,
-    /// The presentations the map defines.
+    /// The presentations the map defines (`format/presentations.md`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub presentations: Vec<PresentationDto>,
+    pub presentations: Vec<crate::document::format::presentations::PresentationDto>,
     /// The verbs the map defines.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub verbs: Vec<VerbDto>,

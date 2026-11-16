@@ -2,8 +2,8 @@
 
 //! The `query` family: read-only views of what the application knows
 //! (`format/ipc.md` §`query`): the document, the selection, the camera,
-//! the interaction mode, the status line, the open modals and the undo
-//! history. What a person reads off the screen
+//! the interaction mode, the status line, the open modals, the undo
+//! history and the animations. What a person reads off the screen
 //! chrome and the app's mental state, as JSON.
 //!
 //! **Read-only by construction.** A handler reaches the app through
@@ -268,6 +268,41 @@ pub(super) const FAMILY: Family = Family {
             support: Support::Everywhere,
             run: undo,
         },
+        CommandSpec {
+            name: "query.animations",
+            summary: "What is animating: the presentation instances playing, and a running animated edit.",
+            params: &[],
+            result: &[
+                ResultSpec::new(
+                    "moving",
+                    ParamType::Boolean,
+                    "Whether time moves what is drawn: an edit is animating, or an instance is on its way in or \
+                     out. False is what clock.wait until=animations_complete waits for.",
+                ),
+                ResultSpec::new(
+                    "epoch",
+                    ParamType::Integer,
+                    "The presentation epoch: advanced by every start, stop and move of an instance, and by an \
+                     instance's end, never by an edit's own writes (an edit that frees the node an instance waits \
+                     on ends it, and that advances the epoch); the document's revision never moves for a \
+                     presentation.",
+                ),
+                ResultSpec::new(
+                    "edit",
+                    ParamType::Object,
+                    "The animated edit running: {elapsed_ms, t, ms, delay_ms, easing}; null when none is.",
+                ),
+                ResultSpec::new("count", ParamType::Integer, "How many instances are playing."),
+                ResultSpec::new(
+                    "presentations",
+                    ParamType::Array,
+                    "The instances, in start order: {id, presentation, node, layer, play, t, direction, \
+                     moving, elements, refusal}.",
+                ),
+            ],
+            support: Support::Everywhere,
+            run: animations,
+        },
     ],
 };
 
@@ -467,6 +502,10 @@ fn undo(call: &mut Call<'_>) -> Reply {
     with_document(call, |doc, _| doc.ipc_undo_json(limit))
 }
 
+fn animations(call: &mut Call<'_>) -> Reply {
+    with_document(call, |doc, app| doc.ipc_animations_json(app.clock().now_ms()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -592,7 +631,7 @@ mod tests {
         }
     }
 
-    const ALL_QUERIES: [&str; 7] = [
+    const ALL_QUERIES: [&str; 8] = [
         r#"{"id":1,"cmd":"query.document"}"#,
         r#"{"id":1,"cmd":"query.selection"}"#,
         r#"{"id":1,"cmd":"query.camera"}"#,
@@ -600,6 +639,7 @@ mod tests {
         r#"{"id":1,"cmd":"query.status"}"#,
         r#"{"id":1,"cmd":"query.editors"}"#,
         r#"{"id":1,"cmd":"query.undo"}"#,
+        r#"{"id":1,"cmd":"query.animations"}"#,
     ];
 
     /// Every query answers `no_document` with no app attached, and
@@ -622,7 +662,7 @@ mod tests {
             doc: None,
             clock: crate::application::clock::AppClock::default(),
         };
-        for frame in [ALL_QUERIES[0], ALL_QUERIES[1], ALL_QUERIES[6]] {
+        for frame in [ALL_QUERIES[0], ALL_QUERIES[1], ALL_QUERIES[6], ALL_QUERIES[7]] {
             let (reply, repaint) = run_attached(frame, &mut app);
             assert_eq!(reply["error"]["code"], json!("no_document"), "{frame}");
             assert!(
@@ -760,7 +800,7 @@ mod tests {
     /// A query that takes no parameters rejects a stray one, naming it.
     #[test]
     fn test_a_parameterless_query_refuses_a_stray_parameter() {
-        for cmd in ["selection", "camera", "mode", "status", "editors"] {
+        for cmd in ["selection", "camera", "mode", "status", "editors", "animations"] {
             assert_eq!(
                 refused(&format!(r#"{{"id":1,"cmd":"query.{cmd}","limit":1}}"#)),
                 ("invalid_params".into(), "limit".into()),

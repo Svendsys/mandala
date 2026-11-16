@@ -171,8 +171,10 @@ and `@stop` is two beats and a jump — correct for an *instant* change, wrong
 for an animation. Check what the thing you demonstrate actually does before
 you choose: **a single `ZoomIn` is instant** (one 1.1× jump, no animation —
 `apply_zoom_step`), so the worked example below shows it as a ramp of steps.
-An animated edit is the one thing that animates today (presentations
-are V1-D2's); nothing on a map animates by itself.
+Two things animate: an animated edit, and a presentation
+(`format/presentations.md`; `act.console 'present start <id> <node-id>'`
+starts one, `present stop` plays its way out). Nothing on a map animates by
+itself: no trigger starts a presentation yet.
 
 **Two traps found while writing this.** `input.wheel 26` is one notch, not
 twenty-six — it moved zoom 0.05 → 0.055; to repeat an action, repeat the

@@ -39,10 +39,12 @@ pub use selection::Selection;
 
 use std::path::Path;
 
+use baumhard::arena::NodeId;
 use baumhard::document::edit::Animate;
 use baumhard::document::format;
 use baumhard::document::format::file::MAP_EXTENSION;
 use baumhard::document::ids::Document;
+use baumhard::document::presentation::{InstanceId, PresentError, PresentationDef};
 use baumhard::document::writer::error::ApplyError;
 use baumhard::document::writer::feed::ChangeRecord;
 use baumhard::document::writer::transaction::{Transaction, TransactionKind};
@@ -543,6 +545,102 @@ impl MindMapDocument {
         self.animation.as_ref().is_some_and(|a| self.doc.is_open(&a.tx))
     }
 
+    /// Start the presentation `def` on `nodes` at the app clock's
+    /// reading `now_ms`: one instance per node, a restart where it is
+    /// already playing (`Document::start_presentation`). Never a change
+    /// of the map: no history entry, no revision, no status line. A
+    /// refusal starts nothing and is returned for the caller to show.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "what starts and stops a presentation today is the console shell, which is native; \
+                      the map's triggers (V1-D3, #252) do on both targets"
+        )
+    )]
+    pub fn start_presentation(
+        &mut self,
+        def: &PresentationDef,
+        nodes: &[NodeId],
+        now_ms: f64,
+    ) -> Result<Vec<InstanceId>, PresentError> {
+        self.doc.start_presentation(def, nodes, now_ms)
+    }
+
+    /// Stop the presentation `id` on `nodes` at `now_ms`: each instance
+    /// there plays its way out (`Document::stop_presentation`). Returns
+    /// how many it stopped.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "what starts and stops a presentation today is the console shell, which is native; \
+                      the map's triggers (V1-D3, #252) do on both targets"
+        )
+    )]
+    pub fn stop_presentation(&mut self, id: &str, nodes: &[NodeId], now_ms: f64) -> usize {
+        self.doc.stop_presentation(id, nodes, now_ms)
+    }
+
+    /// Bring every presentation instance to `now_ms`
+    /// (`Document::tick_presentations`). Returns whether the frame owes
+    /// a draw.
+    pub fn tick_presentations(&mut self, now_ms: f64) -> bool {
+        self.doc.tick_presentations(now_ms)
+    }
+
+    /// Whether a presentation instance is on its way in or out: what
+    /// keeps the frame loop ticking beside an animated edit. O(the
+    /// instances).
+    pub fn presentations_moving(&self) -> bool {
+        self.doc.presentations_moving()
+    }
+
+    /// Set the presentation layer aside (`Document::suspend_presentations`):
+    /// until [`Self::resume_presentations`] takes the returned
+    /// [`Suspension`] back, the document reads as the map itself; the
+    /// pair nests. For the Action funnel's guard
+    /// (`dispatch::the_map::OnTheMap`), which hands its context down and
+    /// so cannot hold [`Self::suspended`]'s. Anything else holds that
+    /// guard: a suspension never resumed leaves the layer out, so one is
+    /// a value that must be given back, not a call that can be left
+    /// unmatched ([`Suspension`] says what catches one that is not).
+    pub(in crate::application) fn suspend_presentations(&mut self) -> Suspension {
+        self.doc.suspend_presentations();
+        Suspension(())
+    }
+
+    /// Put the presentation layer back (`Document::resume_presentations`),
+    /// taking back the [`Suspension`] that set it aside.
+    pub(in crate::application) fn resume_presentations(&mut self, suspension: Suspension) {
+        self.doc.resume_presentations();
+        suspension.given_back();
+    }
+
+    /// The map with its presentation layer set aside, as a guard: what
+    /// builds a change from values it reads — a copy, an edit's filter, a
+    /// layout — reads through it, and the layer is back when it is
+    /// dropped, however its scope ends.
+    pub fn suspended(&mut self) -> MapItself<'_> {
+        self.doc.suspend_presentations();
+        MapItself { doc: self }
+    }
+
+    /// Whether an animation is moving: an animated edit is running, or
+    /// a presentation instance is on its way in or out. What
+    /// `clock.wait until=animations_complete` waits out. O(the
+    /// instances).
+    pub fn animations_moving(&self) -> bool {
+        self.is_animating() || self.presentations_moving()
+    }
+
+    /// Whether a presentation plays on with nobody stopping it: a `loop`
+    /// that was not stopped, which keeps the animations from ever coming
+    /// to rest. O(the instances).
+    pub fn presentation_loops(&self) -> bool {
+        self.doc.presentations().any(|instance| instance.unending)
+    }
+
     /// Drop the selected elements the document no longer holds: what a
     /// change that removed them leaves selected. Returns whether any was
     /// dropped. O(the selection).
@@ -578,6 +676,78 @@ impl MindMapDocument {
             label: "test: create root".to_string(),
         })
         .expect("the root applies")
+    }
+}
+
+/// That the presentation layer of a [`MindMapDocument`] was set aside
+/// ([`MindMapDocument::suspend_presentations`]): only that call makes
+/// one, and only [`MindMapDocument::resume_presentations`] takes it
+/// back. One is caught when it is not given back:
+///
+/// - discarding it where it is made is a warning (`#[must_use]`), and
+///   so an error under the gate's `-D warnings`;
+/// - dropping it any other way — `let _ =`, a `drop`, the end of a
+///   scope — logs an `error!` and, in a debug build, fails a
+///   `debug_assert!` (unless a panic is already unwinding, where a
+///   second one would abort): the layer stays out, which no reader of
+///   the map should be left with.
+///
+/// The one deliberate way to let one go without resuming is
+/// [`Self::forget`], for a guard whose document is gone.
+#[must_use = "a suspension never given back to `resume_presentations` leaves the presentation layer out"]
+pub(in crate::application) struct Suspension(());
+
+impl Suspension {
+    /// Given back: the layer is resumed, so dropping this is not a slip.
+    fn given_back(self) {
+        std::mem::forget(self);
+    }
+
+    /// Let this go without resuming, on purpose: the document it set
+    /// aside is no longer the one at hand (a guard whose context lost
+    /// its document), so there is nothing to give it back to.
+    pub(in crate::application) fn forget(self) {
+        std::mem::forget(self);
+    }
+}
+
+impl Drop for Suspension {
+    fn drop(&mut self) {
+        log::error!(
+            "document: a presentation suspension was dropped without being resumed; the layer stays out"
+        );
+        if !std::thread::panicking() {
+            debug_assert!(false, "a Suspension was dropped without `resume_presentations`");
+        }
+    }
+}
+
+/// The open map with its presentation layer set aside
+/// ([`MindMapDocument::suspended`]): it derefs to the document, which
+/// reads as the map itself, and the layer comes back when this is
+/// dropped — at the end of its scope, on an early return, and while a
+/// panic unwinds.
+pub struct MapItself<'d> {
+    doc: &'d mut MindMapDocument,
+}
+
+impl std::ops::Deref for MapItself<'_> {
+    type Target = MindMapDocument;
+
+    fn deref(&self) -> &MindMapDocument {
+        self.doc
+    }
+}
+
+impl std::ops::DerefMut for MapItself<'_> {
+    fn deref_mut(&mut self) -> &mut MindMapDocument {
+        self.doc
+    }
+}
+
+impl Drop for MapItself<'_> {
+    fn drop(&mut self) {
+        self.doc.doc.resume_presentations();
     }
 }
 

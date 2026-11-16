@@ -27,6 +27,10 @@ pub mod maps;
 /// The oracle's sweeps over the corpus.
 #[cfg(test)]
 mod oracle_tests;
+/// A glyph-layer presentation's body as run mutations, spelled op by
+/// op.
+#[cfg(test)]
+mod presentation_glyph_tests;
 /// The projection's fuzz properties: a loaded map projects, and
 /// edit sequences keep it equal to a full projection.
 pub mod projection_fuzz;

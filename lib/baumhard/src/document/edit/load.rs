@@ -77,7 +77,7 @@ pub fn parse_edits(json: &str) -> Result<Vec<EditDef>, EditsError> {
         )
     })?;
     if let Ok(Extent { edits: Some(edits) }) = serde_json::from_str(whole.get()) {
-        check_nesting(json, edits)?;
+        check_nesting(json, edits, "edits")?;
     }
     let file: EditsFileDto = parse_extent(json, whole, &[])?;
     let mut seen: KeyedSet<String> = KeyedSet::default();
@@ -108,16 +108,21 @@ pub fn parse_edits(json: &str) -> Result<Vec<EditDef>, EditsError> {
     Ok(edits)
 }
 
-/// Refuse `edits` — the extent of a map's or an edits file's `edits`
-/// value, a slice of `text` — when it nests deeper than
-/// [`MAX_EDITS_JSON_DEPTH`], at the definition that does, before the
-/// JSON reader reads it into definitions and would stop at its own
-/// limit. The extent itself was captured without that limit (the
-/// reader skips a value it only captures iteratively), and after the
-/// whole text was read as JSON, so a syntax error anywhere is reported
-/// first. O(edits).
-pub(crate) fn check_nesting(text: &str, edits: &RawValue) -> Result<(), LoadError> {
-    let json = edits.get();
+/// Refuse `list` — the extent of a map's or a definitions file's
+/// `edits` or `presentations` value, named by `key`, a slice of `text`
+/// — when it nests deeper than [`MAX_EDITS_JSON_DEPTH`], at the
+/// definition that does, before the JSON reader reads it into
+/// definitions and would stop at its own limit. The extent itself was
+/// captured without that limit (the reader skips a value it only
+/// captures iteratively), and after the whole text was read as JSON, so
+/// a syntax error anywhere is reported first. O(the list).
+///
+/// One bound for both lists: no presentation nests as deep as an edit's
+/// mutator may, so a presentation within the bound that is not one the
+/// format reads is refused by the reader, at its path, and one past it
+/// here.
+pub(crate) fn check_nesting(text: &str, list: &RawValue, key: &'static str) -> Result<(), LoadError> {
+    let json = list.get();
     let mut depth = 0usize;
     let mut in_string = false;
     let mut escaped = false;
@@ -140,7 +145,7 @@ pub(crate) fn check_nesting(text: &str, edits: &RawValue) -> Result<(), LoadErro
                 depth += 1;
                 if depth > MAX_EDITS_JSON_DEPTH {
                     let mut error = LoadError::new(
-                        render_path(&[Seg::Key("edits"), Seg::Index(entry)]),
+                        render_path(&[Seg::Key(key), Seg::Index(entry)]),
                         LoadErrorKind::DefinitionTooDeep {
                             max: MAX_DEFINITION_DEPTH,
                         },

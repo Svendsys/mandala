@@ -106,8 +106,13 @@ pub(in crate::application::app) fn execute_console_line(
     if !LEAVE_ANIMATION_RUNNING.contains(&cmd.name) {
         doc.finish_animation();
     }
+    // A verb reads the map itself, not what a presentation shows on it:
+    // the layer is aside while it executes, and back before its side
+    // effect is taken — a screenshot, a recording and a clock step show
+    // what is drawn (`dispatch::the_map`).
     let (result, side_effect, close_after) = {
-        let mut effects = ConsoleEffects::new(doc);
+        let mut map = doc.suspended();
+        let mut effects = ConsoleEffects::new(&mut map);
         let result = (cmd.execute)(&Args::new(&args), &mut effects);
         (result, effects.side_effect.take(), effects.close_console)
     };
@@ -139,6 +144,11 @@ pub(in crate::application::app) fn execute_console_line(
     let mut edit_report = None;
     if let Some(ConsoleSideEffect::Edit(line)) = &side_effect {
         edit_report = Some(super::edits::take(ctx, line));
+    }
+    // And a presentation's: what it started, stopped or lists. What it
+    // started shows at once, which the sync below draws.
+    if let Some(ConsoleSideEffect::Present(line)) = &side_effect {
+        edit_report = Some(super::presentations::take(ctx, line));
     }
     if let Some(result) = edit_report {
         let synced = match (ctx.document.as_mut(), ctx.view.as_mut()) {
@@ -185,8 +195,9 @@ pub(in crate::application::app) fn execute_console_line(
     })
 }
 
-/// Perform the side effect a verb asked for. The four that are a
-/// line's whole report (`Record`, `Clock`, `Edit`, `Screenshot`) are taken by
+/// Perform the side effect a verb asked for. The five that are a
+/// line's whole report (`Record`, `Clock`, `Edit`, `Present`,
+/// `Screenshot`) are taken by
 /// [`execute_console_line`] before this is reached.
 fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffect) {
     match effect {
@@ -203,7 +214,8 @@ fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffec
         ConsoleSideEffect::Screenshot(_)
         | ConsoleSideEffect::Record(_)
         | ConsoleSideEffect::Clock(_)
-        | ConsoleSideEffect::Edit(_) => {
+        | ConsoleSideEffect::Edit(_)
+        | ConsoleSideEffect::Present(_) => {
             log::error!("console: {effect:?} reached the side-effect handler; it is taken before — ignoring");
         }
     }

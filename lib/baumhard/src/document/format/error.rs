@@ -328,7 +328,7 @@ pub enum LoadErrorKind {
         /// Why this element cannot have it.
         reason: &'static str,
     },
-    /// A definition — an edit — nests deeper than
+    /// A definition — an edit, a presentation — nests deeper than
     /// [`MAX_DEFINITION_DEPTH`](crate::document::bounds::MAX_DEFINITION_DEPTH)
     /// levels (owner, format Q4 on #250). The path is the definition.
     DefinitionTooDeep {
@@ -346,6 +346,13 @@ pub enum LoadErrorKind {
     /// An edit's body or target is one the edit format refuses
     /// (`format/edits.md`): `message` says which rule.
     InvalidEdit {
+        /// The rule it breaks.
+        message: String,
+    },
+    /// A presentation's body, layer or target is one the presentation
+    /// format refuses (`format/presentations.md`): `message` says which
+    /// rule.
+    InvalidPresentation {
         /// The rule it breaks.
         message: String,
     },
@@ -446,8 +453,11 @@ impl fmt::Display for LoadErrorKind {
             }
             LoadErrorKind::DefinitionTooLarge { max } => write!(f, "a definition has at most {max} parts"),
             // Its message holds what the file wrote, a handler's name or a
-            // name it gave a field, and is shown as file text is.
-            LoadErrorKind::InvalidEdit { message } => write!(f, "{}", shown(message)),
+            // name it gave a field — an edit's or a presentation's — and is
+            // shown as file text is.
+            LoadErrorKind::InvalidEdit { message } | LoadErrorKind::InvalidPresentation { message } => {
+                write!(f, "{}", shown(message))
+            }
             LoadErrorKind::DanglingLink { to } => write!(f, "no node has the id {to}"),
             LoadErrorKind::SelfLink => f.write_str("a link cannot lead to the node that holds it"),
             LoadErrorKind::UnknownVerb { id } => write!(f, "the map defines no verb `{}`", shown(id)),

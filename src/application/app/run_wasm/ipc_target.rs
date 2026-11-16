@@ -124,6 +124,8 @@ impl Borrowed<'_> {
             continuing: self.needs_continuation(),
             redraw_owed: self.input.redraw_owed,
             virtual_clock: self.input.clock.is_virtual(),
+            animating: self.input.document.animations_moving(),
+            looping: self.input.document.presentation_loops(),
         }
     }
 }

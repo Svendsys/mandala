@@ -1062,12 +1062,49 @@ PR that implements them.
 |---|---|---|---|
 | *(bootstrap)* | `meta.rs` | IPC-02; registry by IPC-03 | `describe`, `ping` |
 | `act` | `act.rs` | IPC-03 | `act.action`, `act.console`, `act.macro` |
-| `query` | `query.rs` | IPC-04 | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.editors`, `query.undo` |
+| `query` | `query.rs` | IPC-04; `query.animations` by V1-D2 (#251) | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.editors`, `query.undo`, `query.animations` |
 | `scene` | `scene.rs` | IPC-05 | `scene.dump`, `scene.visible_set`, `scene.node_geometry`, `scene.hit_test`, `scene.find_text` |
 | `input` | `input.rs` | IPC-06 | `input.mouse_move`, `input.mouse_button`, `input.wheel`, `input.key`, `input.text`, `input.touch`, `input.drag`, `input.click_node`, `input.pending` |
 | `capture` | `capture.rs` | IPC-07, IPC-08 | `capture.screenshot`, `capture.record_start`, `capture.record_stop` |
 | `clock` | `clock.rs` | IPC-09 | `clock.status`, `clock.set_mode`, `clock.step`, `clock.wait` |
 | `events` | `events.rs` | IPC-14 | `events.subscribe`, `events.unsubscribe`, `events.revision` |
+
+### The map itself, or what is drawn
+
+A presentation (`format/presentations.md`) shows a map otherwise than
+it is: a node lifted while the pointer is over it, a branch concealed,
+a word swelling. Nothing it shows is the map's — it is never saved,
+never in the history, and the document's revision never moves for it
+— so while one plays, "what is the node's position?" has two answers.
+Every command that reads gives one of them, by this rule: **a command
+that describes the document answers the map itself; a command that
+describes what is drawn answers what is drawn.** With nothing playing
+the two are the same answer.
+
+| answers | commands |
+|---|---|
+| **the map itself** | `query.document` (every field: `document` is what a save writes, and a save never holds a presentation), `query.undo`; `scene.node_geometry`'s `model`, the one part of a `scene` reply that is the document's; every reply's `document_revision` and the `document_changed` event, which a presentation never moves or raises; what an `act.action`, `act.console` or `act.macro` reads to build its change, and the console's readouts of the map (`section show`, `edit inspect`) |
+| **what is drawn** | every `scene.*` command (the runs the projector drew, whether a node is in the scene — its `folded` and `hidden` as they show — and the text as it reads); `capture.screenshot` and its geometry sidecar, and a recording's frames; where an `input.*` command lands (`input.click_node` aims at the node where it is drawn, and a click hits what is drawn there); the Actions that move the camera or change the selection by what can be seen (`ZoomFit`, `CenterOnSelection`, `SelectAll`, `InvertSelection`: a node under a fold a presentation closed is not selected) |
+| **the performance** | `query.animations`, `clock.wait until=animations_complete`, and the console's `present list` |
+| **neither** (the app's own state, which no presentation writes) | `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.editors`, `clock.status`, `clock.wait until=settled`, `input.pending`, `events.revision`, `describe`, `ping`; the console's `help`, `mode`, `clock status`, `edit list` and `edit help` |
+
+**A change is built from the map itself.** An Action, a console line
+and an edit each run with the presentations set aside, and the
+presentations come back when it returns: a copy takes the text the map
+holds, a paste lands beside where the node is, an edit's filter reads
+the opacity the map gives a node and not the one a presentation is
+fading it through. So **each step** — an Action, a console line, an
+edit — given the same app state (the same selection, camera and mode)
+builds the same change, leaves the same history and the same saved
+bytes, whether or not anything is playing:
+`test_every_action_verb_and_edit_leaves_what_it_leaves_with_nothing_playing`
+walks every Action, every console verb and the bundled edits to hold
+that. The guarantee is per step, not per sequence. The Actions in the
+second row above read what can be seen, because that is what they are
+for, and change no document — but the selection they make carries
+into the next step: `SelectAll` under a presentation that folds a node
+leaves what is under the fold unselected, so a `color` after it
+recolors less than it would with nothing playing.
 
 ## `act` — dispatch bridge (IPC-03)
 
@@ -1239,9 +1276,12 @@ naming the refused step.
 ## `query` — application state (IPC-04)
 
 Read-only views of what the application knows: what a person reads off
-the screen chrome, and the app's mental state. Seven commands:
+the screen chrome, and the app's mental state. Eight commands:
 `query.document`, `query.selection`, `query.camera`, `query.mode`,
-`query.status`, `query.editors`, `query.undo`.
+`query.status`, `query.editors`, `query.undo`, `query.animations`.
+Which of them answer the map itself while a presentation plays, and
+which what is drawn, is under
+[The map itself, or what is drawn](#the-map-itself-or-what-is-drawn).
 
 **Zero mutation, by construction.** A query reaches the app through
 `observe()` (`&`), and the only reads the execution context offers are
@@ -1270,11 +1310,12 @@ selection, `scene.*`, `input.click_node`, the capture sidecar — uses
 this one shape.
 
 **Errors.** Before the app exists every query answers `no_document`.
-After it, the three queries that read the document (`query.document`,
-`query.selection`, `query.undo`) answer `no_document` when its initial
-load failed. `query.camera`, `query.mode`, `query.status` and
-`query.editors` need no document and answer regardless. A query's own
-parameter failures are `invalid_params`, naming the parameter.
+After it, the four queries that read the document (`query.document`,
+`query.selection`, `query.undo`, `query.animations`) answer
+`no_document` when its initial load failed. `query.camera`,
+`query.mode`, `query.status` and `query.editors` need no document and
+answer regardless. A query's own parameter failures are
+`invalid_params`, naming the parameter.
 
 ### `query.document`
 
@@ -1296,7 +1337,7 @@ The open document: `file_path`, `dirty`, `name`, `nodes`, `revision`,
 | `nodes` | integer | How many nodes the map holds. |
 | `revision` | integer | The document's revision: it advances with every change, an undo and a redo included, and restarts when the document is replaced (`document_replaced`). |
 | `history` | object | `{"undo", "redo"}`: how many entries the history holds each way (`query.undo` lists them). |
-| `document` | object | The map in the `.mandala.json` shape a save writes (`format/schema.md`), a change an open transaction holds included. With `pointer`, the value found there. |
+| `document` | object | The map in the `.mandala.json` shape a save writes (`format/schema.md`), a change an open transaction holds included, and nothing a presentation shows on it. With `pointer`, the value found there. |
 | `path`, `bytes` | string, integer | With `to_file` only, and then the *only* fields: the absolute path written and its size. |
 
 The `document` field round-trips: it is what `save` would write, and
@@ -1393,7 +1434,32 @@ the unit the editors use, and the one a user counts as characters.
 |---|---|---|
 | `depth` | integer | How many entries `Undo` can take. |
 | `redo_depth` | integer | How many entries `Redo` can take. |
-| `entries` | array | Newest first, the order `Undo` takes them: `{"label", "source", "revision"}`. `label` is the change's own words, `source` the `ChangeSource` that declared it (`action`, `console`, `ipc`, `input`, `edit`, `verb`), `revision` the revision it made. The journals an entry carries are what undo restores from and are not reported. |
+| `entries` | array | Newest first, the order `Undo` takes them: `{"label", "source", "revision"}`. `label` is the change's own words, `source` the `ChangeSource` that declared it (`action`, `console`, `ipc`, `input`, `edit`, `verb`), `revision` the revision it made. The journals an entry carries are what undo restores from and are not reported. A presentation is never an entry: it changes no map. |
+
+### `query.animations`
+
+Params: none. What time is moving on the map: the presentation
+instances playing (`format/presentations.md`), and an animated edit
+still running (`format/edits.md` "Animated edits").
+
+| result field | type | meaning |
+|---|---|---|
+| `moving` | boolean | Whether time moves what is drawn: an edit is animating, or an instance is on its way in or out. An instance that holds — a `hold` or a `while` fully in — is playing and not moving. `false` is what `clock.wait until=animations_complete` waits for. |
+| `epoch` | integer | The presentation epoch: it advances with every start, stop and move of an instance, and with an instance's end, never with an edit's own writes — an edit that frees the node an instance waits on ends that instance, and that advances it. (The document's `revision` is the other way round: it never moves for a presentation.) |
+| `edit` | object | The animated edit running — `{"elapsed_ms", "t", "ms", "delay_ms", "easing"}`: how long ago it began by the app clock, its eased progress in `[0, 1]`, and its timing as the edit spells it — or `null`. |
+| `count` | integer | How many instances are playing. |
+| `presentations` | array | The instances, in start order, which is the order they are applied in. Each is `{"id", "presentation", "node", "layer", "play", "t", "direction", "moving", "elements", "refusal"}`: the instance's number (unique for the life of the document), the presentation's id, the node it plays on by integer id (`null` once an edit has taken the node out of the map; the instance comes back with an undo), `"document"` or `"glyph"`, the lifecycle (`"while"`, `"once"`, `"loop"`, `"hold"`), the eased progress in `[0, 1]` as of the last frame, `"in"` / `"hold"` / `"out"`, whether it is on its way, how many elements it plays on, and — when the document refuses what it would write, which leaves it playing and showing nothing — the refusal in the writer's words (`null` otherwise). |
+
+```jsonc
+{"id": 1, "cmd": "query.animations"}
+{"id": 1, "ok": true, "result": {"moving": true, "epoch": 3, "edit": null, "count": 1,
+  "presentations": [{"id": 0, "presentation": "lift", "node": 2, "layer": "document",
+    "play": "while", "t": 0.42, "direction": "in", "moving": true, "elements": 1, "refusal": null}]}}
+```
+
+Start and stop them with the console's `present` verb
+(`act.console`): `present start <id> [node…]`, `present stop <id>
+[node…]`, `present list`.
 
 ## `scene` — laid-out scene introspection (IPC-05)
 
@@ -1516,7 +1582,7 @@ scene draws it, and where.
 | result field | type | meaning |
 |---|---|---|
 | `element` | object | The node described: `{"node": <id>}`. |
-| `model` | object | `{"position": {"x", "y"}, "min_size": {"w", "h"} or null, "folded", "hidden"}` as the document holds them: the authored values, before text fitting. |
+| `model` | object | `{"position": {"x", "y"}, "min_size": {"w", "h"} or null, "folded", "hidden"}` as the document holds them: the authored values, before text fitting, and with nothing a presentation shows on the node — so `model` and `canvas` differ while one moves it, and `in_scene` is `false` with `model.hidden` `false` for a node a presentation conceals. |
 | `in_scene` | boolean | Whether the scene draws the node: `false` for a node hidden by its own flag or a folded ancestor, or one that draws nothing. |
 | `canvas`, `surface`, `visibility` | object, object, string | Only when `in_scene`: the node's placement, as in `scene.dump`. |
 | `sections` | array | Only when `in_scene`: the drawn sections, as in `scene.dump`, visible or not. |
@@ -2217,8 +2283,8 @@ disposition: [`work_plans/LLM_IPC.md`](../work_plans/LLM_IPC.md) §D9.
 **One clock for what behaves, the wall clock for what measures.**
 Everything the app *does* by time reads the app clock: double-click
 and long-press timing, a recording's frame times, `ping`, and the
-animation tick of an animated edit (and, with V1-D2 (#251), of a
-presentation): a step lands an animation on exact instants. Everything that
+animation tick of an animated edit and of a presentation: a step
+lands an animation on exact instants. Everything that
 *measures* — the FPS overlay, the `FreezeWatchdog`, an encode's
 cost, a `clock.wait` deadline —
 reads the wall clock in both modes, because a stepped or frozen clock
@@ -2298,10 +2364,9 @@ step names.
   asked for from inside a running one — a `clock step` console line
   typed by an injected key the step itself landed — is `busy`.
 
-- **`clock.wait`** — params: `until` (`"settled"`; the
-  `"animations_complete"` condition returns with V1-D2's (#251)
-  presentations; a real-time animated edit keeps `settled` from holding
-  until it ends), `timeout_ms` (integer, default `10_000`,
+- **`clock.wait`** — params: `until` (`"settled"` or
+  `"animations_complete"`, below; anything else is `invalid_params`
+  naming `until`), `timeout_ms` (integer, default `10_000`,
   `1..=60_000`; a value outside it is `invalid_params`, as IPC-07 and
   IPC-08 made their bounds; always **wall-clock** milliseconds — the
   deadline is a client-liveness guard, so a frozen virtual clock must
@@ -2338,7 +2403,8 @@ Wait conditions, defined against the frame (above) and CONCEPTS §5
 
 - **`settled`** — at an evaluation point, all of: (a)
   `needs_continuation()` is false — in real time that includes an
-  animated edit still running; (b) **in real time**, no IPC-injected
+  animated edit still running and a presentation on its way in or out,
+  a looping one for as long as it plays; (b) **in real time**, no IPC-injected
   input remains queued; (c) **no redraw is owed**: every redraw the
   app has asked for — every pixels-affecting command's, and every
   input handler's — has been drawn by a render that ran after it; and
@@ -2423,6 +2489,30 @@ Wait conditions, defined against the frame (above) and CONCEPTS §5
   not become observable behavior (the reason it isn't a continuation
   source), so `settled` does not wait for it — capture with the
   overlay off for byte-identical frames.
+
+- **`animations_complete`** — at an evaluation point: no animated edit
+  is running, and no presentation instance is moving
+  (`query.animations`' `moving` is `false`). An instance that holds
+  where it is — a `hold`, a `while` fully in — does not keep it from
+  holding: nothing more will move until something starts or stops. It
+  says nothing about frames: a client that wants the last frame of an
+  animation drawn waits for `settled` after it. Two cases time out by
+  design, and the `timeout` message names which:
+
+  - **a `loop` is playing**: it ends only when it is stopped, so the
+    wait cannot hold until `present stop` is sent — "a looping
+    presentation is playing, which ends only when it is stopped
+    (`present stop`)";
+  - **the clock is virtual**: time stands still between steps, so an
+    animation that is moving stays moving — "an animation was still
+    moving, and the clock is virtual: only `clock.step` moves it".
+    Step past its end instead (`query.animations` gives an edit's
+    `ms` and `delay_ms`), and the wait holds at once.
+
+  Under a virtual clock `settled` does not wait for animations — it
+  means "at this instant", as above — which is why this second
+  condition exists: `settled` alone cannot say an animation has
+  finished.
 
 There is deliberately **no** third `"idle"` condition: once settled,
 the loop parks by construction (`ControlFlow::Wait`), and the only

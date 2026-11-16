@@ -64,7 +64,7 @@ const SECTIONS: &[(&str, &[&str])] = &[
     ("Top level", &["MapHeaderDto"]),
     ("Theme", &["ThemeDto"]),
     ("Palette group", &["PaletteGroupDto"]),
-    ("Definitions", &["PresentationDto", "VerbDto"]),
+    ("Definitions", &["VerbDto"]),
     ("Defaults", &["DefaultsDto"]),
     ("Node defaults", &["NodeDefaultsDto"]),
     ("Text style", &["TextDefaultsDto"]),
@@ -96,6 +96,14 @@ const EDIT_SECTIONS: &[(&str, &[&str])] = &[
     ("Edits file", &["EditsFileDto"]),
 ];
 
+/// The `###` headings of `format/presentations.md` that hold a table of
+/// keys, and the DTO each describes: a presentation is documented there
+/// (V1-D2). Its filter and its timings are the edit format's.
+const PRESENTATION_SECTIONS: &[(&str, &[&str])] = &[
+    ("Presentation", &["PresentationDto"]),
+    ("Presentations file", &["PresentationsFileDto"]),
+];
+
 /// The DTOs whose keys share one table, "Start point"'s second:
 /// `radius`, `filler`, `min`, `max`, `edge`, `at`, `content`, `color`.
 const SPELLING_OBJECTS: &[&str] = &[
@@ -122,6 +130,7 @@ fn test_the_schema_tables_list_every_key_in_the_order_the_saver_writes_them() {
     let graph = TypeGraph::build(&crate_src_root());
     let documented = documented_keys("schema.md");
     let edits_documented = documented_keys("edits.md");
+    let presentations_documented = documented_keys("presentations.md");
 
     for (doc, documented, heading, dtos) in SECTIONS
         .iter()
@@ -130,6 +139,11 @@ fn test_the_schema_tables_list_every_key_in_the_order_the_saver_writes_them() {
             EDIT_SECTIONS
                 .iter()
                 .map(|(heading, dtos)| ("edits.md", &edits_documented, heading, dtos)),
+        )
+        .chain(
+            PRESENTATION_SECTIONS
+                .iter()
+                .map(|(heading, dtos)| ("presentations.md", &presentations_documented, heading, dtos)),
         )
     {
         let listed = documented
@@ -166,6 +180,7 @@ fn test_the_schema_tables_list_every_key_in_the_order_the_saver_writes_them() {
     let described: BTreeSet<&str> = SECTIONS
         .iter()
         .chain(EDIT_SECTIONS)
+        .chain(PRESENTATION_SECTIONS)
         .flat_map(|(_, dtos)| dtos.iter().copied())
         .chain(SPELLING_OBJECTS.iter().copied())
         .collect();
