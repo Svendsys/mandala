@@ -146,14 +146,17 @@ fn test_every_fuzz_seed_holds_its_targets_properties() {
 }
 
 /// flow_structured_every_face's seeds named `pins_<face>_<seed>` pin that
-/// face (#228, #297): its spans or its flow's style name it, read over
-/// the target's own list of faces, so the corpus starts from inputs that
-/// meet each ornament fallback face and the default face, and every one
-/// of them has a seed named for it. The seeds are
-/// `Choices::seeded(<seed>)`'s choices, replayed; adding the default face
-/// to the list moved every earlier seed's faces, so they were drawn again
-/// (#228). Controls: the seeds read over flow_structured's list instead,
-/// red on each; the emoji's seeds left out, red on `MandalaEmoji`.
+/// face (#228, #297, #355): its spans or its flow's style name it, read
+/// over the target's own list of faces, so the corpus starts from inputs
+/// that meet each face `flow_fuzz::later_faces` adds to
+/// flow_structured's — the ornament fallback's, the default face and
+/// Scrapbook Chinese — and every one of them has a seed named for it.
+/// The seeds are `Choices::seeded(<seed>)`'s choices, replayed; adding
+/// the default face to the list moved every earlier seed's faces, so they
+/// were drawn again (#228), and so did adding Scrapbook Chinese (#355).
+/// Controls: the seeds read over flow_structured's list instead, red on
+/// each; the emoji's seeds left out, red on `MandalaEmoji`; Scrapbook
+/// Chinese's left out, red on `ScrapbookChinese`.
 #[test]
 fn test_the_every_face_flow_seeds_pin_the_faces_they_are_named_for() {
     let faces = flow_fuzz::every_face();
@@ -167,16 +170,15 @@ fn test_the_every_face_flow_seeds_pin_the_faces_they_are_named_for() {
             crate::font::fonts::AppFont::MandalaOrnaments
         } else if name.starts_with("pins_inter_variable_") {
             crate::font::fallback::DEFAULT_FACE.0
+        } else if name.starts_with("pins_scrapbook_chinese_") {
+            crate::font::fonts::AppFont::ScrapbookChinese
         } else {
             continue;
         };
         named.push(want);
         assert!(pinned.contains(&want), "{name} pins {pinned:?}, not {want:?}");
     }
-    for (font, _) in crate::font::fallback::ORNAMENT_FALLBACK
-        .iter()
-        .chain(std::iter::once(&crate::font::fallback::DEFAULT_FACE))
-    {
+    for font in &flow_fuzz::later_faces().collect::<Vec<_>>() {
         assert!(
             named.contains(font),
             "no seed is named for {font:?}, so the corpus need not meet it ({named:?})"

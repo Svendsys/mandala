@@ -42,8 +42,8 @@
 #
 #   pip install fonttools==4.68.0
 #
-# Exit codes: 0 written, 1 a source or the tool is not the pinned one,
-# 2 a bad command line.
+# Exit codes: 0 written, 1 a source is missing or a source or the tool is
+# not the pinned one, 2 a bad command line.
 
 set -euo pipefail
 
@@ -52,7 +52,9 @@ FONTS="$ROOT/lib/baumhard/src/font/fonts"
 
 DEJAVU="${1:-/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf}"
 NOTO_EMOJI="${2:-/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf}"
-if [ $# -gt 2 ]; then
+# It takes no options: an argument that begins with `-` is a bad command
+# line (a file so named is passed as `./-name`).
+if [ $# -gt 2 ] || [[ "${1:-}" == -* ]] || [[ "${2:-}" == -* ]]; then
     echo "usage: $0 [DejaVuSans.ttf] [NotoColorEmoji.ttf]" >&2
     exit 2
 fi
@@ -79,7 +81,13 @@ EMOJI=U+1F338
 
 check_sha256() {
     local file="$1" want="$2" got
-    got="$(sha256sum "$file" | cut -d' ' -f1)"
+    if [ ! -f "$file" ]; then
+        echo "$file: no such file" >&2
+        exit 1
+    fi
+    # Read on stdin, so a path that begins with `-` is not taken for an
+    # option.
+    got="$(sha256sum < "$file" | cut -d' ' -f1)"
     if [ "$got" != "$want" ]; then
         echo "$file: SHA-256 $got, not the pinned $want" >&2
         exit 1
@@ -88,9 +96,9 @@ check_sha256() {
 
 check_sha256 "$DEJAVU" "$DEJAVU_SHA256"
 check_sha256 "$NOTO_EMOJI" "$NOTO_EMOJI_SHA256"
-have="$(python3 -I -c 'import fontTools; print(fontTools.version)')"
+have="$(python3 -I -c 'import fontTools; print(fontTools.version)' 2>/dev/null || true)"
 if [ "$have" != "$FONTTOOLS_VERSION" ]; then
-    echo "fontTools $have, not the pinned $FONTTOOLS_VERSION: pip install fonttools==$FONTTOOLS_VERSION" >&2
+    echo "fontTools ${have:-not installed}, not the pinned $FONTTOOLS_VERSION: pip install fonttools==$FONTTOOLS_VERSION" >&2
     exit 1
 fi
 
