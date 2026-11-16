@@ -1651,6 +1651,95 @@ fn test_projection_a_path_spaced_past_the_cells_is_hidden_by_any_node_in_its_gap
     }
 }
 
+/// The boxes the hide stage tries `path`'s laid glyphs by: each glyph's
+/// box grown by the path's gap.
+fn grown_boxes(p: &Projected, path: NodeId) -> Vec<Rect> {
+    use crate::projection::stages::{gap_and_size, glyph_ink};
+    let Some(UnitBody::Line(line)) = p.projector.units.get(&path).map(|u| &u.body) else {
+        panic!("{path:?} is a line");
+    };
+    let gap = gap_and_size(line).0.max(0.0);
+    let Some(RunShape::Path { run: shaped, placed }) = line.laid[0].as_ref().map(|run| run.shaped()) else {
+        panic!("{path:?}'s body is laid");
+    };
+    placed
+        .glyphs
+        .iter()
+        .filter_map(|g| glyph_ink(shaped, g))
+        .map(|ink| ink.grown(gap))
+        .collect()
+}
+
+/// A connector spaced so far that its glyphs' boxes, grown by its gap,
+/// are past what an `f32` holds — 1.8·10³⁸ and `f32::MAX`, which the
+/// loader lets through — has boxes with no far corner: `Rect::grown` gives
+/// each an origin of −∞ and a size of +∞, which sum to no number. Such a
+/// box meets no node's region, as the paths' index leaves it out (#364):
+/// the path is drawn whole beside a node 1000 away — one with only text,
+/// one ringed, one round and ringed — and with that node across it, and
+/// an update holds what a full projection does once the node is hidden,
+/// shown again and moved across the path. The finite edge beside them,
+/// 1.6·10³⁸, is hidden by each node, as a path spaced past the cells is
+/// (the test above).
+///
+/// Controls: with such a box tried against the regions, as it was, the
+/// round node's region panics on it (`f32::clamp` of a box whose far
+/// corner is no number), and the others hide it in a full projection, red
+/// on the path drawn whole; that assertion taken out, red on the oracle
+/// after the node is shown again, whose update does not find the path.
+#[test]
+fn test_projection_a_path_spaced_past_what_a_box_holds_is_hidden_by_no_node() {
+    let blockers = [
+        ("a node with text", json!({})),
+        ("a ringed node", json!({"frame": dotted(0.05)})),
+        (
+            "a round ringed node",
+            json!({"shape": "ellipse", "frame": dotted(0.05)}),
+        ),
+    ];
+    let hide = |hidden| single(DocKind::Node, DocMutation::Node(NodeOp::SetHidden(hidden)));
+    for (what, blocker) in blockers {
+        for spacing in [1.6e38, 1.8e38, f32::MAX] {
+            let mut p = Projected::new(two_paths(AWAY, blocker.clone(), json!({"spacing": spacing})));
+            let path = path_of(&p, 2);
+            let laid = laid_glyphs(&p, path);
+            assert!(
+                laid >= 1,
+                "precondition: a path spaced {spacing} lays a glyph, {laid}"
+            );
+            let boxes = grown_boxes(&p, path);
+            let finite = spacing < 1.7e38;
+            assert!(
+                !boxes.is_empty() && boxes.iter().all(|b| b.max().is_finite() == finite),
+                "precondition: spaced {spacing}, the glyphs' boxes have a far corner: {finite}, {boxes:?}"
+            );
+            let want = if finite { 0 } else { laid };
+            assert_eq!(
+                drawn_glyphs(&p, path),
+                want,
+                "{what} 1000 away, the path spaced {spacing}: glyphs drawn"
+            );
+            p.check().unwrap();
+            let node = ident(&p.doc, 3);
+            p.apply(request(hide(true), vec![node], "hide")).unwrap();
+            assert_eq!(
+                drawn_glyphs(&p, path),
+                laid,
+                "precondition: {what} hidden, the path spaced {spacing} is drawn whole"
+            );
+            p.apply(request(hide(false), vec![node], "show")).unwrap();
+            p.check().unwrap();
+            move_to(&mut p, 3, ON_P);
+            assert_eq!(
+                drawn_glyphs(&p, path),
+                want,
+                "{what} across the path spaced {spacing}: glyphs drawn"
+            );
+            p.check().unwrap();
+        }
+    }
+}
+
 /// The frame of `maps/theme_demo.mandala.json`'s first node, as shipped:
 /// a directional ring, a corner glyph at each corner of its outline.
 const SHIPPED_FRAME: &str = r#""frame": {"inset": 7.0, "rings": [{"fit": "repeat", "size": 0.175, "color": "var(accent)", "spans": [{"text": "─"}], "vertical": "│", "corners": ["┌", "┐", "┘", "└"]}]}"#;

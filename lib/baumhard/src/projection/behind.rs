@@ -110,8 +110,9 @@ fn meet(a: &Rect, b: &Rect) -> bool {
 
 impl PathCells {
     /// Set where `path`'s glyphs are: `boxes`, each a glyph's box grown by
-    /// the path's gap. A box that is not finite is left out. O(its old and
-    /// new cells).
+    /// the path's gap. A box that is not finite is left out, and the hide
+    /// stage holds that it meets no region (#364). O(its old and new
+    /// cells).
     pub(crate) fn set(&mut self, path: NodeId, boxes: &[Rect]) {
         self.remove(path);
         let mut here: FxHashMap<Cell, Rect> = FxHashMap::default();
@@ -386,9 +387,11 @@ impl Projector {
     /// grown by its gap, meet the box round the label's text are left out
     /// too (#340), a cap's as its body's, so the path stops one gap short
     /// of its label on each side; a label hidden hides nothing of its
-    /// path. Records reading the region, opacity and zoom window of each
-    /// node it meets, and sets where its glyphs and its label are. A path
-    /// not drawn has nothing hidden, and leaves the paths' index.
+    /// path. A box that is not finite meets no node's region, as it is left
+    /// out of the paths' index (#364). Records reading the region, opacity
+    /// and zoom window of each node it meets, and sets where its glyphs and
+    /// its label are. A path not drawn has nothing hidden, and leaves the
+    /// paths' index.
     ///
     /// Cost: O(its glyphs and its label's, and the regions in each glyph's
     /// cells and its label's).
@@ -405,8 +408,15 @@ impl Projector {
         let mut boxes = Vec::new();
         // Whether `rect`, of a run in `zoom`, meets the region of a node the
         // path does not end at that is drawn wherever the run is; each node
-        // met is read.
+        // met is read. A box that is not finite meets none, as the paths'
+        // index leaves it out (`PathCells::set`), so an update finds what a
+        // full projection does: a glyph's box grown by a gap past what an
+        // `f32` holds has an origin of -inf and a size of +inf, and no far
+        // corner (#364).
         let mut behind = |rect: Rect, zoom: Option<ZoomWindow>| {
+            if !rect.origin.is_finite() || !rect.size.is_finite() {
+                return false;
+            }
             let mut hidden = false;
             self.regions.each_within(rect, |node| {
                 if node == from || node == to {
