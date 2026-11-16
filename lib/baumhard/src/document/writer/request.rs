@@ -189,11 +189,25 @@ impl Document {
     /// Refuse `journal` if accounting for it would take the document past
     /// this target's bounds. O(the journal's touches).
     pub(in crate::document) fn within_budget(&self, journal: &Journal<DocElement>) -> Result<(), ApplyError> {
-        let limits = self.writer.limits;
-        if limits.elements.is_none() && limits.bytes.is_none() {
+        if !self.is_limited() {
             return Ok(());
         }
-        let mut budget: Budget = self.derived.budget;
+        self.judge_budget(&self.budget_with(self.derived.budget, journal))
+    }
+
+    /// Whether this target holds a document to a budget at all: on
+    /// wasm32, not on native. O(1).
+    pub(in crate::document) fn is_limited(&self) -> bool {
+        let limits = self.writer.limits;
+        limits.elements.is_some() || limits.bytes.is_some()
+    }
+
+    /// `base` with `journal` written whole: every element it touched
+    /// leaves as its before-image and enters as its after-image, one it
+    /// inserted enters and one it removed leaves. O(the journal's
+    /// touches).
+    pub(in crate::document) fn budget_with(&self, base: Budget, journal: &Journal<DocElement>) -> Budget {
+        let mut budget = base;
         let arena = self.tree.arena();
         for (id, touch) in journal.touched() {
             let Some(current) = arena.get(id).map(|node| node.get()) else {
@@ -208,6 +222,12 @@ impl Document {
                 }
             }
         }
+        budget
+    }
+
+    /// Refuse `budget` if it is past this target's bounds. O(1).
+    pub(in crate::document) fn judge_budget(&self, budget: &Budget) -> Result<(), ApplyError> {
+        let limits = self.writer.limits;
         if let Some(max) = limits.elements.filter(|&max| budget.elements > max) {
             return Err(ApplyError::TooManyElements {
                 elements: budget.elements,

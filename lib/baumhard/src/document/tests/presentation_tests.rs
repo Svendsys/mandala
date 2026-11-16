@@ -1215,6 +1215,112 @@ fn test_a_start_past_the_platform_budget_is_refused_in_the_writers_words() {
     );
 }
 
+/// On a target that holds maps to a budget, the instances are held to
+/// it together, in start order — each on top of the map and every
+/// instance before it — never one by one against the map alone: two
+/// that each fit and together do not are not both shown.
+///
+/// - A start on two nodes is two instances: it is refused, in the
+///   writer's words for the two together, and starts neither.
+/// - Started one after the other, the second start is refused the same
+///   way, and the first plays on.
+/// - Two that fit together until an edit grows the map: the older shows,
+///   the newer shows nothing and says why, and both show again once an
+///   undo makes room.
+///
+/// Controls, each seen red: each application judged against the map
+/// alone (the writer's `within_budget`) starts both instances of the
+/// first start; a restore that judges each against the map alone shows
+/// both after the edit, the tree then holding more text than the
+/// platform holds.
+#[test]
+fn test_instances_that_fit_alone_and_not_together_are_held_to_the_budget_together() {
+    let wordy = presentation(
+        r#"{"id":"wordy","name":"W","play":"hold","target":"spans","mutations":[{"span":{"set_text":"0123456789"}}]}"#,
+    );
+    let span_text = |doc: &Document, ident: u32| {
+        let section = kid(doc, n(doc, ident), DocKind::Section, 0).0;
+        match kid(doc, section, DocKind::Span, 0).1 {
+            DocElement::Span(span) => span.text.clone(),
+            other => panic!("{other:?}"),
+        }
+    };
+    let mut doc = map();
+    let text = doc.derived().budget.text;
+    let (two, four) = (n(&doc, 2), n(&doc, 4));
+    // "two" → ten bytes is seven more; "four" → ten is six more. Each
+    // fits within eight; together they are thirteen.
+    doc.set_limits(Limits {
+        bytes: Some(text + 8),
+        elements: None,
+    });
+    let together = Box::new(ApplyError::TooMuchText {
+        bytes: text + 13,
+        max: text + 8,
+    });
+    assert_eq!(
+        doc.start_presentation(&wordy, &[two, four], 0.0),
+        Err(PresentError::Refused {
+            presentation: "wordy".to_string(),
+            error: together.clone(),
+        }),
+        "one start, two instances"
+    );
+    assert_eq!(doc.presentations().count(), 0);
+    assert!(same_document(&doc, &map()).is_ok());
+    // One after the other.
+    doc.start_presentation(&wordy, &[two], 0.0).unwrap();
+    assert_eq!(
+        doc.start_presentation(&wordy, &[four], 0.0),
+        Err(PresentError::Refused {
+            presentation: "wordy".to_string(),
+            error: together,
+        }),
+        "a second start, on top of the first"
+    );
+    assert_eq!(doc.presentations().count(), 1);
+    assert_eq!(span_text(&doc, 2), "0123456789");
+    assert_eq!(span_text(&doc, 4), "four");
+
+    // Room for both, until an edit grows the map by one byte.
+    let mut doc = map();
+    doc.set_limits(Limits {
+        bytes: Some(text + 13),
+        elements: None,
+    });
+    doc.start_presentation(&wordy, &[two, four], 0.0).unwrap();
+    assert_eq!(
+        (span_text(&doc, 2).as_str(), span_text(&doc, 4).as_str()),
+        ("0123456789", "0123456789")
+    );
+    let section = kid(&doc, n(&doc, 1), DocKind::Section, 0).0;
+    let steps = insert_text(&doc, section, 0, "x".to_string()).unwrap();
+    doc.apply(EditRequest::new(steps, "type"), ChangeSource::Input)
+        .unwrap();
+    assert_eq!(span_text(&doc, 2), "0123456789", "the older one shows");
+    assert_eq!(span_text(&doc, 4), "four", "the newer one shows nothing");
+    let refusals: Vec<Option<ApplyError>> = doc
+        .presentations()
+        .map(|instance| instance.refusal.cloned())
+        .collect();
+    assert_eq!(
+        refusals,
+        vec![
+            None,
+            Some(ApplyError::TooMuchText {
+                bytes: text + 14,
+                max: text + 13
+            })
+        ]
+    );
+    doc.undo().unwrap();
+    assert_eq!(
+        (span_text(&doc, 2).as_str(), span_text(&doc, 4).as_str()),
+        ("0123456789", "0123456789")
+    );
+    assert!(doc.presentations().all(|instance| instance.refusal.is_none()));
+}
+
 /// A glyph-layer instance lives in the layer and writes nothing to the
 /// document: it is listed with its elements and its run mutations, its
 /// progress moves with the clock and a frame in which it moved owes a

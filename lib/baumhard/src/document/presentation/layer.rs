@@ -61,6 +61,7 @@ use crate::document::presentation::{
     takes_time, GlyphOps, Play, PresentError, PresentationBody, PresentationDef, PresentationLayer,
     LOOP_TAKES_NO_TIME,
 };
+use crate::document::writer::budget::Budget;
 use crate::document::writer::error::ApplyError;
 use crate::document::writer::feed::field_inputs;
 use crate::document::writer::{Change, ChangeSource, Writer};
@@ -227,7 +228,10 @@ impl Document {
     /// - Its names are resolved against this map, and a document-layer
     ///   body is judged as the writer would judge a request, structural
     ///   commands refused
-    ///   ([`validate_for_presentation`]).
+    ///   ([`validate_for_presentation`]). Where this target holds maps
+    ///   to a budget, each new instance is judged on top of the map,
+    ///   every instance already playing and the new ones before it: N
+    ///   nodes are N instances, and they must fit together.
     ///
     /// All or nothing: a refusal starts no instance and restarts none.
     ///
@@ -248,7 +252,17 @@ impl Document {
         now_ms: f64,
     ) -> Result<Vec<InstanceId>, PresentError> {
         let lifted = (self.presentations.suspensions == 0).then(|| self.lift_layer(0));
-        let result = self.start_on_the_map(def, nodes, now_ms);
+        // What the instances already playing cost, over the map: what a
+        // new one is judged on top of, as the instances after them in
+        // start order.
+        let set_aside = lifted
+            .as_ref()
+            .or(self.presentations.aside.as_ref().map(|aside| &aside.lifted));
+        let under = match set_aside {
+            Some(set_aside) => self.budget_over(set_aside.journals.iter().map(|(_, applied)| applied)),
+            None => self.derived.budget,
+        };
+        let result = self.start_on_the_map(def, nodes, now_ms, under);
         if let Some(lifted) = lifted {
             let change = self.restore_layer(0, lifted);
             self.push_change(ChangeSource::Presentation, change);
@@ -266,6 +280,7 @@ impl Document {
         def: &PresentationDef,
         nodes: &[NodeId],
         now_ms: f64,
+        mut under: Budget,
     ) -> Result<Vec<InstanceId>, PresentError> {
         let value = |field: &'static str, message: &str| PresentError::Value {
             presentation: def.id.clone(),
@@ -344,11 +359,12 @@ impl Document {
             if reached.is_empty() {
                 continue;
             }
-            self.try_application(&started, &reached)
-                .map_err(|error| PresentError::Refused {
-                    presentation: def.id.clone(),
-                    error: Box::new(error),
-                })?;
+            under =
+                self.try_application(&started, &reached, under)
+                    .map_err(|error| PresentError::Refused {
+                        presentation: def.id.clone(),
+                        error: Box::new(error),
+                    })?;
             plan.push(Planned::Fresh(node, reached));
         }
         let layer = &mut self.presentations;
@@ -722,9 +738,19 @@ impl Document {
     /// — a stage written part-way changes elements without moving the
     /// tree's stamp — every instance before it stands on the side it
     /// stood on, and none of them wrote an element this one holds
-    /// differently. Otherwise the instance is applied afresh.
+    /// differently. Otherwise the instance is applied afresh, and judged
+    /// against this target's bounds as the map and every instance before
+    /// it, in start order, cost together (`within_budget`'s words): one
+    /// that does not fit on top of them shows nothing and remembers why.
     fn restore_layer(&mut self, from: usize, lifted: Lifted) -> Change {
         let mut change = Change::default();
+        // What the map and the instances before the one at hand cost,
+        // written whole; kept only where a bound is.
+        let mut under = self.budget_over(
+            self.presentations.instances[..from]
+                .iter()
+                .filter_map(|instance| instance.applied.as_ref()),
+        );
         let mut old = lifted.journals.into_iter().peekable();
         // Whether the map is where each journal set aside expects it:
         // the tree stamp for stamp, and no change recorded since.
@@ -785,14 +811,14 @@ impl Document {
                     Err(error) => {
                         error!("presentation: an application set aside could not be written again: {error}");
                         in_step = false;
-                        let fresh = self.apply_instance(index, t, snap);
+                        let fresh = self.apply_instance(index, t, snap, under);
                         self.compare(Some(&applied), fresh.as_ref(), &mut change, &mut rewritten);
                         applied.journal.discard(&mut self.tree);
                         fresh
                     }
                 },
                 previous => {
-                    let fresh = self.apply_instance(index, t, snap);
+                    let fresh = self.apply_instance(index, t, snap, under);
                     // A journal made now is at stamps no journal set
                     // aside knows.
                     in_step &= previous.is_none() && fresh.is_none();
@@ -803,6 +829,9 @@ impl Document {
                     fresh
                 }
             };
+            if let Some(applied) = written.as_ref().filter(|_| self.is_limited()) {
+                under = self.budget_with(under, &applied.journal);
+            }
             self.presentations.instances[index].applied = written;
         }
         for (_, gone) in old {
@@ -865,12 +894,14 @@ impl Document {
     /// Apply the instance at `index` to the tree as it stands and write
     /// it at `t`: its application, or `None` when it has nothing to
     /// apply — a glyph-layer body, no element left in the tree — or the
-    /// document refuses it, which the instance then remembers.
-    fn apply_instance(&mut self, index: usize, t: f32, snap: Snap) -> Option<Applied> {
+    /// document refuses it, which the instance then remembers. `under` is
+    /// what the map and the instances before it cost
+    /// ([`Self::application`]).
+    fn apply_instance(&mut self, index: usize, t: f32, snap: Snap, under: Budget) -> Option<Applied> {
         let instance = &self.presentations.instances[index];
         let started = Arc::clone(&instance.started);
         let elements = instance.elements.clone();
-        let outcome = self.application(&started, &elements);
+        let outcome = self.application(&started, &elements, under);
         let instance = &mut self.presentations.instances[index];
         match outcome {
             Ok(journal) => {
@@ -899,22 +930,48 @@ impl Document {
         }
     }
 
-    /// Whether `started` applies at `elements` on the tree as it stands:
-    /// applied, judged and taken back out.
-    fn try_application(&mut self, started: &Started, elements: &[NodeId]) -> Result<(), ApplyError> {
-        if let Some(journal) = self.application(started, elements)? {
-            self.drop_journal(journal);
+    /// Whether `started` applies at `elements` on the tree as it stands,
+    /// on top of what `under` costs: applied, judged and taken back out.
+    /// Returns `under` with it, for the instance after it.
+    fn try_application(
+        &mut self,
+        started: &Started,
+        elements: &[NodeId],
+        under: Budget,
+    ) -> Result<Budget, ApplyError> {
+        let Some(journal) = self.application(started, elements, under)? else {
+            return Ok(under);
+        };
+        let with = if self.is_limited() {
+            self.budget_with(under, &journal)
+        } else {
+            under
+        };
+        self.drop_journal(journal);
+        Ok(with)
+    }
+
+    /// What the map costs with `applied` written whole on it, each over
+    /// the ones before it: the budget an application after them is
+    /// judged against. The map's own budget where this target holds
+    /// none, without reading the journals. O(the elements they touched).
+    fn budget_over<'a>(&self, applied: impl Iterator<Item = &'a Applied>) -> Budget {
+        let map = self.derived.budget;
+        if !self.is_limited() {
+            return map;
         }
-        Ok(())
+        applied.fold(map, |budget, applied| self.budget_with(budget, &applied.journal))
     }
 
     /// Apply `started` at those of `elements` that are in the tree, as
     /// the writer applies a request's walk — judged before
     /// ([`validate_for_presentation`]: no structural command) and after
-    /// ([`validate_applied`], this target's budget) — and return the
-    /// journal with the tree as it left it; `None` for a glyph-layer
-    /// body, for no element in the tree, and for a walk that changed
-    /// nothing. A refusal leaves the tree as it was.
+    /// ([`validate_applied`], and this target's budget: what `under`
+    /// costs — the map and every instance before this one — with this
+    /// application on top) — and return the journal with the tree as it
+    /// left it; `None` for a glyph-layer body, for no element in the
+    /// tree, and for a walk that changed nothing. A refusal leaves the
+    /// tree as it was.
     ///
     /// Nothing is accounted into the document's derived state: the
     /// indexes and the budget describe the map.
@@ -922,6 +979,7 @@ impl Document {
         &mut self,
         started: &Started,
         elements: &[NodeId],
+        under: Budget,
     ) -> Result<Option<Journal<DocElement>>, ApplyError> {
         let Body::Document(mutator) = &started.body else {
             return Ok(None);
@@ -949,7 +1007,13 @@ impl Document {
         let journal = builder.close(&self.tree);
         let checked = validate_applied(&self.tree, &journal)
             .map_err(ApplyError::from)
-            .and_then(|()| self.within_budget(&journal));
+            .and_then(|()| {
+                if self.is_limited() {
+                    self.judge_budget(&self.budget_with(under, &journal))
+                } else {
+                    Ok(())
+                }
+            });
         if let Err(error) = checked {
             self.drop_journal(journal);
             return Err(error);
@@ -1070,7 +1134,8 @@ mod tests {
             play: Play::Hold,
             body: Body::Document(MutatorTree::new_with(hide.clone())),
         };
-        assert_eq!(doc.try_application(&fields_only, &[one]), Ok(()));
+        let under = doc.derived().budget;
+        assert_eq!(doc.try_application(&fields_only, &[one], under), Ok(under));
 
         let mut mutator: DocMutatorTree = MutatorTree::new_with(hide);
         let root = mutator.root();
@@ -1086,7 +1151,7 @@ mod tests {
             play: Play::Hold,
             body: Body::Document(mutator),
         };
-        let refused = doc.try_application(&structural, &[one]);
+        let refused = doc.try_application(&structural, &[one], under);
         assert!(
             matches!(
                 refused,

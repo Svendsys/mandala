@@ -169,15 +169,25 @@ committed map ⊕ open transaction ⊕ presentation layer   →  what is drawn
   started: the later one starts from what the earlier one shows.
 - On wasm32 a presentation is held to the platform's bounds as an edit
   is ([`validation.md`](./validation.md)): what it shows may not take
-  the map past them.
+  the map past them. The instances are held to them together, in the
+  order they started: each is judged on top of the map and of every
+  instance started before it, never against the map alone, so a start
+  on N nodes — N instances — must fit as a whole, and so must several
+  presentations playing at once.
   - **At a start**, nothing starts, and the refusal is the answer where
     the start was asked for — the console line's error, and so
     `act.console`'s — naming the presentation and then the writer's own
     words:
     ``presentation `wordy`: the map would hold N bytes of text; this platform holds at most M``.
-  - **While it plays** — an edit under it grew the map, so writing the
-    instance back on would now pass the bounds — the edit stands and
-    the instance shows nothing: it keeps playing, is tried again after
+    A start is judged with the instances before it at what they cost
+    on the map and each new instance at what it costs on the map
+    alone; one that writes an element an older instance writes too may
+    cost more once it stands on that one's, and then starts and shows
+    nothing, as below.
+  - **While it plays** — an edit under it grew the map, or the
+    instances before it now leave no room, so writing the instance
+    back on would pass the bounds — the edit stands and the instance
+    shows nothing: it keeps playing, is tried again after
     every later change, and shows again as soon as it fits. The reason
     is on the instance, in the same words: `present list` ends its line
     with ``— not applied: the map would hold N bytes of text; this
