@@ -126,8 +126,10 @@ node to the node it leads to.
   draws nothing hides nothing. So a path shown on either side of a node
   stops at least one gap short of it — a gap, and up to one step more
   where the next glyph falls inside — as it stops short of its own
-  frames. A glyph is drawn whole or not at all, never clipped. The path's
-  own two nodes never hide it. A node hides a path only if it is drawn
+  frames. A glyph is drawn whole or not at all, never clipped. A glyph
+  whose box, grown by its gap, is past what an `f32` holds — a `spacing`
+  past about 1.7·10³⁸ — has no far corner and is hidden by no node
+  (#364). The path's own two nodes never hide it. A node hides a path only if it is drawn
   wherever the path is: a node at opacity 0, or whose zoom window does
   not hold the path's, hides nothing of it. A path whose two nodes both
   lie inside another node's ringed region — a ringed container drawn
