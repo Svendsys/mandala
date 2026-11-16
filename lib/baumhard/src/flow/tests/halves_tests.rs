@@ -2787,8 +2787,11 @@ fn test_flow_halves_a_part_never_inverts() {
 /// it, and where they divide the half in their ratio once together they
 /// pass it — never inverted, never off the half: clearances whose
 /// product with the half's length, or whose sum, is past the largest
-/// `f32` included, and infinite ones, the whole half to an infinite
-/// clearance against a finite one and half each to two.
+/// `f32` included.
+///
+/// Control: the share taken as `a / (a + b)` of the clearances as they
+/// are, red: two of 3 × 10³⁸ meet at 33.86 along the half, where they
+/// owe its middle, 263.99.
 pub fn do_flow_halves_a_part_never_inverts() {
     let rect = Rect::new(Vec2::ZERO, Vec2::new(400.0, 160.0));
     for shape in [
@@ -2812,9 +2815,6 @@ pub fn do_flow_halves_a_part_never_inverts() {
                 ([1e36, 1e36], (ja + 0.5 * len, ja + 0.5 * len)),
                 ([1e36, 3e36], (ja + 0.25 * len, ja + 0.25 * len)),
                 ([3e38, 3e38], (ja + 0.5 * len, ja + 0.5 * len)),
-                ([f32::INFINITY, 1.0], (jb, jb)),
-                ([1.0, f32::INFINITY], (ja, ja)),
-                ([f32::INFINITY; 2], (ja + 0.5 * len, ja + 0.5 * len)),
             ];
             for (clear, (lo, hi)) in cases {
                 let ((a, b), junctions) = room_seam(&shape, half, clear);
@@ -3056,25 +3056,32 @@ pub fn do_flow_halves_the_break_holds_below_whole_round_a_flat_outline_inward() 
     }
 }
 
+/// An outline whose halves cannot be measured: a box 600 wide whose
+/// height is not a number. Its top side is a line, and a line of text is
+/// laid along it; its other sides run to no point, so neither half has a
+/// length. (An outline of numbers has halves that are: one too long for
+/// an `f32` to hold them is not laid at all, #363.)
+fn unmeasured_outline() -> Outline {
+    Outline::RoundedRect {
+        rect: Rect::new(Vec2::ZERO, Vec2::new(600.0, f32::NAN)),
+        radius: 0.0,
+    }
+}
+
 #[test]
 fn test_flow_halves_an_outline_whose_halves_are_not_numbers_keeps_r27s_lines() {
     do_flow_halves_an_outline_whose_halves_are_not_numbers_keeps_r27s_lines();
 }
 
 /// An outline whose halves cannot be measured keeps R27's placement
-/// (ruling R34): a rounded rectangle 8.9e37 on a side — the size
-/// `place_on_closed` shrinks the far outline of the flow_structured
-/// finding `spread_gap_past_the_largest_f32` to — has a length, 2.8e38,
-/// but its bottom-right junction, a turn past its top-left one, is past
-/// every `f32`. Its frame's lines are where `place_lines` lays them,
-/// glyph for glyph, every position finite. Precondition: a junction is
+/// (ruling R34): a box whose height is not a number
+/// (`unmeasured_outline`) has a top side and no length. Its frame's
+/// lines are where `place_lines` lays them, glyph for glyph, every
+/// position finite. Precondition: the halves' length or a junction is
 /// not finite, and R27 places glyphs there. Control: without the guard
 /// the halves are laid from that junction, and the glyphs differ.
 pub fn do_flow_halves_an_outline_whose_halves_are_not_numbers_keeps_r27s_lines() {
-    let shape = Outline::RoundedRect {
-        rect: Rect::new(Vec2::splat(-4.4540537e37), Vec2::splat(8.908107e37)),
-        radius: 4.4540537e37,
-    };
+    let shape = unmeasured_outline();
     let (junctions, _, length) = halves_seam(&shape);
     assert!(
         !length.is_finite() || junctions.iter().any(|(a, b)| !a.is_finite() || !b.is_finite()),
@@ -3110,21 +3117,17 @@ fn test_flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_glyp
 /// glyph the rasterizer draws nothing for — U+10FFFD, at Galatia SIL's
 /// `.notdef` — takes no room at a line's end, as a space there takes
 /// none. Before `a time to every purpose under the heaven` and past it,
-/// once and three times, `Spread` and `Fit` round the rounded rectangle
-/// 8.9e37 on a side: no such glyph is laid, and each line holds the
-/// text it holds without them. Its positions are not compared: at
-/// 4.5e37 from the origin an `f32` steps by some 5e30, which no advance
-/// moves. Precondition: the halves are not a number, and the text holds
-/// a glyph that draws nothing. Control: R27's placement laid from the
+/// once and three times, `Spread` and `Fit` round a box whose height is
+/// not a number (`unmeasured_outline`): no such glyph is laid, and
+/// each line holds the text it holds without them. Precondition: the
+/// halves are not a number, the text is laid on a line, and it holds a
+/// glyph that draws nothing. Control: R27's placement laid from the
 /// run as shaped, not the run its lines are parted on, red: the glyphs
 /// before the line are laid ("lays 1 glyph that draws nothing").
 pub fn do_flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_glyph_at_a_line_end() {
     const PLAIN: &str = "a time to every purpose under the heaven";
     const UNDRAWN: char = '\u{10FFFD}';
-    let shape = Outline::RoundedRect {
-        rect: Rect::new(Vec2::splat(-4.4540537e37), Vec2::splat(8.908107e37)),
-        radius: 4.4540537e37,
-    };
+    let shape = unmeasured_outline();
     let (junctions, _, length) = halves_seam(&shape);
     assert!(
         !length.is_finite() || junctions.iter().any(|(a, b)| !a.is_finite() || !b.is_finite()),
@@ -3159,8 +3162,8 @@ pub fn do_flow_halves_an_outline_whose_halves_are_not_numbers_lays_no_undrawn_gl
     for fit in [FitMode::Spread, FitMode::Fit { min: 1.0, max: 1.0 }] {
         let (_, _, plain) = lines(PLAIN, &fit, 0);
         assert!(
-            plain.iter().filter(|line| !line.is_empty()).count() == 2,
-            "precondition: {fit:?}: the text is laid in two lines ({plain:?})"
+            plain.iter().any(|line| !line.is_empty()),
+            "precondition: {fit:?}: the text is laid on a line ({plain:?})"
         );
         for count in [1, 3] {
             let undrawn: String = std::iter::repeat_n(UNDRAWN, count).collect();
@@ -3343,78 +3346,6 @@ fn test_flow_halves_an_ordinary_frame_lays_each_line_a_few_times() {
                 "{name} at span {}: {tracks} lines tracked, at most 160",
                 layout.span.get()
             );
-        }
-    }
-}
-
-#[test]
-fn test_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely() {
-    do_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely();
-}
-
-/// A frame round an outline as long as an `f32` is laid along its
-/// halves and placed finitely: every line's ends, every clearance and
-/// every glyph a number. The 10³⁸ outlines' junctions lie past half the
-/// largest `f32` (asserted), so a midpoint taken as the half of a sum
-/// overflows; round the 10³⁶ one a break of two word gaps, its line's
-/// gaps stretched over its half, is wider than any `f32`. Found by a probe of outlines from 10³⁰ to the largest
-/// `f32` long beside the flow_structured findings
-/// (`test_a_frame_whose_clearances_pass_its_half_places_finitely`),
-/// which the fuzzer had not reached.
-///
-/// Controls: with a one-letter line centered at `0.5 * (sa + sb)` again,
-/// "a b" round the 10³⁸ × 10 rectangle places a glyph at `[NaN, NaN]`;
-/// with the clearance step no longer held to the largest `f32`, "ab"
-/// round the 10³⁶ × 10 one keeps a clearance that is not a number
-/// (`[[NaN, 0.0], [NaN, 0.0]]`: an infinite step shared by a share of
-/// zero, and held to a slack, is `inf * 0` and `inf - inf`); with the
-/// old quotient in `Layout::room`, "ab" round the 10³⁶ × 10 rectangle
-/// ends a line where no number does.
-pub fn do_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely() {
-    for (width, height) in [(1e36_f32, 10.0_f32), (1e38, 10.0), (1e38, 1e37)] {
-        let shape = outline(
-            Rect::new(Vec2::ZERO, Vec2::new(width, height)),
-            Shape::Rectangle {
-                radius: Percent::new(0),
-            },
-        );
-        let (junctions, apexes, length) = halves_seam(&shape);
-        assert!(
-            length.is_finite() && apexes.iter().chain(junctions.iter().flat_map(|(a, b)| [a, b])).all(|s| s.is_finite()),
-            "precondition: the {width} × {height} outline's halves are measured, so its lines are laid along them"
-        );
-        if width >= 1e38 {
-            assert!(
-                junctions.iter().any(|(_, end)| *end > 0.5 * f32::MAX),
-                "precondition: a junction of the {width} × {height} outline lies past half the largest f32, {junctions:?}"
-            );
-        }
-        for text in ["ab", "a b", "ab cd ef gh"] {
-            for fit in [FitMode::Spread, FitMode::Once { filler: None }, FIT] {
-                for outward in [true, false] {
-                    let what = format!("{text:?} round {width} × {height}, {fit:?}, outward {outward}");
-                    let (_, placed, trace) =
-                        frame_with(text, 18.0, &shape, &fit, &RingLayout::whole(), outward);
-                    assert!(
-                        !trace.lines.is_empty(),
-                        "precondition: {what} is laid as a frame's lines"
-                    );
-                    for line in &trace.lines {
-                        assert!(
-                            line.from.is_finite() && line.to.is_finite(),
-                            "{what}: line {line:?} ends where no number does"
-                        );
-                    }
-                    assert!(
-                        trace.clear.iter().flatten().all(|c| !c.is_nan()),
-                        "{what}: a clearance that is not a number, {:?}",
-                        trace.clear
-                    );
-                    for glyph in &placed.glyphs {
-                        assert!(glyph.pos.is_finite(), "{what}: a glyph placed at {}", glyph.pos);
-                    }
-                }
-            }
         }
     }
 }
@@ -5657,13 +5588,14 @@ fn test_flow_halves_an_arc_kept_short_is_reported() {
 /// first half 15 to 35 long, is solved to its part's end, within the
 /// line's tolerance. Round a bend, outward, a gap moves the line's end
 /// by less than the gap, so one gap as long as all the room the line has
-/// at no gap still leaves it short — where the tracking solve's stop for
-/// a line no gap moves once fired and left it points short (precondition)
-/// — but less short than at no gap, so the stop does not fire.
+/// at no gap still leaves it short (precondition) — but less short than
+/// at no gap, and the solve goes on to its end. (The tracking solve once
+/// stopped there, at a stop for a line no gap moves, for a part some 10³³
+/// along its half; since #363 no outline placement lays is that long, and
+/// no input reached the stop, so it is gone.)
 ///
-/// Control: the stop as 03ac0b3f wrote it, without `value >= low.1`, red:
-/// the line is left points short of its end. (No `do_*` twin: it reads a
-/// test seam.)
+/// Control: the stop as 03ac0b3f wrote it put back, red: the line is left
+/// points short of its end. (No `do_*` twin: it reads a test seam.)
 #[test]
 fn test_flow_halves_a_one_gap_line_on_a_curve_is_solved_to_its_end() {
     use crate::flow::place::halves::solve_line_seam;
@@ -5691,78 +5623,57 @@ fn test_flow_halves_a_one_gap_line_on_a_curve_is_solved_to_its_end() {
     );
 }
 
-/// A frame's line tracked where no gap moves its end, or where a gap that
-/// would places its glyphs past every `f32`, keeps a lay placed finitely
-/// (seeds 2970 and 4284 of the structured flow generator, with a host's
-/// faces: a part some 10³³ along its half, where an `f32` sets every
-/// letter at one center, so that the room the line leaves never shrank;
-/// the tracking solve widened its gap past every `f32`, and the line was
-/// placed at `NaN`). The solve stops once one gap is as long as all the
-/// room the line had at no gap and leaves it no less short than the probe
-/// before, and reads a lay placed past every `f32` as past its part's end
-/// ([`solve_tracking_seam`]).
-///
-/// Controls: without the stop, the first line's gap runs to 10³⁸; with
-/// a lay placed past every `f32` read as any other, the second line is
-/// placed at infinity. (No `do_*` twin: it reads a test seam.)
-///
-/// [`solve_tracking_seam`]: crate::flow::place::halves::solve_tracking_seam
 #[test]
-fn test_flow_halves_a_line_no_gap_can_move_keeps_a_finite_lay() {
-    use crate::flow::place::halves::solve_tracking_seam;
-    let room = 1.4e33_f32;
-    let (gap, pos) = solve_tracking_seam(|g| (room, Vec2::new(g * 10.0, 0.0)), 7, 5e33);
-    assert!(
-        pos.is_finite() && gap <= 4.0 * room,
-        "a line no gap moves: gap {gap}, its glyph at {pos}, against a room of {room}"
-    );
-    let (gap, pos) = solve_tracking_seam(|g| (1e38 - g * 1e-3, Vec2::new(g * 10.0, 0.0)), 7, 1e38);
-    assert!(
-        pos.is_finite(),
-        "a line a gap moves by less than it places its glyph: gap {gap}, its glyph at {pos}"
-    );
+fn test_flow_halves_lays_a_frame_as_long_as_placement_lays_as_it_lays_a_smaller() {
+    do_flow_halves_lays_a_frame_as_long_as_placement_lays_as_it_lays_a_smaller();
 }
 
-#[test]
-fn test_flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a_smaller() {
-    do_flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a_smaller();
-}
-
-/// A frame round an outline too large for its letters' gaps to have an
-/// `f32` square is laid as the same frame round a smaller one, scaled
-/// (review 5911092160). Round a box and a rounded box 10¹⁵ across, where
-/// every length's square is finite, a frame's glyphs sit where they sit
-/// round one 10¹² across, each as a share of its outline's size, to a
-/// millionth: the letters are nothing beside either. So they must round
-/// one 10²², 10²⁵, 10³⁰ and 10³⁴ across, laid `Once`, `Spread` and `Fit`;
-/// and three letters round a box 3 × 10¹⁹ across, where a letter is first
-/// near an earlier one only by such a gap. Held to two parts in ten
-/// thousand of the outline's size.
+/// A frame round an outline as long as placement lays is laid as the same
+/// frame round a smaller one, scaled (#363; review 5911092160 on #360).
+/// Round a box, a rounded box and an ellipse 10¹⁵ across a frame's glyphs
+/// sit where they sit round one 10¹² across, each as a share of its
+/// outline's size, to a part in fifty thousand: the letters are nothing
+/// beside either. So they must round one 10¹⁷ and 10¹⁸ across, and round
+/// the longest the limit admits — a box 2.8 × 10¹⁸ across, 0.97 of the
+/// limit round — laid `Once`, `Spread` and `Fit`; and three letters round
+/// that box, where a letter is near an earlier one only by a gap as wide
+/// as the outline. Held to two parts in ten thousand of the outline's
+/// size.
 ///
-/// The frame's rule measures the gap between two inks, across both axes,
-/// as their corners' distance (`corner_distance`). Taken in `f32` alone,
-/// past 1.8 × 10¹⁹ it was infinite: a letter was never "far enough" from
-/// the one before, and at fe7061c9 these frames set their letters at
-/// steps of 1.8 × 10¹⁹ from the lines' starts, or all at one point, and
-/// reported nothing.
+/// Until #363 this was held round outlines 10²² to 10³⁴ across, past the
+/// root of the largest `f32`, where the gap between two inks had no `f32`
+/// square and was taken in `f64` at every site of the frame's rule
+/// (#360). Those outlines are longer than placement lays now, and within
+/// the limit every such gap has its square.
 ///
-/// Controls, each alone measuring in `f32`: the gap the pairwise rule
-/// solves (`pair`), red; its straight-path model (`along`), red; the
-/// junctions' clearance (`box_gap`), red; the earlier inks' nearness,
-/// red on the three letters. `separation` measuring so is green, and no
-/// test holds that site: a frame then moves by a few millionths of its
-/// outline's size at the most (72 of 3,888 did in review 5912075684's
-/// sweep on #360, this test's first among them), far inside what is held
-/// here. It takes the helper so that it answers what `box_gap` answers
-/// where the boxes are apart, as its doc says.
-pub fn do_flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a_smaller() {
-    use crate::flow::place_on_closed;
+/// Controls: the limit held at half what it is, red ("inf of its size":
+/// the box 2.8 × 10¹⁸ across lays nothing); at a quarter, red on the
+/// outlines 10¹⁸ across too.
+pub fn do_flow_halves_lays_a_frame_as_long_as_placement_lays_as_it_lays_a_smaller() {
+    use crate::flow::{place_on_closed, MAX_PATH_LENGTH};
     let text = style(16.0);
-    let lay = |across: f32, radius: f32, spans: &str, fit: &FitMode| {
-        let path = Outline::RoundedRect {
-            rect: Rect::new(Vec2::ZERO, Vec2::new(across, 0.6 * across)),
-            radius: radius * across,
-        };
+    // An outline `across` wide and 0.6 of that tall: a box whose corners
+    // are `radius` of its width, or, with none, the ellipse in it.
+    let shape = |across: f32, radius: Option<f32>| {
+        let rect = Rect::new(Vec2::ZERO, Vec2::new(across, 0.6 * across));
+        match radius {
+            Some(radius) => Outline::RoundedRect {
+                rect,
+                radius: radius * across,
+            },
+            None => Outline::Ellipse { rect },
+        }
+    };
+    // How long round it is, at the most, from its own numbers.
+    let round = |across: f32, radius: Option<f32>| -> f64 {
+        let w = f64::from(across);
+        match radius {
+            Some(radius) => 3.2 * w - (8.0 - std::f64::consts::TAU) * f64::from(radius) * w,
+            None => std::f64::consts::PI * w,
+        }
+    };
+    let lay = |across: f32, radius: Option<f32>, spans: &str, fit: &FitMode| {
+        let path = shape(across, radius);
         with_fonts(|fs| {
             let run = real_run(spans, &text, fs);
             place_on_closed(
@@ -5794,7 +5705,7 @@ pub fn do_flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a
             .map(|(p, q)| {
                 let moved =
                     (p.pos.as_dvec2() / f64::from(across_a) - q.pos.as_dvec2() / f64::from(across_b)).abs();
-                if p.glyph == q.glyph {
+                if p.glyph == q.glyph && !moved.is_nan() {
                     moved.max_element()
                 } else {
                     f64::INFINITY
@@ -5803,14 +5714,22 @@ pub fn do_flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a
             .fold(0.0, f64::max)
     };
     const SAND: &str = "To see a World in a Grain of Sand";
+    let limit = f64::from(MAX_PATH_LENGTH);
     let fits = [FitMode::Once { filler: None }, FitMode::Spread, FIT];
     let (smaller, small) = (1e12_f32, 1e15_f32);
     let cases = [
-        (SAND, 0.0, &[1e22_f32, 1e25, 1e30, 1e34][..]),
-        (SAND, 0.1, &[1e22, 1e25, 1e30, 1e34][..]),
-        ("abc", 0.0, &[3e19][..]),
+        (SAND, Some(0.0), &[1e17_f32, 1e18, 2.8e18][..]),
+        (SAND, Some(0.1), &[1e17, 1e18, 2.9e18][..]),
+        (SAND, None, &[1e17, 1e18, 2.9e18][..]),
+        ("abc", Some(0.0), &[2.8e18][..]),
     ];
     for (spans, radius, sizes) in cases {
+        let longest = round(sizes[sizes.len() - 1], radius);
+        assert!(
+            longest <= limit && (radius.is_none() || longest >= 0.95 * limit),
+            "precondition: radius {radius:?}: the largest outline, {longest:e} round, is within what \
+             placement lays, a box within a twentieth of it"
+        );
         for fit in &fits {
             let reference = lay(small, radius, spans, fit);
             assert!(
@@ -5820,21 +5739,45 @@ pub fn do_flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a
             let scaled = apart(&lay(smaller, radius, spans, fit), smaller, &reference, small);
             assert!(
                 scaled <= 2e-5,
-                "precondition: {fit:?}, radius {radius}, {spans:?}: round outlines 1e12 and 1e15 across the \
-                 frame is one frame, scaled ({scaled} of the size apart)"
+                "precondition: {fit:?}, radius {radius:?}, {spans:?}: round outlines 1e12 and 1e15 across \
+                 the frame is one frame, scaled ({scaled} of the size apart)"
             );
             for &across in sizes {
-                assert!(
-                    (across * across).is_infinite(),
-                    "precondition: an outline {across} across is past the root of the largest f32"
-                );
                 let moved = apart(&lay(across, radius, spans, fit), across, &reference, small);
                 assert!(
                     moved <= 2e-4,
-                    "{fit:?}, radius {radius}, {spans:?}: round an outline {across} across the frame is \
+                    "{fit:?}, radius {radius:?}, {spans:?}: round an outline {across} across the frame is \
                      {moved} of its size from the frame round one 1e15 across"
                 );
             }
         }
+    }
+    // An ellipse's closed form cubes its speed (`EllipseForm::on`), and
+    // past a radius of some 7 × 10¹² a speed has no `f32` cube: the form
+    // answers no velocity there, and the frame's rule reads the path
+    // instead (ruling B42.1 §5). Round the ellipse 10¹² across the form
+    // answers; round those 10¹⁵ across and more it does not — and the
+    // frames above are one frame, scaled, either way.
+    for (across, answers) in [(smaller, true), (small, false), (2.9e18, false)] {
+        let path = crate::flow::path::ArcPath::closed(
+            &shape(across, None),
+            StartPoint {
+                edge: Edge::Top,
+                at: 0.37,
+            },
+            Direction::Clockwise,
+            1.0,
+        );
+        let (_, at) = path.offset_in(0.3 * path.length(), 8.0);
+        let form = path
+            .bend_of(at, 8.0)
+            .and_then(|bend| bend.ellipse)
+            .expect("an ellipse's table has the ellipse's form");
+        assert_eq!(
+            form.on(1e-3).velocity.is_finite(),
+            answers,
+            "precondition: round an ellipse {across} across the closed form's velocity is {}a number",
+            if answers { "" } else { "not " }
+        );
     }
 }

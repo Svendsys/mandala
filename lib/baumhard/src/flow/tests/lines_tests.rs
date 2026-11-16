@@ -456,23 +456,29 @@ pub fn do_flow_lines_center_and_fill() {
 
 /// A sharp rectangle, the default frame's outline.
 #[test]
-fn test_flow_lines_fill_a_frame_as_wide_as_an_f32_reaches() {
-    do_flow_lines_fill_a_frame_as_wide_as_an_f32_reaches();
+fn test_flow_lines_fill_a_frame_whose_floats_lose_a_fillers_steps() {
+    do_flow_lines_fill_a_frame_whose_floats_lose_a_fillers_steps();
 }
 
-/// A `Once` filler round a frame `1e30` wide (ruling R27) fills its
-/// spans and ends: before each line it counts copies one on from the
-/// last, stops where a copy's steps are lost below an `f32`'s precision
-/// and move it nowhere, and lays no more than the placement holds —
-/// every position finite, at most [`MAX_PLACED_GLYPHS`] glyphs, the
-/// lines' text placed. (So far out the lines' own steps are lost too,
-/// and a line is laid at a point: what is owed there is an end, and
-/// finite positions, not a spacing.) Control: counting the copies before a line
-/// afresh from the span's start, with no stop for a copy that does not
-/// move, the placement never returns.
-pub fn do_flow_lines_fill_a_frame_as_wide_as_an_f32_reaches() {
+/// A `Once` filler round a frame `1e18` wide (ruling R27) — a fifth of
+/// the longest outline placement lays (#363), its floats some 10¹¹ apart
+/// — fills its spans and ends: before each line it counts copies one on
+/// from the last, stops where a copy's steps are lost below an `f32`'s
+/// precision and move it nowhere, and lays no more than the placement
+/// holds — every position finite, at most [`MAX_PLACED_GLYPHS`] glyphs,
+/// the lines' text placed. (So far out the lines' own steps are lost
+/// too, and a line is laid at a point: what is owed there is an end, and
+/// finite positions, not a spacing.) Control: counting the copies before
+/// a line afresh from the span's start, with no stop for a copy that
+/// does not move and no read of the frame's budget — the count as it was
+/// before the review of #294 — the placement does not return (stopped
+/// after 300 s, where the test takes under a second). The same count
+/// within the glyph cap and the frame's budget returns: since ruling
+/// R46.1 the budget stops it too. (The frame was `1e30` wide until
+/// #363; the control was run again round this one.)
+pub fn do_flow_lines_fill_a_frame_whose_floats_lose_a_fillers_steps() {
     let shape = outline(
-        Rect::new(Vec2::ZERO, Vec2::new(1.0e30, 40.0)),
+        Rect::new(Vec2::ZERO, Vec2::new(1.0e18, 40.0)),
         Shape::Rectangle {
             radius: Percent::new(50),
         },

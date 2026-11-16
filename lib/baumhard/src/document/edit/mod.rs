@@ -40,6 +40,7 @@ pub use mentions::Shows;
 
 use crate::arena::NodeId;
 use crate::document::element::DocKind;
+use crate::document::format::context::shown;
 use crate::document::format::edits::{
     EasingDto, FilterDto, MutationDto, MutatorDto, ReachDto, SnapDto, TargetDto,
 };
@@ -263,22 +264,40 @@ pub enum EditError {
     },
 }
 
+/// Every part that may hold what a map wrote — the edit's id, the name it
+/// gave a field, a handler's name, a message that quotes either — is
+/// shown as file text is: every control, line separator and bidi control
+/// escaped (`format::context::shown`).
 impl fmt::Display for EditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             EditError::UnknownName { edit, field, name } => {
                 write!(
                     f,
-                    "edit `{edit}`: `{field}` names {name}, which this map does not define"
+                    "edit `{}`: `{field}` names {}, which this map does not define",
+                    shown(edit),
+                    shown(name)
                 )
             }
-            EditError::Value { edit, field, message } => write!(f, "edit `{edit}`: `{field}`: {message}"),
-            EditError::UnknownHandler { edit, handler } => {
-                write!(f, "edit `{edit}`: no handler is called `{handler}`")
+            EditError::Value { edit, field, message } => {
+                write!(f, "edit `{}`: `{field}`: {}", shown(edit), shown(message))
             }
-            EditError::Handler { edit, message } => write!(f, "edit `{edit}`: {message}"),
+            EditError::UnknownHandler { edit, handler } => {
+                write!(
+                    f,
+                    "edit `{}`: no handler is called `{}`",
+                    shown(edit),
+                    shown(handler)
+                )
+            }
+            EditError::Handler { edit, message } => write!(f, "edit `{}`: {}", shown(edit), shown(message)),
             EditError::Build { edit, message } => {
-                write!(f, "edit `{edit}`: the mutator does not build: {message}")
+                write!(
+                    f,
+                    "edit `{}`: the mutator does not build: {}",
+                    shown(edit),
+                    shown(message)
+                )
             }
         }
     }

@@ -330,3 +330,27 @@ fn test_an_unknown_key_is_named_whole_even_when_it_holds_a_backtick() {
         )
     );
 }
+
+/// A name an edit gives that this build does not have — a handler's —
+/// comes from the file, and its refusal shows it as file text is: every
+/// control, line separator and bidi control escaped (CI's load_raw
+/// finding on #365, a handler `flo` and U+202E, which the refusal printed
+/// raw; `fuzz_findings/a_handler_name_shown_raw.mandala.json`).
+///
+/// Control: `InvalidEdit`'s message shown as written, red.
+#[test]
+fn test_an_edits_name_from_the_file_is_escaped_in_its_refusal() {
+    let name = r"flo\u202e\u2028\u0085\u007f\u009b\u2066\u001by";
+    let error = rejection(&map_with(
+        &format!(r#","edits":[{{"id":"e","name":"E","reach":"self","target":"node","handler":"{name}"}}]"#),
+        &node_of(1, ""),
+    ));
+    assert_eq!(error.path, "edits[0].handler", "{error:?}");
+    assert!(
+        matches!(error.kind, LoadErrorKind::InvalidEdit { .. }),
+        "{error:?}"
+    );
+    let rendered = error.to_string();
+    assert!(!rendered.chars().any(is_dangerous), "{rendered:?}");
+    assert!(rendered.contains(name), "the name is shown, escaped: {rendered}");
+}

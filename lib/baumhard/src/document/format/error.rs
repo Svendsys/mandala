@@ -452,8 +452,11 @@ impl fmt::Display for LoadErrorKind {
                 write!(f, "a definition nests at most {max} levels deep")
             }
             LoadErrorKind::DefinitionTooLarge { max } => write!(f, "a definition has at most {max} parts"),
+            // Its message holds what the file wrote, a handler's name or a
+            // name it gave a field — an edit's or a presentation's — and is
+            // shown as file text is.
             LoadErrorKind::InvalidEdit { message } | LoadErrorKind::InvalidPresentation { message } => {
-                f.write_str(message)
+                write!(f, "{}", shown(message))
             }
             LoadErrorKind::DanglingLink { to } => write!(f, "no node has the id {to}"),
             LoadErrorKind::SelfLink => f.write_str("a link cannot lead to the node that holds it"),
