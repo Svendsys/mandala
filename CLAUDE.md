@@ -493,8 +493,8 @@ the parity trajectory (or why none is owed):
   (`scripts/fuzz.sh --list` names them: the `.mandala.json` loader,
   TextFlow shaping, authored glyph-layer mutations, edits and
   presentations, each raw and structure-aware, and the projection
-  under edit sequences). `fuzz/` is outside the workspace, on the nightly
-  its own `rust-toolchain.toml` pins, and needs `cargo install
+  under edit sequences). `fuzz/` is outside the workspace, on the
+  nightly its own `rust-toolchain.toml` pins, and needs `cargo install
   cargo-fuzz --version 0.13.2 --locked`; `./test.sh` never builds it.
   The properties every input is held to, and every finding's
   regression test, live in baumhard's tests trees and run in
