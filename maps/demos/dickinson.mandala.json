@@ -44,6 +44,35 @@
       }
     },
     {
+      "id": "feathers-trail",
+      "name": "Feathers' trail",
+      "description": "Writes the trail of dots after \"feathers\" into the line's last span, which the map saves empty: five glyphs of the same run, unseen until \"feathers-rest\" and \"feathers-lift\" color and lift them, and never saved, exported or found while nothing plays. Start it on node 1, before those two.",
+      "play": "hold",
+      "layer": "document",
+      "target": "spans",
+      "filter": {
+        "fields": [
+          [
+            {
+              "font_size": {
+                "pt": 40.0
+              }
+            },
+            {
+              "Equals": false
+            }
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "span": {
+            "set_text": " ·····"
+          }
+        }
+      ]
+    },
+    {
       "id": "feathers-rest",
       "name": "Feathers at rest",
       "description": "Gives the letters of \"feathers\" and the trail after them the colors they rest in, so that \"feathers-lift\", started after it, fades them from there: a color blends only from a color a presentation gave.",
@@ -538,7 +567,7 @@
       "min_size": [1400.0, 0.0],
       "font": "Galatia SIL",
       "sections": [
-        {"min_size": [1400.0, 0.0], "align": "center", "size": 76.0, "color": "#f4d696", "spans": [{"text": "“Hope” is the thing with feathers –"}, {"text": " ·····", "size": 40.0, "color": "#f4d69600"}]},
+        {"offset": [130.87206, 0.0], "align": "left", "size": 76.0, "color": "#f4d696", "spans": [{"text": "“Hope” is the thing with feathers –"}, {"text": "", "size": 40.0, "color": "#f4d69600"}]},
         {"channel": 1, "offset": [0.0, 130.0], "min_size": [1400.0, 0.0], "align": "center", "size": 76.0, "color": "#e4ceac", "spans": [{"text": "That perches in the soul –"}]},
         {"channel": 2, "offset": [778.0, 298.0], "min_size": [400.0, 0.0], "align": "center", "size": 38.0, "color": "#b2a6cc", "italic": true, "spans": [{"text": "Emily Dickinson"}]}
       ]

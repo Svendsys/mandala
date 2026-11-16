@@ -486,38 +486,41 @@ fn test_demo_maps_draw_every_ring_and_path() {
 
 /// What a demo map's presentations are held to: the node they are
 /// started on, the frame's time on their timeline, and, per
-/// presentation in start order, its progress then and the words each of
-/// its ranges names.
+/// presentation in start order, its layer, its progress then and — on
+/// the glyph layer — the words each of its ranges names.
 struct Presented {
     map: &'static str,
     node: u64,
     at_ms: u64,
-    presentations: &'static [(&'static str, f32, &'static [&'static str])],
+    presentations: &'static [(&'static str, &'static str, f32, &'static [&'static str])],
 }
 
 /// The README's two presented maps (#251, the acceptance cases moved
 /// from #250). Frames: the words "an ellipse" of the ellipse's ring, at
 /// 1.15 times their size. Dickinson, 1200 ms on: "Hope" three quarters
-/// of the way through its swell (`f²(3 - 2f)` at `f = 0.75`), the
-/// letters of "feathers" and the trail after them half way through
-/// their lift in time and three quarters in progress
-/// (`1 - (1 - f)²` at `f = 0.5`).
+/// of the way through its swell (`f²(3 - 2f)` at `f = 0.75`), the trail
+/// of dots written after "feathers" (a document-layer presentation: the
+/// map saves the span empty), and the letters of "feathers" and the
+/// trail half way through their lift in time and three quarters in
+/// progress (`1 - (1 - f)²` at `f = 0.5`).
 const PRESENTED: [Presented; 2] = [
     Presented {
         map: "frames",
         node: 2,
         at_ms: 0,
-        presentations: &[("an-ellipse", 1.0, &["an ellipse"])],
+        presentations: &[("an-ellipse", "glyph", 1.0, &["an ellipse"])],
     },
     Presented {
         map: "dickinson",
         node: 1,
         at_ms: 1200,
         presentations: &[
-            ("hope-swells", 0.84375, &["Hope"]),
-            ("feathers-rest", 1.0, &["feathers", "·····"]),
+            ("hope-swells", "glyph", 0.84375, &["Hope"]),
+            ("feathers-trail", "document", 1.0, &[]),
+            ("feathers-rest", "glyph", 1.0, &["feathers", "·····"]),
             (
                 "feathers-lift",
+                "glyph",
                 0.75,
                 &[
                     "f", "f", "f", "e", "e", "e", "a", "a", "a", "t", "t", "t", "h", "h", "h", "e", "e", "e",
@@ -560,16 +563,18 @@ fn text_of(run: &GlyphRunData, spans: &[String], range: std::ops::Range<usize>) 
 /// a map opens is a trigger, V1-D3's; until then the console is the
 /// route a person has.)
 ///
-/// Held: the map carries exactly the presentations listed; every range
-/// of every run mutation names the words it is for, read off the shaped
-/// run; each instance is at the progress its timing puts it at; and the
-/// run on the glyph layer carries each scale at that progress, with no
-/// other glyph of it scaled. With `MANDALA_DEMO_OUT` set, the frame is
-/// written there as `<name>-presented.png`.
+/// Held: the map carries exactly the presentations listed; with
+/// nothing playing no span holds Dickinson's trail and none is drawn;
+/// every range of every run mutation names the words it is for, read off
+/// the shaped run; each instance is at the progress its timing puts it
+/// at; and the run on the glyph layer carries each scale at that
+/// progress, with no other glyph of it scaled. With `MANDALA_DEMO_OUT`
+/// set, the frame is written there as `<name>-presented.png`.
 ///
 /// Controls, each seen red: a range moved by one glyph names another
 /// word; with the glyph-layer stage not stamping what plays, the run
-/// carries no scale.
+/// carries no scale; the trail saved in the map's span, as it once was,
+/// is drawn with nothing playing.
 #[test]
 fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
     use baumhard::document::presentation::PresentationBody;
@@ -579,6 +584,7 @@ fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
 
     use super::ipc_target::IpcCommandTarget;
     use super::step::Beat;
+    use crate::application::document::selection::every_node;
     use crate::application::ipc::run_attached;
 
     let out = std::env::var_os(OUT_ENV).map(PathBuf::from);
@@ -609,8 +615,33 @@ fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
             .iter()
             .map(|def| def.id.clone())
             .collect();
-        let listed: Vec<&str> = case.presentations.iter().map(|(id, _, _)| *id).collect();
+        let listed: Vec<&str> = case.presentations.iter().map(|(id, _, _, _)| *id).collect();
         assert_eq!(carried, listed, "{name}: the presentations the map carries");
+        // With nothing playing the map draws, and holds, no text of a
+        // presentation's: Dickinson's trail of five dots is written by
+        // one, into a span the map saves empty. (The frames map's
+        // ornaments are single dots of its own.)
+        let found = |init: &mut InitState| {
+            let reply = ipc(init, json!({"id": 1, "cmd": "scene.find_text", "text": "·····"}));
+            reply["matches"].as_array().map_or(0, Vec::len)
+        };
+        assert_eq!(found(init), 0, "{name}: nothing playing, no trail is drawn");
+        let doc = init.document.as_ref().expect("the map loaded").doc();
+        let held: Vec<String> = every_node(doc)
+            .flat_map(|node| children_of(doc, node, DocKind::Section))
+            .flat_map(|section| children_of(doc, section, DocKind::Span))
+            .filter_map(|span| match doc.get(span) {
+                Some(DocElement::Span(span)) if span.text.contains("·····") => {
+                    Some(span.text.to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            held,
+            Vec::<String>::new(),
+            "{name}: the map itself holds no trail"
+        );
 
         for id in &listed {
             ipc(
@@ -623,11 +654,11 @@ fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
         }
         init.input_context().drain_frame(Beat::Loop);
         let playing = ipc(init, json!({"id": 1, "cmd": "query.animations"}));
-        for (at, (id, t, _)) in case.presentations.iter().enumerate() {
+        for (at, (id, layer, t, _)) in case.presentations.iter().enumerate() {
             let instance = &playing["presentations"][at];
             assert_eq!(
                 (&instance["presentation"], &instance["layer"], &instance["node"]),
-                (&json!(id), &json!("glyph"), &json!(case.node)),
+                (&json!(id), &json!(layer), &json!(case.node)),
                 "{name}: {instance}"
             );
             let reported = instance["t"].as_f64().expect("t") as f32;
@@ -667,9 +698,10 @@ fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
         let mut scales = vec![1.0_f32; run.shaped().glyph_count()];
         let mut offsets = vec![Vec2::ZERO; scales.len()];
         let mut colored = vec![false; scales.len()];
-        for (def, (id, t, words)) in doc.definitions().presentations.iter().zip(case.presentations) {
+        for (def, (id, layer, t, words)) in doc.definitions().presentations.iter().zip(case.presentations) {
             let PresentationBody::Glyph(ops) = &def.body else {
-                panic!("{name}: `{id}` is a glyph-layer presentation");
+                assert_eq!(*layer, "document", "{name}: `{id}` is a glyph-layer presentation");
+                continue;
             };
             let mut named = Vec::new();
             for mutation in glyph_mutations(ops) {
