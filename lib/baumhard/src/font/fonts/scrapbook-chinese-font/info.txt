@@ -1,2 +1,7 @@
-﻿license: Freeware
+﻿license: Freeware, as the link below lists it; the listing states no further terms
 link: https://www.fontspace.com/scrapbook-chinese-font-f4497
+designer: Helena Jole
+source: Scrapbook Chinese (ScrapbookChinese-5X6B.ttf), as published at the link above, SHA-256 1da927449e91ae29fb986cfece36ed1badc00eea188e371f2431fff9eb65451f, 196100 bytes
+repair: a PostScript name (name ID 6, "ScrapbookChinese-Regular") added on the face's two name platforms, which the published face lacks and the font system's loader requires (#355); every other table as published: SHA-256 dcddc3c9bd4c235a4cb7aee4f8414e0da18534b188ca5798ea306c71566de23c, 196096 bytes
+encoding: a symbol font: its character map holds U+F020-U+F0FF, at which the shaper reads every printable character of U+0020-U+00FF; decorative characters in the manner of Chinese script, not a Chinese text face
+regenerate: scripts/scrapbook_chinese_font.sh (fonttools 4.68.0)

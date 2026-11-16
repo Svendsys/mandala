@@ -826,3 +826,211 @@ pub fn do_no_compiled_family_has_a_slant_at_a_weight_its_other_slant_lacks() {
         panic!("{why}");
     }
 }
+
+/// How many faces `data` holds, read with `skrifa`, which shares no code
+/// with the `fontdb` loader the tests below hold to it: one for a font
+/// file, the count for a collection.
+fn faces_in(data: &[u8]) -> usize {
+    use cosmic_text::skrifa::raw::FileRef;
+    match FileRef::new(data).expect("a compiled source parses") {
+        FileRef::Font(_) => 1,
+        FileRef::Collection(collection) => collection.len() as usize,
+    }
+}
+
+#[test]
+fn test_every_compiled_source_loads_every_face_it_holds() {
+    do_every_compiled_source_loads_every_face_it_holds();
+}
+
+/// #355: the font system's loader registers every face of every compiled
+/// source. Read from the loader's own result — the ids it recorded for
+/// each [`AppFont`] in [`fonts::COMPILED_FONT_ID_MAP`], and the face index
+/// each one is in its source — not from its log.
+///
+/// `fontdb`'s `load_font_source` logs a `WARN` for each face of a source
+/// it cannot read and registers the others, so a source with a face
+/// index no id names is one that warned at startup, and one with none
+/// is a face compiled into the binary that nothing can draw with. The
+/// ids' count is not the measure: a static fallback face is registered
+/// once more at each weight it lacks (`fallback::register_every_weight`),
+/// under the same index. Until #355 the published Scrapbook Chinese was
+/// such a face: it has no PostScript name (name ID 6), which `fontdb`
+/// requires, so every launch logged "Failed to load a font face 0 from
+/// source cause font doesn't have a family name".
+/// `scripts/scrapbook_chinese_font.sh` adds the record.
+///
+/// Control: the face as published restored over the repaired one, red
+/// on `ScrapbookChinese: faces [] loaded, of 1`.
+pub fn do_every_compiled_source_loads_every_face_it_holds() {
+    fonts::init();
+    let fs = acquire_font_system_write("fonts_tests::do_*");
+    let mut read = 0;
+    let mut faults = Vec::new();
+    for (font, source) in fonts::FONT_SOURCES.iter() {
+        let cosmic_text::fontdb::Source::Binary(data) = source else {
+            faults.push(format!("{font:?}: not a compiled source"));
+            continue;
+        };
+        let held = faces_in((**data).as_ref());
+        let mut loaded: Vec<u32> = fonts::COMPILED_FONT_ID_MAP
+            .get(font)
+            .into_iter()
+            .flat_map(|ids| ids.iter())
+            .filter_map(|id| fs.db().face(*id))
+            .map(|face| face.index)
+            .collect();
+        loaded.sort_unstable();
+        loaded.dedup();
+        if held == 0 || loaded != (0..held as u32).collect::<Vec<_>>() {
+            faults.push(format!("{font:?}: faces {loaded:?} loaded, of {held}"));
+        }
+        read += 1;
+    }
+    drop(fs);
+    assert!(read >= 50, "precondition: the compiled sources are read ({read})");
+    faults.sort();
+    assert!(
+        faults.is_empty(),
+        "compiled sources the font system does not load whole:\n{}",
+        faults.join("\n")
+    );
+}
+
+#[test]
+fn test_every_compiled_face_has_a_family_a_map_can_name() {
+    do_every_compiled_face_has_a_family_a_map_can_name();
+}
+
+/// #355: every compiled face is in the font system, cosmic-text can open
+/// it for shaping (`FontSystem::get_font`), and the family name the font
+/// system reads from it is one a map can name — the loader's own rule,
+/// [`crate::document::format::font`], resolves it to an [`AppFont`] whose
+/// compiled faces bear that name. So no face is compiled in that a span
+/// cannot be pinned to.
+///
+/// Controls: the face as published restored over the repaired one, red
+/// on `ScrapbookChinese: no face loaded`, with no other line;
+/// `place::nameable_font` refusing `AppFont::ScrapbookChinese`, red on
+/// `a map cannot name its family "Scrapbook Chinese" (None)`; and the
+/// vendored cosmic-text's `Font` constructor refusing that face, red on
+/// `cosmic-text cannot open face`.
+pub fn do_every_compiled_face_has_a_family_a_map_can_name() {
+    fonts::init();
+    let mut faults = Vec::new();
+    let mut faces: Vec<(AppFont, String)> = Vec::new();
+    {
+        let mut fs = acquire_font_system_write("fonts_tests::do_*");
+        for font in fonts::FONT_SOURCES.keys() {
+            let ids = fonts::COMPILED_FONT_ID_MAP
+                .get(font)
+                .map(|ids| ids.to_vec())
+                .unwrap_or_default();
+            if ids.is_empty() {
+                faults.push(format!("{font:?}: no face loaded"));
+            }
+            for id in ids {
+                // The name cosmic-text matches a pin on
+                // (`face_family_name_for_pin`); none reads as "", which
+                // names no family.
+                let Some((family, weight)) = fs.db().face(id).map(|face| {
+                    let family = face.families.first().map(|(name, _)| name.clone());
+                    (family.unwrap_or_default(), face.weight)
+                }) else {
+                    faults.push(format!("{font:?}: id {id:?} names no face"));
+                    continue;
+                };
+                if fs.get_font(id, weight).is_none() {
+                    faults.push(format!("{font:?}: cosmic-text cannot open face {id:?}"));
+                }
+                faces.push((*font, family));
+            }
+        }
+    }
+    assert!(
+        faces.len() >= 50,
+        "precondition: the compiled faces are read ({})",
+        faces.len()
+    );
+    let fs = fonts::acquire_font_system_read("fonts_tests::do_*");
+    for (font, family) in &faces {
+        let resolved = crate::document::format::font(family);
+        let bears = resolved.is_some_and(|resolved| {
+            fonts::COMPILED_FONT_ID_MAP[&resolved]
+                .iter()
+                .filter_map(|id| fs.db().face(*id))
+                .any(|face| face.families.iter().any(|(name, _)| name == family))
+        });
+        if !bears {
+            faults.push(format!(
+                "{font:?}: a map cannot name its family {family:?} ({resolved:?})"
+            ));
+        }
+    }
+    drop(fs);
+    faults.sort();
+    faults.dedup();
+    assert!(
+        faults.is_empty(),
+        "compiled faces no span can be pinned to:\n{}",
+        faults.join("\n")
+    );
+}
+
+/// The families `format/fonts.md` lists under "The families a map can
+/// name": the code span that opens each `- ` line of that section.
+fn families_listed(doc: &str) -> Vec<String> {
+    doc.lines()
+        .skip_while(|line| *line != "## The families a map can name")
+        .skip(1)
+        .take_while(|line| !line.starts_with("## "))
+        .filter_map(|line| line.strip_prefix("- `"))
+        .filter_map(|rest| rest.split_once('`'))
+        .map(|(family, _)| family.to_string())
+        .collect()
+}
+
+#[test]
+fn test_format_fonts_lists_exactly_the_families_a_map_can_name() {
+    do_format_fonts_lists_exactly_the_families_a_map_can_name();
+}
+
+/// #355: `format/fonts.md` lists exactly the families a map's `font` may
+/// name: every family the font system holds that the loader's own rule
+/// ([`crate::document::format::font`]) accepts, and nothing else. A
+/// host's installed family is offered by `font list` but refused by the
+/// loader (#329), so it is not listed. The list is read from the
+/// document, which shares nothing with the font system.
+///
+/// Controls: a family deleted from the list, red naming it unlisted; a
+/// family added that no face bears, red naming it listed and not
+/// nameable; and the face as published restored over the repaired
+/// Scrapbook Chinese, red on `Scrapbook Chinese` listed and not nameable.
+pub fn do_format_fonts_lists_exactly_the_families_a_map_can_name() {
+    let doc = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../format/fonts.md"))
+        .expect("format/fonts.md is read");
+    let mut listed = families_listed(&doc);
+    assert!(listed.len() >= 40, "precondition: the list is read ({listed:?})");
+    listed.sort();
+    let total = listed.len();
+    listed.dedup();
+    assert_eq!(listed.len(), total, "a family is listed twice");
+    fonts::init();
+    let nameable: Vec<String> = loaded_families_iter()
+        .filter(|family| crate::document::format::font(family).is_some())
+        .map(str::to_string)
+        .collect();
+    let unlisted: Vec<&String> = nameable
+        .iter()
+        .filter(|family| !listed.contains(family))
+        .collect();
+    let not_nameable: Vec<&String> = listed
+        .iter()
+        .filter(|family| !nameable.contains(family))
+        .collect();
+    assert!(
+        unlisted.is_empty() && not_nameable.is_empty(),
+        "format/fonts.md \"The families a map can name\": unlisted {unlisted:?}; \
+         listed and not nameable {not_nameable:?}"
+    );
+}

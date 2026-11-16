@@ -13,6 +13,7 @@ use crate::document::values::{FontSize, Rgba, Weight};
 use crate::flow::tests::flow_fuzz::{
     check_box, check_flow_bytes, check_flow_bytes_in_every_fit, check_flow_generated,
     check_flow_generated_in, check_flow_structured_as_found, check_placement, check_run, every_face,
+    later_faces,
 };
 use crate::flow::tests::support::{real_run, style, with_fonts};
 use crate::flow::{
@@ -148,18 +149,21 @@ fn test_generated_flows_hold_every_flow_property() {
 }
 
 /// The sweep above over [`every_face`]: `faces()`, the ornament
-/// fallback's two (#297) and the default face (#228), which a map's
-/// `font` can pin as it pins any other. `faces()` stays as it is, since
-/// every committed structured seed and finding chose its faces from that
-/// list; this sweep and the flow_structured_every_face target are where a
-/// span pins `Mandala Ornaments`, `Mandala Emoji` — the first compiled
-/// face with no outline and no space — or `Inter Variable`, the first
-/// variable one. The seeds are other inputs than the sweep above's, the
-/// list being longer.
+/// fallback's two (#297), the default face (#228) and Scrapbook Chinese
+/// (#355), which a map's `font` can pin as it pins any other. `faces()`
+/// stays as it is, since every committed structured seed and finding
+/// chose its faces from that list; this sweep and the
+/// flow_structured_every_face target are where a span pins `Mandala
+/// Ornaments`, `Mandala Emoji` — the first compiled face with no outline
+/// and no space — `Inter Variable`, the first variable one, or `Scrapbook
+/// Chinese`, the first symbol font. The seeds are other inputs than the
+/// sweep above's, the list being longer.
 ///
-/// Precondition: each fallback face is pinned by some seed's spans or
-/// flow, so the sweep cannot pass without meeting them. Control: with
-/// `every_face` returning `faces()` alone, red on it.
+/// Precondition: each of [`later_faces`] is pinned by some seed's spans
+/// or flow, so the sweep cannot pass without meeting them. Controls: with
+/// `every_face` returning `faces()` alone, red on it; with
+/// `ScrapbookChinese` left out of `every_face` but kept in `later_faces`,
+/// red on `ScrapbookChinese`.
 #[test]
 fn test_generated_flows_over_every_face_hold_every_flow_property() {
     let faces = every_face();
@@ -170,10 +174,7 @@ fn test_generated_flows_over_every_face_hold_every_flow_property() {
             Err(why) => panic!("seed {seed}: {why}"),
         }
     }
-    for (font, _) in crate::font::fallback::ORNAMENT_FALLBACK
-        .iter()
-        .chain(std::iter::once(&crate::font::fallback::DEFAULT_FACE))
-    {
+    for font in &later_faces().collect::<Vec<_>>() {
         let times = pinned.iter().filter(|pin| *pin == font).count();
         assert!(
             times > 0,
@@ -182,6 +183,29 @@ fn test_generated_flows_over_every_face_hold_every_flow_property() {
         );
     }
 }
+
+/// `faces()` never changes length, as its doc says: a choice picks a face
+/// at its value modulo the list's length, so a face added anywhere moves
+/// every committed flow_structured seed and finding to another face, and
+/// silently, since each still passes. So the length is held to what it
+/// was when they were drawn. #355 is how it nearly
+/// moved: Scrapbook Chinese, left out only because it had no ids until
+/// then, gained them and would have joined it. A face a map can newly
+/// pin goes in `later_faces` instead. Control: `ScrapbookChinese` taken
+/// out of `later_faces`, red on the length.
+#[test]
+fn test_the_structured_flow_face_list_keeps_the_faces_its_seeds_chose_from() {
+    let faces = crate::flow::tests::flow_fuzz::faces();
+    assert_eq!(
+        faces.len(),
+        FACES_THE_SEEDS_CHOSE_FROM,
+        "faces() changed length: {faces:?}"
+    );
+}
+
+/// The length of `faces()` when the flow_structured seeds and findings
+/// were drawn from it.
+const FACES_THE_SEEDS_CHOSE_FROM: usize = 51;
 
 #[test]
 fn test_hostile_strings_hold_every_flow_property() {

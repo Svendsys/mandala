@@ -56,14 +56,23 @@ fn face_data(font: AppFont) -> &'static [u8] {
     }
 }
 
-/// Every code point `data`'s character map maps to a glyph, sorted.
+/// Every code point `data`'s character map maps to a glyph, sorted: those
+/// it lists, and, for a symbol font, each of U+0000..=U+00FF it reaches
+/// at U+F000 above — Scrapbook Chinese's letters, which it lists at
+/// U+F020..U+F0FF — since the shaper reads a symbol font's map so, and
+/// so does `Charmap::map`, though not `Charmap::mappings`.
 fn mapped(data: &[u8]) -> Vec<char> {
     let font = FontRef::new(data).expect("a compiled face parses");
-    let mut chars: Vec<char> = font
-        .charmap()
+    let charmap = font.charmap();
+    let mut chars: Vec<char> = charmap
         .mappings()
         .filter(|(_, glyph)| glyph.to_u32() != 0)
         .filter_map(|(code_point, _)| char::from_u32(code_point))
+        .chain(
+            (0u8..=0xFF)
+                .map(char::from)
+                .filter(|c| charmap.map(*c).is_some_and(|glyph| glyph.to_u32() != 0)),
+        )
         .collect();
     chars.sort_unstable();
     chars.dedup();
@@ -549,11 +558,8 @@ pub fn do_no_text_glyph_is_drawn_by_an_ornament_face() {
         }
         let mut pinned = Vec::new();
         for (font, missing) in &lacking {
-            // A face whose family name the font system cannot read
-            // (Scrapbook Chinese) is one no span can be pinned to.
-            let Some(pin) = fonts::pinned_family(&fs, *font) else {
-                continue;
-            };
+            let pin = fonts::pinned_family(&fs, *font)
+                .unwrap_or_else(|| panic!("precondition: {font:?} names a family a span can pin"));
             for c in missing {
                 // Between two of its own letters, as in running text.
                 let glyphs = drawn(&mut fs, &format!("a{c}a"), &pin.name, pin.weight_for(400));

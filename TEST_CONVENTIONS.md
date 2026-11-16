@@ -764,7 +764,7 @@ decoders and every regression test compile and run on stable, in every
 | `load_structured` | the loader, maps built from choices | `document::tests::format_fuzz::check_structured` |
 | `flow_raw` | TextFlow (B5), any bytes as text | `flow::tests::flow_fuzz::check_flow_bytes` |
 | `flow_structured` | TextFlow, spans and geometry from choices | `flow::tests::flow_fuzz::check_flow_structured` |
-| `flow_structured_every_face` | the same, its faces from `every_face()`: `faces()` and the ornament fallback's (#297) | `flow::tests::flow_fuzz::check_flow_structured_every_face` |
+| `flow_structured_every_face` | the same, its faces from `every_face()`: `faces()`, the ornament fallback's (#297), the default face (#228) and Scrapbook Chinese (#355) | `flow::tests::flow_fuzz::check_flow_structured_every_face` |
 | `glyph_mutation_raw` | authored run mutations (B6; there is no fill since B12), any bytes as JSON | `gfx_structs::tests::glyph_layer_fuzz::check_glyph_mutations_json` |
 | `glyph_mutation_structured` | the same, built from choices | `gfx_structs::tests::glyph_layer_fuzz::check_glyph_mutations_structured` |
 | `projection_edits` | the projection (B7): a generated map and edit sequences from choices | `projection::tests::projection_fuzz::check_projection_edits` |
@@ -836,11 +836,12 @@ What they hold, in short (each module's docs are the full list):
   every machine. The host's faces come after every compiled one and none
   bears a compiled family's name, so what the sweep and the fuzz targets
   pin is drawn in the same faces wherever they run. The generator's face
-  list, `faces()`, never changes length: a choice picks a face modulo
-  it, so a face added moves every committed structured seed and finding
-  to another face, and silently, since each still passes. Faces it lacks
-  that a map can pin, the ornament fallback's two (#297) and the default
-  face (#228), are drawn from `every_face()`, by
+  list, `faces()`, never changes length, and a test holds it: a choice
+  picks a face modulo it, so a face added moves every committed
+  structured seed and finding to another face, and silently, since each
+  still passes. Faces it lacks that a map can pin, the ornament
+  fallback's two (#297), the default face (#228) and Scrapbook Chinese,
+  which loaded only once #355 repaired it, are drawn from `every_face()`, by
   flow_structured_every_face with seeds of its own and by
   `test_generated_flows_over_every_face_hold_every_flow_property`, whose
   precondition is that each of them is pinned. Every placement is held

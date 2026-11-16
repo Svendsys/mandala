@@ -69,6 +69,80 @@ lets a map name one, and tells its reader what to install or pick in its
 place when the family is missing. A span that names none is drawn in the
 default face, which the file need not name.
 
+## The families a map can name
+
+A map's `font` may name exactly these families: every compiled family,
+spelled as the face's name table spells it, which is how the loader
+compares it (byte for byte, case included). Each loads, and draws, on
+every target.
+`font::tests::fonts_tests::test_format_fonts_lists_exactly_the_families_a_map_can_name`
+holds this list to the loader's own rule both ways, and
+`test_every_compiled_face_has_a_family_a_map_can_name` holds every
+compiled face to having one of them, so a face cannot be compiled in
+that no span can be pinned to.
+
+- `212 Keyboard`
+- `2Peas Heart's Delight`
+- `a Apple Tea`
+- `a Arigatou Gozaimasu`
+- `African`
+- `Alice in Wonderland`
+- `AlphaMusicMan`
+- `AlphaSports`
+- `Carnivalee Freakshow`
+- `Carnivalee Freakshow Demo`
+- `Casanova`
+- `Chubby Dotty`
+- `Critters1DC`
+- `Culinary Art`
+- `Dense Letters`
+- `Distor`
+- `Egyptienne Zierinitialien`
+- `Evilz`
+- `Fabulous Steampunk`
+- `Faster One`
+- `Flowers3`
+- `Galatia SIL`
+- `Inter Variable` (the default face)
+- `Little City 2000`
+- `Mandala Emoji`
+- `Mandala Ornaments`
+- `Mexican Ornaments`
+- `NIGHTCROW`
+- `Norse`
+- `Noto Sans Devanagari`
+- `Noto Sans Egyptian Hieroglyphs`
+- `Noto Sans Hebrew`
+- `Noto Serif Tibetan`
+- `Novem`
+- `Perpetrator`
+- `picto people`
+- `Pinewood`
+- `Public Pixel`
+- `Razzle Dazzle`
+- `RC Rocket`
+- `Regal`
+- `Scrapbook Chinese`
+- `Ships`
+- `SilhousTwo`
+- `skullphabet`
+- `Super Plumber Brothers`
+- `Symbols1`
+- `Toy Train`
+- `Tree Root`
+- `X Typewriter`
+- `zoefingerabc graffiti`
+
+`Scrapbook Chinese` could not be named until #355. The face as published
+has no PostScript name, which the font system's loader requires, so it
+was compiled in but never loaded, and every launch logged a `WARN` for
+it. The compiled face is the published one with that one record added,
+by `scripts/scrapbook_chinese_font.sh`, which rebuilds it byte for byte
+(its `info.txt` records both files). It is a symbol font: its glyphs,
+decorative characters in the manner of Chinese script and not a Chinese
+text face, are drawn for every printable character of U+0020–U+00FF,
+which the shaper reads at U+F020–U+F0FF in its character map.
+
 ## Weight within a pinned family
 
 A pinned family is drawn only in its compiled faces, at the nearest
