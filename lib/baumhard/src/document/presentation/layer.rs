@@ -228,10 +228,21 @@ impl Document {
     /// - Its names are resolved against this map, and a document-layer
     ///   body is judged as the writer would judge a request, structural
     ///   commands refused
-    ///   ([`validate_for_presentation`]). Where this target holds maps
-    ///   to a budget, each new instance is judged on top of the map,
-    ///   every instance already playing and the new ones before it: N
-    ///   nodes are N instances, and they must fit together.
+    ///   ([`validate_for_presentation`]).
+    /// - **It is judged by putting it on the layer.** The new instances
+    ///   join the end of the layer, and the layer is put back as every
+    ///   change puts it back ([`Self::restore_layer`]): each instance
+    ///   applied on top of the map and of every instance before it as it
+    ///   stands, and judged there — on wasm32, against the platform's
+    ///   bounds with all of them. If a new one comes back refused, the
+    ///   new ones are taken out again and the start answers with that
+    ///   refusal. So a start is refused exactly when the layer would not
+    ///   show it.
+    /// - While the layer is set aside
+    ///   ([`Self::suspend_presentations`]) nothing is put on the tree:
+    ///   each new instance is judged on the map, over the new ones
+    ///   before it, and the layer is judged whole when it comes back,
+    ///   where one that does not fit shows nothing and says why.
     ///
     /// All or nothing: a refusal starts no instance and restarts none.
     ///
@@ -252,36 +263,76 @@ impl Document {
         now_ms: f64,
     ) -> Result<Vec<InstanceId>, PresentError> {
         let lifted = (self.presentations.suspensions == 0).then(|| self.lift_layer(0));
-        // What the instances already playing cost, over the map: what a
-        // new one is judged on top of, as the instances after them in
-        // start order.
-        let set_aside = lifted
-            .as_ref()
-            .or(self.presentations.aside.as_ref().map(|aside| &aside.lifted));
-        let under = match set_aside {
-            Some(set_aside) => self.budget_over(set_aside.journals.iter().map(|(_, applied)| applied)),
-            None => self.derived.budget,
+        let result = self.start_on_the_map(def, nodes, now_ms, lifted.is_none());
+        let Some(lifted) = lifted else {
+            return self.started(result.map(|plan| plan.ids));
         };
-        let result = self.start_on_the_map(def, nodes, now_ms, under);
-        if let Some(lifted) = lifted {
-            let change = self.restore_layer(0, lifted);
-            self.push_change(ChangeSource::Presentation, change);
-        }
+        let change = self.restore_layer(0, lifted);
+        self.push_change(ChangeSource::Presentation, change);
+        let plan = result?;
+        // Judged where the layer put them: the first new one refused is
+        // the start's answer.
+        let refused = self
+            .presentations
+            .instances
+            .iter()
+            .filter(|instance| instance.id >= plan.first_new)
+            .find_map(|instance| instance.refusal.clone());
+        let Some(refusal) = refused else {
+            return self.started(Ok(plan.ids));
+        };
+        self.take_back_start(&plan);
+        Err(PresentError::Refused {
+            presentation: def.id.clone(),
+            error: Box::new(refusal),
+        })
+    }
+
+    /// `result`, after advancing the epoch when it started or restarted
+    /// an instance.
+    fn started(
+        &mut self,
+        result: Result<Vec<InstanceId>, PresentError>,
+    ) -> Result<Vec<InstanceId>, PresentError> {
         if result.as_ref().is_ok_and(|started| !started.is_empty()) {
             self.presentations.epoch += 1;
         }
         result
     }
 
+    /// Take a refused start back off the layer: the instances it added
+    /// written out of the tree and dropped, and the ones it restarted
+    /// living as they lived before it.
+    fn take_back_start(&mut self, plan: &StartPlan) {
+        let from = self
+            .presentations
+            .instances
+            .iter()
+            .position(|instance| instance.id >= plan.first_new)
+            .unwrap_or(self.presentations.instances.len());
+        let lifted = self.lift_layer(from);
+        self.presentations.instances.truncate(from);
+        for (id, life) in &plan.restarted {
+            if let Some(instance) = self.presentations.instances.iter_mut().find(|i| i.id == *id) {
+                instance.life = *life;
+            }
+        }
+        let change = self.restore_layer(from, lifted);
+        self.push_change(ChangeSource::Presentation, change);
+    }
+
     /// The body of [`Self::start_presentation`], with the layer out of
-    /// the tree: resolve, judge, and add or restart the instances.
+    /// the tree: resolve, and add or restart the instances; judge each
+    /// new one on the map here only when `judge_here` (the layer is set
+    /// aside, so nothing will put it on the tree now).
     fn start_on_the_map(
         &mut self,
         def: &PresentationDef,
         nodes: &[NodeId],
         now_ms: f64,
-        mut under: Budget,
-    ) -> Result<Vec<InstanceId>, PresentError> {
+        judge_here: bool,
+    ) -> Result<StartPlan, PresentError> {
+        let mut under = self.derived.budget;
         let value = |field: &'static str, message: &str| PresentError::Value {
             presentation: def.id.clone(),
             field,
@@ -359,20 +410,25 @@ impl Document {
             if reached.is_empty() {
                 continue;
             }
-            under =
-                self.try_application(&started, &reached, under)
-                    .map_err(|error| PresentError::Refused {
+            if judge_here {
+                under = self.try_application(&started, &reached, under).map_err(|error| {
+                    PresentError::Refused {
                         presentation: def.id.clone(),
                         error: Box::new(error),
-                    })?;
+                    }
+                })?;
+            }
             plan.push(Planned::Fresh(node, reached));
         }
         let layer = &mut self.presentations;
         let mut ids = Vec::with_capacity(plan.len());
+        let first_new = InstanceId(layer.next_id);
+        let mut restarted = Vec::new();
         for planned in plan {
             match planned {
                 Planned::Restart(index) => {
                     let instance = &mut layer.instances[index];
+                    restarted.push((instance.id, instance.life));
                     instance.life.restart(now_ms);
                     ids.push(instance.id);
                 }
@@ -395,7 +451,11 @@ impl Document {
         // One that is over as it starts — an instant `once` — played
         // nothing, and is not kept.
         layer.instances.retain(|instance| !instance.life.ended());
-        Ok(ids)
+        Ok(StartPlan {
+            ids,
+            first_new,
+            restarted,
+        })
     }
 
     /// Stop the presentation `id` on each of `nodes` — an element stands
@@ -740,9 +800,13 @@ impl Document {
     /// tree's stamp — every instance before it stands on the side it
     /// stood on, and none of them wrote an element this one holds
     /// differently. Otherwise the instance is applied afresh, and judged
-    /// against this target's bounds as the map and every instance before
-    /// it, in start order, cost together (`within_budget`'s words): one
-    /// that does not fit on top of them shows nothing and remembers why.
+    /// against this target's bounds (`within_budget`'s words) at its
+    /// after-image — the most it will show — on top of the map and every
+    /// instance before it as each stands ([`Self::budget_as_shown`]): one
+    /// that does not fit shows nothing and remembers why. An instance
+    /// before it whose snapping fields switched is not written forward
+    /// as it was, so every instance after one that switched is judged
+    /// again.
     fn restore_layer(&mut self, from: usize, lifted: Lifted) -> Change {
         let mut change = Change::default();
         // What the map and the instances before the one at hand cost,
@@ -831,7 +895,7 @@ impl Document {
                 }
             };
             if let Some(applied) = written.as_ref().filter(|_| self.is_limited()) {
-                under = self.budget_with(under, &applied.journal);
+                under = self.budget_as_shown(under, applied);
             }
             self.presentations.instances[index].applied = written;
         }
@@ -952,7 +1016,7 @@ impl Document {
         Ok(with)
     }
 
-    /// What the map costs with `applied` written whole on it, each over
+    /// What the map costs with `applied` on it as each stands, each over
     /// the ones before it: the budget an application after them is
     /// judged against. The map's own budget where this target holds
     /// none, without reading the journals. O(the elements they touched).
@@ -961,7 +1025,23 @@ impl Document {
         if !self.is_limited() {
             return map;
         }
-        applied.fold(map, |budget, applied| self.budget_with(budget, &applied.journal))
+        applied.fold(map, |budget, applied| self.budget_as_shown(budget, applied))
+    }
+
+    /// `base` with `applied` on it as it stands at its progress and snap:
+    /// what it shows costs what its after-image costs once its snapping
+    /// fields have switched, and nothing until then — the fields that
+    /// carry a cost (text, and elements in or out) snap, and before they
+    /// switch every element shows its before-image, which is what is
+    /// under it. A switch of its snap is a rewrite from it, which judges
+    /// every instance after it again ([`Self::restore_layer`]).
+    /// O(the elements it touched) once switched, O(1) before.
+    fn budget_as_shown(&self, base: Budget, applied: &Applied) -> Budget {
+        if applied.snap.takes_after(applied.t) {
+            self.budget_with(base, &applied.journal)
+        } else {
+            base
+        }
     }
 
     /// Apply `started` at those of `elements` that are in the tree, as
@@ -1042,6 +1122,16 @@ impl Document {
             presentations.epoch += 1;
         }
     }
+}
+
+/// What a start did to the layer, to answer with or to take back: the
+/// instances it now plays as, the id of the first it added (every id from
+/// it on is one), and the lifecycles of the ones it restarted as they
+/// were before.
+struct StartPlan {
+    ids: Vec<InstanceId>,
+    first_new: InstanceId,
+    restarted: Vec<(InstanceId, Lifecycle)>,
 }
 
 /// The whole layer, written back out by the writer's funnel.

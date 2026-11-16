@@ -1260,13 +1260,6 @@ fn test_instances_that_fit_alone_and_not_together_are_held_to_the_budget_togethe
     let wordy = presentation(
         r#"{"id":"wordy","name":"W","play":"hold","target":"spans","mutations":[{"span":{"set_text":"0123456789"}}]}"#,
     );
-    let span_text = |doc: &Document, ident: u32| {
-        let section = kid(doc, n(doc, ident), DocKind::Section, 0).0;
-        match kid(doc, section, DocKind::Span, 0).1 {
-            DocElement::Span(span) => span.text.clone(),
-            other => panic!("{other:?}"),
-        }
-    };
     let mut doc = map();
     let text = doc.derived().budget.text;
     let (two, four) = (n(&doc, 2), n(&doc, 4));
@@ -1301,8 +1294,8 @@ fn test_instances_that_fit_alone_and_not_together_are_held_to_the_budget_togethe
         "a second start, on top of the first"
     );
     assert_eq!(doc.presentations().count(), 1);
-    assert_eq!(span_text(&doc, 2), "0123456789");
-    assert_eq!(span_text(&doc, 4), "four");
+    assert_eq!(first_span(&doc, 2), "0123456789");
+    assert_eq!(first_span(&doc, 4), "four");
 
     // Room for both, until an edit grows the map by one byte.
     let mut doc = map();
@@ -1312,15 +1305,15 @@ fn test_instances_that_fit_alone_and_not_together_are_held_to_the_budget_togethe
     });
     doc.start_presentation(&wordy, &[two, four], 0.0).unwrap();
     assert_eq!(
-        (span_text(&doc, 2).as_str(), span_text(&doc, 4).as_str()),
+        (first_span(&doc, 2).as_str(), first_span(&doc, 4).as_str()),
         ("0123456789", "0123456789")
     );
     let section = kid(&doc, n(&doc, 1), DocKind::Section, 0).0;
     let steps = insert_text(&doc, section, 0, "x".to_string()).unwrap();
     doc.apply(EditRequest::new(steps, "type"), ChangeSource::Input)
         .unwrap();
-    assert_eq!(span_text(&doc, 2), "0123456789", "the older one shows");
-    assert_eq!(span_text(&doc, 4), "four", "the newer one shows nothing");
+    assert_eq!(first_span(&doc, 2), "0123456789", "the older one shows");
+    assert_eq!(first_span(&doc, 4), "four", "the newer one shows nothing");
     let refusals: Vec<Option<ApplyError>> = doc
         .presentations()
         .map(|instance| instance.refusal.cloned())
@@ -1337,9 +1330,140 @@ fn test_instances_that_fit_alone_and_not_together_are_held_to_the_budget_togethe
     );
     doc.undo().unwrap();
     assert_eq!(
-        (span_text(&doc, 2).as_str(), span_text(&doc, 4).as_str()),
+        (first_span(&doc, 2).as_str(), first_span(&doc, 4).as_str()),
         ("0123456789", "0123456789")
     );
+    assert!(doc.presentations().all(|instance| instance.refusal.is_none()));
+}
+
+/// The text of node `ident`'s first span, as the tree holds it now.
+fn first_span(doc: &Document, ident: u32) -> String {
+    let section = kid(doc, n(doc, ident), DocKind::Section, 0).0;
+    match kid(doc, section, DocKind::Span, 0).1 {
+        DocElement::Span(span) => span.text.clone(),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The bytes of text the tree holds now, counted from scratch: what the
+/// platform's bound is about, whatever the layer shows.
+fn tree_text(doc: &Document) -> u64 {
+    crate::document::writer::Derived::scan(doc.tree(), doc.definitions())
+        .budget
+        .text
+}
+
+/// **An instance costs what it shows.** A text field snaps (`snap: end`
+/// by default): until it switches, the element shows its before-image,
+/// so an instance that shrinks a text frees no room on its way in, and
+/// takes the room back as soon as it starts its way out. The instances
+/// after it are judged on top of it as it stands, and judged again when
+/// it switches; the tree never holds more text than the bound.
+///
+/// - `shrink` empties node 4's span ("four", 4 bytes) over 400 ms.
+///   Started first, on its way in, it frees nothing: `wordy` (+7 on
+///   node 2) does not fit within +3, and the start is refused.
+/// - Once `shrink` has switched (at 400 ms), `wordy` fits: −4 + 7.
+/// - Stopped, `shrink` shows "four" again from its first step out:
+///   `wordy` on top of it no longer fits, and shows nothing and says why.
+///
+/// Control, seen red: each instance credited with its after-image,
+/// whatever its progress, admits `wordy` at 0 ms, the tree then holding
+/// four bytes more than the bound.
+#[test]
+fn test_an_instance_is_costed_as_it_stands_at_its_snap() {
+    let shrink = presentation(
+        r#"{"id":"shrink","name":"S","play":"hold","target":"spans","mutations":[{"span":{"set_text":""}}],"animate":{"ms":400},"return":{"ms":400}}"#,
+    );
+    let wordy = presentation(
+        r#"{"id":"wordy","name":"W","play":"hold","target":"spans","mutations":[{"span":{"set_text":"0123456789"}}]}"#,
+    );
+    let mut doc = map();
+    let text = doc.derived().budget.text;
+    let (two, four) = (n(&doc, 2), n(&doc, 4));
+    doc.set_limits(Limits {
+        bytes: Some(text + 3),
+        elements: None,
+    });
+    doc.start_presentation(&shrink, &[four], 0.0).unwrap();
+    assert_eq!(first_span(&doc, 4), "four", "precondition: not switched yet");
+    assert_eq!(
+        doc.start_presentation(&wordy, &[two], 0.0),
+        Err(PresentError::Refused {
+            presentation: "wordy".to_string(),
+            error: Box::new(ApplyError::TooMuchText {
+                bytes: text + 7,
+                max: text + 3
+            }),
+        }),
+        "no room is freed before the switch"
+    );
+    assert_eq!(doc.presentations().count(), 1);
+    assert_eq!(tree_text(&doc), text);
+
+    doc.tick_presentations(400.0);
+    assert_eq!(first_span(&doc, 4), "", "switched");
+    doc.start_presentation(&wordy, &[two], 400.0).unwrap();
+    assert_eq!(first_span(&doc, 2), "0123456789");
+    assert_eq!(tree_text(&doc), text + 3);
+
+    doc.stop_presentation("shrink", &[four], 500.0);
+    doc.tick_presentations(600.0);
+    assert_eq!(
+        first_span(&doc, 4),
+        "four",
+        "on its way out, before the switch back"
+    );
+    assert_eq!(first_span(&doc, 2), "two", "wordy no longer fits on top of it");
+    let refusals: Vec<Option<ApplyError>> = doc
+        .presentations()
+        .map(|instance| instance.refusal.cloned())
+        .collect();
+    assert_eq!(
+        refusals,
+        vec![
+            None,
+            Some(ApplyError::TooMuchText {
+                bytes: text + 7,
+                max: text + 3
+            })
+        ]
+    );
+    assert_eq!(tree_text(&doc), text);
+}
+
+/// **A start is judged where the layer puts it.** On a span an older
+/// instance already writes, the new one stands on the older one's text,
+/// not the map's, and is costed so: `twelve` (+9 over the map's "two")
+/// on top of `ten` (+7) costs +9 in all, and fits within +10, though
+/// the two deltas over the map add up to +16.
+///
+/// Control, seen red: the new instance judged on the map, over the cost
+/// of the instances already playing, counts `ten`'s delta and its own
+/// over the map both, and refuses `twelve` (`bytes: text + 16`).
+#[test]
+fn test_a_start_is_judged_on_the_instances_it_stands_on() {
+    let setting = |id: &str, text: &str| {
+        presentation(&format!(
+            r#"{{"id":"{id}","name":"T","play":"hold","target":"spans","mutations":[{{"span":{{"set_text":"{text}"}}}}]}}"#
+        ))
+    };
+    let (ten, twelve) = (setting("ten", "0123456789"), setting("twelve", "0123456789ab"));
+    let mut doc = map();
+    let text = doc.derived().budget.text;
+    let two = n(&doc, 2);
+    doc.set_limits(Limits {
+        bytes: Some(text + 10),
+        elements: None,
+    });
+    doc.start_presentation(&ten, &[two], 0.0).unwrap();
+    assert_eq!(tree_text(&doc), text + 7);
+    assert_eq!(
+        doc.start_presentation(&twelve, &[two], 0.0).map(|ids| ids.len()),
+        Ok(1)
+    );
+    assert_eq!(first_span(&doc, 2), "0123456789ab");
+    assert_eq!(tree_text(&doc), text + 9);
     assert!(doc.presentations().all(|instance| instance.refusal.is_none()));
 }
 
