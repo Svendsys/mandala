@@ -4619,3 +4619,34 @@ fn test_the_flow_seeds_either_side_of_the_longest_path_laid_are_laid_and_not() {
         }
     }
 }
+
+/// The flow_structured finding of CI's run on #370 (job 133116364538,
+/// #371): a frame some 10⁶ from the origin, `"\u{302}👩"` on its sides,
+/// whose side arc's touch check held 4 classes of height, past the 3 its
+/// arc held back for. The combining circumflex's ink is 0.984375 tall as
+/// shaped, of class 0; placed 10⁶ from the origin, where an `f32` is a
+/// sixteenth apart, its box is 0.9375 tall at some places and 1.0 at
+/// others, of class 1. The arc held back for the classes of its glyphs as
+/// shaped, the check counted them as placed. It now holds back for every
+/// class its glyphs can take placed where the frame lies (rulings B46.1,
+/// `reachable_classes`). 761 bytes as found (sha1 ed073022…); 701 here,
+/// minimized on stable, which draws `"\u{302}🇯"` and fails the same way.
+///
+/// Control: with the arc held back for its glyphs' classes as shaped
+/// (`SideOrnament::beside` counting them as placed), red ("held 4
+/// classes of height, past the 3 its arc held back for").
+#[test]
+fn test_flow_structured_finding_a_side_arc_ink_placed_past_its_shaped_class_replays() {
+    let found = include_bytes!("fuzz_findings/structured_side_arc_ink_placed_past_its_shaped_class");
+    for (what, checked) in [
+        (
+            "fuzzed",
+            crate::flow::tests::flow_fuzz::check_flow_structured(found),
+        ),
+        ("as found", check_flow_structured_as_found(found)),
+    ] {
+        if let Err(why) = checked {
+            panic!("{what}: {why}");
+        }
+    }
+}
