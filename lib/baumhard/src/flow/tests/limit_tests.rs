@@ -37,15 +37,21 @@ const NO_END: PathEnd<'static> = PathEnd {
 };
 
 /// A kind of placement round a closed outline: its name, its text, its
-/// fit and its layout.
-type ClosedKind = (String, &'static str, FitMode, RingLayout);
+/// fit, its layout, and whether it has a glyph to lay.
+type ClosedKind = (String, &'static str, FitMode, RingLayout, bool);
 
 /// Every kind of placement round a closed outline, a ring's spaced
 /// `spacing`: a frame in each fit, with and without sides; a ring of
 /// text and one of an ornament; a directional ring of its vertical text
-/// alone, with spans, and with corners.
+/// alone, with spans, and with corners — and, with no glyph to lay, a
+/// frame of no text in each fit, with sides and a `Once`'s filler, and a
+/// ring of no text.
 fn closed_kinds(spacing: f32) -> Vec<ClosedKind> {
     let mut kinds: Vec<ClosedKind> = Vec::new();
+    let sided = |sides: bool| RingLayout {
+        sides: sides.then(|| ("─═".to_owned(), Rgba::opaque(0, 0, 0))),
+        ..RingLayout::whole()
+    };
     for (name, fit) in [
         ("Once", FitMode::Once { filler: None }),
         ("Spread", FitMode::Spread),
@@ -56,12 +62,28 @@ fn closed_kinds(spacing: f32) -> Vec<ClosedKind> {
                 format!("a frame laid {name}{}", if sides { " with sides" } else { "" }),
                 "To see a World in a Grain of Sand",
                 fit.clone(),
-                RingLayout {
-                    sides: sides.then(|| ("─═".to_owned(), Rgba::opaque(0, 0, 0))),
-                    ..RingLayout::whole()
-                },
+                sided(sides),
+                true,
             ));
         }
+    }
+    for (name, fit) in [
+        (
+            "Once with a filler",
+            FitMode::Once {
+                filler: Some("─".to_owned()),
+            },
+        ),
+        ("Spread", FitMode::Spread),
+        ("Fit", FitMode::Fit { min: 0.5, max: 2.0 }),
+    ] {
+        kinds.push((
+            format!("a frame of no text laid {name} with sides"),
+            "",
+            fit,
+            sided(true),
+            false,
+        ));
     }
     let directional = |vertical: &str, corners: bool| DirectionalGlyphs {
         vertical: Some(vertical.to_owned()),
@@ -70,6 +92,7 @@ fn closed_kinds(spacing: f32) -> Vec<ClosedKind> {
     for (name, text, glyphs) in [
         ("a ring of text", "abc", DirectionalGlyphs::default()),
         ("a ring of an ornament", "─", DirectionalGlyphs::default()),
+        ("a ring of no text", "", DirectionalGlyphs::default()),
         (
             "a directional ring of its vertical text alone",
             "",
@@ -82,6 +105,7 @@ fn closed_kinds(spacing: f32) -> Vec<ClosedKind> {
         ),
         ("a directional ring with corners", "abc", directional("│", true)),
     ] {
+        let lays = !text.is_empty() || glyphs.is_set();
         kinds.push((
             format!("{name} spaced {spacing:e}"),
             text,
@@ -91,6 +115,7 @@ fn closed_kinds(spacing: f32) -> Vec<ClosedKind> {
                 directional: glyphs,
                 ..RingLayout::whole()
             },
+            lays,
         ));
     }
     kinds
@@ -142,9 +167,11 @@ fn dots(n: usize) -> ShapedRun {
 }
 
 /// Every kind of placement along the open `path`, spaced `spacing`: its
-/// name, what it laid and its trace. Text and an ornament in each fit,
-/// and a pitched pattern with nothing at its ends and with a box at each.
-fn lay_open_kinds(path: &[Curve], spacing: f32) -> Vec<(String, PlacedRun, Trace)> {
+/// name, whether it has a glyph to lay, what it laid and its trace. Text,
+/// an ornament and no text in each fit, and no text as a `Once` with a
+/// filler, which lays the filler; and a pitched pattern with nothing at
+/// its ends and with a box at each, and one of no ink.
+fn lay_open_kinds(path: &[Curve], spacing: f32) -> Vec<(String, bool, PlacedRun, Trace)> {
     let plain = style(16.0);
     let mut laid = Vec::new();
     with_fonts(|fs| {
@@ -153,13 +180,25 @@ fn lay_open_kinds(path: &[Curve], spacing: f32) -> Vec<(String, PlacedRun, Trace
             ("Repeat", FitMode::Repeat),
             ("Spread", FitMode::Spread),
             ("Fit", FitMode::Fit { min: 0.5, max: 2.0 }),
+            (
+                "Once with a filler",
+                FitMode::Once {
+                    filler: Some("─".to_owned()),
+                },
+            ),
         ] {
-            for text in ["abc", "─"] {
+            for text in ["abc", "─", ""] {
                 let run = real_run(text, &plain, fs);
+                let lays = !text.is_empty() || matches!(fit, FitMode::Once { filler: Some(_) });
                 let mut trace = Trace::default();
                 let (_, placed) =
                     place_on_open_capped(&run, path, &fit, spacing, &plain, fs, CAP, Some(&mut trace));
-                laid.push((format!("{text:?} laid {name} spaced {spacing:e}"), placed, trace));
+                laid.push((
+                    format!("{text:?} laid {name} spaced {spacing:e}"),
+                    lays,
+                    placed,
+                    trace,
+                ));
             }
         }
     });
@@ -191,33 +230,54 @@ fn lay_open_kinds(path: &[Curve], spacing: f32) -> Vec<(String, PlacedRun, Trace
         let placed = place_pitched_capped(&dots(2), path, spacing, ends, CAP, Some(&mut trace));
         laid.push((
             format!("a pitched pattern spaced {spacing:e}, {name}"),
+            true,
             placed,
             trace,
         ));
     }
+    let mut trace = Trace::default();
+    let placed = place_pitched_capped(
+        &synthetic(&[6.0; 2], 12.0),
+        path,
+        spacing,
+        [NO_END; 2],
+        CAP,
+        Some(&mut trace),
+    );
+    laid.push((
+        format!("a pitched pattern of no ink spaced {spacing:e}"),
+        false,
+        placed,
+        trace,
+    ));
     laid
 }
 
 /// What a placement along a path past the limit owes, and does not give:
-/// nothing laid, cut, and the reason by its name. Empty where it gives
-/// all three.
-fn not_refused(what: &str, placed: &PlacedRun, trace: &Trace) -> Option<String> {
-    (!placed.glyphs.is_empty() || !placed.truncated || trace.ring != Some(RingLoss::TooLong)).then(|| {
-        format!(
-            "{what}: {} glyphs, truncated {}, reported {:?}",
-            placed.glyphs.len(),
-            placed.truncated,
-            trace.ring
-        )
-    })
+/// nothing laid, cut, and the reason by its name — where it `lays`, has a
+/// glyph to lay; one with none lays nothing and says nothing, as round any
+/// outline. Empty where it gives all it owes.
+fn not_refused(what: &str, lays: bool, placed: &PlacedRun, trace: &Trace) -> Option<String> {
+    let says = placed.truncated || trace.ring == Some(RingLoss::TooLong);
+    (!placed.glyphs.is_empty() || says != lays || (lays && trace.ring != Some(RingLoss::TooLong))).then(
+        || {
+            format!(
+                "{what}: {} glyphs, truncated {}, reported {:?}",
+                placed.glyphs.len(),
+                placed.truncated,
+                trace.ring
+            )
+        },
+    )
 }
 
 /// What a placement along a path within the limit owes, and does not
-/// give: something laid, every position finite, and no word of a path too
+/// give: something laid where it `lays`, has a glyph to lay, and nothing
+/// where it has none; every position finite; and no word of a path too
 /// long. Empty where it gives all three.
-fn not_laid(what: &str, placed: &PlacedRun, trace: &Trace) -> Option<String> {
+fn not_laid(what: &str, lays: bool, placed: &PlacedRun, trace: &Trace) -> Option<String> {
     let finite = placed.glyphs.iter().all(|g| g.pos.is_finite());
-    (placed.glyphs.is_empty() || !finite || trace.ring == Some(RingLoss::TooLong)).then(|| {
+    (placed.glyphs.is_empty() == lays || !finite || trace.ring == Some(RingLoss::TooLong)).then(|| {
         format!(
             "{what}: {} glyphs, every position finite {finite}, reported {:?}",
             placed.glyphs.len(),
@@ -312,26 +372,26 @@ fn outlines_round(scale: f64) -> Vec<(String, Outline, f64)> {
 }
 
 #[test]
-fn test_flow_limit_is_half_the_root_of_the_largest_f32() {
-    do_flow_limit_is_half_the_root_of_the_largest_f32();
+fn test_flow_limit_is_half_the_first_float_past_the_root_of_the_largest_f32() {
+    do_flow_limit_is_half_the_first_float_past_the_root_of_the_largest_f32();
 }
 
 /// The limit is the number its derivation gives (`MAX_PATH_LENGTH`'s
-/// doc): 2⁶³, half the root of the largest `f32` to the float — twice it
-/// is the first float past that root. So the distance between two points
+/// doc): 2⁶³, half of 2⁶⁴, the first float past the root of the largest
+/// `f32`. So the distance between two points
 /// of a path that long, each a quarter of it off the path, has an `f32`
 /// square, and one float further than twice the limit has none; and two
 /// places along it sum to a number.
 ///
 /// Controls: the constant at twice what it is, and at half, each red
 /// ("the limit is 2⁶³"): the rest is that number's arithmetic.
-pub fn do_flow_limit_is_half_the_root_of_the_largest_f32() {
+pub fn do_flow_limit_is_half_the_first_float_past_the_root_of_the_largest_f32() {
     assert_eq!(MAX_PATH_LENGTH, 2.0_f32.powi(63), "the limit is 2⁶³");
     let root = f32::MAX.sqrt();
     assert_eq!(
         root.next_up(),
         2.0 * MAX_PATH_LENGTH,
-        "twice the limit is the first float past the root of the largest f32"
+        "the limit is half of 2⁶⁴, the first float past the root of the largest f32"
     );
     assert!((root * root).is_finite() && (root.next_up() * root.next_up()).is_infinite());
     let apart = MAX_PATH_LENGTH + 2.0 * (0.25 * MAX_PATH_LENGTH);
@@ -374,16 +434,18 @@ pub fn do_flow_limit_a_square_at_the_limit_is_laid_and_a_float_past_it_is_not() 
     };
     let mut found = Vec::new();
     for outward in [false, true] {
-        for (name, text, fit, layout) in closed_kinds(0.0) {
+        for (name, text, fit, layout, lays) in closed_kinds(0.0) {
             let (placed, trace) = lay_closed(&square(side), text, &fit, &layout, outward, 0.5);
             found.extend(not_laid(
                 &format!("{name} round the square at the limit"),
+                lays,
                 &placed,
                 &trace,
             ));
             let (placed, trace) = lay_closed(&square(side.next_up()), text, &fit, &layout, outward, 0.5);
             found.extend(not_refused(
                 &format!("{name} round the square a float past the limit"),
+                lays,
                 &placed,
                 &trace,
             ));
@@ -468,10 +530,11 @@ pub fn do_flow_limit_an_outline_past_the_limit_lays_nothing_and_says_so() {
         );
         for spacing in [0.0_f32, 1.0e37] {
             for outward in [false, true] {
-                for (kind, text, fit, layout) in closed_kinds(spacing) {
+                for (kind, text, fit, layout, lays) in closed_kinds(spacing) {
                     let (placed, trace) = lay_closed(outline, text, &fit, &layout, outward, 0.37);
                     found.extend(not_refused(
                         &format!("{kind} round {name}, outward {outward}"),
+                        lays,
                         &placed,
                         &trace,
                     ));
@@ -480,7 +543,7 @@ pub fn do_flow_limit_an_outline_past_the_limit_lays_nothing_and_says_so() {
             }
         }
     }
-    assert_eq!(laid, (5 * 12 + 4) * 2 * 2 * 11, "every placement is laid");
+    assert_eq!(laid, (5 * 12 + 4) * 2 * 2 * 15, "every placement is laid");
     assert_none(&found);
 }
 
@@ -512,10 +575,11 @@ pub fn do_flow_limit_an_outline_just_within_the_limit_is_laid() {
         );
         for spacing in [0.0_f32, 0.1 * MAX_PATH_LENGTH] {
             for outward in [false, true] {
-                for (kind, text, fit, layout) in closed_kinds(spacing) {
+                for (kind, text, fit, layout, lays) in closed_kinds(spacing) {
                     let (placed, trace) = lay_closed(&outline, text, &fit, &layout, outward, 0.37);
                     found.extend(not_laid(
                         &format!("{kind} round {name}, outward {outward}"),
+                        lays,
                         &placed,
                         &trace,
                     ));
@@ -668,8 +732,13 @@ pub fn do_flow_limit_an_open_path_past_the_limit_lays_nothing_and_says_so() {
             "precondition: {name} is longer than the limit ({least:e} to {most:e})"
         );
         for spacing in [0.0_f32, 1.0e37] {
-            for (kind, placed, trace) in lay_open_kinds(path, spacing) {
-                found.extend(not_refused(&format!("{kind} along {name}"), &placed, &trace));
+            for (kind, lays, placed, trace) in lay_open_kinds(path, spacing) {
+                found.extend(not_refused(
+                    &format!("{kind} along {name}"),
+                    lays,
+                    &placed,
+                    &trace,
+                ));
             }
         }
     }
@@ -701,8 +770,8 @@ pub fn do_flow_limit_an_open_path_past_the_limit_lays_nothing_and_says_so() {
             most <= LIMIT,
             "precondition: {name} is no longer than the limit ({most:e})"
         );
-        for (kind, placed, trace) in lay_open_kinds(path, 0.0) {
-            found.extend(not_laid(&format!("{kind} along {name}"), &placed, &trace));
+        for (kind, lays, placed, trace) in lay_open_kinds(path, 0.0) {
+            found.extend(not_laid(&format!("{kind} along {name}"), lays, &placed, &trace));
         }
     }
     assert_none(&found);

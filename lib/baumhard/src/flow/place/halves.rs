@@ -1033,29 +1033,22 @@ fn unwrap(s: f32, from: f32, length: f32) -> f32 {
 }
 
 /// The share of a half that the first of two clearances, `a` and `b`
-/// (neither negative), claims where together they pass it: `a / (a + b)`,
-/// in `[0, 1]`. Taken over the larger of the two, so that neither their
-/// sum nor its product with the half's length can overflow: a clearance
-/// grown toward a break its line's gaps make wider than the outline —
-/// a line tracked over an outline some 10²⁶ long — is many times the
-/// half, and the product once took the meeting point to infinity, where
-/// a line's ends are not a number (the 300 s flow_structured run's
-/// finding on #294). An infinite clearance claims the whole of the half
-/// against a finite one, and two claim half each.
+/// (neither negative, both finite), claims where together they pass it:
+/// `a / (a + b)`, in `[0, 1]`. Taken over the larger of the two, so that
+/// neither their sum nor its product with the half's length can overflow
+/// (the 300 s flow_structured run's finding on #294: a line tracked over
+/// an outline some 10²⁶ long, whose meeting point the product took to
+/// infinity). No outline placement lays is long enough for that since
+/// #363, nor for a clearance to be infinite, which once claimed the whole
+/// half; the quotient is still taken so, as every frame has been laid
+/// with it.
 fn share(a: f32, b: f32) -> f32 {
-    match (a.is_infinite(), b.is_infinite()) {
-        (true, true) => 0.5,
-        (true, false) => 1.0,
-        (false, true) => 0.0,
-        (false, false) => {
-            let larger = a.max(b);
-            if larger > 0.0 {
-                let (a, b) = (a / larger, b / larger);
-                a / (a + b)
-            } else {
-                0.0
-            }
-        }
+    let larger = a.max(b);
+    if larger > 0.0 {
+        let (a, b) = (a / larger, b / larger);
+        a / (a + b)
+    } else {
+        0.0
     }
 }
 
@@ -5075,20 +5068,12 @@ impl Layout<'_> {
                 } else {
                     shortfall
                 };
-                // A break wider than any `f32` is short by an infinite
-                // amount, and an infinite step shared by a share of
-                // zero, or held to a line's slack, is not a number: the
-                // step is held to the largest `f32`, past which a
-                // clearance presses its line to a point however much
-                // more it is. (Found on two word gaps of a line tracked
-                // over an outline as long as an `f32`, which is not laid
-                // since #363.)
                 // A step that is not a number — a shortfall that is not
                 // one — grows by the least.
                 let mut step = if damped.is_nan() {
                     MIN_GROWTH
                 } else {
-                    damped.clamp(MIN_GROWTH, f32::MAX)
+                    damped.max(MIN_GROWTH)
                 };
                 // Where the last round grew this junction alone, by all its
                 // step asked, the step is aimed by what that round gave: the
@@ -6033,11 +6018,9 @@ fn solve_tracking(
     // than its letters are set to.
     let tolerance = line_tolerance(steps, end);
     let width = GAP_PRECISION.max(tolerance / per_gap);
-    // A room that is not a number reads as past the end, and so does a
-    // lay with a glyph that is not placed finitely: a gap past what an
-    // `f32` can lay along the path.
+    // A room that is not a number reads as past the end.
     let short = |t: &Tracked| {
-        if t.short.is_nan() || !t.glyphs.iter().all(|g| g.pos.is_finite()) {
+        if t.short.is_nan() {
             f32::NEG_INFINITY
         } else {
             t.short
@@ -6089,7 +6072,6 @@ fn solve_tracking(
         return (0.0, at_zero);
     }
     let aim = |g: f32| g * (1.0 + 1e-3) + f32::MIN_POSITIVE;
-    let at_zero_short = at_zero.short;
     let mut low = (0.0_f32, at_zero.short, at_zero);
     let mut g = aim(low.1 / per_gap);
     for round in 0..TRACK_DOUBLINGS {
@@ -6116,18 +6098,6 @@ fn solve_tracking(
             );
         }
         if value <= tolerance {
-            return (g, tracked);
-        }
-        // Still short with one gap as long as all the room the line had at
-        // no gap, and no less short than at the probe before: no gap moves
-        // its end there, where the path is too far out for an `f32` to set
-        // its letters apart (seeds 2970 and 4284 of the structured flow
-        // generator: a part 10³³ along its half, every letter at one
-        // center). Widened on, the gap ran past every `f32`; it keeps its
-        // last lay instead. A line its gap still moves goes on, however
-        // little a gap moves its end: round a bend, outward, one gap moves
-        // a line's end by less than the gap (ruling R51.3).
-        if g > at_zero_short && value >= low.1 {
             return (g, tracked);
         }
         // Still short: on along the line through the last two probes,
@@ -6817,8 +6787,9 @@ pub(super) fn place_halves(
     // along them (#309).
     let level = frame_halves(outline, table_spacing(run, fit, flow));
     // An outline too long to lay is not laid (#363): its halves are one
-    // outline's, and either says so.
-    if level.iter().any(|(path, _)| path.too_long()) {
+    // outline's, and either says so — where the frame has text to lay: a
+    // frame of none lays nothing, its filler and its sides included.
+    if !run.glyphs.is_empty() && level.iter().any(|(path, _)| path.too_long()) {
         let tables = level.iter().map(|(path, _)| path.table_samples()).sum();
         return (None, too_long_to_lay(trace, tables));
     }
@@ -7490,29 +7461,6 @@ pub(crate) fn line_root_seam(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> 
     (line_root(delta, dir, reach, owed), along(delta, dir, reach, owed))
 }
 
-/// Test seam (#294): [`solve_tracking`] of a line whose lay at gap `g`
-/// leaves `lay(g).0` of its part short and places its one glyph at
-/// `lay(g).1`, over `steps` gaps to `end`: the gap solved and where the
-/// glyph lies.
-#[cfg(test)]
-pub(crate) fn solve_tracking_seam(lay: impl Fn(f32) -> (f32, Vec2), steps: usize, end: f32) -> (f32, Vec2) {
-    let track = |g: f32| {
-        let (short, pos) = lay(g);
-        Tracked {
-            glyphs: vec![PlacedGlyph { glyph: 0, pos }],
-            short,
-            ends: None,
-            centers: None,
-            normals: None,
-            boxes: Vec::new(),
-            marks: Vec::new(),
-            reaches: Vec::new(),
-        }
-    };
-    let (gap, tracked) = solve_tracking(track, steps, end, None, &|| false);
-    (gap, tracked.glyphs[0].pos)
-}
-
 /// Test seam (#294, ruling R50.1): whether two of `boxes`, each with
 /// ink, touch, but for the pairs `exempt` excuses — by [`touch_scan`],
 /// or with `strips`, by [`stripped`] alone across that axis — and the
@@ -7594,8 +7542,7 @@ fn seam_layout<'h>(
 /// outward, over a part from its top-left junction `room` points long:
 /// the gap solved, how short of the part's end it leaves the line, the
 /// tolerance on that, and how short the line is at no gap and at one gap
-/// as long as all that room — where [`solve_tracking`]'s stop for a line
-/// no gap moves once looked.
+/// as long as all that room.
 #[cfg(test)]
 pub(crate) fn solve_line_seam(
     run: &ShapedRun,

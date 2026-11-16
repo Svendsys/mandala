@@ -151,6 +151,12 @@ pub(crate) struct Solved {
 thread_local! {
     /// The last [`place_pitched`]'s [`Solved`] on this thread.
     pub(crate) static SOLVED: std::cell::Cell<Option<Solved>> = const { std::cell::Cell::new(None) };
+    /// The most rounds whose lay did not answer their move ([`STALLED`])
+    /// any one solve of a count's slack took on this thread on a path
+    /// whose float steps are wider than the pattern's end gap: one, where
+    /// the floats cannot resolve its gaps and the solve stops at the first
+    /// such round (#333). Test-only: what holds that stop.
+    pub(crate) static MOST_UNRESOLVED_UNANSWERED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// What a [`place_pitched`] placement keeps its glyphs clear of at one
@@ -932,7 +938,12 @@ pub(super) fn pitch(
             };
         }
         #[cfg(test)]
-        unanswered_for.push((n, unanswered_rounds));
+        {
+            unanswered_for.push((n, unanswered_rounds));
+            if resolved(0.0, track.magnitude()) > end_gap {
+                MOST_UNRESOLVED_UNANSWERED.with(|most| most.set(most.get().max(unanswered_rounds)));
+            }
+        }
         Some(best.1)
     };
     let candidates: Vec<(usize, f32)> = [fitted, fitted + 1]

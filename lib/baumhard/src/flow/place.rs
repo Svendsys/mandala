@@ -491,12 +491,13 @@ fn clusters_of(glyphs: &[GlyphMetrics], range: Range<usize>) -> Vec<Cluster> {
 /// ink a whole gap on, at a spacing past that root. A frame's inks lie
 /// along its outline, their boxes no further apart than it is across, and
 /// there only the pairwise rule's model of a straight path (`along`)
-/// reaches it, stepping on past the outline, where infinity would read
-/// as far as the longer distance does: no frame is laid otherwise for it,
-/// and its rule measures by this so that every corner distance has one
-/// measure. Where a length that is not finite is a site's own signal —
-/// the closed form's root and the model's (`line_root`, `model_root`),
-/// which then give way to the rule read from the path — it stays one.
+/// reaches it, stepping on past the outline, where an infinite distance
+/// would read as far, as the longer finite one does: no frame is laid
+/// otherwise for it, and its rule measures by this so that every corner
+/// distance has one measure. Where a length that is not finite is a
+/// site's own signal — the closed form's root and the model's
+/// (`line_root`, `model_root`), which then give way to the rule read from
+/// the path — it stays one.
 fn corner_distance(apart: Vec2) -> f32 {
     let length = apart.length();
     if length.is_finite() || !apart.is_finite() {
@@ -2803,6 +2804,13 @@ fn lay_on_closed(
     }
     let spacing = table_spacing(run, fit, flow);
     let arc = ArcPath::closed(path, start, direction, spacing);
+    // A directional ring round an outline too long to lay has no runs and
+    // comes here, to be laid as a ring of its spans (`directional::runs`);
+    // its vertical text and its corners are glyphs it would lay, its
+    // spans empty or not (#363, ruling B42.1 §3).
+    if arc.too_long() && layout.directional.is_set() {
+        return (None, too_long_to_lay(trace, arc.table_samples()));
+    }
     // A gap past the whole outline lays one copy: the walk stops at the
     // first step that ends past the path (`PathWalk::lay`).
     let gap = if layout.spacing.is_finite() {
@@ -2892,6 +2900,12 @@ pub(crate) fn place_on_open_capped(
 /// `tables` samples, which the trace counts as every placement's does
 /// (ruling B16.3a).
 ///
+/// Only a placement with a glyph to lay is laid so — one of its run's, a
+/// `Once` filler's along an open path ([`lays_a_glyph`]), a directional
+/// ring's vertical text or corners, a pitched pattern's ink: a placement
+/// of nothing loses nothing round any path, is laid as it is round one
+/// within the limit, and says nothing.
+///
 /// Cost: O(1).
 pub(crate) fn too_long_to_lay(trace: Option<&mut Trace>, tables: usize) -> PlacedRun {
     if let Some(trace) = trace {
@@ -2903,6 +2917,16 @@ pub(crate) fn too_long_to_lay(trace: Option<&mut Trace>, tables: usize) -> Place
         glyphs: Vec::new(),
         truncated: true,
     }
+}
+
+/// Whether a placement of `run` as `fit` along a path has a glyph to lay
+/// (#363): one of its run's, or the filler's of a `Once` along an open
+/// path, which fills the path past a text of nothing. A frame's `Once`
+/// lays its filler only beside its text, and a ring is a `Repeat`.
+///
+/// Cost: O(1).
+fn lays_a_glyph(run: &ShapedRun, fit: &FitMode) -> bool {
+    !run.glyphs.is_empty() || matches!(fit, FitMode::Once { filler: Some(filler) } if !filler.is_empty())
 }
 
 /// Test seam (#309, review 5810838863): a `w`-wide cluster's step from `s`
@@ -3158,7 +3182,7 @@ fn place(
     cap: usize,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
-    if path.too_long() {
+    if path.too_long() && lays_a_glyph(run, fit) {
         return (None, too_long_to_lay(trace, path.table_samples()));
     }
     let memo = StepMemo::default();

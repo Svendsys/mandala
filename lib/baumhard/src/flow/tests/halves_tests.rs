@@ -2787,8 +2787,11 @@ fn test_flow_halves_a_part_never_inverts() {
 /// it, and where they divide the half in their ratio once together they
 /// pass it — never inverted, never off the half: clearances whose
 /// product with the half's length, or whose sum, is past the largest
-/// `f32` included, and infinite ones, the whole half to an infinite
-/// clearance against a finite one and half each to two.
+/// `f32` included.
+///
+/// Control: the share taken as `a / (a + b)` of the clearances as they
+/// are, red: two of 3 × 10³⁸ meet at 33.86 along the half, where they
+/// owe its middle, 263.99.
 pub fn do_flow_halves_a_part_never_inverts() {
     let rect = Rect::new(Vec2::ZERO, Vec2::new(400.0, 160.0));
     for shape in [
@@ -2812,9 +2815,6 @@ pub fn do_flow_halves_a_part_never_inverts() {
                 ([1e36, 1e36], (ja + 0.5 * len, ja + 0.5 * len)),
                 ([1e36, 3e36], (ja + 0.25 * len, ja + 0.25 * len)),
                 ([3e38, 3e38], (ja + 0.5 * len, ja + 0.5 * len)),
-                ([f32::INFINITY, 1.0], (jb, jb)),
-                ([1.0, f32::INFINITY], (ja, ja)),
-                ([f32::INFINITY; 2], (ja + 0.5 * len, ja + 0.5 * len)),
             ];
             for (clear, (lo, hi)) in cases {
                 let ((a, b), junctions) = room_seam(&shape, half, clear);
@@ -5588,13 +5588,14 @@ fn test_flow_halves_an_arc_kept_short_is_reported() {
 /// first half 15 to 35 long, is solved to its part's end, within the
 /// line's tolerance. Round a bend, outward, a gap moves the line's end
 /// by less than the gap, so one gap as long as all the room the line has
-/// at no gap still leaves it short — where the tracking solve's stop for
-/// a line no gap moves once fired and left it points short (precondition)
-/// — but less short than at no gap, so the stop does not fire.
+/// at no gap still leaves it short (precondition) — but less short than
+/// at no gap, and the solve goes on to its end. (The tracking solve once
+/// stopped there, at a stop for a line no gap moves, for a part some 10³³
+/// along its half; since #363 no outline placement lays is that long, and
+/// no input reached the stop, so it is gone.)
 ///
-/// Control: the stop as 03ac0b3f wrote it, without `value >= low.1`, red:
-/// the line is left points short of its end. (No `do_*` twin: it reads a
-/// test seam.)
+/// Control: the stop as 03ac0b3f wrote it put back, red: the line is left
+/// points short of its end. (No `do_*` twin: it reads a test seam.)
 #[test]
 fn test_flow_halves_a_one_gap_line_on_a_curve_is_solved_to_its_end() {
     use crate::flow::place::halves::solve_line_seam;
@@ -5619,38 +5620,6 @@ fn test_flow_halves_a_one_gap_line_on_a_curve_is_solved_to_its_end() {
     assert!(
         stopped >= 3,
         "precondition: over three parts or more a gap of all the room leaves the line a point or more short ({stopped})"
-    );
-}
-
-/// A frame's line tracked where no gap moves its end, or where a gap that
-/// would places its glyphs past every `f32`, keeps a lay placed finitely
-/// (seeds 2970 and 4284 of the structured flow generator, with a host's
-/// faces: a part some 10³³ along its half, where an `f32` sets every
-/// letter at one center, so that the room the line leaves never shrank;
-/// the tracking solve widened its gap past every `f32`, and the line was
-/// placed at `NaN`). The solve stops once one gap is as long as all the
-/// room the line had at no gap and leaves it no less short than the probe
-/// before, and reads a lay placed past every `f32` as past its part's end
-/// ([`solve_tracking_seam`]).
-///
-/// Controls: without the stop, the first line's gap runs to 10³⁸; with
-/// a lay placed past every `f32` read as any other, the second line is
-/// placed at infinity. (No `do_*` twin: it reads a test seam.)
-///
-/// [`solve_tracking_seam`]: crate::flow::place::halves::solve_tracking_seam
-#[test]
-fn test_flow_halves_a_line_no_gap_can_move_keeps_a_finite_lay() {
-    use crate::flow::place::halves::solve_tracking_seam;
-    let room = 1.4e33_f32;
-    let (gap, pos) = solve_tracking_seam(|g| (room, Vec2::new(g * 10.0, 0.0)), 7, 5e33);
-    assert!(
-        pos.is_finite() && gap <= 4.0 * room,
-        "a line no gap moves: gap {gap}, its glyph at {pos}, against a room of {room}"
-    );
-    let (gap, pos) = solve_tracking_seam(|g| (1e38 - g * 1e-3, Vec2::new(g * 10.0, 0.0)), 7, 1e38);
-    assert!(
-        pos.is_finite(),
-        "a line a gap moves by less than it places its glyph: gap {gap}, its glyph at {pos}"
     );
 }
 

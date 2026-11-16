@@ -1114,9 +1114,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_a_closed_path_is_within_the_limit_or_too_long", |b| {
         b.iter(do_flow_a_closed_path_is_within_the_limit_or_too_long)
     });
-    c.bench_function("flow_limit_is_half_the_root_of_the_largest_f32", |b| {
-        b.iter(do_flow_limit_is_half_the_root_of_the_largest_f32)
-    });
+    c.bench_function(
+        "flow_limit_is_half_the_first_float_past_the_root_of_the_largest_f32",
+        |b| b.iter(do_flow_limit_is_half_the_first_float_past_the_root_of_the_largest_f32),
+    );
     c.bench_function(
         "flow_limit_a_square_at_the_limit_is_laid_and_a_float_past_it_is_not",
         |b| b.iter(do_flow_limit_a_square_at_the_limit_is_laid_and_a_float_past_it_is_not),

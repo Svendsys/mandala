@@ -812,7 +812,8 @@ fn check_open(
     // And only along a path clearly within the longest placement lays
     // (#363); past it nothing is laid, and the placement says why.
     let limit = limit_of(chain_length(std::slice::from_ref(curve)));
-    held_to_the_limit(limit, &placed.1, &trace, true, "the placement")?;
+    let reports = has_a_glyph_to_lay(run, Laid::Along(fit));
+    held_to_the_limit(limit, &placed.1, &trace, reports, "the placement")?;
     let whole = owes_whole_along(run, fit, curve)
         && coordinates_hold_apart(curve_reach(curve), run, fit)
         && trace.ring.is_none()
@@ -863,37 +864,16 @@ fn check_pitched(
         return Ok(());
     };
     let mut trace = Trace::default();
-    #[cfg(test)]
-    let before = crate::flow::path::PATH_LOOKUPS.with(std::cell::Cell::get);
     let placed = place_pitched_capped(run, &chain, spacing, ends, cap, Some(&mut trace));
     work.pitched(cap, tables, &placed, &trace, "as whole glyphs")?;
-    // A pattern with no ink lays nothing along any path, and has nothing
-    // to say of one too long (#363).
-    let inked = run.glyphs.iter().any(|glyph| !glyph.blank && glyph.ink.is_some());
     held_to_the_limit(
         limit_of(chain_length(&chain)),
         &placed,
         &trace,
-        inked,
+        has_a_glyph_to_lay(run, Laid::Pitched),
         "as whole glyphs",
     )?;
-    #[cfg(test)]
-    PITCHED_LOOKUPS.with(|count| {
-        count.set(count.get() + crate::flow::path::PATH_LOOKUPS.with(std::cell::Cell::get) - before)
-    });
-    #[cfg(test)]
-    PITCHED_GLYPHS.with(|count| count.set(count.get() + placed.glyphs.len()));
     check_placement(run, &placed, false, "as whole glyphs")
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Test counter (#333): the path lookups the whole-glyph placements
-    /// [`check_pitched`] lays on this thread have made, so that a test of
-    /// another placement's work can hold the two apart.
-    pub(crate) static PITCHED_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Test counter (#333): the glyphs those placements placed.
-    pub(crate) static PITCHED_GLYPHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The layouts a frame drawn in layout `drawn` is laid in: `drawn`, and
@@ -1483,7 +1463,8 @@ fn check_generated_pinning(
                             // longest placement lays (#363); past it nothing
                             // is laid, and the placement says why.
                             let limit = limit_of(outline_length(path));
-                            held_to_the_limit(limit, &placed.1, &trace, true, "around an outline")
+                            let reports = has_a_glyph_to_lay(&run, Laid::Round(&fit, layout));
+                            held_to_the_limit(limit, &placed.1, &trace, reports, "around an outline")
                                 .map_err(|why| format!("{why}, laid {layout:?}, round {path:?}"))?;
                             let whole = owes_whole(&run, &fit, frame_room(path))
                                 && coordinates_hold_apart(outline_reach(path), &run, &fit)
@@ -2611,12 +2592,44 @@ thread_local! {
     pub(crate) static HELD_TO_THE_LIMIT: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
 }
 
+/// How a placement is laid, for [`has_a_glyph_to_lay`].
+#[derive(Clone, Copy)]
+pub(crate) enum Laid<'a> {
+    /// Round a closed outline, as a frame in its fit or as a ring.
+    Round(&'a FitMode, &'a RingLayout),
+    /// Along an open path, in its fit.
+    Along(&'a FitMode),
+    /// As whole glyphs along an open path (`place_pitched`).
+    Pitched,
+}
+
+/// Whether a placement of `run`, laid as `laid` says, has a glyph to lay
+/// (#363), and so something to lose to a path too long to lay: the one
+/// rule for every kind of placement, read here from the run and the
+/// layout alone. A whole-glyph pattern lays only its inks; any other
+/// placement any glyph of its run; besides, a `Once` along an open path
+/// fills the path with its filler past a text of nothing, and a
+/// directional ring lays its vertical text and its corners whatever its
+/// spans. A frame lays its filler and its sides only beside its text.
+pub(crate) fn has_a_glyph_to_lay(run: &ShapedRun, laid: Laid<'_>) -> bool {
+    match laid {
+        Laid::Pitched => run.glyphs.iter().any(|glyph| !glyph.blank && glyph.ink.is_some()),
+        Laid::Along(fit) => {
+            !run.glyphs.is_empty()
+                || matches!(fit, FitMode::Once { filler: Some(filler) } if !filler.is_empty())
+        }
+        Laid::Round(fit, layout) => {
+            !run.glyphs.is_empty() || (matches!(fit, FitMode::Repeat) && layout.directional.is_set())
+        }
+    }
+}
+
 /// What a placement owes the longest path placement lays (#363, ruling
 /// B42.1 §6), its path standing to it as `limit` says: along a path
 /// clearly past it nothing is laid, and the placement says why, by name
-/// (`RingLoss::TooLong`, with [`PlacedRun::truncated`]) — `reports`,
-/// which is false only for a whole-glyph pattern with no ink, which lays
-/// nothing along any path and has nothing to report; along one clearly
+/// (`RingLoss::TooLong`, with [`PlacedRun::truncated`]) — where it
+/// `reports`, having a glyph to lay ([`has_a_glyph_to_lay`]), and else
+/// says nothing, as a placement of nothing anywhere; along one clearly
 /// within it, it does not say so; and wherever it says so, nothing is
 /// laid and it is cut.
 pub(crate) fn held_to_the_limit(
@@ -2649,6 +2662,9 @@ pub(crate) fn held_to_the_limit(
         Limit::Past if reports && !says => Err(format!(
             "{what}: nothing laid along a path longer than placement lays, and the placement does not say why (truncated {}, {:?})",
             placed.truncated, trace.ring
+        )),
+        _ if says && !reports => Err(format!(
+            "{what}: a placement with no glyph to lay says its path is too long"
         )),
         Limit::Within if says => Err(format!(
             "{what}: a placement along a path within what placement lays says it is too long"

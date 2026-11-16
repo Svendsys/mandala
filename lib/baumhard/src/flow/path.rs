@@ -34,8 +34,10 @@ pub const MAX_TABLE_SAMPLES: usize = 1 << 20;
 /// nothing, and its placement says why (`RingLoss::TooLong`, with
 /// [`PlacedRun::truncated`](crate::flow::PlacedRun::truncated)).
 ///
-/// The number is half the square root of the largest `f32`, to the float:
-/// that root is the last float under 2⁶⁴. A path is walked by a place
+/// The number is 2⁶³: half of 2⁶⁴, the first float past the square root
+/// of the largest `f32` — that root is the last float under 2⁶⁴, and half
+/// of it the last under 2⁶³, which the argument below does not need. A
+/// path is walked by a place
 /// along it held in an `f32`, and what is set along it is measured in
 /// `f32` too, so three things must hold of a path for its placement to
 /// be right, and within this length they do by construction:
@@ -46,10 +48,10 @@ pub const MAX_TABLE_SAMPLES: usize = 1 << 20;
 ///   which is longer than its longer axis; a Bézier by its control
 ///   polygon, which no chord and no arc of it exceeds, where its table
 ///   can fall short of its arc. So two points of a path within the
-///   limit, each set off it by less than a quarter of the limit — an
-///   ink's half extent, a frame's band, both nothing beside it — are
+///   limit, each set off it by less than a quarter of the limit, are
 ///   under 1.5 × 2⁶³ apart, and the square of that, 2.25 × 2¹²⁶, is an
-///   `f32`. Past the root of the largest `f32` a chord's square is not
+///   `f32`. An ink's half extent and a frame's band are set off it so:
+///   the shaper holds every font size to at most `MAX_FONT_SIZE_PT`. Past the root of the largest `f32` a chord's square is not
 ///   one: an ornament ring's inks were set by a distance that read
 ///   infinite, and an ellipse's support by a radius squared.
 /// - **Every sum of two places is a place.** A place along a path is at
@@ -70,9 +72,11 @@ pub const MAX_TABLE_SAMPLES: usize = 1 << 20;
 /// the gaps of either can pass that root on a path within the limit, and
 /// are measured so that they may (`place::corner_distance`, and in
 /// `place::pitch` the mean of a pattern's gaps and the step between two
-/// of its inks). And a cubic's derivative is three times a leg of it,
-/// past that root where one leg is most of its polygon: it is read for
-/// its direction alone (`direction_of`).
+/// of its inks). So is an ink handed to placement wider than that root —
+/// a run shaped by no shaper, whose glyphs' sizes nothing holds — by the
+/// same step between two inks. And a cubic's derivative is three times a
+/// leg of it, past that root where one leg is most of its polygon: it is
+/// read for its direction alone (`direction_of`).
 pub const MAX_PATH_LENGTH: f32 = 9_223_372_036_854_775_808.0;
 
 /// The fewest samples a table holds, so a tiny curve is still walked
@@ -1181,7 +1185,11 @@ impl ArcPath {
         ArcPath::from_stretches(stretches, origin, 0.0)
     }
 
-    /// The path's length, `P`: finite, and at most [`MAX_PATH_LENGTH`].
+    /// The path's length, `P`: finite, and at most [`MAX_PATH_LENGTH`] to
+    /// the rounding of its stretches' `f32` sum — the limit is held on
+    /// their sum in `f64`, and each of their additions in `f32` may round
+    /// up by half a float there, far inside the slack the limit's
+    /// derivation leaves.
     /// None for a path built longer than that, which keeps no stretch
     /// ([`too_long`](Self::too_long)).
     pub(crate) fn length(&self) -> f32 {

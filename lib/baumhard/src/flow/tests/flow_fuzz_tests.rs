@@ -36,11 +36,10 @@ use crate::util::tests::choices::Choices;
 ///   frame's line on a part some 10³³ along its half, where an `f32` sets
 ///   every letter at one center, so no gap moved its end; the tracking
 ///   solve widened its gap past every `f32` and placed the line at `NaN`.
-///   It stops once one gap is as long as all the room the line had and
-///   leaves it no less short than the probe before (R51.3), and reads a
-///   lay past every `f32` as past its part's end
-///   (`test_flow_halves_a_line_no_gap_can_move_keeps_a_finite_lay` holds
-///   both on every host).
+///   Such an outline is longer than placement lays since #363: the frame
+///   lays nothing and says so, and the tracking solve's stop for it, and
+///   its reading of a lay past every `f32`, which no input within the
+///   limit reached, are gone.
 ///
 /// Seed 2771, with host faces, laid a `Repeat` ring whose seam no count of
 /// its copies closed for past 18 minutes; its count is held by
@@ -52,9 +51,8 @@ use crate::util::tests::choices::Choices;
 ///
 /// Controls: with a curve no count tables building no stretch, so that
 /// its path is not too long, red at 1021 ("1 glyphs laid along a path
-/// longer than placement lays"); without both the tracking solve's stop
-/// and its reading of a lay past every `f32`, red at 2970 where host faces
-/// shape its text, as here (either alone holds it finite).
+/// longer than placement lays"); the limit not held, red at 2970 where
+/// host faces shape its text.
 #[test]
 fn test_generated_flows_the_r50_seed_sweep_found_hold_every_flow_property() {
     for seed in [1021, 2970, 4284] {
@@ -1150,12 +1148,10 @@ fn test_a_spread_across_the_canvas_places_every_glyph() {
 ///
 /// Since #363 a cubic 10³⁰ long is longer than placement lays: the input
 /// lays nothing along it, as text or as whole glyphs, and says why,
-/// which is what is held here. The cost it was found by needed that
-/// length: its gaps' squares passed every `f32`. The same input with its
-/// control point shortened to 10¹⁷, within the limit, lays the cap at 11
-/// path lookups a glyph, and at 26 with both stops taken out — either
-/// way inside the 24 a glyph and a run-on probe this test held, so no
-/// bound is held on it: none would fail for its stops.
+/// which is what is held here. Its stops are held within the limit by
+/// the two tests below: the whole-glyph solve's on this input with its
+/// floats rescaled into the limit, and the walk's ink solves' on a cubic
+/// 10⁷ from the origin, where both of theirs are what bound it.
 ///
 /// Control: the limit not held, red ("65520 glyphs laid along a path
 /// longer than placement lays").
@@ -1174,6 +1170,133 @@ fn test_a_repeat_of_an_ornament_along_a_cubic_too_long_to_lay_lays_nothing_and_s
         past >= 2,
         "precondition: its cubic's placements, as text and as whole glyphs, are held as clearly past the \
          limit ({past})"
+    );
+}
+
+/// The finding above with the floats that set its cubic rescaled into
+/// the limit (#363): each of them past 9 × 10¹⁸, its control point at
+/// `-1e30` among them, set to its leading digits times 10¹⁴ — a cubic
+/// within the limit whose far points lie some 10¹⁴ from the origin, where
+/// the floats, 10⁷ apart, still cannot resolve the ornament's gaps. The walk
+/// lays the cap of it as the input did, and the whole-glyph placement
+/// the replay lays beside the walk (`place_pitched`, where a face draws
+/// one of the input's glyphs with no outline and inks it as its box,
+/// #333) lays 65,544 glyphs along it. Its floats cannot see the slack
+/// either, so each solve of a count's slack stops at the first round
+/// whose lay does not answer its move (`MOST_UNRESOLVED_UNANSWERED`).
+///
+/// The walk's own cost there is held by the test below, on a path where
+/// both of its ink solves' stops are what bound it.
+///
+/// Precondition: the input lays the cap of an ornament (no `STEPS_TAKEN`
+/// for most glyphs, which an ornament takes by its ink: its box steps are
+/// the run-on probe's, `MAX_RUN_ON_STEPS` at most), its placements are
+/// held as clearly within the limit, and a slack solve where the floats
+/// cannot resolve the pattern's gaps meets a round its lay does not
+/// answer. Control: the solve without its stop where the floats cannot
+/// resolve the gaps (`unresolved && unanswered` in `pitch::pitch`), red:
+/// a solve goes on past two such rounds.
+#[test]
+fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solving_them() {
+    use crate::flow::place::pitch::MOST_UNRESOLVED_UNANSWERED;
+    use crate::flow::place::{GLYPHS_PLACED, MAX_RUN_ON_STEPS, STEPS_TAKEN};
+    use crate::flow::tests::flow_fuzz::HELD_TO_THE_LIMIT;
+    use crate::flow::MAX_PLACED_GLYPHS;
+    let found = include_bytes!(
+        "fuzz_findings/repeat_of_an_ornament_along_a_cubic_its_floats_cannot_resolve_within_the_limit"
+    );
+    for counter in [&STEPS_TAKEN, &GLYPHS_PLACED, &MOST_UNRESOLVED_UNANSWERED] {
+        counter.with(|count| count.set(0));
+    }
+    HELD_TO_THE_LIMIT.with(|held| held.set((0, 0)));
+    if let Err(why) = check_flow_structured_as_found(found) {
+        panic!("the input within the limit: {why}");
+    }
+    let [steps, placed, unanswered] = [&STEPS_TAKEN, &GLYPHS_PLACED, &MOST_UNRESOLVED_UNANSWERED]
+        .map(|counter| counter.with(std::cell::Cell::get));
+    let (within, past) = HELD_TO_THE_LIMIT.with(std::cell::Cell::get);
+    assert!(
+        placed + 64 > MAX_PLACED_GLYPHS && steps < placed / 4 + MAX_RUN_ON_STEPS,
+        "precondition: the input lays the cap of an ornament ({placed} glyphs, {steps} box steps)"
+    );
+    assert!(
+        within >= 2 && past == 0,
+        "precondition: its placements are held as clearly within the limit ({within} within, {past} past)"
+    );
+    assert!(
+        unanswered > 0,
+        "precondition: a slack solve where the floats cannot resolve the pattern's gaps meets a round its \
+         lay does not answer"
+    );
+    assert!(
+        unanswered <= 1,
+        "a slack solve where the floats cannot see the slack went on past a round its lay did not answer \
+         ({unanswered} such rounds)"
+    );
+}
+
+/// What the #294 finding above was found for, where the path's floats
+/// are coarse and its length is ordinary (#363, ruling B42.1 §4): `· `
+/// repeated along a cubic 2 × 10⁵ long, 10⁷ from the origin, where the
+/// floats are a unit apart, a thousand times `INK_TOLERANCE`. No ink gap
+/// can come within the tolerance of what it owes there, so without
+/// their stops every glyph would take every one of `INK_TURNS` turns of
+/// `ink_gap_at` and, in each, every one of `INK_ROUNDS` rounds of
+/// `ink_distance_at`'s bisection. A turn that leaves its center where it
+/// was, and a round that leaves its bracket as it was, leave them so
+/// every turn and round after, so each stops there, which changes no
+/// position. So the placement, its readable lay and its run-on probe
+/// included, takes at most 26 path lookups a glyph: measured, 20.07
+/// (756,156 for 37,682 glyphs). The finding rescaled into the limit
+/// above is no pin for them: there the round's stop moves its walk's
+/// lookups by a tenth (696,222 to 759,786), well inside what its run-on
+/// probe alone may take (`8 × MAX_RUN_ON_STEPS`).
+///
+/// Precondition: the walk lays many glyphs, each by its ink (no
+/// `STEPS_TAKEN` for most of them). Controls: the turn's stop taken out,
+/// red at 88.2 lookups a glyph; the round's, red at 32.7; both, 162.
+#[test]
+fn test_a_repeat_of_an_ornament_far_from_the_origin_stops_its_ink_solves() {
+    use crate::document::values::FitMode;
+    use crate::flow::path::PATH_LOOKUPS;
+    use crate::flow::place::{place_on_open_capped, GLYPHS_PLACED, STEPS_TAKEN};
+    use crate::flow::tests::support::{real_run, style, with_fonts};
+    use crate::flow::{Curve, MAX_PLACED_GLYPHS};
+    use glam::Vec2;
+    let at = Vec2::splat(1.0e7);
+    let length = 2.0e5;
+    let curve = Curve::Cubic(
+        at,
+        at + Vec2::new(0.35 * length, -0.3 * length),
+        at + Vec2::new(0.65 * length, 0.3 * length),
+        at + Vec2::new(length, 0.0),
+    );
+    let plain = style(16.0);
+    let [steps, placed, lookups] = with_fonts(|fs| {
+        let run = real_run("· ", &plain, fs);
+        for counter in [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS] {
+            counter.with(|count| count.set(0));
+        }
+        let (_, laid) = place_on_open_capped(
+            &run,
+            std::slice::from_ref(&curve),
+            &FitMode::Repeat,
+            0.0,
+            &plain,
+            fs,
+            MAX_PLACED_GLYPHS,
+            None,
+        );
+        assert!(!laid.truncated, "the cubic is laid whole");
+        [&STEPS_TAKEN, &GLYPHS_PLACED, &PATH_LOOKUPS].map(|counter| counter.with(std::cell::Cell::get))
+    });
+    assert!(
+        placed > 30_000 && steps < placed / 4,
+        "precondition: the walk lays many glyphs, each by its ink ({placed} glyphs, {steps} box steps)"
+    );
+    assert!(
+        lookups <= 26 * placed,
+        "{lookups} path lookups for {placed} glyphs placed, past 26 a glyph"
     );
 }
 
