@@ -195,7 +195,7 @@ fn near(v: Vec2) -> bool {
 
 /// Whether `doc` is inside the projection's work bound (see the module
 /// docs). O(the document), and once a process O(the font system's glyphs)
-/// for [`widest_advance`].
+/// for `widest_advance`.
 pub fn within_bound(doc: &Document) -> bool {
     let tree = doc.tree();
     let arena = tree.arena();
