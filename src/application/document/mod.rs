@@ -597,16 +597,22 @@ impl MindMapDocument {
     }
 
     /// Set the presentation layer aside (`Document::suspend_presentations`):
-    /// until the matching [`Self::resume_presentations`] the document
-    /// reads as the map itself. For a funnel that hands the document on
-    /// and cannot hold [`Self::suspended`]'s guard; the pair nests.
-    pub fn suspend_presentations(&mut self) {
+    /// until [`Self::resume_presentations`] takes the returned
+    /// [`Suspension`] back, the document reads as the map itself; the
+    /// pair nests. For the Action funnel's guard
+    /// (`dispatch::the_map::OnTheMap`), which hands its context down and
+    /// so cannot hold [`Self::suspended`]'s. Anything else holds that
+    /// guard: a suspension never resumed leaves the layer out, so one is
+    /// a value that must be given back, not a call that can be left
+    /// unmatched.
+    pub(in crate::application) fn suspend_presentations(&mut self) -> Suspension {
         self.doc.suspend_presentations();
+        Suspension(())
     }
 
-    /// Put the presentation layer back (`Document::resume_presentations`).
-    /// Nothing for a resume no suspension matches.
-    pub fn resume_presentations(&mut self) {
+    /// Put the presentation layer back (`Document::resume_presentations`),
+    /// taking back the [`Suspension`] that set it aside.
+    pub(in crate::application) fn resume_presentations(&mut self, _suspension: Suspension) {
         self.doc.resume_presentations();
     }
 
@@ -671,6 +677,14 @@ impl MindMapDocument {
         .expect("the root applies")
     }
 }
+
+/// That the presentation layer of a [`MindMapDocument`] was set aside
+/// ([`MindMapDocument::suspend_presentations`]): only that call makes
+/// one, and only [`MindMapDocument::resume_presentations`] takes it
+/// back. Dropping one unused is a warning, and so an error under the
+/// gate's `-D warnings`.
+#[must_use = "a suspension never given back to `resume_presentations` leaves the presentation layer out"]
+pub(crate) struct Suspension(());
 
 /// The open map with its presentation layer set aside
 /// ([`MindMapDocument::suspended`]): it derefs to the document, which

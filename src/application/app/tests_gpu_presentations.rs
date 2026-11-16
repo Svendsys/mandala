@@ -1015,10 +1015,14 @@ fn test_a_presentation_from_the_console_is_drawn_reported_and_never_in_the_docum
 
 /// **`animations_complete` waits for an animated edit, and never for a
 /// loop that nobody stops**, and the app says which keeps it;
-/// `query.animations` reports the edit's timing while it runs.
+/// `query.animations` reports the edit's timing while it runs. A loop
+/// stopped half way in plays the rest of its way in and all of its way
+/// out, and is then over.
 ///
-/// Control, seen red: with the app reading only the presentations into
-/// `Settling::animating`, the wait holds while the edit is mid-way.
+/// Controls, each seen red: with the app reading only the presentations
+/// into `Settling::animating`, the wait holds while the edit is mid-way;
+/// a loop stopped on its way in that does not finish its cycle is not on
+/// its way out 100 ms later.
 #[test]
 fn test_animations_complete_waits_for_an_edit_and_names_a_loop() {
     let Some(mut app) = headless_app(&fixture()) else {
@@ -1068,23 +1072,116 @@ fn test_animations_complete_waits_for_an_edit_and_names_a_loop() {
     let nodes: Vec<NodeId> = every_node(doc.doc()).collect();
     doc.start_presentation(&breathe, &nodes[..1], now)
         .expect("starts");
-    result(init, json!({"id": 1, "cmd": "clock.step", "ms": 1_000}));
+    result(init, json!({"id": 1, "cmd": "clock.step", "ms": 1_050}));
     let settling = init.settling();
     assert!(
         !at_rest(init) && settling.looping,
         "a loop is what keeps it: {settling:?}"
     );
-    // Stopped half way in (1000 ms is five cycles), it goes in, comes
-    // back, and is over.
+    // 1050 ms is five cycles of 200 and half of the sixth's way in.
+    let half_in = result(init, json!({"id": 1, "cmd": "query.animations"}));
     assert_eq!(
-        document_mut(init).stop_presentation("breathe", &nodes[..1], now + 1_000.0),
+        (
+            &half_in["presentations"][0]["direction"],
+            &half_in["presentations"][0]["t"]
+        ),
+        (&json!("in"), &json!(0.5))
+    );
+    // Stopped there, it plays the rest of its way in (50 ms), then all
+    // of its way out (100 ms), and is over.
+    assert_eq!(
+        document_mut(init).stop_presentation("breathe", &nodes[..1], now + 1_050.0),
         1
     );
-    result(init, json!({"id": 1, "cmd": "clock.step", "ms": 200}));
+    result(init, json!({"id": 1, "cmd": "clock.step", "ms": 100}));
+    let returning = result(init, json!({"id": 1, "cmd": "query.animations"}));
+    assert_eq!(
+        (
+            &returning["count"],
+            &returning["presentations"][0]["direction"],
+            &returning["moving"]
+        ),
+        (&json!(1), &json!("out"), &json!(true)),
+        "50 ms into its way out: {returning}"
+    );
+    assert!(
+        !at_rest(init) && !init.settling().looping,
+        "a stopped loop will end"
+    );
+    result(init, json!({"id": 1, "cmd": "clock.step", "ms": 50}));
     assert!(
         at_rest(init) && !init.settling().looping,
         "stopped, it finished its cycle"
     );
     let over = result(init, json!({"id": 1, "cmd": "query.animations"}));
     assert_eq!(over["count"], 0);
+}
+
+/// The Action funnel's guard (`dispatch::the_map::OnTheMap`) puts the
+/// presentation layer back when it is dropped — at the end of its scope,
+/// on an early return, and while a panic unwinds — and one made for an
+/// Action that reads only what is drawn leaves the layer applied. It is
+/// what every Action goes through; `MindMapDocument::suspended`, the
+/// other funnels' guard, is held the same way in `tests_presentations`.
+///
+/// Control, seen red: a guard whose drop does nothing leaves the
+/// document suspended after each.
+#[test]
+fn test_the_action_funnels_guard_resumes_however_its_scope_ends() {
+    use super::dispatch::the_map::OnTheMap;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    /// Whether the open map's layer is set aside, read through `init`.
+    fn aside(init: &InitState) -> bool {
+        document(init).doc().presentations_suspended()
+    }
+    /// Through a guard for an Action that reads the map, whether the
+    /// layer is set aside; `None` when it returns early.
+    fn early(init: &mut InitState, leave: bool) -> Option<bool> {
+        let mut ctx = init.input_context();
+        let (mut core, _) = ctx.split_borrow();
+        let guard = OnTheMap::when(&mut core, true);
+        let set_aside = guard.document.as_ref()?.doc().presentations_suspended();
+        if leave {
+            return None;
+        }
+        Some(set_aside)
+    }
+
+    let Some(mut app) = headless_app(&fixture()) else {
+        return;
+    };
+    let init = &mut app.init;
+    perform(init);
+    assert!(!aside(init), "precondition: the layer is applied");
+    {
+        let mut ctx = init.input_context();
+        let (mut core, _) = ctx.split_borrow();
+        let guard = OnTheMap::when(&mut core, true);
+        let doc = guard.document.as_ref().expect("a document");
+        assert!(doc.doc().presentations_suspended(), "through the guard: the map");
+    }
+    assert!(!aside(init), "scope end");
+    assert_eq!(early(init, false), Some(true));
+    assert!(!aside(init), "after a return with a value");
+    assert_eq!(early(init, true), None);
+    assert!(!aside(init), "early return");
+    let unwound = catch_unwind(AssertUnwindSafe(|| {
+        let mut ctx = init.input_context();
+        let (mut core, _) = ctx.split_borrow();
+        let _guard = OnTheMap::when(&mut core, true);
+        panic!("an Action failed half way");
+    }));
+    assert!(unwound.is_err());
+    assert!(!aside(init), "panic");
+    // An Action that reads only what is drawn: the guard sets nothing
+    // aside.
+    {
+        let mut ctx = init.input_context();
+        let (mut core, _) = ctx.split_borrow();
+        let guard = OnTheMap::when(&mut core, false);
+        let doc = guard.document.as_ref().expect("a document");
+        assert!(!doc.doc().presentations_suspended(), "what is drawn");
+    }
+    assert!(!aside(init));
 }

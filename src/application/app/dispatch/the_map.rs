@@ -39,7 +39,7 @@
 
 use std::ops::{Deref, DerefMut};
 
-use crate::application::document::MindMapDocument;
+use crate::application::document::{MindMapDocument, Suspension};
 
 use super::super::input_context_core::InputContextCore;
 
@@ -47,8 +47,9 @@ use super::super::input_context_core::InputContextCore;
 /// until this is dropped. See the [module docs](self).
 pub(in crate::application::app) struct OnTheMap<'c, 'a> {
     core: &'c mut InputContextCore<'a>,
-    /// Whether this guard set the layer aside, and so puts it back.
-    suspended: bool,
+    /// The suspension this guard made, when it set the layer aside, and
+    /// so gives back.
+    suspended: Option<Suspension>,
 }
 
 impl<'c, 'a> OnTheMap<'c, 'a> {
@@ -57,11 +58,12 @@ impl<'c, 'a> OnTheMap<'c, 'a> {
     /// when what is about to run reads only what is drawn.
     pub(in crate::application::app) fn when(core: &'c mut InputContextCore<'a>, reads_the_map: bool) -> Self {
         let suspended = reads_the_map
-            && core
-                .document
-                .as_deref_mut()
-                .map(MindMapDocument::suspend_presentations)
-                .is_some();
+            .then(|| {
+                core.document
+                    .as_deref_mut()
+                    .map(MindMapDocument::suspend_presentations)
+            })
+            .flatten();
         OnTheMap { core, suspended }
     }
 }
@@ -83,9 +85,9 @@ impl<'a> DerefMut for OnTheMap<'_, 'a> {
 impl Drop for OnTheMap<'_, '_> {
     /// Put the layer back, on the document the context holds.
     fn drop(&mut self) {
-        if self.suspended {
+        if let Some(suspension) = self.suspended.take() {
             if let Some(doc) = self.core.document.as_deref_mut() {
-                doc.resume_presentations();
+                doc.resume_presentations(suspension);
             }
         }
     }
