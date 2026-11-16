@@ -515,14 +515,18 @@ fn test_demo_maps_draw_every_ring_and_path() {
 }
 
 /// What a demo map's presentations are held to: the node they are
-/// started on, the frame's time on their timeline, and, per
-/// presentation in start order, its layer, its progress then and — on
-/// the glyph layer — the words each of its ranges names.
+/// started on, the frame's time on their timeline, per presentation in
+/// start order its layer, its progress then and — on the glyph layer —
+/// the words each of its ranges names, and the colors the glyphs they
+/// color rest in, as the map spells them: what a color fades from.
 struct Presented {
     map: &'static str,
     node: u64,
     at_ms: u64,
     presentations: &'static [(&'static str, &'static str, f32, &'static [&'static str])],
+    /// `([start, end], #rrggbbaa)`: the glyphs of the run, and the color
+    /// they are drawn in with nothing playing.
+    rest: &'static [([usize; 2], [u8; 4])],
 }
 
 /// The README's two presented maps (#251, the acceptance cases moved
@@ -533,13 +537,16 @@ struct Presented {
 /// "feathers" (two document-layer presentations: the map saves the line
 /// centered and the span empty), and the letters of "feathers" and the
 /// trail half way through their lift in time and three quarters in
-/// progress (`1 - (1 - f)²` at `f = 0.5`).
+/// progress (`1 - (1 - f)²` at `f = 0.5`), their colors three quarters
+/// of the way from the line's `#f4d696` and the trail span's
+/// `#f4d69600` (#369: one presentation, no `feathers-rest` before it).
 const PRESENTED: [Presented; 2] = [
     Presented {
         map: "frames",
         node: 2,
         at_ms: 0,
         presentations: &[("an-ellipse", "glyph", 1.0, &["an ellipse"])],
+        rest: &[],
     },
     Presented {
         map: "dickinson",
@@ -549,7 +556,6 @@ const PRESENTED: [Presented; 2] = [
             ("hope-swells", "glyph", 0.84375, &["Hope"]),
             ("feathers-line", "document", 1.0, &[]),
             ("feathers-trail", "document", 1.0, &[]),
-            ("feathers-rest", "glyph", 1.0, &["feathers", "·····"]),
             (
                 "feathers-lift",
                 "glyph",
@@ -559,6 +565,10 @@ const PRESENTED: [Presented; 2] = [
                     "r", "r", "r", "s", "s", "s", "·", "·", "·", "·", "·", "·", "·", "·", "·", "·",
                 ],
             ),
+        ],
+        rest: &[
+            ([25, 33], [0xf4, 0xd6, 0x96, 0xff]),
+            ([36, 41], [0xf4, 0xd6, 0x96, 0x00]),
         ],
     },
 ];
@@ -604,14 +614,18 @@ fn text_of(run: &GlyphRunData, spans: &[String], range: std::ops::Range<usize>) 
 /// the words it is for, read off the shaped run; each instance is at the
 /// progress its timing puts it at; and the run on the glyph layer
 /// carries each scale at that progress, with no other glyph of it
-/// scaled. With `MANDALA_DEMO_OUT`
+/// scaled, and each color that far from the color its glyph rests in,
+/// with no other glyph of it colored. With `MANDALA_DEMO_OUT`
 /// set, the frame is written there as `<name>-presented.png`.
 ///
 /// Controls, each seen red: a range moved by one glyph names another
 /// word; with the glyph-layer stage not stamping what plays, the run
 /// carries no scale; the trail saved in the map's span, as it once was,
 /// is drawn with nothing playing; `feathers-line`'s offset one unit off
-/// moves glyph 0 of the line.
+/// moves glyph 0 of the line; with no own color given before the lift
+/// (#369's seed left out), its glyphs carry no color; with the trail's
+/// span saved opaque, the dots are not where their fade from
+/// transparent puts them.
 #[test]
 fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
     use baumhard::document::presentation::PresentationBody;
@@ -782,7 +796,7 @@ fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
         // glyphs a color was given.
         let mut scales = vec![1.0_f32; run.shaped().glyph_count()];
         let mut offsets = vec![Vec2::ZERO; scales.len()];
-        let mut colored = vec![false; scales.len()];
+        let mut colored: Vec<Option<([u8; 4], f32)>> = vec![None; scales.len()];
         for (def, (id, layer, t, words)) in doc.definitions().presentations.iter().zip(case.presentations) {
             let PresentationBody::Glyph(ops) = &def.body else {
                 assert_eq!(*layer, "document", "{name}: `{id}` is a glyph-layer presentation");
@@ -809,7 +823,9 @@ fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
                     match &op {
                         RunOverrideOp::Scale { value, .. } => scales[glyph] = 1.0 + (value - 1.0) * t,
                         RunOverrideOp::Offset { value, .. } => offsets[glyph] = *value * *t,
-                        RunOverrideOp::Color { .. } => colored[glyph] = true,
+                        RunOverrideOp::Color { value, .. } => {
+                            colored[glyph] = value.map(|value| (value.0, *t))
+                        }
                         RunOverrideOp::Clear => {}
                     }
                 }
@@ -836,9 +852,31 @@ fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
             );
             assert_eq!(
                 color.is_some(),
-                colored[glyph],
+                colored[glyph].is_some(),
                 "{name}: glyph {glyph} has a color of a presentation's: {color:?}"
             );
+            // A color fades from the one the glyph rests in, which the
+            // map spells; worked here channel by channel. The rounding
+            // is the blend's own, so the ±1 is the progress's: the case
+            // gives `t` as the literal 0.75, the instance's eased `t` is
+            // an f32 that can land a hair to either side of it.
+            if let (Some(color), Some((to, t))) = (color, colored[glyph]) {
+                let from = case
+                    .rest
+                    .iter()
+                    .find(|([start, end], _)| (*start..*end).contains(&glyph))
+                    .map(|(_, rest)| *rest)
+                    .unwrap_or_else(|| panic!("{name}: the case names the color glyph {glyph} rests in"));
+                let expected: [u8; 4] = std::array::from_fn(|channel| {
+                    let (from, to) = (f32::from(from[channel]), f32::from(to[channel]));
+                    (from + (to - from) * t).round() as u8
+                });
+                assert!(
+                    color.0.iter().zip(expected).all(|(&is, want)| is.abs_diff(want) <= 1),
+                    "{name}: glyph {glyph} is drawn in {:?}, not {expected:?}: {t} of the way from {from:?} to {to:?}",
+                    color.0
+                );
+            }
         }
         assert!(
             scales.iter().any(|scale| *scale != 1.0),

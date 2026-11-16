@@ -2833,6 +2833,9 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("run_override_ops_skip_filler_glyphs", |b| {
         b.iter(do_run_override_ops_skip_filler_glyphs)
     });
+    c.bench_function("run_own_colors_follow_the_glyphs_the_run_draws", |b| {
+        b.iter(do_run_own_colors_follow_the_glyphs_the_run_draws)
+    });
     c.bench_function("run_set_reuses_the_override_buffers", |b| {
         b.iter(do_run_set_reuses_the_override_buffers)
     });

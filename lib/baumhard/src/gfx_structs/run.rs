@@ -55,6 +55,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::document::values::{Rgba, ZoomWindow};
 use crate::flow::{PlacedRun, ShapedBox, ShapedRun, FILLER_SPAN};
+use crate::font::{LayoutGlyph, COLOR_WHITE};
+
+/// The color `laid` is drawn in when no override replaces it — its own
+/// color: the color its span was shaped with, or white for a glyph
+/// shaped with none. The one definition of it, which the renderer draws
+/// by and a glyph-layer presentation fades from. O(1).
+pub fn own_color(laid: &LayoutGlyph) -> Rgba {
+    let color = laid.color_opt.unwrap_or(COLOR_WHITE);
+    Rgba([color.r(), color.g(), color.b(), color.a()])
+}
 
 /// What was shaped, and how it is placed.
 ///
@@ -102,6 +112,34 @@ impl RunShape {
         match self {
             RunShape::Box(shaped) => shaped.glyph_spans.len(),
             RunShape::Path { placed, .. } => placed.glyphs.len(),
+        }
+    }
+
+    /// Each placed glyph's [`own_color`], indexed as a run's overrides
+    /// are: a path run's placed glyphs, each the laid-out glyph it
+    /// places, and a box run's laid-out glyphs in layout order. `None`
+    /// for a placed glyph whose laid-out glyph the buffer does not hold,
+    /// which is not drawn.
+    ///
+    /// Cost: O(the run's laid-out glyphs + its placed glyphs); one
+    /// allocation, two for a path run (its layout collected once, so
+    /// glyph *i* is an index and not a walk).
+    pub fn own_colors(&self) -> Vec<Option<Rgba>> {
+        match self {
+            RunShape::Box(shaped) => shaped
+                .buffer
+                .layout_runs()
+                .flat_map(|line| line.glyphs.iter())
+                .map(|laid| Some(own_color(laid)))
+                .collect(),
+            RunShape::Path { run, placed } => {
+                let layout: Vec<&LayoutGlyph> = run.layout_glyphs().collect();
+                placed
+                    .glyphs
+                    .iter()
+                    .map(|glyph| layout.get(glyph.glyph as usize).map(|laid| own_color(laid)))
+                    .collect()
+            }
         }
     }
 

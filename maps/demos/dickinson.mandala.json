@@ -89,7 +89,7 @@
     {
       "id": "feathers-trail",
       "name": "Feathers' trail",
-      "description": "Writes the trail of dots after \"feathers\" into the line's last span, which the map saves empty: five glyphs of the same run, unseen until \"feathers-rest\" and \"feathers-lift\" color and lift them, and never saved, exported or found while nothing plays. Start it on node 1, after \"feathers-line\" and before those two.",
+      "description": "Writes the trail of dots after \"feathers\" into the line's last span, which the map saves empty and transparent: five glyphs of the same run, unseen until \"feathers-lift\" fades them in and lifts them, and never saved, exported or found while nothing plays. Start it on node 1, after \"feathers-line\" and before \"feathers-lift\".",
       "play": "hold",
       "layer": "document",
       "target": "spans",
@@ -116,53 +116,9 @@
       ]
     },
     {
-      "id": "feathers-rest",
-      "name": "Feathers at rest",
-      "description": "Gives the letters of \"feathers\" and the trail after them the colors they rest in, so that \"feathers-lift\", started after it, fades them from there: a color blends only from a color a presentation gave.",
-      "play": "hold",
-      "layer": "glyph",
-      "target": "sections",
-      "filter": {
-        "fields": [
-          [
-            {
-              "channel": 0
-            },
-            {
-              "Equals": false
-            }
-          ]
-        ]
-      },
-      "glyph": [
-        {
-          "run_overrides": {
-            "color": {
-              "range": [
-                25,
-                33
-              ],
-              "value": "#f4d696"
-            }
-          }
-        },
-        {
-          "run_overrides": {
-            "color": {
-              "range": [
-                36,
-                41
-              ],
-              "value": "#f4d69600"
-            }
-          }
-        }
-      ]
-    },
-    {
       "id": "feathers-lift",
       "name": "Feathers lift",
-      "description": "Each letter of \"feathers\" rises a little further than the one before it, growing and thinning, and a trail of dots fades above them; then they settle. Start it on node 1, after \"feathers-rest\".",
+      "description": "Each letter of \"feathers\" rises a little further than the one before it, growing and thinning from the color it rests in, and the trail of dots fades in above them; then they settle. Start it on node 1, after \"feathers-trail\".",
       "play": "loop",
       "layer": "glyph",
       "target": "sections",
