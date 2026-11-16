@@ -45,6 +45,7 @@ pub use load::{parse_presentations, PresentationsError};
 
 use crate::document::edit::resolve::Fault;
 use crate::document::edit::{Animate, Easing, Filter, Mutations, Target};
+use crate::document::format::context::shown;
 use crate::document::format::presentations::{GlyphOpDto, LayerDto, PlayDto};
 use crate::document::writer::error::ApplyError;
 use crate::engine::interpolate::Snap;
@@ -163,6 +164,10 @@ pub enum PresentError {
     },
 }
 
+/// Every part that may hold what a file wrote — the presentation's id,
+/// the name it gave a field, a message that quotes either — is shown as
+/// file text is: every control, line separator and bidi control escaped
+/// (`format::context::shown`), as an edit's refusal shows it (#365).
 impl fmt::Display for PresentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -172,15 +177,22 @@ impl fmt::Display for PresentError {
                 name,
             } => write!(
                 f,
-                "presentation `{presentation}`: `{field}` names {name}, which this map does not define"
+                "presentation `{}`: `{field}` names {}, which this map does not define",
+                shown(presentation),
+                shown(name)
             ),
             PresentError::Value {
                 presentation,
                 field,
                 message,
-            } => write!(f, "presentation `{presentation}`: `{field}`: {message}"),
+            } => write!(
+                f,
+                "presentation `{}`: `{field}`: {}",
+                shown(presentation),
+                shown(message)
+            ),
             PresentError::Refused { presentation, error } => {
-                write!(f, "presentation `{presentation}`: {error}")
+                write!(f, "presentation `{}`: {error}", shown(presentation))
             }
         }
     }

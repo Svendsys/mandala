@@ -1906,3 +1906,42 @@ fn test_a_maps_presentations_are_saved_as_they_were_read() {
     );
     assert!(value["presentations"][1].get("return").is_none());
 }
+
+/// Every part of a refused start that may hold what a file wrote — the
+/// presentation's id, the name it gives a field, a message that quotes
+/// one — is shown as file text is, every control, line separator and
+/// bidi control escaped, as an edit's refusal shows it (#365).
+///
+/// Control, seen red: `PresentError`'s parts shown as written.
+#[test]
+fn test_a_refused_starts_text_from_the_file_is_escaped() {
+    let raw = "a\u{202e}b\u{2028}c\u{85}d\u{1b}e";
+    let errors = [
+        PresentError::UnknownName {
+            presentation: raw.to_string(),
+            field: "color",
+            name: format!("theme variable `{raw}`"),
+        },
+        PresentError::Value {
+            presentation: raw.to_string(),
+            field: "span",
+            message: raw.to_string(),
+        },
+        PresentError::Refused {
+            presentation: raw.to_string(),
+            error: Box::new(ApplyError::TooMuchText { bytes: 2, max: 1 }),
+        },
+    ];
+    let dangerous = |c: char| {
+        c.is_control()
+            || matches!(c, '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+    };
+    for error in errors {
+        let shown = error.to_string();
+        assert!(!shown.chars().any(dangerous), "{error:?} shows {shown:?}");
+        assert!(
+            shown.contains("a\\u202eb"),
+            "{error:?} shows its text escaped: {shown}"
+        );
+    }
+}
