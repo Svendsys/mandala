@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 /// Every minimized input a fuzz target found, by the symptom it had.
 /// Each is replayed through every property here; its own test below
 /// pins the symptom. The fuzz targets read these files as seeds.
-const FINDINGS: [(&str, &[u8]); 7] = [
+const FINDINGS: [(&str, &[u8]); 8] = [
     (
         "c1_control_saved_raw",
         include_bytes!("fuzz_findings/c1_control_saved_raw.mandala.json"),
@@ -62,6 +62,13 @@ const FINDINGS: [(&str, &[u8]); 7] = [
     (
         "a_ring_too_far_out_to_project_in_time",
         include_bytes!("fuzz_findings/a_ring_too_far_out_to_project_in_time.mandala.json"),
+    ),
+    // A harness finding of the same kind (CI's load_raw job on #375, a
+    // timeout): `a_ring_past_the_body_index_cells` with its dots spaced a
+    // tenth as far apart.
+    (
+        "a_ring_spaced_too_far_out_to_project_in_time",
+        include_bytes!("fuzz_findings/a_ring_spaced_too_far_out_to_project_in_time.mandala.json"),
     ),
 ];
 
@@ -141,6 +148,35 @@ fn test_a_ring_past_the_body_index_cells_is_projected() {
 fn test_a_ring_too_far_out_to_project_in_time_is_skipped() {
     use crate::projection::tests::projection_fuzz::projection_counts;
     let finding = FINDINGS[6].1;
+    // The counts are this thread's: exactly what this replay adds.
+    let (projected, skipped, cut) = projection_counts();
+    check_load_bytes(finding).unwrap();
+    let (projected_now, skipped_now, cut_now) = projection_counts();
+    assert_eq!(
+        (projected_now - projected, skipped_now - skipped, cut_now - cut),
+        (0, 1, 0),
+        "the finding is skipped, not projected"
+    );
+}
+
+/// The finding of CI's load_raw job on #375 (a timeout; #374), as found:
+/// `a_ring_past_the_body_index_cells` with its `spacing` of 10⁹ mutated to
+/// 10⁸, one byte (SHA-1 `7e0ac234`). Its ring, 600 `gap`s of 10⁹ out, lays
+/// 37,663 glyphs at 1,499,631 glyph steps a projection, 39.8 a glyph, in
+/// every projection the check made. It is not minimized further: only 600
+/// `gap`s, the most the loader holds one to, put a ring that far out, and
+/// fewer rings lay it nearer, where its glyphs read their path another
+/// number of times (9 rings, spaced to lay as many glyphs, take 68.7 a
+/// glyph). It was found on a branch with #370's carve-out; under ruling
+/// B47.1 its ring is outside the bound, as the first finding's is, so the
+/// check skips its projection and counts it skipped.
+///
+/// Control: with the bound reading no frame's reach — #370's carve-out —
+/// red on the counts, one projected and none skipped.
+#[test]
+fn test_a_ring_spaced_too_far_out_to_project_in_time_is_skipped() {
+    use crate::projection::tests::projection_fuzz::projection_counts;
+    let finding = FINDINGS[7].1;
     // The counts are this thread's: exactly what this replay adds.
     let (projected, skipped, cut) = projection_counts();
     check_load_bytes(finding).unwrap();

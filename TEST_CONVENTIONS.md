@@ -806,24 +806,29 @@ What they hold, in short (each module's docs are the full list):
   sweep requires each step to be both taken and skipped.
 - **The projection** (V1-B7, ruling B7.3). Both loader targets project
   every map they load that is inside the projection's work bound
-  (`projection_fuzz::within_bound`: at most one ring of text, of at most
+  (`projection_fuzz::within_bound`: at most one ring of text — a span's,
+  or a `Repeat` ring's `vertical` or `corners` — of at most
   `MAX_FRAME_GLYPHS` characters, every coordinate within
   `projection_fuzz::EXTENT`, and at most `projection_fuzz::MAX_UNITS`
   sections, rings, connectors and links): no panic, a group per visible
   node in every layer, every run's box finite, the same layers projected
   twice, hits that do not panic, and one generated edit kept equal to a
-  full projection. A frame's rings are coordinates of the bound (ruling
-  B47.1): its node's rectangle grown by its `inset`, a `gap` for each
-  ring inside its outermost and those rings' line heights is held within
-  `EXTENT` (`projection_fuzz::outline_reach`). The loader holds an
-  `inset` and a `gap` only to the canvas bound (#364), and a ring that far
-  out is past what the cap of a placement bounds the work of: the cap
-  bounds its glyphs, and there each glyph reads its path a thousand times
-  (#374). A `spacing` parts glyphs and moves no outline, and is not part
-  of the bound. A map outside the bound is skipped and counted, and
-  the targets print the counts at every power of two and every 256
-  inputs, so even a slow run reports its skipped fraction; the suite
-  holds the structured maps to fewer than half skipped. The engine
+  full projection. A node's drawn rectangle and a frame's rings are
+  coordinates of the bound (rulings B47.1, B47.2): the rectangle — the
+  larger of the node's `min_size` and each section's `offset` plus its
+  box, which the bound reads from the text without shaping it
+  (`projection_fuzz::drawn_bound`) — and it grown by a frame's `inset`, a
+  `gap` for each ring inside its outermost and the line heights of those
+  that lay glyphs are held within `EXTENT`
+  (`projection_fuzz::outline_reach`). The loader holds an `inset`, a
+  `gap`, an `offset` and a `min_size` only to the canvas bound (#364),
+  and a ring that far out is past what the cap of a placement bounds the
+  work of: the cap bounds its glyphs, and there each glyph reads its path
+  a thousand times (#374). A `spacing` parts glyphs and moves no outline,
+  and is not part of the bound. A map outside the bound is skipped and
+  counted, and the targets print the counts at every power of two and
+  every 256 inputs, so even a slow run reports its skipped fraction; the
+  suite holds the structured maps to fewer than half skipped. The engine
   bounds a placement and a frame, never a whole map (#316), which is why
   the bound is the harness's. `projection_edits` runs the oracle — the
   updated layers equal a full projection — after every step of a

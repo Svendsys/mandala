@@ -149,6 +149,12 @@ thread_local! {
     /// `None` before any run.
     #[cfg(test)]
     pub(crate) static RUN_EDGE: Cell<Option<i64>> = const { Cell::new(None) };
+    /// Test counter (ruling B47.2): how many glyphs the last directional
+    /// ring laid on this thread placed, and the glyph steps it spent, its
+    /// placement's work in all, as `LAST_RING` keeps them for a `Repeat`
+    /// ring laid by its spans alone. `None` before any.
+    #[cfg(test)]
+    pub(crate) static LAST_DIRECTIONAL: Cell<Option<(usize, usize)>> = const { Cell::new(None) };
 }
 
 /// The lays of a run held back for whenever its count or its spacing
@@ -863,6 +869,8 @@ pub(super) fn place_directional(
     #[cfg(test)]
     super::halves::PAST_BUDGET
         .with(|past| past.set(past.get().saturating_add(work.spent(&arc).saturating_sub(budget))));
+    #[cfg(test)]
+    LAST_DIRECTIONAL.with(|last| last.set(Some((placed.len(), work.spent(&arc)))));
     Some((
         Some(combined),
         PlacedRun {

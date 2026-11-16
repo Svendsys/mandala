@@ -27,33 +27,73 @@
 //! map can ask for more work than a fuzz input's time (#316). Where the
 //! engine's bound lies past the timeout the harness bounds what it feeds
 //! (TEST_CONVENTIONS §T14): a map is projected here when it holds at most
-//! one ring with text, of at most
+//! one ring that lays text — a span's, or a `vertical` or `corners` text,
+//! which a `Repeat` ring lays where its outline runs steep and where it
+//! turns, all round where it has no span (`format/schema.md`,
+//! "Directional ring") — of at most
 //! [`MAX_FRAME_GLYPHS`](crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS)
-//! characters — the flow harnesses' one frame an input — and every
-//! coordinate a path or an outline is drawn from is within
-//! [`EXTENT`](crate::projection::tests::projection_fuzz::EXTENT); and it
-//! draws at most
+//! characters, all of its texts together — the flow harnesses' one frame
+//! an input — and every coordinate a path or an outline is drawn from is
+//! within [`EXTENT`](crate::projection::tests::projection_fuzz::EXTENT);
+//! and it draws at most
 //! [`MAX_UNITS`](crate::projection::tests::projection_fuzz::MAX_UNITS)
 //! sections, rings, connectors and links.
 //!
-//! **A frame's outline is a coordinate of the bound** (ruling B47.1).
-//! Each of its rings lies where the projection grows its node's outline
-//! to: by its frame's `inset`, a `gap` for each ring inside it and those
-//! rings' line heights (`stages::clearance`). The loader holds an `inset`
-//! and a `gap` to the canvas bound (#364), so a ring can lie 10¹² out, and
-//! the bound holds that reach within `EXTENT` as it holds every coordinate
-//! (`outline_reach`). The cap of a placement (R41) bounds its glyphs, not
-//! their work: a ring's work is its glyphs times its path's reads a glyph,
-//! and its budget bounds that, 196,608,000 glyph steps at the cap (ruling
-//! B17.2c), far past the timeout. Inside the extent an `f32` point is a thousandth
-//! of a unit or finer, a glyph's ink is set apart from the last in a few
-//! reads, and the densest ring of dots the bound admits takes under five
-//! steps a glyph at the cap; 10¹⁰ out a point is a thousand units from
-//! the next, and each glyph of the same ring read its path a thousand
-//! times, 62 steps a glyph, every projection a check makes (#374;
-//! `test_every_dot_ring_the_bound_admits_takes_a_few_steps_a_glyph`). A
-//! `spacing` is not part of the bound: it parts a placement's glyphs, and
-//! moves no outline and no path.
+//! **A node's drawn rectangle and a frame's outline are coordinates of the
+//! bound** (rulings B47.1, B47.2). A path is drawn from the rectangles its
+//! ends are drawn as, and a ring round its node's: the larger of the node's
+//! `min_size` and each of its sections' `offset` plus its box
+//! (`geometry::drawn_rect`, D5), which grows with the section's text. Each
+//! ring lies where the projection grows that rectangle's outline to: by its
+//! frame's `inset`, a `gap` for each ring inside it and those rings' line
+//! heights (`stages::clearance`). The loader holds an `inset`, a `gap`, an
+//! `offset` and a `min_size` to the canvas bound (#364) and a text to its
+//! bytes, so a ring can lie 10¹² out and a node's far side 10⁸ out; the
+//! bound holds every node's drawn rectangle within `EXTENT`, and every
+//! frame's outermost outline grown from it, as it holds every coordinate
+//! (`drawn_bound`, `outline_reach`). The cap of a placement (R41) bounds
+//! its glyphs, not their work: a ring's work is its glyphs times its
+//! path's reads a glyph, and its budget bounds that, 196,608,000 glyph
+//! steps at the cap (ruling B17.2c), far past the timeout. Inside the
+//! extent an `f32` point is a thousandth of a unit or finer, a glyph's ink
+//! is set apart from the last in a few reads, and the densest ring of dots
+//! the bound admits takes under five steps a glyph at the cap; 10¹⁰ out a
+//! point is a thousand units from the next, and each glyph of the same ring
+//! read its path a thousand times, 62 steps a glyph, every projection a
+//! check makes (#374;
+//! `test_every_dot_ring_the_bound_admits_takes_a_few_steps_a_glyph`). The
+//! bound holds where a ring lies, not how much work it is: a `Repeat` ring
+//! a little short of the cap takes some 40 steps a glyph wherever it lies,
+//! and inside the bound such a ring took 40 to 118 s of a check under ASan
+//! against the 20 s timeout (`DOT_STEPS_A_GLYPH` in the tests records the
+//! measurements; what bounds that work in this harness is open, the review
+//! of #378). A `spacing` is not part of the bound: it parts a placement's
+//! glyphs, and moves no outline and no path.
+//!
+//! **A section's box is bounded before it is shaped** (ruling B47.2). The
+//! shaper sizes it to the larger of its `min_size` and its text's natural
+//! size, its widest line by the sum of its lines' heights, its lines
+//! broken at `\n` alone (`flow::shape_box`). The bound reads that from the
+//! document (`box_bound`): each line as tall as `LINE_HEIGHT_FACTOR` times
+//! the largest point size among the spans on it, as the shaper makes a
+//! line, and as wide as each of its characters at its span's point size
+//! times the widest advance any glyph can have, a tab as wide as eight —
+//! a tab is laid to its next stop, at most eight spaces on
+//! (`TAB_STOP_SPACES`). The sizes are the projection's: resolved as it
+//! resolves a section's spans and turned into points as it turns them. The
+//! widest advance is read from the faces the font system holds, the host's
+//! with the compiled ones (`widest_advance`): the most of every glyph's
+//! advance at the default instance plus, in a variable face, every
+//! positive delta its `HVAR` holds for it, each region's scalar being one
+//! at most — or, in one with no `HVAR`, its advance at every weight a span
+//! can ask for, the only axis the shaper sets. No glyph is laid wider. What
+//! the bound takes on trust is that the shaper lays no more than that
+//! advance for a character: a face's substitutions can lay one character
+//! as several glyphs, and its positioning can widen a pair. A face that
+//! did either past the widest advance would draw its box wider than the
+//! bound reads, by that excess, and the end-to-end property
+//! (`test_every_ring_the_bound_admits_lies_within_the_extent`) holds the
+//! bound's own cases and the review's probes to it.
 //!
 //! The coordinates bound how long a path is in map units, not how many
 //! glyphs or samples it takes: those go by its length over its size, and
@@ -90,21 +130,23 @@
 //! own caps.
 
 use std::cell::Cell;
+use std::sync::OnceLock;
 
 use glam::Vec2;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::arena::NodeId;
-use crate::document::element::DocElement;
+use crate::document::element::{DocElement, RingData, SectionData};
 use crate::document::ids::Document;
-use crate::document::resolve::resolve_frame;
+use crate::document::resolve::{resolve_frame, resolve_text_in, Binding};
 use crate::document::writer::transaction::TransactionKind;
 use crate::document::writer::ChangeSource;
 use crate::engine::interpolate::Snap;
 use crate::engine::tree::Tree;
 use crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS;
-use crate::flow::LINE_HEIGHT_FACTOR;
-use crate::font::fonts::MAX_FONT_SIZE_PT;
+use crate::flow::{Rect, LINE_HEIGHT_FACTOR};
+use crate::font::fonts::{FontSystemLease, MAX_FONT_SIZE_PT};
+use crate::projection::geometry;
 use crate::projection::tests::corpus::{edit, edit_named, generated, EDITS};
 use crate::projection::tests::support::Projected;
 use crate::projection::Layer;
@@ -152,7 +194,8 @@ fn near(v: Vec2) -> bool {
 }
 
 /// Whether `doc` is inside the projection's work bound (see the module
-/// docs). O(the document).
+/// docs). O(the document), and once a process O(the font system's glyphs)
+/// for [`widest_advance`].
 pub fn within_bound(doc: &Document) -> bool {
     let tree = doc.tree();
     let arena = tree.arena();
@@ -169,21 +212,26 @@ pub fn within_bound(doc: &Document) -> bool {
             }
         }
         let ok = match arena[id].get() {
-            DocElement::Node(node) => near(node.position) && node.min_size.is_none_or(near),
+            DocElement::Node(node) => {
+                near(node.position)
+                    && node.min_size.is_none_or(near)
+                    && grown_near(drawn_bound(tree, id), 0.0)
+            }
             DocElement::Section(section) => near(section.offset) && section.min_size.is_none_or(near),
             DocElement::Connector(c) => c.path.control_points.iter().all(|&p| near(p)),
             DocElement::Link(l) => l.path.control_points.iter().all(|&p| near(p)),
             DocElement::Label(label) => label.style.offset.is_none_or(|o| o.abs() <= EXTENT),
             DocElement::PortalEnd(end) => end.style.offset.is_none_or(|o| o.abs() <= EXTENT),
             DocElement::Frame(_) => outline_near(tree, id),
-            DocElement::Ring(_) => {
-                let chars: usize = id
+            DocElement::Ring(ring) => {
+                let spans: usize = id
                     .children(arena)
                     .filter_map(|s| match arena[s].get() {
                         DocElement::Span(span) => Some(span.text.chars().count()),
                         _ => None,
                     })
                     .sum();
+                let chars = spans + directional_chars(ring);
                 if chars > 0 {
                     rings_with_text += 1;
                 }
@@ -203,14 +251,46 @@ pub fn within_bound(doc: &Document) -> bool {
 /// as it is shaped, at whatever scale a `Fit` lays it.
 pub(crate) const MOST_RING_LINE_HEIGHT: f32 = LINE_HEIGHT_FACTOR * MAX_FONT_SIZE_PT;
 
-/// How far past its node's rectangle `frame`'s outermost ring's outline
-/// may lie (ruling B47.1): the clearance the projection grows the node's
-/// outline by for it (`stages::clearance`), its frame's `inset` and a
-/// `gap` for each ring inside it, as resolved, and the line heights of
-/// the rings inside it — each [`MOST_RING_LINE_HEIGHT`] at most, where
-/// it holds a span, and none where it holds none, which shapes a run of
-/// no glyphs. No ring of the frame lies further out than its outermost.
-/// `0` for a frame of no rings. O(its rings).
+/// The characters of the texts `ring` lays by direction, its `vertical`
+/// and its four `corners` (#324), which a `Repeat` ring lays where its
+/// spans have nothing to draw too (`format/schema.md`, "Directional
+/// ring"). Counted whatever its fit, which is more than a ring of another
+/// fit lays. O(those texts).
+fn directional_chars(ring: &RingData) -> usize {
+    ring.directional.as_deref().map_or(0, |d| {
+        d.vertical.as_deref().map_or(0, |v| v.chars().count())
+            + d.corners
+                .as_ref()
+                .map_or(0, |corners| corners.iter().map(|c| c.chars().count()).sum())
+    })
+}
+
+/// Whether `ring` may lay a glyph and so take a line height
+/// (`RingState::extent`): it holds a span — even of no text, which is
+/// shaped as an empty line — or a `vertical` or `corners` text (ruling
+/// B47.2). A ring of neither shapes a run of no glyphs; one of a frame's
+/// `sides` alone, or of a `Once` filler alone, places none (the review of
+/// #378). O(its children).
+fn lays_glyphs(tree: &Tree<DocElement>, ring: NodeId) -> bool {
+    let arena = tree.arena();
+    let directional = match arena[ring].get() {
+        DocElement::Ring(data) => data.directional.as_deref().is_some_and(|d| d.is_set()),
+        _ => false,
+    };
+    directional
+        || ring
+            .children(arena)
+            .any(|span| matches!(arena[span].get(), DocElement::Span(_)))
+}
+
+/// How far past its node's drawn rectangle `frame`'s outermost ring's
+/// outline may lie (ruling B47.1): the clearance the projection grows the
+/// node's outline by for it (`stages::clearance`), its frame's `inset` and
+/// a `gap` for each ring inside it, as resolved, and the line heights of
+/// the rings inside it — each [`MOST_RING_LINE_HEIGHT`] at most where it
+/// may lay a glyph ([`lays_glyphs`]), and none where it may not. No ring of
+/// the frame lies further out than its outermost. `0` for a frame of no
+/// rings. O(its rings).
 pub(crate) fn outline_reach(tree: &Tree<DocElement>, frame: NodeId) -> f64 {
     let arena = tree.arena();
     let rings: Vec<NodeId> = frame
@@ -220,38 +300,212 @@ pub(crate) fn outline_reach(tree: &Tree<DocElement>, frame: NodeId) -> f64 {
     let Some((_, inside)) = rings.split_last() else {
         return 0.0;
     };
-    let holding_spans = inside
-        .iter()
-        .filter(|ring| {
-            ring.children(arena)
-                .any(|span| matches!(arena[span].get(), DocElement::Span(_)))
-        })
-        .count();
+    let laying = inside.iter().filter(|&&ring| lays_glyphs(tree, ring)).count();
     let resolved = resolve_frame(tree, frame, &mut ());
     f64::from(resolved.inset)
-        + holding_spans as f64 * f64::from(MOST_RING_LINE_HEIGHT)
+        + laying as f64 * f64::from(MOST_RING_LINE_HEIGHT)
         + inside.len() as f64 * f64::from(resolved.gap)
 }
 
-/// Whether every ring of `frame` lies within [`EXTENT`] (ruling B47.1):
-/// its node's rectangle as the document gives it — from its `position`,
-/// `min_size` wide and high, nothing where it has none, as every other
-/// coordinate of the bound is read — grown by [`outline_reach`]. A frame
-/// with no node lays nothing. O(its rings).
+/// Whether `rect` grown by `reach` on every side lies within [`EXTENT`]
+/// on both axes. O(1).
+fn grown_near(rect: Rect, reach: f64) -> bool {
+    let extent = f64::from(EXTENT);
+    let (near, far) = (rect.origin, rect.max());
+    [(near.x, far.x), (near.y, far.y)].into_iter().all(|(near, far)| {
+        let (near, far) = (f64::from(near), f64::from(far));
+        near.is_finite() && far.is_finite() && near - reach >= -extent && far + reach <= extent
+    })
+}
+
+/// Whether every ring of `frame` lies within [`EXTENT`] (rulings B47.1,
+/// B47.2): its node's drawn rectangle, at most [`drawn_bound`], grown by
+/// [`outline_reach`]. A frame with no node lays nothing. O(its rings and
+/// its node's sections' text).
 fn outline_near(tree: &Tree<DocElement>, frame: NodeId) -> bool {
     let arena = tree.arena();
-    let Some(DocElement::Node(node)) = frame.parent(arena).map(|id| arena[id].get()) else {
+    let Some(node) = frame.parent(arena) else {
         return true;
     };
-    let reach = outline_reach(tree, frame);
-    let size = node.min_size.unwrap_or(Vec2::ZERO);
-    let extent = f64::from(EXTENT);
-    [(node.position.x, size.x), (node.position.y, size.y)]
-        .into_iter()
-        .all(|(at, size)| {
-            let (at, size) = (f64::from(at), f64::from(size));
-            at - reach >= -extent && at + size + reach <= extent
-        })
+    if !matches!(arena[node].get(), DocElement::Node(_)) {
+        return true;
+    }
+    grown_near(drawn_bound(tree, node), outline_reach(tree, frame))
+}
+
+/// The rectangle at most as large as the one `node` is drawn as
+/// (ruling B47.2): `geometry::drawn_rect`, as the projection measures a
+/// node (`stages::measure`), from its `position` and `min_size` and each
+/// of its sections' far corner, its `offset` plus [`box_bound`]. Each far
+/// corner is at least the one the projection reads, so the rectangle is.
+/// The rectangle of no size at the origin for what is not a node.
+/// O(its sections' text).
+pub(crate) fn drawn_bound(tree: &Tree<DocElement>, node: NodeId) -> Rect {
+    let arena = tree.arena();
+    let DocElement::Node(data) = arena[node].get() else {
+        return Rect::new(Vec2::ZERO, Vec2::ZERO);
+    };
+    let corners = node
+        .children(arena)
+        .map_while(|section| match arena[section].get() {
+            DocElement::Section(s) => Some(geometry::usable_point(s.offset) + box_bound(tree, section, s)),
+            _ => None,
+        });
+    geometry::drawn_rect(data.position, data.min_size, corners)
+}
+
+/// How many spaces on a tab is laid to its next stop at most: the tab
+/// width of cosmic-text's `Buffer`, which `flow::shape_box` keeps, a stop
+/// every eight spaces.
+const TAB_STOP_SPACES: f64 = 8.0;
+
+/// A size at least that of the box `section` is shaped as
+/// (`flow::shape_box`; ruling B47.2): the larger, per axis, of its
+/// `min_size` as the shaper reads one and its text's natural size bounded
+/// — each line [`LINE_HEIGHT_FACTOR`] times the largest point size of the
+/// spans on it high, and the sum over its characters of their span's
+/// point size times [`widest_advance`] wide, a tab [`TAB_STOP_SPACES`]
+/// times that (see the module docs). Lines break at `\n` alone; no span is
+/// no text and no line. The point sizes are the projection's: each span
+/// resolved as it resolves a section's (`resolve_text_in`), but with no
+/// palette binding — a binding gives a color, never a size, and finding
+/// one climbs the node's ancestors, which a chain makes quadratic — and
+/// turned into points with no rectangle,
+/// as a section's are (`geometry::points`). Each sum is grown by what the
+/// shaper's `f32` sums of as many terms may round up by. O(its text).
+fn box_bound(tree: &Tree<DocElement>, section: NodeId, data: &SectionData) -> Vec2 {
+    let arena = tree.arena();
+    let mut natural = (0.0f64, 0.0f64);
+    // The characters and the lines summed, for the rounding below.
+    let (mut chars, mut lines) = (0usize, 0usize);
+    // The line being read: its width so far and its largest size.
+    let mut line: Option<(f64, f64)> = None;
+    for span in section.children(arena) {
+        let DocElement::Span(text) = arena[span].get() else {
+            continue;
+        };
+        let style = resolve_text_in(tree, span, Binding::Carried(None), &mut ());
+        let size = f64::from(geometry::points(style.size, Rect::new(Vec2::ZERO, Vec2::ZERO)));
+        let (mut width, mut tallest) = line.unwrap_or((0.0, 0.0));
+        tallest = tallest.max(size);
+        for c in text.text.chars() {
+            if c == '\n' {
+                natural.0 = natural.0.max(width);
+                natural.1 += tallest * f64::from(LINE_HEIGHT_FACTOR);
+                lines += 1;
+                (width, tallest) = (0.0, size);
+            } else {
+                let spaces = if c == '\t' { TAB_STOP_SPACES } else { 1.0 };
+                width += spaces * size * f64::from(widest_advance());
+                chars += 1;
+            }
+        }
+        line = Some((width, tallest));
+    }
+    if let Some((width, tallest)) = line {
+        natural.0 = natural.0.max(width);
+        natural.1 += tallest * f64::from(LINE_HEIGHT_FACTOR);
+        lines += 1;
+    }
+    // The shaper sums in `f32`, which may round each term and the sum up:
+    // `n` terms are within `n + 4` epsilons of their exact sum, which these
+    // `f64` sums are at least.
+    let rounded =
+        |sum: f64, terms: usize| (sum * (1.0 + (terms + 4) as f64 * f64::from(f32::EPSILON))) as f32;
+    let natural = Vec2::new(rounded(natural.0, chars), rounded(natural.1, lines));
+    natural.max(geometry::usable_size(data.min_size))
+}
+
+/// The widest advance, in ems, of any glyph of any face the font system
+/// holds — the compiled faces and, on native, the host's — at any
+/// instance the shaper lays a variable face at (ruling B47.2; see the
+/// module docs): what a character's glyph advances its line by at most,
+/// times its point size. Read once a process, from every face
+/// ([`face_widest_advance`]). O(the font system's glyphs) the first time,
+/// O(1) after.
+pub(crate) fn widest_advance() -> f32 {
+    static WIDEST: OnceLock<f32> = OnceLock::new();
+    *WIDEST.get_or_init(|| {
+        crate::font::fonts::init();
+        let mut lease = FontSystemLease::new("the projection's work bound");
+        let db = lease.fonts().db();
+        // A face registered at several weights is one source read once.
+        let mut read: FxHashSet<(usize, usize, u32)> = FxHashSet::default();
+        let mut widest = 0.0f32;
+        for face in db.faces() {
+            let most = db.with_face_data(face.id, |data, index| {
+                read.insert((data.as_ptr() as usize, data.len(), index))
+                    .then(|| face_widest_advance(data, index))
+                    .flatten()
+            });
+            widest = widest.max(most.flatten().unwrap_or(0.0));
+        }
+        widest
+    })
+}
+
+/// The widest advance of a glyph of the face `index` of `data`, in ems:
+/// each glyph's advance at its default instance and, in a variable face,
+/// the most its variations add — every positive delta its `HVAR` holds for
+/// it, and a unit for the rounding of their sum, since each region's
+/// scalar is at most one; in one with no `HVAR`, its advance at every
+/// weight from 100 to 900, the one axis the shaper sets (`wght`, the
+/// span's weight). `None` for a face that cannot be read, which the shaper
+/// cannot lay a glyph from either. O(its glyphs), times 801 for a variable
+/// face with no `HVAR`.
+fn face_widest_advance(data: &[u8], index: u32) -> Option<f32> {
+    use cosmic_text::skrifa::instance::{LocationRef, Size};
+    use cosmic_text::skrifa::raw::tables::variations::DeltaSetIndex;
+    use cosmic_text::skrifa::raw::TableProvider;
+    use cosmic_text::skrifa::{FontRef, GlyphId, MetadataProvider, Tag};
+    let font = FontRef::from_index(data, index).ok()?;
+    let units = f32::from(font.head().ok()?.units_per_em());
+    let glyphs = u32::from(font.maxp().ok()?.num_glyphs());
+    let default = font.glyph_metrics(Size::unscaled(), LocationRef::default());
+    let advance = |metrics: &cosmic_text::skrifa::metrics::GlyphMetrics<'_>, glyph: u32| {
+        metrics.advance_width(GlyphId::new(glyph)).unwrap_or(0.0)
+    };
+    let most = (0..glyphs).map(|g| advance(&default, g)).fold(0.0f32, f32::max);
+    if font.axes().is_empty() {
+        return Some(most / units);
+    }
+    // Every glyph's default advance and its positive deltas: `None` where
+    // the face has no `HVAR`, or one that cannot be read.
+    let varied = font.hvar().ok().and_then(|hvar| {
+        let store = hvar.item_variation_store().ok()?;
+        let mapping = hvar.advance_width_mapping().and_then(Result::ok);
+        let mut most = most;
+        for glyph in 0..glyphs {
+            let at = match &mapping {
+                Some(map) => map.get(glyph).ok(),
+                None => u16::try_from(glyph)
+                    .ok()
+                    .map(|inner| DeltaSetIndex { outer: 0, inner }),
+            };
+            let grown: i64 = at
+                .filter(|at| *at != DeltaSetIndex::NO_VARIATION_INDEX)
+                .and_then(|at| {
+                    let deltas = store.item_variation_data().get(usize::from(at.outer))?.ok()?;
+                    Some(deltas.delta_set(at.inner).map(|d| i64::from(d.max(0))).sum())
+                })
+                .unwrap_or(0);
+            most = most.max(advance(&default, glyph) + grown as f32 + 1.0);
+        }
+        Some(most)
+    });
+    if let Some(varied) = varied {
+        return Some(varied / units);
+    }
+    let mut most = most;
+    if let Some(axis) = font.axes().get_by_tag(Tag::new(b"wght")) {
+        for weight in 100..=900u16 {
+            let weight = f32::from(weight).clamp(axis.min_value(), axis.max_value());
+            let location = font.axes().location([(Tag::new(b"wght"), weight)]);
+            let metrics = font.glyph_metrics(Size::unscaled(), &location);
+            most = (0..glyphs).map(|g| advance(&metrics, g)).fold(most, f32::max);
+        }
+    }
+    Some(most / units)
 }
 
 /// The projection properties of a map the loader accepted (see the module
