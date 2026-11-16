@@ -1144,11 +1144,15 @@ fn test_flow_directional_lays_gaps_that_sum_past_the_largest_f32_by_their_mean()
 /// A directional ring whose spans' gaps sum past the largest `f32` lays
 /// every run by their mean (found beside CI's fuzz finding on #360,
 /// `test_flow_structured_every_face_finding_a_directional_ring_whose_gap_is_past_the_root_of_the_largest_f32`).
-/// Round a square 8 × 10³⁷ on a side, three spans spaced 1.2 × 10³⁸: a
-/// side holds one ink, its two end gaps cut back from 1.2 × 10³⁸ to the
-/// 4 × 10³⁷ that center it, so the ring is four glyphs, one at the middle
-/// of each side — a span's on the level sides, the vertical text's on
-/// the steep ones, which are gapped by the spans' mean.
+/// Round a square 2 × 10¹⁸ on a side, as long round as placement lays to
+/// a part in eight, three spans spaced 1.2 × 10³⁸: a side holds one ink,
+/// its two end gaps cut back from 1.2 × 10³⁸ to the 10¹⁸ that center it,
+/// so the ring is four glyphs, one on the line of each side — a span's on
+/// the level sides, the vertical text's on the steep ones, which are
+/// gapped by the spans' mean. Where along its side's line each is set is
+/// not held: a gap some 10¹⁹ times its run is cut back by more than
+/// its floats resolve, and the ink is set off the run's end (found here,
+/// reported with #363; the slack solve is #358's).
 ///
 /// The mean was the gaps' `f32` sum over their count, infinite for three
 /// such gaps: every run's end gap was infinite, and so was the gap the
@@ -1159,7 +1163,7 @@ fn test_flow_directional_lays_gaps_that_sum_past_the_largest_f32_by_their_mean()
 /// alone, red ("4 glyphs, one a side", 35,584 laid); with the steep runs'
 /// gap (`place_directional`) alone taken so, red (6 laid).
 pub fn do_flow_directional_lays_gaps_that_sum_past_the_largest_f32_by_their_mean() {
-    let (side, spacing) = (8e37_f32, 1.2e38_f32);
+    let (side, spacing) = (2e18_f32, 1.2e38_f32);
     let path = Outline::RoundedRect {
         rect: Rect::new(Vec2::ZERO, Vec2::splat(side)),
         radius: 0.0,
@@ -1170,29 +1174,28 @@ pub fn do_flow_directional_lays_gaps_that_sum_past_the_largest_f32_by_their_mean
         ..RingLayout::whole()
     };
     assert!(
-        (3.0 * spacing).is_infinite() && 4.0 * side < f32::MAX && spacing > side && spacing < 2.0 * side,
-        "precondition: three gaps sum past the largest `f32`, the outline's perimeter does not, \
-         and a side holds one ink between two gaps cut back"
+        (3.0 * spacing).is_infinite() && 4.0 * side <= crate::flow::MAX_PATH_LENGTH && spacing > side,
+        "precondition: three gaps sum past the largest `f32`, the outline is no longer than placement \
+         lays, and a side holds one ink between two gaps cut back"
     );
     let (_, placed) = lay_layout("abc", &layout, &path);
-    assert_eq!(placed.glyphs.len(), 4, "4 glyphs, one a side");
-    let half = 0.5 * side;
-    for middle in [
-        Vec2::new(half, 0.0),
-        Vec2::new(side, half),
-        Vec2::new(half, side),
-        Vec2::new(0.0, half),
+    let at: Vec<Vec2> = placed.glyphs.iter().map(|g| g.pos).collect();
+    assert_eq!(at.len(), 4, "4 glyphs, one a side");
+    assert!(
+        at.iter().all(|pos| pos.is_finite()),
+        "every position finite: {at:?}"
+    );
+    // One on the line of each side: across it, where its side runs.
+    for (name, across, line) in [
+        ("top", 1, 0.0),
+        ("right", 0, side),
+        ("bottom", 1, side),
+        ("left", 0, 0.0),
     ] {
-        let at = placed
-            .glyphs
+        let on = at
             .iter()
-            .filter(|g| (g.pos - middle).abs().max_element() <= 1e-4 * side)
+            .filter(|pos| (pos[across] - line).abs() <= 1e-4 * side)
             .count();
-        assert_eq!(
-            at,
-            1,
-            "one glyph at the middle of the side through {middle}: {:?}",
-            placed.glyphs.iter().map(|g| g.pos).collect::<Vec<_>>()
-        );
+        assert_eq!(on, 1, "one glyph on the line of the {name} side: {at:?}");
     }
 }

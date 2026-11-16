@@ -22,6 +22,13 @@
 //!   position is finite whatever the path, every placed glyph names a
 //!   glyph of the run it refers to, and no placement holds more than
 //!   [`MAX_PLACED_GLYPHS`](crate::flow::MAX_PLACED_GLYPHS).
+//! - **A path too long is not laid, and says so** (#363, ruling B42.1):
+//!   the harness measures each outline and curve itself, in `f64` from
+//!   its own numbers. Along one clearly past
+//!   [`MAX_PATH_LENGTH`](crate::flow::MAX_PATH_LENGTH) nothing is laid and
+//!   the placement names the reason; along one clearly within it, it
+//!   does not, and is owed what any path is
+//!   (`held_to_the_limit`).
 //! - **A frame's inks never touch** (rulings R38.1, R44.2), whatever
 //!   its layout — span, sides and spacing drawn too (ruling R44.4) —
 //!   and its text is cut to what it lays inside the timeout
@@ -56,7 +63,7 @@ use crate::document::values::{
 };
 use crate::flow::place::halves::{frame_budget, frame_work_steps, table_steps, touch_looks, NEARER};
 use crate::flow::place::pitch::place_pitched_capped;
-use crate::flow::place::ring::{ring_work_steps, RING_STEPS};
+use crate::flow::place::ring::{ring_work_steps, RingLoss, RING_STEPS};
 use crate::flow::place::{
     frame_halves, place_on_closed_capped, place_on_open_capped, setup_table_samples, size_factor, Trace,
     INK_TOLERANCE, MIN_TABLE_SPACING,
@@ -64,7 +71,8 @@ use crate::flow::place::{
 use crate::flow::tests::support::raster_box;
 use crate::flow::{
     offset, outline, place_at_point, shape_box, shape_run, Curve, FlowSpan, GlyphMetrics, Outline, PathEnd,
-    PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PLACED_GLYPHS, MAX_TABLE_SAMPLES,
+    PlacedRun, Rect, RingLayout, ShapedBox, ShapedRun, FILLER_SPAN, MAX_PATH_LENGTH, MAX_PLACED_GLYPHS,
+    MAX_TABLE_SAMPLES,
 };
 use crate::font::fonts::{self, AppFont, FontSystemLease, COMPILED_FONT_ID_MAP};
 use crate::util::tests::choices::Choices;
@@ -801,9 +809,15 @@ fn check_open(
     // (ruling R6, reading 7).
     // Owed whole only where the coordinates hold its glyphs apart (ruling
     // B18.1 §9).
+    // And only along a path clearly within the longest placement lays
+    // (#363); past it nothing is laid, and the placement says why.
+    let limit = limit_of(chain_length(std::slice::from_ref(curve)));
+    let reports = has_a_glyph_to_lay(run, Laid::Along(fit));
+    held_to_the_limit(limit, &placed.1, &trace, reports, "the placement")?;
     let whole = owes_whole_along(run, fit, curve)
         && coordinates_hold_apart(curve_reach(curve), run, fit)
-        && trace.ring.is_none();
+        && trace.ring.is_none()
+        && limit == Limit::Within;
     check_placed(spans, run, placed, whole, "the placement")
 }
 
@@ -850,27 +864,16 @@ fn check_pitched(
         return Ok(());
     };
     let mut trace = Trace::default();
-    #[cfg(test)]
-    let before = crate::flow::path::PATH_LOOKUPS.with(std::cell::Cell::get);
     let placed = place_pitched_capped(run, &chain, spacing, ends, cap, Some(&mut trace));
     work.pitched(cap, tables, &placed, &trace, "as whole glyphs")?;
-    #[cfg(test)]
-    PITCHED_LOOKUPS.with(|count| {
-        count.set(count.get() + crate::flow::path::PATH_LOOKUPS.with(std::cell::Cell::get) - before)
-    });
-    #[cfg(test)]
-    PITCHED_GLYPHS.with(|count| count.set(count.get() + placed.glyphs.len()));
+    held_to_the_limit(
+        limit_of(chain_length(&chain)),
+        &placed,
+        &trace,
+        has_a_glyph_to_lay(run, Laid::Pitched),
+        "as whole glyphs",
+    )?;
     check_placement(run, &placed, false, "as whole glyphs")
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Test counter (#333): the path lookups the whole-glyph placements
-    /// [`check_pitched`] lays on this thread have made, so that a test of
-    /// another placement's work can hold the two apart.
-    pub(crate) static PITCHED_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// Test counter (#333): the glyphs those placements placed.
-    pub(crate) static PITCHED_GLYPHS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The layouts a frame drawn in layout `drawn` is laid in: `drawn`, and
@@ -1456,9 +1459,17 @@ fn check_generated_pinning(
                             // Owed whole only where the coordinates hold
                             // its glyphs apart (ruling B18.1 §9); a cut
                             // where they cannot is still reported.
+                            // And only round an outline clearly within the
+                            // longest placement lays (#363); past it nothing
+                            // is laid, and the placement says why.
+                            let limit = limit_of(outline_length(path));
+                            let reports = has_a_glyph_to_lay(&run, Laid::Round(&fit, layout));
+                            held_to_the_limit(limit, &placed.1, &trace, reports, "around an outline")
+                                .map_err(|why| format!("{why}, laid {layout:?}, round {path:?}"))?;
                             let whole = owes_whole(&run, &fit, frame_room(path))
                                 && coordinates_hold_apart(outline_reach(path), &run, &fit)
-                                && trace.cut_apart.is_empty();
+                                && trace.cut_apart.is_empty()
+                                && limit == Limit::Within;
                             LAST_FRAME_LAID.with(|last| {
                                 last.set(Some((
                                     *path,
@@ -2469,6 +2480,206 @@ pub(crate) fn outline_reach(outline: &Outline) -> f32 {
         .abs()
         .max((rect.origin + rect.size).abs())
         .max_element()
+}
+
+/// Where a path stands to the longest one placement lays
+/// ([`MAX_PATH_LENGTH`], #363, ruling B42.1 §6), by its own length
+/// measured here ([`outline_length`], [`chain_length`]).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Limit {
+    /// Clearly within it: laid, and owed as any path is.
+    Within,
+    /// Clearly past it: nothing is laid, and the placement says why.
+    Past,
+    /// Within [`LIMIT_MARGIN`] of it either way, or not measured — a path
+    /// whose own numbers are not finite is no path: only what every
+    /// placement owes is held.
+    Near,
+}
+
+/// How near the limit a path's length, as measured here, is left to the
+/// engine's own measure: a thousandth of it. The engine sums a path's
+/// stretches from `f32` lengths, and an ellipse from its table, to
+/// millionths of what is measured here.
+const LIMIT_MARGIN: f64 = 1e-3;
+
+/// Where a path `length` long — at the least and at the most — stands to
+/// the limit ([`Limit`]).
+pub(crate) fn limit_of(length: Option<(f64, f64)>) -> Limit {
+    let limit = f64::from(MAX_PATH_LENGTH);
+    match length {
+        Some((least, _)) if least > limit * (1.0 + LIMIT_MARGIN) => Limit::Past,
+        Some((_, most)) if most < limit * (1.0 - LIMIT_MARGIN) => Limit::Within,
+        _ => Limit::Near,
+    }
+}
+
+/// How long `outline` is round, at the least and at the most, from its
+/// own numbers in `f64` and none of the engine's code. `None` where a
+/// corner of its rectangle or its center is not finite: it is no outline,
+/// and its path keeps what stretches are.
+///
+/// - A rounded rectangle: its four arcs, a turn of its radius — held to
+///   half its shorter side, as the outline holds it — and its sides
+///   between them, each as far as its corners lie apart as their floats
+///   hold them, less the radius at each end. Far from the origin those
+///   floats are coarse, and each of a side's ends may be set a float
+///   either way: sixteen of their spacing either side of that.
+/// - An ellipse: between 3.6 of its longer radius — less than the octagon
+///   through it, the fewest points its table is built on — and a turn of
+///   it. Its table is measured from its center, so where it lies does not
+///   enter.
+pub(crate) fn outline_length(outline: &Outline) -> Option<(f64, f64)> {
+    let rect = outline.rect();
+    let far = rect.origin + rect.size;
+    if ![rect.origin, far, rect.origin + rect.size * 0.5]
+        .iter()
+        .all(|corner| corner.is_finite())
+    {
+        return None;
+    }
+    Some(match outline {
+        Outline::RoundedRect { radius, .. } => {
+            let most = (0.5 * f64::from(rect.size.x).min(f64::from(rect.size.y))).max(0.0);
+            let r = if radius.is_nan() {
+                0.0
+            } else {
+                f64::from(*radius).clamp(0.0, most)
+            };
+            let across = far.as_dvec2() - rect.origin.as_dvec2();
+            let sides = (across.x.abs() - 2.0 * r).abs() + (across.y.abs() - 2.0 * r).abs();
+            let round = 2.0 * sides + std::f64::consts::TAU * r;
+            let grain = 16.0 * f32_spacing(outline_reach(outline));
+            ((round - grain).max(0.0), round + grain)
+        }
+        Outline::Ellipse { .. } => {
+            let longer = 0.5 * f64::from(rect.size.x).abs().max(f64::from(rect.size.y).abs());
+            (3.6 * longer, std::f64::consts::TAU * longer * (1.0 + 1e-5))
+        }
+    })
+}
+
+/// How long the chain `curves` is, at the least and at the most, from its
+/// control points in `f64` and none of the engine's code: a line's
+/// length; a Bézier's between its polyline's ([`polyline_length`]) and
+/// its control polygon's, which is what the engine counts it by. `None`
+/// where a control point is not finite.
+pub(crate) fn chain_length(curves: &[Curve]) -> Option<(f64, f64)> {
+    let mut length = (0.0, 0.0);
+    for curve in curves {
+        let points: Vec<Vec2> = match *curve {
+            Curve::Line(a, b) => vec![a, b],
+            Curve::Quadratic(a, c, b) => vec![a, c, b],
+            Curve::Cubic(a, c1, c2, b) => vec![a, c1, c2, b],
+        };
+        if !points.iter().all(|point| point.is_finite()) {
+            return None;
+        }
+        let polygon: f64 = points
+            .windows(2)
+            .map(|leg| (leg[1].as_dvec2() - leg[0].as_dvec2()).length())
+            .sum();
+        length.0 += polyline_length(curve, 256).min(polygon);
+        length.1 += polygon;
+    }
+    Some(length)
+}
+
+thread_local! {
+    /// Test counter (#363): the placements [`held_to_the_limit`] has held
+    /// on this thread whose path was clearly within the limit, and clearly
+    /// past it, so that a sweep can show it draws both.
+    pub(crate) static HELD_TO_THE_LIMIT: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// How a placement is laid, for [`has_a_glyph_to_lay`].
+#[derive(Clone, Copy)]
+pub(crate) enum Laid<'a> {
+    /// Round a closed outline, as a frame in its fit or as a ring.
+    Round(&'a FitMode, &'a RingLayout),
+    /// Along an open path, in its fit.
+    Along(&'a FitMode),
+    /// As whole glyphs along an open path (`place_pitched`).
+    Pitched,
+}
+
+/// Whether a placement of `run`, laid as `laid` says, has a glyph to lay
+/// (#363), and so something to lose to a path too long to lay: the one
+/// rule for every kind of placement, read here from the run and the
+/// layout alone. A whole-glyph pattern lays only its inks; any other
+/// placement any glyph of its run; besides, a `Once` along an open path
+/// fills the path with its filler past a text of nothing, and a
+/// directional ring lays its vertical text and its corners whatever its
+/// spans — each where it is not empty. A frame lays its filler and its sides only beside its text.
+pub(crate) fn has_a_glyph_to_lay(run: &ShapedRun, laid: Laid<'_>) -> bool {
+    match laid {
+        Laid::Pitched => run.glyphs.iter().any(|glyph| !glyph.blank && glyph.ink.is_some()),
+        Laid::Along(fit) => {
+            !run.glyphs.is_empty()
+                || matches!(fit, FitMode::Once { filler: Some(filler) } if !filler.is_empty())
+        }
+        Laid::Round(fit, layout) => {
+            let glyphs = &layout.directional;
+            let directional = glyphs
+                .vertical
+                .as_deref()
+                .is_some_and(|vertical| !vertical.is_empty())
+                || glyphs
+                    .corners
+                    .as_ref()
+                    .is_some_and(|corners| corners.iter().any(|corner| !corner.is_empty()));
+            !run.glyphs.is_empty() || (matches!(fit, FitMode::Repeat) && directional)
+        }
+    }
+}
+
+/// What a placement owes the longest path placement lays (#363, ruling
+/// B42.1 §6), its path standing to it as `limit` says: along a path
+/// clearly past it nothing is laid, and the placement says why, by name
+/// (`RingLoss::TooLong`, with [`PlacedRun::truncated`]) — where it
+/// `reports`, having a glyph to lay ([`has_a_glyph_to_lay`]), and else
+/// says nothing, as a placement of nothing anywhere; along one clearly
+/// within it, it does not say so; and wherever it says so, nothing is
+/// laid and it is cut.
+pub(crate) fn held_to_the_limit(
+    limit: Limit,
+    placed: &PlacedRun,
+    trace: &Trace,
+    reports: bool,
+    what: &str,
+) -> Result<(), String> {
+    let says = trace.ring == Some(RingLoss::TooLong);
+    if says && !(placed.glyphs.is_empty() && placed.truncated) {
+        return Err(format!(
+            "{what}: a placement that says its path is too long laid {} glyphs, truncated {}",
+            placed.glyphs.len(),
+            placed.truncated
+        ));
+    }
+    HELD_TO_THE_LIMIT.with(|held| {
+        let (within, past) = held.get();
+        held.set((
+            within + usize::from(limit == Limit::Within),
+            past + usize::from(limit == Limit::Past),
+        ));
+    });
+    match limit {
+        Limit::Past if !placed.glyphs.is_empty() => Err(format!(
+            "{what}: {} glyphs laid along a path longer than placement lays",
+            placed.glyphs.len()
+        )),
+        Limit::Past if reports && !says => Err(format!(
+            "{what}: nothing laid along a path longer than placement lays, and the placement does not say why (truncated {}, {:?})",
+            placed.truncated, trace.ring
+        )),
+        _ if says && !reports => Err(format!(
+            "{what}: a placement with no glyph to lay says its path is too long"
+        )),
+        Limit::Within if says => Err(format!(
+            "{what}: a placement along a path within what placement lays says it is too long"
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// The pieces [`curvature_bound`] splits a curve into, each bounded on

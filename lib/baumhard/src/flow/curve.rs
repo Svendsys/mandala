@@ -76,16 +76,16 @@ impl Curve {
     ///
     /// `NaN` when any leg's length is not finite — a control point that
     /// is not finite, or a leg longer than the largest `f32` — since such
-    /// a curve has no bound. (`f32::max` would drop a `NaN` leg and bound the rest.)
-    /// Every leg finite, the bound saturates at the largest `f32`: a
-    /// quadratic whose legs are each within it can still be twice as fast,
-    /// and its path no longer for that (seed 1021 of the structured flow
-    /// generator: a leg of 2.4 × 10³⁸, a path that long, whose bound of
-    /// twice that was infinite, so that it built no table and was placed
-    /// as a path of no length). The bound only picks a table's sample
-    /// count, which [`MAX_TABLE_SAMPLES`](crate::flow::path::MAX_TABLE_SAMPLES)
-    /// caps far below it; a path longer than the largest `f32` is still
-    /// dropped as not walkable (`ArcPath::from_stretches`).
+    /// a curve has no bound. (`f32::max` would drop a `NaN` leg and bound
+    /// the rest.) Every leg finite, the bound may still pass the largest
+    /// `f32`, and is then infinite: a quadratic whose legs are each within
+    /// it can be twice as fast. Either way the curve is tabled by no
+    /// count, and with finite control points it is longer than any path
+    /// placement lays ([`MAX_PATH_LENGTH`](crate::flow::MAX_PATH_LENGTH)),
+    /// which its path says of it (seed 1021 of the structured flow
+    /// generator: a leg of 2.4 × 10³⁸, a bound of twice that, a path that
+    /// built no table and was placed as a path of no length with nothing
+    /// said).
     pub fn speed_bound(&self) -> f32 {
         let bound = |degree: f32, legs: &[Vec2]| {
             let mut longest = 0.0_f32;
@@ -96,7 +96,7 @@ impl Curve {
                 }
                 longest = longest.max(length);
             }
-            (degree * longest).min(f32::MAX)
+            degree * longest
         };
         match *self {
             Curve::Line(a, b) => bound(1.0, &[b - a]),

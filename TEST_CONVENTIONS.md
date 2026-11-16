@@ -833,14 +833,26 @@ What they hold, in short (each module's docs are the full list):
   would let slip past its pin to another face of that weight does so on
   every machine. The host's faces come after every compiled one and none
   bears a compiled family's name, so what the sweep and the fuzz targets
-  pin is drawn in the same faces wherever they run. The generator's face list, `faces()`, never changes length: a
-  choice picks a face modulo it, so a face added moves every committed
-  structured seed and finding to another face, and silently, since each
-  still passes. Faces it lacks that a map can pin, the ornament
-  fallback's two (#297) and the default face (#228), are drawn from
-  `every_face()`, by flow_structured_every_face with seeds of its own
-  and by `test_generated_flows_over_every_face_hold_every_flow_property`,
-  whose precondition is that each of them is pinned.
+  pin is drawn in the same faces wherever they run. The generator's face
+  list, `faces()`, never changes length: a choice picks a face modulo
+  it, so a face added moves every committed structured seed and finding
+  to another face, and silently, since each still passes. Faces it lacks
+  that a map can pin, the ornament fallback's two (#297) and the default
+  face (#228), are drawn from `every_face()`, by
+  flow_structured_every_face with seeds of its own and by
+  `test_generated_flows_over_every_face_hold_every_flow_property`, whose
+  precondition is that each of them is pinned. Every placement is held
+  to the longest path placement lays (`MAX_PATH_LENGTH`, 2⁶³; #363,
+  ruling B42.1): the harness measures each outline and curve itself, in
+  `f64` from its own numbers and none of the engine's code. Along a path
+  clearly past the limit nothing is laid and the placement names the
+  reason (`RingLoss::TooLong`), where it has a glyph to lay — one rule
+  for every kind of placement (`has_a_glyph_to_lay`); along one clearly
+  within it the placement does not say so, and is owed what any path
+  is; within a thousandth of the limit either way, only what every
+  placement owes is held. The sweep's precondition is that it holds
+  placements on both sides, and flow_structured has a seed just within
+  the limit and one just past it.
 - **Glyph-layer mutations.** No panic; no non-finite box reaches an
   ancestor; a run's overrides are empty or exactly as long as its
   placed glyphs, whatever range is named; `same_state` is reflexive and

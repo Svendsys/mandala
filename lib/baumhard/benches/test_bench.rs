@@ -37,6 +37,7 @@ use baumhard::engine::tests::walker_tests::*;
 use baumhard::flow::tests::directional_tests::*;
 use baumhard::flow::tests::fit_tests::*;
 use baumhard::flow::tests::halves_tests::*;
+use baumhard::flow::tests::limit_tests::*;
 use baumhard::flow::tests::lines_tests::*;
 use baumhard::flow::tests::outline_tests::*;
 use baumhard::flow::tests::pitch_tests::*;
@@ -1113,16 +1114,35 @@ fn criterion_benchmark(c: &mut Criterion) {
         "flow_a_closed_paths_table_samples_are_known_before_it_is_built",
         |b| b.iter(do_flow_a_closed_paths_table_samples_are_known_before_it_is_built),
     );
-    c.bench_function("flow_a_closed_paths_length_is_finite_as_its_build_says", |b| {
-        b.iter(do_flow_a_closed_paths_length_is_finite_as_its_build_says)
+    c.bench_function("flow_a_closed_path_is_within_the_limit_or_too_long", |b| {
+        b.iter(do_flow_a_closed_path_is_within_the_limit_or_too_long)
     });
+    c.bench_function(
+        "flow_limit_is_half_the_first_float_past_the_root_of_the_largest_f32",
+        |b| b.iter(do_flow_limit_is_half_the_first_float_past_the_root_of_the_largest_f32),
+    );
+    c.bench_function(
+        "flow_limit_a_square_at_the_limit_is_laid_and_a_float_past_it_is_not",
+        |b| b.iter(do_flow_limit_a_square_at_the_limit_is_laid_and_a_float_past_it_is_not),
+    );
+    c.bench_function(
+        "flow_limit_an_outline_past_the_limit_lays_nothing_and_says_so",
+        |b| b.iter(do_flow_limit_an_outline_past_the_limit_lays_nothing_and_says_so),
+    );
+    c.bench_function("flow_limit_an_outline_just_within_the_limit_is_laid", |b| {
+        b.iter(do_flow_limit_an_outline_just_within_the_limit_is_laid)
+    });
+    c.bench_function(
+        "flow_limit_an_open_path_past_the_limit_lays_nothing_and_says_so",
+        |b| b.iter(do_flow_limit_an_open_path_past_the_limit_lays_nothing_and_says_so),
+    );
     c.bench_function(
         "flow_an_ellipses_length_is_its_ellipses_at_every_magnitude",
         |b| b.iter(do_flow_an_ellipses_length_is_its_ellipses_at_every_magnitude),
     );
     c.bench_function(
-        "flow_an_ellipse_whose_points_pass_the_largest_f32_has_no_length",
-        |b| b.iter(do_flow_an_ellipse_whose_points_pass_the_largest_f32_has_no_length),
+        "flow_an_ellipse_whose_points_pass_the_largest_f32_is_too_long",
+        |b| b.iter(do_flow_an_ellipse_whose_points_pass_the_largest_f32_is_too_long),
     );
     c.bench_function("nearest_weight_follows_css_fonts_4", |b| {
         b.iter(do_nearest_weight_follows_css_fonts_4)
@@ -2204,8 +2224,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_path_nearest_finds_its_own_points", |b| {
         b.iter(do_flow_path_nearest_finds_its_own_points)
     });
-    c.bench_function("flow_path_measures_past_the_root_of_the_largest_f32", |b| {
-        b.iter(do_flow_path_measures_past_the_root_of_the_largest_f32)
+    c.bench_function("flow_path_measures_a_path_as_long_as_placement_lays", |b| {
+        b.iter(do_flow_path_measures_a_path_as_long_as_placement_lays)
     });
     c.bench_function("flow_directional_lays_a_box", |b| {
         b.iter(do_flow_directional_lays_a_box)
@@ -2255,6 +2275,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         |b| b.iter(do_flow_pitched_lays_a_gap_past_the_root_of_the_largest_f32_evenly),
     );
     c.bench_function(
+        "flow_pitched_centers_an_ink_between_two_ends_at_a_gap_past_the_root_of_the_largest_f32",
+        |b| b.iter(do_flow_pitched_centers_an_ink_between_two_ends_at_a_gap_past_the_root_of_the_largest_f32),
+    );
+    c.bench_function(
         "flow_pitched_lays_gaps_that_sum_past_the_largest_f32_by_their_mean",
         |b| b.iter(do_flow_pitched_lays_gaps_that_sum_past_the_largest_f32_by_their_mean),
     );
@@ -2270,8 +2294,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(do_flow_pitched_leaves_no_end_gap_below_none)
     });
     c.bench_function(
-        "flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a_smaller",
-        |b| b.iter(do_flow_halves_lays_a_frame_past_the_root_of_the_largest_f32_as_it_lays_a_smaller),
+        "flow_halves_lays_a_frame_as_long_as_placement_lays_as_it_lays_a_smaller",
+        |b| b.iter(do_flow_halves_lays_a_frame_as_long_as_placement_lays_as_it_lays_a_smaller),
     );
     c.bench_function("flow_place_horizontal_steps_by_advance", |b| {
         b.iter(do_flow_place_horizontal_steps_by_advance)
@@ -2392,8 +2416,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_non_finite_curves_build_no_table", |b| {
         b.iter(do_flow_non_finite_curves_build_no_table)
     });
-    c.bench_function("flow_a_curve_faster_than_the_largest_f32_is_tabled", |b| {
-        b.iter(do_flow_a_curve_faster_than_the_largest_f32_is_tabled)
+    c.bench_function("flow_a_curve_faster_than_the_largest_f32_is_too_long", |b| {
+        b.iter(do_flow_a_curve_faster_than_the_largest_f32_is_too_long)
     });
     c.bench_function(
         "flow_a_ring_that_never_closes_counts_its_copies_in_few_asks",
@@ -2468,8 +2492,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_lines_center_and_fill", |b| {
         b.iter(do_flow_lines_center_and_fill)
     });
-    c.bench_function("flow_lines_fill_a_frame_as_wide_as_an_f32_reaches", |b| {
-        b.iter(do_flow_lines_fill_a_frame_as_wide_as_an_f32_reaches)
+    c.bench_function("flow_lines_fill_a_frame_whose_floats_lose_a_fillers_steps", |b| {
+        b.iter(do_flow_lines_fill_a_frame_whose_floats_lose_a_fillers_steps)
     });
     c.bench_function("flow_lines_fit_sweeps_a_sharp_rect", |b| {
         b.iter(do_flow_lines_fit_sweeps_a_sharp_rect)
@@ -2551,9 +2575,6 @@ fn criterion_benchmark(c: &mut Criterion) {
     });
     c.bench_function("flow_halves_a_part_never_inverts", |b| {
         b.iter(do_flow_halves_a_part_never_inverts)
-    });
-    c.bench_function("flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely", |b| {
-        b.iter(do_flow_halves_a_frame_as_long_as_an_f32_is_placed_finitely)
     });
     c.bench_function("flow_halves_an_end_past_a_sharp_corner_faces_away_from_it", |b| {
         b.iter(do_flow_halves_an_end_past_a_sharp_corner_faces_away_from_it)
