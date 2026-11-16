@@ -908,22 +908,23 @@ fn test_projection_a_query_past_the_cells_tries_every_body() {
 }
 
 /// A query that is no rectangle on the canvas finds nothing (#364): one
-/// with a part that is no number — its origin, its size, or the far
-/// corner of a glyph's box grown past what an `f32` holds (an origin of
-/// −∞ and a size of +∞) — or one whose size is negative, which a [`Rect`]
-/// never has and which is not normalized into the rectangle its corners
-/// span. A rubber band and a layout's rectangle of each find no node — not
-/// the round one, the square one, or the one too large for the cells —
-/// where a rectangle round all three finds all three, and so does one
-/// reaching +∞, a rectangle that far.
+/// with a part that is no number — its origin, its size, or its far
+/// corner (an origin of −∞ and a size of +∞) — or one whose size is
+/// negative, which a [`Rect`] never has and which is not normalized into
+/// the rectangle its corners span. A rubber band and a layout's rectangle
+/// of each find no node — not the round one, the square one, or the one
+/// too large for the cells — where a rectangle round all three finds all
+/// three, and so does one reaching +∞, a rectangle that far: a glyph's
+/// box grown past what an `f32` holds is one, as `Rect::grown` saturates.
 ///
 /// Controls: with such a query given candidates, as it was, a negative
 /// size meets the node too large for the cells, which every query tries,
 /// red on the layout's rectangle. With that and the shape's check of its
 /// corners' order both taken out, the corner that is no number panics on
 /// the round node (`f32::clamp`). With no part of a query let reach +∞,
-/// red on the rectangle reaching it. The shape's check alone is held by
-/// its own test.
+/// red on the rectangle reaching it. With `Rect::grown` as it was, its
+/// far corner no number, red on the rubber band of the box grown by
+/// `f32::MAX`. The shape's check alone is held by its own test.
 #[test]
 fn test_projection_a_query_that_is_no_rectangle_finds_nothing() {
     let doc = load_map(json!({"nodes": [
@@ -968,8 +969,8 @@ fn test_projection_a_query_that_is_no_rectangle_finds_nothing() {
             Rect::new(Vec2::splat(-1.0e3), Vec2::new(2.0e5, nan)),
         ),
         (
-            "a glyph's box grown past f32",
-            Rect::new(Vec2::splat(10.0), Vec2::splat(10.0)).grown(f32::MAX),
+            "a far corner that is no number",
+            Rect::new(Vec2::splat(-inf), Vec2::splat(inf)),
         ),
         // Inside node 3, the node too large for the cells, which every
         // query tries.
@@ -987,18 +988,22 @@ fn test_projection_a_query_that_is_no_rectangle_finds_nothing() {
         ),
     ];
     // One reaching infinity is a rectangle that far, and finds what it
-    // covers.
-    let reaching = Rect::new(Vec2::splat(-1.0e3), Vec2::splat(inf));
-    assert_eq!(
-        p.projector.nodes_in(reaching),
-        every,
-        "a rubber band reaching +inf"
-    );
-    assert_eq!(
-        p.projector.nodes_meeting(reaching),
-        every,
-        "a layout's rectangle reaching +inf"
-    );
+    // covers: a glyph's box grown past f32 among them, which
+    // `Rect::grown` saturates (#364).
+    let glyph = Rect::new(Vec2::splat(10.0), Vec2::splat(10.0));
+    let reaching = [
+        ("reaching +inf", Rect::new(Vec2::splat(-1.0e3), Vec2::splat(inf))),
+        ("of a glyph's box grown by f32::MAX", glyph.grown(f32::MAX)),
+        ("of a glyph's box grown by +inf", glyph.grown(inf)),
+    ];
+    for (what, rect) in reaching {
+        assert_eq!(p.projector.nodes_in(rect), every, "a rubber band {what}");
+        assert_eq!(
+            p.projector.nodes_meeting(rect),
+            every,
+            "a layout's rectangle {what}"
+        );
+    }
     for (what, rect) in queries {
         assert_eq!(
             p.projector.nodes_in(rect),
