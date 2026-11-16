@@ -38,20 +38,23 @@
 //! found from its element through the projector's map, an element's
 //! instances through an index kept here, and no layer is walked.
 //!
-//! **Every override blends from what is drawn** ([`seed`]). A run's
-//! override vectors interpolate only between two of the same length
-//! (`GfxElement`'s interpolation), and a projected run has none; and a
-//! glyph's color blends only where both sides color it, while a glyph
-//! drawn in its own color has no color override. So before an instance
-//! is applied on a run, one more walk per run, under one journal of its
-//! own, gives the run neutral overrides — drawn exactly as none — if it
-//! has none and the instance writes any, and gives each glyph that the
-//! instance colors and nothing has colored yet its own color
-//! (`RunShape::own_colors`) as an override, which draws exactly as
-//! none. The instance's journal then runs from what is drawn — the
-//! glyph's own color, an overlay's tint, or what an instance started
-//! before it shows — to its own values. The base, taken before, still
-//! says "none", and is what the run goes back to.
+//! **Every override but a `null` color blends from what is drawn.** A
+//! run's override vectors interpolate only between two of the same
+//! length (`GfxElement`'s interpolation), and a projected run has none;
+//! and a glyph's color blends only where both sides color it, while a
+//! glyph drawn in its own color has no color override. So before an
+//! instance that writes overrides is applied, under one journal of
+//! their own, one walk gives every run of it that has no overrides
+//! neutral ones — drawn exactly as none — and one more walk per run
+//! that needs it gives each glyph the instance colors and nothing has
+//! colored yet its own color (`RunShape::own_colors`) as an override,
+//! which draws exactly as none ([`color_seed`]). The instance's journal
+//! then runs from what is drawn — the glyph's own color, an overlay's
+//! tint, or what an instance started before it shows — to its own
+//! values. What it runs from is read again every time the run is
+//! written, so a tint that comes or goes, or an earlier instance that
+//! ends, while it plays moves where it fades from. The base, taken
+//! before, holds none of this, and is what the run goes back to.
 
 use baumhard::arena::NodeId;
 use baumhard::document::ids::Document;
@@ -196,8 +199,9 @@ fn writes_overrides(ops: &[GfxMutation]) -> bool {
 }
 
 /// The ranges `ops` give a color in, in order: every color op with a
-/// value. (One that returns glyphs to their own color has nothing to
-/// fade.) O(the ops).
+/// value. (One that returns glyphs to their own color is not faded: a
+/// glyph colored by something else takes its own color where `snap`
+/// puts it.) O(the ops).
 fn colored_ranges(ops: &[GfxMutation]) -> Vec<Range<usize>> {
     ops.iter()
         .filter_map(|op| match op {
@@ -210,44 +214,48 @@ fn colored_ranges(ops: &[GfxMutation]) -> Vec<Range<usize>> {
         .collect()
 }
 
-/// The run mutations that make every override an instance is about to
-/// write on `run` blend from what is drawn, for an instance that writes
-/// overrides and colors the glyphs of `colored`: neutral overrides when
-/// `run` has none, then, over each stretch of those glyphs that no
-/// override colors yet and that share one own color, that color. Each
-/// draws exactly as the run did; what they change is what the
-/// instance's journal blends from. A glyph past the run's end, or one
-/// the run does not draw, is left as it is.
+/// The run mutations that make a color an instance writes on `run`
+/// fade from what is drawn, for an instance that colors the glyphs of
+/// `colored`: over each stretch of those glyphs that no override colors
+/// yet and that share one own color, that color. Each draws exactly as
+/// the run did; what they change is what the instance's journal blends
+/// from. A glyph past the run's end, or one the run does not draw, is
+/// left as it is; a glyph something already colors — the tint, an
+/// earlier instance — keeps that color, which the fade starts from.
 ///
-/// Cost: O(the lengths of `colored`); and when one of those glyphs has
-/// no color override, O(the run's glyphs) more, its own colors read once
-/// ([`RunShape::own_colors`](baumhard::gfx_structs::run::RunShape::own_colors)).
-fn seed(run: &GlyphRunData, colored: &[Range<usize>]) -> Vec<GfxMutation> {
+/// Cost: O(the lengths of `colored`, and the run's glyphs once for the
+/// mask) when `colored` is not empty; and when one of those glyphs has
+/// no color override, O(the run's glyphs) more, its own colors read
+/// once ([`RunShape::own_colors`](baumhard::gfx_structs::run::RunShape::own_colors)).
+fn color_seed(run: &GlyphRunData, colored: &[Range<usize>]) -> Vec<GfxMutation> {
     let mut ops = Vec::new();
-    if run.overrides().is_empty() {
-        ops.push(neutral_overrides());
+    if colored.is_empty() {
+        return ops;
     }
     let count = run.shaped().glyph_count();
     let current = run.overrides().color();
-    let bare = |index: usize| current.get(index).is_none_or(Option::is_none);
-    let wanted = colored
-        .iter()
-        .flat_map(|range| range.start..range.end.min(count))
-        .any(bare);
-    if !wanted {
+    // The glyphs to seed: colored by the instance, and by nothing yet.
+    let mut seeded = vec![false; count];
+    let mut any = false;
+    for range in colored {
+        let Some(reached) = seeded.get_mut(range.start..range.end.min(count)) else {
+            continue;
+        };
+        for (index, slot) in (range.start..).zip(reached) {
+            if current.get(index).is_none_or(Option::is_none) {
+                *slot = true;
+                any = true;
+            }
+        }
+    }
+    if !any {
         return ops;
     }
     let own = run.shaped().own_colors();
-    let mut mask = vec![false; count];
-    for range in colored {
-        if let Some(reached) = mask.get_mut(range.start..range.end.min(count)) {
-            reached.fill(true);
-        }
-    }
     stretches(
         count,
         |index| {
-            if mask[index] && bare(index) {
+            if seeded[index] {
                 own.get(index).copied().flatten()
             } else {
                 None
@@ -600,19 +608,28 @@ impl Stage {
                 }
                 let tree = layers.tree_mut(layer);
                 if writes_overrides(ops) {
-                    let mut builder = JournalBuilder::new();
-                    let mut seeded = false;
+                    // One walk over every run with no overrides, then one
+                    // per run with glyphs to give their own color.
+                    let mut neutral: Vec<NodeId> = Vec::new();
+                    let mut seeds: Vec<(NodeId, Vec<GfxMutation>)> = Vec::new();
                     for &glyph in glyphs {
-                        let ops = match tree.get(glyph).and_then(|node| node.get().glyph_run()) {
-                            Some(run) => seed(run, colored),
-                            None => continue,
+                        let Some(run) = tree.get(glyph).and_then(|node| node.get().glyph_run()) else {
+                            continue;
                         };
-                        if !ops.is_empty() {
-                            seeded = true;
-                            write(tree, &mut builder, &[glyph], ops);
+                        if run.overrides().is_empty() {
+                            neutral.push(glyph);
+                        }
+                        let seed = color_seed(run, colored);
+                        if !seed.is_empty() {
+                            seeds.push((glyph, seed));
                         }
                     }
-                    if seeded {
+                    if !neutral.is_empty() || !seeds.is_empty() {
+                        let mut builder = JournalBuilder::new();
+                        write(tree, &mut builder, &neutral, vec![neutral_overrides()]);
+                        for (glyph, seed) in seeds {
+                            write(tree, &mut builder, &[glyph], seed);
+                        }
                         journals.journals.push((layer, builder.close(tree)));
                     }
                 }

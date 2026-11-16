@@ -76,6 +76,28 @@ const HALF_WAY: Rgba = Rgba::opaque(144, 32, 48);
 /// Red, as `REDDEN` writes it.
 const RED: Rgba = Rgba::opaque(0xff, 0, 0);
 
+/// Reddens the first two glyphs of a section's run: in over 100 ms, out
+/// over 100.
+const REDDEN_TWO: &str = r##"{"id":"redden-two","name":"Redden two","play":"while","layer":"glyph","target":"sections",
+"glyph":[{"run_overrides":{"color":{"range":[0,2],"value":"#ff0000"}}}],
+"animate":{"ms":100}}"##;
+
+/// Colors the first glyph of a section's run blue, at once, for as long
+/// as it is held.
+const BLUE_HELD: &str = r##"{"id":"blue","name":"Blue","play":"hold","layer":"glyph","target":"sections",
+"glyph":[{"run_overrides":{"color":{"range":[0,1],"value":"#0000ff"}}}]}"##;
+
+/// Blue, as `BLUE_HELD` writes it.
+const BLUE: Rgba = Rgba::opaque(0, 0, 0xff);
+
+/// Half way from the selection's tint `#00e5ff` to `#ff0000`, worked by
+/// hand: `0xff / 2 = 127.5`, rounded to 128; `0xe5 / 2 = 114.5`, to 115;
+/// `0xff / 2`, 128.
+const TINT_HALF_WAY: Rgba = Rgba::opaque(128, 115, 128);
+
+/// Half way from [`BLUE`] to `#ff0000`, worked by hand: 128, 0, 128.
+const BLUE_HALF_WAY: Rgba = Rgba::opaque(128, 0, 128);
+
 /// Give every span of `node`'s first section the text color `color`, by
 /// an edit each (a span's own color is what its glyphs are drawn in),
 /// and leave nothing selected. Returns the section.
@@ -348,6 +370,141 @@ fn test_a_color_fades_from_the_glyphs_own_color_and_back() {
         "no color override, as before: to the bit"
     );
     assert!(view.stage().based_runs().is_empty());
+}
+
+/// A color fades from the selection's tint where the tint is on the
+/// glyph, not from the glyph's own color under it; and what it fades from
+/// is read again whenever the run is written, so a deselect while it
+/// plays moves the fade's start to the glyph's own color at the same
+/// progress, and a reselect moves it back. Ended selected, the run is
+/// the tinted one, to the bit.
+///
+/// Control: with the seed given to every glyph the instance colors,
+/// already colored or not, glyph 0 fades from its own color under the
+/// tint (`#902030`, not `#807380`).
+#[test]
+fn test_a_color_fades_from_the_tint_and_follows_it() {
+    let mut doc = testament();
+    let mut view = MapView::for_test(&doc);
+    let (a, _, _) = three_drawn_roots(&doc, &view);
+    let section = color_first_section(&mut doc, a, OWN);
+    view.sync_for_test(&mut doc).expect("the edit is synced");
+    let run = view.projector().glyphs_of(section)[0];
+    doc.selection.select_only(a);
+    view.sync_for_test(&mut doc).expect("tinted");
+    let tinted = bits(&view, run);
+    assert_eq!(
+        run_data(&view, run).overrides().color()[0],
+        Some(SELECTION_HIGHLIGHT),
+        "precondition: the tint is on glyph 0"
+    );
+    let colors = |view: &MapView| run_data(view, run).overrides().color().to_vec();
+
+    doc.start_presentation(&presentation(REDDEN), &[a], 0.0).unwrap();
+    doc.tick_presentations(50.0);
+    view.sync_for_test(&mut doc).expect("moved");
+    assert_eq!(colors(&view)[0], Some(TINT_HALF_WAY), "half way from the tint");
+
+    doc.selection.clear();
+    view.sync_for_test(&mut doc).expect("deselected");
+    assert_eq!(
+        colors(&view)[0],
+        Some(HALF_WAY),
+        "the tint gone, half way from its own color"
+    );
+
+    doc.selection.select_only(a);
+    view.sync_for_test(&mut doc).expect("selected again");
+    assert_eq!(
+        colors(&view)[0],
+        Some(TINT_HALF_WAY),
+        "half way from the tint again"
+    );
+
+    doc.stop_presentation("redden", &[a], 50.0);
+    doc.tick_presentations(150.0);
+    view.sync_for_test(&mut doc).expect("ended");
+    assert_eq!(doc.doc().presentations().count(), 0, "it has ended");
+    assert_eq!(bits(&view, run), tinted, "the tinted run, to the bit");
+}
+
+/// A color fades from what an instance started before it shows, glyph
+/// by glyph: over a range where only glyph 0 is colored before it (blue,
+/// held), glyph 0 fades from blue and glyph 1 from its own color. When
+/// the earlier instance ends while it plays, glyph 0 fades from its own
+/// color from then on. Started the other way round, the held blue is
+/// written over the fade. Each ends leaving the run as it was, to the
+/// bit.
+///
+/// Controls: with the seed given to every glyph the instance colors,
+/// already colored or not, glyph 0 is `#902030` where `#800080` is
+/// asserted (the case that holds the seed to the glyphs no override
+/// colors yet, within a range that has both); with no seed, glyph 1 is
+/// uncolored at 50 ms, not half way.
+#[test]
+fn test_a_color_fades_from_what_an_earlier_instance_shows_glyph_by_glyph() {
+    let mut doc = testament();
+    let mut view = MapView::for_test(&doc);
+    let (a, _, _) = three_drawn_roots(&doc, &view);
+    let section = color_first_section(&mut doc, a, OWN);
+    view.sync_for_test(&mut doc).expect("the edit is synced");
+    let run = view.projector().glyphs_of(section)[0];
+    let before = bits(&view, run);
+    let colors = |view: &MapView| run_data(view, run).overrides().color().to_vec();
+
+    doc.start_presentation(&presentation(BLUE_HELD), &[a], 0.0)
+        .unwrap();
+    view.sync_for_test(&mut doc).expect("held");
+    assert_eq!(
+        colors(&view)[..2],
+        [Some(BLUE), None],
+        "precondition: glyph 0 colored, glyph 1 not"
+    );
+
+    doc.start_presentation(&presentation(REDDEN_TWO), &[a], 0.0)
+        .unwrap();
+    doc.tick_presentations(50.0);
+    view.sync_for_test(&mut doc).expect("moved");
+    assert_eq!(
+        colors(&view)[..2],
+        [Some(BLUE_HALF_WAY), Some(HALF_WAY)],
+        "glyph 0 half way from blue, glyph 1 half way from its own color"
+    );
+
+    doc.stop_presentation("blue", &[a], 50.0);
+    doc.tick_presentations(50.0);
+    view.sync_for_test(&mut doc).expect("the blue ended");
+    assert_eq!(doc.doc().presentations().count(), 1, "the blue has ended");
+    assert_eq!(
+        colors(&view)[..2],
+        [Some(HALF_WAY), Some(HALF_WAY)],
+        "both half way from their own color"
+    );
+
+    doc.stop_presentation("redden-two", &[a], 50.0);
+    doc.tick_presentations(150.0);
+    view.sync_for_test(&mut doc).expect("ended");
+    assert_eq!(doc.doc().presentations().count(), 0);
+    assert_eq!(bits(&view, run), before, "as it was, to the bit");
+
+    // The other way round: the fade first, the held blue over it.
+    doc.start_presentation(&presentation(REDDEN_TWO), &[a], 200.0)
+        .unwrap();
+    doc.start_presentation(&presentation(BLUE_HELD), &[a], 200.0)
+        .unwrap();
+    doc.tick_presentations(250.0);
+    view.sync_for_test(&mut doc).expect("moved");
+    assert_eq!(
+        colors(&view)[..2],
+        [Some(BLUE), Some(HALF_WAY)],
+        "the blue written over the fade on glyph 0"
+    );
+    doc.stop_presentation("blue", &[a], 250.0);
+    doc.stop_presentation("redden-two", &[a], 250.0);
+    doc.tick_presentations(350.0);
+    view.sync_for_test(&mut doc).expect("ended");
+    assert_eq!(doc.doc().presentations().count(), 0);
+    assert_eq!(bits(&view, run), before, "as it was, to the bit");
 }
 
 /// On a run another instance already gives overrides — a scale, and no

@@ -237,10 +237,13 @@ data. They never touch the document.
   written: at `t = 0` the run is drawn exactly as it was. A color fades
   from the color the glyph is drawn in — its own (its span's), the
   selection's tint, or what an instance started before this one shows —
-  to the op's, and back on the way out. A `null` color, which returns a
-  glyph to its own color, has nothing to fade: a glyph colored by
-  something else takes its own color where `snap` puts it (`"start"`:
-  as soon as the instance moves; `"end"`: at `t = 1`).
+  to the op's, and back on the way out. What it fades from is read
+  again whenever the run is written, so a selection change, or an
+  earlier instance ending, while a fade plays moves where it fades
+  from, and the glyph jumps there. A `null` color, which returns a
+  glyph to its own color, is not faded: a glyph colored by something
+  else takes its own color where `snap` puts it (`"start"`: as soon as
+  the instance moves; `"end"`: at `t = 1`).
   `maps/demos/dickinson.mandala.json`'s `feathers-lift` thins the
   letters of "feathers" from the line's color, and brings the trail
   after them (which `feathers-trail` writes, below) up from the color

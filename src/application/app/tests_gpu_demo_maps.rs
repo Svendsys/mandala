@@ -856,7 +856,10 @@ fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
                 "{name}: glyph {glyph} has a color of a presentation's: {color:?}"
             );
             // A color fades from the one the glyph rests in, which the
-            // map spells; worked here channel by channel.
+            // map spells; worked here channel by channel. The rounding
+            // is the blend's own, so the ±1 is the progress's: the case
+            // gives `t` as the literal 0.75, the instance's eased `t` is
+            // an f32 that can land a hair to either side of it.
             if let (Some(color), Some((to, t))) = (color, colored[glyph]) {
                 let from = case
                     .rest
