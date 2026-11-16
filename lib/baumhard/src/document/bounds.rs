@@ -336,8 +336,7 @@ pub fn check_ornament(content: &str) -> Result<&str, BoundError> {
     }
 }
 
-/// A finite value `≥ 0`: a frame's `gap` and `inset`, and a path's or
-/// a ring's `spacing`. O(1).
+/// A finite value `≥ 0`. O(1).
 pub fn check_non_negative(value: f32) -> Result<f32, BoundError> {
     in_closed(value, 0.0, f32::MAX)
 }
@@ -387,9 +386,10 @@ pub fn check_weight(value: u16) -> Result<u16, BoundError> {
     }
 }
 
-/// A size component — a node's or a section's `min_size` — if it is
-/// finite and in `0.0..=`[`MAX_CANVAS_COORD`]: an extent on the canvas,
-/// never negative and never larger than a coordinate can be. O(1).
+/// A length on the canvas — either part of a node's or a section's
+/// `min_size`, a frame's `gap` and `inset`, and a frame's, a ring's or a
+/// path's `spacing` — if it is finite and in `0.0..=`[`MAX_CANVAS_COORD`]:
+/// never negative and never larger than a coordinate can be (#364). O(1).
 pub fn check_extent(value: f32) -> Result<f32, BoundError> {
     in_closed(value, 0.0, MAX_CANVAS_COORD)
 }

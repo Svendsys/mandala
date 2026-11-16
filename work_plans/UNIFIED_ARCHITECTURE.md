@@ -1856,7 +1856,7 @@ Typical chains:
   against its own label's text where that label is drawn (#340).
 - A path's label moved, re-texted or removed, or the path's gap changed
   → that path is laid again and hidden again, and only that path: its
-  own label is the one region its own glyphs keep their gap from (#340),
+  own label is a region only its own glyphs keep their gap from (#340),
   and no other element reads it.
 
 ### §12.4 Zoom and pan

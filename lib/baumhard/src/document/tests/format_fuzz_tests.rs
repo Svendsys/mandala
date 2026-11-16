@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 /// Every minimized input a fuzz target found, by the symptom it had.
 /// Each is replayed through every property here; its own test below
 /// pins the symptom. The fuzz targets read these files as seeds.
-const FINDINGS: [(&str, &[u8]); 4] = [
+const FINDINGS: [(&str, &[u8]); 6] = [
     (
         "c1_control_saved_raw",
         include_bytes!("fuzz_findings/c1_control_saved_raw.mandala.json"),
@@ -43,6 +43,18 @@ const FINDINGS: [(&str, &[u8]); 4] = [
     (
         "a_handler_name_shown_raw",
         include_bytes!("fuzz_findings/a_handler_name_shown_raw.mandala.json"),
+    ),
+    // A projection finding, written by hand from #364's: a map that loads
+    // and made the projection panic.
+    (
+        "a_ring_past_the_body_index_cells",
+        include_bytes!("fuzz_findings/a_ring_past_the_body_index_cells.mandala.json"),
+    ),
+    // A second, written by hand from #364's edges: a map that loaded and
+    // made the projection panic at `f32::MAX`, now refused at load.
+    (
+        "a_path_spaced_past_what_a_box_holds",
+        include_bytes!("fuzz_findings/a_path_spaced_past_what_a_box_holds.mandala.json"),
     ),
 ];
 
@@ -70,6 +82,70 @@ fn test_a_handler_name_from_the_file_is_escaped_in_its_refusal() {
     let shown = error.to_string();
     assert!(!shown.contains('\u{202e}'), "shown raw: {shown:?}");
     assert!(shown.contains("`flo\\u202e`"), "{shown}");
+}
+
+/// The finding of #364: a map that loads made the projection panic,
+/// counting the cells of a region too large for the product to fit an
+/// `i64` (attempt to multiply with overflow); a release build wrapped the
+/// count, took the region for a small one and filed it under every cell.
+/// The map is one node whose last ring is 600 `gap`s of 10⁹ out, the most
+/// a length is held to wherever the loader bounds one, its dots spaced to
+/// run all the way round: a region 1.2·10¹² across. It loads and is inside
+/// the projection's work bound, so both loader targets project it, and it
+/// holds every property.
+///
+/// Controls: with the count the product of two spans in `i64`, as it was,
+/// a debug build panics in the first projection here (attempt to multiply
+/// with overflow), and a release build's ends in a failed allocation.
+/// With the bound refusing a `gap` past its extent, red on the
+/// precondition that the map is inside it.
+#[test]
+fn test_a_ring_past_the_body_index_cells_is_projected() {
+    use crate::projection::tests::projection_fuzz::within_bound;
+    use crate::projection::tests::support::Projected;
+    let finding = FINDINGS[4].1;
+    let doc = load(std::str::from_utf8(finding).unwrap()).expect("the finding loads");
+    assert!(
+        within_bound(&doc),
+        "precondition: inside the projection's work bound, so the loader targets project it"
+    );
+    let node = doc.node_by_ident(crate::document::ids::NodeIdent(1)).unwrap();
+    let region = Projected::new(doc).projector.regions.get(node).1;
+    let across = region.map(|(rect, _)| rect.size.min_element());
+    assert!(
+        across.is_some_and(|across| across > 1.0e12),
+        "precondition: the ring's box is 600 gaps out each way, {region:?}"
+    );
+    check_load_bytes(finding).unwrap();
+}
+
+/// The second finding of #364: a map that loaded made the projection
+/// panic at the far edge of a `spacing`. The connector from node 1 to
+/// node 2 is spaced `f32::MAX`, so each of its glyphs' boxes, grown by its
+/// gap, had no far corner, and node 3, 1000 away, round and ringed, clamped
+/// to no number trying it. A `spacing` is now held to the canvas bound at
+/// load, so the map is refused, naming the connector's `spacing` and the
+/// bound, and it holds every property of a refusal.
+///
+/// Control: with a path's `spacing` held only to `check_non_negative` at
+/// load, as it was, red on the refusal.
+#[test]
+fn test_a_path_spaced_past_what_a_box_holds_is_refused() {
+    let finding = FINDINGS[5].1;
+    let error = load(std::str::from_utf8(finding).unwrap()).expect_err("the finding is refused");
+    assert_eq!(
+        (error.path.as_str(), &error.kind),
+        (
+            "nodes[1].connector.spacing",
+            &crate::document::format::LoadErrorKind::Bound {
+                error: crate::document::bounds::BoundError::Above {
+                    value: f32::MAX,
+                    max: crate::document::bounds::MAX_CANVAS_COORD,
+                },
+            }
+        )
+    );
+    check_load_bytes(finding).unwrap();
 }
 
 /// The second finding: malformed text inside `nodes[1]` was refused at

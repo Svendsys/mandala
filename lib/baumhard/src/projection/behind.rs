@@ -71,7 +71,7 @@ use crate::flow::{PlacedRun, Rect};
 use crate::gfx_structs::run::{GlyphRunData, RunShape};
 use crate::gfx_structs::shape::NodeShape;
 use crate::projection::geometry::node_shape;
-use crate::projection::hit::{cell_count, cells, span, BodyIndex};
+use crate::projection::hit::{cell_count, cells, is_rectangle, span, BodyIndex};
 use crate::projection::input::{Dependent, ProjectionInput, Stage};
 use crate::projection::stages::{gap_and_size, glyph_ink, run_data, PhaseWork};
 use crate::projection::state::UnitBody;
@@ -101,6 +101,11 @@ pub(crate) struct PathCells {
     /// The paths with a glyph too large for the cells, each with the box
     /// round those glyphs: tried by every query.
     large: FxHashMap<NodeId, Rect>,
+    /// How many cells `each_meeting` has visited, its query's own walked
+    /// or the occupied ones scanned: what the test that holds a region
+    /// past the cells to the occupied cells reads. Test builds only.
+    #[cfg(test)]
+    pub(crate) meeting_cells: std::cell::Cell<usize>,
 }
 
 /// Whether `a` and `b` meet, edges included.
@@ -110,13 +115,15 @@ fn meet(a: &Rect, b: &Rect) -> bool {
 
 impl PathCells {
     /// Set where `path`'s glyphs are: `boxes`, each a glyph's box grown by
-    /// the path's gap. A box that is not finite is left out. O(its old and
-    /// new cells).
+    /// the path's gap. A box that is no rectangle ([`is_rectangle`]) is
+    /// left out, as the regions' index finds nothing for it, so the hide
+    /// stage and the index agree on it; one reaching ±∞ is kept apart, as
+    /// any box past the cells is. O(its old and new cells).
     pub(crate) fn set(&mut self, path: NodeId, boxes: &[Rect]) {
         self.remove(path);
         let mut here: FxHashMap<Cell, Rect> = FxHashMap::default();
         for b in boxes {
-            if !b.origin.is_finite() || !b.size.is_finite() {
+            if !is_rectangle(*b) {
                 continue;
             }
             match cells(*b) {
@@ -184,14 +191,20 @@ impl PathCells {
             each(&[(path, *b, 0)]);
         }
         match span(rect) {
-            Some(((x0, y0), (x1, y1))) if cell_count((x0, y0), (x1, y1)) <= self.cells.len() as i64 => {
+            Some(((x0, y0), (x1, y1))) if cell_count((x0, y0), (x1, y1)) <= self.cells.len() as u64 => {
                 for x in x0..=x1 {
                     for y in y0..=y1 {
+                        #[cfg(test)]
+                        self.meeting_cells.set(self.meeting_cells.get() + 1);
                         each(self.cells.get(&(x, y)).map_or(&[], Vec::as_slice));
                     }
                 }
             }
-            Some(_) => self.cells.values().for_each(|list| each(list)),
+            Some(_) => self.cells.values().for_each(|list| {
+                #[cfg(test)]
+                self.meeting_cells.set(self.meeting_cells.get() + 1);
+                each(list)
+            }),
             None => {}
         }
     }

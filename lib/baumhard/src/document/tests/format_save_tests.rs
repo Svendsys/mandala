@@ -300,11 +300,12 @@ fn test_a_float_survives_the_text_exactly() {
     };
     let mut checked = 0;
     // Random bit patterns, and the neighbors of the interesting values,
-    // read and written as a frame's `gap`: any finite number `>= 0`, with
-    // no upper bound — so both zeros, `0.0` and `-0.0`, are among them.
-    let mut values: Vec<f32> = (0..200_000)
+    // read and written as a frame's `gap`: any finite number from `0` to
+    // the canvas bound (#364) — so both zeros, `0.0` and `-0.0`, are among
+    // them.
+    let mut values: Vec<f32> = (0..400_000)
         .map(|_| f32::from_bits((next() >> 32) as u32))
-        .filter(|v| v.is_finite() && *v >= 0.0)
+        .filter(|v| v.is_finite() && *v >= 0.0 && *v <= crate::document::bounds::MAX_CANVAS_COORD)
         .chain([0.0, -0.0])
         .collect();
     for base in [
