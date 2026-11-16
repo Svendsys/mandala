@@ -1584,16 +1584,17 @@ presentation changes what is drawn and is stopped.
   The funnels an input reaches the map through — an Action
   (`dispatch::the_map`), a console verb's execution, an edit — set the
   layer aside for as long as they run (`Document::suspend_presentations`
-  and `resume_presentations`, or, where the scope can end early, the
-  app's guard `MindMapDocument::suspended`, which puts the layer back
-  however its scope ends), so nothing a presentation shows is ever
-  read into a change. The guard is the app's, not the document's: one
-  that derefs to the document would be a way into it beside
-  `Document::apply`. A reader that holds the document shared and must
-  describe the map reads through `Document::without_presentations`, as
-  `format::save` does. Which surface answers the map and which what is
-  drawn is in [`format/ipc.md`](./format/ipc.md) "The map itself, or
-  what is drawn".
+  and `resume_presentations`, held by the app's guards — `OnTheMap` for
+  an Action, `MindMapDocument::suspended` for a console line and an
+  edit — which put the layer back however their scope ends), so
+  nothing a presentation shows is ever read into a change. The guards
+  are the app's, not the document's: one that derefs to the document
+  would be a way into it beside `Document::apply`. A reader that holds
+  the document shared and must describe the map reads through
+  `Document::without_presentations`, as `format::save` does. Which
+  surface answers the map and which what is drawn is in
+  [`format/ipc.md`](./format/ipc.md) "The map itself, or what is
+  drawn".
 - **On the clock.** The frame's tick (`app::animation::tick`) brings
   every instance to the app clock's reading, then writes the animated
   edit; `keeps_ticking` owes the loop a frame while an instance is on
