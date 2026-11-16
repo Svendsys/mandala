@@ -136,6 +136,36 @@ fn in_points(mut style: ResolvedText, side: f32) -> ResolvedText {
     style
 }
 
+/// Where each glyph of `run` is laid out on the canvas: the run's origin
+/// and each glyph's place in its shaping, before an override moves it.
+fn laid_out(run: &GlyphRunData) -> Vec<Vec2> {
+    let origin = run.origin();
+    match run.shaped() {
+        RunShape::Box(shaped) => shaped
+            .buffer
+            .layout_runs()
+            .flat_map(|line| {
+                let top = line.line_top;
+                line.glyphs
+                    .iter()
+                    .map(move |glyph| origin + Vec2::new(glyph.x, top))
+            })
+            .collect(),
+        RunShape::Path { placed, .. } => placed.glyphs.iter().map(|glyph| origin + glyph.pos).collect(),
+    }
+}
+
+/// Every element below `id` and `id` itself, parents first.
+fn subtree_of(doc: &Document, id: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let mut stack = vec![id];
+    while let Some(at) = stack.pop() {
+        out.push(at);
+        stack.extend(doc.children(at));
+    }
+    out
+}
+
 /// The children of `id` of `kind`, in their row's order.
 fn children_of(doc: &Document, id: NodeId, kind: DocKind) -> Vec<NodeId> {
     doc.children(id)
@@ -498,9 +528,10 @@ struct Presented {
 /// The README's two presented maps (#251, the acceptance cases moved
 /// from #250). Frames: the words "an ellipse" of the ellipse's ring, at
 /// 1.15 times their size. Dickinson, 1200 ms on: "Hope" three quarters
-/// of the way through its swell (`f²(3 - 2f)` at `f = 0.75`), the trail
-/// of dots written after "feathers" (a document-layer presentation: the
-/// map saves the span empty), and the letters of "feathers" and the
+/// of the way through its swell (`f²(3 - 2f)` at `f = 0.75`), the line
+/// held where centering put it and the trail of dots written after
+/// "feathers" (two document-layer presentations: the map saves the line
+/// centered and the span empty), and the letters of "feathers" and the
 /// trail half way through their lift in time and three quarters in
 /// progress (`1 - (1 - f)²` at `f = 0.5`).
 const PRESENTED: [Presented; 2] = [
@@ -516,6 +547,7 @@ const PRESENTED: [Presented; 2] = [
         at_ms: 1200,
         presentations: &[
             ("hope-swells", "glyph", 0.84375, &["Hope"]),
+            ("feathers-line", "document", 1.0, &[]),
             ("feathers-trail", "document", 1.0, &[]),
             ("feathers-rest", "glyph", 1.0, &["feathers", "·····"]),
             (
@@ -565,16 +597,21 @@ fn text_of(run: &GlyphRunData, spans: &[String], range: std::ops::Range<usize>) 
 ///
 /// Held: the map carries exactly the presentations listed; with
 /// nothing playing no span holds Dickinson's trail and none is drawn;
-/// every range of every run mutation names the words it is for, read off
-/// the shaped run; each instance is at the progress its timing puts it
-/// at; and the run on the glyph layer carries each scale at that
-/// progress, with no other glyph of it scaled. With `MANDALA_DEMO_OUT`
+/// what plays moves no glyph of the run that was there before it (on
+/// Dickinson, `feathers-line` holds the line where centering put it
+/// while `feathers-trail` writes after it), read off the run's own
+/// layout and so for any face; every range of every run mutation names
+/// the words it is for, read off the shaped run; each instance is at the
+/// progress its timing puts it at; and the run on the glyph layer
+/// carries each scale at that progress, with no other glyph of it
+/// scaled. With `MANDALA_DEMO_OUT`
 /// set, the frame is written there as `<name>-presented.png`.
 ///
 /// Controls, each seen red: a range moved by one glyph names another
 /// word; with the glyph-layer stage not stamping what plays, the run
 /// carries no scale; the trail saved in the map's span, as it once was,
-/// is drawn with nothing playing.
+/// is drawn with nothing playing; `feathers-line`'s offset one unit off
+/// moves glyph 0 of the line.
 #[test]
 fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
     use baumhard::document::presentation::PresentationBody;
@@ -643,6 +680,24 @@ fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
             "{name}: the map itself holds no trail"
         );
 
+        // Where every run of the node's elements is laid out now, with
+        // nothing playing, by element.
+        let laid_before: Vec<(NodeId, Vec<Vec2>)> = {
+            let view = init.view.as_ref().expect("the app has a view");
+            let doc = init.document.as_ref().expect("the map loaded").doc();
+            let node = doc
+                .node_by_ident(baumhard::document::ids::NodeIdent(case.node as u32))
+                .expect("the node the presentations start on");
+            subtree_of(doc, node)
+                .into_iter()
+                .filter_map(|element| {
+                    let (layer, glyph) = *view.projector().glyphs_of(element).first()?;
+                    let run = view.layers().tree(layer).get(glyph)?.get().glyph_run()?;
+                    Some((element, laid_out(run)))
+                })
+                .collect()
+        };
+
         for id in &listed {
             ipc(
                 init,
@@ -678,6 +733,36 @@ fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
             .projector()
             .element_of(layer, glyph)
             .expect("the run is an element's");
+        // What plays moves no glyph of the run that was there before it
+        // started: on Dickinson, the line is held where centering put it
+        // while the trail is written after it. Read off the run's own
+        // layout, so it holds for any face.
+        let before = laid_before
+            .iter()
+            .find(|(of, _)| *of == element)
+            .map(|(_, laid)| laid.clone())
+            .expect("the run was laid out before anything played");
+        {
+            let run = view
+                .layers()
+                .tree(layer)
+                .get(glyph)
+                .and_then(|node| node.get().glyph_run())
+                .expect("a run");
+            let now = laid_out(run);
+            assert!(
+                now.len() >= before.len(),
+                "{name}: {} glyphs, then {}",
+                before.len(),
+                now.len()
+            );
+            for (at, (was, is)) in before.iter().zip(&now).enumerate() {
+                assert!(
+                    (*is - *was).length() < 1e-3,
+                    "{name}: glyph {at} was laid out at {was}, and is at {is} while it plays"
+                );
+            }
+        }
         let spans: Vec<String> = children_of(doc, element, DocKind::Span)
             .into_iter()
             .filter_map(|span| match doc.get(span) {

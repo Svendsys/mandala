@@ -253,9 +253,10 @@ data. They never touch the document.
   only to be performed is better written by a document-layer
   presentation into a span the map saves empty. Dickinson's first line
   does: its last span is empty, and `feathers-trail` writes the five
-  dots into it (`set_text`) while it plays. The line is aligned left
-  at the offset that centering gave it, so the trail added at its end
-  moves nothing before it.
+  dots into it (`set_text`) while it plays. The line is saved centered,
+  as the rest of the map is; `feathers-line`, started before the trail,
+  aligns it left at the offset centering gave it (`set_align`,
+  `set_offset`), so the trail added at its end moves nothing before it.
 - When projection rewrites a run an instance plays on — its text
   changed, its node moved — the instance is written on it again, and
   on no other run. The selection's tint and a presentation share a
