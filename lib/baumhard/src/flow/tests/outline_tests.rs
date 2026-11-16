@@ -122,7 +122,9 @@ fn reach(origin: f32, size: f32, d: f32) -> (f64, f64) {
 /// and by 10³⁸ from a box at the high edge, whose far corner reaches +∞
 /// — its edges are where `f64` puts them; shrunk by 3, 10³⁰, `f32::MAX`
 /// and +∞, a side stops at zero about the center; and by a `d` that is
-/// no number it is empty at its center.
+/// no number it is empty at its center. A box not itself finite on an
+/// axis — an origin of ±∞ or no number, a size of +∞, as the flow is
+/// handed — grows as it always did, its size never negative.
 ///
 /// Controls: with `grown` as it was, its origin `center − size / 2`, red
 /// on the box grown by 1.8·10³⁸, whose origin is −∞; with that check
@@ -132,6 +134,9 @@ fn reach(origin: f32, size: f32, d: f32) -> (f64, f64) {
 /// on its far corner, −∞, short of the far edge it reaches. Saturated to
 /// an origin of `f32::MIN` and a size of `f32::MAX`, or of +∞, red on the
 /// near edge of the box grown by 1.8·10³⁸, which it reaches at −1.8·10³⁸.
+/// Saturating an axis whose center is not finite too, red on the box with
+/// an origin of −∞ grown by 5, whose size is then −∞ (which panicked the
+/// flow's `f32::clamp` of an offset's radius).
 pub fn do_flow_a_rect_grown_past_f32_saturates_and_covers_what_it_reaches() {
     let (max, inf, nan) = (f32::MAX, f32::INFINITY, f32::NAN);
     let r = rect(10.0, -20.0, 30.0, 4.0);
@@ -190,6 +195,23 @@ pub fn do_flow_a_rect_grown_past_f32_saturates_and_covers_what_it_reaches() {
                     "{at}: its far corner is the far edge it reaches, {far_at}"
                 );
             }
+        }
+    }
+    // A box not itself finite on an axis, which the flow is handed: its
+    // size is never negative, whatever `d`.
+    let unfinite = [
+        ("an origin of -inf", rect(-inf, 0.0, 10.0, 10.0)),
+        ("an origin of +inf", rect(inf, 0.0, 10.0, 10.0)),
+        ("a size of +inf", rect(0.0, 0.0, inf, 10.0)),
+        ("an origin that is no number", rect(nan, 0.0, 10.0, 10.0)),
+    ];
+    for (what, r) in unfinite {
+        for d in [5.0, -5.0, 1.8e38, max, inf, -inf, nan] {
+            let g = r.grown(d);
+            assert!(
+                !(g.size.x < 0.0 || g.size.y < 0.0),
+                "a box with {what} grown by {d}: its size is not negative, {g:?}"
+            );
         }
     }
 }

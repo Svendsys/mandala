@@ -49,20 +49,22 @@ impl Rect {
     /// A negative `d` shrinks it, and a side shrunk past zero stays at
     /// zero, centered; a `d` that is no number shrinks it so too.
     ///
-    /// **Past what an `f32` holds** (#364), an axis saturates rather than
-    /// leave a far corner that is no number (an origin of −∞ plus a size
-    /// of +∞). Its origin is the near edge it reaches, held to
-    /// `f32::MIN`; its size runs from there to the far edge it reaches,
-    /// `+∞` where that width is past `f32`. Every corner is then a number,
-    /// the far one `+∞` at most, and the box covers every point it
-    /// reaches: on an axis of width `+∞`, every point from its near edge
-    /// on — past its far edge too, as no finite width can reach that edge
-    /// from the near one. It is a rectangle reaching `+∞`, which the
-    /// indices take as a rectangle that far (`hit::is_rectangle`). Grown
-    /// by `+∞` it runs from `f32::MIN` to `+∞`: every finite point.
+    /// **Past what an `f32` holds** (#364), an axis whose center is a
+    /// finite number saturates rather than leave a far corner that is no
+    /// number (an origin of −∞ plus a size of +∞). Its origin is the near
+    /// edge it reaches, held to `f32::MIN`; its size runs from there to
+    /// the far edge it reaches, `+∞` where that width is past `f32`. Every
+    /// corner is then a number, the far one `+∞` at most, and the box
+    /// covers every point it reaches: on an axis of width `+∞`, every
+    /// point from its near edge on — past its far edge too, as no finite
+    /// width can reach that edge from the near one. It is a rectangle
+    /// reaching `+∞`, which the indices take as a rectangle that far
+    /// (`hit::is_rectangle`). Grown by `+∞` it runs from `f32::MIN` to
+    /// `+∞`: every finite point.
     ///
-    /// An axis that grows within `f32` is computed as it always was, to
-    /// the bit. For a finite rectangle. O(1).
+    /// An axis that grows within `f32`, and one whose center is itself
+    /// past `f32` or no number, is computed as it always was, to the bit:
+    /// its size never negative. O(1).
     pub fn grown(&self, d: f32) -> Rect {
         let size = (self.size + Vec2::splat(2.0 * d)).max(Vec2::ZERO);
         let center = self.center();
@@ -72,10 +74,11 @@ impl Rect {
         }
         // An axis past `f32`: its near edge from the half width, which an
         // `f32` holds wherever `d` does, and its size from the near edge
-        // to the far one, `+∞` where the far edge is past `f32` too.
+        // to the far one, `+∞` where the far edge is past `f32` too. Its
+        // center finite, the near edge is at most the far one.
         let half = (self.size * 0.5 + Vec2::splat(d)).max(Vec2::ZERO);
         let axis = |origin: f32, size: f32, center: f32, half: f32| {
-            if origin.is_finite() && size.is_finite() {
+            if (origin.is_finite() && size.is_finite()) || !center.is_finite() {
                 (origin, size)
             } else {
                 let near = (center - half).max(f32::MIN);

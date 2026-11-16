@@ -2209,6 +2209,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("flow_offset_grows_the_rect_and_the_radius", |b| {
         b.iter(do_flow_offset_grows_the_rect_and_the_radius)
     });
+    c.bench_function(
+        "flow_a_rect_grown_past_f32_saturates_and_covers_what_it_reaches",
+        |b| b.iter(do_flow_a_rect_grown_past_f32_saturates_and_covers_what_it_reaches),
+    );
     c.bench_function("flow_ring_offset_sums_inner_rings_and_gaps", |b| {
         b.iter(do_flow_ring_offset_sums_inner_rings_and_gaps)
     });
