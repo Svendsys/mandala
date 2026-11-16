@@ -517,12 +517,23 @@ pub(crate) const TOUCH_LOOKS_A_CLASS_MEASURED: usize = 2;
 /// it or not: a lookup that charged it only for the coarser inks near
 /// it, along the axis as well as across, would still look for them in
 /// each class, so the classes are counted instead. A check holds no more
-/// classes than its frame's inks span ([`height_classes`]), and the
-/// font-size window bounds those: every size is from 0.5 to 4,096 pt,
-/// so an ink no taller than twice its size is less than 8,192 tall, of
-/// class 14 at most, and the least class, of an ink of no height and
-/// [`TOUCH`], is −9: 24 classes at most, one more for each doubling of an
-/// ink past twice its size.
+/// classes than its frame's inks can reach as placed
+/// ([`reachable_classes`]): each ink's extent as shaped, give or take
+/// what placing it where the frame lies rounds it by
+/// ([`placement_error`]; rulings R51.2, B46.1). So the count is known
+/// before the fill, from the sizes and the float resolution where the
+/// frame lies, and the font-size window and that resolution bound it
+/// (the ceiling): every size is from 0.5 to 4,096 pt, so an ink no
+/// taller than twice its size is less than 8,192 tall, and the least
+/// class, of an ink of no height and [`TOUCH`], is −9. With no
+/// coordinate a frame places from further than `M` from the origin, an
+/// ink of the window is placed less than `8,192 + (M + 8,192) × 2⁻²²`
+/// tall, so the check holds the classes from −9 to that height's: 24
+/// classes for `M` up to 3.4 × 10¹⁰ (class 14 holds every height to
+/// 16,383.98), and one more for each doubling of `M` past it; and one
+/// more for each doubling of an ink past twice its size. Where `M` is
+/// not finite, every class an `f32` extent has: 140, from −9 to 129 and
+/// an infinite extent's (`test_flow_halves_the_class_ceiling_grows_with_where_a_frame_lies`).
 pub(crate) fn touch_looks(classes: usize) -> usize {
     TOUCH_LOOKS_BASE.saturating_add(TOUCH_LOOKS_A_CLASS.saturating_mul(classes))
 }
@@ -538,28 +549,265 @@ pub(crate) fn check_steps(boxes: usize, classes: usize) -> usize {
     weighing_steps(swept).saturating_add(stripped.div_ceil(STRIPPED_A_STEP))
 }
 
-/// How many classes of height a touch check of boxes `sizes` wide and
-/// tall holds at most, across either axis it may sweep along ([`stripped`],
-/// ruling R51.2): the distinct classes ([`strip_class`]) of their heights
-/// or of their widths, whichever are more. A size with no ink to touch
-/// with ([`has_ink`]) is left out, as the check leaves it out.
-pub(crate) fn height_classes(sizes: impl IntoIterator<Item = Vec2>) -> usize {
-    let mut across: [Vec<i32>; 2] = [Vec::new(), Vec::new()];
-    for size in sizes {
-        if has_ink((Vec2::ZERO, size)) {
-            across[0].push(strip_class(size.y));
-            across[1].push(strip_class(size.x));
+/// How much a placed extent's rounding is a share of its reach and its
+/// size at most ([`placement_error`]): 2⁻²², twice what the derivation
+/// owes.
+const PLACED_ROUNDING: f64 = 1.0 / (1_u64 << 22) as f64;
+
+/// What a placed extent's rounding is at the least, past its share
+/// ([`placement_error`]): more than 2⁻¹⁴⁶, sixteen times the most the
+/// derivation's subnormal parts add.
+const PLACED_FLOOR: f64 = 1.2e-44;
+
+/// How far an ink box's extent across an axis, as a frame places it and
+/// a touch check measures it, may lie from `size`, its ink's extent there
+/// as shaped, where no coordinate the box is placed from is further than
+/// `reach` from the origin (ruling B46.1): `(reach + size) × 2⁻²²` and
+/// [`PLACED_FLOOR`]. Not finite where `reach` is not.
+///
+/// The derivation. A frame places an ink box at a point `p`, an `f32` of
+/// its own, as `p + v₀` to `p + v₁`, each `vₖ` an `f32` corner of the ink
+/// as shaped (or, for a line's ink, `∓` its half size): a glyph's at its
+/// pen ([`glyph_box`]), a line's ink at its center (`InkLay::cluster`).
+/// Each corner is rounded once, to `cₖ = (p + vₖ)(1 + εₖ) + ηₖ`, where
+/// `|εₖ| ≤ u = 2⁻²⁴` and `|ηₖ| ≤ η = 2⁻¹⁵⁰` (round to nearest in
+/// binary32), and `|p + vₖ| ≤ reach`. The check measures `h' = c₁ − c₀`,
+/// rounded once more (`stripped`'s `class`), and the size as shaped is
+/// `s = v₁ − v₀`, rounded once. So `|h' − s| ≤ 2(u·reach + η) + u·s + η`
+/// from the corners and the shaped size, and `u·|c₁ − c₀| + η` from the
+/// measure, `|c₁ − c₀| ≤ s(1 + u) + η + 2(u·reach + η)`: at most
+/// `2⁻²³(reach + s)(1 + 2⁻²³) + 6η`, which this is twice, and more.
+/// Whatever `p` is — a pen, a center, however many roundings it took to
+/// reach — it is one `f32` both corners share, and only its magnitude,
+/// in `reach`, counts.
+pub(crate) fn placement_error(reach: f64, size: f32) -> f64 {
+    (reach + f64::from(size).abs()) * PLACED_ROUNDING + PLACED_FLOOR
+}
+
+/// The largest `f32` no greater than `x`.
+fn f32_below(x: f64) -> f32 {
+    let near = x as f32;
+    if f64::from(near) > x {
+        near.next_down()
+    } else {
+        near
+    }
+}
+
+/// The least `f32` no less than `x`: infinite past the largest, and where
+/// `x` is not a number.
+fn f32_above(x: f64) -> f32 {
+    let near = x as f32;
+    if x.is_nan() {
+        f32::INFINITY
+    } else if f64::from(near) < x {
+        near.next_up()
+    } else {
+        near
+    }
+}
+
+/// The offset a frame's band curve is tried at next, laid at `offset`
+/// and missing what its inks want by `miss`, the offset tried before and
+/// its miss `before` ([`solve_offset`], [`Layout::clear_at`]): where the
+/// line through the two misses crosses none (the secant), or `fallback`
+/// without a line or where it does not cross; held to within `bound` of
+/// none either way ([`held_offset`], ruling B46.2).
+pub(crate) fn next_offset(
+    offset: f32,
+    miss: f32,
+    before: Option<(f32, f32)>,
+    fallback: f32,
+    bound: f32,
+) -> f32 {
+    let next = match before {
+        Some((was, missed)) if missed != miss => offset - miss * (offset - was) / (miss - missed),
+        _ => fallback,
+    };
+    held_offset(if next.is_finite() { next } else { fallback }, bound)
+}
+
+/// `offset` held to within `bound` of none either way (ruling B46.2):
+/// what every offset a frame's band curve is tried at is held to
+/// ([`Layout::text_bound`]). A bound that is not finite holds nothing.
+/// The secant through two misses that nearly agree steps far past it.
+fn held_offset(offset: f32, bound: f32) -> f32 {
+    if bound.is_finite() && bound >= 0.0 {
+        offset.clamp(-bound, bound)
+    } else {
+        offset
+    }
+}
+
+/// How many classes of height a touch check of boxes of `sizes` holds
+/// at most, across either axis it may sweep along ([`stripped`]; rulings
+/// R51.2, B46.1): of each size with a reach, an ink's extents as shaped,
+/// every class an extent of it placed no further than its reach from
+/// the origin can take ([`placement_error`]), from its extent less the
+/// error, or none, to its extent and the error — and the class of an
+/// infinite extent where that passes the largest `f32`, past which the
+/// measure is one; of each size with none, a box's as placed, its own
+/// classes ([`strip_class`]), as the check classes them. Across each axis the
+/// distinct classes of them all, whichever axis holds more. A size with
+/// no ink to touch with ([`has_ink`]) is left out, as the check leaves it
+/// out: placed, it has none either, its two corners being one sum.
+///
+/// Cost: a sort of a range of classes a size a axis.
+pub(crate) fn reachable_classes(sizes: impl IntoIterator<Item = (Vec2, Option<f64>)>) -> usize {
+    let infinite = strip_class(f32::INFINITY);
+    let mut across: [Vec<(i32, i32)>; 2] = [Vec::new(), Vec::new()];
+    for (size, reach) in sizes {
+        if !has_ink((Vec2::ZERO, size)) {
+            continue;
+        }
+        for (ranges, extent) in across.iter_mut().zip([size.y, size.x]) {
+            let Some(reach) = reach else {
+                let class = strip_class(extent);
+                ranges.push((class, class));
+                continue;
+            };
+            let error = placement_error(reach, extent);
+            let (low, high) = if error.is_finite() {
+                (f64::from(extent) - error, f64::from(extent) + error)
+            } else {
+                (0.0, f64::INFINITY)
+            };
+            ranges.push((
+                strip_class(f32_below(low.max(0.0))),
+                strip_class(f32_below(high.min(f64::from(f32::MAX)))),
+            ));
+            if high > f64::from(f32::MAX) {
+                ranges.push((infinite, infinite));
+            }
         }
     }
     across
         .iter_mut()
-        .map(|classes| {
-            classes.sort_unstable();
-            classes.dedup();
-            classes.len()
+        .map(|ranges| {
+            ranges.sort_unstable();
+            let mut count = 0_usize;
+            let mut open: Option<(i32, i32)> = None;
+            for &(low, high) in ranges.iter() {
+                open = match open {
+                    Some((from, to)) if i64::from(low) <= i64::from(to) + 1 => Some((from, to.max(high))),
+                    Some((from, to)) => {
+                        count += (i64::from(to) - i64::from(from) + 1) as usize;
+                        Some((low, high))
+                    }
+                    None => Some((low, high)),
+                };
+            }
+            if let Some((from, to)) = open {
+                count += (i64::from(to) - i64::from(from) + 1) as usize;
+            }
+            count
         })
         .max()
         .unwrap_or(0)
+}
+
+/// How far from the origin a point of a frame's band curve lies at most,
+/// along either axis, its outline reaching `outline` from it
+/// ([`Halves::reach`]) and the curve `offset` off it (ruling B46.1):
+/// `(2 × outline + |offset| / cos(INSIDE_TURN)) × (1 + 2⁻¹⁶)`, infinite
+/// where either is not finite.
+///
+/// The derivation ([`ArcPath::offset_at`]). A point of the curve is a
+/// point of the outline, within its rectangle, moved `offset` along a
+/// normal of length one; or, round a sharp corner outward, the corner's
+/// point moved along a side no further than half that side — less than
+/// the rectangle is across, so less than `2 × outline` from the origin —
+/// and `offset` along its normal; or, inside a bend inward, the corner's
+/// point moved along its bisector by the offset inside it, no more than
+/// `|offset|`, over the cosine of half the bend's turn, which is less
+/// than `INSIDE_TURN` there. A model letter is set on a form of the
+/// curve where the form holds it ([`model_set`]), within float error of
+/// the curve's own point there (`check_pair_model`). The last factor
+/// covers the roundings of each.
+fn band_reach(outline: f64, offset: f64) -> f64 {
+    let fold = 1.0 / f64::from(crate::flow::path::INSIDE_TURN).cos();
+    let reach = (2.0 * outline + offset.abs() * fold) * (1.0 + REACH_SLACK);
+    if reach.is_finite() {
+        reach
+    } else {
+        f64::INFINITY
+    }
+}
+
+/// The share of a reach added for the roundings it was found through
+/// ([`band_reach`], [`placed_reach`]): 2⁻¹⁶, past the few `f32`
+/// roundings of 2⁻²⁴ each that set a point and its ink.
+const REACH_SLACK: f64 = 1.0 / (1_u64 << 16) as f64;
+
+/// The most the coordinates an ink is placed from lie past the frame's
+/// band curve's point it is anchored at, along either axis, an ink of
+/// `ink` (in its cluster's box coordinates, `Cluster::ink`) whose anchor
+/// lies `anchor` below its baseline ([`Band::anchor`]): its center's rise
+/// from its anchor, at most `|anchor|` and its center's own height, and
+/// its center and half size besides (rulings R33.1, B46.1). What a line's
+/// ink box's corners lie off the curve (`InkLay::cluster`: its center set
+/// `rise` below the curve's point, its corners its half size off it), and
+/// what the offset an ink wants of the curve reaches ([`Reach::of`]: its
+/// support along a normal of length one, its half size's, and its rise
+/// along it).
+fn ink_reach(anchor: f32, ink: Ink) -> f64 {
+    let l1 = |v: Vec2| f64::from(v.x).abs() + f64::from(v.y).abs();
+    let center = (ink.min + ink.max) * 0.5;
+    let half = (ink.max - ink.min) * 0.5;
+    nan_as_infinite(f64::from(anchor).abs() + l1(center) + l1(half))
+}
+
+/// The most the coordinates a glyph of a side ornament's `clusters` (of
+/// `run`) is placed from lie past the band curve's point its cluster is
+/// anchored at, along either axis (ruling B46.1). An inked cluster is set
+/// with its ink's center `rise` below the point, the point less that
+/// center and the baseline its corner, each glyph its pen's distance into
+/// the box past it, its pen the baseline below, and its ink box's corners
+/// that far off its pen (`InkLay::cluster`, [`glyph_box`]): within
+/// [`ink_reach`] of the point, its center again, its pen's distance, the
+/// baseline twice and the glyph's ink corner. A cluster with no ink to
+/// lay is set a half advance before the point and its anchor of no ink
+/// above, the baseline taken off, which its pen adds back: within those
+/// and its ink corner. The sum of all of them bounds either.
+fn side_ink_reach(band: &Band, run: &ShapedRun, clusters: &[Cluster]) -> f64 {
+    let l1 = |v: Vec2| f64::from(v.x).abs() + f64::from(v.y).abs();
+    let none = Ink {
+        min: Vec2::ZERO,
+        max: Vec2::ZERO,
+    };
+    let baseline = 2.0 * f64::from(run.baseline()).abs();
+    clusters
+        .iter()
+        .flat_map(|cluster| {
+            let first = &run.glyphs[cluster.glyphs.start];
+            let set = cluster.ink.map_or(0.0, |ink| {
+                ink_reach(band.anchor(first, ink), ink) + l1((ink.min + ink.max) * 0.5)
+            });
+            let unset = f64::from(band.anchor(first, none)).abs() + 0.5 * f64::from(cluster.advance).abs();
+            run.glyphs[cluster.glyphs.clone()].iter().map(move |glyph| {
+                let corner = glyph.ink.map_or(0.0, |ink| l1(ink.min).max(l1(ink.max)));
+                nan_as_infinite(set + unset + f64::from(glyph.x - cluster.left).abs() + baseline + corner)
+            })
+        })
+        .fold(0.0, f64::max)
+}
+
+/// `reach`, or infinite where it is not a number: a reach that does not
+/// bound counts as one that bounds nothing, and `f64::max` would drop it.
+fn nan_as_infinite(reach: f64) -> f64 {
+    if reach.is_nan() {
+        f64::INFINITY
+    } else {
+        reach
+    }
+}
+
+/// How far from the origin a coordinate an ink is placed from lies at
+/// most, its frame's band curve's points within `band` of it
+/// ([`band_reach`]) and the ink within `ink` of its point there along
+/// either axis: the two together and [`REACH_SLACK`] (ruling B46.1).
+fn placed_reach(band: f64, ink: f64) -> f64 {
+    (band + ink) * (1.0 + REACH_SLACK)
 }
 
 /// Clusters one glyph step walks in R27's arithmetic lays
@@ -847,12 +1095,15 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
 /// R27's fit, each lay and each copy of a side ornament, so no more than
 /// one of each runs past it; [`untouched`] runs within the budget, which
 /// holds its share back, and so does a side arc's touch check, held back
-/// before each copy ([`check_steps`], ruling R48.2). That rests on two
+/// before each copy ([`check_steps`], ruling R48.2). That rests on three
 /// assumptions, which the flow fuzz property holds every frame to: that
 /// no touch check looks at more than [`touch_looks`] pairs a box of the
-/// classes of height it holds; and that no side arc's check holds more
-/// classes than its arc held back for ([`height_classes`], over the
-/// text's boxes and the ornament's inks before the fill; ruling R51.2). A check's looks are the inks near each
+/// classes of height it holds; that no side arc's check holds more
+/// classes than its arc held back for ([`reachable_classes`], over the
+/// text's boxes and the ornament's inks, placed where the frame lies,
+/// before the fill; rulings R51.2, B46.1); and that no check of
+/// [`untouched`] holds more than its share was held back for (ruling
+/// B46.2). A check's looks are the inks near each
 /// box, whatever the tallest box ([`stripped`], ruling R50.1), and a few
 /// for each class of height it holds (ruling R51.2); the structured
 /// fuzzer draws long mixed side ornaments and texts of up to 16 sizes, as
@@ -900,7 +1151,7 @@ fn weighing_steps(boxes: usize) -> usize {
 }
 
 /// The glyph steps [`untouched`] may take over `boxes` inks of `classes`
-/// classes of height ([`height_classes`]): a bisection of looks at them,
+/// classes of height ([`reachable_classes`]): a bisection of looks at them,
 /// each with its lines cut again — as much work as weighing them — and
 /// a touch check of them, at most [`check_steps`] while it looks at no
 /// more than [`touch_looks`] pairs a box (rulings R48.2, R51.2). What a
@@ -958,6 +1209,11 @@ struct Halves {
     apexes: [f32; 2],
     /// The outline's length.
     length: f32,
+    /// How far from the origin the outline's rectangle reaches along
+    /// either axis, its largest coordinate's magnitude: infinite where one
+    /// is not a number. What bounds where its inks are placed
+    /// ([`band_reach`], ruling B46.1).
+    reach: f64,
 }
 
 impl Halves {
@@ -995,11 +1251,21 @@ impl Halves {
             junctions[k] = (start, end);
             apexes[k] = unwrap(along(tops[k]), start, length);
         }
+        // Every point of the outline lies within its rectangle, from its
+        // origin to the origin and its size: no coordinate further out
+        // than the two's magnitudes together, taken in `f64`.
+        let rect = outline.rect();
+        let reach = [(rect.origin.x, rect.size.x), (rect.origin.y, rect.size.y)]
+            .into_iter()
+            .map(|(at, size)| f64::from(at).abs() + f64::from(size).abs())
+            .map(|v| if v.is_finite() { v } else { f64::INFINITY })
+            .fold(0.0, f64::max);
         Halves {
             level,
             junctions,
             apexes,
             length,
+            reach,
         }
     }
 
@@ -1302,6 +1568,15 @@ thread_local! {
     /// height its frame held back for.
     #[cfg(test)]
     pub(crate) static UNTOUCHED_TAKEN: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// Test counter (ruling B46.2): of the frames' lines weighed for a
+    /// touch on this thread ([`overlapping`]) — every box [`untouched`]
+    /// could weigh, wherever the frame's offset was tried — the weighing
+    /// whose boxes held the most classes of height past those held back
+    /// for `untouched` ([`Work::hold_for`]): the classes of their boxes
+    /// as placed, across whichever axis holds more, and those held back
+    /// for. `(0, 0)` where none was weighed.
+    #[cfg(test)]
+    pub(crate) static LINE_CLASSES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
     /// Test counter (#294, rulings R44.3, R46.1): the pairs of boxes
     /// [`touching`] has looked at on this thread, each a [`box_gap`]
     /// weighed or a pair it passed over.
@@ -2969,6 +3244,11 @@ struct Layout<'a> {
     /// every ink of it is anchored on (#308, ruling B15.1): as last
     /// solved ([`Layout::lay_clear`]), what every lay is laid at.
     offset: Cell<f32>,
+    /// The most the offset may be either way, which every offset tried
+    /// is held to ([`held_offset`], ruling B46.2): what the inks of the
+    /// text's last build can want at the most ([`Layout::text_bound`]).
+    /// Infinite until a build sets it.
+    offset_bound: Cell<f32>,
     /// Each span's band center a point of its size ([`Band::centers`],
     /// [`inked_with_bands`]), as the text's last build read them.
     centers: std::cell::RefCell<Rc<[f32]>>,
@@ -3001,15 +3281,18 @@ pub(super) struct Work {
     glyphs: Cell<usize>,
     budget: Cell<usize>,
     reserve: Cell<usize>,
-    /// The classes of height its text's inks hold ([`height_classes`]),
-    /// what [`untouched`]'s share is held back for: one until the text is
-    /// inked.
+    /// The classes of height its text's inks can take placed
+    /// ([`Layout::text_bound`]), what [`untouched`]'s share is held back
+    /// for: one until the text is inked.
     classes: Cell<usize>,
     /// The most pairs its touch checks looked at a box (rulings R48.2,
     /// R51.2).
     looks: Cell<Looks>,
     /// The classes of height the last touch check held.
     last_classes: Cell<usize>,
+    /// Whether [`untouched`] is running: its touch checks are noted
+    /// against what its share was held back for ([`Looks::untouched`]).
+    untouched: Cell<bool>,
     /// Whether [`untouched`] is running, within the share held back for
     /// it: its steps are not past the budget ([`PAST_BUDGET`]).
     #[cfg(test)]
@@ -3030,6 +3313,7 @@ impl Work {
             classes: Cell::new(1),
             looks: Cell::new(Looks::default()),
             last_classes: Cell::new(0),
+            untouched: Cell::new(false),
             #[cfg(test)]
             reserved: Cell::new(false),
         };
@@ -3122,7 +3406,14 @@ impl Work {
     /// Note a touch check of `boxes` boxes that looked at the pairs
     /// `looked` holds.
     fn looked(&self, looked: &Looked, boxes: usize) {
-        self.looks.set(self.looks.get().more(looked, boxes));
+        let mut looks = self.looks.get().more(looked, boxes);
+        if self.untouched.get() {
+            looks = looks.with(Looks {
+                untouched: (looked.classes, self.classes.get()),
+                ..Looks::default()
+            });
+        }
+        self.looks.set(looks);
         self.last_classes.set(looked.classes);
     }
 
@@ -3158,13 +3449,18 @@ impl Work {
         self.reserve.set(untouched_steps(glyphs, self.classes.get()));
     }
 
-    /// Hold back [`untouched`]'s share for a text whose inks hold
-    /// `classes` classes of height ([`height_classes`]), one at the least:
-    /// read from each build's inks, before any of its lines is laid, so
-    /// that every check `untouched` makes — of a part of those inks —
-    /// holds no more (ruling R46.1, #308).
+    /// Hold back [`untouched`]'s share for a text whose inks can take
+    /// `classes` classes of height placed ([`Layout::text_bound`]), one at
+    /// the least, and no fewer than any build of the frame held it for
+    /// before: read from each build's inks, before any of its lines is
+    /// laid, so that every check `untouched` makes — of a part of the
+    /// inks of whichever build the frame keeps, as placed — holds no more
+    /// (rulings R46.1, B46.2; #308). (Until B46.2 it was held for the last
+    /// build's alone, whichever was kept, and for its glyphs' inks as
+    /// shaped, which its lines' boxes, each a cluster's ink placed, can
+    /// pass.)
     fn hold_for(&self, classes: usize) {
-        self.classes.set(classes.max(1));
+        self.classes.set(classes.max(self.classes.get()).max(1));
         self.reserve
             .set(untouched_steps(self.glyphs.get(), self.classes.get()));
     }
@@ -3326,6 +3622,7 @@ impl<'a> Layout<'a> {
             outward,
             work,
             offset: Cell::new(0.0),
+            offset_bound: Cell::new(f32::INFINITY),
             centers: std::cell::RefCell::new(centers.into()),
             sides: std::cell::RefCell::new(None),
             tracked: std::cell::RefCell::new(TrackMemo::default()),
@@ -3410,6 +3707,67 @@ impl Layout<'_> {
         -self
             .track(&self.walk(k, run), &run.glyphs, clusters, (from, from), g)
             .short
+    }
+
+    /// The most the offset of the frame's band curve may be either way,
+    /// and the classes of height its lines' ink boxes can take as placed,
+    /// for a build of `run` whose lines hold `text`'s clusters and whose
+    /// side ornament holds `ornament`'s (rulings B46.1, B46.2): read
+    /// before any of its lines is laid, from its inks and its outline
+    /// alone.
+    ///
+    /// **The bound, `W`.** An offset an ink wants of the curve is its
+    /// reach toward the outline or away from it ([`Reach::of`]): within
+    /// [`ink_reach`] of none, as is the side ornament's, and half the
+    /// two's difference inward ([`offset_from`]). So whatever the offset
+    /// the frame is laid at, the offset it wants is within `W`, the most
+    /// any of these inks' reaches is (and [`REACH_SLACK`] for the
+    /// normal's length), and so is every offset it settles at, where the
+    /// offset it wants is the offset it is laid at: every offset tried is
+    /// held to `W` ([`held_offset`]), which no offset the solve could
+    /// settle at lies past. Until B46.2 a secant's step could try any
+    /// offset, and a line be kept there.
+    ///
+    /// **The classes.** Each line ink's box is its cluster's ink half
+    /// size either side of a center its rise below a point of the curve
+    /// (`InkLay::cluster`): a coordinate no further from the origin than
+    /// [`band_reach`] of the outline and `W` and the ink's own
+    /// [`ink_reach`] ([`placed_reach`]). The classes are those each
+    /// cluster's ink can take placed there ([`reachable_classes`]), by
+    /// cluster — the boxes [`untouched`] weighs — not by glyph: a base
+    /// and its combining mark make one box taller than either.
+    ///
+    /// Cost: O(clusters).
+    fn text_bound<'c>(
+        &self,
+        run: &ShapedRun,
+        text: impl IntoIterator<Item = &'c Cluster>,
+        ornament: impl IntoIterator<Item = &'c Cluster>,
+    ) -> (f32, usize) {
+        let band = self.band();
+        let reach = |cluster: &Cluster| {
+            cluster.ink.filter(|_| inks(cluster)).map(|ink| {
+                (
+                    ink,
+                    ink_reach(band.anchor(&run.glyphs[cluster.glyphs.start], ink), ink),
+                )
+            })
+        };
+        let inked: Vec<(Ink, f64)> = text.into_iter().filter_map(reach).collect();
+        let wants = inked
+            .iter()
+            .map(|&(_, at)| at)
+            .chain(ornament.into_iter().filter_map(reach).map(|(_, at)| at))
+            .fold(0.0, f64::max)
+            * (1.0 + REACH_SLACK);
+        let bound = f32_above(wants);
+        let band_at = band_reach(self.halves.reach, f64::from(bound));
+        let classes = reachable_classes(
+            inked
+                .iter()
+                .map(|&(ink, at)| (ink.max - ink.min, Some(placed_reach(band_at, at)))),
+        );
+        (bound, classes)
     }
 
     /// The offset the frame's band curve is first laid at (#308): the one
@@ -3979,10 +4337,13 @@ struct SideOrnament<'a> {
     base: Cell<usize>,
     /// The glyphs of one copy, each an ink box at most.
     per_copy: usize,
-    /// The ink sizes of one copy's glyphs, and the classes of height the
-    /// touch check of the arc being laid holds at most: the text's and
-    /// these (ruling R51.2).
+    /// The ink sizes of one copy's glyphs as shaped, and how far from the
+    /// origin a coordinate any of them is placed from lies at most
+    /// ([`placed_reach`]); and the classes of height the touch check of
+    /// the arc being laid holds at most: the text's and those these reach
+    /// placed (rulings R51.2, B46.1).
     sizes: Vec<Vec2>,
+    reach: f64,
     classes: Cell<usize>,
 }
 
@@ -3990,16 +4351,22 @@ impl<'a> SideOrnament<'a> {
     /// The side ornament of `run` (inked) over `range`, laid round the
     /// halves of `layout` on its band curve as it stands.
     fn new(layout: &'a Layout<'_>, run: &'a ShapedRun, range: Range<usize>) -> SideOrnament<'a> {
+        let band = layout.band();
+        let clusters = clusters_of(&run.glyphs, range.clone());
         SideOrnament {
             walk: line_walk(layout.halves.path(0), run, layout.outward),
-            band: layout.band(),
+            reach: placed_reach(
+                band_reach(layout.halves.reach, f64::from(band.offset)),
+                side_ink_reach(&band, run, &clusters),
+            ),
+            band,
             glyphs: &run.glyphs,
             per_copy: range.len(),
-            sizes: run.glyphs[range.clone()]
+            sizes: run.glyphs[range]
                 .iter()
                 .filter_map(|g| g.ink.map(|ink| ink.max - ink.min))
                 .collect(),
-            clusters: clusters_of(&run.glyphs, range),
+            clusters,
             work: &layout.work,
             base: Cell::new(0),
             classes: Cell::new(0),
@@ -4007,12 +4374,13 @@ impl<'a> SideOrnament<'a> {
     }
 
     /// Weigh the touch checks of its arcs as holding the classes of
-    /// height of `text`, the text's ink boxes, and of its own copies'
-    /// glyphs ([`height_classes`], ruling R51.2).
+    /// height of `text`, the text's ink boxes as placed, and the classes
+    /// its own copies' glyphs can take, placed where the frame lies
+    /// ([`reachable_classes`]; rulings R51.2, B46.1).
     fn beside(&self, text: &[InkBox]) {
-        let sizes = text.iter().map(|(min, max)| *max - *min);
-        self.classes
-            .set(height_classes(sizes.chain(self.sizes.iter().copied())));
+        let placed = text.iter().map(|(min, max)| (*max - *min, None));
+        let shaped = self.sizes.iter().map(|&size| (size, Some(self.reach)));
+        self.classes.set(reachable_classes(placed.chain(shaped)));
         let looks = self.work.looks.get();
         self.work.looks.set(Looks {
             reserved: looks.reserved.max(self.classes.get()),
@@ -4860,7 +5228,8 @@ impl Layout<'_> {
     /// they lie, and the clearance grown again from `seed` at the offset
     /// they want where they miss it by more than [`OFFSET_TOLERANCE`] —
     /// the line through the last two misses aimed at none, as
-    /// [`solve_offset`] aims it — [`OFFSET_ROUNDS`] times at most.
+    /// [`solve_offset`] aims it, and held as it holds it — [`OFFSET_ROUNDS`]
+    /// times at most.
     ///
     /// Cost: a lay of each line at `seed` for each offset tried, one where
     /// the frame's last offset holds; and a clearance search for each
@@ -4882,6 +5251,7 @@ impl Layout<'_> {
         let tolerance = resolved(OFFSET_TOLERANCE, self.halves.length);
         let (settled, _) = solve_offset(
             self.offset.get(),
+            self.offset_bound.get(),
             tolerance,
             OFFSET_ROUNDS,
             |offset, _: Option<&Vec<Line>>| {
@@ -4905,13 +5275,9 @@ impl Layout<'_> {
             {
                 return cleared;
             }
-            let next = match last {
-                Some((was, missed)) if missed != miss => offset - miss * (offset - was) / (miss - missed),
-                _ => offset + miss,
-            };
+            let next = next_offset(offset, miss, last, offset + miss, self.offset_bound.get());
             last = Some((offset, miss));
-            self.offset
-                .set(if next.is_finite() { next } else { offset + miss });
+            self.offset.set(next);
         }
     }
 
@@ -5276,6 +5642,19 @@ struct Cleared {
 /// Cost: O(n log n) in the lines' inks, and a pair per two that share
 /// some of their width.
 fn overlapping(lines: &[Line], work: &Work) -> bool {
+    #[cfg(test)]
+    {
+        let sizes = lines
+            .iter()
+            .flat_map(|l| l.tracked.boxes.iter().map(|(min, max)| (*max - *min, None)));
+        let now = (reachable_classes(sizes), work.classes.get());
+        let past = |(held, reserved): (usize, usize)| held as i128 - reserved as i128;
+        LINE_CLASSES.with(|most| {
+            if past(now) > past(most.get()) {
+                most.set(now);
+            }
+        });
+    }
     let boxes = lines
         .iter()
         .enumerate()
@@ -5352,17 +5731,23 @@ struct Looked {
 /// checks, the most a box in its sweep and within each class's own
 /// strips, as those looks and the boxes; the most a box for each class,
 /// between a class and the finer ones, as those looks, the boxes and the
-/// classes; and the most classes a side arc's check held, and one was
-/// held back for.
+/// classes; the most classes a side arc's check held, and one was held
+/// back for; and the check of [`untouched`] that held the most past what
+/// its share was held back for (ruling B46.2).
 #[derive(Clone, Copy, Default, Debug, PartialEq)]
 pub(crate) struct Looks {
     pub(crate) worst: (usize, usize, usize),
     pub(crate) base: (usize, usize),
     pub(crate) across: (usize, usize, usize),
     /// The most classes of height a side arc's touch check held, and the
-    /// most one was held back for ([`height_classes`]).
+    /// most one was held back for ([`reachable_classes`]).
     pub(crate) classes: usize,
     pub(crate) reserved: usize,
+    /// Of [`untouched`]'s touch checks, the one that held the most
+    /// classes of height past what its share was held back for
+    /// ([`Work::hold_for`], ruling B46.2): the classes it held, and those
+    /// held back for. `(0, 0)` where none ran.
+    pub(crate) untouched: (usize, usize),
 }
 
 impl Looks {
@@ -5376,6 +5761,7 @@ impl Looks {
             across: (looked.across, boxes, looked.classes),
             classes: 0,
             reserved: 0,
+            untouched: (0, 0),
         })
     }
 
@@ -5390,6 +5776,8 @@ impl Looks {
         };
         let per_class =
             |(looks, boxes, classes): (usize, usize, usize)| (looks, boxes.saturating_mul(classes));
+        // How many classes a check held past those held back for it.
+        let past = |(held, reserved): (usize, usize)| held as i128 - reserved as i128;
         Looks {
             worst: if more(bound(other.worst), bound(self.worst)) {
                 other.worst
@@ -5408,6 +5796,11 @@ impl Looks {
             },
             classes: self.classes.max(other.classes),
             reserved: self.reserved.max(other.reserved),
+            untouched: if past(other.untouched) > past(self.untouched) {
+                other.untouched
+            } else {
+                self.untouched
+            },
         }
     }
 
@@ -5823,6 +6216,7 @@ impl Swept {
 /// Cost: a bisection of [`overlapping`]s over the frame's inks.
 fn untouched(lines: &[Line], work: &Work) -> (Vec<Line>, Vec<usize>) {
     let total: usize = lines.iter().map(|l| l.tracked.boxes.len()).sum();
+    let was_untouched = work.untouched.replace(true);
     #[cfg(test)]
     let (spent, reserved) = (work.spent.get(), work.reserved.replace(true));
     let cut_to = |m: usize| {
@@ -5858,6 +6252,7 @@ fn untouched(lines: &[Line], work: &Work) -> (Vec<Line>, Vec<usize>) {
         }
     }
     let kept = cut_to(apart);
+    work.untouched.set(was_untouched);
     #[cfg(test)]
     {
         work.reserved.set(reserved);
@@ -6184,13 +6579,17 @@ fn offset_from(reaches: &[Reach], outward: bool, side: Option<SideWant>) -> f32 
 /// bend the ink nearest the outline turns with its line's letters, and
 /// the offset it wants swings past where it was laid by more than the
 /// change, so laying the frame again at what the last wanted would
-/// circle the answer and never reach it. [`OFFSET_ROUNDS`] lays at most,
-/// fewer with `stop`; the lay whose miss is the least is kept. A miss
-/// that is not a number — no ink — keeps the lay.
+/// circle the answer and never reach it. Each offset tried past the
+/// first is held to within `bound` of none ([`held_offset`], ruling
+/// B46.2), which no offset the frame's inks want lies past.
+/// [`OFFSET_ROUNDS`] lays at most, fewer with `stop`; the lay whose miss
+/// is the least is kept. A miss that is not a number — no ink — keeps
+/// the lay.
 ///
 /// Cost: `lay`'s, once for each offset tried.
-fn solve_offset<T: Clone>(
+pub(crate) fn solve_offset<T: Clone>(
     start: f32,
+    bound: f32,
     tolerance: f32,
     rounds: usize,
     mut lay: impl FnMut(f32, Option<&T>) -> T,
@@ -6213,12 +6612,9 @@ fn solve_offset<T: Clone>(
         if miss.abs() <= tolerance || round == rounds || stop() {
             break;
         }
-        let next = match before {
-            Some((was, missed)) if missed != miss => offset - miss * (offset - was) / (miss - missed),
-            _ => wanted,
-        };
+        let next = next_offset(offset, miss, before, wanted, bound);
         before = Some((offset, miss));
-        offset = if next.is_finite() { next } else { wanted };
+        offset = next;
         laid = lay(offset, Some(&laid));
     }
     match best {
@@ -6588,6 +6984,9 @@ struct LaidSides {
 struct Built {
     /// The offset of the frame's band curve its lines are laid at (#308).
     offset: f32,
+    /// The most any offset its band curve is laid at may be, either way
+    /// ([`Layout::offset_bound`], ruling B46.2).
+    bound: f32,
     /// The run as drawn, inked.
     drawn: ShapedRun,
     /// The side ornament's glyphs in it.
@@ -6922,11 +7321,6 @@ pub(super) fn place_halves(
         let (drawn, centers) = inked_with_bands(&drawn, fsys);
         lay.centers.replace(centers.into());
         lay.tracked.borrow_mut().clear();
-        // `untouched`'s share, for the classes of height the text's inks
-        // hold (ruling R46.1).
-        lay.work.hold_for(height_classes(
-            drawn.glyphs.iter().filter_map(|g| g.ink.map(|i| i.max - i.min)),
-        ));
         // The glyphs the text may still place (ruling R44.1): a frame's
         // text and its sides together place at most `MAX_PLACED_GLYPHS`,
         // so a text longer is cut at a cluster, its end left out.
@@ -6938,6 +7332,19 @@ pub(super) fn place_halves(
                 (*k, clusters, *cut || capped)
             })
             .collect();
+        // The offsets its band curve is laid at, and `untouched`'s share,
+        // for the classes of height its lines' inks can take placed
+        // there, before any of them is laid (rulings R46.1, B46.1).
+        let ornament = side
+            .as_ref()
+            .map(|range| clusters_of(&drawn.glyphs, range.clone()));
+        let (bound, classes) = lay.text_bound(
+            &drawn,
+            parted.iter().flat_map(|(_, clusters, _)| clusters),
+            ornament.iter().flatten(),
+        );
+        lay.offset_bound.set(bound);
+        lay.work.hold_for(classes);
         // The frame's band curve, first at the offset its inks would want
         // each set at its half's apex (#308): what its lines are prepared
         // on, and its offset solved from.
@@ -6989,6 +7396,7 @@ pub(super) fn place_halves(
         let overlap = overlapping(&cleared.lines, &lay.work);
         Some(Built {
             offset: lay.offset.get(),
+            bound,
             drawn,
             side,
             prepared,
@@ -7059,6 +7467,7 @@ pub(super) fn place_halves(
     }
     let Built {
         offset,
+        bound,
         drawn,
         side,
         prepared,
@@ -7068,9 +7477,11 @@ pub(super) fn place_halves(
         overlap,
     } = built;
     // The frame's band curve where the size kept laid it, a later probe's
-    // laid elsewhere (#308); and none of a later probe's lines, which
-    // were laid from another run (#309).
+    // laid elsewhere (#308), and held to that size's bound (ruling
+    // B46.2); and none of a later probe's lines, which were laid from
+    // another run (#309).
     lay.offset.set(offset);
+    lay.offset_bound.set(bound);
     lay.tracked.borrow_mut().clear();
     let side_of = side.as_ref().map(|range| (&drawn, range));
 
