@@ -843,12 +843,13 @@ What they hold, in short (each module's docs are the full list):
   ruling B42.1): the harness measures each outline and curve itself, in
   `f64` from its own numbers and none of the engine's code. Along a path
   clearly past the limit nothing is laid and the placement names the
-  reason (`RingLoss::TooLong`); along one clearly within it the
-  placement does not say so, and is owed what any path is; within a
-  thousandth of the limit either way, only what every placement owes is
-  held. The sweep's precondition is that it holds placements on both
-  sides, and flow_structured has a seed just within the limit and one
-  just past it.
+  reason (`RingLoss::TooLong`), where it has a glyph to lay — one rule
+  for every kind of placement (`has_a_glyph_to_lay`); along one clearly
+  within it the placement does not say so, and is owed what any path
+  is; within a thousandth of the limit either way, only what every
+  placement owes is held. The sweep's precondition is that it holds
+  placements on both sides, and flow_structured has a seed just within
+  the limit and one just past it.
 - **Glyph-layer mutations.** No panic; no non-finite box reaches an
   ancestor; a run's overrides are empty or exactly as long as its
   placed glyphs, whatever range is named; `same_state` is reflexive and

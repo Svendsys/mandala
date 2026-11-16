@@ -1664,7 +1664,8 @@ element.
   control polygon — is built with no stretch (`ArcPath::too_long`), and
   whatever would be laid along it, a ring, a frame, an open path's text
   or a pitched pattern, lays nothing and says so by one name
-  (`RingLoss::TooLong`, with `PlacedRun::truncated`).
+  (`RingLoss::TooLong`, with `PlacedRun::truncated`); a placement with no
+  glyph to lay says nothing, as along any path.
 - **Outlines** (`outline`, `offset`, `ring_offset`): a node's
   rectangle shaped as a rounded rectangle (radius a percentage of half
   the shorter side) or the inscribed ellipse; ring *k* runs around the
