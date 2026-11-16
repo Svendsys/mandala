@@ -56,14 +56,27 @@ fn face_data(font: AppFont) -> &'static [u8] {
     }
 }
 
-/// Every code point `data`'s character map maps to a glyph, sorted.
+/// Every code point `data`'s character map maps to a glyph, sorted: those
+/// it lists, and, for a symbol font, each of U+0000..=U+00FF it reaches
+/// at U+F000 above, since the shaper reads a symbol font's map so, and
+/// so does `Charmap::map`, though not `Charmap::mappings`. Two compiled
+/// faces are symbol fonts: Scrapbook Chinese, which lists every printable
+/// character of U+0020..U+00FF at U+F020..U+F0FF (#355), and Symbols1,
+/// which lists its capital letters at U+F041..U+F05A. Until #355 both
+/// were read as lacking those characters, Symbols1's `L` and `G` (in
+/// [`TEXT`]) among them, though the shaper draws them in the face.
 fn mapped(data: &[u8]) -> Vec<char> {
     let font = FontRef::new(data).expect("a compiled face parses");
-    let mut chars: Vec<char> = font
-        .charmap()
+    let charmap = font.charmap();
+    let mut chars: Vec<char> = charmap
         .mappings()
         .filter(|(_, glyph)| glyph.to_u32() != 0)
         .filter_map(|(code_point, _)| char::from_u32(code_point))
+        .chain(
+            (0u8..=0xFF)
+                .map(char::from)
+                .filter(|c| charmap.map(*c).is_some_and(|glyph| glyph.to_u32() != 0)),
+        )
         .collect();
     chars.sort_unstable();
     chars.dedup();
@@ -300,26 +313,40 @@ fn drawn_with(
     text: &str,
     attrs: &cosmic_text::Attrs<'_>,
 ) -> Vec<(cosmic_text::fontdb::ID, String, u16)> {
+    drawn_at(fs, text, attrs)
+        .into_iter()
+        .map(|(_, id, name, glyph)| (id, name, glyph))
+        .collect()
+}
+
+/// [`drawn_with`], each glyph with the byte offset in `text` where its
+/// cluster starts: so a caller reads the glyphs of one character, not of
+/// the whole string.
+fn drawn_at(
+    fs: &mut cosmic_text::FontSystem,
+    text: &str,
+    attrs: &cosmic_text::Attrs<'_>,
+) -> Vec<(usize, cosmic_text::fontdb::ID, String, u16)> {
     let mut buffer = cosmic_text::Buffer::new(fs, cosmic_text::Metrics::new(16.0, 20.0));
     buffer.set_text(text, attrs, cosmic_text::Shaping::Advanced, None);
     buffer.shape_until_scroll(fs, false);
-    let glyphs: Vec<(cosmic_text::fontdb::ID, u16)> = buffer
+    let glyphs: Vec<(usize, cosmic_text::fontdb::ID, u16)> = buffer
         .layout_runs()
         .flat_map(|run| {
             run.glyphs
                 .iter()
-                .map(|g| (g.font_id, g.glyph_id))
+                .map(|g| (g.start, g.font_id, g.glyph_id))
                 .collect::<Vec<_>>()
         })
         .collect();
     glyphs
         .into_iter()
-        .map(|(id, glyph)| {
+        .map(|(start, id, glyph)| {
             let name = fs
                 .db()
                 .face(id)
                 .map_or_else(String::new, |f| f.post_script_name.clone());
-            (id, name, glyph)
+            (start, id, name, glyph)
         })
         .collect()
 }
@@ -510,8 +537,12 @@ fn test_no_text_glyph_is_drawn_by_an_ornament_face() {
 /// the fallback list, red on the pinned faces' `+ ~ · ♪`, drawn in
 /// `MandalaOrnaments-Regular`; with the default face left out of the
 /// fallback list, red on the pinned faces' punctuation, drawn in
-/// `African` and Noto Sans Devanagari; and with that and the generic
-/// families left as cosmic-text's names, red on every unpinned glyph.
+/// `African` and Noto Sans Devanagari; with that and the generic
+/// families left as cosmic-text's names, red on every unpinned glyph; and
+/// with `mapped`'s symbol-font read taken out, red on `Symbols1`'s `L`
+/// and `G` drawn in its own face — a face that lacks `a`, so only the
+/// read of `c`'s own glyphs sees it — and on Scrapbook Chinese's every
+/// missing character.
 pub fn do_no_text_glyph_is_drawn_by_an_ornament_face() {
     use cosmic_text::fontdb::{Style, Weight};
     fonts::init();
@@ -549,14 +580,21 @@ pub fn do_no_text_glyph_is_drawn_by_an_ornament_face() {
         }
         let mut pinned = Vec::new();
         for (font, missing) in &lacking {
-            // A face whose family name the font system cannot read
-            // (Scrapbook Chinese) is one no span can be pinned to.
-            let Some(pin) = fonts::pinned_family(&fs, *font) else {
-                continue;
-            };
+            let pin = fonts::pinned_family(&fs, *font)
+                .unwrap_or_else(|| panic!("precondition: {font:?} names a family a span can pin"));
+            let attrs = cosmic_text::Attrs::new()
+                .family(cosmic_text::Family::Name(&pin.name))
+                .weight(cosmic_text::Weight(pin.weight_for(400)));
             for c in missing {
-                // Between two of its own letters, as in running text.
-                let glyphs = drawn(&mut fs, &format!("a{c}a"), &pin.name, pin.weight_for(400));
+                // Between two letters, as in running text; only `c`'s own
+                // glyphs, the cluster that starts at byte 1, are read, so
+                // an `a` the face lacks, which falls back, cannot stand
+                // in for a `c` that did not.
+                let glyphs: Vec<_> = drawn_at(&mut fs, &format!("a{c}a"), &attrs)
+                    .into_iter()
+                    .filter(|(start, ..)| *start == 1)
+                    .map(|(_, id, name, glyph)| (id, name, glyph))
+                    .collect();
                 pinned.push((*font, *c, pin.faces.clone(), glyphs));
             }
         }
@@ -579,12 +617,13 @@ pub fn do_no_text_glyph_is_drawn_by_an_ornament_face() {
     }
     assert!(pinned.len() >= 4, "precondition: the pinned cases are shaped");
     for (font, c, own, glyphs) in &pinned {
-        let fallen: Vec<_> = glyphs.iter().filter(|(id, _, _)| !own.contains(id)).collect();
-        if fallen.is_empty() {
-            faults.push(format!("{font:?}'s missing {c:?}: drawn in its own face"));
+        if glyphs.is_empty() {
+            faults.push(format!("{font:?}'s missing {c:?}: no glyph of its own"));
         }
-        for (id, name, glyph) in fallen {
-            if ornament_ids.contains(id) || !default_ids.contains(id) || *glyph == 0 {
+        for (id, name, glyph) in glyphs {
+            if own.contains(id) {
+                faults.push(format!("{font:?}'s missing {c:?}: drawn in its own face"));
+            } else if ornament_ids.contains(id) || !default_ids.contains(id) || *glyph == 0 {
                 faults.push(format!("{font:?}'s missing {c:?}: {name} glyph {glyph}"));
             }
         }
