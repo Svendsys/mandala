@@ -14,9 +14,9 @@ use crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS;
 use crate::flow::LINE_HEIGHT_FACTOR;
 use crate::projection::tests::maps::{load_map, node};
 use crate::projection::tests::projection_fuzz::{
-    check_projects, frame_steps, projection_counts, repeat_glyphs, under_ceiling, widest_advance,
-    within_bound, EXTENT, MAX_UNITS, MAX_UNTANGLE_SAMPLES, MOST_RING_GLYPHS, MOST_RING_LINE_HEIGHT,
-    RING_LAYS_A_CHECK, RING_SETUP_STEPS, RING_STEPS_A_GLYPH,
+    check_projects, frame_steps, projection_counts, repeat_glyphs, rings_within_their_work, under_ceiling,
+    widest_advance, within_bound, EXTENT, MAX_UNITS, MAX_UNTANGLE_SAMPLES, MOST_RING_GLYPHS,
+    MOST_RING_LINE_HEIGHT, RING_LAYS_A_CHECK, RING_SETUP_STEPS, RING_STEPS_A_GLYPH,
 };
 use crate::projection::tests::support::Projected;
 use crate::util::tests::choices::Choices;
@@ -120,8 +120,8 @@ fn bound_cases() -> Vec<(String, serde_json::Value, bool)> {
     let height = f64::from(MOST_RING_LINE_HEIGHT);
     let text = json!({"spans": [{"text": "a"}]});
     // Spaced, so that its glyphs are few wherever it lies (ruling B47.3).
-    let vertical = json!({"fit": "repeat", "size": 1.0, "spacing": 400.0, "vertical": "|"});
-    let corners = json!({"fit": "repeat", "size": 1.0, "spacing": 400.0, "corners": ["+", "+", "+", "+"]});
+    let vertical = json!({"fit": "repeat", "size": 1.0, "spacing": 800.0, "vertical": "|"});
+    let corners = json!({"fit": "repeat", "size": 1.0, "spacing": 800.0, "corners": ["+", "+", "+", "+"]});
     let path = |end: serde_json::Value| {
         let mut far = json!({"position": [500.0, 0.0]});
         for (key, value) in end.as_object().into_iter().flatten() {
@@ -370,6 +370,21 @@ fn bound_cases() -> Vec<(String, serde_json::Value, bool)> {
         // Inside where it lies, outside for its work (ruling B47.3).
         ("the ellipse of one ring of vertical alone", ellipse(1), false),
         ("the ellipse of four rings of vertical alone", ellipse(4), false),
+        // A default ignorable a face maps an em wide, which the shaper lays
+        // as a glyph at no advance (the review of #378): 6,191 glyphs laid,
+        // 41 copies, and every glyph of a copy is one the bound counts.
+        (
+            "a ring of `·` and 150 U+180E",
+            one_node(json!({
+                "position": [-350.0, -350.0],
+                "min_size": [700.0, 700.0],
+                "shape": "ellipse",
+                "frame": {"inset": 0.0, "gap": 0.0, "rings": [
+                    {"fit": "repeat", "size": 0.25, "spans": [{"text": format!("·{}", "\u{180E}".repeat(150))}]},
+                ]},
+            })),
+            false,
+        ),
         // A path is drawn from the rectangles of its ends.
         (
             "a connector from a node its section draws past the extent",
@@ -395,18 +410,18 @@ fn bound_cases() -> Vec<(String, serde_json::Value, bool)> {
 /// bounds its glyphs, and far out each glyph reads its path a thousand
 /// times (`test_every_repeat_ring_the_bound_admits_fits_the_share`).
 ///
-/// Controls, each run and seen red, the cases each names: with the bound
-/// reading no frame's reach — #370's carve-out — the nine past the extent
-/// or at the canvas bound by an `inset`, a `gap` or an inner ring; with it
-/// a unit wider, the five a unit past it; with the inner rings' line
-/// heights not counted, the three inner rings past the extent; with them
-/// counted for a ring that lays no glyph too, "two gaps at the extent" and
-/// "an empty inner ring at the extent"; with a frame's own `gap` read and
-/// not its defaults', "a default gap past the extent"; with the rectangle
-/// read from `min_size` alone, as before ruling B47.2, the eight it draws
-/// past the extent — both sections, the ten characters, tabs and lines,
-/// both of the review's sections and the connector; with a node's own
-/// rectangle not held, the four with no frame among them; with no line
+/// Controls, each run and seen red, the cases each names: with no frame's
+/// outline held (`outline_near`) — #370's carve-out — the nine past the
+/// extent or at the canvas bound by an `inset`, a `gap` or an inner ring;
+/// with it a unit wider, the five a unit past it; with the inner rings'
+/// line heights not counted, the three inner rings past the extent; with
+/// them counted for a ring that lays no glyph too, "two gaps at the extent"
+/// and "an empty inner ring at the extent"; with a frame's own `gap` read
+/// and not its defaults', "a default gap past the extent"; with the
+/// rectangle read from `min_size` alone, as before ruling B47.2, the eight
+/// it draws past the extent — both sections, the ten characters, tabs and
+/// lines, both of the review's sections and the connector; with a node's
+/// own rectangle not held, the four with no frame among them; with no line
 /// height for a ring of `vertical` or `corners` alone, "an inner vertical
 /// ring past the extent" and its corners twin; with those texts not counted
 /// as text, the five with a second ring of text or one too long, the
@@ -414,13 +429,14 @@ fn bound_cases() -> Vec<(String, serde_json::Value, bool)> {
 /// an em, the ten characters and the ten tabs past the extent; with a tab
 /// read as one character, the tabs; with no line height in a box, "eleven
 /// lines past the extent"; with no `Repeat` ring's work bounded (ruling
-/// B47.3), "the ellipse of one ring of vertical alone"; with the most
-/// glyphs halved, or a ring's `spacing` not read, "an inner vertical ring
-/// at the extent". The review's probes held outside by more than one rule
-/// go red with them together: its inner vertical ring and the ellipse of
-/// one with neither the texts by direction nor the work bounded, the
-/// ellipse of four with neither those texts' line heights nor their count
-/// nor the work.
+/// B47.3), "the ellipse of one ring of vertical alone" and "a ring of `·`
+/// and 150 U+180E"; with a copy's glyphs counted as those that advance, the
+/// latter; with the most glyphs halved, or a ring's `spacing` not read, "an
+/// inner vertical ring at the extent". The review's probes held outside by
+/// more than one rule go red with them together: its inner vertical ring
+/// and the ellipse of one with neither the texts by direction nor the work
+/// bounded, the ellipse of four with neither those texts' line heights nor
+/// their count nor the work.
 #[test]
 fn test_the_projection_bound_holds_a_nodes_drawn_rectangle_and_a_frames_outline() {
     // Every case read, and every one the bound gets wrong named.
@@ -505,7 +521,11 @@ fn rings_within_the_extent(p: &Projected, reached: &mut Reached) -> Result<(), S
 /// ([`reach_cases`]) that the bound admits, projected, draws every node
 /// within `EXTENT` and every ring's ink within `EXTENT` and its own line
 /// height, twice for ink past its line ([`rings_within_the_extent`];
-/// ruling B47.2); the grid of the
+/// ruling B47.2), and lays each ring within the work the bound read for it
+/// — a `Repeat` ring no more glyphs than its bound and no more steps than
+/// `RING_STEPS_A_GLYPH` a glyph of it and `RING_SETUP_STEPS`, a frame laid
+/// by halves no more than `frame_steps` ([`rings_within_their_work`], which
+/// every check of a fuzz run makes too; ruling B47.3). The grid of the
 /// densest rings is held to the same where it is projected
 /// (`test_every_repeat_ring_the_bound_admits_fits_the_share`). The
 /// review's probes are among the cases, each outside, so each is held to
@@ -518,12 +538,15 @@ fn rings_within_the_extent(p: &Projected, reached: &mut Reached) -> Result<(), S
 /// 30,000-character line, 110,952,560 across, the connector from the
 /// first, both sections and "eleven lines past the extent"; with a node's
 /// own rectangle not held, that connector and those lines; with no line
-/// height in a box, those lines; with the bound reading no frame's reach
-/// — #370's carve-out — the four with a ring inked 7·10⁸ out; with a
-/// frame's own `gap` read and not its defaults', "a default gap past the
-/// extent"; with the bound a unit wider, "a section past the extent", a
-/// node drawn 8,193 across; with no reach in a `Repeat` ring's perimeter,
-/// "an inner vertical ring at the extent", 58 glyphs laid of 5 bounded.
+/// height in a box, those lines; with no frame's outline held
+/// (`outline_near`, #370's carve-out), the four with a ring inked 7·10⁸
+/// out; with a frame's own `gap` read and not its defaults', "a default
+/// gap past the extent"; with the bound a unit wider, "a section past the
+/// extent", a node drawn 8,193 across; with no reach in a `Repeat` ring's
+/// perimeter, "an inner vertical ring at the extent", 28 glyphs laid of 5
+/// bounded; with a copy's glyphs counted as those that advance, "a ring of
+/// `·` and 150 U+180E", 6,191 glyphs laid of 71 bounded, on both
+/// properties.
 #[test]
 fn test_every_ring_the_bound_admits_lies_within_the_extent() {
     let maps = bound_cases().into_iter().map(|(what, map, _)| (what, map)).chain(
@@ -541,8 +564,13 @@ fn test_every_ring_the_bound_admits_lies_within_the_extent() {
             continue;
         }
         admitted += 1;
+        crate::flow::MOST_RING_LAY.with(|most| most.set(0));
         let p = Projected::new(doc);
         if let Err(why) = rings_within_the_extent(&p, &mut reached) {
+            past.push(format!("{what}: {why}"));
+        }
+        let most = crate::flow::MOST_RING_LAY.with(std::cell::Cell::get);
+        if let Err(why) = rings_within_their_work(&p, most) {
             past.push(format!("{what}: {why}"));
         }
     }
@@ -574,57 +602,74 @@ fn ringed(across: f64, shape: &serde_json::Value, inset: f64, ring: &serde_json:
 /// `(name, map, the same ring a unit further out)`. `·` at a quarter of a
 /// node 1 across, the least size, round an ellipse, a sharp and a rounded
 /// rectangle; `MANDALA ` the same way round an ellipse; `*` at a twentieth
-/// of a node 1,000 across, the ring the sweep found most steps a glyph in
-/// (`RING_STEPS_A_GLYPH`); and `·` spaced, and a ring of `|` laid by
-/// direction spaced, whose `spacing` is what bounds their glyphs. Their
-/// characters are each in the default face, so the edges are the same on
+/// of the largest node it is admitted round at all, 7 across; `·` spaced,
+/// and a ring of `|` laid by direction spaced, whose `spacing` is what
+/// bounds their glyphs; and the two of a fallback face the second sweep
+/// found most steps a glyph in (`RING_STEPS_A_GLYPH`): `😀·` at a twentieth
+/// of an ellipse 1,000 across, the most steps a lay, and `·\u{1BCA0}`, the
+/// review of #378's, round the largest node it is admitted round, 9
+/// across. Their faces are the compiled ones, so the edges are the same on
 /// every host.
 fn densest_admitted_rings() -> Vec<(String, serde_json::Value, serde_json::Value)> {
     let ellipse = json!("ellipse");
     let dots = json!({"fit": "repeat", "size": 0.25, "spans": [{"text": "·"}]});
     let rows = [
-        ("`·` round an ellipse", 1.0, ellipse.clone(), dots.clone(), 2.0),
+        ("`·` round an ellipse", 1.0, ellipse.clone(), dots.clone(), 1.0),
         (
             "`·` round a sharp rectangle",
             1.0,
             json!({"rectangle": {"radius": 0}}),
             dots.clone(),
-            2.0,
+            1.0,
         ),
         (
             "`·` round a rounded rectangle",
             1.0,
             json!({"rectangle": {"radius": 30}}),
             dots,
-            2.0,
+            1.0,
         ),
         (
             "`MANDALA ` round an ellipse",
             1.0,
             ellipse.clone(),
             json!({"fit": "repeat", "size": 0.25, "spans": [{"text": "MANDALA "}]}),
-            9.0,
+            4.0,
         ),
         (
-            "`*` round an ellipse 1,000 across",
-            1000.0,
+            "`*` round an ellipse 7 across",
+            7.0,
             ellipse.clone(),
             json!({"fit": "repeat", "size": 0.05, "spans": [{"text": "*"}]}),
-            311.0,
+            0.0,
         ),
         (
             "`·` spaced round an ellipse",
             1.0,
             ellipse.clone(),
             json!({"fit": "repeat", "size": 0.25, "spacing": 0.3, "spans": [{"text": "·"}]}),
-            13.0,
+            6.0,
         ),
         (
             "a ring of `|` by direction, spaced, round an ellipse",
             1.0,
-            ellipse,
+            ellipse.clone(),
             json!({"fit": "repeat", "size": 0.25, "spacing": 2.0, "vertical": "|"}),
-            73.0,
+            28.0,
+        ),
+        (
+            "`😀·` round an ellipse 1,000 across",
+            1000.0,
+            ellipse.clone(),
+            json!({"fit": "repeat", "size": 0.05, "spans": [{"text": "😀·"}]}),
+            63.0,
+        ),
+        (
+            "`·\\u{1BCA0}` round an ellipse 9 across",
+            9.0,
+            ellipse,
+            json!({"fit": "repeat", "size": 0.05, "spans": [{"text": "·\u{1BCA0}"}]}),
+            0.0,
         ),
     ];
     rows.into_iter()
@@ -698,26 +743,28 @@ fn test_the_most_ring_glyphs_fill_the_inputs_share() {
 /// ([`densest_admitted_rings`]), projected, lays no more glyphs than the
 /// bound read for it and takes no more than [`RING_STEPS_A_GLYPH`] a glyph
 /// of that and [`RING_SETUP_STEPS`] (`LAST_RING`, `LAST_DIRECTIONAL`;
-/// ruling B47.3), and draws within the extent ([`rings_within_the_extent`]);
-/// each a unit further out is outside. The rings the review measured under
-/// ASan ([`measured_rings`]) and both loader findings are outside, so none
-/// is laid.
+/// ruling B47.3), as every check of a fuzz run holds it
+/// ([`rings_within_their_work`]), and draws within the extent
+/// ([`rings_within_the_extent`]); each a unit further out is outside. The
+/// rings the review measured under ASan ([`measured_rings`]) and both
+/// loader findings are outside, so none is laid.
 ///
 /// Under ASan (`cargo fuzz run load_raw <file> -- -runs=1`, the load
-/// average some 5), against `FUZZ_TIMEOUT_SECONDS`, 20 s, the input's
-/// whole run, reading the faces once (`face_metrics`) among it: the `*`
-/// round an ellipse 1,000 across, the most steps a lay, 0.82 s; the ring
-/// of `|` by direction, 0.71 s; `·` round an ellipse, 0.47 s. Each of the
-/// review's measured rings, refused, 0.36 to 0.58 s.
+/// average some 2), against `FUZZ_TIMEOUT_SECONDS`, 20 s, each input's
+/// run as libFuzzer reports it: `😀·` round an ellipse 1,000 across, the
+/// most steps a lay, 0.87 s; `·\u{1BCA0}`, 0.50 s; `·` round an ellipse,
+/// 0.15 s.
 ///
 /// Controls, each run and seen red: with no `Repeat` ring's work bounded,
 /// every measured ring inside; with the most glyphs halved, "`·` round an
-/// ellipse, 2 out" outside; with a ring's `spacing` not read, "`·` spaced
-/// round an ellipse, 13 out" outside; with a ring by direction stepped by
-/// its advance, the ring of `|` a unit further out inside; with each
-/// character's widest advance read for its narrowest, "`·` round an
-/// ellipse" a unit further out inside; with no reach in a ring's
-/// perimeter, the dots out to the extent and 1,300 out inside.
+/// ellipse, 1 out" outside; with a ring's `spacing` not read, "`·` spaced
+/// round an ellipse, 6 out" outside; with a ring by direction stepped by
+/// its advance, the ring of `|` a unit further out inside; with a copy's
+/// advance read double, and with no `RING_STEP_SLACK`, "`·` round an
+/// ellipse" a unit further out inside; with a quarter of
+/// `RING_STEPS_A_GLYPH` held here, and with a quarter in the check's own
+/// property, `😀·`, 34,987 steps a lay of 17,728 allowed; with no reach in
+/// a ring's perimeter, the dots out to the extent and 1,300 out inside.
 #[test]
 fn test_every_repeat_ring_the_bound_admits_fits_the_share() {
     use crate::flow::{LAST_DIRECTIONAL, LAST_RING};
@@ -774,8 +821,12 @@ fn test_every_repeat_ring_the_bound_admits_fits_the_share() {
             repeat_glyphs(doc.tree(), frame, ring).unwrap_or_else(|| panic!("{what}: a `Repeat` ring"));
         LAST_RING.with(|last| last.set(None));
         LAST_DIRECTIONAL.with(|last| last.set(None));
+        crate::flow::MOST_RING_LAY.with(|most| most.set(0));
         let projected = Projected::new(doc);
         rings_within_the_extent(&projected, &mut reached).unwrap_or_else(|why| panic!("{what}: {why}"));
+        // What every check of a fuzz run holds the ring to.
+        let most = crate::flow::MOST_RING_LAY.with(std::cell::Cell::get);
+        rings_within_their_work(&projected, most).unwrap_or_else(|why| panic!("{what}: {why}"));
         drop(projected);
         let (placed, spent) = LAST_RING
             .with(std::cell::Cell::get)
@@ -893,15 +944,18 @@ fn densest_admitted_frames() -> Vec<(&'static str, serde_json::Value)> {
 /// share in one lay, which the old bound admitted it for, and takes more
 /// in ten: the bound holds it outside. Each of the densest frames the
 /// bound admits ([`densest_admitted_frames`]), projected, takes no more
-/// than [`frame_steps`] read for it (`LAST_FRAME`), and ten of its lays fit
-/// the share.
+/// than [`frame_steps`] read for it (`LAST_FRAME`), as every check of a
+/// fuzz run holds it ([`rings_within_their_work`]), and ten of its lays
+/// fit the share.
 ///
 /// Controls, each run and seen red: with no frame's work bounded, the
 /// first measured frame inside; with its side ornament's glyphs not
 /// counted, the same; with one lay given the whole share, as the flow
 /// harnesses give it, the same; with a quarter of
 /// `FRAME_STEPS_A_SIDE_GLYPH`, the 40 letters with a `✦` past their bound;
-/// with a third of `FRAME_STEPS_A_GLYPH`, the 151 letters past theirs.
+/// with a third of `FRAME_STEPS_A_GLYPH`, the 151 letters past theirs;
+/// with a quarter of [`frame_steps`] allowed in the check's own property,
+/// the 151 letters, 22,872 steps a lay of 9,296 allowed.
 #[test]
 fn test_every_text_frame_the_bound_admits_fits_the_share() {
     use crate::flow::LAST_FRAME;
@@ -945,7 +999,17 @@ fn test_every_text_frame_the_bound_admits_fits_the_share() {
             .next()
             .unwrap_or_else(|| panic!("{what}: a ring"));
         let bound = frame_steps(doc.tree(), frame, ring).unwrap_or_else(|| panic!("{what}: laid by halves"));
-        let spent = lay(doc, what);
+        LAST_FRAME.with(|last| last.set(None));
+        crate::flow::MOST_RING_LAY.with(|most| most.set(0));
+        let projected = Projected::new(doc);
+        // What every check of a fuzz run holds the frame to.
+        let most = crate::flow::MOST_RING_LAY.with(std::cell::Cell::get);
+        rings_within_their_work(&projected, most).unwrap_or_else(|why| panic!("{what}: {why}"));
+        drop(projected);
+        let spent = LAST_FRAME
+            .with(std::cell::Cell::get)
+            .unwrap_or_else(|| panic!("{what}: a frame is laid"))
+            .1;
         eprintln!("{what}: {spent} steps a lay, {bound} bounded");
         assert!(spent <= bound, "{what}: {spent} steps a lay, {bound} bounded");
         assert!(
@@ -953,6 +1017,71 @@ fn test_every_text_frame_the_bound_admits_fits_the_share() {
             "{what}: ten lays of {spent} steps past the share"
         );
     }
+}
+
+/// Every [`DEFAULT_IGNORABLE`] code point the bound reads as advancing by
+/// nothing is laid at no advance by the shaper (the review of #378): each
+/// shaped between two `a`s in the default face, on this host's faces, the
+/// run is no wider than the two `a`s alone, though some faces map these
+/// code points to glyphs a whole em wide (U+180E, U+17B4, the tags). And
+/// the bound reads them so: `narrowest_char` gives each nothing.
+///
+/// Controls, run and seen red: with the whole of Unicode's property in the
+/// table, the Hangul fillers and the shorthand format controls laid an em
+/// wide; with U+180E read at the narrowest glyph a face maps it to, red on
+/// its advance read.
+#[test]
+fn test_the_default_ignorables_are_laid_at_no_advance() {
+    use crate::document::resolve::ResolvedText;
+    use crate::document::values::{FontSize, Rgba, Weight};
+    use crate::flow::{shape_run, FlowSpan};
+    use crate::font::fonts::{AppFont, FontSystemLease};
+    use crate::projection::tests::projection_fuzz::{face_metrics, DEFAULT_IGNORABLE};
+    crate::font::fonts::init();
+    // Read before the lease below is taken: it takes one of its own.
+    let faces = face_metrics();
+    let style = ResolvedText {
+        font: AppFont::Any,
+        size: FontSize::Pt(100.0),
+        color: Rgba::opaque(255, 255, 255),
+        weight: Weight::NORMAL,
+        italic: false,
+    };
+    let mut fs = FontSystemLease::new("the default ignorables");
+    let mut width = |text: &str| -> f32 {
+        let span = FlowSpan {
+            text,
+            style: &style,
+            link: None,
+        };
+        shape_run(&[span], 1.0, &mut fs)
+            .glyphs
+            .iter()
+            .map(|g| g.advance)
+            .sum()
+    };
+    let plain = width("aa");
+    let mut wide = Vec::new();
+    let mut read = 0;
+    for &(first, last) in &DEFAULT_IGNORABLE {
+        for code in first..=last {
+            let Some(c) = char::from_u32(code) else {
+                continue;
+            };
+            read += 1;
+            let laid = width(&format!("a{c}a"));
+            if laid > plain + 1e-3 {
+                wide.push(format!("U+{code:04X}: {laid} against {plain}"));
+            }
+            assert_eq!(
+                faces.narrowest_char(AppFont::Any, c),
+                0.0,
+                "U+{code:04X} read as advancing"
+            );
+        }
+    }
+    assert!(read > 4_000, "{read} code points read");
+    assert!(wide.is_empty(), "laid wider than nothing: {wide:#?}");
 }
 
 /// The maps the bound's reach is held to by the projection's

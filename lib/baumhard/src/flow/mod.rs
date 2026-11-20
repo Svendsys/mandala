@@ -78,6 +78,11 @@ pub(crate) use place::halves::LAST_FRAME;
 /// (ruling B47.1).
 #[cfg(test)]
 pub(crate) use place::LAST_RING;
+/// The most glyph steps a ring's placement has taken on this thread since
+/// it was cleared, a test and fuzz counter: what the projection harness
+/// holds each ring's work to (ruling B47.3).
+#[cfg(any(test, fuzzing))]
+pub(crate) use place::MOST_RING_LAY;
 pub use place::{
     pattern_gap, place_at_point, place_on_closed, place_on_open, place_pitched, PathEnd, PlacedGlyph,
     PlacedRun, RingLayout, MAX_PLACED_GLYPHS,

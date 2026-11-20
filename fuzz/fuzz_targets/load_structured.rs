@@ -6,8 +6,9 @@
 //! and the reference model of
 //! `baumhard::document::tests::format_fuzz::check_structured`
 //! (TEST_CONVENTIONS §T14). A map that loads is projected too, inside the
-//! projection's work bound; at every power of two and every 256 inputs the target reports how many
-//! it projected and how many it skipped (ruling B7.3 on #241).
+//! projection's work bound; at every power of two and every 256 inputs
+//! the target reports how many it projected and how many it skipped, and
+//! why (ruling B7.3 on #241).
 
 #![no_main]
 
@@ -24,8 +25,9 @@ fuzz_target!(|bytes: &[u8]| {
     let inputs = INPUTS.fetch_add(1, Ordering::Relaxed) + 1;
     if inputs.is_power_of_two() || inputs % 256 == 0 {
         let (projected, skipped, cut) = baumhard::projection::tests::projection_fuzz::projection_counts();
+        let left = baumhard::projection::tests::projection_fuzz::projection_left();
         eprintln!(
-            "projection: {projected} loaded maps projected, {skipped} outside the bound and skipped, {cut} cut short untangling and skipped"
+            "projection: {projected} loaded maps projected, {skipped} outside the bound and skipped, {cut} cut short untangling and skipped, {left} taken out of the bound by the check's edit and skipped"
         );
     }
 });

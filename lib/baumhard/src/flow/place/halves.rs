@@ -7360,6 +7360,8 @@ pub(super) fn place_halves(
         );
         #[cfg(test)]
         LAST_FRAME.with(|last| last.set(Some((run.glyphs.len(), work.spent.get()))));
+        #[cfg(any(test, fuzzing))]
+        super::MOST_RING_LAY.with(|most| most.set(most.get().max(work.spent.get())));
         if let Some(trace) = trace {
             *trace = kept;
             trace.spent = work.spent.get();
@@ -7925,6 +7927,8 @@ pub(super) fn place_halves(
     }
     #[cfg(test)]
     LAST_FRAME.with(|last| last.set(Some((run.glyphs.len(), lay.work.spent.get()))));
+    #[cfg(any(test, fuzzing))]
+    super::MOST_RING_LAY.with(|most| most.set(most.get().max(lay.work.spent.get())));
     let changed = (sized && fitted.is_some()) || side.is_some() || scale != 1.0;
     let mut glyphs = text;
     glyphs.extend(sides);

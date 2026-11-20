@@ -871,6 +871,8 @@ pub(super) fn place_directional(
         .with(|past| past.set(past.get().saturating_add(work.spent(&arc).saturating_sub(budget))));
     #[cfg(test)]
     LAST_DIRECTIONAL.with(|last| last.set(Some((placed.len(), work.spent(&arc)))));
+    #[cfg(any(test, fuzzing))]
+    super::MOST_RING_LAY.with(|most| most.set(most.get().max(work.spent(&arc))));
     Some((
         Some(combined),
         PlacedRun {

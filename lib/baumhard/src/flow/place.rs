@@ -834,6 +834,13 @@ thread_local! {
     /// path on this thread ([`LastRing`]).
     #[cfg(test)]
     pub(crate) static LAST_RING: std::cell::Cell<Option<LastRing>> = const { std::cell::Cell::new(None) };
+    /// Test and fuzz counter (ruling B47.3): the most glyph steps one
+    /// placement round a closed path — a ring laid by its spans, by
+    /// direction or by halves — has taken on this thread since it was last
+    /// cleared: what the projection harness holds every ring it lays to,
+    /// in a fuzz build as in a test.
+    #[cfg(any(test, fuzzing))]
+    pub(crate) static MOST_RING_LAY: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test counter (ruling B17.2c): what the last `Repeat` ring laid round
     /// a closed path on this thread estimated its glyphs from — its glyphs
     /// a copy, a copy's advance and its path's length
@@ -3267,6 +3274,10 @@ fn place(
         fs.unlocked(|| walk(walked.run.as_ref().unwrap_or(run)).readable(walked, trace.as_deref_mut()));
     work.placed(placed.1.glyphs.len());
     let spent = work.spent(path);
+    #[cfg(any(test, fuzzing))]
+    if closed {
+        MOST_RING_LAY.with(|most| most.set(most.get().max(spent)));
+    }
     let (budget, glyphs, _) = work.budget();
     if let Some(trace) = trace {
         trace.spent = spent;

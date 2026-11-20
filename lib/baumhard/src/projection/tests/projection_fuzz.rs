@@ -12,9 +12,11 @@
 //!   layer, every run's box finite, the same layers when projected again,
 //!   hits that do not panic, and one generated edit that the update
 //!   brings the layers through to a full projection's. A map outside the
-//!   bound is skipped for this property and counted, and so is one whose
-//!   untangling reaches the ceiling below, apart
-//!   ([`projection_counts`](crate::projection::tests::projection_fuzz::projection_counts)),
+//!   bound is skipped for this property and counted, and so, apart, is
+//!   one whose untangling reaches the ceiling below
+//!   ([`projection_counts`](crate::projection::tests::projection_fuzz::projection_counts))
+//!   and one the check's own edit takes out of the bound
+//!   ([`projection_left`](crate::projection::tests::projection_fuzz::projection_left)),
 //!   which the targets report.
 //! - [`check_projection_edits`](crate::projection::tests::projection_fuzz::check_projection_edits)
 //!   is the projection_edits target's body: a generated map and a
@@ -58,39 +60,48 @@
 //! its glyphs, not their work: a ring's work is its glyphs times its
 //! path's reads a glyph, and its budget bounds that, 196,608,000 glyph
 //! steps at the cap (ruling B17.2c), far past the timeout. Inside the
-//! extent an `f32` point is a thousandth of a unit or finer, a glyph's ink
-//! is set apart from the last in a few reads, and the densest ring of dots
-//! the bound admits takes under five steps a glyph at the cap; 10¹⁰ out a
-//! point is a thousand units from the next, and each glyph of the same ring
-//! read its path a thousand times, 62 steps a glyph, every projection a
-//! check makes (#374;
-//! `test_every_repeat_ring_the_bound_admits_fits_the_share`). A `spacing`
-//! is not part of where a ring lies: it parts a placement's glyphs, and
-//! moves no outline and no path.
+//! extent an `f32` point is a thousandth of a unit or finer, and a glyph's
+//! ink is set apart from the last in a few reads; 10¹⁰ out a point is a
+//! thousand units from the next, and each glyph of a ring of dots read its
+//! path a thousand times, 62 steps a glyph, every projection a check makes
+//! (#374). A `spacing` is not part of where a ring lies: it parts a
+//! placement's glyphs, and moves no outline and no path.
 //!
-//! **A `Repeat` ring's work is part of the bound** (ruling B47.3). Where a
-//! ring lies does not bound how much work it is: a `Repeat` ring a little
-//! short of the cap closes its spacing and takes some 40 steps a glyph
-//! wherever it lies, and inside the extent such rings took 40 to 118 s of
-//! a check under ASan, against the 20 s timeout. So a map is projected
-//! here only when each `Repeat` ring may lay no more glyphs than
-//! `MOST_RING_GLYPHS` (`repeat_glyphs`, bounded before it is laid): the
-//! most whose work — `RING_STEPS_A_GLYPH` a glyph and `RING_SETUP_STEPS`,
-//! stated from a sweep of the rings the bound admits — laid
-//! `RING_LAYS_A_CHECK` times, once in each projection the check makes, fits
-//! the input's share, `flow_fuzz::INPUT_STEPS`. The flow harnesses hold
-//! their rings to `MAX_RING_GLYPHS` for the same reason (B17.2b). A ring's
-//! glyphs are bounded as its outline's perimeter at its reach over the
-//! least step one of them takes along it: its advance, from the narrowest
-//! glyph a face maps each character to, at the least size the ring can be,
-//! and its `spacing`. A ring of text laid by halves — any other fit — is
-//! held the same way, to the steps one lay of it may take,
-//! `FRAME_STEPS_A_LAY`: its text's characters and the glyphs its side
-//! ornament may lay (`side_glyphs`), at `FRAME_STEPS_A_GLYPH` and
-//! `FRAME_STEPS_A_SIDE_GLYPH`, and `FRAME_SETUP_STEPS` (`frame_steps`). The
-//! flow harnesses lay such a frame once an input and give it the whole
-//! share; a check here lays it up to ten times.
-
+//! **A ring's work is part of the bound** (ruling B47.3). Where a ring lies
+//! does not bound how much work it is: a `Repeat` ring a little short of
+//! the cap closes its spacing and takes some 40 steps a glyph wherever it
+//! lies, and inside the extent such rings took 40 to 118 s of a check
+//! under ASan, against the 20 s timeout. So a map is projected here only
+//! when each `Repeat` ring may lay no more glyphs than `MOST_RING_GLYPHS`
+//! (`repeat_glyphs`, bounded before it is laid): the most whose work —
+//! `RING_STEPS_A_GLYPH` a glyph and `RING_SETUP_STEPS`, stated from sweeps
+//! of the rings the bound admits — laid `RING_LAYS_A_CHECK` times, once in
+//! each projection the check makes, fits the input's share,
+//! `flow_fuzz::INPUT_STEPS`. The flow harnesses hold their rings to
+//! `MAX_RING_GLYPHS` for the same reason (B17.2b). A ring's glyphs are
+//! bounded as its outline's perimeter at its reach over the least step one
+//! of them takes along it: a copy of its text shaped as the ring shapes it,
+//! at the least size the ring can be, its glyphs and its advance, and its
+//! `spacing`, with `RING_STEP_SLACK` more for inks that overhang their
+//! advance. A ring of text laid by halves — any other fit — is held the
+//! same way, to the steps one lay of it may take, `FRAME_STEPS_A_LAY`: its
+//! text's characters and the glyphs its side ornament may lay
+//! (`side_glyphs`), at `FRAME_STEPS_A_GLYPH` and `FRAME_STEPS_A_SIDE_GLYPH`,
+//! and `FRAME_SETUP_STEPS` (`frame_steps`). The flow harnesses lay such a
+//! frame once an input and give it the whole share; a check here lays it
+//! up to ten times. The rates are measured, and an input no sweep tried can
+//! break them: the check holds each ring the fuzzer lays to them
+//! (`rings_within_their_work`), so a fuzz run finds the next one.
+//!
+//! **The check's own edit is held to the bound too** (the review of #378).
+//! The bound reads the map as loaded; the check then edits it, and every
+//! projection after the edit lays the map as edited. An edit can take an
+//! admitted map out by any rule of the bound — a ring made `Repeat`, a node
+//! moved or resized, a section's or a ring's text, an `inset` or a `gap`,
+//! a side ornament — so the check reads the bound again after each change
+//! and before its update, and abandons a map that left it, counting it
+//! apart (`left_the_bound`, `projection_left`).
+//!
 //! **A section's box is bounded before it is shaped** (ruling B47.2). The
 //! shaper sizes it to the larger of its `min_size` and its text's natural
 //! size, its widest line by the sum of its lines' heights, its lines
@@ -107,14 +118,22 @@
 //! advance at the default instance plus, in a variable face, every
 //! positive delta its `HVAR` holds for it, each region's scalar being one
 //! at most — or, in one with no `HVAR`, its advance at every weight a span
-//! can ask for, the only axis the shaper sets. No glyph is laid wider. What
-//! the bound takes on trust is that the shaper lays no more than that
-//! advance for a character: a face's substitutions can lay one character
-//! as several glyphs, and its positioning can widen a pair. A face that
-//! did either past the widest advance would draw its box wider than the
-//! bound reads, by that excess, and the end-to-end property
-//! (`test_every_ring_the_bound_admits_lies_within_the_extent`) holds the
-//! bound's own cases and the review's probes to it.
+//! can ask for, the only axis the shaper sets. No glyph is laid wider.
+//!
+//! **What the bound takes on trust.** That the shaper lays no more than
+//! the widest advance for a character of a section: a face's substitutions
+//! can lay one character as several glyphs, and its positioning can widen
+//! a pair, and a face that did either past the widest advance would draw
+//! its box wider than the bound reads, by that excess. That a side
+//! ornament's character advances no less than the narrowest glyph a face
+//! maps it to, or by nothing where it is one of the code points the shaper
+//! hides (`DEFAULT_IGNORABLE`, held to the shaper by
+//! `test_the_default_ignorables_are_laid_at_no_advance`). That a `Repeat`
+//! ring steps along its outline no less than its glyphs' advances over
+//! `RING_STEP_SLACK`. And the rates above. The end-to-end properties
+//! (`test_every_ring_the_bound_admits_lies_within_the_extent`, and in every
+//! check `rings_within_their_work`) hold the bound's own cases, the
+//! reviews' probes and every map the fuzzer lays to them.
 //!
 //! The coordinates bound how long a path is in map units, not how many
 //! glyphs or samples it takes: those go by its length over its size, and
@@ -146,9 +165,12 @@
 //! this map's, so nothing is asserted of it, and it is counted as cut
 //! short. The ceiling and the mark are compiled into test and fuzz builds
 //! only (`cfg(test)`, `cfg(fuzzing)`). So one check's work in `untangle`
-//! is at most the ceiling and the one lane that reaches it; the rest of
-//! the check is bounded by the coordinate bound above and the engine's
-//! own caps.
+//! is at most the ceiling and the one lane that reaches it. The rest of
+//! the check is bounded by the bound above and the engine's own caps, but
+//! for shaping: every full projection shapes every flow again — a
+//! section's, a ring's, a path's — and no step counts it (#383), so what
+//! a check's projections spend shaping text in many faces is not held
+//! here.
 
 use std::cell::Cell;
 use std::sync::OnceLock;
@@ -159,8 +181,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::arena::NodeId;
 use crate::document::element::{DocElement, RingData, SectionData};
 use crate::document::ids::Document;
-use crate::document::resolve::{resolve_frame, resolve_ring_in, resolve_text_in, Binding};
-use crate::document::values::FitMode;
+use crate::document::resolve::{resolve_frame, resolve_ring_in, resolve_text_in, Binding, ResolvedText};
+use crate::document::values::{FitMode, FontSize};
 use crate::document::writer::transaction::TransactionKind;
 use crate::document::writer::ChangeSource;
 use crate::engine::interpolate::Snap;
@@ -197,6 +219,62 @@ thread_local! {
     static PROJECTED: Cell<usize> = const { Cell::new(0) };
     static SKIPPED: Cell<usize> = const { Cell::new(0) };
     static CUT: Cell<usize> = const { Cell::new(0) };
+    static LEFT: Cell<usize> = const { Cell::new(0) };
+    /// Whether the check under way is of a map the bound admitted, which
+    /// its edit must keep inside it ([`left_the_bound`]).
+    static HELD: Cell<bool> = const { Cell::new(false) };
+    /// Whether the check's edit took its map out of the bound.
+    static GONE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// How many loaded maps [`check_projects`] abandoned because the check's
+/// own edit took the map out of the bound (the review of #378,
+/// `left_the_bound`), on this thread: counted apart from
+/// [`projection_counts`]'s three, as a map cut short is.
+pub fn projection_left() -> usize {
+    LEFT.with(Cell::get)
+}
+
+/// Whether the map `p` holds has left the bound in a check of a map it
+/// admitted (the review of #378): read again after each edit, stage,
+/// interpolation, commit, cancel, undo and redo the check makes, before
+/// the update and the full projection that would lay it. An edit can take
+/// a map out by any rule of the bound — a ring's or a frame's `fit` or the
+/// defaults made `Repeat` (`Ring::SetFit`, `Frame::SetFit`,
+/// `Defaults::Replace`), a node moved or resized, a section's text, a
+/// frame's `inset` or `gap`, a ring's text, a side ornament — and the lays
+/// after it are of the map as edited, which the bound never read: a ring of
+/// `·` made `Repeat` 1,300 out took a check 26.6 s under ASan. Marks the
+/// check, which is then abandoned and counted ([`projection_left`]).
+/// O(the document) where a check is held, O(1) where none is.
+fn left_the_bound(p: &Projected) -> bool {
+    if !HELD.with(Cell::get) {
+        return false;
+    }
+    if within_bound(&p.doc) {
+        // The lays that follow are of the map as changed: their most is
+        // counted afresh ([`laid_within`]).
+        #[cfg(any(test, fuzzing))]
+        crate::flow::MOST_RING_LAY.with(|most| most.set(0));
+        return false;
+    }
+    GONE.with(|gone| gone.set(true));
+    true
+}
+
+/// Whether the rings `p` laid since the bound was last read held to the
+/// work it read for them ([`rings_within_their_work`]), in a check of a
+/// map the bound admitted: what the sweep asks of every update and full
+/// projection after its first, as of the first. `Ok` where no check is
+/// held, and in a build that counts no steps. O(`p`'s rings and their
+/// texts) where a check is held, O(1) where none is.
+fn laid_within(p: &Projected) -> Result<(), String> {
+    #[cfg(any(test, fuzzing))]
+    if HELD.with(Cell::get) {
+        return rings_within_their_work(p, crate::flow::MOST_RING_LAY.with(Cell::get));
+    }
+    let _ = p;
+    Ok(())
 }
 
 /// How many loaded maps [`check_projects`] has projected, how many it
@@ -384,7 +462,9 @@ pub(crate) fn drawn_bound(tree: &Tree<DocElement>, node: NodeId) -> Rect {
 /// full projection it makes — its first, and the sweep's comparison — and
 /// for its one edit at most four updates, each followed by the oracle's
 /// full projection: a transaction's two stages, its interpolation and its
-/// commit (`sweep`). A fuzz build shares no placement between them.
+/// commit (`sweep`). A fuzz build shares no placement between them. Each
+/// lays a map the bound admitted: the check reads the bound again after
+/// each change, before the lays that follow it (`left_the_bound`).
 pub const RING_LAYS_A_CHECK: usize = 10;
 
 /// The most glyph steps a `Repeat` ring the bound admits takes for each
@@ -393,44 +473,61 @@ pub const RING_LAYS_A_CHECK: usize = 10;
 /// `STEPS_PER_GLYPH`, 3,000 a glyph over a floor of 400,000 steps a lay
 /// (B17.2c), under which ten lays fit no ring at all into the input's
 /// share, and its spacing solves are read against that budget and nothing
-/// less. A sweep of 576 admitted rings — `·` at a quarter and at the whole
-/// of its node, `MANDALA `, `*` at a twentieth, and `·`, a ring of `|` and
-/// one of corners spaced, round an ellipse, a sharp and a rounded rectangle
-/// 1 to 1,000 across, from the node's side to 3,000 out — and the densest
-/// rings this bound admits took at most some 82 steps a glyph of their
-/// bound: `*` at a twentieth of an ellipse 1,000 across, 1,127 out, 48,974
-/// steps for 363 glyphs laid of 597 bounded. 128 holds that with half as
-/// much again. `test_every_repeat_ring_the_bound_admits_fits_the_share`
-/// holds the densest rings the bound admits to it. What a step costs under
-/// ASan, 6.6 to 10 µs where measured against the share's 32.3, and the
-/// three to five lays these maps' checks make against the ten counted
-/// leave a ring several times past this still within the timeout.
-pub const RING_STEPS_A_GLYPH: usize = 128;
+/// less. Two sweeps: 576 rings of the default face — `·` at a quarter and
+/// at the whole of its node, `MANDALA `, `*` at a twentieth, and `·`, a
+/// ring of `|` and one of corners spaced, round an ellipse, a sharp and a
+/// rounded rectangle 1 to 1,000 across, from the node's side to 3,000 out
+/// — and, after the review of #378 found a ring past the first rate, 420
+/// rings of 31 texts laid in fallback faces and as `.notdef`: emoji,
+/// Hebrew, Arabic, Devanagari, Thai, Tamil, Mongolian, Cherokee,
+/// hieroglyphs, U+1BCA0, U+F0000, U+10FFFD, U+FDFD, split vowels, alone
+/// and beside `·`, round an ellipse and a rounded rectangle 1 to 1,000
+/// across at their edge of the bound, at half and at a quarter of it. The
+/// most any took was 206 steps a glyph of its bound: `😀·` at a twentieth of
+/// an ellipse 1,000 across, 317 out, 44,493 steps for 164 glyphs laid of
+/// 216 bounded; `·\u{1BCA0}`, the review's, took 201. 256 holds that with a
+/// quarter as much again. Measured rates are what an input no sweep tried
+/// breaks: the check holds every ring the fuzzer lays to them
+/// (`rings_within_their_work`), so a fuzz run finds the next one.
+/// `test_every_repeat_ring_the_bound_admits_fits_the_share` holds the
+/// densest rings the bound admits to it.
+pub const RING_STEPS_A_GLYPH: usize = 256;
+
+/// How many more glyphs a `Repeat` ring may lay than its outline's length
+/// over its glyphs' advances (ruling B47.3, the review of #378): a ring
+/// sets each glyph's ink apart from the last, not its advance, and a glyph
+/// whose ink overhangs its advance steps less than it. Stated from
+/// measurement: the most a sweep of rings of fallback faces, `.notdef`s
+/// and split vowels laid past it was 3.6 % (`ொ`, U+0BCA, Tamil's split
+/// vowel, round a rounded rectangle 1,000 across: 174 glyphs where the
+/// advance read 168). A quarter more.
+pub const RING_STEP_SLACK: f64 = 1.25;
 
 /// The most glyph steps a `Repeat` ring the bound admits takes past
 /// [`RING_STEPS_A_GLYPH`] a glyph of its bound (ruling B47.3): its setup,
 /// its path's tables, and shaping and inking its copy, which do not grow
-/// with its glyphs. Stated from the same sweep, whose most past 64 a glyph
-/// was 5,481, rounded up to a power of two.
+/// with its glyphs. Stated from the same sweeps, whose most past 64 a
+/// glyph was 5,481, rounded up to a power of two; past 256, none was.
 pub const RING_SETUP_STEPS: usize = 8_192;
 
 /// The most glyphs a `Repeat` ring the bound admits may lay (ruling
-/// B47.3), 298: the most whose work, [`RING_STEPS_A_GLYPH`] a glyph and
+/// B47.3), 149: the most whose work, [`RING_STEPS_A_GLYPH`] a glyph and
 /// [`RING_SETUP_STEPS`], laid [`RING_LAYS_A_CHECK`] times, fits the input's
 /// share, `flow_fuzz::INPUT_STEPS` at `flow_fuzz::ASAN_STEP_NANOS` a step —
 /// the flow harnesses' share for an input, whose rings they lay at
 /// `MAX_RING_GLYPHS` (B17.2b) for the same reason. The densest ring it
-/// admits, by the steps it takes, `*` at a twentieth of an ellipse 1,000
-/// across, 311 out — 182 glyphs laid of 298 bounded, 19,750 steps a lay —
-/// ran its whole input in 0.82 s under ASan (`cargo fuzz run load_raw
-/// <file> -- -runs=1`, the load average some 5), against the 20 s
-/// timeout, `flow_fuzz::FUZZ_TIMEOUT_SECONDS`.
+/// admits, by the steps it takes, `😀·` at a twentieth of an ellipse 1,000
+/// across, 63 out — 114 glyphs laid of 149 bounded, 34,987 steps a lay —
+/// ran its input in 0.87 s under ASan (`cargo fuzz run load_raw <file> --
+/// -runs=1`, the load average some 2), against the 20 s timeout,
+/// `flow_fuzz::FUZZ_TIMEOUT_SECONDS`.
 pub const MOST_RING_GLYPHS: usize = (INPUT_STEPS / RING_LAYS_A_CHECK - RING_SETUP_STEPS) / RING_STEPS_A_GLYPH;
 
 /// The most glyphs `ring` may lay, laid `Repeat` (ruling B47.3), bounded
 /// before it is laid: the perimeter its outline can have, over the least
-/// one of its glyphs can advance along it, and a copy and its corners more.
-/// `None` for a ring of another fit, which lays its text once.
+/// one of its glyphs can step along it, with [`RING_STEP_SLACK`] more, and
+/// a copy and its corners more. `None` for a ring of another fit, which
+/// lays its text once.
 ///
 /// - **The perimeter**: its node's drawn rectangle at most
 ///   ([`drawn_bound`]) grown by its frame's outermost reach
@@ -438,29 +535,28 @@ pub const MOST_RING_GLYPHS: usize = (INPUT_STEPS / RING_LAYS_A_CHECK - RING_SETU
 ///   least that of any convex outline inside it — every node shape is
 ///   convex, and an outline grown from one is.
 /// - **A glyph's step at the least**: each text it lays — its spans', each
-///   in its own font, or the `vertical` its spans have nothing to draw
-///   beside — over its characters, as its grapheme clusters advance at
-///   least ([`FaceMetrics::narrowest_cluster`]) at the least point size its
-///   ring can be, plus its `spacing`, which a `Repeat` ring adds between
-///   every two glyph steps. The size is relative to its node's drawn
-///   rectangle, at least `min_size` (D5), and so at least `min_size`'s
-///   point size. A ring that lays by direction steps a run down a side by
-///   its glyphs' ink, upright, and not by their advance
-///   (`place::directional`): its `spacing` alone is a step it takes at
-///   least. One whose step can be nothing lays the cap.
+///   in its own style, or the `vertical` its spans have nothing to draw
+///   beside — shaped as the ring shapes a copy of it (`flow::shape_run`),
+///   at the least point size its ring can be: its glyphs, however many a
+///   character lays, and its advance, over its glyphs, plus its `spacing`,
+///   which a `Repeat` ring adds between every two glyph steps. The size is
+///   relative to its node's drawn rectangle, at least `min_size` (D5), and
+///   so at least `min_size`'s point size. A ring that lays by direction
+///   steps a run down a side by its glyphs' ink, upright, and not by their
+///   advance (`place::directional`): its `spacing` alone is a step it
+///   takes at least. One whose step can be nothing lays the cap.
 /// - The glyphs of a copy past that, a copy on each of the four runs of a
 ///   ring laid by direction, and its corners; and the cap,
 ///   `MAX_PLACED_GLYPHS`, at most.
 ///
-/// What it takes on trust, as [`box_bound`] does: that a character lays a
-/// glyph at most, in its span's family where a face of that family maps
-/// it, and no narrower than the glyph it maps to; and that a `Repeat` ring
-/// of its spans steps along its outline by its glyphs' advances, as every
-/// ring the end-to-end property reads does (`rings_within_the_extent`
-/// holds what each lays to this). O(its texts), and once a process
-/// [`face_metrics`].
+/// What it takes on trust: that the ring steps along its outline no less
+/// than its glyphs' advances over [`RING_STEP_SLACK`] — it sets inks apart,
+/// not advances, and an ink can overhang its advance — as every ring the
+/// end-to-end property reads does (`rings_within_the_extent` holds what
+/// each lays to this, and `rings_within_their_work` holds every ring a
+/// fuzz run lays). O(its texts), shaped once each.
 pub(crate) fn repeat_glyphs(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId) -> Option<usize> {
-    use unicode_segmentation::UnicodeSegmentation;
+    use crate::flow::{shape_run, FlowSpan};
     let arena = tree.arena();
     let resolved = resolve_ring_in(tree, ring, Binding::Carried(None), &mut ());
     if !matches!(resolved.fit, FitMode::Repeat) {
@@ -470,26 +566,33 @@ pub(crate) fn repeat_glyphs(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId
     let DocElement::Node(data) = arena[node].get() else {
         return None;
     };
-    let style = resolve_text_in(tree, ring, Binding::Carried(None), &mut ());
-    // Each text it lays, as runs of a font: its spans', one copy, each in
-    // its own font, and its `vertical`, in its own.
-    let spans: Vec<(AppFont, &str)> = ring
+    // The least rectangle its node is drawn as, and so the least size its
+    // text is shaped at (D5).
+    let least_rect = Rect::new(Vec2::ZERO, geometry::usable_size(data.min_size));
+    let at_least = |style: ResolvedText| ResolvedText {
+        size: FontSize::Pt(geometry::points(style.size, least_rect)),
+        ..style
+    };
+    let style = at_least(resolve_text_in(tree, ring, Binding::Carried(None), &mut ()));
+    // Each text it lays: its spans', one copy, each in its own style, and
+    // its `vertical`, in its own.
+    let spans: Vec<(ResolvedText, &str)> = ring
         .children(arena)
         .filter_map(|span| match arena[span].get() {
             DocElement::Span(text) => Some((
-                resolve_text_in(tree, span, Binding::Carried(None), &mut ()).font,
+                at_least(resolve_text_in(tree, span, Binding::Carried(None), &mut ())),
                 text.text.as_str(),
             )),
             _ => None,
         })
         .filter(|(_, text)| !text.is_empty())
         .collect();
-    let mut texts: Vec<Vec<(AppFont, &str)>> = Vec::new();
+    let mut texts: Vec<Vec<(ResolvedText, &str)>> = Vec::new();
     if !spans.is_empty() {
         texts.push(spans);
     }
     if let Some(vertical) = resolved.directional.vertical.as_deref() {
-        texts.push(vec![(style.font, vertical)]);
+        texts.push(vec![(style, vertical)]);
     }
     let corners: usize = resolved
         .directional
@@ -499,42 +602,56 @@ pub(crate) fn repeat_glyphs(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId
     if texts.is_empty() {
         return Some(corners.min(MAX_PLACED_GLYPHS));
     }
-    let least_rect = Rect::new(Vec2::ZERO, geometry::usable_size(data.min_size));
-    let size = f64::from(geometry::points(style.size, least_rect));
     let spacing = if resolved.spacing.is_finite() {
         f64::from(resolved.spacing.max(0.0))
     } else {
         0.0
     };
-    let faces = face_metrics();
-    // The least a glyph of each text advances along the outline, and the
-    // most glyphs a copy of any holds.
+    // Each text shaped as the ring shapes a copy of it, at the least size:
+    // its glyphs and how far a copy advances.
+    crate::font::fonts::init();
+    let mut lease = FontSystemLease::new("the projection's work bound");
+    // The least a glyph of each text steps along the outline, and the most
+    // glyphs a copy of any holds.
     let mut least = f64::INFINITY;
     let mut copy = 0usize;
     for text in &texts {
-        let (mut chars, mut clusters, mut advance) = (0usize, 0usize, 0.0f64);
-        for &(font, run) in text {
-            chars += run.chars().count();
-            for cluster in run.graphemes(true) {
-                clusters += 1;
-                advance += f64::from(faces.narrowest_cluster(font, cluster));
-            }
+        let spans: Vec<FlowSpan<'_>> = text
+            .iter()
+            .map(|(style, text)| FlowSpan {
+                text,
+                style,
+                link: None,
+            })
+            .collect();
+        let run = shape_run(&spans, 1.0, &mut lease);
+        let glyphs = run.glyphs.len();
+        if glyphs == 0 {
+            continue;
         }
+        let advance: f64 = run.glyphs.iter().map(|g| f64::from(g.advance.max(0.0))).sum();
         // A ring that lays by direction steps a run down a side by its
         // glyphs' ink, upright, not by their advance (`place::directional`):
         // only its `spacing` is a step it takes at least.
         let step = if resolved.directional.is_set() {
-            clusters as f64 * spacing
+            glyphs as f64 * spacing
         } else {
-            advance * size + clusters as f64 * spacing
+            advance + glyphs as f64 * spacing
         };
-        least = least.min(step / chars as f64);
-        copy = copy.max(chars);
+        least = least.min(step / glyphs as f64);
+        copy = copy.max(glyphs);
+    }
+    drop(lease);
+    if copy == 0 {
+        return Some(corners.min(MAX_PLACED_GLYPHS));
     }
     let drawn = drawn_bound(tree, node);
     let reach = outline_reach(tree, frame);
     let perimeter = 2.0 * f64::from(drawn.size.x + drawn.size.y) + 8.0 * reach;
-    let glyphs = perimeter / least;
+    // A ring sets each glyph's ink apart from the last, not its advance,
+    // and an ink that overhangs its advance steps less than it: at most a
+    // fifth less (`RING_STEP_SLACK`).
+    let glyphs = perimeter / least * RING_STEP_SLACK;
     if !(glyphs.is_finite() && glyphs < MAX_PLACED_GLYPHS as f64) {
         return Some(MAX_PLACED_GLYPHS);
     }
@@ -604,9 +721,10 @@ pub const FRAME_STEPS_A_LAY: usize = INPUT_STEPS / RING_LAYS_A_CHECK;
 /// bounds a `Repeat` ring's: the outline's `perimeter`, over the least a
 /// copy of it advances at `size`, the least size its ring can be laid at,
 /// each of its grapheme clusters at its narrowest in `font`
-/// ([`FaceMetrics::narrowest_cluster`]); and a copy more at each of the
-/// two breaks it fills. The cap, `MAX_PLACED_GLYPHS`, where a copy can
-/// advance by nothing. O(its text).
+/// ([`FaceMetrics::narrowest_cluster`]), one the shaper hides at nothing
+/// ([`DEFAULT_IGNORABLE`]); and a copy more at each of the two breaks it
+/// fills. The cap, `MAX_PLACED_GLYPHS`, where a copy can advance by
+/// nothing. What it takes on trust is the module docs'. O(its text).
 fn side_glyphs(sides: &str, font: AppFont, size: f64, perimeter: f64) -> usize {
     use unicode_segmentation::UnicodeSegmentation;
     let faces = face_metrics();
@@ -770,14 +888,52 @@ pub(crate) struct FaceMetrics {
     pub(crate) notdef: f32,
 }
 
+/// The code points the shaper hides at no advance, whatever glyph a face
+/// maps them to (the review of #378): Unicode's
+/// `Default_Ignorable_Code_Point` (Unicode 16.0.0,
+/// `DerivedCoreProperties.txt`), its ranges merged, less the four Hangul
+/// fillers (U+115F, U+1160, U+3164, U+FFA0) and the shorthand format
+/// controls (U+1BCA0–U+1BCA3), which harfrust, as HarfBuzz, lays as any
+/// other character — a whole em of a fallback face on this host.
+/// `test_the_default_ignorables_are_laid_at_no_advance` holds the table to
+/// the shaper on this host's faces. No crate the workspace builds exposes
+/// the property.
+pub(crate) const DEFAULT_IGNORABLE: [(u32, u32); 13] = [
+    (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
+    (0x061C, 0x061C),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180F),
+    (0x200B, 0x200F),
+    (0x202A, 0x202E),
+    (0x2060, 0x206F),
+    (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF),
+    (0xFFF0, 0xFFF8),
+    (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0FFF),
+];
+
+/// Whether `c` is a [`DEFAULT_IGNORABLE`] code point. O(1).
+pub(crate) fn default_ignorable(c: char) -> bool {
+    let code = u32::from(c);
+    DEFAULT_IGNORABLE
+        .iter()
+        .any(|&(first, last)| (first..=last).contains(&code))
+}
+
 impl FaceMetrics {
-    /// The narrowest advance `c` may take in a span of `font`, in ems: the
-    /// narrowest its family's faces map it to, where one maps it — the
-    /// shaper lays a character in the family it is pinned to, or the
-    /// default face, whenever a face of it holds the character — or the
-    /// narrowest any face maps it to, where none does, or `.notdef`'s.
+    /// The narrowest advance `c` may take in a span of `font`, in ems:
+    /// nothing for a [`default_ignorable`] character, which the shaper
+    /// hides; else the narrowest its family's faces map it to, where one
+    /// maps it — the shaper lays a character in the family it is pinned to,
+    /// or the default face, whenever a face of it holds the character — or
+    /// the narrowest any face maps it to, where none does, or `.notdef`'s.
     /// O(1).
     pub(crate) fn narrowest_char(&self, font: AppFont, c: char) -> f32 {
+        if default_ignorable(c) {
+            return 0.0;
+        }
         let font = if font == AppFont::Any {
             DEFAULT_FACE.0
         } else {
@@ -797,14 +953,21 @@ impl FaceMetrics {
     /// or for a cluster of several the narrowest any face maps any of them
     /// to — a mark or a joiner of none, which the shaper may draw over its
     /// base or into one glyph with it, in whichever face holds the whole
-    /// cluster. O(its characters).
+    /// cluster — and nothing where one of them is [`default_ignorable`].
+    /// O(its characters).
     pub(crate) fn narrowest_cluster(&self, font: AppFont, cluster: &str) -> f32 {
         let mut chars = cluster.chars();
         match (chars.next(), chars.next()) {
             (Some(c), None) => self.narrowest_char(font, c),
             _ => cluster
                 .chars()
-                .map(|c| self.narrowest.get(&u32::from(c)).copied().unwrap_or(self.notdef))
+                .map(|c| {
+                    if default_ignorable(c) {
+                        0.0
+                    } else {
+                        self.narrowest.get(&u32::from(c)).copied().unwrap_or(self.notdef)
+                    }
+                })
                 .fold(f32::INFINITY, f32::min)
                 .min(self.notdef),
         }
@@ -983,31 +1146,59 @@ fn face_advances(data: &[u8], index: u32) -> Option<FaceAdvances> {
 }
 
 /// The projection properties of a map the loader accepted (see the module
-/// docs): `Ok` when they hold, when the map is outside the bound, or when
-/// its untangling reaches [`MAX_UNTANGLE_SAMPLES`] — each skipped, and
-/// counted.
+/// docs): `Ok` when they hold, when the map is outside the bound, when its
+/// untangling reaches [`MAX_UNTANGLE_SAMPLES`], or when the check's own
+/// edit takes it out of the bound — each skipped, and counted apart.
 pub fn check_projects(doc: &Document) -> Result<(), String> {
     if !within_bound(doc) {
         SKIPPED.with(|n| n.set(n.get() + 1));
         return Ok(());
     }
-    #[cfg(any(test, fuzzing))]
-    {
-        let (checked, cut) = under_ceiling(|| check_within_ceiling(doc));
-        // Cut short, the map was not laid out as it lays out: whatever the
-        // check found, it is not this map's, and is not reported.
-        if cut {
-            CUT.with(|n| n.set(n.get() + 1));
-            return Ok(());
+    let (checked, gone) = held(|| {
+        #[cfg(any(test, fuzzing))]
+        {
+            under_ceiling(|| check_within_ceiling(doc))
         }
-        PROJECTED.with(|n| n.set(n.get() + 1));
-        checked
+        #[cfg(not(any(test, fuzzing)))]
+        {
+            (check_within_ceiling(doc), false)
+        }
+    });
+    let (checked, cut) = checked;
+    // Cut short, the map was not laid out as it lays out: whatever the
+    // check found, it is not this map's, and is not reported.
+    if cut {
+        CUT.with(|n| n.set(n.get() + 1));
+        return Ok(());
     }
-    #[cfg(not(any(test, fuzzing)))]
-    {
-        PROJECTED.with(|n| n.set(n.get() + 1));
-        check_within_ceiling(doc)
+    // Taken out of the bound by the check's own edit: what it laid after
+    // is of a map the bound never read.
+    if gone {
+        LEFT.with(|n| n.set(n.get() + 1));
+        return Ok(());
     }
+    PROJECTED.with(|n| n.set(n.get() + 1));
+    checked
+}
+
+/// `check` with its map held to the bound ([`left_the_bound`]), and
+/// whether the check's edit took the map out of it. The hold and the mark
+/// are clear again however `check` ends, by return or by panic.
+/// O(`check`).
+fn held<R>(check: impl FnOnce() -> R) -> (R, bool) {
+    /// Clears the hold and the mark when it goes.
+    struct Clear;
+    impl Drop for Clear {
+        fn drop(&mut self) {
+            HELD.with(|held| held.set(false));
+            GONE.with(|gone| gone.set(false));
+        }
+    }
+    let _clear = Clear;
+    HELD.with(|held| held.set(true));
+    GONE.with(|gone| gone.set(false));
+    let checked = check();
+    (checked, GONE.with(Cell::get))
 }
 
 /// `check` under the untangling ceiling, [`MAX_UNTANGLE_SAMPLES`], and
@@ -1032,6 +1223,56 @@ pub(crate) fn under_ceiling<R>(check: impl FnOnce() -> R) -> (R, bool) {
     (checked, UNTANGLE_CUT.with(Cell::get))
 }
 
+/// The work bound's end-to-end property (ruling B47.3), read from the
+/// projection `p` of a map inside the bound, whose rings' placements took
+/// at most `most` glyph steps each (`flow::MOST_RING_LAY`, cleared before
+/// it): every `Repeat` ring lays no more glyphs than [`repeat_glyphs`]
+/// read for it, and no ring's lay took more steps than the most the bound
+/// allows any ring of the map — [`RING_STEPS_A_GLYPH`] a glyph of a
+/// `Repeat` ring's bound and [`RING_SETUP_STEPS`], [`frame_steps`] for a
+/// ring laid by halves, and the larger setup for a ring of no text. The
+/// map holds one ring of text at most, so the most of its lays is that
+/// ring's, or a ring's of no text. The steps and the rates are stated
+/// from measurement, which an input no sweep tried can break: this is
+/// where a fuzz run finds it: a loader check reads it after its first
+/// projection, and after every update and full projection its edit makes
+/// of a map still inside the bound (`laid_within`). A placement the test
+/// build shares from an earlier projection (`stages::memo`) is not laid
+/// again, and counts nothing. O(its rings and their texts).
+#[cfg(any(test, fuzzing))]
+pub(crate) fn rings_within_their_work(p: &Projected, most: usize) -> Result<(), String> {
+    use crate::projection::state::UnitBody;
+    let tree = p.doc.tree();
+    let mut allowed = RING_SETUP_STEPS.max(FRAME_SETUP_STEPS);
+    for (&id, unit) in &p.projector.units {
+        let UnitBody::Ring(ring) = &unit.body else {
+            continue;
+        };
+        let Some(frame) = ring.frame else {
+            continue;
+        };
+        if let Some(bound) = repeat_glyphs(tree, frame, id) {
+            let placed = ring.flow.placed.as_ref().map_or(0, |p| p.placed.glyphs.len());
+            if placed > bound {
+                return Err(format!("ring {id:?} laid {placed} glyphs, its bound {bound}"));
+            }
+            allowed = allowed.max(
+                RING_STEPS_A_GLYPH
+                    .saturating_mul(bound)
+                    .saturating_add(RING_SETUP_STEPS),
+            );
+        } else if let Some(steps) = frame_steps(tree, frame, id) {
+            allowed = allowed.max(steps);
+        }
+    }
+    if most > allowed {
+        return Err(format!(
+            "a ring's lay took {most} glyph steps, past the {allowed} the bound allows its map"
+        ));
+    }
+    Ok(())
+}
+
 /// [`check_projects`] once the map is inside the bound, under the ceiling
 /// it sets: abandoned, with `Ok`, as soon as its first projection is cut
 /// short.
@@ -1040,6 +1281,8 @@ fn check_within_ceiling(doc: &Document) -> Result<(), String> {
     // nodes, are projected sharing the shapings of equal keys as the
     // oracle's full projections do (`stages::memo`): every property here
     // compares by value. A fuzz build shapes every flow.
+    #[cfg(any(test, fuzzing))]
+    crate::flow::MOST_RING_LAY.with(|most| most.set(0));
     #[cfg(test)]
     let mut p = Projected::new_shared(doc.clone());
     #[cfg(not(test))]
@@ -1048,6 +1291,10 @@ fn check_within_ceiling(doc: &Document) -> Result<(), String> {
     if crate::projection::geometry::UNTANGLE_CUT.with(Cell::get) {
         return Ok(());
     }
+    // What the bound read of each ring holds of how it was laid (ruling
+    // B47.3): a fuzz run finds the next ring past it.
+    #[cfg(any(test, fuzzing))]
+    rings_within_their_work(&p, crate::flow::MOST_RING_LAY.with(Cell::get))?;
     for layer in Layer::ALL {
         let tree = p.layers.tree(layer);
         let mut groups = 0;
@@ -1102,7 +1349,11 @@ pub fn check_projection_edits(bytes: &[u8]) -> Result<(), String> {
 /// five edits and undos applied before one update is fed every record
 /// they made, as a frame feeds them (the review of #317). The oracle is
 /// checked after every update; each edit applied is counted in
-/// `covered`. `Err` names the case, the step and the edit.
+/// `covered`. In a loader check, the map is read against the bound again
+/// after each change and before its update, and the sweep stops with `Ok`
+/// where the change took it out (`left_the_bound`); where it did not,
+/// the rings laid after it are held to the work the bound read for them
+/// (`laid_within`). `Err` names the case, the step and the edit.
 pub fn sweep(
     case: &str,
     p: &mut Projected,
@@ -1112,6 +1363,7 @@ pub fn sweep(
     covered: &mut FxHashMap<&'static str, usize>,
 ) -> Result<(), String> {
     p.check()
+        .and_then(|()| laid_within(p))
         .map_err(|e| format!("{case}, the full projection: {e}"))?;
     for step in 0..steps {
         let at = |what: &str, e: String| format!("{case}, step {step}, {what}: {e}");
@@ -1137,8 +1389,13 @@ pub fn sweep(
             if names.len() > 1 {
                 *covered.entry("batch").or_default() += 1;
             }
+            if left_the_bound(p) {
+                return Ok(());
+            }
             p.sync_and_discard();
-            p.check().map_err(|e| at(&format!("the batch {names:?}"), e))?;
+            p.check()
+                .and_then(|()| laid_within(p))
+                .map_err(|e| at(&format!("the batch {names:?}"), e))?;
             continue;
         }
         if c.one_in(6) {
@@ -1158,22 +1415,37 @@ pub fn sweep(
                 };
                 if p.doc.stage(&tx, req).is_ok() {
                     *covered.entry("transaction::stage").or_default() += 1;
+                    if left_the_bound(p) {
+                        return Ok(());
+                    }
                     p.sync_and_discard();
-                    p.check().map_err(|e| at(&format!("stage {stage} ({name})"), e))?;
+                    p.check()
+                        .and_then(|()| laid_within(p))
+                        .map_err(|e| at(&format!("stage {stage} ({name})"), e))?;
                 }
             }
             if kind == TransactionKind::Animated && p.doc.stage_progress(&tx, 0.5, Snap::End).is_ok() {
                 *covered.entry("transaction::interpolate").or_default() += 1;
+                if left_the_bound(p) {
+                    return Ok(());
+                }
                 p.sync_and_discard();
-                p.check().map_err(|e| at("interpolate", e))?;
+                p.check()
+                    .and_then(|()| laid_within(p))
+                    .map_err(|e| at("interpolate", e))?;
             }
             if c.one_in(2) {
                 p.doc.commit(tx);
             } else {
                 p.doc.cancel(tx);
             }
+            if left_the_bound(p) {
+                return Ok(());
+            }
             p.sync_and_discard();
-            p.check().map_err(|e| at("commit or cancel", e))?;
+            p.check()
+                .and_then(|()| laid_within(p))
+                .map_err(|e| at("commit or cancel", e))?;
             continue;
         }
         let name = EDITS[*turn % EDITS.len()];
@@ -1181,18 +1453,32 @@ pub fn sweep(
         let Some((name, req)) = edit_named(c, &p.doc, name) else {
             continue;
         };
-        if p.apply(req).is_err() {
+        if p.doc.apply(req, ChangeSource::Action).is_err() {
             continue;
         }
         *covered.entry(name).or_default() += 1;
-        p.check().map_err(|e| at(name, e))?;
+        if left_the_bound(p) {
+            return Ok(());
+        }
+        p.sync_and_discard();
+        p.check().and_then(|()| laid_within(p)).map_err(|e| at(name, e))?;
         if c.one_in(3) {
             p.doc.undo();
+            if left_the_bound(p) {
+                return Ok(());
+            }
             p.sync_and_discard();
-            p.check().map_err(|e| at(&format!("undo of {name}"), e))?;
+            p.check()
+                .and_then(|()| laid_within(p))
+                .map_err(|e| at(&format!("undo of {name}"), e))?;
             p.doc.redo();
+            if left_the_bound(p) {
+                return Ok(());
+            }
             p.sync_and_discard();
-            p.check().map_err(|e| at(&format!("redo of {name}"), e))?;
+            p.check()
+                .and_then(|()| laid_within(p))
+                .map_err(|e| at(&format!("redo of {name}"), e))?;
             *covered.entry("history::undo_and_redo").or_default() += 1;
         }
     }
