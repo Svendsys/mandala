@@ -830,6 +830,33 @@ thread_local! {
     /// thread, what the work above is weighed against.
     #[cfg(test)]
     pub(crate) static GLYPHS_PLACED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#376): the solves `PathWalk::ink_gap_at` has made on
+    /// this thread ([`InkSolves`]) — a call each, for a glyph a walk lays
+    /// and for one a measure or a probe walks alike.
+    #[cfg(test)]
+    pub(crate) static INK_SOLVES: std::cell::Cell<InkSolves> = const {
+        std::cell::Cell::new(InkSolves {
+            solves: 0,
+            reads: 0,
+            most: 0,
+            still: 0,
+            strides: None,
+            gapless_strides: None,
+        })
+    };
+    /// Test hook (#376): the gap between steps of the walk now laying or
+    /// measuring clusters on this thread (`PathWalk::lay`,
+    /// `PathWalk::walk_bodies`), which each ink a walk sets is owed besides
+    /// its bearings: [`InkSolves::gapless_strides`] counts the walks with
+    /// none.
+    #[cfg(test)]
+    pub(crate) static WALK_GAP: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
+    /// Test switch (#376, rulings B48.1 to B48.3): `PathWalk::ink_gap_at`
+    /// reads each turn's gap and guess again after a still turn, as it did
+    /// before #376 — the full search a test lays a reference placement,
+    /// and counts its reads, with.
+    #[cfg(test)]
+    pub(crate) static NO_STILL_CHAIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Test counter (#310): the last `Repeat` ring laid round a closed
     /// path on this thread ([`LastRing`]).
     #[cfg(test)]
@@ -895,6 +922,34 @@ pub(crate) struct LastRing {
     /// began to the end of the placement, its handling of the glyphs
     /// placed included — what the hold is for.
     pub(crate) again: usize,
+}
+
+/// What [`INK_SOLVES`] counts (#376): the solves of an ornament's ink
+/// (`PathWalk::ink_gap_at`), the path reads they took, the most one took,
+/// and the solves whose last turn no stride moved the ink in
+/// (`PathWalk::ink_strides`); and the shortest and the longest stride its
+/// stride searches took, of every walk and of the walks with no gap
+/// between their steps ([`WALK_GAP`]).
+#[cfg(test)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub(crate) struct InkSolves {
+    pub(crate) solves: usize,
+    pub(crate) reads: usize,
+    pub(crate) most: usize,
+    pub(crate) still: usize,
+    pub(crate) strides: Option<(f32, f32)>,
+    pub(crate) gapless_strides: Option<(f32, f32)>,
+}
+
+/// What a stride search for an ornament's ink found
+/// (`PathWalk::ink_strides`, #376).
+#[derive(Copy, Clone, Debug)]
+enum Strode {
+    /// Where to set the glyph's center.
+    At(f32),
+    /// Where its last stride ended, none of its strides having moved the
+    /// ink from `at`, where the search began.
+    Still { high: f32, at: Vec2 },
 }
 
 /// The extent a `w × h` box spans along unit direction `dir`.
@@ -1276,22 +1331,88 @@ impl PathWalk<'_> {
     /// continuously with the glyphs before it, as a ring's spacing solve
     /// needs ([`close_ring`]).
     ///
-    /// Cost: at most [`INK_TURNS`] solves
-    /// ([`ink_distance_at`](Self::ink_distance_at)), each a path lookup or
-    /// two where the path runs straight.
+    /// **A chain of still turns** (#376, rulings B48.1 to B48.3). A turn
+    /// whose stride search no stride of which moved the ink
+    /// ([`Strode::Still`]) hands the next turn a center whose ink is where
+    /// it was, bit for bit, so the next turn reads the same gap at it,
+    /// solves for the same distance, reads the same miss at its guess and
+    /// strides on with the same stride from where the last stride ended.
+    /// So the turns are one stride search, [`INK_TURNS`] × [`INK_STRIDES`]
+    /// strides long, and that whole reach is what sets a glyph right where
+    /// one search's strides cannot move its ink and the chain's can: 10⁹
+    /// from the origin, where the floats are 64 apart, a 1-point dot's 64
+    /// strides do not cross a float and its 768 do, and setting its ink on
+    /// the next float is what closes its ring. Far from the origin, where
+    /// no stride of the chain moves the ink — 32,768 apart some
+    /// 4.35 × 10¹¹ out, round #374's ring — the stride work is that same
+    /// reach, and it cannot be cut without changing placements the full
+    /// search makes: ending the turns at a still one stacked such rings'
+    /// glyphs at 10⁹, and ending the chain where it began stacked dots at
+    /// the end of a line there, and took more work on #374's ring, not
+    /// less. How the floats there should set a ring's glyphs apart is a
+    /// product question (O4, #316, ruling B18.1 §9).
+    ///
+    /// So the turns keep their whole reach and return what they always
+    /// did, bit for bit, and each still turn's next strides on from its
+    /// center without reading that center's gap and its guess's miss
+    /// again, which it knows: two points a turn, the one saving that
+    /// changes nothing. A glyph none of whose strides moves its ink reads
+    /// its path 2 + 768 points' worth, where it read 12 × 66. The reads it
+    /// does not take are counted against no budget, so a placement its
+    /// budget stopped — a ring, or any along an open path, which reads its
+    /// budget the same way (#313) — may now stop later, never sooner:
+    /// while two placements are the same the chain has read no more than
+    /// the full search, so every budget check the full search passes it
+    /// passes, and it stops at the same check, a later one, or none. A
+    /// later stop is never a worse [`RingLoss`]: the losses fall in the
+    /// order the placement runs, `Short` in its first walk, `Unclosed` in
+    /// its close, `Uneven` in phase 2's solves, where more probes only
+    /// close the bracket further. Of #376's sweep of 4,320 placements, two
+    /// rings far out that the full search's reads left unclosed close.
+    ///
+    /// Cost: at most [`INK_TURNS`] turns, each a solve of
+    /// [`ink_distance_at`](Self::ink_distance_at) — or, after a still
+    /// turn, a search of [`ink_strides`](Self::ink_strides) alone, its gap
+    /// and guess not read — each a path lookup or two where the path runs
+    /// straight.
     fn ink_gap_at(&self, (last, half): (Vec2, Vec2), from: f32, natural: f32, owed: f32, ink: Ink) -> f32 {
+        #[cfg(test)]
+        let reads = self.path.reads();
+        #[cfg(test)]
+        let full = NO_STILL_CHAIN.with(std::cell::Cell::get);
+        #[cfg(not(test))]
+        let full = false;
         let reach = half + (ink.max - ink.min) * 0.5;
         let gap_at = |center: f32| {
             let between = (self.ink_at(center, ink) - last).abs();
             (between.length(), (between - reach).max(Vec2::ZERO).length())
         };
         let mut center = natural;
+        // Where the last turn was still: the point its ink stayed at, and
+        // the distance it solved for.
+        let mut still: Option<(Vec2, f32)> = None;
         for _ in 0..INK_TURNS {
-            let (distance, gap) = gap_at(center);
-            if (gap - owed).abs() <= INK_TOLERANCE {
-                break;
-            }
-            let next = self.ink_distance_at(last, owed + distance - gap, from, center, ink);
+            let (found, apart) = match still {
+                Some((at, apart)) => (self.ink_strides(last, apart, center, at, ink), apart),
+                None => {
+                    let (distance, gap) = gap_at(center);
+                    if (gap - owed).abs() <= INK_TOLERANCE {
+                        break;
+                    }
+                    let apart = owed + distance - gap;
+                    (self.ink_distance_at(last, apart, from, center, ink), apart)
+                }
+            };
+            let next = match found {
+                Strode::Still { high, at } if !full => {
+                    still = Some((at, apart));
+                    high
+                }
+                Strode::Still { high, .. } | Strode::At(high) => {
+                    still = None;
+                    high
+                }
+            };
             // A turn that leaves the center where it was leaves it there
             // every turn after: each is a function of the center alone.
             if next.to_bits() == center.to_bits() {
@@ -1299,47 +1420,112 @@ impl PathWalk<'_> {
             }
             center = next;
         }
+        #[cfg(test)]
+        INK_SOLVES.with(|solves| {
+            let mut counted = solves.get();
+            let took = self.path.reads() - reads;
+            counted.solves += 1;
+            counted.reads += took;
+            counted.most = counted.most.max(took);
+            counted.still += usize::from(still.is_some());
+            solves.set(counted);
+        });
         center
     }
 
     /// Where along the path past `from` to set the center of a glyph
-    /// whose ink is `ink` so that it is `apart` from `last`: `guess`,
-    /// where that is within [`INK_TOLERANCE`]; otherwise by bisection,
-    /// between `from` and `guess` where `guess` is too far, and between
-    /// it and a stride on where it is too near ([`ink_gap_at`]).
+    /// whose ink is `ink` so that it is `apart` from `last`, as a
+    /// [`Strode`]: `guess`, where that is within [`INK_TOLERANCE`];
+    /// otherwise by bisection, between `from` and `guess` where `guess` is
+    /// too far, and between it and a stride on where it is too near
+    /// ([`ink_strides`], whose [`Strode::Still`] it returns as it is).
     ///
-    /// [`ink_gap_at`]: Self::ink_gap_at
-    fn ink_distance_at(&self, last: Vec2, apart: f32, from: f32, guess: f32, ink: Ink) -> f32 {
-        let miss = |c: f32| self.ink_at(c, ink).distance(last) - apart;
-        let at_guess = miss(guess);
-        if at_guess.abs() <= INK_TOLERANCE {
-            return guess;
+    /// [`ink_strides`]: Self::ink_strides
+    fn ink_distance_at(&self, last: Vec2, apart: f32, from: f32, guess: f32, ink: Ink) -> Strode {
+        let at_guess = self.ink_at(guess, ink);
+        let miss = at_guess.distance(last) - apart;
+        if miss.abs() <= INK_TOLERANCE {
+            return Strode::At(guess);
         }
-        let (mut low, mut high) = if at_guess > 0.0 {
-            (from, guess)
-        } else {
-            let stride = apart.max((ink.max - ink.min).max_element());
-            let mut low = guess;
-            let mut high = guess + stride;
-            let mut strides = 1;
-            // A miss that is not a number is not far enough: stride on.
-            while !matches!(
-                miss(high).partial_cmp(&0.0),
+        if miss > 0.0 {
+            return Strode::At(self.ink_bisect(last, apart, from, guess, ink));
+        }
+        self.ink_strides(last, apart, guess, at_guess, ink)
+    }
+
+    /// The strides of a search from `guess`, whose ink `at_guess` is too
+    /// near `last` ([`ink_distance_at`]): up to [`INK_STRIDES`] strides
+    /// on, until the ink is `apart` from `last` or further, then bisection
+    /// between that stride and the one before. Where no stride gets so
+    /// far, where the last stride ended; [`Strode::Still`] if no stride
+    /// moved the ink from `at_guess` either, which the next turn of
+    /// [`ink_gap_at`] strides on from (#376).
+    ///
+    /// The points are compared by their bits. `-0.0` against `0.0` moved,
+    /// which only costs the next turn its two reads; a point that is not a
+    /// number, with the same bits, did not, and its next turn would read
+    /// the same; and it is the points that are compared, not their misses,
+    /// which holds where the distance between two points far apart
+    /// overflows to infinity.
+    ///
+    /// [`ink_distance_at`]: Self::ink_distance_at
+    /// [`ink_gap_at`]: Self::ink_gap_at
+    fn ink_strides(&self, last: Vec2, apart: f32, guess: f32, at_guess: Vec2, ink: Ink) -> Strode {
+        let stride = apart.max((ink.max - ink.min).max_element());
+        #[cfg(test)]
+        INK_SOLVES.with(|solves| {
+            let mut counted = solves.get();
+            let span = |seen: Option<(f32, f32)>| {
+                Some(seen.map_or((stride, stride), |(least, most)| {
+                    (least.min(stride), most.max(stride))
+                }))
+            };
+            counted.strides = span(counted.strides);
+            if WALK_GAP.with(std::cell::Cell::get) == 0.0 {
+                counted.gapless_strides = span(counted.gapless_strides);
+            }
+            solves.set(counted);
+        });
+        let bits = |at: Vec2| (at.x.to_bits(), at.y.to_bits());
+        let mut low = guess;
+        let mut high = guess + stride;
+        let mut strides = 1;
+        // Whether every stride so far left the ink where it was.
+        let mut still = true;
+        loop {
+            let at_high = self.ink_at(high, ink);
+            still = still && bits(at_high) == bits(at_guess);
+            // A miss that is not a number — from two points too far apart
+            // for their distance, or from a point that is not one — is not
+            // far enough: stride on.
+            if matches!(
+                (at_high.distance(last) - apart).partial_cmp(&0.0),
                 Some(Ordering::Greater | Ordering::Equal)
             ) {
-                if strides == INK_STRIDES {
-                    return high;
-                }
-                low = high;
-                high += stride;
-                strides += 1;
+                break;
             }
-            (low, high)
-        };
+            if strides == INK_STRIDES {
+                return if still {
+                    Strode::Still { high, at: at_guess }
+                } else {
+                    Strode::At(high)
+                };
+            }
+            low = high;
+            high += stride;
+            strides += 1;
+        }
+        Strode::At(self.ink_bisect(last, apart, low, high, ink))
+    }
+
+    /// Bisection between `low`, where the ink is nearer `last` than
+    /// `apart`, and `high`, where it is not: [`INK_ROUNDS`] rounds at
+    /// most, and `high` as it ends.
+    fn ink_bisect(&self, last: Vec2, apart: f32, mut low: f32, mut high: f32, ink: Ink) -> f32 {
         for _ in 0..INK_ROUNDS {
             let middle = 0.5 * (low + high);
             let before = (low.to_bits(), high.to_bits());
-            if miss(middle) < 0.0 {
+            if self.ink_at(middle, ink).distance(last) - apart < 0.0 {
                 low = middle;
             } else {
                 high = middle;
@@ -1456,6 +1642,8 @@ impl PathWalk<'_> {
         gap: f32,
         mut trail: Trail,
     ) -> (f32, Trail) {
+        #[cfg(test)]
+        WALK_GAP.with(|walk| walk.set(gap));
         let mut s = from;
         let mut end = from;
         for body in bodies {
@@ -1915,6 +2103,8 @@ impl PathWalk<'_> {
         gap: f32,
         out: &mut Laying,
     ) -> Laid {
+        #[cfg(test)]
+        WALK_GAP.with(|walk| walk.set(gap));
         for cluster in clusters {
             if let Some(work) = self.work {
                 if !work.admits(self.path, out.glyphs.len() + cluster.glyphs.len()) {
