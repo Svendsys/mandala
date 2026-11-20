@@ -107,7 +107,7 @@ fn grown_axis(origin: f32, size: f32, d: f32, plain: (f32, f32), center: f32) ->
         // This axis grew within `f32`; the other did not.
         return plain;
     }
-    if origin.is_nan() || !(size >= 0.0) {
+    if origin.is_nan() || size.is_nan() || size < 0.0 {
         // No rectangle on this axis: as it always was.
         return plain;
     }
@@ -135,7 +135,8 @@ fn grown_axis(origin: f32, size: f32, d: f32, plain: (f32, f32), center: f32) ->
     // as is a size of `+∞` shrunk by `+∞`, which reaches no width a
     // number gives. The half width is read, not `size + 2·d`, as `2·d`
     // overflows where the shrink it is does not empty a size of `+∞`.
-    if !(size * 0.5 + d >= 0.0) {
+    let shrunk = size * 0.5 + d;
+    if shrunk.is_nan() || shrunk < 0.0 {
         return plain;
     }
     // Otherwise the edges from the origin and the far corner: the near one
