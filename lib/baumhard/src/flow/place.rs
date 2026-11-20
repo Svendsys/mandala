@@ -830,6 +830,11 @@ thread_local! {
     /// thread, what the work above is weighed against.
     #[cfg(test)]
     pub(crate) static GLYPHS_PLACED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#376): the glyphs `PathWalk::ink_gap_at` has set by
+    /// their ink on this thread, the path reads it took for them, and the
+    /// most it took for one.
+    #[cfg(test)]
+    pub(crate) static INK_SETS: std::cell::Cell<(usize, usize, usize)> = const { std::cell::Cell::new((0, 0, 0)) };
     /// Test counter (#310): the last `Repeat` ring laid round a closed
     /// path on this thread ([`LastRing`]).
     #[cfg(test)]
@@ -1271,8 +1276,11 @@ impl PathWalk<'_> {
     ///
     /// Cost: at most [`INK_TURNS`] solves
     /// ([`ink_distance_at`](Self::ink_distance_at)), each a path lookup or
-    /// two where the path runs straight.
+    /// two where the path runs straight; one turn, of its gap, its guess
+    /// and one stride, where a stride cannot move the ink (#376).
     fn ink_gap_at(&self, (last, half): (Vec2, Vec2), from: f32, natural: f32, owed: f32, ink: Ink) -> f32 {
+        #[cfg(test)]
+        let reads = self.path.reads();
         let reach = half + (ink.max - ink.min) * 0.5;
         let gap_at = |center: f32| {
             let between = (self.ink_at(center, ink) - last).abs();
@@ -1292,6 +1300,12 @@ impl PathWalk<'_> {
             }
             center = next;
         }
+        #[cfg(test)]
+        INK_SETS.with(|sets| {
+            let (set, all, most) = sets.get();
+            let took = self.path.reads() - reads;
+            sets.set((set + 1, all + took, most.max(took)));
+        });
         center
     }
 
@@ -1301,10 +1315,53 @@ impl PathWalk<'_> {
     /// between `from` and `guess` where `guess` is too far, and between
     /// it and a stride on where it is too near ([`ink_gap_at`]).
     ///
+    /// **A stride that leaves the ink where it was ends the strides**
+    /// (#376): the glyph is set where the stride before it left it, at
+    /// `guess` where it was the first. The search reads nothing of a
+    /// center but the point its ink is set at ([`ink_at`]), so a stride
+    /// that leaves that point bit for bit where it was leaves its miss as
+    /// it was, and has found nothing to act on. It is taken in three
+    /// places:
+    ///
+    /// - where `guess + stride` rounds back to `guess`, far enough along a
+    ///   long path: every stride after leaves it so too;
+    /// - past the end of an open path, which holds its end point: so does
+    ///   every stride after;
+    /// - where the canvas's floats are further apart than a stride moves
+    ///   the ink: 32,768 apart some 4.35 × 10¹¹ from the origin, where a
+    ///   dot's stride is a few points.
+    ///
+    /// Without the stop each such search took every one of
+    /// [`INK_STRIDES`] strides and returned where they ended, which the
+    /// next turn of [`ink_gap_at`] solved from again, up to [`INK_TURNS`]
+    /// times a glyph: in #374's `Repeat` ring of dots that far out, all
+    /// but 649 of 20.4 million strides past a search's first left the ink
+    /// where it was. Stopped at its first stride, the search returns its
+    /// guess, the turn's center, which ends the turns. Stopped later, it
+    /// returns where the ink last moved, and the next turn's first stride
+    /// stops there.
+    ///
+    /// The first returns what the strides would have, and moves nothing.
+    /// The second sets a glyph whose ink has reached the path's end a
+    /// stride past where it did, rather than [`INK_STRIDES`] strides on at
+    /// every turn. In #376's sweep of 216 placements along open paths near
+    /// the origin no walk kept such a glyph, but a probe of a `Spread`'s
+    /// spacing solve that runs past the end now runs less far, so the
+    /// solve can close on another spacing within its tolerance
+    /// ([`SOLVE_TOLERANCE`]): 11 `Spread`s did, their glyphs moved 0.1
+    /// points at the most. The third moves a glyph wherever a later stride
+    /// would have crossed a float of the canvas: the glyph keeps the box
+    /// rule's place along the path rather than being carried on stride
+    /// after stride that the floats cannot tell apart. A shipped map takes
+    /// none of the three.
+    ///
     /// [`ink_gap_at`]: Self::ink_gap_at
+    /// [`ink_at`]: Self::ink_at
     fn ink_distance_at(&self, last: Vec2, apart: f32, from: f32, guess: f32, ink: Ink) -> f32 {
-        let miss = |c: f32| self.ink_at(c, ink).distance(last) - apart;
-        let at_guess = miss(guess);
+        let miss_of = |at: Vec2| at.distance(last) - apart;
+        let miss = |c: f32| miss_of(self.ink_at(c, ink));
+        let mut at_low = self.ink_at(guess, ink);
+        let at_guess = miss_of(at_low);
         if at_guess.abs() <= INK_TOLERANCE {
             return guess;
         }
@@ -1315,15 +1372,22 @@ impl PathWalk<'_> {
             let mut low = guess;
             let mut high = guess + stride;
             let mut strides = 1;
-            // A miss that is not a number is not far enough: stride on.
-            while !matches!(
-                miss(high).partial_cmp(&0.0),
-                Some(Ordering::Greater | Ordering::Equal)
-            ) {
+            loop {
+                let at_high = self.ink_at(high, ink);
+                if (at_high.x.to_bits(), at_high.y.to_bits()) == (at_low.x.to_bits(), at_low.y.to_bits()) {
+                    return low;
+                }
+                // A miss that is not a number is not far enough: stride on.
+                if matches!(
+                    miss_of(at_high).partial_cmp(&0.0),
+                    Some(Ordering::Greater | Ordering::Equal)
+                ) {
+                    break;
+                }
                 if strides == INK_STRIDES {
                     return high;
                 }
-                low = high;
+                (low, at_low) = (high, at_high);
                 high += stride;
                 strides += 1;
             }

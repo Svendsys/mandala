@@ -1329,8 +1329,11 @@ fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solvi
 /// was, and a round that leaves its bracket as it was, leave them so
 /// every turn and round after, so each stops there, which changes no
 /// position. So the placement, its readable lay and its run-on probe
-/// included, takes at most 26 path lookups a glyph: measured, 20.07
-/// (756,156 for 37,682 glyphs). The finding rescaled into the limit
+/// included, takes at most 26 path lookups a glyph: measured, 20.00
+/// (753,789 for 37,682 glyphs; 756,156 before #376 ended a stride search
+/// at a stride that leaves the ink where it was, which here is three
+/// searches past the cubic's end, where the path holds its end point, and
+/// moves no glyph). The finding rescaled into the limit
 /// above is no pin for them: there the round's stop moves its walk's
 /// lookups by a tenth (696,222 to 759,786), well inside what its run-on
 /// probe alone may take (`8 × MAX_RUN_ON_STEPS`).
@@ -1380,6 +1383,133 @@ fn test_a_repeat_of_an_ornament_far_from_the_origin_stops_its_ink_solves() {
     assert!(
         lookups <= 26 * placed,
         "{lookups} path lookups for {placed} glyphs placed, past 26 a glyph"
+    );
+}
+
+/// A ring of `text` at `points`, laid `Repeat` round `shape`, outward, at
+/// most `cap` glyphs: the glyphs it placed, and what its ink sets took
+/// (`INK_SETS`): the glyphs set by their ink, their path reads, and the
+/// most one glyph's took.
+fn ink_sets_of_ring(text: &str, points: f32, shape: &Outline, cap: usize) -> (usize, (usize, usize, usize)) {
+    use crate::document::values::{Direction, Edge, FitMode, StartPoint};
+    use crate::flow::place::{place_on_closed_capped, INK_SETS};
+    let flow = style(points);
+    with_fonts(|fs| {
+        let run = real_run(text, &flow, fs);
+        INK_SETS.with(|sets| sets.set((0, 0, 0)));
+        let (_, placed) = place_on_closed_capped(
+            &run,
+            shape,
+            StartPoint {
+                edge: Edge::Top,
+                at: 0.0,
+            },
+            Direction::Clockwise,
+            &FitMode::Repeat,
+            &RingLayout::whole(),
+            true,
+            &flow,
+            fs,
+            cap,
+            None,
+        );
+        (placed.glyphs.len(), INK_SETS.with(std::cell::Cell::get))
+    })
+}
+
+/// The reads one turn of `ink_gap_at` takes for a glyph whose first stride
+/// leaves its ink where it was (#376): three points — the gap at its
+/// center, `ink_distance_at`'s guess and its first stride — of three reads
+/// each on a closed path, which pushes an ink outward along the chord
+/// across its reach (`ink_at`: the point and the chord's two ends).
+const ONE_STILL_TURN: usize = 3 * 3;
+
+/// #376: a `Repeat` ring of dots round an ellipse 8.7 × 10¹¹ across about
+/// the origin, as far out as the ring of #374's loader fuzz finding — a
+/// frame's 435th ring at a gap of 10⁹ — where the canvas's floats are
+/// 32,768 apart and a dot's stride is a few points. No stride there moves a dot's ink. Each
+/// glyph's search took every one of `INK_STRIDES` strides, and the turns
+/// of `ink_gap_at` solved again from where they ended: measured, 2,362
+/// reads a glyph's ink, 2,376 at the most, against the 9 that tell the
+/// search nothing moved. A stride that leaves the ink bit for bit where it
+/// was now ends the search, and a search that ends at its first stride
+/// ends the turns, so every glyph takes [`ONE_STILL_TURN`]: the ring is
+/// held to it, the most one glyph's ink took, over its first 1,024 glyphs
+/// (#374's was laid to the engine's cap, 65,536, each glyph as these).
+///
+/// Preconditions: the floats there are coarser than a stride, and the
+/// ring lays its cap, every glyph but the first set by its ink. Control:
+/// the stop taken out, red ("2376 path reads for one glyph's ink, past
+/// the 9 of one turn").
+#[test]
+fn test_a_repeat_ring_whose_strides_cannot_move_its_ink_stops_at_its_first_stride() {
+    use crate::document::values::Shape;
+    use crate::flow::outline;
+    let across = 8.7e11_f32;
+    let far = 0.5 * across;
+    let grain = f32::from_bits(far.to_bits() + 1) - far;
+    assert!(
+        grain >= 16_384.0,
+        "precondition: the floats 4.35 × 10¹¹ from the origin are coarser than a dot's stride ({grain} apart)"
+    );
+    let shape = outline(Rect::new(Vec2::splat(-far), Vec2::splat(across)), Shape::Ellipse);
+    let cap = 1_024;
+    let (placed, (sets, reads, most)) = ink_sets_of_ring("·", 16.0, &shape, cap);
+    assert!(
+        placed == cap && sets + 1 >= placed,
+        "precondition: the ring lays its cap of {cap} glyphs, each after the first set by its ink ({placed} \
+         placed, {sets} set by their ink)"
+    );
+    assert!(
+        most <= ONE_STILL_TURN,
+        "{most} path reads for one glyph's ink, past the {ONE_STILL_TURN} of one turn ({reads} for {sets} glyphs)"
+    );
+}
+
+/// What #376's stop leaves (`ink_distance_at`): a stride that moves the
+/// ink is taken, however many there are, so the most one glyph may read
+/// its path (`CLUSTER_READS`) does not tighten. `·:·` at 16 points round a
+/// sharp rectangle 1 × 3, outward: a dot's ink circles the rectangle
+/// within its owed distance of the glyph's before, every stride moving it
+/// and none far enough, so each of `INK_TURNS` turns takes the gap at its
+/// center, its guess and every one of `INK_STRIDES` strides, three reads
+/// a point — 12 × (2 + 64) × 3 = 2,376 reads, every turn and stride
+/// `CLUSTER_READS` counts, where a search whose first stride leaves the
+/// ink where it was takes 9.
+///
+/// Precondition: the ring's walks set a glyph by its ink. Control: the
+/// stop compared on the ink's `x` alone, which a stride up the
+/// rectangle's side does not move, red ("9 path reads for one glyph's
+/// ink ..., short of the 2376 of every stride of every turn");
+/// `CLUSTER_READS` without its strides, red ("2376 path reads for one
+/// glyph's ink, past the 946 a cluster may take").
+#[test]
+fn test_a_repeat_ring_whose_strides_move_its_ink_takes_every_stride() {
+    use crate::document::values::{Percent, Shape};
+    use crate::flow::outline;
+    use crate::flow::place::ring::CLUSTER_READS;
+    let shape = outline(
+        Rect::new(Vec2::ZERO, Vec2::new(1.0, 3.0)),
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+    );
+    let (placed, (sets, reads, most)) = ink_sets_of_ring("·:·", 16.0, &shape, 1_024);
+    assert!(
+        sets >= 1,
+        "precondition: the ring's walks set a glyph by its ink ({placed} placed, {sets} set by their ink)"
+    );
+    // `INK_TURNS` turns, each a point for its gap, one for its guess and
+    // one for each of `INK_STRIDES` strides, three reads a point.
+    let every_stride = 12 * (2 + 64) * 3;
+    assert!(
+        most >= every_stride,
+        "{most} path reads for one glyph's ink ({reads} for {sets} glyphs), short of the {every_stride} of \
+         every stride of every turn"
+    );
+    assert!(
+        most <= CLUSTER_READS,
+        "{most} path reads for one glyph's ink, past the {CLUSTER_READS} a cluster may take"
     );
 }
 
