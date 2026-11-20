@@ -263,7 +263,7 @@ fn left_the_bound(p: &Projected) -> bool {
 }
 
 /// Whether the rings `p` laid since the bound was last read held to the
-/// work it read for them ([`rings_within_their_work`]), in a check of a
+/// work it read for them (`rings_within_their_work`), in a check of a
 /// map the bound admitted: what the sweep asks of every update and full
 /// projection after its first, as of the first. `Ok` where no check is
 /// held, and in a build that counts no steps. O(`p`'s rings and their
