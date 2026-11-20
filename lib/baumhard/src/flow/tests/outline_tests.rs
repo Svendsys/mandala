@@ -96,6 +96,150 @@ pub fn do_flow_offset_grows_the_rect_and_the_radius() {
 }
 
 #[test]
+fn test_flow_a_rect_grown_past_f32_saturates_and_covers_what_it_reaches() {
+    do_flow_a_rect_grown_past_f32_saturates_and_covers_what_it_reaches();
+}
+
+/// One axis of `origin`/`size` grown by `d`, in `f64`, which holds every
+/// width an `f32` grows to: its near and far edges, from the origin and
+/// the far corner, the near one held to `f32::MIN` as no `f32` reaches
+/// past it, and both the center where a shrink passes zero. A finite
+/// origin and a `d` that is a number.
+fn reach(origin: f32, size: f32, d: f32) -> (f64, f64) {
+    let (origin, size, d) = (f64::from(origin), f64::from(size), f64::from(d));
+    if size + 2.0 * d < 0.0 {
+        let center = origin + size / 2.0;
+        return (center, center);
+    }
+    ((origin - d).max(f64::from(f32::MIN)), origin + size + d)
+}
+
+/// `Rect::grown` past what an `f32` holds (#364): grown by a `d` that
+/// takes its width or its near edge past `f32` — 1.8·10³⁸, `f32::MAX`
+/// and +∞ from a box near the origin, 10³⁸ from one at the low edge of
+/// `f32` — no corner is no number: the origin is the near edge it
+/// reaches, held to `f32::MIN`, and the far corner the far edge, or +∞
+/// where the width or that edge is past `f32`. So it covers what it
+/// reaches, each edge read in `f64` here, not from the box. Grown within
+/// `f32` — by 0, 5, 10³⁷ and 1.6·10³⁸, whose width an `f32` still holds,
+/// and by 10³⁸ from a box at the high edge, whose far corner reaches +∞
+/// — its edges are where `f64` puts them; shrunk by 3, 10³⁰, `f32::MAX`
+/// and +∞, a side stops at zero about the center; and by a `d` that is
+/// no number it is empty at its center. A rectangle with a finite origin
+/// and a center past `f32` — reaching +∞ as the box grown by 1.8·10³⁸
+/// does, grown again by 0, 5, −10³⁸ and −1.8·10³⁸; one with a size of
+/// +∞ grown by 5; one at 3·10³⁸, 10³⁸ wide, grown by 0, 5 and 1.8·10³⁸ —
+/// is held the same way, its edges from its origin and its far corner. A
+/// box whose origin is ±∞ or no number, as the flow is handed, has a
+/// size never negative.
+///
+/// Controls: with `grown` as it was, its origin `center − size / 2`, red
+/// on the box grown by 1.8·10³⁸, whose origin is −∞; with that check
+/// taken out, on its far corner, −∞ + +∞, no number. With the rows near
+/// the origin taken out too, red on the box at the low edge of `f32`,
+/// whose origin overflows to −∞, on its near edge; with that taken out,
+/// on its far corner, −∞, short of the far edge it reaches. Saturated to
+/// an origin of `f32::MIN` and a size of `f32::MAX`, or of +∞, red on the
+/// near edge of the box grown by 1.8·10³⁸, which it reaches at −1.8·10³⁸.
+/// Saturating an axis whose origin is −∞ from its center too, red on the
+/// box with an origin of −∞ grown by 5, whose size is then −∞ (which
+/// panicked the flow's `f32::clamp` of an offset's radius). Saturating
+/// only an axis whose center is finite, as this first did, red on the
+/// rectangle reaching +∞ grown by 0, whose origin is then +∞ less a width
+/// of +∞; and with a shrink read as `size + 2·d`, which overflows, red on
+/// it shrunk by 1.8·10³⁸, emptied at +∞ where it reaches from 0 on.
+pub fn do_flow_a_rect_grown_past_f32_saturates_and_covers_what_it_reaches() {
+    let (max, inf, nan) = (f32::MAX, f32::INFINITY, f32::NAN);
+    let r = rect(10.0, -20.0, 30.0, 4.0);
+    // Literal rows: grown within `f32`, as it always was.
+    assert_eq!(r.grown(0.0), r, "grown by 0");
+    assert_eq!(r.grown(5.0), rect(5.0, -25.0, 40.0, 14.0), "grown by 5");
+    assert_eq!(r.grown(-3.0), rect(13.0, -18.0, 24.0, 0.0), "shrunk by 3");
+    let center = r.center();
+    for d in [-1.0e30, -max, -inf, nan] {
+        assert_eq!(
+            r.grown(d),
+            Rect::new(center, Vec2::ZERO),
+            "grown by {d}: empty at its center"
+        );
+    }
+    let edge = rect(-max, -max, 1.0e38, 1.0e38);
+    let high = rect(max - 1.0e38, max - 1.0e38, 1.0e38, 1.0e38);
+    // A rectangle reaching +inf, as grown past f32 gives one: its origin
+    // finite and its center past f32.
+    let reaching = r.grown(1.8e38);
+    let unbounded = rect(0.0, 0.0, inf, 10.0);
+    let overflowing = rect(3.0e38, 0.0, 1.0e38, 10.0);
+    let rows = [
+        ("near the origin", r, 0.0, false),
+        ("near the origin", r, 5.0, false),
+        ("near the origin", r, 1.0e37, false),
+        ("near the origin", r, 1.6e38, false),
+        ("near the origin", r, 1.8e38, true),
+        ("near the origin", r, max, true),
+        ("near the origin", r, inf, true),
+        ("near the origin", r, -3.0, false),
+        ("near the origin", r, -max, false),
+        ("at the low edge of f32", edge, 1.0e38, true),
+        ("at the high edge of f32", high, 1.0e38, false),
+        ("reaching +inf", reaching, 0.0, true),
+        ("reaching +inf", reaching, 5.0, true),
+        ("reaching +inf", reaching, -1.0e38, true),
+        ("reaching +inf", reaching, -1.8e38, true),
+        ("with a size of +inf", unbounded, 5.0, true),
+        ("whose center is past f32", overflowing, 0.0, true),
+        ("whose center is past f32", overflowing, 5.0, true),
+        ("whose center is past f32", overflowing, 1.8e38, true),
+    ];
+    for (what, r, d, past) in rows {
+        let plain = (r.size + Vec2::splat(2.0 * d)).max(Vec2::ZERO);
+        assert_eq!(
+            !(plain.is_finite() && (r.center() - plain * 0.5).is_finite()),
+            past,
+            "precondition: a box {what} grown by {d} is past f32 on an axis: {past}"
+        );
+        let g = r.grown(d);
+        for (axis, k) in [("x", 0), ("y", 1)] {
+            let (origin, size, far) = (g.origin[k], g.size[k], g.max()[k]);
+            let (near_at, far_at) = reach(r.origin[k], r.size[k], d);
+            let at = format!("a box {what} grown by {d}, on {axis}: {g:?}");
+            assert!(origin.is_finite(), "{at}: its origin is a number on the canvas");
+            assert!(size >= 0.0, "{at}: its size is a number, not negative");
+            assert!(!far.is_nan(), "{at}: its far corner is a number");
+            let close = |got: f64, want: f64| (got - want).abs() <= want.abs() * 1.0e-6 + 1.0e-6;
+            assert!(
+                close(f64::from(origin), near_at),
+                "{at}: its origin is the near edge it reaches, {near_at}"
+            );
+            if far_at > f64::from(max) || far_at - near_at > f64::from(max) {
+                assert_eq!(far, inf, "{at}: its far corner is +inf, past f32");
+            } else {
+                assert!(
+                    close(f64::from(far), far_at),
+                    "{at}: its far corner is the far edge it reaches, {far_at}"
+                );
+            }
+        }
+    }
+    // A box whose origin is not finite on an axis, which the flow is
+    // handed: its size is never negative, whatever `d`.
+    let unfinite = [
+        ("an origin of -inf", rect(-inf, 0.0, 10.0, 10.0)),
+        ("an origin of +inf", rect(inf, 0.0, 10.0, 10.0)),
+        ("an origin that is no number", rect(nan, 0.0, 10.0, 10.0)),
+    ];
+    for (what, r) in unfinite {
+        for d in [5.0, -5.0, 1.8e38, max, inf, -inf, nan] {
+            let g = r.grown(d);
+            assert!(
+                !(g.size.x < 0.0 || g.size.y < 0.0),
+                "a box with {what} grown by {d}: its size is not negative, {g:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn test_flow_ring_offset_sums_inner_rings_and_gaps() {
     do_flow_ring_offset_sums_inner_rings_and_gaps();
 }

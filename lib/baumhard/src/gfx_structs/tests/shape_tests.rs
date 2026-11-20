@@ -186,7 +186,7 @@ pub fn do_shape_an_aabb_that_is_no_rectangle_overlaps_nothing() {
         ("a NaN min", Vec2::new(nan, 10.0), Vec2::new(60.0, 60.0)),
         ("a NaN max", Vec2::new(10.0, 10.0), Vec2::new(60.0, nan)),
         (
-            "a glyph's box grown past f32",
+            "a far corner of −∞ plus +∞, no number",
             Vec2::splat(f32::NEG_INFINITY),
             Vec2::splat(nan),
         ),
