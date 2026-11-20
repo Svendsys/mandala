@@ -739,6 +739,66 @@ fn test_the_most_ring_glyphs_fill_the_inputs_share() {
     );
 }
 
+/// The check's after-edit read of the work bound's property (ruling
+/// B47.4): a map the bound admits, whose check's edit keeps it inside the
+/// bound and lays its ring again, is held to its work after the edit as
+/// before it (`updated`, `laid_within`). The map is the densest admitted
+/// ring by its steps, `😀·` at a twentieth of an ellipse 1,000 across, 63
+/// out, and 33 bare nodes, which seed the check's choices to a transaction
+/// whose first stage is `Ring::SetChannel`: a change of the ring's color
+/// channel, which keeps the map inside the bound and lays the ring again.
+/// The check projects it (one projected, none skipped, cut short or
+/// left), and its after-edit read saw that lay (`LAID_AFTER`), heavy
+/// enough that a quarter of the rate would refuse it.
+///
+/// Controls, run and seen red: with the after-edit read alone at a quarter
+/// of the rate (`updated` reading four times the steps laid), the check
+/// fails, "a loaded map, step 0, stage 0 (Ring::SetChannel): a ring's lay
+/// took 139948 glyph steps, past the 46336 the bound allows its map"; with
+/// the after-edit read removed, the read sees no lay (`Some(0)`).
+#[test]
+fn test_the_ring_an_edit_lays_again_is_held_to_its_work() {
+    use crate::projection::tests::projection_fuzz::{projection_left, LAID_AFTER};
+    let mut nodes = vec![json!({
+        "id": 1,
+        "position": [0.0, 0.0],
+        "min_size": [1000.0, 1000.0],
+        "shape": "ellipse",
+        "frame": {"inset": 63.0, "gap": 0.0, "rings": [{"fit": "repeat", "size": 0.05, "spans": [{"text": "😀·"}]}]},
+    })];
+    // The bare nodes set the arena's length the check's choices are
+    // seeded by.
+    for id in 2..35 {
+        nodes.push(json!({"id": id, "position": [10.0, 10.0]}));
+    }
+    let text = serde_json::to_string(
+        &json!({"format": 1, "name": "an edit that lays a ring again", "nodes": nodes}),
+    )
+    .expect("the map serializes");
+    let doc = crate::document::format::load(&text).expect("the map loads");
+    assert!(within_bound(&doc), "the map is inside the bound");
+    // The counts are this thread's: exactly what this check adds.
+    let ((projected, skipped, cut), left) = (projection_counts(), projection_left());
+    check_projects(&doc).unwrap_or_else(|why| panic!("the check: {why}"));
+    let ((projected_now, skipped_now, cut_now), left_now) = (projection_counts(), projection_left());
+    assert_eq!(
+        (
+            projected_now - projected,
+            skipped_now - skipped,
+            cut_now - cut,
+            left_now - left
+        ),
+        (1, 0, 0, 0),
+        "the map is projected through its edit"
+    );
+    let laid = LAID_AFTER.with(std::cell::Cell::get);
+    let quarter = RING_STEPS_A_GLYPH / 4 * MOST_RING_GLYPHS + RING_SETUP_STEPS;
+    assert!(
+        laid.is_some_and(|steps| steps > quarter),
+        "the after-edit read saw {laid:?} steps of the ring laid again, not past a quarter of the rate, {quarter}"
+    );
+}
+
 /// Every one of the densest `Repeat` rings the bound admits
 /// ([`densest_admitted_rings`]), projected, lays no more glyphs than the
 /// bound read for it and takes no more than [`RING_STEPS_A_GLYPH`] a glyph

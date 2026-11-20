@@ -225,6 +225,12 @@ thread_local! {
     static HELD: Cell<bool> = const { Cell::new(false) };
     /// Whether the check's edit took its map out of the bound.
     static GONE: Cell<bool> = const { Cell::new(false) };
+    /// Test counter: the most glyph steps of a ring's lay that
+    /// [`laid_within`] read after the check's last change, `Some(0)` where
+    /// it read none since, and `None` where the check made no change that
+    /// kept the map inside the bound.
+    #[cfg(test)]
+    pub(crate) static LAID_AFTER: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
 /// How many loaded maps [`check_projects`] abandoned because the check's
@@ -256,6 +262,8 @@ fn left_the_bound(p: &Projected) -> bool {
         // counted afresh ([`laid_within`]).
         #[cfg(any(test, fuzzing))]
         crate::flow::MOST_RING_LAY.with(|most| most.set(0));
+        #[cfg(test)]
+        LAID_AFTER.with(|laid| laid.set(Some(0)));
         return false;
     }
     GONE.with(|gone| gone.set(true));
@@ -271,7 +279,10 @@ fn left_the_bound(p: &Projected) -> bool {
 fn laid_within(p: &Projected) -> Result<(), String> {
     #[cfg(any(test, fuzzing))]
     if HELD.with(Cell::get) {
-        return rings_within_their_work(p, crate::flow::MOST_RING_LAY.with(Cell::get));
+        let most = crate::flow::MOST_RING_LAY.with(Cell::get);
+        #[cfg(test)]
+        LAID_AFTER.with(|laid| laid.set(laid.get().map(|_| most)));
+        return rings_within_their_work(p, most);
     }
     let _ = p;
     Ok(())
@@ -701,13 +712,13 @@ pub const FRAME_SETUP_STEPS: usize = 8_192;
 /// the bound (ruling B47.3): the input's share, `flow_fuzz::INPUT_STEPS`,
 /// over the [`RING_LAYS_A_CHECK`] times a check lays it, 46,439. The flow
 /// harnesses give one frame the whole share, since they lay it once; a
-/// frame admitted by that one lay's share took 18.4 s of a check under
-/// ASan in three lays — 80 letters `fit` with a 60-character ornament round
-/// an ellipse 1,000 across, 185,336 steps a lay — where ten would have
-/// taken a minute. Under ASan (`cargo fuzz run load_raw <file> --
-/// -runs=1`, the load average some 2.5), the densest frame this admits by
-/// its steps, 151 letters `spread` round an ellipse 1,000 across, 22,872
-/// steps a lay, ran its input in 0.50 s. The slowest it admits, 151
+/// frame admitted by that one lay's share took 18.4 s of a check under ASan
+/// in three lays — 80 letters `fit` with a 60-character ornament round an
+/// ellipse 1,000 across, 185,336 steps a lay (184,557 since #382) — where
+/// ten would have taken a minute. Under ASan (`cargo fuzz run load_raw
+/// <file> -- -runs=1`, the load average some 2.5), the densest frame this
+/// admits by its steps, 151 letters `spread` round an ellipse 1,000 across,
+/// 22,872 steps a lay, ran its input in 0.50 s. The slowest it admits, 151
 /// characters of seven scripts `once` with a `✦` round one 100 across,
 /// 21,702 steps a lay, ran in 3.1 s in three lays, some 10 s in ten, under
 /// the 20 s timeout: most of its time is shaping its text in the faces its
@@ -1197,6 +1208,8 @@ fn held<R>(check: impl FnOnce() -> R) -> (R, bool) {
     let _clear = Clear;
     HELD.with(|held| held.set(true));
     GONE.with(|gone| gone.set(false));
+    #[cfg(test)]
+    LAID_AFTER.with(|laid| laid.set(None));
     let checked = check();
     (checked, GONE.with(Cell::get))
 }
@@ -1343,6 +1356,22 @@ pub fn check_projection_edits(bytes: &[u8]) -> Result<(), String> {
     sweep("projection_edits", &mut p, &mut c, steps, &mut turn, &mut covered)
 }
 
+/// Bring `p` through the change just made to its document: the update,
+/// then the oracle (`Projected::check`), then, in a loader check, the
+/// work of the rings the two laid ([`laid_within`]) — the after-edit read
+/// of the work bound's property. `Ok(false)`, with nothing laid, where
+/// the change took the map out of the bound ([`left_the_bound`]) and the
+/// sweep stops. O(an update and a full projection).
+fn updated(p: &mut Projected) -> Result<bool, String> {
+    if left_the_bound(p) {
+        return Ok(false);
+    }
+    p.sync_and_discard();
+    p.check()?;
+    laid_within(p)?;
+    Ok(true)
+}
+
 /// Take `p` through `steps` edits — the edit [`EDITS`] names at `turn`,
 /// advancing it, its targets and values drawn from `c`, applied and, one
 /// in three, undone and redone — transaction stages, and batches: two to
@@ -1389,13 +1418,9 @@ pub fn sweep(
             if names.len() > 1 {
                 *covered.entry("batch").or_default() += 1;
             }
-            if left_the_bound(p) {
+            if !updated(p).map_err(|e| at(&format!("the batch {names:?}"), e))? {
                 return Ok(());
             }
-            p.sync_and_discard();
-            p.check()
-                .and_then(|()| laid_within(p))
-                .map_err(|e| at(&format!("the batch {names:?}"), e))?;
             continue;
         }
         if c.one_in(6) {
@@ -1415,37 +1440,25 @@ pub fn sweep(
                 };
                 if p.doc.stage(&tx, req).is_ok() {
                     *covered.entry("transaction::stage").or_default() += 1;
-                    if left_the_bound(p) {
+                    if !updated(p).map_err(|e| at(&format!("stage {stage} ({name})"), e))? {
                         return Ok(());
                     }
-                    p.sync_and_discard();
-                    p.check()
-                        .and_then(|()| laid_within(p))
-                        .map_err(|e| at(&format!("stage {stage} ({name})"), e))?;
                 }
             }
             if kind == TransactionKind::Animated && p.doc.stage_progress(&tx, 0.5, Snap::End).is_ok() {
                 *covered.entry("transaction::interpolate").or_default() += 1;
-                if left_the_bound(p) {
+                if !updated(p).map_err(|e| at("interpolate", e))? {
                     return Ok(());
                 }
-                p.sync_and_discard();
-                p.check()
-                    .and_then(|()| laid_within(p))
-                    .map_err(|e| at("interpolate", e))?;
             }
             if c.one_in(2) {
                 p.doc.commit(tx);
             } else {
                 p.doc.cancel(tx);
             }
-            if left_the_bound(p) {
+            if !updated(p).map_err(|e| at("commit or cancel", e))? {
                 return Ok(());
             }
-            p.sync_and_discard();
-            p.check()
-                .and_then(|()| laid_within(p))
-                .map_err(|e| at("commit or cancel", e))?;
             continue;
         }
         let name = EDITS[*turn % EDITS.len()];
@@ -1457,28 +1470,18 @@ pub fn sweep(
             continue;
         }
         *covered.entry(name).or_default() += 1;
-        if left_the_bound(p) {
+        if !updated(p).map_err(|e| at(name, e))? {
             return Ok(());
         }
-        p.sync_and_discard();
-        p.check().and_then(|()| laid_within(p)).map_err(|e| at(name, e))?;
         if c.one_in(3) {
             p.doc.undo();
-            if left_the_bound(p) {
+            if !updated(p).map_err(|e| at(&format!("undo of {name}"), e))? {
                 return Ok(());
             }
-            p.sync_and_discard();
-            p.check()
-                .and_then(|()| laid_within(p))
-                .map_err(|e| at(&format!("undo of {name}"), e))?;
             p.doc.redo();
-            if left_the_bound(p) {
+            if !updated(p).map_err(|e| at(&format!("redo of {name}"), e))? {
                 return Ok(());
             }
-            p.sync_and_discard();
-            p.check()
-                .and_then(|()| laid_within(p))
-                .map_err(|e| at(&format!("redo of {name}"), e))?;
             *covered.entry("history::undo_and_redo").or_default() += 1;
         }
     }
