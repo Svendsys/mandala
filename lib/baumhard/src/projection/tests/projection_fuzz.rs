@@ -83,7 +83,13 @@
 //! glyphs are bounded as its outline's perimeter at its reach over the
 //! least step one of them takes along it: its advance, from the narrowest
 //! glyph a face maps each character to, at the least size the ring can be,
-//! and its `spacing`.
+//! and its `spacing`. A ring of text laid by halves — any other fit — is
+//! held the same way, to the steps one lay of it may take,
+//! `FRAME_STEPS_A_LAY`: its text's characters and the glyphs its side
+//! ornament may lay (`side_glyphs`), at `FRAME_STEPS_A_GLYPH` and
+//! `FRAME_STEPS_A_SIDE_GLYPH`, and `FRAME_SETUP_STEPS` (`frame_steps`). The
+//! flow harnesses lay such a frame once an input and give it the whole
+//! share; a check here lays it up to ten times.
 
 //! **A section's box is bounded before it is shaped** (ruling B47.2). The
 //! shaper sizes it to the larger of its `min_size` and its text's natural
@@ -240,7 +246,9 @@ pub fn within_bound(doc: &Document) -> bool {
             DocElement::Link(l) => l.path.control_points.iter().all(|&p| near(p)),
             DocElement::Label(label) => label.style.offset.is_none_or(|o| o.abs() <= EXTENT),
             DocElement::PortalEnd(end) => end.style.offset.is_none_or(|o| o.abs() <= EXTENT),
-            DocElement::Frame(_) => outline_near(tree, id) && repeat_rings_fit(tree, id),
+            DocElement::Frame(_) => {
+                outline_near(tree, id) && repeat_rings_fit(tree, id) && text_frames_fit(tree, id)
+            }
             DocElement::Ring(ring) => {
                 let spans: usize = id
                     .children(arena)
@@ -545,6 +553,138 @@ fn repeat_rings_fit(tree: &Tree<DocElement>, frame: NodeId) -> bool {
         .children(arena)
         .filter(|&ring| matches!(arena[ring].get(), DocElement::Ring(_)))
         .all(|ring| repeat_glyphs(tree, frame, ring).is_none_or(|glyphs| glyphs <= MOST_RING_GLYPHS))
+}
+
+/// The most glyph steps a frame laid by halves — a ring of text of any
+/// fit but `Repeat` — takes for each character of its text, past
+/// [`FRAME_SETUP_STEPS`] and its side ornament's (ruling B47.3, on the
+/// review of #378). Stated from measurement, as [`RING_STEPS_A_GLYPH`] is:
+/// the engine bounds a frame's work by its budget, 400,000 steps at the
+/// least (R44.2), which the flow harnesses give one lay of an input's
+/// share and a check here lays up to [`RING_LAYS_A_CHECK`] times. A sweep
+/// of 1,080 frames — 1 to 151 characters of Latin, of seven scripts and of
+/// code points no face holds; `spread`, `fit` and `once`; no ornament, `✦`,
+/// a 60-character one and a 256-character one; round ellipses 1 to 8,000
+/// across from a twentieth of their size to the least — took at most 192
+/// a character with 320 a side glyph and 8,192 (`latin spread`, a `✦`, 100
+/// across: 1,730 short of it). `test_every_text_frame_the_bound_admits_fits_the_share`
+/// holds the densest admitted frames to it.
+pub const FRAME_STEPS_A_GLYPH: usize = 192;
+
+/// The most glyph steps a frame laid by halves takes for each glyph its
+/// side ornament may lay (`side_glyphs`), past its text's: from the same
+/// sweep, whose ornaments took at most 292 a glyph of their bound.
+pub const FRAME_STEPS_A_SIDE_GLYPH: usize = 320;
+
+/// The most glyph steps a frame laid by halves takes past its glyphs'
+/// steps: from the same sweep, as [`RING_SETUP_STEPS`].
+pub const FRAME_SETUP_STEPS: usize = 8_192;
+
+/// The most glyph steps one lay of a frame laid by halves may take inside
+/// the bound (ruling B47.3): the input's share, `flow_fuzz::INPUT_STEPS`,
+/// over the [`RING_LAYS_A_CHECK`] times a check lays it, 46,439. The flow
+/// harnesses give one frame the whole share, since they lay it once; a
+/// frame admitted by that one lay's share took 18.4 s of a check under
+/// ASan in three lays — 80 letters `fit` with a 60-character ornament round
+/// an ellipse 1,000 across, 185,336 steps a lay — where ten would have
+/// taken a minute. Under ASan (`cargo fuzz run load_raw <file> --
+/// -runs=1`, the load average some 2.5), the densest frame this admits by
+/// its steps, 151 letters `spread` round an ellipse 1,000 across, 22,872
+/// steps a lay, ran its input in 0.50 s. The slowest it admits, 151
+/// characters of seven scripts `once` with a `✦` round one 100 across,
+/// 21,702 steps a lay, ran in 3.1 s in three lays, some 10 s in ten, under
+/// the 20 s timeout: most of its time is shaping its text in the faces its
+/// scripts fall back to, which a full projection does again and no step
+/// counts. That shaping is what a check's projections cost for every flow,
+/// a section's and a path's too, and this bound does not hold it.
+pub const FRAME_STEPS_A_LAY: usize = INPUT_STEPS / RING_LAYS_A_CHECK;
+
+/// The most glyphs the side ornament `sides` of a frame laid by halves may
+/// lay (ruling B47.3), bounded before it is laid as [`repeat_glyphs`]
+/// bounds a `Repeat` ring's: the outline's `perimeter`, over the least a
+/// copy of it advances at `size`, the least size its ring can be laid at,
+/// each of its grapheme clusters at its narrowest in `font`
+/// ([`FaceMetrics::narrowest_cluster`]); and a copy more at each of the
+/// two breaks it fills. The cap, `MAX_PLACED_GLYPHS`, where a copy can
+/// advance by nothing. O(its text).
+fn side_glyphs(sides: &str, font: AppFont, size: f64, perimeter: f64) -> usize {
+    use unicode_segmentation::UnicodeSegmentation;
+    let faces = face_metrics();
+    let chars = sides.chars().count();
+    let copy: f64 = sides
+        .graphemes(true)
+        .map(|cluster| f64::from(faces.narrowest_cluster(font, cluster)))
+        .sum::<f64>()
+        * size;
+    let copies = perimeter / copy;
+    if !(copies.is_finite() && copies * (chars as f64) < MAX_PLACED_GLYPHS as f64) {
+        return MAX_PLACED_GLYPHS;
+    }
+    ((copies.ceil() as usize + 2) * chars).min(MAX_PLACED_GLYPHS)
+}
+
+/// The most glyph steps one lay of `ring`, a ring of `frame` laid by
+/// halves — any fit but `Repeat` — may take (ruling B47.3): its text's
+/// glyphs, a glyph a character, at [`FRAME_STEPS_A_GLYPH`], its side
+/// ornament's ([`side_glyphs`]) at [`FRAME_STEPS_A_SIDE_GLYPH`], and
+/// [`FRAME_SETUP_STEPS`]. The ornament's least size is its ring's at
+/// `min_size` (D5), times a `Fit`'s least scale where that is less than
+/// one. `None` for a `Repeat` ring ([`repeat_glyphs`] bounds those) and a
+/// ring of no text, which lays nothing. O(its texts), and once a process
+/// [`face_metrics`].
+pub(crate) fn frame_steps(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId) -> Option<usize> {
+    let arena = tree.arena();
+    let resolved = resolve_ring_in(tree, ring, Binding::Carried(None), &mut ());
+    if matches!(resolved.fit, FitMode::Repeat) {
+        return None;
+    }
+    let text: usize = ring
+        .children(arena)
+        .filter_map(|span| match arena[span].get() {
+            DocElement::Span(span) => Some(span.text.chars().count()),
+            _ => None,
+        })
+        .sum();
+    if text == 0 {
+        return None;
+    }
+    let node = frame.parent(arena)?;
+    let DocElement::Node(data) = arena[node].get() else {
+        return None;
+    };
+    let sides = match &resolved.sides {
+        Some(sides) => {
+            let style = resolve_text_in(tree, ring, Binding::Carried(None), &mut ());
+            let least_rect = Rect::new(Vec2::ZERO, geometry::usable_size(data.min_size));
+            let scale = match resolved.fit {
+                FitMode::Fit { min, .. } if min.is_finite() => f64::from(min.clamp(0.0, 1.0)),
+                _ => 1.0,
+            };
+            let size = (f64::from(geometry::points(style.size, least_rect)) * scale)
+                .max(f64::from(crate::font::fonts::MIN_FONT_SIZE_PT));
+            let drawn = drawn_bound(tree, node);
+            let perimeter = 2.0 * f64::from(drawn.size.x + drawn.size.y) + 8.0 * outline_reach(tree, frame);
+            side_glyphs(&sides.content, style.font, size, perimeter)
+        }
+        None => 0,
+    };
+    Some(
+        FRAME_STEPS_A_GLYPH
+            .saturating_mul(text)
+            .saturating_add(FRAME_STEPS_A_SIDE_GLYPH.saturating_mul(sides))
+            .saturating_add(FRAME_SETUP_STEPS),
+    )
+}
+
+/// Whether one lay of every ring of `frame` laid by halves may take no
+/// more than [`FRAME_STEPS_A_LAY`] ([`frame_steps`]; ruling B47.3).
+/// O(its rings' texts).
+fn text_frames_fit(tree: &Tree<DocElement>, frame: NodeId) -> bool {
+    let arena = tree.arena();
+    frame
+        .children(arena)
+        .filter(|&ring| matches!(arena[ring].get(), DocElement::Ring(_)))
+        .all(|ring| frame_steps(tree, frame, ring).is_none_or(|steps| steps <= FRAME_STEPS_A_LAY))
 }
 
 /// How many spaces on a tab is laid to its next stop at most: the tab

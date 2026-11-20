@@ -68,6 +68,11 @@ pub(crate) use place::directional::LAST_DIRECTIONAL;
 /// A run with every glyph's ink measured, text too: what a text ring's
 /// paths stop at (#296).
 pub(crate) use place::halves::inked;
+/// The last frame laid by halves on this thread, its text's glyphs and its
+/// work, a test counter: what the projection harness's bound holds a text
+/// frame's work to (ruling B47.3).
+#[cfg(test)]
+pub(crate) use place::halves::LAST_FRAME;
 /// The last `Repeat` ring laid round a closed path on this thread, a test
 /// counter (#310): what the projection harness's bound is held to
 /// (ruling B47.1).

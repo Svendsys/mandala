@@ -832,12 +832,14 @@ What they hold, in short (each module's docs are the full list):
   are held to `projection_fuzz::MOST_RING_GLYPHS`, the most whose work at
   a stated rate a glyph, laid once in each projection a check makes, fits
   the input's share — as the flow harnesses hold a ring to
-  `MAX_RING_GLYPHS`. A map outside the bound is skipped and
-  counted, and the targets print the counts at every power of two and
-  every 256 inputs, so even a slow run reports its skipped fraction; the
-  suite holds the structured maps to fewer than half skipped. The engine
-  bounds a placement and a frame, never a whole map (#316), which is why
-  the bound is the harness's. `projection_edits` runs the oracle — the
+  `MAX_RING_GLYPHS`; and a ring of text laid by halves, to the steps one
+  of its lays may take, the share over the lays a check makes
+  (`projection_fuzz::FRAME_STEPS_A_LAY`). A map outside the bound is
+  skipped and counted, and the targets print the counts at every power of
+  two and every 256 inputs, so even a slow run reports its skipped
+  fraction; the suite holds the structured maps to fewer than half
+  skipped. The engine bounds a placement and a frame, never a whole map
+  (#316), which is why the bound is the harness's. `projection_edits` runs the oracle — the
   updated layers equal a full projection — after every step of a
   generated edit sequence: field and structural edits, a rebinding near
   the root, theme and palette changes, transaction stages, undos and

@@ -14,9 +14,9 @@ use crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS;
 use crate::flow::LINE_HEIGHT_FACTOR;
 use crate::projection::tests::maps::{load_map, node};
 use crate::projection::tests::projection_fuzz::{
-    check_projects, projection_counts, repeat_glyphs, under_ceiling, widest_advance, within_bound, EXTENT,
-    MAX_UNITS, MAX_UNTANGLE_SAMPLES, MOST_RING_GLYPHS, MOST_RING_LINE_HEIGHT, RING_LAYS_A_CHECK,
-    RING_SETUP_STEPS, RING_STEPS_A_GLYPH,
+    check_projects, frame_steps, projection_counts, repeat_glyphs, under_ceiling, widest_advance,
+    within_bound, EXTENT, MAX_UNITS, MAX_UNTANGLE_SAMPLES, MOST_RING_GLYPHS, MOST_RING_LINE_HEIGHT,
+    RING_LAYS_A_CHECK, RING_SETUP_STEPS, RING_STEPS_A_GLYPH,
 };
 use crate::projection::tests::support::Projected;
 use crate::util::tests::choices::Choices;
@@ -788,6 +788,169 @@ fn test_every_repeat_ring_the_bound_admits_fits_the_share() {
         assert!(
             spent <= RING_STEPS_A_GLYPH * bound + RING_SETUP_STEPS,
             "{what}: {spent} steps, past {RING_STEPS_A_GLYPH} a glyph of {bound} and {RING_SETUP_STEPS}"
+        );
+    }
+}
+
+/// A map of one ellipse node `across` wide and high, about the origin, its
+/// frame one ring of `text` laid `fit` at `size`, with `sides` its side
+/// ornament where it has one.
+fn framed_text(
+    across: f64,
+    fit: serde_json::Value,
+    size: f64,
+    text: &str,
+    sides: Option<&str>,
+) -> serde_json::Value {
+    let mut ring = json!({"fit": fit, "size": size, "spans": [{"text": text}]});
+    if let Some(sides) = sides {
+        ring["sides"] = json!({"content": sides});
+    }
+    one_node(json!({
+        "position": [-across / 2.0, -across / 2.0],
+        "min_size": [across, across],
+        "shape": "ellipse",
+        "frame": {"inset": 0.0, "gap": 0.0, "rings": [ring]},
+    }))
+}
+
+/// Text of `n` characters, `pattern` repeated.
+fn text_of(pattern: &str, n: usize) -> String {
+    pattern.chars().cycle().take(n).collect()
+}
+
+/// The frames laid by halves the bound admitted before ruling B47.3 held a
+/// frame's work to the lays a check makes, each measured under ASan, its
+/// time of a check (`cargo fuzz run load_raw <file> -- -runs=1`), three
+/// lays: an ornament of 60 characters on 80 letters laid `fit`, and on 151
+/// characters of seven scripts laid `once`, round an ellipse 1,000 across.
+fn measured_frames() -> Vec<(&'static str, serde_json::Value)> {
+    let heavy = text_of("✦你😀Aب", 60);
+    vec![
+        (
+            "80 letters `fit`, a 60-character ornament, 18.4 s",
+            framed_text(
+                1000.0,
+                json!({"fit": {"min": 0.25, "max": 4.0}}),
+                0.05,
+                &text_of("MANDALA mindmap glyph ring text ", 80),
+                Some(&heavy),
+            ),
+        ),
+        (
+            "151 characters of seven scripts `once`, a 60-character ornament, 6.0 s",
+            framed_text(
+                1000.0,
+                json!({"once": {"filler": "·"}}),
+                0.05,
+                &text_of("Aא你😀ب Ωж", 151),
+                Some(&heavy),
+            ),
+        ),
+    ]
+}
+
+/// The densest frames laid by halves the bound admits (ruling B47.3), by
+/// the steps their lay took in the sweep `FRAME_STEPS_A_GLYPH` is stated
+/// from: 151 letters `spread` round an ellipse 1,000 across, the most steps
+/// a lay; 151 characters of seven scripts `once` with a `✦`, the slowest;
+/// and 40 letters `spread` with a `✦` round one 100 across, the nearest its
+/// bound.
+fn densest_admitted_frames() -> Vec<(&'static str, serde_json::Value)> {
+    let latin = text_of("MANDALA mindmap glyph ring text ", 151);
+    vec![
+        (
+            "151 letters `spread`, 1,000 across",
+            framed_text(1000.0, json!("spread"), 0.05, &latin, None),
+        ),
+        (
+            "151 characters of seven scripts `once`, a `✦`, 100 across",
+            framed_text(
+                100.0,
+                json!({"once": {"filler": "·"}}),
+                0.5,
+                &text_of("Aא你😀ب Ωж", 151),
+                Some("✦"),
+            ),
+        ),
+        (
+            "40 letters `spread`, a `✦`, 100 across",
+            framed_text(
+                100.0,
+                json!("spread"),
+                0.5,
+                &text_of("MANDALA mindmap glyph ring text ", 40),
+                Some("✦"),
+            ),
+        ),
+    ]
+}
+
+/// A frame laid by halves is laid once in each projection a check makes,
+/// up to [`RING_LAYS_A_CHECK`], and its work is held to that (ruling
+/// B47.3), not to the one lay the flow harnesses budget a frame for. Each
+/// measured frame ([`measured_frames`]) took no more than the input's
+/// share in one lay, which the old bound admitted it for, and takes more
+/// in ten: the bound holds it outside. Each of the densest frames the
+/// bound admits ([`densest_admitted_frames`]), projected, takes no more
+/// than [`frame_steps`] read for it (`LAST_FRAME`), and ten of its lays fit
+/// the share.
+///
+/// Controls, each run and seen red: with no frame's work bounded, the
+/// first measured frame inside; with its side ornament's glyphs not
+/// counted, the same; with one lay given the whole share, as the flow
+/// harnesses give it, the same; with a quarter of
+/// `FRAME_STEPS_A_SIDE_GLYPH`, the 40 letters with a `✦` past their bound;
+/// with a third of `FRAME_STEPS_A_GLYPH`, the 151 letters past theirs.
+#[test]
+fn test_every_text_frame_the_bound_admits_fits_the_share() {
+    use crate::flow::LAST_FRAME;
+    let lay = |doc: crate::document::ids::Document, what: &str| {
+        LAST_FRAME.with(|last| last.set(None));
+        drop(Projected::new(doc));
+        LAST_FRAME
+            .with(std::cell::Cell::get)
+            .unwrap_or_else(|| panic!("{what}: a frame is laid"))
+            .1
+    };
+    for (k, (what, map)) in measured_frames().into_iter().enumerate() {
+        let doc = load_map(map);
+        assert!(!within_bound(&doc), "{what}: inside the bound");
+        let spent = lay(doc, what);
+        eprintln!("{what}: {spent} steps a lay");
+        assert!(
+            spent <= INPUT_STEPS,
+            "{what}: {spent} steps a lay, past the share in one"
+        );
+        // The first is past the share in ten lays by its counted steps;
+        // the second by its time, its shaping in many faces counted by
+        // none (see `FRAME_STEPS_A_LAY`).
+        if k == 0 {
+            assert!(
+                RING_LAYS_A_CHECK * spent > INPUT_STEPS,
+                "{what}: ten lays of {spent} steps within the share"
+            );
+        }
+    }
+    for (what, map) in densest_admitted_frames() {
+        let doc = load_map(map);
+        assert!(within_bound(&doc), "{what}: outside the bound");
+        let frame = doc
+            .tree()
+            .descendants()
+            .find(|&id| matches!(doc.tree().arena()[id].get(), DocElement::Frame(_)))
+            .unwrap_or_else(|| panic!("{what}: a frame"));
+        let ring = frame
+            .children(doc.tree().arena())
+            .next()
+            .unwrap_or_else(|| panic!("{what}: a ring"));
+        let bound = frame_steps(doc.tree(), frame, ring).unwrap_or_else(|| panic!("{what}: laid by halves"));
+        let spent = lay(doc, what);
+        eprintln!("{what}: {spent} steps a lay, {bound} bounded");
+        assert!(spent <= bound, "{what}: {spent} steps a lay, {bound} bounded");
+        assert!(
+            RING_LAYS_A_CHECK * spent <= INPUT_STEPS,
+            "{what}: ten lays of {spent} steps past the share"
         );
     }
 }
