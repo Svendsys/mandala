@@ -185,23 +185,21 @@ const STEP_READS: usize = CHORD_ROUNDS + 2;
 /// [`INK_ROUNDS`] rounds of bisection, a point each — the point its ink is
 /// remembered at, and the point its corner is set from. 3,250.
 ///
-/// **#376's stop leaves it as it is.** A stride search now ends at a
-/// stride that leaves the ink bit for bit where it was, and a search
-/// ended at its first stride ends the turns. So a glyph whose ink no
-/// stride can move — far from the origin, where the floats are coarser
-/// than a stride — reads its path for its ink at three points, its gap,
-/// its guess and its first stride, where it read every stride of every
-/// turn: 2,376 reads for a dot of a ring 4.35 × 10¹¹ from the origin, as
-/// #374's was
-/// (`test_a_repeat_ring_whose_strides_cannot_move_its_ink_stops_at_its_first_stride`).
-/// But the bound is a worst case, and its strides are reached by a glyph
-/// whose every stride moves its ink and none far enough, which the stop
-/// does not touch: a dot round an outline smaller than the gap it is
-/// owed, its ink circling within reach of the last, still takes every
-/// stride of every turn, the same 2,376 reads
-/// (`test_a_repeat_ring_whose_strides_move_its_ink_takes_every_stride`).
-/// The stop removes that work from the glyphs whose strides cannot move
-/// their ink, and not from the bound.
+/// **#376 leaves it as it is** (rulings B48.1 to B48.3). A glyph's turns
+/// are one stride search while none of their strides moves its ink
+/// (`PathWalk::ink_gap_at`), and every stride of that reach is what sets
+/// the glyph where the full search sets it. So the strides stay, and the
+/// turns return what they did; what #376 removes is each still turn's
+/// read of its center's gap and its guess again, which it reads where the
+/// last turn's strides left them. A glyph none of whose strides moves its
+/// ink — a dot of a ring 10¹⁵ across, further out than #374's — reads its
+/// path for its ink 2,310 times, where it read 2,376
+/// (`test_a_repeat_ring_whose_strides_cannot_move_its_ink_reads_no_gap_twice`).
+/// The bound's strides are reached by a glyph whose every stride moves
+/// its ink and none far enough, which #376 does not touch: a dot round an
+/// outline smaller than the gap it is owed, its ink circling within reach
+/// of the last, takes every stride of every turn and every read of them,
+/// 2,376 (`test_a_repeat_ring_whose_strides_move_its_ink_takes_every_stride`).
 pub(crate) const CLUSTER_READS: usize =
     STEP_READS + INK_TURNS * (2 + INK_STRIDES + INK_ROUNDS) * INK_READS + 2 * INK_READS;
 
