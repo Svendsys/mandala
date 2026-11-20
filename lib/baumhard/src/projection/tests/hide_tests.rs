@@ -1523,6 +1523,133 @@ fn test_projection_a_region_past_the_cells_scans_the_cells_that_hold_a_path() {
     );
 }
 
+/// Whether `region` is within `d` of `glyph` on both axes — what `glyph`
+/// grown by `d` reaches — read in `f64`, which holds every such edge.
+fn reached(glyph: Rect, d: f32, region: Rect) -> bool {
+    let d = f64::from(d);
+    let within = |g0: f32, g1: f32, r0: f32, r1: f32| {
+        f64::from(r0) <= f64::from(g1) + d && f64::from(g0) - d <= f64::from(r1)
+    };
+    within(glyph.origin.x, glyph.max().x, region.origin.x, region.max().x)
+        && within(glyph.origin.y, glyph.max().y, region.origin.y, region.max().y)
+}
+
+/// A glyph's box grown past what an `f32` holds — by 1.8·10³⁸,
+/// `f32::MAX` and +∞, which `Rect::grown` saturates (#364) — is a
+/// rectangle reaching +∞, and the hide stage's two indices each find it
+/// wherever it reaches. Set as a path's box, the paths' index passes that
+/// path to every region the box reaches — at the glyph, 3·10⁵ out, at
+/// ±10⁹, at ±10³⁰ and at ∓1.7·10³⁸ — and to one at −3·10³⁸ only where
+/// the box reaches it, grown by `f32::MAX` and +∞ but not by 1.8·10³⁸.
+/// Queried as the hide stage queries the regions, it finds every node
+/// whose region it reaches, by either part: a text box at the origin, a
+/// round ring 3·10⁵ out, a text box 10⁶ across, past the cells, one at
+/// ±10³⁰, and one at −3·10³⁸ on the same terms. What each reaches is
+/// read in `f64`, not from the box.
+///
+/// Control: with `Rect::grown` as it was — an origin of −∞ and a far
+/// corner that is no number — red on the first region of the paths'
+/// index, which leaves such a box out, and with that assertion taken out,
+/// on the regions', which finds nothing for it.
+#[test]
+fn test_projection_a_glyph_box_grown_past_f32_is_found_by_every_region_it_reaches() {
+    use crate::gfx_structs::shape::NodeShape;
+    use crate::projection::behind::Regions;
+    let nodes: Vec<Value> = (1..=7).map(|id| node(id, None, json!({}))).collect();
+    let doc = load_map(json!({ "nodes": nodes }));
+    let id = |k| ident(&doc, k);
+    let (wide, near) = (id(1), id(2));
+    let glyph = Rect::new(Vec2::new(500.0, 20.0), Vec2::new(8.0, 2.0));
+    let behind_edge = Rect::new(Vec2::new(-3.0e38, 0.0), Vec2::new(1.0e33, 50.0));
+    let past_the_cells = Rect::new(Vec2::new(-2.0e6, 4.0e6), Vec2::splat(1.0e6));
+    let probes = [
+        glyph,
+        Rect::new(Vec2::new(3.0e5, -2.0e5), Vec2::splat(50.0)),
+        Rect::new(Vec2::new(-1.0e9, 1.0e9), Vec2::splat(50.0)),
+        Rect::new(Vec2::new(1.0e30, -1.0e30), Vec2::splat(1.0e25)),
+        Rect::new(Vec2::new(-1.7e38, 1.7e38), Vec2::splat(1.0e33)),
+        behind_edge,
+    ];
+    let mut regions = Regions::default();
+    let bodies = [
+        (id(3), (Some(Rect::new(Vec2::ZERO, Vec2::new(100.0, 40.0))), None)),
+        (
+            id(4),
+            (
+                None,
+                Some((
+                    Rect::new(Vec2::new(3.0e5, -2.0e5), Vec2::splat(200.0)),
+                    NodeShape::Ellipse,
+                )),
+            ),
+        ),
+        (id(5), (Some(past_the_cells), None)),
+        (
+            id(6),
+            (
+                Some(Rect::new(Vec2::new(1.0e30, -1.0e30), Vec2::splat(1.0e25))),
+                None,
+            ),
+        ),
+        (id(7), (Some(behind_edge), None)),
+    ];
+    assert_eq!(
+        grid_cells(past_the_cells),
+        None,
+        "precondition: the text box 10⁶ across is past the cells"
+    );
+    for (node, region) in bodies {
+        regions.set(node, region);
+    }
+    for d in [1.8e38, f32::MAX, f32::INFINITY] {
+        let grown = glyph.grown(d);
+        assert!(
+            !(glyph.size + Vec2::splat(2.0 * d)).is_finite(),
+            "precondition: grown by {d}, the glyph's box is past f32"
+        );
+        assert_eq!(
+            reached(glyph, d, behind_edge),
+            d > 1.8e38,
+            "precondition: grown by {d}, it reaches -3e38 only past 1.8e38"
+        );
+        let mut index = PathCells::default();
+        index.set(near, &[glyph]);
+        index.set(wide, &[glyph, grown]);
+        for probe in probes {
+            let mut want = Vec::new();
+            if reached(glyph, d, probe) {
+                want.push(wide);
+            }
+            if meet(&glyph, &probe) {
+                want.extend([wide, near]);
+            }
+            want.sort_unstable();
+            assert_eq!(
+                meeting(&index, probe),
+                want,
+                "the paths' index, a region at {probe:?}, the glyph grown by {d}: {grown:?}"
+            );
+        }
+        let mut found = Vec::new();
+        regions.each_within(grown, |node| found.push(node));
+        found.sort_unstable();
+        found.dedup();
+        let mut want: Vec<NodeId> = bodies
+            .iter()
+            .filter(|(_, (text, rings))| {
+                let part = text.or(rings.map(|(r, _)| r)).expect("a part");
+                reached(glyph, d, part)
+            })
+            .map(|&(node, _)| node)
+            .collect();
+        want.sort_unstable();
+        assert_eq!(
+            found, want,
+            "the regions' index, queried with the glyph grown by {d}: {grown:?}"
+        );
+    }
+}
+
 /// How many glyphs of `path`'s body its layer draws: none where every one
 /// is hidden, and the layer holds no run for it.
 fn drawn_glyphs(p: &Projected, path: NodeId) -> usize {
