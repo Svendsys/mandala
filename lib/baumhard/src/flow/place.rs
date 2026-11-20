@@ -1342,14 +1342,14 @@ impl PathWalk<'_> {
     /// stops there.
     ///
     /// The first returns what the strides would have, and moves nothing.
-    /// The second sets a glyph whose ink has reached the path's end a
-    /// stride past where it did, rather than [`INK_STRIDES`] strides on at
-    /// every turn. In #376's sweep of 216 placements along open paths near
-    /// the origin no walk kept such a glyph, but a probe of a `Spread`'s
-    /// spacing solve that runs past the end now runs less far, so the
-    /// solve can close on another spacing within its tolerance
-    /// ([`SOLVE_TOLERANCE`]): 11 `Spread`s did, their glyphs moved 0.1
-    /// points at the most. The third moves a glyph wherever a later stride
+    /// The second sets a glyph whose ink has reached the path's end at the
+    /// first stride that reached it, rather than [`INK_STRIDES`] strides on
+    /// at every turn, an overshoot nothing past the end could see. In
+    /// #376's sweep of 216 placements along open paths near the origin no
+    /// walk kept such a glyph, but a probe of a `Spread`'s spacing solve
+    /// that runs past the end now runs less far, so the solve can close on
+    /// another spacing within its tolerance ([`SOLVE_TOLERANCE`]): 11
+    /// `Spread`s did, their glyphs moved 0.1 points at the most. The third moves a glyph wherever a later stride
     /// would have crossed a float of the canvas: the glyph keeps the box
     /// rule's place along the path rather than being carried on stride
     /// after stride that the floats cannot tell apart. A shipped map takes
