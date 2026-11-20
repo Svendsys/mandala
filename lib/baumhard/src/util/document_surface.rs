@@ -100,12 +100,14 @@ const DELETED_FIELDS: &[&str] = &[
 ];
 
 /// Whether `ty` mentions `String` anywhere: `String`, `Vec<String>`,
-/// `Option<String>`.
+/// `Option<String>` — or `Name` (`document::keyed::Name`), which is a
+/// `String` outside a test build, where it is one that counts its
+/// compares (ruling D3.4 item 4 on #252).
 fn mentions_string(ty: &Type) -> bool {
     struct Finder(bool);
     impl<'ast> Visit<'ast> for Finder {
         fn visit_path_segment(&mut self, segment: &'ast PathSegment) {
-            self.0 |= segment.ident == "String";
+            self.0 |= segment.ident == "String" || segment.ident == "Name";
             visit::visit_path_segment(self, segment);
         }
     }
@@ -2353,7 +2355,7 @@ hidden_items!();
                     ..MapData::default()
                 })],
                 "PaletteData.name" => vec![DocElement::Palette(PaletteData {
-                    name: TEXT.to_string(),
+                    name: crate::document::keyed::name(TEXT),
                     groups: Vec::new(),
                 })],
                 "PortalEndStyle.content" => {
@@ -2424,7 +2426,7 @@ hidden_items!();
                     ..SpanData::default()
                 })],
                 "ThemeData.variables" => vec![DocElement::Theme(ThemeData {
-                    variables: vec![TEXT.to_string()],
+                    variables: vec![crate::document::keyed::name(TEXT)],
                     ..ThemeData::default()
                 })],
                 "ThemeVariant.name" => vec![DocElement::Theme(ThemeData {

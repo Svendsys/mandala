@@ -355,13 +355,15 @@ fn test_the_pointer_leaving_the_window_releases_a_hover() {
 /// **A leave during a press releases the hover when the press ends**
 /// (ruling D3.3 item 4): the pointer held on node 1 presses there, then
 /// leaves the window while the press is down — which changes nothing, as
-/// a move during a gesture leaves the hover — and the release, which no
-/// move follows, releases the run, its `while` presentation playing its
-/// way out.
+/// a move during a gesture leaves the hover — and moves on outside it, as
+/// a captured drag reports (winit on Windows sends a `CursorMoved`
+/// outside with its `CursorLeft`; ruling D3.4 item 3); and the release
+/// releases the run, its `while` presentation playing its way out.
 ///
-/// Control, seen red: the release not deciding the hover again
+/// Controls, each seen red: the release not deciding the hover again
 /// (`on_mouse_input` without `release_hover_if_outside`) leaves the run
-/// held.
+/// held; a move setting `pointer_inside` whatever its position, as it did
+/// at fed68afd, leaves it held too.
 #[test]
 fn test_a_leave_during_a_press_releases_the_hover_at_the_release() {
     use crate::application::platform::input::{ElementState, MouseButton};
@@ -393,6 +395,11 @@ fn test_a_leave_during_a_press_releases_the_hover_at_the_release() {
         !init.input_context().on_cursor_left(),
         "a leave during the press changes nothing"
     );
+    init.input_context()
+        .on_cursor_moved(crate::application::platform::window::PhysicalPosition::new(
+            -400.0, -300.0,
+        ));
+    assert!(!init.pointer_inside, "a move outside the window is a pointer out");
     init.input_context().drain_frame(Beat::Loop);
     let pressed = animations(init);
     assert_eq!(pressed["verbs"][0]["held"], true, "still held: {pressed}");

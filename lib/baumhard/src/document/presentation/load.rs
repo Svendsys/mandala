@@ -218,7 +218,7 @@ pub(crate) fn definition(dto: PresentationDto) -> Result<PresentationDef, (Vec<S
         return Err(invalid(Vec::new(), LOOP_TAKES_NO_TIME.to_string()));
     }
     Ok(PresentationDef {
-        id: dto.id,
+        id: crate::document::keyed::name(dto.id),
         name: dto.name,
         description: dto.description,
         play,
@@ -314,7 +314,7 @@ pub(crate) fn to_dto(def: &PresentationDef) -> PresentationDto {
         snap: (a.snap != Snap::End).then(|| a.snap.into()),
     };
     PresentationDto {
-        id: def.id.clone(),
+        id: def.id.to_string(),
         name: def.name.clone(),
         description: def.description.clone(),
         play: def.play.into(),

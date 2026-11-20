@@ -607,3 +607,52 @@ fn test_a_macro_verb_step_runs_on_its_target() {
     assert!(run(&mut doc, "lift", &MacroTarget::CurrentSelection));
     assert_eq!(playing(&doc, "p"), [(1, Direction::In)]);
 }
+
+/// **The pointer is in by where it is** (ruling D3.4 item 3): a point is
+/// within a surface of 800 × 600 from its top-left corner up to, not
+/// including, its width and height; past any edge, or before the first
+/// pixel, it is out.
+///
+/// Control, seen red: `within_surface` answering `true` for any point,
+/// as a move did at fed68afd, takes the points outside for inside.
+#[test]
+fn test_a_point_is_within_the_surface_by_its_position() {
+    use super::within_surface;
+    for inside in [(0.0, 0.0), (799.9, 599.9), (400.0, 300.0)] {
+        assert!(within_surface(inside, 800, 600), "{inside:?}");
+    }
+    for outside in [
+        (-400.0, -300.0),
+        (-0.1, 10.0),
+        (10.0, -0.1),
+        (800.0, 10.0),
+        (10.0, 600.0),
+    ] {
+        assert!(!within_surface(outside, 800, 600), "{outside:?}");
+    }
+}
+
+/// **The browser decides the pointer is in as native does**: its
+/// cursor-move arm — compiled for wasm32 alone, so pinned by reading its
+/// source (`baumhard::util::rust_source`; TEST_CONVENTIONS §T9) — sets
+/// `pointer_inside` from `within_surface` and the canvas's size, before
+/// its early return for a pending click, so a move during a press
+/// outside the canvas reads as out (ruling D3.4 item 3).
+///
+/// Control, seen red: the arm's line as it was at fed68afd,
+/// `self.input.pointer_inside = true;`.
+#[test]
+fn test_the_browser_decides_the_pointer_is_in_by_position() {
+    use baumhard::util::rust_source::{braced_block_after, production_code};
+    let code = production_code("src/application/app/run_wasm/event_cursor_moved.rs");
+    let arm = braced_block_after(&code, "fn on_cursor_moved(").expect("the arm is in the file");
+    let flat: String = arm.chars().filter(|c| !c.is_whitespace()).collect();
+    let decided = flat
+        .find("self.input.pointer_inside=crate::application::app::within_surface((position.x,position.y),self.renderer.surface_width(),self.renderer.surface_height()")
+        .expect("pointer_inside decided by position");
+    let pending = flat
+        .find("pending_click.is_some()")
+        .expect("the pending-click return");
+    assert!(decided < pending, "decided before the early return: {arm}");
+    assert_eq!(flat.matches("pointer_inside=").count(), 1, "decided once: {arm}");
+}

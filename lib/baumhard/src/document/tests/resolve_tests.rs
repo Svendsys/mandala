@@ -560,7 +560,7 @@ fn test_document_resolve_palette_clamps_and_nearest_binding_wins() {
 pub fn do_document_resolve_palette_clamps_and_nearest_binding_wins() {
     let (mut builder, ids) = example();
     let short = builder.palette(PaletteData {
-        name: "short".to_string(),
+        name: crate::document::keyed::name("short"),
         groups: vec![palette_group(20), palette_group(21)],
     });
     builder.edit_node(ids.a, |n| n.palette = Some(short));
@@ -1381,7 +1381,7 @@ pub fn do_document_resolve_background() {
     );
 
     builder.theme(ThemeData {
-        variables: vec!["bg".to_string()],
+        variables: vec![crate::document::keyed::name("bg")],
         variants: vec![
             ThemeVariant {
                 name: "dark".to_string(),

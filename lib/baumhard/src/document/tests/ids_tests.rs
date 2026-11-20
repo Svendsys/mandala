@@ -165,7 +165,7 @@ fn test_document_map_reads() {
 pub fn do_document_map_reads() {
     let (mut builder, _) = example();
     builder.palette(crate::document::element::PaletteData {
-        name: "second".to_string(),
+        name: crate::document::keyed::name("second"),
         groups: Vec::new(),
     });
     let mut defaults = crate::document::element::DefaultsData::default();
@@ -259,7 +259,7 @@ pub fn do_document_refuses_more_than_an_index_addresses() {
     let with_variables = |n: usize| {
         let mut builder = DocumentBuilder::new();
         builder.theme(ThemeData {
-            variables: vec![String::new(); n],
+            variables: vec![crate::document::keyed::name(""); n],
             variants: Vec::new(),
             active: 0,
         });
@@ -277,7 +277,7 @@ pub fn do_document_refuses_more_than_an_index_addresses() {
     let with_verbs = |n: usize| {
         let mut builder = DocumentBuilder::new();
         let verb = VerbDef {
-            id: String::new(),
+            id: crate::document::keyed::name(""),
             name: String::new(),
             description: String::new(),
             steps: Vec::new(),

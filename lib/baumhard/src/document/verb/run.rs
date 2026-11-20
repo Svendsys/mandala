@@ -220,14 +220,15 @@ impl Runs {
             });
         };
         let self_node = match self_node {
-            Some(given) => Some(
-                doc.owning_node(given)
-                    .ok_or_else(|| VerbError::NotANode { verb: def.id.clone() })?,
-            ),
+            Some(given) => Some(doc.owning_node(given).ok_or_else(|| VerbError::NotANode {
+                verb: def.id.to_string(),
+            })?),
             None => None,
         };
         if self_node.is_none() && def.needs_self(definitions) {
-            return Err(VerbError::NeedsNode { verb: def.id.clone() });
+            return Err(VerbError::NeedsNode {
+                verb: def.id.to_string(),
+            });
         }
         let id = RunId(self.next);
         self.next += 1;

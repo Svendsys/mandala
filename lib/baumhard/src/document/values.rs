@@ -363,7 +363,8 @@ pub enum LinkRefusal<'a> {
     /// or the whole of it when it has no `:`.
     Scheme(&'a str),
     /// A `mailto` address that names a header outside [`MAIL_HEADERS`],
-    /// or whose address part decodes to hold a `?`.
+    /// in its query or its address part, or whose address part decodes
+    /// to hold a `?`.
     MailHeader {
         /// The header's name as the address writes it (reading (a)), or
         /// as it reads once the query is decoded (reading (b)); or the
@@ -374,9 +375,9 @@ pub enum LinkRefusal<'a> {
 
 /// `url` if a link may lead there: its scheme — what it writes before its
 /// first `:` — is one of [`LINK_SCHEMES`], in any case (a scheme is
-/// case-insensitive), and, for `mailto`, its headers are all of
-/// [`MAIL_HEADERS`] under both readings of `mail_header`, and its
-/// address part decodes to hold no `?`. Otherwise what is wrong, for the
+/// case-insensitive), and, for `mailto`, every header it names, in its
+/// query or its address part, is one of [`MAIL_HEADERS`] under both
+/// readings of `mail_header`. Otherwise what is wrong, for the
 /// refusal to name. O(the address's length).
 pub fn check_link_url(url: &str) -> Result<&str, LinkRefusal<'_>> {
     let (scheme, rest) = url.split_once(':').unwrap_or((url, ""));
@@ -414,19 +415,49 @@ pub fn check_link_url(url: &str) -> Result<&str, LinkRefusal<'_>> {
 ///   `body=a%26b%3Dc` does not (it reads a header `b`) — over-refused,
 ///   on the safe side;
 ///
-/// and an address part that decodes to hold a `?` is refused, since a
-/// handler may read the rest as a query. Returns the name refused. O(the
+/// and the address part — what comes before the first raw `?` — is read
+/// the way the query is (ruling D3.4 item 1): one that decodes to hold a
+/// `?` is refused, since a handler may read the rest as a query; and
+/// split on `?`, `&`, `;`, `,` and `#`, raw and decoded once, every part
+/// after the first that holds an `=` must name one of [`MAIL_HEADERS`],
+/// since a handler may split what follows `mailto:` without first
+/// finding the `?`. A part with no `=` is an address, so `a@b,c@d`
+/// passes; `a@b;c=d` does not — over-refused, and a `to` part writes
+/// `=` encoded anyway (RFC 6068). Returns the name refused. O(the
 /// address's length).
 fn mail_header(rest: &str) -> Option<Cow<'_, str>> {
     let (address, query) = rest.split_once('?').unwrap_or((rest, ""));
-    if percent_decoded(address.as_bytes(), false).contains(&b'?') {
-        return Some(Cow::Borrowed(address));
-    }
     let allowed = |name: &[u8]| {
         MAIL_HEADERS
             .iter()
             .any(|header| name.to_ascii_lowercase() == header.as_bytes())
     };
+    let decoded_address = percent_decoded(address.as_bytes(), false);
+    if decoded_address.contains(&b'?') {
+        return Some(Cow::Borrowed(address));
+    }
+    // The address part, read as the query is (ruling D3.4 item 1): split
+    // on `?`, `&`, `;`, `,` and `#`, raw and decoded once, every part
+    // after the first with an `=` must name one of the six.
+    let address_split = |b: u8| matches!(b, b'?' | b'&' | b';' | b',' | b'#');
+    for segment in address
+        .split(|c: char| c.is_ascii() && address_split(c as u8))
+        .skip(1)
+    {
+        if let Some((name, _)) = segment.split_once('=') {
+            if !allowed(&percent_decoded(name.as_bytes(), false)) {
+                return Some(Cow::Borrowed(name));
+            }
+        }
+    }
+    for segment in decoded_address.split(|&b| address_split(b)).skip(1) {
+        if let Some(at) = segment.iter().position(|&b| b == b'=') {
+            let name = &segment[..at];
+            if !allowed(name) {
+                return Some(Cow::Owned(String::from_utf8_lossy(name).into_owned()));
+            }
+        }
+    }
     let split = |c: char| matches!(c, '?' | '&' | ';');
     for segment in query.split(split) {
         let name = segment.split_once('=').map_or(segment, |(name, _)| name);

@@ -40,7 +40,7 @@ pub const MAX_VERB_DEPTH: usize = 8;
 #[derive(Clone, Debug, PartialEq)]
 pub struct VerbDef {
     /// The id triggers, links, the console and IPC name it by.
-    pub id: String,
+    pub id: crate::document::keyed::Name,
     /// The name shown to the user.
     pub name: String,
     /// What it does.

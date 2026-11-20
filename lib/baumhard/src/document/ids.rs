@@ -89,9 +89,27 @@ impl Definitions {
     /// The verb the map defines with `id`, and its index: what the
     /// console, IPC and a macro name a verb by. One probe of the index
     /// the document built (`Definitions::index`).
+    ///
+    /// The index is a field the type does not keep up itself: a
+    /// `Definitions` no document was made of has none, and one whose
+    /// verbs changed after would answer stale positions. Nothing does
+    /// either today; a debug build says so loudly should something
+    /// start to (ruling D3.4 item 5).
     pub fn verb_by_id(&self, id: &str) -> Option<(VerbId, &VerbDef)> {
+        debug_assert!(
+            self.verbs.is_empty() || !self.verb_ids.is_empty(),
+            "Definitions::verb_by_id: {} verbs and no index; a document indexes them when it is made",
+            self.verbs.len()
+        );
         let verb = self.verb_ids.get(id)?;
-        Some((verb, self.verbs.get(usize::from(verb.0))?))
+        let def = self.verbs.get(usize::from(verb.0))?;
+        // `as_str` on both sides: a check, not a compare a test counts.
+        debug_assert!(
+            def.id.as_str() == id,
+            "Definitions::verb_by_id: the index puts `{id}` at {verb:?}, which holds `{}`",
+            def.id.as_str()
+        );
+        Some((verb, def))
     }
 
     /// Index every verb by its id, the first of a repeated id keeping it.

@@ -288,7 +288,7 @@ impl Document {
         };
         self.take_back_start(&plan, feed);
         Err(PresentError::Refused {
-            presentation: def.id.clone(),
+            presentation: def.id.to_string(),
             error: Box::new(refusal),
         })
     }
@@ -354,7 +354,7 @@ impl Document {
     ) -> Result<StartPlan, PresentError> {
         let mut under = self.derived.budget;
         let value = |field: &'static str, message: &str| PresentError::Value {
-            presentation: def.id.clone(),
+            presentation: def.id.to_string(),
             field,
             message: message.to_string(),
         };
@@ -394,7 +394,7 @@ impl Document {
             None => None,
         };
         let started = Arc::new(Started {
-            id: def.id.clone(),
+            id: def.id.to_string(),
             play: def.play,
             body,
         });
@@ -433,7 +433,7 @@ impl Document {
             if judge_here {
                 under = self.try_application(&started, &reached, under).map_err(|error| {
                     PresentError::Refused {
-                        presentation: def.id.clone(),
+                        presentation: def.id.to_string(),
                         error: Box::new(error),
                     }
                 })?;

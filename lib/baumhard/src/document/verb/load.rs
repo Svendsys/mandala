@@ -116,7 +116,7 @@ pub(crate) fn definitions(
             steps.push(self::step(step, &names).map_err(|(segs, kind)| (at(segs), kind))?);
         }
         defs.push(VerbDef {
-            id: dto.id.clone(),
+            id: crate::document::keyed::name(dto.id.as_str()),
             name: dto.name.clone(),
             description: dto.description.clone(),
             steps,
@@ -361,9 +361,11 @@ fn check_graph(defs: &[VerbDef]) -> Result<(), Refusal> {
                 }
                 Some(Mark::Open) => {
                     let from = stack.iter().position(|&(v, _)| v == callee).unwrap_or(0);
-                    let mut cycle: Vec<String> =
-                        stack[from..].iter().map(|&(v, _)| defs[v].id.clone()).collect();
-                    cycle.push(defs[callee].id.clone());
+                    let mut cycle: Vec<String> = stack[from..]
+                        .iter()
+                        .map(|&(v, _)| defs[v].id.to_string())
+                        .collect();
+                    cycle.push(defs[callee].id.to_string());
                     return Err((
                         vec![
                             Seg::Index(verb),
@@ -401,7 +403,7 @@ pub(crate) fn to_dto(def: &VerbDef, definitions: &Definitions) -> Option<VerbDto
         definitions
             .presentations
             .get(usize::from(id.0))
-            .map(|def| def.id.clone())
+            .map(|def| def.id.to_string())
     };
     let steps = def
         .steps
@@ -425,19 +427,19 @@ pub(crate) fn to_dto(def: &VerbDef, definitions: &Definitions) -> Option<VerbDto
                     dto.on = Some(on_dto(on));
                 }
                 Step::Edit { edit, on } => {
-                    dto.edit = Some(definitions.edits.get(usize::from(edit.0))?.id.clone());
+                    dto.edit = Some(definitions.edits.get(usize::from(edit.0))?.id.to_string());
                     dto.on = Some(on_dto(on));
                 }
                 Step::Wait { ms } => dto.wait = Some(*ms),
                 Step::Verb { verb } => {
-                    dto.verb = Some(definitions.verbs.get(usize::from(verb.0))?.id.clone());
+                    dto.verb = Some(definitions.verbs.get(usize::from(verb.0))?.id.to_string());
                 }
             }
             Some(dto)
         })
         .collect::<Option<Vec<_>>>()?;
     Some(VerbDto {
-        id: def.id.clone(),
+        id: def.id.to_string(),
         name: def.name.clone(),
         description: def.description.clone(),
         steps,

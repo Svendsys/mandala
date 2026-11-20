@@ -40,7 +40,7 @@ fn document() -> (Document, Example) {
     let (mut builder, ids) = example();
     builder.definitions(Definitions {
         verbs: vec![VerbDef {
-            id: "go".to_string(),
+            id: crate::document::keyed::name("go"),
             name: "Go".to_string(),
             description: String::new(),
             steps: Vec::new(),
@@ -1293,13 +1293,13 @@ fn test_document_validate_holds_an_inserted_name_to_the_files_rule() {
     let (doc, _) = document();
     let palette = |name: &str| {
         DocElement::Palette(PaletteData {
-            name: name.to_string(),
+            name: crate::document::keyed::name(name),
             groups: vec![palette_group(1)],
         })
     };
     let theme = |variant: &str, variable: &str| {
         DocElement::Theme(ThemeData {
-            variables: vec![variable.to_string()],
+            variables: vec![crate::document::keyed::name(variable)],
             variants: vec![ThemeVariant {
                 name: variant.to_string(),
                 values: vec![Rgba::opaque(0, 0, 0)],

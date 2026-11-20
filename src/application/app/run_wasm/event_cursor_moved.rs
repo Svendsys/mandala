@@ -26,7 +26,11 @@ impl super::Borrowed<'_> {
     /// hover where it was, as native's does during a gesture.
     pub(super) fn on_cursor_moved(&mut self, position: PhysicalPosition<f64>) -> bool {
         self.input.cursor_pos = (position.x, position.y);
-        self.input.pointer_inside = true;
+        self.input.pointer_inside = crate::application::app::within_surface(
+            (position.x, position.y),
+            self.renderer.surface_width(),
+            self.renderer.surface_height(),
+        );
         if self.input.pending_click.is_some() {
             return true;
         }

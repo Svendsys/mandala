@@ -531,7 +531,7 @@ Exactly one of the two keys.
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
-| `url` | string | one of the two | | An address to open: its scheme — what it writes before its first `:`, in any case — is `http`, `https` or `mailto`. Any other is refused at its path (`LinkScheme`), as is a `mailto` naming a header other than `to`, `cc`, `bcc`, `subject`, `body` and `in-reply-to` under either reading of its query, or whose address part decodes to hold a `?` (`LinkMailHeader`), and an edit or a presentation that writes either is refused too ([`verbs.md`](./verbs.md#links)). |
+| `url` | string | one of the two | | An address to open: its scheme — what it writes before its first `:`, in any case — is `http`, `https` or `mailto`. Any other is refused at its path (`LinkScheme`), as is a `mailto` naming a header other than `to`, `cc`, `bcc`, `subject`, `body` and `in-reply-to` under either reading of its query, or whose address part names one or decodes to hold a `?` (`LinkMailHeader`), and an edit or a presentation that writes either is refused too ([`verbs.md`](./verbs.md#links)). |
 | `verb` | string | one of the two | | The id of a verb in `verbs`. |
 
 ### Frame

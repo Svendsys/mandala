@@ -111,7 +111,7 @@ impl OnTheDocument<'_> {
             .definitions()
             .presentations
             .get(usize::from(id.0))
-            .map_or_else(String::new, |def| def.id.clone())
+            .map_or_else(String::new, |def| def.id.to_string())
     }
 }
 
@@ -156,7 +156,8 @@ impl Performer for OnTheDocument<'_> {
             .get(usize::from(id.0))
             .cloned()
             .ok_or_else(|| format!("no edit at {id:?}"))?;
-        self.calls.push(("edit", def.id.clone(), nodes.to_vec(), at_ms));
+        self.calls
+            .push(("edit", def.id.to_string(), nodes.to_vec(), at_ms));
         let request = def
             .request(self.doc, &Boxes::of(self.doc), &registry(), nodes)
             .map_err(|error| error.to_string())?;
@@ -458,8 +459,10 @@ enum Link {
 /// found past the attachment denylist, `attach` itself in three, and
 /// headers no attachment names (`X-Foo`, `from`, `reply-to`); and
 /// `body=a%26b%3Dc`, refused on the safe side because its decoded query
-/// reads a header `b`.
-const SCHEMES: [(&str, Link); 37] = [
+/// reads a header `b`; and a header in the address part after a `&`,
+/// `;`, `,` or `#`, raw or encoded (ruling D3.4 item 1), with `a@b;c=d`
+/// over-refused and a second plain address loading.
+const SCHEMES: [(&str, Link); 47] = [
     ("https://example.org/a", Link::Opens),
     ("HTTP://example.org", Link::Opens),
     ("mailto:someone@example.org", Link::Opens),
@@ -506,6 +509,16 @@ const SCHEMES: [(&str, Link); 37] = [
     ("mailto:a@example.org?reply-to=b@example.org", Link::Header),
     ("mailto:a@example.org?body=a%26b%3Dc", Link::Header),
     ("mailto:a@example.org?subject", Link::Opens),
+    ("mailto:a@example.org&attach=/etc/passwd", Link::Header),
+    ("mailto:a@example.org&attach=/etc/passwd?subject=hi", Link::Header),
+    ("mailto:a@example.org;attach=x", Link::Header),
+    ("mailto:a@example.org,attach=x", Link::Header),
+    ("mailto:a@example.org%26attach=x", Link::Header),
+    ("mailto:a@example.org%3Battach=x", Link::Header),
+    ("mailto:a@example.org#&attach=x", Link::Header),
+    ("mailto:a@example.org#attach=x", Link::Header),
+    ("mailto:a@example.org;c=d", Link::Header),
+    ("mailto:a@example.org,b@example.org", Link::Opens),
 ];
 
 /// A span link of an address `choices` draws is loaded exactly when a

@@ -36,8 +36,14 @@ pub(super) fn handle_cursor_moved(
 ) -> bool {
     let prev_pos = *ctx.cursor_pos;
     *ctx.cursor_pos = (position.x, position.y);
-    *ctx.pointer_inside = true;
     let cursor = *ctx.cursor_pos;
+    // Inside or out by where the move is, not by its being a move: a
+    // captured drag reports moves outside the window (ruling D3.4 item 3).
+    *ctx.pointer_inside = super::within_surface(
+        cursor,
+        ctx.renderer.surface_width(),
+        ctx.renderer.surface_height(),
+    );
 
     // Idle: a hand over what a click triggers something on, the default
     // elsewhere, and the hover follows the pointer. During a gesture the

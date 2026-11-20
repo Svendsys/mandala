@@ -146,12 +146,15 @@ impl<V: Copy> NameIndex<V> {
     }
 
     /// What `name` names, if anything. One probe: O(the name's length).
+    /// One body in every build: the probe compares through
+    /// `NameKey`'s [`Borrow`], which counts in a test build.
     pub fn get(&self, name: &str) -> Option<V> {
-        #[cfg(not(test))]
-        let found = self.map.get(name);
-        #[cfg(test)]
-        let found = self.map.get(&key(name));
-        found.copied()
+        self.map.get(name).copied()
+    }
+
+    /// Whether no name is indexed. O(1).
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
     }
 
     /// Room for `more` names besides those indexed.
@@ -162,11 +165,11 @@ impl<V: Copy> NameIndex<V> {
 
 /// A key of a [`NameIndex`]: the name, owned. It hashes and compares as
 /// the `str` it holds, and is looked up by one ([`Borrow`]). In a test
-/// build every compare is counted (`NAMES_COMPARED`) and a lookup goes
-/// through this type's own `PartialEq`, so a test can hold a lookup to
-/// the compares it makes — about one for a hash probe, as many as there
-/// are names for a scan of the keys, whoever wrote the scan (ruling D3.3
-/// item 3 on #252).
+/// build every compare is counted (`NAMES_COMPARED`): a probe compares a
+/// candidate through `borrow` (the hash map's `Equivalent`), and an
+/// insert through `PartialEq` — about one for a hash probe, as many as
+/// there are names for a scan of the keys, whoever wrote the scan
+/// (rulings D3.3 item 3 and D3.4 item 4 on #252).
 #[derive(Clone, Debug, Eq)]
 pub(crate) struct NameKey(Box<str>);
 
@@ -183,6 +186,9 @@ impl std::hash::Hash for NameKey {
 
 impl Borrow<str> for NameKey {
     fn borrow(&self) -> &str {
+        // The hash map calls this once a candidate it compares.
+        #[cfg(test)]
+        NAMES_COMPARED.with(|count| count.set(count.get() + 1));
         &self.0
     }
 }
@@ -195,17 +201,162 @@ impl PartialEq for NameKey {
     }
 }
 
-impl PartialEq<str> for NameKey {
-    fn eq(&self, other: &str) -> bool {
-        #[cfg(test)]
-        NAMES_COMPARED.with(|count| count.set(count.get() + 1));
-        &*self.0 == other
-    }
-}
-
 #[cfg(test)]
 thread_local! {
-    /// Test counter (ruling D3.3 item 3 on #252): how many times a
-    /// [`NameIndex`]'s keys have been compared on this thread.
+    /// Test counter (rulings D3.3 item 3 and D3.4 item 4 on #252): how
+    /// many times a [`NameIndex`]'s keys, and the ids and names a lookup
+    /// could scan ([`Name`]), have been compared on this thread.
     pub(crate) static NAMES_COMPARED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// An id or a name a lookup by name could scan instead of probing an
+/// index: a verb's, a presentation's and an edit's id, a theme
+/// variable's and a palette's name. A `String` — and in a test build a
+/// string whose every compare is counted (`counted::CountedName`), so a
+/// test holding a lookup to its compares sees a scan of the list as well
+/// as one of the index (ruling D3.4 item 4 on #252).
+#[cfg(not(test))]
+pub type Name = String;
+
+#[cfg(test)]
+pub use counted::CountedName as Name;
+
+/// `name` as a [`Name`]: how every place that makes one makes it, the
+/// same in a test build, where it is counted, as in any other.
+#[allow(
+    clippy::useless_conversion,
+    reason = "a `String` to a `String` outside a test build, where `Name` is one"
+)]
+pub fn name(name: impl Into<String>) -> Name {
+    Name::from(name.into())
+}
+
+/// The test build's [`Name`].
+#[cfg(test)]
+mod counted {
+    use super::NAMES_COMPARED;
+    use std::borrow::Borrow;
+    use std::fmt;
+    use std::ops::Deref;
+
+    /// A `String` that counts every compare made through it
+    /// (`NAMES_COMPARED`): what a test build stores an id or a name as.
+    #[derive(Clone, Default, PartialOrd, Ord)]
+    pub struct CountedName(String);
+
+    impl std::hash::Hash for CountedName {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.0.hash(state);
+        }
+    }
+
+    fn counted() {
+        NAMES_COMPARED.with(|count| count.set(count.get() + 1));
+    }
+
+    impl Deref for CountedName {
+        type Target = String;
+        fn deref(&self) -> &String {
+            &self.0
+        }
+    }
+
+    impl Borrow<str> for CountedName {
+        fn borrow(&self) -> &str {
+            &self.0
+        }
+    }
+
+    impl AsRef<str> for CountedName {
+        fn as_ref(&self) -> &str {
+            &self.0
+        }
+    }
+
+    impl fmt::Debug for CountedName {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            fmt::Debug::fmt(&self.0, f)
+        }
+    }
+
+    impl fmt::Display for CountedName {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            fmt::Display::fmt(&self.0, f)
+        }
+    }
+
+    impl From<String> for CountedName {
+        fn from(name: String) -> Self {
+            CountedName(name)
+        }
+    }
+
+    impl From<&str> for CountedName {
+        fn from(name: &str) -> Self {
+            CountedName(name.to_string())
+        }
+    }
+
+    impl From<&String> for CountedName {
+        fn from(name: &String) -> Self {
+            CountedName(name.clone())
+        }
+    }
+
+    impl From<CountedName> for String {
+        fn from(name: CountedName) -> Self {
+            name.0
+        }
+    }
+
+    impl Eq for CountedName {}
+
+    impl PartialEq for CountedName {
+        fn eq(&self, other: &Self) -> bool {
+            counted();
+            self.0 == other.0
+        }
+    }
+
+    impl PartialEq<str> for CountedName {
+        fn eq(&self, other: &str) -> bool {
+            counted();
+            self.0 == other
+        }
+    }
+
+    impl PartialEq<&str> for CountedName {
+        fn eq(&self, other: &&str) -> bool {
+            counted();
+            self.0 == *other
+        }
+    }
+
+    impl PartialEq<String> for CountedName {
+        fn eq(&self, other: &String) -> bool {
+            counted();
+            self.0 == *other
+        }
+    }
+
+    impl PartialEq<CountedName> for str {
+        fn eq(&self, other: &CountedName) -> bool {
+            counted();
+            self == other.0
+        }
+    }
+
+    impl PartialEq<CountedName> for &str {
+        fn eq(&self, other: &CountedName) -> bool {
+            counted();
+            *self == other.0
+        }
+    }
+
+    impl PartialEq<CountedName> for String {
+        fn eq(&self, other: &CountedName) -> bool {
+            counted();
+            *self == other.0
+        }
+    }
 }

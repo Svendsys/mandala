@@ -267,18 +267,21 @@ fn names_compared<R>(f: impl FnOnce() -> R) -> (usize, R) {
 }
 
 /// **A step's name is one probe, however long the lists it names
-/// into** (#380 review, item 1; D29; ruling D3.3 item 3): a map of 2,048
-/// presentations, 2,048 edits and 2,048 verbs, each verb naming the far
-/// end of each list, loads having compared at least one key per name its
-/// steps spell — 4 × 2,048 − 1 — and at most twice that, the room a
-/// hash probe's rare false match and the indexes' own building take;
-/// where a scan compares on the order of 2,048 for each.
+/// into** (#380 review, item 1; D29; rulings D3.3 item 3 and D3.4 item
+/// 4): a map of 2,048 presentations, 2,048 edits and 2,048 verbs, each
+/// verb naming the far end of each list, loads having compared at least
+/// one name per name its steps spell — 4 × 2,048 − 1 — and at most twice
+/// that, the room a hash probe's rare false match and the indexes' own
+/// building take; where a scan compares on the order of 2,048 for each.
+/// What is counted is every compare of a name a lookup could scan: the
+/// indexes' keys (through `Borrow`, the one body a probe compares
+/// through in every build) and, in a test build, the ids and names the
+/// lists hold (`keyed::Name`).
 ///
-/// Control, seen red: `NameIndex::get` scanning its keys
-/// (`iter().find(|(known, _)| **known == *name)`, nothing of it counted
-/// by hand) compares millions of keys for the 8,191 names — 10,253,826
-/// and 8,096,253 in two runs, a scan's length following the hash's
-/// order.
+/// Controls, each seen red: `NameIndex::get` scanning its keys
+/// (`iter().find(|(known, _)| Borrow::<str>::borrow(*known) == name)`,
+/// nothing of it counted by hand) compares millions; `NameKey`'s
+/// `Borrow` not counting leaves the count under the floor.
 #[test]
 fn test_a_step_resolves_each_name_in_one_probe() {
     const N: usize = 2_048;
@@ -333,15 +336,15 @@ fn test_a_step_resolves_each_name_in_one_probe() {
 /// key per name each resolution reads and at most twice that — where a
 /// scan of any of the three lists compares on the order of 4,096 a name.
 ///
-/// The floor is what catches a lookup that leaves the index: a scan of
-/// the list itself compares no key, and drops the count below one a
-/// name.
+/// The ids and names the lists hold count as the index's keys do (in a
+/// test build, `keyed::Name`; ruling D3.4 item 4), so a scan of a list
+/// counts wherever it is written — in place of the probe or beside it.
 ///
-/// Controls, each seen red: `NameIndex::get` scanning its keys compares
-/// hundreds of thousands of keys for the 256 names (369,088 and 582,400
-/// in two runs); `verb_of`, `var_of` and `palette_of`
-/// each back to its scan of the list (the verbs, the theme's variables,
-/// the palettes) compare 128, 192 and 192, under the floor.
+/// Controls, each seen red: the review's probe, `verb_of` scanning the
+/// verbs (`position(|verb| verb.id == id)`) before its probe; `verb_of`,
+/// `var_of` and `palette_of` each back to its scan of the list;
+/// `NameIndex::get` scanning its keys — each compares hundreds of
+/// thousands of names for the 256.
 #[test]
 fn test_a_trigger_resolves_each_name_in_one_probe() {
     const N: usize = 4_096;
@@ -393,12 +396,35 @@ fn test_a_trigger_resolves_each_name_in_one_probe() {
     let (ran, calls) = ran;
     ran.expect("runs");
     assert_eq!(calls, 2, "the presentation started and the edit run");
-    assert!(!doc.presentations().next().is_none(), "the presentation plays");
+    assert!(doc.presentations().next().is_some(), "the presentation plays");
     let names = 4 * M;
     assert!(
         (names..=2 * names).contains(&compared),
         "{compared} keys compared for {names} names"
     );
+}
+
+/// **A verb's index is the definitions' own, and a debug build says when
+/// it is not** (ruling D3.4 item 5): a `Definitions` holding a verb that
+/// no document indexed has no index to answer from, and `verb_by_id`
+/// stops there rather than answer `None` as though the map lacked it.
+///
+/// Control, seen red: `verb_by_id` without its `debug_assert!`s answers
+/// `None` and does not panic.
+#[test]
+#[should_panic(expected = "1 verbs and no index")]
+fn test_verb_by_id_refuses_definitions_no_document_indexed() {
+    use crate::document::ids::{Definitions, VerbDef};
+    let definitions = Definitions {
+        verbs: vec![VerbDef {
+            id: crate::document::keyed::name("go"),
+            name: "Go".to_string(),
+            description: String::new(),
+            steps: Vec::new(),
+        }],
+        ..Definitions::default()
+    };
+    let _ = definitions.verb_by_id("go");
 }
 
 /// **A link opens `http`, `https` and `mailto`, and nothing else**, at
@@ -467,14 +493,19 @@ fn test_a_link_to_a_file_is_refused_at_load_and_at_apply() {
 /// naming the header as written (or as it reads decoded, or the address
 /// part), and so are `attach` in three spellings, `X-Foo`, `from` and
 /// `reply-to`, and `body=a%26b%3Dc`, over-refused because its decoded
-/// query reads a header `b`. The six headers load, in any case, with
+/// query reads a header `b`; and (ruling D3.4 item 1) a header in the
+/// address part after a `&`, `;`, `,` or `#`, raw or encoded —
+/// verification review 5997452252's table — and `a@b;c=d`, over-refused.
+/// Plain addresses after a `,` or a `;` load. The six headers load, in any case, with
 /// encoded values and a `Q%26A` body, and an `https` address's `attach`
 /// is no header. The writer refuses one at apply, the map left as it
 /// was, and an edit's or a presentation's `set_link` to one is refused
 /// when it is read.
 ///
 /// Controls, each seen red: `check_link_url` as it was at 3e90f093 (the
-/// attachment denylist) loads `attach+`, the first row; `load_node`
+/// attachment denylist) loads `attach+`, the first row; as it was at
+/// fed68afd (D3.3, the address part checked for `?` alone) loads
+/// `a@example.org&attach=`; `load_node`
 /// accepting `LinkRefusal::MailHeader` loads it too; the validator
 /// accepting it applies the `set_link`; `resolve` accepting it reads the
 /// edit (and so the presentation, which reads through it).
@@ -505,6 +536,19 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
         ("mailto:a@example.org?from=b@example.org", "from"),
         ("mailto:a@example.org?reply-to=b@example.org", "reply-to"),
         ("mailto:a@example.org?body=a%26b%3Dc", "b"),
+        // Ruling D3.4 item 1: a header in the address part, after a
+        // `&`, `;`, `,` or `#`, raw or encoded — verification review
+        // 5997452252's table, each of which loaded at fed68afd.
+        ("mailto:a@example.org&attach=/etc/passwd", "attach"),
+        ("mailto:a@example.org&attach=/etc/passwd?subject=hi", "attach"),
+        ("mailto:a@example.org;attach=x", "attach"),
+        ("mailto:a@example.org,attach=x", "attach"),
+        ("mailto:a@example.org%26attach=x", "attach"),
+        ("mailto:a@example.org%3Battach=x", "attach"),
+        ("mailto:a@example.org#&attach=x", "attach"),
+        ("mailto:a@example.org#attach=x", "attach"),
+        // Over-refused: an address part with an `=` that is no header.
+        ("mailto:a@example.org;c=d", "c"),
     ] {
         let error = load(&map(url)).expect_err(url);
         assert_eq!(error.path, "nodes[0].sections[0].spans[0].link.url", "{url}");
@@ -521,6 +565,8 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
         "mailto:a@example.org?SUBJECT=Hi&Body=x&IN-REPLY-TO=y",
         "mailto:a@example.org?subject=%E2%9C%93+done",
         "mailto:a@example.org?body=Q%26A",
+        "mailto:a@example.org,b@example.org",
+        "mailto:a@example.org;b@example.org?subject=x",
         "https://example.org/?attach=x",
     ] {
         load(&map(url)).unwrap_or_else(|error| panic!("{url} loads: {error}"));

@@ -57,7 +57,10 @@ fn refuses(builder: DocumentBuilder, path: &str, kind: SaveErrorKind) {
 /// A theme of one variant `d` with the variables `names`, all black.
 fn theme_of(names: &[&str]) -> ThemeData {
     ThemeData {
-        variables: names.iter().map(|name| (*name).to_string()).collect(),
+        variables: names
+            .iter()
+            .map(|name| crate::document::keyed::name(*name))
+            .collect(),
         variants: vec![ThemeVariant {
             name: "d".to_string(),
             values: names.iter().map(|_| Rgba::opaque(0, 0, 0)).collect(),
@@ -106,7 +109,7 @@ fn test_a_theme_that_is_present_still_needs_a_variant() {
 fn test_a_theme_with_variables_or_an_active_index_but_no_variants_has_no_spelling() {
     let mut builder = DocumentBuilder::new();
     builder.theme(ThemeData {
-        variables: vec!["x".to_string()],
+        variables: vec![crate::document::keyed::name("x")],
         variants: Vec::new(),
         active: 0,
     });
@@ -185,7 +188,7 @@ fn test_two_variants_two_variables_or_two_palettes_of_one_name_have_no_spelling(
     let mut builder = DocumentBuilder::new();
     for _ in 0..2 {
         builder.palette(PaletteData {
-            name: "a.b".to_string(),
+            name: crate::document::keyed::name("a.b"),
             groups: Vec::new(),
         });
     }
@@ -196,7 +199,7 @@ fn test_two_variants_two_variables_or_two_palettes_of_one_name_have_no_spelling(
 fn test_two_definitions_of_one_id_have_no_spelling() {
     let mut builder = DocumentBuilder::new();
     let edit = |id: &str| EditDef {
-        id: id.to_string(),
+        id: crate::document::keyed::name(id),
         name: "n".to_string(),
         description: String::new(),
         reach: Reach::SelfNode,
@@ -216,7 +219,7 @@ fn test_two_definitions_of_one_id_have_no_spelling() {
     );
     let mut builder = DocumentBuilder::new();
     let verb = |id: &str| VerbDef {
-        id: id.to_string(),
+        id: crate::document::keyed::name(id),
         name: "n".to_string(),
         description: String::new(),
         steps: Vec::new(),
@@ -255,7 +258,7 @@ fn test_a_color_naming_a_variable_the_theme_lacks_has_no_spelling() {
     let mut builder = DocumentBuilder::new();
     builder.theme(theme_of(&[]));
     builder.palette(PaletteData {
-        name: "p".to_string(),
+        name: crate::document::keyed::name("p"),
         groups: vec![PaletteGroup {
             frame: PlainColor::Var(VarId(3)),
             text: PlainColor::Rgba(Rgba::opaque(0, 0, 0)),

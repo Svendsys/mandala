@@ -163,7 +163,7 @@ impl Builder {
             })?;
         self.vars = variables.clone();
         Ok(ThemeData {
-            variables,
+            variables: variables.into_iter().map(crate::document::keyed::name).collect(),
             variants: theme_variants,
             active,
         })
@@ -269,7 +269,7 @@ impl Builder {
                     out.push(b.at(Seg::Index(index), |b| b.palette_group(group))?);
                 }
                 Ok(PaletteData {
-                    name: name.to_string(),
+                    name: crate::document::keyed::name(name),
                     groups: out,
                 })
             })?;

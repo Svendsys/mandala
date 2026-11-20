@@ -128,9 +128,11 @@ mod tests {
     /// **A `mailto` naming any header but RFC 6068's is not opened**
     /// (ruling D3.3 item 1), whatever its spelling — a `+` beside the
     /// name, a NUL, an `attach` behind an encoded `&` or in the address
-    /// part — the message naming it; one naming only those is. Control,
-    /// seen red: `check_link_url` as it was at 3e90f093 (the attachment
-    /// denylist) lets the first through to the seam.
+    /// part, after a `&`, `;`, `,` or `#` there (ruling D3.4 item 1) —
+    /// the message naming it; one naming only those is. Controls, seen
+    /// red: `check_link_url` as it was at 3e90f093 (the attachment
+    /// denylist) lets the first through to the seam; as it was at
+    /// fed68afd, `a@example.org&attach=`.
     #[test]
     fn test_a_mailto_naming_another_header_does_not_reach_the_opener() {
         let _ = take_opened();
@@ -140,6 +142,14 @@ mod tests {
             ("mailto:a@example.org?subject=x%26attach=y", "`attach`"),
             ("mailto:a@example.org%3Fattach=y", "`a@example.org%3Fattach=y`"),
             ("mailto:a@example.org?from=b@example.org", "`from`"),
+            ("mailto:a@example.org&attach=/etc/passwd", "`attach`"),
+            ("mailto:a@example.org&attach=/etc/passwd?subject=hi", "`attach`"),
+            ("mailto:a@example.org;attach=x", "`attach`"),
+            ("mailto:a@example.org,attach=x", "`attach`"),
+            ("mailto:a@example.org%26attach=x", "`attach`"),
+            ("mailto:a@example.org%3Battach=x", "`attach`"),
+            ("mailto:a@example.org#&attach=x", "`attach`"),
+            ("mailto:a@example.org#attach=x", "`attach`"),
         ] {
             let refused = open_url(url).expect_err(url);
             assert!(

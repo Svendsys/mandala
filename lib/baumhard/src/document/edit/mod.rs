@@ -201,7 +201,7 @@ pub enum EditBody {
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditDef {
     /// The id keybinds, the console, macros and verbs name it by.
-    pub id: String,
+    pub id: crate::document::keyed::Name,
     /// The name shown to the user, and the history entry's label.
     pub name: String,
     /// What it does.
@@ -399,7 +399,7 @@ impl EditDef {
             EditBody::Mutator(ast) => {
                 let node = resolve::mutator(&ast.0, Some(doc)).map_err(|f| f.into_error(&self.id))?;
                 build(&node, &NoRuntime).map_err(|e| EditError::Build {
-                    edit: self.id.clone(),
+                    edit: self.id.to_string(),
                     message: e.to_string(),
                 })?
             }
@@ -407,11 +407,11 @@ impl EditDef {
                 let handler = handlers
                     .get(name.as_str())
                     .ok_or_else(|| EditError::UnknownHandler {
-                        edit: self.id.clone(),
+                        edit: self.id.to_string(),
                         handler: name.clone(),
                     })?;
                 let walks = handler(doc, geometry, &elements).map_err(|message| EditError::Handler {
-                    edit: self.id.clone(),
+                    edit: self.id.to_string(),
                     message,
                 })?;
                 return Ok(walks

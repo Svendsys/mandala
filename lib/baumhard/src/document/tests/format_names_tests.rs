@@ -108,7 +108,7 @@ fn test_a_document_holding_a_name_the_file_refuses_cannot_be_saved() {
     let saved = |name: &str| {
         let mut builder = DocumentBuilder::new();
         builder.palette(PaletteData {
-            name: name.to_string(),
+            name: crate::document::keyed::name(name),
             groups: Vec::new(),
         });
         check_savable(&builder.build().expect("a document"))

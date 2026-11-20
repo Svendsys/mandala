@@ -202,13 +202,32 @@ read two ways, and must pass both:
   one of the six before it, lowercased. A part with no `=` is text, so
   a body `Q%26A` loads.
 
-And an address part that decodes to hold a `?` (`a@b%3Fattach=…`) is
-refused, since a client may read the rest as a query. Such an address
-is refused at its `url` (`LinkMailHeader`, naming the header as written,
-or as it reads decoded). **What is over-refused**: a value that decodes
-to look like a header — `body=a%26b%3Dc` reads a header `b` once
-decoded — and a raw `;` or `?` in a value, which the split-first
-reading takes for a part with a name; encode them, or leave them out.
+And the address part — what comes before the first raw `?` — is read
+the way the query is (ruling D3.4 item 1), since a client may split
+what follows `mailto:` without first finding the `?`: one that decodes
+to hold a `?` (`a@b%3Fattach=…`) is refused, and, split on `?`, `&`,
+`;`, `,` and `#`, raw and decoded once, every part after the first that
+holds an `=` must name one of the six (`a@b&attach=…`, `a@b%26attach=…`
+and `a@b#attach=…` are refused). A part with no `=` is an address, so
+`a@b,c@d` loads. Such an address is refused at its `url`
+(`LinkMailHeader`, naming the header as written, or as it reads
+decoded).
+
+**What is over-refused**, and is kept so (ruling D3.4 item 2):
+
+- **a `body` or `subject` holding a web address with a query string**,
+  as a "share this page" link writes one —
+  `body=see%20https%3A%2F%2Fx.org%2F%3Fq%3D1` reads a header `q` once
+  decoded. Encoding does not help, since the decode-first reading
+  decodes it: the only way around it is to leave the query out of the
+  web address;
+- any other value that decodes to look like a header —
+  `body=a%26b%3Dc` reads a header `b`;
+- a raw `;` or `?` in a value, which the split-first reading takes for
+  a part with a name: encode it, or leave it out;
+- an address part holding an `=` that is no header, such as `a@b;c=d`
+  or `a@b,x=y@z` — RFC 6068 has a `to` part write `=` encoded anyway.
+
 A `set_link` an edit or a presentation writes to either kind of
 address is refused when the edit or the presentation is read, and
 again by the writer when it is applied, and the app's opener refuses

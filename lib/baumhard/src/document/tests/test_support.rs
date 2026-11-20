@@ -346,7 +346,10 @@ pub fn example() -> (DocumentBuilder, Example) {
 
     let mut builder = DocumentBuilder::new();
     builder.theme(ThemeData {
-        variables: vec!["accent".to_string(), "fg".to_string()],
+        variables: vec![
+            crate::document::keyed::name("accent"),
+            crate::document::keyed::name("fg"),
+        ],
         variants: vec![
             ThemeVariant {
                 name: "dark".to_string(),
@@ -360,7 +363,7 @@ pub fn example() -> (DocumentBuilder, Example) {
         active: 0,
     });
     let rainbow = builder.palette(PaletteData {
-        name: "rainbow".to_string(),
+        name: crate::document::keyed::name("rainbow"),
         groups: vec![palette_group(10), palette_group(11), palette_group(12)],
     });
     let root = builder.root();

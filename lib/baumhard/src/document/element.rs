@@ -174,7 +174,7 @@ impl Default for MapData {
 pub struct ThemeData {
     /// The variable names. A [`VarId`](crate::document::values::VarId)
     /// indexes this list.
-    pub variables: Vec<String>,
+    pub variables: Vec<crate::document::keyed::Name>,
     /// The variants.
     pub variants: Vec<ThemeVariant>,
     /// The index of the active variant in [`variants`](Self::variants).
@@ -195,7 +195,7 @@ pub struct ThemeVariant {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PaletteData {
     /// The palette's name.
-    pub name: String,
+    pub name: crate::document::keyed::Name,
     /// The groups: `groups[0]` colors the bound node, `groups[1]` its
     /// children, and so on; depths past the end take the last group.
     pub groups: Vec<PaletteGroup>,

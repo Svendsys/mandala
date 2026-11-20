@@ -200,6 +200,17 @@ impl ClickHit {
     }
 }
 
+/// Whether the pointer at `pos` (surface pixels) is inside a surface of
+/// `width` × `height` — the window, or the canvas in the browser: what
+/// decides whether the pointer is in, its position rather than the kind
+/// of event that reports it (ruling D3.4 item 3 on #252). A captured
+/// drag reports moves outside the window after the leave (winit on
+/// Windows sends a `CursorMoved` outside with its `CursorLeft`), and
+/// each of them is a pointer still out. O(1).
+pub(crate) fn within_surface(pos: (f64, f64), width: u32, height: u32) -> bool {
+    pos.0 >= 0.0 && pos.1 >= 0.0 && pos.0 < f64::from(width) && pos.1 < f64::from(height)
+}
+
 /// What a click at `canvas_pos` hits, through the projector's hit test
 /// (`MapView::hit`): never by reading a glyph layer for document state.
 /// The one hit chain both targets' click and tap paths run.
