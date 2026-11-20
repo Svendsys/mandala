@@ -71,7 +71,7 @@ use crate::flow::{PlacedRun, Rect};
 use crate::gfx_structs::run::{GlyphRunData, RunShape};
 use crate::gfx_structs::shape::NodeShape;
 use crate::projection::geometry::node_shape;
-use crate::projection::hit::{cell_count, cells, is_rectangle, span, BodyIndex};
+use crate::projection::hit::{cell_count, cells, span, BodyIndex};
 use crate::projection::input::{Dependent, ProjectionInput, Stage};
 use crate::projection::stages::{gap_and_size, glyph_ink, run_data, PhaseWork};
 use crate::projection::state::UnitBody;
@@ -115,17 +115,22 @@ fn meet(a: &Rect, b: &Rect) -> bool {
 
 impl PathCells {
     /// Set where `path`'s glyphs are: `boxes`, each a glyph's box grown by
-    /// the path's gap. A box that is no rectangle ([`is_rectangle`]) is
-    /// left out, as the regions' index finds nothing for it, so the hide
-    /// stage and the index agree on it; one reaching ±∞ is kept apart, as
-    /// any box past the cells is. O(its old and new cells).
+    /// the path's gap, or its label's text box. One reaching ±∞ — a
+    /// glyph's grown past what an `f32` holds, which `Rect::grown`
+    /// saturates (#364) — is kept apart, as any box past the cells is.
+    ///
+    /// Relies on every box being a rectangle ([`hit::is_rectangle`]): a
+    /// glyph's ink and a label's text box are finite (the flow and the
+    /// projection fuzz both hold it), and `Rect::grown` of a rectangle is
+    /// a rectangle for every gap. A box with a part that is no number
+    /// would replace or poison the unions below, by the order it comes in.
+    /// O(its old and new cells).
+    ///
+    /// [`hit::is_rectangle`]: crate::projection::hit::is_rectangle
     pub(crate) fn set(&mut self, path: NodeId, boxes: &[Rect]) {
         self.remove(path);
         let mut here: FxHashMap<Cell, Rect> = FxHashMap::default();
         for b in boxes {
-            if !is_rectangle(*b) {
-                continue;
-            }
             match cells(*b) {
                 Some(((x0, y0), (x1, y1))) => {
                     for x in x0..=x1 {
