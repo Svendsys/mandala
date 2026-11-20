@@ -825,7 +825,14 @@ What they hold, in short (each module's docs are the full list):
   and a ring that far out is past what the cap of a placement bounds the
   work of: the cap bounds its glyphs, and there each glyph reads its path
   a thousand times (#374). A `spacing` parts glyphs and moves no outline,
-  and is not part of the bound. A map outside the bound is skipped and
+  and is not part of where a ring lies. Where a ring lies does not bound
+  its work, so a `Repeat` ring's is part of the bound too (ruling B47.3):
+  its glyphs, bounded before it is laid as its outline's perimeter over
+  the least step a glyph takes along it (`projection_fuzz::repeat_glyphs`),
+  are held to `projection_fuzz::MOST_RING_GLYPHS`, the most whose work at
+  a stated rate a glyph, laid once in each projection a check makes, fits
+  the input's share — as the flow harnesses hold a ring to
+  `MAX_RING_GLYPHS`. A map outside the bound is skipped and
   counted, and the targets print the counts at every power of two and
   every 256 inputs, so even a slow run reports its skipped fraction; the
   suite holds the structured maps to fewer than half skipped. The engine

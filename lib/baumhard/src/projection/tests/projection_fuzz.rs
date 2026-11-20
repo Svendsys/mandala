@@ -35,9 +35,12 @@
 //! characters, all of its texts together — the flow harnesses' one frame
 //! an input — and every coordinate a path or an outline is drawn from is
 //! within [`EXTENT`](crate::projection::tests::projection_fuzz::EXTENT);
-//! and it draws at most
+//! it draws at most
 //! [`MAX_UNITS`](crate::projection::tests::projection_fuzz::MAX_UNITS)
-//! sections, rings, connectors and links.
+//! sections, rings, connectors and links; and each `Repeat` ring may lay
+//! at most
+//! [`MOST_RING_GLYPHS`](crate::projection::tests::projection_fuzz::MOST_RING_GLYPHS)
+//! glyphs.
 //!
 //! **A node's drawn rectangle and a frame's outline are coordinates of the
 //! bound** (rulings B47.1, B47.2). A path is drawn from the rectangles its
@@ -61,15 +64,27 @@
 //! point is a thousand units from the next, and each glyph of the same ring
 //! read its path a thousand times, 62 steps a glyph, every projection a
 //! check makes (#374;
-//! `test_every_dot_ring_the_bound_admits_takes_a_few_steps_a_glyph`). The
-//! bound holds where a ring lies, not how much work it is: a `Repeat` ring
-//! a little short of the cap takes some 40 steps a glyph wherever it lies,
-//! and inside the bound such a ring took 40 to 118 s of a check under ASan
-//! against the 20 s timeout (`DOT_STEPS_A_GLYPH` in the tests records the
-//! measurements; what bounds that work in this harness is open, the review
-//! of #378). A `spacing` is not part of the bound: it parts a placement's
-//! glyphs, and moves no outline and no path.
+//! `test_every_repeat_ring_the_bound_admits_fits_the_share`). A `spacing`
+//! is not part of where a ring lies: it parts a placement's glyphs, and
+//! moves no outline and no path.
 //!
+//! **A `Repeat` ring's work is part of the bound** (ruling B47.3). Where a
+//! ring lies does not bound how much work it is: a `Repeat` ring a little
+//! short of the cap closes its spacing and takes some 40 steps a glyph
+//! wherever it lies, and inside the extent such rings took 40 to 118 s of
+//! a check under ASan, against the 20 s timeout. So a map is projected
+//! here only when each `Repeat` ring may lay no more glyphs than
+//! `MOST_RING_GLYPHS` (`repeat_glyphs`, bounded before it is laid): the
+//! most whose work — `RING_STEPS_A_GLYPH` a glyph and `RING_SETUP_STEPS`,
+//! stated from a sweep of the rings the bound admits — laid
+//! `RING_LAYS_A_CHECK` times, once in each projection the check makes, fits
+//! the input's share, `flow_fuzz::INPUT_STEPS`. The flow harnesses hold
+//! their rings to `MAX_RING_GLYPHS` for the same reason (B17.2b). A ring's
+//! glyphs are bounded as its outline's perimeter at its reach over the
+//! least step one of them takes along it: its advance, from the narrowest
+//! glyph a face maps each character to, at the least size the ring can be,
+//! and its `spacing`.
+
 //! **A section's box is bounded before it is shaped** (ruling B47.2). The
 //! shaper sizes it to the larger of its `min_size` and its text's natural
 //! size, its widest line by the sum of its lines' heights, its lines
@@ -138,19 +153,22 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::arena::NodeId;
 use crate::document::element::{DocElement, RingData, SectionData};
 use crate::document::ids::Document;
-use crate::document::resolve::{resolve_frame, resolve_text_in, Binding};
+use crate::document::resolve::{resolve_frame, resolve_ring_in, resolve_text_in, Binding};
+use crate::document::values::FitMode;
 use crate::document::writer::transaction::TransactionKind;
 use crate::document::writer::ChangeSource;
 use crate::engine::interpolate::Snap;
 use crate::engine::tree::Tree;
-use crate::flow::tests::flow_fuzz::MAX_FRAME_GLYPHS;
-use crate::flow::{Rect, LINE_HEIGHT_FACTOR};
-use crate::font::fonts::{FontSystemLease, MAX_FONT_SIZE_PT};
+use crate::flow::tests::flow_fuzz::{INPUT_STEPS, MAX_FRAME_GLYPHS};
+use crate::flow::{Rect, LINE_HEIGHT_FACTOR, MAX_PLACED_GLYPHS};
+use crate::font::fallback::DEFAULT_FACE;
+use crate::font::fonts::{AppFont, FontSystemLease, COMPILED_FONT_ID_MAP, MAX_FONT_SIZE_PT};
 use crate::projection::geometry;
 use crate::projection::tests::corpus::{edit, edit_named, generated, EDITS};
 use crate::projection::tests::support::Projected;
 use crate::projection::Layer;
 use crate::util::tests::choices::Choices;
+use cosmic_text::fontdb::ID;
 
 /// How far from the origin, per axis, a coordinate of a map the loader
 /// targets project may be: positions, sizes, offsets and control points.
@@ -222,7 +240,7 @@ pub fn within_bound(doc: &Document) -> bool {
             DocElement::Link(l) => l.path.control_points.iter().all(|&p| near(p)),
             DocElement::Label(label) => label.style.offset.is_none_or(|o| o.abs() <= EXTENT),
             DocElement::PortalEnd(end) => end.style.offset.is_none_or(|o| o.abs() <= EXTENT),
-            DocElement::Frame(_) => outline_near(tree, id),
+            DocElement::Frame(_) => outline_near(tree, id) && repeat_rings_fit(tree, id),
             DocElement::Ring(ring) => {
                 let spans: usize = id
                     .children(arena)
@@ -354,6 +372,181 @@ pub(crate) fn drawn_bound(tree: &Tree<DocElement>, node: NodeId) -> Rect {
     geometry::drawn_rect(data.position, data.min_size, corners)
 }
 
+/// How many times a check lays a ring at most (ruling B47.3): once in each
+/// full projection it makes — its first, and the sweep's comparison — and
+/// for its one edit at most four updates, each followed by the oracle's
+/// full projection: a transaction's two stages, its interpolation and its
+/// commit (`sweep`). A fuzz build shares no placement between them.
+pub const RING_LAYS_A_CHECK: usize = 10;
+
+/// The most glyph steps a `Repeat` ring the bound admits takes for each
+/// glyph `repeat_glyphs` bounds it to, past [`RING_SETUP_STEPS`] (ruling
+/// B47.3). Stated from measurement: the engine's own bound is its budget,
+/// `STEPS_PER_GLYPH`, 3,000 a glyph over a floor of 400,000 steps a lay
+/// (B17.2c), under which ten lays fit no ring at all into the input's
+/// share, and its spacing solves are read against that budget and nothing
+/// less. A sweep of 576 admitted rings — `·` at a quarter and at the whole
+/// of its node, `MANDALA `, `*` at a twentieth, and `·`, a ring of `|` and
+/// one of corners spaced, round an ellipse, a sharp and a rounded rectangle
+/// 1 to 1,000 across, from the node's side to 3,000 out — and the densest
+/// rings this bound admits took at most some 82 steps a glyph of their
+/// bound: `*` at a twentieth of an ellipse 1,000 across, 1,127 out, 48,974
+/// steps for 363 glyphs laid of 597 bounded. 128 holds that with half as
+/// much again. `test_every_repeat_ring_the_bound_admits_fits_the_share`
+/// holds the densest rings the bound admits to it. What a step costs under
+/// ASan, 6.6 to 10 µs where measured against the share's 32.3, and the
+/// three to five lays these maps' checks make against the ten counted
+/// leave a ring several times past this still within the timeout.
+pub const RING_STEPS_A_GLYPH: usize = 128;
+
+/// The most glyph steps a `Repeat` ring the bound admits takes past
+/// [`RING_STEPS_A_GLYPH`] a glyph of its bound (ruling B47.3): its setup,
+/// its path's tables, and shaping and inking its copy, which do not grow
+/// with its glyphs. Stated from the same sweep, whose most past 64 a glyph
+/// was 5,481, rounded up to a power of two.
+pub const RING_SETUP_STEPS: usize = 8_192;
+
+/// The most glyphs a `Repeat` ring the bound admits may lay (ruling
+/// B47.3), 298: the most whose work, [`RING_STEPS_A_GLYPH`] a glyph and
+/// [`RING_SETUP_STEPS`], laid [`RING_LAYS_A_CHECK`] times, fits the input's
+/// share, `flow_fuzz::INPUT_STEPS` at `flow_fuzz::ASAN_STEP_NANOS` a step —
+/// the flow harnesses' share for an input, whose rings they lay at
+/// `MAX_RING_GLYPHS` (B17.2b) for the same reason. The densest ring it
+/// admits, by the steps it takes, `*` at a twentieth of an ellipse 1,000
+/// across, 311 out — 182 glyphs laid of 298 bounded, 19,750 steps a lay —
+/// ran its whole input in 0.82 s under ASan (`cargo fuzz run load_raw
+/// <file> -- -runs=1`, the load average some 5), against the 20 s
+/// timeout, `flow_fuzz::FUZZ_TIMEOUT_SECONDS`.
+pub const MOST_RING_GLYPHS: usize = (INPUT_STEPS / RING_LAYS_A_CHECK - RING_SETUP_STEPS) / RING_STEPS_A_GLYPH;
+
+/// The most glyphs `ring` may lay, laid `Repeat` (ruling B47.3), bounded
+/// before it is laid: the perimeter its outline can have, over the least
+/// one of its glyphs can advance along it, and a copy and its corners more.
+/// `None` for a ring of another fit, which lays its text once.
+///
+/// - **The perimeter**: its node's drawn rectangle at most
+///   ([`drawn_bound`]) grown by its frame's outermost reach
+///   ([`outline_reach`]), whose perimeter, 2 (w + h) + 8 × reach, is at
+///   least that of any convex outline inside it — every node shape is
+///   convex, and an outline grown from one is.
+/// - **A glyph's step at the least**: each text it lays — its spans', each
+///   in its own font, or the `vertical` its spans have nothing to draw
+///   beside — over its characters, as its grapheme clusters advance at
+///   least ([`FaceMetrics::narrowest_cluster`]) at the least point size its
+///   ring can be, plus its `spacing`, which a `Repeat` ring adds between
+///   every two glyph steps. The size is relative to its node's drawn
+///   rectangle, at least `min_size` (D5), and so at least `min_size`'s
+///   point size. A ring that lays by direction steps a run down a side by
+///   its glyphs' ink, upright, and not by their advance
+///   (`place::directional`): its `spacing` alone is a step it takes at
+///   least. One whose step can be nothing lays the cap.
+/// - The glyphs of a copy past that, a copy on each of the four runs of a
+///   ring laid by direction, and its corners; and the cap,
+///   `MAX_PLACED_GLYPHS`, at most.
+///
+/// What it takes on trust, as [`box_bound`] does: that a character lays a
+/// glyph at most, in its span's family where a face of that family maps
+/// it, and no narrower than the glyph it maps to; and that a `Repeat` ring
+/// of its spans steps along its outline by its glyphs' advances, as every
+/// ring the end-to-end property reads does (`rings_within_the_extent`
+/// holds what each lays to this). O(its texts), and once a process
+/// [`face_metrics`].
+pub(crate) fn repeat_glyphs(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId) -> Option<usize> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let arena = tree.arena();
+    let resolved = resolve_ring_in(tree, ring, Binding::Carried(None), &mut ());
+    if !matches!(resolved.fit, FitMode::Repeat) {
+        return None;
+    }
+    let node = frame.parent(arena)?;
+    let DocElement::Node(data) = arena[node].get() else {
+        return None;
+    };
+    let style = resolve_text_in(tree, ring, Binding::Carried(None), &mut ());
+    // Each text it lays, as runs of a font: its spans', one copy, each in
+    // its own font, and its `vertical`, in its own.
+    let spans: Vec<(AppFont, &str)> = ring
+        .children(arena)
+        .filter_map(|span| match arena[span].get() {
+            DocElement::Span(text) => Some((
+                resolve_text_in(tree, span, Binding::Carried(None), &mut ()).font,
+                text.text.as_str(),
+            )),
+            _ => None,
+        })
+        .filter(|(_, text)| !text.is_empty())
+        .collect();
+    let mut texts: Vec<Vec<(AppFont, &str)>> = Vec::new();
+    if !spans.is_empty() {
+        texts.push(spans);
+    }
+    if let Some(vertical) = resolved.directional.vertical.as_deref() {
+        texts.push(vec![(style.font, vertical)]);
+    }
+    let corners: usize = resolved
+        .directional
+        .corners
+        .as_ref()
+        .map_or(0, |corners| corners.iter().map(|c| c.chars().count()).sum());
+    if texts.is_empty() {
+        return Some(corners.min(MAX_PLACED_GLYPHS));
+    }
+    let least_rect = Rect::new(Vec2::ZERO, geometry::usable_size(data.min_size));
+    let size = f64::from(geometry::points(style.size, least_rect));
+    let spacing = if resolved.spacing.is_finite() {
+        f64::from(resolved.spacing.max(0.0))
+    } else {
+        0.0
+    };
+    let faces = face_metrics();
+    // The least a glyph of each text advances along the outline, and the
+    // most glyphs a copy of any holds.
+    let mut least = f64::INFINITY;
+    let mut copy = 0usize;
+    for text in &texts {
+        let (mut chars, mut clusters, mut advance) = (0usize, 0usize, 0.0f64);
+        for &(font, run) in text {
+            chars += run.chars().count();
+            for cluster in run.graphemes(true) {
+                clusters += 1;
+                advance += f64::from(faces.narrowest_cluster(font, cluster));
+            }
+        }
+        // A ring that lays by direction steps a run down a side by its
+        // glyphs' ink, upright, not by their advance (`place::directional`):
+        // only its `spacing` is a step it takes at least.
+        let step = if resolved.directional.is_set() {
+            clusters as f64 * spacing
+        } else {
+            advance * size + clusters as f64 * spacing
+        };
+        least = least.min(step / chars as f64);
+        copy = copy.max(chars);
+    }
+    let drawn = drawn_bound(tree, node);
+    let reach = outline_reach(tree, frame);
+    let perimeter = 2.0 * f64::from(drawn.size.x + drawn.size.y) + 8.0 * reach;
+    let glyphs = perimeter / least;
+    if !(glyphs.is_finite() && glyphs < MAX_PLACED_GLYPHS as f64) {
+        return Some(MAX_PLACED_GLYPHS);
+    }
+    // A ring laid by direction lays a glyph at least on each of its four
+    // runs, however short.
+    let runs = if resolved.directional.is_set() { 4 } else { 1 };
+    Some((glyphs.ceil() as usize + runs * copy + corners).min(MAX_PLACED_GLYPHS))
+}
+
+/// Whether every `Repeat` ring of `frame` may lay no more glyphs than
+/// [`MOST_RING_GLYPHS`] ([`repeat_glyphs`]; ruling B47.3). O(its rings'
+/// texts).
+fn repeat_rings_fit(tree: &Tree<DocElement>, frame: NodeId) -> bool {
+    let arena = tree.arena();
+    frame
+        .children(arena)
+        .filter(|&ring| matches!(arena[ring].get(), DocElement::Ring(_)))
+        .all(|ring| repeat_glyphs(tree, frame, ring).is_none_or(|glyphs| glyphs <= MOST_RING_GLYPHS))
+}
+
 /// How many spaces on a tab is laid to its next stop at most: the tab
 /// width of cosmic-text's `Buffer`, which `flow::shape_box` keeps, a stop
 /// every eight spaces.
@@ -416,44 +609,161 @@ fn box_bound(tree: &Tree<DocElement>, section: NodeId, data: &SectionData) -> Ve
     natural.max(geometry::usable_size(data.min_size))
 }
 
-/// The widest advance, in ems, of any glyph of any face the font system
-/// holds — the compiled faces and, on native, the host's — at any
-/// instance the shaper lays a variable face at (ruling B47.2; see the
-/// module docs): what a character's glyph advances its line by at most,
-/// times its point size. Read once a process, from every face
-/// ([`face_widest_advance`]). O(the font system's glyphs) the first time,
-/// O(1) after.
+/// What the bound reads of the faces the font system holds — the compiled
+/// faces and, on native, the host's — at any instance the shaper lays a
+/// variable face at (rulings B47.2, B47.3; see the module docs), in ems.
+/// Read once a process ([`face_metrics`]).
+pub(crate) struct FaceMetrics {
+    /// The widest advance of any glyph of any face: what a character's
+    /// glyph advances its line by at most, times its point size.
+    pub(crate) widest: f32,
+    /// For each code point some face maps, the narrowest advance of the
+    /// glyph any face maps it to: what a character the shaper falls back
+    /// for advances by at least, times its point size.
+    pub(crate) narrowest: FxHashMap<u32, f32>,
+    /// For each compiled family, and each code point a face of it maps, the
+    /// narrowest advance of the glyph a face of it maps it to: what a
+    /// character of a span in that family advances by at least.
+    pub(crate) family: FxHashMap<AppFont, FxHashMap<u32, f32>>,
+    /// The narrowest `.notdef` of any face: what a character no face maps
+    /// advances by at least.
+    pub(crate) notdef: f32,
+}
+
+impl FaceMetrics {
+    /// The narrowest advance `c` may take in a span of `font`, in ems: the
+    /// narrowest its family's faces map it to, where one maps it — the
+    /// shaper lays a character in the family it is pinned to, or the
+    /// default face, whenever a face of it holds the character — or the
+    /// narrowest any face maps it to, where none does, or `.notdef`'s.
+    /// O(1).
+    pub(crate) fn narrowest_char(&self, font: AppFont, c: char) -> f32 {
+        let font = if font == AppFont::Any {
+            DEFAULT_FACE.0
+        } else {
+            font
+        };
+        let code = u32::from(c);
+        self.family
+            .get(&font)
+            .and_then(|family| family.get(&code))
+            .or_else(|| self.narrowest.get(&code))
+            .copied()
+            .unwrap_or(self.notdef)
+    }
+
+    /// The narrowest advance a grapheme cluster of `cluster` may take in a
+    /// span of `font`, in ems: its one character's ([`Self::narrowest_char`]),
+    /// or for a cluster of several the narrowest any face maps any of them
+    /// to — a mark or a joiner of none, which the shaper may draw over its
+    /// base or into one glyph with it, in whichever face holds the whole
+    /// cluster. O(its characters).
+    pub(crate) fn narrowest_cluster(&self, font: AppFont, cluster: &str) -> f32 {
+        let mut chars = cluster.chars();
+        match (chars.next(), chars.next()) {
+            (Some(c), None) => self.narrowest_char(font, c),
+            _ => cluster
+                .chars()
+                .map(|c| self.narrowest.get(&u32::from(c)).copied().unwrap_or(self.notdef))
+                .fold(f32::INFINITY, f32::min)
+                .min(self.notdef),
+        }
+    }
+}
+
+/// The widest advance any glyph can have, in ems ([`FaceMetrics::widest`]).
+/// O(1) once [`face_metrics`] has read the faces.
 pub(crate) fn widest_advance() -> f32 {
-    static WIDEST: OnceLock<f32> = OnceLock::new();
-    *WIDEST.get_or_init(|| {
+    face_metrics().widest
+}
+
+/// [`FaceMetrics`] of every face the font system holds, read once a
+/// process ([`face_advances`]). O(the font system's glyphs and code
+/// points) the first time, O(1) after.
+pub(crate) fn face_metrics() -> &'static FaceMetrics {
+    static METRICS: OnceLock<FaceMetrics> = OnceLock::new();
+    METRICS.get_or_init(|| {
         crate::font::fonts::init();
+        let compiled: FxHashSet<ID> = COMPILED_FONT_ID_MAP
+            .values()
+            .flat_map(|ids| ids.iter().copied())
+            .collect();
         let mut lease = FontSystemLease::new("the projection's work bound");
         let db = lease.fonts().db();
-        // A face registered at several weights is one source read once.
+        // A face registered at several weights is one source, read once:
+        // each face's source, and each compiled source's code points.
+        let mut source_of: FxHashMap<ID, (usize, usize, u32)> = FxHashMap::default();
+        let mut compiled_maps: FxHashMap<(usize, usize, u32), Vec<(u32, f32)>> = FxHashMap::default();
         let mut read: FxHashSet<(usize, usize, u32)> = FxHashSet::default();
-        let mut widest = 0.0f32;
+        let mut metrics = FaceMetrics {
+            widest: 0.0,
+            narrowest: FxHashMap::default(),
+            family: FxHashMap::default(),
+            notdef: f32::INFINITY,
+        };
         for face in db.faces() {
-            let most = db.with_face_data(face.id, |data, index| {
-                read.insert((data.as_ptr() as usize, data.len(), index))
-                    .then(|| face_widest_advance(data, index))
-                    .flatten()
+            db.with_face_data(face.id, |data, index| {
+                let source = (data.as_ptr() as usize, data.len(), index);
+                source_of.insert(face.id, source);
+                if !read.insert(source) {
+                    return;
+                }
+                let Some(face_read) = face_advances(data, index) else {
+                    return;
+                };
+                metrics.widest = metrics.widest.max(face_read.widest);
+                metrics.notdef = metrics.notdef.min(face_read.notdef);
+                for &(code, least) in &face_read.codes {
+                    narrowest_into(&mut metrics.narrowest, code, least);
+                }
+                if compiled.contains(&face.id) {
+                    compiled_maps.insert(source, face_read.codes);
+                }
             });
-            widest = widest.max(most.flatten().unwrap_or(0.0));
         }
-        widest
+        for (font, ids) in COMPILED_FONT_ID_MAP.iter() {
+            let family = metrics.family.entry(*font).or_default();
+            for codes in ids.iter().filter_map(|id| compiled_maps.get(source_of.get(id)?)) {
+                for &(code, least) in codes {
+                    narrowest_into(family, code, least);
+                }
+            }
+        }
+        if !metrics.notdef.is_finite() {
+            metrics.notdef = 0.0;
+        }
+        metrics
     })
 }
 
-/// The widest advance of a glyph of the face `index` of `data`, in ems:
-/// each glyph's advance at its default instance and, in a variable face,
-/// the most its variations add — every positive delta its `HVAR` holds for
-/// it, and a unit for the rounding of their sum, since each region's
-/// scalar is at most one; in one with no `HVAR`, its advance at every
-/// weight from 100 to 900, the one axis the shaper sets (`wght`, the
-/// span's weight). `None` for a face that cannot be read, which the shaper
-/// cannot lay a glyph from either. O(its glyphs), times 801 for a variable
-/// face with no `HVAR`.
-fn face_widest_advance(data: &[u8], index: u32) -> Option<f32> {
+/// Keep `least` as `code`'s narrowest in `into` where it is narrower.
+fn narrowest_into(into: &mut FxHashMap<u32, f32>, code: u32, least: f32) {
+    into.entry(code)
+        .and_modify(|was| *was = was.min(least))
+        .or_insert(least);
+}
+
+/// What [`face_advances`] reads of one face, in ems.
+struct FaceAdvances {
+    /// Its widest glyph.
+    widest: f32,
+    /// Its `.notdef`, at its narrowest.
+    notdef: f32,
+    /// Each code point it maps, with the narrowest its glyph can be.
+    codes: Vec<(u32, f32)>,
+}
+
+/// The advances of the face `index` of `data`, in ems: each glyph's
+/// advance at its default instance, and in a variable face what its
+/// variations add or take at most — every positive and every negative
+/// delta its `HVAR` holds for it, each region's scalar being at most one,
+/// and a unit either way for the rounding of their sum; in one with no
+/// `HVAR`, its advance at every weight from 100 to 900, the one axis the
+/// shaper sets (`wght`, the span's weight). `None` for a face that cannot
+/// be read, which the shaper cannot lay a glyph from either. O(its glyphs
+/// and code points), its glyphs 801 times over for a variable face with no
+/// `HVAR`.
+fn face_advances(data: &[u8], index: u32) -> Option<FaceAdvances> {
     use cosmic_text::skrifa::instance::{LocationRef, Size};
     use cosmic_text::skrifa::raw::tables::variations::DeltaSetIndex;
     use cosmic_text::skrifa::raw::TableProvider;
@@ -465,47 +775,71 @@ fn face_widest_advance(data: &[u8], index: u32) -> Option<f32> {
     let advance = |metrics: &cosmic_text::skrifa::metrics::GlyphMetrics<'_>, glyph: u32| {
         metrics.advance_width(GlyphId::new(glyph)).unwrap_or(0.0)
     };
-    let most = (0..glyphs).map(|g| advance(&default, g)).fold(0.0f32, f32::max);
-    if font.axes().is_empty() {
-        return Some(most / units);
-    }
-    // Every glyph's default advance and its positive deltas: `None` where
-    // the face has no `HVAR`, or one that cannot be read.
-    let varied = font.hvar().ok().and_then(|hvar| {
-        let store = hvar.item_variation_store().ok()?;
-        let mapping = hvar.advance_width_mapping().and_then(Result::ok);
-        let mut most = most;
-        for glyph in 0..glyphs {
-            let at = match &mapping {
-                Some(map) => map.get(glyph).ok(),
-                None => u16::try_from(glyph)
-                    .ok()
-                    .map(|inner| DeltaSetIndex { outer: 0, inner }),
-            };
-            let grown: i64 = at
-                .filter(|at| *at != DeltaSetIndex::NO_VARIATION_INDEX)
-                .and_then(|at| {
-                    let deltas = store.item_variation_data().get(usize::from(at.outer))?.ok()?;
-                    Some(deltas.delta_set(at.inner).map(|d| i64::from(d.max(0))).sum())
-                })
-                .unwrap_or(0);
-            most = most.max(advance(&default, glyph) + grown as f32 + 1.0);
+    // Each glyph's narrowest and widest advance, in font units.
+    let mut range: Vec<(f32, f32)> = (0..glyphs)
+        .map(|g| {
+            let at = advance(&default, g);
+            (at, at)
+        })
+        .collect();
+    if !font.axes().is_empty() {
+        let varied = font.hvar().ok().and_then(|hvar| {
+            let store = hvar.item_variation_store().ok()?;
+            let mapping = hvar.advance_width_mapping().and_then(Result::ok);
+            for (glyph, (least, most)) in range.iter_mut().enumerate() {
+                let glyph = glyph as u32;
+                let at = match &mapping {
+                    Some(map) => map.get(glyph).ok(),
+                    None => u16::try_from(glyph)
+                        .ok()
+                        .map(|inner| DeltaSetIndex { outer: 0, inner }),
+                };
+                let (taken, added) = at
+                    .filter(|at| *at != DeltaSetIndex::NO_VARIATION_INDEX)
+                    .and_then(|at| {
+                        let deltas = store.item_variation_data().get(usize::from(at.outer))?.ok()?;
+                        Some(
+                            deltas
+                                .delta_set(at.inner)
+                                .fold((0i64, 0i64), |(taken, added), d| {
+                                    (taken + i64::from(d.min(0)), added + i64::from(d.max(0)))
+                                }),
+                        )
+                    })
+                    .unwrap_or((0, 0));
+                *least = (*least + taken as f32 - 1.0).max(0.0);
+                *most += added as f32 + 1.0;
+            }
+            Some(())
+        });
+        if varied.is_none() {
+            if let Some(axis) = font.axes().get_by_tag(Tag::new(b"wght")) {
+                for weight in 100..=900u16 {
+                    let weight = f32::from(weight).clamp(axis.min_value(), axis.max_value());
+                    let location = font.axes().location([(Tag::new(b"wght"), weight)]);
+                    let at = font.glyph_metrics(Size::unscaled(), &location);
+                    for (glyph, (least, most)) in range.iter_mut().enumerate() {
+                        let width = advance(&at, glyph as u32);
+                        *least = least.min(width);
+                        *most = most.max(width);
+                    }
+                }
+            }
         }
-        Some(most)
-    });
-    if let Some(varied) = varied {
-        return Some(varied / units);
     }
-    let mut most = most;
-    if let Some(axis) = font.axes().get_by_tag(Tag::new(b"wght")) {
-        for weight in 100..=900u16 {
-            let weight = f32::from(weight).clamp(axis.min_value(), axis.max_value());
-            let location = font.axes().location([(Tag::new(b"wght"), weight)]);
-            let metrics = font.glyph_metrics(Size::unscaled(), &location);
-            most = (0..glyphs).map(|g| advance(&metrics, g)).fold(most, f32::max);
-        }
-    }
-    Some(most / units)
+    let codes = font
+        .charmap()
+        .mappings()
+        .filter_map(|(code, glyph)| {
+            let &(least, _) = range.get(glyph.to_u32() as usize)?;
+            Some((code, least / units))
+        })
+        .collect();
+    Some(FaceAdvances {
+        widest: range.iter().map(|&(_, most)| most).fold(0.0f32, f32::max) / units,
+        notdef: range.first().map_or(f32::INFINITY, |&(least, _)| least / units),
+        codes,
+    })
 }
 
 /// The projection properties of a map the loader accepted (see the module
