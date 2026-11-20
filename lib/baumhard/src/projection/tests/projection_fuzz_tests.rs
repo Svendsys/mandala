@@ -746,8 +746,8 @@ fn test_the_most_ring_glyphs_fill_the_inputs_share() {
 /// ruling B47.3), as every check of a fuzz run holds it
 /// ([`rings_within_their_work`]), and draws within the extent
 /// ([`rings_within_the_extent`]); each a unit further out is outside. The
-/// rings the review measured under ASan ([`measured_rings`]) and both
-/// loader findings are outside, so none is laid.
+/// rings the review measured under ASan ([`measured_rings`]) and the
+/// three loader findings of a ring far out are outside, so none is laid.
 ///
 /// Under ASan (`cargo fuzz run load_raw <file> -- -runs=1`, the load
 /// average some 2), against `FUZZ_TIMEOUT_SECONDS`, 20 s, each input's
@@ -768,7 +768,7 @@ fn test_the_most_ring_glyphs_fill_the_inputs_share() {
 #[test]
 fn test_every_repeat_ring_the_bound_admits_fits_the_share() {
     use crate::flow::{LAST_DIRECTIONAL, LAST_RING};
-    let findings: [(&str, &[u8]); 2] = [
+    let findings: [(&str, &[u8]); 3] = [
         (
             "the finding of #374",
             include_bytes!(
@@ -779,6 +779,12 @@ fn test_every_repeat_ring_the_bound_admits_fits_the_share() {
             "the finding of #375",
             include_bytes!(
                 "../../document/tests/fuzz_findings/a_ring_spaced_too_far_out_to_project_in_time.mandala.json"
+            ),
+        ),
+        (
+            "the finding of #382",
+            include_bytes!(
+                "../../document/tests/fuzz_findings/a_ring_unspaced_too_far_out_to_project_in_time.mandala.json"
             ),
         ),
     ];
