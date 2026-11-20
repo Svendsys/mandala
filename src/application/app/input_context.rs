@@ -75,6 +75,10 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// dedupes `set_cursor` only on macOS / X11; Windows + Wayland
     /// re-issue the underlying OS call every time.
     pub cursor_icon_last: &'a mut winit::window::CursorIcon,
+    /// Whether the pointer is inside the window (`InitState`'s), which a
+    /// gesture's end reads to release a hover the pointer left during
+    /// it.
+    pub pointer_inside: &'a mut bool,
     /// Resolved user keybinds. `&` (immutable) — no dispatch path
     /// mutates keybinds; query methods (`action_for_*`, `macro_for`,
     /// `edit_for`, `has_*`) are all `&self`. Track-C
@@ -260,6 +264,7 @@ impl InputHandlerContext<'_> {
     /// a console line.
     pub(super) fn on_mouse_input(&mut self, state: ElementState, button: MouseButton) -> bool {
         event_mouse_click::handle_mouse_input(state, button, self);
+        event_cursor_moved::release_hover_if_outside(self);
         true
     }
 
@@ -340,15 +345,25 @@ impl InputHandlerContext<'_> {
         event_cursor_moved::handle_cursor_left(self)
     }
 
+    /// `WindowEvent::CursorEntered`: the pointer is inside again. Nothing
+    /// to draw; the next move decides the hover.
+    pub(super) fn on_cursor_entered(&mut self) -> bool {
+        *self.pointer_inside = true;
+        false
+    }
+
     /// `WindowEvent::KeyboardInput`. A press reaches the full
     /// handler; a release only ends a pan the key holds, which
     /// changes no pixels. Returns whether to request a redraw.
     pub(super) fn on_keyboard_input(&mut self, logical_key: Key, state: ElementState) -> bool {
         if state != ElementState::Pressed {
             event_keyboard::handle_key_release(&logical_key, self);
-            return false;
+            // A release can end a pan the key held: a hover the pointer
+            // left during it is released now.
+            return event_cursor_moved::release_hover_if_outside(self);
         }
         event_keyboard::handle_keyboard_input(logical_key, self);
+        event_cursor_moved::release_hover_if_outside(self);
         true
     }
 
@@ -360,6 +375,7 @@ impl InputHandlerContext<'_> {
     pub(super) fn on_focus_lost(&mut self) -> bool {
         let was_idle = matches!(*self.drag_state, DragState::None);
         self.drag_state.end_on_focus_loss();
-        !was_idle
+        let released = event_cursor_moved::release_hover_if_outside(self);
+        !was_idle || released
     }
 }

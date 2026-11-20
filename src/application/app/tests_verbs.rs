@@ -225,18 +225,10 @@ fn test_a_click_runs_the_node_verb_and_the_span_link() {
     assert!(playing(&doc, "h").is_empty() && take_opened().is_empty());
 }
 
-/// **A click on a linked span runs the link, and not its node's
-/// `on.click`** (ruling D3.1 item 2 on #252): with node 2's own click
-/// starting `h` on node 3, a click on its span linked to `go` starts `h`
-/// on node 5 alone, and one on its span linked to an address opens the
-/// address and starts nothing; a click on its plain span, or its body,
-/// runs the node's click — node 3 — so the fixture can tell the two
-/// apart.
-///
-/// Control, seen red: `click_of` reading the node's `on.click` before
-/// the span's link starts `h` on node 3 for the linked span.
-#[test]
-fn test_a_click_on_a_linked_span_runs_the_link_only() {
+/// [`MAP`] with node 2's own click starting `h` on node 3, a top-level
+/// node of its own: what tells a click on node 2's spans that ran the
+/// node's click from one that ran a link.
+fn clicked_map() -> MindMapDocument {
     let json = MAP
         .replace(
             r#"{"id":2,"parent":1,"position":[300,0],"sections""#,
@@ -252,7 +244,66 @@ fn test_a_click_on_a_linked_span_runs_the_link_only() {
             r#" {"id":3,"position":[1200,0],"sections":[{"spans":[{"text":"three"}]}]},
  {"id":5,"position":[900,0],"#,
         );
-    let fresh = || MindMapDocument::from_json_str(&json, None, 50).expect("the map loads");
+    MindMapDocument::from_json_str(&json, None, 50).expect("the map loads")
+}
+
+/// **The press decides what a click triggers, and a press on what is
+/// gone by the release is a click on nothing** (ruling D3.3 item 5): the
+/// press lands on node 2's span linked to `go`, the span is removed
+/// before the release, and the click triggers nothing — not the link,
+/// which is gone, and not node 2's own click either, which the press was
+/// never on. A press on node 2's body, still there, runs its click.
+///
+/// Control, seen red: `click_of` without its check of what the press
+/// landed on falls back to the node, starting `h` on node 3.
+#[test]
+fn test_a_press_on_what_is_gone_by_the_release_triggers_nothing() {
+    use baumhard::document::mutation::compose;
+    use baumhard::document::writer::EditRequest;
+    let mut doc = clicked_map();
+    let two = node(&doc, 2);
+    let [linked, ..] = spans(&doc)[..] else { panic!("three spans") };
+    let section = doc.doc().parent(linked).expect("the span's section");
+    let pressed = hit(two, section, Some(linked));
+    let steps = compose::remove(doc.doc(), DocKind::Span, &[linked]).expect("composes");
+    doc.apply(EditRequest::new(steps, "remove"), ChangeSource::Edit)
+        .expect("the span is removed");
+    assert!(doc.doc().get(linked).is_none(), "precondition: the span is gone");
+    let edits = registry();
+    let click = |doc: &mut MindMapDocument, hit: &Hit| {
+        Host {
+            doc,
+            drawn: &mut Undrawn,
+            edits: &edits,
+        }
+        .click(Some(hit), 0.0)
+    };
+    assert!(!click(&mut doc, &pressed), "a click on nothing");
+    assert!(
+        playing(&doc, "h").is_empty(),
+        "neither the link nor the node's click"
+    );
+    assert!(click(&mut doc, &hit(two, two, None)));
+    assert_eq!(
+        playing(&doc, "h"),
+        [(3, Direction::Hold)],
+        "the body is still there"
+    );
+}
+
+/// **A click on a linked span runs the link, and not its node's
+/// `on.click`** (ruling D3.1 item 2 on #252): with node 2's own click
+/// starting `h` on node 3, a click on its span linked to `go` starts `h`
+/// on node 5 alone, and one on its span linked to an address opens the
+/// address and starts nothing; a click on its plain span, or its body,
+/// runs the node's click — node 3 — so the fixture can tell the two
+/// apart.
+///
+/// Control, seen red: `click_of` reading the node's `on.click` before
+/// the span's link starts `h` on node 3 for the linked span.
+#[test]
+fn test_a_click_on_a_linked_span_runs_the_link_only() {
+    let fresh = clicked_map;
     let mut doc = fresh();
     let two = node(&doc, 2);
     let [linked, away, plain] = spans(&doc)[..] else { panic!("three spans") };
@@ -378,6 +429,68 @@ fn test_an_edit_step_is_skipped_while_an_interaction_is_open() {
     .invoke("edits", Some(one), false, 0.0)
     .expect("runs");
     assert_eq!(doc.doc().history().count(), 1);
+}
+
+/// **A verb's edit step runs the map's edit at its index, never one
+/// looked up by name** (ruling D3.3 item 2): the run makes its one
+/// history entry, and `EditRegistry::find` — the tiers' lookup by name,
+/// a scan of each tier's edits — is asked nothing, where a key, a macro
+/// and the console name an edit through it (the control below shows the
+/// counter sees one).
+///
+/// Control, seen red: `Host::edit` turning the index back into the
+/// edit's id and running it through `run_edit` asks `find` once.
+#[test]
+fn test_a_verb_edit_step_runs_the_map_edit_by_index() {
+    use crate::application::edits::FINDS;
+    let mut doc = map();
+    let one = node(&doc, 1);
+    let edits = registry();
+    FINDS.with(|finds| finds.set(0));
+    Host {
+        doc: &mut doc,
+        drawn: &mut Undrawn,
+        edits: &edits,
+    }
+    .invoke("edits", Some(one), false, 0.0)
+    .expect("runs");
+    assert_eq!(doc.doc().history().count(), 1, "the edit ran");
+    assert_eq!(FINDS.with(|finds| finds.get()), 0, "by index, not by name");
+    // The counter sees a lookup by name: a macro's `Edit` step makes one.
+    let mut doc = map();
+    let by_name = EditRegistry::new(doc.doc().definitions().edits.clone(), Vec::new());
+    assert!(super::dispatch::families::edits::run_step(
+        &mut doc,
+        &mut Undrawn,
+        &by_name,
+        "e",
+        &MacroTarget::NodeId(1),
+        0.0
+    ));
+    assert_eq!(FINDS.with(|finds| finds.get()), 1);
+}
+
+/// **A performer asked to start a presentation the map lacks says so**
+/// (#380 verification review; ruling D3.3 item 7): the runner makes
+/// nothing of such a step, so the ask is a defect, which a debug build
+/// stops at, and a release build warns of — not a start of nothing.
+///
+/// Control, seen red: `Host::start` answering `Ok(vec![])` as it did
+/// does not panic.
+#[test]
+#[should_panic(expected = "no presentation at PresentationId(99)")]
+fn test_the_host_refuses_to_start_a_presentation_the_map_lacks() {
+    use baumhard::document::values::PresentationId;
+    use baumhard::document::verb::Performer;
+    let mut doc = map();
+    let one = node(&doc, 1);
+    let edits = registry();
+    let _ = Host {
+        doc: &mut doc,
+        drawn: &mut Undrawn,
+        edits: &edits,
+    }
+    .start(PresentationId(99), &[one], 0.0);
 }
 
 /// **The frame resumes a run that waits, and owes the loop frames for

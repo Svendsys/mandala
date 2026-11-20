@@ -325,7 +325,7 @@ impl Builder {
         let verbs = self.defined("verbs", &dto.verbs, |d| (&d.id, &d.name))?;
         for (index, (id, _)) in verbs.iter().enumerate() {
             if let Ok(index) = u16::try_from(index) {
-                self.verbs.insert(id.clone(), VerbId(index));
+                self.verbs.insert_first(id, VerbId(index));
             }
         }
         let verbs = crate::document::verb::load::definitions(&dto.verbs, &self.verbs, &presentations, &edits)
@@ -337,6 +337,7 @@ impl Builder {
             edits,
             presentations,
             verbs,
+            ..Definitions::default()
         })
     }
 

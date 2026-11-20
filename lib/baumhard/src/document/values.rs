@@ -21,6 +21,7 @@
 
 use crate::document::bounds::{self, BoundError};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 /// A color as four bytes, red, green, blue and alpha. Final: it
 /// resolves to itself.
@@ -347,29 +348,36 @@ pub enum LinkTarget {
 /// it.
 pub const LINK_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
 
-/// The parameters of a `mailto` address that ask a mail client to attach
-/// a file (ruling D3.2 item 2 on #252): some handlers have attached a
-/// local file a link named in one, so a map's link may not carry either.
-pub const MAIL_ATTACHMENT_PARAMS: [&str; 2] = ["attach", "attachment"];
+/// The header names a `mailto` address may carry in its query: RFC
+/// 6068's (ruling D3.3 item 1 on #252). Any other — `attach`,
+/// `attachment`, `from`, `X-…`, however spelled — is refused, since some
+/// mail handlers have honored one that attached a local file, and they
+/// do not read a name alike: an allowlist closes every spelling at once,
+/// where a denylist closes only the ones it thought of.
+pub const MAIL_HEADERS: [&str; 6] = ["to", "cc", "bcc", "subject", "body", "in-reply-to"];
 
 /// Why a link may not lead to an address ([`check_link_url`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LinkRefusal<'a> {
     /// Its scheme is not one of [`LINK_SCHEMES`]: the scheme it wrote,
     /// or the whole of it when it has no `:`.
     Scheme(&'a str),
-    /// A `mailto` address with a parameter of
-    /// [`MAIL_ATTACHMENT_PARAMS`]: the parameter's name as it wrote it.
-    MailAttachment(&'a str),
+    /// A `mailto` address that names a header outside [`MAIL_HEADERS`],
+    /// or whose address part decodes to hold a `?`.
+    MailHeader {
+        /// The header's name as the address writes it (reading (a)), or
+        /// as it reads once the query is decoded (reading (b)); or the
+        /// address part, for one that holds a `?`.
+        name: Cow<'a, str>,
+    },
 }
 
 /// `url` if a link may lead there: its scheme — what it writes before its
 /// first `:` — is one of [`LINK_SCHEMES`], in any case (a scheme is
-/// case-insensitive), and, for `mailto`, none of its parameters is one of
-/// [`MAIL_ATTACHMENT_PARAMS`], in any case and however it is
-/// percent-encoded (a mail client decodes a name before it reads it).
-/// Otherwise what is wrong, for the refusal to name. O(the address's
-/// length).
+/// case-insensitive), and, for `mailto`, its headers are all of
+/// [`MAIL_HEADERS`] under both readings of `mail_header`, and its
+/// address part decodes to hold no `?`. Otherwise what is wrong, for the
+/// refusal to name. O(the address's length).
 pub fn check_link_url(url: &str) -> Result<&str, LinkRefusal<'_>> {
     let (scheme, rest) = url.split_once(':').unwrap_or((url, ""));
     if !(LINK_SCHEMES
@@ -380,36 +388,69 @@ pub fn check_link_url(url: &str) -> Result<&str, LinkRefusal<'_>> {
         return Err(LinkRefusal::Scheme(scheme));
     }
     if scheme.eq_ignore_ascii_case("mailto") {
-        if let Some(name) = mail_attachment(rest) {
-            return Err(LinkRefusal::MailAttachment(name));
+        if let Some(name) = mail_header(rest) {
+            return Err(LinkRefusal::MailHeader { name });
         }
     }
     Ok(url)
 }
 
-/// The first parameter of the `mailto` address `rest` — what follows its
-/// `mailto:` — that attaches a file, as written. A parameter is what
-/// follows the address's first `?`, up to a `&` or a `;`; its name is
-/// what it writes before its `=`, percent-decoded and with the spaces
-/// round it trimmed. O(`rest`'s length).
-fn mail_attachment(rest: &str) -> Option<&str> {
-    let (_, query) = rest.split_once('?')?;
-    query
-        .split(['&', ';'])
-        .map(|param| param.split_once('=').map_or(param, |(name, _)| name))
-        .find(|name| {
-            let decoded = percent_decoded(name.as_bytes());
-            let trimmed = decoded.trim_ascii();
-            MAIL_ATTACHMENT_PARAMS
-                .iter()
-                .any(|attach| attach.as_bytes().eq_ignore_ascii_case(trimmed))
-        })
+/// What is wrong with the `mailto` address `rest` — what follows its
+/// `mailto:` — if anything (ruling D3.3 item 1), checked under two
+/// readings, both of which must pass, since mail handlers read a query
+/// either way:
+///
+/// - **(a) split first**: the query — what follows the first `?` — is
+///   split on every `?`, `&` and `;`; each segment's name, what it
+///   writes before its first `=` (all of it, without one), is
+///   percent-decoded once (`+` stays `+`) and its ASCII letters
+///   lowercased, and every name that is not empty must be one of
+///   [`MAIL_HEADERS`] exactly — nothing trimmed or dropped, so a name
+///   with a byte more is refused;
+/// - **(b) decode first**: the whole query is percent-decoded once, `+`
+///   read as a space, then split the same way; every segment with an
+///   `=` must name one of [`MAIL_HEADERS`] before it, lowercased. A
+///   segment with none is text, not a header, so `body=Q%26A` passes;
+///   `body=a%26b%3Dc` does not (it reads a header `b`) — over-refused,
+///   on the safe side;
+///
+/// and an address part that decodes to hold a `?` is refused, since a
+/// handler may read the rest as a query. Returns the name refused. O(the
+/// address's length).
+fn mail_header(rest: &str) -> Option<Cow<'_, str>> {
+    let (address, query) = rest.split_once('?').unwrap_or((rest, ""));
+    if percent_decoded(address.as_bytes(), false).contains(&b'?') {
+        return Some(Cow::Borrowed(address));
+    }
+    let allowed = |name: &[u8]| {
+        MAIL_HEADERS
+            .iter()
+            .any(|header| name.to_ascii_lowercase() == header.as_bytes())
+    };
+    let split = |c: char| matches!(c, '?' | '&' | ';');
+    for segment in query.split(split) {
+        let name = segment.split_once('=').map_or(segment, |(name, _)| name);
+        if !name.is_empty() && !allowed(&percent_decoded(name.as_bytes(), false)) {
+            return Some(Cow::Borrowed(name));
+        }
+    }
+    let decoded = percent_decoded(query.as_bytes(), true);
+    for segment in decoded.split(|&b| matches!(b, b'?' | b'&' | b';')) {
+        if let Some(at) = segment.iter().position(|&b| b == b'=') {
+            let name = &segment[..at];
+            if !allowed(name) {
+                return Some(Cow::Owned(String::from_utf8_lossy(name).into_owned()));
+            }
+        }
+    }
+    None
 }
 
 /// `bytes` with each `%` and two hex digits after it decoded once, as a
-/// mail client decodes a parameter's name; a `%` not followed by two hex
-/// digits is kept as it is. O(`bytes`' length).
-fn percent_decoded(bytes: &[u8]) -> Vec<u8> {
+/// mail client decodes a header; a `%` not followed by two hex digits is
+/// kept as it is, and a `+` is read as a space when `plus_is_space`.
+/// O(`bytes`' length).
+fn percent_decoded(bytes: &[u8], plus_is_space: bool) -> Vec<u8> {
     let hex = |b: u8| char::from(b).to_digit(16).and_then(|d| u8::try_from(d).ok());
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -422,13 +463,16 @@ fn percent_decoded(bytes: &[u8]) -> Vec<u8> {
             out.push(high * 16 + low);
             i += 3;
         } else {
-            out.push(bytes[i]);
+            out.push(if plus_is_space && bytes[i] == b'+' {
+                b' '
+            } else {
+                bytes[i]
+            });
             i += 1;
         }
     }
     out
 }
-
 /// A verb: an index into
 /// [`Definitions::verbs`](crate::document::ids::Definitions::verbs).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]

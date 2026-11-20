@@ -154,14 +154,21 @@ instances hold until a step or the console stops them.
   releases the first before invoking the second, and the pointer
   leaving the window (the canvas, in the browser) releases the hover as
   leaving the node does (ruling D3.2 item 4 on #252). During a gesture
-  — a press not yet released — the hover stays as it was. Touch has no
-  hover: a tap is a click.
+  — a press not yet released — the hover stays as it was, and a gesture
+  that ends with the pointer outside releases it then (ruling D3.3
+  item 4). Touch has no hover: a tap is a click.
 - **A hover is decided by the pointer's moves, and only by them**
   (ruling D3.2 item 4). When the scene changes under a pointer that
   does not move — a click's verb hides or moves the node it rests on,
   a presentation slides another under it — the hover is not decided
   again: the run it holds stays held until the pointer next moves or
   leaves the window.
+- **The press decides what a click triggers** (ruling D3.3 item 5):
+  a click triggers what its press landed on, read on the map as it
+  stands at the release. When that is gone by then — the span, the
+  connector, the link or the node removed in between — the click is
+  on nothing and triggers nothing: not the node's `on.click` in its
+  place.
 - A node is the node a click on it selects: a click or a hover on a
   node's connector or one of its links is not on the node.
 - The pointer shows a hand over a node with an `on.click` and over a
@@ -177,15 +184,36 @@ links to gets no handle on Mandala's tab (ruling D3.2 item 1 on #252).
 **Only `http`, `https` and `mailto` addresses** (in any case) are
 accepted: any other scheme — `file`, `javascript`, `data`, a custom
 handler — is refused at load, at the link's `url` (`LinkScheme`).
-**A `mailto` address may not attach a file** (ruling D3.2 item 2): one
-with a parameter named `attach` or `attachment` — in any case, however
-it is percent-encoded, after a `&` or a `;` — is refused there too
-(`LinkAttachment`), since some mail clients have attached a local file
-such a parameter named; the words as a parameter's value attach
-nothing. A `set_link` an edit or a presentation writes to either is
-refused when the edit or the presentation is read, and again by the
-writer when it is applied, and the app's opener refuses either before
-it hands an address on, so no map can come to hold one or open one.
+**A `mailto` address names only RFC 6068's headers** — `to`, `cc`,
+`bcc`, `subject`, `body` and `in-reply-to` (ruling D3.3 item 1, which
+supersedes D3.2 item 2's attachment denylist). Some mail clients have
+attached a local file an `attach` or `attachment` header named, and
+clients read a query differently, so any other name is refused, however
+it is spelled. The query — what follows the address's first `?` — is
+read two ways, and must pass both:
+
+- **split first**: split on every `?`, `&` and `;`; each part's name —
+  what it writes before its first `=`, or all of it without one — is
+  percent-decoded once (`+` stays `+`) and its ASCII letters
+  lowercased, and must be one of the six exactly, unless it is empty.
+  Nothing is trimmed: `attach+`, `attach%00` and ` attach` are refused;
+- **decode first**: percent-decode the whole query once, reading `+` as
+  a space, then split the same way; every part with an `=` must name
+  one of the six before it, lowercased. A part with no `=` is text, so
+  a body `Q%26A` loads.
+
+And an address part that decodes to hold a `?` (`a@b%3Fattach=…`) is
+refused, since a client may read the rest as a query. Such an address
+is refused at its `url` (`LinkMailHeader`, naming the header as written,
+or as it reads decoded). **What is over-refused**: a value that decodes
+to look like a header — `body=a%26b%3Dc` reads a header `b` once
+decoded — and a raw `;` or `?` in a value, which the split-first
+reading takes for a part with a name; encode them, or leave them out.
+A `set_link` an edit or a presentation writes to either kind of
+address is refused when the edit or the presentation is read, and
+again by the writer when it is applied, and the app's opener refuses
+either before it hands an address on, so no map can come to hold one
+or open one.
 
 ## Load checks
 

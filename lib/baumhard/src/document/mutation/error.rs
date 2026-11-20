@@ -167,12 +167,14 @@ pub enum MutationError {
         /// The scheme it wrote, or all of it when it has no `:`.
         scheme: String,
     },
-    /// A span link to a `mailto` address that asks the mail client to
-    /// attach a file (ruling D3.2 item 2 on #252).
-    LinkAttachment {
+    /// A span link to a `mailto` address that names a header outside
+    /// RFC 6068's six, or whose address part decodes to hold a `?`
+    /// (ruling D3.3 item 1 on #252).
+    LinkMailHeader {
         /// Where.
         at: MutatorPath,
-        /// The parameter's name, as it was written.
+        /// The header's name, as written or as it reads decoded; or the
+        /// address part.
         name: String,
     },
     /// A link whose target is not a node of the document.
@@ -314,9 +316,10 @@ impl fmt::Display for MutationError {
                 "{at}: a link opens an `http`, `https` or `mailto` address, and this one is `{}`",
                 crate::document::format::context::shown(scheme)
             ),
-            MutationError::LinkAttachment { at, name } => write!(
+            MutationError::LinkMailHeader { at, name } => write!(
                 f,
-                "{at}: a `mailto` link may not attach a file, and this one has the parameter `{}`",
+                "{at}: a `mailto` link names only the headers to, cc, bcc, subject, body and in-reply-to, \
+                 and this one has `{}`",
                 crate::document::format::context::shown(name)
             ),
             MutationError::Instruction { at } => {

@@ -26,6 +26,7 @@ impl super::Borrowed<'_> {
     /// hover where it was, as native's does during a gesture.
     pub(super) fn on_cursor_moved(&mut self, position: PhysicalPosition<f64>) -> bool {
         self.input.cursor_pos = (position.x, position.y);
+        self.input.pointer_inside = true;
         if self.input.pending_click.is_some() {
             return true;
         }
@@ -63,10 +64,21 @@ impl super::Borrowed<'_> {
 
     /// `WindowEvent::CursorLeft`: the pointer left the canvas, and with
     /// it the node it hovered, so the hover is released (ruling D3.2
-    /// item 4), unless a click is pending, as a move then leaves it.
-    /// Returns whether to request a redraw: whether the hover changed.
+    /// item 4), unless a click is pending, as a move then leaves it — and
+    /// then when the press ends with the pointer still out
+    /// ([`Self::release_hover_if_outside`]; ruling D3.3 item 4). Returns
+    /// whether to request a redraw: whether the hover changed.
     pub(super) fn on_cursor_left(&mut self) -> bool {
-        if self.input.pending_click.is_some() {
+        self.input.pointer_inside = false;
+        self.release_hover_if_outside()
+    }
+
+    /// Release the hover when the pointer is off the canvas and no click
+    /// is pending: what a leave does at once, and what the end of a press
+    /// the pointer left during does, as native's does. Returns whether
+    /// the hover changed.
+    pub(super) fn release_hover_if_outside(&mut self) -> bool {
+        if self.input.pointer_inside || self.input.pending_click.is_some() {
             return false;
         }
         let now_ms = self.input.clock.now_ms();

@@ -35,13 +35,13 @@
 use crate::arena::NodeId;
 use crate::document::bounds::{self, BoundError};
 use crate::document::element::{DefaultsData, DocElement, DocKind, PaletteData, ThemeData};
-use crate::document::keyed::KeyedMap;
+use crate::document::keyed::{KeyedMap, NameIndex};
 use crate::document::mutation::error::MutationError;
 use crate::document::mutation::inherited::inherited_seed;
 use crate::document::mutation::validate::validate;
 use crate::document::presentation::layer::Presentations;
 use crate::document::shape::{validate_shape, validate_subtree, ShapeError};
-use crate::document::values::PaletteId;
+use crate::document::values::{PaletteId, VarId, VerbId};
 use crate::document::writer::{Derived, Writer};
 use crate::engine::journal::JournalBuilder;
 use crate::engine::structure::Subtree;
@@ -74,22 +74,70 @@ pub struct Definitions {
     /// [`PresentationId`](crate::document::values::PresentationId)
     /// indexes this list.
     pub presentations: Vec<PresentationDef>,
-    /// The verbs. A [`VerbId`](crate::document::values::VerbId) indexes
+    /// The verbs. A [`VerbId`] indexes
     /// this list.
     pub verbs: Vec<VerbDef>,
+    /// Every verb's id, to the `VerbId` it has: built when a document is
+    /// made of these definitions ([`Self::index`]), which nothing changes
+    /// after (§5.7), so a verb named by id is one probe — what a link, a
+    /// trigger, the console, IPC and a macro name one by (ruling D3.3
+    /// item 2 on #252).
+    pub(crate) verb_ids: NameIndex<VerbId>,
 }
 
 impl Definitions {
     /// The verb the map defines with `id`, and its index: what the
-    /// console, IPC and a macro name a verb by. O(verbs).
-    pub fn verb_by_id(&self, id: &str) -> Option<(crate::document::values::VerbId, &VerbDef)> {
-        self.verbs
-            .iter()
-            .enumerate()
-            .find(|(_, verb)| verb.id == id)
-            .and_then(|(index, verb)| {
-                Some((crate::document::values::VerbId(u16::try_from(index).ok()?), verb))
-            })
+    /// console, IPC and a macro name a verb by. One probe of the index
+    /// the document built (`Definitions::index`).
+    pub fn verb_by_id(&self, id: &str) -> Option<(VerbId, &VerbDef)> {
+        let verb = self.verb_ids.get(id)?;
+        Some((verb, self.verbs.get(usize::from(verb.0))?))
+    }
+
+    /// Index every verb by its id, the first of a repeated id keeping it.
+    /// What a document's constructors do before they share the
+    /// definitions. O(verbs).
+    pub(crate) fn index(&mut self) {
+        let mut verb_ids = NameIndex::default();
+        verb_ids.reserve(self.verbs.len());
+        for (index, verb) in self.verbs.iter().enumerate() {
+            if let Ok(index) = u16::try_from(index) {
+                verb_ids.insert_first(&verb.id, VerbId(index));
+            }
+        }
+        self.verb_ids = verb_ids;
+    }
+}
+
+/// The names a map row gives — its theme's variables and its palettes —
+/// indexed once, when a document is made: nothing renames either after
+/// (no operation writes a variable's or a palette's name, and the map
+/// row takes no insert or removal), so a name an edit or a presentation
+/// writes is one probe, however many the map has (ruling D3.3 item 2 on
+/// #252). The first of a repeated name keeps it, as a scan in order
+/// found it.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct MapNames {
+    variables: NameIndex<VarId>,
+    palettes: NameIndex<PaletteId>,
+}
+
+impl MapNames {
+    /// The names of `tree`'s map row. O(variables + palettes).
+    fn of(tree: &Tree<DocElement>) -> MapNames {
+        let mut names = MapNames::default();
+        if let Some((_, theme)) = theme(tree) {
+            names.variables.reserve(theme.variables.len());
+            for (index, variable) in theme.variables.iter().enumerate() {
+                if let Ok(index) = u16::try_from(index) {
+                    names.variables.insert_first(variable, VarId(index));
+                }
+            }
+        }
+        for (id, palette) in palettes(tree) {
+            names.palettes.insert_first(&palette.name, id);
+        }
+        names
     }
 }
 
@@ -168,6 +216,7 @@ pub(crate) fn idents_named_by(definitions: &Definitions) -> impl Iterator<Item =
         edits: _,
         presentations: _,
         verbs,
+        verb_ids: _,
     } = definitions;
     crate::document::verb::named_idents(verbs)
 }
@@ -192,6 +241,9 @@ pub struct Document {
     /// own presentations reads its definition where the map keeps it
     /// ([`Self::start_defined`]).
     pub(in crate::document) definitions: std::sync::Arc<Definitions>,
+    /// The map row's names, indexed when the document is made
+    /// ([`MapNames`]); shared with a copy of the document.
+    pub(in crate::document) names: std::sync::Arc<MapNames>,
     pub(in crate::document) derived: Derived,
     pub(in crate::document) writer: Writer,
     pub(in crate::document) presentations: Presentations,
@@ -241,7 +293,10 @@ impl Document {
         }
         let next_ident = first_free_ident(highest, idents_named_by(&definitions));
         let derived = Derived::scan(&tree, &definitions);
+        let mut definitions = definitions;
+        definitions.index();
         Ok(Document {
+            names: std::sync::Arc::new(MapNames::of(&tree)),
             tree,
             ident_index,
             next_ident,
@@ -271,7 +326,10 @@ impl Document {
         derived: Derived,
     ) -> Result<Self, DocumentError> {
         check_loaded(&tree, &definitions)?;
+        let mut definitions = definitions;
+        definitions.index();
         Ok(Document {
+            names: std::sync::Arc::new(MapNames::of(&tree)),
             tree,
             ident_index,
             next_ident: first_free_ident(highest, idents_named_by(&definitions)),
@@ -386,6 +444,18 @@ impl Document {
     /// The definitions the map carries. O(1).
     pub fn definitions(&self) -> &Definitions {
         &self.definitions
+    }
+
+    /// The theme variable named `name`, if the theme has one. One probe
+    /// of the index made with the document (`MapNames`).
+    pub fn variable_named(&self, name: &str) -> Option<VarId> {
+        self.names.variables.get(name)
+    }
+
+    /// The palette named `name`, if the map has one. One probe of the
+    /// index made with the document (`MapNames`).
+    pub fn palette_named(&self, name: &str) -> Option<PaletteId> {
+        self.names.palettes.get(name)
     }
 
     /// Run `steps` in order on `journal`, each built from the document

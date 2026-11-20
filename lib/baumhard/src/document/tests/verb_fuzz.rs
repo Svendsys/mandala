@@ -25,11 +25,11 @@
 //! - **a missing node is skipped, not a crash (D27)**: a target naming a
 //!   node the map lacks reaches the performer as no node, while the
 //!   targets the map has are acted on;
-//! - **links open only `http`, `https` and `mailto`, and no `mailto`
-//!   that attaches a file** (ruling D3.2 item 2): a span link of any
-//!   other scheme, or a `mailto` with an `attach` or `attachment`
-//!   parameter, is refused at load at its `url`, and a `set_link` to
-//!   one is refused at apply, the map left as it was;
+//! - **links open only `http`, `https` and `mailto`, and a `mailto`
+//!   names only RFC 6068's headers** (ruling D3.3 item 1): a span link
+//!   of any other scheme, or a `mailto` naming any other header, is
+//!   refused at load at its `url`, and a `set_link` to one is refused at
+//!   apply, the map left as it was;
 //! - **a loaded map saves and reloads to the same bytes**, its verbs
 //!   with it.
 //!
@@ -444,16 +444,22 @@ enum Link {
     Opens,
     /// Refused for its scheme.
     Scheme,
-    /// Refused as a `mailto` that attaches a file (ruling D3.2 item 2).
-    Attaches,
+    /// Refused as a `mailto` that names a header outside RFC 6068's six,
+    /// under either reading, or whose address part decodes to hold a `?`
+    /// (ruling D3.3 item 1).
+    Header,
 }
 
 /// The addresses a generated link draws from, each with what a load
-/// says of it: the three schemes a link opens, in two cases, others, and
-/// `mailto` addresses with and without a parameter that attaches a file
-/// — spelled in any case, percent-encoded, after a `;` — or the word as
-/// a value, which attaches nothing.
-const SCHEMES: [(&str, Link); 16] = [
+/// says of it: the three schemes a link opens, in two cases, and others;
+/// `mailto` addresses naming only RFC 6068's headers — in any case, with
+/// encoded values, a `Q%26A` body — which load, and ones naming any
+/// other, which do not: every spelling verification review 5995253466
+/// found past the attachment denylist, `attach` itself in three, and
+/// headers no attachment names (`X-Foo`, `from`, `reply-to`); and
+/// `body=a%26b%3Dc`, refused on the safe side because its decoded query
+/// reads a header `b`.
+const SCHEMES: [(&str, Link); 37] = [
     ("https://example.org/a", Link::Opens),
     ("HTTP://example.org", Link::Opens),
     ("mailto:someone@example.org", Link::Opens),
@@ -463,16 +469,43 @@ const SCHEMES: [(&str, Link); 16] = [
     ("example.org", Link::Scheme),
     ("https", Link::Scheme),
     (" https://example.org", Link::Scheme),
-    ("mailto:a@example.org?subject=attach&body=attachment", Link::Opens),
     ("https://example.org/?attach=x", Link::Opens),
-    ("mailto:a@example.org?attach=/etc/passwd", Link::Attaches),
+    ("mailto:a@example.org?to=b@example.org", Link::Opens),
     (
-        "MAILTO:a@example.org?subject=x&ATTACHMENT=%2Fetc%2Fpasswd",
-        Link::Attaches,
+        "mailto:a@example.org?cc=b@example.org&bcc=c@example.org",
+        Link::Opens,
     ),
-    ("mailto:a@example.org?%61ttach=x", Link::Attaches),
-    ("mailto:a@example.org?body=x;Attach=y", Link::Attaches),
-    ("mailto:?%20attachment%20", Link::Attaches),
+    ("mailto:a@example.org?subject=attach&body=attachment", Link::Opens),
+    (
+        "mailto:a@example.org?in-reply-to=%3Cid@example.org%3E",
+        Link::Opens,
+    ),
+    ("mailto:a@example.org?SUBJECT=Hi&In-Reply-To=x", Link::Opens),
+    ("mailto:a@example.org?subject=%E2%9C%93+done", Link::Opens),
+    ("mailto:a@example.org?body=Q%26A", Link::Opens),
+    ("mailto:?to=a@example.org", Link::Opens),
+    ("mailto:a@example.org?attach=/etc/passwd", Link::Header),
+    ("mailto:a@example.org?ATTACH=/etc/passwd", Link::Header),
+    ("mailto:a@example.org?%61ttach=x", Link::Header),
+    ("mailto:a@example.org?attachment=x", Link::Header),
+    ("mailto:a@example.org?attach+=/etc/passwd", Link::Header),
+    ("mailto:a@example.org?+attach=/etc/passwd", Link::Header),
+    ("mailto:a@example.org?attach%00=/etc/passwd", Link::Header),
+    ("mailto:a@example.org?attach%0B=/etc/passwd", Link::Header),
+    ("mailto:a@example.org?attach%C2%A0=/etc/passwd", Link::Header),
+    (
+        "mailto:a@example.org?subject=x%26attach=/etc/passwd",
+        Link::Header,
+    ),
+    ("mailto:a@example.org?subject=x?attach=/etc/passwd", Link::Header),
+    ("mailto:a@example.org%3Fattach=/etc/passwd", Link::Header),
+    ("mailto:a@example.org?body=x;Attach=y", Link::Header),
+    ("mailto:?%20attachment%20", Link::Header),
+    ("mailto:a@example.org?X-Foo=1", Link::Header),
+    ("mailto:a@example.org?from=b@example.org", Link::Header),
+    ("mailto:a@example.org?reply-to=b@example.org", Link::Header),
+    ("mailto:a@example.org?body=a%26b%3Dc", Link::Header),
+    ("mailto:a@example.org?subject", Link::Opens),
 ];
 
 /// A span link of an address `choices` draws is loaded exactly when a
@@ -492,7 +525,7 @@ fn check_link_scheme(choices: &mut Choices<'_>) -> Result<(), String> {
             if error.path == "nodes[0].sections[0].spans[0].link.url"
                 && match verdict {
                     Link::Scheme => matches!(error.kind, LoadErrorKind::LinkScheme { .. }),
-                    Link::Attaches => matches!(error.kind, LoadErrorKind::LinkAttachment { .. }),
+                    Link::Header => matches!(error.kind, LoadErrorKind::LinkMailHeader { .. }),
                     Link::Opens => false,
                 } => {}
         (read, _) => {

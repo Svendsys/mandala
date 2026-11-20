@@ -896,8 +896,9 @@ What they hold, in short (each module's docs are the full list):
   at most as often as its verb has parts after expansion, and every run
   is over once its waits have passed; a step reaches no node the map
   lacks (D27); a span link loads, and a `set_link` applies, exactly when
-  its scheme is `http`, `https` or `mailto` and it is no `mailto` that
-  attaches a file (ruling D3.2); and a map that loads saves
+  its scheme is `http`, `https` or `mailto` and it is no `mailto`
+  naming a header outside RFC 6068's six (ruling D3.3); and a map that
+  loads saves
   and reloads to the same bytes.
 
 **Where their tests live.** A property module is `pub`, in its

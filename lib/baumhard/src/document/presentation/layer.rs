@@ -772,6 +772,7 @@ impl Document {
             ident_index: self.ident_index.clone(),
             next_ident: self.next_ident,
             definitions: self.definitions.clone(),
+            names: self.names.clone(),
             derived: self.derived.clone(),
             writer: Writer::default(),
             presentations: Presentations::default(),

@@ -255,19 +255,32 @@ fn test_a_verb_is_bounded_by_its_parts_after_expansion() {
     );
 }
 
-/// **A step's name is one lookup, however long the lists it names
-/// into** (#380 review, item 1; D29): a map of 2,048 presentations,
-/// 2,048 edits and 2,048 verbs, each verb naming the far end of each
-/// list, loads having looked at exactly one name per name its steps
-/// spell — 4 × 2,048 − 1 — where a scan of the lists would look at on
-/// the order of 2,048 for each.
+/// The names [`NameIndex`](crate::document::keyed::NameIndex) keys have
+/// been compared while `f` ran, and what it returned (ruling D3.3 item
+/// 3): the counter is the keys' own `PartialEq`, so a scan of an index's
+/// keys counts every key it compares, whoever wrote it.
+fn names_compared<R>(f: impl FnOnce() -> R) -> (usize, R) {
+    use crate::document::keyed::NAMES_COMPARED;
+    NAMES_COMPARED.with(|count| count.set(0));
+    let out = f();
+    (NAMES_COMPARED.with(|count| count.get()), out)
+}
+
+/// **A step's name is one probe, however long the lists it names
+/// into** (#380 review, item 1; D29; ruling D3.3 item 3): a map of 2,048
+/// presentations, 2,048 edits and 2,048 verbs, each verb naming the far
+/// end of each list, loads having compared at least one key per name its
+/// steps spell — 4 × 2,048 − 1 — and at most twice that, the room a
+/// hash probe's rare false match and the indexes' own building take;
+/// where a scan compares on the order of 2,048 for each.
 ///
-/// Control, seen red: `Names::presentation` scanning the presentations
-/// in file order, each entry it compares counted, looks at 4,200,447
-/// names where the steps spell 8,191.
+/// Control, seen red: `NameIndex::get` scanning its keys
+/// (`iter().find(|(known, _)| **known == *name)`, nothing of it counted
+/// by hand) compares millions of keys for the 8,191 names — 10,253,826
+/// and 8,096,253 in two runs, a scan's length following the hash's
+/// order.
 #[test]
-fn test_a_step_resolves_each_name_in_one_lookup() {
-    use crate::document::verb::load::NAMES_LOOKED_AT;
+fn test_a_step_resolves_each_name_in_one_probe() {
     const N: usize = 2_048;
     let presentations: Vec<String> = (0..N)
         .map(|n| {
@@ -302,10 +315,90 @@ fn test_a_step_resolves_each_name_in_one_lookup() {
         presentations.join(","),
         verbs.join(",")
     );
-    NAMES_LOOKED_AT.with(|count| count.set(0));
-    let doc = load(&map).unwrap_or_else(|error| panic!("the wide map loads: {error}"));
+    let (compared, doc) = names_compared(|| load(&map));
+    let doc = doc.unwrap_or_else(|error| panic!("the wide map loads: {error}"));
     assert_eq!(doc.definitions().verbs.len(), N);
-    assert_eq!(NAMES_LOOKED_AT.with(|count| count.get()), 4 * N - 1);
+    let names = 4 * N - 1;
+    assert!(
+        (names..=2 * names).contains(&compared),
+        "{compared} keys compared for {names} names"
+    );
+}
+
+/// **What a trigger starts names in one probe a name** (ruling D3.3
+/// item 2): with 4,096 verbs, theme variables and palettes, a verb that
+/// starts a presentation of 64 `set_link`s to the last verb and 64 colors
+/// of the last variable, and runs an edit of 64 `set_palette`s to the last
+/// palette and 64 `set_click`s to the last verb, compares at least one
+/// key per name each resolution reads and at most twice that — where a
+/// scan of any of the three lists compares on the order of 4,096 a name.
+///
+/// The floor is what catches a lookup that leaves the index: a scan of
+/// the list itself compares no key, and drops the count below one a
+/// name.
+///
+/// Controls, each seen red: `NameIndex::get` scanning its keys compares
+/// hundreds of thousands of keys for the 256 names (369,088 and 582,400
+/// in two runs); `verb_of`, `var_of` and `palette_of`
+/// each back to its scan of the list (the verbs, the theme's variables,
+/// the palettes) compare 128, 192 and 192, under the floor.
+#[test]
+fn test_a_trigger_resolves_each_name_in_one_probe() {
+    const N: usize = 4_096;
+    const M: usize = 64;
+    let verbs: Vec<String> = (0..N)
+        .map(|n| format!(r#"{{"id":"v{n}","name":"V","steps":[]}}"#))
+        .collect();
+    let variables: Vec<String> = (0..N).map(|n| format!(r##""c{n}":"#ff0000""##)).collect();
+    let palettes: Vec<String> = (0..N)
+        .map(|n| format!(r##""p{n}":[{{"frame":"#a20000","text":"#a30000"}}]"##))
+        .collect();
+    let last = N - 1;
+    let span_mutations: Vec<String> = (0..M)
+        .flat_map(|_| {
+            [
+                format!(r#"{{"span":{{"set_link":{{"verb":"v{last}"}}}}}}"#),
+                format!(r#"{{"span":{{"text":{{"set_color":"var(c{last})"}}}}}}"#),
+            ]
+        })
+        .collect();
+    let node_mutations: Vec<String> = (0..M)
+        .flat_map(|_| {
+            [
+                format!(r#"{{"node":{{"set_palette":"p{last}"}}}}"#),
+                format!(r#"{{"node":{{"set_click":"v{last}"}}}}"#),
+            ]
+        })
+        .collect();
+    let map = format!(
+        r#"{{"format":1,"name":"wide","theme":{{"active":"d","variants":{{"d":{{{}}}}}}},"palettes":{{{}}},
+        "presentations":[{{"id":"wide","name":"W","play":"hold","target":"spans","mutations":[{}]}}],
+        "edits":[{{"id":"wide-edit","name":"W","reach":"self","target":"node","mutations":[{}]}}],
+        "verbs":[{{"id":"run","name":"Run","steps":[{{"present":"wide","on":"self"}},{{"edit":"wide-edit","on":"self"}}]}},{}],
+        "nodes":[{{"id":1,"position":[0,0],"sections":[{{"spans":[{{"text":"one"}}]}}]}}]}}"#,
+        variables.join(","),
+        palettes.join(","),
+        span_mutations.join(","),
+        node_mutations.join(","),
+        verbs.join(",")
+    );
+    let mut doc = load(&map).unwrap_or_else(|error| panic!("the wide map loads: {error}"));
+    let one = node(&doc, 1);
+    let mut runs = Runs::default();
+    let (compared, ran) = names_compared(|| {
+        let mut on = OnTheDocument::new(&mut doc);
+        let ran = runs.invoke(verb(0), Some(one), false, 0.0, &mut on);
+        (ran, on.calls.len())
+    });
+    let (ran, calls) = ran;
+    ran.expect("runs");
+    assert_eq!(calls, 2, "the presentation started and the edit run");
+    assert!(!doc.presentations().next().is_none(), "the presentation plays");
+    let names = 4 * M;
+    assert!(
+        (names..=2 * names).contains(&compared),
+        "{compared} keys compared for {names} names"
+    );
 }
 
 /// **A link opens `http`, `https` and `mailto`, and nothing else**, at
@@ -365,47 +458,69 @@ fn test_a_link_to_a_file_is_refused_at_load_and_at_apply() {
     assert_eq!(read.path, "edits[0].mutations[0]");
 }
 
-/// **A `mailto` link may not attach a file** (ruling D3.2 item 2 on
-/// #252), wherever a link is checked: a parameter named `attach` or
-/// `attachment` — in any case, percent-encoded, after a `;` — is refused
-/// at load at the link's `url`, naming the parameter as written; by the
-/// writer at apply, the map left as it was; and in an edit's or a
-/// presentation's `set_link` when it is read. The word as a value, and
-/// an `attach` parameter of an `https` address, are no attachment.
+/// **A `mailto` link names only RFC 6068's headers** (ruling D3.3
+/// item 1 on #252, which supersedes D3.2 item 2), wherever a link is
+/// checked. Every spelling verification review 5995253466 found past the
+/// attachment denylist — a `+`, a NUL, a vertical tab or an NBSP beside
+/// the name, an `attach` behind an encoded `&` or a second `?`, an
+/// address part hiding a `?` — is refused at load at the link's `url`,
+/// naming the header as written (or as it reads decoded, or the address
+/// part), and so are `attach` in three spellings, `X-Foo`, `from` and
+/// `reply-to`, and `body=a%26b%3Dc`, over-refused because its decoded
+/// query reads a header `b`. The six headers load, in any case, with
+/// encoded values and a `Q%26A` body, and an `https` address's `attach`
+/// is no header. The writer refuses one at apply, the map left as it
+/// was, and an edit's or a presentation's `set_link` to one is refused
+/// when it is read.
 ///
-/// Controls, each seen red: `load_node` accepting
-/// `LinkRefusal::MailAttachment` loads the `Attach` map; the validator
+/// Controls, each seen red: `check_link_url` as it was at 3e90f093 (the
+/// attachment denylist) loads `attach+`, the first row; `load_node`
+/// accepting `LinkRefusal::MailHeader` loads it too; the validator
 /// accepting it applies the `set_link`; `resolve` accepting it reads the
-/// edit (and so the presentation, which reads through it); with
-/// `check_link_url` not looking at a `mailto`'s parameters, the `Attach`
-/// map loads.
+/// edit (and so the presentation, which reads through it).
 #[test]
-fn test_a_mailto_that_attaches_a_file_is_refused_wherever_a_link_is_checked() {
+fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
     let map = |url: &str| {
+        let url = serde_json::to_string(url).expect("a string");
         format!(
-            r#"{{"format":1,"name":"l","nodes":[{{"id":1,"position":[0,0],"sections":[{{"spans":[{{"text":"x","link":{{"url":"{url}"}}}}]}}]}}]}}"#
+            r#"{{"format":1,"name":"l","nodes":[{{"id":1,"position":[0,0],"sections":[{{"spans":[{{"text":"x","link":{{"url":{url}}}}}]}}]}}]}}"#
         )
     };
     for (url, name) in [
+        ("mailto:a@example.org?attach+=/etc/passwd", "attach+"),
+        ("mailto:a@example.org?+attach=/etc/passwd", "+attach"),
+        ("mailto:a@example.org?attach%00=/etc/passwd", "attach%00"),
+        ("mailto:a@example.org?attach%0B=/etc/passwd", "attach%0B"),
+        ("mailto:a@example.org?attach%C2%A0=/etc/passwd", "attach%C2%A0"),
+        ("mailto:a@example.org?subject=x%26attach=/etc/passwd", "attach"),
+        ("mailto:a@example.org?subject=x?attach=/etc/passwd", "attach"),
         (
-            "mailto:a@example.org?subject=hi&Attach=%2Fhome%2Fu%2F.ssh%2Fid_rsa",
-            "Attach",
+            "mailto:a@example.org%3Fattach=/etc/passwd",
+            "a@example.org%3Fattach=/etc/passwd",
         ),
-        ("MAILTO:a@example.org?ATTACHMENT=x", "ATTACHMENT"),
+        ("mailto:a@example.org?attach=/etc/passwd", "attach"),
+        ("MAILTO:a@example.org?subject=hi&ATTACH=x", "ATTACH"),
         ("mailto:a@example.org?%61ttach=x", "%61ttach"),
-        ("mailto:a@example.org?body=x;attach=y", "attach"),
+        ("mailto:a@example.org?X-Foo=1", "X-Foo"),
+        ("mailto:a@example.org?from=b@example.org", "from"),
+        ("mailto:a@example.org?reply-to=b@example.org", "reply-to"),
+        ("mailto:a@example.org?body=a%26b%3Dc", "b"),
     ] {
         let error = load(&map(url)).expect_err(url);
         assert_eq!(error.path, "nodes[0].sections[0].spans[0].link.url", "{url}");
         assert_eq!(
             error.kind,
-            LoadErrorKind::LinkAttachment { name: name.into() },
+            LoadErrorKind::LinkMailHeader { name: name.into() },
             "{url}"
         );
     }
     for url in [
+        "mailto:a@example.org?to=b@example.org&cc=c@example.org&bcc=d@example.org",
         "mailto:a@example.org?subject=attach&body=attachment",
-        "mailto:a@example.org?attachments=x",
+        "mailto:a@example.org?in-reply-to=%3Cid@example.org%3E",
+        "mailto:a@example.org?SUBJECT=Hi&Body=x&IN-REPLY-TO=y",
+        "mailto:a@example.org?subject=%E2%9C%93+done",
+        "mailto:a@example.org?body=Q%26A",
         "https://example.org/?attach=x",
     ] {
         load(&map(url)).unwrap_or_else(|error| panic!("{url} loads: {error}"));
@@ -433,12 +548,12 @@ fn test_a_mailto_that_attaches_a_file_is_refused_wherever_a_link_is_checked() {
     let before = doc.save_json().unwrap();
     let refusal = doc
         .apply(
-            set(&doc, "mailto:a@example.org?attachment=/etc/passwd"),
+            set(&doc, "mailto:a@example.org?attach+=/etc/passwd"),
             ChangeSource::Edit,
         )
-        .expect_err("the writer refuses a mailto that attaches a file");
+        .expect_err("the writer refuses a mailto naming another header");
     assert!(
-        refusal.to_string().contains("may not attach a file") && refusal.to_string().contains("`attachment`"),
+        refusal.to_string().contains("names only the headers") && refusal.to_string().contains("`attach+`"),
         "{refusal}"
     );
     assert_eq!(doc.save_json().unwrap(), before, "the map is as it was");
@@ -446,16 +561,17 @@ fn test_a_mailto_that_attaches_a_file_is_refused_wherever_a_link_is_checked() {
         set(&doc, "mailto:a@example.org?subject=attach"),
         ChangeSource::Edit,
     )
-    .expect("a mailto that attaches nothing applies");
-    let edit = r#"{"edits":[{"id":"x","name":"X","reach":"self","target":"spans","mutations":[{"span":{"set_link":{"url":"mailto:a@example.org?attach=x"}}}]}]}"#;
-    let read = crate::document::edit::parse_edits(edit).expect_err("an edit that attaches a file is refused");
+    .expect("a mailto naming only its headers applies");
+    let edit = r#"{"edits":[{"id":"x","name":"X","reach":"self","target":"spans","mutations":[{"span":{"set_link":{"url":"mailto:a@example.org?attach+=x"}}}]}]}"#;
+    let read =
+        crate::document::edit::parse_edits(edit).expect_err("an edit naming another header is refused");
     assert_eq!(read.path, "edits[0].mutations[0]");
-    assert!(read.to_string().contains("may not attach a file"), "{read}");
-    let presentation = r#"{"presentations":[{"id":"x","name":"X","play":"hold","target":"spans","mutations":[{"span":{"set_link":{"url":"mailto:a@example.org?Attachment=x"}}}]}]}"#;
+    assert!(read.to_string().contains("names only the headers"), "{read}");
+    let presentation = r#"{"presentations":[{"id":"x","name":"X","play":"hold","target":"spans","mutations":[{"span":{"set_link":{"url":"mailto:a@example.org?subject=x%26attach=y"}}}]}]}"#;
     let read = crate::document::presentation::load::parse_presentations(presentation)
-        .expect_err("a presentation that attaches a file is refused");
+        .expect_err("a presentation naming another header is refused");
     assert_eq!(read.path, "presentations[0].mutations[0]");
-    assert!(read.to_string().contains("may not attach a file"), "{read}");
+    assert!(read.to_string().contains("names only the headers"), "{read}");
 }
 
 /// **Steps run at once, in order, until a `wait`**, which suspends the

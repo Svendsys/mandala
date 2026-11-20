@@ -84,6 +84,11 @@ pub(super) struct WasmInputState {
     /// triggers something on (`families::verbs::points_at`). The peer of
     /// native's `cursor_is_hand`.
     pub cursor_is_hand: bool,
+    /// Whether the pointer is over the canvas: `CursorLeft` clears it,
+    /// `CursorEntered` and `CursorMoved` set it. A press that ends with
+    /// it clear releases the hover the leave could not (ruling D3.3 item
+    /// 4 on #252). The peer of native's `pointer_inside`.
+    pub pointer_inside: bool,
     pub modifiers: crate::application::platform::input::Modifiers,
     /// High-level interaction mode. Cross-platform field; the browser
     /// initializes it to `Default`.
@@ -447,6 +452,12 @@ impl WasmApp {
                 .with_borrowed(|b| b.on_cursor_moved(position))
                 .unwrap_or(false),
             WindowEvent::CursorLeft { .. } => self.with_borrowed(|b| b.on_cursor_left()).unwrap_or(false),
+            WindowEvent::CursorEntered { .. } => self
+                .with_borrowed(|b| {
+                    b.input.pointer_inside = true;
+                    false
+                })
+                .unwrap_or(false),
             WindowEvent::MouseInput { state, button, .. } => self
                 .with_borrowed(|b| b.on_mouse_input(state, button))
                 .unwrap_or(false),
@@ -464,10 +475,11 @@ impl WasmApp {
             //   inline node-text editor. Modal-handler-side
             //   work; the dispatch funnel doesn't see literal
             //   IME payloads (§3 carve-out for `winit::Key`).
-            // - `WindowEvent::Focused`, `CursorEntered` —
-            //   informational; could drive a "canvas inactive"
-            //   overlay in the future. (`CursorLeft` is routed:
-            //   it releases a held hover.)
+            // - `WindowEvent::Focused` — informational; could drive
+            //   a "canvas inactive" overlay in the future.
+            //   (`CursorLeft` and `CursorEntered` are routed: they
+            //   keep whether the pointer is over the canvas, and a
+            //   leave releases a held hover.)
             //
             // Drop silently rather than log because winit fires
             // every variant on every event tick; a log would
@@ -734,6 +746,7 @@ pub(super) fn run(mut app: Application) {
             cursor_pos: (0.0, 0.0),
             pending_click: None,
             cursor_is_hand: false,
+            pointer_inside: true,
             modifiers: crate::application::platform::input::Modifiers::empty(),
             interaction_mode: super::InteractionMode::Default,
             macros,

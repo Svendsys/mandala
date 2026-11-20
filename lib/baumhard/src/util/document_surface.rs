@@ -365,6 +365,12 @@ const EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
         "the error the caller's own callback returns",
     ),
     (
+        "keyed.rs",
+        "NameIndex::get",
+        PARAM,
+        "a copy of an id the index holds (`V: Copy`: a `VerbId`, a `VarId`), never a reference into a document",
+    ),
+    (
         "format/rows.rs",
         "RowSource::each",
         HANDS,

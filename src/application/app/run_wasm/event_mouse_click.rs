@@ -168,5 +168,7 @@ impl super::Borrowed<'_> {
         if click_selection(&mut input.document.selection, hit, shift) || triggered {
             self.sync_view();
         }
+        // The press is over: a hover the pointer left during it goes.
+        self.release_hover_if_outside();
     }
 }

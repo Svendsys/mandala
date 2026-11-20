@@ -43,7 +43,7 @@ use baumhard::document::verb::{Performer, RunId, VerbError};
 use baumhard::document::writer::ChangeSource;
 use baumhard::projection::Hit;
 
-use super::edits::{run_edit, Drawn};
+use super::edits::{run_map_edit, Drawn};
 use crate::application::document::selection::selectable;
 use crate::application::document::{Hover, MindMapDocument};
 use crate::application::edits::EditRegistry;
@@ -74,10 +74,17 @@ impl Performer for Host<'_> {
         nodes: &[NodeId],
         at_ms: f64,
     ) -> Result<Vec<InstanceId>, PresentError> {
-        // A run asks only for a presentation the map defines.
-        self.doc
-            .start_defined(id, nodes, at_ms)
-            .unwrap_or_else(|| Ok(Vec::new()))
+        // A run asks only for a presentation the map defines: the runner
+        // makes nothing of a step whose id the map lacks. Should one come
+        // here all the same, it is a defect, not a start of nothing.
+        self.doc.start_defined(id, nodes, at_ms).unwrap_or_else(|| {
+            debug_assert!(
+                false,
+                "no presentation at {id:?}: a run asks only for one the map defines"
+            );
+            log::warn!("verb: no presentation at {id:?}: a run asks only for a presentation the map defines");
+            Ok(Vec::new())
+        })
     }
 
     fn stop(&mut self, id: PresentationId, nodes: &[NodeId], at_ms: f64) -> usize {
@@ -89,37 +96,32 @@ impl Performer for Host<'_> {
     }
 
     fn edit(&mut self, id: EditId, nodes: &[NodeId], at_ms: f64) -> Result<(), String> {
-        // The edit funnel names an edit by its id, as every route does:
-        // the id, not the definition, is what is copied.
-        let Some(id) = self
-            .doc
-            .doc()
-            .definitions()
-            .edits
-            .get(usize::from(id.0))
-            .map(|def| def.id.clone())
-        else {
-            return Err(format!(
-                "no edit at {id:?}: a run asks only for an edit the map defines"
-            ));
-        };
-        let id = id.as_str();
         // D28: an interactive transaction refuses every other change, and
         // a verb's edit step yields to it rather than fail the run.
         if let Some(interaction) = self.doc.open_interaction() {
+            let named = self
+                .doc
+                .doc()
+                .definitions()
+                .edits
+                .get(usize::from(id.0))
+                .map_or("?", |def| def.id.as_str());
             return Err(format!(
-                "edit `{id}` skipped: {interaction:?} is open (D28), and a verb's edit waits for nobody"
+                "edit `{}` skipped: {interaction:?} is open (D28), and a verb's edit waits for nobody",
+                baumhard::document::format::context::shown(named)
             ));
         }
         if nodes.is_empty() {
             return Ok(());
         }
-        run_edit(
+        // The map's own edit at that index, never looked up by name
+        // (ruling D3.3 item 2).
+        run_map_edit(
             self.doc,
             self.drawn,
             self.edits,
             id,
-            Some(nodes),
+            nodes,
             ChangeSource::Verb,
             at_ms,
         )
@@ -247,7 +249,18 @@ pub(in crate::application) enum Click {
 
 /// What a click on `hit` triggers on `doc`, if anything. O(the element's
 /// depth within its node).
+///
+/// **The press decides** (ruling D3.3 item 5 on #252): `hit` is what
+/// the press landed on, and a click is read on the map as it stands at
+/// the release. When what the press landed on is gone by then — its
+/// node, its element or its span removed, or replaced, in between — the
+/// click is on nothing, and triggers nothing: never the node's `on.click`
+/// for a span, a connector or a link that was there at the press.
 pub(in crate::application) fn click_of(doc: &Document, hit: &Hit) -> Option<Click> {
+    let landed = |id: NodeId| doc.get(id).is_some();
+    if !landed(hit.node) || !landed(hit.element) || hit.span.is_some_and(|span| !landed(span)) {
+        return None;
+    }
     if let Some(span) = hit.span {
         if let Some(DocElement::Span(data)) = doc.get(span) {
             match &data.link {

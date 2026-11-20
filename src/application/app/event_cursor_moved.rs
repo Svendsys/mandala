@@ -36,6 +36,7 @@ pub(super) fn handle_cursor_moved(
 ) -> bool {
     let prev_pos = *ctx.cursor_pos;
     *ctx.cursor_pos = (position.x, position.y);
+    *ctx.pointer_inside = true;
     let cursor = *ctx.cursor_pos;
 
     // Idle: a hand over what a click triggers something on, the default
@@ -68,9 +69,21 @@ pub(super) fn handle_cursor_moved(
 /// the node it hovered, so the hover is released (#252 §3, ruling D3.2
 /// item 4) — a node at the canvas's edge is left this way as often as by
 /// a move. During a gesture the hover stays, as a move during one leaves
-/// it. Returns whether the hover changed.
+/// it, and is released when the gesture ends with the pointer still out
+/// ([`release_hover_if_outside`]; ruling D3.3 item 4). Returns whether
+/// the hover changed.
 pub(super) fn handle_cursor_left(ctx: &mut InputHandlerContext<'_>) -> bool {
-    if !matches!(*ctx.drag_state, DragState::None) {
+    *ctx.pointer_inside = false;
+    release_hover_if_outside(ctx)
+}
+
+/// Release the hover when the pointer is outside the window and no
+/// gesture runs: what a leave does at once, and what the end of a
+/// gesture the pointer left during does — a release, a key's release, a
+/// lost focus — since no move and maybe no second leave comes after
+/// (ruling D3.3 item 4 on #252). Returns whether the hover changed.
+pub(super) fn release_hover_if_outside(ctx: &mut InputHandlerContext<'_>) -> bool {
+    if *ctx.pointer_inside || !matches!(*ctx.drag_state, DragState::None) {
         return false;
     }
     let now_ms = ctx.clock.now_ms();

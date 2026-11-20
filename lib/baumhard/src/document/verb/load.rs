@@ -37,7 +37,7 @@ use crate::document::edit::EditDef;
 use crate::document::format::error::{LoadErrorKind, Seg};
 use crate::document::format::verbs::{StepDto, StepTargetDto, VerbDto, WithinDto};
 use crate::document::ids::{Definitions, NodeIdent};
-use crate::document::keyed::KeyedMap;
+use crate::document::keyed::NameIndex;
 use crate::document::presentation::PresentationDef;
 use crate::document::values::{EditId, PresentationId, VerbId};
 use crate::document::verb::{On, Step, VerbDef, Within, MAX_VERB_DEPTH};
@@ -45,47 +45,29 @@ use crate::document::verb::{On, Step, VerbDef, Within, MAX_VERB_DEPTH};
 /// A refusal: the path below `verbs`, and what is wrong there.
 pub(crate) type Refusal = (Vec<Seg>, LoadErrorKind);
 
-thread_local! {
-    /// Test counter (#380 review, item 1): the names the steps' lookups
-    /// have looked at on this thread — one a lookup in an index, each
-    /// entry of a list a scan would compare. A load is linear in its
-    /// steps only while this grows by one a lookup.
-    #[cfg(test)]
-    pub(crate) static NAMES_LOOKED_AT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 /// The map's own names a step resolves against, each list indexed once:
-/// a step's lookup is one probe of a keyed map, never a scan of a list a
-/// file chose the length of (D29).
+/// a step's lookup is one probe of a [`NameIndex`], never a scan of a
+/// list a file chose the length of (D29).
 struct Names<'a> {
     /// Every verb's id, to the `VerbId` it has: the builder's own index.
-    verbs: &'a KeyedMap<String, VerbId>,
+    verbs: &'a NameIndex<VerbId>,
     /// Every presentation's id, to its place in the list.
-    presentations: KeyedMap<&'a str, PresentationId>,
+    presentations: NameIndex<PresentationId>,
     /// Every edit's id, to its place in the list.
-    edits: KeyedMap<&'a str, EditId>,
+    edits: NameIndex<EditId>,
 }
 
 impl Names<'_> {
-    /// One lookup, counted (`NAMES_LOOKED_AT`).
-    fn looked_at() {
-        #[cfg(test)]
-        NAMES_LOOKED_AT.with(|count| count.set(count.get() + 1));
-    }
-
     fn verb(&self, id: &str) -> Option<VerbId> {
-        Self::looked_at();
-        self.verbs.get(id).copied()
+        self.verbs.get(id)
     }
 
     fn presentation(&self, id: &str) -> Option<PresentationId> {
-        Self::looked_at();
-        self.presentations.get(id).copied()
+        self.presentations.get(id)
     }
 
     fn edit(&self, id: &str) -> Option<EditId> {
-        Self::looked_at();
-        self.edits.get(id).copied()
+        self.edits.get(id)
     }
 }
 
@@ -99,22 +81,22 @@ impl Names<'_> {
 /// edges, each looked at once.
 pub(crate) fn definitions(
     dtos: &[VerbDto],
-    verbs: &KeyedMap<String, VerbId>,
+    verbs: &NameIndex<VerbId>,
     presentations: &[PresentationDef],
     edits: &[EditDef],
 ) -> Result<Vec<VerbDef>, Refusal> {
-    let mut by_id: KeyedMap<&str, PresentationId> = KeyedMap::default();
+    let mut by_id: NameIndex<PresentationId> = NameIndex::default();
     by_id.reserve(presentations.len());
     for (index, def) in presentations.iter().enumerate() {
         if let Ok(index) = u16::try_from(index) {
-            by_id.insert(def.id.as_str(), PresentationId(index));
+            by_id.insert_first(&def.id, PresentationId(index));
         }
     }
-    let mut edit_ids: KeyedMap<&str, EditId> = KeyedMap::default();
+    let mut edit_ids: NameIndex<EditId> = NameIndex::default();
     edit_ids.reserve(edits.len());
     for (index, def) in edits.iter().enumerate() {
         if let Ok(index) = u16::try_from(index) {
-            edit_ids.insert(def.id.as_str(), EditId(index));
+            edit_ids.insert_first(&def.id, EditId(index));
         }
     }
     let names = Names {

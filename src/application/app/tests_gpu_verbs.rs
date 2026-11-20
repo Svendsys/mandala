@@ -351,3 +351,59 @@ fn test_the_pointer_leaving_the_window_releases_a_hover() {
     assert_eq!(left["presentations"][0]["direction"], "out", "{left}");
     assert!(!init.input_context().on_cursor_left(), "nothing left to release");
 }
+
+/// **A leave during a press releases the hover when the press ends**
+/// (ruling D3.3 item 4): the pointer held on node 1 presses there, then
+/// leaves the window while the press is down — which changes nothing, as
+/// a move during a gesture leaves the hover — and the release, which no
+/// move follows, releases the run, its `while` presentation playing its
+/// way out.
+///
+/// Control, seen red: the release not deciding the hover again
+/// (`on_mouse_input` without `release_hover_if_outside`) leaves the run
+/// held.
+#[test]
+fn test_a_leave_during_a_press_releases_the_hover_at_the_release() {
+    use crate::application::platform::input::{ElementState, MouseButton};
+    let dir = baumhard::util::test_temp::TempDir::new("verb-hover-press-left");
+    let path = dir.path().join("hover.mandala.json");
+    std::fs::write(
+        &path,
+        r#"{"format":1,"name":"hover",
+        "presentations":[{"id":"p","name":"P","play":"while","target":"node","mutations":[{"node":{"set_opacity":0.5}}],"animate":{"ms":100},"return":{"ms":100}}],
+        "verbs":[{"id":"lift","name":"Lift","steps":[{"present":"p","on":"self"}]}],
+        "nodes":[{"id":1,"position":[0,0],"min_size":[200,100],"on":{"hover":"lift"},"sections":[{"spans":[{"text":"hover me"}]}]}]}"#,
+    )
+    .expect("writes");
+    let Some(mut app) = headless_app(path.to_str().expect("UTF-8")) else {
+        return;
+    };
+    let init = &mut app.init;
+    init.input_context().drain_frame(Beat::Loop);
+    result(
+        init,
+        json!({"id": 1, "cmd": "input.mouse_move", "x": 100.0, "y": 50.0, "space": "canvas"}),
+    );
+    init.input_context().drain_frame(Beat::Loop);
+    let animations = |init: &mut InitState| result(init, json!({"id": 1, "cmd": "query.animations"}));
+    assert_eq!(animations(init)["verbs"][0]["held"], true, "precondition: held");
+    init.input_context()
+        .on_mouse_input(ElementState::Pressed, MouseButton::Left);
+    assert!(
+        !init.input_context().on_cursor_left(),
+        "a leave during the press changes nothing"
+    );
+    init.input_context().drain_frame(Beat::Loop);
+    let pressed = animations(init);
+    assert_eq!(pressed["verbs"][0]["held"], true, "still held: {pressed}");
+    init.input_context()
+        .on_mouse_input(ElementState::Released, MouseButton::Left);
+    init.input_context().drain_frame(Beat::Loop);
+    let released = animations(init);
+    assert_eq!(
+        released["verbs"],
+        json!([]),
+        "released at the release: {released}"
+    );
+    assert_eq!(released["presentations"][0]["direction"], "out", "{released}");
+}

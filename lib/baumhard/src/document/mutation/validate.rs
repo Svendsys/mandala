@@ -371,9 +371,9 @@ impl<'d> Validator<'d> {
                     at: self.at(),
                     scheme: scheme.to_string(),
                 },
-                LinkRefusal::MailAttachment(name) => MutationError::LinkAttachment {
+                LinkRefusal::MailHeader { name } => MutationError::LinkMailHeader {
                     at: self.at(),
-                    name: name.to_string(),
+                    name: name.into_owned(),
                 },
             }),
             None => Ok(()),

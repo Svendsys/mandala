@@ -205,10 +205,10 @@ impl Builder {
                             scheme: scheme.to_string(),
                         },
                     )),
-                    Err(LinkRefusal::MailAttachment(name)) => Err(b.error_at(
+                    Err(LinkRefusal::MailHeader { name }) => Err(b.error_at(
                         "url",
-                        LoadErrorKind::LinkAttachment {
-                            name: name.to_string(),
+                        LoadErrorKind::LinkMailHeader {
+                            name: name.into_owned(),
                         },
                     )),
                 },

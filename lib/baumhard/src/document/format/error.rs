@@ -395,10 +395,13 @@ pub enum LoadErrorKind {
         /// it has none.
         scheme: String,
     },
-    /// A `mailto` link's `url` asks the mail client to attach a file: a
-    /// parameter named `attach` or `attachment` (ruling D3.2 item 2).
-    LinkAttachment {
-        /// The parameter's name, as the link wrote it.
+    /// A `mailto` link's `url` names a header outside RFC 6068's six,
+    /// under either reading of its query, or its address part decodes to
+    /// hold a `?` (ruling D3.3 item 1;
+    /// [`check_link_url`](crate::document::values::check_link_url)).
+    LinkMailHeader {
+        /// The header's name, as the link wrote it or as it reads
+        /// decoded; or the address part.
         name: String,
     },
     /// The loader built something the document refuses: a row that
@@ -521,9 +524,10 @@ impl fmt::Display for LoadErrorKind {
                 "a link opens an `http`, `https` or `mailto` address, and this one is `{}`",
                 shown(scheme)
             ),
-            LoadErrorKind::LinkAttachment { name } => write!(
+            LoadErrorKind::LinkMailHeader { name } => write!(
                 f,
-                "a `mailto` link may not attach a file, and this one has the parameter `{}`",
+                "a `mailto` link names only the headers to, cc, bcc, subject, body and in-reply-to, \
+                 and this one has `{}`",
                 shown(name)
             ),
             LoadErrorKind::DanglingLink { to } => write!(f, "no node has the id {to}"),

@@ -30,6 +30,7 @@
 //! **Output stays deterministic.** Nothing is ever written by iterating
 //! one of these maps; the saver writes in tree order and sorted names.
 
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasher;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -118,3 +119,93 @@ pub type KeyedMap<K, V> = HashMap<K, V, KeyedState>;
 
 /// A hash set of things a file chose.
 pub type KeyedSet<T> = HashSet<T, KeyedState>;
+
+/// An index from the names a file chose — verb ids, presentation and
+/// edit ids, theme variables, palettes — to what they name: a lookup is
+/// one keyed probe, never a scan of a list whose length the file chose
+/// (D29; ruling D3.3 item 2 on #252). Where two entries share a name,
+/// the first inserted keeps it, as a scan in order would find it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NameIndex<V> {
+    map: KeyedMap<NameKey, V>,
+}
+
+impl<V> Default for NameIndex<V> {
+    fn default() -> Self {
+        NameIndex {
+            map: KeyedMap::default(),
+        }
+    }
+}
+
+impl<V: Copy> NameIndex<V> {
+    /// Index `name` as `value`, unless an earlier entry has the name.
+    /// O(the name's length).
+    pub fn insert_first(&mut self, name: &str, value: V) {
+        self.map.entry(key(name)).or_insert(value);
+    }
+
+    /// What `name` names, if anything. One probe: O(the name's length).
+    pub fn get(&self, name: &str) -> Option<V> {
+        #[cfg(not(test))]
+        let found = self.map.get(name);
+        #[cfg(test)]
+        let found = self.map.get(&key(name));
+        found.copied()
+    }
+
+    /// Room for `more` names besides those indexed.
+    pub fn reserve(&mut self, more: usize) {
+        self.map.reserve(more);
+    }
+}
+
+/// A key of a [`NameIndex`]: the name, owned. It hashes and compares as
+/// the `str` it holds, and is looked up by one ([`Borrow`]). In a test
+/// build every compare is counted (`NAMES_COMPARED`) and a lookup goes
+/// through this type's own `PartialEq`, so a test can hold a lookup to
+/// the compares it makes — about one for a hash probe, as many as there
+/// are names for a scan of the keys, whoever wrote the scan (ruling D3.3
+/// item 3 on #252).
+#[derive(Clone, Debug, Eq)]
+pub(crate) struct NameKey(Box<str>);
+
+/// `name` as a [`NameIndex`] key.
+fn key(name: &str) -> NameKey {
+    NameKey(Box::from(name))
+}
+
+impl std::hash::Hash for NameKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl Borrow<str> for NameKey {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq for NameKey {
+    fn eq(&self, other: &Self) -> bool {
+        #[cfg(test)]
+        NAMES_COMPARED.with(|count| count.set(count.get() + 1));
+        self.0 == other.0
+    }
+}
+
+impl PartialEq<str> for NameKey {
+    fn eq(&self, other: &str) -> bool {
+        #[cfg(test)]
+        NAMES_COMPARED.with(|count| count.set(count.get() + 1));
+        &*self.0 == other
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test counter (ruling D3.3 item 3 on #252): how many times a
+    /// [`NameIndex`]'s keys have been compared on this thread.
+    pub(crate) static NAMES_COMPARED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
