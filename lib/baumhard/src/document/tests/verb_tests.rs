@@ -255,6 +255,59 @@ fn test_a_verb_is_bounded_by_its_parts_after_expansion() {
     );
 }
 
+/// **A step's name is one lookup, however long the lists it names
+/// into** (#380 review, item 1; D29): a map of 2,048 presentations,
+/// 2,048 edits and 2,048 verbs, each verb naming the far end of each
+/// list, loads having looked at exactly one name per name its steps
+/// spell — 4 × 2,048 − 1 — where a scan of the lists would look at on
+/// the order of 2,048 for each.
+///
+/// Control, seen red: `Names::presentation` scanning the presentations
+/// in file order, each entry it compares counted, looks at 4,200,447
+/// names where the steps spell 8,191.
+#[test]
+fn test_a_step_resolves_each_name_in_one_lookup() {
+    use crate::document::verb::load::NAMES_LOOKED_AT;
+    const N: usize = 2_048;
+    let presentations: Vec<String> = (0..N)
+        .map(|n| {
+            format!(
+                r#"{{"id":"p{n}","name":"P","play":"while","target":"node","mutations":[{{"node":{{"set_opacity":0.5}}}}]}}"#
+            )
+        })
+        .collect();
+    let edits: Vec<String> = (0..N)
+        .map(|n| {
+            format!(
+                r#"{{"id":"e{n}","name":"E","reach":"self","target":"node","mutations":[{{"node":{{"nudge":[1.0,0.0]}}}}]}}"#
+            )
+        })
+        .collect();
+    let verbs: Vec<String> = (0..N)
+        .map(|n| {
+            let far = N - 1 - n;
+            let call = if n + 1 < N {
+                format!(r#",{{"verb":"v{}"}}"#, N - 1)
+            } else {
+                String::new()
+            };
+            format!(
+                r#"{{"id":"v{n}","name":"V","steps":[{{"present":"p{far}","on":"self"}},{{"stop":"p{far}","on":"self"}},{{"edit":"e{far}","on":"self"}}{call}]}}"#
+            )
+        })
+        .collect();
+    let map = format!(
+        r#"{{"format":1,"name":"wide","edits":[{}],"presentations":[{}],"verbs":[{}],"nodes":[{{"id":1,"position":[0,0],"sections":[{{"spans":[{{"text":"one"}}]}}]}}]}}"#,
+        edits.join(","),
+        presentations.join(","),
+        verbs.join(",")
+    );
+    NAMES_LOOKED_AT.with(|count| count.set(0));
+    let doc = load(&map).unwrap_or_else(|error| panic!("the wide map loads: {error}"));
+    assert_eq!(doc.definitions().verbs.len(), N);
+    assert_eq!(NAMES_LOOKED_AT.with(|count| count.get()), 4 * N - 1);
+}
+
 /// **A link opens `http`, `https` and `mailto`, and nothing else**, at
 /// load and at apply (amendment 3 on #252): a `file://` span link is
 /// refused at its `url`, naming the scheme; an `https` one loads; and a
@@ -312,6 +365,99 @@ fn test_a_link_to_a_file_is_refused_at_load_and_at_apply() {
     assert_eq!(read.path, "edits[0].mutations[0]");
 }
 
+/// **A `mailto` link may not attach a file** (ruling D3.2 item 2 on
+/// #252), wherever a link is checked: a parameter named `attach` or
+/// `attachment` — in any case, percent-encoded, after a `;` — is refused
+/// at load at the link's `url`, naming the parameter as written; by the
+/// writer at apply, the map left as it was; and in an edit's or a
+/// presentation's `set_link` when it is read. The word as a value, and
+/// an `attach` parameter of an `https` address, are no attachment.
+///
+/// Controls, each seen red: `load_node` accepting
+/// `LinkRefusal::MailAttachment` loads the `Attach` map; the validator
+/// accepting it applies the `set_link`; `resolve` accepting it reads the
+/// edit (and so the presentation, which reads through it); with
+/// `check_link_url` not looking at a `mailto`'s parameters, the `Attach`
+/// map loads.
+#[test]
+fn test_a_mailto_that_attaches_a_file_is_refused_wherever_a_link_is_checked() {
+    let map = |url: &str| {
+        format!(
+            r#"{{"format":1,"name":"l","nodes":[{{"id":1,"position":[0,0],"sections":[{{"spans":[{{"text":"x","link":{{"url":"{url}"}}}}]}}]}}]}}"#
+        )
+    };
+    for (url, name) in [
+        (
+            "mailto:a@example.org?subject=hi&Attach=%2Fhome%2Fu%2F.ssh%2Fid_rsa",
+            "Attach",
+        ),
+        ("MAILTO:a@example.org?ATTACHMENT=x", "ATTACHMENT"),
+        ("mailto:a@example.org?%61ttach=x", "%61ttach"),
+        ("mailto:a@example.org?body=x;attach=y", "attach"),
+    ] {
+        let error = load(&map(url)).expect_err(url);
+        assert_eq!(error.path, "nodes[0].sections[0].spans[0].link.url", "{url}");
+        assert_eq!(
+            error.kind,
+            LoadErrorKind::LinkAttachment { name: name.into() },
+            "{url}"
+        );
+    }
+    for url in [
+        "mailto:a@example.org?subject=attach&body=attachment",
+        "mailto:a@example.org?attachments=x",
+        "https://example.org/?attach=x",
+    ] {
+        load(&map(url)).unwrap_or_else(|error| panic!("{url} loads: {error}"));
+    }
+    let mut doc = load(&map("https://example.org")).expect("an https link loads");
+    let span = doc
+        .tree()
+        .descendants()
+        .find(|&id| doc.get(id).is_some_and(|e| e.kind() == DocKind::Span))
+        .expect("a span");
+    let set = |doc: &Document, url: &str| {
+        use crate::document::mutation::ops::{DocMutation, SpanOp};
+        use crate::document::values::LinkTarget;
+        let steps = compose::set(
+            doc,
+            DocKind::Span,
+            vec![DocMutation::Span(SpanOp::SetLink(Some(LinkTarget::Url(
+                url.into(),
+            ))))],
+            &[span],
+        )
+        .expect("composes");
+        EditRequest::new(steps, "link")
+    };
+    let before = doc.save_json().unwrap();
+    let refusal = doc
+        .apply(
+            set(&doc, "mailto:a@example.org?attachment=/etc/passwd"),
+            ChangeSource::Edit,
+        )
+        .expect_err("the writer refuses a mailto that attaches a file");
+    assert!(
+        refusal.to_string().contains("may not attach a file") && refusal.to_string().contains("`attachment`"),
+        "{refusal}"
+    );
+    assert_eq!(doc.save_json().unwrap(), before, "the map is as it was");
+    doc.apply(
+        set(&doc, "mailto:a@example.org?subject=attach"),
+        ChangeSource::Edit,
+    )
+    .expect("a mailto that attaches nothing applies");
+    let edit = r#"{"edits":[{"id":"x","name":"X","reach":"self","target":"spans","mutations":[{"span":{"set_link":{"url":"mailto:a@example.org?attach=x"}}}]}]}"#;
+    let read = crate::document::edit::parse_edits(edit).expect_err("an edit that attaches a file is refused");
+    assert_eq!(read.path, "edits[0].mutations[0]");
+    assert!(read.to_string().contains("may not attach a file"), "{read}");
+    let presentation = r#"{"presentations":[{"id":"x","name":"X","play":"hold","target":"spans","mutations":[{"span":{"set_link":{"url":"mailto:a@example.org?Attachment=x"}}}]}]}"#;
+    let read = crate::document::presentation::load::parse_presentations(presentation)
+        .expect_err("a presentation that attaches a file is refused");
+    assert_eq!(read.path, "presentations[0].mutations[0]");
+    assert!(read.to_string().contains("may not attach a file"), "{read}");
+}
+
 /// **Steps run at once, in order, until a `wait`**, which suspends the
 /// run on the clock; a frame before the wait is over runs nothing, one at
 /// or past it runs the rest, **at the time the wait ends** — a
@@ -320,7 +466,7 @@ fn test_a_link_to_a_file_is_refused_at_load_and_at_apply() {
 /// comes back.
 ///
 /// Controls, seen red: `run.at_ms` advanced to the frame's reading
-/// instead of by the wait starts `p` at 380; a `wait` that does not
+/// instead of by the wait starts `p` at 480; a `wait` that does not
 /// suspend runs every step at once.
 #[test]
 fn test_a_run_waits_on_the_clock_and_runs_its_calls_inline() {

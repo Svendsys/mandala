@@ -29,7 +29,7 @@ use crate::document::edit::reach::elements;
 use crate::document::edit::{Reach, Target};
 use crate::document::element::DocKind;
 use crate::document::ids::{Definitions, Document, NodeIdent};
-use crate::document::values::{PresentationId, VerbId};
+use crate::document::values::{EditId, PresentationId, VerbId};
 
 /// The deepest a chain of verb calls may go: a verb that calls a verb
 /// that calls a verb … at most this many verbs long (#252 §1). A verb
@@ -71,9 +71,8 @@ pub enum Step {
     /// Apply one of the map's edits at the targets: one history entry,
     /// recorded with `ChangeSource::Verb`.
     Edit {
-        /// The edit's id, found among the map's edits when the step
-        /// runs.
-        edit: String,
+        /// The edit, one of the map's own.
+        edit: EditId,
         /// Where.
         on: On,
     },

@@ -392,6 +392,7 @@ mod tests {
             DragState::Pending {
                 start_pos: (0.0, 0.0),
                 hit: crate::application::app::ClickHit::Empty,
+                landed: None,
             },
         ] {
             assert_eq!(route_pan_canvas(&drag), PanCanvasRoute::Arm);

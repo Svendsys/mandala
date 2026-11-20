@@ -17,7 +17,9 @@ use super::dispatch::cross_dispatch::click_selection;
 use super::dispatch::families::edits::Projected;
 use super::dispatch::families::verbs::Host;
 use super::input_context::InputHandlerContext;
-use super::{compute_click_hit, is_double_click, ClickHit, DragState, HeldInput, InteractionMode, LastClick};
+use super::{
+    compute_click_hit, is_double_click, press_hit, ClickHit, DragState, HeldInput, InteractionMode, LastClick,
+};
 use crate::application::console::ConsoleState;
 use crate::application::keybinds::MouseGesture;
 
@@ -165,7 +167,10 @@ fn handle_left_press(ctx: &mut InputHandlerContext<'_>) {
         return;
     }
     let screen_pos = *ctx.cursor_pos;
-    let (canvas_pos, hit) = hit_under_cursor(ctx);
+    let canvas_pos = ctx
+        .renderer
+        .screen_to_canvas(screen_pos.0 as f32, screen_pos.1 as f32);
+    let (landed, hit) = press_hit(ctx.document.as_ref(), ctx.view.as_mut(), canvas_pos);
     let now = ctx.clock.now_ms();
     let doubled = ctx
         .last_click
@@ -192,6 +197,7 @@ fn handle_left_press(ctx: &mut InputHandlerContext<'_>) {
     *ctx.drag_state = DragState::Pending {
         start_pos: screen_pos,
         hit,
+        landed,
     };
 }
 
@@ -200,7 +206,7 @@ fn handle_left_press(ctx: &mut InputHandlerContext<'_>) {
 /// ends.
 fn handle_left_release(ctx: &mut InputHandlerContext<'_>) {
     match std::mem::replace(ctx.drag_state, DragState::None) {
-        DragState::Pending { hit, start_pos } => handle_click(hit, start_pos, ctx.modifiers.shift_key(), ctx),
+        DragState::Pending { hit, landed, .. } => handle_click(hit, landed, ctx.modifiers.shift_key(), ctx),
         DragState::SelectingRect {
             start_canvas,
             current_canvas,
@@ -213,20 +219,22 @@ fn handle_left_release(ctx: &mut InputHandlerContext<'_>) {
     }
 }
 
-/// A click on `hit`, pressed at `press` (surface pixels) — Shift held or
-/// not — first runs what it triggers: a linked span's verb or address,
-/// or the clicked node's `on.click` verb (`families::verbs`). Then it
-/// updates the selection (`click_selection`), as a click always does, and
-/// syncs the view when either changed anything.
-pub(super) fn handle_click(hit: ClickHit, press: (f64, f64), shift: bool, ctx: &mut InputHandlerContext<'_>) {
-    let canvas_pos = ctx.renderer.screen_to_canvas(press.0 as f32, press.1 as f32);
+/// A click on what its press `landed` on — `hit`, what the selection
+/// takes of it, both from the press's one hit test (`press_hit`) —
+/// Shift held or not, first runs what it triggers: a linked span's verb
+/// or address, or the clicked node's `on.click` verb (`families::verbs`).
+/// Then it updates the selection (`click_selection`), as a click always
+/// does, and syncs the view when either changed anything.
+pub(super) fn handle_click(
+    hit: ClickHit,
+    landed: Option<baumhard::projection::Hit>,
+    shift: bool,
+    ctx: &mut InputHandlerContext<'_>,
+) {
     let now_ms = ctx.clock.now_ms();
     let (Some(doc), Some(view)) = (ctx.document.as_mut(), ctx.view.as_mut()) else {
         return;
     };
-    // What the press landed on, as the trigger reads it: the span under
-    // it as well as the element (`compute_click_hit` keeps the element).
-    let landed = view.hit(canvas_pos);
     let triggered = Host {
         doc: &mut *doc,
         drawn: &mut Projected {
@@ -366,6 +374,7 @@ mod tests {
             DragState::Pending {
                 start_pos: (0.0, 0.0),
                 hit: ClickHit::Empty,
+                landed: None,
             },
         ] {
             assert_eq!(

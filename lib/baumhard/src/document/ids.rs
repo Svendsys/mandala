@@ -187,7 +187,11 @@ pub struct Document {
     pub(in crate::document) tree: Tree<DocElement>,
     pub(in crate::document) ident_index: IdentIndex,
     pub(in crate::document) next_ident: u32,
-    pub(in crate::document) definitions: Definitions,
+    /// Shared, as nothing changes them while the map is open (§5.7): a
+    /// copy of the document shares them, and a start of one of the map's
+    /// own presentations reads its definition where the map keeps it
+    /// ([`Self::start_defined`]).
+    pub(in crate::document) definitions: std::sync::Arc<Definitions>,
     pub(in crate::document) derived: Derived,
     pub(in crate::document) writer: Writer,
     pub(in crate::document) presentations: Presentations,
@@ -241,7 +245,7 @@ impl Document {
             tree,
             ident_index,
             next_ident,
-            definitions,
+            definitions: std::sync::Arc::new(definitions),
             derived,
             writer: Writer::default(),
             presentations: Presentations::default(),
@@ -271,7 +275,7 @@ impl Document {
             tree,
             ident_index,
             next_ident: first_free_ident(highest, idents_named_by(&definitions)),
-            definitions,
+            definitions: std::sync::Arc::new(definitions),
             derived,
             writer: Writer::default(),
             presentations: Presentations::default(),

@@ -40,8 +40,8 @@
 use crate::arena::NodeId;
 use crate::document::format::context::shown;
 use crate::document::ids::Document;
-use crate::document::presentation::{InstanceId, Play, PresentError, PresentationDef};
-use crate::document::values::{PresentationId, VerbId};
+use crate::document::presentation::{InstanceId, Play, PresentError};
+use crate::document::values::{EditId, PresentationId, VerbId};
 use crate::document::verb::{On, Step, MAX_VERB_DEPTH};
 use std::fmt;
 
@@ -57,30 +57,31 @@ pub trait Performer {
     /// What is selected now.
     fn selection(&self) -> Vec<NodeId>;
 
-    /// Start `def` on `nodes` at the clock reading `at_ms`: the
-    /// instances it now plays as. The answer is the start's
-    /// (`Document::start_presentation`), and is not where a refusal of
-    /// the platform's budget arrives when the layer is set aside — that
-    /// one arrives later, on the instance — so nothing here relies on it
-    /// beyond the instances it names.
+    /// Start the map's presentation `id` on `nodes` at the clock reading
+    /// `at_ms`: the instances it now plays as. The answer is the start's
+    /// (`Document::start_defined`), and is not where a refusal of the
+    /// platform's budget arrives when the layer is set aside — that one
+    /// arrives later, on the instance — so nothing here relies on it
+    /// beyond the instances it names. A run asks only for a presentation
+    /// the map defines.
     fn start(
         &mut self,
-        def: &PresentationDef,
+        id: PresentationId,
         nodes: &[NodeId],
         at_ms: f64,
     ) -> Result<Vec<InstanceId>, PresentError>;
 
-    /// Stop the presentation `id` on `nodes` at `at_ms`. Returns how
-    /// many instances it stopped.
-    fn stop(&mut self, id: &str, nodes: &[NodeId], at_ms: f64) -> usize;
+    /// Stop the map's presentation `id` on `nodes` at `at_ms`. Returns
+    /// how many instances it stopped.
+    fn stop(&mut self, id: PresentationId, nodes: &[NodeId], at_ms: f64) -> usize;
 
     /// Stop the instances `ids` that still play, at `at_ms`. Returns how
     /// many it stopped.
     fn stop_instances(&mut self, ids: &[InstanceId], at_ms: f64) -> usize;
 
-    /// Apply the edit `id` at `nodes`, at `at_ms`, recorded with
+    /// Apply the map's edit `id` at `nodes`, at `at_ms`, recorded with
     /// `ChangeSource::Verb`; or why it did not.
-    fn edit(&mut self, id: &str, nodes: &[NodeId], at_ms: f64) -> Result<(), String>;
+    fn edit(&mut self, id: EditId, nodes: &[NodeId], at_ms: f64) -> Result<(), String>;
 }
 
 /// A run, as [`Runs::invoke`] names it.
@@ -177,11 +178,13 @@ pub struct Runs {
 }
 
 /// What one step resolved to, owned, so that the document can be lent
-/// out again to do it.
+/// out again to do it: the definitions it names by index, and the nodes
+/// it acts on.
 enum Act {
-    Start(PresentationDef, Vec<NodeId>),
-    Stop(String, Vec<NodeId>),
-    Edit(String, Vec<NodeId>),
+    /// Start a presentation that plays as `Play`.
+    Start(PresentationId, Play, Vec<NodeId>),
+    Stop(PresentationId, Vec<NodeId>),
+    Edit(EditId, Vec<NodeId>),
     Wait(u32),
     Call(VerbId),
     Nothing,
@@ -333,21 +336,21 @@ fn advance(run: &mut Run, now_ms: f64, performer: &mut dyn Performer) {
             }
         };
         match act {
-            Act::Start(def, nodes) => match performer.start(&def, &nodes, run.at_ms) {
+            Act::Start(id, play, nodes) => match performer.start(id, &nodes, run.at_ms) {
                 // The start's answer names the instances; whether the
                 // layer can show them is the layer's to say, on each.
                 Ok(ids) => {
-                    if def.play == Play::While && run.held {
+                    if play == Play::While && run.held {
                         run.held_instances.extend(ids);
                     }
                 }
                 Err(error) => log::warn!("verb: {error}"),
             },
             Act::Stop(id, nodes) => {
-                performer.stop(&id, &nodes, run.at_ms);
+                performer.stop(id, &nodes, run.at_ms);
             }
             Act::Edit(id, nodes) => {
-                if let Err(message) = performer.edit(&id, &nodes, run.at_ms) {
+                if let Err(message) = performer.edit(id, &nodes, run.at_ms) {
                     log::warn!("verb: {message}");
                 }
             }
@@ -402,14 +405,17 @@ fn resolve(
     let presentation = |id: PresentationId| doc.definitions().presentations.get(usize::from(id.0));
     match step {
         Step::Present { presentation: id, on } => match presentation(*id) {
-            Some(def) => Act::Start(def.clone(), targets(on)),
+            Some(def) => Act::Start(*id, def.play, targets(on)),
             None => Act::Nothing,
         },
         Step::Stop { presentation: id, on } => match presentation(*id) {
-            Some(def) => Act::Stop(def.id.clone(), targets(on)),
+            Some(_) => Act::Stop(*id, targets(on)),
             None => Act::Nothing,
         },
-        Step::Edit { edit, on } => Act::Edit(edit.clone(), targets(on)),
+        Step::Edit { edit, on } => match doc.definitions().edits.get(usize::from(edit.0)) {
+            Some(_) => Act::Edit(*edit, targets(on)),
+            None => Act::Nothing,
+        },
         Step::Wait { ms } => Act::Wait(*ms),
         Step::Verb { verb } => Act::Call(*verb),
     }

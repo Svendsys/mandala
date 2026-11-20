@@ -73,11 +73,13 @@ pub(super) struct WasmInputState {
     pub view: Option<MapView>,
     pub last_click: Option<LastClick>,
     pub cursor_pos: (f64, f64),
-    /// What the left press hit, and where it was pressed (surface
-    /// pixels), held until its release clicks it: `None` on init, after a
-    /// release consumed it, and while no press is down. The browser's
-    /// whole drag-state machine — it has no drag to promote a press into.
-    pub pending_click: Option<(ClickHit, (f64, f64))>,
+    /// What the left press hit — what the selection takes of it, and the
+    /// hit test itself, span and all, which the click's trigger reads
+    /// (`app::press_hit`) — held until its release clicks it: `None` on
+    /// init, after a release consumed it, and while no press is down. The
+    /// browser's whole drag-state machine — it has no drag to promote a
+    /// press into.
+    pub pending_click: Option<(ClickHit, Option<baumhard::projection::Hit>)>,
     /// Whether the pointer shows the hand: it is over what a click
     /// triggers something on (`families::verbs::points_at`). The peer of
     /// native's `cursor_is_hand`.
@@ -444,6 +446,7 @@ impl WasmApp {
             WindowEvent::CursorMoved { position, .. } => self
                 .with_borrowed(|b| b.on_cursor_moved(position))
                 .unwrap_or(false),
+            WindowEvent::CursorLeft { .. } => self.with_borrowed(|b| b.on_cursor_left()).unwrap_or(false),
             WindowEvent::MouseInput { state, button, .. } => self
                 .with_borrowed(|b| b.on_mouse_input(state, button))
                 .unwrap_or(false),
@@ -461,9 +464,10 @@ impl WasmApp {
             //   inline node-text editor. Modal-handler-side
             //   work; the dispatch funnel doesn't see literal
             //   IME payloads (§3 carve-out for `winit::Key`).
-            // - `WindowEvent::Focused`, `CursorEntered` /
-            //   `CursorLeft` — informational; could drive a
-            //   "canvas inactive" overlay in the future.
+            // - `WindowEvent::Focused`, `CursorEntered` —
+            //   informational; could drive a "canvas inactive"
+            //   overlay in the future. (`CursorLeft` is routed:
+            //   it releases a held hover.)
             //
             // Drop silently rather than log because winit fires
             // every variant on every event tick; a log would

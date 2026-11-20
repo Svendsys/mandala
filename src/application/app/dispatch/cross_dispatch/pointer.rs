@@ -19,7 +19,7 @@ use crate::application::app::dispatch::families::edits::Projected;
 use crate::application::app::dispatch::families::verbs;
 use crate::application::app::input_context_core::InputContextCore;
 use crate::application::app::touch_gesture::{Phase, RecognizedGesture, TouchGestureRecognizer};
-use crate::application::app::{compute_click_hit, ClickHit};
+use crate::application::app::ClickHit;
 
 use super::click_selection;
 
@@ -159,9 +159,11 @@ fn camera_step_decrees(
 
 /// A tap is a click without Shift (#252 §3: touch has no hover): it runs
 /// what it triggers — a linked span's verb or address, or the node's
-/// `on.click` verb (`families::verbs`) — then selects through the same
-/// hit chain (`compute_click_hit`), and syncs the view when either
-/// changed anything.
+/// `on.click` verb (`families::verbs`) — then selects what the same hit
+/// test landed on (`ClickHit::of`, the selection's half of
+/// `compute_click_hit`), and syncs the view when either changed
+/// anything. One hit test, which the trigger and the selection both
+/// read.
 fn apply_tap_select(screen_pos: (f64, f64), core: &mut InputContextCore<'_>) {
     let canvas_pos = core
         .renderer
@@ -180,7 +182,7 @@ fn apply_tap_select(screen_pos: (f64, f64), core: &mut InputContextCore<'_>) {
         edits: core.edits,
     }
     .click(landed.as_ref(), now_ms);
-    let hit = compute_click_hit(Some(&*doc), Some(&mut *view), canvas_pos);
+    let hit = ClickHit::of(doc.doc(), landed.as_ref());
     if click_selection(&mut doc.selection, hit, false) || triggered {
         view.sync(doc, core.renderer);
     }

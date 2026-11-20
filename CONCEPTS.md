@@ -1653,8 +1653,9 @@ macro tiers, which could run console lines from a map someone sent.
   first: a hover must not cut short the change the user watches.
 - **Links.** A span's `link` runs a verb with `self` the span's node,
   or opens an `http`, `https` or `mailto` address
-  (`platform::opener`: the `open` crate on native, `window.open` in the
-  browser); any other scheme is refused at load and at apply.
+  (`platform::opener`: the `open` crate on native, `window.open` with
+  `noopener` in the browser); any other scheme, and a `mailto` that
+  attaches a file, is refused at load and at apply.
 
 `lib/baumhard/src/document/verb/`,
 `src/application/app/dispatch/families/verbs.rs`,

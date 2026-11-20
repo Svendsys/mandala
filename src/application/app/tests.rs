@@ -262,6 +262,7 @@ mod abandonment_guard {
             DragState::Pending {
                 start_pos: (0.0, 0.0),
                 hit: ClickHit::Empty,
+                landed: None,
             },
         ] {
             assert!(
@@ -408,6 +409,7 @@ mod abandonment_guard {
             DragState::Pending {
                 start_pos: (0.0, 0.0),
                 hit: ClickHit::Empty,
+                landed: None,
             },
         ] {
             let before = std::mem::discriminant(&drag);

@@ -120,7 +120,8 @@ node-inline tiers went with the old format. What a third-party map can
 do is be drawn, and run its verbs ([`verbs.md`](./verbs.md), V1-D3) from
 its triggers and links: start and stop its own presentations, apply its
 own edits, wait, and open an `http`, `https` or `mailto` link a click
-lands on. A verb has no step that runs a console line or an Action, or
+lands on — a `mailto` that attaches no file, in a browser tab that has
+no handle on Mandala's. A verb has no step that runs a console line or an Action, or
 touches a file or the process — the format has no spelling for one —
 so the capability surface of this document is the user's file and the
 application bundle, both of which the user owns.

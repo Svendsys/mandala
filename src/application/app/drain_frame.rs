@@ -138,6 +138,7 @@ mod tests {
             DragState::Pending {
                 start_pos: (0.0, 0.0),
                 hit: ClickHit::Empty,
+                landed: None,
             },
             DragState::Panning {
                 owner: PanOwner::Toggled,

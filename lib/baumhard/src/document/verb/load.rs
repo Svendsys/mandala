@@ -37,26 +37,91 @@ use crate::document::edit::EditDef;
 use crate::document::format::error::{LoadErrorKind, Seg};
 use crate::document::format::verbs::{StepDto, StepTargetDto, VerbDto, WithinDto};
 use crate::document::ids::{Definitions, NodeIdent};
+use crate::document::keyed::KeyedMap;
 use crate::document::presentation::PresentationDef;
-use crate::document::values::{PresentationId, VerbId};
+use crate::document::values::{EditId, PresentationId, VerbId};
 use crate::document::verb::{On, Step, VerbDef, Within, MAX_VERB_DEPTH};
 
 /// A refusal: the path below `verbs`, and what is wrong there.
 pub(crate) type Refusal = (Vec<Seg>, LoadErrorKind);
 
+thread_local! {
+    /// Test counter (#380 review, item 1): the names the steps' lookups
+    /// have looked at on this thread — one a lookup in an index, each
+    /// entry of a list a scan would compare. A load is linear in its
+    /// steps only while this grows by one a lookup.
+    #[cfg(test)]
+    pub(crate) static NAMES_LOOKED_AT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The map's own names a step resolves against, each list indexed once:
+/// a step's lookup is one probe of a keyed map, never a scan of a list a
+/// file chose the length of (D29).
+struct Names<'a> {
+    /// Every verb's id, to the `VerbId` it has: the builder's own index.
+    verbs: &'a KeyedMap<String, VerbId>,
+    /// Every presentation's id, to its place in the list.
+    presentations: KeyedMap<&'a str, PresentationId>,
+    /// Every edit's id, to its place in the list.
+    edits: KeyedMap<&'a str, EditId>,
+}
+
+impl Names<'_> {
+    /// One lookup, counted (`NAMES_LOOKED_AT`).
+    fn looked_at() {
+        #[cfg(test)]
+        NAMES_LOOKED_AT.with(|count| count.set(count.get() + 1));
+    }
+
+    fn verb(&self, id: &str) -> Option<VerbId> {
+        Self::looked_at();
+        self.verbs.get(id).copied()
+    }
+
+    fn presentation(&self, id: &str) -> Option<PresentationId> {
+        Self::looked_at();
+        self.presentations.get(id).copied()
+    }
+
+    fn edit(&self, id: &str) -> Option<EditId> {
+        Self::looked_at();
+        self.edits.get(id).copied()
+    }
+}
+
 /// The map's verbs, read from `dtos` against the map's own
-/// `presentations` and `edits`; `verbs` is every verb's id, in the
-/// file's order, which a `VerbId` indexes. See the [module docs](self)
-/// for what is refused.
+/// `presentations` and `edits`; `verbs` is every verb's id to the
+/// `VerbId` it has, as the loader numbered them in the file's order. See
+/// the [module docs](self) for what is refused.
 ///
-/// Cost: O(the steps and the ids they name), and the call graph's
+/// Cost: O(the presentations and the edits, each indexed once), O(1) for
+/// each step's name, O(the ids the steps name), and the call graph's
 /// edges, each looked at once.
 pub(crate) fn definitions(
     dtos: &[VerbDto],
-    verbs: &[String],
+    verbs: &KeyedMap<String, VerbId>,
     presentations: &[PresentationDef],
     edits: &[EditDef],
 ) -> Result<Vec<VerbDef>, Refusal> {
+    let mut by_id: KeyedMap<&str, PresentationId> = KeyedMap::default();
+    by_id.reserve(presentations.len());
+    for (index, def) in presentations.iter().enumerate() {
+        if let Ok(index) = u16::try_from(index) {
+            by_id.insert(def.id.as_str(), PresentationId(index));
+        }
+    }
+    let mut edit_ids: KeyedMap<&str, EditId> = KeyedMap::default();
+    edit_ids.reserve(edits.len());
+    for (index, def) in edits.iter().enumerate() {
+        if let Ok(index) = u16::try_from(index) {
+            edit_ids.insert(def.id.as_str(), EditId(index));
+        }
+    }
+    let names = Names {
+        verbs,
+        presentations: by_id,
+        edits: edit_ids,
+    };
     let mut defs = Vec::with_capacity(dtos.len());
     for (i, dto) in dtos.iter().enumerate() {
         let mut steps = Vec::with_capacity(dto.steps.len());
@@ -66,9 +131,7 @@ pub(crate) fn definitions(
                 path.append(&mut segs);
                 path
             };
-            steps.push(
-                self::step(step, verbs, presentations, edits).map_err(|(segs, kind)| (at(segs), kind))?,
-            );
+            steps.push(self::step(step, &names).map_err(|(segs, kind)| (at(segs), kind))?);
         }
         defs.push(VerbDef {
             id: dto.id.clone(),
@@ -82,12 +145,7 @@ pub(crate) fn definitions(
 }
 
 /// One step, resolved; or the path inside it, and what is wrong there.
-fn step(
-    dto: &StepDto,
-    verbs: &[String],
-    presentations: &[PresentationDef],
-    edits: &[EditDef],
-) -> Result<Step, Refusal> {
+fn step(dto: &StepDto, names: &Names) -> Result<Step, Refusal> {
     let StepDto {
         present,
         stop,
@@ -152,17 +210,12 @@ fn step(
         }
     };
     let presentation = |key: &'static str, id: &str| -> Result<PresentationId, Refusal> {
-        presentations
-            .iter()
-            .position(|def| def.id == id)
-            .and_then(|index| u16::try_from(index).ok())
-            .map(PresentationId)
-            .ok_or_else(|| {
-                (
-                    vec![Seg::Key(key)],
-                    LoadErrorKind::UnknownPresentation { id: id.to_string() },
-                )
-            })
+        names.presentation(id).ok_or_else(|| {
+            (
+                vec![Seg::Key(key)],
+                LoadErrorKind::UnknownPresentation { id: id.to_string() },
+            )
+        })
     };
     if let Some(id) = present {
         let presentation = presentation("present", id)?;
@@ -179,14 +232,14 @@ fn step(
         });
     }
     if let Some(id) = edit {
-        if !edits.iter().any(|def| def.id == *id) {
+        let Some(edit) = names.edit(id) else {
             return Err((
                 vec![Seg::Key("edit")],
                 LoadErrorKind::UnknownEdit { id: id.clone() },
             ));
-        }
+        };
         return Ok(Step::Edit {
-            edit: id.clone(),
+            edit,
             on: targets("edit")?,
         });
     }
@@ -198,17 +251,12 @@ fn step(
     }
     if let Some(id) = verb {
         untargeted("verb")?;
-        let verb = verbs
-            .iter()
-            .position(|known| known == id)
-            .and_then(|index| u16::try_from(index).ok())
-            .map(VerbId)
-            .ok_or_else(|| {
-                (
-                    vec![Seg::Key("verb")],
-                    LoadErrorKind::UnknownVerb { id: id.clone() },
-                )
-            })?;
+        let verb = names.verb(id).ok_or_else(|| {
+            (
+                vec![Seg::Key("verb")],
+                LoadErrorKind::UnknownVerb { id: id.clone() },
+            )
+        })?;
         return Ok(Step::Verb { verb });
     }
     // `kinds == 1` above: one of the five was set.
@@ -395,7 +443,7 @@ pub(crate) fn to_dto(def: &VerbDef, definitions: &Definitions) -> Option<VerbDto
                     dto.on = Some(on_dto(on));
                 }
                 Step::Edit { edit, on } => {
-                    dto.edit = Some(edit.clone());
+                    dto.edit = Some(definitions.edits.get(usize::from(edit.0))?.id.clone());
                     dto.on = Some(on_dto(on));
                 }
                 Step::Wait { ms } => dto.wait = Some(*ms),

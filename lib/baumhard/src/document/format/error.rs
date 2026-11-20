@@ -395,6 +395,12 @@ pub enum LoadErrorKind {
         /// it has none.
         scheme: String,
     },
+    /// A `mailto` link's `url` asks the mail client to attach a file: a
+    /// parameter named `attach` or `attachment` (ruling D3.2 item 2).
+    LinkAttachment {
+        /// The parameter's name, as the link wrote it.
+        name: String,
+    },
     /// The loader built something the document refuses: a row that
     /// breaks the shape rules, a tree that is not a document, an insert
     /// the tree rejects. The loader checks everything the document
@@ -514,6 +520,11 @@ impl fmt::Display for LoadErrorKind {
                 f,
                 "a link opens an `http`, `https` or `mailto` address, and this one is `{}`",
                 shown(scheme)
+            ),
+            LoadErrorKind::LinkAttachment { name } => write!(
+                f,
+                "a `mailto` link may not attach a file, and this one has the parameter `{}`",
+                shown(name)
             ),
             LoadErrorKind::DanglingLink { to } => write!(f, "no node has the id {to}"),
             LoadErrorKind::SelfLink => f.write_str("a link cannot lead to the node that holds it"),

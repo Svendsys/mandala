@@ -873,16 +873,6 @@ impl Renderer {
         self.fps_display_mode
     }
 
-    /// Forward a redraw request to the underlying winit window. On
-    /// web (winit-web) this schedules an internal
-    /// `requestAnimationFrame`; multiple calls in one event chain
-    /// coalesce to a single delivery, so it is safe to call from any
-    /// handler that mutated visual state.
-    ///
-    /// Browser-only consumer: `run_wasm` drives its frames off winit
-    /// redraw requests, while native's loop runs `ControlFlow::Poll`
-    /// and never asks. Lint armed on wasm32 so the day that changes,
-    /// wasm32 says so.
     /// Show `icon` as the pointer over the canvas: the browser's half of
     /// the hand over what a click triggers something on (#252 §3). Native
     /// sets the cursor through its shell, which owns the window there.
@@ -893,6 +883,16 @@ impl Renderer {
         }
     }
 
+    /// Forward a redraw request to the underlying winit window. On
+    /// web (winit-web) this schedules an internal
+    /// `requestAnimationFrame`; multiple calls in one event chain
+    /// coalesce to a single delivery, so it is safe to call from any
+    /// handler that mutated visual state.
+    ///
+    /// Browser-only consumer: `run_wasm` drives its frames off winit
+    /// redraw requests, while native's loop runs `ControlFlow::Poll`
+    /// and never asks. Lint armed on wasm32 so the day that changes,
+    /// wasm32 says so.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     pub fn request_redraw(&self) {
         match &self.sink {

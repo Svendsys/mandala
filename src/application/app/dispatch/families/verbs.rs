@@ -37,8 +37,8 @@
 use baumhard::arena::NodeId;
 use baumhard::document::element::DocElement;
 use baumhard::document::ids::{Document, NodeIdent};
-use baumhard::document::presentation::{InstanceId, PresentError, PresentationDef};
-use baumhard::document::values::{LinkTarget, VerbId};
+use baumhard::document::presentation::{InstanceId, PresentError};
+use baumhard::document::values::{EditId, LinkTarget, PresentationId, VerbId};
 use baumhard::document::verb::{Performer, RunId, VerbError};
 use baumhard::document::writer::ChangeSource;
 use baumhard::projection::Hit;
@@ -70,22 +70,40 @@ impl Performer for Host<'_> {
 
     fn start(
         &mut self,
-        def: &PresentationDef,
+        id: PresentationId,
         nodes: &[NodeId],
         at_ms: f64,
     ) -> Result<Vec<InstanceId>, PresentError> {
-        self.doc.start_presentation(def, nodes, at_ms)
+        // A run asks only for a presentation the map defines.
+        self.doc
+            .start_defined(id, nodes, at_ms)
+            .unwrap_or_else(|| Ok(Vec::new()))
     }
 
-    fn stop(&mut self, id: &str, nodes: &[NodeId], at_ms: f64) -> usize {
-        self.doc.stop_presentation(id, nodes, at_ms)
+    fn stop(&mut self, id: PresentationId, nodes: &[NodeId], at_ms: f64) -> usize {
+        self.doc.stop_defined(id, nodes, at_ms)
     }
 
     fn stop_instances(&mut self, ids: &[InstanceId], at_ms: f64) -> usize {
         self.doc.stop_instances(ids, at_ms)
     }
 
-    fn edit(&mut self, id: &str, nodes: &[NodeId], at_ms: f64) -> Result<(), String> {
+    fn edit(&mut self, id: EditId, nodes: &[NodeId], at_ms: f64) -> Result<(), String> {
+        // The edit funnel names an edit by its id, as every route does:
+        // the id, not the definition, is what is copied.
+        let Some(id) = self
+            .doc
+            .doc()
+            .definitions()
+            .edits
+            .get(usize::from(id.0))
+            .map(|def| def.id.clone())
+        else {
+            return Err(format!(
+                "no edit at {id:?}: a run asks only for an edit the map defines"
+            ));
+        };
+        let id = id.as_str();
         // D28: an interactive transaction refuses every other change, and
         // a verb's edit step yields to it rather than fail the run.
         if let Some(interaction) = self.doc.open_interaction() {

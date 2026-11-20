@@ -139,7 +139,7 @@ instances hold until a step or the console stops them.
 | Trigger | Invokes |
 |---|---|
 | A click on a node | its `on.click` verb, with `self` the node |
-| The pointer resting on a node | its `on.hover` verb, held, with `self` the node; leaving the node releases it |
+| The pointer resting on a node | its `on.hover` verb, held, with `self` the node; leaving the node, or the window, releases it |
 | A click on a span with a `link` | `{ "verb": id }`: that verb, with `self` the node the span belongs to; `{ "url": … }`: opens the address |
 | The console | `verb run <id> [node-id]` |
 | IPC | [`act.verb`](./ipc.md#actverb), and `mandalactl act.verb <id> [node-id]` |
@@ -151,8 +151,17 @@ instances hold until a step or the console stops them.
   on #252): a click on a span with a `link` runs the link, and not also
   the node's `on.click`; a click elsewhere on the node runs the node's.
 - **Hover follows the pointer.** Moving from one node to another
-  releases the first before invoking the second. Touch has no hover: a
-  tap is a click.
+  releases the first before invoking the second, and the pointer
+  leaving the window (the canvas, in the browser) releases the hover as
+  leaving the node does (ruling D3.2 item 4 on #252). During a gesture
+  — a press not yet released — the hover stays as it was. Touch has no
+  hover: a tap is a click.
+- **A hover is decided by the pointer's moves, and only by them**
+  (ruling D3.2 item 4). When the scene changes under a pointer that
+  does not move — a click's verb hides or moves the node it rests on,
+  a presentation slides another under it — the hover is not decided
+  again: the run it holds stays held until the pointer next moves or
+  leaves the window.
 - A node is the node a click on it selects: a click or a hover on a
   node's connector or one of its links is not on the node.
 - The pointer shows a hand over a node with an `on.click` and over a
@@ -163,12 +172,20 @@ instances hold until a step or the console stops them.
 A span link's `url` opens in the platform's handler for it — the
 default browser, or the mail client for `mailto:` — through the
 platform's opener on native and in a new tab (`window.open(url,
-"_blank")`) in the browser. **Only `http`, `https` and `mailto`
-addresses** (in any case) are accepted: any other scheme — `file`,
-`javascript`, `data`, a custom handler — is refused at load, at the
-link's `url` (`LinkScheme`), and a `set_link` an edit or a presentation
-writes to one is refused when the edit or the presentation is read, and
-again by the writer when it is applied, so no map can come to hold one.
+"_blank", "noopener,noreferrer")`) in the browser, so the page a map
+links to gets no handle on Mandala's tab (ruling D3.2 item 1 on #252).
+**Only `http`, `https` and `mailto` addresses** (in any case) are
+accepted: any other scheme — `file`, `javascript`, `data`, a custom
+handler — is refused at load, at the link's `url` (`LinkScheme`).
+**A `mailto` address may not attach a file** (ruling D3.2 item 2): one
+with a parameter named `attach` or `attachment` — in any case, however
+it is percent-encoded, after a `&` or a `;` — is refused there too
+(`LinkAttachment`), since some mail clients have attached a local file
+such a parameter named; the words as a parameter's value attach
+nothing. A `set_link` an edit or a presentation writes to either is
+refused when the edit or the presentation is read, and again by the
+writer when it is applied, and the app's opener refuses either before
+it hands an address on, so no map can come to hold one or open one.
 
 ## Load checks
 

@@ -6,14 +6,15 @@
 //! and any other button is dropped, as native drops it:
 //!
 //! - **Pressed** ([`super::Borrowed::handle_mouse_pressed`]): runs the
-//!   cross-platform `compute_click_hit` — the projector's hit test, the
+//!   cross-platform `press_hit` — the projector's hit test, the
 //!   chain native's press runs — distinguishes single vs double click,
 //!   dispatches the `DoubleClick` binding on a double, and otherwise
 //!   holds what the press hit (`WasmInputState::pending_click`) plus a
 //!   `LastClick` snapshot for the eventual release.
 //! - **Released** ([`super::Borrowed::handle_mouse_released`]): clicks
-//!   what the press hit — the selection updates through the shared
-//!   `click_selection` and the view syncs, native's `handle_click`.
+//!   what the press hit — its trigger runs on the press's hit test, the
+//!   selection updates through the shared `click_selection` and the view
+//!   syncs, native's `handle_click`.
 //!
 //! Mirrors the native shape at `event_mouse_click.rs`; the WASM
 //! variant has no console / color-picker / drag-state intercepts so
@@ -27,7 +28,7 @@ use crate::application::app::dispatch::cross_dispatch::click_selection;
 use crate::application::app::dispatch::families::edits::Projected;
 use crate::application::app::dispatch::families::verbs;
 use crate::application::app::dispatch::DispatchOutcome;
-use crate::application::app::{compute_click_hit, dispatch, is_double_click, LastClick};
+use crate::application::app::{dispatch, is_double_click, press_hit, LastClick};
 use std::sync::atomic::AtomicBool;
 
 /// One-shot latch for the double-click input class. See
@@ -86,7 +87,7 @@ impl super::Borrowed<'_> {
         let renderer = &mut *self.renderer;
         let canvas_pos = renderer.screen_to_canvas(input.cursor_pos.0 as f32, input.cursor_pos.1 as f32);
         // The one hit chain both targets' presses run.
-        let hit = compute_click_hit(Some(&input.document), input.view.as_mut(), canvas_pos);
+        let (landed, hit) = press_hit(Some(&input.document), input.view.as_mut(), canvas_pos);
         let now = input.clock.now_ms();
         let is_dblclick = input
             .last_click
@@ -132,7 +133,7 @@ impl super::Borrowed<'_> {
             return;
         }
 
-        input.pending_click = Some((hit, input.cursor_pos));
+        input.pending_click = Some((hit, landed));
         input.last_click = Some(LastClick {
             time: now,
             screen_pos: input.cursor_pos,
@@ -146,26 +147,22 @@ impl super::Borrowed<'_> {
     /// the selection updates, Shift held or not, and the view syncs when
     /// either changed anything.
     fn handle_mouse_released(&mut self) {
-        let Some((hit, press)) = self.input.pending_click.take() else {
+        let Some((hit, landed)) = self.input.pending_click.take() else {
             return;
         };
         let shift = self.input.modifiers.shift_key();
         let now_ms = self.input.clock.now_ms();
-        let canvas_pos = self.renderer.screen_to_canvas(press.0 as f32, press.1 as f32);
         let input = &mut *self.input;
         let triggered = match input.view.as_mut() {
-            Some(view) => {
-                let landed = view.hit(canvas_pos);
-                verbs::Host {
-                    doc: &mut input.document,
-                    drawn: &mut Projected {
-                        view,
-                        renderer: &mut *self.renderer,
-                    },
-                    edits: &input.edits,
-                }
-                .click(landed.as_ref(), now_ms)
+            Some(view) => verbs::Host {
+                doc: &mut input.document,
+                drawn: &mut Projected {
+                    view,
+                    renderer: &mut *self.renderer,
+                },
+                edits: &input.edits,
             }
+            .click(landed.as_ref(), now_ms),
             None => false,
         };
         if click_selection(&mut input.document.selection, hit, shift) || triggered {

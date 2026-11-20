@@ -61,6 +61,7 @@ use crate::document::presentation::{
     takes_time, GlyphOps, Play, PresentError, PresentationBody, PresentationDef, PresentationLayer,
     LOOP_TAKES_NO_TIME,
 };
+use crate::document::values::PresentationId;
 use crate::document::writer::budget::Budget;
 use crate::document::writer::error::ApplyError;
 use crate::document::writer::feed::field_inputs;
@@ -501,6 +502,37 @@ impl Document {
             self.presentations.epoch += 1;
         }
         stopped
+    }
+
+    /// Start the map's own presentation `id` on `nodes` at `now_ms`, as
+    /// [`Self::start_presentation`] starts a definition: read where the
+    /// map keeps it, never copied — what a verb's `present` step starts.
+    /// `None`, with nothing started, when the map defines none at `id`.
+    ///
+    /// Cost: [`Self::start_presentation`]'s, and O(1) to find it.
+    pub fn start_defined(
+        &mut self,
+        id: PresentationId,
+        nodes: &[NodeId],
+        now_ms: f64,
+    ) -> Option<Result<Vec<InstanceId>, PresentError>> {
+        let definitions = Arc::clone(&self.definitions);
+        let def = definitions.presentations.get(usize::from(id.0))?;
+        Some(self.start_presentation(def, nodes, now_ms))
+    }
+
+    /// Stop the map's own presentation `id` on `nodes` at `now_ms`, as
+    /// [`Self::stop_presentation`] stops one by its name: what a verb's
+    /// `stop` step stops. Returns how many instances it stopped; none
+    /// when the map defines no presentation at `id`.
+    ///
+    /// Cost: [`Self::stop_presentation`]'s.
+    pub fn stop_defined(&mut self, id: PresentationId, nodes: &[NodeId], now_ms: f64) -> usize {
+        let definitions = Arc::clone(&self.definitions);
+        match definitions.presentations.get(usize::from(id.0)) {
+            Some(def) => self.stop_presentation(&def.id, nodes, now_ms),
+            None => 0,
+        }
     }
 
     /// Stop each of the instances `ids` that still plays, at the clock

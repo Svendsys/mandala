@@ -45,6 +45,7 @@ use baumhard::document::format;
 use baumhard::document::format::file::MAP_EXTENSION;
 use baumhard::document::ids::Document;
 use baumhard::document::presentation::{InstanceId, PresentError, PresentationDef};
+use baumhard::document::values::PresentationId;
 use baumhard::document::verb::{RunId, Runs};
 use baumhard::document::writer::error::ApplyError;
 use baumhard::document::writer::feed::ChangeRecord;
@@ -571,6 +572,15 @@ impl MindMapDocument {
     /// already playing (`Document::start_presentation`). Never a change
     /// of the map: no history entry, no revision, no status line. A
     /// refusal starts nothing and is returned for the caller to show.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "what starts and stops a presentation by its definition is the console shell, which is \
+                      native; the map's triggers start and stop the map's own by id (`start_defined`), on \
+                      both targets"
+        )
+    )]
     pub fn start_presentation(
         &mut self,
         def: &PresentationDef,
@@ -583,8 +593,37 @@ impl MindMapDocument {
     /// Stop the presentation `id` on `nodes` at `now_ms`: each instance
     /// there plays its way out (`Document::stop_presentation`). Returns
     /// how many it stopped.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "what starts and stops a presentation by its definition is the console shell, which is \
+                      native; the map's triggers start and stop the map's own by id (`start_defined`), on \
+                      both targets"
+        )
+    )]
     pub fn stop_presentation(&mut self, id: &str, nodes: &[NodeId], now_ms: f64) -> usize {
         self.doc.stop_presentation(id, nodes, now_ms)
+    }
+
+    /// Start the map's own presentation `id` on `nodes` at `now_ms`, as
+    /// [`Self::start_presentation`] starts a definition, read where the
+    /// map keeps it (`Document::start_defined`): what a verb's `present`
+    /// step starts. `None` when the map defines none at `id`.
+    pub fn start_defined(
+        &mut self,
+        id: PresentationId,
+        nodes: &[NodeId],
+        now_ms: f64,
+    ) -> Option<Result<Vec<InstanceId>, PresentError>> {
+        self.doc.start_defined(id, nodes, now_ms)
+    }
+
+    /// Stop the map's own presentation `id` on `nodes` at `now_ms`
+    /// (`Document::stop_defined`): what a verb's `stop` step stops.
+    /// Returns how many instances it stopped.
+    pub fn stop_defined(&mut self, id: PresentationId, nodes: &[NodeId], now_ms: f64) -> usize {
+        self.doc.stop_defined(id, nodes, now_ms)
     }
 
     /// Stop the instances `ids` that still play, at `now_ms`

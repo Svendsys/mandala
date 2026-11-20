@@ -328,8 +328,7 @@ impl Builder {
                 self.verbs.insert(id.clone(), VerbId(index));
             }
         }
-        let ids: Vec<String> = verbs.into_iter().map(|(id, _)| id).collect();
-        let verbs = crate::document::verb::load::definitions(&dto.verbs, &ids, &presentations, &edits)
+        let verbs = crate::document::verb::load::definitions(&dto.verbs, &self.verbs, &presentations, &edits)
             .map_err(|(mut segs, kind)| {
                 segs.insert(0, Seg::Key("verbs"));
                 self.error_under(&segs, kind)

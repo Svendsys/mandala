@@ -333,6 +333,13 @@ impl InputHandlerContext<'_> {
         hover_changed || !matches!(*self.drag_state, DragState::None)
     }
 
+    /// `WindowEvent::CursorLeft`: the hover is released when no gesture
+    /// runs. Returns whether to request a redraw: whether the hover
+    /// changed, which may have stopped what its verb plays.
+    pub(super) fn on_cursor_left(&mut self) -> bool {
+        event_cursor_moved::handle_cursor_left(self)
+    }
+
     /// `WindowEvent::KeyboardInput`. A press reaches the full
     /// handler; a release only ends a pan the key holds, which
     /// changes no pixels. Returns whether to request a redraw.

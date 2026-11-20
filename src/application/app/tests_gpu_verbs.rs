@@ -305,3 +305,49 @@ fn test_the_pointer_holds_a_hover_and_releases_it() {
     let released = result(init, json!({"id": 1, "cmd": "query.animations"}));
     assert_eq!(released["verbs"], json!([]), "{released}");
 }
+
+/// **Leaving the window releases a held hover** (#380 review; ruling
+/// D3.2 item 4): the pointer held on node 1, then `WindowEvent::CursorLeft`
+/// delivered to the handler its arm calls — no move off the node first,
+/// as when a node at the canvas's edge is left past it — releases the
+/// run, and its `while` presentation plays its way out. Leaving again
+/// changes nothing.
+///
+/// Control, seen red: `handle_cursor_left` returning before
+/// `Host::hover` leaves the run held and the presentation in.
+#[test]
+fn test_the_pointer_leaving_the_window_releases_a_hover() {
+    let dir = baumhard::util::test_temp::TempDir::new("verb-hover-left");
+    let path = dir.path().join("hover.mandala.json");
+    std::fs::write(
+        &path,
+        r#"{"format":1,"name":"hover",
+        "presentations":[{"id":"p","name":"P","play":"while","target":"node","mutations":[{"node":{"set_opacity":0.5}}],"animate":{"ms":100},"return":{"ms":100}}],
+        "verbs":[{"id":"lift","name":"Lift","steps":[{"present":"p","on":"self"}]}],
+        "nodes":[{"id":1,"position":[0,0],"min_size":[200,100],"on":{"hover":"lift"},"sections":[{"spans":[{"text":"hover me"}]}]}]}"#,
+    )
+    .expect("writes");
+    let Some(mut app) = headless_app(path.to_str().expect("UTF-8")) else {
+        return;
+    };
+    let init = &mut app.init;
+    init.input_context().drain_frame(Beat::Loop);
+    result(
+        init,
+        json!({"id": 1, "cmd": "input.mouse_move", "x": 100.0, "y": 50.0, "space": "canvas"}),
+    );
+    init.input_context().drain_frame(Beat::Loop);
+    let animations = |init: &mut InitState| result(init, json!({"id": 1, "cmd": "query.animations"}));
+    let held = animations(init);
+    assert_eq!(held["verbs"][0]["held"], true, "precondition: held: {held}");
+    assert_eq!(held["presentations"][0]["direction"], "in", "{held}");
+    assert!(
+        init.input_context().on_cursor_left(),
+        "the hover changed: a redraw"
+    );
+    init.input_context().drain_frame(Beat::Loop);
+    let left = animations(init);
+    assert_eq!(left["verbs"], json!([]), "released: {left}");
+    assert_eq!(left["presentations"][0]["direction"], "out", "{left}");
+    assert!(!init.input_context().on_cursor_left(), "nothing left to release");
+}

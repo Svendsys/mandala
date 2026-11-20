@@ -180,6 +180,15 @@ pub(crate) enum ClickHit {
 }
 
 impl ClickHit {
+    /// What a click on `landed` selects in `doc`: [`selectable`]'s
+    /// element, or nothing when the press landed on nothing.
+    pub(crate) fn of(
+        doc: &baumhard::document::ids::Document,
+        landed: Option<&baumhard::projection::Hit>,
+    ) -> ClickHit {
+        landed.map_or(ClickHit::Empty, |hit| ClickHit::Element(selectable(doc, hit)))
+    }
+
     /// The element hit, if any. Native: what reads it is the drag state's
     /// wire form (`app::ipc_state`), and the browser has no drag state.
     #[cfg(not(target_arch = "wasm32"))]
@@ -199,11 +208,25 @@ pub(crate) fn compute_click_hit(
     view: Option<&mut MapView>,
     canvas_pos: glam::Vec2,
 ) -> ClickHit {
+    press_hit(doc, view, canvas_pos).1
+}
+
+/// What a press at `canvas_pos` landed on, by one hit test
+/// ([`compute_click_hit`]'s): the hit itself — the span under it as well
+/// as the element, which a click's trigger reads (`families::verbs`) —
+/// and what a click there selects. A press keeps both until its release
+/// clicks it, so the trigger and the selection read the one hit test.
+pub(crate) fn press_hit(
+    doc: Option<&MindMapDocument>,
+    view: Option<&mut MapView>,
+    canvas_pos: glam::Vec2,
+) -> (Option<baumhard::projection::Hit>, ClickHit) {
     match (doc, view) {
-        (Some(doc), Some(view)) => view.hit(canvas_pos).map_or(ClickHit::Empty, |hit| {
-            ClickHit::Element(selectable(doc.doc(), &hit))
-        }),
-        _ => ClickHit::Empty,
+        (Some(doc), Some(view)) => {
+            let landed = view.hit(canvas_pos);
+            (landed, ClickHit::of(doc.doc(), landed.as_ref()))
+        }
+        _ => (None, ClickHit::Empty),
     }
 }
 
@@ -385,6 +408,10 @@ enum DragState {
         start_pos: (f64, f64),
         /// What the press landed on.
         hit: ClickHit,
+        /// The press's hit test itself, span and all, which the click's
+        /// trigger reads at the release ([`press_hit`]): `hit` is what
+        /// the selection takes of it.
+        landed: Option<baumhard::projection::Hit>,
     },
     /// The right button is down and the cursor has not moved past the
     /// drag threshold yet. The threshold cross dispatches whatever

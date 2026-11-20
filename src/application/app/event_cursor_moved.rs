@@ -64,6 +64,30 @@ pub(super) fn handle_cursor_moved(
     hover_changed
 }
 
+/// `WindowEvent::CursorLeft`: the pointer left the window, and with it
+/// the node it hovered, so the hover is released (#252 §3, ruling D3.2
+/// item 4) — a node at the canvas's edge is left this way as often as by
+/// a move. During a gesture the hover stays, as a move during one leaves
+/// it. Returns whether the hover changed.
+pub(super) fn handle_cursor_left(ctx: &mut InputHandlerContext<'_>) -> bool {
+    if !matches!(*ctx.drag_state, DragState::None) {
+        return false;
+    }
+    let now_ms = ctx.clock.now_ms();
+    let (Some(doc), Some(view)) = (ctx.document.as_mut(), ctx.view.as_mut()) else {
+        return false;
+    };
+    verbs::Host {
+        doc,
+        drawn: &mut Projected {
+            view,
+            renderer: &mut *ctx.renderer,
+        },
+        edits: ctx.edits,
+    }
+    .hover(None, now_ms)
+}
+
 /// In reparent or connect mode, tint the node under the cursor when the
 /// mode could land on it — for a reparent, not a source nor one below a
 /// source. The next frame's sync stamps it (`MapView::set_hover_target`).
@@ -128,7 +152,7 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev: (f64, f64), curso
         DragState::SelectingRect { current_canvas, .. } => {
             *current_canvas = ctx.renderer.screen_to_canvas(cursor.0 as f32, cursor.1 as f32);
         }
-        DragState::Pending { start_pos, hit } => {
+        DragState::Pending { start_pos, hit, .. } => {
             let (start_pos, hit) = (*start_pos, *hit);
             if past_threshold(start_pos, cursor) {
                 promote_left_drag(ctx, start_pos, hit, cursor);

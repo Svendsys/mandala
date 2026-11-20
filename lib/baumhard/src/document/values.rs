@@ -347,21 +347,86 @@ pub enum LinkTarget {
 /// it.
 pub const LINK_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
 
+/// The parameters of a `mailto` address that ask a mail client to attach
+/// a file (ruling D3.2 item 2 on #252): some handlers have attached a
+/// local file a link named in one, so a map's link may not carry either.
+pub const MAIL_ATTACHMENT_PARAMS: [&str; 2] = ["attach", "attachment"];
+
+/// Why a link may not lead to an address ([`check_link_url`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkRefusal<'a> {
+    /// Its scheme is not one of [`LINK_SCHEMES`]: the scheme it wrote,
+    /// or the whole of it when it has no `:`.
+    Scheme(&'a str),
+    /// A `mailto` address with a parameter of
+    /// [`MAIL_ATTACHMENT_PARAMS`]: the parameter's name as it wrote it.
+    MailAttachment(&'a str),
+}
+
 /// `url` if a link may lead there: its scheme — what it writes before its
 /// first `:` — is one of [`LINK_SCHEMES`], in any case (a scheme is
-/// case-insensitive). Otherwise the scheme it wrote, or the whole of it
-/// when it has no `:`, for the refusal to name. O(the scheme's length).
-pub fn check_link_url(url: &str) -> Result<&str, &str> {
-    let scheme = url.split_once(':').map_or(url, |(scheme, _)| scheme);
-    if LINK_SCHEMES
+/// case-insensitive), and, for `mailto`, none of its parameters is one of
+/// [`MAIL_ATTACHMENT_PARAMS`], in any case and however it is
+/// percent-encoded (a mail client decodes a name before it reads it).
+/// Otherwise what is wrong, for the refusal to name. O(the address's
+/// length).
+pub fn check_link_url(url: &str) -> Result<&str, LinkRefusal<'_>> {
+    let (scheme, rest) = url.split_once(':').unwrap_or((url, ""));
+    if !(LINK_SCHEMES
         .iter()
         .any(|allowed| allowed.eq_ignore_ascii_case(scheme))
-        && scheme.len() < url.len()
+        && scheme.len() < url.len())
     {
-        Ok(url)
-    } else {
-        Err(scheme)
+        return Err(LinkRefusal::Scheme(scheme));
     }
+    if scheme.eq_ignore_ascii_case("mailto") {
+        if let Some(name) = mail_attachment(rest) {
+            return Err(LinkRefusal::MailAttachment(name));
+        }
+    }
+    Ok(url)
+}
+
+/// The first parameter of the `mailto` address `rest` — what follows its
+/// `mailto:` — that attaches a file, as written. A parameter is what
+/// follows the address's first `?`, up to a `&` or a `;`; its name is
+/// what it writes before its `=`, percent-decoded and with the spaces
+/// round it trimmed. O(`rest`'s length).
+fn mail_attachment(rest: &str) -> Option<&str> {
+    let (_, query) = rest.split_once('?')?;
+    query
+        .split(['&', ';'])
+        .map(|param| param.split_once('=').map_or(param, |(name, _)| name))
+        .find(|name| {
+            let decoded = percent_decoded(name.as_bytes());
+            let trimmed = decoded.trim_ascii();
+            MAIL_ATTACHMENT_PARAMS
+                .iter()
+                .any(|attach| attach.as_bytes().eq_ignore_ascii_case(trimmed))
+        })
+}
+
+/// `bytes` with each `%` and two hex digits after it decoded once, as a
+/// mail client decodes a parameter's name; a `%` not followed by two hex
+/// digits is kept as it is. O(`bytes`' length).
+fn percent_decoded(bytes: &[u8]) -> Vec<u8> {
+    let hex = |b: u8| char::from(b).to_digit(16).and_then(|d| u8::try_from(d).ok());
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if let (b'%', Some(high), Some(low)) = (
+            bytes[i],
+            bytes.get(i + 1).copied().and_then(hex),
+            bytes.get(i + 2).copied().and_then(hex),
+        ) {
+            out.push(high * 16 + low);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// A verb: an index into

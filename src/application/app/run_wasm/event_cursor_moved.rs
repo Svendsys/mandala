@@ -5,8 +5,9 @@
 //! mouse-click, and wheel arms can read screen coordinates
 //! without re-querying winit, and moves the hover a node's `on.hover`
 //! verb is held for (`families::verbs`), as native's cursor-move
-//! handler does. WASM has no drag state today (full drag machine
-//! deferred to a later parity session).
+//! handler does; and the `WindowEvent::CursorLeft` arm, which releases
+//! that hover as native's does. WASM has no drag state today (full drag
+//! machine deferred to a later parity session).
 
 #![cfg(target_arch = "wasm32")]
 
@@ -58,5 +59,29 @@ impl super::Borrowed<'_> {
             edits: &input.edits,
         }
         .hover(hovered, now_ms)
+    }
+
+    /// `WindowEvent::CursorLeft`: the pointer left the canvas, and with
+    /// it the node it hovered, so the hover is released (ruling D3.2
+    /// item 4), unless a click is pending, as a move then leaves it.
+    /// Returns whether to request a redraw: whether the hover changed.
+    pub(super) fn on_cursor_left(&mut self) -> bool {
+        if self.input.pending_click.is_some() {
+            return false;
+        }
+        let now_ms = self.input.clock.now_ms();
+        let input = &mut *self.input;
+        let Some(view) = input.view.as_mut() else {
+            return false;
+        };
+        verbs::Host {
+            doc: &mut input.document,
+            drawn: &mut Projected {
+                view,
+                renderer: &mut *self.renderer,
+            },
+            edits: &input.edits,
+        }
+        .hover(None, now_ms)
     }
 }

@@ -31,7 +31,7 @@ use crate::document::format::from_dto::{Builder, Keep, LoadResult, PendingLink};
 use crate::document::format::rows::Rows;
 use crate::document::ids::NodeIdent;
 use crate::document::place::{sizes_its_own_text, Unit};
-use crate::document::values::{check_link_url, Align, Anchor, LinkKind, LinkTarget, PaletteId};
+use crate::document::values::{check_link_url, Align, Anchor, LinkKind, LinkRefusal, LinkTarget, PaletteId};
 use glam::Vec2;
 
 /// The anchors a path with none written has.
@@ -199,10 +199,16 @@ impl Builder {
             Some(link) => Some(self.key("link", |b| match link {
                 LinkTargetDto::Url(url) => match check_link_url(url) {
                     Ok(url) => Ok(LinkTarget::Url(url.to_string())),
-                    Err(scheme) => Err(b.error_at(
+                    Err(LinkRefusal::Scheme(scheme)) => Err(b.error_at(
                         "url",
                         LoadErrorKind::LinkScheme {
                             scheme: scheme.to_string(),
+                        },
+                    )),
+                    Err(LinkRefusal::MailAttachment(name)) => Err(b.error_at(
+                        "url",
+                        LoadErrorKind::LinkAttachment {
+                            name: name.to_string(),
                         },
                     )),
                 },

@@ -225,6 +225,69 @@ fn test_a_click_runs_the_node_verb_and_the_span_link() {
     assert!(playing(&doc, "h").is_empty() && take_opened().is_empty());
 }
 
+/// **A click on a linked span runs the link, and not its node's
+/// `on.click`** (ruling D3.1 item 2 on #252): with node 2's own click
+/// starting `h` on node 3, a click on its span linked to `go` starts `h`
+/// on node 5 alone, and one on its span linked to an address opens the
+/// address and starts nothing; a click on its plain span, or its body,
+/// runs the node's click — node 3 — so the fixture can tell the two
+/// apart.
+///
+/// Control, seen red: `click_of` reading the node's `on.click` before
+/// the span's link starts `h` on node 3 for the linked span.
+#[test]
+fn test_a_click_on_a_linked_span_runs_the_link_only() {
+    let json = MAP
+        .replace(
+            r#"{"id":2,"parent":1,"position":[300,0],"sections""#,
+            r#"{"id":2,"parent":1,"position":[300,0],"on":{"click":"mark"},"sections""#,
+        )
+        .replace(
+            r#" {"id":"go","name":"Go","#,
+            r#" {"id":"mark","name":"Mark","steps":[{"present":"h","on":{"nodes":[3]}}]},
+ {"id":"go","name":"Go","#,
+        )
+        .replace(
+            r#" {"id":5,"position":[900,0],"#,
+            r#" {"id":3,"position":[1200,0],"sections":[{"spans":[{"text":"three"}]}]},
+ {"id":5,"position":[900,0],"#,
+        );
+    let fresh = || MindMapDocument::from_json_str(&json, None, 50).expect("the map loads");
+    let mut doc = fresh();
+    let two = node(&doc, 2);
+    let [linked, away, plain] = spans(&doc)[..] else { panic!("three spans") };
+    let edits = registry();
+    let _ = take_opened();
+    let click = |doc: &mut MindMapDocument, hit: &Hit| {
+        Host {
+            doc,
+            drawn: &mut Undrawn,
+            edits: &edits,
+        }
+        .click(Some(hit), 0.0)
+    };
+    assert!(click(&mut doc, &hit(two, two, Some(linked))));
+    assert_eq!(
+        playing(&doc, "h"),
+        [(5, Direction::Hold)],
+        "the link's verb, and not the node's"
+    );
+    let mut doc = fresh();
+    assert!(click(&mut doc, &hit(two, two, Some(away))));
+    assert_eq!(take_opened(), ["https://example.org/page"]);
+    assert!(playing(&doc, "h").is_empty(), "the address alone");
+    for at in [Some(plain), None] {
+        let mut doc = fresh();
+        assert!(click(&mut doc, &hit(two, two, at)));
+        assert_eq!(
+            playing(&doc, "h"),
+            [(3, Direction::Hold)],
+            "{at:?}: off a link, the node's click"
+        );
+    }
+    assert!(take_opened().is_empty());
+}
+
 /// **A verb never settles an animated edit to start a presentation**:
 /// with `slow` animating, a hover starts `p` and the edit is still
 /// animating, at the place its own clock puts it. An edit step does
@@ -355,6 +418,52 @@ fn test_the_frame_resumes_a_waiting_run() {
     assert!(animation::tick(Some(&mut doc), &mut Undrawn, &edits, &clock));
     assert_eq!(playing(&doc, "h"), [(2, Direction::Hold)]);
     assert!(!doc.runs().waiting());
+}
+
+/// **A trigger under a suspension starts what plays once the layer is
+/// back** (#380 review): a macro's `Verb` step run while an Action's
+/// guard holds the presentation layer aside — `suspend_presentations`,
+/// what `dispatch::the_map::OnTheMap` holds for an Action that reads the
+/// map, and a macro is one — starts `lift`'s `p` on node 1: listed as
+/// playing at once, while the map read through the guard keeps node 1's
+/// own opacity. Given back, the layer shows it: once `p` is in, node 1
+/// is at `p`'s opacity. Nothing here reads the start's answer but for
+/// its instances (#252 hand-off 6916160625).
+///
+/// Controls, each seen red: `Document::start_presentation` starting
+/// nothing while the layer is aside lists nothing playing; a resume that
+/// does not apply the layer again leaves node 1 at its own opacity.
+#[test]
+fn test_a_trigger_under_a_suspension_starts_what_plays_after_it() {
+    let mut doc = map();
+    let one = node(&doc, 1);
+    let (mut clock, start) = clock();
+    let edits = registry();
+    let opacity = |doc: &MindMapDocument| match doc.doc().get(one) {
+        Some(baumhard::document::element::DocElement::Node(data)) => data.opacity,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(opacity(&doc), 1.0, "precondition: the map's own");
+    let suspension = doc.suspend_presentations();
+    assert!(verbs::run_step(
+        &mut doc,
+        &mut Undrawn,
+        &edits,
+        "lift",
+        &MacroTarget::NodeId(1),
+        start
+    ));
+    assert_eq!(
+        playing(&doc, "p"),
+        [(1, Direction::In)],
+        "started under the guard"
+    );
+    assert_eq!(opacity(&doc), 1.0, "the map itself, through the guard");
+    doc.resume_presentations(suspension);
+    clock.advance_to(start + 150.0);
+    animation::tick(Some(&mut doc), &mut Undrawn, &edits, &clock);
+    assert_eq!(playing(&doc, "p"), [(1, Direction::Hold)]);
+    assert_eq!(opacity(&doc), 0.5, "given back, the layer shows `p`");
 }
 
 /// **A macro's `Verb` step runs the map verb on its target**: the node

@@ -25,9 +25,11 @@
 //! - **a missing node is skipped, not a crash (D27)**: a target naming a
 //!   node the map lacks reaches the performer as no node, while the
 //!   targets the map has are acted on;
-//! - **links open only `http`, `https` and `mailto`**: a span link of
-//!   any other scheme is refused at load at its `url`, and a `set_link`
-//!   to one is refused at apply, the map left as it was;
+//! - **links open only `http`, `https` and `mailto`, and no `mailto`
+//!   that attaches a file** (ruling D3.2 item 2): a span link of any
+//!   other scheme, or a `mailto` with an `attach` or `attachment`
+//!   parameter, is refused at load at its `url`, and a `set_link` to
+//!   one is refused at apply, the map left as it was;
 //! - **a loaded map saves and reloads to the same bytes**, its verbs
 //!   with it.
 //!
@@ -42,9 +44,9 @@ use crate::document::format::{load, LoadErrorKind};
 use crate::document::ids::{Document, NodeIdent};
 use crate::document::mutation::compose;
 use crate::document::mutation::ops::{DocMutation, SpanOp};
-use crate::document::presentation::{InstanceId, PresentError, PresentationDef};
+use crate::document::presentation::{InstanceId, PresentError};
 use crate::document::tests::edit_fuzz::Boxes;
-use crate::document::values::LinkTarget;
+use crate::document::values::{EditId, LinkTarget, PresentationId};
 use crate::document::verb::{Performer, Runs, MAX_VERB_DEPTH};
 use crate::document::writer::{ChangeSource, EditRequest};
 use crate::edit_handlers::registry;
@@ -102,6 +104,17 @@ impl<'d> OnTheDocument<'d> {
     }
 }
 
+impl OnTheDocument<'_> {
+    /// The id of the map's presentation `id`, for the record of a call.
+    fn presentation(&self, id: PresentationId) -> String {
+        self.doc
+            .definitions()
+            .presentations
+            .get(usize::from(id.0))
+            .map_or_else(String::new, |def| def.id.clone())
+    }
+}
+
 impl Performer for OnTheDocument<'_> {
     fn document(&self) -> &Document {
         self.doc
@@ -113,17 +126,21 @@ impl Performer for OnTheDocument<'_> {
 
     fn start(
         &mut self,
-        def: &PresentationDef,
+        id: PresentationId,
         nodes: &[NodeId],
         at_ms: f64,
     ) -> Result<Vec<InstanceId>, PresentError> {
-        self.calls.push(("start", def.id.clone(), nodes.to_vec(), at_ms));
-        self.doc.start_presentation(def, nodes, at_ms)
+        self.calls
+            .push(("start", self.presentation(id), nodes.to_vec(), at_ms));
+        self.doc
+            .start_defined(id, nodes, at_ms)
+            .unwrap_or_else(|| panic!("a run starts only a presentation the map defines, not {id:?}"))
     }
 
-    fn stop(&mut self, id: &str, nodes: &[NodeId], at_ms: f64) -> usize {
-        self.calls.push(("stop", id.to_string(), nodes.to_vec(), at_ms));
-        self.doc.stop_presentation(id, nodes, at_ms)
+    fn stop(&mut self, id: PresentationId, nodes: &[NodeId], at_ms: f64) -> usize {
+        self.calls
+            .push(("stop", self.presentation(id), nodes.to_vec(), at_ms));
+        self.doc.stop_defined(id, nodes, at_ms)
     }
 
     fn stop_instances(&mut self, ids: &[InstanceId], at_ms: f64) -> usize {
@@ -131,16 +148,15 @@ impl Performer for OnTheDocument<'_> {
         self.doc.stop_instances(ids, at_ms)
     }
 
-    fn edit(&mut self, id: &str, nodes: &[NodeId], at_ms: f64) -> Result<(), String> {
-        self.calls.push(("edit", id.to_string(), nodes.to_vec(), at_ms));
+    fn edit(&mut self, id: EditId, nodes: &[NodeId], at_ms: f64) -> Result<(), String> {
         let def = self
             .doc
             .definitions()
             .edits
-            .iter()
-            .find(|def| def.id == id)
+            .get(usize::from(id.0))
             .cloned()
-            .ok_or_else(|| format!("no edit `{id}`"))?;
+            .ok_or_else(|| format!("no edit at {id:?}"))?;
+        self.calls.push(("edit", def.id.clone(), nodes.to_vec(), at_ms));
         let request = def
             .request(self.doc, &Boxes::of(self.doc), &registry(), nodes)
             .map_err(|error| error.to_string())?;
@@ -421,26 +437,51 @@ pub fn check_verbs_generated(choices: &mut Choices<'_>) -> Result<Ran, String> {
     Ok(ran)
 }
 
-/// The schemes a generated link draws from: the three a link opens, in
-/// two cases, and others.
-const SCHEMES: [(&str, bool); 9] = [
-    ("https://example.org/a", true),
-    ("HTTP://example.org", true),
-    ("mailto:someone@example.org", true),
-    ("file:///etc/passwd", false),
-    ("javascript:alert(1)", false),
-    ("data:text/html,x", false),
-    ("example.org", false),
-    ("https", false),
-    (" https://example.org", false),
+/// What a load says of a link's address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Link {
+    /// It loads.
+    Opens,
+    /// Refused for its scheme.
+    Scheme,
+    /// Refused as a `mailto` that attaches a file (ruling D3.2 item 2).
+    Attaches,
+}
+
+/// The addresses a generated link draws from, each with what a load
+/// says of it: the three schemes a link opens, in two cases, others, and
+/// `mailto` addresses with and without a parameter that attaches a file
+/// — spelled in any case, percent-encoded, after a `;` — or the word as
+/// a value, which attaches nothing.
+const SCHEMES: [(&str, Link); 16] = [
+    ("https://example.org/a", Link::Opens),
+    ("HTTP://example.org", Link::Opens),
+    ("mailto:someone@example.org", Link::Opens),
+    ("file:///etc/passwd", Link::Scheme),
+    ("javascript:alert(1)", Link::Scheme),
+    ("data:text/html,x", Link::Scheme),
+    ("example.org", Link::Scheme),
+    ("https", Link::Scheme),
+    (" https://example.org", Link::Scheme),
+    ("mailto:a@example.org?subject=attach&body=attachment", Link::Opens),
+    ("https://example.org/?attach=x", Link::Opens),
+    ("mailto:a@example.org?attach=/etc/passwd", Link::Attaches),
+    (
+        "MAILTO:a@example.org?subject=x&ATTACHMENT=%2Fetc%2Fpasswd",
+        Link::Attaches,
+    ),
+    ("mailto:a@example.org?%61ttach=x", Link::Attaches),
+    ("mailto:a@example.org?body=x;Attach=y", Link::Attaches),
+    ("mailto:?%20attachment%20", Link::Attaches),
 ];
 
-/// A span link of a scheme `choices` draws is loaded exactly when a link
-/// may open it, refused at its `url` otherwise; and a `set_link` to it,
-/// applied to a map that loaded, is accepted exactly then too, a refusal
-/// leaving the map as it was.
+/// A span link of an address `choices` draws is loaded exactly when a
+/// link may open it, refused at its `url` otherwise, of the kind the
+/// table says; and a `set_link` to it, applied to a map that loaded, is
+/// accepted exactly then too, a refusal leaving the map as it was.
 fn check_link_scheme(choices: &mut Choices<'_>) -> Result<(), String> {
-    let &(url, allowed) = choices.pick(&SCHEMES);
+    let &(url, verdict) = choices.pick(&SCHEMES);
+    let allowed = verdict == Link::Opens;
     let escaped = serde_json::to_string(url).map_err(|error| error.to_string())?;
     let map = format!(
         r#"{{"format":1,"name":"l","nodes":[{{"id":1,"position":[0,0],"sections":[{{"spans":[{{"text":"x","link":{{"url":{escaped}}}}}]}}]}}]}}"#
@@ -449,7 +490,11 @@ fn check_link_scheme(choices: &mut Choices<'_>) -> Result<(), String> {
         (Ok(_), true) => {}
         (Err(error), false)
             if error.path == "nodes[0].sections[0].spans[0].link.url"
-                && matches!(error.kind, LoadErrorKind::LinkScheme { .. }) => {}
+                && match verdict {
+                    Link::Scheme => matches!(error.kind, LoadErrorKind::LinkScheme { .. }),
+                    Link::Attaches => matches!(error.kind, LoadErrorKind::LinkAttachment { .. }),
+                    Link::Opens => false,
+                } => {}
         (read, _) => {
             return Err(format!(
                 "the link `{url}` read as {read:?}, and it is allowed: {allowed}"
