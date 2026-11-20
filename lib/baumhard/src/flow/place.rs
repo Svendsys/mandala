@@ -840,8 +840,17 @@ thread_local! {
             reads: 0,
             most: 0,
             still: 0,
+            strides: None,
+            gapless_strides: None,
         })
     };
+    /// Test hook (#376): the gap between steps of the walk now laying or
+    /// measuring clusters on this thread (`PathWalk::lay`,
+    /// `PathWalk::walk_bodies`), which each ink a walk sets is owed besides
+    /// its bearings: [`InkSolves::gapless_strides`] counts the walks with
+    /// none.
+    #[cfg(test)]
+    pub(crate) static WALK_GAP: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
     /// Test switch (#376, rulings B48.1 to B48.3): `PathWalk::ink_gap_at`
     /// reads each turn's gap and guess again after a still turn, as it did
     /// before #376 — the full search a test lays a reference placement,
@@ -911,7 +920,9 @@ pub(crate) struct LastRing {
 /// What [`INK_SOLVES`] counts (#376): the solves of an ornament's ink
 /// (`PathWalk::ink_gap_at`), the path reads they took, the most one took,
 /// and the solves whose last turn no stride moved the ink in
-/// (`PathWalk::ink_strides`).
+/// (`PathWalk::ink_strides`); and the shortest and the longest stride its
+/// stride searches took, of every walk and of the walks with no gap
+/// between their steps ([`WALK_GAP`]).
 #[cfg(test)]
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub(crate) struct InkSolves {
@@ -919,6 +930,8 @@ pub(crate) struct InkSolves {
     pub(crate) reads: usize,
     pub(crate) most: usize,
     pub(crate) still: usize,
+    pub(crate) strides: Option<(f32, f32)>,
+    pub(crate) gapless_strides: Option<(f32, f32)>,
 }
 
 /// What a stride search for an ornament's ink found
@@ -1338,13 +1351,23 @@ impl PathWalk<'_> {
     /// again, which it knows: two points a turn, the one saving that
     /// changes nothing. A glyph none of whose strides moves its ink reads
     /// its path 2 + 768 points' worth, where it read 12 × 66. The reads it
-    /// does not take are counted against no budget, so a ring its budget
-    /// stopped may now stop later: of #376's sweep of 4,320 placements,
-    /// two rings far out that the full search's reads left unclosed close.
+    /// does not take are counted against no budget, so a placement its
+    /// budget stopped — a ring, or any along an open path, which reads its
+    /// budget the same way (#313) — may now stop later, never sooner:
+    /// while two placements are the same the chain has read no more than
+    /// the full search, so every budget check the full search passes it
+    /// passes, and it stops at the same check, a later one, or none. A
+    /// later stop is never a worse [`RingLoss`]: the losses fall in the
+    /// order the placement runs, `Short` in its first walk, `Unclosed` in
+    /// its close, `Uneven` in phase 2's solves, where more probes only
+    /// close the bracket further. Of #376's sweep of 4,320 placements, two
+    /// rings far out that the full search's reads left unclosed close.
     ///
-    /// Cost: at most [`INK_TURNS`] solves
-    /// ([`ink_distance_at`](Self::ink_distance_at)), each a path lookup or
-    /// two where the path runs straight.
+    /// Cost: at most [`INK_TURNS`] turns, each a solve of
+    /// [`ink_distance_at`](Self::ink_distance_at) — or, after a still
+    /// turn, a search of [`ink_strides`](Self::ink_strides) alone, its gap
+    /// and guess not read — each a path lookup or two where the path runs
+    /// straight.
     fn ink_gap_at(&self, (last, half): (Vec2, Vec2), from: f32, natural: f32, owed: f32, ink: Ink) -> f32 {
         #[cfg(test)]
         let reads = self.path.reads();
@@ -1404,10 +1427,11 @@ impl PathWalk<'_> {
     }
 
     /// Where along the path past `from` to set the center of a glyph
-    /// whose ink is `ink` so that it is `apart` from `last`: `guess`,
-    /// where that is within [`INK_TOLERANCE`]; otherwise by bisection,
-    /// between `from` and `guess` where `guess` is too far, and between
-    /// it and a stride on where it is too near ([`ink_strides`]).
+    /// whose ink is `ink` so that it is `apart` from `last`, as a
+    /// [`Strode`]: `guess`, where that is within [`INK_TOLERANCE`];
+    /// otherwise by bisection, between `from` and `guess` where `guess` is
+    /// too far, and between it and a stride on where it is too near
+    /// ([`ink_strides`], whose [`Strode::Still`] it returns as it is).
     ///
     /// [`ink_strides`]: Self::ink_strides
     fn ink_distance_at(&self, last: Vec2, apart: f32, from: f32, guess: f32, ink: Ink) -> Strode {
@@ -1441,6 +1465,20 @@ impl PathWalk<'_> {
     /// [`ink_gap_at`]: Self::ink_gap_at
     fn ink_strides(&self, last: Vec2, apart: f32, guess: f32, at_guess: Vec2, ink: Ink) -> Strode {
         let stride = apart.max((ink.max - ink.min).max_element());
+        #[cfg(test)]
+        INK_SOLVES.with(|solves| {
+            let mut counted = solves.get();
+            let span = |seen: Option<(f32, f32)>| {
+                Some(seen.map_or((stride, stride), |(least, most)| {
+                    (least.min(stride), most.max(stride))
+                }))
+            };
+            counted.strides = span(counted.strides);
+            if WALK_GAP.with(std::cell::Cell::get) == 0.0 {
+                counted.gapless_strides = span(counted.gapless_strides);
+            }
+            solves.set(counted);
+        });
         let bits = |at: Vec2| (at.x.to_bits(), at.y.to_bits());
         let mut low = guess;
         let mut high = guess + stride;
@@ -1495,6 +1533,7 @@ impl PathWalk<'_> {
         }
         high
     }
+
     /// How far along the path from `s` it moves `d` horizontally, on a
     /// level walk (ruling R28): `L` with `x(s + L) − x(s) = d`. A text
     /// frame's line lies where the path runs left to right within 45° of
@@ -1596,6 +1635,8 @@ impl PathWalk<'_> {
         gap: f32,
         mut trail: Trail,
     ) -> (f32, Trail) {
+        #[cfg(test)]
+        WALK_GAP.with(|walk| walk.set(gap));
         let mut s = from;
         let mut end = from;
         for body in bodies {
@@ -2055,6 +2096,8 @@ impl PathWalk<'_> {
         gap: f32,
         out: &mut Laying,
     ) -> Laid {
+        #[cfg(test)]
+        WALK_GAP.with(|walk| walk.set(gap));
         for cluster in clusters {
             if let Some(work) = self.work {
                 if !work.admits(self.path, out.glyphs.len() + cluster.glyphs.len()) {

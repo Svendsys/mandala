@@ -13,11 +13,11 @@
 //! ([`ArcPath::reads`]) — a few times a cluster where it runs straight,
 //! and up to [`CLUSTER_READS`] for an ornament's glyph whose ink is set
 //! by bisection where the path's floats barely move it, or by strides
-//! that move it and never far enough. So a ring counts
-//! its path's reads, [`READS_A_STEP`] to a glyph step, and not its
-//! clusters: a frame's weights count a glyph a step (ruling R46.1), and
-//! an ornament's glyph some 10²² from the origin read its path 1,262
-//! times (seed 2771 of the structured flow generator, as found).
+//! that move it and never far enough. So a ring counts its path's reads,
+//! [`READS_A_STEP`] to a glyph step, and not its clusters: a frame's
+//! weights count a glyph a step (ruling R46.1), and an ornament's glyph
+//! some 10²² from the origin read its path 1,262 times (seed 2771 of the
+//! structured flow generator, as found).
 //!
 //! **What it may take.** The frame's budget, scaled by the glyphs the
 //! ring will lay, as a frame's is by its text (rulings R44.2, B17.1a):
@@ -189,14 +189,15 @@ const STEP_READS: usize = CHORD_ROUNDS + 2;
 /// are one stride search while none of their strides moves its ink
 /// (`PathWalk::ink_gap_at`), and every stride of that reach is what sets
 /// the glyph where the full search sets it. So the strides stay, and the
-/// turns return what they did; what #376 removes is each still turn's
-/// read of its center's gap and its guess again, which it reads where the
-/// last turn's strides left them. A glyph none of whose strides moves its
-/// ink — a dot of a ring 10¹⁵ across, further out than #374's — reads its
-/// path for its ink 2,310 times, where it read 2,376
+/// turns return what they did. What #376 removes is a read the turn after
+/// a still one no longer takes: its center's gap and its guess's miss,
+/// which it knows from where the still turn's strides left the ink. A
+/// glyph none of whose strides moves its ink — a dot of a ring 10¹⁵
+/// across, further out than #374's — reads its path for its ink 2,310
+/// times, where it read 2,376
 /// (`test_a_repeat_ring_whose_strides_cannot_move_its_ink_reads_no_gap_twice`).
-/// The bound's strides are reached by a glyph whose every stride moves
-/// its ink and none far enough, which #376 does not touch: a dot round an
+/// The bound's strides are reached by a glyph whose every stride moves its
+/// ink and none far enough, which #376 does not touch: a dot round an
 /// outline smaller than the gap it is owed, its ink circling within reach
 /// of the last, takes every stride of every turn and every read of them,
 /// 2,376 (`test_a_repeat_ring_whose_strides_move_its_ink_takes_every_stride`).

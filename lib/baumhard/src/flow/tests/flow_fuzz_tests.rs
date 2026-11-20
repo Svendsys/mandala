@@ -1325,7 +1325,7 @@ fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solvi
 /// can come within the tolerance of what it owes there, so without
 /// their stops every glyph would take every one of `INK_TURNS` turns of
 /// `ink_gap_at` and, in each, every one of `INK_ROUNDS` rounds of
-/// `ink_distance_at`'s bisection. A turn that leaves its center where it
+/// `ink_bisect`. A turn that leaves its center where it
 /// was, and a round that leaves its bracket as it was, leave them so
 /// every turn and round after, so each stops there, which changes no
 /// position. So the placement, its readable lay and its run-on probe
@@ -1333,10 +1333,10 @@ fn test_a_repeat_of_an_ornament_where_floats_cannot_resolve_its_gaps_stops_solvi
 /// (756,090 for 37,682 glyphs; 756,156 before #376 had a turn after a
 /// still one stride on without reading its gap and guess again, which
 /// three solves past the cubic's end, where the path holds its end point,
-/// take). The finding rescaled into the limit
-/// above is no pin for them: there the round's stop moves its walk's
-/// lookups by a tenth (696,222 to 759,786), well inside what its run-on
-/// probe alone may take (`8 × MAX_RUN_ON_STEPS`).
+/// take). The finding rescaled into the limit above is no pin for them:
+/// there the round's stop moves its walk's lookups by a tenth (696,222 to
+/// 759,786), well inside what its run-on probe alone may take
+/// (`8 × MAX_RUN_ON_STEPS`).
 ///
 /// Precondition: the walk lays many glyphs, each by its ink (no
 /// `STEPS_TAKEN` for most of them). Controls: the turn's stop taken out,
@@ -1388,16 +1388,21 @@ fn test_a_repeat_of_an_ornament_far_from_the_origin_stops_its_ink_solves() {
 
 /// A ring of `text` at `points`, laid `Repeat` round `shape`, outward, at
 /// most `cap` glyphs — with the full stride search (`NO_STILL_CHAIN`)
-/// where `full` — and the solves of its inks it made (`INK_SOLVES`).
+/// where `full` — the solves of its inks it made (`INK_SOLVES`), and how
+/// its budget left it.
 fn ring_and_its_ink_solves(
     text: &str,
     points: f32,
     shape: &Outline,
     cap: usize,
     full: bool,
-) -> (PlacedRun, crate::flow::place::InkSolves) {
+) -> (
+    PlacedRun,
+    crate::flow::place::InkSolves,
+    Option<crate::flow::place::ring::RingLoss>,
+) {
     use crate::document::values::{Direction, Edge, FitMode, StartPoint};
-    use crate::flow::place::{place_on_closed_capped, InkSolves, INK_SOLVES, NO_STILL_CHAIN};
+    use crate::flow::place::{place_on_closed_capped, InkSolves, Trace, INK_SOLVES, NO_STILL_CHAIN};
     struct Restore;
     impl Drop for Restore {
         fn drop(&mut self) {
@@ -1410,6 +1415,7 @@ fn ring_and_its_ink_solves(
         INK_SOLVES.with(|solves| solves.set(InkSolves::default()));
         NO_STILL_CHAIN.with(|switch| switch.set(full));
         let _restore = Restore;
+        let mut trace = Trace::default();
         let (_, placed) = place_on_closed_capped(
             &run,
             shape,
@@ -1424,30 +1430,9 @@ fn ring_and_its_ink_solves(
             &flow,
             fs,
             cap,
-            None,
+            Some(&mut trace),
         );
-        (placed, INK_SOLVES.with(std::cell::Cell::get))
-    })
-}
-
-/// What one stride of a search for `text`'s ink at `points` may be at the
-/// least and at the most (`PathWalk::ink_distance_at`), from its shaped
-/// glyphs alone: at least its ink's longer side, and at most its advance
-/// and its ink's diagonal — the gap owed between two of its inks, its
-/// bearings, at most its advance, and the distance the ink's two halves
-/// reach, at most the diagonal, which is what a stride adds to the gap
-/// owed.
-fn stride_bounds(text: &str, points: f32) -> (f32, f32) {
-    let flow = style(points);
-    with_fonts(|fs| {
-        let run = real_run(text, &flow, fs);
-        let inked = run
-            .glyphs
-            .iter()
-            .filter_map(|glyph| glyph.ink.map(|ink| (glyph.advance, ink.max - ink.min)));
-        inked.fold((f32::INFINITY, 0.0_f32), |(least, most), (advance, size)| {
-            (least.min(size.max_element()), most.max(advance + size.length()))
-        })
+        (placed, INK_SOLVES.with(std::cell::Cell::get), trace.ring)
     })
 }
 
@@ -1469,38 +1454,42 @@ const ONE_STILL_CHAIN: usize = (2 + 12 * 64) * 3;
 
 /// #376: a `Repeat` ring of dots round an ellipse 10¹⁵ across about the
 /// origin, further out than #374's ring, where the canvas's floats are
-/// 2²⁵ apart — further than every stride of the ring's first 1,024 dots
-/// moves an ink — so every turn of every solve is still. Each turn after
-/// the first strides on from where the last one's strides ended, without
-/// reading its center's gap and its guess again, and the solve returns
-/// what the full search returns: exactly [`ONE_STILL_CHAIN`] reads a
-/// solve, where the full search takes 2,376. (Round #374's ring itself,
-/// 4.35 × 10¹¹ out, 28 of the first 1,024 solves' strides cross a float,
-/// and take fewer.)
+/// 2²⁵ apart. Every turn of every solve of the ring's first 1,024 dots is
+/// still, so each turn after the first strides on from where the last
+/// one's strides ended, without reading its center's gap and its guess
+/// again, and the solve returns what the full search returns: exactly
+/// [`ONE_STILL_CHAIN`] reads a solve, where the full search takes 2,376.
 ///
-/// Preconditions: the floats there are further apart than 768 of the
-/// longest strides the dot can take (the regime's boundary), and the ring
-/// lays its cap, a solve for each glyph. Controls: the full search
-/// (`NO_STILL_CHAIN`), red ("2433024 path reads for 1024 solves of a
-/// glyph's ink, not 2365440, 2310 each"); a solve whose turns end at its
-/// first still one, red at 198 each; a search that ends at its first
-/// stride that leaves the ink where it was, red at 9 each.
+/// The precondition — floats further apart than 768 of the longest strides
+/// the ring's searches take — is the regime's boundary, below which a
+/// chain crosses a float often; it is not enough for no chain to cross
+/// one, since a coordinate moved far less than a float still changes
+/// where it crosses half of one. Round #374's ring, which meets it too, 28
+/// of the first 1,024 solves cross a float and read fewer. What pins this
+/// fixture as still throughout is the exact count of still solves.
+///
+/// Preconditions: that boundary, and the ring lays its cap, a solve for
+/// each glyph. Controls: the full search (`NO_STILL_CHAIN`), red
+/// ("2433024 path reads for 1024 solves of a glyph's ink, not 2365440,
+/// 2310 each"); a solve whose turns end at its first still one, red at
+/// 198 each; a search that ends at its first stride that leaves the ink
+/// where it was, red at 9 each.
 #[test]
 fn test_a_repeat_ring_whose_strides_cannot_move_its_ink_reads_no_gap_twice() {
     use crate::document::values::Shape;
     use crate::flow::outline;
     let across = 1.0e15_f32;
     let far = 0.5 * across;
-    let (_, most_stride) = stride_bounds("·", 16.0);
-    assert!(
-        grain_at(far) > 768.0 * most_stride,
-        "precondition: the floats 5 × 10¹⁴ from the origin ({} apart) are further apart than 768 strides of \
-         the dot ({most_stride} at the most)",
-        grain_at(far)
-    );
     let shape = outline(Rect::new(Vec2::splat(-far), Vec2::splat(across)), Shape::Ellipse);
     let cap = 1_024;
-    let (placed, solved) = ring_and_its_ink_solves("·", 16.0, &shape, cap, false);
+    let (placed, solved, _) = ring_and_its_ink_solves("·", 16.0, &shape, cap, false);
+    let (_, longest) = solved.strides.unwrap_or((f32::NAN, f32::NAN));
+    assert!(
+        grain_at(far) > 768.0 * longest,
+        "precondition: the floats 5 × 10¹⁴ from the origin ({} apart) are further apart than 768 of the \
+         ring's longest stride ({longest})",
+        grain_at(far)
+    );
     assert!(
         placed.glyphs.len() == cap && solved.solves == cap,
         "precondition: the ring lays its cap of {cap} glyphs, a solve of its ink for each ({} placed, {} solves)",
@@ -1522,17 +1511,25 @@ fn test_a_repeat_ring_whose_strides_cannot_move_its_ink_reads_no_gap_twice() {
 
 /// `·` at `points` laid round an ellipse 2,000 across 10⁹ from the origin,
 /// where the floats are 64 apart: as the full search lays it
-/// (`NO_STILL_CHAIN`) and as it is laid, and the solves of the second.
-fn ring_at_a_billion(points: f32) -> (PlacedRun, PlacedRun, crate::flow::place::InkSolves) {
+/// (`NO_STILL_CHAIN`), with its solves and how its budget left it, and as
+/// it is laid.
+fn ring_at_a_billion(
+    points: f32,
+) -> (
+    PlacedRun,
+    crate::flow::place::InkSolves,
+    Option<crate::flow::place::ring::RingLoss>,
+    PlacedRun,
+) {
     use crate::document::values::Shape;
     use crate::flow::outline;
     let shape = outline(
         Rect::new(Vec2::splat(1.0e9), Vec2::splat(2_000.0)),
         Shape::Ellipse,
     );
-    let (full, _) = ring_and_its_ink_solves("·", points, &shape, 1_024, true);
-    let (laid, solved) = ring_and_its_ink_solves("·", points, &shape, 1_024, false);
-    (full, laid, solved)
+    let (full, solved, loss) = ring_and_its_ink_solves("·", points, &shape, 1_024, true);
+    let (laid, _, _) = ring_and_its_ink_solves("·", points, &shape, 1_024, false);
+    (full, solved, loss, laid)
 }
 
 /// Where one search's strides may not stop early (#376, ruling B48.1): a
@@ -1541,31 +1538,35 @@ fn ring_at_a_billion(points: f32) -> (PlacedRun, PlacedRun, crate::flow::place::
 /// stride of a dot moves its ink, and nearer than its 64 strides do. A
 /// stride that leaves the ink where it was is followed there by one that
 /// moves it, and the search sets the ink on the next float, as R31 keeps
-/// it where the floats allow. The ring is laid as the full search lays it
-/// (`NO_STILL_CHAIN`), bit for bit: 128 dots, closed. A search stopped at
-/// its first still stride stacked its dots, about 8 to a float, and ran
-/// on to the cap.
+/// it where the floats allow. The full search (`NO_STILL_CHAIN`) closes
+/// the ring with 128 dots, and the ring is laid as it lays it, bit for
+/// bit. A search stopped at its first still stride stacked its dots,
+/// about 8 to a float, and ran on to the cap.
 ///
-/// Precondition: the floats there are further apart than the longest
-/// stride the dot can take and nearer than 64 of its shortest (the
-/// regime's two boundaries), and the ring lays its glyphs by their ink.
-/// Control: a search stopped at its first stride that leaves the ink where
-/// it was, red ("1024 glyphs, the full search's 128 ...").
+/// Preconditions: every stride the ring's searches take, in its first
+/// walk, its close's measures and its lay alike, is shorter than a float
+/// and longer than a 64th of one (the regime's two boundaries) — the
+/// longest by a margin, 60.3 of 64, in the close's measures, whose gap is
+/// owed besides the bearings — and the full search closes the ring with
+/// 128 dots, so that the reference cannot stack too. Controls: a search
+/// stopped at its first stride that leaves the ink where it was, the
+/// reference spared, red ("1024 glyphs, the full search's 128 ..."); the
+/// same stop in the reference too, red ("precondition: the full search
+/// closes the ring with 128 dots (1024 dots ...").
 #[test]
 fn test_a_repeat_ring_whose_floats_one_stride_cannot_cross_is_laid_as_the_full_search_lays_it() {
-    let (least_stride, most_stride) = stride_bounds("·", 16.0);
     let grain = grain_at(1.0e9);
+    let (full, solved, loss, laid) = ring_at_a_billion(16.0);
     assert!(
-        most_stride < grain && grain < 64.0 * least_stride,
-        "precondition: the floats 10⁹ from the origin ({grain} apart) are further apart than one stride of the \
-         16-point dot ({most_stride} at the most) and nearer than 64 ({least_stride} at the least)"
+        full.glyphs.len() == 128 && loss.is_none(),
+        "precondition: the full search closes the ring with 128 dots ({} dots, {loss:?})",
+        full.glyphs.len()
     );
-    let (full, laid, solved) = ring_at_a_billion(16.0);
+    let (shortest, longest) = solved.strides.unwrap_or((f32::NAN, f32::NAN));
     assert!(
-        full.glyphs.len() > 2 && solved.solves > 0,
-        "precondition: the ring lays its glyphs by their ink ({} glyphs, {} solves)",
-        full.glyphs.len(),
-        solved.solves
+        longest < grain && grain < 64.0 * shortest,
+        "precondition: the floats 10⁹ from the origin ({grain} apart) are further apart than the ring's \
+         longest stride ({longest}) and nearer than 64 of its shortest ({shortest})"
     );
     assert!(
         laid == full,
@@ -1575,37 +1576,46 @@ fn test_a_repeat_ring_whose_floats_one_stride_cannot_cross_is_laid_as_the_full_s
     );
 }
 
-/// Where a still turn may not end the turns (#376, ruling B48.2): a `Repeat`
-/// ring of 1-point dots round the same ellipse 10⁹ from the origin, where
-/// the floats, 64 apart, are further apart than a dot's 64 strides move
-/// its ink and nearer than the 768 of its chain of turns do. A turn none
-/// of whose strides moves the ink is followed by one whose stride does,
-/// and the solve sets the ink on the next float. The ring is laid as the
-/// full search lays it (`NO_STILL_CHAIN`), bit for bit. A solve whose
-/// turns ended at its first still one stacked its dots and ran on to the
-/// cap.
+/// Where a still turn may not end the turns (#376, ruling B48.2): a
+/// `Repeat` ring of 1-point dots round the same ellipse 10⁹ from the
+/// origin, where the floats, 64 apart, are further apart than a dot's 64
+/// strides move its ink and nearer than the 768 of its chain of turns do.
+/// In the ring's first walk, which steps with no gap, a turn none of whose
+/// strides moves the ink is followed by one whose stride does, and the
+/// solve sets the ink on the next float. The full search
+/// (`NO_STILL_CHAIN`) closes the ring with 128 dots, and the ring is laid
+/// as it lays it, bit for bit. A solve whose turns ended at its first
+/// still one stacked the first walk's dots and ran it to the cap.
 ///
-/// Precondition: the floats there are further apart than 64 of the
-/// longest strides the dot can take and nearer than 768 of its shortest
-/// (the regime's two boundaries), and the ring lays its glyphs by their
-/// ink. Control: the solve's turns ended at its first still one, which
-/// leaves the ring of 16-point dots above as it is, red ("1024 glyphs,
-/// the full search's 128 ...").
+/// The regime is the first walk's: its close's measures and its lay step
+/// with the gap they solve for, which each ink is owed besides its
+/// bearings, and stride further, up to a float — outside it, where one
+/// stride can cross a float, for some of their searches. The property
+/// bites in the first walk, whose stacking runs the ring to its cap.
+///
+/// Preconditions: every stride the searches of the walks with no gap take
+/// is longer than a 768th of a float and shorter than a 64th (the regime's
+/// two boundaries), and the full search closes the ring with 128 dots, so
+/// that the reference cannot stack too. Controls: the solve's turns ended
+/// at its first still one, the reference spared, which leaves the ring of
+/// 16-point dots above as it is, red ("1024 glyphs, the full search's 128
+/// ..."); a search stopped at its first stride that leaves the ink where
+/// it was in the reference too, red ("precondition: the full search
+/// closes the ring with 128 dots (1024 dots ...").
 #[test]
 fn test_a_repeat_ring_whose_floats_one_turn_cannot_cross_is_laid_as_the_full_search_lays_it() {
-    let (least_stride, most_stride) = stride_bounds("·", 1.0);
     let grain = grain_at(1.0e9);
+    let (full, solved, loss, laid) = ring_at_a_billion(1.0);
     assert!(
-        64.0 * most_stride < grain && grain < 768.0 * least_stride,
-        "precondition: the floats 10⁹ from the origin ({grain} apart) are further apart than 64 strides of the \
-         1-point dot ({most_stride} at the most) and nearer than 768 ({least_stride} at the least)"
+        full.glyphs.len() == 128 && loss.is_none(),
+        "precondition: the full search closes the ring with 128 dots ({} dots, {loss:?})",
+        full.glyphs.len()
     );
-    let (full, laid, solved) = ring_at_a_billion(1.0);
+    let (shortest, longest) = solved.gapless_strides.unwrap_or((f32::NAN, f32::NAN));
     assert!(
-        full.glyphs.len() > 2 && solved.solves > 0,
-        "precondition: the ring lays its glyphs by their ink ({} glyphs, {} solves)",
-        full.glyphs.len(),
-        solved.solves
+        64.0 * longest < grain && grain < 768.0 * shortest,
+        "precondition: the floats 10⁹ from the origin ({grain} apart) are further apart than 64 of the longest \
+         stride of a walk with no gap ({longest}) and nearer than 768 of its shortest ({shortest})"
     );
     assert!(
         laid == full,
@@ -1618,15 +1628,14 @@ fn test_a_repeat_ring_whose_floats_one_turn_cannot_cross_is_laid_as_the_full_sea
 /// What #376 leaves (`ink_gap_at`, `ink_strides`): a stride that moves the
 /// ink is taken, however many there are, and a turn after one is read
 /// whole, so the most one glyph may read its path (`CLUSTER_READS`) does
-/// not tighten. `·:·` at 16 points round a
-/// sharp rectangle 1 × 3, outward: the ring places one glyph, and the
-/// walks that measure and probe it solve the ink of a dot three times.
-/// In each, the dot's ink circles the rectangle within its owed distance
-/// of the dot's before, every stride moving it and none far enough, so
-/// each of `INK_TURNS` turns takes the gap at its center, its guess and
-/// every one of `INK_STRIDES` strides, three reads a point — 12 × (2 +
-/// 64) × 3 = 2,376 reads a solve, every turn and stride `CLUSTER_READS`
-/// counts.
+/// not tighten. `·:·` at 16 points round a sharp rectangle 1 × 3, outward:
+/// the ring places one glyph, and the walks that measure and probe it
+/// solve the ink of a dot three times. In each, the dot's ink circles the
+/// rectangle within its owed distance of the dot's before, every stride
+/// moving it and none far enough, so each of `INK_TURNS` turns takes the
+/// gap at its center, its guess and every one of `INK_STRIDES` strides,
+/// three reads a point — 12 × (2 + 64) × 3 = 2,376 reads a solve, every
+/// turn and stride `CLUSTER_READS` counts.
 ///
 /// Precondition: the ring's walks solve an ink. Control: a search stopped
 /// at its first stride that leaves the ink's `x` where it was, which a
@@ -1645,7 +1654,7 @@ fn test_a_repeat_ring_whose_strides_move_its_ink_takes_every_stride() {
             radius: Percent::new(0),
         },
     );
-    let (placed, solved) = ring_and_its_ink_solves("·:·", 16.0, &shape, 1_024, false);
+    let (placed, solved, _) = ring_and_its_ink_solves("·:·", 16.0, &shape, 1_024, false);
     assert!(
         solved.solves >= 1,
         "precondition: the ring's walks solve an ink ({} placed, {} solves)",
