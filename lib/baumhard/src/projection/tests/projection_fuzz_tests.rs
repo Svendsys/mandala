@@ -95,19 +95,20 @@ fn one_node(fields: serde_json::Value) -> serde_json::Value {
 }
 
 /// The maps the bound is held to by name, each with whether it is inside
-/// (rulings B47.1, B47.2): `test_the_projection_bound_holds_a_nodes_drawn_rectangle_and_a_frames_outline`
-/// asserts that, and `test_every_ring_the_bound_admits_lies_within_the_extent`
-/// projects those inside. The frame's cases: its node's rectangle grown by
-/// its `inset`, a `gap` for each ring inside its outermost and those
-/// rings' line heights, as the projection grows its outline
-/// (`stages::clearance`), within `EXTENT`, at it and a unit past it; a
-/// ring inside that lays text by direction alone takes a line height, and
-/// is a ring of text. The rectangle's: a section's `offset` and box grow
-/// it (D5), the box's lines `LINE_HEIGHT_FACTOR` times their size high and
-/// its characters the widest advance across, a tab eight; the review's
-/// probes of #378 are among them, each outside. A `spacing` parts a
-/// placement's glyphs and moves no outline: a map with one at the canvas
-/// bound is inside.
+/// (rulings B47.1, B47.2):
+/// `test_the_projection_bound_holds_a_nodes_drawn_rectangle_and_a_frames_outline`
+/// asserts that, and
+/// `test_every_ring_the_bound_admits_lies_within_the_extent` projects those
+/// inside. The frame's cases: its node's rectangle grown by its `inset`, a
+/// `gap` for each ring inside its outermost and those rings' line heights,
+/// as the projection grows its outline (`stages::clearance`), within
+/// `EXTENT`, at it and a unit past it; a ring inside that lays text by
+/// direction alone takes a line height, and is a ring of text. The
+/// rectangle's: a section's `offset` and box grow it (D5), the box's lines
+/// `LINE_HEIGHT_FACTOR` times their size high and its characters the widest
+/// advance across, a tab eight; the review's probes of #378 are among them,
+/// each outside. A `spacing` parts a placement's glyphs and moves no
+/// outline: a map with one at the canvas bound is inside.
 fn bound_cases() -> Vec<(String, serde_json::Value, bool)> {
     // A ring that lays its text once, so that how far out it lies is all
     // that can hold it outside; the cases of `spacing` lay one `Repeat`.
@@ -786,18 +787,22 @@ fn test_the_most_ring_glyphs_fill_the_inputs_share() {
 /// quarter of an ellipse 1,000 across, at the furthest whole `inset` the
 /// bound admits it (`edge`, found where the test runs; the emoji face is a
 /// compiled one), and 33 bare nodes, which seed the check's choices to a
-/// transaction
-/// whose first stage is `Ring::SetChannel`: a change of the ring's color
-/// channel, which keeps the map inside the bound and lays the ring again.
-/// The check projects it (one projected, none skipped, cut short or
-/// left), and its after-edit read saw that lay (`LAID_AFTER`), heavy
-/// enough that a quarter of the rate would refuse it.
+/// transaction whose first stage is `Ring::SetChannel`: a change of the
+/// ring's color channel, which keeps the map inside the bound and lays the
+/// ring again. The check projects it (one projected, none skipped, cut
+/// short or left). `LAID_AFTER` holds what the property itself recorded
+/// at its read after the check's last change — `updated`'s after-edit read
+/// of the transaction's commit or cancel, which lays the ring again too:
+/// a lay of the ring heavy enough that a quarter of the rate would refuse
+/// it.
 ///
-/// Controls, run and seen red: with the after-edit read alone at a quarter
-/// of the rate (`updated` reading four times the steps laid), the check
+/// Controls, run and seen red: with `updated`'s after-edit call alone at a
+/// quarter of the rate (reading four times the steps laid), the check
 /// fails, "a loaded map, step 0, stage 0 (Ring::SetChannel): a ring's lay
 /// took 131444 glyph steps, past the 46208 the bound allows its map"; with
-/// the after-edit read removed, the read sees no lay (`Some(0)`).
+/// that call removed, and with `laid_within` returning the steps without
+/// calling the property, nothing is recorded after the change
+/// (`Some(0)`).
 #[test]
 fn test_the_ring_an_edit_lays_again_is_held_to_its_work() {
     use crate::projection::tests::projection_fuzz::{projection_left, LAID_AFTER};
@@ -1151,6 +1156,82 @@ fn test_every_text_frame_the_bound_admits_fits_the_share() {
     }
 }
 
+/// A cluster whose advances sum to less than nothing is read as stepping
+/// back, as placement steps it (the verification review of #378): a text
+/// cluster is a box, and `PathWalk::take` does not floor a box's step, so
+/// `least_steps` reads `ab` with its `a` given an advance of three line
+/// heights back as stepping that far back, past the `b`'s step on; an
+/// ornament's step `take` floors, so `··` so given reads its second `·`
+/// alone. A copy whose least step is not more than nothing gains no ground
+/// the bound can count, and `glyphs_round` reads the cap for it; a copy
+/// that steps on is bounded as its perimeter over its step, with the
+/// slack. The runs are shaped with the font lease dropped before any
+/// assert, so a failure here poisons nothing.
+///
+/// Controls, run and seen red: with a text cluster's step floored at
+/// nothing, `ab` reads its `b`'s step alone, 12.2 on where it steps 59.8
+/// back; with no cap for a step that is not more than nothing, a copy
+/// stepping back reads none of its own glyphs, only the 3 past them.
+#[test]
+fn test_a_cluster_whose_advances_sum_negative_is_read_as_stepping_back() {
+    use crate::document::resolve::ResolvedText;
+    use crate::document::values::{FontSize, Rgba, Weight};
+    use crate::flow::{shape_run, FlowSpan, MAX_PLACED_GLYPHS};
+    use crate::font::fonts::{AppFont, FontSystemLease};
+    use crate::projection::tests::projection_fuzz::{glyphs_round, least_steps, RING_STEP_SLACK};
+    crate::font::fonts::init();
+    let style = ResolvedText {
+        font: AppFont::Any,
+        size: FontSize::Pt(20.0),
+        color: Rgba::opaque(255, 255, 255),
+        weight: Weight::NORMAL,
+        italic: false,
+    };
+    let (mut text, mut dots) = {
+        let mut lease = FontSystemLease::new("a cluster that steps back");
+        let shaped = |text: &str, lease: &mut FontSystemLease| {
+            let span = FlowSpan {
+                text,
+                style: &style,
+                link: None,
+            };
+            shape_run(&[span], 1.0, lease)
+        };
+        (shaped("ab", &mut lease), shaped("··", &mut lease))
+    };
+    assert_eq!((text.glyphs.len(), dots.glyphs.len()), (2, 2), "two glyphs each");
+    let back = -3.0 * text.line_height;
+    let b = f64::from(text.glyphs[1].advance.min(text.line_height));
+    text.glyphs[0].advance = back;
+    let (steps, clusters) = least_steps(&text);
+    assert_eq!(clusters, 2);
+    assert!(
+        (steps - (f64::from(back) + b)).abs() < 1e-3,
+        "`ab` with its `a` {back} back read {steps}, not {} + {b}",
+        back
+    );
+    assert!(steps < 0.0, "`ab` steps back, {steps}");
+    let second = least_steps(&dots).0 / 2.0;
+    dots.glyphs[0].advance = back;
+    let (steps, _) = least_steps(&dots);
+    assert!(
+        (steps - second).abs() < 1e-3,
+        "`··` with its first `·` {back} back read {steps}, not the second's {second}"
+    );
+    assert_eq!(
+        glyphs_round(1_000.0, -1.0, 3),
+        MAX_PLACED_GLYPHS,
+        "a copy stepping back"
+    );
+    assert_eq!(
+        glyphs_round(1_000.0, 0.0, 3),
+        MAX_PLACED_GLYPHS,
+        "a copy stepping nothing"
+    );
+    let on = (1_000.0 / 10.0 * RING_STEP_SLACK).ceil() as usize + 3;
+    assert_eq!(glyphs_round(1_000.0, 10.0, 3), on, "a copy stepping on");
+}
+
 /// A side ornament of default ignorables lays no more glyphs than the bound
 /// reads for it (the review of #378; ruling B47.4), on whatever faces the
 /// host holds: each ornament a `·` and 20 of one code point of
@@ -1234,7 +1315,10 @@ fn test_a_side_ornament_of_default_ignorables_lays_within_its_bound() {
             );
         }
     }
-    assert!(read > 4_000, "{read} code points read");
+    assert_eq!(
+        read, 4_174,
+        "the code points of `Default_Ignorable_Code_Point` read"
+    );
 }
 
 /// The maps the bound's reach is held to by the projection's
