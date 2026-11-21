@@ -852,45 +852,6 @@ pub fn do_flow_halves_closed_form_roots_are_the_first_at_what_is_owed() {
     }
 }
 
-/// The step along `dir` from two inks' centers `delta` apart, their half
-/// sizes summing to `reach`, after which their boxes are `owed` apart —
-/// on where they are nearer, back (a negative) where further: the first
-/// such step, found in `f64` by a scan of 20,000 steps and a bisection of
-/// the one that crosses, from the gap's definition alone. An oracle for
-/// the tangent line's root that shares no arithmetic with it.
-fn line_root_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f64 {
-    let (dx, dy, wx, wy) = (delta.x as f64, delta.y as f64, dir.x as f64, dir.y as f64);
-    let (rx, ry, owed) = (reach.x as f64, reach.y as f64, owed as f64);
-    let gap = |d: f64| {
-        let x = ((dx + wx * d).abs() - rx).max(0.0);
-        let y = ((dy + wy * d).abs() - ry).max(0.0);
-        x.hypot(y)
-    };
-    let near = |d: f64| gap(d) < owed || (gap(d) <= owed && owed <= 0.0);
-    let on = near(0.0);
-    let sign = if on { 1.0 } else { -1.0 };
-    // Past every edge a step can cross, four times over.
-    let span = 4.0 * (dx.abs() + dy.abs() + rx + ry + owed + 1.0) / wx.hypot(wy);
-    let mut before = 0.0;
-    for i in 1..=20_000 {
-        let d = sign * span * i as f64 / 20_000.0;
-        if near(d) != on {
-            let (mut inside, mut outside) = (before, d);
-            for _ in 0..200 {
-                let middle = 0.5 * (inside + outside);
-                if near(middle) == on {
-                    inside = middle;
-                } else {
-                    outside = middle;
-                }
-            }
-            return outside;
-        }
-        before = d;
-    }
-    f64::NAN
-}
-
 #[test]
 fn test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap() {
     do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap();
@@ -898,17 +859,21 @@ fn test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_g
 
 /// #384's CI finding (`structured_line_root_owed_a_gap_its_step_barely_moves`):
 /// on the line two inks `(-20, -12)` apart, reach `(6, 6)`, stepped along
-/// `(-1.25, -1.09e-7)` and owed 6, the closed form is the root, to five
-/// millionths of its scale of the line's root in `f64`, and the bisection
-/// is off by more than its bracket's width — precondition: the case the
-/// property's blur is for — and by no more than `bisection_blur` allows.
+/// `(-1.25, -1.09e-7)` and owed 6, the closed form is the root, to
+/// `CLOSED_FORM_REACH` of its scale of the line's root in `f64`; and the
+/// bisection is off by more than its bracket's width — precondition: the
+/// case `bisection_window` is for — and lies inside that window, the steps
+/// it may stop at.
 ///
-/// The blur is 2.6e-3 there, the bisection 5.9e-4 off, its bracket's
-/// width 2.3e-4.
+/// The bisection is 5.9e-4 off there, past the root, its bracket's width
+/// 2.3e-4; the closed form 4.5e-6.
 ///
-/// Control: with `bisection_blur` allowing none, red ("the bisection
-/// steps -11.19753, 5.952654974556992e-4 from the root, past the blur
-/// 0e0").
+/// The window runs from -20.806 to -11.1947: past the root one axis's gap
+/// stays all but 6 to where the other's opens again.
+///
+/// Control: with the bisection 10⁻² short, before the root where the gap
+/// is clearly past what is owed, red ("the bisection steps -11.18753,
+/// outside -20.805981056832046 to -11.194736282389622").
 #[test]
 fn test_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors() {
     do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors();
@@ -919,14 +884,14 @@ fn test_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors() {
 /// reused by its benchmark.
 pub fn do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors() {
     use crate::flow::place::halves::line_root_seam;
-    use crate::flow::tests::flow_fuzz::bisection_blur;
+    use crate::flow::tests::flow_fuzz::{bisection_window, line_root_in_f64, CLOSED_FORM_REACH};
     let (delta, reach, owed) = (Vec2::new(-20.0, -12.0), Vec2::new(6.0, 6.0), 6.0);
     let dir = Vec2::new(-1.25, -1.092_784_7e-7);
     let (closed, bisected) = line_root_seam(delta, dir, reach, owed);
     let truth = line_root_in_f64(delta, dir, reach, owed);
     let scale = truth.abs() + f64::from(owed) + f64::from(reach.max_element());
     assert!(
-        (f64::from(closed) - truth).abs() <= 5e-6 * scale,
+        (f64::from(closed) - truth).abs() <= CLOSED_FORM_REACH * scale,
         "the closed form steps {closed}, the line's root is {truth}"
     );
     let off = (f64::from(bisected) - truth).abs();
@@ -935,10 +900,10 @@ pub fn do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors()
         off > width,
         "precondition: the bisection steps {bisected}, {off:e} from the root, within its bracket's width {width:e}"
     );
-    let blur = bisection_blur(delta, dir, reach, owed, closed, bisected);
+    let (lo, hi) = bisection_window(delta, dir, reach, owed, truth);
     assert!(
-        off <= blur,
-        "the bisection steps {bisected}, {off:e} from the root, past the blur {blur:e}"
+        (lo..=hi).contains(&f64::from(bisected)),
+        "the bisection steps {bisected}, outside {lo} to {hi}"
     );
 }
 
@@ -978,6 +943,7 @@ pub fn do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors()
 /// 22.876034, the line's root is 22.8076041…").
 pub fn do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap() {
     use crate::flow::place::halves::line_root_seam;
+    use crate::flow::tests::flow_fuzz::{line_root_in_f64, CLOSED_FORM_REACH};
     use crate::util::tests::choices::Choices;
     // How far the closed form may be from the oracle, of the scale it is
     // read at: its step, what is owed, and the reach.
@@ -986,7 +952,7 @@ pub fn do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide
         let truth = line_root_in_f64(delta, dir, reach, owed);
         let scale = truth.abs() + owed as f64 + reach.max_element() as f64;
         let ok = if truth.is_finite() {
-            (closed as f64 - truth).abs() <= 5e-6 * scale
+            (closed as f64 - truth).abs() <= CLOSED_FORM_REACH * scale
         } else {
             !closed.is_finite()
         };

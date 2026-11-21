@@ -4862,16 +4862,22 @@ fn test_flow_structured_finding_a_line_root_owed_little_of_a_wide_gap_replays() 
 /// property's bracket width of 2.3e-4. The bisection was the one off,
 /// and rightly: one axis's gap is all but what is owed and the other's
 /// 4·10⁻³ and closing, so the gap moves 8·10⁻⁴ a unit of step there, and
-/// `along`, reading the gap in `f32`, cannot tell steps whose gap is
-/// within a rounding of 6 (5.99999957 at its step) from the root. The
-/// property now allows the bisection that reach (`bisection_blur`,
-/// derived at it). The input is the base's: it fails alike on
-/// `epic/unified-mutations` at ec9d5f41, whose `line_root`, `along` and
-/// `check_line_root` #384 does not touch. 142 bytes, as found (sha1
-/// 20b3f06f…).
+/// `along`, reading the gap in `f32`, cannot tell steps within a rounding
+/// of 6 (5.99999957 at its step) from the root. The property now holds the
+/// closed form to the line's root in `f64` (`line_root_in_f64`), and the
+/// bisection to the steps it cannot tell from that root
+/// (`bisection_window`), nothing read at either step widening either. The
+/// input is the base's: it fails alike on `epic/unified-mutations` at
+/// ec9d5f41, whose `line_root`, `along` and `check_line_root` #384 does not
+/// touch. 142 bytes, as found (sha1 20b3f06f…).
 ///
-/// Control: with no `bisection_blur` in the property's width, red ("owed
-/// 6: the closed form steps -11.196939, the bisection -11.19753").
+/// Controls, each planted in `line_root_seam`: with the closed form 10⁻³
+/// further, red ("the closed form steps -11.19794, the line's root is
+/// -11.196934…"), and 3 further, red ("-14.196939") — on the property as
+/// it stood at 5608b21e, whose blur was read at the closed form's step,
+/// both were green; with the bisection 10⁻² short of the root, where the
+/// gap is clearly past what is owed, red ("the bisection steps -11.18753,
+/// outside -20.805981…..-11.194736…").
 #[test]
 fn test_flow_structured_finding_a_line_root_owed_a_gap_its_step_barely_moves_replays() {
     let found = include_bytes!("fuzz_findings/structured_line_root_owed_a_gap_its_step_barely_moves");
