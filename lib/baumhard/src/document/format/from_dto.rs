@@ -144,7 +144,7 @@ pub(super) struct Builder {
     /// [`PaletteId`](crate::document::values::PaletteId).
     pub palettes: Vec<String>,
     /// The verbs, by the id the file names them with.
-    pub verbs: KeyedMap<String, VerbId>,
+    pub verbs: crate::document::keyed::NameIndex<VerbId>,
     /// Every node placed so far, by id.
     pub idents: KeyedMap<u32, PlacedNode>,
     /// The chain: the path from a top-level node to the node placed
@@ -207,7 +207,7 @@ impl Builder {
             current: None,
             vars: Vec::new(),
             palettes: Vec::new(),
-            verbs: KeyedMap::default(),
+            verbs: crate::document::keyed::NameIndex::default(),
             idents: KeyedMap::default(),
             chain: Vec::new(),
             highest: 0,
@@ -661,7 +661,6 @@ impl Builder {
     pub fn verb(&self, key: &'static str, id: &str) -> LoadResult<VerbId> {
         self.verbs
             .get(id)
-            .copied()
             .ok_or_else(|| self.error_at(key, LoadErrorKind::UnknownVerb { id: id.to_string() }))
     }
 

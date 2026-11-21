@@ -539,7 +539,7 @@ mod tests {
         };
         let mut from = map(
             json!({"accent": "#d4a24c"}),
-            json!([{"id": "glow", "name": "Glow"}]),
+            json!([{"id": "glow", "name": "Glow", "steps": []}]),
         );
         let s = section(&from, node(&from, 1), 0);
         from.selection.select_only(s);
@@ -548,7 +548,7 @@ mod tests {
 
         let mut to = map(
             json!({"aaa": "#000000", "accent": "#d4a24c"}),
-            json!([{"id": "alpha", "name": "Alpha"}, {"id": "glow", "name": "Glow"}]),
+            json!([{"id": "alpha", "name": "Alpha", "steps": []}, {"id": "glow", "name": "Glow", "steps": []}]),
         );
         let target = section(&to, node(&to, 1), 0);
         to.selection.select_only(target);

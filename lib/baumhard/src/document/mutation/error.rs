@@ -159,6 +159,35 @@ pub enum MutationError {
         /// Its index.
         index: usize,
     },
+    /// A span link to an address of a scheme a link may not open: only
+    /// `http`, `https` and `mailto` (#252 §3).
+    LinkScheme {
+        /// Where.
+        at: MutatorPath,
+        /// The scheme it wrote, or all of it when it has no `:`.
+        scheme: String,
+    },
+    /// A span link to a `mailto` address holding a raw control
+    /// character, or a decoded line break outside its `body` (ruling D3.5
+    /// item 3 on #252).
+    LinkMailControl {
+        /// Where.
+        at: MutatorPath,
+        /// The header — or the part of the address — that holds it.
+        name: String,
+        /// What was found there.
+        found: crate::document::values::MailControlFound,
+    },
+    /// A span link to a `mailto` address that names a header outside
+    /// RFC 6068's six, or whose address part decodes to hold a `?`
+    /// (ruling D3.3 item 1 on #252).
+    LinkMailHeader {
+        /// Where.
+        at: MutatorPath,
+        /// The header's name, as written or as it reads decoded; or the
+        /// address part.
+        name: String,
+    },
     /// A link whose target is not a node of the document.
     LinkTarget {
         /// Where.
@@ -293,6 +322,24 @@ impl fmt::Display for MutationError {
                 write!(f, "{at}: the document has no {what} {index}")
             }
             MutationError::LinkTarget { at, to } => write!(f, "{at}: link target {to} is not a node"),
+            MutationError::LinkScheme { at, scheme } => write!(
+                f,
+                "{at}: a link opens an `http`, `https` or `mailto` address, and this one is `{}`",
+                crate::document::format::context::shown(scheme)
+            ),
+            MutationError::LinkMailControl { at, name, found } => write!(
+                f,
+                "{at}: a `mailto` link holds a line break or a tab only encoded and only inside its \
+                 `body`, and no other control character; this one has {} in `{}`",
+                found.words(),
+                crate::document::format::context::shown(name)
+            ),
+            MutationError::LinkMailHeader { at, name } => write!(
+                f,
+                "{at}: a `mailto` link names only the headers to, cc, bcc, subject, body and in-reply-to, \
+                 and this one has `{}`",
+                crate::document::format::context::shown(name)
+            ),
             MutationError::Instruction { at } => {
                 write!(
                     f,

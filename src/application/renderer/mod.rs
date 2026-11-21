@@ -873,6 +873,16 @@ impl Renderer {
         self.fps_display_mode
     }
 
+    /// Show `icon` as the pointer over the canvas: the browser's half of
+    /// the hand over what a click triggers something on (#252 §3). Native
+    /// sets the cursor through its shell, which owns the window there.
+    #[cfg(target_arch = "wasm32")]
+    pub fn set_cursor(&self, icon: winit::window::CursorIcon) {
+        match &self.sink {
+            Sink::Window { window, .. } => window.set_cursor(icon),
+        }
+    }
+
     /// Forward a redraw request to the underlying winit window. On
     /// web (winit-web) this schedules an internal
     /// `requestAnimationFrame`; multiple calls in one event chain

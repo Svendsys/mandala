@@ -999,6 +999,9 @@ mod tests {
         fn run_macro(&mut self, _: &str, _: &mut dyn FnMut(Observed<'_>)) -> bool {
             panic!("raw input must not run a macro");
         }
+        fn run_verb(&mut self, _: &str, _: Option<u32>) -> Result<(), String> {
+            panic!("raw input must not run a verb");
+        }
         fn run_macro_steps(&mut self, _: &[MacroStep], _: &mut dyn FnMut(Observed<'_>)) -> bool {
             panic!("raw input must not run macro steps");
         }

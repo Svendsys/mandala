@@ -61,6 +61,7 @@ use crate::document::presentation::{
     takes_time, GlyphOps, Play, PresentError, PresentationBody, PresentationDef, PresentationLayer,
     LOOP_TAKES_NO_TIME,
 };
+use crate::document::values::PresentationId;
 use crate::document::writer::budget::Budget;
 use crate::document::writer::error::ApplyError;
 use crate::document::writer::feed::field_inputs;
@@ -287,7 +288,7 @@ impl Document {
         };
         self.take_back_start(&plan, feed);
         Err(PresentError::Refused {
-            presentation: def.id.clone(),
+            presentation: def.id.to_string(),
             error: Box::new(refusal),
         })
     }
@@ -353,7 +354,7 @@ impl Document {
     ) -> Result<StartPlan, PresentError> {
         let mut under = self.derived.budget;
         let value = |field: &'static str, message: &str| PresentError::Value {
-            presentation: def.id.clone(),
+            presentation: def.id.to_string(),
             field,
             message: message.to_string(),
         };
@@ -368,7 +369,7 @@ impl Document {
                     .iter()
                     .map(|m| resolve::mutation(m, Some(self)))
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|fault| PresentError::of(fault, &def.id))?;
+                    .map_err(|fault| PresentError::of(fault, def.id.as_str()))?;
                 Body::Document(MutatorTree::new_with(Mutator::new_macro(
                     mutations,
                     BranchKey::new(def.target.kind(), 0),
@@ -388,12 +389,12 @@ impl Document {
         let filter = match &def.filter {
             Some(filter) => Some(
                 resolve::predicate(&filter.0, Some(self))
-                    .map_err(|fault| PresentError::of(fault, &def.id))?,
+                    .map_err(|fault| PresentError::of(fault, def.id.as_str()))?,
             ),
             None => None,
         };
         let started = Arc::new(Started {
-            id: def.id.clone(),
+            id: def.id.to_string(),
             play: def.play,
             body,
         });
@@ -432,7 +433,7 @@ impl Document {
             if judge_here {
                 under = self.try_application(&started, &reached, under).map_err(|error| {
                     PresentError::Refused {
-                        presentation: def.id.clone(),
+                        presentation: def.id.to_string(),
                         error: Box::new(error),
                     }
                 })?;
@@ -493,6 +494,60 @@ impl Document {
         let mut stopped = 0;
         for instance in &mut self.presentations.instances {
             if instance.started.id == id && owners.contains(&instance.node) {
+                instance.life.stop(now_ms);
+                stopped += 1;
+            }
+        }
+        if stopped > 0 {
+            self.presentations.epoch += 1;
+        }
+        stopped
+    }
+
+    /// Start the map's own presentation `id` on `nodes` at `now_ms`, as
+    /// [`Self::start_presentation`] starts a definition: read where the
+    /// map keeps it, never copied — what a verb's `present` step starts.
+    /// `None`, with nothing started, when the map defines none at `id`.
+    ///
+    /// Cost: [`Self::start_presentation`]'s, and O(1) to find it.
+    pub fn start_defined(
+        &mut self,
+        id: PresentationId,
+        nodes: &[NodeId],
+        now_ms: f64,
+    ) -> Option<Result<Vec<InstanceId>, PresentError>> {
+        let definitions = Arc::clone(&self.definitions);
+        let def = definitions.presentations.get(usize::from(id.0))?;
+        Some(self.start_presentation(def, nodes, now_ms))
+    }
+
+    /// Stop the map's own presentation `id` on `nodes` at `now_ms`, as
+    /// [`Self::stop_presentation`] stops one by its name: what a verb's
+    /// `stop` step stops. Returns how many instances it stopped; none
+    /// when the map defines no presentation at `id`.
+    ///
+    /// Cost: [`Self::stop_presentation`]'s.
+    pub fn stop_defined(&mut self, id: PresentationId, nodes: &[NodeId], now_ms: f64) -> usize {
+        let definitions = Arc::clone(&self.definitions);
+        match definitions.presentations.get(usize::from(id.0)) {
+            Some(def) => self.stop_presentation(def.id.as_str(), nodes, now_ms),
+            None => 0,
+        }
+    }
+
+    /// Stop each of the instances `ids` that still plays, at the clock
+    /// reading `now_ms`, as [`Self::stop_presentation`] stops one: it
+    /// plays its way out from where it is. An id no instance has any more
+    /// — one that ended — is passed over, so a stop never reaches an
+    /// instance started since on the same node. What a held verb run's
+    /// release stops (design §11.2: leaving a hovered node stops every
+    /// `while` instance its verb started). Returns how many it stopped.
+    ///
+    /// Cost: O(the instances × `ids`).
+    pub fn stop_instances(&mut self, ids: &[InstanceId], now_ms: f64) -> usize {
+        let mut stopped = 0;
+        for instance in &mut self.presentations.instances {
+            if ids.contains(&instance.id) {
                 instance.life.stop(now_ms);
                 stopped += 1;
             }
@@ -717,6 +772,7 @@ impl Document {
             ident_index: self.ident_index.clone(),
             next_ident: self.next_ident,
             definitions: self.definitions.clone(),
+            names: self.names.clone(),
             derived: self.derived.clone(),
             writer: Writer::default(),
             presentations: Presentations::default(),

@@ -103,6 +103,7 @@ pub mod screenshot;
 pub mod section;
 pub mod spacing;
 pub mod theme;
+pub mod verb;
 pub mod zoom;
 
 /// One entry in the console command registry. Kept small and
@@ -168,6 +169,7 @@ pub const COMMANDS: &[Command] = &[
     color::COMMAND,
     edit::COMMAND,
     present::COMMAND,
+    verb::COMMAND,
     font::COMMAND,
     fps::COMMAND,
     spacing::COMMAND,

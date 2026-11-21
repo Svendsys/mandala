@@ -255,7 +255,7 @@ pub(crate) fn definition(dto: EditDto) -> Result<EditDef, (Vec<Seg>, LoadErrorKi
         ));
     }
     Ok(EditDef {
-        id: dto.id,
+        id: crate::document::keyed::name(dto.id),
         name: dto.name,
         description: dto.description,
         reach: dto.reach.into(),
@@ -281,7 +281,7 @@ pub(crate) fn to_dto(def: &EditDef) -> EditDto {
         EditBody::Handler(name) => (None, None, Some(name.clone())),
     };
     EditDto {
-        id: def.id.clone(),
+        id: def.id.to_string(),
         name: def.name.clone(),
         description: def.description.clone(),
         reach: def.reach.into(),

@@ -5,7 +5,7 @@
     {
       "id": "hope-swells",
       "name": "Hope swells",
-      "description": "The word \"Hope\" grows and settles, over and over. Start it on node 1.",
+      "description": "The word \"Hope\" grows and settles, over and over.",
       "play": "loop",
       "layer": "glyph",
       "target": "sections",
@@ -46,7 +46,7 @@
     {
       "id": "feathers-line",
       "name": "Feathers' line, held",
-      "description": "Holds the first line where centering puts it at rest, aligned left at that offset, so the trail \"feathers-trail\" writes after it moves nothing before it. Start it on node 1 before \"feathers-trail\".",
+      "description": "Holds the first line where centering puts it at rest, aligned left at that offset, so the trail \"feathers-trail\" writes after it moves nothing before it.",
       "play": "hold",
       "layer": "document",
       "target": "sections",
@@ -89,7 +89,7 @@
     {
       "id": "feathers-trail",
       "name": "Feathers' trail",
-      "description": "Writes the trail of dots after \"feathers\" into the line's last span, which the map saves empty and transparent: five glyphs of the same run, unseen until \"feathers-lift\" fades them in and lifts them, and never saved, exported or found while nothing plays. Start it on node 1, after \"feathers-line\" and before \"feathers-lift\".",
+      "description": "Writes the trail of dots after \"feathers\" into the line's last span, which the map saves empty and transparent: five glyphs of the same run, unseen until \"feathers-lift\" fades them in and lifts them, and never saved, exported or found while nothing plays.",
       "play": "hold",
       "layer": "document",
       "target": "spans",
@@ -118,7 +118,7 @@
     {
       "id": "feathers-lift",
       "name": "Feathers lift",
-      "description": "Each letter of \"feathers\" rises a little further than the one before it, growing and thinning from the color it rests in, and the trail of dots fades in above them; then they settle. Start it on node 1, after \"feathers-trail\".",
+      "description": "Each letter of \"feathers\" rises a little further than the one before it, growing and thinning from the color it rests in, and the trail of dots fades in above them; then they settle.",
       "play": "loop",
       "layer": "glyph",
       "target": "sections",
@@ -559,11 +559,37 @@
       }
     }
   ],
+  "verbs": [
+    {
+      "id": "lift-the-feathers",
+      "name": "Lift the feathers",
+      "description": "\"Hope\" swells, and the letters of \"feathers\" lift with their trail of dots: the line held where centering puts it first, so the trail written after it moves nothing before it, then the trail, then the lift.",
+      "steps": [
+        {
+          "present": "hope-swells",
+          "on": "self"
+        },
+        {
+          "present": "feathers-line",
+          "on": "self"
+        },
+        {
+          "present": "feathers-trail",
+          "on": "self"
+        },
+        {
+          "present": "feathers-lift",
+          "on": "self"
+        }
+      ]
+    }
+  ],
   "nodes": [
     {
       "id": 1,
       "position": [-750.0, -116.0],
       "min_size": [1400.0, 0.0],
+      "on": {"click": "lift-the-feathers"},
       "font": "Galatia SIL",
       "sections": [
         {"min_size": [1400.0, 0.0], "align": "center", "size": 76.0, "color": "#f4d696", "spans": [{"text": "“Hope” is the thing with feathers –"}, {"text": "", "size": 40.0, "color": "#f4d69600"}]},

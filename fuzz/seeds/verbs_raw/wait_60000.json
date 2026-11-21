@@ -1,0 +1,1 @@
+[{"id": "a", "name": "A", "steps": [{"wait": 60000}, {"present": "p", "on": "self"}]}]

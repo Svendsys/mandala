@@ -78,6 +78,11 @@ pub(super) struct InitState {
     /// per-event cursor icon update needs an application-side gate.
     /// Initialized to `Default` to match the as-launched cursor.
     pub(super) cursor_icon_last: CursorIcon,
+    /// Whether the pointer is inside the window: `CursorLeft` clears it,
+    /// `CursorEntered` and `CursorMoved` set it. A gesture that ends with
+    /// it clear releases the hover the leave could not (ruling D3.3 item
+    /// 4 on #252).
+    pub(super) pointer_inside: bool,
     pub(super) keybinds: ResolvedKeybinds,
     /// User-defined macro registry. Loaded once at startup
     /// (`run_native_init::build`) from `~/.config/mandala/macros.json`;
@@ -146,6 +151,7 @@ impl InitState {
             modifiers: &mut self.modifiers,
             cursor_is_hand: &mut self.cursor_is_hand,
             cursor_icon_last: &mut self.cursor_icon_last,
+            pointer_inside: &mut self.pointer_inside,
             keybinds: &self.keybinds,
             macros: &mut self.macros,
             edits: &self.edits,
@@ -373,6 +379,9 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
         // winit doesn't dedup. Initialized to Default to match the
         // as-launched cursor.
         cursor_icon_last: CursorIcon::Default,
+        // Inside until the window says the pointer left: a launch under
+        // the pointer gets no `CursorEntered` first.
+        pointer_inside: true,
         keybinds,
 
         macros,

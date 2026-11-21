@@ -778,7 +778,7 @@ fn test_a_verb_the_map_does_not_define_is_refused() {
     );
     // And one that is defined is.
     assert!(load(&map_with(
-        r#","verbs":[{"id":"v","name":"V"}]"#,
+        r#","verbs":[{"id":"v","name":"V", "steps": []}]"#,
         &node_of(1, r#","on":{"click":"v"}"#)
     ))
     .is_ok());
@@ -1016,7 +1016,7 @@ fn test_an_id_in_a_list_of_definitions_is_unique_within_its_list() {
     }
     // The same id in two lists is two ids.
     assert!(load(&map_with(
-        r#","edits":[{"id":"a","name":"A","reach":"self","target":"node","handler":"flower"}],"verbs":[{"id":"a","name":"A"}]"#,
+        r#","edits":[{"id":"a","name":"A","reach":"self","target":"node","handler":"flower"}],"verbs":[{"id":"a","name":"A", "steps": []}]"#,
         ""
     ))
     .is_ok());
@@ -1777,13 +1777,14 @@ fn definition_body(key: &str) -> &'static str {
     match key {
         "edits" => EDIT_BODY,
         "presentations" => PRESENTATION_BODY,
+        "verbs" => VERB_BODY,
         _ => "",
     }
 }
 
 /// `count` definitions of the list `key`, as the text of an array's
-/// elements: an edit has a reach, a target and a body besides, and a
-/// presentation a lifecycle, a target and a body.
+/// elements: an edit has a reach, a target and a body besides, a
+/// presentation a lifecycle, a target and a body, and a verb its steps.
 fn definitions(key: &str, count: usize) -> String {
     let more = definition_body(key);
     (0..count)
@@ -1794,6 +1795,9 @@ fn definitions(key: &str, count: usize) -> String {
 
 /// What an edit has beside its id and name, in the shortest spelling.
 const EDIT_BODY: &str = r#","reach":"self","target":"node","handler":"flower""#;
+
+/// What a verb has beside its id and name, in the shortest spelling.
+const VERB_BODY: &str = r#","steps":[]"#;
 
 /// What a presentation has beside its id and name, in the shortest
 /// spelling.

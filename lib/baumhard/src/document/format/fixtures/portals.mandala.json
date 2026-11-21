@@ -12,7 +12,8 @@
   "verbs": [
     {
       "id": "open",
-      "name": "Open"
+      "name": "Open",
+      "steps": []
     }
   ],
   "nodes": [

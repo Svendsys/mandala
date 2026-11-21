@@ -100,10 +100,13 @@ Commands:
                                 its JSON path and exits 1. Then print a
                                 warning for what loads but is probably a
                                 mistake: a verb nothing refers to (a
-                                node's 'on', a span's 'link', or an edit
-                                or a presentation in the map naming it
+                                node's 'on', a span's 'link', another
+                                verb's 'verb' step, or an edit or a
+                                presentation in the map naming it
                                 anywhere in it, its filter or its body,
-                                run or not), a node saved hidden that
+                                run or not), a presentation no verb's
+                                'present' or 'stop' step names, a node
+                                saved hidden that
                                 nothing can reveal (none while an edit
                                 in the map, or a presentation in it that
                                 plays on nodes, writes

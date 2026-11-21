@@ -180,6 +180,15 @@ pub(crate) enum ClickHit {
 }
 
 impl ClickHit {
+    /// What a click on `landed` selects in `doc`: [`selectable`]'s
+    /// element, or nothing when the press landed on nothing.
+    pub(crate) fn of(
+        doc: &baumhard::document::ids::Document,
+        landed: Option<&baumhard::projection::Hit>,
+    ) -> ClickHit {
+        landed.map_or(ClickHit::Empty, |hit| ClickHit::Element(selectable(doc, hit)))
+    }
+
     /// The element hit, if any. Native: what reads it is the drag state's
     /// wire form (`app::ipc_state`), and the browser has no drag state.
     #[cfg(not(target_arch = "wasm32"))]
@@ -191,6 +200,17 @@ impl ClickHit {
     }
 }
 
+/// Whether the pointer at `pos` (surface pixels) is inside a surface of
+/// `width` × `height` — the window, or the canvas in the browser: what
+/// decides whether the pointer is in, its position rather than the kind
+/// of event that reports it (ruling D3.4 item 3 on #252). A captured
+/// drag reports moves outside the window after the leave (winit on
+/// Windows sends a `CursorMoved` outside with its `CursorLeft`), and
+/// each of them is a pointer still out. O(1).
+pub(crate) fn within_surface(pos: (f64, f64), width: u32, height: u32) -> bool {
+    pos.0 >= 0.0 && pos.1 >= 0.0 && pos.0 < f64::from(width) && pos.1 < f64::from(height)
+}
+
 /// What a click at `canvas_pos` hits, through the projector's hit test
 /// (`MapView::hit`): never by reading a glyph layer for document state.
 /// The one hit chain both targets' click and tap paths run.
@@ -199,11 +219,25 @@ pub(crate) fn compute_click_hit(
     view: Option<&mut MapView>,
     canvas_pos: glam::Vec2,
 ) -> ClickHit {
+    press_hit(doc, view, canvas_pos).1
+}
+
+/// What a press at `canvas_pos` landed on, by one hit test
+/// ([`compute_click_hit`]'s): the hit itself — the span under it as well
+/// as the element, which a click's trigger reads (`families::verbs`) —
+/// and what a click there selects. A press keeps both until its release
+/// clicks it, so the trigger and the selection read the one hit test.
+pub(crate) fn press_hit(
+    doc: Option<&MindMapDocument>,
+    view: Option<&mut MapView>,
+    canvas_pos: glam::Vec2,
+) -> (Option<baumhard::projection::Hit>, ClickHit) {
     match (doc, view) {
-        (Some(doc), Some(view)) => view.hit(canvas_pos).map_or(ClickHit::Empty, |hit| {
-            ClickHit::Element(selectable(doc.doc(), &hit))
-        }),
-        _ => ClickHit::Empty,
+        (Some(doc), Some(view)) => {
+            let landed = view.hit(canvas_pos);
+            (landed, ClickHit::of(doc.doc(), landed.as_ref()))
+        }
+        _ => (None, ClickHit::Empty),
     }
 }
 
@@ -385,6 +419,10 @@ enum DragState {
         start_pos: (f64, f64),
         /// What the press landed on.
         hit: ClickHit,
+        /// The press's hit test itself, span and all, which the click's
+        /// trigger reads at the release ([`press_hit`]): `hit` is what
+        /// the selection takes of it.
+        landed: Option<baumhard::projection::Hit>,
     },
     /// The right button is down and the cursor has not moved past the
     /// drag threshold yet. The threshold cross dispatches whatever
@@ -656,6 +694,11 @@ mod tests_edits;
 #[cfg(not(target_arch = "wasm32"))]
 mod tests_presentations;
 
+// Map verbs, their triggers and links (V1-D3).
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_verbs;
+
 // The GPU-backed half of the suite (TEST_CONVENTIONS §T8): a whole
 // native app with no window on whatever adapter the machine has —
 // Mesa's lavapipe on a GPU-less box — skipped with a note where there
@@ -690,3 +733,6 @@ mod tests_gpu_presentations;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests_gpu_structure;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_gpu_verbs;

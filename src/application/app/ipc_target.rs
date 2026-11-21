@@ -165,6 +165,19 @@ impl CommandTarget for IpcCommandTarget<'_> {
         ran
     }
 
+    fn run_verb(&mut self, verb: &str, node: Option<u32>) -> Result<(), String> {
+        let ctx = self.ctx();
+        let now_ms = ctx.clock.now_ms();
+        let Some(doc) = ctx.document.as_mut() else {
+            return Err("no map is open".to_string());
+        };
+        let ran = super::dispatch::families::edits::with_drawn(ctx.view.as_mut(), ctx.renderer, |drawn| {
+            super::dispatch::families::verbs::run_named(doc, drawn, ctx.edits, verb, node, now_ms)
+        });
+        self.changed_view |= ran.is_ok();
+        ran
+    }
+
     fn observed(&self) -> Option<Observed<'_>> {
         Some(self.init.observed())
     }

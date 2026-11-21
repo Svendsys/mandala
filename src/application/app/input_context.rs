@@ -75,6 +75,10 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     /// dedupes `set_cursor` only on macOS / X11; Windows + Wayland
     /// re-issue the underlying OS call every time.
     pub cursor_icon_last: &'a mut winit::window::CursorIcon,
+    /// Whether the pointer is inside the window (`InitState`'s), which a
+    /// gesture's end reads to release a hover the pointer left during
+    /// it.
+    pub pointer_inside: &'a mut bool,
     /// Resolved user keybinds. `&` (immutable) — no dispatch path
     /// mutates keybinds; query methods (`action_for_*`, `macro_for`,
     /// `edit_for`, `has_*`) are all `&self`. Track-C
@@ -156,6 +160,8 @@ impl<'a> InputHandlerContext<'a> {
                 modifiers: &*self.modifiers,
                 macros: &mut *self.macros,
                 interaction_mode: &mut *self.interaction_mode,
+                edits: self.edits,
+                clock: &*self.clock,
             },
             super::input_context_core::NativeContextExt {
                 drag_state: &mut *self.drag_state,
@@ -258,6 +264,7 @@ impl InputHandlerContext<'_> {
     /// a console line.
     pub(super) fn on_mouse_input(&mut self, state: ElementState, button: MouseButton) -> bool {
         event_mouse_click::handle_mouse_input(state, button, self);
+        event_cursor_moved::release_hover_if_outside(self);
         true
     }
 
@@ -322,11 +329,27 @@ impl InputHandlerContext<'_> {
     /// `WindowEvent::CursorMoved`. Returns whether to request a redraw.
     pub(super) fn on_cursor_moved(&mut self, position: PhysicalPosition<f64>) -> bool {
         let shell = self.shell;
-        event_cursor_moved::handle_cursor_moved(position, shell, self);
-        // Hover that doesn't drag changes no pixels — no redraw
-        // needed. An active drag (a pan, a rubber band) requires a
-        // fresh frame so the camera or the band tracks the cursor.
-        !matches!(*self.drag_state, DragState::None)
+        let hover_changed = event_cursor_moved::handle_cursor_moved(position, shell, self);
+        // A move that neither drags nor moves the hover changes no
+        // pixels — no redraw needed. An active drag (a pan, a rubber
+        // band) requires a fresh frame so the camera or the band tracks
+        // the cursor; a hover that changed may have started or stopped
+        // what its node's verb plays.
+        hover_changed || !matches!(*self.drag_state, DragState::None)
+    }
+
+    /// `WindowEvent::CursorLeft`: the hover is released when no gesture
+    /// runs. Returns whether to request a redraw: whether the hover
+    /// changed, which may have stopped what its verb plays.
+    pub(super) fn on_cursor_left(&mut self) -> bool {
+        event_cursor_moved::handle_cursor_left(self)
+    }
+
+    /// `WindowEvent::CursorEntered`: the pointer is inside again. Nothing
+    /// to draw; the next move decides the hover.
+    pub(super) fn on_cursor_entered(&mut self) -> bool {
+        *self.pointer_inside = true;
+        false
     }
 
     /// `WindowEvent::KeyboardInput`. A press reaches the full
@@ -335,9 +358,12 @@ impl InputHandlerContext<'_> {
     pub(super) fn on_keyboard_input(&mut self, logical_key: Key, state: ElementState) -> bool {
         if state != ElementState::Pressed {
             event_keyboard::handle_key_release(&logical_key, self);
-            return false;
+            // A release can end a pan the key held: a hover the pointer
+            // left during it is released now.
+            return event_cursor_moved::release_hover_if_outside(self);
         }
         event_keyboard::handle_keyboard_input(logical_key, self);
+        event_cursor_moved::release_hover_if_outside(self);
         true
     }
 
@@ -349,6 +375,7 @@ impl InputHandlerContext<'_> {
     pub(super) fn on_focus_lost(&mut self) -> bool {
         let was_idle = matches!(*self.drag_state, DragState::None);
         self.drag_state.end_on_focus_loss();
-        !was_idle
+        let released = event_cursor_moved::release_hover_if_outside(self);
+        !was_idle || released
     }
 }

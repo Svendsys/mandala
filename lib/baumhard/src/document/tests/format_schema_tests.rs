@@ -64,7 +64,6 @@ const SECTIONS: &[(&str, &[&str])] = &[
     ("Top level", &["MapHeaderDto"]),
     ("Theme", &["ThemeDto"]),
     ("Palette group", &["PaletteGroupDto"]),
-    ("Definitions", &["VerbDto"]),
     ("Defaults", &["DefaultsDto"]),
     ("Node defaults", &["NodeDefaultsDto"]),
     ("Text style", &["TextDefaultsDto"]),
@@ -95,6 +94,12 @@ const EDIT_SECTIONS: &[(&str, &[&str])] = &[
     ("Filter", &["FilterDto"]),
     ("Edits file", &["EditsFileDto"]),
 ];
+
+/// The `###` headings of `format/verbs.md` that hold a table of keys, and
+/// the DTO each describes: a verb is documented there (V1-D3). A step's
+/// target is read by a reader of its own, and its spellings are a table
+/// of spellings, not of keys.
+const VERB_SECTIONS: &[(&str, &[&str])] = &[("Verb", &["VerbDto"]), ("Step", &["StepDto"])];
 
 /// The `###` headings of `format/presentations.md` that hold a table of
 /// keys, and the DTO each describes: a presentation is documented there
@@ -131,6 +136,7 @@ fn test_the_schema_tables_list_every_key_in_the_order_the_saver_writes_them() {
     let documented = documented_keys("schema.md");
     let edits_documented = documented_keys("edits.md");
     let presentations_documented = documented_keys("presentations.md");
+    let verbs_documented = documented_keys("verbs.md");
 
     for (doc, documented, heading, dtos) in SECTIONS
         .iter()
@@ -144,6 +150,11 @@ fn test_the_schema_tables_list_every_key_in_the_order_the_saver_writes_them() {
             PRESENTATION_SECTIONS
                 .iter()
                 .map(|(heading, dtos)| ("presentations.md", &presentations_documented, heading, dtos)),
+        )
+        .chain(
+            VERB_SECTIONS
+                .iter()
+                .map(|(heading, dtos)| ("verbs.md", &verbs_documented, heading, dtos)),
         )
     {
         let listed = documented
@@ -181,6 +192,7 @@ fn test_the_schema_tables_list_every_key_in_the_order_the_saver_writes_them() {
         .iter()
         .chain(EDIT_SECTIONS)
         .chain(PRESENTATION_SECTIONS)
+        .chain(VERB_SECTIONS)
         .flat_map(|(_, dtos)| dtos.iter().copied())
         .chain(SPELLING_OBJECTS.iter().copied())
         .collect();
@@ -263,9 +275,9 @@ fn test_the_schema_examples_errors_are_what_the_loader_says() {
         with_lines(&[1, 2, 3, 4, 6, 5], &same),
     ];
     let expected = [
-        r#"nodes[4]: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 76)"#,
-        r#"nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 63)"#,
-        r#"nodes[5].parent: node 2 (nodes[1]) is earlier, but its subtree has ended; a node here can name 6, or none for a new root (node 5 "the firmament", line 82)"#,
+        r#"nodes[4]: siblings are listed in ascending channel, and the sibling before this one (node 4) has channel 1 (node 3 "the earth", line 77)"#,
+        r#"nodes[2].parent: no node before this one has the id 3; a parent comes before its children (node 5 "the firmament", line 64)"#,
+        r#"nodes[5].parent: node 2 (nodes[1]) is earlier, but its subtree has ended; a node here can name 6, or none for a new root (node 5 "the firmament", line 83)"#,
     ];
     for (text, message) in cases.iter().zip(expected) {
         let error = load(text).expect_err("the edit makes the example invalid");

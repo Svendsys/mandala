@@ -158,8 +158,9 @@ fn act(init: &mut InitState, request: serde_json::Value) -> serde_json::Value {
 ///
 /// Control: the step's expectation differs from the clear load left, so
 /// a clear that stayed where load put it — the defect this pins — fails.
-/// (The theme-variant switch a click fired, and its undo, return with
-/// the map's verbs: V1-D3 #252.)
+/// (A click no longer switches a theme variant: a map's verbs start and
+/// stop its presentations and run its edits, and a theme switch is
+/// neither, design §11.3.)
 #[test]
 fn test_the_clear_follows_a_reload_through_the_console() {
     let Some(mut app) = headless_app(&map_path("theme_demo.mandala.json")) else {

@@ -491,7 +491,7 @@ fn check_text(
     maps.same_map("a long while on")?;
     // Stopped, each is over within its lifecycle.
     for def in defs.iter().take(MAX_PLAYED) {
-        maps.performed.stop_presentation(&def.id, &anchors, now);
+        maps.performed.stop_presentation(def.id.as_str(), &anchors, now);
     }
     maps.same_save("after the stops")?;
     now += LIFECYCLE_MS;

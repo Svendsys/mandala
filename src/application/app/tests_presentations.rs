@@ -95,7 +95,12 @@ fn test_a_while_goes_in_holds_and_returns_on_the_app_clock() {
     for (ms, t) in [(37.5, 0.4375_f32), (75.0, 0.75), (112.5, 0.9375)] {
         clock.advance_to(start + ms);
         assert!(
-            animation::tick(Some(&mut doc), &clock),
+            animation::tick(
+                Some(&mut doc),
+                &mut Undrawn,
+                &EditRegistry::new(Vec::new(), Vec::new()),
+                &clock
+            ),
             "at {ms} ms a frame is drawn"
         );
         let (at, _) = shown(&doc, node);
@@ -113,7 +118,12 @@ fn test_a_while_goes_in_holds_and_returns_on_the_app_clock() {
         );
     }
     clock.advance_to(start + 150.0);
-    assert!(animation::tick(Some(&mut doc), &clock));
+    assert!(animation::tick(
+        Some(&mut doc),
+        &mut Undrawn,
+        &EditRegistry::new(Vec::new(), Vec::new()),
+        &clock
+    ));
     assert_eq!(shown(&doc, node).0, home - Vec2::new(0.0, 6.0));
 
     // Held: nothing owed, nothing written, however long.
@@ -121,7 +131,12 @@ fn test_a_while_goes_in_holds_and_returns_on_the_app_clock() {
     assert!(!doc.animations_moving());
     clock.advance_to(start + 5_000.0);
     assert!(
-        !animation::tick(Some(&mut doc), &clock),
+        !animation::tick(
+            Some(&mut doc),
+            &mut Undrawn,
+            &EditRegistry::new(Vec::new(), Vec::new()),
+            &clock
+        ),
         "a held instance writes nothing"
     );
     assert_eq!(doc.doc().presentations().count(), 1, "and plays on");
@@ -132,12 +147,22 @@ fn test_a_while_goes_in_holds_and_returns_on_the_app_clock() {
     assert!(animation::keeps_ticking(Some(&doc), &running_clock()));
     for (ms, t) in [(75.0, 0.84375_f32), (150.0, 0.5), (225.0, 0.15625)] {
         clock.advance_to(turned + ms);
-        assert!(animation::tick(Some(&mut doc), &clock));
+        assert!(animation::tick(
+            Some(&mut doc),
+            &mut Undrawn,
+            &EditRegistry::new(Vec::new(), Vec::new()),
+            &clock
+        ));
         let (at, _) = shown(&doc, node);
         assert!(close(at.y, home.y - 6.0 * t), "{ms} ms into the return: {at}");
     }
     clock.advance_to(turned + 300.0);
-    assert!(animation::tick(Some(&mut doc), &clock));
+    assert!(animation::tick(
+        Some(&mut doc),
+        &mut Undrawn,
+        &EditRegistry::new(Vec::new(), Vec::new()),
+        &clock
+    ));
     assert_eq!(shown(&doc, node).0, home);
     assert_eq!(doc.doc().presentations().count(), 0, "returned, it is over");
     assert!(!animation::keeps_ticking(Some(&doc), &running_clock()));
@@ -167,7 +192,12 @@ fn test_a_once_plays_in_and_out_and_ends_by_itself() {
         (120.0 + 180.0, 1.0 - 0.5625),
     ] {
         clock.advance_to(start + ms);
-        assert!(animation::tick(Some(&mut doc), &clock));
+        assert!(animation::tick(
+            Some(&mut doc),
+            &mut Undrawn,
+            &EditRegistry::new(Vec::new(), Vec::new()),
+            &clock
+        ));
         let (_, opacity) = shown(&doc, node);
         assert!(close(opacity, 1.0 - 0.45 * t), "at {ms} ms: {opacity}");
         assert!(
@@ -176,7 +206,12 @@ fn test_a_once_plays_in_and_out_and_ends_by_itself() {
         );
     }
     clock.advance_to(start + 360.0);
-    assert!(animation::tick(Some(&mut doc), &clock));
+    assert!(animation::tick(
+        Some(&mut doc),
+        &mut Undrawn,
+        &EditRegistry::new(Vec::new(), Vec::new()),
+        &clock
+    ));
     assert_eq!(shown(&doc, node).1, 1.0);
     assert_eq!(doc.doc().presentations().count(), 0);
     assert!(!animation::keeps_ticking(Some(&doc), &running_clock()));
@@ -199,7 +234,12 @@ fn test_a_loop_owes_frames_until_it_is_stopped_and_a_hold_owes_none() {
     doc.start_presentation(&breathe, &[node], start).expect("starts");
     // Ten cycles on, mid-way in again: still playing, still moving.
     clock.advance_to(start + 2_050.0);
-    assert!(animation::tick(Some(&mut doc), &clock));
+    assert!(animation::tick(
+        Some(&mut doc),
+        &mut Undrawn,
+        &EditRegistry::new(Vec::new(), Vec::new()),
+        &clock
+    ));
     assert!(close(shown(&doc, node).1, 0.75), "{}", shown(&doc, node).1);
     assert!(doc.presentation_loops() && doc.animations_moving());
     assert!(animation::keeps_ticking(Some(&doc), &running_clock()));
@@ -208,7 +248,12 @@ fn test_a_loop_owes_frames_until_it_is_stopped_and_a_hold_owes_none() {
     assert!(!doc.presentation_loops(), "a stopped loop will end");
     assert!(doc.animations_moving());
     clock.advance_to(start + 2_200.0);
-    assert!(animation::tick(Some(&mut doc), &clock));
+    assert!(animation::tick(
+        Some(&mut doc),
+        &mut Undrawn,
+        &EditRegistry::new(Vec::new(), Vec::new()),
+        &clock
+    ));
     assert_eq!(doc.doc().presentations().count(), 0);
     assert_eq!(shown(&doc, node).1, 1.0);
 
@@ -238,7 +283,12 @@ fn test_an_animated_edit_runs_under_a_presentation_and_commits_the_map_alone() {
     doc.start_presentation(&bundled("lift"), &[node], start)
         .expect("starts");
     clock.advance_to(start + 150.0);
-    assert!(animation::tick(Some(&mut doc), &clock));
+    assert!(animation::tick(
+        Some(&mut doc),
+        &mut Undrawn,
+        &EditRegistry::new(Vec::new(), Vec::new()),
+        &clock
+    ));
     let lifted = Vec2::new(0.0, -6.0);
     assert_eq!(shown(&doc, node).0, home + lifted);
 
@@ -260,7 +310,12 @@ fn test_an_animated_edit_runs_under_a_presentation_and_commits_the_map_alone() {
     )
     .expect("runs");
     clock.advance_to(began + 75.0);
-    assert!(animation::tick(Some(&mut doc), &clock));
+    assert!(animation::tick(
+        Some(&mut doc),
+        &mut Undrawn,
+        &EditRegistry::new(Vec::new(), Vec::new()),
+        &clock
+    ));
     let (at, _) = shown(&doc, node);
     assert!(
         at.x > home.x && at.x < home.x + 50.0,
@@ -268,7 +323,12 @@ fn test_an_animated_edit_runs_under_a_presentation_and_commits_the_map_alone() {
     );
     assert_eq!(at.y, home.y - 6.0, "and lifted all the while");
     clock.advance_to(began + 150.0);
-    assert!(animation::tick(Some(&mut doc), &clock));
+    assert!(animation::tick(
+        Some(&mut doc),
+        &mut Undrawn,
+        &EditRegistry::new(Vec::new(), Vec::new()),
+        &clock
+    ));
     assert_eq!(shown(&doc, node).0, home + Vec2::new(50.0, 0.0) + lifted);
 
     // The entry is the edit's, and the save is the map's.

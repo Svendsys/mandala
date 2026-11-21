@@ -113,11 +113,13 @@
   "verbs": [
     {
       "id": "glow",
-      "name": "Glow"
+      "name": "Glow",
+      "steps": []
     },
     {
       "id": "reveal",
-      "name": "Reveal chapter two"
+      "name": "Reveal chapter two",
+      "steps": []
     }
   ],
   "nodes": [

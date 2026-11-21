@@ -31,7 +31,7 @@ use crate::document::format::from_dto::{Builder, Keep, LoadResult, PendingLink};
 use crate::document::format::rows::Rows;
 use crate::document::ids::NodeIdent;
 use crate::document::place::{sizes_its_own_text, Unit};
-use crate::document::values::{Align, Anchor, LinkKind, LinkTarget, PaletteId};
+use crate::document::values::{check_link_url, Align, Anchor, LinkKind, LinkRefusal, LinkTarget, PaletteId};
 use glam::Vec2;
 
 /// The anchors a path with none written has.
@@ -197,7 +197,28 @@ impl Builder {
         let style = self.text_style(text_in!(dto), Unit::of_place(DocKind::Span, parent_kind))?;
         let link = match &dto.link {
             Some(link) => Some(self.key("link", |b| match link {
-                LinkTargetDto::Url(url) => Ok(LinkTarget::Url(url.to_string())),
+                LinkTargetDto::Url(url) => match check_link_url(url) {
+                    Ok(url) => Ok(LinkTarget::Url(url.to_string())),
+                    Err(LinkRefusal::Scheme(scheme)) => Err(b.error_at(
+                        "url",
+                        LoadErrorKind::LinkScheme {
+                            scheme: scheme.to_string(),
+                        },
+                    )),
+                    Err(LinkRefusal::MailHeader { name }) => Err(b.error_at(
+                        "url",
+                        LoadErrorKind::LinkMailHeader {
+                            name: name.into_owned(),
+                        },
+                    )),
+                    Err(LinkRefusal::MailControl { name, found }) => Err(b.error_at(
+                        "url",
+                        LoadErrorKind::LinkMailControl {
+                            name: name.into_owned(),
+                            found,
+                        },
+                    )),
+                },
                 LinkTargetDto::Verb(id) => b.verb("verb", id).map(LinkTarget::Verb),
             })?),
             None => None,

@@ -30,6 +30,7 @@
 //! **Output stays deterministic.** Nothing is ever written by iterating
 //! one of these maps; the saver writes in tree order and sorted names.
 
+use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasher;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -118,3 +119,234 @@ pub type KeyedMap<K, V> = HashMap<K, V, KeyedState>;
 
 /// A hash set of things a file chose.
 pub type KeyedSet<T> = HashSet<T, KeyedState>;
+
+/// An index from the names a file chose — verb ids, presentation and
+/// edit ids, theme variables, palettes — to what they name: a lookup is
+/// one keyed probe, never a scan of a list whose length the file chose
+/// (D29; ruling D3.3 item 2 on #252). Where two entries share a name,
+/// the first inserted keeps it, as a scan in order would find it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NameIndex<V> {
+    map: KeyedMap<NameKey, V>,
+}
+
+impl<V> Default for NameIndex<V> {
+    fn default() -> Self {
+        NameIndex {
+            map: KeyedMap::default(),
+        }
+    }
+}
+
+impl<V: Copy> NameIndex<V> {
+    /// Index `name` as `value`, unless an earlier entry has the name.
+    /// O(the name's length).
+    pub fn insert_first(&mut self, name: &str, value: V) {
+        self.map.entry(key(name)).or_insert(value);
+    }
+
+    /// What `name` names, if anything. One probe: O(the name's length).
+    /// One body in every build: the probe compares through
+    /// `NameKey`'s [`Borrow`], which counts in a test build.
+    pub fn get(&self, name: &str) -> Option<V> {
+        self.map.get(name).copied()
+    }
+
+    /// Whether no name is indexed. O(1).
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    /// Room for `more` names besides those indexed.
+    pub fn reserve(&mut self, more: usize) {
+        self.map.reserve(more);
+    }
+}
+
+/// A key of a [`NameIndex`]: the name, owned. It hashes and compares as
+/// the `str` it holds, and is looked up by one ([`Borrow`]). In a test
+/// build every compare is counted (`NAMES_COMPARED`): a probe compares a
+/// candidate through `borrow` (the hash map's `Equivalent`), and an
+/// insert through `PartialEq` — about one for a hash probe, as many as
+/// there are names for a scan of the keys, whoever wrote the scan
+/// (rulings D3.3 item 3 and D3.4 item 4 on #252).
+#[derive(Clone, Debug, Eq)]
+pub(crate) struct NameKey(Box<str>);
+
+/// `name` as a [`NameIndex`] key.
+fn key(name: &str) -> NameKey {
+    NameKey(Box::from(name))
+}
+
+impl std::hash::Hash for NameKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl Borrow<str> for NameKey {
+    fn borrow(&self) -> &str {
+        // The hash map calls this once a candidate it compares.
+        #[cfg(test)]
+        NAMES_COMPARED.with(|count| count.set(count.get() + 1));
+        &self.0
+    }
+}
+
+impl PartialEq for NameKey {
+    fn eq(&self, other: &Self) -> bool {
+        #[cfg(test)]
+        NAMES_COMPARED.with(|count| count.set(count.get() + 1));
+        self.0 == other.0
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test counter (rulings D3.3 item 3 and D3.4 item 4 on #252): how
+    /// many times a [`NameIndex`]'s keys, and the ids and names a lookup
+    /// could scan ([`Name`]), have been compared on this thread.
+    pub(crate) static NAMES_COMPARED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// An id or a name a lookup by name could scan instead of probing an
+/// index: a verb's, a presentation's and an edit's id, a theme
+/// variable's and a palette's name. A `String` — and in a test build a
+/// string whose every compare is counted (`counted::CountedName`), so a
+/// test holding a lookup to its compares sees a scan of the list as well
+/// as one of the index (ruling D3.4 item 4 on #252).
+#[cfg(not(test))]
+pub type Name = String;
+
+#[cfg(test)]
+pub use counted::CountedName as Name;
+
+/// `name` as a [`Name`]: how every place that makes one makes it, the
+/// same in a test build, where it is counted, as in any other.
+#[allow(
+    clippy::useless_conversion,
+    reason = "a `String` to a `String` outside a test build, where `Name` is one"
+)]
+pub fn name(name: impl Into<String>) -> Name {
+    Name::from(name.into())
+}
+
+/// The test build's [`Name`].
+#[cfg(test)]
+mod counted {
+    use super::NAMES_COMPARED;
+    use std::fmt;
+
+    /// A `String` that counts every compare made through it
+    /// (`NAMES_COMPARED`): what a test build stores an id or a name as.
+    #[derive(Clone, Default)]
+    pub struct CountedName(String);
+
+    impl std::hash::Hash for CountedName {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.0.hash(state);
+        }
+    }
+
+    fn counted() {
+        NAMES_COMPARED.with(|count| count.set(count.get() + 1));
+    }
+
+    impl CountedName {
+        /// The name as a `str`, counted as a compare is (`NAMES_COMPARED`):
+        /// what a test build reads a name through, so a scan that compares
+        /// through it counts too (ruling D3.5 item 4 on #252). There is no
+        /// `Deref`, `AsRef` or `Borrow` to read it through uncounted.
+        pub fn as_str(&self) -> &str {
+            counted();
+            &self.0
+        }
+    }
+
+    impl fmt::Debug for CountedName {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            fmt::Debug::fmt(&self.0, f)
+        }
+    }
+
+    impl fmt::Display for CountedName {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            fmt::Display::fmt(&self.0, f)
+        }
+    }
+
+    impl From<String> for CountedName {
+        fn from(name: String) -> Self {
+            CountedName(name)
+        }
+    }
+
+    impl From<&str> for CountedName {
+        fn from(name: &str) -> Self {
+            CountedName(name.to_string())
+        }
+    }
+
+    impl From<&String> for CountedName {
+        fn from(name: &String) -> Self {
+            CountedName(name.clone())
+        }
+    }
+
+    impl From<CountedName> for String {
+        fn from(name: CountedName) -> Self {
+            name.0
+        }
+    }
+
+    impl Eq for CountedName {}
+
+    impl PartialEq for CountedName {
+        fn eq(&self, other: &Self) -> bool {
+            counted();
+            self.0 == other.0
+        }
+    }
+
+    impl PartialEq<str> for CountedName {
+        fn eq(&self, other: &str) -> bool {
+            counted();
+            self.0 == other
+        }
+    }
+
+    impl PartialEq<&str> for CountedName {
+        fn eq(&self, other: &&str) -> bool {
+            counted();
+            self.0 == *other
+        }
+    }
+
+    impl PartialEq<String> for CountedName {
+        fn eq(&self, other: &String) -> bool {
+            counted();
+            self.0 == *other
+        }
+    }
+
+    impl PartialEq<CountedName> for str {
+        fn eq(&self, other: &CountedName) -> bool {
+            counted();
+            self == other.0
+        }
+    }
+
+    impl PartialEq<CountedName> for &str {
+        fn eq(&self, other: &CountedName) -> bool {
+            counted();
+            *self == other.0
+        }
+    }
+
+    impl PartialEq<CountedName> for String {
+        fn eq(&self, other: &CountedName) -> bool {
+            counted();
+            *self == other.0
+        }
+    }
+}

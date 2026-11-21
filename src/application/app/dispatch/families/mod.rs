@@ -14,11 +14,12 @@
 //! | [`transactions`] | drags, resizes, the color picker, handle chrome | V1-C7 (#248) |
 //! | [`text`] | text editing on spans, node editing | V1-C8 (#249) |
 //! | [`edits`] | the edit funnel: keys bound to edits, the macro `Edit` step, the console | V1-D1 (#250), rebuilt |
-//! | [`verbs`] | node click triggers, the macro verb step | V1-D3 (#252) |
+//! | [`verbs`] | map verbs: click, hover and link triggers, the console, IPC, the macro `Verb` step | V1-D3 (#252), landed |
 //!
 //! Presentations (V1-D2, #251) have no Action and no dispatch entry of
 //! their own: the console's `present` verb starts and stops them
-//! (`console_input::presentations`), and V1-D3's verbs will. What they
+//! (`console_input::presentations`), and so do the map's verbs
+//! ([`verbs`]). What they
 //! have here is [`the_map`](super::the_map): every Action that reads the
 //! map runs with them set aside.
 //!

@@ -313,8 +313,8 @@ fn test_a_node_that_does_not_read_is_still_named_by_its_id() {
 #[test]
 fn test_an_error_carries_its_line_exact_or_the_line_of_its_node() {
     let tree = fixture("tree");
-    // The nodes start on line 46; node 3's block opens on line 69, its
-    // `id` on 70 and its `parent` on 71.
+    // The nodes start on line 47; node 3's block opens on line 70, its
+    // `id` on 71 and its `parent` on 72.
     let lines: Vec<&str> = tree.lines().collect();
     let line_of = |id: u32| {
         1 + lines
@@ -322,7 +322,7 @@ fn test_an_error_carries_its_line_exact_or_the_line_of_its_node() {
             .position(|pair| pair[0] == "    {" && pair[1].starts_with(&format!("      \"id\": {id},")))
             .unwrap()
     };
-    assert_eq!((line_of(1), line_of(3)), (46, 69));
+    assert_eq!((line_of(1), line_of(3)), (47, 70));
     // A reader's error, an unknown key on a line of its own in node 3's
     // block: its line, and the column of the key.
     let bad = tree.replace(
@@ -332,19 +332,19 @@ fn test_an_error_carries_its_line_exact_or_the_line_of_its_node() {
     let error = rejection(&bad);
     assert_eq!(error.path, "nodes[3].bogus");
     let position = error.position.expect("a reader's error has a place");
-    assert_eq!(position.line, 72);
-    let key_at = bad.lines().nth(71).unwrap().find("\"bogus\"").unwrap() as u32 + 1;
+    assert_eq!(position.line, 73);
+    let key_at = bad.lines().nth(72).unwrap().find("\"bogus\"").unwrap() as u32 + 1;
     // The reader stops at the key's closing quote, the seventh byte of
     // `"bogus"`: the column in the whole line, not in the node's extent,
     // which starts four bytes into the block's first line.
     assert_eq!(position.column, key_at + 6, "the column of the key's end");
     assert!(
-        error.to_string().ends_with(r#"(node 3 "the earth", line 72)"#),
+        error.to_string().ends_with(r#"(node 3 "the earth", line 73)"#),
         "{error}"
     );
-    // Control: the same error in the first node reports its line, 48.
+    // Control: the same error in the first node reports its line, 49.
     let bad = tree.replace("      \"id\": 1,\n", "      \"id\": 1,\n      \"bogus\": 0,\n");
-    assert_eq!(rejection(&bad).position.map(|p| p.line), Some(48));
+    assert_eq!(rejection(&bad).position.map(|p| p.line), Some(49));
     // An error found after the node was read: the line where its block
     // opens, at the `{`.
     let bad = tree.replace(
@@ -353,7 +353,7 @@ fn test_an_error_carries_its_line_exact_or_the_line_of_its_node() {
     );
     let error = rejection(&bad);
     assert_eq!(error.path, "nodes[3].sections[0].spans[0].color");
-    assert_eq!(error.position.map(|p| (p.line, p.column)), Some((69, 5)));
+    assert_eq!(error.position.map(|p| (p.line, p.column)), Some((70, 5)));
     // In a top-level value: the start of the value.
     let bad = tree.replace(r##""frame": "#a239ca""##, r#""frame": "var(nope)""#);
     let error = rejection(&bad);
@@ -459,7 +459,7 @@ fn test_the_header_is_read_whole_then_checked_with_the_defaults_last() {
 
     // Then the content is checked, the definitions before the defaults,
     // whatever order the schema's table and the file list them in.
-    let json = r#"{"format":1,"name":"t","defaults":{"span":{"color":"var(nope)"}},"verbs":[{"id":"v","name":"a"},{"id":"v","name":"b"}]}"#;
+    let json = r#"{"format":1,"name":"t","defaults":{"span":{"color":"var(nope)"}},"verbs":[{"id":"v","name":"a", "steps": []},{"id":"v","name":"b", "steps": []}]}"#;
     assert_eq!(
         at(&rejection(json)),
         (
@@ -468,7 +468,7 @@ fn test_the_header_is_read_whole_then_checked_with_the_defaults_last() {
         )
     );
     // Control: with the verbs unique, the defaults' error is the one.
-    let json = r#"{"format":1,"name":"t","defaults":{"span":{"color":"var(nope)"}},"verbs":[{"id":"v","name":"a"},{"id":"w","name":"b"}]}"#;
+    let json = r#"{"format":1,"name":"t","defaults":{"span":{"color":"var(nope)"}},"verbs":[{"id":"v","name":"a", "steps": []},{"id":"w","name":"b", "steps": []}]}"#;
     assert_eq!(rejection(json).path, "defaults.span.color");
 }
 

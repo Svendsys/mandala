@@ -6,8 +6,9 @@
 //! wire-visible. Each command is one existing funnel reached through
 //! [`CommandTarget`](crate::application::ipc::CommandTarget):
 //! `act.action` is `dispatch_action`, `act.console` is the console's
-//! parse → execute → side-effect drain, and `act.macro` is the macro
-//! dispatcher's gated step loop. There is no parallel control path,
+//! parse → execute → side-effect drain, `act.macro` is the macro
+//! dispatcher's gated step loop, and `act.verb` is the runner a node's
+//! click takes (`dispatch::families::verbs`). There is no parallel control path,
 //! so an IPC-driven change takes the same arms, leaves the same undo
 //! entries and passes the same privilege gates as the keystroke,
 //! console line or bound macro it stands in for.
@@ -38,8 +39,8 @@ const ACTION_SHAPE: ParamType = ParamType::OneOf(&[ParamType::String, ParamType:
 /// (CONCEPTS §6 "Console"). The other two `act` commands run on both.
 pub(super) const CONSOLE_NATIVE_ONLY: &str = "the browser has no console runtime; `act.console` is \
                                               native-only until the console shell reaches the browser \
-                                              (CONCEPTS §6 \"Console\"). `act.action` and `act.macro` \
-                                              run on both targets";
+                                              (CONCEPTS §6 \"Console\"). `act.action`, `act.macro` \
+                                              and `act.verb` run on both targets";
 
 pub(super) const FAMILY: Family = Family {
     name: "act",
@@ -137,6 +138,33 @@ pub(super) const FAMILY: Family = Family {
             )],
             support: Support::Everywhere,
             run: run_macro,
+        },
+        CommandSpec {
+            name: "act.verb",
+            summary: "Run one of the open map's verbs, on a node or on none, as a trigger runs it.",
+            params: &[
+                ParamSpec::new(
+                    "verb",
+                    ParamType::String,
+                    true,
+                    "The verb's id, as the map's `verbs` list gives it (format/verbs.md).",
+                ),
+                ParamSpec::new(
+                    "node",
+                    ParamType::Integer,
+                    false,
+                    "The id of the node to run it on: its `self`. Required by a verb that acts on \
+                     `self`, its children, its descendants or a channel within it.",
+                ),
+            ],
+            result: &[ResultSpec::new(
+                "changes_the_map",
+                ParamType::Boolean,
+                "Whether the verb has an `edit` step, its own or one of a verb it runs: a change of the \
+                 map, one history entry per step; a verb without one is a performance.",
+            )],
+            support: Support::Everywhere,
+            run: verb,
         },
     ],
 };
@@ -339,6 +367,64 @@ fn run_macro(call: &mut Call<'_>) -> Reply {
         }
     };
     call.ok(json!({ "ran": ran }))
+}
+
+/// `act.verb`: the map verb `verb` on the node `node`, or on none,
+/// through the runner every trigger takes. Refused before anything runs:
+/// a missing or mistyped parameter (`invalid_params`), a verb or a node
+/// the open map does not have (`not_found`), and a verb that acts on the
+/// node it is run on, sent with no `node` (`invalid_params`, naming
+/// `node`).
+fn verb(call: &mut Call<'_>) -> Reply {
+    let Some(id) = call.str_param("verb").map(str::to_owned) else {
+        return call.invalid_params("verb", "missing `verb`");
+    };
+    let node = match call.param("node") {
+        None => None,
+        Some(value) => match value.as_u64().and_then(|n| u32::try_from(n).ok()) {
+            Some(node) => Some(node),
+            None => return call.invalid_params("node", "`node` is a node id: a whole number from 1"),
+        },
+    };
+    let changes_the_map = {
+        let Some(doc) = call.observe().and_then(|app| app.document()) else {
+            return call.no_document();
+        };
+        let doc = doc.doc();
+        let definitions = doc.definitions();
+        let Some((_, def)) = definitions.verb_by_id(&id) else {
+            return call.error(
+                code::NOT_FOUND,
+                format!("the map defines no verb `{id}`"),
+                Some(json!({ "verb": id })),
+            );
+        };
+        if let Some(node) = node {
+            if doc
+                .node_by_ident(baumhard::document::ids::NodeIdent(node))
+                .is_none()
+            {
+                return call.error(
+                    code::NOT_FOUND,
+                    format!("no node has the id {node}"),
+                    Some(json!({ "node": node })),
+                );
+            }
+        } else if def.needs_self(definitions) {
+            return call.invalid_params(
+                "node",
+                format!("verb `{id}` acts on the node it is run on: send `node`"),
+            );
+        }
+        def.changes_the_map(definitions)
+    };
+    let Some(app) = call.drive() else {
+        return call.no_document();
+    };
+    match app.run_verb(&id, node) {
+        Ok(()) => call.ok(json!({ "changes_the_map": changes_the_map })),
+        Err(message) => call.error(code::INTERNAL, message, Some(json!({ "verb": id }))),
+    }
 }
 
 #[cfg(test)]

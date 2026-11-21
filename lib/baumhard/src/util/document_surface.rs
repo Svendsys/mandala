@@ -100,12 +100,14 @@ const DELETED_FIELDS: &[&str] = &[
 ];
 
 /// Whether `ty` mentions `String` anywhere: `String`, `Vec<String>`,
-/// `Option<String>`.
+/// `Option<String>` — or `Name` (`document::keyed::Name`), which is a
+/// `String` outside a test build, where it is one that counts its
+/// compares (ruling D3.4 item 4 on #252).
 fn mentions_string(ty: &Type) -> bool {
     struct Finder(bool);
     impl<'ast> Visit<'ast> for Finder {
         fn visit_path_segment(&mut self, segment: &'ast PathSegment) {
-            self.0 |= segment.ident == "String";
+            self.0 |= segment.ident == "String" || segment.ident == "Name";
             visit::visit_path_segment(self, segment);
         }
     }
@@ -290,6 +292,51 @@ const EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
         "an iterator of node ids a definition names, by value",
     ),
     (
+        "verb/mod.rs",
+        "named_idents",
+        IMPL_TRAIT,
+        "an iterator of the node ids the verbs' targets name, by value",
+    ),
+    (
+        "verb/run.rs",
+        "Runs::runs",
+        IMPL_TRAIT,
+        "an iterator of the runs, as copies holding ids",
+    ),
+    (
+        "verb/run.rs",
+        "Performer::stop",
+        HANDS,
+        "the performer is the app's own code: a step hands it a presentation's id and the nodes it resolved, \
+         by shared reference, and the app stops the instances through the document's own API",
+    ),
+    (
+        "verb/run.rs",
+        "Performer::edit",
+        HANDS,
+        "the performer is the app's own code: a step hands it an edit's id and the nodes it resolved, by \
+         shared reference, and the app applies the edit through its one funnel to `Document::apply`",
+    ),
+    (
+        "verb/run.rs",
+        "Runs::invoke",
+        LENDS,
+        "the performer is the caller's own: the runner lends it the steps' resolved targets and asks it to \
+         act, and never holds a document",
+    ),
+    (
+        "verb/run.rs",
+        "Runs::tick",
+        LENDS,
+        "the performer is the caller's own, as for `Runs::invoke`",
+    ),
+    (
+        "verb/run.rs",
+        "Runs::release",
+        LENDS,
+        "the performer is the caller's own, as for `Runs::invoke`",
+    ),
+    (
         "format/index.rs",
         "parse_extent",
         PARAM,
@@ -318,6 +365,12 @@ const EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
         "Rows::each",
         PARAM,
         "the error the caller's own callback returns",
+    ),
+    (
+        "keyed.rs",
+        "NameIndex::get",
+        PARAM,
+        "a copy of an id the index holds (`V: Copy`: a `VerbId`, a `VarId`), never a reference into a document",
     ),
     (
         "format/rows.rs",
@@ -2302,7 +2355,7 @@ hidden_items!();
                     ..MapData::default()
                 })],
                 "PaletteData.name" => vec![DocElement::Palette(PaletteData {
-                    name: TEXT.to_string(),
+                    name: crate::document::keyed::name(TEXT),
                     groups: Vec::new(),
                 })],
                 "PortalEndStyle.content" => {
@@ -2373,7 +2426,7 @@ hidden_items!();
                     ..SpanData::default()
                 })],
                 "ThemeData.variables" => vec![DocElement::Theme(ThemeData {
-                    variables: vec![TEXT.to_string()],
+                    variables: vec![crate::document::keyed::name(TEXT)],
                     ..ThemeData::default()
                 })],
                 "ThemeVariant.name" => vec![DocElement::Theme(ThemeData {

@@ -97,7 +97,7 @@ impl DragState {
         let canvas = |point: glam::Vec2| json!({ "x": f32_json(point.x), "y": f32_json(point.y) });
         match self {
             DragState::None => json!({ "kind": "None" }),
-            DragState::Pending { start_pos, hit } => json!({
+            DragState::Pending { start_pos, hit, .. } => json!({
                 "kind": "Pending",
                 "start_pos": xy_f64(*start_pos),
                 "hit": element(*hit),
@@ -323,6 +323,7 @@ mod tests {
                 DragState::Pending {
                     start_pos: (1.0, 2.0),
                     hit: ClickHit::Empty,
+                    landed: None,
                 },
                 "Pending",
             ),
@@ -347,6 +348,7 @@ mod tests {
         let pending = DragState::Pending {
             start_pos: (1.0, 2.0),
             hit: ClickHit::Empty,
+            landed: None,
         };
         assert_eq!(pending.to_ipc_json(None)["hit"], Value::Null);
     }

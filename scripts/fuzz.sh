@@ -37,7 +37,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGETS=(load_raw load_structured flow_raw flow_structured flow_structured_every_face glyph_mutation_raw glyph_mutation_structured projection_edits edits_raw edits_structured presentations_raw presentations_structured)
+TARGETS=(load_raw load_structured flow_raw flow_structured flow_structured_every_face glyph_mutation_raw glyph_mutation_structured projection_edits edits_raw edits_structured presentations_raw presentations_structured verbs_raw verbs_structured)
 
 usage() {
   sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -103,6 +103,10 @@ case "$TARGET" in
   # (amendment on #251), in the same text.
   presentations_raw) MAX_LEN=2097152 ;;
   presentations_structured) MAX_LEN=4096 ;;
+  # A verb's seeds include fans of calls around the definition parts
+  # bound after expansion (ruling D3.1 on #252), a few hundred bytes.
+  verbs_raw) MAX_LEN=65536 ;;
+  verbs_structured) MAX_LEN=4096 ;;
 esac
 
 EXTRA=()

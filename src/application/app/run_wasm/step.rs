@@ -38,7 +38,7 @@ impl Steps for Borrowed<'_> {
             self.land_injected();
         }
         if beat.moves_time(&self.input.clock) {
-            crate::application::app::animation::tick(Some(&mut self.input.document), &self.input.clock);
+            self.tick_animations();
         }
         self.sync_view();
     }

@@ -3,8 +3,9 @@
 //! Cursor-move dispatch. Owns the drag-state transitions (a pending
 //! press crossing the threshold becomes a pan, a rubber band, or
 //! whatever the `LeftDrag` / `RightDrag` gesture is bound to), the pan's
-//! camera steps, the rubber band's corner, and the hand cursor over
-//! nodes whose click runs a verb.
+//! camera steps, the rubber band's corner, the hand cursor over what a
+//! click triggers something on, and the hover a node's `on.hover` verb
+//! is held for (`families::verbs`).
 //!
 //! The drags that edit the map — moving and resizing nodes and
 //! sections, the connector handles, the labels — return as transactions
@@ -14,7 +15,9 @@
 
 use crate::application::platform::window::{CursorIcon, PhysicalPosition};
 
+use super::dispatch::families::edits::Projected;
 use super::dispatch::families::structure::valid_reparent_target;
+use super::dispatch::families::verbs;
 use super::input_context::InputHandlerContext;
 use super::shell::Shell;
 use super::{ClickHit, DragState, HeldInput, InteractionMode};
@@ -22,25 +25,37 @@ use crate::application::common::RenderDecree;
 use crate::application::keybinds::MouseGesture;
 use crate::application::platform::input::MouseButton;
 
-/// `WindowEvent::CursorMoved`: place the cursor, update its icon, and
-/// advance the drag state.
+/// `WindowEvent::CursorMoved`: place the cursor, update its icon and the
+/// hover, and advance the drag state. Returns whether the hover changed:
+/// a verb it invoked or released may have started or stopped what is
+/// drawn.
 pub(super) fn handle_cursor_moved(
     position: PhysicalPosition<f64>,
     shell: &Shell,
     ctx: &mut InputHandlerContext<'_>,
-) {
+) -> bool {
     let prev_pos = *ctx.cursor_pos;
     *ctx.cursor_pos = (position.x, position.y);
     let cursor = *ctx.cursor_pos;
+    // Inside or out by where the move is, not by its being a move: a
+    // captured drag reports moves outside the window (ruling D3.4 item 3).
+    *ctx.pointer_inside = super::within_surface(
+        cursor,
+        ctx.renderer.surface_width(),
+        ctx.renderer.surface_height(),
+    );
 
-    // Idle: a hand over a node whose click runs a verb, the default
-    // elsewhere. During a gesture the cursor stays as the gesture began.
+    // Idle: a hand over what a click triggers something on, the default
+    // elsewhere, and the hover follows the pointer. During a gesture the
+    // cursor stays as the gesture began, and so does the hover.
     // `set_cursor` goes through `cursor_icon_last` because winit dedupes
     // it on macOS / X11 but not on Windows or Wayland.
+    let mut hover_changed = false;
     if matches!(*ctx.drag_state, DragState::None) {
-        let over_verb = node_with_click_verb_under(ctx, cursor);
-        *ctx.cursor_is_hand = over_verb;
-        let icon = if over_verb {
+        let (points, changed) = follow_pointer(ctx, cursor);
+        hover_changed = changed;
+        *ctx.cursor_is_hand = points;
+        let icon = if points {
             CursorIcon::Pointer
         } else {
             CursorIcon::Default
@@ -53,6 +68,43 @@ pub(super) fn handle_cursor_moved(
     }
 
     advance_drag_state(ctx, prev_pos, cursor);
+    hover_changed
+}
+
+/// `WindowEvent::CursorLeft`: the pointer left the window, and with it
+/// the node it hovered, so the hover is released (#252 §3, ruling D3.2
+/// item 4) — a node at the canvas's edge is left this way as often as by
+/// a move. During a gesture the hover stays, as a move during one leaves
+/// it, and is released when the gesture ends with the pointer still out
+/// ([`release_hover_if_outside`]; ruling D3.3 item 4). Returns whether
+/// the hover changed.
+pub(super) fn handle_cursor_left(ctx: &mut InputHandlerContext<'_>) -> bool {
+    *ctx.pointer_inside = false;
+    release_hover_if_outside(ctx)
+}
+
+/// Release the hover when the pointer is outside the window and no
+/// gesture runs: what a leave does at once, and what the end of a
+/// gesture the pointer left during does — a release, a key's release, a
+/// lost focus — since no move and maybe no second leave comes after
+/// (ruling D3.3 item 4 on #252). Returns whether the hover changed.
+pub(super) fn release_hover_if_outside(ctx: &mut InputHandlerContext<'_>) -> bool {
+    if *ctx.pointer_inside || !matches!(*ctx.drag_state, DragState::None) {
+        return false;
+    }
+    let now_ms = ctx.clock.now_ms();
+    let (Some(doc), Some(view)) = (ctx.document.as_mut(), ctx.view.as_mut()) else {
+        return false;
+    };
+    verbs::Host {
+        doc,
+        drawn: &mut Projected {
+            view,
+            renderer: &mut *ctx.renderer,
+        },
+        edits: ctx.edits,
+    }
+    .hover(None, now_ms)
 }
 
 /// In reparent or connect mode, tint the node under the cursor when the
@@ -74,18 +126,31 @@ fn follow_target(ctx: &mut InputHandlerContext<'_>, cursor: (f64, f64)) {
     view.set_hover_target(target);
 }
 
-/// Whether the cursor at `cursor` (surface pixels) is over a node whose
-/// `on.click` names a verb: the projector's hit test, then the node's
-/// triggers. No glyph layer is read for the answer.
-fn node_with_click_verb_under(ctx: &mut InputHandlerContext<'_>, cursor: (f64, f64)) -> bool {
-    let (Some(doc), Some(view)) = (ctx.document.as_ref(), ctx.view.as_mut()) else {
-        return false;
-    };
+/// What the pointer at `cursor` (surface pixels) is over, by one hit
+/// test (the projector's, `Projector::hit`; no glyph layer is read for
+/// the answer): whether a click there triggers something — a node's
+/// `on.click`, a linked span — which the hand cursor shows, and the hover,
+/// moved onto the node there whose `on.hover` names a verb, or off any
+/// (`families::verbs`). Returns the first, and whether the hover changed.
+fn follow_pointer(ctx: &mut InputHandlerContext<'_>, cursor: (f64, f64)) -> (bool, bool) {
+    let now_ms = ctx.clock.now_ms();
     let canvas_pos = ctx.renderer.screen_to_canvas(cursor.0 as f32, cursor.1 as f32);
-    view.hit(canvas_pos)
-        .and_then(|hit| doc.doc().get(hit.node))
-        .and_then(|element| element.as_node())
-        .is_some_and(|node| node.on.click.is_some())
+    let (Some(doc), Some(view)) = (ctx.document.as_mut(), ctx.view.as_mut()) else {
+        return (false, false);
+    };
+    let hit = view.hit(canvas_pos);
+    let points = verbs::points_at(doc.doc(), hit.as_ref());
+    let hovered = verbs::hovered(doc.doc(), hit.as_ref());
+    let changed = verbs::Host {
+        doc,
+        drawn: &mut Projected {
+            view,
+            renderer: &mut *ctx.renderer,
+        },
+        edits: ctx.edits,
+    }
+    .hover(hovered, now_ms);
+    (points, changed)
 }
 
 /// Whether the cursor has moved past the drag threshold from `start`.
@@ -106,7 +171,7 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev: (f64, f64), curso
         DragState::SelectingRect { current_canvas, .. } => {
             *current_canvas = ctx.renderer.screen_to_canvas(cursor.0 as f32, cursor.1 as f32);
         }
-        DragState::Pending { start_pos, hit } => {
+        DragState::Pending { start_pos, hit, .. } => {
             let (start_pos, hit) = (*start_pos, *hit);
             if past_threshold(start_pos, cursor) {
                 promote_left_drag(ctx, start_pos, hit, cursor);

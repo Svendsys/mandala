@@ -351,6 +351,17 @@ impl super::macro_core::MacroDispatchTarget for NativeMacroDispatchTarget<'_, '_
         })
     }
 
+    fn run_verb(&mut self, id: &str, at: &crate::application::macros::MacroTarget) -> bool {
+        let ctx = &mut *self.ctx;
+        let Some(doc) = ctx.document.as_mut() else {
+            return false;
+        };
+        let (registry, now_ms) = (ctx.edits, ctx.clock.now_ms());
+        super::families::edits::with_drawn(ctx.view.as_mut(), ctx.renderer, |drawn| {
+            super::families::verbs::run_step(doc, drawn, registry, id, at, now_ms)
+        })
+    }
+
     fn step_finished(&mut self) {
         if let Some(observe) = self.after_step.as_mut() {
             observe(self.ctx);
@@ -381,6 +392,7 @@ mod tests {
             DragState::Pending {
                 start_pos: (0.0, 0.0),
                 hit: crate::application::app::ClickHit::Empty,
+                landed: None,
             },
         ] {
             assert_eq!(route_pan_canvas(&drag), PanCanvasRoute::Arm);

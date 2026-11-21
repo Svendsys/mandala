@@ -115,6 +115,15 @@ pub enum MacroStep {
     /// as if typed. Lets macros leverage every parameterised verb
     /// (e.g. `zoom 2`) without needing a bespoke step kind.
     ConsoleLine { line: String },
+    /// Run one of the open map's verbs by id (`format/verbs.md`; design
+    /// §11.2), on the node `target` resolves — its `self` — through the
+    /// runner every trigger takes (`dispatch::families::verbs`). Every
+    /// tier may: a map verb is sandboxed (§11.3).
+    Verb {
+        id: String,
+        #[serde(default)]
+        target: MacroTarget,
+    },
 }
 
 /// How a `MacroStep::Edit` resolves its target node at

@@ -20,6 +20,9 @@
 /// Input-event value types — what comes out of a key/mouse press
 /// after the bootstrap unwraps the corresponding winit event.
 pub mod input;
+/// Opening a span link's address: the platform's opener on native, a
+/// new tab in the browser (#252 §3).
+pub(crate) mod opener;
 /// Window-shape value types — cursor/size/position primitives the
 /// renderer surface and the cursor-state code reach for.
 pub mod window;

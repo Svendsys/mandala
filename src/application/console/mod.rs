@@ -98,6 +98,11 @@ pub enum ConsoleSideEffect {
     /// app's presentation registry and the open map, on the app clock
     /// (`app::console_input`), and its report becomes the line's output.
     Present(commands::present::PresentLine),
+    /// Run or list the map's verbs. Set by the `verb` verb, which only
+    /// reads the line; the executor runs it through the verb runner on
+    /// the open map, on the app clock (`app::console_input`), and its
+    /// report becomes the line's output.
+    Verb(commands::verb::VerbLine),
 }
 
 impl std::fmt::Debug for ConsoleSideEffect {
@@ -115,6 +120,7 @@ impl std::fmt::Debug for ConsoleSideEffect {
             Self::Clock(line) => f.debug_tuple("Clock").field(line).finish(),
             Self::Edit(line) => f.debug_tuple("Edit").field(line).finish(),
             Self::Present(line) => f.debug_tuple("Present").field(line).finish(),
+            Self::Verb(line) => f.debug_tuple("Verb").field(line).finish(),
         }
     }
 }

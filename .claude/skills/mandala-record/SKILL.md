@@ -173,8 +173,11 @@ you choose: **a single `ZoomIn` is instant** (one 1.1× jump, no animation —
 `apply_zoom_step`), so the worked example below shows it as a ramp of steps.
 Two things animate: an animated edit, and a presentation
 (`format/presentations.md`; `act.console 'present start <id> <node-id>'`
-starts one, `present stop` plays its way out). Nothing on a map animates by
-itself: no trigger starts a presentation yet.
+starts one, `present stop` plays its way out). A map's own verbs start
+theirs (`format/verbs.md`): a click on a node with an `on.click`
+(`input.click_node <id>`), the pointer resting on one with an `on.hover`
+(`input.mouse_move`), or `act.verb <verb> [node]`. Nothing animates
+until one of those runs: a map opening starts nothing.
 
 **Two traps found while writing this.** `input.wheel 26` is one notch, not
 twenty-six — it moved zoom 0.05 → 0.055; to repeat an action, repeat the

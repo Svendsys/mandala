@@ -22,31 +22,48 @@
 //! ([`MindMapDocument::tick_presentations`]), which never change the
 //! map (design §10).
 
+use super::dispatch::families::edits::Drawn;
+use super::dispatch::families::verbs::Host;
 use crate::application::clock::{AppClock, ClockMode};
 use crate::application::document::MindMapDocument;
+use crate::application::edits::EditRegistry;
 
-/// Write every running animation at the clock's reading: the
-/// presentation instances first, then the animated edit, whose write
-/// goes through the writer's funnel and so leaves the instances on top
-/// where they now are. Returns whether anything was written: the
-/// caller's view sync then draws it (`view::MapView::sync`, from the
-/// change feed and the presentations' epoch). Nothing runs with no
-/// document or no animation.
-pub(super) fn tick(document: Option<&mut MindMapDocument>, clock: &AppClock) -> bool {
+/// Write every running animation at the clock's reading: first the map
+/// verbs a `wait` suspended go on with their steps (`families::verbs`),
+/// each at the time its wait ends — which may start a presentation or an
+/// edit there — then the presentation instances, then the animated edit,
+/// whose write goes through the writer's funnel and so leaves the
+/// instances on top where they now are. `drawn` is where the map is
+/// drawn, which a verb's edit step reads; `edits` the edits' tiers.
+/// Returns whether anything was written: the caller's view sync then
+/// draws it (`view::MapView::sync`, from the change feed and the
+/// presentations' epoch). Nothing runs with no document or no animation.
+pub(super) fn tick(
+    document: Option<&mut MindMapDocument>,
+    drawn: &mut dyn Drawn,
+    edits: &EditRegistry,
+    clock: &AppClock,
+) -> bool {
     document.is_some_and(|doc| {
         let now_ms = clock.now_ms();
+        let ran = Host {
+            doc: &mut *doc,
+            drawn,
+            edits,
+        }
+        .tick(now_ms);
         let presented = doc.tick_presentations(now_ms);
         let edited = doc.tick_animation(now_ms);
-        presented || edited
+        ran || presented || edited
     })
 }
 
 /// Whether a running animation owes the loop another frame: an animated
-/// edit is running or a presentation instance is on its way in or out,
+/// edit is running, a presentation instance is on its way in or out, or
+/// a verb waits on the clock to go on (`MindMapDocument::animations_moving`),
 /// and the clock moves on its own. One that holds at its end owes
 /// nothing. Under a virtual clock the frames that advance an animation
 /// are a step's, so it keeps nothing awake.
 pub(super) fn keeps_ticking(document: Option<&MindMapDocument>, clock: &AppClock) -> bool {
-    document.is_some_and(|doc| doc.is_animating() || doc.presentations_moving())
-        && clock.mode() == ClockMode::Real
+    document.is_some_and(MindMapDocument::animations_moving) && clock.mode() == ClockMode::Real
 }

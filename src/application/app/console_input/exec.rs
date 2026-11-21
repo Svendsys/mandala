@@ -31,9 +31,12 @@ pub(in crate::application::app) struct LineRun {
 /// drives it (a step is how a virtual clock moves it); `help`, `fps`,
 /// `mode`, `screenshot` and `record`, which change nothing of the map;
 /// `save`, which writes the map as committed, a running edit not yet in
-/// it (§9); and `edit`, whose `apply` settles in the edit funnel and
-/// whose `inspect` reports the animation. Every other verb settles it.
-pub(in crate::application::app) const LEAVE_ANIMATION_RUNNING: [&str; 8] = [
+/// it (§9); `edit`, whose `apply` settles in the edit funnel and whose
+/// `inspect` reports the animation; and `verb`, whose map verbs run as a
+/// trigger runs them — an `edit` step settles in the edit funnel, and a
+/// presentation started settles nothing (`dispatch::families::verbs`).
+/// Every other verb settles it.
+pub(in crate::application::app) const LEAVE_ANIMATION_RUNNING: [&str; 9] = [
     "clock",
     "help",
     "fps",
@@ -42,6 +45,7 @@ pub(in crate::application::app) const LEAVE_ANIMATION_RUNNING: [&str; 8] = [
     "record",
     "save",
     "edit",
+    "verb",
 ];
 
 /// Parse and execute a console line against `ctx`, and return what the
@@ -150,6 +154,11 @@ pub(in crate::application::app) fn execute_console_line(
     if let Some(ConsoleSideEffect::Present(line)) = &side_effect {
         edit_report = Some(super::presentations::take(ctx, line));
     }
+    // And a map verb's: what it ran, or the verbs it lists. What it ran
+    // shows at once, which the sync below draws.
+    if let Some(ConsoleSideEffect::Verb(line)) = &side_effect {
+        edit_report = Some(super::verbs::take(ctx, line));
+    }
     if let Some(result) = edit_report {
         let synced = match (ctx.document.as_mut(), ctx.view.as_mut()) {
             (Some(doc), Some(view)) => view.sync(doc, ctx.renderer),
@@ -195,8 +204,8 @@ pub(in crate::application::app) fn execute_console_line(
     })
 }
 
-/// Perform the side effect a verb asked for. The five that are a
-/// line's whole report (`Record`, `Clock`, `Edit`, `Present`,
+/// Perform the side effect a verb asked for. The six that are a
+/// line's whole report (`Record`, `Clock`, `Edit`, `Present`, `Verb`,
 /// `Screenshot`) are taken by
 /// [`execute_console_line`] before this is reached.
 fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffect) {
@@ -215,7 +224,8 @@ fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffec
         | ConsoleSideEffect::Record(_)
         | ConsoleSideEffect::Clock(_)
         | ConsoleSideEffect::Edit(_)
-        | ConsoleSideEffect::Present(_) => {
+        | ConsoleSideEffect::Present(_)
+        | ConsoleSideEffect::Verb(_) => {
             log::error!("console: {effect:?} reached the side-effect handler; it is taken before — ignoring");
         }
     }

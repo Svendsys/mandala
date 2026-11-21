@@ -62,14 +62,14 @@ pub fn text_bytes(element: &DocElement) -> u64 {
             variants,
             active: _,
         }) => {
-            let variables: u64 = variables.iter().map(|name| len(name)).sum();
+            let variables: u64 = variables.iter().map(|name| len(name.as_str())).sum();
             let variants: u64 = variants
                 .iter()
                 .map(|ThemeVariant { name, values: _ }| len(name))
                 .sum();
             variables + variants
         }
-        DocElement::Palette(PaletteData { name, groups: _ }) => len(name),
+        DocElement::Palette(PaletteData { name, groups: _ }) => len(name.as_str()),
         DocElement::Defaults(defaults) => {
             let DefaultsData {
                 node: _,

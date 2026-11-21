@@ -611,6 +611,9 @@ pub(crate) mod fixture {
         }
         /// One document change per step, observed after each, as the
         /// real step loop does.
+        fn run_verb(&mut self, _: &str, _: Option<u32>) -> Result<(), String> {
+            panic!("an event test runs no verb");
+        }
         fn run_macro_steps(&mut self, steps: &[MacroStep], after_step: &mut dyn FnMut(Observed<'_>)) -> bool {
             for _ in steps {
                 self.change();

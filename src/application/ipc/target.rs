@@ -142,6 +142,13 @@ pub(crate) trait CommandTarget {
     /// model). Returns the any-step-executed flag.
     fn run_macro_steps(&mut self, steps: &[MacroStep], after_step: &mut dyn FnMut(Observed<'_>)) -> bool;
 
+    /// Run the open map's verb `verb` on the node with the id `node`, or
+    /// on none, through the runner every trigger takes
+    /// (`families::verbs`): its steps run up to its first `wait`, and the
+    /// frame resumes it after. The caller has checked that the verb and
+    /// the node are the map's; `Err` is the runner's refusal, worded.
+    fn run_verb(&mut self, verb: &str, node: Option<u32>) -> Result<(), String>;
+
     /// Whether anything run through this target so far may have
     /// changed what the window draws. The executor reads it after the
     /// handler returns, and the event loop requests a redraw only when
