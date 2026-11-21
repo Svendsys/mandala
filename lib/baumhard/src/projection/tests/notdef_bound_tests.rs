@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The work bound counts the shaper's `.notdef` passes (#387): CI's
+//! The work bound and the shaper's `.notdef` passes (#387): CI's
 //! load_structured finding on #380, a frame of a tab beside code points no
-//! face draws, replayed on the compiled faces alone, where it lays past the
-//! bound as it stood; each other shape of the same blind spot beside it;
-//! and the two facts the count rests on, which faces may lay a `.notdef`
-//! for a text and which code points the shaper hides.
+//! face draws, replayed on the compiled faces alone, where it laid past
+//! the bound as it stood; each other shape of the same blind spot beside
+//! it — the frames the bound now excludes, the directional rings whose
+//! pass it now counts; and the facts the bound rests on: which texts may
+//! lay a `.notdef`, which frames may shape one again, and which code
+//! points the shaper hides.
 //!
 //! Each check runs in a child process whose font system holds the compiled
 //! faces alone (`FONTCONFIG_FILE` naming a config of one empty directory),
 //! so it fails alike on every host: a host face that draws what the
 //! compiled ones do not — Unifont maps U+0001 and U+20E3 — would shape the
-//! finding with no `.notdef` at all. A target whose fontdb does not read
-//! `FONTCONFIG_FILE` cannot make such a child, and skips with a note; CI
-//! runs on Linux and sets `MANDALA_REQUIRE_FONTCONFIG_HOSTS`, under which
-//! it fails instead.
+//! finding with no `.notdef` at all. A child that reports no font system
+//! fails the test on every host. A target whose fontdb does not read
+//! `FONTCONFIG_FILE` makes a child whose font system holds host faces, and
+//! skips with a note; CI runs on Linux and sets
+//! `MANDALA_REQUIRE_FONTCONFIG_HOSTS`, under which it fails instead.
 
 use std::process::Command;
 
@@ -24,7 +27,8 @@ use crate::document::element::DocElement;
 use crate::document::format::load;
 use crate::document::ids::Document;
 use crate::projection::tests::projection_fuzz::{
-    check_projects, face_metrics, may_lay_notdef, ring_notdef_steps, ring_steps, within_bound, SHAPER_HIDDEN,
+    check_projects, directional_notdef_steps, face_metrics, frame_may_shape_notdef, may_lay_notdef,
+    projection_counts, ring_steps, within_bound, SHAPER_HIDDEN,
 };
 use crate::projection::tests::support::Projected;
 
@@ -38,10 +42,24 @@ const FINDING: &[u8] =
 const FINDING_CHOICES: &[u8] =
     include_bytes!("../../document/tests/fuzz_findings/structured_a_tabbed_ring_of_notdefs");
 
-/// The lines a child of `test` (its path under the crate) reported in mode
-/// `mode`, from a font system of the compiled faces alone; `None`, with a
-/// note, where this target cannot make one. The child's own first report
-/// is how many host faces its font system holds, which must be none.
+/// The path libtest runs the test this is written in under, as `--exact`
+/// takes it: its own, read from the type of a function inside it, so it
+/// cannot drift from the test's name or its module's.
+macro_rules! this_test {
+    () => {{
+        fn here() {}
+        let path = std::any::type_name_of_val(&here);
+        let path = path.strip_suffix("::here").expect("a function's path");
+        path.split_once("::").expect("a path in the crate").1.to_string()
+    }};
+}
+
+/// The lines a child of `test` (its path under the crate, [`this_test`])
+/// reported in mode `mode`, from a font system of the compiled faces alone;
+/// `None`, with a note, where this target cannot make one. Its first report
+/// is how many host faces its font system holds: none, or the target reads
+/// no `FONTCONFIG_FILE`. A child that made no such report ran no check, and
+/// fails the test wherever it runs.
 fn on_compiled_faces(test: &str, mode: &str) -> Option<Vec<String>> {
     let scratch = std::env::temp_dir().join(format!("baumhard_notdef_bound_{}_{mode}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
@@ -80,19 +98,24 @@ fn on_compiled_faces(test: &str, mode: &str) -> Option<Vec<String>> {
         .lines()
         .filter_map(|line| line.split_once("REPORT ").map(|(_, report)| report.to_string()))
         .collect();
-    match reports.first().map(String::as_str) {
-        Some("HOSTS 0") => Some(reports[1..].to_vec()),
-        hosts => {
-            assert!(
-                std::env::var_os("MANDALA_REQUIRE_FONTCONFIG_HOSTS").is_none(),
-                "precondition: the child's font system holds the compiled faces alone ({hosts:?})"
-            );
-            crate::util::test_skip::note_skipped(&format!(
-                "{test}: this target does not read FONTCONFIG_FILE, so no child holds the compiled faces alone"
-            ));
-            None
-        }
+    let hosts: usize = reports
+        .first()
+        .and_then(|first| first.strip_prefix("HOSTS "))
+        .and_then(|hosts| hosts.parse().ok())
+        .unwrap_or_else(|| {
+            panic!("{test}: the child ran no check, and made no report of its font system: {text}")
+        });
+    if hosts == 0 {
+        return Some(reports[1..].to_vec());
     }
+    assert!(
+        std::env::var_os("MANDALA_REQUIRE_FONTCONFIG_HOSTS").is_none(),
+        "precondition: the child's font system holds the compiled faces alone, not {hosts} host faces"
+    );
+    crate::util::test_skip::note_skipped(&format!(
+        "{test}: this target does not read FONTCONFIG_FILE, so no child holds the compiled faces alone"
+    ));
+    None
 }
 
 /// In a child: report how many host faces its font system holds, the
@@ -111,68 +134,140 @@ fn report_hosts() {
     println!("REPORT HOSTS {hosts}");
 }
 
-/// The rings of the bound's blind spot (#387), each on a node of its own,
-/// laid on the compiled faces: CI's map, and a ring of each other shape a
-/// `.notdef` pass took past the bound as it stood in — a tab beside code
-/// points no face draws, a `fit` ring with a tab, a side ornament and a
-/// `once` filler beside such text, a cluster each of whose characters some
-/// face maps and no one face maps together (an Egyptian hieroglyph, which
-/// only its face maps, and U+0301, which that face does not), and a
-/// `Repeat` ring that lays text by direction, whose one shaping a lay
-/// makes holds such text in its spans or in its corners, round a node 10
-/// across.
-fn blind_spot_maps() -> Vec<(&'static str, String)> {
-    let ring = |ring: serde_json::Value| {
-        json!({"format": 1, "name": "l", "nodes": [{"id": 1, "position": [0, 0], "frame": {"rings": [ring]}}]})
-            .to_string()
+/// The number after `key` in `report`.
+fn number(report: &str, key: &str) -> usize {
+    report
+        .split(key)
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("{report}: no number after {key:?}"))
+}
+
+/// What the bound does with a ring of [`blind_spot_maps`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Held {
+    /// A frame laid by halves that may shape a `.notdef` again: excluded
+    /// ([`frame_may_shape_notdef`]).
+    Excluded,
+    /// A directional ring whose counted pass takes it past its share.
+    Outside,
+    /// A directional ring the bound admits with its pass counted.
+    Inside,
+}
+
+/// A map of one node at the origin, `min_size` across, framed by `ring`.
+fn framed(min_size: f32, ring: serde_json::Value) -> String {
+    json!({"format": 1, "name": "l", "nodes": [{"id": 1, "position": [0, 0], "min_size": [min_size, min_size], "frame": {"rings": [ring]}}]})
+        .to_string()
+}
+
+/// The rings of the bound's blind spot (#387), laid on the compiled faces,
+/// each with what the bound does with it: CI's map and each other shape of
+/// frame a `.notdef` pass took past the bound as it stood in — a tab
+/// beside code points no face draws, a `fit` ring with a tab, a side
+/// ornament and a `once` filler beside such text, and a cluster each of
+/// whose characters some face maps and no one face maps together (an
+/// Egyptian hieroglyph, which only its face maps, and U+0301, which that
+/// face does not), all excluded; and `Repeat` rings that lay text by
+/// direction, whose one shaping holds such text, round a node 10 across:
+/// four the bound admits with their pass counted — one in Galatia SIL,
+/// whose U+1EB0 it decomposes to three glyphs, and one round a node its
+/// section draws wider than its `min_size`, whose text the lay shapes at
+/// a larger size than the bound does — and two it holds outside by their
+/// count, one of them Galatia SIL's twenty U+1EB0 beside the keycap's
+/// cluster, 63 glyphs of 23 characters.
+fn blind_spot_maps() -> Vec<(&'static str, String, Held)> {
+    let frame = |ring: serde_json::Value| framed(0.0, ring);
+    let directional = |font: Option<&str>, spans: &str, vertical: &str, corners: Option<[&str; 4]>| {
+        let mut ring =
+            json!({"fit": "repeat", "spacing": 8.0, "spans": [{"text": spans}], "vertical": vertical});
+        if let Some(font) = font {
+            ring["font"] = json!(font);
+        }
+        if let Some(corners) = corners {
+            ring["corners"] = json!(corners);
+        }
+        framed(10.0, ring)
     };
-    let small = |ring: serde_json::Value| {
-        json!({"format": 1, "name": "l", "nodes": [{"id": 1, "position": [0, 0], "min_size": [10.0, 10.0], "frame": {"rings": [ring]}}]})
-            .to_string()
-    };
+    let twenty: String = "\u{1}\u{20e3}"
+        .chars()
+        .chain(std::iter::repeat_n('\u{1EB0}', 20))
+        .collect();
     vec![
         (
             "CI's finding",
             String::from_utf8(FINDING.to_vec()).expect("the finding is text"),
+            Held::Excluded,
         ),
         (
             "a tab beside six code points no face draws",
-            ring(json!({"spans": [{"text": "\t\u{1}\u{2}\u{3}\u{4}\u{5}\u{6}"}]})),
+            frame(json!({"spans": [{"text": "\t\u{1}\u{2}\u{3}\u{4}\u{5}\u{6}"}]})),
+            Held::Excluded,
         ),
         (
             "`fit`, a tab and a keycap",
-            ring(json!({"fit": "fit", "spans": [{"text": "\tab\u{20e3}"}]})),
+            frame(json!({"fit": "fit", "spans": [{"text": "\tab\u{20e3}"}]})),
+            Held::Excluded,
         ),
         (
             "a side ornament beside text no face draws",
-            ring(json!({"sides": "*", "spans": [{"text": "a\u{1}\u{20e3}b"}]})),
+            frame(json!({"sides": "*", "spans": [{"text": "a\u{1}\u{20e3}b"}]})),
+            Held::Excluded,
         ),
         (
             "a `once` filler beside text no face draws",
-            ring(json!({"fit": {"once": {"filler": "*"}}, "spans": [{"text": "a\u{1}\u{20e3}b\u{2}\u{3}"}]})),
+            frame(
+                json!({"fit": {"once": {"filler": "*"}}, "spans": [{"text": "a\u{1}\u{20e3}b\u{2}\u{3}"}]}),
+            ),
+            Held::Excluded,
         ),
         (
             "a tab beside a cluster no one face draws",
-            ring(json!({"fit": "fit", "spans": [{"text": "\t\u{13000}\u{301}abcdefgh"}]})),
+            frame(json!({"fit": "fit", "spans": [{"text": "\t\u{13000}\u{301}abcdefgh"}]})),
+            Held::Excluded,
+        ),
+        (
+            "a directional ring of a keycap's cluster and a letter",
+            directional(None, "\u{1}\u{20e3}a", "|", None),
+            Held::Inside,
+        ),
+        (
+            "a directional ring in Galatia SIL of a keycap's cluster and U+1EB0",
+            directional(Some("Galatia SIL"), "\u{1}\u{20e3}\u{1EB0}", "|", None),
+            Held::Inside,
         ),
         (
             "a directional ring of spans no face draws",
-            small(json!({
-                "fit": "repeat",
-                "spacing": 8.0,
-                "spans": [{"text": "\u{1}\u{20e3}\u{2}\u{3}\u{4}\u{5}\u{6}\u{7}\u{e}\u{f}\u{10}\u{11}"}],
-                "vertical": "|",
-            })),
+            directional(
+                None,
+                "\u{1}\u{20e3}\u{2}\u{3}\u{4}\u{5}\u{6}\u{7}\u{e}\u{f}\u{10}\u{11}",
+                "|",
+                None,
+            ),
+            Held::Outside,
         ),
         (
             "a directional ring of corners no face draws",
-            small(json!({
-                "fit": "repeat",
-                "spacing": 8.0,
-                "spans": [{"text": "-"}],
-                "vertical": "|",
-                "corners": ["\u{1}\u{20e3}", "\u{2}", "\u{3}", "\u{4}"],
-            })),
+            directional(None, "-", "|", Some(["\u{1}\u{20e3}", "\u{2}", "\u{3}", "\u{4}"])),
+            Held::Inside,
+        ),
+        (
+            "a directional ring of a keycap's cluster round a node its section draws wider",
+            json!({"format": 1, "name": "l", "nodes": [{
+                "id": 1,
+                "position": [0, 0],
+                "min_size": [10.0, 10.0],
+                "sections": [{"spans": [{"text": "M"}]}],
+                "frame": {"rings": [{"fit": "repeat", "spacing": 8.0, "spans": [{"text": "\u{1}\u{20e3}a"}], "vertical": "|"}]},
+            }]})
+            .to_string(),
+            Held::Inside,
+        ),
+        (
+            "a directional ring in Galatia SIL of a keycap's cluster and twenty U+1EB0",
+            directional(Some("Galatia SIL"), &twenty, "|", None),
+            Held::Outside,
         ),
     ]
 }
@@ -181,12 +276,10 @@ fn blind_spot_maps() -> Vec<(&'static str, String)> {
 /// node 10 across: what a lay of a ring of no `vertical` text and no
 /// corners does with text the shaper lays as `.notdef`.
 fn plain_repeat_map() -> String {
-    json!({"format": 1, "name": "l", "nodes": [{"id": 1, "position": [0, 0], "min_size": [10.0, 10.0], "frame": {"rings": [{
-        "fit": "repeat",
-        "spacing": 8.0,
-        "spans": [{"text": "\u{1}\u{20e3}\u{2}\u{3}"}],
-    }]}}]})
-    .to_string()
+    framed(
+        10.0,
+        json!({"fit": "repeat", "spacing": 8.0, "spans": [{"text": "\u{1}\u{20e3}\u{2}\u{3}"}]}),
+    )
 }
 
 /// `doc`'s one ring: its frame and itself.
@@ -199,150 +292,310 @@ fn the_ring(doc: &Document) -> (crate::arena::NodeId, crate::arena::NodeId) {
     (ring.parent(tree.arena()).expect("a frame"), ring)
 }
 
-/// **The bound counts the shaper's `.notdef` passes** (#387). CI's
-/// load_structured job on #380 (job 136906833586) found a map the bound
-/// admitted whose one ring, `\n\r\t\u{1}` and U+FE0F U+20E3, took 14,157
-/// glyph steps a lay where the bound allowed 9,344: no compiled face draws
-/// U+0001 or U+20E3, the shaper joins them and the variation selector into
-/// one cluster, a `.notdef` of three code points, and a frame whose text
-/// holds a tab shapes it again at each reshape, a pass through every face
-/// a glyph of its line, 2,200 steps each (`halves::notdef_steps`), where
-/// the bound counted 192 a character. Each ring of the blind spot
-/// ([`blind_spot_maps`]), laid on the compiled faces alone, takes more
-/// steps than the bound read for it less its `.notdef` count — so the pass
-/// is laid, and the bound as it stood is short — and no more than the
-/// bound reads for it ([`ring_steps`]). The finding is outside the bound
-/// now, and its input's check (`check_structured`) and its map's
-/// (`check_projects`) hold, there and on this host's faces. And a `Repeat`
-/// ring of spans alone, of the same code points, shapes nothing as it lays
-/// ([`plain_repeat_map`]): the bound counts it no pass, and it lays fewer
-/// steps than one pass costs, inside its `RING_STEPS_A_GLYPH` a glyph —
-/// the rate a `.notdef` pass could break where a lay shaped, and does not
-/// here.
+/// In a child: lay `map`'s one ring, and report what the bound reads of it
+/// and what its lay took: whether it is inside the bound and excluded,
+/// the steps laid, the steps allowed ([`ring_steps`]), the `.notdef`
+/// count ([`directional_notdef_steps`]), and what a directional ring's
+/// reshape charged as it was laid (`flow::LAST_RESHAPE`, `none` where none
+/// was).
+fn report_ring(what: &str, map: &str) {
+    let doc = load(map).unwrap_or_else(|why| panic!("{what}: does not load: {why}"));
+    let (frame, ring) = the_ring(&doc);
+    let allowed = ring_steps(doc.tree(), frame, ring).expect("a ring of text");
+    let count = directional_notdef_steps(doc.tree(), frame, ring);
+    let excluded = frame_may_shape_notdef(doc.tree(), ring);
+    crate::flow::MOST_RING_LAY.with(|most| most.set(0));
+    crate::flow::LAST_RESHAPE.with(|last| last.set(None));
+    drop(Projected::new(doc.clone()));
+    let laid = crate::flow::MOST_RING_LAY.with(std::cell::Cell::get);
+    let charged = crate::flow::LAST_RESHAPE
+        .with(std::cell::Cell::get)
+        .map_or("none".to_string(), |steps| steps.to_string());
+    println!(
+        "REPORT RING {what}: inside {} excluded {excluded} laid {laid} allowed {allowed} count {count} charged {charged}",
+        within_bound(&doc)
+    );
+}
+
+/// **Every lay that may pay the shaper's `.notdef` passes is excluded or
+/// counted** (#387). CI's load_structured job on #380 (job 136906833586)
+/// found a map the bound admitted whose one ring, `\n\r\t\u{1}` and U+FE0F
+/// U+20E3, took 14,157 glyph steps a lay where the bound allowed 9,344: no
+/// compiled face draws U+0001 or U+20E3, the shaper joins them and the
+/// variation selector into one cluster, a `.notdef` of three code points,
+/// and a frame whose text holds a tab shapes it again at each reshape, a
+/// pass through every face a glyph of its line, 2,200 steps each
+/// (`halves::notdef_steps`), where the bound counted 192 a character. On
+/// the compiled faces alone, each ring of the blind spot
+/// ([`blind_spot_maps`]) is held as listed:
 ///
-/// Controls, each run and seen red: the bound as it stood, no `.notdef`
-/// count (`notdef_steps_of` nothing), every ring past its bound and the
-/// finding's check failing as CI's did ("a ring's lay took 14157 glyph
-/// steps, past the 9344 the bound allows its map"); with no count for a
-/// `fit` frame's tabbed reshapes, CI's finding, the six code points, the
-/// `fit` keycap and the cluster no one face draws; with none for a side
-/// ornament's shapings, the ornament's ring, and with none for a `once`
-/// filler's own shaping either, the filler's ring too; with none for a
-/// directional ring's shaping, both directional rings; with "may lay a
-/// `.notdef`" read as "holds a character no face maps", the cluster no one
-/// face draws. A filler's own shaping, made only where a frame's halves
-/// cannot be measured, alone (the filler's ring is held by its sides'
-/// count without it), and the two a character — a `.notdef` of one code
-/// point and a glyph of a line that holds one of several, each at most one
-/// a character — are margins no ring here comes near, and have no red
-/// control.
+/// - each frame lays more steps than the bound's rates allow it — the
+///   pass is laid, and the bound as it stood was short — and is excluded,
+///   outside the bound;
+/// - each directional ring's count is not nothing, and is exactly what its
+///   reshape charged as it was laid (`flow::LAST_RESHAPE`), Galatia SIL's
+///   decomposed U+1EB0 included; those it admits lay within what it
+///   allows, and those it holds outside lay more than the rates allow
+///   without the count.
+///
+/// The finding's input and its map are each checked once on the compiled
+/// faces, and each is skipped there, outside the bound — `SKIPPED` rises
+/// by one at each — and on this host's faces each is checked, projected
+/// where the host's faces admit it and skipped, with a note, where they do
+/// not. A `Repeat` ring of spans alone, of the same code points, shapes
+/// nothing as it lays ([`plain_repeat_map`]): the bound counts it no pass,
+/// no reshape is charged, and it lays fewer steps than one pass costs.
+///
+/// Controls, each run and seen red: no frame excluded (`text_frames_fit`
+/// not reading `frame_may_shape_notdef`), each frame inside the bound, and
+/// the finding's input failing as CI's did ("a ring's lay took 14157 glyph
+/// steps, past the 9344 the bound allows its map"); no directional count,
+/// every directional ring's count nothing where its reshape charged, and
+/// the ring of spans no face draws admitted though it lays 49,256 steps of
+/// the 29,312 it is then allowed; the count the bound read before the
+/// review of #388, two `.notdef` passes a character of the lines, not the
+/// reshape's charge, red on every directional ring, and on Galatia SIL's
+/// twenty U+1EB0 — 63 glyphs of 23 characters — 101,200 where the
+/// reshape charged 137,829.
 #[test]
-fn test_the_bound_counts_the_shapers_notdef_passes_on_the_compiled_faces() {
-    let name = "projection::tests::notdef_bound_tests::test_the_bound_counts_the_shapers_notdef_passes_on_the_compiled_faces";
+fn test_every_lay_that_may_pay_a_notdef_pass_is_excluded_or_counted() {
+    let name = this_test!();
     if std::env::var(CHILD).as_deref() == Ok("rings") {
         report_hosts();
-        for (what, map) in blind_spot_maps() {
-            let doc = load(&map).unwrap_or_else(|why| panic!("{what}: does not load: {why}"));
-            let (frame, ring) = the_ring(&doc);
-            let allowed = ring_steps(doc.tree(), frame, ring).expect("a ring of text");
-            let notdef = ring_notdef_steps(doc.tree(), ring);
-            crate::flow::MOST_RING_LAY.with(|most| most.set(0));
-            drop(Projected::new(doc.clone()));
-            let laid = crate::flow::MOST_RING_LAY.with(std::cell::Cell::get);
-            println!(
-                "REPORT RING {what}: laid {laid} allowed {allowed} without its notdef count {} inside {}",
-                allowed - notdef,
-                within_bound(&doc)
-            );
+        for (what, map, _) in blind_spot_maps() {
+            report_ring(what, &map);
         }
-        let doc = load(&plain_repeat_map()).expect("the plain ring loads");
-        let (frame, ring) = the_ring(&doc);
-        let allowed = ring_steps(doc.tree(), frame, ring).expect("a ring of text");
-        let notdef = ring_notdef_steps(doc.tree(), ring);
-        crate::flow::MOST_RING_LAY.with(|most| most.set(0));
-        drop(Projected::new(doc.clone()));
-        let laid = crate::flow::MOST_RING_LAY.with(std::cell::Cell::get);
-        println!(
-            "REPORT PLAIN laid {laid} allowed {allowed} notdef {notdef} inside {}",
-            within_bound(&doc)
+        report_ring(
+            "a plain `Repeat` ring of spans no face draws",
+            &plain_repeat_map(),
         );
         let doc = load(std::str::from_utf8(FINDING).unwrap()).expect("the finding loads");
+        let skipped = || projection_counts().1;
+        let before = skipped();
+        let structured = crate::document::tests::format_fuzz::check_structured(FINDING_CHOICES);
+        let between = skipped();
+        let projects = check_projects(&doc);
+        let after = skipped();
         println!(
-            "REPORT CHECKS structured {:?} projects {:?}",
-            crate::document::tests::format_fuzz::check_structured(FINDING_CHOICES),
-            check_projects(&doc)
+            "REPORT CHECKS structured {structured:?} skipped {} projects {projects:?} skipped {}",
+            between - before,
+            after - between
         );
         return;
     }
-    let Some(reports) = on_compiled_faces(name, "rings") else {
+    let Some(reports) = on_compiled_faces(&name, "rings") else {
         return;
     };
     let mut wrong = Vec::new();
     let mut rings = 0;
+    let held: Vec<(&str, Held)> = blind_spot_maps()
+        .into_iter()
+        .map(|(what, _, held)| (what, held))
+        .collect();
     for report in &reports {
         eprintln!("{report}");
         let Some(ring) = report.strip_prefix("RING ") else {
             continue;
         };
-        rings += 1;
-        let number = |key: &str| -> usize {
-            ring.split(key)
-                .nth(1)
-                .and_then(|rest| rest.split_whitespace().next())
-                .and_then(|n| n.parse().ok())
-                .unwrap_or_else(|| panic!("{ring}: no {key}"))
+        let Some(&(_, held)) = held
+            .iter()
+            .find(|(what, _)| ring.starts_with(&format!("{what}:")))
+        else {
+            continue;
         };
-        let (laid, allowed, without) = (
-            number(" laid "),
-            number(" allowed "),
-            number(" without its notdef count "),
+        rings += 1;
+        let (laid, allowed, count) = (
+            number(ring, " laid "),
+            number(ring, " allowed "),
+            number(ring, " count "),
         );
-        if laid <= without {
-            wrong.push(format!(
-                "precondition, the pass laid past the bound as it stood: {ring}"
-            ));
-        }
-        if laid > allowed {
-            wrong.push(format!("laid past its bound: {ring}"));
-        }
-        if ring.starts_with("CI's finding") && !ring.ends_with("inside false") {
-            wrong.push(format!("the finding is inside the bound: {ring}"));
+        let inside = ring.contains(" inside true ");
+        let excluded = ring.contains(" excluded true ");
+        let charged = ring.split(" charged ").nth(1).unwrap_or("none");
+        let mut want = |holds: bool, what: &str| {
+            if !holds {
+                wrong.push(format!("{what}: {ring}"));
+            }
+        };
+        match held {
+            Held::Excluded => {
+                want(
+                    excluded && !inside,
+                    "a frame that may shape a notdef again, excluded",
+                );
+                want(
+                    laid > allowed,
+                    "precondition, the pass laid past the bound's rates",
+                );
+                want(count == 0, "a frame counted no pass");
+            }
+            Held::Outside | Held::Inside => {
+                want(!excluded, "a directional ring is no frame to exclude");
+                want(count > 0, "a pass counted");
+                want(
+                    charged == count.to_string(),
+                    "the count, exactly what the reshape charged",
+                );
+                if held == Held::Inside {
+                    want(inside && laid <= allowed, "admitted, and laid within its bound");
+                } else {
+                    want(!inside, "held outside the bound by its count");
+                    want(
+                        laid > allowed - count,
+                        "precondition, the pass laid past the bound's rates",
+                    );
+                }
+            }
         }
     }
     assert_eq!(
         rings,
-        blind_spot_maps().len(),
-        "precondition: every ring reported"
+        held.len(),
+        "precondition: every ring reported: {reports:#?}"
     );
     assert!(wrong.is_empty(), "{wrong:#?}");
     let plain = reports
         .iter()
-        .find_map(|r| r.strip_prefix("PLAIN "))
+        .find_map(|r| r.strip_prefix("RING a plain `Repeat` ring of spans no face draws: "))
         .unwrap_or_else(|| panic!("the plain ring reported: {reports:?}"));
-    let field = |key: &str| -> usize {
-        plain
-            .split(key)
-            .nth(1)
-            .and_then(|rest| rest.split_whitespace().next())
-            .and_then(|n| n.parse().ok())
-            .unwrap_or_else(|| panic!("{plain}: no {key}"))
-    };
-    let (laid, allowed, notdef) = (field("laid "), field(" allowed "), field(" notdef "));
     assert!(
-        plain.ends_with("inside true") && notdef == 0 && laid < crate::flow::SHAPE_NOTDEF_STEPS && laid <= allowed,
+        plain.starts_with("inside true excluded false ")
+            && plain.ends_with(" count 0 charged none")
+            && number(plain, " laid ") < crate::flow::SHAPE_NOTDEF_STEPS,
         "a plain `Repeat` ring of code points no face draws, inside the bound, counted no pass and paid none: {plain}"
     );
     assert!(
         reports
             .iter()
-            .any(|r| r == "CHECKS structured Ok(()) projects Ok(())"),
-        "the finding's checks on the compiled faces: {reports:?}"
+            .any(|r| r == "CHECKS structured Ok(()) skipped 1 projects Ok(()) skipped 1"),
+        "the finding's input and its map, each skipped once, outside the bound: {reports:#?}"
     );
     // And on this host's faces, whatever it has.
     let doc = load(std::str::from_utf8(FINDING).unwrap()).expect("the finding loads");
     crate::document::tests::format_fuzz::check_structured(FINDING_CHOICES)
         .unwrap_or_else(|why| panic!("the finding's input on this host: {why}"));
     check_projects(&doc).unwrap_or_else(|why| panic!("the finding's map on this host: {why}"));
+    if within_bound(&doc) {
+        eprintln!("the finding's map on this host's faces: inside the bound, projected and checked");
+    } else {
+        crate::util::test_skip::note_skipped(
+            "the finding's map on this host's faces: outside the bound, so its check there is a skip",
+        );
+    }
+}
+
+/// **A frame that may shape a `.notdef` again is excluded** (#387): the
+/// predicate the bound excludes a frame laid by halves by
+/// ([`frame_may_shape_notdef`]), held to each of its terms both ways, on
+/// the compiled faces alone. A lay shapes a line again where the frame
+/// has a side ornament — set, or a `once` filler's — or is `Fit` with a
+/// tab in its text, and the predicate is true exactly there, where a line
+/// it shapes (the text, the ornament, the `x`, the filler) may lay a
+/// `.notdef`. Each frame it is true of is outside the bound, and each it
+/// is false of inside.
+///
+/// Controls, each run and seen red: with a side ornament not read as
+/// shaping again, the two ornaments' rings and the two fillers' no face
+/// draws; with a `Fit` frame shaping again whatever its text, the untabbed
+/// `fit` ring; with any tabbed frame shaping again, `spread`'s; with the
+/// filler's line not read, the filler no face draws beside a set ornament;
+/// with "may lay a `.notdef`" read as "holds a character no face maps",
+/// the cluster no one face draws; with no frame excluded from the bound,
+/// each frame the predicate is true of inside it.
+#[test]
+fn test_a_frame_that_may_shape_a_notdef_again_is_excluded() {
+    let name = this_test!();
+    let frame = |ring: serde_json::Value| framed(0.0, ring);
+    let cases: Vec<(&str, String, bool)> = vec![
+        (
+            "an ornament beside text no face draws",
+            frame(json!({"sides": "*", "spans": [{"text": "a\u{1}\u{20e3}b"}]})),
+            true,
+        ),
+        (
+            "an ornament no face draws",
+            frame(json!({"sides": "\u{1}", "spans": [{"text": "abc"}]})),
+            true,
+        ),
+        (
+            "an ornament beside text one face draws",
+            frame(json!({"sides": "*", "spans": [{"text": "abc"}]})),
+            false,
+        ),
+        (
+            "a `once` filler, its sides, no face draws",
+            frame(json!({"fit": {"once": {"filler": "\u{1}"}}, "spans": [{"text": "abc"}]})),
+            true,
+        ),
+        (
+            "a `once` filler no face draws beside a set ornament",
+            frame(json!({"fit": {"once": {"filler": "\u{1}"}}, "sides": "*", "spans": [{"text": "abc"}]})),
+            true,
+        ),
+        (
+            "a `once` filler one face draws beside a set ornament",
+            frame(json!({"fit": {"once": {"filler": "-"}}, "sides": "*", "spans": [{"text": "abc"}]})),
+            false,
+        ),
+        (
+            "`fit` with a tab beside a code point no face draws",
+            frame(json!({"fit": "fit", "spans": [{"text": "\tab\u{1}"}]})),
+            true,
+        ),
+        (
+            "`fit` with a tab beside text one face draws",
+            frame(json!({"fit": "fit", "spans": [{"text": "\tabc"}]})),
+            false,
+        ),
+        (
+            "`fit` with no tab beside a code point no face draws",
+            frame(json!({"fit": "fit", "spans": [{"text": "ab\u{1}\u{20e3}"}]})),
+            false,
+        ),
+        (
+            "`spread` with a tab beside a code point no face draws",
+            frame(json!({"fit": "spread", "spans": [{"text": "\tab\u{1}\u{20e3}"}]})),
+            false,
+        ),
+        (
+            "`fit` with a tab beside a cluster no one face draws",
+            frame(json!({"fit": "fit", "spans": [{"text": "\t\u{13000}\u{301}"}]})),
+            true,
+        ),
+    ];
+    if std::env::var(CHILD).as_deref() == Ok("frames") {
+        report_hosts();
+        for (what, map, _) in &cases {
+            let doc = load(map).unwrap_or_else(|why| panic!("{what}: does not load: {why}"));
+            let (_, ring) = the_ring(&doc);
+            println!(
+                "REPORT FRAME {what}: excluded {} inside {}",
+                frame_may_shape_notdef(doc.tree(), ring),
+                within_bound(&doc)
+            );
+        }
+        return;
+    }
+    let Some(reports) = on_compiled_faces(&name, "frames") else {
+        return;
+    };
+    for report in &reports {
+        eprintln!("{report}");
+    }
+    let wrong: Vec<String> = cases
+        .iter()
+        .filter(|(what, _, excluded)| {
+            let want = format!("FRAME {what}: excluded {excluded} inside {}", !excluded);
+            !reports.contains(&want)
+        })
+        .map(|(what, _, excluded)| format!("{what}: excluded {excluded} wanted"))
+        .collect();
+    assert_eq!(
+        reports.len(),
+        cases.len(),
+        "precondition: every frame reported: {reports:#?}"
+    );
+    assert!(wrong.is_empty(), "{wrong:#?}\n{reports:#?}");
 }
 
 /// **Which texts may lay a `.notdef`** (#387), on the compiled faces alone:
@@ -357,8 +610,7 @@ fn test_the_bound_counts_the_shapers_notdef_passes_on_the_compiled_faces() {
 /// character no face maps", the hieroglyph and its accent.
 #[test]
 fn test_one_face_must_map_a_whole_text_for_it_to_lay_no_notdef() {
-    let name =
-        "projection::tests::notdef_bound_tests::test_one_face_must_map_a_whole_text_for_it_to_lay_no_notdef";
+    let name = this_test!();
     let cases: [(&str, bool); 8] = [
         ("MANDALA mindmap", false),
         ("a\u{200d}b\u{fe0f}\u{e0041}", false),
@@ -383,7 +635,7 @@ fn test_one_face_must_map_a_whole_text_for_it_to_lay_no_notdef() {
         }
         return;
     }
-    let Some(reports) = on_compiled_faces(name, "faces") else {
+    let Some(reports) = on_compiled_faces(&name, "faces") else {
         return;
     };
     for report in &reports {
@@ -420,7 +672,7 @@ fn test_the_shaper_hides_every_code_point_the_bound_reads_as_hidden() {
     use crate::document::values::{FontSize, Rgba, Weight};
     use crate::flow::{shape_run, FlowSpan};
     use crate::font::fonts::{AppFont, FontSystemLease};
-    let name = "projection::tests::notdef_bound_tests::test_the_shaper_hides_every_code_point_the_bound_reads_as_hidden";
+    let name = this_test!();
     let left_out = [
         '\u{115F}',
         '\u{1160}',
@@ -475,7 +727,7 @@ fn test_the_shaper_hides_every_code_point_the_bound_reads_as_hidden() {
         }
         return;
     }
-    let Some(reports) = on_compiled_faces(name, "hidden") else {
+    let Some(reports) = on_compiled_faces(&name, "hidden") else {
         return;
     };
     for report in &reports {

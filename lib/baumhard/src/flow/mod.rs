@@ -60,11 +60,19 @@ pub(crate) use path::ArcPath;
 /// measured on, its table's and the projection's samples' (#313, #356).
 pub(crate) use path::Local;
 pub use path::{MAX_PATH_LENGTH, MAX_TABLE_SAMPLES};
+/// The glyph steps a directional ring's one reshape charges, before its
+/// lay reads its budget: what the projection harness's bound counts for
+/// such a ring (#387).
+pub(crate) use place::directional::reshape_steps;
 /// The last directional ring laid on this thread, its glyphs and its work,
 /// a test counter: what the projection harness's bound is held to for a
 /// ring that lays text by direction (ruling B47.2).
 #[cfg(test)]
 pub(crate) use place::directional::LAST_DIRECTIONAL;
+/// The last directional ring's reshape, as it charged it, a test counter:
+/// what the projection harness's count is held to (#387).
+#[cfg(test)]
+pub(crate) use place::directional::LAST_RESHAPE;
 /// A run with every glyph's ink measured, text too: what a text ring's
 /// paths stop at (#296).
 pub(crate) use place::halves::inked;
@@ -73,12 +81,10 @@ pub(crate) use place::halves::inked;
 /// frame's work to (ruling B47.3).
 #[cfg(test)]
 pub(crate) use place::halves::LAST_FRAME;
-/// The glyph steps a `.notdef` pass is weighed at, the rounds a `Fit`
-/// frame is shrunk in, and the rounds R27's `Fit` reshapes its text in:
-/// what the projection harness's bound counts a frame's `.notdef` passes
-/// by (#387).
-pub(crate) use place::halves::{SHAPE_NOTDEF_STEPS, SHRINK_ROUNDS};
-pub(crate) use place::FIT_ROUNDS;
+/// The glyph steps a `.notdef` pass is weighed at, a test's yardstick for
+/// a lay that paid none (#387).
+#[cfg(test)]
+pub(crate) use place::halves::SHAPE_NOTDEF_STEPS;
 /// The last `Repeat` ring laid round a closed path on this thread, a test
 /// counter (#310): what the projection harness's bound is held to
 /// (ruling B47.1).

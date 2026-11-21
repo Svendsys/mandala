@@ -1043,9 +1043,9 @@ fn measured_frames() -> Vec<(&'static str, serde_json::Value)> {
 /// from: 151 letters `spread` round an ellipse 1,000 across, the most steps
 /// a lay; and 40 letters `spread` with a `✦` round one 100 across, the
 /// nearest its bound. (151 characters of seven scripts `once` with a `✦`,
-/// the slowest the sweep found, is outside the bound since #387: no one
-/// face draws its seven scripts, so each of its side shapings is counted a
-/// `.notdef` pass — [`seven_scripts_with_sides`].)
+/// the slowest the sweep found, is excluded since #387: no one face draws
+/// its seven scripts, so its side shapings may pay `.notdef` passes the
+/// bound does not count — [`seven_scripts_with_sides`].)
 fn densest_admitted_frames() -> Vec<(&'static str, serde_json::Value)> {
     let latin = text_of("MANDALA mindmap glyph ring text ", 151);
     vec![
@@ -1090,10 +1090,10 @@ fn seven_scripts_with_sides() -> serde_json::Value {
 /// than [`frame_steps`] read for it (`LAST_FRAME`), as every check of a
 /// fuzz run holds it ([`rings_within_their_work`]), and ten of its lays
 /// fit the share. The seven scripts with a side ornament
-/// ([`seven_scripts_with_sides`]) are outside the bound, the cost of its
-/// `.notdef` count reading a line in one face (#387): with no face that
-/// maps all of a text, the bound cannot tell where a cluster none draws
-/// whole would fall.
+/// ([`seven_scripts_with_sides`]) are excluded, the cost of the bound
+/// reading a line in one face (#387): with no face that maps all of a
+/// text, it cannot tell where a cluster none draws whole would fall, and a
+/// frame that may shape such a line again is excluded, not counted.
 ///
 /// Controls, each run and seen red: with no frame's work bounded, the
 /// first measured frame inside; with its side ornament's glyphs not

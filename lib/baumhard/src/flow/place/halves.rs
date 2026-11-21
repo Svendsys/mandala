@@ -299,7 +299,7 @@ const JOIN_FLOOR: f32 = 4.0 * INK_TOLERANCE;
 
 /// The rounds of bisection a `Fit` frame is shrunk in, when its halves
 /// cannot hold its lines at the size R27 gave it.
-pub(crate) const SHRINK_ROUNDS: usize = 12;
+const SHRINK_ROUNDS: usize = 12;
 
 /// The shrink stops once its bracket on the scale is within this share
 /// of the scale held (ruling R42.2).
