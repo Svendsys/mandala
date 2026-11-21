@@ -631,9 +631,12 @@ fn test_a_link_to_a_file_is_refused_at_load_and_at_apply() {
 /// `continue` on the marked line) loads `body=Hi,Thanks;body=x%0D%0A…`
 /// and `body=Hi,%0D%0ABcc:%20evil@x;body=1`; the body name compared
 /// decoded only, as at 3094b28e, loads `b%6Fdy=x%0D%0A…`; the decoded
-/// bytes read lossily, as at 3094b28e, loads `subject=x%85…`,
-/// `subject=x%C0%8A…` and `body=x%85y`; a `body` with no check for a
-/// lone byte from `%80` to `%9F` loads `body=x%85y`.
+/// bytes read lossily, as at 3094b28e, loads `subject=x%85…` and
+/// `subject=x%C0%8A…`. Verification of round 6: a `body` checked for a
+/// lone byte from `%80` to `%9F`, as at 9ba09476, refuses `body=x%85y`
+/// and `body=Wait%85`; any byte from `0x80` to `0x9F` refused outside a
+/// `body`, the Latin-1 reading of valid UTF-8, refuses
+/// `subject=x%C3%85Bcc:%20e@x` and `subject=%C3%85ngstr%C3%B6m`.
 #[test]
 fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
     let map = |url: &str| {
@@ -818,7 +821,7 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
         // Round 6: the two counter-examples to option (ii) — which load
         // with a part with no `=` let through — an encoded `body` name,
         // and decoded bytes that are not UTF-8 outside a `body` (Latin-1
-        // NEL, an overlong LF), or a lone C1 byte in one.
+        // NEL, an overlong LF).
         (
             "mailto:a@b?body=Hi,Thanks;body=x%0D%0ABcc:e",
             "Thanks",
@@ -832,7 +835,8 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
         ("mailto:a@b?b%6Fdy=x%0D%0ABcc:%20e@x", "b%6Fdy", DecodedLineBreak),
         ("mailto:a@b?subject=x%85Bcc:e", "subject", DecodedNotUtf8),
         ("mailto:a@b?subject=x%C0%8ABcc:e", "subject", DecodedNotUtf8),
-        ("mailto:a@b?body=x%85y", "body", DecodedNotUtf8),
+        // Over-refused, and kept so (verbs.md): a Latin-1 subject.
+        ("mailto:a@b?subject=caf%E9", "subject", DecodedNotUtf8),
     ] {
         refused(
             url,
@@ -842,11 +846,6 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
             },
         );
     }
-    assert!(
-        wrong.is_empty(),
-        "addresses not refused as they should be:\n{}",
-        wrong.join("\n")
-    );
     for url in [
         "mailto:a@example.org?to=b@example.org&cc=c@example.org&bcc=d@example.org",
         "mailto:a@example.org?subject=attach&body=attachment",
@@ -863,6 +862,16 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
         "mailto:a@example.org?body=line1%0D%0Aline2&subject=hi",
         "mailto:a@example.org?body=a%09b",
         "mailto:a@example.org?body=caf%E9",
+        // A lone byte from `%80` to `%9F` in a `body` (a Latin-1 C1
+        // control, a Windows-1252 ellipsis) adds nothing to a line break
+        // a `body` may hold already; and a Latin-1 reading of valid UTF-8
+        // (`%C3%85`: `Ã` and NEL) is not refused, nor most non-ASCII text
+        // with it (verification of round 6).
+        "mailto:a@b?body=x%85y",
+        "mailto:a@b?body=Wait%85",
+        "mailto:a@b?subject=x%C3%85Bcc:%20e@x",
+        "mailto:a@b?subject=%C3%85ngstr%C3%B6m",
+        "mailto:a@b?subject=caf%C3%A9",
         // Round 6: these load, and are unsafe only for a handler that
         // does not cut at raw `&` — one that could not read
         // `?subject=a&body=b` either (see `mail_header`'s docs).
@@ -871,8 +880,15 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
         "mailto:a@example.org?body=line1%0D%0Aline2%26body=line3%0Aline4",
         "https://example.org/?attach=x",
     ] {
-        load(&map(url)).unwrap_or_else(|error| panic!("{url} loads: {error}"));
+        if let Err(error) = load(&map(url)) {
+            wrong.push(format!("{url:?} is refused: {error}"));
+        }
     }
+    assert!(
+        wrong.is_empty(),
+        "addresses not judged as they should be:\n{}",
+        wrong.join("\n")
+    );
     let mut doc = load(&map("https://example.org")).expect("an https link loads");
     let span = doc
         .tree()

@@ -137,7 +137,8 @@ mod tests {
     /// part, after a `&`, `;`, `,` or `#` there (ruling D3.4 item 1), or
     /// after a `,` or `#` in the query (ruling D3.5) — the message naming
     /// it; and none with a line break outside its `body` (ruling D3.5
-    /// item 3); one naming only those is. Controls, seen
+    /// item 3); one naming only those is, a `body` holding a lone byte
+    /// from `%80` to `%9F` among them. Controls, seen
     /// red: `check_link_url` as it was at 3e90f093 (the attachment
     /// denylist) lets the first through to the seam; as it was at
     /// fed68afd, `a@example.org&attach=`; as it was at 5f8bcfff,
@@ -145,7 +146,8 @@ mod tests {
     /// part with no `=` let through, option (ii)'s `continue`, lets
     /// `body=Hi%20Bob,%0D%0AThanks` and its two counter-examples,
     /// `body=Hi,Thanks;body=x%0D%0A…` and `body=Hi,%0D%0ABcc:%20evil@x;body=1`,
-    /// reach the seam.
+    /// reach the seam; (its verification) a `body` checked for a lone
+    /// `%80`–`%9F` byte, as at 9ba09476, refuses `body=x%85y`.
     #[test]
     fn test_a_mailto_naming_another_header_does_not_reach_the_opener() {
         let _ = take_opened();
@@ -260,11 +262,15 @@ mod tests {
         assert!(take_opened().is_empty(), "nothing refused was opened");
         assert_eq!(open_url("mailto:a@example.org?subject=attach&body=Q%26A"), Ok(()));
         assert_eq!(open_url("mailto:a@example.org?body=line1%0D%0Aline2%09x"), Ok(()));
+        assert_eq!(open_url("mailto:a@b?body=x%85y"), Ok(()));
+        assert_eq!(open_url("mailto:a@b?body=Wait%85"), Ok(()));
         assert_eq!(
             take_opened(),
             [
                 "mailto:a@example.org?subject=attach&body=Q%26A",
-                "mailto:a@example.org?body=line1%0D%0Aline2%09x"
+                "mailto:a@example.org?body=line1%0D%0Aline2%09x",
+                "mailto:a@b?body=x%85y",
+                "mailto:a@b?body=Wait%85"
             ]
         );
     }

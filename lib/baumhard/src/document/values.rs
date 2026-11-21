@@ -472,7 +472,12 @@ pub fn check_link_url(url: &str) -> Result<&str, LinkRefusal<'_>> {
 /// a handler that splits on `;` or `?` and ignores `&` — one that could
 /// not read `?subject=a&body=b` either (round 6 of #380). Covering it
 /// would take the whole query as the coarse unit, so that a `body`
-/// holding a break would have to come first: the owner's call.
+/// holding a break would have to come first: the owner's call. Nor does
+/// it cover a Latin-1 reading of *valid* UTF-8, which can still find a
+/// C1 byte: `subject=x%C3%85Bcc:%20e@x` loads, read as `Ã` and NEL.
+/// Refusing that would refuse most non-ASCII text
+/// (`%C3%85ngstr%C3%B6m`), and RFC 5322 ends a header line only at CRLF
+/// (verification of round 6).
 ///
 /// An address part that decodes to hold a `?` is refused, since a
 /// handler may read the rest as a query. Returns the refusal, naming the
@@ -580,9 +585,7 @@ pub enum MailControlFound {
     DecodedControl,
     /// Decoded bytes that are not UTF-8, outside a `body` — which a handler
     /// reading them as Latin-1 may take for a C1 control (`%85`, NEL) and
-    /// a lenient one for a line break (`%C0%8A`); or, in a `body`, a lone
-    /// byte from `0x80` to `0x9F`, a C1 control in Latin-1 (round 6 of
-    /// #380).
+    /// a lenient one for a line break (`%C0%8A`) (round 6 of #380).
     DecodedNotUtf8,
 }
 
@@ -624,23 +627,16 @@ fn decoded_control(part: &[u8]) -> Option<MailControlFound> {
 }
 
 /// What in the decoded bytes `part`, a `body`'s, may not stand even
-/// there, if anything: a control but a line break or a tab, or a lone
-/// byte from `0x80` to `0x9F` — a C1 control to a handler reading
-/// Latin-1. Other bytes that are not UTF-8 (a Latin-1 `é`, `%E9`) stand.
+/// there, if anything: a control but a line break or a tab. Bytes that
+/// are not UTF-8 stand, a lone one from `0x80` to `0x9F` too (a Latin-1
+/// `caf%E9`, a Windows-1252 ellipsis `Wait%85`): a `body` may hold a line
+/// break already, so the C1 control a Latin-1 reading finds in one adds
+/// nothing (verification of round 6 on #380).
 fn body_control(part: &[u8]) -> Option<MailControlFound> {
-    for chunk in part.utf8_chunks() {
-        if chunk
-            .valid()
-            .chars()
-            .any(|c| is_mail_control(c) && !matches!(c, '\r' | '\n' | '\t'))
-        {
-            return Some(MailControlFound::DecodedControl);
-        }
-        if chunk.invalid().iter().any(|b| (0x80..=0x9f).contains(b)) {
-            return Some(MailControlFound::DecodedNotUtf8);
-        }
-    }
-    None
+    part.utf8_chunks()
+        .flat_map(|chunk| chunk.valid().chars())
+        .any(|c| is_mail_control(c) && !matches!(c, '\r' | '\n' | '\t'))
+        .then_some(MailControlFound::DecodedControl)
 }
 
 /// In `raw` — one of a query's coarsest headers, split on raw `&` — the
@@ -648,7 +644,7 @@ fn body_control(part: &[u8]) -> Option<MailControlFound> {
 /// found, if any (see `mail_header`'s docs). `raw` is cut on the five
 /// separators as written, each part decoded once (`+` read as a space)
 /// and cut again on the five, decoded; every part from the header's
-/// first up to the last that holds a control (or bytes that are no
+/// first up to the last that holds a control (or bytes that are not
 /// UTF-8) must hold an `=` and be named `body` once decoded — and, where
 /// it begins at a raw separator or the header's start, `body` as written
 /// too (ASCII case-insensitive), so `b%6Fdy=` is no `body` to a handler

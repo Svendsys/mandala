@@ -242,14 +242,20 @@ in the `subject`.
 This does not cover a split that ignores raw `&`:
 `?to=c;subject=a&body=%0D%0ABcc:e` and `?to=c?subject=a&body=%0D%0ABcc:e`
 load, and are unsafe only for a client that splits on `;` or `?` but not
-on `&` — one that could not read `?subject=a&body=b` either.
+on `&` — one that could not read `?subject=a&body=b` either. Nor does it
+cover a Latin-1 reading of *valid* UTF-8, which can still find a C1
+byte: `subject=x%C3%85Bcc:%20e@x` loads, though Latin-1 reads `%C3%85`
+as `Ã` and NEL. Refusing that would refuse most non-ASCII text
+(`%C3%85ngstr%C3%B6m`), and RFC 5322 ends a header line only at CRLF.
 
 **Decoded bytes that are not UTF-8** are refused outside a `body`, as
 "decoded bytes that are not UTF-8" (`LinkMailControl`): a client reading
 them as Latin-1 takes `%85` for NEL, a C1 control, and a lenient one
-takes the overlong `%C0%8A` for a line feed. In a `body`, a lone byte
-from `%80` to `%9F` — a C1 control in Latin-1 — is refused the same way;
-other bytes that are not UTF-8 (a Latin-1 `caf%E9`) stand.
+takes the overlong `%C0%8A` for a line feed. In a `body` they stand —
+a Latin-1 `caf%E9`, and a lone byte from `%80` to `%9F` too
+(`body=Wait%85`, a Windows-1252 ellipsis): a `body` may hold a line
+break already, so the C1 control a Latin-1 reading finds there adds
+nothing.
 
 An address part that decodes to hold a `?` (`a@b%3Fattach=…`) is
 refused, since a client may read the rest as a query, and no address
@@ -276,6 +282,10 @@ D3.5):
 - a raw `;` or `?` in a value, which the split-first reading takes for
   a part with a name: encode it, or leave it out;
 - a decoded control in a value that is not the `body`;
+- **decoded bytes that are not UTF-8 in a value that is not the
+  `body`** — a Latin-1 subject, `subject=caf%E9`, is refused
+  ("decoded bytes that are not UTF-8"): write it as UTF-8,
+  `subject=caf%C3%A9`;
 - **a line break in a `body` after any `?`, `&`, `;`, `,` or `#` in
   it, raw or encoded** — `body=Hi%20Bob,%0D%0AThanks`,
   `body=How%20are%20you%3F%0D%0ABest`: split there, the break stands in

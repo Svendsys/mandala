@@ -470,7 +470,7 @@ enum Link {
 /// break outside a `body` and a raw control character, with a fragment,
 /// `mailto:to=a@b`, `mailto:a%3Db@c` and a `body` with line breaks
 /// loading.
-const SCHEMES: [(&str, Link); 92] = [
+const SCHEMES: [(&str, Link); 95] = [
     ("https://example.org/a", Link::Opens),
     ("HTTP://example.org", Link::Opens),
     ("mailto:someone@example.org", Link::Opens),
@@ -582,7 +582,10 @@ const SCHEMES: [(&str, Link); 92] = [
     ("mailto:a@b?b%6Fdy=x%0D%0ABcc:%20e@x", Link::Control),
     ("mailto:a@b?subject=x%85Bcc:e", Link::Control),
     ("mailto:a@b?subject=x%C0%8ABcc:e", Link::Control),
-    ("mailto:a@b?body=x%85y", Link::Control),
+    ("mailto:a@b?body=x%85y", Link::Opens),
+    ("mailto:a@b?body=Wait%85", Link::Opens),
+    ("mailto:a@b?subject=x%C3%85Bcc:%20e@x", Link::Opens),
+    ("mailto:a@b?subject=caf%E9", Link::Control),
     ("mailto:a@example.org?body=caf%E9", Link::Opens),
 ];
 
