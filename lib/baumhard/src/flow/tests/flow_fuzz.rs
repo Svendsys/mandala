@@ -2114,7 +2114,7 @@ thread_local! {
 /// copy's `c` clusters and one at the arc's end; each inked cluster is as
 /// long along the arc as its ink and a space as its advance (the engine's
 /// step, ink to ink, ruling R31). So a copy is `A` long and has `c` gaps,
-/// `A` the inks' extents and the spaces' advances at `fit`'s least scale —
+/// `A` the inks' widths and the spaces' advances at `fit`'s least scale —
 /// a cluster's side bearings lie inside its gaps, and are not counted — and
 /// an arc `L` long holds `n₀` copies at the origin where `L = n₀·(A +
 /// c·g₀) + g₀`. Far out each gap may be wider by `Δ`. The arc then holds
@@ -2124,8 +2124,22 @@ thread_local! {
 /// nearest the target may be one fewer still: two less per arc of the
 /// twin's, the rest shared over the same arcs. `L` is the twin's arc: its
 /// ends are the text's end inks, which far out may lie a few float steps
-/// from where the twin sets them; that the slack of a copy covers this is
-/// what the spreads show, not what this proves.
+/// from where the twin sets them.
+///
+/// Two premises are stated, not proved; that they hold is what the spreads
+/// show:
+/// - The far arc's end inks lie within the slack of a copy of where the
+///   twin sets them.
+/// - An ink steps by its width along the arc. The engine steps ink box to
+///   ink box, so on an upright stretch a flat ink like `─` or `═` steps by
+///   its height, and `A` can then be more than a copy's step. Taking each
+///   ink's smaller extent instead makes the bound provable, but too loose
+///   to catch a floor at two, three or four times the spacing: only one at
+///   eight goes red on "To see…" `Spread` (24 of 60 frames). Where it was
+///   probed (`─`, `═`, `-`, `—` and `─═` round ellipses 450 × 1,800 to
+///   2,000 × 1,200, from `4·10⁶` to `1.6·10⁷`, review 6003990236) every
+///   frame stays above the bound: `─═` round 450 × 1,800 at `10⁷` lays 836
+///   glyphs of its sides against 770 owed, from 1,006 at the origin.
 ///
 /// `Δ` is the least gap the coordinates hold the first copy apart from the
 /// text at, plus one float step past what a gap is owed. The floor

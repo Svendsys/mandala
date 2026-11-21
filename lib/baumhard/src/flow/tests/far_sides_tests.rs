@@ -636,9 +636,12 @@ fn test_far_sides_a_frame_at_half_span_lays_its_sides_wherever_its_coordinates_h
 /// 67,000 keep the first short, and 68,000 to 70,000 lay the first whole;
 /// each leaves the second empty.
 ///
-/// Control: with the search keeping the count it stands at, red at 58,000
-/// and 67,000, both junctions left empty, where 53,000 kept copies on the
-/// first.
+/// Control: with the search keeping the count it stands at — the block in
+/// `SideArc::fill` that moves a stopped search to the count it solved
+/// whole nearest the target switched off, its condition read as `false &&
+/// self.stopped.get() && …` — red at 58,000 and 67,000, both junctions
+/// left empty, where 53,000 kept copies on the first: both budgets in the
+/// message.
 #[test]
 fn test_far_sides_a_larger_budget_keeps_the_copies_a_smaller_one_does() {
     use crate::flow::place::halves::BUDGET_OVERRIDE;
