@@ -947,6 +947,16 @@ pub fn do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors()
 /// near-side lines that sweep seldom reaches where it fails, each one
 /// axis apart and closing while the other, a tenth as far apart at most,
 /// opens at least as fast, owed their gap and 1e-6 to 1e-1 of it more.
+/// Each is held as `check_line_root` holds it (#384): its gap in `f64`
+/// within `closed_form_rounding` of what is owed and its step in
+/// `root_window` at that rounding, on every line; and its step to the
+/// oracle's, to `CLOSED_FORM_REACH` of its scale, only where the line
+/// places its step (`placed_within`, the predicate the property reads). A
+/// line whose gap moves too little with the step for an `f32` input to
+/// place it owes its gap, not its step: there a step 10⁻³ off moves the
+/// gap by less than one rounding, and is not caught (#384's CI lines; of
+/// the 2,063 such lines in a census of 100,000 of these seeds, a closed
+/// form 10⁻³ further is caught on 2, 3·10⁻² further on 18).
 /// Preconditions: the first sweep steps back at least 200 times where
 /// less than a hundredth of the gap is owed (244 here), and the second
 /// finds at least 3,900 roots where the gap closes before it opens, on
@@ -955,34 +965,61 @@ pub fn do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors()
 ///
 /// Controls: with `b² − a c` for the discriminant where the boxes are
 /// further than owed, red on the finding ("the closed form steps
-/// -15.051204"), on both axes apart ("-22.493431") and on the sweep
-/// ("seed 7: … the closed form steps -10.538687"); with `−c / (b + √disc)`
-/// for every root where they are nearer, red on the gap that closes
-/// first ("the closed form steps 8.946237") and, with that case skipped,
-/// on the near-side sweep ("near side, seed 0: … the closed form steps
-/// 22.876034, the line's root is 22.8076041…").
+/// -15.051204, its gap 4.98e-4 from what is owed, past its rounding
+/// 4.55e-5") and, with the named cases skipped, on the sweep ("seed 7: …
+/// the closed form steps -10.538687, its gap 1.43e-4 …"); with `−c / (b +
+/// √disc)` for every root where they are nearer, red on the gap that
+/// closes first ("the closed form steps 8.946237, its gap 4.58e-2 …") and,
+/// with the named cases skipped, on the near-side sweep ("near side, seed
+/// 0: … the closed form steps 22.876034, its gap 3.01e-2 …"). With the
+/// closed form 10⁻³ further on every line whose gap moves less than 0.06 a
+/// unit of step, red on the sweep at seed 1549, by its gap ("its gap
+/// -2.82e-5 from what is owed, past its rounding 2.56e-5"), and 3·10⁻²
+/// further, red there too ("-8.45e-4"); `check_pair_model`'s 2,000-seed
+/// sweep catches both at seed 252, a line flat by that cut that places its
+/// step.
 pub fn do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap() {
     use crate::flow::place::halves::line_root_seam;
-    use crate::flow::tests::flow_fuzz::{line_root_in_f64, CLOSED_FORM_REACH};
+    use crate::flow::tests::flow_fuzz::{
+        closed_form_rounding, gap_in_f64, line_root_in_f64, placed_within, root_window,
+    };
     use crate::util::tests::choices::Choices;
-    // How far the closed form may be from the oracle, of the scale it is
-    // read at: its step, what is owed, and the reach.
+    // What the closed form owes, as `check_line_root` holds it: its gap
+    // within its rounding of what is owed, its step among those whose gap
+    // is, and, where the line places its step (`placed_within`), its step
+    // to the oracle's.
     let held = |what: &str, delta: Vec2, dir: Vec2, reach: Vec2, owed: f32| -> Result<(), String> {
         let (closed, _) = line_root_seam(delta, dir, reach, owed);
         let truth = line_root_in_f64(delta, dir, reach, owed);
-        let scale = truth.abs() + owed as f64 + reach.max_element() as f64;
-        let ok = if truth.is_finite() {
-            (closed as f64 - truth).abs() <= CLOSED_FORM_REACH * scale
-        } else {
-            !closed.is_finite()
-        };
-        if ok {
-            Ok(())
-        } else {
-            Err(format!(
-                "{what}: inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}: \
-                 the closed form steps {closed}, the line's root is {truth}"
-            ))
+        let line = format!("{what}: inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}");
+        if !truth.is_finite() {
+            return if closed.is_finite() {
+                Err(format!(
+                    "{line}: the closed form steps {closed}, the line has no root"
+                ))
+            } else {
+                Ok(())
+            };
+        }
+        let at = f64::from(closed);
+        let rounding = closed_form_rounding(delta, dir, reach, owed, truth);
+        let off = gap_in_f64(delta, dir, reach, at) - f64::from(owed);
+        if off.is_nan() || off.abs() > rounding {
+            return Err(format!(
+                "{line}: the closed form steps {closed}, its gap {off:e} from what is owed, past its rounding {rounding:e}"
+            ));
+        }
+        let (lo, hi) = root_window(delta, dir, reach, owed, truth, rounding);
+        if at < lo || at > hi {
+            return Err(format!(
+                "{line}: the closed form steps {closed}, outside {lo}..{hi}"
+            ));
+        }
+        match placed_within(delta, dir, reach, owed, truth) {
+            Some(within) if (at - truth).abs() > within => Err(format!(
+                "{line}: the closed form steps {closed}, the line's root is {truth}"
+            )),
+            _ => Ok(()),
         }
     };
     // The finding's line, from the choices `check_line_root` drew for it.

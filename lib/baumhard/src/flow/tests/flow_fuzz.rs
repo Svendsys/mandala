@@ -1116,16 +1116,7 @@ pub fn check_pair_model(choices: &mut Choices<'_>) -> Result<(), String> {
 ///   are owed apart at the closed form's step.
 pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
     use crate::flow::place::halves::line_root_seam;
-    let unit = |choices: &mut Choices<'_>| choices.below(1001) as f32 / 1000.0;
-    let delta = Vec2::new(unit(choices) - 0.5, unit(choices) - 0.5) * 40.0;
-    let angle = unit(choices) * std::f32::consts::TAU;
-    let dir = Vec2::new(angle.cos(), angle.sin()) * (0.25 + 2.0 * unit(choices));
-    let reach = Vec2::new(unit(choices), unit(choices)) * 12.0;
-    let owed = if choices.below(8) == 0 {
-        0.0
-    } else {
-        unit(choices) * 12.0
-    };
+    let (delta, dir, reach, owed) = line_drawn(choices);
     let (closed, bisected) = line_root_seam(delta, dir, reach, owed);
     let what = format!("inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}");
     let gap = |d: f32| ((delta + dir * d).abs() - reach).max(Vec2::ZERO).length();
@@ -1146,7 +1137,6 @@ pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
         _ => return Ok(()),
     }
     let owed64 = f64::from(owed);
-    let scale = truth.abs() + owed64 + f64::from(reach.max_element());
     let reading = reading_rounding(delta, dir, reach, truth);
     // The closed form: its gap, the steps whose gap that is, and, where the
     // line places the step, the step.
@@ -1154,18 +1144,25 @@ pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
         let rounding = closed_form_rounding(delta, dir, reach, owed, truth);
         let at = f64::from(closed);
         let off = gap_in_f64(delta, dir, reach, at) - owed64;
-        let (lo, hi) = root_window(delta, dir, reach, owed, truth, rounding);
-        if off.abs() > rounding || at < lo || at > hi {
+        if off.abs() > rounding {
             return Err(format!(
                 "{what}: the closed form steps {closed}, its gap {off:e} from what is owed, past its rounding \
-                 {rounding:e} or outside {lo}..{hi}; the line's root is {truth}"
+                 {rounding:e}; the line's root is {truth}"
             ));
         }
-        let placed = gap_rate_in_f64(delta, dir, reach, truth) * CLOSED_FORM_REACH * scale >= reading;
-        if placed && (at - truth).abs() > CLOSED_FORM_REACH * scale {
+        let (lo, hi) = root_window(delta, dir, reach, owed, truth, rounding);
+        if at < lo || at > hi {
             return Err(format!(
-                "{what}: the closed form steps {closed}, the line's root is {truth}"
+                "{what}: the closed form steps {closed}, outside {lo}..{hi}, the steps whose gap is within its \
+                 rounding {rounding:e} of what is owed; the line's root is {truth}"
             ));
+        }
+        if let Some(reach_of) = placed_within(delta, dir, reach, owed, truth) {
+            if (at - truth).abs() > reach_of {
+                return Err(format!(
+                    "{what}: the closed form steps {closed}, the line's root is {truth}"
+                ));
+            }
         }
     }
     if !bisected.is_finite() {
@@ -1199,8 +1196,42 @@ pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
 /// rate, 7.6·10⁻⁴ on #384's second CI finding.
 pub(crate) const CLOSED_FORM_REACH: f64 = 5e-6;
 
+/// The line [`check_line_root`] draws from `choices`: two inks' centers
+/// `delta` apart, a way `dir` to step one along, their half sizes summing
+/// to `reach`, and what is owed between their boxes.
+pub(crate) fn line_drawn(choices: &mut Choices<'_>) -> (Vec2, Vec2, Vec2, f32) {
+    let unit = |choices: &mut Choices<'_>| choices.below(1001) as f32 / 1000.0;
+    let delta = Vec2::new(unit(choices) - 0.5, unit(choices) - 0.5) * 40.0;
+    let angle = unit(choices) * std::f32::consts::TAU;
+    let dir = Vec2::new(angle.cos(), angle.sin()) * (0.25 + 2.0 * unit(choices));
+    let reach = Vec2::new(unit(choices), unit(choices)) * 12.0;
+    let owed = if choices.below(8) == 0 {
+        0.0
+    } else {
+        unit(choices) * 12.0
+    };
+    (delta, dir, reach, owed)
+}
+
+/// Where a line places the tangent line's step, the reach the closed form
+/// (`line_root`) is held to about the line's root `truth` in `f64`:
+/// `CLOSED_FORM_REACH` of the scale it is read at — its step, what is owed
+/// and the reach. `None` where the line does not place its step: where the
+/// gap's rate at the root is under one reading's rounding of the gap
+/// (`reading_rounding`) over that reach, so that a step that far off
+/// moves the gap by less than a rounding (#384's CI findings). Read from
+/// the line and its root alone. [`check_line_root`] and the `f64` sweep of
+/// `test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap`
+/// both hold the closed form's step by it.
+pub(crate) fn placed_within(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32, truth: f64) -> Option<f64> {
+    let scale = truth.abs() + f64::from(owed) + f64::from(reach.max_element());
+    let within = CLOSED_FORM_REACH * scale;
+    (gap_rate_in_f64(delta, dir, reach, truth) * within >= reading_rounding(delta, dir, reach, truth))
+        .then_some(within)
+}
+
 /// The gap along [`check_line_root`]'s line at step `d`, in `f64`.
-fn gap_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, d: f64) -> f64 {
+pub(crate) fn gap_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, d: f64) -> f64 {
     let x = ((f64::from(delta.x) + f64::from(dir.x) * d).abs() - f64::from(reach.x)).max(0.0);
     let y = ((f64::from(delta.y) + f64::from(dir.y) * d).abs() - f64::from(reach.y)).max(0.0);
     x.hypot(y)
@@ -1208,7 +1239,7 @@ fn gap_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, d: f64) -> f64 {
 
 /// How fast the gap along [`check_line_root`]'s line moves with the step
 /// at `d`, in `f64`: none where no axis is apart.
-fn gap_rate_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, d: f64) -> f64 {
+pub(crate) fn gap_rate_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, d: f64) -> f64 {
     let mut moved = 0.0;
     for (at, w, r) in [(delta.x, dir.x, reach.x), (delta.y, dir.y, reach.y)] {
         let center = f64::from(at) + f64::from(w) * d;
@@ -1254,9 +1285,10 @@ const CLOSED_FORM_ROUNDINGS: f64 = 16.0;
 
 /// The most the closed form's step (`line_root`) may miss what is owed by,
 /// in its gap, for [`check_line_root`]'s line, its root `truth` in `f64`
-/// (#384's second CI finding). Read from the line and that root alone.
+/// (#384's CI findings). Read from the line and that root alone: the
+/// tighter of two bounds.
 ///
-/// The derivation. The closed form solves the gap's square along a
+/// The quadratic bound. The closed form solves the gap's square along a
 /// stretch of the line, `a τ² + 2 b τ + c` less what is owed squared, by
 /// Lagrange's identity: every quantity it forms — the axes' gaps and
 /// rates at the stretch's start, the coefficients, the cross term and the
@@ -1267,21 +1299,52 @@ const CLOSED_FORM_ROUNDINGS: f64 = 16.0;
 /// half a unit of `f32`'s last place, so its step is the root of a gap's
 /// square within `γ M` of the line's, `γ` those roundings at `2⁻²⁴`. Its
 /// gap there is within `γ M / (gap + owed)` of what is owed: at most `γ M
-/// / owed`, and at most `√(γ M)` where little or nothing is owed.
+/// / owed`, and at most `√(γ M)` where little or nothing is owed — loose
+/// there, up to 7·10⁻² over a census of 100,000 of the property's lines
+/// (review 6005928757).
 ///
-/// It is a bound, far past the miss: on the second finding the closed
-/// form's gap is 3.9·10⁻⁷ short of 6 and this is 3.1·10⁻⁴. Where the line
+/// The linear bound, per axis, `γ` times the sum of the farthest each axis
+/// reaches over the step, `X`, and what is owed. To first order in the
+/// roundings:
+/// - The step is a stretch's start, a stop `(edge − delta)/dir` rounded,
+///   and a root on the stretch. The stop's roundings, a few units of the
+///   last place of `X` over the axis's rate, move the gap by `γ X`; where
+///   nothing is owed, that is the whole of it.
+/// - The root is `c / (−b + s)`, `s = √(a owed² − cross²)`. At the root the
+///   gap moves `s / owed` a unit of step (the gap's square moves `2 s`).
+/// - The discriminant's roundings, relative to `a owed²` and to `cross² ≤ a
+///   owed²`, move `s` by `γ a owed² / s`, the root by that over `a`, and the
+///   gap by `γ owed`: the identity leaves no difference of near equals to
+///   be divided by the gap's rate.
+/// - The constant's and the coefficients' roundings, relative to the axes'
+///   gaps at the stretch's start, move the root by `γ` times those gaps
+///   squared over `−b + s`, and the gap by that times `s / owed`, at most
+///   the step's rate: `γ X` where the axis that carries the gap also
+///   carries `−b`, its rate not far below the step's. That last is not
+///   proved for every line — an axis far apart at the start whose rate is
+///   all but none is its exception — and the lines hold it instead: over
+///   a census of 100,000 of the property's seeds (49,070 lines with a
+///   root) no closed form misses by more than 0.09 of this bound, and the
+///   largest bound is 1.3·10⁻⁴; `check_line_root`'s own 20,000-seed sweep
+///   (`test_the_pair_model_sets_the_first_root_at_what_is_owed`) holds it
+///   on every line it draws.
+///
+/// Both are bounds far past the miss: on the second CI finding the closed
+/// form's gap is 3.9·10⁻⁷ short of 6, and this is 6·10⁻⁵. Where the line
 /// places its step, `CLOSED_FORM_REACH` holds the closed form tighter.
 pub(crate) fn closed_form_rounding(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32, truth: f64) -> f64 {
     let owed = f64::from(owed);
     let far = |at: f32, w: f32, r: f32| f64::from(at).abs() + (f64::from(w) * truth).abs() + f64::from(r);
     let m = far(delta.x, dir.x, reach.x).powi(2) + far(delta.y, dir.y, reach.y).powi(2) + owed * owed;
-    let gm = CLOSED_FORM_ROUNDINGS * 0.5 * f64::from(f32::EPSILON) * m;
-    if owed > 0.0 {
+    let gamma = CLOSED_FORM_ROUNDINGS * 0.5 * f64::from(f32::EPSILON);
+    let gm = gamma * m;
+    let quadratic = if owed > 0.0 {
         (gm / owed).min(gm.sqrt())
     } else {
         gm.sqrt()
-    }
+    };
+    let linear = gamma * (far(delta.x, dir.x, reach.x) + far(delta.y, dir.y, reach.y) + owed);
+    quadratic.min(linear)
 }
 
 /// The step along `dir` from two inks' centers `delta` apart, their half
