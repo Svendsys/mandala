@@ -73,6 +73,12 @@ pub(crate) use place::halves::inked;
 /// frame's work to (ruling B47.3).
 #[cfg(test)]
 pub(crate) use place::halves::LAST_FRAME;
+/// The glyph steps a `.notdef` pass is weighed at, the rounds a `Fit`
+/// frame is shrunk in, and the rounds R27's `Fit` reshapes its text in:
+/// what the projection harness's bound counts a frame's `.notdef` passes
+/// by (#387).
+pub(crate) use place::halves::{SHAPE_NOTDEF_STEPS, SHRINK_ROUNDS};
+pub(crate) use place::FIT_ROUNDS;
 /// The last `Repeat` ring laid round a closed path on this thread, a test
 /// counter (#310): what the projection harness's bound is held to
 /// (ruling B47.1).
@@ -87,6 +93,10 @@ pub use place::{
     pattern_gap, place_at_point, place_on_closed, place_on_open, place_pitched, PathEnd, PlacedGlyph,
     PlacedRun, RingLayout, MAX_PLACED_GLYPHS,
 };
+/// Whether shaping hands a character to cosmic-text as a space, a run
+/// being one line: what the projection harness's bound reads a ring's
+/// line breaks as (#387).
+pub(crate) use shape::is_paragraph_separator;
 pub use shape::{shape_box, shape_run, GlyphMetrics, Ink, ShapedBox, ShapedRun, FILLER_SPAN};
 pub use span::{point_size, span_attrs, FlowSpan, LINE_HEIGHT_FACTOR};
 

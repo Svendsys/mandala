@@ -216,7 +216,7 @@ const SOLVE_TOLERANCE: f32 = 0.05;
 const SOLVE_ROUNDS: usize = 48;
 
 /// The most rounds `Fit` takes to shrink its scale until the text fits.
-const FIT_ROUNDS: usize = 16;
+pub(crate) const FIT_ROUNDS: usize = 16;
 
 /// The most rounds [`fit_to`]'s bracket takes once the shrink has run
 /// (ruling B18.1 §10): enough to close on a scale within
