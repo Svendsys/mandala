@@ -808,22 +808,51 @@ What they hold, in short (each module's docs are the full list):
   sweep requires each step to be both taken and skipped.
 - **The projection** (V1-B7, ruling B7.3). Both loader targets project
   every map they load that is inside the projection's work bound
-  (`projection_fuzz::within_bound`: at most one ring of text, of at most
+  (`projection_fuzz::within_bound`: at most one ring of text — a span's,
+  or a `Repeat` ring's `vertical` or `corners` — of at most
   `MAX_FRAME_GLYPHS` characters, every coordinate within
   `projection_fuzz::EXTENT`, and at most `projection_fuzz::MAX_UNITS`
   sections, rings, connectors and links): no panic, a group per visible
   node in every layer, every run's box finite, the same layers projected
   twice, hits that do not panic, and one generated edit kept equal to a
-  full projection. A frame's `inset` and `gap` and a `spacing` are not
-  coordinates of the bound: the loader holds them to the canvas bound,
-  and a map at it is projected (#364, where one past it made the
-  projection panic). A map outside the bound is skipped and counted, and
-  the targets print the counts at every power of two and every 256
-  inputs, so even a slow run reports its skipped fraction; the suite
-  holds the structured maps to fewer than half skipped. The engine
-  bounds a placement and a frame, never a whole map (#316), which is why
-  the bound is the harness's. `projection_edits` runs the oracle — the
-  updated layers equal a full projection — after every step of a
+  full projection. A node's drawn rectangle and a frame's rings are
+  coordinates of the bound (rulings B47.1, B47.2): the rectangle — the
+  larger of the node's `min_size` and each section's `offset` plus its
+  box, which the bound reads from the text without shaping it
+  (`projection_fuzz::drawn_bound`) — and it grown by a frame's `inset`, a
+  `gap` for each ring inside its outermost and the line heights of those
+  that lay glyphs are held within `EXTENT`
+  (`projection_fuzz::outline_reach`). The loader holds an `inset`, a
+  `gap`, an `offset` and a `min_size` only to the canvas bound (#364), and
+  a ring that far out is past what the cap of a placement bounds the work
+  of: the cap bounds its glyphs, and there each glyph read its path a
+  thousand times when #374 was found. A `spacing` parts glyphs and moves
+  no outline, and is not part of where a ring lies. Where a ring lies does
+  not bound its work, so a `Repeat` ring's is part of the bound too
+  (ruling B47.3): its glyphs, bounded before it is laid as its outline's
+  perimeter over the least step placement can give a glyph of a shaped
+  copy of its text, at any direction (`projection_fuzz::repeat_glyphs`),
+  are held to `projection_fuzz::MOST_RING_GLYPHS`, the most whose work at
+  a measured rate a glyph, laid once in each projection a check makes,
+  fits the input's share — as the flow harnesses hold a ring to
+  `MAX_RING_GLYPHS`; and a ring of text laid by halves, to the steps one
+  of its lays may take, the share over the lays a check makes
+  (`projection_fuzz::FRAME_STEPS_A_LAY`). The rates are measured, so every
+  check holds each ring it lays to them
+  (`projection_fuzz::rings_within_their_work`), and a fuzz run finds the
+  input that breaks one. The check's own edit lays the map as edited,
+  which the bound never read, so the check reads the bound again after
+  each change and abandons a map its edit took out
+  (`projection_fuzz::projection_left`). A map outside the bound is skipped
+  and counted, as are, apart, those cut short and those an edit took out;
+  the targets print the counts at every power of two and every 256 inputs,
+  so even a slow run reports its skipped fraction; the suite holds the
+  structured maps to fewer than half skipped. The engine bounds a
+  placement and a frame, never a whole map (#316), which is why the bound
+  is the harness's. It bounds the steps of laying glyphs and of
+  untangling, not of shaping: every full projection shapes every flow
+  again, and no step counts it (#383). `projection_edits` runs the oracle
+  — the updated layers equal a full projection — after every step of a
   generated edit sequence: field and structural edits, a rebinding near
   the root, theme and palette changes, transaction stages, undos and
   redos.

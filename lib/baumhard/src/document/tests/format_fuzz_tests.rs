@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 /// Every minimized input a fuzz target found, by the symptom it had.
 /// Each is replayed through every property here; its own test below
 /// pins the symptom. The fuzz targets read these files as seeds.
-const FINDINGS: [(&str, &[u8]); 6] = [
+const FINDINGS: [(&str, &[u8]); 10] = [
     (
         "c1_control_saved_raw",
         include_bytes!("fuzz_findings/c1_control_saved_raw.mandala.json"),
@@ -55,6 +55,33 @@ const FINDINGS: [(&str, &[u8]); 6] = [
     (
         "a_path_spaced_past_what_a_box_holds",
         include_bytes!("fuzz_findings/a_path_spaced_past_what_a_box_holds.mandala.json"),
+    ),
+    // A harness finding (CI's load_raw job on #372, a timeout; #374): a
+    // ring the projection's work bound let in, far out past what the cap
+    // of a placement bounds the work of.
+    (
+        "a_ring_too_far_out_to_project_in_time",
+        include_bytes!("fuzz_findings/a_ring_too_far_out_to_project_in_time.mandala.json"),
+    ),
+    // A harness finding of the same kind (CI's load_raw job on #375, a
+    // timeout): `a_ring_past_the_body_index_cells` with its dots spaced a
+    // tenth as far apart.
+    (
+        "a_ring_spaced_too_far_out_to_project_in_time",
+        include_bytes!("fuzz_findings/a_ring_spaced_too_far_out_to_project_in_time.mandala.json"),
+    ),
+    // A harness finding (the review of #378, a timeout under ASan): a map
+    // the bound admits that the check's own edit takes out of it.
+    (
+        "a_ring_its_check_makes_repeat",
+        include_bytes!("fuzz_findings/a_ring_its_check_makes_repeat.mandala.json"),
+    ),
+    // A harness finding of the same kind as #375's (CI's load_raw job on
+    // #382, a timeout): the dots of `a_ring_past_the_body_index_cells`
+    // unspaced, 315 `gap`s out.
+    (
+        "a_ring_unspaced_too_far_out_to_project_in_time",
+        include_bytes!("fuzz_findings/a_ring_unspaced_too_far_out_to_project_in_time.mandala.json"),
     ),
 ];
 
@@ -90,25 +117,19 @@ fn test_a_handler_name_from_the_file_is_escaped_in_its_refusal() {
 /// count, took the region for a small one and filed it under every cell.
 /// The map is one node whose last ring is 600 `gap`s of 10⁹ out, the most
 /// a length is held to wherever the loader bounds one, its dots spaced to
-/// run all the way round: a region 1.2·10¹² across. It loads and is inside
-/// the projection's work bound, so both loader targets project it, and it
-/// holds every property.
+/// run all the way round: a region 1.2·10¹² across. It loads, and holds
+/// every property. Since ruling B47.1 its ring is outside the projection's
+/// work bound, which holds a frame's outline within its extent, so the
+/// loader targets skip its projection; this test projects it itself.
 ///
 /// Controls: with the count the product of two spans in `i64`, as it was,
 /// a debug build panics in the first projection here (attempt to multiply
 /// with overflow), and a release build's ends in a failed allocation.
-/// With the bound refusing a `gap` past its extent, red on the
-/// precondition that the map is inside it.
 #[test]
 fn test_a_ring_past_the_body_index_cells_is_projected() {
-    use crate::projection::tests::projection_fuzz::within_bound;
     use crate::projection::tests::support::Projected;
     let finding = FINDINGS[4].1;
     let doc = load(std::str::from_utf8(finding).unwrap()).expect("the finding loads");
-    assert!(
-        within_bound(&doc),
-        "precondition: inside the projection's work bound, so the loader targets project it"
-    );
     let node = doc.node_by_ident(crate::document::ids::NodeIdent(1)).unwrap();
     let region = Projected::new(doc).projector.regions.get(node).1;
     let across = region.map(|(rect, _)| rect.size.min_element());
@@ -117,6 +138,145 @@ fn test_a_ring_past_the_body_index_cells_is_projected() {
         "precondition: the ring's box is 600 gaps out each way, {region:?}"
     );
     check_load_bytes(finding).unwrap();
+}
+
+/// The finding of #374 (CI's load_raw job on #372, a timeout, minimized
+/// by hand: the found map had 434 empty rings, and these 9 lay its ring
+/// in counted work within half a percent of it): a map the projection's work
+/// bound let in took the loader target past its timeout. One node, a dot
+/// ring 9 `gap`s of 10⁹ out with no spacing, laid to the cap of a
+/// placement (R41), 65,536 glyphs; that far out an `f32` point is a
+/// thousand units from the next, and each glyph read its path a thousand
+/// times setting its ink apart from the last, in every projection the
+/// check made. The cap bounds a ring's glyphs, not their work, which its
+/// budget does, 196,608,000 steps at the cap (ruling B17.2c), past the
+/// timeout. The map is outside the bound on both counts: its ring lies
+/// past the extent (ruling B47.1: the bound holds a frame's outline within
+/// it, as every coordinate), and lays past `MOST_RING_GLYPHS` (ruling
+/// B47.3) — so the check skips its projection and counts it skipped. What
+/// the densest ring inside the bound takes is held in
+/// `projection_fuzz_tests`.
+///
+/// Control, run and seen red: with `outline_reach` reading no reach,
+/// which both counts read, and no `Repeat` ring's work bounded, the map is
+/// admitted and its check fails, its ring laying 65,536 glyphs of 123
+/// bounded (`rings_within_their_work`). With either count alone taken
+/// out, it stays skipped.
+#[test]
+fn test_a_ring_too_far_out_to_project_in_time_is_skipped() {
+    use crate::projection::tests::projection_fuzz::projection_counts;
+    let finding = FINDINGS[6].1;
+    // The counts are this thread's: exactly what this replay adds.
+    let (projected, skipped, cut) = projection_counts();
+    check_load_bytes(finding).unwrap();
+    let (projected_now, skipped_now, cut_now) = projection_counts();
+    assert_eq!(
+        (projected_now - projected, skipped_now - skipped, cut_now - cut),
+        (0, 1, 0),
+        "the finding is skipped, not projected"
+    );
+}
+
+/// The finding of CI's load_raw job on #375 (a timeout; #374), as found:
+/// `a_ring_past_the_body_index_cells` with its `spacing` of 10⁹ mutated to
+/// 10⁸, one byte (SHA-1 `7e0ac234`). Its ring, 600 `gap`s of 10⁹ out, lays
+/// 37,663 glyphs at 1,499,631 glyph steps a projection, 39.8 a glyph, in
+/// every projection the check made. It is not minimized further: only 600
+/// `gap`s, the most the loader holds one to, put a ring that far out, and
+/// fewer rings lay it nearer, where its glyphs read their path another
+/// number of times (9 rings, spaced to lay as many glyphs, take 68.7 a
+/// glyph). It was found on a branch with #370's carve-out. The map is
+/// outside the bound on both counts, as the first finding's is: its ring
+/// lies past the extent (ruling B47.1) and lays past `MOST_RING_GLYPHS`
+/// (ruling B47.3), so the check skips its projection and counts it
+/// skipped.
+///
+/// Control, run and seen red: with `outline_reach` reading no reach,
+/// which both counts read, the map is admitted and its check fails, its
+/// ring laying 37,663 glyphs of 2 bounded (`rings_within_their_work`).
+/// With either count alone taken out, it stays skipped.
+#[test]
+fn test_a_ring_spaced_too_far_out_to_project_in_time_is_skipped() {
+    use crate::projection::tests::projection_fuzz::projection_counts;
+    let finding = FINDINGS[7].1;
+    // The counts are this thread's: exactly what this replay adds.
+    let (projected, skipped, cut) = projection_counts();
+    check_load_bytes(finding).unwrap();
+    let (projected_now, skipped_now, cut_now) = projection_counts();
+    assert_eq!(
+        (projected_now - projected, skipped_now - skipped, cut_now - cut),
+        (0, 1, 0),
+        "the finding is skipped, not projected"
+    );
+}
+
+/// The finding of CI's load_raw job on #382 (a timeout, artifact
+/// 14663467799), as found, 1,491 bytes (SHA-1 `293215b2`): one node, 100 by
+/// 40, its frame 315 empty rings at a `gap` of 10⁹ and outside them a ring
+/// of `·` laid `Repeat` with a `spacing` of `0e9`, none. The empty rings
+/// lay nothing and take no line height, so the dots lie 315 `gap`s out,
+/// 3.15·10¹¹: laid, they place 65,536 glyphs, the cap, at 4,098,212 glyph
+/// steps a projection, 62.5 a glyph, in every projection a check makes.
+/// #382's branch, off the epic, has #370's carve-out and not rulings B47.1
+/// and B47.3. Here the map is outside the bound on both counts: its ring
+/// lies past the extent (ruling B47.1, `outline_reach` reads 3.15·10¹¹) and
+/// may lay past `MOST_RING_GLYPHS` (ruling B47.3, `repeat_glyphs` reads the
+/// cap), so the check skips its projection and counts it skipped.
+///
+/// Control, run and seen red: with `outline_reach` reading no reach,
+/// which both counts read, and no `Repeat` ring's work bounded, the map is
+/// admitted and its check fails, its ring laying 65,536 glyphs of 123
+/// bounded (`rings_within_their_work`). With either count alone taken
+/// out, it stays skipped.
+#[test]
+fn test_a_ring_unspaced_too_far_out_to_project_in_time_is_skipped() {
+    use crate::projection::tests::projection_fuzz::projection_counts;
+    let finding = FINDINGS[9].1;
+    // The counts are this thread's: exactly what this replay adds.
+    let (projected, skipped, cut) = projection_counts();
+    check_load_bytes(finding).unwrap();
+    let (projected_now, skipped_now, cut_now) = projection_counts();
+    assert_eq!(
+        (projected_now - projected, skipped_now - skipped, cut_now - cut),
+        (0, 1, 0),
+        "the finding is skipped, not projected"
+    );
+}
+
+/// The finding of the review of #378 (verification review 5997246699, a
+/// timeout under ASan, 26.6 s): a map the bound admits — a ring of `·`
+/// laid `fit`, by default, 1,300 out round a node 1 across, its frame
+/// laid by halves within `FRAME_STEPS_A_LAY` — and 1,095 bare nodes, which
+/// set the arena's length the check's choices are seeded by. Those draw a
+/// transaction whose first stage is `Ring::SetFit(Repeat)`: the ring laid
+/// so is the review's "dots 1,300 out", 52,210 glyphs at 1,907,788 steps a
+/// lay, in every projection after it, which the bound never read. The
+/// check reads the bound again after each change (`left_the_bound`), so it
+/// abandons the map at that stage and counts it apart: none projected,
+/// none skipped, none cut short, one left, 1.3 s under ASan. With 1,094
+/// bare nodes the seed draws a harmless edit, and the map is projected,
+/// 1.9 s under ASan.
+///
+/// Control, run and seen red: with the bound not read again after an
+/// edit, red on the counts, one projected and none left.
+#[test]
+fn test_a_ring_its_check_makes_repeat_is_abandoned() {
+    use crate::projection::tests::projection_fuzz::{projection_counts, projection_left};
+    let finding = FINDINGS[8].1;
+    // The counts are this thread's: exactly what this replay adds.
+    let ((projected, skipped, cut), left) = (projection_counts(), projection_left());
+    check_load_bytes(finding).unwrap();
+    let ((projected_now, skipped_now, cut_now), left_now) = (projection_counts(), projection_left());
+    assert_eq!(
+        (
+            projected_now - projected,
+            skipped_now - skipped,
+            cut_now - cut,
+            left_now - left
+        ),
+        (0, 0, 0, 1),
+        "the finding is abandoned when its edit takes it out of the bound"
+    );
 }
 
 /// The second finding of #364: a map that loaded made the projection
