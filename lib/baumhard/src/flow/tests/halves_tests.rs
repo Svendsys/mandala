@@ -911,6 +911,13 @@ fn test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_g
 /// 0e0").
 #[test]
 fn test_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors() {
+    do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors();
+}
+
+/// The body of
+/// `test_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors`,
+/// reused by its benchmark.
+pub fn do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors() {
     use crate::flow::place::halves::line_root_seam;
     use crate::flow::tests::flow_fuzz::bisection_blur;
     let (delta, reach, owed) = (Vec2::new(-20.0, -12.0), Vec2::new(6.0, 6.0), 6.0);

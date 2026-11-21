@@ -1094,7 +1094,7 @@ pub fn check_pair_model(choices: &mut Choices<'_>) -> Result<(), String> {
 /// The gap along a line is convex in the step, so each way has one root:
 /// where the bisection brackets one, the closed form finds it, to the
 /// bracket's width and to how far the bisection can tell the root
-/// ([`bisection_blur`]); and where only the closed form does, the boxes
+/// (`bisection_blur`); and where only the closed form does, the boxes
 /// are owed apart there.
 pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
     use crate::flow::place::halves::line_root_seam;
