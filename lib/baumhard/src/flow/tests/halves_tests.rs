@@ -896,6 +896,45 @@ fn test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_g
     do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap();
 }
 
+/// #384's CI finding (`structured_line_root_owed_a_gap_its_step_barely_moves`):
+/// on the line two inks `(-20, -12)` apart, reach `(6, 6)`, stepped along
+/// `(-1.25, -1.09e-7)` and owed 6, the closed form is the root, to five
+/// millionths of its scale of the line's root in `f64`, and the bisection
+/// is off by more than its bracket's width — precondition: the case the
+/// property's blur is for — and by no more than `bisection_blur` allows.
+///
+/// The blur is 2.6e-3 there, the bisection 5.9e-4 off, its bracket's
+/// width 2.3e-4.
+///
+/// Control: with `bisection_blur` allowing none, red ("the bisection
+/// steps -11.19753, 5.952654974556992e-4 from the root, past the blur
+/// 0e0").
+#[test]
+fn test_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors() {
+    use crate::flow::place::halves::line_root_seam;
+    use crate::flow::tests::flow_fuzz::bisection_blur;
+    let (delta, reach, owed) = (Vec2::new(-20.0, -12.0), Vec2::new(6.0, 6.0), 6.0);
+    let dir = Vec2::new(-1.25, -1.092_784_7e-7);
+    let (closed, bisected) = line_root_seam(delta, dir, reach, owed);
+    let truth = line_root_in_f64(delta, dir, reach, owed);
+    let scale = truth.abs() + f64::from(owed) + f64::from(reach.max_element());
+    assert!(
+        (f64::from(closed) - truth).abs() <= 5e-6 * scale,
+        "the closed form steps {closed}, the line's root is {truth}"
+    );
+    let off = (f64::from(bisected) - truth).abs();
+    let width = (f64::from(bisected.abs()) + f64::from(owed) + f64::from(reach.max_element())) * 1e-5;
+    assert!(
+        off > width,
+        "precondition: the bisection steps {bisected}, {off:e} from the root, within its bracket's width {width:e}"
+    );
+    let blur = bisection_blur(delta, dir, reach, owed, closed, bisected);
+    assert!(
+        off <= blur,
+        "the bisection steps {bisected}, {off:e} from the root, past the blur {blur:e}"
+    );
+}
+
 /// #348: the tangent line's root in closed form (`line_root`) is the
 /// first step at which two inks' boxes are what is owed apart, to five
 /// millionths of the scale it is read at (its step, what is owed and the

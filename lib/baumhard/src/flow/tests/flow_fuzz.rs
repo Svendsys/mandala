@@ -1093,8 +1093,9 @@ pub fn check_pair_model(choices: &mut Choices<'_>) -> Result<(), String> {
 /// owed apart — on where they are nearer, back where they are further.
 /// The gap along a line is convex in the step, so each way has one root:
 /// where the bisection brackets one, the closed form finds it, to the
-/// bracket's width; and where only the closed form does, the boxes are
-/// owed apart there.
+/// bracket's width and to how far the bisection can tell the root
+/// ([`bisection_blur`]); and where only the closed form does, the boxes
+/// are owed apart there.
 pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
     use crate::flow::place::halves::line_root_seam;
     let unit = |choices: &mut Choices<'_>| choices.below(1001) as f32 / 1000.0;
@@ -1110,8 +1111,10 @@ pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
     let (closed, bisected) = line_root_seam(delta, dir, reach, owed);
     let what = format!("inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}");
     let gap = |d: f32| ((delta + dir * d).abs() - reach).max(Vec2::ZERO).length();
-    // The bisection's last bracket, and the floats of the step and the gap.
-    let width = (bisected.abs() + owed + reach.max_element()).max(INK_TOLERANCE) * 1e-5;
+    // The bisection's last bracket, and the floats of the step and the gap;
+    // and how far the bisection can tell the root from its neighbors.
+    let width = (bisected.abs() + owed + reach.max_element()).max(INK_TOLERANCE) * 1e-5
+        + bisection_blur(delta, dir, reach, owed, closed, bisected) as f32;
     match (closed.is_finite(), bisected.is_finite()) {
         (true, true) if (closed - bisected).abs() <= width => Ok(()),
         (false, true) => Err(format!(
@@ -1125,6 +1128,83 @@ pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
             "{what}: the closed form steps {closed}, the bisection {bisected}"
         )),
         _ => Ok(()),
+    }
+}
+
+/// How far from the root of [`check_line_root`]'s line the bisection's
+/// step may lie for its reading of the gap alone (#384's CI finding): the
+/// rounding of the gap as `along` reads it in `f32`, over the least of the
+/// gap's rates at the closed form's step and the bisection's. None where
+/// nothing is owed, or where either step is not finite.
+///
+/// The derivation. `along` steps on the sign of `gap(d) − owed`, the gap
+/// read in `f32`. Each axis's step `dir·d`, its center `delta + dir·d` and
+/// its distance past `reach` are rounded once each, half a spacing of
+/// `f32` at each, which moves the gap by that axis's share of it. The length of
+/// the two axes' gaps, squared, summed and rooted, is within two spacings
+/// at the gap. Near the root `− owed` is exact (Sterbenz). So the gap it
+/// reads is within `ε` of the line's, and it cannot tell from the root `r`
+/// any step `d` whose gap is within `ε` of what is owed. The gap is convex
+/// in the step, so a tangent at either of `d` and `r` lies under it:
+/// `|gap(d) − owed| ≥ |gap′(x)|·|d − r|`, `x` whichever of the two lies on
+/// the side nearer the gap's least. So `|d − r| ≤ ε / min(|gap′(d)|,
+/// |gap′(r)|)`. The closed form's step stands for `r`: it is held to the
+/// root in `f64` to five millionths of its scale
+/// (`test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap`).
+///
+/// Where the gap barely moves with the step this is wide: on the finding,
+/// one axis's gap all but 6 and owed 6, the other's 4·10⁻³ and closing,
+/// the gap moves 8·10⁻⁴ a unit of step, and one rounding of 6 sets the
+/// bisection's step 5.9·10⁻⁴ past the root, where the closed form's is
+/// 4.5·10⁻⁶ from it; the blur is 2.6·10⁻³ there. Where the gap moves
+/// about as fast as the step it is a few millionths, under the bracket's
+/// width: on #348's line, 9.8·10⁻⁷.
+pub(crate) fn bisection_blur(
+    delta: Vec2,
+    dir: Vec2,
+    reach: Vec2,
+    owed: f32,
+    closed: f32,
+    bisected: f32,
+) -> f64 {
+    if owed <= 0.0 || !closed.is_finite() || !bisected.is_finite() {
+        return 0.0;
+    }
+    // The gap's rounding as `along` reads it at step `d`, and its rate.
+    let read = |d: f32| -> (f64, f64) {
+        let d = f64::from(d);
+        let mut parts = [(0.0_f64, 0.0_f64, 0.0_f64); 2];
+        for (part, (at, w, r)) in parts
+            .iter_mut()
+            .zip([(delta.x, dir.x, reach.x), (delta.y, dir.y, reach.y)])
+        {
+            let step = f64::from(w) * d;
+            let center = f64::from(at) + step;
+            let past = center.abs() - f64::from(r);
+            if past > 0.0 {
+                let rounding = 0.5
+                    * (f32_spacing(step.abs() as f32)
+                        + f32_spacing(center.abs() as f32)
+                        + f32_spacing(past as f32));
+                *part = (past, center.signum() * f64::from(w), rounding);
+            }
+        }
+        let gap = parts[0].0.hypot(parts[1].0);
+        if gap <= 0.0 {
+            return (0.0, 0.0);
+        }
+        let rate = (parts[0].0 * parts[0].1 + parts[1].0 * parts[1].1) / gap;
+        let rounding: f64 =
+            parts.iter().map(|p| p.0 / gap * p.2).sum::<f64>() + 2.0 * f32_spacing(gap as f32);
+        (rounding, rate.abs())
+    };
+    let (at_closed, rate_closed) = read(closed);
+    let (at_bisected, rate_bisected) = read(bisected);
+    let blur = at_closed.max(at_bisected) / rate_closed.min(rate_bisected);
+    if blur.is_nan() {
+        0.0
+    } else {
+        blur
     }
 }
 

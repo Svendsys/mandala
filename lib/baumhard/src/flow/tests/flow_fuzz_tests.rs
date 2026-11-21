@@ -4829,15 +4829,52 @@ fn test_flow_structured_finding_a_directional_ring_whose_turns_fall_out_of_order
 /// the property's bound of 2.5e-4. The discriminant is taken by
 /// Lagrange's identity now. The line itself is held to an oracle in `f64`
 /// by `test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap`.
-/// The input has reached this line only since #336, whose directional
-/// glyphs are drawn from the choices before it; `line_root` is older. 202
-/// bytes, as found.
-///
-/// Control: with the discriminant `b² − a c`, red ("owed 0.012: the
-/// closed form steps -15.051204, the bisection -15.051884").
+/// The input reached this line from #336, whose directional glyphs are
+/// drawn from the choices before it, and no longer does: with the
+/// discriminant `b² − a c` planted it replays green as the generator
+/// stands, the planted root never compared (#384's CI finding found this).
+/// Its line is held where no generator can move it, by
+/// `test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap`,
+/// which that plant turns red ("the finding: … the closed form steps
+/// -15.051204, the line's root is -15.051883…"). 202 bytes, as found.
 #[test]
 fn test_flow_structured_finding_a_line_root_owed_little_of_a_wide_gap_replays() {
     let found = include_bytes!("fuzz_findings/structured_line_root_owed_little_of_a_wide_gap");
+    for (what, checked) in [
+        (
+            "fuzzed",
+            crate::flow::tests::flow_fuzz::check_flow_structured(found),
+        ),
+        ("as found", check_flow_structured_as_found(found)),
+    ] {
+        if let Err(why) = checked {
+            panic!("{what}: {why}");
+        }
+    }
+}
+
+/// The flow_structured finding of CI's run on #384 at 53639670 (job
+/// 136791952303): the tangent line's root in closed form held to its
+/// bisection (`check_line_root`) for two inks `(-20, -12)` apart, reach
+/// `(6, 6)`, stepped along `(-1.25, -1.09e-7)` and owed 6. The closed
+/// form steps -11.196939, 4.5e-6 from the line's root in `f64`
+/// (-11.1969345); the bisection -11.19753, 5.9e-4 past it, beyond the
+/// property's bracket width of 2.3e-4. The bisection was the one off,
+/// and rightly: one axis's gap is all but what is owed and the other's
+/// 4·10⁻³ and closing, so the gap moves 8·10⁻⁴ a unit of step there, and
+/// `along`, reading the gap in `f32`, cannot tell steps whose gap is
+/// within a rounding of 6 (5.99999957 at its step) from the root. The
+/// property now allows the bisection that reach (`bisection_blur`,
+/// derived at it). The input is the base's: it fails alike on
+/// `epic/unified-mutations` at ec9d5f41, whose `line_root`, `along` and
+/// `check_line_root` #384 does not touch. 142 bytes, as found (sha1
+/// 20b3f06f…).
+///
+/// Control: with no `bisection_blur` in the property's width, red ("owed
+/// 6: the closed form steps -11.196939, the bisection -11.19753").
+#[test]
+fn test_flow_structured_finding_a_line_root_owed_a_gap_its_step_barely_moves_replays() {
+    let found = include_bytes!("fuzz_findings/structured_line_root_owed_a_gap_its_step_barely_moves");
     for (what, checked) in [
         (
             "fuzzed",
