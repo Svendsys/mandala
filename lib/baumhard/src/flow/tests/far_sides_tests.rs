@@ -109,6 +109,48 @@ fn lays_its_sides(laid: &Laid) -> bool {
     laid.sides > 0 && laid.trace.unheld.sides.is_empty()
 }
 
+/// The fewest glyphs of its sides a frame round `shape` in `fit` owes far
+/// out, where `origin` is the same frame at the origin (#362): its copies
+/// bounded from below by `flow_fuzz::least_far_copies`, from the ornament
+/// at the least scale `fit` lays it at and the coordinates' spacing.
+fn least_far_sides(origin: &Laid, shape: &Outline, fit: &FitMode) -> usize {
+    use crate::flow::tests::flow_fuzz::least_far_copies;
+    let ornament =
+        with_fonts(|fs| ornament_run(&layout(), &style(POINTS), 1.0, fs).expect("the layout has sides"));
+    let glyphs = ornament.glyphs.len().max(1);
+    let scale = match fit {
+        FitMode::Fit { min, max } => min.min(*max),
+        _ => 1.0,
+    };
+    let copies = least_far_copies(
+        origin.sides / glyphs,
+        origin.trace.lines.len(),
+        &ornament,
+        scale,
+        outline_reach(shape),
+    );
+    copies * glyphs
+}
+
+/// Why the far frame `far`, round `shape` in `fit`, does not lay its sides
+/// as `origin`, the same frame at the origin, does: none of a junction
+/// left empty or kept short, nor fewer glyphs of them than
+/// [`least_far_sides`]; `None` where it does.
+fn short_of(origin: &Laid, far: &Laid, shape: &Outline, fit: &FitMode) -> Option<String> {
+    let least = least_far_sides(origin, shape, fit);
+    (!lays_its_sides(far) || far.sides < least).then(|| {
+        format!(
+            "{} glyphs, {} of its sides ({} at the origin, {least} owed), {:?}, its budget {} of {} spent",
+            far.placed.glyphs.len(),
+            far.sides,
+            origin.sides,
+            far.trace.unheld.sides,
+            far.trace.spent,
+            far.trace.budget
+        )
+    })
+}
+
 /// The issue's frames (#362): each with its fit mode and the ellipse it is
 /// laid round, 2,000 across. "MANDALA" in `Fit` round the ellipse 2,000 ×
 /// 500 lays its sides at 10⁶ and 10⁷ on the epic before #362 (255 glyphs at
@@ -153,16 +195,9 @@ fn test_far_sides_the_issues_frames_lay_their_sides_at_1e6_and_1e7() {
                 "precondition: the coordinates at {at:e} hold the glyphs of {text:?} {fit:?} apart"
             );
             let far = laid(text, &shape, &fit);
-            assert!(
-                lays_its_sides(&far),
-                "{text:?} {fit:?} round the ellipse {size} at {at:e} does not lay its sides as at the origin: {} glyphs, {} of its sides ({} at the origin), {:?}, its budget {} of {} spent",
-                far.placed.glyphs.len(),
-                far.sides,
-                origin.sides,
-                far.trace.unheld.sides,
-                far.trace.spent,
-                far.trace.budget
-            );
+            if let Some(why) = short_of(&origin, &far, &shape, &fit) {
+                panic!("{text:?} {fit:?} round the ellipse {size} at {at:e} does not lay its sides as at the origin: {why}");
+            }
         }
     }
 }
@@ -245,15 +280,9 @@ fn holds_the_spread(text: &'static str, fit: &FitMode) -> usize {
             );
             let far = laid(text, &shape, &fit);
             held += 1;
-            if !lays_its_sides(&far) {
+            if let Some(why) = short_of(&origin, &far, &shape, &fit) {
                 broken.push(format!(
-                    "{text:?} {fit:?} round the ellipse {size} at {at:e}: {} glyphs, {} of its sides ({} at the origin), {:?}, its budget {} of {} spent",
-                    far.placed.glyphs.len(),
-                    far.sides,
-                    origin.sides,
-                    far.trace.unheld.sides,
-                    far.trace.spent,
-                    far.trace.budget
+                    "{text:?} {fit:?} round the ellipse {size} at {at:e}: {why}"
                 ));
             }
         }
@@ -270,14 +299,23 @@ fn holds_the_spread(text: &'static str, fit: &FitMode) -> usize {
 /// #362: [`holds_the_spread`] for [`SAND`] in `Spread`: 12 frames, each
 /// at 5 centers.
 ///
-/// Controls: with the pairwise rule closing its bracket to a float of the
-/// center, the spread of [`SAND`] in `Spread` red at 4·10⁶, two frames
-/// with an arc left empty and their budgets spent; with no floor holding
-/// the first copy apart from the text (`halves::held_apart`), red at 10⁷ and
-/// 1.6·10⁷, three frames round the tall ellipses 450 × 1,800 and 500 ×
-/// 2,000 with an arc left empty, their copies touching the text. With one
-/// center too many, red on its precondition; with the spread's `beyond` its
-/// last center, red on that precondition.
+/// Controls, each red on the spread of [`SAND`] in `Spread`:
+/// - the pairwise rule closing its bracket to a float of the center: at
+///   4·10⁶, four frames with an arc left empty or kept short, their budgets
+///   spent;
+/// - no floor holding the first copy apart from the text
+///   (`halves::held_apart`): at 10⁷ and 1.6·10⁷, three frames round the
+///   tall ellipses 450 × 1,800 and 500 × 2,000 with an arc left empty,
+///   their copies touching the text;
+/// - the copies weighed in their arcs' touch check on their glyph boxes as
+///   placed (`glyph_box`, gone): the ellipse 450 × 1,800 at 10⁷ and
+///   1.6·10⁷, an arc left empty;
+/// - the floor eight times the spacing: some frames from 4·10⁶ on laying
+///   fewer copies than [`least_far_sides`] owes, none of them reporting a
+///   loss.
+///
+/// With one center too many, red on its precondition; with the spread's
+/// `beyond` its last center, red on that precondition.
 #[test]
 fn test_far_sides_sand_in_spread_lays_its_sides_wherever_its_coordinates_hold_them() {
     assert_eq!(holds_the_spread(SAND, &FitMode::Spread), 12 * 5);
@@ -528,15 +566,9 @@ fn holds_the_tight_spread(span: LineSpan) -> usize {
                         }
                         let far = lay(text, &shape, &fit);
                         held += 1;
-                        if !lays_its_sides(&far) {
+                        if let Some(why) = short_of(&origin, &far, &shape, &fit) {
                             broken.push(format!(
-                                "{text:?} {fit:?} round the ellipse {across} at {at:e}: {} glyphs, {} of its sides ({} at the origin), {:?}, its budget {} of {} spent",
-                                far.placed.glyphs.len(),
-                                far.sides,
-                                origin.sides,
-                                far.trace.unheld.sides,
-                                far.trace.spent,
-                                far.trace.budget
+                                "{text:?} {fit:?} round the ellipse {across} at {at:e}: {why}"
                             ));
                         }
                     }
@@ -628,4 +660,126 @@ fn test_far_sides_a_larger_budget_keeps_the_copies_a_smaller_one_does() {
         "precondition: some budget from 40,000 to 70,000 keeps an arc short"
     );
     assert!(broken.is_empty(), "{}", broken.join("\n"));
+}
+
+/// #362: a bracket open at an end — no count solved past it — is bisected
+/// as a closed one is, its ends none and one past the counts that fit:
+/// from 150 copies reached, none yet short of the target, gaps that point
+/// at the next count each time are bisected once the bracket has not
+/// halved over two counts tried. The search tries at most about three
+/// counts a halving however the gaps mislead it.
+///
+/// Control: with the bisection held to brackets closed at both ends, red:
+/// the search tries 151, the next count, where the gaps point.
+#[test]
+fn test_far_sides_the_count_search_bisects_an_open_bracket_too() {
+    use crate::flow::place::halves::next_count_seam;
+    let fit = 256;
+    // Gaps that reach the target to 151 copies along the straight path
+    // read, wherever the search stands.
+    let straight = |k: usize| if k <= 151 { 1.0 } else { 0.0 };
+    let solve = |halved: (usize, usize)| {
+        next_count_seam((150, 1.0), None, 0.75, (150, fit + 1, fit), halved, 2.0, straight)
+    };
+    assert_eq!(
+        solve((107, 1)),
+        (203, (107, 0)),
+        "the bracket 150 to past 256, as wide as when it last halved and one count tried since, is bisected"
+    );
+    assert_eq!(
+        solve((107, 0)),
+        (151, (107, 1)),
+        "the bracket 150 to past 256, one count tried since it last halved, is read from the gaps"
+    );
+}
+
+/// #362: a copy weighs in its arc's touch check, and in what the frame's
+/// budget holds back for that check, as the boxes the lay sets — one an
+/// inked cluster, a base and its marks one box — where it places a glyph
+/// each: `a` with two marks over it and `═`, three glyphs a copy as shaped
+/// (the first mark composed with its base), two boxes, and the sizes the
+/// check's classes of height are read from two.
+///
+/// Control: with a copy weighed by its glyphs, red: three boxes a copy.
+#[test]
+fn test_far_sides_a_copy_weighs_its_inked_clusters_not_its_glyphs() {
+    use crate::flow::place::halves::side_copy_seam;
+    let shape = ellipse(Vec2::new(600.0, 300.0), 0.0);
+    let (boxes, sizes, glyphs) = with_fonts(|fs| {
+        let flow = style(POINTS);
+        let run = real_run(MANDALA, &flow, fs);
+        side_copy_seam(&run, &shape, "a\u{301}\u{302}═", &flow, fs).expect("the ornament shapes")
+    });
+    assert!(
+        glyphs > 2,
+        "precondition: the copy places more glyphs than it has inked clusters ({glyphs})"
+    );
+    assert_eq!(
+        (boxes, sizes),
+        (2, 2),
+        "a copy of {glyphs} glyphs in two inked clusters weighs {boxes} boxes, its classes read from {sizes} sizes"
+    );
+}
+
+/// The powers of two of `f32` spacing the straddling frames lie across:
+/// `2²²`, `2²³` and `2²⁴`, where a frame's inks and the copies set from
+/// them meet two spacings.
+const POWERS: [f32; 3] = [4_194_304.0, 8_388_608.0, 16_777_216.0];
+
+/// #362: frames centered on a power of two of `f32` spacing, and a
+/// quarter of their size either side of it — where the text ink a side's
+/// first copy starts past and the copy lie in two spacings, the floor of
+/// `halves::held_apart` read at both — lay their sides as at the origin,
+/// wherever the coordinates hold their glyphs apart (precondition, and a
+/// floor on how many frames it holds).
+///
+/// Control: with the floor read at the text ink's spacing alone (`s` as
+/// `u`), still green: no frame here sets its first copy across the power of
+/// two from the text ink at the floor's gap — what the `s` term holds is
+/// the derivation's, held by its argument rather than by a frame found.
+#[test]
+fn test_far_sides_a_frame_across_a_power_of_two_lays_its_sides() {
+    let mut held = 0;
+    let mut broken = Vec::new();
+    for text in [SAND, MANDALA] {
+        for fit in [FitMode::Spread, FitMode::Fit { min: 0.5, max: 2.0 }] {
+            for size in [
+                Vec2::new(2_000.0, 1_200.0),
+                Vec2::new(450.0, 1_800.0),
+                Vec2::new(2_000.0, 500.0),
+            ] {
+                let origin = laid(text, &ellipse(size, 0.0), &fit);
+                assert!(
+                    lays_its_sides(&origin),
+                    "precondition: {text:?} {fit:?} round the ellipse {size} lays its sides at the origin"
+                );
+                for power in POWERS {
+                    let quarter = 0.25 * size.max_element();
+                    for at in [power - quarter, power, power + quarter] {
+                        let shape = ellipse(size, at);
+                        if !coordinates_hold(text, &shape, &fit) {
+                            continue;
+                        }
+                        let far = laid(text, &shape, &fit);
+                        held += 1;
+                        if let Some(why) = short_of(&origin, &far, &shape, &fit) {
+                            broken.push(format!(
+                                "{text:?} {fit:?} round the ellipse {size} at {at:e}: {why}"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        held >= 70,
+        "precondition: the straddles hold 70 far frames or more ({held})"
+    );
+    assert!(
+        broken.is_empty(),
+        "{} of {held} far frames across a power of two do not lay their sides as at the origin:\n{}",
+        broken.len(),
+        broken.join("\n")
+    );
 }

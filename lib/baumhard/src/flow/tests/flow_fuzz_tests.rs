@@ -148,6 +148,149 @@ fn test_generated_flows_hold_every_flow_property() {
     );
 }
 
+/// The seeds the twin property draws its far-out frames from (#362), each
+/// that draws an outline drawing it far out, at `10⁶` or `10⁷`
+/// (`FAR_OUT_NEAR`).
+const TWIN_SEEDS: u64 = 1_000;
+
+/// #362, the issue's item 5 held by the suite rather than a fuzz target:
+/// every far-out frame with sides the structured generator lays over
+/// [`TWIN_SEEDS`] seeded inputs, drawn far out each time it draws an
+/// outline, at `10⁶` or `10⁷` (`FAR_OUT_NEAR`), where the coordinates hold its text's and
+/// its ornament's glyphs apart (ruling B18.1 §9, `coordinates_hold_apart`
+/// at the least scale its fit lays them at, a `Once` at a `Spread`'s), and
+/// whose twin — the same frame, text, layout and cap round the same
+/// outline at the origin — lays its sides with no junction empty or kept
+/// short, both laying their text whole, lays them so too: some copies, no junction empty or kept short,
+/// and no fewer copies than `least_far_copies` bounds from the twin's
+/// count, the coordinates' spacing and the ornament as shaped.
+///
+/// It is not a property of the fuzz targets: a twin is a second budgeted
+/// frame an input, past what one input may take there (ruling R45.1,
+/// `STRUCTURED_FRAMES`). Laying it within that bound, by the twin's
+/// realized work rather than its worst case, is the owner's to rule on.
+///
+/// Precondition: the seeds hold 15 far frames or more to their twins (26
+/// of the 264 far frames they lay as the generator stands). Control: with
+/// every arc of a frame further than `10⁵` from the origin cut to its
+/// first two inks, no loss reported, red: 13 of the 26, each short of the
+/// copies' bound. The generator's frames do not reach the mechanisms of
+/// #362 itself — with the count search walking, the floor eight times as
+/// wide or none at all, this is green — which `far_sides_tests` holds.
+#[test]
+fn test_generated_far_frames_lay_their_sides_as_their_twins_at_the_origin() {
+    use crate::document::values::FitMode;
+    use crate::flow::place::{place_on_closed_capped, Trace};
+    use crate::flow::tests::flow_fuzz::FAR_OUT_NEAR;
+    use crate::flow::tests::flow_fuzz::{
+        coordinates_hold_apart, least_far_copies, ornament_run, outline_reach, FAR_FRAMES_LAID,
+    };
+    use crate::flow::PlacedRun;
+    struct Off;
+    impl Drop for Off {
+        fn drop(&mut self) {
+            FAR_OUT_NEAR.with(|near| near.set(false));
+        }
+    }
+    FAR_FRAMES_LAID.with(|laid| laid.borrow_mut().clear());
+    FAR_OUT_NEAR.with(|near| near.set(true));
+    let off = Off;
+    for seed in 0..TWIN_SEEDS {
+        if let Err(why) = check_flow_generated(&mut Choices::seeded(seed)) {
+            panic!("seed {seed}: {why}");
+        }
+    }
+    drop(off);
+    let frames = FAR_FRAMES_LAID.with(|laid| std::mem::take(&mut *laid.borrow_mut()));
+    let sides_of = |placed: &PlacedRun, trace: &Trace| {
+        let lines: usize = trace.lines.iter().map(|l| l.glyphs.len()).sum();
+        placed.glyphs.len().saturating_sub(lines)
+    };
+    let mut held = 0;
+    let mut broken = Vec::new();
+    for frame in &frames {
+        let least_scale = match frame.fit {
+            FitMode::Repeat => continue,
+            FitMode::Fit { min, max } => min.min(max),
+            _ => 1.0,
+        };
+        let held_as = match &frame.fit {
+            FitMode::Once { .. } => FitMode::Spread,
+            other => other.clone(),
+        };
+        let Some(ornament) = with_fonts(|fs| ornament_run(&frame.layout, &frame.flow, frame.scale, fs))
+        else {
+            continue;
+        };
+        let reach = outline_reach(&frame.far);
+        if !coordinates_hold_apart(reach, &frame.run, &held_as)
+            || !coordinates_hold_apart(reach, &ornament, &held_as)
+        {
+            continue;
+        }
+        let mut trace = Trace::default();
+        let (_, twin) = with_fonts(|fs| {
+            place_on_closed_capped(
+                &frame.run,
+                &frame.origin,
+                frame.start,
+                frame.direction,
+                &frame.fit,
+                &frame.layout,
+                frame.outward,
+                &frame.flow,
+                fs,
+                frame.cap,
+                Some(&mut trace),
+            )
+        });
+        let twin_sides = sides_of(&twin, &trace);
+        // Owed where the twin lays its sides and both lay their text whole:
+        // a frame loses its sides before its text (ruling R48.3), so one
+        // that keeps more of a cut text than its twin may keep fewer sides.
+        let whole = |placed: &PlacedRun, trace: &Trace| !placed.truncated && trace.cut_apart.is_empty();
+        if twin_sides == 0
+            || !trace.unheld.sides.is_empty()
+            || !whole(&twin, &trace)
+            || !whole(&frame.placed, &frame.trace)
+        {
+            continue;
+        }
+        held += 1;
+        let glyphs = ornament.glyphs.len().max(1);
+        let least = least_far_copies(
+            twin_sides / glyphs,
+            trace.lines.len(),
+            &ornament,
+            least_scale,
+            reach,
+        ) * glyphs;
+        let far_sides = sides_of(&frame.placed, &frame.trace);
+        if far_sides == 0 || !frame.trace.unheld.sides.is_empty() || far_sides < least {
+            broken.push(format!(
+                "{:?} {:?} round {:?}: {far_sides} glyphs of its sides ({twin_sides} at the origin, {least} owed), {:?}, its budget {} of {} spent",
+                frame.fit,
+                frame.layout.sides,
+                frame.far,
+                frame.trace.unheld.sides,
+                frame.trace.spent,
+                frame.trace.budget
+            ));
+        }
+    }
+    assert!(
+        held >= 15,
+        "precondition: the seeds hold 15 far frames or more to their twins ({held} of {})",
+        frames.len()
+    );
+    assert!(
+        broken.is_empty(),
+        "{} of {held} far frames do not lay their sides as their twins at the origin:\n{}",
+        broken.len(),
+        broken.join("\n")
+    );
+}
+
 /// The sweep above over [`every_face`]: `faces()`, the ornament
 /// fallback's two (#297), the default face (#228) and Scrapbook Chinese
 /// (#355), which a map's `font` can pin as it pins any other. `faces()`

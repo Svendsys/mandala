@@ -1694,7 +1694,8 @@ element.
     a `Once` filler, when `sides` is unset (ruling R34) — their gap, far
     from the origin, no less than the coordinates there hold apart from
     the text, so a frame lays its sides wherever they hold its glyphs
-    apart (#362, ruling B18.1 §9). A `Once` or
+    apart (#362, ruling B18.1 §9), though there, at least that gap apart,
+    an arc may hold fewer copies than at the origin. A `Once` or
     `Spread` line is never cut to the level part; only a line its half
     cannot hold at its font's gap is cut, a `Fit` frame shrunk first.
   - **A pattern and a connector read stretch by stretch**. On a `Repeat`

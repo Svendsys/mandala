@@ -112,7 +112,7 @@
 //! time, and its side lays' and its tracking's path reads besides,
 //! [`SIDE_READS_A_STEP`] and [`TRACK_READS_A_STEP`] to a step (#313, ruling
 //! B18.1 §2), since far from the origin a cluster reads its path up to
-//! twenty times where at the origin it reads it a few times. It is read before
+//! 22 times where at the origin it reads it a few times. It is read before
 //! every lay, build and reshape — in each tracking solve, slide, shrink
 //! (its floor build too), cut and backtrack, R27's fit and a `Once`
 //! filler's copies — and before each copy of a side ornament, which is laid
@@ -2433,11 +2433,16 @@ pub(crate) fn note_reshape() {
 /// center may set the gap inside it, and the bracket closes on the step
 /// where the ink moves from one `f32` to the next (#362). Once the two
 /// centers that close it set the ink on neighboring `f32`s, in each
-/// coordinate ([`neighbors`]), no center between them sets it anywhere
-/// but those coordinates, and the search ends there, at the one far
-/// enough: what closing the bracket to a float of the center would find,
-/// but for a point taking one of its coordinates from each — a step of
-/// one `f32` in one coordinate, either way still at least `owed` away.
+/// coordinate ([`neighbors`]), the search ends there, at the one far
+/// enough, whose miss is past none: never nearer than `owed`, whatever a
+/// center between would have set. That is about what closing the bracket
+/// to a float of the center would find — a center between sets the ink on
+/// those coordinates, or on a point taking one coordinate from each, where
+/// the ink's place moves with the center one way in each coordinate; its
+/// place is a path lookup, an offset and a rise, each rounded, so it need
+/// not, and a center between may set it a float further on — but only
+/// about: the stop gives up at most a step of an `f32` or two, never the
+/// gap owed.
 /// Nearer the origin than `2¹³`, where `f32`s are at most `2⁻¹¹` apart,
 /// two centers that set the ink on neighboring `f32`s set gaps at most
 /// `√2·2⁻¹¹` apart, less than the window is wide, so they never close a
@@ -4676,6 +4681,15 @@ impl<'a> SideOrnament<'a> {
         advance + 2.0 * floor
     }
 
+    /// How far across one copy's inks reach at most, either way: the
+    /// largest extent of [`sizes`](Self::sizes), none with no ink.
+    fn extent(&self) -> f32 {
+        self.sizes
+            .iter()
+            .map(|size| size.max_element())
+            .fold(0.0, f32::max)
+    }
+
     /// The least gap a copy is laid at: its first ink's side bearings,
     /// never less than [`JOIN_FLOOR`].
     fn arc_floor(&self) -> Option<f32> {
@@ -4732,7 +4746,7 @@ impl<'s> SideArc<'s> {
                 reach: Reach::default(),
             },
             to,
-            floor: side.arc_floor()?.max(held_apart(from)),
+            floor: side.arc_floor()?.max(held_apart(from, side.extent())),
             ca,
             cb,
             stopped: Cell::new(false),
@@ -5189,11 +5203,11 @@ impl<'s> SideArc<'s> {
         let mut solved: Vec<Option<(f32, Copies, bool)>> = vec![None; fit + 1];
         let mut solve = |n: usize| -> f32 {
             if solved[n].is_none() {
-                let (room, glyphs, inks) = rooms[n - 1];
+                let (room, glyphs, ink_count) = rooms[n - 1];
                 let copies = Copies {
                     glyphs: row.glyphs[..glyphs].to_vec(),
-                    boxes: row.boxes[..inks].to_vec(),
-                    reaches: row.reaches[..inks].to_vec(),
+                    boxes: row.boxes[..ink_count].to_vec(),
+                    reaches: row.reaches[..ink_count].to_vec(),
                 };
                 solved[n] = Some(self.solve(n, room, copies));
             }
@@ -5290,31 +5304,40 @@ impl<'s> SideArc<'s> {
 
 /// The least gap a side arc's first copy is set at that holds it apart
 /// from the text ink `from` it starts past, as the frame keeps both
-/// (#362): twice the spacing of `f32`s where `from` lies, past [`NEARER`]
-/// and [`TOUCH`].
+/// (#362), the copy's inks at most `extent` across either way:
+/// `(u + s)/2` past [`NEARER`] and [`TOUCH`], `u` the spacing of `f32`s
+/// where `from` lies and `s` the spacing where the copy's corner facing it
+/// may, at most `extent` and `1.5u` past [`NEARER`] and [`TOUCH`] further
+/// out.
 ///
-/// The derivation. Where the pairwise rule finds the copy its gap from
+/// The derivation. Where the pairwise rule finds the copy its gap `g` from
 /// `from` ([`pair`]), it measures that gap from `from`'s center and half
-/// size, the center the midpoint of `from`'s corners rounded once, at most
-/// half a spacing `u` of `from`'s off, in arithmetic at the size of the
-/// inks and their gap rather than of where they lie. The copy is kept as
-/// its center less and plus its half size, each corner rounded once, at
-/// most half the spacing where it lies off: `u` at most, the copy lying
-/// within a gap and its own size of `from` — within twice `from`'s
-/// magnitude where that is the larger, across one power of two at most;
-/// where it is not, so near the origin that the spacing is far below
-/// either. The two boxes as kept are then within `1.5u` of the gap the
-/// rule set, itself at most [`NEARER`] short: a gap of `2u` and both past
-/// it keeps them more than [`TOUCH`] apart. Nearer the origin than `2¹⁴`,
-/// where `u` is at most `2⁻¹⁰`, it is less than [`JOIN_FLOOR`], which
-/// holds them; far out, a frame whose copies were set nearer the text
-/// than this found them touching it, and lost its sides.
+/// size: the center the midpoint of `from`'s corners rounded once, at most
+/// `u/2` off, the half size exact, in arithmetic at the size of the inks
+/// and their gap rather than of where they lie. The copy is kept as its
+/// center less and plus its half size, each corner rounded once, at most
+/// half the spacing where it lies off. So the two boxes as kept are at
+/// least `g − NEARER − (u + s')/2` apart, `s'` the spacing at the copy's
+/// corner facing `from`, which lies within `g` of `from` along the gap and
+/// within `extent` of it across. Where `g` is at most `1.5u + NEARER +
+/// TOUCH`, that corner lies where `s` is read, so `s' ≤ s`, and a gap of
+/// `(u + s)/2 + NEARER + TOUCH` keeps the boxes more than [`TOUCH`] apart.
+/// Where `g` is more, the corner may lie a power of two further out, never
+/// two — `g` and `extent` far less than `from` lies from the origin, or
+/// so near it that every spacing is far below them — so `s' ≤ 2u`, and
+/// `g − NEARER − 1.5u` is past [`TOUCH`] already. In `from`'s power of two
+/// the floor is `u + NEARER + TOUCH`; nearer the origin than `2¹⁴`, where
+/// `u` is at most `2⁻¹⁰`, it is less than [`JOIN_FLOOR`], which holds them.
+/// Far out, a frame whose copies were set nearer the text than this found
+/// them touching it, and lost its sides.
 ///
 /// Cost: O(1).
-fn held_apart(from: InkBox) -> f32 {
+fn held_apart(from: InkBox, extent: f32) -> f32 {
+    let spacing = |at: f32| (at.next_up() - at).max(0.0);
     let at = from.0.abs().max(from.1.abs()).max_element();
-    let spacing = at.next_up() - at;
-    2.0 * spacing + NEARER + TOUCH
+    let u = spacing(at);
+    let s = spacing(at + extent.max(0.0) + 1.5 * u + NEARER + TOUCH);
+    0.5 * (u + s) + NEARER + TOUCH
 }
 
 /// The count a side arc's search solves next (#362, [`SideArc::fill`]):
@@ -5332,10 +5355,13 @@ fn held_apart(from: InkBox) -> f32 {
 /// path holds exactly and a path's bend nearly: the most counts whose gap
 /// there reaches the target. From one, the straight path's gaps
 /// (`straight`, by count) less the amount the solved gap falls short of its
-/// own. Where neither tells, or the bracket, closed at both ends, has not
-/// halved over two counts tried (`halved`: its width when it last did, and
-/// the counts tried since), its middle: so the search ends within about
-/// three counts tried a halving of the counts that fit, whatever the gaps.
+/// own. Where neither tells, or the bracket has not halved over two counts
+/// tried (`halved`: its width when it last did, and the counts tried
+/// since), its middle: so the search ends within about three counts tried a
+/// halving of the counts that fit, whatever the gaps. An end no count solved
+/// is closed all the same, at none or one past the counts that fit: no
+/// copies is the empty answer, and one more than fit at the floor's gap
+/// does not fit at any.
 ///
 /// Cost: O(fit) for a scan of `straight`, O(1) past two counts solved.
 fn next_count(
@@ -5353,16 +5379,14 @@ fn next_count(
         (n + 1)..=(fell - 1)
     };
     let middle = within.start().midpoint(*within.end());
-    if reached > 0 && fell <= fit {
-        let width = fell - reached;
-        if width.saturating_mul(2) <= halved.0 {
+    let width = fell - reached;
+    if width.saturating_mul(2) <= halved.0 {
+        *halved = (width, 0);
+    } else {
+        halved.1 += 1;
+        if halved.1 >= 2 {
             *halved = (width, 0);
-        } else {
-            halved.1 += 1;
-            if halved.1 >= 2 {
-                *halved = (width, 0);
-                return middle;
-            }
+            return middle;
         }
     }
     let predicted = match before {
@@ -8441,6 +8465,30 @@ pub(crate) fn side_floor_seam(
     Some((uninked(drawn), glyphs, floor))
 }
 
+/// Test seam (#362): what one copy of `ornament`, shaped beside `run`'s
+/// text as a frame round `outline` shapes it, weighs in its arc's touch
+/// check and budget: the ink boxes it adds ([`SideOrnament::per_copy`],
+/// what [`SideOrnament::affords`] holds [`check_steps`] back for), the
+/// sizes its classes of height are read from, and the glyphs it places.
+/// `None` when the ornament shapes to nothing.
+#[cfg(test)]
+pub(crate) fn side_copy_seam(
+    run: &ShapedRun,
+    outline: &Outline,
+    ornament: &str,
+    flow: &ResolvedText,
+    fs: &mut FontSystemLease,
+) -> Option<(usize, usize, usize)> {
+    let halves = Halves::of(outline, MIN_TABLE_SPACING);
+    let lay = Layout::new(&halves, true, Work::new(0), Vec::new());
+    let sides = Some((ornament.to_owned(), Rgba::opaque(0, 0, 0)));
+    let (with, range) = side_run(run, &sides, flow, fs, &lay.work)?;
+    let drawn = inked(&with, fs.fonts());
+    let glyphs = range.len();
+    let side = SideOrnament::new(&lay, &drawn, range);
+    Some((side.per_copy, side.sizes.len(), glyphs))
+}
+
 /// Test seam (#294, ruling R44.3): `n` copies of `ornament` solved for
 /// their equal gap ([`SideArc::solve`]) along the arc
 /// [`side_floor_seam`] lays them on, between `outline`'s first half's
@@ -8471,11 +8519,11 @@ pub(crate) fn side_solve_seam(
     };
     let arc = side.arc(point(ja), point(jb))?;
     let (row, rooms) = arc.floor_row(n)?;
-    let &(room, glyphs, inks) = rooms.get(n.checked_sub(1)?)?;
+    let &(room, glyphs, ink_count) = rooms.get(n.checked_sub(1)?)?;
     let copies = Copies {
         glyphs: row.glyphs[..glyphs].to_vec(),
-        boxes: row.boxes[..inks].to_vec(),
-        reaches: row.reaches[..inks].to_vec(),
+        boxes: row.boxes[..ink_count].to_vec(),
+        reaches: row.reaches[..ink_count].to_vec(),
     };
     let (gap, _, _) = arc.solve(n, room, copies);
     let (_, (end, at), _) = arc.lay(n, gap);

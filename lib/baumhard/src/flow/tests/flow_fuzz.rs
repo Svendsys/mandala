@@ -1377,6 +1377,8 @@ fn check_generated_pinning(
                     // replay lays a finding's outline and layouts as found
                     // as well, as it lays its layout (`laid_layouts`).
                     let mut sets = vec![(path, layouts)];
+                    #[cfg(test)]
+                    let mut twin: Option<(Outline, Outline)> = None;
                     if let Some((at, size)) = far_out(choices) {
                         let far = outline(Rect::new(at, Vec2::splat(size)), shape);
                         let sides = choices.pick(&FAR_SIDES).to_string();
@@ -1389,6 +1391,10 @@ fn check_generated_pinning(
                         }
                         FAR_FRAMES.with(|n| n.set(n.get() + 1));
                         LAST_FAR_FRAME.with(|last| last.set(Some(far)));
+                        #[cfg(test)]
+                        {
+                            twin = Some((far, outline(Rect::new(Vec2::ZERO, Vec2::splat(size)), shape)));
+                        }
                         sets.push((far, vec![drawn]));
                     }
                     let mut laid_texts = vec![drawn_texts];
@@ -1486,6 +1492,26 @@ fn check_generated_pinning(
                                     placed.1.truncated,
                                 )))
                             });
+                            #[cfg(test)]
+                            if let Some((_, origin)) = twin.filter(|(far, _)| far == path) {
+                                FAR_FRAMES_LAID.with(|laid| {
+                                    laid.borrow_mut().push(FarFrame {
+                                        run: run.clone(),
+                                        far: *path,
+                                        origin,
+                                        start,
+                                        direction,
+                                        fit: fit.clone(),
+                                        layout: layout.clone(),
+                                        outward,
+                                        flow: flow.clone(),
+                                        scale,
+                                        cap,
+                                        placed: placed.1.clone(),
+                                        trace: trace.clone(),
+                                    })
+                                });
+                            }
                             let mut work = InputWork::default();
                             let sized = matches!(fit, FitMode::Fit { .. });
                             let counted = if matches!(fit, FitMode::Repeat) {
@@ -2040,6 +2066,84 @@ thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
+/// The fewest copies an arc of a frame's side ornament `ornament` owes far
+/// out, where the frame lies within `reach` of the origin along either axis,
+/// laid at no less than `scale` of `ornament` as shaped, its twin at the
+/// origin laying `copies` of them over `arcs` arcs (#362). Computed from the
+/// ornament as shaped and the coordinates' spacing, with no placement code.
+///
+/// An arc's copies fill it at an equal gap: at the origin `n₀` of them,
+/// each `A` along the arc and `inked` gaps a copy. Far out each gap may be
+/// wider by `Δ`: the least gap the coordinates hold the first copy apart
+/// from the text at, at most `2u` past `NEARER` and `TOUCH` (`u` the
+/// spacing of `f32`s where the frame lies, read a power of two further
+/// out, so that it bounds every spacing the frame's inks meet), and as much
+/// again as one float step past what it is owed (`√2u`, or the pairwise
+/// rule's `INK_TOLERANCE` where that is more). So the arcs hold at least
+/// `n₀·A/(A + inked·Δ)` copies — the straight path's arithmetic, the gaps
+/// shared over the same arcs — less one for the count whose gap is nearest
+/// the target and one for the bend, per arc. `A` is the copy's advance,
+/// which is no longer than its step along the arc. Near the origin that is
+/// within a copy or two an arc of the origin's count; at `10⁷`, where
+/// `f32`s are 1 apart, some three in five of it for `─═` at 16 pt.
+#[cfg(test)]
+pub(crate) fn least_far_copies(
+    copies: usize,
+    arcs: usize,
+    ornament: &ShapedRun,
+    scale: f32,
+    reach: f32,
+) -> usize {
+    use crate::flow::place::halves::TOUCH;
+    let advance: f32 = ornament.glyphs.iter().map(|g| g.advance.max(0.0)).sum();
+    let inked = ornament.glyphs.iter().filter(|g| g.ink.is_some()).count().max(1) as f64;
+    let copy = f64::from(advance) * f64::from(scale.max(0.0));
+    let u = f32_spacing(2.0 * reach.abs());
+    let wider = 2.0 * u
+        + f64::from(NEARER)
+        + f64::from(TOUCH)
+        + (std::f64::consts::SQRT_2 * u).max(f64::from(INK_TOLERANCE));
+    let least = copies as f64 * copy / (copy + inked * wider);
+    if least.is_finite() {
+        (least.floor() as usize).saturating_sub(2 * arcs.clamp(1, 2))
+    } else {
+        0
+    }
+}
+
+/// A far-out frame with sides the structured generator laid (#362), with
+/// what it was laid from and the outline its twin at the origin is laid
+/// round: what `flow_fuzz_tests`' twin property lays again there.
+#[cfg(test)]
+pub(crate) struct FarFrame {
+    pub(crate) run: ShapedRun,
+    pub(crate) far: Outline,
+    pub(crate) origin: Outline,
+    pub(crate) start: StartPoint,
+    pub(crate) direction: Direction,
+    pub(crate) fit: FitMode,
+    pub(crate) layout: RingLayout,
+    pub(crate) outward: bool,
+    pub(crate) flow: ResolvedText,
+    /// The scale its run, and so its ornament, was shaped at.
+    pub(crate) scale: f32,
+    pub(crate) cap: usize,
+    pub(crate) placed: PlacedRun,
+    pub(crate) trace: Trace,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test switch (#362): `far_out` draws a place far out every time it is
+    /// asked, at `10⁶` or `10⁷` — what the twin property sweeps its seeds
+    /// with, so that most of them lay a frame there.
+    pub(crate) static FAR_OUT_NEAR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The far-out frames with sides the structured generator has laid on
+    /// this thread, while a test collects them (#362).
+    pub(crate) static FAR_FRAMES_LAID: std::cell::RefCell<Vec<FarFrame>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// The side ornaments a far-out frame is given where its layout draws none
 /// (#313): a box-drawing pair and a dot, whose copies far from the origin
 /// read their path many times a cluster (review 5761697746), and two of
@@ -2063,10 +2167,18 @@ pub const FAR_SIDES: [&str; 4] = ["─═", "· ", "-=", "x"];
 /// which share that table; the table is held to an independent measure by
 /// `outline_tests::test_flow_an_ellipses_length_is_its_ellipses_at_every_magnitude`.
 pub fn far_out(choices: &mut Choices<'_>) -> Option<(Vec2, f32)> {
-    if !choices.one_in(4) {
+    #[cfg(test)]
+    let near = FAR_OUT_NEAR.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    let near = false;
+    if !choices.one_in(4) && !near {
         return None;
     }
-    let at = 10.0_f32.powi(6 + choices.below(17) as i32);
+    let power = choices.below(17) as i32;
+    // In a test that asks (`FAR_OUT_NEAR`), at `10⁶` or `10⁷`, where the
+    // coordinates hold most frames' glyphs apart (ruling B18.1 §9).
+    let power = if near { power % 2 } else { power };
+    let at = 10.0_f32.powi(6 + power);
     let size = 100.0 * (1u32 << choices.below(12)) as f32;
     Some((Vec2::splat(at), size))
 }
