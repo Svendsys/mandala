@@ -1049,6 +1049,63 @@ pub fn do_flow_halves_a_line_root_reads_its_axes_where_they_move_slowly() {
     );
 }
 
+/// #384 review (thread 4654375406, the coordinator's ruling): the
+/// bisection (`along`) on a slowed line, held by what it places
+/// (`bisection_placed`), where its start reads as what is owed. Seed 62017
+/// of `check_slow_line_root`'s sweep: two inks `(3.08, -12.24)` apart,
+/// reach `(5.316, 3.636)`, owed 8.604, stepped along `(-1.14e-4,
+/// -7.54e-5)`, its way slowed `10⁻⁴`. The start's gap is 4.8·10⁻⁷ short of
+/// what is owed in `f64`, so the line's root is on, at 6.3·10⁻³; `f32`
+/// reads the start further, so the bisection steps back, to -6.3·10⁻³,
+/// its gap 9.5·10⁻⁷ short of what is owed. Its rounding there
+/// (`closed_form_rounding`) is 3.1·10⁻⁵: the start is within it, and so is
+/// every step either way the bisection's reading could send it, so either
+/// side is a right answer and the line's inputs do not say which. The
+/// engine is right; held to the root's side alone, the check was not.
+/// Precondition: the bisection and the root lie either side of the start,
+/// and the start is within the rounding. Held: its gap, and its step
+/// among those whose gap is within the rounding, on either side.
+///
+/// Control: with `bisection_placed` taking the root's side alone, red
+/// ("the bisection steps -0.0063280966, outside 0..0.42239933050088024,
+/// the steps whose gap is within its rounding 3.135299880886177e-5 of
+/// what is owed").
+#[test]
+fn test_flow_halves_a_bisection_steps_either_way_from_a_start_read_as_owed() {
+    do_flow_halves_a_bisection_steps_either_way_from_a_start_read_as_owed();
+}
+
+/// The body of
+/// `test_flow_halves_a_bisection_steps_either_way_from_a_start_read_as_owed`,
+/// reused by its benchmark.
+pub fn do_flow_halves_a_bisection_steps_either_way_from_a_start_read_as_owed() {
+    use crate::flow::place::halves::line_root_seam;
+    use crate::flow::tests::flow_fuzz::{
+        bisection_placed, closed_form_rounding, gap_in_f64, line_root_in_f64,
+    };
+    let (delta, dir, reach, owed) = (
+        Vec2::new(3.080_000_9, -12.24),
+        Vec2::new(-0.000_113_935_11, -0.000_075_354_845),
+        Vec2::new(5.316, 3.636_000_2),
+        8.604,
+    );
+    let (_, bisected) = line_root_seam(delta, dir, reach, owed);
+    let truth = line_root_in_f64(delta, dir, reach, owed);
+    let rounding = closed_form_rounding(delta, dir, reach, owed, truth);
+    let start = gap_in_f64(delta, dir, reach, 0.0) - f64::from(owed);
+    assert!(
+        truth > 0.0 && bisected < 0.0,
+        "precondition: the bisection steps {bisected} and the line's root is {truth}, either side of the start"
+    );
+    assert!(
+        start.abs() <= rounding,
+        "precondition: the start's gap is {start:e} from what is owed, within its rounding {rounding:e}"
+    );
+    if let Err(why) = bisection_placed(delta, dir, reach, owed, truth, bisected) {
+        panic!("{why}");
+    }
+}
+
 /// #348: the tangent line's root in closed form (`line_root`) is the
 /// first step at which two inks' boxes are what is owed apart, to five
 /// millionths of the scale it is read at (its step, what is owed and the

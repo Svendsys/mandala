@@ -1133,17 +1133,14 @@ pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
 /// draws after [`check_pair_model`]'s other two, so that what they draw is
 /// as it was.
 ///
-/// The closed form alone is held here, not the bisection (`along`): that
-/// is the pairwise rule's model along a unit way, its bracket first a step
-/// of what is owed and the reach and doubled 24 times at most, so that on
-/// a way slowed much past `10⁻⁷` it finds none (`NaN`); and the width
-/// `check_line_root` allows its last bracket is in steps, what is owed and
-/// the reach among them, not in movement, so on a slowed line it is that
-/// much narrower. Held so, one of 100,000 seeded slowed lines (seed 62017,
-/// slowed `10⁻⁴`) reads its start's gap, within a rounding of what is
-/// owed, as further where `f64` reads it nearer, and the bisection steps
-/// back 6.3·10⁻³ where the line's root is as far on: unslowed, 6.3·10⁻⁷
-/// either way, within the width of 1.4·10⁻⁴ it is allowed there.
+/// The bisection (`along`) is held here by what it places
+/// (`bisection_placed`), not by the width `check_line_root` allows its
+/// last bracket: that width is in steps, what is owed and the reach among
+/// them, not in movement, so on a slowed line it is that much narrower,
+/// and holding the bisection by it there would hold it to more than its
+/// arithmetic can tell. Where the way is slowed much past `10⁻⁷` the
+/// bisection finds no bracket (`NaN`: its first is a step of what is owed
+/// and the reach, doubled 24 times at most), and nothing is held of it.
 pub fn check_slow_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
     let (delta, dir, reach, owed) = line_drawn(choices);
     let slow = 10.0_f32.powi(-1 - choices.below(9) as i32);
@@ -1151,8 +1148,9 @@ pub fn check_slow_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
 }
 
 /// What [`check_line_root`] holds of one line: the closed form, and the
-/// bisection where `bisection`.
-fn line_root_held(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32, bisection: bool) -> Result<(), String> {
+/// bisection — by the width of its last bracket where `by_width`, as on
+/// `line_drawn`'s own lines, else by what it places ([`bisection_placed`]).
+fn line_root_held(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32, by_width: bool) -> Result<(), String> {
     use crate::flow::place::halves::line_root_seam;
     let (closed, bisected) = line_root_seam(delta, dir, reach, owed);
     let what = format!("inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}");
@@ -1202,8 +1200,11 @@ fn line_root_held(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32, bisection: boo
             }
         }
     }
-    if !bisection || !bisected.is_finite() {
+    if !bisected.is_finite() {
         return Ok(());
+    }
+    if !by_width {
+        return bisection_placed(delta, dir, reach, owed, truth, bisected);
     }
     // The bisection's last bracket, and the floats of the step.
     let width = (f64::from(bisected.abs()) + owed64 + f64::from(reach.max_element()))
@@ -1219,6 +1220,99 @@ fn line_root_held(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32, bisection: boo
         ));
     }
     Ok(())
+}
+
+/// The bisection's step `bisected` (`along`) on [`check_line_root`]'s line,
+/// its root `truth` in `f64`, held by what it places, as the closed form
+/// is (#384, review 6007364071): read in units of the line's movement, not
+/// of its step, so that how slowly the way moves does not matter.
+///
+/// - Its gap, in `f64`, is within `closed_form_rounding` of what is owed.
+/// - Its step lies among those whose gap is (`root_window`), on the side of
+///   the start the root lies, or on either where the start's gap is itself
+///   within that rounding of what is owed: the start then reads as what is
+///   owed, the step that way is a rounding from it, and which side of it
+///   the bisection's `f32` reading of the start sends it is not a thing the
+///   line's inputs decide. On seed 62017 of `check_slow_line_root`'s sweep
+///   the start's gap is 4.8·10⁻⁷ short of 8.604, `f32` reads it further,
+///   and the bisection steps back 6.3·10⁻³ where the root in `f64` is as far
+///   on, its gap 9.5·10⁻⁷ short of what is owed against a rounding of
+///   3.1·10⁻⁵
+///   (`test_flow_halves_a_bisection_steps_either_way_from_a_start_read_as_owed`).
+/// - Where the line places its step (`placed_within`), it is within that
+///   reach of the root.
+pub(crate) fn bisection_placed(
+    delta: Vec2,
+    dir: Vec2,
+    reach: Vec2,
+    owed: f32,
+    truth: f64,
+    bisected: f32,
+) -> Result<(), String> {
+    let what = format!("inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}");
+    let owed64 = f64::from(owed);
+    let rounding = closed_form_rounding(delta, dir, reach, owed, truth);
+    let at = f64::from(bisected);
+    let off = gap_in_f64(delta, dir, reach, at) - owed64;
+    if off.is_nan() || off.abs() > rounding {
+        return Err(format!(
+            "{what}: the bisection steps {bisected}, its gap {off:e} from what is owed, past its rounding \
+             {rounding:e}; the line's root is {truth}"
+        ));
+    }
+    let (lo, hi) = root_window(delta, dir, reach, owed, truth, rounding);
+    let start = gap_in_f64(delta, dir, reach, 0.0) - owed64;
+    let other = (start.abs() <= rounding).then(|| {
+        let back = if truth < 0.0 { 1.0 } else { -1.0 };
+        let end = back * read_as_owed_from_start(delta, dir, reach, owed64, back, rounding);
+        (end.min(0.0), end.max(0.0))
+    });
+    let within = |(lo, hi): (f64, f64)| (lo..=hi).contains(&at);
+    if !within((lo, hi)) && !other.is_some_and(within) {
+        return Err(format!(
+            "{what}: the bisection steps {bisected}, outside {lo}..{hi}, the steps whose gap is within its \
+             rounding {rounding:e} of what is owed; the line's root is {truth}"
+        ));
+    }
+    if let Some(reach_of) = placed_within(delta, dir, reach, owed, truth) {
+        if (at - truth).abs() > reach_of {
+            return Err(format!(
+                "{what}: the bisection steps {bisected}, the line's root is {truth}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// How far from the start of [`check_line_root`]'s line, its start's gap
+/// within `epsilon` of what is owed, a step along `sign` keeps its gap
+/// within `epsilon` of it: the first step past which it is not, found in
+/// `f64` by a scan of 20,000 steps and a bisection of the one that leaves,
+/// as [`root_window`] finds its ends. Where its step's side is not the
+/// root's, the steps [`bisection_placed`] may stop at.
+fn read_as_owed_from_start(delta: Vec2, dir: Vec2, reach: Vec2, owed: f64, sign: f64, epsilon: f64) -> f64 {
+    let (dx, dy, wx, wy) = (delta.x as f64, delta.y as f64, dir.x as f64, dir.y as f64);
+    let (rx, ry) = (reach.x as f64, reach.y as f64);
+    let off = |t: f64| (gap_in_f64(delta, dir, reach, sign * t) - owed).abs() > epsilon;
+    let span = 4.0 * (dx.abs() + dy.abs() + rx + ry + owed + 1.0) / wx.hypot(wy);
+    let mut before = 0.0;
+    for i in 1..=20_000 {
+        let t = span * i as f64 / 20_000.0;
+        if off(t) {
+            let (mut inside, mut outside) = (before, t);
+            for _ in 0..200 {
+                let middle = 0.5 * (inside + outside);
+                if off(middle) {
+                    outside = middle;
+                } else {
+                    inside = middle;
+                }
+            }
+            return outside;
+        }
+        before = t;
+    }
+    span
 }
 
 /// How far from the line's root in `f64` the tangent line's closed form
