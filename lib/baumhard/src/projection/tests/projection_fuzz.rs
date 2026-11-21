@@ -540,7 +540,11 @@ pub const RING_SETUP_STEPS: usize = 8_192;
 /// input's share, `flow_fuzz::INPUT_STEPS` at `flow_fuzz::ASAN_STEP_NANOS` a
 /// step — the flow harnesses' share for an input, whose rings they lay at
 /// `MAX_RING_GLYPHS` (B17.2b) for the same reason. The densest ring it
-/// admits, by the steps it takes, ASAN_DENSEST.
+/// admits, by the steps it takes, `😀·` at a quarter of an ellipse 1,000
+/// across, 1,304 out — 72 glyphs laid of 99 bounded, 32,861 steps a lay —
+/// ran its input in 0.73 s under ASan (`cargo fuzz run load_raw <file> --
+/// -runs=1`, the load average some 3), against the 20 s timeout,
+/// `flow_fuzz::FUZZ_TIMEOUT_SECONDS`.
 pub const MOST_RING_GLYPHS: usize = (INPUT_STEPS / RING_LAYS_A_CHECK - RING_SETUP_STEPS) / RING_STEPS_A_GLYPH;
 
 /// The most glyphs `ring` may lay, laid `Repeat` (ruling B47.3), bounded

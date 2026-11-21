@@ -856,10 +856,10 @@ fn test_the_ring_an_edit_lays_again_is_held_to_its_work() {
 /// three loader findings of a ring far out are outside, so none is laid.
 ///
 /// Under ASan (`cargo fuzz run load_raw <file> -- -runs=1`, the load
-/// average some 2), against `FUZZ_TIMEOUT_SECONDS`, 20 s, each input's run
+/// average some 3), against `FUZZ_TIMEOUT_SECONDS`, 20 s, each input's run
 /// as libFuzzer reports it: `😀·` round an ellipse 1,000 across, the most
-/// steps a lay, 0.87 s; `·\u{1BCA0}` round 9 across, 0.50 s; `·` round an
-/// ellipse, 0.15 s.
+/// steps a lay, 0.73 s; `—` spaced round one 32 across, 0.21 s; `·` round
+/// an ellipse, 0.07 s.
 ///
 /// Controls, each run and seen red: with no `Repeat` ring's work bounded,
 /// every measured ring inside; with the most glyphs halved, `MANDALA ` a
