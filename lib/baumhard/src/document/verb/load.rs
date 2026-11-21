@@ -89,14 +89,14 @@ pub(crate) fn definitions(
     by_id.reserve(presentations.len());
     for (index, def) in presentations.iter().enumerate() {
         if let Ok(index) = u16::try_from(index) {
-            by_id.insert_first(&def.id, PresentationId(index));
+            by_id.insert_first(def.id.as_str(), PresentationId(index));
         }
     }
     let mut edit_ids: NameIndex<EditId> = NameIndex::default();
     edit_ids.reserve(edits.len());
     for (index, def) in edits.iter().enumerate() {
         if let Ok(index) = u16::try_from(index) {
-            edit_ids.insert_first(&def.id, EditId(index));
+            edit_ids.insert_first(def.id.as_str(), EditId(index));
         }
     }
     let names = Names {

@@ -1656,8 +1656,10 @@ macro tiers, which could run console lines from a map someone sent.
   (`platform::opener`: the `open` crate on native, `window.open` with
   `noopener` in the browser); any other scheme, and a `mailto` naming
   a header other than RFC 6068's six (`to`, `cc`, `bcc`, `subject`,
-  `body`, `in-reply-to`) under either of two readings of its query, is
-  refused at load and at apply.
+  `body`, `in-reply-to`) in its query or its address part, under either
+  of two readings, is refused at load and at apply — and some values
+  that only look like headers are refused too (the list:
+  [`format/verbs.md`](./format/verbs.md#links)).
 
 `lib/baumhard/src/document/verb/`,
 `src/application/app/dispatch/families/verbs.rs`,

@@ -167,6 +167,15 @@ pub enum MutationError {
         /// The scheme it wrote, or all of it when it has no `:`.
         scheme: String,
     },
+    /// A span link to a `mailto` address holding a raw control
+    /// character, or a decoded line break outside its `body` (ruling D3.5
+    /// item 3 on #252).
+    LinkMailControl {
+        /// Where.
+        at: MutatorPath,
+        /// The header — or the part of the address — that holds it.
+        name: String,
+    },
     /// A span link to a `mailto` address that names a header outside
     /// RFC 6068's six, or whose address part decodes to hold a `?`
     /// (ruling D3.3 item 1 on #252).
@@ -315,6 +324,12 @@ impl fmt::Display for MutationError {
                 f,
                 "{at}: a link opens an `http`, `https` or `mailto` address, and this one is `{}`",
                 crate::document::format::context::shown(scheme)
+            ),
+            MutationError::LinkMailControl { at, name } => write!(
+                f,
+                "{at}: a `mailto` link holds a line break only encoded and only in its `body`, and no \
+                 other control character, and this one has one in `{}`",
+                crate::document::format::context::shown(name)
             ),
             MutationError::LinkMailHeader { at, name } => write!(
                 f,

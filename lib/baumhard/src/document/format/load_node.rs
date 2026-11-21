@@ -211,6 +211,12 @@ impl Builder {
                             name: name.into_owned(),
                         },
                     )),
+                    Err(LinkRefusal::MailControl { name }) => Err(b.error_at(
+                        "url",
+                        LoadErrorKind::LinkMailControl {
+                            name: name.into_owned(),
+                        },
+                    )),
                 },
                 LinkTargetDto::Verb(id) => b.verb("verb", id).map(LinkTarget::Verb),
             })?),

@@ -449,6 +449,9 @@ enum Link {
     /// under either reading, or whose address part decodes to hold a `?`
     /// (ruling D3.3 item 1).
     Header,
+    /// Refused as a `mailto` holding a raw control character, or a
+    /// decoded line break outside its `body` (ruling D3.5 item 3).
+    Control,
 }
 
 /// The addresses a generated link draws from, each with what a load
@@ -461,8 +464,13 @@ enum Link {
 /// `body=a%26b%3Dc`, refused on the safe side because its decoded query
 /// reads a header `b`; and a header in the address part after a `&`,
 /// `;`, `,` or `#`, raw or encoded (ruling D3.4 item 1), with `a@b;c=d`
-/// over-refused and a second plain address loading.
-const SCHEMES: [(&str, Link); 47] = [
+/// over-refused and a second plain address loading; and (ruling D3.5)
+/// a header after a `,` or a `#` in the query, raw or encoded, one first
+/// in the address part, a later address with an encoded `=`, a line
+/// break outside a `body` and a raw control character, with a fragment,
+/// `mailto:to=a@b`, `mailto:a%3Db@c` and a `body` with line breaks
+/// loading.
+const SCHEMES: [(&str, Link); 68] = [
     ("https://example.org/a", Link::Opens),
     ("HTTP://example.org", Link::Opens),
     ("mailto:someone@example.org", Link::Opens),
@@ -519,6 +527,39 @@ const SCHEMES: [(&str, Link); 47] = [
     ("mailto:a@example.org#attach=x", Link::Header),
     ("mailto:a@example.org;c=d", Link::Header),
     ("mailto:a@example.org,b@example.org", Link::Opens),
+    ("mailto:a@example.org?subject=hi#attach=/etc/passwd", Link::Header),
+    ("mailto:a@example.org?body=x#attach=/etc/passwd", Link::Header),
+    (
+        "mailto:a@example.org?subject=hi%23attach=/etc/passwd",
+        Link::Header,
+    ),
+    ("mailto:a@example.org?to=c,attach=/etc/passwd", Link::Header),
+    ("mailto:a@example.org?to=c%2Cattach=/etc/passwd", Link::Header),
+    ("mailto:a@example.org?body=a,b=c", Link::Header),
+    ("mailto:a@example.org?subject=x#y=z", Link::Header),
+    ("mailto:attach=/etc/passwd", Link::Header),
+    ("mailto:%61ttach=/etc/passwd", Link::Header),
+    ("mailto:attach=/etc/passwd?subject=x", Link::Header),
+    ("mailto:attach=/etc/passwd&to=c@d", Link::Header),
+    ("mailto:x@y,a%3Db@c", Link::Header),
+    (
+        "mailto:a@example.org?subject=x%0D%0AAttach:%20/etc/passwd",
+        Link::Control,
+    ),
+    (
+        "mailto:a@example.org?subject=x%0AAttach=/etc/passwd",
+        Link::Control,
+    ),
+    ("mailto:a%0D%0Ab@example.org", Link::Control),
+    (
+        "mailto:a@example.org?subject=x\nAttach: /etc/passwd",
+        Link::Control,
+    ),
+    ("mailto:a\u{1}@example.org", Link::Control),
+    ("mailto:a@example.org?to=c@example.org#frag", Link::Opens),
+    ("mailto:to=a@example.org", Link::Opens),
+    ("mailto:a%3Db@example.org", Link::Opens),
+    ("mailto:a@example.org?body=line1%0D%0Aline2", Link::Opens),
 ];
 
 /// A span link of an address `choices` draws is loaded exactly when a
@@ -539,6 +580,7 @@ fn check_link_scheme(choices: &mut Choices<'_>) -> Result<(), String> {
                 && match verdict {
                     Link::Scheme => matches!(error.kind, LoadErrorKind::LinkScheme { .. }),
                     Link::Header => matches!(error.kind, LoadErrorKind::LinkMailHeader { .. }),
+                    Link::Control => matches!(error.kind, LoadErrorKind::LinkMailControl { .. }),
                     Link::Opens => false,
                 } => {}
         (read, _) => {

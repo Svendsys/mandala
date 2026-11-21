@@ -103,12 +103,17 @@ impl Definitions {
         );
         let verb = self.verb_ids.get(id)?;
         let def = self.verbs.get(usize::from(verb.0))?;
-        // `as_str` on both sides: a check, not a compare a test counts.
+        // A check, not a lookup: in a test build the count of compares
+        // it reads is put back as it was (`keyed::NAMES_COMPARED`).
+        #[cfg(test)]
+        let compared = crate::document::keyed::NAMES_COMPARED.with(std::cell::Cell::get);
         debug_assert!(
-            def.id.as_str() == id,
+            def.id == id,
             "Definitions::verb_by_id: the index puts `{id}` at {verb:?}, which holds `{}`",
-            def.id.as_str()
+            def.id
         );
+        #[cfg(test)]
+        crate::document::keyed::NAMES_COMPARED.with(|count| count.set(compared));
         Some((verb, def))
     }
 
@@ -120,7 +125,7 @@ impl Definitions {
         verb_ids.reserve(self.verbs.len());
         for (index, verb) in self.verbs.iter().enumerate() {
             if let Ok(index) = u16::try_from(index) {
-                verb_ids.insert_first(&verb.id, VerbId(index));
+                verb_ids.insert_first(verb.id.as_str(), VerbId(index));
             }
         }
         self.verb_ids = verb_ids;
@@ -148,12 +153,12 @@ impl MapNames {
             names.variables.reserve(theme.variables.len());
             for (index, variable) in theme.variables.iter().enumerate() {
                 if let Ok(index) = u16::try_from(index) {
-                    names.variables.insert_first(variable, VarId(index));
+                    names.variables.insert_first(variable.as_str(), VarId(index));
                 }
             }
         }
         for (id, palette) in palettes(tree) {
-            names.palettes.insert_first(&palette.name, id);
+            names.palettes.insert_first(palette.name.as_str(), id);
         }
         names
     }

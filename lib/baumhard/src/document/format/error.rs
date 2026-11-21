@@ -404,6 +404,12 @@ pub enum LoadErrorKind {
         /// decoded; or the address part.
         name: String,
     },
+    /// A `mailto` link's `url` holds a raw control character, or a
+    /// decoded line break outside its `body` (ruling D3.5 item 3).
+    LinkMailControl {
+        /// The header — or the part of the address — that holds it.
+        name: String,
+    },
     /// The loader built something the document refuses: a row that
     /// breaks the shape rules, a tree that is not a document, an insert
     /// the tree rejects. The loader checks everything the document
@@ -523,6 +529,12 @@ impl fmt::Display for LoadErrorKind {
                 f,
                 "a link opens an `http`, `https` or `mailto` address, and this one is `{}`",
                 shown(scheme)
+            ),
+            LoadErrorKind::LinkMailControl { name } => write!(
+                f,
+                "a `mailto` link holds a line break only encoded and only in its `body`, and no other \
+                 control character, and this one has one in `{}`",
+                shown(name)
             ),
             LoadErrorKind::LinkMailHeader { name } => write!(
                 f,

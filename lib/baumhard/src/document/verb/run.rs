@@ -333,7 +333,7 @@ fn advance(run: &mut Run, now_ms: f64, performer: &mut dyn Performer) {
                     run.frames.pop();
                     continue;
                 }
-                Some(step) => resolve(step, doc, run.self_node, performer, &def.id, index),
+                Some(step) => resolve(step, doc, run.self_node, performer, def.id.as_str(), index),
             }
         };
         match act {

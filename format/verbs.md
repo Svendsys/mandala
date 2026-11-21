@@ -189,31 +189,44 @@ handler — is refused at load, at the link's `url` (`LinkScheme`).
 supersedes D3.2 item 2's attachment denylist). Some mail clients have
 attached a local file an `attach` or `attachment` header named, and
 clients read a query differently, so any other name is refused, however
-it is spelled. The query — what follows the address's first `?` — is
-read two ways, and must pass both:
+it is spelled. The whole address is split on one set of separators —
+`?`, `&`, `;`, `,` and `#` — the query (what follows the first raw `?`)
+and the address part before it alike (rulings D3.4 item 1 and D3.5
+item 1), since a client may split what follows `mailto:` without first
+finding the `?`; and it is read two ways, both of which must pass:
 
-- **split first**: split on every `?`, `&` and `;`; each part's name —
-  what it writes before its first `=`, or all of it without one — is
-  percent-decoded once (`+` stays `+`) and its ASCII letters
-  lowercased, and must be one of the six exactly, unless it is empty.
-  Nothing is trimmed: `attach+`, `attach%00` and ` attach` are refused;
-- **decode first**: percent-decode the whole query once, reading `+` as
-  a space, then split the same way; every part with an `=` must name
-  one of the six before it, lowercased. A part with no `=` is text, so
-  a body `Q%26A` loads.
+- **split first**: each part's name — what it writes before its first
+  `=` — is percent-decoded once (`+` stays `+`) and its ASCII letters
+  lowercased, and must be one of the six exactly. Nothing is trimmed:
+  `attach+`, `attach%00` and ` attach` are refused. In the query, a part
+  after a `?`, `&` or `;` is a header, so all of it is its name when it
+  has no `=` (`?attach` is refused); a part after a `,` or a `#` is a
+  header only when it holds an `=`, so a fragment (`?to=c@d#frag`) loads
+  and `?subject=hi#attach=…` does not. In the address part every part
+  that holds an `=` is a header, the first one too: `mailto:attach=…`
+  is refused, `mailto:to=a@b` loads;
+- **decode first**: percent-decode the query once, reading `+` as a
+  space, and the address part once, then split the same way; every
+  part with an `=` must name one of the six before it, lowercased — in
+  the address part every part after the first, so `mailto:a%3Db@c`
+  loads. A part with no `=` is text, so a body `Q%26A` loads. And no
+  part but a `body` holds a line break once decoded (`%0D`, `%0A`): a
+  client that writes the message out as text would read what follows
+  the break as a header line of its own (ruling D3.5 item 3), so
+  `subject=x%0D%0AAttach:%20…` is refused and `body=line1%0D%0Aline2`
+  loads.
 
-And the address part — what comes before the first raw `?` — is read
-the way the query is (ruling D3.4 item 1), since a client may split
-what follows `mailto:` without first finding the `?`: one that decodes
-to hold a `?` (`a@b%3Fattach=…`) is refused, and, split on `?`, `&`,
-`;`, `,` and `#`, raw and decoded once, every part after the first that
-holds an `=` must name one of the six (`a@b&attach=…`, `a@b%26attach=…`
-and `a@b#attach=…` are refused). A part with no `=` is an address, so
-`a@b,c@d` loads. Such an address is refused at its `url`
-(`LinkMailHeader`, naming the header as written, or as it reads
-decoded).
+An address part that decodes to hold a `?` (`a@b%3Fattach=…`) is
+refused, since a client may read the rest as a query; so is a raw
+control character anywhere in the address, a raw line break included —
+a link writes them encoded (RFC 6068), and nothing else in a map
+refuses one in a `url`. A refused address is refused at its `url`:
+`LinkMailHeader`, naming the header as written or as it reads decoded,
+or `LinkMailControl` for a line break or a control character, naming
+the part that holds it.
 
-**What is over-refused**, and is kept so (ruling D3.4 item 2):
+**What is over-refused**, and is kept so (rulings D3.4 item 2 and
+D3.5):
 
 - **a `body` or `subject` holding a web address with a query string**,
   as a "share this page" link writes one —
@@ -223,10 +236,17 @@ decoded).
   web address;
 - any other value that decodes to look like a header —
   `body=a%26b%3Dc` reads a header `b`;
+- a value holding a `,` or a `#` before an `=` — `body=a,b=c` reads a
+  header `b`, `subject=x#y=z` a header `y`;
 - a raw `;` or `?` in a value, which the split-first reading takes for
   a part with a name: encode it, or leave it out;
-- an address part holding an `=` that is no header, such as `a@b;c=d`
-  or `a@b,x=y@z` — RFC 6068 has a `to` part write `=` encoded anyway.
+- a line break in a value that is not the `body`, and a value that
+  goes on with a line break after an encoded separator
+  (`body=a%26%0Ab`), whose second part is no `body`;
+- **an address after the first whose local part holds an `=`, raw or
+  encoded** — `a@b;c=d`, `a@b,x=y@z`, `x@y,a%3Db@c` (a header `a`).
+  Encoding does not help, since the decode-first reading decodes it:
+  put that address first, or leave it out.
 
 A `set_link` an edit or a presentation writes to either kind of
 address is refused when the edit or the presentation is read, and

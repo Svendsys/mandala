@@ -371,6 +371,15 @@ pub enum LinkRefusal<'a> {
         /// address part, for one that holds a `?`.
         name: Cow<'a, str>,
     },
+    /// A `mailto` address holding a raw control character anywhere, or
+    /// a decoded line break (CR or LF) anywhere but in its `body` (ruling
+    /// D3.5 item 3 on #252): a handler that writes the message as text
+    /// would read what follows the break as a header line of its own.
+    MailControl {
+        /// The name of the header — or the part of the address — that
+        /// holds it, as written or as it reads decoded.
+        name: Cow<'a, str>,
+    },
 }
 
 /// `url` if a link may lead there: its scheme — what it writes before its
@@ -389,89 +398,126 @@ pub fn check_link_url(url: &str) -> Result<&str, LinkRefusal<'_>> {
         return Err(LinkRefusal::Scheme(scheme));
     }
     if scheme.eq_ignore_ascii_case("mailto") {
-        if let Some(name) = mail_header(rest) {
-            return Err(LinkRefusal::MailHeader { name });
+        if let Some(refusal) = mail_header(rest) {
+            return Err(refusal);
         }
     }
     Ok(url)
 }
 
 /// What is wrong with the `mailto` address `rest` — what follows its
-/// `mailto:` — if anything (ruling D3.3 item 1), checked under two
-/// readings, both of which must pass, since mail handlers read a query
-/// either way:
+/// `mailto:` — if anything (rulings D3.3 item 1, D3.4 item 1 and D3.5 on
+/// #252). The whole of it is split on one set of separators, `?`, `&`,
+/// `;`, `,` and `#` — the query (what follows the first raw `?`) and the
+/// address part before it alike — and read two ways, both of which must
+/// pass, since mail handlers read a link either way:
 ///
-/// - **(a) split first**: the query — what follows the first `?` — is
-///   split on every `?`, `&` and `;`; each segment's name, what it
-///   writes before its first `=` (all of it, without one), is
-///   percent-decoded once (`+` stays `+`) and its ASCII letters
-///   lowercased, and every name that is not empty must be one of
-///   [`MAIL_HEADERS`] exactly — nothing trimmed or dropped, so a name
-///   with a byte more is refused;
-/// - **(b) decode first**: the whole query is percent-decoded once, `+`
-///   read as a space, then split the same way; every segment with an
-///   `=` must name one of [`MAIL_HEADERS`] before it, lowercased. A
-///   segment with none is text, not a header, so `body=Q%26A` passes;
-///   `body=a%26b%3Dc` does not (it reads a header `b`) — over-refused,
-///   on the safe side;
+/// - **(a) split first**: each part's name, what it writes before its
+///   first `=`, is percent-decoded once (`+` stays `+`) and its ASCII
+///   letters lowercased, and must be one of [`MAIL_HEADERS`] exactly —
+///   nothing trimmed or dropped, so a name with a byte more is refused.
+///   A part of the query after a `?`, `&` or `;` (or its first) is a
+///   header, so all of it is its name when it has no `=`; one after a `,`
+///   or a `#` is a header only when it holds an `=` — so a fragment
+///   (`?to=c@d#frag`) and a second address pass. In the address part
+///   every part holding an `=` is a header, the first included
+///   (`mailto:attach=…` is refused, `mailto:to=a@b` passes);
+/// - **(b) decode first**: the query is percent-decoded once, `+` read
+///   as a space, and the address part once, then split the same way;
+///   every part with an `=` must name one of [`MAIL_HEADERS`] before
+///   it, lowercased — in the address part every part after the first,
+///   so `mailto:a%3Db@c` passes. A part with none is text, so
+///   `body=Q%26A` passes; `body=a%26b%3Dc` does not (it reads a header
+///   `b`) — over-refused, on the safe side. And no part but a `body`
+///   holds a decoded line break (CR or LF): a handler that writes the
+///   message as text would take what follows for a header line.
 ///
-/// and the address part — what comes before the first raw `?` — is read
-/// the way the query is (ruling D3.4 item 1): one that decodes to hold a
-/// `?` is refused, since a handler may read the rest as a query; and
-/// split on `?`, `&`, `;`, `,` and `#`, raw and decoded once, every part
-/// after the first that holds an `=` must name one of [`MAIL_HEADERS`],
-/// since a handler may split what follows `mailto:` without first
-/// finding the `?`. A part with no `=` is an address, so `a@b,c@d`
-/// passes; `a@b;c=d` does not — over-refused, and a `to` part writes
-/// `=` encoded anyway (RFC 6068). Returns the name refused. O(the
+/// An address part that decodes to hold a `?` is refused, since a
+/// handler may read the rest as a query; and a raw control character
+/// anywhere is refused, line breaks included — a link writes them
+/// encoded (RFC 6068). Returns the refusal, naming the part. O(the
 /// address's length).
-fn mail_header(rest: &str) -> Option<Cow<'_, str>> {
-    let (address, query) = rest.split_once('?').unwrap_or((rest, ""));
+fn mail_header(rest: &str) -> Option<LinkRefusal<'_>> {
+    fn header(name: Cow<'_, str>) -> LinkRefusal<'_> {
+        LinkRefusal::MailHeader { name }
+    }
+    fn control(name: Cow<'_, str>) -> LinkRefusal<'_> {
+        LinkRefusal::MailControl { name }
+    }
+    fn owned(bytes: &[u8]) -> Cow<'static, str> {
+        Cow::Owned(String::from_utf8_lossy(bytes).into_owned())
+    }
+    fn name_of(part: &str) -> &str {
+        part.split_once('=').map_or(part, |(name, _)| name)
+    }
     let allowed = |name: &[u8]| {
         MAIL_HEADERS
             .iter()
             .any(|header| name.to_ascii_lowercase() == header.as_bytes())
     };
+    let separator = |b: u8| matches!(b, b'?' | b'&' | b';' | b',' | b'#');
+    let line_break = |part: &[u8]| part.iter().any(|&b| b == b'\r' || b == b'\n');
+    let (address, query) = rest.split_once('?').unwrap_or((rest, ""));
+    // A raw control character anywhere: no reading makes one a header's.
+    if let Some(part) = rest
+        .split(|c: char| c.is_ascii() && separator(c as u8))
+        .find(|part| part.chars().any(char::is_control))
+    {
+        return Some(control(Cow::Borrowed(name_of(part))));
+    }
     let decoded_address = percent_decoded(address.as_bytes(), false);
     if decoded_address.contains(&b'?') {
-        return Some(Cow::Borrowed(address));
+        return Some(header(Cow::Borrowed(address)));
     }
-    // The address part, read as the query is (ruling D3.4 item 1): split
-    // on `?`, `&`, `;`, `,` and `#`, raw and decoded once, every part
-    // after the first with an `=` must name one of the six.
-    let address_split = |b: u8| matches!(b, b'?' | b'&' | b';' | b',' | b'#');
-    for segment in address
-        .split(|c: char| c.is_ascii() && address_split(c as u8))
-        .skip(1)
-    {
-        if let Some((name, _)) = segment.split_once('=') {
+    // The address part, (a): every part with an `=`, the first included.
+    for part in address.split(|c: char| c.is_ascii() && separator(c as u8)) {
+        if let Some((name, _)) = part.split_once('=') {
             if !allowed(&percent_decoded(name.as_bytes(), false)) {
-                return Some(Cow::Borrowed(name));
+                return Some(header(Cow::Borrowed(name)));
             }
         }
     }
-    for segment in decoded_address.split(|&b| address_split(b)).skip(1) {
-        if let Some(at) = segment.iter().position(|&b| b == b'=') {
-            let name = &segment[..at];
-            if !allowed(name) {
-                return Some(Cow::Owned(String::from_utf8_lossy(name).into_owned()));
+    // The address part, (b): every part with an `=` after the first; and
+    // no line break, as no address part is a `body`.
+    for (index, part) in decoded_address.split(|&b| separator(b)).enumerate() {
+        if line_break(part) {
+            return Some(control(owned(part.split(|&b| b == b'=').next().unwrap_or(part))));
+        }
+        if let Some(at) = part.iter().position(|&b| b == b'=') {
+            if index > 0 && !allowed(&part[..at]) {
+                return Some(header(owned(&part[..at])));
             }
         }
     }
-    let split = |c: char| matches!(c, '?' | '&' | ';');
-    for segment in query.split(split) {
-        let name = segment.split_once('=').map_or(segment, |(name, _)| name);
-        if !name.is_empty() && !allowed(&percent_decoded(name.as_bytes(), false)) {
-            return Some(Cow::Borrowed(name));
+    // The query, (a): a part after `?`, `&` or `;` is a header, all of it
+    // its name without an `=`; one after `,` or `#` only with an `=`.
+    let mut after = b'?';
+    let mut start = 0;
+    let bytes = query.as_bytes();
+    for end in (0..=bytes.len()).filter(|&i| i == bytes.len() || separator(bytes[i])) {
+        let part = &query[start..end];
+        let is_header = matches!(after, b'?' | b'&' | b';') || part.contains('=');
+        let name = name_of(part);
+        if is_header && !name.is_empty() && !allowed(&percent_decoded(name.as_bytes(), false)) {
+            return Some(header(Cow::Borrowed(name)));
+        }
+        if end < bytes.len() {
+            after = bytes[end];
+            start = end + 1;
         }
     }
+    // The query, (b): every part with an `=` names a header, and none but
+    // a `body` holds a line break.
     let decoded = percent_decoded(query.as_bytes(), true);
-    for segment in decoded.split(|&b| matches!(b, b'?' | b'&' | b';')) {
-        if let Some(at) = segment.iter().position(|&b| b == b'=') {
-            let name = &segment[..at];
+    for part in decoded.split(|&b| separator(b)) {
+        let name = part.iter().position(|&b| b == b'=').map(|at| &part[..at]);
+        if let Some(name) = name {
             if !allowed(name) {
-                return Some(Cow::Owned(String::from_utf8_lossy(name).into_owned()));
+                return Some(header(owned(name)));
             }
+        }
+        if line_break(part) && !name.is_some_and(|name| name.eq_ignore_ascii_case(b"body")) {
+            return Some(control(owned(name.unwrap_or(part))));
         }
     }
     None

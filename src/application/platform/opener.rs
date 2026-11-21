@@ -38,6 +38,11 @@ pub(crate) fn open_url(url: &str) -> Result<(), String> {
             "a link opens an `http`, `https` or `mailto` address, and this one is `{}`",
             baumhard::util::log::excerpt(scheme)
         ),
+        LinkRefusal::MailControl { name } => format!(
+            "a `mailto` link holds a line break only encoded and only in its `body`, and no other \
+             control character, and this one has one in `{}`",
+            baumhard::util::log::excerpt(&name)
+        ),
         LinkRefusal::MailHeader { name } => format!(
             "a `mailto` link names only the headers to, cc, bcc, subject, body and in-reply-to, \
              and this one has `{}`",
@@ -128,15 +133,25 @@ mod tests {
     /// **A `mailto` naming any header but RFC 6068's is not opened**
     /// (ruling D3.3 item 1), whatever its spelling — a `+` beside the
     /// name, a NUL, an `attach` behind an encoded `&` or in the address
-    /// part, after a `&`, `;`, `,` or `#` there (ruling D3.4 item 1) —
-    /// the message naming it; one naming only those is. Controls, seen
+    /// part, after a `&`, `;`, `,` or `#` there (ruling D3.4 item 1), or
+    /// after a `,` or `#` in the query (ruling D3.5) — the message naming
+    /// it; and none with a line break outside its `body` (ruling D3.5
+    /// item 3); one naming only those is. Controls, seen
     /// red: `check_link_url` as it was at 3e90f093 (the attachment
     /// denylist) lets the first through to the seam; as it was at
-    /// fed68afd, `a@example.org&attach=`.
+    /// fed68afd, `a@example.org&attach=`; as it was at 5f8bcfff,
+    /// `?subject=hi#attach=` and `subject=x%0D%0A…`.
     #[test]
     fn test_a_mailto_naming_another_header_does_not_reach_the_opener() {
         let _ = take_opened();
         for (url, name) in [
+            ("mailto:a@example.org?subject=hi#attach=/etc/passwd", "`attach`"),
+            ("mailto:a@example.org?body=x#attach=/etc/passwd", "`attach`"),
+            ("mailto:a@example.org?subject=hi%23attach=/etc/passwd", "`attach`"),
+            ("mailto:a@example.org?to=c,attach=/etc/passwd", "`attach`"),
+            ("mailto:a@example.org?to=c%2Cattach=/etc/passwd", "`attach`"),
+            ("mailto:attach=/etc/passwd", "`attach`"),
+            ("mailto:x@y,a%3Db@c", "`a`"),
             ("mailto:a@example.org?attach+=/etc/passwd", "`attach+`"),
             ("mailto:a@example.org?attach%00=/etc/passwd", "`attach%00`"),
             ("mailto:a@example.org?subject=x%26attach=y", "`attach`"),
@@ -146,8 +161,8 @@ mod tests {
             ("mailto:a@example.org&attach=/etc/passwd?subject=hi", "`attach`"),
             ("mailto:a@example.org;attach=x", "`attach`"),
             ("mailto:a@example.org,attach=x", "`attach`"),
-            ("mailto:a@example.org%26attach=x", "`attach`"),
-            ("mailto:a@example.org%3Battach=x", "`attach`"),
+            ("mailto:a@example.org%26attach=x", "`a@example.org%26attach`"),
+            ("mailto:a@example.org%3Battach=x", "`a@example.org%3Battach`"),
             ("mailto:a@example.org#&attach=x", "`attach`"),
             ("mailto:a@example.org#attach=x", "`attach`"),
         ] {
@@ -155,6 +170,16 @@ mod tests {
             assert!(
                 refused.contains("names only the headers") && refused.contains(name),
                 "{url}: {refused}"
+            );
+        }
+        for url in [
+            "mailto:a@example.org?subject=x%0D%0AAttach:%20/etc/passwd",
+            "mailto:a@example.org?subject=x\nAttach: /etc/passwd",
+        ] {
+            let refused = open_url(url).expect_err(url);
+            assert!(
+                refused.contains("holds a line break only encoded") && refused.contains("`subject`"),
+                "{url:?}: {refused}"
             );
         }
         assert!(take_opened().is_empty(), "nothing refused was opened");

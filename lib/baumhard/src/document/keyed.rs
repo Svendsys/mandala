@@ -235,9 +235,7 @@ pub fn name(name: impl Into<String>) -> Name {
 #[cfg(test)]
 mod counted {
     use super::NAMES_COMPARED;
-    use std::borrow::Borrow;
     use std::fmt;
-    use std::ops::Deref;
 
     /// A `String` that counts every compare made through it
     /// (`NAMES_COMPARED`): what a test build stores an id or a name as.
@@ -254,21 +252,13 @@ mod counted {
         NAMES_COMPARED.with(|count| count.set(count.get() + 1));
     }
 
-    impl Deref for CountedName {
-        type Target = String;
-        fn deref(&self) -> &String {
-            &self.0
-        }
-    }
-
-    impl Borrow<str> for CountedName {
-        fn borrow(&self) -> &str {
-            &self.0
-        }
-    }
-
-    impl AsRef<str> for CountedName {
-        fn as_ref(&self) -> &str {
+    impl CountedName {
+        /// The name as a `str`, counted as a compare is (`NAMES_COMPARED`):
+        /// what a test build reads a name through, so a scan that compares
+        /// through it counts too (ruling D3.5 item 4 on #252). There is no
+        /// `Deref`, `AsRef` or `Borrow` to read it through uncounted.
+        pub fn as_str(&self) -> &str {
+            counted();
             &self.0
         }
     }

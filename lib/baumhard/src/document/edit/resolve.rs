@@ -345,7 +345,8 @@ fn span_op(dto: &SpanOpDto, names: Names<'_>) -> Resolved<SpanOp> {
             start: *start,
             end: *end,
         },
-        SpanOpDto::SetLink(target) => SpanOp::SetLink(opt(target, |target| match target {
+        SpanOpDto::SetLink(target) => SpanOp::SetLink(opt(target, |target| {
+            match target {
             LinkTargetDto::Url(url) => match check_link_url(url) {
                 Ok(url) => Ok(LinkTarget::Url(url.to_string())),
                 Err(LinkRefusal::Scheme(_)) => Err(Fault::Invalid {
@@ -357,8 +358,13 @@ fn span_op(dto: &SpanOpDto, names: Names<'_>) -> Resolved<SpanOp> {
                     message:
                         "a `mailto` link names only the headers to, cc, bcc, subject, body and in-reply-to",
                 }),
+                Err(LinkRefusal::MailControl { .. }) => Err(Fault::Invalid {
+                    field: "set_link",
+                    message: "a `mailto` link holds a line break only encoded and only in its `body`, and no other control character",
+                }),
             },
             LinkTargetDto::Verb(id) => verb("set_link", id, names).map(LinkTarget::Verb),
+        }
         })?),
         SpanOpDto::Text(op) => SpanOp::Text(text_op(op, DocKind::Span, names)?),
     })

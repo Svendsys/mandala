@@ -369,7 +369,7 @@ impl Document {
                     .iter()
                     .map(|m| resolve::mutation(m, Some(self)))
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|fault| PresentError::of(fault, &def.id))?;
+                    .map_err(|fault| PresentError::of(fault, def.id.as_str()))?;
                 Body::Document(MutatorTree::new_with(Mutator::new_macro(
                     mutations,
                     BranchKey::new(def.target.kind(), 0),
@@ -389,7 +389,7 @@ impl Document {
         let filter = match &def.filter {
             Some(filter) => Some(
                 resolve::predicate(&filter.0, Some(self))
-                    .map_err(|fault| PresentError::of(fault, &def.id))?,
+                    .map_err(|fault| PresentError::of(fault, def.id.as_str()))?,
             ),
             None => None,
         };
@@ -530,7 +530,7 @@ impl Document {
     pub fn stop_defined(&mut self, id: PresentationId, nodes: &[NodeId], now_ms: f64) -> usize {
         let definitions = Arc::clone(&self.definitions);
         match definitions.presentations.get(usize::from(id.0)) {
-            Some(def) => self.stop_presentation(&def.id, nodes, now_ms),
+            Some(def) => self.stop_presentation(def.id.as_str(), nodes, now_ms),
             None => 0,
         }
     }

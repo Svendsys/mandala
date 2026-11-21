@@ -338,10 +338,13 @@ fn test_a_step_resolves_each_name_in_one_probe() {
 ///
 /// The ids and names the lists hold count as the index's keys do (in a
 /// test build, `keyed::Name`; ruling D3.4 item 4), so a scan of a list
-/// counts wherever it is written — in place of the probe or beside it.
+/// counts wherever it is written — in place of the probe or beside it,
+/// and through `==` or `as_str` alike: a counted name has no `Deref`,
+/// `AsRef` or `Borrow` to read it through uncounted (ruling D3.5 item 4).
 ///
-/// Controls, each seen red: the review's probe, `verb_of` scanning the
-/// verbs (`position(|verb| verb.id == id)`) before its probe; `verb_of`,
+/// Controls, each seen red: the review's probes, `verb_of` scanning the
+/// verbs before its probe through `==` (`position(|verb| verb.id ==
+/// id)`) and through `as_str` (`verb.id.as_str() == id`: 524,674); `verb_of`,
 /// `var_of` and `palette_of` each back to its scan of the list;
 /// `NameIndex::get` scanning its keys — each compares hundreds of
 /// thousands of names for the 256.
@@ -427,6 +430,32 @@ fn test_verb_by_id_refuses_definitions_no_document_indexed() {
     let _ = definitions.verb_by_id("go");
 }
 
+/// **A stale index says so in a debug build** (ruling D3.5 item 7): an
+/// index that puts `b` where `a` is — what a `Definitions` whose verbs
+/// changed after it was indexed would hold — stops `verb_by_id("b")`
+/// rather than answer with `a`'s definition.
+///
+/// Control, seen red: `verb_by_id` without its second `debug_assert!`
+/// answers `a` for `b` and does not panic.
+#[test]
+#[should_panic(expected = "the index puts `b` at")]
+fn test_verb_by_id_refuses_a_stale_index() {
+    use crate::document::ids::{Definitions, VerbDef};
+    use crate::document::keyed::name;
+    let verb = |id: &str| VerbDef {
+        id: name(id),
+        name: id.to_uppercase(),
+        description: String::new(),
+        steps: Vec::new(),
+    };
+    let mut definitions = Definitions {
+        verbs: vec![verb("a"), verb("b")],
+        ..Definitions::default()
+    };
+    definitions.verb_ids.insert_first("b", VerbId(0));
+    let _ = definitions.verb_by_id("b");
+}
+
 /// **A link opens `http`, `https` and `mailto`, and nothing else**, at
 /// load and at apply (amendment 3 on #252): a `file://` span link is
 /// refused at its `url`, naming the scheme; an `https` one loads; and a
@@ -502,10 +531,24 @@ fn test_a_link_to_a_file_is_refused_at_load_and_at_apply() {
 /// was, and an edit's or a presentation's `set_link` to one is refused
 /// when it is read.
 ///
+/// Ruling D3.5: the query split on `,` and `#` as well (verification
+/// review 6001048552's rows, and the over-refused `body=a,b=c` and
+/// `subject=x#y=z`), the first part of the address read raw
+/// (`mailto:attach=…`), a later address with an encoded `=`
+/// (`x@y,a%3Db@c`), a decoded line break outside a `body` and a raw
+/// control character anywhere (`LinkMailControl`) are refused; a
+/// fragment, `mailto:to=a@b`, `mailto:a%3Db@c` and a `body` with line
+/// breaks load.
+///
 /// Controls, each seen red: `check_link_url` as it was at 3e90f093 (the
 /// attachment denylist) loads `attach+`, the first row; as it was at
 /// fed68afd (D3.3, the address part checked for `?` alone) loads
-/// `a@example.org&attach=`; `load_node`
+/// `a@example.org&attach=`; as it was at 5f8bcfff (D3.4) loads every
+/// D3.5 row; the raw address loop skipping its first part loads the four
+/// `mailto:attach=…`; without the raw control check, `body=x\ry` and
+/// `a\u{1}@…` load; without the query's line-break check, the two
+/// `subject=x%0A…` rows load (each failure lists every row it gets
+/// wrong); `load_node`
 /// accepting `LinkRefusal::MailHeader` loads it too; the validator
 /// accepting it applies the `set_link`; `resolve` accepting it reads the
 /// edit (and so the presentation, which reads through it).
@@ -516,6 +559,16 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
         format!(
             r#"{{"format":1,"name":"l","nodes":[{{"id":1,"position":[0,0],"sections":[{{"spans":[{{"text":"x","link":{{"url":{url}}}}}]}}]}}]}}"#
         )
+    };
+    // Every row is read before any is judged, so a failure lists each
+    // address the code at hand gets wrong, not only the first.
+    let mut wrong: Vec<String> = Vec::new();
+    let mut refused = |url: &str, kind: LoadErrorKind| match load(&map(url)) {
+        Ok(_) => wrong.push(format!("{url:?} loads")),
+        Err(error) if error.path != "nodes[0].sections[0].spans[0].link.url" || error.kind != kind => {
+            wrong.push(format!("{url:?}: {} {:?}", error.path, error.kind))
+        }
+        Err(_) => {}
     };
     for (url, name) in [
         ("mailto:a@example.org?attach+=/etc/passwd", "attach+"),
@@ -543,21 +596,54 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
         ("mailto:a@example.org&attach=/etc/passwd?subject=hi", "attach"),
         ("mailto:a@example.org;attach=x", "attach"),
         ("mailto:a@example.org,attach=x", "attach"),
-        ("mailto:a@example.org%26attach=x", "attach"),
-        ("mailto:a@example.org%3Battach=x", "attach"),
+        ("mailto:a@example.org%26attach=x", "a@example.org%26attach"),
+        ("mailto:a@example.org%3Battach=x", "a@example.org%3Battach"),
         ("mailto:a@example.org#&attach=x", "attach"),
         ("mailto:a@example.org#attach=x", "attach"),
         // Over-refused: an address part with an `=` that is no header.
         ("mailto:a@example.org;c=d", "c"),
+        // Ruling D3.5 item 1: the query split on the address part's
+        // separators, `,` and `#` too — verification review 6001048552's
+        // rows, each of which loaded at 5f8bcfff — and the over-refusals
+        // that come with it.
+        ("mailto:a@example.org?subject=hi#attach=/etc/passwd", "attach"),
+        ("mailto:a@example.org?body=x#attach=/etc/passwd", "attach"),
+        ("mailto:a@example.org?subject=hi%23attach=/etc/passwd", "attach"),
+        ("mailto:a@example.org?to=c,attach=/etc/passwd", "attach"),
+        ("mailto:a@example.org?to=c%2Cattach=/etc/passwd", "attach"),
+        ("mailto:a@example.org?body=a,b=c", "b"),
+        ("mailto:a@example.org?subject=x#y=z", "y"),
+        // Ruling D3.5 item 2: the first part of the address, read raw.
+        ("mailto:attach=/etc/passwd", "attach"),
+        ("mailto:%61ttach=/etc/passwd", "%61ttach"),
+        ("mailto:attach=/etc/passwd?subject=x", "attach"),
+        ("mailto:attach=/etc/passwd&to=c@d", "attach"),
+        // Ruling D3.5 item 5: a later address with `=`, encoded or not.
+        ("mailto:x@y,a%3Db@c", "a"),
     ] {
-        let error = load(&map(url)).expect_err(url);
-        assert_eq!(error.path, "nodes[0].sections[0].spans[0].link.url", "{url}");
-        assert_eq!(
-            error.kind,
-            LoadErrorKind::LinkMailHeader { name: name.into() },
-            "{url}"
-        );
+        refused(url, LoadErrorKind::LinkMailHeader { name: name.into() });
     }
+    // Ruling D3.5 item 3: a decoded line break outside a `body`, and a
+    // raw control character anywhere — which nothing else refuses: the
+    // format reads a `url` as any JSON string.
+    for (url, name) in [
+        (
+            "mailto:a@example.org?subject=x%0D%0AAttach:%20/etc/passwd",
+            "subject",
+        ),
+        ("mailto:a@example.org?subject=x%0AAttach=/etc/passwd", "subject"),
+        ("mailto:a%0D%0Ab@example.org", "a\r\nb@example.org"),
+        ("mailto:a@example.org?subject=x\nAttach: /etc/passwd", "subject"),
+        ("mailto:a@example.org?body=x\ry", "body"),
+        ("mailto:a\u{1}@example.org", "a\u{1}@example.org"),
+    ] {
+        refused(url, LoadErrorKind::LinkMailControl { name: name.into() });
+    }
+    assert!(
+        wrong.is_empty(),
+        "addresses not refused as they should be:\n{}",
+        wrong.join("\n")
+    );
     for url in [
         "mailto:a@example.org?to=b@example.org&cc=c@example.org&bcc=d@example.org",
         "mailto:a@example.org?subject=attach&body=attachment",
@@ -567,6 +653,10 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
         "mailto:a@example.org?body=Q%26A",
         "mailto:a@example.org,b@example.org",
         "mailto:a@example.org;b@example.org?subject=x",
+        "mailto:a@example.org?to=c@example.org#frag",
+        "mailto:to=a@example.org",
+        "mailto:a%3Db@example.org",
+        "mailto:a@example.org?body=line1%0D%0Aline2",
         "https://example.org/?attach=x",
     ] {
         load(&map(url)).unwrap_or_else(|error| panic!("{url} loads: {error}"));

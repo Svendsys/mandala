@@ -375,6 +375,10 @@ impl<'d> Validator<'d> {
                     at: self.at(),
                     name: name.into_owned(),
                 },
+                LinkRefusal::MailControl { name } => MutationError::LinkMailControl {
+                    at: self.at(),
+                    name: name.into_owned(),
+                },
             }),
             None => Ok(()),
         }
@@ -751,11 +755,11 @@ impl<'d> Validator<'d> {
                     self.name("theme variant", &variant.name)?;
                 }
                 for variable in &theme.variables {
-                    self.name("theme variable", variable)?;
+                    self.name("theme variable", variable.as_str())?;
                 }
                 Ok(())
             }
-            DocElement::Palette(palette) => self.name("palette", &palette.name),
+            DocElement::Palette(palette) => self.name("palette", palette.name.as_str()),
             DocElement::Map(_) => Ok(()),
             DocElement::Defaults(defaults) => self.defaults(defaults),
         }
