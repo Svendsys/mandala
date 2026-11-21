@@ -14,6 +14,10 @@ mod budget_tests;
 mod class_reach_tests;
 /// Directional rings (#324).
 pub mod directional_tests;
+/// A sided frame lays its sides far from the origin wherever the
+/// coordinates hold its glyphs apart (#362).
+#[cfg(test)]
+mod far_sides_tests;
 pub mod fit_tests;
 /// TextFlow's fuzz properties, which the `fuzz/` targets call
 /// (TEST_CONVENTIONS §T14).

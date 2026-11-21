@@ -884,7 +884,15 @@ What they hold, in short (each module's docs are the full list):
   is; within a thousandth of the limit either way, only what every
   placement owes is held. The sweep's precondition is that it holds
   placements on both sides, and flow_structured has a seed just within
-  the limit and one just past it.
+  the limit and one just past it. A far-out frame with sides lays them as
+  its twin round the same outline at the origin does, no junction empty or
+  kept short and no fewer copies than a bound the twin's count and the
+  coordinates' spacing set, wherever the coordinates hold its glyphs apart
+  (#362): held by the suite,
+  `test_generated_far_frames_lay_their_sides_as_their_twins_at_the_origin`,
+  over the frames the structured generator draws, with none of its other
+  properties checked, and not by the targets, where a twin would be a
+  second budgeted frame an input past the per-input bound below.
 - **Glyph-layer mutations.** No panic; no non-finite box reaches an
   ancestor; a run's overrides are empty or exactly as long as its
   placed glyphs, whatever range is named; `same_state` is reflexive and

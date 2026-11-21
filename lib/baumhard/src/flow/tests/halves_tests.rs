@@ -852,48 +852,59 @@ pub fn do_flow_halves_closed_form_roots_are_the_first_at_what_is_owed() {
     }
 }
 
-/// The step along `dir` from two inks' centers `delta` apart, their half
-/// sizes summing to `reach`, after which their boxes are `owed` apart —
-/// on where they are nearer, back (a negative) where further: the first
-/// such step, found in `f64` by a scan of 20,000 steps and a bisection of
-/// the one that crosses, from the gap's definition alone. An oracle for
-/// the tangent line's root that shares no arithmetic with it.
-fn line_root_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f64 {
-    let (dx, dy, wx, wy) = (delta.x as f64, delta.y as f64, dir.x as f64, dir.y as f64);
-    let (rx, ry, owed) = (reach.x as f64, reach.y as f64, owed as f64);
-    let gap = |d: f64| {
-        let x = ((dx + wx * d).abs() - rx).max(0.0);
-        let y = ((dy + wy * d).abs() - ry).max(0.0);
-        x.hypot(y)
-    };
-    let near = |d: f64| gap(d) < owed || (gap(d) <= owed && owed <= 0.0);
-    let on = near(0.0);
-    let sign = if on { 1.0 } else { -1.0 };
-    // Past every edge a step can cross, four times over.
-    let span = 4.0 * (dx.abs() + dy.abs() + rx + ry + owed + 1.0) / wx.hypot(wy);
-    let mut before = 0.0;
-    for i in 1..=20_000 {
-        let d = sign * span * i as f64 / 20_000.0;
-        if near(d) != on {
-            let (mut inside, mut outside) = (before, d);
-            for _ in 0..200 {
-                let middle = 0.5 * (inside + outside);
-                if near(middle) == on {
-                    inside = middle;
-                } else {
-                    outside = middle;
-                }
-            }
-            return outside;
-        }
-        before = d;
-    }
-    f64::NAN
-}
-
 #[test]
 fn test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap() {
     do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap();
+}
+
+/// #384's CI finding (`structured_line_root_owed_a_gap_its_step_barely_moves`):
+/// on the line two inks `(-20, -12)` apart, reach `(6, 6)`, stepped along
+/// `(-1.25, -1.09e-7)` and owed 6, the closed form is the root, to
+/// `CLOSED_FORM_REACH` of its scale of the line's root in `f64`; and the
+/// bisection is off by more than its bracket's width — precondition: the
+/// case `bisection_window` is for — and lies inside that window, the steps
+/// it may stop at.
+///
+/// The bisection is 5.9e-4 off there, past the root, its bracket's width
+/// 2.3e-4; the closed form 4.5e-6.
+///
+/// The window runs from -20.806 to -11.1947: past the root one axis's gap
+/// stays all but 6 to where the other's opens again.
+///
+/// Control: with the bisection 10⁻² short, before the root where the gap
+/// is clearly past what is owed, red ("the bisection steps -11.18753,
+/// outside -20.805981056832046 to -11.194736282389622").
+#[test]
+fn test_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors() {
+    do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors();
+}
+
+/// The body of
+/// `test_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors`,
+/// reused by its benchmark.
+pub fn do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors() {
+    use crate::flow::place::halves::line_root_seam;
+    use crate::flow::tests::flow_fuzz::{bisection_window, line_root_in_f64, CLOSED_FORM_REACH};
+    let (delta, reach, owed) = (Vec2::new(-20.0, -12.0), Vec2::new(6.0, 6.0), 6.0);
+    let dir = Vec2::new(-1.25, -1.092_784_7e-7);
+    let (closed, bisected) = line_root_seam(delta, dir, reach, owed);
+    let truth = line_root_in_f64(delta, dir, reach, owed);
+    let scale = truth.abs() + f64::from(owed) + f64::from(reach.max_element());
+    assert!(
+        (f64::from(closed) - truth).abs() <= CLOSED_FORM_REACH * scale,
+        "the closed form steps {closed}, the line's root is {truth}"
+    );
+    let off = (f64::from(bisected) - truth).abs();
+    let width = (f64::from(bisected.abs()) + f64::from(owed) + f64::from(reach.max_element())) * 1e-5;
+    assert!(
+        off > width,
+        "precondition: the bisection steps {bisected}, {off:e} from the root, within its bracket's width {width:e}"
+    );
+    let (lo, hi) = bisection_window(delta, dir, reach, owed, truth);
+    assert!(
+        (lo..=hi).contains(&f64::from(bisected)),
+        "the bisection steps {bisected}, outside {lo} to {hi}"
+    );
 }
 
 /// #348: the tangent line's root in closed form (`line_root`) is the
@@ -932,6 +943,7 @@ fn test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_g
 /// 22.876034, the line's root is 22.8076041…").
 pub fn do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap() {
     use crate::flow::place::halves::line_root_seam;
+    use crate::flow::tests::flow_fuzz::{line_root_in_f64, CLOSED_FORM_REACH};
     use crate::util::tests::choices::Choices;
     // How far the closed form may be from the oracle, of the scale it is
     // read at: its step, what is owed, and the reach.
@@ -940,7 +952,7 @@ pub fn do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide
         let truth = line_root_in_f64(delta, dir, reach, owed);
         let scale = truth.abs() + owed as f64 + reach.max_element() as f64;
         let ok = if truth.is_finite() {
-            (closed as f64 - truth).abs() <= 5e-6 * scale
+            (closed as f64 - truth).abs() <= CLOSED_FORM_REACH * scale
         } else {
             !closed.is_finite()
         };
@@ -5522,14 +5534,22 @@ fn extreme_touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) ->
 /// R50.5 (review 5745584645): a side arc whose search for its count the
 /// frame's budget stopped keeps the copies it had where they hold the
 /// equal-gap rule, and is reported kept short, apart from an arc left
-/// empty: "To see a World in a Grain of Sand" at 16 pt round a 2,000
-/// sharp square, `Once` at span ½ with an `=` on its sides (ruling R51.5:
-/// a glyph the compiled faces hold, wider than tall, where `❧` was one no
-/// compiled face holds), outward, whose
-/// count search moves from its guess, at budgets from 5,000 to 8,000 in
-/// steps of 5. The first budget at which an arc is kept short places more
+/// empty: "To see a World in a Grain of Sand" at 16 pt round an ellipse
+/// 2,000 × 1,200 centered at (10⁶, 10⁶), `Spread` at span natural with
+/// `─═` on its sides, outward, at budgets from 40,000 to 60,000 in steps of
+/// 1,000. The first budget at which an arc is kept short places more
 /// glyphs than the last before it at which that arc was left empty, the
 /// other arc as it was.
+///
+/// The frame is far out because there its count search's solves each lay
+/// their copies several times, where at the origin the band curve's forms
+/// answer for most of them (#362). Since the search moves to the count the
+/// solved gaps point to, a few solves where it once moved a count at a
+/// time, neither this ellipse nor the sharp square 2,000 across this was
+/// first laid round (`Once` at span ½ with an `=`, kept short at budgets
+/// from 5,000 to 8,000) is kept short at the origin at any budget from
+/// 1,000 to 40,000: a budget that affords an arc's floor row there
+/// affords the rest of its search.
 ///
 /// Control: with a stopped search's kept copies not reported, red. (No
 /// `do_*` twin: it sets a test seam.)
@@ -5538,20 +5558,16 @@ fn test_flow_halves_an_arc_kept_short_is_reported() {
     use crate::flow::place::halves::BUDGET_OVERRIDE;
     use crate::flow::place::SideLoss;
     let text = "To see a World in a Grain of Sand";
-    let shape = outline(
-        Rect::new(Vec2::ZERO, Vec2::splat(2_000.0)),
-        Shape::Rectangle {
-            radius: Percent::new(0),
-        },
-    );
+    let size = Vec2::new(2_000.0, 1_200.0);
+    let shape = outline(Rect::new(Vec2::splat(1e6) - size * 0.5, size), Shape::Ellipse);
     let layout = RingLayout {
-        span: LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
-        sides: Some(("=".to_string(), Rgba::opaque(0, 0, 0))),
+        span: LineSpan::NATURAL,
+        sides: Some(("─═".to_string(), Rgba::opaque(0, 0, 0))),
         ..RingLayout::whole()
     };
-    let fit = FitMode::Once { filler: None };
+    let fit = FitMode::Spread;
     let mut frames = Vec::new();
-    for budget in (5_000..8_000).step_by(5) {
+    for budget in (40_000..60_000).step_by(1_000) {
         let (_, placed, trace) = with_seam(&BUDGET_OVERRIDE, budget, || {
             frame_with(text, 16.0, &shape, &fit, &layout, true)
         });
@@ -5581,7 +5597,7 @@ fn test_flow_halves_an_arc_kept_short_is_reported() {
         return;
     }
     panic!(
-        "no arc is reported kept short at any budget from 5,000 to 8,000: {:?}",
+        "no arc is reported kept short at any budget from 40,000 to 60,000: {:?}",
         frames
             .iter()
             .map(|f| (f.0, f.1.clone()))

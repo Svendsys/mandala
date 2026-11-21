@@ -1086,15 +1086,25 @@ pub fn check_pair_model(choices: &mut Choices<'_>) -> Result<(), String> {
     pair_model_held(choices).map(|_| ())
 }
 
-/// The tangent line's root in closed form held to the iterative rule's
-/// bisection of it as its oracle (#309, ruling B16.1b; `line_root`,
-/// `along`): two inks some way apart, their half sizes summing to a reach
-/// the choices draw, one stepped along a way they draw until the two are
-/// owed apart — on where they are nearer, back where they are further.
-/// The gap along a line is convex in the step, so each way has one root:
-/// where the bisection brackets one, the closed form finds it, to the
-/// bracket's width; and where only the closed form does, the boxes are
-/// owed apart there.
+/// The tangent line's root in closed form held to the line's root in
+/// `f64`, and the iterative rule's bisection of it held to the steps it
+/// cannot tell from that root (#309, ruling B16.1b; `line_root`, `along`;
+/// #384): two inks some way apart, their half sizes summing to a reach the
+/// choices draw, one stepped along a way they draw until the two are owed
+/// apart — on where they are nearer, back where they are further. The gap
+/// along a line is convex in the step, so each way has one root.
+///
+/// - The closed form is held to `line_root_in_f64`, which shares no
+///   arithmetic with it, to `CLOSED_FORM_REACH` of the scale it is read
+///   at. Nothing read at the closed form's step widens that: a closed form
+///   that lands where the gap is flat is held as tightly as any.
+/// - The bisection is held to the oracle too, not to the closed form: to
+///   the steps it may stop at, its reading of the gap off by `along`'s
+///   rounding (`bisection_window`, read at the oracle's root), and its
+///   last bracket. That is as much as its `f32` reading lets a sound check
+///   say, and on a flat stretch it is little.
+/// - Where the oracle finds no root and the closed form does, the boxes
+///   are owed apart at the closed form's step.
 pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
     use crate::flow::place::halves::line_root_seam;
     let unit = |choices: &mut Choices<'_>| choices.below(1001) as f32 / 1000.0;
@@ -1110,22 +1120,208 @@ pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
     let (closed, bisected) = line_root_seam(delta, dir, reach, owed);
     let what = format!("inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}");
     let gap = |d: f32| ((delta + dir * d).abs() - reach).max(Vec2::ZERO).length();
-    // The bisection's last bracket, and the floats of the step and the gap.
-    let width = (bisected.abs() + owed + reach.max_element()).max(INK_TOLERANCE) * 1e-5;
-    match (closed.is_finite(), bisected.is_finite()) {
-        (true, true) if (closed - bisected).abs() <= width => Ok(()),
-        (false, true) => Err(format!(
-            "{what}: the bisection steps {bisected}, the closed form finds none"
-        )),
-        (true, false) if owed > 0.0 && (gap(closed) - owed).abs() > 1e-4 * (owed + 1.0) => Err(format!(
-            "{what}: the closed form steps {closed}, where the gap is {}",
-            gap(closed)
-        )),
-        (true, true) => Err(format!(
-            "{what}: the closed form steps {closed}, the bisection {bisected}"
-        )),
-        _ => Ok(()),
+    let truth = line_root_in_f64(delta, dir, reach, owed);
+    let scale = truth.abs() + f64::from(owed) + f64::from(reach.max_element());
+    match (closed.is_finite(), truth.is_finite()) {
+        (true, true) if (f64::from(closed) - truth).abs() > CLOSED_FORM_REACH * scale => {
+            return Err(format!(
+                "{what}: the closed form steps {closed}, the line's root is {truth}"
+            ))
+        }
+        (false, true) => {
+            return Err(format!(
+                "{what}: the closed form finds none, the line's root is {truth}"
+            ))
+        }
+        (true, false) if owed > 0.0 && (gap(closed) - owed).abs() > 1e-4 * (owed + 1.0) => {
+            return Err(format!(
+                "{what}: the closed form steps {closed}, where the gap is {}",
+                gap(closed)
+            ))
+        }
+        _ => {}
     }
+    if !(bisected.is_finite() && truth.is_finite()) {
+        return Ok(());
+    }
+    // The bisection's last bracket, and the floats of the step.
+    let width = (f64::from(bisected.abs()) + f64::from(owed) + f64::from(reach.max_element()))
+        .max(f64::from(INK_TOLERANCE))
+        * 1e-5;
+    let off = (f64::from(bisected) - truth).abs();
+    if off <= width {
+        return Ok(());
+    }
+    let (lo, hi) = bisection_window(delta, dir, reach, owed, truth);
+    if f64::from(bisected) < lo - width || f64::from(bisected) > hi + width {
+        return Err(format!(
+            "{what}: the bisection steps {bisected}, outside {lo}..{hi}, the steps it may stop at, the line's root {truth}"
+        ));
+    }
+    Ok(())
+}
+
+/// How far from the line's root in `f64` the tangent line's closed form
+/// (`line_root`) may be, of the scale it is read at — its step, what is
+/// owed and the reach: five millionths. A measure, not a derivation: the
+/// most its `f32` arithmetic was found off over the 8,000 seeded lines and
+/// the findings of
+/// `test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap`,
+/// with room. A bound derived from that arithmetic alone cannot be this
+/// tight where the gap barely moves with the step: the closed form solves
+/// a line within a few roundings of its own, and such a line's root lies
+/// as far off as those roundings over the gap's rate. On #384's CI
+/// finding that is 2.6·10⁻³, which would admit a closed form 10⁻³ off; it
+/// is 4.5·10⁻⁶ off.
+pub(crate) const CLOSED_FORM_REACH: f64 = 5e-6;
+
+/// The step along `dir` from two inks' centers `delta` apart, their half
+/// sizes summing to `reach`, after which their boxes are `owed` apart —
+/// on where they are nearer, back (a negative) where further: the first
+/// such step, found in `f64` by a scan of 20,000 steps and a bisection of
+/// the one that crosses, from the gap's definition alone. An oracle for
+/// the tangent line's root that shares no arithmetic with it. `NaN` where
+/// the scan meets no crossing.
+pub(crate) fn line_root_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f64 {
+    line_root_owed_in_f64(delta, dir, reach, f64::from(owed))
+}
+
+/// [`line_root_in_f64`] for what is owed in `f64`.
+fn line_root_owed_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, owed: f64) -> f64 {
+    let (dx, dy, wx, wy) = (delta.x as f64, delta.y as f64, dir.x as f64, dir.y as f64);
+    let (rx, ry) = (reach.x as f64, reach.y as f64);
+    let gap = |d: f64| {
+        let x = ((dx + wx * d).abs() - rx).max(0.0);
+        let y = ((dy + wy * d).abs() - ry).max(0.0);
+        x.hypot(y)
+    };
+    let near = |d: f64| gap(d) < owed || (gap(d) <= owed && owed <= 0.0);
+    let on = near(0.0);
+    let sign = if on { 1.0 } else { -1.0 };
+    // Past every edge a step can cross, four times over.
+    let span = 4.0 * (dx.abs() + dy.abs() + rx + ry + owed + 1.0) / wx.hypot(wy);
+    let mut before = 0.0;
+    for i in 1..=20_000 {
+        let d = sign * span * i as f64 / 20_000.0;
+        if near(d) != on {
+            let (mut inside, mut outside) = (before, d);
+            for _ in 0..200 {
+                let middle = 0.5 * (inside + outside);
+                if near(middle) == on {
+                    inside = middle;
+                } else {
+                    outside = middle;
+                }
+            }
+            return outside;
+        }
+        before = d;
+    }
+    f64::NAN
+}
+
+/// The steps of [`check_line_root`]'s line among which the bisection
+/// (`along`) may set its root, the line's root `truth` in `f64` known
+/// (#384's CI finding): every step it may stop at, its reading of the gap
+/// in `f32` off by `ε` at most. `ε` is read at `truth`, from the line's
+/// coordinates there: nothing read at a step under test widens it.
+///
+/// The derivation of `ε`. `along` steps on the sign of `gap(d) − owed`,
+/// the gap read in `f32`. Each axis's step `dir·d`, its center `delta +
+/// dir·d` and its distance past `reach` are rounded once each, half a
+/// spacing of `f32` at each, and each moves the gap by no more than
+/// itself; the length of the two axes' gaps, squared, summed and rooted,
+/// is within two spacings at the gap; near the root `− owed` is exact
+/// (Sterbenz).
+///
+/// The window. `along` keeps a bracket whose one end reads nearer than
+/// what is owed and whose other reads further, and stops on a step where
+/// the reading changes: one whose gap is within `ε` of what is owed. On
+/// from the start, where the boxes are nearer, the gap rises through what
+/// is owed and, convex, keeps rising: every such step lies before the
+/// first whose gap is `ε` past it, and after the last before that whose
+/// gap is `ε` short of it, or the start. Back from the start, where they
+/// are further, the gap falls through what is owed: every such step lies
+/// from the first whose gap is within `ε` past it to the first after
+/// that whose gap is `ε` past it again — the gap's sublevel set, an
+/// interval since the gap is convex — or the scan's end. Past the root
+/// the gap may stay within `ε` of what is owed a long way where it is
+/// flat, and the window with it: on the finding, from 11.19 to past 20.8,
+/// one axis's gap all but 6 over that stretch. The bisection's step,
+/// 5.9·10⁻⁴ past the root, lies inside.
+///
+/// Each end is found in `f64` by a scan of 20,000 steps, as
+/// [`line_root_in_f64`] scans, and a bisection of the one that crosses.
+pub(crate) fn bisection_window(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32, truth: f64) -> (f64, f64) {
+    let (dx, dy, wx, wy) = (delta.x as f64, delta.y as f64, dir.x as f64, dir.y as f64);
+    let (rx, ry, owed) = (reach.x as f64, reach.y as f64, f64::from(owed));
+    let gap = |d: f64| {
+        let x = ((dx + wx * d).abs() - rx).max(0.0);
+        let y = ((dy + wy * d).abs() - ry).max(0.0);
+        x.hypot(y)
+    };
+    let mut rounding = 0.0;
+    for (at, w, r) in [(dx, wx, rx), (dy, wy, ry)] {
+        let step = w * truth;
+        let center = at + step;
+        rounding += 0.5
+            * (f32_spacing(step.abs() as f32)
+                + f32_spacing(center.abs() as f32)
+                + f32_spacing((center.abs() - r).abs() as f32));
+    }
+    let epsilon = rounding + 2.0 * f32_spacing(gap(truth) as f32);
+    let sign = if truth < 0.0 { -1.0 } else { 1.0 };
+    let span = 4.0 * (dx.abs() + dy.abs() + rx + ry + owed + 1.0) / wx.hypot(wy);
+    let at = |t: f64| gap(sign * t);
+    // The first `t` from `from` on at which `past` holds, to `f64`'s
+    // precision; `span` where none does.
+    let first = |from: f64, past: &dyn Fn(f64) -> bool| -> f64 {
+        let mut before = from;
+        for i in 1..=20_000 {
+            let t = from + (span - from).max(0.0) * i as f64 / 20_000.0;
+            if past(t) {
+                let (mut inside, mut outside) = (before, t);
+                for _ in 0..200 {
+                    let middle = 0.5 * (inside + outside);
+                    if past(middle) {
+                        outside = middle;
+                    } else {
+                        inside = middle;
+                    }
+                }
+                return outside;
+            }
+            before = t;
+        }
+        span
+    };
+    let above = |t: f64| at(t) > owed + epsilon;
+    let (start, end) = if gap(0.0) < owed || (gap(0.0) <= owed && owed <= 0.0) {
+        // On: before the first step `ε` past what is owed, after the last
+        // before it `ε` short of it.
+        let end = first(0.0, &above);
+        let mut start = 0.0;
+        let mut t = 0.0;
+        while t < end {
+            let next = first(t, &|t: f64| at(t) < owed - epsilon);
+            if next >= end {
+                break;
+            }
+            // From there, the first step not `ε` short again.
+            start = first(next, &|t: f64| at(t) >= owed - epsilon).min(end);
+            t = start;
+            if start >= end {
+                break;
+            }
+        }
+        (start, end)
+    } else {
+        // Back: the gap's sublevel set at what is owed and `ε`.
+        let start = first(0.0, &|t: f64| at(t) <= owed + epsilon);
+        (start, first(start, &above))
+    };
+    let (a, b) = (sign * start, sign * end);
+    (a.min(b), a.max(b))
 }
 
 /// [`check_pair_model`], and which of its holds it reached: the model's
@@ -1282,7 +1478,13 @@ fn check_generated_pinning(
     pinned.extend(styles.iter().map(|style| style.font));
     pinned.push(flow.font);
     let mut fs = FontSystemLease::new("flow fuzz");
-    match choices.below(4) {
+    let layout = choices.below(4);
+    // Collecting far frames, only the frames round an outline are laid.
+    #[cfg(test)]
+    if layout != 1 && COLLECTING_FAR_FRAMES.with(std::cell::Cell::get) {
+        return Ok(());
+    }
+    match layout {
         0 => {
             let min = choices.one_in(2).then(|| any_vec2(choices));
             let align = *choices.pick(&[Align::Left, Align::Center, Align::Right]);
@@ -1377,6 +1579,8 @@ fn check_generated_pinning(
                     // replay lays a finding's outline and layouts as found
                     // as well, as it lays its layout (`laid_layouts`).
                     let mut sets = vec![(path, layouts)];
+                    #[cfg(test)]
+                    let mut twin: Option<(Outline, Outline)> = None;
                     if let Some((at, size)) = far_out(choices) {
                         let far = outline(Rect::new(at, Vec2::splat(size)), shape);
                         let sides = choices.pick(&FAR_SIDES).to_string();
@@ -1389,6 +1593,10 @@ fn check_generated_pinning(
                         }
                         FAR_FRAMES.with(|n| n.set(n.get() + 1));
                         LAST_FAR_FRAME.with(|last| last.set(Some(far)));
+                        #[cfg(test)]
+                        {
+                            twin = Some((far, outline(Rect::new(Vec2::ZERO, Vec2::splat(size)), shape)));
+                        }
                         sets.push((far, vec![drawn]));
                     }
                     let mut laid_texts = vec![drawn_texts];
@@ -1445,6 +1653,32 @@ fn check_generated_pinning(
                             // A ring's cap (rulings B17.2a, B17.2b).
                             let laid_tables = tables(&run);
                             let cap = ring_cap(run.glyphs.len(), bounded, laid_tables);
+                            // Collecting far frames, one the twin property
+                            // holds nothing of is recorded and not laid.
+                            #[cfg(test)]
+                            if let Some((_, origin)) = twin
+                                .filter(|(far, _)| far == path)
+                                .filter(|_| COLLECTING_FAR_FRAMES.with(std::cell::Cell::get))
+                                .filter(|_| !far_frame_owed(&run, ornament.as_ref(), &fit, path))
+                            {
+                                FAR_FRAMES_LAID.with(|laid| {
+                                    laid.borrow_mut().push(FarFrame {
+                                        run: run.clone(),
+                                        far: *path,
+                                        origin,
+                                        start,
+                                        direction,
+                                        fit: fit.clone(),
+                                        layout: layout.clone(),
+                                        outward,
+                                        flow,
+                                        scale,
+                                        cap,
+                                        laid: None,
+                                    })
+                                });
+                                continue;
+                            }
                             let placed = place_on_closed_capped(
                                 &run,
                                 path,
@@ -1486,6 +1720,32 @@ fn check_generated_pinning(
                                     placed.1.truncated,
                                 )))
                             });
+                            #[cfg(test)]
+                            if let Some((_, origin)) = twin
+                                .filter(|(far, _)| far == path)
+                                .filter(|_| COLLECTING_FAR_FRAMES.with(std::cell::Cell::get))
+                            {
+                                FAR_FRAMES_LAID.with(|laid| {
+                                    laid.borrow_mut().push(FarFrame {
+                                        run: run.clone(),
+                                        far: *path,
+                                        origin,
+                                        start,
+                                        direction,
+                                        fit: fit.clone(),
+                                        layout: layout.clone(),
+                                        outward,
+                                        flow,
+                                        scale,
+                                        cap,
+                                        laid: Some((placed.1.clone(), trace.clone())),
+                                    })
+                                });
+                            }
+                            #[cfg(test)]
+                            if COLLECTING_FAR_FRAMES.with(std::cell::Cell::get) {
+                                continue;
+                            }
                             let mut work = InputWork::default();
                             let sized = matches!(fit, FitMode::Fit { .. });
                             let counted = if matches!(fit, FitMode::Repeat) {
@@ -2040,6 +2300,190 @@ thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
+/// The fewest copies of its side ornament `ornament` a frame of `text` in
+/// `fit` owes far out, where the frame lies within `reach` of the origin
+/// along either axis, its twin at the origin laying `copies` of them over
+/// `arcs` arcs that kept copies (#362). Computed from the runs as shaped
+/// and the coordinates' spacing, with no placement code.
+///
+/// An arc's copies fill it at an equal gap `g`, one before each of a
+/// copy's `c` clusters and one at the arc's end; each inked cluster is as
+/// long along the arc as its ink and a space as its advance (the engine's
+/// step, ink to ink, ruling R31). So a copy is `A` long and has `c` gaps,
+/// `A` the inks' widths and the spaces' advances at `fit`'s least scale —
+/// a cluster's side bearings lie inside its gaps, and are not counted — and
+/// an arc `L` long holds `n₀` copies at the origin where `L = n₀·(A +
+/// c·g₀) + g₀`. Far out each gap may be wider by `Δ`. The arc then holds
+/// the most `n` with `n·(A + c·(g₀ + Δ)) + g₀ + Δ ≤ L`: `n₀·(A + c·g₀)/(A +
+/// c·(g₀ + Δ))` rounded down, less one, which is no less than `n₀·A/(A +
+/// c·Δ)` rounded down, less one, whatever `g₀`. The count whose gap is
+/// nearest the target may be one fewer still: two less per arc of the
+/// twin's, the rest shared over the same arcs. `L` is the twin's arc: its
+/// ends are the text's end inks, which far out may lie a few float steps
+/// from where the twin sets them.
+///
+/// Two premises are stated, not proved; that they hold is what the spreads
+/// show:
+/// - The far arc's end inks lie within the slack of a copy of where the
+///   twin sets them.
+/// - An ink steps by its width along the arc. The engine steps ink box to
+///   ink box, so on an upright stretch a flat ink like `─` or `═` steps by
+///   its height, and `A` can then be more than a copy's step. Taking each
+///   ink's smaller extent instead makes the bound provable, but too loose
+///   to catch a floor at two, three or four times the spacing: only one at
+///   eight goes red on "To see…" `Spread` (24 of 60 frames). Where it was
+///   probed (`─`, `═`, `-`, `—` and `─═` round ellipses 450 × 1,800 to
+///   2,000 × 1,200, from `4·10⁶` to `1.6·10⁷`, review 6003990236) every
+///   frame stays above the bound: `─═` round 450 × 1,800 at `10⁷` lays 836
+///   glyphs of its sides against 770 owed, from 1,006 at the origin.
+///
+/// `Δ` is the least gap the coordinates hold the first copy apart from the
+/// text at, plus one float step past what a gap is owed. The floor
+/// (`held_apart`) is `(u + s)/2 + NEARER + TOUCH`, with `u` the spacing at
+/// the text ink it starts past and `s` where the copy's facing corner may
+/// lie, at most a power of two further out. So `s ≤ 2u`, and the floor is
+/// at most `1.5u + NEARER + TOUCH`. A gap lands at most a float step past
+/// what it is owed: `√2u` on the canvas's grid, or the pairwise rule's
+/// `INK_TOLERANCE` where that is more. `u` is read at the frame, as
+/// [`coordinates_hold_apart`] reads it: at `reach` plus twice the text's
+/// and the ornament's line heights at the most scale `fit` lays them at,
+/// within which every ink of the frame lies, its sides' included, so that
+/// it bounds every spacing they meet.
+///
+/// For `─═` at 16 pt round an ellipse 2,000 × 1,200, whose twin lays 800
+/// glyphs of its sides, that is 736 at `4·10⁶` and 610 at `10⁷`, where
+/// `f32`s are 0.25 and 1 apart; the frame lays 770 and 688. It tightens
+/// toward the origin's count as the spacing falls. It is a bound, not the
+/// count the coordinates allow.
+#[cfg(test)]
+pub(crate) fn least_far_copies(
+    copies: usize,
+    arcs: usize,
+    text: &ShapedRun,
+    ornament: &ShapedRun,
+    fit: &FitMode,
+    reach: f32,
+) -> usize {
+    use crate::flow::place::halves::TOUCH;
+    let Some(least) = least_scale(fit) else {
+        return 0;
+    };
+    let most = match fit {
+        FitMode::Fit { min, max } => min.max(*max),
+        _ => 1.0,
+    };
+    let glyphs = drawn_glyphs(ornament);
+    let clusters = glyph_clusters(&glyphs);
+    let copy: f64 = clusters
+        .iter()
+        .map(|cluster| match cluster_ink_at(cluster, least) {
+            Some((min, max)) => (max.x - min.x).max(0.0),
+            None => f64::from(cluster_advance(cluster, least)),
+        })
+        .sum();
+    let gaps = clusters.len().max(1) as f64;
+    let height = |run: &ShapedRun| {
+        let largest = drawn_glyphs(run).iter().map(|g| g.size).fold(0.0_f32, f32::max);
+        run.line_height.max(0.0) * size_factor(largest, most)
+    };
+    let u = f32_spacing(reach.abs() + 2.0 * (height(text) + height(ornament)));
+    let floor = 1.5 * u + f64::from(NEARER) + f64::from(TOUCH);
+    let step = (std::f64::consts::SQRT_2 * u).max(f64::from(INK_TOLERANCE));
+    let least = copies as f64 * copy / (copy + gaps * (floor + step));
+    if least.is_finite() {
+        (least.floor() as usize).saturating_sub(2 * arcs)
+    } else {
+        0
+    }
+}
+
+/// A far-out frame with sides the structured generator laid (#362), with
+/// what it was laid from and the outline its twin at the origin is laid
+/// round: what `flow_fuzz_tests`' twin property lays again there.
+#[cfg(test)]
+pub(crate) struct FarFrame {
+    pub(crate) run: ShapedRun,
+    pub(crate) far: Outline,
+    pub(crate) origin: Outline,
+    pub(crate) start: StartPoint,
+    pub(crate) direction: Direction,
+    pub(crate) fit: FitMode,
+    pub(crate) layout: RingLayout,
+    pub(crate) outward: bool,
+    pub(crate) flow: ResolvedText,
+    /// The scale its run, and so its ornament, was shaped at.
+    pub(crate) scale: f32,
+    pub(crate) cap: usize,
+    /// The frame as laid, and its trace: `None` for one collected and not
+    /// laid, which the twin property holds nothing of
+    /// ([`far_frame_owed`]).
+    pub(crate) laid: Option<(PlacedRun, Trace)>,
+}
+
+/// Whether the twin property can hold anything of a far frame of `run` in
+/// `fit` round `outline`, `ornament` its sides (#362): it is no `Repeat`,
+/// which owes no text whole, and the coordinates hold its text's and its
+/// ornament's glyphs apart (ruling B18.1 §9), a `Once` at a `Spread`'s
+/// least scale. What the property drops first, so that a frame it would
+/// drop there is not laid.
+#[cfg(test)]
+pub(crate) fn far_frame_owed(
+    run: &ShapedRun,
+    ornament: Option<&ShapedRun>,
+    fit: &FitMode,
+    outline: &Outline,
+) -> bool {
+    let held_as = match fit {
+        FitMode::Repeat => return false,
+        FitMode::Once { .. } => FitMode::Spread,
+        other => other.clone(),
+    };
+    let reach = outline_reach(outline);
+    ornament.is_some_and(|ornament| {
+        coordinates_hold_apart(reach, run, &held_as) && coordinates_hold_apart(reach, ornament, &held_as)
+    })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test switch (#362), set by [`far_frames_laid`]: `far_out` draws a
+    /// place far out every time it is asked, at `10⁶` or `10⁷`, so that
+    /// most seeds lay a frame there, and the structured generator lays only
+    /// its frames round an outline, records each far one with sides
+    /// ([`FAR_FRAMES_LAID`]) and checks none of them: the twin property's
+    /// collection, the generator's choices without the properties the
+    /// structured sweep holds.
+    pub(crate) static COLLECTING_FAR_FRAMES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The far-out frames with sides the structured generator has laid on
+    /// this thread, while a test collects them (#362).
+    pub(crate) static FAR_FRAMES_LAID: std::cell::RefCell<Vec<FarFrame>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The far-out frames with sides the structured generator lays over
+/// `seeds`, drawn far out each time it draws an outline, at `10⁶` or `10⁷`
+/// ([`COLLECTING_FAR_FRAMES`]), with no property checked (#362): what the
+/// twin property holds. An input the generator refuses, as the structured
+/// target's would be, is the seed's error.
+#[cfg(test)]
+pub(crate) fn far_frames_laid(seeds: std::ops::Range<u64>) -> Result<Vec<FarFrame>, String> {
+    struct Off;
+    impl Drop for Off {
+        fn drop(&mut self) {
+            COLLECTING_FAR_FRAMES.with(|collecting| collecting.set(false));
+            FAR_FRAMES_LAID.with(|laid| laid.borrow_mut().clear());
+        }
+    }
+    FAR_FRAMES_LAID.with(|laid| laid.borrow_mut().clear());
+    COLLECTING_FAR_FRAMES.with(|collecting| collecting.set(true));
+    let _off = Off;
+    for seed in seeds {
+        check_generated(&mut Choices::seeded(seed), true, &faces())
+            .map_err(|why| format!("seed {seed}: {why}"))?;
+    }
+    Ok(FAR_FRAMES_LAID.with(|laid| std::mem::take(&mut *laid.borrow_mut())))
+}
+
 /// The side ornaments a far-out frame is given where its layout draws none
 /// (#313): a box-drawing pair and a dot, whose copies far from the origin
 /// read their path many times a cluster (review 5761697746), and two of
@@ -2063,10 +2507,18 @@ pub const FAR_SIDES: [&str; 4] = ["─═", "· ", "-=", "x"];
 /// which share that table; the table is held to an independent measure by
 /// `outline_tests::test_flow_an_ellipses_length_is_its_ellipses_at_every_magnitude`.
 pub fn far_out(choices: &mut Choices<'_>) -> Option<(Vec2, f32)> {
-    if !choices.one_in(4) {
+    #[cfg(test)]
+    let near = COLLECTING_FAR_FRAMES.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    let near = false;
+    if !choices.one_in(4) && !near {
         return None;
     }
-    let at = 10.0_f32.powi(6 + choices.below(17) as i32);
+    let power = choices.below(17) as i32;
+    // In a test that asks (`COLLECTING_FAR_FRAMES`), at `10⁶` or `10⁷`, where the
+    // coordinates hold most frames' glyphs apart (ruling B18.1 §9).
+    let power = if near { power % 2 } else { power };
+    let at = 10.0_f32.powi(6 + power);
     let size = 100.0 * (1u32 << choices.below(12)) as f32;
     Some((Vec2::splat(at), size))
 }

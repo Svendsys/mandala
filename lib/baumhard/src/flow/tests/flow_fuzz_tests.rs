@@ -148,6 +148,169 @@ fn test_generated_flows_hold_every_flow_property() {
     );
 }
 
+/// The seeds the twin property draws its far-out frames from (#362), each
+/// that draws an outline drawing it far out, at `10⁶` or `10⁷`
+/// (`flow_fuzz::far_frames_laid`).
+const TWIN_SEEDS: u64 = 1_000;
+
+/// #362, the issue's item 5 held by the suite rather than a fuzz target:
+/// every far-out frame with sides the structured generator lays over
+/// [`TWIN_SEEDS`] seeded inputs, drawn far out each time it draws an
+/// outline, at `10⁶` or `10⁷` (`flow_fuzz::far_frames_laid`, which lays
+/// those frames from the generator's choices and checks none of the
+/// properties the structured sweep above holds), where the coordinates
+/// hold its text's and its ornament's glyphs apart (ruling B18.1 §9,
+/// `coordinates_hold_apart` at the least scale its fit lays them at, a
+/// `Once` at a `Spread`'s), and whose twin — the same frame, text, layout
+/// and cap round the same outline at the origin — lays its sides with no
+/// junction empty or kept short, both laying their text whole, lays them
+/// so too: some copies, no junction empty or kept short, and no fewer
+/// copies than `least_far_copies` bounds from the twin's count and arcs,
+/// the coordinates' spacing and the runs as shaped.
+///
+/// Most far frames are owed nothing here. Of the 264 the seeds lay as the
+/// generator stands, 238 are not held: 74 are a `Repeat`, which owes no
+/// text whole; 105 lie where the coordinates cannot hold their glyphs
+/// apart; 46 have a twin that lays no sides; 11 a twin that cuts its text,
+/// and 1 a far frame that does; 1 a twin that reports a loss of its sides.
+///
+/// It is not a property of the fuzz targets: a twin is a second budgeted
+/// frame an input, past what one input may take there (ruling R45.1,
+/// `STRUCTURED_FRAMES`). Laying it within that bound, by the twin's
+/// realized work rather than its worst case, is the owner's to rule on.
+///
+/// Precondition: the seeds hold 15 far frames or more to their twins (26
+/// of the 264). Control: with every arc of a frame further than `10⁵` from
+/// the origin cut to its first two inks, no loss reported, red: 13 of the
+/// 26, each short of the copies' bound. It is a net for a far frame laying
+/// fewer copies than its twin, whatever the cause, across the generator's
+/// frames; it does not reach the mechanisms of #362 itself — with the
+/// count search walking, the floor eight times as wide or none at all, it
+/// is green: the walk costs a frame its sides only where some two hundred
+/// copies of a short ornament lie beside a long text, which is what the
+/// spreads of `far_sides_tests` are, and those hold them.
+#[test]
+fn test_generated_far_frames_lay_their_sides_as_their_twins_at_the_origin() {
+    use crate::document::values::FitMode;
+    use crate::flow::place::{place_on_closed_capped, Trace};
+    use crate::flow::tests::flow_fuzz::{
+        coordinates_hold_apart, far_frames_laid, least_far_copies, ornament_run, outline_reach,
+    };
+    use crate::flow::PlacedRun;
+    let frames = far_frames_laid(0..TWIN_SEEDS).unwrap_or_else(|why| panic!("{why}"));
+    let sides_of = |placed: &PlacedRun, trace: &Trace| {
+        let lines: usize = trace.lines.iter().map(|l| l.glyphs.len()).sum();
+        placed.glyphs.len().saturating_sub(lines)
+    };
+    // Why each far frame not held is owed nothing here.
+    let mut dropped = [0usize; 6];
+    let mut held = 0;
+    let mut broken = Vec::new();
+    for frame in &frames {
+        if frame.fit == FitMode::Repeat {
+            dropped[0] += 1;
+            continue;
+        }
+        let held_as = match &frame.fit {
+            FitMode::Once { .. } => FitMode::Spread,
+            other => other.clone(),
+        };
+        let Some(ornament) = with_fonts(|fs| ornament_run(&frame.layout, &frame.flow, frame.scale, fs))
+        else {
+            continue;
+        };
+        let reach = outline_reach(&frame.far);
+        if !coordinates_hold_apart(reach, &frame.run, &held_as)
+            || !coordinates_hold_apart(reach, &ornament, &held_as)
+        {
+            dropped[1] += 1;
+            continue;
+        }
+        let (placed, far_trace) = frame
+            .laid
+            .as_ref()
+            .expect("a far frame the coordinates hold apart is laid (`far_frame_owed`)");
+        let mut trace = Trace::default();
+        let (_, twin) = with_fonts(|fs| {
+            place_on_closed_capped(
+                &frame.run,
+                &frame.origin,
+                frame.start,
+                frame.direction,
+                &frame.fit,
+                &frame.layout,
+                frame.outward,
+                &frame.flow,
+                fs,
+                frame.cap,
+                Some(&mut trace),
+            )
+        });
+        let twin_sides = sides_of(&twin, &trace);
+        // Owed where the twin lays its sides and both lay their text whole:
+        // a frame loses its sides before its text (ruling R48.3), so one
+        // that keeps more of a cut text than its twin may keep fewer sides.
+        let whole = |placed: &PlacedRun, trace: &Trace| !placed.truncated && trace.cut_apart.is_empty();
+        let why_not = if twin_sides == 0 {
+            Some(2)
+        } else if !whole(&twin, &trace) {
+            Some(3)
+        } else if !whole(placed, far_trace) {
+            Some(4)
+        } else if !trace.unheld.sides.is_empty() {
+            Some(5)
+        } else {
+            None
+        };
+        if let Some(why) = why_not {
+            dropped[why] += 1;
+            continue;
+        }
+        held += 1;
+        let glyphs = ornament.glyphs.len().max(1);
+        let least = least_far_copies(
+            twin_sides / glyphs,
+            trace.side_arcs,
+            &frame.run,
+            &ornament,
+            &held_as,
+            reach,
+        ) * glyphs;
+        let far_sides = sides_of(placed, far_trace);
+        if far_sides == 0 || !far_trace.unheld.sides.is_empty() || far_sides < least {
+            broken.push(format!(
+                "{:?} {:?} round {:?}: {far_sides} glyphs of its sides ({twin_sides} at the origin over {} arcs, {least} owed), {:?}, its budget {} of {} spent",
+                frame.fit,
+                frame.layout.sides,
+                frame.far,
+                trace.side_arcs,
+                far_trace.unheld.sides,
+                far_trace.spent,
+                far_trace.budget
+            ));
+        }
+    }
+    assert!(
+        held >= 15,
+        "precondition: the seeds hold 15 far frames or more to their twins ({held} of {}; not held: \
+         {} a `Repeat`, {} where the coordinates cannot hold them, {} whose twin lays no sides, {} \
+         whose twin cuts its text, {} that cut their own, {} whose twin reports a loss)",
+        frames.len(),
+        dropped[0],
+        dropped[1],
+        dropped[2],
+        dropped[3],
+        dropped[4],
+        dropped[5]
+    );
+    assert!(
+        broken.is_empty(),
+        "{} of {held} far frames do not lay their sides as their twins at the origin:\n{}",
+        broken.len(),
+        broken.join("\n")
+    );
+}
+
 /// The sweep above over [`every_face`]: `faces()`, the ornament
 /// fallback's two (#297), the default face (#228) and Scrapbook Chinese
 /// (#355), which a map's `font` can pin as it pins any other. `faces()`
@@ -4666,15 +4829,58 @@ fn test_flow_structured_finding_a_directional_ring_whose_turns_fall_out_of_order
 /// the property's bound of 2.5e-4. The discriminant is taken by
 /// Lagrange's identity now. The line itself is held to an oracle in `f64`
 /// by `test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap`.
-/// The input has reached this line only since #336, whose directional
-/// glyphs are drawn from the choices before it; `line_root` is older. 202
-/// bytes, as found.
-///
-/// Control: with the discriminant `b² − a c`, red ("owed 0.012: the
-/// closed form steps -15.051204, the bisection -15.051884").
+/// The input reached this line from #336, whose directional glyphs are
+/// drawn from the choices before it, and no longer does: with the
+/// discriminant `b² − a c` planted it replays green as the generator
+/// stands, the planted root never compared (#384's CI finding found this).
+/// Its line is held where no generator can move it, by
+/// `test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap`,
+/// which that plant turns red ("the finding: … the closed form steps
+/// -15.051204, the line's root is -15.051883…"). 202 bytes, as found.
 #[test]
 fn test_flow_structured_finding_a_line_root_owed_little_of_a_wide_gap_replays() {
     let found = include_bytes!("fuzz_findings/structured_line_root_owed_little_of_a_wide_gap");
+    for (what, checked) in [
+        (
+            "fuzzed",
+            crate::flow::tests::flow_fuzz::check_flow_structured(found),
+        ),
+        ("as found", check_flow_structured_as_found(found)),
+    ] {
+        if let Err(why) = checked {
+            panic!("{what}: {why}");
+        }
+    }
+}
+
+/// The flow_structured finding of CI's run on #384 at 53639670 (job
+/// 136791952303): the tangent line's root in closed form held to its
+/// bisection (`check_line_root`) for two inks `(-20, -12)` apart, reach
+/// `(6, 6)`, stepped along `(-1.25, -1.09e-7)` and owed 6. The closed
+/// form steps -11.196939, 4.5e-6 from the line's root in `f64`
+/// (-11.1969345); the bisection -11.19753, 5.9e-4 past it, beyond the
+/// property's bracket width of 2.3e-4. The bisection was the one off,
+/// and rightly: one axis's gap is all but what is owed and the other's
+/// 4·10⁻³ and closing, so the gap moves 8·10⁻⁴ a unit of step there, and
+/// `along`, reading the gap in `f32`, cannot tell steps within a rounding
+/// of 6 (5.99999957 at its step) from the root. The property now holds the
+/// closed form to the line's root in `f64` (`line_root_in_f64`), and the
+/// bisection to the steps it cannot tell from that root
+/// (`bisection_window`), nothing read at either step widening either. The
+/// input is the base's: it fails alike on `epic/unified-mutations` at
+/// ec9d5f41, whose `line_root`, `along` and `check_line_root` #384 does not
+/// touch. 142 bytes, as found (sha1 20b3f06f…).
+///
+/// Controls, each planted in `line_root_seam`: with the closed form 10⁻³
+/// further, red ("the closed form steps -11.19794, the line's root is
+/// -11.196934…"), and 3 further, red ("-14.196939") — on the property as
+/// it stood at 5608b21e, whose blur was read at the closed form's step,
+/// both were green; with the bisection 10⁻² short of the root, where the
+/// gap is clearly past what is owed, red ("the bisection steps -11.18753,
+/// outside -20.805981…..-11.194736…").
+#[test]
+fn test_flow_structured_finding_a_line_root_owed_a_gap_its_step_barely_moves_replays() {
+    let found = include_bytes!("fuzz_findings/structured_line_root_owed_a_gap_its_step_barely_moves");
     for (what, checked) in [
         (
             "fuzzed",
