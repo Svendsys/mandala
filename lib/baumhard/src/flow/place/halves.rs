@@ -1613,6 +1613,12 @@ thread_local! {
     /// that share: all a frame does past its budget.
     #[cfg(test)]
     pub(crate) static PAST_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (ruling B47.3): the glyphs of the text the last frame
+    /// laid on this thread by halves was given, and the glyph steps it
+    /// spent, its work in all, as `LAST_RING` keeps them for a `Repeat`
+    /// ring. `None` before any.
+    #[cfg(test)]
+    pub(crate) static LAST_FRAME: std::cell::Cell<Option<(usize, usize)>> = const { std::cell::Cell::new(None) };
     /// Test counter (#294, ruling R46.1): the most glyph steps one
     /// [`untouched`] has taken on this thread, and its share
     /// ([`untouched_steps`]) for the inks it was given, of the classes of
@@ -7352,6 +7358,10 @@ pub(super) fn place_halves(
             Some(&mut kept),
             &work,
         );
+        #[cfg(test)]
+        LAST_FRAME.with(|last| last.set(Some((run.glyphs.len(), work.spent.get()))));
+        #[cfg(any(test, fuzzing))]
+        super::MOST_RING_LAY.with(|most| most.set(most.get().max(work.spent.get())));
         if let Some(trace) = trace {
             *trace = kept;
             trace.spent = work.spent.get();
@@ -7915,6 +7925,10 @@ pub(super) fn place_halves(
         trace.glyphs = lay.work.glyphs.get();
         trace.looks = lay.work.looks.get();
     }
+    #[cfg(test)]
+    LAST_FRAME.with(|last| last.set(Some((run.glyphs.len(), lay.work.spent.get()))));
+    #[cfg(any(test, fuzzing))]
+    super::MOST_RING_LAY.with(|most| most.set(most.get().max(lay.work.spent.get())));
     let changed = (sized && fitted.is_some()) || side.is_some() || scale != 1.0;
     let mut glyphs = text;
     glyphs.extend(sides);

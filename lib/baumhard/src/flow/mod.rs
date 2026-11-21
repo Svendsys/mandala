@@ -60,9 +60,29 @@ pub(crate) use path::ArcPath;
 /// measured on, its table's and the projection's samples' (#313, #356).
 pub(crate) use path::Local;
 pub use path::{MAX_PATH_LENGTH, MAX_TABLE_SAMPLES};
+/// The last directional ring laid on this thread, its glyphs and its work,
+/// a test counter: what the projection harness's bound is held to for a
+/// ring that lays text by direction (ruling B47.2).
+#[cfg(test)]
+pub(crate) use place::directional::LAST_DIRECTIONAL;
 /// A run with every glyph's ink measured, text too: what a text ring's
 /// paths stop at (#296).
 pub(crate) use place::halves::inked;
+/// The last frame laid by halves on this thread, its text's glyphs and its
+/// work, a test counter: what the projection harness's bound holds a text
+/// frame's work to (ruling B47.3).
+#[cfg(test)]
+pub(crate) use place::halves::LAST_FRAME;
+/// The last `Repeat` ring laid round a closed path on this thread, a test
+/// counter (#310): what the projection harness's bound is held to
+/// (ruling B47.1).
+#[cfg(test)]
+pub(crate) use place::LAST_RING;
+/// The most glyph steps a ring's placement has taken on this thread since
+/// it was cleared, a test and fuzz counter: what the projection harness
+/// holds each ring's work to (ruling B47.3).
+#[cfg(any(test, fuzzing))]
+pub(crate) use place::MOST_RING_LAY;
 pub use place::{
     pattern_gap, place_at_point, place_on_closed, place_on_open, place_pitched, PathEnd, PlacedGlyph,
     PlacedRun, RingLayout, MAX_PLACED_GLYPHS,
