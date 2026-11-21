@@ -5522,14 +5522,22 @@ fn extreme_touch_case(choices: &mut crate::util::tests::choices::Choices<'_>) ->
 /// R50.5 (review 5745584645): a side arc whose search for its count the
 /// frame's budget stopped keeps the copies it had where they hold the
 /// equal-gap rule, and is reported kept short, apart from an arc left
-/// empty: "To see a World in a Grain of Sand" at 16 pt round a 2,000
-/// sharp square, `Once` at span ½ with an `=` on its sides (ruling R51.5:
-/// a glyph the compiled faces hold, wider than tall, where `❧` was one no
-/// compiled face holds), outward, whose
-/// count search moves from its guess, at budgets from 5,000 to 8,000 in
-/// steps of 5. The first budget at which an arc is kept short places more
+/// empty: "To see a World in a Grain of Sand" at 16 pt round an ellipse
+/// 2,000 × 1,200 centered at (10⁶, 10⁶), `Spread` at span natural with
+/// `─═` on its sides, outward, at budgets from 40,000 to 60,000 in steps of
+/// 1,000. The first budget at which an arc is kept short places more
 /// glyphs than the last before it at which that arc was left empty, the
 /// other arc as it was.
+///
+/// The frame is far out because there its count search's solves each lay
+/// their copies several times, where at the origin the band curve's forms
+/// answer for most of them (#362). Since the search moves to the count the
+/// solved gaps point to, a few solves where it once moved a count at a
+/// time, neither this ellipse nor the sharp square 2,000 across this was
+/// first laid round (`Once` at span ½ with an `=`, kept short at budgets
+/// from 5,000 to 8,000) is kept short at the origin at any budget from
+/// 1,000 to 40,000: a budget that affords an arc's floor row there
+/// affords the rest of its search.
 ///
 /// Control: with a stopped search's kept copies not reported, red. (No
 /// `do_*` twin: it sets a test seam.)
@@ -5538,20 +5546,16 @@ fn test_flow_halves_an_arc_kept_short_is_reported() {
     use crate::flow::place::halves::BUDGET_OVERRIDE;
     use crate::flow::place::SideLoss;
     let text = "To see a World in a Grain of Sand";
-    let shape = outline(
-        Rect::new(Vec2::ZERO, Vec2::splat(2_000.0)),
-        Shape::Rectangle {
-            radius: Percent::new(0),
-        },
-    );
+    let size = Vec2::new(2_000.0, 1_200.0);
+    let shape = outline(Rect::new(Vec2::splat(1e6) - size * 0.5, size), Shape::Ellipse);
     let layout = RingLayout {
-        span: LineSpan::new(0.5).unwrap_or(LineSpan::WHOLE),
-        sides: Some(("=".to_string(), Rgba::opaque(0, 0, 0))),
+        span: LineSpan::NATURAL,
+        sides: Some(("─═".to_string(), Rgba::opaque(0, 0, 0))),
         ..RingLayout::whole()
     };
-    let fit = FitMode::Once { filler: None };
+    let fit = FitMode::Spread;
     let mut frames = Vec::new();
-    for budget in (5_000..8_000).step_by(5) {
+    for budget in (40_000..60_000).step_by(1_000) {
         let (_, placed, trace) = with_seam(&BUDGET_OVERRIDE, budget, || {
             frame_with(text, 16.0, &shape, &fit, &layout, true)
         });
@@ -5581,7 +5585,7 @@ fn test_flow_halves_an_arc_kept_short_is_reported() {
         return;
     }
     panic!(
-        "no arc is reported kept short at any budget from 5,000 to 8,000: {:?}",
+        "no arc is reported kept short at any budget from 40,000 to 60,000: {:?}",
         frames
             .iter()
             .map(|f| (f.0, f.1.clone()))

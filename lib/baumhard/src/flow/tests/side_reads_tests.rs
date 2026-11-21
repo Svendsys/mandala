@@ -237,8 +237,8 @@ fn grid() -> &'static [Vec<Laid>] {
 /// back the most a lay may read before it is laid, and its tracking counts
 /// its lines' reads past one a cluster, which its overshoot holds for each
 /// line's lay (ruling B18.1 §2), so a frame far from the origin, whose
-/// clusters read their path 11 to 20 times where at the origin they read it
-/// once, takes past its budget no more than `overshoot_steps` —
+/// clusters read their path up to 22 times where at the origin they read
+/// it a few times, takes past its budget no more than `overshoot_steps` —
 /// `PAST_BUDGET`, a take that crosses the budget counted for the part past
 /// it (ruling R50.4) — and in all no more than its budget and that (ruling
 /// R47.2): no lay of its sides leaves it past what its budget holds for
@@ -382,19 +382,25 @@ const COPY_HOLD: i64 = 2 + (2 * SIDE_CLUSTER_READS as i64 + 3) / 4;
 const MOST_READS_A_STEP: f64 = 4.0;
 
 /// The fewest path reads a counted step of a side ornament's lays takes in
-/// a frame far from the origin (#313): the band's floor, below the 2.6 to
-/// 3.3 the grid's far frames take (`─═` and `· `), above the 0.2 to 0.4 a
-/// frame at the origin takes. A side whose reads went uncounted would take
-/// as many reads a step as its clusters take each, 6 to 20 far out, past
-/// [`MOST_READS_A_STEP`], and so would one whose reads were counted at
-/// the ring's weight, sixteen to a step; one that counted a read a step,
-/// or none, would read a step as [`FAR_READS_A_STEP`] or less.
-const FAR_READS_A_STEP: f64 = 2.0;
+/// a frame far from the origin (#313): the band's floor, one, which a side
+/// whose reads were counted at a read a step could never pass — its step
+/// a cluster and one for each read, so less than one read a step — below
+/// the 1.2 to 3.2 the grid's far frames take (`─═` and `· `; 2.7 to 3.4
+/// before #362, whose pairwise rule ends where its bracket's centers set
+/// an ink on neighboring `f32`s, rather than closing it to a float of the
+/// center), above the 0.2 to 0.4 a frame at the origin takes. A side whose
+/// reads went uncounted would take as many reads a step as its clusters
+/// take each, up to 16 far out, past [`MOST_READS_A_STEP`], and so would
+/// one whose reads were counted at the ring's weight, sixteen to a step.
+const FAR_READS_A_STEP: f64 = 1.0;
 
 /// #313: no cluster of a side ornament's lay reads its path more than
 /// [`SIDE_CLUSTER_READS`] times, what a lay is held back for before it is
 /// laid; and far out a cluster does read it many times — the bound is the
-/// one the far frames come near.
+/// one the far frames come near: 21 or 22 reads a cluster at most in each
+/// far frame of the grid at its own budget but the sharp square `─═` at
+/// 3·10⁷, whose clusters, their pairwise rule ending where its bracket's
+/// centers set an ink on neighboring `f32`s (#362), read it 13 at most.
 ///
 /// Controls: see the pull request of #313.
 #[test]
@@ -403,17 +409,20 @@ fn test_flow_side_reads_no_cluster_reads_past_what_its_lay_holds_back() {
     let most = frames.iter().map(|f| f.most).max().unwrap_or(0);
     // Held from below by a count apart from the reads: no cluster reads
     // its path fewer times than one of its steps looked it up; and far out,
-    // at its own budget, as many times as the grid's far frames read it,
-    // 21 or 22.
-    for case in grid() {
-        let own = case.last().expect("every case lays its frame at its own budget");
-        assert!(
-            !own.far || own.most >= 20,
-            "{}: far out, no cluster of its sides read its path 20 times or more ({})",
-            own.what,
-            own.most
-        );
-    }
+    // at their own budgets, seven of the grid's eight frames read it 20
+    // times or more a cluster, near the bound.
+    let far: Vec<&Laid> = grid()
+        .iter()
+        .map(|case| case.last().expect("every case lays its frame at its own budget"))
+        .filter(|own| own.far)
+        .collect();
+    let near = far.iter().filter(|own| own.most >= 20).count();
+    assert!(
+        near >= 7 && far.len() == 8,
+        "far out, {near} of the {} frames at their own budgets read their path 20 times or more a cluster, fewer than seven of eight: {:?}",
+        far.len(),
+        far.iter().map(|own| (&own.what, own.most)).collect::<Vec<_>>()
+    );
     for f in &frames {
         assert!(
             f.most >= f.most_lookups,
@@ -440,8 +449,10 @@ const TRACK_READS_WEIGHT: usize = 8;
 /// step, counted apart by the lookups' own counter (`STEP_LOOKUPS` less
 /// `SIDE_STEP_LOOKUPS`) — at [`TRACK_READS_WEIGHT`] to a counted step,
 /// rounded up over the frame. Far out its lines' clusters read their path
-/// 11 to 13 times past the first (review 5902086644), at the origin less
-/// than once in four.
+/// 2.2 to 12.3 times past the first (11 to 13 before #362, review
+/// 5902086644, whose pairwise rule ends where its bracket's centers set an
+/// ink on neighboring `f32`s, rather than closing it to a float of the
+/// center), at the origin less than once in four.
 ///
 /// Controls: see the pull request of #313.
 #[test]
@@ -466,12 +477,12 @@ fn test_flow_track_reads_a_frame_counts_its_lines_reads_past_one_a_cluster() {
             ));
         }
         let per = f.track_reads as f64 / f.track_steps as f64;
-        if (f.far && per < 10.0) || (!f.far && per > 0.5) {
+        if (f.far && per < 2.0) || (!f.far && per > 0.5) {
             broken.push(format!(
                 "{}: {per:.2} reads past the first a cluster, {}",
                 f.what,
                 if f.far {
-                    "below 10 far out"
+                    "below 2 far out"
                 } else {
                     "above 0.5 at the origin"
                 }
