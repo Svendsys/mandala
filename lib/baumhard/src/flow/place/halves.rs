@@ -5139,9 +5139,10 @@ impl<'s> SideArc<'s> {
     /// afford the copies and their touch check ([`SideOrnament::affords`],
     /// rulings R47.2, R48.2, R50.5) the arc is left as it stands, which it
     /// returns: before the floor's row is laid, or before its search ends
-    /// where the copies it has do not hold the equal-gap rule, empty
-    /// ([`SideLoss::Empty`]); before its search ends where they do, kept
-    /// short with them ([`SideLoss::Short`]). `None` when the search ended.
+    /// where no count it solved holds the equal-gap rule, empty
+    /// ([`SideLoss::Empty`]); before its search ends where one does, kept
+    /// short with the copies of the one whose gap is nearest the target
+    /// ([`SideLoss::Short`]). `None` when the search ended.
     /// The copies kept are placed in `out`, and their inks' boxes, where
     /// the lay set them, in `boxes`.
     ///
@@ -5256,9 +5257,24 @@ impl<'s> SideArc<'s> {
                 best = (n + 1, wider);
             }
         }
-        // A search the frame could not afford to finish keeps its copies
-        // only where they hold the equal-gap rule, kept short; else the arc
-        // is left empty. Either way it is reported (rulings R48.2, R50.5).
+        // A search the frame could not afford to finish keeps copies only
+        // where they hold the equal-gap rule, kept short; else the arc is
+        // left empty. Either way it is reported (rulings R48.2, R50.5). The
+        // count it stands at may be one whose solve its budget cut short:
+        // it keeps then, of the counts it solved whole, the one whose gap is
+        // nearest the target — else a larger budget, its search reaching
+        // further before the stop, would leave empty an arc a smaller one
+        // keeps (#362).
+        if self.stopped.get() && !solved[best.0].as_ref().is_some_and(|s| s.2) {
+            let nearest = solved
+                .iter()
+                .enumerate()
+                .filter_map(|(k, s)| s.as_ref().filter(|s| s.2).map(|s| (k, (s.0 - target).abs())))
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((k, _)) = nearest {
+                best.0 = k;
+            }
+        }
         match solved[best.0].take() {
             Some((_, _, false)) if self.stopped.get() => Some(SideLoss::Empty),
             Some((_, copies, _)) => {

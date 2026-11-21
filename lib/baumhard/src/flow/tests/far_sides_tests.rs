@@ -585,3 +585,47 @@ fn test_far_sides_a_frame_at_half_span_lays_its_sides_wherever_its_coordinates_h
         "precondition: the spread holds 340 far frames or more ({held})"
     );
 }
+
+/// #362: a larger budget leaves no arc empty that a smaller one keeps
+/// copies on: "To see a World in a Grain of Sand" in `Spread` round the
+/// ellipse 2,000 × 1,200 at 10⁶, at budgets from 40,000 to 70,000 in steps
+/// of 1,000. A count search the budget stops keeps, of the counts it solved
+/// whole, the one whose gap is nearest the target, where it kept the count
+/// it stood at: with more budget the search reaches further before the
+/// stop, onto a count whose solve the stop cut short, and kept nothing.
+/// Precondition: some budget keeps an arc short, and so stops its search.
+///
+/// Control: with the search keeping the count it stands at, red at 53,000
+/// to 55,000, both junctions left empty, where 46,000 to 52,000 keep the
+/// first short.
+#[test]
+fn test_far_sides_a_larger_budget_keeps_the_copies_a_smaller_one_does() {
+    use crate::flow::place::halves::BUDGET_OVERRIDE;
+    use crate::flow::place::SideLoss;
+    use crate::flow::tests::halves_tests::with_seam;
+    let shape = ellipse(Vec2::new(2_000.0, 1_200.0), 1e6);
+    let fit = FitMode::Spread;
+    let mut held: [Option<usize>; 2] = [None; 2];
+    let mut short = 0;
+    let mut broken = Vec::new();
+    for budget in (40_000..=70_000).step_by(1_000) {
+        let frame = with_seam(&BUDGET_OVERRIDE, budget, || laid(SAND, &shape, &fit));
+        let losses = &frame.trace.unheld.sides;
+        short += losses.iter().filter(|loss| loss.1 == SideLoss::Short).count();
+        for (j, kept) in held.iter_mut().enumerate() {
+            let empty = losses.contains(&(j, SideLoss::Empty));
+            match (*kept, empty) {
+                (Some(at), true) => broken.push(format!(
+                    "at a budget of {budget} junction {j} is left empty ({losses:?}), where {at} kept copies there"
+                )),
+                (None, false) if frame.sides > 0 => *kept = Some(budget),
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        short > 0,
+        "precondition: some budget from 40,000 to 70,000 keeps an arc short"
+    );
+    assert!(broken.is_empty(), "{}", broken.join("\n"));
+}
