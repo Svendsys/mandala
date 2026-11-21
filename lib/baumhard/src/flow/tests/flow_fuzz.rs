@@ -1325,15 +1325,25 @@ const CLOSED_FORM_ROUNDINGS: f64 = 16.0;
 ///   owed²) / (−b + s)` and the gap by at most `|dir|` times that over
 ///   `|b|`: within `γ` times the bound's sum exactly where `|dir| (Σ from² +
 ///   owed²) ≤ |b| (ΣX + owed)`. That is the premise, checked on the line.
-/// - Where the boxes start nearer than owed, the root is read from `b² −
-///   a c`, whose roundings are not held linear here, and the quadratic bound
-///   holds alone.
+/// - Where the boxes start nearer than owed, the root is the larger of the
+///   quadratic's, from `b² − a c`, a sum: every axis's gap there, and its
+///   move over the root, is at most what is owed, so each rounding moves
+///   the gap by `γ owed` or `γ X` ([`linear_holds`] gives the terms).
+///
+/// Where the boxes start further apart than owed and the premise fails,
+/// the quadratic bound is the honest one: an axis is far apart there while
+/// the gap closes slowly against it (`|b|` small beside `Σ from²`), so the
+/// root `c / (−b + s)` is all but `c / s`, and the constant's rounding moves
+/// the gap by `δc / owed` — the formula's own sensitivity, the quadratic
+/// bound's form.
 ///
 /// Over a census of 100,000 of the property's seeds (49,070 lines with a
-/// root), the premise holds on 16,880. On the 32,190 where it does not,
-/// the quadratic bound stands, at most 3.7·10⁻², against 7.0·10⁻² with the
-/// quadratic alone on every line; no closed form misses by more than 0.09
-/// of its bound.
+/// root): 34,753 start nearer than owed or owe nothing, linear, the largest
+/// bound 1.3·10⁻⁴; 13,689 start further with the premise holding, linear,
+/// 9.6·10⁻⁵; 628 start further with it failing, quadratic, 7.6·10⁻⁴. The
+/// largest bound of all is 7.6·10⁻⁴, against 7.0·10⁻² with the quadratic
+/// alone on every line; no closed form misses by more than 0.09 of its
+/// bound.
 ///
 /// Both are bounds far past the miss: on the second CI finding the closed
 /// form's gap is 3.9·10⁻⁷ short of 6, and this is 6·10⁻⁵. Where the line
@@ -1371,14 +1381,28 @@ pub(crate) fn closed_form_rounding(delta: Vec2, dir: Vec2, reach: Vec2, owed: f3
 ///   `|dir| (Σ from² + owed²) ≤ |b| · reach_sum`, `from` the axes' gaps at
 ///   the stretch's start and `b` the sum of each times its rate. Checked
 ///   here, at that stretch, from the line in `f64`.
-/// - Where they start nearer, the root on that stretch is read from `b² −
-///   a c`, whose roundings are not held linear: it does not.
+/// - Where they start nearer than owed, or exactly owed apart, it holds,
+///   with no further condition. The closed form solves the stretch holding
+///   the root only where its constant `c = Σ from² − owed²` is below none
+///   (else its step is the stretch's start, a stop): so each axis's gap at
+///   the start is under `owed`, and at the root, where the gap is `owed`,
+///   each axis's gap moved by `|rate τ| ≤ owed` over the root `τ`, so
+///   `a τ² ≤ 2 owed²`. The root is the larger of `a τ² + 2 b τ + c`'s, where
+///   the quadratic moves `2 s`, `s = √(b² − a c)`, and the gap `s / owed ≤
+///   √a` a unit of step. A rounding of the coefficients moves the root by
+///   `(δa τ² + 2 δb τ + δc) / 2 s` and the gap by that over `owed`: `δc` is
+///   a few roundings of `Σ from² + owed² < 2 owed²`, `δa τ²` of `a τ² ≤ 2
+///   owed²`, and `2 δb τ` of `2 τ Σ |from rate| < 2 owed Σ |rate τ|`, so the
+///   gap moves by `γ owed` and `γ X`. Both forms of the root, `−c / (b +
+///   s)` where `b ≥ 0` and `(s − b) / a` where not, and `s` itself sum terms
+///   of one sign, so their own roundings are relative: the root moves by
+///   `γ τ`, the gap by `γ √a τ ≤ γ √2 owed`.
 fn linear_holds(delta: Vec2, dir: Vec2, reach: Vec2, owed: f64, truth: f64, reach_sum: f64) -> bool {
     if owed <= 0.0 {
         return true;
     }
     if gap_in_f64(delta, dir, reach, 0.0) <= owed {
-        return false;
+        return true;
     }
     let sign = if truth < 0.0 { -1.0 } else { 1.0 };
     let t = truth.abs();
