@@ -8106,6 +8106,7 @@ pub(super) fn place_halves(
         text.extend(line.tracked.glyphs.iter().copied());
     }
     let mut sides = Vec::new();
+    let mut side_arcs = 0;
     if let Some(laid) = laid_sides {
         let offset = lay.offset.get();
         let mut kept = vec![true; laid.glyphs.len()];
@@ -8120,6 +8121,8 @@ pub(super) fn place_halves(
                 }
                 #[cfg(test)]
                 ARCS_OFF_THE_CURVE.with(|n| n.set(n.get() + 1));
+            } else {
+                side_arcs += 1;
             }
         }
         sides = laid
@@ -8152,6 +8155,7 @@ pub(super) fn place_halves(
             .collect();
         trace.offset = Some(lay.offset.get());
         trace.unheld = unheld;
+        trace.side_arcs = side_arcs;
         trace.cut_apart = cut_apart;
         trace.clear = clear;
         trace.spent = lay.work.spent.get();

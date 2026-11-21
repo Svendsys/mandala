@@ -109,24 +109,27 @@ fn lays_its_sides(laid: &Laid) -> bool {
     laid.sides > 0 && laid.trace.unheld.sides.is_empty()
 }
 
-/// The fewest glyphs of its sides a frame round `shape` in `fit` owes far
-/// out, where `origin` is the same frame at the origin (#362): its copies
-/// bounded from below by `flow_fuzz::least_far_copies`, from the ornament
-/// at the least scale `fit` lays it at and the coordinates' spacing.
-fn least_far_sides(origin: &Laid, shape: &Outline, fit: &FitMode) -> usize {
+/// The fewest glyphs of its sides a frame of `text` round `shape` in `fit`
+/// owes far out, where `origin` is the same frame at the origin (#362):
+/// its copies bounded from below by `flow_fuzz::least_far_copies`, from
+/// the runs as shaped, the arcs `origin` kept copies on and the
+/// coordinates' spacing.
+fn least_far_sides(text: &str, origin: &Laid, shape: &Outline, fit: &FitMode) -> usize {
     use crate::flow::tests::flow_fuzz::least_far_copies;
-    let ornament =
-        with_fonts(|fs| ornament_run(&layout(), &style(POINTS), 1.0, fs).expect("the layout has sides"));
+    let (run, ornament) = with_fonts(|fs| {
+        let flow = style(POINTS);
+        (
+            real_run(text, &flow, fs),
+            ornament_run(&layout(), &flow, 1.0, fs).expect("the layout has sides"),
+        )
+    });
     let glyphs = ornament.glyphs.len().max(1);
-    let scale = match fit {
-        FitMode::Fit { min, max } => min.min(*max),
-        _ => 1.0,
-    };
     let copies = least_far_copies(
         origin.sides / glyphs,
-        origin.trace.lines.len(),
+        origin.trace.side_arcs,
+        &run,
         &ornament,
-        scale,
+        &held_as(fit),
         outline_reach(shape),
     );
     copies * glyphs
@@ -136,8 +139,8 @@ fn least_far_sides(origin: &Laid, shape: &Outline, fit: &FitMode) -> usize {
 /// as `origin`, the same frame at the origin, does: none of a junction
 /// left empty or kept short, nor fewer glyphs of them than
 /// [`least_far_sides`]; `None` where it does.
-fn short_of(origin: &Laid, far: &Laid, shape: &Outline, fit: &FitMode) -> Option<String> {
-    let least = least_far_sides(origin, shape, fit);
+fn short_of(text: &str, origin: &Laid, far: &Laid, shape: &Outline, fit: &FitMode) -> Option<String> {
+    let least = least_far_sides(text, origin, shape, fit);
     (!lays_its_sides(far) || far.sides < least).then(|| {
         format!(
             "{} glyphs, {} of its sides ({} at the origin, {least} owed), {:?}, its budget {} of {} spent",
@@ -175,8 +178,8 @@ fn issue_frames() -> Vec<(&'static str, FitMode, Vec2)> {
 /// left both junctions empty at both (32, 7 and 7 glyphs).
 ///
 /// Control: with the count search moving a count at a time, as before
-/// #362, red at 10⁶: "To see…" in `Spread` keeps an arc short, 396,660 of
-/// its 400,000 glyph steps spent.
+/// #362, red at 10⁶: "To see…" in `Spread` leaves junction 1 empty,
+/// 395,916 of its 400,000 glyph steps spent.
 #[test]
 fn test_far_sides_the_issues_frames_lay_their_sides_at_1e6_and_1e7() {
     for (text, fit, size) in issue_frames() {
@@ -195,7 +198,7 @@ fn test_far_sides_the_issues_frames_lay_their_sides_at_1e6_and_1e7() {
                 "precondition: the coordinates at {at:e} hold the glyphs of {text:?} {fit:?} apart"
             );
             let far = laid(text, &shape, &fit);
-            if let Some(why) = short_of(&origin, &far, &shape, &fit) {
+            if let Some(why) = short_of(text, &origin, &far, &shape, &fit) {
                 panic!("{text:?} {fit:?} round the ellipse {size} at {at:e} does not lay its sides as at the origin: {why}");
             }
         }
@@ -280,7 +283,7 @@ fn holds_the_spread(text: &'static str, fit: &FitMode) -> usize {
             );
             let far = laid(text, &shape, &fit);
             held += 1;
-            if let Some(why) = short_of(&origin, &far, &shape, &fit) {
+            if let Some(why) = short_of(text, &origin, &far, &shape, &fit) {
                 broken.push(format!(
                     "{text:?} {fit:?} round the ellipse {size} at {at:e}: {why}"
                 ));
@@ -310,9 +313,10 @@ fn holds_the_spread(text: &'static str, fit: &FitMode) -> usize {
 /// - the copies weighed in their arcs' touch check on their glyph boxes as
 ///   placed (`glyph_box` (gone)): the ellipse 450 × 1,800 at 10⁷ and
 ///   1.6·10⁷, an arc left empty;
-/// - the floor eight times the spacing: some frames from 4·10⁶ on laying
-///   fewer copies than [`least_far_sides`] owes, none of them reporting a
-///   loss.
+/// - the floor wider than `held_apart`'s, none of the frames reporting a
+///   loss, each laying fewer copies than [`least_far_sides`] owes: at
+///   twice the spacing (`2u + NEARER + TOUCH`) 12 of the 60, at 10⁷ and
+///   1.6·10⁷; at three times 24; at four 28, from 4·10⁶ on; at eight 36.
 ///
 /// With one center too many, red on its precondition; with the spread's
 /// `beyond` its last center, red on that precondition.
@@ -566,7 +570,7 @@ fn holds_the_tight_spread(span: LineSpan) -> usize {
                         }
                         let far = lay(text, &shape, &fit);
                         held += 1;
-                        if let Some(why) = short_of(&origin, &far, &shape, &fit) {
+                        if let Some(why) = short_of(text, &origin, &far, &shape, &fit) {
                             broken.push(format!(
                                 "{text:?} {fit:?} round the ellipse {across} at {at:e}: {why}"
                             ));
@@ -590,10 +594,10 @@ fn holds_the_tight_spread(span: LineSpan) -> usize {
 /// frames or more of the 480 it may lay, 345 as it stands.
 ///
 /// Control: with the band curve held to a hundredth of a point wherever it
-/// lies (`Halves::offset_tolerance`), red: four frames of "MANDALA" round
-/// ellipses 150 to 2,400 across, at 10⁷ to 3.3·10⁷, both arcs emptied as
-/// wanting more of the curve than it was last laid at, little of their
-/// budgets spent.
+/// lies (`Halves::offset_tolerance`), red: two frames of "MANDALA" in
+/// `Fit`, round the ellipses 300 × 90 and 2,400 × 720 at 1.6·10⁷, both
+/// arcs emptied as wanting more of the curve than it was last laid at,
+/// little of their budgets spent.
 #[test]
 fn test_far_sides_a_frame_at_whole_lays_its_sides_wherever_its_coordinates_hold_them() {
     let held = holds_the_tight_spread(LineSpan::WHOLE);
@@ -608,7 +612,8 @@ fn test_far_sides_a_frame_at_whole_lays_its_sides_wherever_its_coordinates_hold_
 ///
 /// Control: as for
 /// [`test_far_sides_a_frame_at_whole_lays_its_sides_wherever_its_coordinates_hold_them`],
-/// red: two frames of "MANDALA" in `Fit` at 8.3·10⁶.
+/// red: one frame of "MANDALA" in `Fit`, round the ellipse 150 × 45 at
+/// 10⁷.
 #[test]
 fn test_far_sides_a_frame_at_half_span_lays_its_sides_wherever_its_coordinates_hold_them() {
     let held = holds_the_tight_spread(LineSpan::new(0.5).expect("a half is a span"));
@@ -627,9 +632,13 @@ fn test_far_sides_a_frame_at_half_span_lays_its_sides_wherever_its_coordinates_h
 /// stop, onto a count whose solve the stop cut short, and kept nothing.
 /// Precondition: some budget keeps an arc short, and so stops its search.
 ///
-/// Control: with the search keeping the count it stands at, red at 53,000
-/// to 55,000, both junctions left empty, where 46,000 to 52,000 keep the
-/// first short.
+/// As it stands, 40,000 to 52,000 leave both junctions empty, 53,000 to
+/// 67,000 keep the first short, and 68,000 to 70,000 lay the first whole;
+/// each leaves the second empty.
+///
+/// Control: with the search keeping the count it stands at, red at 58,000
+/// and 67,000, both junctions left empty, where 53,000 kept copies on the
+/// first.
 #[test]
 fn test_far_sides_a_larger_budget_keeps_the_copies_a_smaller_one_does() {
     use crate::flow::place::halves::BUDGET_OVERRIDE;
@@ -762,7 +771,7 @@ fn test_far_sides_a_frame_across_a_power_of_two_lays_its_sides() {
                         }
                         let far = laid(text, &shape, &fit);
                         held += 1;
-                        if let Some(why) = short_of(&origin, &far, &shape, &fit) {
+                        if let Some(why) = short_of(text, &origin, &far, &shape, &fit) {
                             broken.push(format!(
                                 "{text:?} {fit:?} round the ellipse {size} at {at:e}: {why}"
                             ));

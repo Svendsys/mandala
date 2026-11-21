@@ -150,20 +150,29 @@ fn test_generated_flows_hold_every_flow_property() {
 
 /// The seeds the twin property draws its far-out frames from (#362), each
 /// that draws an outline drawing it far out, at `10⁶` or `10⁷`
-/// (`FAR_OUT_NEAR`).
+/// (`flow_fuzz::far_frames_laid`).
 const TWIN_SEEDS: u64 = 1_000;
 
 /// #362, the issue's item 5 held by the suite rather than a fuzz target:
 /// every far-out frame with sides the structured generator lays over
 /// [`TWIN_SEEDS`] seeded inputs, drawn far out each time it draws an
-/// outline, at `10⁶` or `10⁷` (`FAR_OUT_NEAR`), where the coordinates hold its text's and
-/// its ornament's glyphs apart (ruling B18.1 §9, `coordinates_hold_apart`
-/// at the least scale its fit lays them at, a `Once` at a `Spread`'s), and
-/// whose twin — the same frame, text, layout and cap round the same
-/// outline at the origin — lays its sides with no junction empty or kept
-/// short, both laying their text whole, lays them so too: some copies, no junction empty or kept short,
-/// and no fewer copies than `least_far_copies` bounds from the twin's
-/// count, the coordinates' spacing and the ornament as shaped.
+/// outline, at `10⁶` or `10⁷` (`flow_fuzz::far_frames_laid`, which lays
+/// those frames from the generator's choices and checks none of the
+/// properties the structured sweep above holds), where the coordinates
+/// hold its text's and its ornament's glyphs apart (ruling B18.1 §9,
+/// `coordinates_hold_apart` at the least scale its fit lays them at, a
+/// `Once` at a `Spread`'s), and whose twin — the same frame, text, layout
+/// and cap round the same outline at the origin — lays its sides with no
+/// junction empty or kept short, both laying their text whole, lays them
+/// so too: some copies, no junction empty or kept short, and no fewer
+/// copies than `least_far_copies` bounds from the twin's count and arcs,
+/// the coordinates' spacing and the runs as shaped.
+///
+/// Most far frames are owed nothing here. Of the 264 the seeds lay as the
+/// generator stands, 238 are not held: 74 are a `Repeat`, which owes no
+/// text whole; 105 lie where the coordinates cannot hold their glyphs
+/// apart; 46 have a twin that lays no sides; 11 a twin that cuts its text,
+/// and 1 a far frame that does; 1 a twin that reports a loss of its sides.
 ///
 /// It is not a property of the fuzz targets: a twin is a second budgeted
 /// frame an input, past what one input may take there (ruling R45.1,
@@ -171,49 +180,37 @@ const TWIN_SEEDS: u64 = 1_000;
 /// realized work rather than its worst case, is the owner's to rule on.
 ///
 /// Precondition: the seeds hold 15 far frames or more to their twins (26
-/// of the 264 far frames they lay as the generator stands). Control: with
-/// every arc of a frame further than `10⁵` from the origin cut to its
-/// first two inks, no loss reported, red: 13 of the 26, each short of the
-/// copies' bound. The generator's frames do not reach the mechanisms of
-/// #362 itself — with the count search walking, the floor eight times as
-/// wide or none at all, this is green — which `far_sides_tests` holds.
+/// of the 264). Control: with every arc of a frame further than `10⁵` from
+/// the origin cut to its first two inks, no loss reported, red: 13 of the
+/// 26, each short of the copies' bound. It is a net for a far frame laying
+/// fewer copies than its twin, whatever the cause, across the generator's
+/// frames; it does not reach the mechanisms of #362 itself — with the
+/// count search walking, the floor eight times as wide or none at all, it
+/// is green: the walk costs a frame its sides only where some two hundred
+/// copies of a short ornament lie beside a long text, which is what the
+/// spreads of `far_sides_tests` are, and those hold them.
 #[test]
 fn test_generated_far_frames_lay_their_sides_as_their_twins_at_the_origin() {
     use crate::document::values::FitMode;
     use crate::flow::place::{place_on_closed_capped, Trace};
-    use crate::flow::tests::flow_fuzz::FAR_OUT_NEAR;
     use crate::flow::tests::flow_fuzz::{
-        coordinates_hold_apart, least_far_copies, ornament_run, outline_reach, FAR_FRAMES_LAID,
+        coordinates_hold_apart, far_frames_laid, least_far_copies, ornament_run, outline_reach,
     };
     use crate::flow::PlacedRun;
-    struct Off;
-    impl Drop for Off {
-        fn drop(&mut self) {
-            FAR_OUT_NEAR.with(|near| near.set(false));
-        }
-    }
-    FAR_FRAMES_LAID.with(|laid| laid.borrow_mut().clear());
-    FAR_OUT_NEAR.with(|near| near.set(true));
-    let off = Off;
-    for seed in 0..TWIN_SEEDS {
-        if let Err(why) = check_flow_generated(&mut Choices::seeded(seed)) {
-            panic!("seed {seed}: {why}");
-        }
-    }
-    drop(off);
-    let frames = FAR_FRAMES_LAID.with(|laid| std::mem::take(&mut *laid.borrow_mut()));
+    let frames = far_frames_laid(0..TWIN_SEEDS).unwrap_or_else(|why| panic!("{why}"));
     let sides_of = |placed: &PlacedRun, trace: &Trace| {
         let lines: usize = trace.lines.iter().map(|l| l.glyphs.len()).sum();
         placed.glyphs.len().saturating_sub(lines)
     };
+    // Why each far frame not held is owed nothing here.
+    let mut dropped = [0usize; 6];
     let mut held = 0;
     let mut broken = Vec::new();
     for frame in &frames {
-        let least_scale = match frame.fit {
-            FitMode::Repeat => continue,
-            FitMode::Fit { min, max } => min.min(max),
-            _ => 1.0,
-        };
+        if frame.fit == FitMode::Repeat {
+            dropped[0] += 1;
+            continue;
+        }
         let held_as = match &frame.fit {
             FitMode::Once { .. } => FitMode::Spread,
             other => other.clone(),
@@ -226,8 +223,13 @@ fn test_generated_far_frames_lay_their_sides_as_their_twins_at_the_origin() {
         if !coordinates_hold_apart(reach, &frame.run, &held_as)
             || !coordinates_hold_apart(reach, &ornament, &held_as)
         {
+            dropped[1] += 1;
             continue;
         }
+        let (placed, far_trace) = frame
+            .laid
+            .as_ref()
+            .expect("a far frame the coordinates hold apart is laid (`far_frame_owed`)");
         let mut trace = Trace::default();
         let (_, twin) = with_fonts(|fs| {
             place_on_closed_capped(
@@ -249,39 +251,57 @@ fn test_generated_far_frames_lay_their_sides_as_their_twins_at_the_origin() {
         // a frame loses its sides before its text (ruling R48.3), so one
         // that keeps more of a cut text than its twin may keep fewer sides.
         let whole = |placed: &PlacedRun, trace: &Trace| !placed.truncated && trace.cut_apart.is_empty();
-        if twin_sides == 0
-            || !trace.unheld.sides.is_empty()
-            || !whole(&twin, &trace)
-            || !whole(&frame.placed, &frame.trace)
-        {
+        let why_not = if twin_sides == 0 {
+            Some(2)
+        } else if !whole(&twin, &trace) {
+            Some(3)
+        } else if !whole(placed, far_trace) {
+            Some(4)
+        } else if !trace.unheld.sides.is_empty() {
+            Some(5)
+        } else {
+            None
+        };
+        if let Some(why) = why_not {
+            dropped[why] += 1;
             continue;
         }
         held += 1;
         let glyphs = ornament.glyphs.len().max(1);
         let least = least_far_copies(
             twin_sides / glyphs,
-            trace.lines.len(),
+            trace.side_arcs,
+            &frame.run,
             &ornament,
-            least_scale,
+            &held_as,
             reach,
         ) * glyphs;
-        let far_sides = sides_of(&frame.placed, &frame.trace);
-        if far_sides == 0 || !frame.trace.unheld.sides.is_empty() || far_sides < least {
+        let far_sides = sides_of(placed, far_trace);
+        if far_sides == 0 || !far_trace.unheld.sides.is_empty() || far_sides < least {
             broken.push(format!(
-                "{:?} {:?} round {:?}: {far_sides} glyphs of its sides ({twin_sides} at the origin, {least} owed), {:?}, its budget {} of {} spent",
+                "{:?} {:?} round {:?}: {far_sides} glyphs of its sides ({twin_sides} at the origin over {} arcs, {least} owed), {:?}, its budget {} of {} spent",
                 frame.fit,
                 frame.layout.sides,
                 frame.far,
-                frame.trace.unheld.sides,
-                frame.trace.spent,
-                frame.trace.budget
+                trace.side_arcs,
+                far_trace.unheld.sides,
+                far_trace.spent,
+                far_trace.budget
             ));
         }
     }
     assert!(
         held >= 15,
-        "precondition: the seeds hold 15 far frames or more to their twins ({held} of {})",
-        frames.len()
+        "precondition: the seeds hold 15 far frames or more to their twins ({held} of {}; not held: \
+         {} a `Repeat`, {} where the coordinates cannot hold them, {} whose twin lays no sides, {} \
+         whose twin cuts its text, {} that cut their own, {} whose twin reports a loss)",
+        frames.len(),
+        dropped[0],
+        dropped[1],
+        dropped[2],
+        dropped[3],
+        dropped[4],
+        dropped[5]
     );
     assert!(
         broken.is_empty(),

@@ -1282,7 +1282,13 @@ fn check_generated_pinning(
     pinned.extend(styles.iter().map(|style| style.font));
     pinned.push(flow.font);
     let mut fs = FontSystemLease::new("flow fuzz");
-    match choices.below(4) {
+    let layout = choices.below(4);
+    // Collecting far frames, only the frames round an outline are laid.
+    #[cfg(test)]
+    if layout != 1 && COLLECTING_FAR_FRAMES.with(std::cell::Cell::get) {
+        return Ok(());
+    }
+    match layout {
         0 => {
             let min = choices.one_in(2).then(|| any_vec2(choices));
             let align = *choices.pick(&[Align::Left, Align::Center, Align::Right]);
@@ -1451,6 +1457,32 @@ fn check_generated_pinning(
                             // A ring's cap (rulings B17.2a, B17.2b).
                             let laid_tables = tables(&run);
                             let cap = ring_cap(run.glyphs.len(), bounded, laid_tables);
+                            // Collecting far frames, one the twin property
+                            // holds nothing of is recorded and not laid.
+                            #[cfg(test)]
+                            if let Some((_, origin)) = twin
+                                .filter(|(far, _)| far == path)
+                                .filter(|_| COLLECTING_FAR_FRAMES.with(std::cell::Cell::get))
+                                .filter(|_| !far_frame_owed(&run, ornament.as_ref(), &fit, path))
+                            {
+                                FAR_FRAMES_LAID.with(|laid| {
+                                    laid.borrow_mut().push(FarFrame {
+                                        run: run.clone(),
+                                        far: *path,
+                                        origin,
+                                        start,
+                                        direction,
+                                        fit: fit.clone(),
+                                        layout: layout.clone(),
+                                        outward,
+                                        flow,
+                                        scale,
+                                        cap,
+                                        laid: None,
+                                    })
+                                });
+                                continue;
+                            }
                             let placed = place_on_closed_capped(
                                 &run,
                                 path,
@@ -1493,7 +1525,10 @@ fn check_generated_pinning(
                                 )))
                             });
                             #[cfg(test)]
-                            if let Some((_, origin)) = twin.filter(|(far, _)| far == path) {
+                            if let Some((_, origin)) = twin
+                                .filter(|(far, _)| far == path)
+                                .filter(|_| COLLECTING_FAR_FRAMES.with(std::cell::Cell::get))
+                            {
                                 FAR_FRAMES_LAID.with(|laid| {
                                     laid.borrow_mut().push(FarFrame {
                                         run: run.clone(),
@@ -1507,10 +1542,13 @@ fn check_generated_pinning(
                                         flow,
                                         scale,
                                         cap,
-                                        placed: placed.1.clone(),
-                                        trace: trace.clone(),
+                                        laid: Some((placed.1.clone(), trace.clone())),
                                     })
                                 });
+                            }
+                            #[cfg(test)]
+                            if COLLECTING_FAR_FRAMES.with(std::cell::Cell::get) {
+                                continue;
                             }
                             let mut work = InputWork::default();
                             let sized = matches!(fit, FitMode::Fit { .. });
@@ -2066,49 +2104,84 @@ thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
-/// The fewest copies an arc of a frame's side ornament `ornament` owes far
-/// out, where the frame lies within `reach` of the origin along either axis,
-/// laid at no less than `scale` of `ornament` as shaped, its twin at the
-/// origin laying `copies` of them over `arcs` arcs (#362). Computed from the
-/// ornament as shaped and the coordinates' spacing, with no placement code.
+/// The fewest copies of its side ornament `ornament` a frame of `text` in
+/// `fit` owes far out, where the frame lies within `reach` of the origin
+/// along either axis, its twin at the origin laying `copies` of them over
+/// `arcs` arcs that kept copies (#362). Computed from the runs as shaped
+/// and the coordinates' spacing, with no placement code.
 ///
-/// An arc's copies fill it at an equal gap: at the origin `n₀` of them,
-/// each `A` along the arc and `inked` gaps a copy. Far out each gap may be
-/// wider by `Δ`: the least gap the coordinates hold the first copy apart
-/// from the text at, at most `2u` past `NEARER` and `TOUCH` (`u` the
-/// spacing of `f32`s where the frame lies, read a power of two further
-/// out, so that it bounds every spacing the frame's inks meet), and as much
-/// again as one float step past what it is owed (`√2u`, or the pairwise
-/// rule's `INK_TOLERANCE` where that is more). So the arcs hold at least
-/// `n₀·A/(A + inked·Δ)` copies — the straight path's arithmetic, the gaps
-/// shared over the same arcs — less one for the count whose gap is nearest
-/// the target and one for the bend, per arc. `A` is the copy's advance,
-/// which is no longer than its step along the arc. For `─═` at 16 pt round
-/// an ellipse 2,000 across that is about five in six of the origin's
-/// copies at `4·10⁶` and three in five at `10⁷`, where `f32`s are 0.5 and
-/// 1 apart at the power of two past the frame; it tightens toward the
-/// origin's count as the spacing falls. It is a bound, not the count the
-/// coordinates allow: the frames lay 96% and 86% of the origin's there.
+/// An arc's copies fill it at an equal gap `g`, one before each of a
+/// copy's `c` clusters and one at the arc's end; each inked cluster is as
+/// long along the arc as its ink and a space as its advance (the engine's
+/// step, ink to ink, ruling R31). So a copy is `A` long and has `c` gaps,
+/// `A` the inks' extents and the spaces' advances at `fit`'s least scale —
+/// a cluster's side bearings lie inside its gaps, and are not counted — and
+/// an arc `L` long holds `n₀` copies at the origin where `L = n₀·(A +
+/// c·g₀) + g₀`. Far out each gap may be wider by `Δ`. The arc then holds
+/// the most `n` with `n·(A + c·(g₀ + Δ)) + g₀ + Δ ≤ L`: `n₀·(A + c·g₀)/(A +
+/// c·(g₀ + Δ))` rounded down, less one, which is no less than `n₀·A/(A +
+/// c·Δ)` rounded down, less one, whatever `g₀`. The count whose gap is
+/// nearest the target may be one fewer still: two less per arc of the
+/// twin's, the rest shared over the same arcs. `L` is the twin's arc: its
+/// ends are the text's end inks, which far out may lie a few float steps
+/// from where the twin sets them; that the slack of a copy covers this is
+/// what the spreads show, not what this proves.
+///
+/// `Δ` is the least gap the coordinates hold the first copy apart from the
+/// text at, plus one float step past what a gap is owed. The floor
+/// (`held_apart`) is `(u + s)/2 + NEARER + TOUCH`, with `u` the spacing at
+/// the text ink it starts past and `s` where the copy's facing corner may
+/// lie, at most a power of two further out. So `s ≤ 2u`, and the floor is
+/// at most `1.5u + NEARER + TOUCH`. A gap lands at most a float step past
+/// what it is owed: `√2u` on the canvas's grid, or the pairwise rule's
+/// `INK_TOLERANCE` where that is more. `u` is read at the frame, as
+/// [`coordinates_hold_apart`] reads it: at `reach` plus twice the text's
+/// and the ornament's line heights at the most scale `fit` lays them at,
+/// within which every ink of the frame lies, its sides' included, so that
+/// it bounds every spacing they meet.
+///
+/// For `─═` at 16 pt round an ellipse 2,000 × 1,200, whose twin lays 800
+/// glyphs of its sides, that is 736 at `4·10⁶` and 610 at `10⁷`, where
+/// `f32`s are 0.25 and 1 apart; the frame lays 770 and 688. It tightens
+/// toward the origin's count as the spacing falls. It is a bound, not the
+/// count the coordinates allow.
 #[cfg(test)]
 pub(crate) fn least_far_copies(
     copies: usize,
     arcs: usize,
+    text: &ShapedRun,
     ornament: &ShapedRun,
-    scale: f32,
+    fit: &FitMode,
     reach: f32,
 ) -> usize {
     use crate::flow::place::halves::TOUCH;
-    let advance: f32 = ornament.glyphs.iter().map(|g| g.advance.max(0.0)).sum();
-    let inked = ornament.glyphs.iter().filter(|g| g.ink.is_some()).count().max(1) as f64;
-    let copy = f64::from(advance) * f64::from(scale.max(0.0));
-    let u = f32_spacing(2.0 * reach.abs());
-    let wider = 2.0 * u
-        + f64::from(NEARER)
-        + f64::from(TOUCH)
-        + (std::f64::consts::SQRT_2 * u).max(f64::from(INK_TOLERANCE));
-    let least = copies as f64 * copy / (copy + inked * wider);
+    let Some(least) = least_scale(fit) else {
+        return 0;
+    };
+    let most = match fit {
+        FitMode::Fit { min, max } => min.max(*max),
+        _ => 1.0,
+    };
+    let glyphs = drawn_glyphs(ornament);
+    let clusters = glyph_clusters(&glyphs);
+    let copy: f64 = clusters
+        .iter()
+        .map(|cluster| match cluster_ink_at(cluster, least) {
+            Some((min, max)) => (max.x - min.x).max(0.0),
+            None => f64::from(cluster_advance(cluster, least)),
+        })
+        .sum();
+    let gaps = clusters.len().max(1) as f64;
+    let height = |run: &ShapedRun| {
+        let largest = drawn_glyphs(run).iter().map(|g| g.size).fold(0.0_f32, f32::max);
+        run.line_height.max(0.0) * size_factor(largest, most)
+    };
+    let u = f32_spacing(reach.abs() + 2.0 * (height(text) + height(ornament)));
+    let floor = 1.5 * u + f64::from(NEARER) + f64::from(TOUCH);
+    let step = (std::f64::consts::SQRT_2 * u).max(f64::from(INK_TOLERANCE));
+    let least = copies as f64 * copy / (copy + gaps * (floor + step));
     if least.is_finite() {
-        (least.floor() as usize).saturating_sub(2 * arcs.clamp(1, 2))
+        (least.floor() as usize).saturating_sub(2 * arcs)
     } else {
         0
     }
@@ -2131,20 +2204,74 @@ pub(crate) struct FarFrame {
     /// The scale its run, and so its ornament, was shaped at.
     pub(crate) scale: f32,
     pub(crate) cap: usize,
-    pub(crate) placed: PlacedRun,
-    pub(crate) trace: Trace,
+    /// The frame as laid, and its trace: `None` for one collected and not
+    /// laid, which the twin property holds nothing of
+    /// ([`far_frame_owed`]).
+    pub(crate) laid: Option<(PlacedRun, Trace)>,
+}
+
+/// Whether the twin property can hold anything of a far frame of `run` in
+/// `fit` round `outline`, `ornament` its sides (#362): it is no `Repeat`,
+/// which owes no text whole, and the coordinates hold its text's and its
+/// ornament's glyphs apart (ruling B18.1 §9), a `Once` at a `Spread`'s
+/// least scale. What the property drops first, so that a frame it would
+/// drop there is not laid.
+#[cfg(test)]
+pub(crate) fn far_frame_owed(
+    run: &ShapedRun,
+    ornament: Option<&ShapedRun>,
+    fit: &FitMode,
+    outline: &Outline,
+) -> bool {
+    let held_as = match fit {
+        FitMode::Repeat => return false,
+        FitMode::Once { .. } => FitMode::Spread,
+        other => other.clone(),
+    };
+    let reach = outline_reach(outline);
+    ornament.is_some_and(|ornament| {
+        coordinates_hold_apart(reach, run, &held_as) && coordinates_hold_apart(reach, ornament, &held_as)
+    })
 }
 
 #[cfg(test)]
 thread_local! {
-    /// Test switch (#362): `far_out` draws a place far out every time it is
-    /// asked, at `10⁶` or `10⁷` — what the twin property sweeps its seeds
-    /// with, so that most of them lay a frame there.
-    pub(crate) static FAR_OUT_NEAR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Test switch (#362), set by [`far_frames_laid`]: `far_out` draws a
+    /// place far out every time it is asked, at `10⁶` or `10⁷`, so that
+    /// most seeds lay a frame there, and the structured generator lays only
+    /// its frames round an outline, records each far one with sides
+    /// ([`FAR_FRAMES_LAID`]) and checks none of them: the twin property's
+    /// collection, the generator's choices without the properties the
+    /// structured sweep holds.
+    pub(crate) static COLLECTING_FAR_FRAMES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The far-out frames with sides the structured generator has laid on
     /// this thread, while a test collects them (#362).
     pub(crate) static FAR_FRAMES_LAID: std::cell::RefCell<Vec<FarFrame>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The far-out frames with sides the structured generator lays over
+/// `seeds`, drawn far out each time it draws an outline, at `10⁶` or `10⁷`
+/// ([`COLLECTING_FAR_FRAMES`]), with no property checked (#362): what the
+/// twin property holds. An input the generator refuses, as the structured
+/// target's would be, is the seed's error.
+#[cfg(test)]
+pub(crate) fn far_frames_laid(seeds: std::ops::Range<u64>) -> Result<Vec<FarFrame>, String> {
+    struct Off;
+    impl Drop for Off {
+        fn drop(&mut self) {
+            COLLECTING_FAR_FRAMES.with(|collecting| collecting.set(false));
+            FAR_FRAMES_LAID.with(|laid| laid.borrow_mut().clear());
+        }
+    }
+    FAR_FRAMES_LAID.with(|laid| laid.borrow_mut().clear());
+    COLLECTING_FAR_FRAMES.with(|collecting| collecting.set(true));
+    let _off = Off;
+    for seed in seeds {
+        check_generated(&mut Choices::seeded(seed), true, &faces())
+            .map_err(|why| format!("seed {seed}: {why}"))?;
+    }
+    Ok(FAR_FRAMES_LAID.with(|laid| std::mem::take(&mut *laid.borrow_mut())))
 }
 
 /// The side ornaments a far-out frame is given where its layout draws none
@@ -2171,14 +2298,14 @@ pub const FAR_SIDES: [&str; 4] = ["─═", "· ", "-=", "x"];
 /// `outline_tests::test_flow_an_ellipses_length_is_its_ellipses_at_every_magnitude`.
 pub fn far_out(choices: &mut Choices<'_>) -> Option<(Vec2, f32)> {
     #[cfg(test)]
-    let near = FAR_OUT_NEAR.with(std::cell::Cell::get);
+    let near = COLLECTING_FAR_FRAMES.with(std::cell::Cell::get);
     #[cfg(not(test))]
     let near = false;
     if !choices.one_in(4) && !near {
         return None;
     }
     let power = choices.below(17) as i32;
-    // In a test that asks (`FAR_OUT_NEAR`), at `10⁶` or `10⁷`, where the
+    // In a test that asks (`COLLECTING_FAR_FRAMES`), at `10⁶` or `10⁷`, where the
     // coordinates hold most frames' glyphs apart (ruling B18.1 §9).
     let power = if near { power % 2 } else { power };
     let at = 10.0_f32.powi(6 + power);
