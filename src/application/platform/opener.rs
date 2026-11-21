@@ -141,7 +141,11 @@ mod tests {
     /// red: `check_link_url` as it was at 3e90f093 (the attachment
     /// denylist) lets the first through to the seam; as it was at
     /// fed68afd, `a@example.org&attach=`; as it was at 5f8bcfff,
-    /// `?subject=hi#attach=` and `subject=x%0D%0A…`.
+    /// `?subject=hi#attach=` and `subject=x%0D%0A…`; (round 6 on #380) a
+    /// part with no `=` let through, option (ii)'s `continue`, lets
+    /// `body=Hi%20Bob,%0D%0AThanks` and its two counter-examples,
+    /// `body=Hi,Thanks;body=x%0D%0A…` and `body=Hi,%0D%0ABcc:%20evil@x;body=1`,
+    /// reach the seam.
     #[test]
     fn test_a_mailto_naming_another_header_does_not_reach_the_opener() {
         let _ = take_opened();
@@ -201,6 +205,26 @@ mod tests {
                 "a raw control character in `body`",
             ),
             ("mailto:a@b?body=Hi%20Bob,%0D%0AThanks", "a decoded line break in"),
+            (
+                "mailto:a@b?body=Hi,Thanks;body=x%0D%0ABcc:e",
+                "a decoded line break in `Thanks`",
+            ),
+            (
+                "mailto:a@b?body=Hi,%0D%0ABcc:%20evil@x;body=1",
+                "a decoded line break in",
+            ),
+            (
+                "mailto:a@b?b%6Fdy=x%0D%0ABcc:%20e@x",
+                "a decoded line break in `b%6Fdy`",
+            ),
+            (
+                "mailto:a@b?subject=x%85Bcc:e",
+                "decoded bytes that are not UTF-8 in `subject`",
+            ),
+            (
+                "mailto:a@b?subject=x%C0%8ABcc:e",
+                "decoded bytes that are not UTF-8 in `subject`",
+            ),
         ] {
             let refused = open_url(url).expect_err(url);
             assert!(refused.contains(words), "{url:?}: {refused}");

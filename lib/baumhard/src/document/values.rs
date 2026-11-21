@@ -442,23 +442,37 @@ pub fn check_link_url(url: &str) -> Result<&str, LinkRefusal<'_>> {
 /// header as a header line of its own (`Bcc: …`), and the other controls
 /// have no place in a header either (ruling D3.5 item 3; round 5).
 ///
-/// **Where "inside a `body`" is decided** is every split a handler may
-/// make at once. The coarsest is RFC 6068's: the query split on raw `&`
-/// alone, each header's value decoded once. The finest is (b)'s. Every
-/// other — a handler that splits on some of the five separators, raw or
-/// decoded — cuts each of the coarsest's headers into runs of the
+/// **Where "inside a `body`" is decided** is every split that cuts at
+/// RFC 6068's raw `&` — the one separator every handler shares — at once.
+/// The coarsest is RFC 6068's own: the query split on raw `&` alone, each
+/// header's value decoded once. The finest is (b)'s. Every split that
+/// cuts at each raw `&` and at some of the other separators, raw or
+/// decoded, cuts each of the coarsest's headers into runs of the
 /// finest's parts. So a decoded control is allowed only when, in its
 /// coarsest header, **every finest part from the header's first up to
-/// the one holding it holds an `=` and is named `body`**. Then any split
-/// in between puts the control in a part that begins with one of those
-/// `body=` parts — named `body` — and holds it in its value: inside a
-/// `body` under every split. A finest part with no `=` in that run is
-/// refused rather than trusted (option (i) on round 5's thread): a split
-/// that begins a part there would name it with that text and whatever
-/// follows up to the next `=` (`Thanks;body`), which no allowlist sees.
-/// Letting such a part inherit the header before it (option (ii)) is the
-/// one line marked in [`controls_inside_body`], should the owner choose
-/// it — with that caveat to weigh.
+/// the one holding it holds an `=` and is named `body`** — named so as
+/// written, too, where the part begins at a raw separator or the
+/// header's start (`b%6Fdy=` is refused: a handler that matches names
+/// before it decodes them reads `b%6Fdy`). Then any such split puts the
+/// control in a part that begins with one of those `body=` parts — named
+/// `body` — and holds it in its value: inside a `body` under every split
+/// that cuts at `&`. A finest part with no `=` in that run is refused
+/// rather than trusted (option (i) on round 5's thread): a split that
+/// begins a part there names it with that text and whatever follows up to
+/// the next `=`. Letting it inherit the header before it (option (ii))
+/// reopens the gap — `body=Hi,Thanks;body=x%0D%0ABcc:e` gives a handler
+/// that splits on `,` alone a header `Thanks;body` holding the break, and
+/// `body=Hi,%0D%0ABcc:%20evil@x;body=1` gives one that splits on `&` and
+/// `,` a header named `\r\nBcc: evil@x;body` — which the marked line in
+/// [`controls_inside_body`] says, and two refused rows hold.
+///
+/// **What this does not cover**: a split that does not cut at raw `&`
+/// carries a run across it, so `?to=c;subject=a&body=%0D%0ABcc:e` and
+/// `?to=c?subject=a&body=%0D%0ABcc:e` load, and would be unsafe only for
+/// a handler that splits on `;` or `?` and ignores `&` — one that could
+/// not read `?subject=a&body=b` either (round 6 of #380). Covering it
+/// would take the whole query as the coarse unit, so that a `body`
+/// holding a break would have to come first: the owner's call.
 ///
 /// An address part that decodes to hold a `?` is refused, since a
 /// handler may read the rest as a query. Returns the refusal, naming the
@@ -547,9 +561,8 @@ fn mail_header(rest: &str) -> Option<LinkRefusal<'_>> {
     // The query's controls, each coarsest header — split on raw `&` —
     // decoded once and cut into the finest parts.
     for coarse in query.split('&') {
-        let decoded = percent_decoded(coarse.as_bytes(), true);
-        if let Some((name, found)) = controls_inside_body(&decoded, separator) {
-            return Some(control(owned(name), found));
+        if let Some((name, found)) = controls_inside_body(coarse, separator) {
+            return Some(control(name, found));
         }
     }
     None
@@ -565,16 +578,24 @@ pub enum MailControlFound {
     /// Any other control character, once decoded, outside a `body`; or
     /// in one, other than a line break or a tab.
     DecodedControl,
+    /// Decoded bytes that are not UTF-8, outside a `body` — which a handler
+    /// reading them as Latin-1 may take for a C1 control (`%85`, NEL) and
+    /// a lenient one for a line break (`%C0%8A`); or, in a `body`, a lone
+    /// byte from `0x80` to `0x9F`, a C1 control in Latin-1 (round 6 of
+    /// #380).
+    DecodedNotUtf8,
 }
 
 impl MailControlFound {
     /// The words a refusal says it with: "a raw control character", "a
-    /// decoded line break", "a decoded control character".
+    /// decoded line break", "a decoded control character", "decoded bytes
+    /// that are not UTF-8".
     pub fn words(self) -> &'static str {
         match self {
             MailControlFound::Raw => "a raw control character",
             MailControlFound::DecodedLineBreak => "a decoded line break",
             MailControlFound::DecodedControl => "a decoded control character",
+            MailControlFound::DecodedNotUtf8 => "decoded bytes that are not UTF-8",
         }
     }
 }
@@ -587,10 +608,13 @@ fn is_mail_control(c: char) -> bool {
     c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')
 }
 
-/// The first control character in the decoded bytes `part`, as a refusal
-/// names it, if any.
+/// The first thing in the decoded bytes `part` that may not stand outside
+/// a `body`, as a refusal names it, if any: a control character, or bytes
+/// that are not UTF-8.
 fn decoded_control(part: &[u8]) -> Option<MailControlFound> {
-    let text = String::from_utf8_lossy(part);
+    let Ok(text) = std::str::from_utf8(part) else {
+        return Some(MailControlFound::DecodedNotUtf8);
+    };
     let c = text.chars().find(|&c| is_mail_control(c))?;
     Some(if matches!(c, '\r' | '\n') {
         MailControlFound::DecodedLineBreak
@@ -599,40 +623,99 @@ fn decoded_control(part: &[u8]) -> Option<MailControlFound> {
     })
 }
 
-/// In `coarse` — one of a query's coarsest headers (split on raw `&`),
-/// decoded once — the name of the part a control character may not stand
-/// in, and what was found, if any (see `mail_header`'s docs). Cut into
-/// the finest parts on `separator`, every part from the first up to the
-/// last that holds a control must hold an `=` and be named `body`, and
-/// every control in them must be a line break or a tab. O(`coarse`'s
-/// length).
-fn controls_inside_body(coarse: &[u8], separator: impl Fn(u8) -> bool) -> Option<(&[u8], MailControlFound)> {
-    let parts: Vec<&[u8]> = coarse.split(|&b| separator(b)).collect();
-    let last = parts.iter().rposition(|part| decoded_control(part).is_some())?;
-    for part in &parts[..=last] {
-        let named = part.iter().position(|&b| b == b'=').map(|at| &part[..at]);
-        // Option (ii) on round 5's thread would `continue` here for a
-        // part with no `=`, letting it inherit the header before it.
-        let is_body = named.is_some_and(|name| name.eq_ignore_ascii_case(b"body"));
-        let found = decoded_control(part);
-        if !is_body {
-            if let Some(found) = found {
-                return Some((named.unwrap_or(part), found));
-            }
-            // A part that is no `body` before the control: the control
-            // stands in a header a coarser split begins here.
-            let found = parts[..=last]
-                .iter()
-                .find_map(|part| decoded_control(part))
-                .unwrap_or(MailControlFound::DecodedControl);
-            return Some((named.unwrap_or(part), found));
-        }
-        let text = String::from_utf8_lossy(part);
-        if text
+/// What in the decoded bytes `part`, a `body`'s, may not stand even
+/// there, if anything: a control but a line break or a tab, or a lone
+/// byte from `0x80` to `0x9F` — a C1 control to a handler reading
+/// Latin-1. Other bytes that are not UTF-8 (a Latin-1 `é`, `%E9`) stand.
+fn body_control(part: &[u8]) -> Option<MailControlFound> {
+    for chunk in part.utf8_chunks() {
+        if chunk
+            .valid()
             .chars()
             .any(|c| is_mail_control(c) && !matches!(c, '\r' | '\n' | '\t'))
         {
-            return Some((b"body", MailControlFound::DecodedControl));
+            return Some(MailControlFound::DecodedControl);
+        }
+        if chunk.invalid().iter().any(|b| (0x80..=0x9f).contains(b)) {
+            return Some(MailControlFound::DecodedNotUtf8);
+        }
+    }
+    None
+}
+
+/// In `raw` — one of a query's coarsest headers, split on raw `&` — the
+/// name of the part a decoded control may not stand in, and what was
+/// found, if any (see `mail_header`'s docs). `raw` is cut on the five
+/// separators as written, each part decoded once (`+` read as a space)
+/// and cut again on the five, decoded; every part from the header's
+/// first up to the last that holds a control (or bytes that are no
+/// UTF-8) must hold an `=` and be named `body` once decoded — and, where
+/// it begins at a raw separator or the header's start, `body` as written
+/// too (ASCII case-insensitive), so `b%6Fdy=` is no `body` to a handler
+/// that matches names before it decodes them (round 6 of #380). In those
+/// `body` parts a line break and a tab may stand, and nothing else of
+/// [`body_control`]'s. O(`raw`'s length).
+fn controls_inside_body(
+    raw: &str,
+    separator: impl Fn(u8) -> bool,
+) -> Option<(Cow<'_, str>, MailControlFound)> {
+    let owned = |bytes: &[u8]| Cow::Owned(String::from_utf8_lossy(bytes).into_owned());
+    // Each part as written, decoded and cut again: (as written, decoded).
+    let raw_parts: Vec<(&str, Vec<u8>)> = raw
+        .split(|c: char| c.is_ascii() && separator(c as u8))
+        .map(|part| (part, percent_decoded(part.as_bytes(), true)))
+        .collect();
+    let last = raw_parts.iter().rposition(|(_, decoded)| {
+        decoded
+            .split(|&b| separator(b))
+            .any(|part| decoded_control(part).is_some())
+    })?;
+    let run = &raw_parts[..=last];
+    let first_found = run
+        .iter()
+        .flat_map(|(_, decoded)| decoded.split(|&b| separator(b)))
+        .find_map(decoded_control)
+        .unwrap_or(MailControlFound::DecodedControl);
+    for (index, (written, decoded)) in run.iter().enumerate() {
+        let parts: Vec<&[u8]> = decoded.split(|&b| separator(b)).collect();
+        // Within the last part as written, only up to its last control.
+        let end = if index == last {
+            parts
+                .iter()
+                .rposition(|part| decoded_control(part).is_some())
+                .unwrap_or(0)
+        } else {
+            parts.len() - 1
+        };
+        for (at, part) in parts[..=end].iter().enumerate() {
+            let named = part.iter().position(|&b| b == b'=').map(|eq| &part[..eq]);
+            let Some(name) = named else {
+                // A part with no `=` in the run is refused, never trusted
+                // to the header before it. Option (ii) on round 5's thread
+                // would `continue` here — and reopen the gap: a coarser
+                // split joins this part to the next `name=` one, so
+                // `body=Hi,Thanks;body=x%0D%0ABcc:e` gives a handler that
+                // splits on `,` alone a header `Thanks;body` holding the
+                // break, and `body=Hi,%0D%0ABcc:%20evil@x;body=1` gives
+                // one that splits on `&` and `,` a header named
+                // `\r\nBcc: evil@x;body`, the break in its name (rounds 5
+                // and 6 of #380).
+                return Some((owned(part), decoded_control(part).unwrap_or(first_found)));
+            };
+            let as_written = written.split_once('=').map_or(*written, |(name, _)| name);
+            let is_body =
+                name.eq_ignore_ascii_case(b"body") && (at > 0 || as_written.eq_ignore_ascii_case("body"));
+            if !is_body {
+                let shown = if at == 0 {
+                    Cow::Borrowed(as_written)
+                } else {
+                    owned(name)
+                };
+                return Some((shown, decoded_control(part).unwrap_or(first_found)));
+            }
+            if let Some(found) = body_control(part) {
+                return Some((Cow::Borrowed("body"), found));
+            }
         }
     }
     None

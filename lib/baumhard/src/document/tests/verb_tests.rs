@@ -286,6 +286,11 @@ fn names_compared<R>(f: impl FnOnce() -> R) -> (usize, R) {
 /// `verb::load`'s index, not `resolve::verb_of`, so that is where the scan
 /// goes (`presentations.iter().position(|def| def.id.as_str() == id)`
 /// before each `present` step) — compares 2,112,872 (round 5 on #380).
+///
+/// **What it does not see**: a scan over the DTO lists at load is not
+/// counted: they are plain `String`s — what the file wrote, read once
+/// per load and bounded by the definitions' limits, not a cost a map's
+/// triggers drive (round 6 on #380).
 #[test]
 fn test_a_step_resolves_each_name_in_one_probe() {
     const N: usize = 2_048;
@@ -437,10 +442,12 @@ fn test_verb_by_id_refuses_definitions_no_document_indexed() {
 /// **A control refusal says what it found, raw or decoded, and where**
 /// (verification round 5 on #380, item 6): at load and from the writer
 /// alike, "a raw control character in `body`", "a decoded line break in
-/// `subject`", "a decoded control character in `subject`".
+/// `subject`", "a decoded control character in `subject`", and (round 6)
+/// "decoded bytes that are not UTF-8 in `subject`".
 ///
-/// Control, seen red: `MailControlFound::words` answering one wording
-/// for all three.
+/// Controls, seen red: `MailControlFound::words` answering one wording
+/// for all four; (round 6) the decoded bytes read lossily, as at
+/// 3094b28e, loads `subject=x%85y`.
 #[test]
 fn test_a_control_refusal_says_what_it_found_and_where() {
     use crate::document::mutation::ops::{DocMutation, SpanOp};
@@ -469,6 +476,10 @@ fn test_a_control_refusal_says_what_it_found_and_where() {
         (
             "mailto:a@example.org?subject=x%00y",
             "a decoded control character in `subject`",
+        ),
+        (
+            "mailto:a@example.org?subject=x%85y",
+            "decoded bytes that are not UTF-8 in `subject`",
         ),
     ] {
         let loaded = load(&map(url)).expect_err(url).to_string();
@@ -615,7 +626,14 @@ fn test_a_link_to_a_file_is_refused_at_load_and_at_apply() {
 /// row it gets wrong); `load_node`
 /// accepting `LinkRefusal::MailHeader` loads it too; the validator
 /// accepting it applies the `set_link`; `resolve` accepting it reads the
-/// edit (and so the presentation, which reads through it).
+/// edit (and so the presentation, which reads through it). Round 6 on
+/// #380: a part with no `=` in the run let through (option (ii), a
+/// `continue` on the marked line) loads `body=Hi,Thanks;body=x%0D%0A…`
+/// and `body=Hi,%0D%0ABcc:%20evil@x;body=1`; the body name compared
+/// decoded only, as at 3094b28e, loads `b%6Fdy=x%0D%0A…`; the decoded
+/// bytes read lossily, as at 3094b28e, loads `subject=x%85…`,
+/// `subject=x%C0%8A…` and `body=x%85y`; a `body` with no check for a
+/// lone byte from `%80` to `%9F` loads `body=x%85y`.
 #[test]
 fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
     let map = |url: &str| {
@@ -690,7 +708,7 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
     // Ruling D3.5 item 3 and round 5: a control character raw anywhere —
     // which nothing else refuses: the format reads a `url` as any JSON
     // string — and decoded anywhere but inside a `body` under every split.
-    use crate::document::values::MailControlFound::{DecodedControl, DecodedLineBreak, Raw};
+    use crate::document::values::MailControlFound::{DecodedControl, DecodedLineBreak, DecodedNotUtf8, Raw};
     for (url, name, found) in [
         (
             "mailto:a@example.org?subject=x%0D%0AAttach:%20/etc/passwd",
@@ -797,6 +815,24 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
             "\r\nBest",
             DecodedLineBreak,
         ),
+        // Round 6: the two counter-examples to option (ii) — which load
+        // with a part with no `=` let through — an encoded `body` name,
+        // and decoded bytes that are not UTF-8 outside a `body` (Latin-1
+        // NEL, an overlong LF), or a lone C1 byte in one.
+        (
+            "mailto:a@b?body=Hi,Thanks;body=x%0D%0ABcc:e",
+            "Thanks",
+            DecodedLineBreak,
+        ),
+        (
+            "mailto:a@b?body=Hi,%0D%0ABcc:%20evil@x;body=1",
+            "\r\nBcc: evil@x",
+            DecodedLineBreak,
+        ),
+        ("mailto:a@b?b%6Fdy=x%0D%0ABcc:%20e@x", "b%6Fdy", DecodedLineBreak),
+        ("mailto:a@b?subject=x%85Bcc:e", "subject", DecodedNotUtf8),
+        ("mailto:a@b?subject=x%C0%8ABcc:e", "subject", DecodedNotUtf8),
+        ("mailto:a@b?body=x%85y", "body", DecodedNotUtf8),
     ] {
         refused(
             url,
@@ -826,6 +862,12 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
         "mailto:a@example.org?body=line1%0D%0Aline2",
         "mailto:a@example.org?body=line1%0D%0Aline2&subject=hi",
         "mailto:a@example.org?body=a%09b",
+        "mailto:a@example.org?body=caf%E9",
+        // Round 6: these load, and are unsafe only for a handler that
+        // does not cut at raw `&` — one that could not read
+        // `?subject=a&body=b` either (see `mail_header`'s docs).
+        "mailto:a@b?to=c;subject=a&body=%0D%0ABcc:e",
+        "mailto:a@b?to=c?subject=a&body=%0D%0ABcc:e",
         "mailto:a@example.org?body=line1%0D%0Aline2%26body=line3%0Aline4",
         "https://example.org/?attach=x",
     ] {

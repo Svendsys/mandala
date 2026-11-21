@@ -470,7 +470,7 @@ enum Link {
 /// break outside a `body` and a raw control character, with a fragment,
 /// `mailto:to=a@b`, `mailto:a%3Db@c` and a `body` with line breaks
 /// loading.
-const SCHEMES: [(&str, Link); 85] = [
+const SCHEMES: [(&str, Link); 92] = [
     ("https://example.org/a", Link::Opens),
     ("HTTP://example.org", Link::Opens),
     ("mailto:someone@example.org", Link::Opens),
@@ -577,6 +577,13 @@ const SCHEMES: [(&str, Link); 85] = [
     ("mailto:a@example.org?body=a%00b", Link::Control),
     ("mailto:a@b?body=Hi%20Bob,%0D%0AThanks", Link::Control),
     ("mailto:a@example.org?body=a%09b", Link::Opens),
+    ("mailto:a@b?body=Hi,Thanks;body=x%0D%0ABcc:e", Link::Control),
+    ("mailto:a@b?body=Hi,%0D%0ABcc:%20evil@x;body=1", Link::Control),
+    ("mailto:a@b?b%6Fdy=x%0D%0ABcc:%20e@x", Link::Control),
+    ("mailto:a@b?subject=x%85Bcc:e", Link::Control),
+    ("mailto:a@b?subject=x%C0%8ABcc:e", Link::Control),
+    ("mailto:a@b?body=x%85y", Link::Control),
+    ("mailto:a@example.org?body=caf%E9", Link::Opens),
 ];
 
 /// A span link of an address `choices` draws is loaded exactly when a

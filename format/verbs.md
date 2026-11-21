@@ -224,15 +224,32 @@ verification round 5). The tab is allowed in a `body` because it is
 ordinary text there — indentation in a message — and breaks no line;
 anywhere else it is refused with the rest.
 
-*Inside a `body`* is decided under every split a client may make at
-once: under RFC 6068's (the query split on raw `&` alone, each value
-decoded once), under the decode-first reading's, and so under every
-split between them. A decoded control is allowed only when, within its
-`&`-separated header, every part from the header's first up to the one
-holding the control, split on all five separators once decoded, holds
-an `=` and is named `body`. So `subject=x%26body=y%0D%0ABcc:%20…` is
-refused, though the decode-first reading alone sees the break in a
-`body`: under RFC 6068's split it is in the `subject`.
+*Inside a `body`* is decided under every split that cuts at RFC 6068's
+raw `&` — the one separator every client shares — at once: under RFC
+6068's own (the query split on raw `&` alone, each value decoded once),
+under the decode-first reading's, and so under every split between them
+that cuts at each raw `&`. A decoded control is allowed only when,
+within its `&`-separated header, every part from the header's first up
+to the one holding the control, split on all five separators once
+decoded, holds an `=` and is named `body` — and, where the part begins
+at a raw separator or at the header's start, is named `body` as written
+too, in any case: `b%6Fdy=x%0D%0A…` is refused, since a client that
+matches a name before it decodes it reads a header `b%6Fdy`. So
+`subject=x%26body=y%0D%0ABcc:%20…` is refused, though the decode-first
+reading alone sees the break in a `body`: under RFC 6068's split it is
+in the `subject`.
+
+This does not cover a split that ignores raw `&`:
+`?to=c;subject=a&body=%0D%0ABcc:e` and `?to=c?subject=a&body=%0D%0ABcc:e`
+load, and are unsafe only for a client that splits on `;` or `?` but not
+on `&` — one that could not read `?subject=a&body=b` either.
+
+**Decoded bytes that are not UTF-8** are refused outside a `body`, as
+"decoded bytes that are not UTF-8" (`LinkMailControl`): a client reading
+them as Latin-1 takes `%85` for NEL, a C1 control, and a lenient one
+takes the overlong `%C0%8A` for a line feed. In a `body`, a lone byte
+from `%80` to `%9F` — a C1 control in Latin-1 — is refused the same way;
+other bytes that are not UTF-8 (a Latin-1 `caf%E9`) stand.
 
 An address part that decodes to hold a `?` (`a@b%3Fattach=…`) is
 refused, since a client may read the rest as a query, and no address
@@ -240,7 +257,8 @@ part is a `body`, so a control decoded there is refused too. A refused
 address is refused at its `url`: `LinkMailHeader`, naming the header as
 written or as it reads decoded, or `LinkMailControl`, saying what it
 found — "a raw control character", "a decoded line break", "a decoded
-control character" — and the part that holds it.
+control character", "decoded bytes that are not UTF-8" — and the part
+that holds it.
 
 **What is over-refused**, and is kept so (rulings D3.4 item 2 and
 D3.5):
