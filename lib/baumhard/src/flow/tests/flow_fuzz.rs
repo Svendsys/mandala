@@ -2083,9 +2083,12 @@ thread_local! {
 /// `n₀·A/(A + inked·Δ)` copies — the straight path's arithmetic, the gaps
 /// shared over the same arcs — less one for the count whose gap is nearest
 /// the target and one for the bend, per arc. `A` is the copy's advance,
-/// which is no longer than its step along the arc. Near the origin that is
-/// within a copy or two an arc of the origin's count; at `10⁷`, where
-/// `f32`s are 1 apart, some three in five of it for `─═` at 16 pt.
+/// which is no longer than its step along the arc. For `─═` at 16 pt round
+/// an ellipse 2,000 across that is about five in six of the origin's
+/// copies at `4·10⁶` and three in five at `10⁷`, where `f32`s are 0.5 and
+/// 1 apart at the power of two past the frame; it tightens toward the
+/// origin's count as the spacing falls. It is a bound, not the count the
+/// coordinates allow: the frames lay 96% and 86% of the origin's there.
 #[cfg(test)]
 pub(crate) fn least_far_copies(
     copies: usize,
