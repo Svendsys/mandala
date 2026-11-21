@@ -927,6 +927,128 @@ pub fn do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors()
     }
 }
 
+/// #384 review (thread 4654375406): the tangent line's root in closed form
+/// (`line_root`) on three lines along which an axis moves too slowly for a
+/// point stood one unit of step past its stop, or midway between two, to
+/// be a float apart from its edge, each held to the line's root in `f64`
+/// (`line_root_in_f64`). `line_root` read which axes are apart on a
+/// stretch from that point, so on each the axis just past its edge read
+/// as within reach, and the quadratic was solved for the other axis alone:
+/// on the first, the y axis moves 1.026·10⁻⁵ a unit of step and its
+/// spacing at 449.85 is 3.05·10⁻⁵, so a unit past its stop at 9.44·10⁶ it
+/// stood on its edge, and the x axis alone, apart by 52.8 and moving
+/// 1.63·10⁻⁸, took 1.22·10¹⁰ steps to be owed 251.25 apart, where both
+/// together take 3.34·10⁷. It reads them from the steps at which each
+/// axis's center meets an edge, the stops themselves, now.
+///
+/// The lines are off `check_line_root`'s domain (`line_drawn`), each
+/// coordinate drawn log-uniform from 10⁻² to 10⁴ and each way down to
+/// 10⁻⁹ by the review's search. The review gave the first in full, its
+/// numbers rounded to the hundredth: rounded so, `line_root` read it
+/// right, so it is set here at the floats nearest them on which it read
+/// it wrong — its y center and reach `-353.0449` and `449.8452`. Of the
+/// other two it gave the center and the way, and the closed form's step
+/// and the line's root: their reach and what is owed are set here so that
+/// `line_root`'s step and the line's root are the review's to four
+/// figures.
+///
+/// On each, the line places its step (`placed_within`): the closed form
+/// is within `CLOSED_FORM_REACH` of the scale of the root, and its gap in
+/// `f64` within `closed_form_rounding` of what is owed.
+///
+/// And where two stops meet, the stretch between them has no length and
+/// is the step itself: an axis there is apart only off its edges. On a
+/// line owed nothing, its x reach none, the boxes touch at the one step
+/// where the x centers cross, `(3.04, 9.68)` apart along `(0.276, 0.886)`
+/// with a y reach of 3.048, back 11.028 — three stops met. Read there as
+/// a stretch is read, from its two ends, the x axis is apart and the
+/// closed form finds no step (`NaN`); and the oracle's scan, its
+/// crossings a stretch of steps, cannot meet a touch at one, so it is
+/// held to where the centers cross, to two spacings of `f32` there. Six
+/// of 200,000 `line_drawn` lines are such, all owed nothing with a reach
+/// of none; on each, and on every other of them, the closed form's step
+/// is bit for bit 437d941a's.
+///
+/// The closed form is 1.03, 19 and 65 from the root now, each within one
+/// spacing of `f32` at its step; it was 1.2·10¹⁰, 8,403 and 9.4·10⁵ from
+/// it, against a reach of 167, 2,769 and 6,622.
+///
+/// Control: with `line_root` reading its axes from a point stood a unit of
+/// step past its last stop or midway between two, as at 437d941a, red on
+/// the first ("the closed form steps 12174233000, the line's root is
+/// 33364527.03"), and on each of the other two alone. With a stretch of
+/// no length read from its ends, as a stretch with length is, red on the
+/// touch ("owed nothing, the boxes touch at -11.028294716539289, and the
+/// closed form steps NaN").
+#[test]
+fn test_flow_halves_a_line_root_reads_its_axes_where_they_move_slowly() {
+    do_flow_halves_a_line_root_reads_its_axes_where_they_move_slowly();
+}
+
+/// The body of
+/// `test_flow_halves_a_line_root_reads_its_axes_where_they_move_slowly`,
+/// reused by its benchmark.
+pub fn do_flow_halves_a_line_root_reads_its_axes_where_they_move_slowly() {
+    use crate::flow::place::halves::line_root_seam;
+    use crate::flow::tests::flow_fuzz::{
+        closed_form_rounding, f32_spacing, gap_in_f64, line_root_in_f64, placed_within,
+    };
+    for (delta, dir, reach, owed) in [
+        (
+            Vec2::new(605.32, -353.0449),
+            Vec2::new(1.63e-8, -1.026e-5),
+            Vec2::new(552.51, 449.8452),
+            251.25,
+        ),
+        (
+            Vec2::new(0.562, 3.204),
+            Vec2::new(1.24e-9, 4.17e-9),
+            Vec2::new(1.230_094_4, 0.496_235_88),
+            5.017_531_4,
+        ),
+        (
+            Vec2::new(-0.2065, -0.0751),
+            Vec2::new(-4.0e-11, -2.1e-10),
+            Vec2::new(0.247_799_59, 0.007_947_54),
+            0.345_473_83,
+        ),
+    ] {
+        let (closed, _) = line_root_seam(delta, dir, reach, owed);
+        let truth = line_root_in_f64(delta, dir, reach, owed);
+        let what = format!("inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}");
+        assert!(truth.is_finite(), "precondition: {what} has a root");
+        let within = placed_within(delta, dir, reach, owed, truth);
+        assert!(within.is_some(), "precondition: {what} places its step");
+        let within = within.unwrap_or(0.0);
+        assert!(
+            (f64::from(closed) - truth).abs() <= within,
+            "{what}: the closed form steps {closed}, the line's root is {truth:.2}"
+        );
+        let rounding = closed_form_rounding(delta, dir, reach, owed, truth);
+        let off = gap_in_f64(delta, dir, reach, f64::from(closed)) - f64::from(owed);
+        assert!(
+            off.abs() <= rounding,
+            "{what}: the closed form steps {closed}, its gap {off:e} from what is owed, past {rounding:e}"
+        );
+    }
+    // Owed nothing, where one axis's reach is none: back from the start
+    // the boxes touch at one step only, where that axis's center crosses
+    // the other's and the other axis is within reach, three stops met. Its
+    // stretch has no length, and is that step.
+    let (delta, dir, reach) = (
+        Vec2::new(3.039_999, 9.679_999),
+        Vec2::new(0.275_654_5, 0.886_114_3),
+        Vec2::new(0.0, 3.048),
+    );
+    let (closed, _) = line_root_seam(delta, dir, reach, 0.0);
+    let touch = -f64::from(delta.x) / f64::from(dir.x);
+    let spacing = f32_spacing(touch.abs() as f32);
+    assert!(
+        (f64::from(closed) - touch).abs() <= 2.0 * spacing,
+        "owed nothing, the boxes touch at {touch}, and the closed form steps {closed}"
+    );
+}
+
 /// #348: the tangent line's root in closed form (`line_root`) is the
 /// first step at which two inks' boxes are what is owed apart, to five
 /// millionths of the scale it is read at (its step, what is owed and the

@@ -2856,7 +2856,10 @@ impl<'p> Form<'p> {
 /// reaches `reach` or crosses none, so between those steps — at most six
 /// — the gap's square is a quadratic in the step, and the first of them
 /// to reach `owed` holds its root: on, where the boxes are nearer than
-/// `owed` now; back, a negative, where they are further. Boxes no gap
+/// `owed` now; back, a negative, where they are further. Which axes are
+/// apart between two of those steps is read from the steps themselves,
+/// never from a step between them, which along a slow axis need not be a
+/// float apart from its edge (#384). Boxes no gap
 /// apart may overlap: where nothing is owed, the step to where they
 /// begin to part. `NaN` where no step on or back sets them so, or a
 /// number on the way is not finite.
@@ -2892,19 +2895,47 @@ fn line_root(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f32 {
         // The axes apart between the two stops, and the gap's square
         // there in the step past `lo`: `a τ² + 2 b τ + c`, `c` less what
         // is owed squared.
-        let probe = delta + v * if hi.is_finite() { lo.midpoint(hi) } else { lo + 1.0 };
         let (mut a, mut b, mut c) = (0.0_f32, 0.0_f32, 0.0_f32);
         // Each axis's gap at `lo` and its rate, none where it is not apart.
         let mut parts = [(0.0_f32, 0.0_f32); 2];
         // Whether either axis is apart there, at whatever rate.
         let mut apart = false;
-        for (part, (p, d, w, r)) in parts
+        for (part, (d, w, r)) in parts
             .iter_mut()
-            .zip([(probe.x, delta.x, v.x, reach.x), (probe.y, delta.y, v.y, reach.y)])
+            .zip([(delta.x, v.x, reach.x), (delta.y, v.y, reach.y)])
         {
-            if p.abs() > r {
+            // Which side of the other's box the axis is on between the
+            // stops, if it is apart there: read from the steps at which
+            // its center meets either edge, `enter` and `leave`, computed
+            // as the stops are, not from a point stood between them. A
+            // moving axis is within reach from `enter` to `leave`, and
+            // each of them past the start is a stop, the same float, so a
+            // stretch lies wholly before
+            // `enter`, on the side the axis moves from, wholly past
+            // `leave`, on the side it moves to, or wholly within. A stretch
+            // of no length, where two stops meet, is the step itself, apart
+            // only off the two: at an edge, or crossing a reach of none,
+            // the axis's gap is none. A point between the stops need not be
+            // a float apart from the edge's: an axis moving slowly, far
+            // from its stop, may stand there within one spacing of its edge
+            // and read as within reach (#384: one moving 1.0·10⁻⁵ a unit of
+            // step, a unit past its stop at 9.4·10⁶, by under a third of its
+            // spacing at 449.85).
+            let side = if w == 0.0 {
+                (d.abs() > r).then(|| d.signum())
+            } else {
+                let (one, other) = ((r - d) / w, (-r - d) / w);
+                let (enter, leave) = (one.min(other), one.max(other));
+                if lo >= leave && hi > leave {
+                    Some(w.signum())
+                } else if hi <= enter && lo < enter {
+                    Some(-w.signum())
+                } else {
+                    None
+                }
+            };
+            if let Some(side) = side {
                 apart = true;
-                let side = p.signum();
                 let from = side * (d + w * lo) - r;
                 let rate = side * w;
                 a += rate * rate;

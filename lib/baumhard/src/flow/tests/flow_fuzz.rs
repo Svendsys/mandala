@@ -1083,7 +1083,8 @@ pub fn check_flow_generated(choices: &mut Choices<'_>) -> Result<(), String> {
 /// on a 20 pt span — can lie between two samples unseen.
 pub fn check_pair_model(choices: &mut Choices<'_>) -> Result<(), String> {
     check_line_root(choices)?;
-    pair_model_held(choices).map(|_| ())
+    pair_model_held(choices)?;
+    check_slow_line_root(choices)
 }
 
 /// The tangent line's root in closed form and the iterative rule's
@@ -1115,8 +1116,44 @@ pub fn check_pair_model(choices: &mut Choices<'_>) -> Result<(), String> {
 /// - Where the oracle finds no root and the closed form does, the boxes
 ///   are owed apart at the closed form's step.
 pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
-    use crate::flow::place::halves::line_root_seam;
     let (delta, dir, reach, owed) = line_drawn(choices);
+    line_root_held(delta, dir, reach, owed, true)
+}
+
+/// [`check_line_root`] on a line along which both axes move slowly (#384
+/// review, thread 4654375406): one `line_drawn` draws, its way slowed by
+/// a power of ten from `10⁻¹` to `10⁻⁹` the choices draw, so that its
+/// root lies up to some 10¹⁰ steps on, where a step of one, or of a
+/// spacing of the step, moves an axis by less than a spacing of its own
+/// center: where `line_root` once read which axes are apart from a point
+/// stood a unit past its last stop, and read an axis just past its edge
+/// as within reach. Each bound `check_line_root` holds the closed form to
+/// reads the step through its movement along the axes, `dir` times the
+/// step, and so reads the slowed line as the line it was drawn from. It
+/// draws after [`check_pair_model`]'s other two, so that what they draw is
+/// as it was.
+///
+/// The closed form alone is held here, not the bisection (`along`): that
+/// is the pairwise rule's model along a unit way, its bracket first a step
+/// of what is owed and the reach and doubled 24 times at most, so that on
+/// a way slowed much past `10⁻⁷` it finds none (`NaN`); and the width
+/// `check_line_root` allows its last bracket is in steps, what is owed and
+/// the reach among them, not in movement, so on a slowed line it is that
+/// much narrower. Held so, one of 100,000 seeded slowed lines (seed 62017,
+/// slowed `10⁻⁴`) reads its start's gap, within a rounding of what is
+/// owed, as further where `f64` reads it nearer, and the bisection steps
+/// back 6.3·10⁻³ where the line's root is as far on: unslowed, 6.3·10⁻⁷
+/// either way, within the width of 1.4·10⁻⁴ it is allowed there.
+pub fn check_slow_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
+    let (delta, dir, reach, owed) = line_drawn(choices);
+    let slow = 10.0_f32.powi(-1 - choices.below(9) as i32);
+    line_root_held(delta, dir * slow, reach, owed, false)
+}
+
+/// What [`check_line_root`] holds of one line: the closed form, and the
+/// bisection where `bisection`.
+fn line_root_held(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32, bisection: bool) -> Result<(), String> {
+    use crate::flow::place::halves::line_root_seam;
     let (closed, bisected) = line_root_seam(delta, dir, reach, owed);
     let what = format!("inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}");
     let gap = |d: f32| ((delta + dir * d).abs() - reach).max(Vec2::ZERO).length();
@@ -1144,7 +1181,7 @@ pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
         let rounding = closed_form_rounding(delta, dir, reach, owed, truth);
         let at = f64::from(closed);
         let off = gap_in_f64(delta, dir, reach, at) - owed64;
-        if off.abs() > rounding {
+        if off.is_nan() || off.abs() > rounding {
             return Err(format!(
                 "{what}: the closed form steps {closed}, its gap {off:e} from what is owed, past its rounding \
                  {rounding:e}; the line's root is {truth}"
@@ -1165,7 +1202,7 @@ pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
             }
         }
     }
-    if !bisected.is_finite() {
+    if !bisection || !bisected.is_finite() {
         return Ok(());
     }
     // The bisection's last bracket, and the floats of the step.
@@ -1380,7 +1417,11 @@ pub(crate) fn closed_form_rounding(delta: Vec2, dir: Vec2, reach: Vec2, owed: f3
 ///   |b|` (`s ≤ |dir| owed`), come to no more than `γ` times `reach_sum`:
 ///   `|dir| (Σ from² + owed²) ≤ |b| · reach_sum`, `from` the axes' gaps at
 ///   the stretch's start and `b` the sum of each times its rate. Checked
-///   here, at that stretch, from the line in `f64`.
+///   here, at that stretch, from the line in `f64`: the premise is read on
+///   the `f64` stretch, its start the last stop before the line's root and
+///   its axes apart read in `f64`, not on the one the closed form's `f32`
+///   stops bound, which differs from it only where a stop lies within a
+///   rounding of the root or of another stop (review 6007364071).
 /// - Where they start nearer than owed, or exactly owed apart, it holds,
 ///   with no further condition. The closed form solves the stretch holding
 ///   the root only where its constant `c = Σ from² − owed²` is below none

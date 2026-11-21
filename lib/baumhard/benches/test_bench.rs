@@ -2565,6 +2565,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         "flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors",
         |b| b.iter(do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors),
     );
+    c.bench_function(
+        "flow_halves_a_line_root_reads_its_axes_where_they_move_slowly",
+        |b| b.iter(do_flow_halves_a_line_root_reads_its_axes_where_they_move_slowly),
+    );
     c.bench_function("flow_halves_a_side_arc_is_filled_from_its_model_lays", |b| {
         b.iter(do_flow_halves_a_side_arc_is_filled_from_its_model_lays)
     });
