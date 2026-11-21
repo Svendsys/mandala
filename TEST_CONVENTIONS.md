@@ -828,8 +828,8 @@ What they hold, in short (each module's docs are the full list):
   and is not part of where a ring lies. Where a ring lies does not bound
   its work, so a `Repeat` ring's is part of the bound too (ruling B47.3):
   its glyphs, bounded before it is laid as its outline's perimeter over
-  the least step a glyph of a shaped copy of its text takes along it
-  (`projection_fuzz::repeat_glyphs`), are held to
+  the least step placement can give a glyph of a shaped copy of its text,
+  at any direction (`projection_fuzz::repeat_glyphs`), are held to
   `projection_fuzz::MOST_RING_GLYPHS`, the most whose work at a measured
   rate a glyph, laid once in each projection a check makes, fits the
   input's share — as the flow harnesses hold a ring to `MAX_RING_GLYPHS`;

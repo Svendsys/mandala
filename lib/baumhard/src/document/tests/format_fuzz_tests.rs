@@ -158,9 +158,10 @@ fn test_a_ring_past_the_body_index_cells_is_projected() {
 /// `projection_fuzz_tests`.
 ///
 /// Control, run and seen red: with `outline_reach` reading no reach,
-/// which both counts read, the map is admitted and its check fails, its
-/// ring laying 65,536 glyphs of 123 bounded (`rings_within_their_work`).
-/// With either count alone taken out, it stays skipped.
+/// which both counts read, and no `Repeat` ring's work bounded, the map is
+/// admitted and its check fails, its ring laying 65,536 glyphs of 123
+/// bounded (`rings_within_their_work`). With either count alone taken
+/// out, it stays skipped.
 #[test]
 fn test_a_ring_too_far_out_to_project_in_time_is_skipped() {
     use crate::projection::tests::projection_fuzz::projection_counts;
@@ -223,9 +224,10 @@ fn test_a_ring_spaced_too_far_out_to_project_in_time_is_skipped() {
 /// cap), so the check skips its projection and counts it skipped.
 ///
 /// Control, run and seen red: with `outline_reach` reading no reach,
-/// which both counts read, the map is admitted and its check fails, its
-/// ring laying 65,536 glyphs of 123 bounded (`rings_within_their_work`).
-/// With either count alone taken out, it stays skipped.
+/// which both counts read, and no `Repeat` ring's work bounded, the map is
+/// admitted and its check fails, its ring laying 65,536 glyphs of 123
+/// bounded (`rings_within_their_work`). With either count alone taken
+/// out, it stays skipped.
 #[test]
 fn test_a_ring_unspaced_too_far_out_to_project_in_time_is_skipped() {
     use crate::projection::tests::projection_fuzz::projection_counts;

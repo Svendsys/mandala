@@ -81,9 +81,11 @@
 //! `MAX_RING_GLYPHS` for the same reason (B17.2b). A ring's glyphs are
 //! bounded as its outline's perimeter at its reach over the least step one
 //! of them takes along it: a copy of its text shaped as the ring shapes it,
-//! at the least size the ring can be, its glyphs and its advance, and its
-//! `spacing`, with `RING_STEP_SLACK` more for inks that overhang their
-//! advance. A ring of text laid by halves — any other fit — is held the
+//! at the least size the ring can be, each of its clusters at the least
+//! step placement can give it at any direction (`least_steps`; ruling
+//! B47.4) — a dash, stepped by its ink, takes a hair where the path runs
+//! steep — and its `spacing`, with `RING_STEP_SLACK` more for where a ring
+//! turns. A ring of text laid by halves — any other fit — is held the
 //! same way, to the steps one lay of it may take, `FRAME_STEPS_A_LAY`: its
 //! text's characters and the glyphs its side ornament may lay
 //! (`side_glyphs`), at `FRAME_STEPS_A_GLYPH` and `FRAME_STEPS_A_SIDE_GLYPH`,
@@ -120,20 +122,21 @@
 //! at most — or, in one with no `HVAR`, its advance at every weight a span
 //! can ask for, the only axis the shaper sets. No glyph is laid wider.
 //!
-//! **What the bound takes on trust.** That the shaper lays no more than
-//! the widest advance for a character of a section: a face's substitutions
-//! can lay one character as several glyphs, and its positioning can widen
-//! a pair, and a face that did either past the widest advance would draw
-//! its box wider than the bound reads, by that excess. That a side
-//! ornament's character advances no less than the narrowest glyph a face
-//! maps it to, or by nothing where it is one of the code points the shaper
-//! hides (`DEFAULT_IGNORABLE`, held to the shaper by
-//! `test_the_default_ignorables_are_laid_at_no_advance`). That a `Repeat`
-//! ring steps along its outline no less than its glyphs' advances over
-//! `RING_STEP_SLACK`. And the rates above. The end-to-end properties
-//! (`test_every_ring_the_bound_admits_lies_within_the_extent`, and in every
-//! check `rings_within_their_work`) hold the bound's own cases, the
-//! reviews' probes and every map the fuzzer lays to them.
+//! **What the bound takes on trust.** That the shaper lays no more than the
+//! widest advance for a character of a section: a face's substitutions can
+//! lay one character as several glyphs, and its positioning can widen a
+//! pair, and a face that did either past the widest advance would draw its
+//! box wider than the bound reads, by that excess. That a side ornament's
+//! character advances no less than the narrowest glyph a face maps it to,
+//! unless it is one of the code points a shaper may hide, which the bound
+//! reads as advancing by nothing, a lower bound on any host
+//! (`DEFAULT_IGNORABLE`;
+//! `test_a_side_ornament_of_default_ignorables_lays_within_its_bound`).
+//! That a `Repeat` ring steps along its outline no less than its
+//! clusters' least steps over `RING_STEP_SLACK`. And the rates above. The end-to-end
+//! properties (`test_every_ring_the_bound_admits_lies_within_the_extent`,
+//! and in every check `rings_within_their_work`) hold the bound's own
+//! cases, the reviews' probes and every map the fuzzer lays to them.
 //!
 //! The coordinates bound how long a path is in map units, not how many
 //! glyphs or samples it takes: those go by its length over its size, and
@@ -479,65 +482,71 @@ pub(crate) fn drawn_bound(tree: &Tree<DocElement>, node: NodeId) -> Rect {
 pub const RING_LAYS_A_CHECK: usize = 10;
 
 /// The most glyph steps a `Repeat` ring the bound admits takes for each
-/// glyph `repeat_glyphs` bounds it to, past [`RING_SETUP_STEPS`] (ruling
-/// B47.3). Stated from measurement: the engine's own bound is its budget,
-/// `STEPS_PER_GLYPH`, 3,000 a glyph over a floor of 400,000 steps a lay
-/// (B17.2c), under which ten lays fit no ring at all into the input's
+/// glyph `repeat_glyphs` bounds it to, past [`RING_SETUP_STEPS`] (rulings
+/// B47.3, B47.4). Stated from measurement: the engine's own bound is its
+/// budget, `STEPS_PER_GLYPH`, 3,000 a glyph over a floor of 400,000 steps a
+/// lay (B17.2c), under which ten lays fit no ring at all into the input's
 /// share, and its spacing solves are read against that budget and nothing
-/// less. Two sweeps: 576 rings of the default face — `·` at a quarter and
-/// at the whole of its node, `MANDALA `, `*` at a twentieth, and `·`, a
+/// less. Three sweeps. 576 rings of the default face — `·` at a quarter
+/// and at the whole of its node, `MANDALA `, `*` at a twentieth, and `·`, a
 /// ring of `|` and one of corners spaced, round an ellipse, a sharp and a
-/// rounded rectangle 1 to 1,000 across, from the node's side to 3,000 out
-/// — and, after the review of #378 found a ring past the first rate, 420
-/// rings of 31 texts laid in fallback faces and as `.notdef`: emoji,
-/// Hebrew, Arabic, Devanagari, Thai, Tamil, Mongolian, Cherokee,
-/// hieroglyphs, U+1BCA0, U+F0000, U+10FFFD, U+FDFD, split vowels, alone
-/// and beside `·`, round an ellipse and a rounded rectangle 1 to 1,000
-/// across at their edge of the bound, at half and at a quarter of it. The
-/// most any took was 206 steps a glyph of its bound: `😀·` at a twentieth of
-/// an ellipse 1,000 across, 317 out, 44,493 steps for 164 glyphs laid of
-/// 216 bounded; `·\u{1BCA0}`, the review's, took 201. 256 holds that with a
-/// quarter as much again. Measured rates are what an input no sweep tried
-/// breaks: the check holds every ring the fuzzer lays to them
-/// (`rings_within_their_work`), so a fuzz run finds the next one.
+/// rounded rectangle 1 to 1,000 across, from the node's side to 3,000 out.
+/// After the review of #378 found a ring past the first rate, 420 rings of
+/// 31 texts laid in fallback faces and as `.notdef`: emoji, Hebrew, Arabic,
+/// Devanagari, Thai, Tamil, Mongolian, Cherokee, hieroglyphs, U+1BCA0,
+/// U+F0000, U+10FFFD, U+FDFD, split vowels, alone and beside `·`, round an
+/// ellipse and a rounded rectangle at their edge of the bound, at half and
+/// at a quarter of it; the most was 206 a bound glyph. And after ruling
+/// B47.4 bounded a ring's step by the least its clusters can take
+/// (`least_steps`), which admits rings of dashes and bars spaced, 1,890
+/// rings of 36 texts — those, `·`, `*`, `MANDALA `, dashes, bars and
+/// ellipses of the default face — at a twentieth and a quarter of their
+/// node, spaced 0, 0.1 and 1, round an ellipse, a sharp and a rounded
+/// rectangle, at the largest node up to 1,000 across the bound admits them
+/// round, at their edge, half of it and on its side. Laid with the bound
+/// as it stood, at 256 a glyph, the most any took was 298 steps a glyph of
+/// its bound: `😀·` at a quarter of an ellipse 1,000 across, 2,234 out,
+/// 52,585 steps for 110 glyphs laid of 149 bounded. 384 holds that with a
+/// quarter as much again, rounded up to a multiple of 128; at 384 the bound
+/// admits 1,854 of those rings, the most of which took 249 a glyph past
+/// [`RING_SETUP_STEPS`]. Measured rates are what an input no sweep tried breaks: the check
+/// holds every ring the fuzzer lays to them (`rings_within_their_work`),
+/// so a fuzz run finds the next one.
 /// `test_every_repeat_ring_the_bound_admits_fits_the_share` holds the
 /// densest rings the bound admits to it.
-pub const RING_STEPS_A_GLYPH: usize = 256;
+pub const RING_STEPS_A_GLYPH: usize = 384;
 
 /// How many more glyphs a `Repeat` ring may lay than its outline's length
-/// over its glyphs' advances (ruling B47.3, the review of #378): a ring
-/// sets each glyph's ink apart from the last, not its advance, and a glyph
-/// whose ink overhangs its advance steps less than it. Stated from
-/// measurement: the most a sweep of rings of fallback faces, `.notdef`s
-/// and split vowels laid past it was 3.6 % (`ொ`, U+0BCA, Tamil's split
-/// vowel, round a rounded rectangle 1,000 across: 174 glyphs where the
-/// advance read 168). A quarter more.
+/// over the least its glyphs step (`least_steps`; ruling B47.3, the review
+/// of #378): round a turn and across its seam a ring sets each glyph's ink
+/// as far from the last as a line would, which its step does not read.
+/// Stated from measurement: the most a sweep of rings of fallback faces,
+/// `.notdef`s and split vowels laid past it was 3.6 % (`ொ`, U+0BCA,
+/// Tamil's split vowel, round a rounded rectangle 1,000 across: 174 glyphs
+/// where the advance read 168). A quarter more.
 pub const RING_STEP_SLACK: f64 = 1.25;
 
 /// The most glyph steps a `Repeat` ring the bound admits takes past
 /// [`RING_STEPS_A_GLYPH`] a glyph of its bound (ruling B47.3): its setup,
 /// its path's tables, and shaping and inking its copy, which do not grow
-/// with its glyphs. Stated from the same sweeps, whose most past 64 a
-/// glyph was 5,481, rounded up to a power of two; past 256, none was.
+/// with its glyphs. Stated from the same sweeps: the first two's most past
+/// 64 a glyph was 5,481, the third's past 384 a glyph 1,344; rounded up to
+/// a power of two.
 pub const RING_SETUP_STEPS: usize = 8_192;
 
-/// The most glyphs a `Repeat` ring the bound admits may lay (ruling
-/// B47.3), 149: the most whose work, [`RING_STEPS_A_GLYPH`] a glyph and
-/// [`RING_SETUP_STEPS`], laid [`RING_LAYS_A_CHECK`] times, fits the input's
-/// share, `flow_fuzz::INPUT_STEPS` at `flow_fuzz::ASAN_STEP_NANOS` a step —
-/// the flow harnesses' share for an input, whose rings they lay at
+/// The most glyphs a `Repeat` ring the bound admits may lay (rulings
+/// B47.3, B47.4), 99: the most whose work, [`RING_STEPS_A_GLYPH`] a glyph
+/// and [`RING_SETUP_STEPS`], laid [`RING_LAYS_A_CHECK`] times, fits the
+/// input's share, `flow_fuzz::INPUT_STEPS` at `flow_fuzz::ASAN_STEP_NANOS` a
+/// step — the flow harnesses' share for an input, whose rings they lay at
 /// `MAX_RING_GLYPHS` (B17.2b) for the same reason. The densest ring it
-/// admits, by the steps it takes, `😀·` at a twentieth of an ellipse 1,000
-/// across, 63 out — 114 glyphs laid of 149 bounded, 34,987 steps a lay —
-/// ran its input in 0.87 s under ASan (`cargo fuzz run load_raw <file> --
-/// -runs=1`, the load average some 2), against the 20 s timeout,
-/// `flow_fuzz::FUZZ_TIMEOUT_SECONDS`.
+/// admits, by the steps it takes, ASAN_DENSEST.
 pub const MOST_RING_GLYPHS: usize = (INPUT_STEPS / RING_LAYS_A_CHECK - RING_SETUP_STEPS) / RING_STEPS_A_GLYPH;
 
 /// The most glyphs `ring` may lay, laid `Repeat` (ruling B47.3), bounded
 /// before it is laid: the perimeter its outline can have, over the least
 /// one of its glyphs can step along it, with [`RING_STEP_SLACK`] more, and
-/// a copy and its corners more. `None` for a ring of another fit, which
+/// a copy and its corners more (rulings B47.3, B47.4). `None` for a ring of another fit, which
 /// lays its text once.
 ///
 /// - **The perimeter**: its node's drawn rectangle at most
@@ -548,9 +557,11 @@ pub const MOST_RING_GLYPHS: usize = (INPUT_STEPS / RING_LAYS_A_CHECK - RING_SETU
 /// - **A glyph's step at the least**: each text it lays — its spans', each
 ///   in its own style, or the `vertical` its spans have nothing to draw
 ///   beside — shaped as the ring shapes a copy of it (`flow::shape_run`),
-///   at the least point size its ring can be: its glyphs, however many a
-///   character lays, and its advance, over its glyphs, plus its `spacing`,
-///   which a `Repeat` ring adds between every two glyph steps. The size is
+///   at the least point size its ring can be: the least a copy can step
+///   along any path, each cluster by the rule placement steps it by
+///   ([`least_steps`]), and its `spacing`, which a `Repeat` ring adds to
+///   every cluster's step, over its glyphs, however many a character lays.
+///   The size is
 ///   relative to its node's drawn rectangle, at least `min_size` (D5), and
 ///   so at least `min_size`'s point size. A ring that lays by direction
 ///   steps a run down a side by its glyphs' ink, upright, and not by their
@@ -561,8 +572,9 @@ pub const MOST_RING_GLYPHS: usize = (INPUT_STEPS / RING_LAYS_A_CHECK - RING_SETU
 ///   `MAX_PLACED_GLYPHS`, at most.
 ///
 /// What it takes on trust: that the ring steps along its outline no less
-/// than its glyphs' advances over [`RING_STEP_SLACK`] — it sets inks apart,
-/// not advances, and an ink can overhang its advance — as every ring the
+/// than its clusters' least steps over [`RING_STEP_SLACK`] — round a turn
+/// and across its seam it sets inks apart as a line would — as every ring
+/// the
 /// end-to-end property reads does (`rings_within_the_extent` holds what
 /// each lays to this, and `rings_within_their_work` holds every ring a
 /// fuzz run lays). O(its texts), shaped once each.
@@ -640,14 +652,14 @@ pub(crate) fn repeat_glyphs(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId
         if glyphs == 0 {
             continue;
         }
-        let advance: f64 = run.glyphs.iter().map(|g| f64::from(g.advance.max(0.0))).sum();
+        let (steps, clusters) = least_steps(&run);
         // A ring that lays by direction steps a run down a side by its
         // glyphs' ink, upright, not by their advance (`place::directional`):
         // only its `spacing` is a step it takes at least.
         let step = if resolved.directional.is_set() {
-            glyphs as f64 * spacing
+            clusters as f64 * spacing
         } else {
-            advance + glyphs as f64 * spacing
+            steps + clusters as f64 * spacing
         };
         least = least.min(step / glyphs as f64);
         copy = copy.max(glyphs);
@@ -670,6 +682,55 @@ pub(crate) fn repeat_glyphs(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId
     // runs, however short.
     let runs = if resolved.directional.is_set() { 4 } else { 1 };
     Some((glyphs.ceil() as usize + runs * copy + corners).min(MAX_PLACED_GLYPHS))
+}
+
+/// The least a copy of `run` steps along any path, and its grapheme
+/// clusters (ruling B47.4): the sum over its clusters of the least step
+/// each can take, by the rule placement steps it by (`flow::place`,
+/// `PathWalk::take`), at every direction a chord can run. A cluster of
+/// text is a box its advance wide and the run's line high, whose extent
+/// along a chord is at least the lesser of the two. In an ornament — a run
+/// with no letter or digit — a cluster with ink steps by its ink box's
+/// extent along the chord, at least the lesser of the box's width and
+/// height, plus its side bearings, its advance less the ink's width, which
+/// do not turn with the path and are negative where the ink overhangs it:
+/// a dash, as wide as its advance and a hair high, steps by a hair where
+/// the path runs steep. A blank cluster, or one that draws nothing, steps
+/// its advance. No step is less than nothing. The `spacing` a ring adds
+/// to each step is not counted here. O(its glyphs).
+fn least_steps(run: &crate::flow::ShapedRun) -> (f64, usize) {
+    let ornament = !run.glyphs.iter().any(|glyph| glyph.letter);
+    let line = f64::from(run.line_height);
+    let (mut steps, mut clusters) = (0.0, 0);
+    let mut start = 0;
+    while start < run.glyphs.len() {
+        let end = run.glyphs[start + 1..]
+            .iter()
+            .position(|glyph| glyph.grapheme_start)
+            .map_or(run.glyphs.len(), |at| start + 1 + at);
+        let cluster = &run.glyphs[start..end];
+        let advance: f64 = cluster.iter().map(|glyph| f64::from(glyph.advance)).sum();
+        let left = cluster.iter().map(|glyph| glyph.x).fold(f32::INFINITY, f32::min);
+        let ink = cluster
+            .iter()
+            .filter_map(|glyph| {
+                let pen = Vec2::new(glyph.x - left, 0.0);
+                glyph.ink.map(|ink| (pen + ink.min, pen + ink.max))
+            })
+            .reduce(|(min, max), (lo, hi)| (min.min(lo), max.max(hi)));
+        let step = match ink.filter(|_| ornament && !cluster[0].blank) {
+            Some((min, max)) => {
+                let size = max - min;
+                f64::from(size.x.min(size.y)) + advance - f64::from(size.x)
+            }
+            None if ornament => advance,
+            None => advance.min(line),
+        };
+        steps += step.max(0.0);
+        clusters += 1;
+        start = end;
+    }
+    (steps, clusters)
 }
 
 /// Whether every `Repeat` ring of `frame` may lay no more glyphs than
@@ -762,6 +823,21 @@ fn side_glyphs(sides: &str, font: AppFont, size: f64, perimeter: f64) -> usize {
 /// ring of no text, which lays nothing. O(its texts), and once a process
 /// [`face_metrics`].
 pub(crate) fn frame_steps(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId) -> Option<usize> {
+    let (text, sides) = frame_glyphs(tree, frame, ring)?;
+    Some(
+        FRAME_STEPS_A_GLYPH
+            .saturating_mul(text)
+            .saturating_add(FRAME_STEPS_A_SIDE_GLYPH.saturating_mul(sides))
+            .saturating_add(FRAME_SETUP_STEPS),
+    )
+}
+
+/// The glyphs one lay of `ring`, a ring of `frame` laid by halves, may
+/// lay (ruling B47.3), as [`frame_steps`] counts them: its text's
+/// characters, and the glyphs its side ornament may lay ([`side_glyphs`]).
+/// `None` where [`frame_steps`] is. O(its texts), and once a process
+/// [`face_metrics`].
+pub(crate) fn frame_glyphs(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId) -> Option<(usize, usize)> {
     let arena = tree.arena();
     let resolved = resolve_ring_in(tree, ring, Binding::Carried(None), &mut ());
     if matches!(resolved.fit, FitMode::Repeat) {
@@ -797,12 +873,7 @@ pub(crate) fn frame_steps(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId) 
         }
         None => 0,
     };
-    Some(
-        FRAME_STEPS_A_GLYPH
-            .saturating_mul(text)
-            .saturating_add(FRAME_STEPS_A_SIDE_GLYPH.saturating_mul(sides))
-            .saturating_add(FRAME_SETUP_STEPS),
-    )
+    Some((text, sides))
 }
 
 /// Whether one lay of every ring of `frame` laid by halves may take no
@@ -899,28 +970,39 @@ pub(crate) struct FaceMetrics {
     pub(crate) notdef: f32,
 }
 
-/// The code points the shaper hides at no advance, whatever glyph a face
-/// maps them to (the review of #378): Unicode's
-/// `Default_Ignorable_Code_Point` (Unicode 16.0.0,
-/// `DerivedCoreProperties.txt`), its ranges merged, less the four Hangul
-/// fillers (U+115F, U+1160, U+3164, U+FFA0) and the shorthand format
-/// controls (U+1BCA0–U+1BCA3), which harfrust, as HarfBuzz, lays as any
-/// other character — a whole em of a fallback face on this host.
-/// `test_the_default_ignorables_are_laid_at_no_advance` holds the table to
-/// the shaper on this host's faces. No crate the workspace builds exposes
-/// the property.
-pub(crate) const DEFAULT_IGNORABLE: [(u32, u32); 13] = [
+/// The code points the bound reads as advancing by nothing (the review of
+/// #378; ruling B47.4): the whole of Unicode's `Default_Ignorable_Code_Point`
+/// (Unicode 16.0.0, `DerivedCoreProperties.txt`), its ranges merged. No
+/// crate the workspace builds exposes the property.
+///
+/// Why nothing, on every host. The advance read for a character is a
+/// lower bound: `side_glyphs` divides an outline by a copy's least advance,
+/// so reading less counts more copies and more glyphs, never fewer.
+/// Nothing is the least an advance can be, so reading it is sound
+/// whatever the shaper lays the character as. What is unsound is reading
+/// more than the shaper lays: a face can map one of these code points to a
+/// glyph an em wide, which the shaper then hides at no advance (U+180E in
+/// Unifont, on a host that has it). So the table must hold every code point
+/// a shaper may hide, and the property is that set: HarfBuzz and harfrust
+/// hide a subset of it. Where a shaper lays one of them after all — a
+/// Hangul filler, a shorthand format control, or one no face maps, laid as
+/// a `.notdef` — reading nothing counts more glyphs than it lays.
+pub(crate) const DEFAULT_IGNORABLE: [(u32, u32); 17] = [
     (0x00AD, 0x00AD),
     (0x034F, 0x034F),
     (0x061C, 0x061C),
+    (0x115F, 0x1160),
     (0x17B4, 0x17B5),
     (0x180B, 0x180F),
     (0x200B, 0x200F),
     (0x202A, 0x202E),
     (0x2060, 0x206F),
+    (0x3164, 0x3164),
     (0xFE00, 0xFE0F),
     (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0),
     (0xFFF0, 0xFFF8),
+    (0x1BCA0, 0x1BCA3),
     (0x1D173, 0x1D17A),
     (0xE0000, 0xE0FFF),
 ];
@@ -934,13 +1016,13 @@ pub(crate) fn default_ignorable(c: char) -> bool {
 }
 
 impl FaceMetrics {
-    /// The narrowest advance `c` may take in a span of `font`, in ems:
-    /// nothing for a [`default_ignorable`] character, which the shaper
-    /// hides; else the narrowest its family's faces map it to, where one
-    /// maps it — the shaper lays a character in the family it is pinned to,
-    /// or the default face, whenever a face of it holds the character — or
-    /// the narrowest any face maps it to, where none does, or `.notdef`'s.
-    /// O(1).
+    /// The narrowest advance `c` may take in a span of `font`, in ems: nothing
+    /// for a [`default_ignorable`] character, which a shaper may hide (nothing
+    /// is a lower bound on any advance); else the narrowest its family's faces
+    /// map it to, where one maps it — the shaper lays a character in the family
+    /// it is pinned to, or the default face, whenever a face of it holds the
+    /// character — or the narrowest any face maps it to, where none does, or
+    /// `.notdef`'s. O(1).
     pub(crate) fn narrowest_char(&self, font: AppFont, c: char) -> f32 {
         if default_ignorable(c) {
             return 0.0;
