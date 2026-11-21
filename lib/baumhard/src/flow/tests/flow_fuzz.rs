@@ -1304,30 +1304,36 @@ const CLOSED_FORM_ROUNDINGS: f64 = 16.0;
 /// (review 6005928757).
 ///
 /// The linear bound, per axis, `γ` times the sum of the farthest each axis
-/// reaches over the step, `X`, and what is owed. To first order in the
+/// reaches over the step, `X`, and what is owed, taken only where its
+/// premise holds on the line ([`linear_holds`]). To first order in the
 /// roundings:
 /// - The step is a stretch's start, a stop `(edge − delta)/dir` rounded,
 ///   and a root on the stretch. The stop's roundings, a few units of the
 ///   last place of `X` over the axis's rate, move the gap by `γ X`; where
-///   nothing is owed, that is the whole of it.
-/// - The root is `c / (−b + s)`, `s = √(a owed² − cross²)`. At the root the
-///   gap moves `s / owed` a unit of step (the gap's square moves `2 s`).
+///   nothing is owed, the step is the stop, and that is the whole of it.
+/// - Where the boxes start further apart than owed, the root is `c / (−b +
+///   s)`, `b < 0`, `s = √(a owed² − cross²)`. At the root the gap moves `s /
+///   owed` a unit of step (the gap's square moves `2 s`), at most `|dir|`.
 /// - The discriminant's roundings, relative to `a owed²` and to `cross² ≤ a
 ///   owed²`, move `s` by `γ a owed² / s`, the root by that over `a`, and the
 ///   gap by `γ owed`: the identity leaves no difference of near equals to
 ///   be divided by the gap's rate.
-/// - The constant's and the coefficients' roundings, relative to the axes'
-///   gaps at the stretch's start, move the root by `γ` times those gaps
-///   squared over `−b + s`, and the gap by that times `s / owed`, at most
-///   the step's rate: `γ X` where the axis that carries the gap also
-///   carries `−b`, its rate not far below the step's. That last is not
-///   proved for every line — an axis far apart at the start whose rate is
-///   all but none is its exception — and the lines hold it instead: over
-///   a census of 100,000 of the property's seeds (49,070 lines with a
-///   root) no closed form misses by more than 0.09 of this bound, and the
-///   largest bound is 1.3·10⁻⁴; `check_line_root`'s own 20,000-seed sweep
-///   (`test_the_pair_model_sets_the_first_root_at_what_is_owed`) holds it
-///   on every line it draws.
+/// - `b`'s roundings move the root by `root · γ |b| / (−b + s)`, the gap by
+///   no more than `γ |dir| root`, within `γ X`.
+/// - The constant's roundings, relative to the axes' gaps at the stretch's
+///   start squared and what is owed squared, move the root by `γ (Σ from² +
+///   owed²) / (−b + s)` and the gap by at most `|dir|` times that over
+///   `|b|`: within `γ` times the bound's sum exactly where `|dir| (Σ from² +
+///   owed²) ≤ |b| (ΣX + owed)`. That is the premise, checked on the line.
+/// - Where the boxes start nearer than owed, the root is read from `b² −
+///   a c`, whose roundings are not held linear here, and the quadratic bound
+///   holds alone.
+///
+/// Over a census of 100,000 of the property's seeds (49,070 lines with a
+/// root), the premise holds on 16,880. On the 32,190 where it does not,
+/// the quadratic bound stands, at most 3.7·10⁻², against 7.0·10⁻² with the
+/// quadratic alone on every line; no closed form misses by more than 0.09
+/// of its bound.
 ///
 /// Both are bounds far past the miss: on the second CI finding the closed
 /// form's gap is 3.9·10⁻⁷ short of 6, and this is 6·10⁻⁵. Where the line
@@ -1343,8 +1349,68 @@ pub(crate) fn closed_form_rounding(delta: Vec2, dir: Vec2, reach: Vec2, owed: f3
     } else {
         gm.sqrt()
     };
-    let linear = gamma * (far(delta.x, dir.x, reach.x) + far(delta.y, dir.y, reach.y) + owed);
-    quadratic.min(linear)
+    let reach_sum = far(delta.x, dir.x, reach.x) + far(delta.y, dir.y, reach.y) + owed;
+    if linear_holds(delta, dir, reach, owed, truth, reach_sum) {
+        quadratic.min(gamma * reach_sum)
+    } else {
+        quadratic
+    }
+}
+
+/// Whether the linear bound of [`closed_form_rounding`] holds on its line,
+/// its root `truth` in `f64`, the axes' farthest reaches and what is owed
+/// summing to `reach_sum`: read from the line and that root alone.
+///
+/// - Where nothing is owed, the closed form's step is a stop, its gap a
+///   rounding of the stop's arithmetic: it holds.
+/// - Where the boxes start further apart than owed, the closed form's root
+///   on the stretch holding the line's root is `c / (−b + s)`, `b < 0`, and
+///   it holds where the constant's roundings, moving the gap by `s / owed ·
+///   γ (Σ from² + owed²) / (−b + s)`, at most `|dir| γ (Σ from² + owed²) /
+///   |b|` (`s ≤ |dir| owed`), come to no more than `γ` times `reach_sum`:
+///   `|dir| (Σ from² + owed²) ≤ |b| · reach_sum`, `from` the axes' gaps at
+///   the stretch's start and `b` the sum of each times its rate. Checked
+///   here, at that stretch, from the line in `f64`.
+/// - Where they start nearer, the root on that stretch is read from `b² −
+///   a c`, whose roundings are not held linear: it does not.
+fn linear_holds(delta: Vec2, dir: Vec2, reach: Vec2, owed: f64, truth: f64, reach_sum: f64) -> bool {
+    if owed <= 0.0 {
+        return true;
+    }
+    if gap_in_f64(delta, dir, reach, 0.0) <= owed {
+        return false;
+    }
+    let sign = if truth < 0.0 { -1.0 } else { 1.0 };
+    let t = truth.abs();
+    let axes = [(delta.x, dir.x, reach.x), (delta.y, dir.y, reach.y)];
+    // The stretch's start: the last stop before the root, as the closed
+    // form takes its stops, or the start.
+    let mut lo = 0.0_f64;
+    for (d, w, r) in axes {
+        let (d, v, r) = (f64::from(d), sign * f64::from(w), f64::from(r));
+        if v != 0.0 {
+            for edge in [r, -r, 0.0] {
+                let stop = (edge - d) / v;
+                if stop > 0.0 && stop < t {
+                    lo = lo.max(stop);
+                }
+            }
+        }
+    }
+    let middle = 0.5 * (lo + t);
+    let (mut b, mut squares) = (0.0_f64, 0.0_f64);
+    for (d, w, r) in axes {
+        let (d, v, r) = (f64::from(d), sign * f64::from(w), f64::from(r));
+        let probe = d + v * middle;
+        if probe.abs() > r {
+            let side = probe.signum();
+            let from = side * (d + v * lo) - r;
+            b += from * side * v;
+            squares += from * from;
+        }
+    }
+    let speed = f64::from(dir.x).hypot(f64::from(dir.y));
+    b < 0.0 && speed * (squares + owed * owed) <= -b * reach_sum
 }
 
 /// The step along `dir` from two inks' centers `delta` apart, their half

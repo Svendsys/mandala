@@ -956,7 +956,7 @@ pub fn do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors()
 /// place it owes its gap, not its step: there a step 10⁻³ off moves the
 /// gap by less than one rounding, and is not caught (#384's CI lines; of
 /// the 2,063 such lines in a census of 100,000 of these seeds, a closed
-/// form 10⁻³ further is caught on 2, 3·10⁻² further on 18).
+/// form 10⁻³ further is caught on 1, 3·10⁻² further on 17).
 /// Preconditions: the first sweep steps back at least 200 times where
 /// less than a hundredth of the gap is owed (244 here), and the second
 /// finds at least 3,900 roots where the gap closes before it opens, on

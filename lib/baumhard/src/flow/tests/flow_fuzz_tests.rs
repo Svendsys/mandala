@@ -4938,8 +4938,8 @@ fn test_flow_structured_finding_a_line_root_owed_a_gap_along_all_but_one_axis_re
 /// bytes, as found (sha1 a0724487…).
 ///
 /// Control: with the scan not reading its start, red ("the closed form
-/// steps -0, outside -10.244488…..-3.08e-63, the steps whose gap is
-/// within its rounding 2.86e-5 of what is owed").
+/// steps -0, outside -10.244521…..-3.08e-63, the steps whose gap is
+/// within its rounding 6.29e-5 of what is owed").
 #[test]
 fn test_flow_structured_finding_a_line_root_owed_its_gap_at_the_start_replays() {
     let found = include_bytes!("fuzz_findings/structured_line_root_owed_its_gap_at_the_start");
