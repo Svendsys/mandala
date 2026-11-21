@@ -857,19 +857,21 @@ fn test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_g
     do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap();
 }
 
-/// #384's CI finding (`structured_line_root_owed_a_gap_its_step_barely_moves`):
-/// on the line two inks `(-20, -12)` apart, reach `(6, 6)`, stepped along
-/// `(-1.25, -1.09e-7)` and owed 6, the closed form is the root, to
-/// `CLOSED_FORM_REACH` of its scale of the line's root in `f64`; and the
-/// bisection is off by more than its bracket's width — precondition: the
-/// case `bisection_window` is for — and lies inside that window, the steps
+/// #384's two CI findings (`structured_line_root_owed_a_gap_its_step_barely_moves`
+/// and `structured_line_root_owed_a_gap_along_all_but_one_axis`): two inks
+/// `(-20, -12)` apart, reach `(6, 6)`, owed 6, stepped along `(-1.25,
+/// -1.09e-7)` and `(-0.872, -7.62e-8)`. At each root one axis's gap is all
+/// but 6 and the other's 4·10⁻³ and closing, so the gap moves 8·10⁻⁴ and
+/// 5.6·10⁻⁴ a unit of step: the line does not place its step
+/// (precondition: its rate is under `reading_rounding` over
+/// `CLOSED_FORM_REACH` of its scale), and the closed form's step is held by
+/// what it owes. On each, the closed form's gap in `f64` is within
+/// `closed_form_rounding` of what is owed and its step inside the steps
+/// whose gap is (`root_window`); the bisection's step is inside the steps
 /// it may stop at.
 ///
-/// The bisection is 5.9e-4 off there, past the root, its bracket's width
-/// 2.3e-4; the closed form 4.5e-6.
-///
-/// The window runs from -20.806 to -11.1947: past the root one axis's gap
-/// stays all but 6 to where the other's opens again.
+/// The closed form is 4.5e-6 and 7.6e-4 from the root, its gap 3.9e-9 and
+/// 3.9e-7 short of 6; the bisection 5.9e-4 and 8.5e-4 past it.
 ///
 /// Control: with the bisection 10⁻² short, before the root where the gap
 /// is clearly past what is owed, red ("the bisection steps -11.18753,
@@ -884,27 +886,45 @@ fn test_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors() {
 /// reused by its benchmark.
 pub fn do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors() {
     use crate::flow::place::halves::line_root_seam;
-    use crate::flow::tests::flow_fuzz::{bisection_window, line_root_in_f64, CLOSED_FORM_REACH};
+    use crate::flow::tests::flow_fuzz::{
+        closed_form_rounding, line_root_in_f64, reading_rounding, root_window, CLOSED_FORM_REACH,
+    };
     let (delta, reach, owed) = (Vec2::new(-20.0, -12.0), Vec2::new(6.0, 6.0), 6.0);
-    let dir = Vec2::new(-1.25, -1.092_784_7e-7);
-    let (closed, bisected) = line_root_seam(delta, dir, reach, owed);
-    let truth = line_root_in_f64(delta, dir, reach, owed);
-    let scale = truth.abs() + f64::from(owed) + f64::from(reach.max_element());
-    assert!(
-        (f64::from(closed) - truth).abs() <= CLOSED_FORM_REACH * scale,
-        "the closed form steps {closed}, the line's root is {truth}"
-    );
-    let off = (f64::from(bisected) - truth).abs();
-    let width = (f64::from(bisected.abs()) + f64::from(owed) + f64::from(reach.max_element())) * 1e-5;
-    assert!(
-        off > width,
-        "precondition: the bisection steps {bisected}, {off:e} from the root, within its bracket's width {width:e}"
-    );
-    let (lo, hi) = bisection_window(delta, dir, reach, owed, truth);
-    assert!(
-        (lo..=hi).contains(&f64::from(bisected)),
-        "the bisection steps {bisected}, outside {lo} to {hi}"
-    );
+    for dir in [
+        Vec2::new(-1.25, -1.092_784_7e-7),
+        Vec2::new(-0.872, -7.623_266e-8),
+    ] {
+        let (closed, bisected) = line_root_seam(delta, dir, reach, owed);
+        let truth = line_root_in_f64(delta, dir, reach, owed);
+        let scale = truth.abs() + f64::from(owed) + f64::from(reach.max_element());
+        let gap = |d: f64| {
+            let x = ((f64::from(delta.x) + f64::from(dir.x) * d).abs() - f64::from(reach.x)).max(0.0);
+            let y = ((f64::from(delta.y) + f64::from(dir.y) * d).abs() - f64::from(reach.y)).max(0.0);
+            x.hypot(y)
+        };
+        let rate = (gap(truth + 1e-6) - gap(truth - 1e-6)).abs() / 2e-6;
+        let reading = reading_rounding(delta, dir, reach, truth);
+        assert!(
+            rate * CLOSED_FORM_REACH * scale < reading,
+            "precondition: along {dir} the gap moves {rate:e} a unit of step, which places it"
+        );
+        let rounding = closed_form_rounding(delta, dir, reach, owed, truth);
+        let off = gap(f64::from(closed)) - f64::from(owed);
+        assert!(
+            off.abs() <= rounding,
+            "along {dir} the closed form steps {closed}, its gap {off:e} from what is owed, past {rounding:e}"
+        );
+        let (lo, hi) = root_window(delta, dir, reach, owed, truth, rounding);
+        assert!(
+            (lo..=hi).contains(&f64::from(closed)),
+            "along {dir} the closed form steps {closed}, outside {lo} to {hi}"
+        );
+        let (lo, hi) = root_window(delta, dir, reach, owed, truth, reading);
+        assert!(
+            (lo..=hi).contains(&f64::from(bisected)),
+            "the bisection steps {bisected}, outside {lo} to {hi}"
+        );
+    }
 }
 
 /// #348: the tangent line's root in closed form (`line_root`) is the

@@ -4863,24 +4863,58 @@ fn test_flow_structured_finding_a_line_root_owed_little_of_a_wide_gap_replays() 
 /// and rightly: one axis's gap is all but what is owed and the other's
 /// 4·10⁻³ and closing, so the gap moves 8·10⁻⁴ a unit of step there, and
 /// `along`, reading the gap in `f32`, cannot tell steps within a rounding
-/// of 6 (5.99999957 at its step) from the root. The property now holds the
-/// closed form to the line's root in `f64` (`line_root_in_f64`), and the
-/// bisection to the steps it cannot tell from that root
-/// (`bisection_window`), nothing read at either step widening either. The
-/// input is the base's: it fails alike on `epic/unified-mutations` at
+/// of 6 (5.99999957 at its step) from the root. The property now holds
+/// each answer by what it owes, read in `f64` from the line alone — the
+/// closed form's gap within its rounding of what is owed, each step among
+/// those whose gap may read so (`root_window`) — and the closed form to
+/// the line's root only where the line places its step (`check_line_root`).
+/// The input is the base's: it fails alike on `epic/unified-mutations` at
 /// ec9d5f41, whose `line_root`, `along` and `check_line_root` #384 does not
 /// touch. 142 bytes, as found (sha1 20b3f06f…).
 ///
-/// Controls, each planted in `line_root_seam`: with the closed form 10⁻³
-/// further, red ("the closed form steps -11.19794, the line's root is
-/// -11.196934…"), and 3 further, red ("-14.196939") — on the property as
-/// it stood at 5608b21e, whose blur was read at the closed form's step,
-/// both were green; with the bisection 10⁻² short of the root, where the
-/// gap is clearly past what is owed, red ("the bisection steps -11.18753,
-/// outside -20.805981…..-11.194736…").
+/// Controls, each planted in `line_root_seam`: with the bisection 10⁻²
+/// short of the root, where the gap is clearly past what is owed, red
+/// ("the bisection steps -11.18753, outside -20.805981…..-11.194736…").
+/// With the closed form 10⁻³ or 3 further, green, and rightly: this line
+/// does not place its step, and at both the gap is within the closed
+/// form's rounding of 6 (`structured_line_root_owed_little_of_a_wide_gap`'s
+/// replay, whose line does, goes red on both).
 #[test]
 fn test_flow_structured_finding_a_line_root_owed_a_gap_its_step_barely_moves_replays() {
     let found = include_bytes!("fuzz_findings/structured_line_root_owed_a_gap_its_step_barely_moves");
+    for (what, checked) in [
+        (
+            "fuzzed",
+            crate::flow::tests::flow_fuzz::check_flow_structured(found),
+        ),
+        ("as found", check_flow_structured_as_found(found)),
+    ] {
+        if let Err(why) = checked {
+            panic!("{what}: {why}");
+        }
+    }
+}
+
+/// The flow_structured finding of CI's run on #384 at 22023fc9 (job
+/// 136836330346), the first finding above with one byte more: two inks
+/// `(-20, -12)` apart, reach `(6, 6)`, stepped along `(-0.872,
+/// -7.62e-8)` and owed 6. The property as it stood held the closed form to
+/// the line's root in `f64` to `CLOSED_FORM_REACH` of its scale, 1.4e-4
+/// here, and it was 7.6e-4 off (-16.051414, the root -16.0506519). Its gap
+/// there is 3.9e-7 short of 6, one rounding of 6: the line does not place
+/// its step, the gap moving 5.6e-4 a unit of it. The engine owes the gap,
+/// and keeps it far inside the pairwise rule's window. The property now
+/// holds the gap, and the step to the root only where the line places it.
+/// #384's own: on the epic at ec9d5f41 the property compared the closed
+/// form to the bisection, 9.2e-5 apart, within that check's width of
+/// 2.8e-4. 143 bytes, as found (sha1 6b3193d8…).
+///
+/// Control: with the closed form held to the root wherever the line runs,
+/// red, CI's message ("the closed form steps -16.051414, the line's root
+/// is -16.05065194473038").
+#[test]
+fn test_flow_structured_finding_a_line_root_owed_a_gap_along_all_but_one_axis_replays() {
+    let found = include_bytes!("fuzz_findings/structured_line_root_owed_a_gap_along_all_but_one_axis");
     for (what, checked) in [
         (
             "fuzzed",

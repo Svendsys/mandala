@@ -1086,23 +1086,32 @@ pub fn check_pair_model(choices: &mut Choices<'_>) -> Result<(), String> {
     pair_model_held(choices).map(|_| ())
 }
 
-/// The tangent line's root in closed form held to the line's root in
-/// `f64`, and the iterative rule's bisection of it held to the steps it
-/// cannot tell from that root (#309, ruling B16.1b; `line_root`, `along`;
-/// #384): two inks some way apart, their half sizes summing to a reach the
-/// choices draw, one stepped along a way they draw until the two are owed
-/// apart — on where they are nearer, back where they are further. The gap
-/// along a line is convex in the step, so each way has one root.
+/// The tangent line's root in closed form and the iterative rule's
+/// bisection of it, each held to what it owes and to the line's root in
+/// `f64` (#309, ruling B16.1b; `line_root`, `along`; #384): two inks some
+/// way apart, their half sizes summing to a reach the choices draw, one
+/// stepped along a way they draw until the two are owed apart — on where
+/// they are nearer, back where they are further. The gap along a line is
+/// convex in the step, so each way has one root.
 ///
-/// - The closed form is held to `line_root_in_f64`, which shares no
-///   arithmetic with it, to `CLOSED_FORM_REACH` of the scale it is read
-///   at. Nothing read at the closed form's step widens that: a closed form
-///   that lands where the gap is flat is held as tightly as any.
-/// - The bisection is held to the oracle too, not to the closed form: to
-///   the steps it may stop at, its reading of the gap off by `along`'s
-///   rounding (`bisection_window`, read at the oracle's root), and its
-///   last bracket. That is as much as its `f32` reading lets a sound check
-///   say, and on a flat stretch it is little.
+/// What a step owes is its gap: what the pairwise rule keeps a letter
+/// within (`NEARER` short of what is owed, `INK_TOLERANCE` past). Where the
+/// gap barely moves with the step, its `f32` inputs cannot place the step,
+/// and a position checked there is either loose or wrong (#384's CI
+/// findings: the gap moves 8·10⁻⁴ and 5.6·10⁻⁴ a unit of step, and one
+/// rounding of the inputs moves the step 6·10⁻⁴ and 7.6·10⁻⁴). So:
+///
+/// - The closed form's gap at its step, in `f64`, is within its own
+///   rounding of what is owed (`closed_form_rounding`), and the step lies
+///   among those whose gap is (`root_window`). Read from the line and the
+///   root in `f64` alone: nothing read at the step under test widens it.
+/// - Where the line places its step — the gap's rate at the root, in
+///   `f64`, is at least its reading's rounding over `CLOSED_FORM_REACH` of
+///   the scale — the closed form is also held to the root
+///   (`line_root_in_f64`), to `CLOSED_FORM_REACH` of the scale.
+/// - The bisection lies among the steps it may stop at, its reading of the
+///   gap off by `along`'s rounding (`root_window`, `reading_rounding`), and
+///   its last bracket.
 /// - Where the oracle finds no root and the closed form does, the boxes
 ///   are owed apart at the closed form's step.
 pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
@@ -1121,13 +1130,7 @@ pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
     let what = format!("inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}");
     let gap = |d: f32| ((delta + dir * d).abs() - reach).max(Vec2::ZERO).length();
     let truth = line_root_in_f64(delta, dir, reach, owed);
-    let scale = truth.abs() + f64::from(owed) + f64::from(reach.max_element());
     match (closed.is_finite(), truth.is_finite()) {
-        (true, true) if (f64::from(closed) - truth).abs() > CLOSED_FORM_REACH * scale => {
-            return Err(format!(
-                "{what}: the closed form steps {closed}, the line's root is {truth}"
-            ))
-        }
         (false, true) => {
             return Err(format!(
                 "{what}: the closed form finds none, the line's root is {truth}"
@@ -1139,20 +1142,43 @@ pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
                 gap(closed)
             ))
         }
-        _ => {}
+        (true, true) => {}
+        _ => return Ok(()),
     }
-    if !(bisected.is_finite() && truth.is_finite()) {
+    let owed64 = f64::from(owed);
+    let scale = truth.abs() + owed64 + f64::from(reach.max_element());
+    let reading = reading_rounding(delta, dir, reach, truth);
+    // The closed form: its gap, the steps whose gap that is, and, where the
+    // line places the step, the step.
+    if closed.is_finite() {
+        let rounding = closed_form_rounding(delta, dir, reach, owed, truth);
+        let at = f64::from(closed);
+        let off = gap_in_f64(delta, dir, reach, at) - owed64;
+        let (lo, hi) = root_window(delta, dir, reach, owed, truth, rounding);
+        if off.abs() > rounding || at < lo || at > hi {
+            return Err(format!(
+                "{what}: the closed form steps {closed}, its gap {off:e} from what is owed, past its rounding \
+                 {rounding:e} or outside {lo}..{hi}; the line's root is {truth}"
+            ));
+        }
+        let placed = gap_rate_in_f64(delta, dir, reach, truth) * CLOSED_FORM_REACH * scale >= reading;
+        if placed && (at - truth).abs() > CLOSED_FORM_REACH * scale {
+            return Err(format!(
+                "{what}: the closed form steps {closed}, the line's root is {truth}"
+            ));
+        }
+    }
+    if !bisected.is_finite() {
         return Ok(());
     }
     // The bisection's last bracket, and the floats of the step.
-    let width = (f64::from(bisected.abs()) + f64::from(owed) + f64::from(reach.max_element()))
+    let width = (f64::from(bisected.abs()) + owed64 + f64::from(reach.max_element()))
         .max(f64::from(INK_TOLERANCE))
         * 1e-5;
-    let off = (f64::from(bisected) - truth).abs();
-    if off <= width {
+    if (f64::from(bisected) - truth).abs() <= width {
         return Ok(());
     }
-    let (lo, hi) = bisection_window(delta, dir, reach, owed, truth);
+    let (lo, hi) = root_window(delta, dir, reach, owed, truth, reading);
     if f64::from(bisected) < lo - width || f64::from(bisected) > hi + width {
         return Err(format!(
             "{what}: the bisection steps {bisected}, outside {lo}..{hi}, the steps it may stop at, the line's root {truth}"
@@ -1163,17 +1189,100 @@ pub fn check_line_root(choices: &mut Choices<'_>) -> Result<(), String> {
 
 /// How far from the line's root in `f64` the tangent line's closed form
 /// (`line_root`) may be, of the scale it is read at — its step, what is
-/// owed and the reach: five millionths. A measure, not a derivation: the
-/// most its `f32` arithmetic was found off over the 8,000 seeded lines and
-/// the findings of
+/// owed and the reach — where the line places its step: five millionths.
+/// A measure, not a derivation: the most its `f32` arithmetic was found
+/// off over the 8,000 seeded lines and the findings of
 /// `test_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap`,
-/// with room. A bound derived from that arithmetic alone cannot be this
-/// tight where the gap barely moves with the step: the closed form solves
-/// a line within a few roundings of its own, and such a line's root lies
-/// as far off as those roundings over the gap's rate. On #384's CI
-/// finding that is 2.6·10⁻³, which would admit a closed form 10⁻³ off; it
-/// is 4.5·10⁻⁶ off.
+/// with room. It holds only where the gap's rate at the root places the
+/// step to it (`check_line_root`): where the gap barely moves with the
+/// step, the closed form's step lies as far off as its rounding over that
+/// rate, 7.6·10⁻⁴ on #384's second CI finding.
 pub(crate) const CLOSED_FORM_REACH: f64 = 5e-6;
+
+/// The gap along [`check_line_root`]'s line at step `d`, in `f64`.
+fn gap_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, d: f64) -> f64 {
+    let x = ((f64::from(delta.x) + f64::from(dir.x) * d).abs() - f64::from(reach.x)).max(0.0);
+    let y = ((f64::from(delta.y) + f64::from(dir.y) * d).abs() - f64::from(reach.y)).max(0.0);
+    x.hypot(y)
+}
+
+/// How fast the gap along [`check_line_root`]'s line moves with the step
+/// at `d`, in `f64`: none where no axis is apart.
+fn gap_rate_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, d: f64) -> f64 {
+    let mut moved = 0.0;
+    for (at, w, r) in [(delta.x, dir.x, reach.x), (delta.y, dir.y, reach.y)] {
+        let center = f64::from(at) + f64::from(w) * d;
+        let past = center.abs() - f64::from(r);
+        if past > 0.0 {
+            moved += past * center.signum() * f64::from(w);
+        }
+    }
+    let gap = gap_in_f64(delta, dir, reach, d);
+    if gap > 0.0 {
+        (moved / gap).abs()
+    } else {
+        0.0
+    }
+}
+
+/// The most `along`'s `f32` reading of the gap along [`check_line_root`]'s
+/// line is off at step `d` (#384). `along` steps on the sign of `gap(d) −
+/// owed`. Each axis's step `dir·d`, its center `delta + dir·d` and its
+/// distance past `reach` are rounded once each, half a spacing of `f32` at
+/// each, and each moves the gap by no more than itself; the length of the
+/// two axes' gaps, squared, summed and rooted, is within two spacings at
+/// the gap; near the root `− owed` is exact (Sterbenz).
+pub(crate) fn reading_rounding(delta: Vec2, dir: Vec2, reach: Vec2, d: f64) -> f64 {
+    let mut rounding = 0.0;
+    for (at, w, r) in [(delta.x, dir.x, reach.x), (delta.y, dir.y, reach.y)] {
+        let step = f64::from(w) * d;
+        let center = f64::from(at) + step;
+        rounding += 0.5
+            * (f32_spacing(step.abs() as f32)
+                + f32_spacing(center.abs() as f32)
+                + f32_spacing((center.abs() - f64::from(r)).abs() as f32));
+    }
+    rounding + 2.0 * f32_spacing(gap_in_f64(delta, dir, reach, d) as f32)
+}
+
+/// The roundings the closed form's arithmetic takes on its way to a root:
+/// each axis's gap at its stretch's start and the stretch's start itself
+/// (three each), the quadratic's coefficients (two each), the identity's
+/// cross term (three) and its square, the discriminant (three), its root
+/// and the step's division and sum — sixteen, counted with room.
+const CLOSED_FORM_ROUNDINGS: f64 = 16.0;
+
+/// The most the closed form's step (`line_root`) may miss what is owed by,
+/// in its gap, for [`check_line_root`]'s line, its root `truth` in `f64`
+/// (#384's second CI finding). Read from the line and that root alone.
+///
+/// The derivation. The closed form solves the gap's square along a
+/// stretch of the line, `a τ² + 2 b τ + c` less what is owed squared, by
+/// Lagrange's identity: every quantity it forms — the axes' gaps and
+/// rates at the stretch's start, the coefficients, the cross term and the
+/// discriminant — is a sum or product of terms no larger than `M`, the
+/// square of the farthest either axis reaches over the step (its offset,
+/// its step and its reach), summed over the axes, and what is owed
+/// squared. Each of its [`CLOSED_FORM_ROUNDINGS`] roundings moves a term by
+/// half a unit of `f32`'s last place, so its step is the root of a gap's
+/// square within `γ M` of the line's, `γ` those roundings at `2⁻²⁴`. Its
+/// gap there is within `γ M / (gap + owed)` of what is owed: at most `γ M
+/// / owed`, and at most `√(γ M)` where little or nothing is owed.
+///
+/// It is a bound, far past the miss: on the second finding the closed
+/// form's gap is 3.9·10⁻⁷ short of 6 and this is 3.1·10⁻⁴. Where the line
+/// places its step, `CLOSED_FORM_REACH` holds the closed form tighter.
+pub(crate) fn closed_form_rounding(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32, truth: f64) -> f64 {
+    let owed = f64::from(owed);
+    let far = |at: f32, w: f32, r: f32| f64::from(at).abs() + (f64::from(w) * truth).abs() + f64::from(r);
+    let m = far(delta.x, dir.x, reach.x).powi(2) + far(delta.y, dir.y, reach.y).powi(2) + owed * owed;
+    let gm = CLOSED_FORM_ROUNDINGS * 0.5 * f64::from(f32::EPSILON) * m;
+    if owed > 0.0 {
+        (gm / owed).min(gm.sqrt())
+    } else {
+        gm.sqrt()
+    }
+}
 
 /// The step along `dir` from two inks' centers `delta` apart, their half
 /// sizes summing to `reach`, after which their boxes are `owed` apart —
@@ -1220,39 +1329,38 @@ fn line_root_owed_in_f64(delta: Vec2, dir: Vec2, reach: Vec2, owed: f64) -> f64 
     f64::NAN
 }
 
-/// The steps of [`check_line_root`]'s line among which the bisection
-/// (`along`) may set its root, the line's root `truth` in `f64` known
-/// (#384's CI finding): every step it may stop at, its reading of the gap
-/// in `f32` off by `ε` at most. `ε` is read at `truth`, from the line's
-/// coordinates there: nothing read at a step under test widens it.
+/// The steps of [`check_line_root`]'s line whose gap may read as what is
+/// owed, read off by `epsilon` at most, the line's root `truth` in `f64`
+/// known (#384): where the bisection (`along`) may stop, its reading off by
+/// `reading_rounding`, and where the closed form may step, its own off by
+/// `closed_form_rounding`. Read from the line, its root and the rounding
+/// alone: nothing read at a step under test widens it.
 ///
-/// The derivation of `ε`. `along` steps on the sign of `gap(d) − owed`,
-/// the gap read in `f32`. Each axis's step `dir·d`, its center `delta +
-/// dir·d` and its distance past `reach` are rounded once each, half a
-/// spacing of `f32` at each, and each moves the gap by no more than
-/// itself; the length of the two axes' gaps, squared, summed and rooted,
-/// is within two spacings at the gap; near the root `− owed` is exact
-/// (Sterbenz).
-///
-/// The window. `along` keeps a bracket whose one end reads nearer than
-/// what is owed and whose other reads further, and stops on a step where
-/// the reading changes: one whose gap is within `ε` of what is owed. On
-/// from the start, where the boxes are nearer, the gap rises through what
-/// is owed and, convex, keeps rising: every such step lies before the
-/// first whose gap is `ε` past it, and after the last before that whose
-/// gap is `ε` short of it, or the start. Back from the start, where they
-/// are further, the gap falls through what is owed: every such step lies
-/// from the first whose gap is within `ε` past it to the first after
-/// that whose gap is `ε` past it again — the gap's sublevel set, an
-/// interval since the gap is convex — or the scan's end. Past the root
-/// the gap may stay within `ε` of what is owed a long way where it is
-/// flat, and the window with it: on the finding, from 11.19 to past 20.8,
-/// one axis's gap all but 6 over that stretch. The bisection's step,
-/// 5.9·10⁻⁴ past the root, lies inside.
+/// On from the start, where the boxes are nearer, the gap rises through
+/// what is owed and, convex, keeps rising: every such step lies before the
+/// first whose gap is `epsilon` past it, and after the last before that
+/// whose gap is `epsilon` short of it, or the start. Back from the start,
+/// where they are further, the gap falls through what is owed: every such
+/// step lies from the first whose gap is within `epsilon` past it to the
+/// first after that whose gap is `epsilon` past it again — the gap's
+/// sublevel set, an interval since the gap is convex — or the scan's end.
+/// A step `along` stops at reads the gap changing: its bracket's one end
+/// reads nearer than what is owed and its other further, so it lies in
+/// that set. Past the root the gap may stay within `epsilon` of what is
+/// owed a long way where it is flat, and the window with it: on the first
+/// finding, from 11.19 to past 20.8, one axis's gap all but 6 over that
+/// stretch.
 ///
 /// Each end is found in `f64` by a scan of 20,000 steps, as
 /// [`line_root_in_f64`] scans, and a bisection of the one that crosses.
-pub(crate) fn bisection_window(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32, truth: f64) -> (f64, f64) {
+pub(crate) fn root_window(
+    delta: Vec2,
+    dir: Vec2,
+    reach: Vec2,
+    owed: f32,
+    truth: f64,
+    epsilon: f64,
+) -> (f64, f64) {
     let (dx, dy, wx, wy) = (delta.x as f64, delta.y as f64, dir.x as f64, dir.y as f64);
     let (rx, ry, owed) = (reach.x as f64, reach.y as f64, f64::from(owed));
     let gap = |d: f64| {
@@ -1260,16 +1368,6 @@ pub(crate) fn bisection_window(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32, t
         let y = ((dy + wy * d).abs() - ry).max(0.0);
         x.hypot(y)
     };
-    let mut rounding = 0.0;
-    for (at, w, r) in [(dx, wx, rx), (dy, wy, ry)] {
-        let step = w * truth;
-        let center = at + step;
-        rounding += 0.5
-            * (f32_spacing(step.abs() as f32)
-                + f32_spacing(center.abs() as f32)
-                + f32_spacing((center.abs() - r).abs() as f32));
-    }
-    let epsilon = rounding + 2.0 * f32_spacing(gap(truth) as f32);
     let sign = if truth < 0.0 { -1.0 } else { 1.0 };
     let span = 4.0 * (dx.abs() + dy.abs() + rx + ry + owed + 1.0) / wx.hypot(wy);
     let at = |t: f64| gap(sign * t);
