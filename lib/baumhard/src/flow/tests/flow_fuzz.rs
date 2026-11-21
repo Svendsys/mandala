@@ -1504,7 +1504,7 @@ fn check_generated_pinning(
                                         fit: fit.clone(),
                                         layout: layout.clone(),
                                         outward,
-                                        flow: flow.clone(),
+                                        flow,
                                         scale,
                                         cap,
                                         placed: placed.1.clone(),

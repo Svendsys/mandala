@@ -308,7 +308,7 @@ fn holds_the_spread(text: &'static str, fit: &FitMode) -> usize {
 ///   tall ellipses 450 × 1,800 and 500 × 2,000 with an arc left empty,
 ///   their copies touching the text;
 /// - the copies weighed in their arcs' touch check on their glyph boxes as
-///   placed (`glyph_box`, gone): the ellipse 450 × 1,800 at 10⁷ and
+///   placed (`glyph_box` (gone)): the ellipse 450 × 1,800 at 10⁷ and
 ///   1.6·10⁷, an arc left empty;
 /// - the floor eight times the spacing: some frames from 4·10⁶ on laying
 ///   fewer copies than [`least_far_sides`] owes, none of them reporting a
