@@ -281,7 +281,11 @@ fn names_compared<R>(f: impl FnOnce() -> R) -> (usize, R) {
 /// Controls, each seen red: `NameIndex::get` scanning its keys
 /// (`iter().find(|(known, _)| Borrow::<str>::borrow(*known) == name)`,
 /// nothing of it counted by hand) compares millions; `NameKey`'s
-/// `Borrow` not counting leaves the count under the floor.
+/// `Borrow` not counting leaves the count under the floor; a scan planted
+/// beside the load's own probe — a step's names resolve through
+/// `verb::load`'s index, not `resolve::verb_of`, so that is where the scan
+/// goes (`presentations.iter().position(|def| def.id.as_str() == id)`
+/// before each `present` step) — compares 2,112,872 (round 5 on #380).
 #[test]
 fn test_a_step_resolves_each_name_in_one_probe() {
     const N: usize = 2_048;
@@ -430,6 +434,62 @@ fn test_verb_by_id_refuses_definitions_no_document_indexed() {
     let _ = definitions.verb_by_id("go");
 }
 
+/// **A control refusal says what it found, raw or decoded, and where**
+/// (verification round 5 on #380, item 6): at load and from the writer
+/// alike, "a raw control character in `body`", "a decoded line break in
+/// `subject`", "a decoded control character in `subject`".
+///
+/// Control, seen red: `MailControlFound::words` answering one wording
+/// for all three.
+#[test]
+fn test_a_control_refusal_says_what_it_found_and_where() {
+    use crate::document::mutation::ops::{DocMutation, SpanOp};
+    use crate::document::values::LinkTarget;
+    let map = |url: &str| {
+        let url = serde_json::to_string(url).expect("a string");
+        format!(
+            r#"{{"format":1,"name":"l","nodes":[{{"id":1,"position":[0,0],"sections":[{{"spans":[{{"text":"x","link":{{"url":{url}}}}}]}}]}}]}}"#
+        )
+    };
+    let mut doc = load(&map("https://example.org")).expect("an https link loads");
+    let span = doc
+        .tree()
+        .descendants()
+        .find(|&id| doc.get(id).is_some_and(|e| e.kind() == DocKind::Span))
+        .expect("a span");
+    for (url, words) in [
+        (
+            "mailto:a@example.org?body=x\tY",
+            "a raw control character in `body`",
+        ),
+        (
+            "mailto:a@example.org?subject=x%0D%0ABcc:%20e@x",
+            "a decoded line break in `subject`",
+        ),
+        (
+            "mailto:a@example.org?subject=x%00y",
+            "a decoded control character in `subject`",
+        ),
+    ] {
+        let loaded = load(&map(url)).expect_err(url).to_string();
+        assert!(loaded.contains(words), "{url:?}: {loaded}");
+        let steps = compose::set(
+            &doc,
+            DocKind::Span,
+            vec![DocMutation::Span(SpanOp::SetLink(Some(LinkTarget::Url(
+                url.into(),
+            ))))],
+            &[span],
+        )
+        .expect("composes");
+        let applied = doc
+            .apply(EditRequest::new(steps, "link"), ChangeSource::Edit)
+            .expect_err(url)
+            .to_string();
+        assert!(applied.contains(words), "{url:?}: {applied}");
+    }
+}
+
 /// **A stale index says so in a debug build** (ruling D3.5 item 7): an
 /// index that puts `b` where `a` is — what a `Definitions` whose verbs
 /// changed after it was indexed would hold — stops `verb_by_id("b")`
@@ -546,9 +606,13 @@ fn test_a_link_to_a_file_is_refused_at_load_and_at_apply() {
 /// `a@example.org&attach=`; as it was at 5f8bcfff (D3.4) loads every
 /// D3.5 row; the raw address loop skipping its first part loads the four
 /// `mailto:attach=…`; without the raw control check, `body=x\ry` and
-/// `a\u{1}@…` load; without the query's line-break check, the two
-/// `subject=x%0A…` rows load (each failure lists every row it gets
-/// wrong); `load_node`
+/// `a\u{1}@…` load; (round 5 on #380) as it was at 0e59a693 loads the
+/// review's eight `subject=x%26body=y%0D%0A…` rows and every other
+/// decoded control; a control checked in its own part only — not the run
+/// from its `&`-header's first part — loads the eight; with no tab
+/// allowed in a `body`, `body=a%09b` is refused; the address read raw
+/// before decoded names `a@example.org%26attach` (each failure lists every
+/// row it gets wrong); `load_node`
 /// accepting `LinkRefusal::MailHeader` loads it too; the validator
 /// accepting it applies the `set_link`; `resolve` accepting it reads the
 /// edit (and so the presentation, which reads through it).
@@ -596,8 +660,8 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
         ("mailto:a@example.org&attach=/etc/passwd?subject=hi", "attach"),
         ("mailto:a@example.org;attach=x", "attach"),
         ("mailto:a@example.org,attach=x", "attach"),
-        ("mailto:a@example.org%26attach=x", "a@example.org%26attach"),
-        ("mailto:a@example.org%3Battach=x", "a@example.org%3Battach"),
+        ("mailto:a@example.org%26attach=x", "attach"),
+        ("mailto:a@example.org%3Battach=x", "attach"),
         ("mailto:a@example.org#&attach=x", "attach"),
         ("mailto:a@example.org#attach=x", "attach"),
         // Over-refused: an address part with an `=` that is no header.
@@ -623,21 +687,124 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
     ] {
         refused(url, LoadErrorKind::LinkMailHeader { name: name.into() });
     }
-    // Ruling D3.5 item 3: a decoded line break outside a `body`, and a
-    // raw control character anywhere — which nothing else refuses: the
-    // format reads a `url` as any JSON string.
-    for (url, name) in [
+    // Ruling D3.5 item 3 and round 5: a control character raw anywhere —
+    // which nothing else refuses: the format reads a `url` as any JSON
+    // string — and decoded anywhere but inside a `body` under every split.
+    use crate::document::values::MailControlFound::{DecodedControl, DecodedLineBreak, Raw};
+    for (url, name, found) in [
         (
             "mailto:a@example.org?subject=x%0D%0AAttach:%20/etc/passwd",
             "subject",
+            DecodedLineBreak,
         ),
-        ("mailto:a@example.org?subject=x%0AAttach=/etc/passwd", "subject"),
-        ("mailto:a%0D%0Ab@example.org", "a\r\nb@example.org"),
-        ("mailto:a@example.org?subject=x\nAttach: /etc/passwd", "subject"),
-        ("mailto:a@example.org?body=x\ry", "body"),
-        ("mailto:a\u{1}@example.org", "a\u{1}@example.org"),
+        (
+            "mailto:a@example.org?subject=x%0AAttach=/etc/passwd",
+            "subject",
+            DecodedLineBreak,
+        ),
+        (
+            "mailto:a%0D%0Ab@example.org",
+            "a\r\nb@example.org",
+            DecodedLineBreak,
+        ),
+        (
+            "mailto:a@example.org?subject=x\nAttach: /etc/passwd",
+            "subject",
+            Raw,
+        ),
+        ("mailto:a@example.org?body=x\ry", "body", Raw),
+        ("mailto:a@example.org?body=x\tY", "body", Raw),
+        ("mailto:a\u{1}@example.org", "a\u{1}@example.org", Raw),
+        ("mailto:a@example.org?subject=x\u{2028}y", "subject", Raw),
+        // Round 5's bypass: a break in a `body` only under the finest
+        // split, in a `subject` or a `cc` under RFC 6068's — verification
+        // review 6002854973's table, each of which loaded at 0e59a693.
+        (
+            "mailto:a@b?subject=x%26body=y%0D%0ABcc:%20evil@x",
+            "subject",
+            DecodedLineBreak,
+        ),
+        (
+            "mailto:a@b?subject=x%3Bbody=%0D%0ABcc:%20evil@x",
+            "subject",
+            DecodedLineBreak,
+        ),
+        (
+            "mailto:a@b?subject=x%2Cbody=%0D%0ABcc:%20evil@x",
+            "subject",
+            DecodedLineBreak,
+        ),
+        (
+            "mailto:a@b?subject=x%23body=%0D%0ABcc:%20evil@x",
+            "subject",
+            DecodedLineBreak,
+        ),
+        (
+            "mailto:a@b?subject=x%3Fbody=%0D%0ABcc:%20evil@x",
+            "subject",
+            DecodedLineBreak,
+        ),
+        (
+            "mailto:a@b?subject=x,body=%0D%0ABcc:%20evil@x",
+            "subject",
+            DecodedLineBreak,
+        ),
+        (
+            "mailto:a@b?subject=x;body=%0D%0ABcc:%20evil@x",
+            "subject",
+            DecodedLineBreak,
+        ),
+        (
+            "mailto:a@b?cc=x@y,body=%0D%0ABcc:%20evil@x",
+            "cc",
+            DecodedLineBreak,
+        ),
+        // Round 5 item 2: any other control decoded, outside a `body` —
+        // NUL, VT, DEL, NEL, U+2028, U+2029 — or in one, but a line break
+        // or a tab.
+        ("mailto:a@example.org?subject=x%00y", "subject", DecodedControl),
+        ("mailto:a@example.org?subject=x%0By", "subject", DecodedControl),
+        ("mailto:a@example.org?subject=x%7Fy", "subject", DecodedControl),
+        ("mailto:a@example.org?subject=x%C2%85y", "subject", DecodedControl),
+        (
+            "mailto:a@example.org?subject=x%E2%80%A8y",
+            "subject",
+            DecodedControl,
+        ),
+        ("mailto:a@example.org?cc=a%E2%80%A9b@c", "cc", DecodedControl),
+        ("mailto:a@example.org?subject=x%09y", "subject", DecodedControl),
+        (
+            "mailto:a%C2%85b@example.org",
+            "a\u{85}b@example.org",
+            DecodedControl,
+        ),
+        ("mailto:a@example.org?body=a%00b", "body", DecodedControl),
+        ("mailto:a@example.org?body=a%E2%80%A8b", "body", DecodedControl),
+        // Round 5 item 3, option (i): a break after any separator, raw or
+        // encoded, stands in a part that is no `body=` — refused.
+        (
+            "mailto:a@b?body=Hi%20Bob,%0D%0AThanks",
+            "\r\nThanks",
+            DecodedLineBreak,
+        ),
+        (
+            "mailto:a@b?body=Hi%20Bob%2C%0D%0AThanks",
+            "\r\nThanks",
+            DecodedLineBreak,
+        ),
+        (
+            "mailto:a@b?body=How%20are%20you%3F%0D%0ABest",
+            "\r\nBest",
+            DecodedLineBreak,
+        ),
     ] {
-        refused(url, LoadErrorKind::LinkMailControl { name: name.into() });
+        refused(
+            url,
+            LoadErrorKind::LinkMailControl {
+                name: name.into(),
+                found,
+            },
+        );
     }
     assert!(
         wrong.is_empty(),
@@ -657,6 +824,9 @@ fn test_a_mailto_names_only_rfc_6068_headers_wherever_a_link_is_checked() {
         "mailto:to=a@example.org",
         "mailto:a%3Db@example.org",
         "mailto:a@example.org?body=line1%0D%0Aline2",
+        "mailto:a@example.org?body=line1%0D%0Aline2&subject=hi",
+        "mailto:a@example.org?body=a%09b",
+        "mailto:a@example.org?body=line1%0D%0Aline2%26body=line3%0Aline4",
         "https://example.org/?attach=x",
     ] {
         load(&map(url)).unwrap_or_else(|error| panic!("{url} loads: {error}"));

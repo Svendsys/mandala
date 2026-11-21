@@ -175,6 +175,8 @@ pub enum MutationError {
         at: MutatorPath,
         /// The header — or the part of the address — that holds it.
         name: String,
+        /// What was found there.
+        found: crate::document::values::MailControlFound,
     },
     /// A span link to a `mailto` address that names a header outside
     /// RFC 6068's six, or whose address part decodes to hold a `?`
@@ -325,10 +327,11 @@ impl fmt::Display for MutationError {
                 "{at}: a link opens an `http`, `https` or `mailto` address, and this one is `{}`",
                 crate::document::format::context::shown(scheme)
             ),
-            MutationError::LinkMailControl { at, name } => write!(
+            MutationError::LinkMailControl { at, name, found } => write!(
                 f,
-                "{at}: a `mailto` link holds a line break only encoded and only in its `body`, and no \
-                 other control character, and this one has one in `{}`",
+                "{at}: a `mailto` link holds a line break or a tab only encoded and only inside its \
+                 `body`, and no other control character; this one has {} in `{}`",
+                found.words(),
                 crate::document::format::context::shown(name)
             ),
             MutationError::LinkMailHeader { at, name } => write!(

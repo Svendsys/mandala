@@ -360,7 +360,7 @@ fn span_op(dto: &SpanOpDto, names: Names<'_>) -> Resolved<SpanOp> {
                 }),
                 Err(LinkRefusal::MailControl { .. }) => Err(Fault::Invalid {
                     field: "set_link",
-                    message: "a `mailto` link holds a line break only encoded and only in its `body`, and no other control character",
+                    message: "a `mailto` link holds a line break or a tab only encoded and only inside its `body`, and no other control character",
                 }),
             },
             LinkTargetDto::Verb(id) => verb("set_link", id, names).map(LinkTarget::Verb),

@@ -209,21 +209,38 @@ finding the `?`; and it is read two ways, both of which must pass:
   space, and the address part once, then split the same way; every
   part with an `=` must name one of the six before it, lowercased — in
   the address part every part after the first, so `mailto:a%3Db@c`
-  loads. A part with no `=` is text, so a body `Q%26A` loads. And no
-  part but a `body` holds a line break once decoded (`%0D`, `%0A`): a
-  client that writes the message out as text would read what follows
-  the break as a header line of its own (ruling D3.5 item 3), so
-  `subject=x%0D%0AAttach:%20…` is refused and `body=line1%0D%0Aline2`
-  loads.
+  loads. A part with no `=` is text, so a body `Q%26A` loads.
+
+**Control characters** — C0 (line breaks and tabs among them), DEL, C1
+(NEL among them), and the Unicode line and paragraph separators U+2028
+and U+2029 — are refused **raw anywhere** in a `mailto`: a link writes
+them encoded (RFC 6068), and nothing else in a map refuses one in a
+`url`. **Decoded**, one may stand only **inside a `body`**, and only a
+line break (`%0D`, `%0A`) or a tab (`%09`): a client that writes the
+message out as text would read what follows a break in any other header
+as a header line of its own (`subject=x%0D%0ABcc:%20…`), and the other
+controls have no place in a header either (ruling D3.5 item 3 and
+verification round 5). The tab is allowed in a `body` because it is
+ordinary text there — indentation in a message — and breaks no line;
+anywhere else it is refused with the rest.
+
+*Inside a `body`* is decided under every split a client may make at
+once: under RFC 6068's (the query split on raw `&` alone, each value
+decoded once), under the decode-first reading's, and so under every
+split between them. A decoded control is allowed only when, within its
+`&`-separated header, every part from the header's first up to the one
+holding the control, split on all five separators once decoded, holds
+an `=` and is named `body`. So `subject=x%26body=y%0D%0ABcc:%20…` is
+refused, though the decode-first reading alone sees the break in a
+`body`: under RFC 6068's split it is in the `subject`.
 
 An address part that decodes to hold a `?` (`a@b%3Fattach=…`) is
-refused, since a client may read the rest as a query; so is a raw
-control character anywhere in the address, a raw line break included —
-a link writes them encoded (RFC 6068), and nothing else in a map
-refuses one in a `url`. A refused address is refused at its `url`:
-`LinkMailHeader`, naming the header as written or as it reads decoded,
-or `LinkMailControl` for a line break or a control character, naming
-the part that holds it.
+refused, since a client may read the rest as a query, and no address
+part is a `body`, so a control decoded there is refused too. A refused
+address is refused at its `url`: `LinkMailHeader`, naming the header as
+written or as it reads decoded, or `LinkMailControl`, saying what it
+found — "a raw control character", "a decoded line break", "a decoded
+control character" — and the part that holds it.
 
 **What is over-refused**, and is kept so (rulings D3.4 item 2 and
 D3.5):
@@ -240,9 +257,13 @@ D3.5):
   header `b`, `subject=x#y=z` a header `y`;
 - a raw `;` or `?` in a value, which the split-first reading takes for
   a part with a name: encode it, or leave it out;
-- a line break in a value that is not the `body`, and a value that
-  goes on with a line break after an encoded separator
-  (`body=a%26%0Ab`), whose second part is no `body`;
+- a decoded control in a value that is not the `body`;
+- **a line break in a `body` after any `?`, `&`, `;`, `,` or `#` in
+  it, raw or encoded** — `body=Hi%20Bob,%0D%0AThanks`,
+  `body=How%20are%20you%3F%0D%0ABest`: split there, the break stands in
+  a part with no `=`, which some client may begin a header with. That
+  is most multi-line bodies; to keep the break, leave the separator out
+  of the text before it;
 - **an address after the first whose local part holds an `=`, raw or
   encoded** — `a@b;c=d`, `a@b,x=y@z`, `x@y,a%3Db@c` (a header `a`).
   Encoding does not help, since the decode-first reading decodes it:

@@ -375,9 +375,10 @@ impl<'d> Validator<'d> {
                     at: self.at(),
                     name: name.into_owned(),
                 },
-                LinkRefusal::MailControl { name } => MutationError::LinkMailControl {
+                LinkRefusal::MailControl { name, found } => MutationError::LinkMailControl {
                     at: self.at(),
                     name: name.into_owned(),
+                    found,
                 },
             }),
             None => Ok(()),

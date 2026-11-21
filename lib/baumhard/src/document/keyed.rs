@@ -239,7 +239,7 @@ mod counted {
 
     /// A `String` that counts every compare made through it
     /// (`NAMES_COMPARED`): what a test build stores an id or a name as.
-    #[derive(Clone, Default, PartialOrd, Ord)]
+    #[derive(Clone, Default)]
     pub struct CountedName(String);
 
     impl std::hash::Hash for CountedName {

@@ -211,10 +211,11 @@ impl Builder {
                             name: name.into_owned(),
                         },
                     )),
-                    Err(LinkRefusal::MailControl { name }) => Err(b.error_at(
+                    Err(LinkRefusal::MailControl { name, found }) => Err(b.error_at(
                         "url",
                         LoadErrorKind::LinkMailControl {
                             name: name.into_owned(),
+                            found,
                         },
                     )),
                 },

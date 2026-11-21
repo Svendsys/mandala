@@ -409,6 +409,9 @@ pub enum LoadErrorKind {
     LinkMailControl {
         /// The header — or the part of the address — that holds it.
         name: String,
+        /// What was found there: raw, or a decoded line break or other
+        /// control.
+        found: crate::document::values::MailControlFound,
     },
     /// The loader built something the document refuses: a row that
     /// breaks the shape rules, a tree that is not a document, an insert
@@ -530,10 +533,11 @@ impl fmt::Display for LoadErrorKind {
                 "a link opens an `http`, `https` or `mailto` address, and this one is `{}`",
                 shown(scheme)
             ),
-            LoadErrorKind::LinkMailControl { name } => write!(
+            LoadErrorKind::LinkMailControl { name, found } => write!(
                 f,
-                "a `mailto` link holds a line break only encoded and only in its `body`, and no other \
-                 control character, and this one has one in `{}`",
+                "a `mailto` link holds a line break or a tab only encoded and only inside its `body`, \
+                 and no other control character; this one has {} in `{}`",
+                found.words(),
                 shown(name)
             ),
             LoadErrorKind::LinkMailHeader { name } => write!(

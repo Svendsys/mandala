@@ -38,9 +38,10 @@ pub(crate) fn open_url(url: &str) -> Result<(), String> {
             "a link opens an `http`, `https` or `mailto` address, and this one is `{}`",
             baumhard::util::log::excerpt(scheme)
         ),
-        LinkRefusal::MailControl { name } => format!(
-            "a `mailto` link holds a line break only encoded and only in its `body`, and no other \
-             control character, and this one has one in `{}`",
+        LinkRefusal::MailControl { name, found } => format!(
+            "a `mailto` link holds a line break or a tab only encoded and only inside its `body`, \
+             and no other control character; this one has {} in `{}`",
+            found.words(),
             baumhard::util::log::excerpt(&name)
         ),
         LinkRefusal::MailHeader { name } => format!(
@@ -144,6 +145,66 @@ mod tests {
     #[test]
     fn test_a_mailto_naming_another_header_does_not_reach_the_opener() {
         let _ = take_opened();
+        for (url, words) in [
+            // Round 5's bypass rows: a break in a `body` only under the
+            // finest split, in a `subject` or a `cc` under RFC 6068's.
+            (
+                "mailto:a@b?subject=x%26body=y%0D%0ABcc:%20evil@x",
+                "a decoded line break in `subject`",
+            ),
+            (
+                "mailto:a@b?subject=x%3Bbody=%0D%0ABcc:%20evil@x",
+                "a decoded line break in `subject`",
+            ),
+            (
+                "mailto:a@b?subject=x%2Cbody=%0D%0ABcc:%20evil@x",
+                "a decoded line break in `subject`",
+            ),
+            (
+                "mailto:a@b?subject=x%23body=%0D%0ABcc:%20evil@x",
+                "a decoded line break in `subject`",
+            ),
+            (
+                "mailto:a@b?subject=x%3Fbody=%0D%0ABcc:%20evil@x",
+                "a decoded line break in `subject`",
+            ),
+            (
+                "mailto:a@b?subject=x,body=%0D%0ABcc:%20evil@x",
+                "a decoded line break in `subject`",
+            ),
+            (
+                "mailto:a@b?subject=x;body=%0D%0ABcc:%20evil@x",
+                "a decoded line break in `subject`",
+            ),
+            (
+                "mailto:a@b?cc=x@y,body=%0D%0ABcc:%20evil@x",
+                "a decoded line break in `cc`",
+            ),
+            (
+                "mailto:a@example.org?subject=x%0D%0AAttach:%20/etc/passwd",
+                "a decoded line break in `subject`",
+            ),
+            (
+                "mailto:a@example.org?subject=x%00y",
+                "a decoded control character in `subject`",
+            ),
+            (
+                "mailto:a@example.org?subject=x%E2%80%A8y",
+                "a decoded control character in `subject`",
+            ),
+            (
+                "mailto:a@example.org?subject=x\nAttach: /etc/passwd",
+                "a raw control character in `subject`",
+            ),
+            (
+                "mailto:a@example.org?body=x\tY",
+                "a raw control character in `body`",
+            ),
+            ("mailto:a@b?body=Hi%20Bob,%0D%0AThanks", "a decoded line break in"),
+        ] {
+            let refused = open_url(url).expect_err(url);
+            assert!(refused.contains(words), "{url:?}: {refused}");
+        }
         for (url, name) in [
             ("mailto:a@example.org?subject=hi#attach=/etc/passwd", "`attach`"),
             ("mailto:a@example.org?body=x#attach=/etc/passwd", "`attach`"),
@@ -161,8 +222,8 @@ mod tests {
             ("mailto:a@example.org&attach=/etc/passwd?subject=hi", "`attach`"),
             ("mailto:a@example.org;attach=x", "`attach`"),
             ("mailto:a@example.org,attach=x", "`attach`"),
-            ("mailto:a@example.org%26attach=x", "`a@example.org%26attach`"),
-            ("mailto:a@example.org%3Battach=x", "`a@example.org%3Battach`"),
+            ("mailto:a@example.org%26attach=x", "`attach`"),
+            ("mailto:a@example.org%3Battach=x", "`attach`"),
             ("mailto:a@example.org#&attach=x", "`attach`"),
             ("mailto:a@example.org#attach=x", "`attach`"),
         ] {
@@ -172,19 +233,16 @@ mod tests {
                 "{url}: {refused}"
             );
         }
-        for url in [
-            "mailto:a@example.org?subject=x%0D%0AAttach:%20/etc/passwd",
-            "mailto:a@example.org?subject=x\nAttach: /etc/passwd",
-        ] {
-            let refused = open_url(url).expect_err(url);
-            assert!(
-                refused.contains("holds a line break only encoded") && refused.contains("`subject`"),
-                "{url:?}: {refused}"
-            );
-        }
         assert!(take_opened().is_empty(), "nothing refused was opened");
         assert_eq!(open_url("mailto:a@example.org?subject=attach&body=Q%26A"), Ok(()));
-        assert_eq!(take_opened(), ["mailto:a@example.org?subject=attach&body=Q%26A"]);
+        assert_eq!(open_url("mailto:a@example.org?body=line1%0D%0Aline2%09x"), Ok(()));
+        assert_eq!(
+            take_opened(),
+            [
+                "mailto:a@example.org?subject=attach&body=Q%26A",
+                "mailto:a@example.org?body=line1%0D%0Aline2%09x"
+            ]
+        );
     }
 
     /// Where `code` — comment-free, its literals blanked
