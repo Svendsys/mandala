@@ -1372,8 +1372,13 @@ pub(crate) fn root_window(
     let span = 4.0 * (dx.abs() + dy.abs() + rx + ry + owed + 1.0) / wx.hypot(wy);
     let at = |t: f64| gap(sign * t);
     // The first `t` from `from` on at which `past` holds, to `f64`'s
-    // precision; `span` where none does.
+    // precision — `from` itself where it does there, as at a root at the
+    // start, the start's gap what is owed (#384's local finding); `span`
+    // where none does.
     let first = |from: f64, past: &dyn Fn(f64) -> bool| -> f64 {
+        if past(from) {
+            return from;
+        }
         let mut before = from;
         for i in 1..=20_000 {
             let t = from + (span - from).max(0.0) * i as f64 / 20_000.0;

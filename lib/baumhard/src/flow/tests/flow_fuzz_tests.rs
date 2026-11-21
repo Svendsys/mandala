@@ -4928,6 +4928,34 @@ fn test_flow_structured_finding_a_line_root_owed_a_gap_along_all_but_one_axis_re
     }
 }
 
+/// The flow_structured finding of a local 600 s run on #384 at a48abf25,
+/// in the property's own window rather than the engine: two inks `(-12,
+/// 0)` apart, reach `(6, 6)`, stepped along `(-0.467, 1.159)` and owed 6,
+/// where the start's gap is 6 itself, so the root is the start. The
+/// window's scan bisected from the start to the first sample past it and
+/// never read the start, so its end lay at -3e-63, and the closed form's
+/// step, -0, fell outside it. The scan now reads its start first. 143
+/// bytes, as found (sha1 a0724487…).
+///
+/// Control: with the scan not reading its start, red ("the closed form
+/// steps -0, its gap 0e0 from what is owed, past its rounding 6.29e-5 or
+/// outside -10.244521…..-3.08e-63").
+#[test]
+fn test_flow_structured_finding_a_line_root_owed_its_gap_at_the_start_replays() {
+    let found = include_bytes!("fuzz_findings/structured_line_root_owed_its_gap_at_the_start");
+    for (what, checked) in [
+        (
+            "fuzzed",
+            crate::flow::tests::flow_fuzz::check_flow_structured(found),
+        ),
+        ("as found", check_flow_structured_as_found(found)),
+    ] {
+        if let Err(why) = checked {
+            panic!("{what}: {why}");
+        }
+    }
+}
+
 /// The flow_structured_every_face finding of CI's run on #360 at
 /// 59826cfd (job 132771815404), after 5,055 runs: a directional ring
 /// (#324) of its vertical text alone, `spacing` 10³⁰, round a rounded
