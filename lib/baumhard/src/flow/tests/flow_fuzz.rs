@@ -437,9 +437,12 @@ impl InputWork {
     /// inking predicted at `setup` steps ([`directional_setup`], #387): the
     /// most it may take, `ring_work_steps` of its cap and that setup (#310,
     /// rulings B17.1a, B17.2b). What its lay charged before it first read
-    /// its budget (`Trace::setup`) is never past the prediction, and is
-    /// exactly it where the lay reshaped — nothing where its outline was
-    /// too small for two runs, and it was laid by its spans alone. The
+    /// its budget (`Trace::setup`) is exactly the prediction where the lay
+    /// reshaped, and nothing where it did not: where its outline was too
+    /// small for two runs, and it was laid by its spans alone, or too long
+    /// to lay, and nothing was laid. (A lay that reshaped and recorded
+    /// nothing reads as one that did not; `most` counts the prediction
+    /// either way.) The
     /// engine scales a ring's budget by the glyphs it will lay, never more
     /// than its cap, places no more than its cap, spends no more than its
     /// budget and the one cluster past it that found it spent, and reports
@@ -464,7 +467,7 @@ impl InputWork {
         let copy = run.glyphs.len();
         let budget = frame_budget(cap);
         let most = ring_work_steps(cap, copy, tables, setup);
-        if trace.setup > setup || (trace.setup != 0 && trace.setup != setup) {
+        if trace.setup != 0 && trace.setup != setup {
             return Err(format!(
                 "{what}: a ring charged {} glyph steps before it read its budget, where {setup} were predicted (#387)",
                 trace.setup

@@ -711,7 +711,8 @@ pub(crate) struct Trace {
     /// reshape, `.notdef` passes and all, and its inking where its run
     /// holds a letter (`directional::setup_steps`, #387). Nothing for any
     /// other placement, and for a ring whose outline is too small for two
-    /// runs, which is laid by its spans alone.
+    /// runs or too long to lay, which is laid by its spans alone or not at
+    /// all.
     pub(crate) setup: usize,
     /// For a text frame that keeps R27's placement with a `Once` filler,
     /// the glyph steps it charged for shaping its text with the filler

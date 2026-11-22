@@ -10,6 +10,7 @@ use glam::Vec2;
 
 use crate::document::values::{Direction, Edge, FitMode, Percent, Shape, StartPoint};
 use crate::flow::place::halves::{filler_steps, frame_work_steps, MOST_FILLED};
+use crate::flow::place::ring::RingLoss;
 use crate::flow::place::{place_on_closed_capped, setup_table_samples, Trace};
 use crate::flow::tests::flow_fuzz::{
     check_flow_structured_every_face, check_flow_structured_every_face_as_found, filler_in_time, InputWork,
@@ -22,13 +23,15 @@ use crate::util::tests::compiled_faces::{on_compiled_faces, report_hosts, this_t
 /// The size the rows are shaped at.
 const POINTS: f32 = 16.0;
 
-/// A rounded rectangle `width` × 120 at the origin: one whose width is not
-/// a number has halves that cannot be measured, and a frame round it
+/// A rounded rectangle `width` × `height` at the origin: one whose width is
+/// not a number has halves that cannot be measured, and a frame round it
 /// keeps R27's placement (`halves::keeps_r27`, the flow_structured finding
-/// `structured_frame_round_an_outline_whose_width_is_not_a_number`).
-fn rounded(width: f32) -> Outline {
+/// `structured_frame_round_an_outline_whose_width_is_not_a_number`); one
+/// 1e19 wide and of no finite height is too long to lay
+/// (`halves::lays_nothing`), and its halves cannot be measured either.
+fn rounded(width: f32, height: f32) -> Outline {
     outline(
-        Rect::new(Vec2::ZERO, Vec2::new(width, 120.0)),
+        Rect::new(Vec2::ZERO, Vec2::new(width, height)),
         Shape::Rectangle {
             radius: Percent::new(50),
         },
@@ -43,6 +46,9 @@ enum Past {
     Yes,
     /// Its halves measured, its filler never shaped: nothing charged.
     Unshaped,
+    /// Its outline too long to lay, nothing laid: nothing charged, where a
+    /// frame of no text round it, which is not too long, shapes its filler.
+    TooLong,
     /// Text and a filler one face draws, shaped: within it.
     Drawn,
 }
@@ -64,6 +70,13 @@ enum Past {
 ///   be measured: laid by halves, its filler never shaped, it charges
 ///   nothing for it and is predicted nothing, and the harnesses' check
 ///   refuses a prediction of the first frame's charge;
+/// - the same frame round a rounded rectangle 1e19 wide and of no finite
+///   height, too long to lay and whose halves cannot be measured: nothing
+///   is laid, it charges nothing and is predicted nothing, where a frame
+///   of no text round it — not too long to lay, since `lays_nothing` reads
+///   only a frame with text — keeps R27's placement and is predicted its
+///   filler's shaping, and the harnesses' check refuses that prediction
+///   for it;
 /// - letters and a filler one face draws round the first outline: counted
 ///   exactly, and within the most it may take as read before;
 /// - the harnesses leave off a filler whose shaping leaves a frame of no
@@ -86,7 +99,9 @@ enum Past {
 /// shaping, the first frame and the finding past the most they may take;
 /// `filler_steps` saying every `Once` frame with a filler keeps R27's
 /// placement, the second frame predicted a charge it never makes;
-/// `filler_steps` saying none does, the first frame and the finding
+/// `filler_steps` without its too-long gate (`lays_nothing`), the third
+/// frame predicted a charge it never makes; `filler_steps` saying none
+/// does, the first frame and the finding
 /// charging what was not predicted; the lay not noting its charge
 /// (`Trace::filled`), the first frame's charge unseen; `filler_in_time`
 /// keeping every filler, the first one kept and uncounted.
@@ -107,8 +122,8 @@ fn test_a_frame_that_keeps_r27s_placement_counts_its_filler() {
     }
     assert_eq!(
         reports.len(),
-        8,
-        "the child's three frames, its three fillers, the finding and its check: {reports:#?}"
+        9,
+        "the child's four frames, its three fillers, the finding and its check: {reports:#?}"
     );
     assert_eq!(
         reports.last().map(String::as_str),
@@ -121,8 +136,9 @@ fn test_a_frame_that_keeps_r27s_placement_counts_its_filler() {
 /// in its child.
 fn filler_counted() {
     let flow = style(POINTS);
-    let unmeasured = rounded(f32::NAN);
-    let measured = rounded(400.0);
+    let unmeasured = rounded(f32::NAN, 120.0);
+    let measured = rounded(400.0, 120.0);
+    let too_long = rounded(1.0e19, f32::INFINITY);
     let (text, filler) = with_fonts(|fs| {
         let undrawn = undrawn(fs, 240);
         assert_eq!(undrawn.len(), 240, "precondition: 240 code points no face draws");
@@ -147,6 +163,13 @@ fn filler_counted() {
             Past::Unshaped,
         ),
         (
+            "code points no face draws, round an outline too long to lay",
+            text.as_str(),
+            filler.as_str(),
+            &too_long,
+            Past::TooLong,
+        ),
+        (
             "letters one face draws, round an outline whose halves cannot be measured",
             "MANDALA mindmap",
             "·",
@@ -160,17 +183,24 @@ fn filler_counted() {
         let fit = FitMode::Once {
             filler: Some(filler.to_string()),
         };
-        let (run, predicted, tables, trace) = with_fonts(|fs| {
-            let run = shape_run(
-                &[FlowSpan {
-                    text,
-                    style: &flow,
-                    link: None,
-                }],
-                1.0,
-                fs,
-            );
+        let (run, predicted, empty, tables, trace) = with_fonts(|fs| {
+            let shaped = |text: &str, fs: &mut crate::font::fonts::FontSystemLease| {
+                shape_run(
+                    &[FlowSpan {
+                        text,
+                        style: &flow,
+                        link: None,
+                    }],
+                    1.0,
+                    fs,
+                )
+            };
+            let run = shaped(text, fs);
             let predicted = filler_steps(&run, path, &fit, &flow, fs);
+            // What a frame of no text round it is predicted, as
+            // `filler_in_time` reads it.
+            let none = shaped("", fs);
+            let empty = filler_steps(&none, path, &fit, &flow, fs);
             let tables = setup_table_samples(&run, path, &fit, &flow);
             let mut trace = Trace::default();
             place_on_closed_capped(
@@ -189,7 +219,7 @@ fn filler_counted() {
                 MAX_RING_GLYPHS,
                 Some(&mut trace),
             );
-            (run, predicted, tables, trace)
+            (run, predicted, empty, tables, trace)
         });
         let before = frame_work_steps(&run, None, false, tables, 0);
         let most = frame_work_steps(&run, None, false, tables, predicted);
@@ -224,6 +254,24 @@ fn filler_counted() {
                         .frame(&run, None, false, tables, charged, &trace, what)
                         .is_err(),
                     "{what}: refused with the first frame's charge predicted"
+                );
+            }
+            Past::TooLong => {
+                assert_eq!(predicted, 0, "{what}: nothing laid, its filler never shaped");
+                assert_eq!(
+                    trace.ring,
+                    Some(RingLoss::TooLong),
+                    "{what}: precondition: too long to lay, nothing laid"
+                );
+                assert!(
+                    empty > 0,
+                    "{what}: precondition: a frame of no text round it keeps R27's placement"
+                );
+                assert!(
+                    InputWork::default()
+                        .frame(&run, None, false, tables, empty, &trace, what)
+                        .is_err(),
+                    "{what}: refused with a frame of no text's charge predicted"
                 );
             }
             Past::Drawn => {

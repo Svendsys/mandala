@@ -1175,6 +1175,7 @@ mod held {
     /// none predicted; every ring laid as drawn held to the timeout, the
     /// three rings of code points no face draws so laid.
     #[test]
+    #[cfg(not(target_arch = "wasm32"))] // a compiled-faces child: spawns its own test binary.
     fn test_flow_directional_counts_its_setup_past_its_budget() {
         use crate::util::tests::compiled_faces::{on_compiled_faces, report_hosts, this_test, CHILD};
         let name = this_test!();
@@ -1204,6 +1205,7 @@ mod held {
 
     /// How a ring of [`directional_setup_counted`] lays against the work
     /// the harnesses read before #387, with no setup.
+    #[cfg(not(target_arch = "wasm32"))]
     #[derive(Clone, Copy, Debug, PartialEq)]
     enum Past {
         /// Code points no face draws, laid past it.
@@ -1216,6 +1218,7 @@ mod held {
 
     /// [`test_flow_directional_counts_its_setup_past_its_budget`]'s check,
     /// in its child.
+    #[cfg(not(target_arch = "wasm32"))]
     fn directional_setup_counted() {
         use crate::document::values::Shape;
         use crate::flow::place::ring::ring_work_steps;

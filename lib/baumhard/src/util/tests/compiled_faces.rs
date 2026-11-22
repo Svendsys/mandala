@@ -4,13 +4,14 @@
 //! the compiled faces alone (#387): `FONTCONFIG_FILE` naming a config of
 //! one empty directory, so the check fails alike on every host — a host
 //! face can draw what the compiled ones do not, or, as one here does, map
-//! every C0 and C1 control and every private-use code point. A child that reports no font system fails the test on
-//! every host. A target whose fontdb does not read `FONTCONFIG_FILE` makes
-//! a child whose font system holds host faces, and the test skips with a
-//! note; CI runs on Linux and sets `MANDALA_REQUIRE_FONTCONFIG_HOSTS`,
-//! under which it fails instead. A test is its own child: it runs its
-//! check where [`CHILD`] names its mode, and otherwise asks for a child
-//! ([`on_compiled_faces`]) and reads what it reported.
+//! every C0 and C1 control and every private-use code point. A child that
+//! reports no font system fails the test on every host. A target whose
+//! fontdb does not read `FONTCONFIG_FILE` makes a child whose font system
+//! holds host faces, and the test skips with a note; CI runs on Linux and
+//! sets `MANDALA_REQUIRE_FONTCONFIG_HOSTS`, under which it fails instead.
+//! A test is its own child: it runs its check where [`CHILD`] names its
+//! mode, and otherwise asks for a child ([`on_compiled_faces`]) and reads
+//! what it reported.
 
 use std::process::Command;
 
@@ -99,7 +100,7 @@ pub(crate) fn on_compiled_faces(test: &str, mode: &str) -> Option<Vec<String>> {
 /// reads it.
 pub(crate) fn report_hosts() {
     crate::font::fonts::init();
-    let mut lease = crate::font::fonts::FontSystemLease::new("the notdef bound's child");
+    let mut lease = crate::font::fonts::FontSystemLease::new("a compiled-faces child");
     let hosts = lease
         .fonts()
         .db()

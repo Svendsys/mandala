@@ -126,16 +126,15 @@
 //! what runs before the budget is first read — its setup, R27's first
 //! reshape and one build's shaping and inking, and where it keeps R27's
 //! placement its text's shaping with a `Once` filler (#387) — the lay of
-//! each line that finds it spent, and the touch checks that end the
-//! frame; no copy of its
-//! sides is laid past what the budget leaves for their check. A frame whose
-//! budget runs out while two of its inks still touch keeps the longest run
-//! of its inks that touch nothing ([`untouched`], within a share of the
-//! budget held back for it), and says it was cut ([`Trace::cut_apart`]). A
-//! frame's text is cut to [`MAX_PLACED_GLYPHS`] at a cluster before its
-//! lines are prepared (ruling R44.1), its sides placing no more than the
-//! cap leaves, so the budget is at most `STEPS_PER_GLYPH ×
-//! MAX_PLACED_GLYPHS`.
+//! each line that finds it spent, and the touch checks that end the frame;
+//! no copy of its sides is laid past what the budget leaves for their
+//! check. A frame whose budget runs out while two of its inks still touch
+//! keeps the longest run of its inks that touch nothing ([`untouched`],
+//! within a share of the budget held back for it), and says it was cut
+//! ([`Trace::cut_apart`]). A frame's text is cut to [`MAX_PLACED_GLYPHS`]
+//! at a cluster before its lines are prepared (ruling R44.1), its sides
+//! placing no more than the cap leaves, so the budget is at most
+//! `STEPS_PER_GLYPH × MAX_PLACED_GLYPHS`.
 //!
 //! **Sides.** With `sides`, an ornament closes what the lines leave
 //! round each junction: whole copies, at least one and at most
@@ -1119,28 +1118,27 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
 /// ([`CLUSTERS_A_STEP`] a step) — and its reshape at that size
 /// ([`predicted_resizing_steps`]) — the inking its lines are parted on
 /// (`parting_run`, #333; [`inking_steps`]), one build's shaping and inking
-/// ([`build_steps`]), a lay of each line ([`OVERSHOOT_TRACKS`]
-/// `track`s of every glyph, each with its path's reads, [`track_steps`]),
-/// which the touch checks that end the frame
-/// fall within, and, for a frame that keeps R27's placement with a `Once`
-/// filler, the `filled` steps of shaping its text with the filler
-/// appended ([`filler_steps`], #387; nothing for any other frame), which
-/// a text of code points no face draws makes past any rate of its glyphs.
-/// A budget is read before each build, each reshape of
-/// R27's fit, each lay and each copy of a side ornament, so no more than
-/// one of each runs past it; [`untouched`] runs within the budget, which
-/// holds its share back, and so does a side arc's touch check, held back
-/// before each copy ([`check_steps`], ruling R48.2). That rests on three
-/// assumptions, which the flow fuzz property holds every frame to: that
-/// no touch check looks at more than [`touch_looks`] pairs a box of the
-/// classes of height it holds; that no side arc's check holds more
-/// classes than its arc held back for ([`reachable_classes`], over the
-/// text's boxes and the ornament's inks, placed where the frame lies,
-/// before the fill; rulings R51.2, B46.1); and that no check of
-/// [`untouched`] holds more than its share was held back for (ruling
-/// B46.2). A check's looks are the inks near each
-/// box, whatever the tallest box ([`stripped`], ruling R50.1), and a few
-/// for each class of height it holds (ruling R51.2); the structured
+/// ([`build_steps`]), a lay of each line ([`OVERSHOOT_TRACKS`] `track`s of
+/// every glyph, each with its path's reads, [`track_steps`]), which the
+/// touch checks that end the frame fall within, and, for a frame that
+/// keeps R27's placement with a `Once` filler, the `filled` steps of
+/// shaping its text with the filler appended ([`filler_steps`], #387;
+/// nothing for any other frame), which a text of code points no face
+/// draws makes past any rate of its glyphs. A budget is read before each
+/// build, each reshape of R27's fit, each lay and each copy of a side
+/// ornament, so no more than one of each runs past it; [`untouched`] runs
+/// within the budget, which holds its share back, and so does a side
+/// arc's touch check, held back before each copy ([`check_steps`], ruling
+/// R48.2). That rests on three assumptions, which the flow fuzz property
+/// holds every frame to: that no touch check looks at more than
+/// [`touch_looks`] pairs a box of the classes of height it holds; that no
+/// side arc's check holds more classes than its arc held back for
+/// ([`reachable_classes`], over the text's boxes and the ornament's inks,
+/// placed where the frame lies, before the fill; rulings R51.2, B46.1);
+/// and that no check of [`untouched`] holds more than its share was held
+/// back for (ruling B46.2). A check's looks are the inks near each box,
+/// whatever the tallest box ([`stripped`], ruling R50.1), and a few for
+/// each class of height it holds (ruling R51.2); the structured
 /// fuzzer draws long mixed side ornaments and texts of up to 16 sizes, as
 /// a map may hold (rulings R50.3, R51.2), so a geometry that breaks it is
 /// a finding. The first build holds `untouched`'s share after the frame's
