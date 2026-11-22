@@ -189,7 +189,7 @@ fn compiled_family_index(
         };
         if face.families.is_empty() {
             log::warn!(
-                "compiled face {} has no family names; skipping",
+                "fonts: compiled face {} has no family names; skipping",
                 face.post_script_name
             );
             continue;
@@ -467,7 +467,10 @@ fn build_family_index(db: &cosmic_text::fontdb::Database) -> Arc<[LoadedFamily]>
     let mut out: Vec<LoadedFamily> = Vec::new();
     for face in db.faces() {
         if face.families.is_empty() {
-            log::warn!("face {} has no family names; skipping", face.post_script_name);
+            log::warn!(
+                "fonts: face {} has no family names; skipping",
+                face.post_script_name
+            );
             continue;
         }
         let source = id_to_app_font
@@ -489,7 +492,7 @@ fn build_family_index(db: &cosmic_text::fontdb::Database) -> Arc<[LoadedFamily]>
 /// Every family the font system holds, sorted by name, each marked
 /// compiled or installed: what `font list`, the console's completion and
 /// IPC's `query.fonts` offer. On native it includes the host's installed
-/// families, so it builds [`FONT_SYSTEM`] — the host's font scan — if
+/// families, so it builds the font system — the host's font scan — if
 /// nothing has yet; the browser lists the compiled families alone.
 ///
 /// Cost: one lock and one reference count for the cached index; on first
@@ -558,7 +561,7 @@ pub fn app_font_by_family(name: &str) -> Option<AppFont> {
 /// its own name would draw it as `.notdef` boxes.
 ///
 /// Builds no font system and takes no lock: it reads the compiled faces'
-/// data ([`compiled`]). Cost: one character-map parse per face of the
+/// data. Cost: one character-map parse per face of the
 /// family, and one lookup per character of `text`.
 pub fn compiled_family_maps(name: &str, text: &str) -> bool {
     use cosmic_text::skrifa::{FontRef as SkrifaFont, MetadataProvider};
@@ -908,8 +911,12 @@ pub(crate) const INSTALLED_PINS_HELD: usize = 256;
 /// when that state is not the one asked about, and when it holds
 /// [`INSTALLED_PINS_HELD`] names. Holds no lock but its own while it is
 /// read or written.
-static INSTALLED_PINS: parking_lot::Mutex<(Option<PinState>, FxHashMap<Box<str>, Option<PinnedFamily>>)> =
+static INSTALLED_PINS: parking_lot::Mutex<InstalledPins> =
     parking_lot::Mutex::new((None, FxHashMap::with_hasher(rustc_hash::FxBuildHasher)));
+
+/// What [`INSTALLED_PINS`] holds: the state its answers were resolved
+/// against, and each name's answer.
+type InstalledPins = (Option<PinState>, FxHashMap<Box<str>, Option<PinnedFamily>>);
 
 /// The pin of `name` drawn in `faces`: their weights, the `wght` axes of
 /// the variable ones, and their ids, each sorted and once. Cost: one

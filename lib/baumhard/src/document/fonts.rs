@@ -4,15 +4,15 @@
 //! machine lacks one (#329).
 //!
 //! A map may name a family no compiled face bears: an installed one,
-//! held by its name ([`FontRef::Installed`]). Opening the map never
+//! held by its name ([`FontRef::Installed`](crate::document::values::FontRef::Installed)). Opening the map never
 //! fails for it. Where the machine has the family, its text is drawn in
 //! its faces; where it does not, in the **stand-in**, the default face
-//! ([`STAND_IN`]), at the span's own weight and slant, until the user
+//! ([`STAND_IN`](crate::document::fonts::STAND_IN)), at the span's own weight and slant, until the user
 //! decides — installing the font, which a rescan picks up, or picking a
-//! replacement, which [`replace_steps`] makes one undoable edit. Saving
+//! replacement, which [`replace_steps`](crate::document::fonts::replace_steps) makes one undoable edit. Saving
 //! writes a family nobody replaced back as it was named.
 //!
-//! [`missing_families`] is the report: one walk of the tree, nothing
+//! [`missing_families`](crate::document::fonts::missing_families) is the report: one walk of the tree, nothing
 //! stored, so it is right after any edit, undo or redo without an index
 //! to keep. It asks the font system which installed families this
 //! machine has only when the map names one, so a map that names only
@@ -20,7 +20,7 @@
 //!
 //! **What a replacement does not rewrite.** The edits and presentations
 //! a map defines are not changed while it is open (design §5.7), so a
-//! family one of them names is reported ([`MissingFamily::definitions`])
+//! family one of them names is reported ([`NamedFamily::definitions`](crate::document::fonts::NamedFamily::definitions))
 //! and left as it is; running it sets the family again. Whether the
 //! replacement should rewrite them too is the owner's decision on #329.
 
