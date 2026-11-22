@@ -50,7 +50,8 @@ impl ResizeRefusal {
     pub(in crate::application::app) const NODE_GONE: &'static str = "the pressed node is not drawn";
     /// Another interactive transaction is open (D28); the status line
     /// says so too.
-    pub(in crate::application::app) const BUSY: &'static str = crate::application::document::TRANSACTION_OPEN_STATUS;
+    pub(in crate::application::app) const BUSY: &'static str =
+        crate::application::document::TRANSACTION_OPEN_STATUS;
 }
 
 /// The family's answer to `action`, or `None` for an Action it does not
@@ -94,7 +95,10 @@ fn enter_resize_mode(ctx: &mut InputHandlerContext<'_>) -> DispatchOutcome {
 /// corner nearest the press, held by the button that pressed — a drag
 /// like a handle's from there on (`app::live`). Everything comes off
 /// `hit`, which the drag's threshold cross builds from the press (#194).
-fn fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&DispatchHit>) -> Result<(), &'static str> {
+fn fast_resize_start(
+    ctx: &mut InputHandlerContext<'_>,
+    hit: Option<&DispatchHit>,
+) -> Result<(), &'static str> {
     let hit = hit.ok_or(ResizeRefusal::NO_POINTER)?;
     let held_by = match hit.held_by {
         Some(button @ (MouseButton::Left | MouseButton::Right)) => button,
@@ -110,11 +114,18 @@ fn fast_resize_start(ctx: &mut InputHandlerContext<'_>, hit: Option<&DispatchHit
     };
     let rect = view.projector().node_rect(node).ok_or(ResizeRefusal::NODE_GONE)?;
     let side = ResizeSide::corner_for(hit.canvas_pos, rect);
-    let gesture = grab::resize_node(doc.doc(), view.projector(), node, side).ok_or(ResizeRefusal::NODE_GONE)?;
+    let gesture =
+        grab::resize_node(doc.doc(), view.projector(), node, side).ok_or(ResizeRefusal::NODE_GONE)?;
     let cursor = ctx
         .renderer
         .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
-    super::super::super::event_cursor_moved::start_drag(ctx, gesture, held_by, cursor - hit.canvas_pos, cursor);
+    super::super::super::event_cursor_moved::start_drag(
+        ctx,
+        gesture,
+        held_by,
+        cursor - hit.canvas_pos,
+        cursor,
+    );
     if matches!(*ctx.drag_state, super::super::super::DragState::Dragging(_)) {
         Ok(())
     } else {

@@ -51,11 +51,15 @@ fn fixture() -> String {
 }
 
 fn document(init: &InitState) -> &MindMapDocument {
-    init.document.as_ref().expect("the harness always builds a document")
+    init.document
+        .as_ref()
+        .expect("the harness always builds a document")
 }
 
 fn document_mut(init: &mut InitState) -> &mut MindMapDocument {
-    init.document.as_mut().expect("the harness always builds a document")
+    init.document
+        .as_mut()
+        .expect("the harness always builds a document")
 }
 
 /// What a save writes: the committed map.
@@ -171,7 +175,11 @@ fn assert_same_document(actual: &Document, expected: &Document, what: &str) {
     assert_eq!(a, b, "{what}: the trees hold the same elements in the same order");
     for id in a {
         assert_eq!(actual.get(id), expected.get(id), "{what}: element {id:?}");
-        assert_eq!(actual.parent(id), expected.parent(id), "{what}: the parent of {id:?}");
+        assert_eq!(
+            actual.parent(id),
+            expected.parent(id),
+            "{what}: the parent of {id:?}"
+        );
     }
 }
 
@@ -196,8 +204,15 @@ fn one_apply_of_the_drag(init: &InitState, before: &Document) -> Document {
 /// an undo back to `baseline`'s bytes. `expected` is the map one apply of
 /// its final request makes, which the committed map must be.
 fn assert_committed_once(init: &mut InitState, expected: &Document, baseline: &str, what: &str) {
-    assert!(matches!(init.drag_state, DragState::None), "{what}: the release ended the drag");
-    assert_eq!(document(init).open_interaction(), None, "{what}: no transaction is left open");
+    assert!(
+        matches!(init.drag_state, DragState::None),
+        "{what}: the release ended the drag"
+    );
+    assert_eq!(
+        document(init).open_interaction(),
+        None,
+        "{what}: no transaction is left open"
+    );
     assert_eq!(entries(init), 1, "{what}: the release made one history entry");
     assert_eq!(
         bytes(init),
@@ -255,9 +270,18 @@ fn test_a_node_drag_is_one_apply_of_its_final_request_and_one_entry() {
     let expected = one_apply_of_the_drag(init, &before);
     assert_same_document(document(init).doc(), &expected, "after six frames");
     let total = init.drag_state.live().expect("a drag").total();
-    assert!((total - Vec2::new(30.0, 18.0)).length() < 1e-3, "the total is the travel: {total}");
-    assert!((position(init, n2) - (p2 + total)).length() < 1e-3, "the node moved by it");
-    assert!((position(init, n4) - (p4 + total)).length() < 1e-3, "and its subtree with it");
+    assert!(
+        (total - Vec2::new(30.0, 18.0)).length() < 1e-3,
+        "the total is the travel: {total}"
+    );
+    assert!(
+        (position(init, n2) - (p2 + total)).length() < 1e-3,
+        "the node moved by it"
+    );
+    assert!(
+        (position(init, n4) - (p4 + total)).length() < 1e-3,
+        "and its subtree with it"
+    );
     assert_eq!(entries(init), 0, "a stage is not history");
     assert_eq!(
         document_mut(init).save_json().expect("saves"),
@@ -293,7 +317,10 @@ fn test_alt_drags_a_node_alone_and_shift_drags_the_selection() {
     frame(init);
     let moved = position(init, n2) - p2;
     assert!(moved.length() > 1.0);
-    assert!((position(init, n3) - (p3 + moved)).length() < 1e-3, "the selected node moved as far");
+    assert!(
+        (position(init, n3) - (p3 + moved)).length() < 1e-3,
+        "the selected node moved as far"
+    );
     assert_eq!(entries(init), 2, "each drag is one entry");
 }
 
@@ -321,10 +348,16 @@ fn test_a_drag_to_ten_then_twenty_then_five_ends_at_five() {
     );
     move_to(init, from + Vec2::new(5.0, 0.0), &[]);
     frame(init);
-    assert!((position(init, n3) - (p3 + Vec2::new(5.0, 0.0))).length() < 1e-3, "back at +5");
+    assert!(
+        (position(init, n3) - (p3 + Vec2::new(5.0, 0.0))).length() < 1e-3,
+        "back at +5"
+    );
     button(init, "left", "release", from + Vec2::new(5.0, 0.0), &[]);
     frame(init);
-    assert!((position(init, n3) - (p3 + Vec2::new(5.0, 0.0))).length() < 1e-3, "committed at +5");
+    assert!(
+        (position(init, n3) - (p3 + Vec2::new(5.0, 0.0))).length() < 1e-3,
+        "committed at +5"
+    );
     assert_eq!(entries(init), 1);
 }
 
@@ -350,7 +383,10 @@ fn test_moves_between_frames_stage_once_at_the_frame() {
     }
     assert_eq!(position(init, n3), staged, "five moves wrote nothing");
     frame(init);
-    assert!((position(init, n3) - (p3 + Vec2::new(28.0, 0.0))).length() < 1e-3, "the frame staged all five");
+    assert!(
+        (position(init, n3) - (p3 + Vec2::new(28.0, 0.0))).length() < 1e-3,
+        "the frame staged all five"
+    );
     let records = &init.view.as_ref().expect("a view").pending_feed()[fed..];
     assert_eq!(records.len(), 1, "one stage, one change record: {records:?}");
 }
@@ -393,9 +429,16 @@ fn test_undo_during_a_drag_cancels_it() {
     let n2 = node(init, 2);
     let from = rect(init, n2).center();
     let at = drag(init, from, &gentle(), &[]);
-    assert_eq!(act(init, json!("Undo")), "handled", "the undo cancels the open drag");
+    assert_eq!(
+        act(init, json!("Undo")),
+        "handled",
+        "the undo cancels the open drag"
+    );
     frame(init);
-    assert!(matches!(init.drag_state, DragState::None), "the drag ended at its frame");
+    assert!(
+        matches!(init.drag_state, DragState::None),
+        "the drag ended at its frame"
+    );
     assert_same_document(document(init).doc(), &before, "after the undo");
     move_to(init, at + Vec2::new(10.0, 0.0), &[]);
     button(init, "left", "release", at, &[]);
@@ -416,7 +459,11 @@ fn test_a_drag_while_another_transaction_is_open_is_refused() {
     let init = &mut app.init;
     let n2 = node(init, 2);
     let p2 = position(init, n2);
-    assert!(document_mut(init).begin(ChangeSource::Action, TransactionKind::Interactive, Interaction::Test));
+    assert!(document_mut(init).begin(
+        ChangeSource::Action,
+        TransactionKind::Interactive,
+        Interaction::Test
+    ));
     let from = rect(init, n2).center();
     button(init, "left", "press", from, &[]);
     move_to(init, from + Vec2::new(8.0, 0.0), &[]);
@@ -425,9 +472,16 @@ fn test_a_drag_while_another_transaction_is_open_is_refused() {
         "the crossing started no drag, before any frame ran"
     );
     let at = drag(init, from, &gentle(), &[]);
-    assert!(matches!(init.drag_state, DragState::None), "nor did any frame after it");
+    assert!(
+        matches!(init.drag_state, DragState::None),
+        "nor did any frame after it"
+    );
     assert_eq!(document(init).status(), Some(TRANSACTION_OPEN_STATUS));
-    assert_eq!(document(init).open_interaction(), Some(Interaction::Test), "and the other is still open");
+    assert_eq!(
+        document(init).open_interaction(),
+        Some(Interaction::Test),
+        "and the other is still open"
+    );
     assert_eq!(position(init, n2), p2);
     button(init, "left", "release", at, &[]);
     frame(init);
@@ -437,7 +491,10 @@ fn test_a_drag_while_another_transaction_is_open_is_refused() {
     let at = drag(init, from, &gentle(), &[]);
     button(init, "left", "release", at, &[]);
     frame(init);
-    assert!(position(init, n2) != p2, "control: with it closed, the drag moves the node");
+    assert!(
+        position(init, n2) != p2,
+        "control: with it closed, the drag moves the node"
+    );
     assert_eq!(entries(init), 1);
 }
 
@@ -490,33 +547,65 @@ fn test_a_node_resize_handle_is_one_transaction() {
     let before = document(init).doc().clone();
     let n5 = node(init, 5);
     let start = rect(init, n5);
-    let se = Handle::Node { node: n5, side: ResizeSide::SE };
-    assert_eq!(init.view.as_ref().expect("a view").handle_center(se), None, "control: no mode, no handle");
+    let se = Handle::Node {
+        node: n5,
+        side: ResizeSide::SE,
+    };
+    assert_eq!(
+        init.view.as_ref().expect("a view").handle_center(se),
+        None,
+        "control: no mode, no handle"
+    );
     document_mut(init).selection.select_only(n5);
     resize_mode(init);
-    assert_eq!(init.interaction_mode, InteractionMode::Resize { target: ResizeTarget::Node(n5) });
+    assert_eq!(
+        init.interaction_mode,
+        InteractionMode::Resize {
+            target: ResizeTarget::Node(n5)
+        }
+    );
     let from = handle_at(init, se);
-    assert!((from - start.max()).length() < 1e-3, "the handle is on the drawn corner");
+    assert!(
+        (from - start.max()).length() < 1e-3,
+        "the handle is on the drawn corner"
+    );
     let travel: Vec<Vec2> = (1..=4).map(|k| Vec2::new(10.0, 5.0) * k as f32).collect();
     let at = drag(init, from, &travel, &[]);
     let expected = one_apply_of_the_drag(init, &before);
     assert_same_document(document(init).doc(), &expected, "mid-resize");
     let grown = min_size(init, n5).expect("a minimum was staged");
-    assert!((grown - (start.size + Vec2::new(40.0, 20.0))).length() < 1e-3, "{grown}");
-    assert_eq!(position(init, n5), start.origin, "a south-east handle leaves the position");
+    assert!(
+        (grown - (start.size + Vec2::new(40.0, 20.0))).length() < 1e-3,
+        "{grown}"
+    );
+    assert_eq!(
+        position(init, n5),
+        start.origin,
+        "a south-east handle leaves the position"
+    );
     button(init, "left", "release", at, &[]);
     frame(init);
     assert_committed_once(init, &expected, &baseline, "node resize");
 
     // The north-west handle, pulled far past the content: the far corner
     // holds, and the node stops at what it holds rather than slide.
-    let nw = Handle::Node { node: n5, side: ResizeSide::NW };
+    let nw = Handle::Node {
+        node: n5,
+        side: ResizeSide::NW,
+    };
     let from = handle_at(init, nw);
     let at = drag(init, from, &[Vec2::new(20.0, 10.0), Vec2::new(400.0, 400.0)], &[]);
     let size = min_size(init, n5).expect("staged");
     let far = position(init, n5) + size;
-    assert!((far - start.max()).length() < 1e-3, "the far corner stays put: {far} vs {}", start.max());
-    assert!(size.x > 0.0 && size.y > 0.0 && size.x < start.size.x, "held at the content: {size}");
+    assert!(
+        (far - start.max()).length() < 1e-3,
+        "the far corner stays put: {far} vs {}",
+        start.max()
+    );
+    assert!(
+        size.x > 0.0 && size.y > 0.0 && size.x < start.size.x,
+        "held at the content: {size}"
+    );
     button(init, "left", "release", at, &[]);
     frame(init);
     assert!(
@@ -539,14 +628,34 @@ fn test_a_section_resize_handle_is_one_transaction() {
     let section = child(init, n5, DocKind::Section, 1);
     document_mut(init).selection.set([section]);
     resize_mode(init);
-    assert_eq!(init.interaction_mode, InteractionMode::Resize { target: ResizeTarget::Section(section) });
-    let start = init.view.as_ref().expect("a view").projector().section_rect(section).expect("drawn");
-    let from = handle_at(init, Handle::Section { section, side: ResizeSide::SE });
+    assert_eq!(
+        init.interaction_mode,
+        InteractionMode::Resize {
+            target: ResizeTarget::Section(section)
+        }
+    );
+    let start = init
+        .view
+        .as_ref()
+        .expect("a view")
+        .projector()
+        .section_rect(section)
+        .expect("drawn");
+    let from = handle_at(
+        init,
+        Handle::Section {
+            section,
+            side: ResizeSide::SE,
+        },
+    );
     let at = drag(init, from, &[Vec2::new(15.0, 6.0), Vec2::new(30.0, 12.0)], &[]);
     let expected = one_apply_of_the_drag(init, &before);
     assert_same_document(document(init).doc(), &expected, "mid-resize");
     let grown = min_size(init, section).expect("staged");
-    assert!((grown - (start.size + Vec2::new(30.0, 12.0))).length() < 1e-3, "{grown}");
+    assert!(
+        (grown - (start.size + Vec2::new(30.0, 12.0))).length() < 1e-3,
+        "{grown}"
+    );
     button(init, "left", "release", at, &[]);
     frame(init);
     assert_committed_once(init, &expected, &baseline, "section resize");
@@ -582,7 +691,10 @@ fn test_a_section_move_is_one_transaction() {
     let expected = one_apply_of_the_drag(init, &before);
     assert_same_document(document(init).doc(), &expected, "mid-move");
     let offset = super::live::offset_of(document(init).doc(), section).expect("a section");
-    assert!((offset - (start + Vec2::new(18.0, 12.0))).length() < 1e-3, "{offset}");
+    assert!(
+        (offset - (start + Vec2::new(18.0, 12.0))).length() < 1e-3,
+        "{offset}"
+    );
     button(init, "left", "release", from + Vec2::new(18.0, 12.0), &[]);
     frame(init);
     assert_committed_once(init, &expected, &baseline, "section move");
@@ -614,8 +726,14 @@ fn test_a_paths_midpoint_handle_adds_its_control_point() {
     assert!(points(init, connector).is_empty(), "control: no point yet");
     document_mut(init).selection.select_only(connector);
     frame(init);
-    let mid = Handle::Path { path: connector, handle: PathHandle::Midpoint };
-    let control = Handle::Path { path: connector, handle: PathHandle::Control(0) };
+    let mid = Handle::Path {
+        path: connector,
+        handle: PathHandle::Midpoint,
+    };
+    let control = Handle::Path {
+        path: connector,
+        handle: PathHandle::Control(0),
+    };
     assert_eq!(init.view.as_ref().expect("a view").handle_center(control), None);
     let from = handle_at(init, mid);
     let (t, off) = init
@@ -625,16 +743,26 @@ fn test_a_paths_midpoint_handle_adds_its_control_point() {
         .projector()
         .label_place_at(connector, from)
         .expect("drawn");
-    assert!((t - 0.5).abs() < 0.05 && off.abs() < 0.5, "the midpoint is halfway along the path: t {t}, off {off}");
+    assert!(
+        (t - 0.5).abs() < 0.05 && off.abs() < 0.5,
+        "the midpoint is halfway along the path: t {t}, off {off}"
+    );
     let at = drag(init, from, &[Vec2::new(0.0, 15.0), Vec2::new(0.0, 30.0)], &[]);
     let expected = one_apply_of_the_drag(init, &before);
     assert_same_document(document(init).doc(), &expected, "mid-drag");
     assert_eq!(points(init, connector).len(), 1, "one point is staged");
     let shown = handle_at(init, control);
-    assert!((shown - at).length() < 2.0, "the path passes under the pointer: {shown} vs {at}");
+    assert!(
+        (shown - at).length() < 2.0,
+        "the path passes under the pointer: {shown} vs {at}"
+    );
     button(init, "left", "release", at, &[]);
     frame(init);
-    assert_eq!(init.view.as_ref().expect("a view").handle_center(mid), None, "no midpoint once it has a point");
+    assert_eq!(
+        init.view.as_ref().expect("a view").handle_center(mid),
+        None,
+        "no midpoint once it has a point"
+    );
     assert_committed_once(init, &expected, &baseline, "midpoint drag");
 }
 
@@ -652,7 +780,13 @@ fn test_a_control_point_and_an_end_handle_are_transactions() {
     let start = points(init, link);
     document_mut(init).selection.select_only(link);
     frame(init);
-    let from = handle_at(init, Handle::Path { path: link, handle: PathHandle::Control(0) });
+    let from = handle_at(
+        init,
+        Handle::Path {
+            path: link,
+            handle: PathHandle::Control(0),
+        },
+    );
     let at = drag(init, from, &[Vec2::new(10.0, 5.0), Vec2::new(20.0, 10.0)], &[]);
     let expected = one_apply_of_the_drag(init, &before);
     assert_same_document(document(init).doc(), &expected, "control point mid-drag");
@@ -663,14 +797,24 @@ fn test_a_control_point_and_an_end_handle_are_transactions() {
 
     // The start, at node 3, dragged above it: the start attaches on top.
     let before = document(init).doc().clone();
-    let from = handle_at(init, Handle::Path { path: link, handle: PathHandle::Start });
+    let from = handle_at(
+        init,
+        Handle::Path {
+            path: link,
+            handle: PathHandle::Start,
+        },
+    );
     let top = rect(init, n3);
     let target = Vec2::new(top.center().x, top.origin.y - 20.0);
     let at = drag(init, from, &[(from + target) * 0.5 - from, target - from], &[]);
     let anchors = crate::application::view::handles::path_data(document(init).doc(), link)
         .expect("a path")
         .anchors;
-    assert_eq!(anchors.0, baumhard::document::values::Anchor::Top, "the start is on top");
+    assert_eq!(
+        anchors.0,
+        baumhard::document::values::Anchor::Top,
+        "the start is on top"
+    );
     let expected = one_apply_of_the_drag(init, &before);
     button(init, "left", "release", at, &[]);
     frame(init);
@@ -690,7 +834,13 @@ fn test_a_label_drag_is_one_transaction() {
     let n2 = node(init, 2);
     let connector = child(init, n2, DocKind::Connector, 0);
     let label = child(init, connector, DocKind::Label, 0);
-    let from = init.view.as_ref().expect("a view").projector().label_pos(label).expect("drawn");
+    let from = init
+        .view
+        .as_ref()
+        .expect("a view")
+        .projector()
+        .label_pos(label)
+        .expect("drawn");
     let at = drag(init, from, &[Vec2::new(12.0, 6.0), Vec2::new(24.0, 12.0)], &[]);
     assert!(
         matches!(&init.drag_state, DragState::Dragging(live) if live.gesture.word() == "Label"),
@@ -698,8 +848,17 @@ fn test_a_label_drag_is_one_transaction() {
     );
     let expected = one_apply_of_the_drag(init, &before);
     assert_same_document(document(init).doc(), &expected, "mid-drag");
-    let centered = init.view.as_ref().expect("a view").projector().label_pos(label).expect("drawn");
-    assert!((centered - at).length() < 1.0, "the label centers under the pointer: {centered} vs {at}");
+    let centered = init
+        .view
+        .as_ref()
+        .expect("a view")
+        .projector()
+        .label_pos(label)
+        .expect("drawn");
+    assert!(
+        (centered - at).length() < 1.0,
+        "the label centers under the pointer: {centered} vs {at}"
+    );
     button(init, "left", "release", at, &[]);
     frame(init);
     assert_committed_once(init, &expected, &baseline, "label drag");
@@ -717,7 +876,13 @@ fn test_a_portal_end_drag_is_one_transaction() {
     let link = child(init, n1, DocKind::Link, 0);
     let end = child(init, link, DocKind::PortalEnd, 0);
     let label = child(init, end, DocKind::Label, 0);
-    let from = init.view.as_ref().expect("a view").projector().label_pos(label).expect("drawn");
+    let from = init
+        .view
+        .as_ref()
+        .expect("a view")
+        .projector()
+        .label_pos(label)
+        .expect("drawn");
     let at = drag(init, from, &[Vec2::new(10.0, 20.0), Vec2::new(20.0, 40.0)], &[]);
     assert!(
         matches!(&init.drag_state, DragState::Dragging(live) if live.gesture.word() == "PortalEnd"),
@@ -733,7 +898,11 @@ fn test_a_portal_end_drag_is_one_transaction() {
         .portal_place_at(n1, at)
         .expect("drawn");
     match document(init).doc().get(end) {
-        Some(DocElement::PortalEnd(data)) => assert_eq!(data.style.border_t, Some(place), "the end is at the pointer's place"),
+        Some(DocElement::PortalEnd(data)) => assert_eq!(
+            data.style.border_t,
+            Some(place),
+            "the end is at the pointer's place"
+        ),
         other => panic!("{other:?}"),
     }
     button(init, "left", "release", at, &[]);
@@ -805,21 +974,37 @@ fn test_a_finger_on_a_resize_handle_resizes_as_the_mouse_does() {
     }
     touch(init, "ended", off + Vec2::new(40.0, 40.0));
     frame(init);
-    assert_eq!(bytes(init), baseline, "control: a finger off the handles pans, and edits nothing");
+    assert_eq!(
+        bytes(init),
+        baseline,
+        "control: a finger off the handles pans, and edits nothing"
+    );
     assert_eq!(entries(init), 0);
 
-    let from = handle_at(init, Handle::Node { node: n5, side: ResizeSide::SE });
+    let from = handle_at(
+        init,
+        Handle::Node {
+            node: n5,
+            side: ResizeSide::SE,
+        },
+    );
     touch(init, "started", from);
     for k in 1..=4 {
         touch(init, "moved", from + Vec2::new(8.0, 4.0) * k as f32);
         frame(init);
     }
-    assert!(matches!(init.drag_state, DragState::Dragging(_)), "the finger drives the resize");
+    assert!(
+        matches!(init.drag_state, DragState::Dragging(_)),
+        "the finger drives the resize"
+    );
     touch(init, "ended", from + Vec2::new(32.0, 16.0));
     frame(init);
     assert_eq!(entries(init), 1, "the lift committed one entry");
     let grown = min_size(init, n5).expect("a minimum");
-    assert!((grown - (start.size + Vec2::new(32.0, 16.0))).length() < 1e-3, "{grown}");
+    assert!(
+        (grown - (start.size + Vec2::new(32.0, 16.0))).length() < 1e-3,
+        "{grown}"
+    );
 }
 
 /// The open picker's layout.
@@ -832,7 +1017,10 @@ fn layout(init: &InitState) -> crate::application::color_picker::ColorPickerLayo
 
 /// Move the pointer to `at`, a point on the surface.
 fn move_on_surface(init: &mut InitState, at: (f32, f32)) {
-    input(init, json!({"id": 1, "cmd": "input.mouse_move", "x": at.0, "y": at.1}));
+    input(
+        init,
+        json!({"id": 1, "cmd": "input.mouse_move", "x": at.0, "y": at.1}),
+    );
 }
 
 /// Click the left button at `at`, a point on the surface.
@@ -954,7 +1142,11 @@ fn test_a_drag_while_the_picker_is_open_is_refused() {
     open_picker(init);
     // The contextual picker takes every press inside its backdrop; this
     // drag goes through the document's own refusal, which is the rule.
-    assert!(!document_mut(init).begin(ChangeSource::Input, TransactionKind::Interactive, Interaction::Drag));
+    assert!(!document_mut(init).begin(
+        ChangeSource::Input,
+        TransactionKind::Interactive,
+        Interaction::Drag
+    ));
     assert_eq!(document(init).status(), Some(TRANSACTION_OPEN_STATUS));
     assert!(init.color_picker_state.is_open());
     tap(init, "Escape");
@@ -964,7 +1156,10 @@ fn test_a_drag_while_the_picker_is_open_is_refused() {
     let at = drag(init, from, &gentle(), &[]);
     button(init, "left", "release", at, &[]);
     frame(init);
-    assert!(position(init, n3) != p3, "control: with the picker closed the drag moves the node");
+    assert!(
+        position(init, n3) != p3,
+        "control: with the picker closed the drag moves the node"
+    );
 }
 
 /// **A presentation keeps playing on top of a drag** (§10.2): a `hold`
@@ -989,7 +1184,9 @@ fn test_a_presentation_stays_on_top_during_a_drag() {
     .expect("reads")
     .remove(0);
     let now = init.clock.now_ms();
-    document_mut(init).start_presentation(&dim, &[n2], now).expect("starts");
+    document_mut(init)
+        .start_presentation(&dim, &[n2], now)
+        .expect("starts");
     frame(init);
     let opacity = |init: &InitState| match document(init).doc().get(n2) {
         Some(DocElement::Node(data)) => data.opacity,
@@ -1010,11 +1207,18 @@ fn test_a_presentation_stays_on_top_during_a_drag() {
     frame(init);
     assert_eq!(entries(init), 1);
     assert_eq!(opacity(init), 0.25, "and on top of the commit");
-    assert!(!bytes(init).contains("\"opacity\""), "a presentation never reaches the file");
+    assert!(
+        !bytes(init).contains("\"opacity\""),
+        "a presentation never reaches the file"
+    );
     assert_eq!(act(init, json!("Undo")), "handled");
     frame(init);
     assert_eq!(bytes(init), baseline, "the entry held the move alone");
-    assert_eq!(opacity(init), 0.25, "and the presentation plays on after the undo");
+    assert_eq!(
+        opacity(init),
+        0.25,
+        "and the presentation plays on after the undo"
+    );
 }
 
 /// **The handle chrome is rebuilt only when what it is built from
@@ -1035,7 +1239,12 @@ fn test_a_pan_writes_no_chrome_and_a_selection_does() {
     document_mut(init).selection.select_only(connector);
     frame(init);
     assert_eq!(applies(init), before + 1, "the selection wrote the handles");
-    let group = init.view.as_ref().expect("a view").handles().group(HandleSet::Path);
+    let group = init
+        .view
+        .as_ref()
+        .expect("a view")
+        .handles()
+        .group(HandleSet::Path);
     let visited = init.renderer.layer_renderer().log().chrome_visited.clone();
     let chrome = init.view.as_ref().expect("a view").chrome();
     let in_path_set: Vec<NodeId> = group.children(chrome.arena()).collect();
@@ -1045,9 +1254,25 @@ fn test_a_pan_writes_no_chrome_and_a_selection_does() {
     );
     // The end of the connector that is at node 1, its parent.
     let n1 = node(init, 1);
-    let (from, _) = init.view.as_ref().expect("a view").projector().path_ends(connector).expect("drawn");
-    let at_one = if from == n1 { PathHandle::Start } else { PathHandle::End };
-    let at = handle_at(init, Handle::Path { path: connector, handle: at_one });
+    let (from, _) = init
+        .view
+        .as_ref()
+        .expect("a view")
+        .projector()
+        .path_ends(connector)
+        .expect("drawn");
+    let at_one = if from == n1 {
+        PathHandle::Start
+    } else {
+        PathHandle::End
+    };
+    let at = handle_at(
+        init,
+        Handle::Path {
+            path: connector,
+            handle: at_one,
+        },
+    );
 
     let panned = applies(init);
     let rebuilt = |init: &InitState| init.view.as_ref().expect("a view").handles().rebuilt();
@@ -1057,7 +1282,7 @@ fn test_a_pan_writes_no_chrome_and_a_selection_does() {
     assert_eq!(act(init, json!("ZoomIn")), "handled");
     frame(init);
     assert_eq!(applies(init), panned, "a pan and a zoom write no chrome");
-    assert_eq!(rebuilt(init), rebuilt_before, "nor rebuild any handle set"); 
+    assert_eq!(rebuilt(init), rebuilt_before, "nor rebuild any handle set");
 
     // Moving the node the path ends at moves the path's handles.
     let r1 = rect(init, n1);
@@ -1074,7 +1299,17 @@ fn test_a_pan_writes_no_chrome_and_a_selection_does() {
         .apply(EditRequest::new(steps, "test: move 1"), ChangeSource::Action)
         .expect("applies");
     frame(init);
-    assert_eq!(applies(init), panned + 1, "the touched path's handles were written");
-    let moved = handle_at(init, Handle::Path { path: connector, handle: at_one });
+    assert_eq!(
+        applies(init),
+        panned + 1,
+        "the touched path's handles were written"
+    );
+    let moved = handle_at(
+        init,
+        Handle::Path {
+            path: connector,
+            handle: at_one,
+        },
+    );
     assert!(moved != at, "and its end handle moved with it");
 }

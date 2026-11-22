@@ -23,7 +23,9 @@ mod open;
 mod rebuild;
 pub(in crate::application::app) mod session;
 
-pub(in crate::application::app) use click::{end_color_picker_gesture, handle_color_picker_click, PickerClick};
+pub(in crate::application::app) use click::{
+    end_color_picker_gesture, handle_color_picker_click, PickerClick,
+};
 pub(in crate::application::app) use key::{handle_color_picker_clipboard_key, picker_op_for};
 pub(in crate::application::app) use mouse::handle_color_picker_mouse_move;
 pub(in crate::application::app) use rebuild::rebuild_color_picker_overlay;

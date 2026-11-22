@@ -63,7 +63,8 @@ impl PickerRefusal {
     pub(in crate::application::app) const NO_DOCUMENT: &'static str = "no map is open";
     /// Another interactive transaction is open (D28); the status line
     /// says so too.
-    pub(in crate::application::app) const BUSY: &'static str = crate::application::document::TRANSACTION_OPEN_STATUS;
+    pub(in crate::application::app) const BUSY: &'static str =
+        crate::application::document::TRANSACTION_OPEN_STATUS;
 }
 
 /// The color `hsv` names, opaque. O(1).
@@ -75,7 +76,11 @@ fn color_of(hsv: (f32, f32, f32)) -> ColorRef {
 
 /// The steps that set `target`'s color to `hsv`. `Err` for a target
 /// nothing of which takes the axis's color.
-fn steps(doc: &MindMapDocument, target: &PickerTarget, hsv: (f32, f32, f32)) -> crate::application::fields::Steps {
+fn steps(
+    doc: &MindMapDocument,
+    target: &PickerTarget,
+    hsv: (f32, f32, f32),
+) -> crate::application::fields::Steps {
     style::color_of(doc.doc(), &target.selection, target.axis, Some(color_of(hsv)))
 }
 
@@ -90,7 +95,9 @@ fn seed_of(doc: &mut MindMapDocument, selection: &Selection, axis: ColorAxis) ->
         return (0.0, 1.0, 1.0);
     };
     let owner: NodeId = match (kind_of(d, first), axis) {
-        (Some(DocKind::Node), ColorAxis::Border | ColorAxis::Ring) => style::frame_of(d, first).unwrap_or(first),
+        (Some(DocKind::Node), ColorAxis::Border | ColorAxis::Ring) => {
+            style::frame_of(d, first).unwrap_or(first)
+        }
         _ => first,
     };
     let [r, g, b, _] = resolve_text(d.tree(), owner, &mut ()).color.0;
@@ -119,7 +126,11 @@ pub(in crate::application::app) fn open_contextual(
         return Err(PickerRefusal::NOTHING);
     }
     let seed_hsv = seed_of(doc, &target.selection, axis);
-    if !doc.begin(ChangeSource::Input, TransactionKind::Interactive, Interaction::ColorPicker) {
+    if !doc.begin(
+        ChangeSource::Input,
+        TransactionKind::Interactive,
+        Interaction::ColorPicker,
+    ) {
         return Err(PickerRefusal::BUSY);
     }
     open_picker_inner(
@@ -280,7 +291,10 @@ fn bits(hsv: (f32, f32, f32)) -> (u32, u32, u32) {
 /// any other Action. A picker Action with nothing to act on — the picker
 /// closed, a cancel of the standalone palette, no map — is `Unhandled`,
 /// so a macro step reports that nothing ran.
-pub(in crate::application::app) fn dispatch(action: &Action, ctx: &mut InputHandlerContext<'_>) -> Option<DispatchOutcome> {
+pub(in crate::application::app) fn dispatch(
+    action: &Action,
+    ctx: &mut InputHandlerContext<'_>,
+) -> Option<DispatchOutcome> {
     match action {
         Action::OpenColorPicker => {
             close(ctx);

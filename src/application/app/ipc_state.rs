@@ -84,7 +84,9 @@ impl InteractionMode {
                     super::interaction_mode::ResizeTarget::Node(node) => ("node", *node),
                     super::interaction_mode::ResizeTarget::Section(section) => ("section", *section),
                 };
-                let element = doc.map_or(Value::Null, |doc| crate::application::view::inspect::element_ref(doc, element));
+                let element = doc.map_or(Value::Null, |doc| {
+                    crate::application::view::inspect::element_ref(doc, element)
+                });
                 json!({ "kind": "Resize", "target": { "kind": what, "element": element } })
             }
         }
@@ -159,7 +161,9 @@ impl DragState {
                     super::live::Gesture::MoveNodes { nodes } => {
                         json!({ "nodes": nodes.iter().map(|&(node, _)| named(node)).collect::<Vec<_>>() })
                     }
-                    super::live::Gesture::MoveSection { section, .. } => json!({ "element": named(*section) }),
+                    super::live::Gesture::MoveSection { section, .. } => {
+                        json!({ "element": named(*section) })
+                    }
                     super::live::Gesture::ResizeNode { node, side, .. } => {
                         json!({ "element": named(*node), "side": side.word() })
                     }

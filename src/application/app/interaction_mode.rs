@@ -68,7 +68,10 @@ impl ResizeTarget {
     /// only by node editing, V1-C8). `None` for anything else. What
     /// `Action::EnterResizeMode` and `mode resize` enter on. O(1).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub fn of(doc: &baumhard::document::ids::Document, selection: &crate::application::document::Selection) -> Option<Self> {
+    pub fn of(
+        doc: &baumhard::document::ids::Document,
+        selection: &crate::application::document::Selection,
+    ) -> Option<Self> {
         use baumhard::document::element::DocKind;
         let mut selected = selection.iter();
         let (Some(only), None) = (selected.next(), selected.next()) else {

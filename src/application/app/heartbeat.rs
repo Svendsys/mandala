@@ -144,9 +144,14 @@ impl InputHandlerContext<'_> {
         // left it showing — a no-op when nothing it draws changed — and
         // the contextual picker's color staged on its target.
         let picker_open = self.color_picker_state.is_open();
-        let picker_staged = color_picker_flow::session::drain(self.color_picker_state, self.document, throttled);
+        let picker_staged =
+            color_picker_flow::session::drain(self.color_picker_state, self.document, throttled);
         let wheel_drawn = picker_open
-            && color_picker_flow::rebuild_color_picker_overlay(self.color_picker_state, self.app_scene, self.renderer);
+            && color_picker_flow::rebuild_color_picker_overlay(
+                self.color_picker_state,
+                self.app_scene,
+                self.renderer,
+            );
         let changed = match (self.document.as_mut(), self.view.as_mut()) {
             (Some(doc), Some(view)) => {
                 view.follow_mode(self.interaction_mode);

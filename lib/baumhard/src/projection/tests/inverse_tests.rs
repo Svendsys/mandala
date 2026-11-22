@@ -84,8 +84,12 @@ fn test_label_at_on_an_empty_path_is_the_middle() {
 fn test_portal_at_reads_back_the_place_portal_point_puts_an_end() {
     let rect = Rect::new(Vec2::new(40.0, 20.0), Vec2::new(200.0, 100.0));
     for shape in [
-        Shape::Rectangle { radius: Percent::new(0) },
-        Shape::Rectangle { radius: Percent::new(50) },
+        Shape::Rectangle {
+            radius: Percent::new(0),
+        },
+        Shape::Rectangle {
+            radius: Percent::new(50),
+        },
         Shape::Ellipse,
     ] {
         let line = outline(rect, shape);

@@ -2029,7 +2029,10 @@ fn test_picker_hover_reshapes_a_small_part_of_the_wheel() {
 
     let mut forgot = OverlayShapes::default();
     reshape_overlays(&mut forgot, &scene, &[id]);
-    assert_eq!(forgot.shaped, areas, "control: without the keys every area is shaped");
+    assert_eq!(
+        forgot.shaped, areas,
+        "control: without the keys every area is shaped"
+    );
 }
 
 /// **A color-picker drag-move shapes nothing, and lands every buffer where
@@ -2061,7 +2064,8 @@ fn test_picker_drag_move_patches_every_cell_and_shapes_none() {
     let mut shapes = OverlayShapes::default();
     reshape_overlays(&mut shapes, &scene, &[id]);
     let areas = shapes.shaped;
-    let positions = |shapes: &OverlayShapes| -> Vec<(f32, f32)> { shapes.elements.iter().map(|b| b.pos).collect() };
+    let positions =
+        |shapes: &OverlayShapes| -> Vec<(f32, f32)> { shapes.elements.iter().map(|b| b.pos).collect() };
     let before = positions(&shapes);
 
     let idempotent = color_picker_overlay::build_mutator(&geometry, &layout);

@@ -159,7 +159,12 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     if let Stop::Matched(subverb) = descent.stop {
         let line = match route::lookup(ROUTES, subverb) {
             Some(Route::Pick(axis)) => PickerLine::Open(axis),
-            Some(Route::Palette) => match descent.slot_value(args).get(0).map(str::to_ascii_lowercase).as_deref() {
+            Some(Route::Palette) => match descent
+                .slot_value(args)
+                .get(0)
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+            {
                 Some("on") => PickerLine::Palette,
                 Some("off") => PickerLine::Close,
                 _ => return ExecResult::err(usage::subverb_usage(descent.level, subverb)),

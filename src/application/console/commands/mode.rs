@@ -107,7 +107,9 @@ fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             let doc = eff.document();
             match ResizeTarget::of(doc.doc(), &doc.selection) {
                 Some(target) => {
-                    eff.side_effect = Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::Resize { target }));
+                    eff.side_effect = Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::Resize {
+                        target,
+                    }));
                     eff.close_console = true;
                     ExecResult::ok_msg("mode: Resize — drag a corner or edge")
                 }
@@ -162,7 +164,10 @@ mod tests {
         let mut doc = MindMapDocument::new_blank(None, 50);
         doc.create_root_for_test();
         let (refused, side, close) = run_mode("mode resize", &mut doc);
-        assert!(matches!(&refused, ExecResult::Err(m) if m == RESIZE_NEEDS_ONE), "nothing selected: {refused:?}");
+        assert!(
+            matches!(&refused, ExecResult::Err(m) if m == RESIZE_NEEDS_ONE),
+            "nothing selected: {refused:?}"
+        );
         assert!(side.is_none() && !close);
         let node = baumhard::document::ids::NodeIdent(1);
         let node = doc.doc().node_by_ident(node).expect("the root is node 1");
@@ -183,7 +188,10 @@ mod tests {
             .expect("the second root is node 2");
         doc.selection.set([node, other]);
         let (refused, side, _) = run_mode("mode resize", &mut doc);
-        assert!(matches!(&refused, ExecResult::Err(m) if m == RESIZE_NEEDS_ONE), "two selected: {refused:?}");
+        assert!(
+            matches!(&refused, ExecResult::Err(m) if m == RESIZE_NEEDS_ONE),
+            "two selected: {refused:?}"
+        );
         assert!(side.is_none());
     }
 

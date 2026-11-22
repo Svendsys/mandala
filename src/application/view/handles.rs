@@ -108,6 +108,13 @@ impl ResizeSide {
     /// How the handle moves each axis: `1` grows the size, `-1` moves
     /// the top-left and shrinks the size by as much (the opposite edge
     /// stays put), `0` leaves the axis alone. O(1).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the browser draws the handles; only native's drags grab them"
+        )
+    )]
     pub(crate) fn axis_factors(self) -> (i8, i8) {
         match self {
             ResizeSide::NW => (-1, -1),
@@ -126,6 +133,13 @@ impl ResizeSide {
     /// the press each time (never accumulated). A handle that moves the
     /// top-left moves it only as far as the size shrinks, so a box that
     /// cannot shrink below its content does not slide. O(1).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the browser draws the handles; only native's drags grab them"
+        )
+    )]
     pub(crate) fn resolve(self, start: Rect, delta: Vec2, floor: Vec2) -> Rect {
         let (fx, fy) = self.axis_factors();
         // One axis: its new origin and size. A handle that moves the
@@ -150,6 +164,13 @@ impl ResizeSide {
     /// one in the quadrant `point` is in, a point on a center line
     /// rounding south and east, as on `main`. Edge handles are never
     /// picked: a one-axis resize is the resize mode's. O(1).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the browser draws the handles; only native's drags grab them"
+        )
+    )]
     pub(crate) fn corner_for(point: Vec2, rect: Rect) -> ResizeSide {
         let center = rect.center();
         match (point.x >= center.x, point.y >= center.y) {
@@ -176,6 +197,13 @@ impl ResizeSide {
     }
 
     /// The side's name, as `query.mode` reports it: `main`'s. O(1).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the browser draws the handles; only native's drags grab them"
+        )
+    )]
     pub(crate) fn word(self) -> &'static str {
         match self {
             ResizeSide::NW => "nw",
@@ -230,6 +258,13 @@ impl PathHandle {
 
     /// The handle's name, as `query.mode` reports it. Allocates for a
     /// control point.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the browser draws the handles; only native's drags grab them"
+        )
+    )]
     pub(crate) fn word(self) -> String {
         match self {
             PathHandle::Start => "start".to_string(),
@@ -242,6 +277,13 @@ impl PathHandle {
 
 /// A handle the chrome shows, as a press grabs it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    target_arch = "wasm32",
+    expect(
+        dead_code,
+        reason = "the browser draws the handles; only native's drags grab them"
+    )
+)]
 pub(crate) enum Handle {
     /// A resize handle of the node the resize mode targets.
     Node { node: NodeId, side: ResizeSide },
@@ -306,6 +348,13 @@ impl HandleSet {
     }
 
     /// The handle of this set on `target` in `slot`. O(1).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the browser draws the handles; only native's drags grab them"
+        )
+    )]
     fn handle(self, target: NodeId, slot: usize) -> Handle {
         match self {
             HandleSet::Node => Handle::Node {
@@ -428,7 +477,8 @@ pub(crate) fn centers(
 /// through to the next — the ends, then the control points in order.
 /// `None` for a chain that is not such a path's. O(1).
 pub(crate) fn body(curves: &[baumhard::flow::Curve], n: usize) -> Option<&[baumhard::flow::Curve]> {
-    let lead = usize::from(curves.len() > n + 1 && matches!(curves.first(), Some(baumhard::flow::Curve::Line(..))));
+    let lead =
+        usize::from(curves.len() > n + 1 && matches!(curves.first(), Some(baumhard::flow::Curve::Line(..))));
     curves.get(lead..lead + n + 1)
 }
 
@@ -480,7 +530,11 @@ impl Handles {
                 let (run, size) = handle_run(set.glyph(slot), &mut fonts);
                 half.push(size * 0.5);
                 chrome
-                    .insert_child(group, GfxElement::new_run(run, set.channel(slot), 0), Placement::Last)
+                    .insert_child(
+                        group,
+                        GfxElement::new_run(run, set.channel(slot), 0),
+                        Placement::Last,
+                    )
                     .expect("a handle group takes its handles");
             }
             Planted {
@@ -536,6 +590,13 @@ impl Handles {
     /// The handle a press at `point` grabs: the shown handle whose
     /// center is nearest, within `tolerance` (canvas units) of it, the
     /// resize sets before the path's. O(the shown handles).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the browser draws the handles; only native's drags grab them"
+        )
+    )]
     pub(crate) fn at(&self, point: Vec2, tolerance: f32) -> Option<Handle> {
         for set in HandleSet::ALL {
             let planted = &self.sets[set.index()];
@@ -557,6 +618,13 @@ impl Handles {
     }
 
     /// Where `handle` centers while it is shown. O(1).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the browser draws the handles; only native's drags grab them"
+        )
+    )]
     pub(crate) fn center_of(&self, handle: Handle) -> Option<Vec2> {
         let (set, target, slot) = match handle {
             Handle::Node { node, side } => (HandleSet::Node, node, side_slot(side)),
@@ -586,6 +654,13 @@ impl Handles {
 }
 
 /// The slot of `side` in a resize set. O(1).
+#[cfg_attr(
+    target_arch = "wasm32",
+    expect(
+        dead_code,
+        reason = "the browser draws the handles; only native's drags grab them"
+    )
+)]
 fn side_slot(side: ResizeSide) -> usize {
     ResizeSide::ALL
         .iter()
@@ -644,7 +719,13 @@ fn handle_run(glyph: &str, fonts: &mut FontSystemLease) -> (GlyphRunData, Vec2) 
     }];
     let shaped = shape_box(&spans, None, Align::Left, fonts);
     let size = shaped.size;
-    let run = GlyphRunData::new(RunShape::Box(Arc::new(shaped)), Vec2::ZERO, GlyphOverrides::none(), 0.0, None)
-        .expect("a run with no overrides is always built");
+    let run = GlyphRunData::new(
+        RunShape::Box(Arc::new(shaped)),
+        Vec2::ZERO,
+        GlyphOverrides::none(),
+        0.0,
+        None,
+    )
+    .expect("a run with no overrides is always built");
     (run, size)
 }

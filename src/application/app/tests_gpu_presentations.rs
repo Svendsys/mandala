@@ -707,7 +707,12 @@ fn sequences() -> Vec<Vec<Step>> {
             act("PickerNudgeValUp"),
             act("PickerCancel"),
         ],
-        vec![act("OpenColorPicker"), act("PickerNudgeHueUp"), act("PickerCommit"), act("CloseColorPicker")],
+        vec![
+            act("OpenColorPicker"),
+            act("PickerNudgeHueUp"),
+            act("PickerCommit"),
+            act("CloseColorPicker"),
+        ],
     ]
 }
 

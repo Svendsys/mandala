@@ -1054,7 +1054,7 @@ are the other half of the same question.
 | `ping`, `clock.status` | `ipc/commands/meta.rs`, `ipc/commands/clock.rs` | app | they report the app clock |
 | FPS overlay and its idle grace | `renderer::tick_fps`, `fps_idle_defer_deadline` | wall (`Instant`) | measures real frame cost; a diagnostic must not become observable behavior |
 | freeze watchdog | `freeze_watchdog.rs` | wall (`Instant`) | guards real liveness; a frozen clock would disable it |
-| drag throttle's budget | `ThrottledInteraction::drive` | wall (`Instant`) | measures real work; the *decision* is suspended under virtual time (above) |
+| live interactions' drain throttle | `live::Live::drain` / `record_frame`, `color_picker_flow::session::drain` (`heartbeat::drain_inputs`) | wall (`Instant`) | measures real work; the *decision* is suspended under virtual time (above) |
 | encode cost, idle-encode budget, manifest rewrite interval | `capture/record.rs` | wall (`Instant`) | cost measurements; under virtual time the idle budget is one heartbeat of wall time |
 | GPU readback wait | `renderer/capture.rs` | wall (`Instant`) | a liveness bound on the GPU |
 | `clock.wait` deadline and `elapsed_ms` | `ipc/wait.rs` | wall (`Instant`) | client liveness (D7) |

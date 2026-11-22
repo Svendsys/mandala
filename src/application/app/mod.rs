@@ -79,8 +79,6 @@ mod event_mouse_click;
 #[cfg(not(target_arch = "wasm32"))]
 mod freeze_watchdog;
 #[cfg(not(target_arch = "wasm32"))]
-mod live;
-#[cfg(not(target_arch = "wasm32"))]
 mod heartbeat;
 #[cfg(not(target_arch = "wasm32"))]
 mod input_context;
@@ -89,6 +87,8 @@ mod ipc_scene;
 mod ipc_state;
 #[cfg(not(target_arch = "wasm32"))]
 mod ipc_target;
+#[cfg(not(target_arch = "wasm32"))]
+mod live;
 #[cfg(not(target_arch = "wasm32"))]
 mod pump;
 #[cfg(not(target_arch = "wasm32"))]

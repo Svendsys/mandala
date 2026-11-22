@@ -77,7 +77,12 @@ pub(crate) fn color(doc: &MindMapDocument, axis: ColorAxis, color: Option<ColorR
 /// [`color`] on `selection` rather than the document's own: what the
 /// color picker stages on the selection it was opened on (V1-C7), which
 /// holds while it is open whatever selects something else.
-pub(crate) fn color_of(d: &Document, selection: &Selection, axis: ColorAxis, color: Option<ColorRef>) -> Steps {
+pub(crate) fn color_of(
+    d: &Document,
+    selection: &Selection,
+    axis: ColorAxis,
+    color: Option<ColorRef>,
+) -> Steps {
     let key: &'static str = axis.into();
     if let (ColorAxis::Text, Some((section, start, end))) = (axis, range_of(d, selection)) {
         return compose::style_range(d, section, start, end, vec![TextOp::SetColor(color)])

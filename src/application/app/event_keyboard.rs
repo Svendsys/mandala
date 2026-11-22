@@ -59,7 +59,8 @@ pub(super) fn handle_keyboard_input(logical_key: Key, ctx: &mut InputHandlerCont
         });
         match picker_action {
             Some(a) if picker_op_for(&a).is_some() => {
-                if super::dispatch::dispatch_action(a, ctx, None) == super::dispatch::DispatchOutcome::Handled {
+                if super::dispatch::dispatch_action(a, ctx, None) == super::dispatch::DispatchOutcome::Handled
+                {
                     return;
                 }
             }

@@ -29,15 +29,39 @@ fn start() -> Rect {
 fn test_each_resize_handle_moves_its_own_edges() {
     let d = Vec2::new(7.0, 3.0);
     let r = |side: ResizeSide| side.resolve(start(), d, Vec2::ZERO);
-    assert_eq!(r(ResizeSide::SE), Rect::new(Vec2::new(10.0, 20.0), Vec2::new(107.0, 53.0)));
-    assert_eq!(r(ResizeSide::NW), Rect::new(Vec2::new(17.0, 23.0), Vec2::new(93.0, 47.0)));
+    assert_eq!(
+        r(ResizeSide::SE),
+        Rect::new(Vec2::new(10.0, 20.0), Vec2::new(107.0, 53.0))
+    );
+    assert_eq!(
+        r(ResizeSide::NW),
+        Rect::new(Vec2::new(17.0, 23.0), Vec2::new(93.0, 47.0))
+    );
     assert_eq!(r(ResizeSide::NW).max(), start().max(), "the far corner stays put");
-    assert_eq!(r(ResizeSide::N), Rect::new(Vec2::new(10.0, 23.0), Vec2::new(100.0, 47.0)));
-    assert_eq!(r(ResizeSide::E), Rect::new(Vec2::new(10.0, 20.0), Vec2::new(107.0, 50.0)));
-    assert_eq!(r(ResizeSide::NE), Rect::new(Vec2::new(10.0, 23.0), Vec2::new(107.0, 47.0)));
-    assert_eq!(r(ResizeSide::SW), Rect::new(Vec2::new(17.0, 20.0), Vec2::new(93.0, 53.0)));
-    assert_eq!(r(ResizeSide::S), Rect::new(Vec2::new(10.0, 20.0), Vec2::new(100.0, 53.0)));
-    assert_eq!(r(ResizeSide::W), Rect::new(Vec2::new(17.0, 20.0), Vec2::new(93.0, 50.0)));
+    assert_eq!(
+        r(ResizeSide::N),
+        Rect::new(Vec2::new(10.0, 23.0), Vec2::new(100.0, 47.0))
+    );
+    assert_eq!(
+        r(ResizeSide::E),
+        Rect::new(Vec2::new(10.0, 20.0), Vec2::new(107.0, 50.0))
+    );
+    assert_eq!(
+        r(ResizeSide::NE),
+        Rect::new(Vec2::new(10.0, 23.0), Vec2::new(107.0, 47.0))
+    );
+    assert_eq!(
+        r(ResizeSide::SW),
+        Rect::new(Vec2::new(17.0, 20.0), Vec2::new(93.0, 53.0))
+    );
+    assert_eq!(
+        r(ResizeSide::S),
+        Rect::new(Vec2::new(10.0, 20.0), Vec2::new(100.0, 53.0))
+    );
+    assert_eq!(
+        r(ResizeSide::W),
+        Rect::new(Vec2::new(17.0, 20.0), Vec2::new(93.0, 50.0))
+    );
     for side in ResizeSide::ALL {
         assert_eq!(side.resolve(start(), Vec2::ZERO, Vec2::ZERO), start(), "{side:?}");
     }
@@ -59,7 +83,11 @@ fn test_a_resize_stops_at_its_floor_without_sliding() {
     let unheld = ResizeSide::NW.resolve(start(), Vec2::new(500.0, 500.0), Vec2::ZERO);
     assert_eq!(unheld.size, Vec2::ZERO);
     let grown = ResizeSide::SE.resolve(start(), Vec2::new(-500.0, -500.0), floor);
-    assert_eq!(grown, Rect::new(start().origin, floor), "a south-east drag inward stops too");
+    assert_eq!(
+        grown,
+        Rect::new(start().origin, floor),
+        "a south-east drag inward stops too"
+    );
 }
 
 /// **A fast resize grabs the corner of the quadrant it is pressed in**;
@@ -69,10 +97,20 @@ fn test_a_fast_resize_grabs_the_corner_of_its_quadrant() {
     let rect = start();
     let c = rect.center();
     assert_eq!(ResizeSide::corner_for(rect.origin, rect), ResizeSide::NW);
-    assert_eq!(ResizeSide::corner_for(Vec2::new(rect.max().x, rect.origin.y), rect), ResizeSide::NE);
-    assert_eq!(ResizeSide::corner_for(Vec2::new(rect.origin.x, rect.max().y), rect), ResizeSide::SW);
+    assert_eq!(
+        ResizeSide::corner_for(Vec2::new(rect.max().x, rect.origin.y), rect),
+        ResizeSide::NE
+    );
+    assert_eq!(
+        ResizeSide::corner_for(Vec2::new(rect.origin.x, rect.max().y), rect),
+        ResizeSide::SW
+    );
     assert_eq!(ResizeSide::corner_for(rect.max(), rect), ResizeSide::SE);
-    assert_eq!(ResizeSide::corner_for(c, rect), ResizeSide::SE, "the center rounds south-east");
+    assert_eq!(
+        ResizeSide::corner_for(c, rect),
+        ResizeSide::SE,
+        "the center rounds south-east"
+    );
 }
 
 /// **A dragged path end attaches to the side of its node nearest the
@@ -82,8 +120,20 @@ fn test_a_fast_resize_grabs_the_corner_of_its_quadrant() {
 fn test_a_dragged_end_attaches_to_the_nearest_side() {
     let rect = start();
     let c = rect.center();
-    assert_eq!(nearest_side(rect, Vec2::new(c.x, rect.origin.y - 30.0)), Anchor::Top);
-    assert_eq!(nearest_side(rect, Vec2::new(rect.max().x + 30.0, c.y)), Anchor::Right);
-    assert_eq!(nearest_side(rect, Vec2::new(c.x, rect.max().y + 30.0)), Anchor::Bottom);
-    assert_eq!(nearest_side(rect, Vec2::new(rect.origin.x - 30.0, c.y)), Anchor::Left);
+    assert_eq!(
+        nearest_side(rect, Vec2::new(c.x, rect.origin.y - 30.0)),
+        Anchor::Top
+    );
+    assert_eq!(
+        nearest_side(rect, Vec2::new(rect.max().x + 30.0, c.y)),
+        Anchor::Right
+    );
+    assert_eq!(
+        nearest_side(rect, Vec2::new(c.x, rect.max().y + 30.0)),
+        Anchor::Bottom
+    );
+    assert_eq!(
+        nearest_side(rect, Vec2::new(rect.origin.x - 30.0, c.y)),
+        Anchor::Left
+    );
 }

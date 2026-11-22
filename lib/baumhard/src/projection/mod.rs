@@ -372,7 +372,10 @@ impl Projector {
             return None;
         };
         let local = state.local?;
-        Some(Rect::new(self.nodes.get(&unit.node)?.rect.origin + local.origin, local.size))
+        Some(Rect::new(
+            self.nodes.get(&unit.node)?.rect.origin + local.origin,
+            local.size,
+        ))
     }
 
     /// Where a label on the drawn path `path` centers nearest `point`, as

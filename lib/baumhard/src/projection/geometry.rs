@@ -1232,7 +1232,10 @@ pub(crate) fn label_at(path: &[Curve], point: Vec2) -> (f32, f32) {
     }
     let s = arc.nearest(point);
     let (on, tangent) = arc.at(s);
-    ((s / length).clamp(0.0, 1.0), (point - on).dot(left_normal(tangent)))
+    (
+        (s / length).clamp(0.0, 1.0),
+        (point - on).dot(left_normal(tangent)),
+    )
 }
 
 /// The inverse of [`portal_along`] and [`portal_point`] for a portal end

@@ -393,11 +393,25 @@ impl MapView {
     /// The handle a press at `point` grabs, within `tolerance` canvas
     /// units of its center ([`handles::Handles::at`]): asked before the
     /// projector is, since the chrome is drawn over the map.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the browser draws the handles; only native's drags grab them"
+        )
+    )]
     pub(crate) fn handle_at(&self, point: Vec2, tolerance: f32) -> Option<handles::Handle> {
         self.handles.at(point, tolerance)
     }
 
     /// Where `handle` centers while it is shown.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the browser draws the handles; only native's drags grab them"
+        )
+    )]
     pub(crate) fn handle_center(&self, handle: handles::Handle) -> Option<Vec2> {
         self.handles.center_of(handle)
     }
@@ -413,7 +427,11 @@ impl MapView {
     /// beside the handles' in the same pass.
     ///
     /// Cost: each builder's reading of `changes`.
-    fn follow_chrome(&mut self, changes: &LayerChanges, doc: &MindMapDocument) -> Vec<(GfxMutatorTree, Anchors)> {
+    fn follow_chrome(
+        &mut self,
+        changes: &LayerChanges,
+        doc: &MindMapDocument,
+    ) -> Vec<(GfxMutatorTree, Anchors)> {
         let pass = PassChanges {
             changes,
             doc: doc.doc(),

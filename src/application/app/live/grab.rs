@@ -122,7 +122,11 @@ fn portal_end(doc: &Document, end: NodeId) -> Option<Grab> {
 ///
 /// Cost: O(the node's sections) for a node's resize; O(the path's
 /// control points) for a path handle; O(1) otherwise.
-pub(in crate::application::app) fn gesture_for(grab: Grab, doc: &Document, view: &MapView) -> Option<Gesture> {
+pub(in crate::application::app) fn gesture_for(
+    grab: Grab,
+    doc: &Document,
+    view: &MapView,
+) -> Option<Gesture> {
     let projector = view.projector();
     match grab {
         Grab::Handle(Handle::Node { node, side }) => resize_node(doc, projector, node, side),
@@ -131,12 +135,10 @@ pub(in crate::application::app) fn gesture_for(grab: Grab, doc: &Document, view:
             let at = view.handle_center(handle)?;
             path_handle(doc, projector, path, which, at)
         }
-        Grab::Label { label, path } => {
-            (doc.get(label).is_some() && projector.curve(path).is_some()).then_some(Gesture::Label { label, path })
-        }
-        Grab::PortalEnd { end, node } => {
-            (doc.get(end).is_some() && projector.node_rect(node).is_some()).then_some(Gesture::PortalEnd { end, node })
-        }
+        Grab::Label { label, path } => (doc.get(label).is_some() && projector.curve(path).is_some())
+            .then_some(Gesture::Label { label, path }),
+        Grab::PortalEnd { end, node } => (doc.get(end).is_some() && projector.node_rect(node).is_some())
+            .then_some(Gesture::PortalEnd { end, node }),
     }
 }
 
@@ -149,7 +151,9 @@ pub(in crate::application::app) fn resize_node(
     node: NodeId,
     side: ResizeSide,
 ) -> Option<Gesture> {
-    let start = projector.node_rect(node).filter(|r| r.size.x > 0.0 && r.size.y > 0.0)?;
+    let start = projector
+        .node_rect(node)
+        .filter(|r| r.size.x > 0.0 && r.size.y > 0.0)?;
     let floor = doc
         .children(node)
         .filter_map(|section| projector.section_rect(section))
@@ -255,7 +259,10 @@ pub(in crate::application::app) fn move_nodes(
             }
             nodes.push((at, position));
             if !alone {
-                stack.extend(doc.children(at).filter(|&c| kind_of(doc, c) == Some(DocKind::Node)));
+                stack.extend(
+                    doc.children(at)
+                        .filter(|&c| kind_of(doc, c) == Some(DocKind::Node)),
+                );
             }
         }
     }

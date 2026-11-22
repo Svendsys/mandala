@@ -11,7 +11,7 @@
 //! | [`structure`] | create, delete, reparent, orphan, connect, clipboard | V1-C4 (#245), rebuilt |
 //! | [`field_nodes`] | node, section, frame, theme and defaults fields; selection-wide style | V1-C5 (#246), rebuilt |
 //! | [`field_paths`] | connector, link, label and portal fields | V1-C6 (#247), rebuilt |
-//! | [`transactions`] | the resize mode, the fast resize, the color picker (the drags are not Actions: `app::live`) | V1-C7 (#248), rebuilt |
+//! | `transactions` (native) | the resize mode, the fast resize, the color picker (the drags are not Actions: `app::live`) | V1-C7 (#248), rebuilt |
 //! | [`text`] | text editing on spans, node editing | V1-C8 (#249) |
 //! | [`edits`] | the edit funnel: keys bound to edits, the macro `Edit` step, the console | V1-D1 (#250), rebuilt |
 //! | [`verbs`] | map verbs: click, hover and link triggers, the console, IPC, the macro `Verb` step | V1-D3 (#252), landed |

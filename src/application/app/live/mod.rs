@@ -269,9 +269,7 @@ impl Gesture {
                     }
                     PathHandle::Start | PathHandle::End => {
                         let node = start.node.ok_or("the end's node is not known")?;
-                        let rect = projector
-                            .node_rect(node)
-                            .ok_or("the end's node is not drawn")?;
+                        let rect = projector.node_rect(node).ok_or("the end's node is not drawn")?;
                         let side = nearest_side(rect, start.at + total);
                         let (from, to) = start.anchors;
                         if *handle == PathHandle::Start {
@@ -282,7 +280,9 @@ impl Gesture {
                     }
                     // A midpoint grabbed becomes control point 0 at the
                     // press (`grab`), so a stage never sees one.
-                    PathHandle::Midpoint => return Err("a midpoint is grabbed as control point 0".to_string()),
+                    PathHandle::Midpoint => {
+                        return Err("a midpoint is grabbed as control point 0".to_string())
+                    }
                 };
                 set(*kind, vec![DocMutation::Path(op)], *path)
             }
@@ -340,7 +340,10 @@ pub(in crate::application::app) fn nearest_side(rect: Rect, point: Vec2) -> Anch
         (Anchor::Left, Vec2::new(min.x, c.y)),
     ]
     .into_iter()
-    .min_by(|a, b| a.1.distance_squared(point).total_cmp(&b.1.distance_squared(point)))
+    .min_by(|a, b| {
+        a.1.distance_squared(point)
+            .total_cmp(&b.1.distance_squared(point))
+    })
     .map_or(Anchor::Auto, |(side, _)| side)
 }
 
@@ -391,7 +394,11 @@ impl Live {
         total: Vec2,
         cursor: Vec2,
     ) -> Option<Live> {
-        if !doc.begin(ChangeSource::Input, TransactionKind::Interactive, Interaction::Drag) {
+        if !doc.begin(
+            ChangeSource::Input,
+            TransactionKind::Interactive,
+            Interaction::Drag,
+        ) {
             return None;
         }
         Some(Live {
@@ -486,7 +493,11 @@ impl Live {
     /// transaction as one history entry. A drag that went nowhere —
     /// a travel of nothing, for a drag by travel — is cancelled instead
     /// and makes no entry. Returns the entry's revision, or `None`.
-    pub(in crate::application::app) fn release(mut self, doc: &mut MindMapDocument, projector: &Projector) -> Option<Revision> {
+    pub(in crate::application::app) fn release(
+        mut self,
+        doc: &mut MindMapDocument,
+        projector: &Projector,
+    ) -> Option<Revision> {
         if doc.open_interaction() != Some(Interaction::Drag) {
             return None;
         }

@@ -288,7 +288,11 @@ impl InputHandlerContext<'_> {
     /// press grabs the handle, the moves begin and drive the resize's
     /// transaction (`app::live`), and the lift commits it, one history
     /// entry. Returns whether to request a redraw.
-    fn drive_handle_finger(&mut self, step: super::touch_handle::HandleStep, location: PhysicalPosition<f64>) -> bool {
+    fn drive_handle_finger(
+        &mut self,
+        step: super::touch_handle::HandleStep,
+        location: PhysicalPosition<f64>,
+    ) -> bool {
         use super::touch_handle::HandleStep;
         use crate::application::platform::input::{ElementState, MouseButton};
         let moved = self.on_cursor_moved(location);

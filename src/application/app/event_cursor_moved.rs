@@ -22,16 +22,16 @@ use super::dispatch::families::edits::Projected;
 use super::dispatch::families::structure::valid_reparent_target;
 use super::dispatch::families::verbs;
 use super::input_context::InputHandlerContext;
-use super::shell::Shell;
 use super::live::{self, grab::Grab};
+use super::shell::Shell;
 use super::{ClickHit, DragState, HeldInput, InteractionMode};
+use crate::application::common::RenderDecree;
 use crate::application::document::selection::kind_of;
+use crate::application::keybinds::MouseGesture;
+use crate::application::platform::input::MouseButton;
 use baumhard::arena::NodeId;
 use baumhard::document::element::DocKind;
 use glam::Vec2;
-use crate::application::common::RenderDecree;
-use crate::application::keybinds::MouseGesture;
-use crate::application::platform::input::MouseButton;
 
 /// `WindowEvent::CursorMoved`: place the cursor, update its icon and the
 /// hover, and advance the drag state. Returns whether the hover changed —
@@ -205,7 +205,10 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev: (f64, f64), curso
             // The travel in canvas units, move by move, as on `main`: a
             // zoom mid-drag changes what a pixel is worth from then on.
             let from = ctx.renderer.screen_to_canvas(prev.0 as f32, prev.1 as f32);
-            live.moved(from, ctx.renderer.screen_to_canvas(cursor.0 as f32, cursor.1 as f32));
+            live.moved(
+                from,
+                ctx.renderer.screen_to_canvas(cursor.0 as f32, cursor.1 as f32),
+            );
         }
         DragState::Pending {
             start_pos, hit, grab, ..
@@ -270,7 +273,13 @@ fn promote_left_drag(
             _ => None,
         };
         match gesture {
-            Some(gesture) => start_drag(ctx, gesture, MouseButton::Left, cursor_canvas - start_canvas, cursor_canvas),
+            Some(gesture) => start_drag(
+                ctx,
+                gesture,
+                MouseButton::Left,
+                cursor_canvas - start_canvas,
+                cursor_canvas,
+            ),
             None => log::debug!("drag: the press's {} is gone; nothing is dragged", grab.word()),
         }
         return;

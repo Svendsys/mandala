@@ -66,6 +66,6 @@ pub use glyph_tables::hue_ring_font_scale;
 pub use hit::hit_test_picker;
 #[cfg(not(target_arch = "wasm32"))]
 pub use state::{
-    request_error_flash, ColorPickerState, FlashKind, OpenPicker, PickerDynamicApplyKey, PickerGesture, PickerMode,
-    PickerTarget,
+    request_error_flash, ColorPickerState, FlashKind, OpenPicker, PickerDynamicApplyKey, PickerGesture,
+    PickerMode, PickerTarget,
 };
