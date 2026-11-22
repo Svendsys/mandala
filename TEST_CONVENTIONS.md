@@ -1091,6 +1091,17 @@ in place of its frame one input in four that draws no ring (`raw_line`),
 and flow_structured lays one along its curve, its fit mode's or, one
 time in two, its whole-glyph pattern — each at the most glyphs whose work
 fits an input (`open_cap`, `pitched_cap`), its whole text and path laid.
+A placement along an open path counts its reshapes in its work since
+#387 — a `Fit`'s, one a round, and a `Once` filler's shaping with the
+text, `.notdef` passes and all — reading its budget before each further
+round, so at most one runs past it: the harnesses predict that one
+(`place::path_reshape_steps`), hold the placement to it
+(`Trace::reshaped`) and count it in the cap, and where no cap holds its
+whole text they cut the text until one does, or lay a `Once` with no
+filler where its filler's shaping leaves no cap even for no text, and
+count it (`open_in_time`). The projection harness holds each
+connector's and line link's body to its own bound the same way
+(`place::open_work_steps`, `MOST_OPEN_LAY`).
 flow_structured draws, one time in four, its outline or its curve far
 from the origin, from 10⁶ to 10²² (`far_out`): a far frame with sides, its
 side ornament's lays counting their path reads (#313), and a far

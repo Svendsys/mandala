@@ -566,6 +566,7 @@ fn test_every_ring_the_bound_admits_lies_within_the_extent() {
         }
         admitted += 1;
         crate::flow::MOST_RING_LAY.with(|most| most.set(0));
+        crate::flow::MOST_OPEN_LAY.with(|most| most.set(0));
         let p = Projected::new(doc);
         if let Err(why) = rings_within_the_extent(&p, &mut reached) {
             past.push(format!("{what}: {why}"));
@@ -959,6 +960,7 @@ fn test_every_repeat_ring_the_bound_admits_fits_the_share() {
         LAST_RING.with(|last| last.set(None));
         LAST_DIRECTIONAL.with(|last| last.set(None));
         crate::flow::MOST_RING_LAY.with(|most| most.set(0));
+        crate::flow::MOST_OPEN_LAY.with(|most| most.set(0));
         let projected = Projected::new(doc);
         rings_within_the_extent(&projected, &mut reached).unwrap_or_else(|why| panic!("{what}: {why}"));
         // What every check of a fuzz run holds the ring to.
@@ -1152,6 +1154,7 @@ fn test_every_text_frame_the_bound_admits_fits_the_share() {
         let bound = frame_steps(doc.tree(), frame, ring).unwrap_or_else(|| panic!("{what}: laid by halves"));
         LAST_FRAME.with(|last| last.set(None));
         crate::flow::MOST_RING_LAY.with(|most| most.set(0));
+        crate::flow::MOST_OPEN_LAY.with(|most| most.set(0));
         let projected = Projected::new(doc);
         // What every check of a fuzz run holds the frame to.
         let most = crate::flow::MOST_RING_LAY.with(std::cell::Cell::get);
@@ -1595,4 +1598,106 @@ fn test_both_seeds_of_the_untangling_timeout_are_projected_in_full() {
             "{seed}: projected, not cut"
         );
     }
+}
+
+/// **A connector's body that reshapes is held to its bound, its reshape
+/// counted** (#387). Before #387 no property of the projection read a
+/// connector's or a line link's body at all: `MOST_RING_LAY` is a closed
+/// path's, and a body is laid along an open one. Now every body's lay is
+/// recorded (`flow::MOST_OPEN_LAY`) and held to the most any body of its
+/// map may take ([`line_body_steps`](crate::projection::tests::projection_fuzz::line_body_steps):
+/// `flow::open_work_steps` of each, its one reshape included).
+///
+/// A connector in `fit` of "Ἐν ἀρχῇ\tἦν ὁ λόγος", 30 points across, whose tab
+/// makes each round of its fit shape again, laid at every budget from what
+/// it spends before its first round to what it spends whole (the budget
+/// seam, which its bound reads too, `halves::frame_budget`): its lay is
+/// always within its bound with its one reshape, and the map's work
+/// property holds; at some budgets a round's reshape crosses the budget,
+/// and the lay is past its bound read with no reshape.
+///
+/// Controls, each run and seen red: `open_work_steps` with no reshape,
+/// the body's lay past its bound; `place` recording no open lay
+/// (`MOST_OPEN_LAY`), nothing laid to hold; `fit_to` charging no
+/// reshape, no budget crossed by one.
+#[test]
+fn test_a_connector_body_that_reshapes_is_held_to_its_bound() {
+    use crate::document::values::FitMode;
+    use crate::flow::tests::halves_tests::with_seam;
+    use crate::flow::BUDGET_OVERRIDE;
+    use crate::projection::state::UnitBody;
+    use crate::projection::tests::projection_fuzz::line_body_steps;
+    let doc = load_map(json!({"nodes": [
+        node(1, None, json!({"min_size": [40.0, 40.0]})),
+        node(2, Some(1), json!({"position": [0.0, 90.0], "min_size": [40.0, 40.0], "connector": {
+            "fit": "fit", "size": 16.0, "spans": [{"text": "Ἐν ἀρχῇ\tἦν ὁ λόγος"}]
+        }})),
+    ]}));
+    // The body's lay at `budget`: the projection, the most a body's lay
+    // took, and under the same seam, its bound and the map's property.
+    let laid_at = |budget: usize| {
+        with_seam(&BUDGET_OVERRIDE, budget, || {
+            crate::flow::MOST_RING_LAY.with(|most| most.set(0));
+            crate::flow::MOST_OPEN_LAY.with(|most| most.set(0));
+            let p = Projected::new(doc.clone());
+            let laid = crate::flow::MOST_OPEN_LAY.with(std::cell::Cell::get);
+            let bound = line_body_steps(&p);
+            let held = rings_within_their_work(&p, crate::flow::MOST_RING_LAY.with(std::cell::Cell::get));
+            (p, laid, bound, held)
+        })
+    };
+    let (_, first, _, _) = laid_at(1);
+    let (p, whole, _, _) = laid_at(usize::MAX / 4);
+    assert!(
+        first > 0 && whole > first,
+        "precondition: its body is laid along its path"
+    );
+    let reshape = p
+        .projector
+        .units
+        .values()
+        .find_map(|unit| match &unit.body {
+            UnitBody::Line(line) => {
+                let (resolved, style) = line.resolved.as_ref()?;
+                let body = line.flows[0].flow.as_ref()?;
+                assert!(
+                    matches!(resolved.fit, FitMode::Fit { .. }),
+                    "precondition: its body is in `fit`"
+                );
+                let mut lease = crate::font::fonts::FontSystemLease::new("the test's prediction");
+                Some(crate::flow::path_reshape_steps(
+                    &body.shaped,
+                    &resolved.fit,
+                    style,
+                    lease.fonts(),
+                ))
+            }
+            _ => None,
+        })
+        .expect("precondition: the map holds its connector");
+    assert!(reshape > 0, "precondition: a reshape is predicted");
+    // At every budget from what it spends before its first round to what
+    // it spends whole: within its bound, and the map's property holds.
+    let mut crossed = 0;
+    for step in 0..=40 {
+        let budget = first + (whole - first) * step / 40;
+        let (_, laid, bound, held) = laid_at(budget);
+        let bound = bound.expect("precondition: its body is laid along its path");
+        assert!(
+            laid <= bound,
+            "budget {budget}: the body's lay within its bound, {laid} against {bound}"
+        );
+        assert!(held.is_ok(), "budget {budget}: the map's work property: {held:?}");
+        if laid > bound - reshape {
+            crossed += 1;
+            eprintln!(
+                "budget {budget}: the body took {laid}, its bound {bound}, {} with no reshape",
+                bound - reshape
+            );
+        }
+    }
+    assert!(
+        crossed > 0,
+        "precondition: at some budget the body's reshape runs past it, past its bound with no reshape"
+    );
 }

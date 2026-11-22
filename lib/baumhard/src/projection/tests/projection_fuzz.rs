@@ -311,6 +311,8 @@ fn left_the_bound(p: &Projected) -> bool {
         // counted afresh ([`laid_within`]).
         #[cfg(any(test, fuzzing))]
         crate::flow::MOST_RING_LAY.with(|most| most.set(0));
+        #[cfg(any(test, fuzzing))]
+        crate::flow::MOST_OPEN_LAY.with(|most| most.set(0));
         #[cfg(test)]
         LAID_AFTER.with(|laid| laid.set(Some(0)));
         return false;
@@ -1684,10 +1686,29 @@ pub(crate) fn under_ceiling<R>(check: impl FnOnce() -> R) -> (R, bool) {
 /// projection, and after every update and full projection its edit makes
 /// of a map still inside the bound (`laid_within`). `Ok(most)`, the steps
 /// it held. A placement the test build shares from an earlier projection
-/// (`stages::memo`) is not laid again, and counts nothing. O(its rings and
-/// their texts).
+/// (`stages::memo`) is not laid again, and counts nothing.
+///
+/// And every connector's and line link's body laid along its open path,
+/// as the projection laid them since `flow::MOST_OPEN_LAY` was last
+/// cleared, which it is wherever `MOST_RING_LAY` is: no body's lay took
+/// more steps than the most any body of the map may take
+/// ([`line_body_steps`], #387) — its budget and what may run past it, its
+/// one reshape included. Before #387 no property of the projection read a
+/// body's lay at all. That is each lay held to its own bound, not the
+/// map's bodies together held to the timeout, which #316 owns.
+///
+/// O(its rings and their texts, and its lines' bodies, each predicted).
 #[cfg(any(test, fuzzing))]
 pub(crate) fn rings_within_their_work(p: &Projected, most: usize) -> Result<usize, String> {
+    let open = crate::flow::MOST_OPEN_LAY.with(Cell::get);
+    if open > 0 {
+        let allowed = line_body_steps(p).unwrap_or(0);
+        if open > allowed {
+            return Err(format!(
+                "a body's lay along an open path took {open} glyph steps, past the {allowed} the bound allows its map's bodies (#387)"
+            ));
+        }
+    }
     use crate::projection::state::UnitBody;
     let tree = p.doc.tree();
     let mut allowed = RING_SETUP_STEPS.max(FRAME_SETUP_STEPS);
@@ -1716,6 +1737,47 @@ pub(crate) fn rings_within_their_work(p: &Projected, most: usize) -> Result<usiz
     #[cfg(test)]
     LAID_AFTER.with(|laid| laid.set(laid.get().map(|_| most)));
     Ok(most)
+}
+
+/// The most glyph steps any connector's or line link's body in `p` laid
+/// along its open path may take (#387): `flow::open_work_steps` of each,
+/// read as the projector holds it — its input as shaped, its resolved fit,
+/// spacing and style, and its curves as its stage built and placed them,
+/// whose tables it builds again as the placement does — the largest of
+/// them. A body laid as whole glyphs (`stages::laid_pitched`, the stage's
+/// own test) is not laid along its path, and counts nothing; nor does one
+/// not yet placed, which has no curves. One that is not drawn is counted
+/// all the same: its place stage lays it (`stages::line_place` reads no
+/// `drawn`). `None` where none is laid along its path.
+/// O(its lines' bodies), each a prediction of its reshape: a shaping for
+/// a `Once` with a filler.
+#[cfg(any(test, fuzzing))]
+pub(crate) fn line_body_steps(p: &Projected) -> Option<usize> {
+    use crate::projection::state::UnitBody;
+    crate::font::fonts::init();
+    let mut lease = FontSystemLease::new("the projection's work bound");
+    let mut most: Option<usize> = None;
+    for unit in p.projector.units.values() {
+        let UnitBody::Line(line) = &unit.body else {
+            continue;
+        };
+        let (Some((resolved, style)), Some(body)) = (&line.resolved, line.flows[0].flow.as_ref()) else {
+            continue;
+        };
+        if line.path.is_empty() || crate::projection::stages::laid_pitched(&body.shaped, resolved) {
+            continue;
+        }
+        let steps = crate::flow::open_work_steps(
+            &body.shaped,
+            &line.path,
+            &resolved.fit,
+            resolved.spacing,
+            style,
+            lease.fonts(),
+        );
+        most = Some(most.map_or(steps, |most| most.max(steps)));
+    }
+    most
 }
 
 /// The most glyph steps one lay of `ring`, a ring of `frame`, may take
@@ -1747,6 +1809,8 @@ fn check_within_ceiling(doc: &Document) -> Result<(), String> {
     // compares by value. A fuzz build shapes every flow.
     #[cfg(any(test, fuzzing))]
     crate::flow::MOST_RING_LAY.with(|most| most.set(0));
+    #[cfg(any(test, fuzzing))]
+    crate::flow::MOST_OPEN_LAY.with(|most| most.set(0));
     #[cfg(test)]
     let mut p = Projected::new_shared(doc.clone());
     #[cfg(not(test))]

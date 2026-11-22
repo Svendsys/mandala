@@ -4390,7 +4390,7 @@ fn test_an_open_placement_is_an_input_s_one_budgeted_placement() {
     let tables = [0, open_tables(&cubic)];
     for copy in [1, 256, 4_096] {
         for tables in tables {
-            let cap = open_cap(copy, tables, true).expect("a cap holds a placement along an open path");
+            let cap = open_cap(copy, tables, true, 0).expect("a cap holds a placement along an open path");
             let (at, more) = (
                 ring_work_steps(cap, copy, tables, 0),
                 ring_work_steps(cap + 1, copy, tables, 0),
@@ -4471,7 +4471,7 @@ fn test_the_flow_properties_find_an_open_placement_past_its_work() {
         ..Trace::default()
     };
     let open = |placed: &PlacedRun, trace: &Trace| {
-        InputWork::default().open(&run, cap, tables, placed, trace, "a placement")
+        InputWork::default().open(&run, cap, tables, 0, placed, trace, "a placement")
     };
     assert!(
         open(&whole, &base).is_ok(),
