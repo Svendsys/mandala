@@ -467,13 +467,15 @@ impl<'a, 'f> Walk<'a, 'f> {
 
     /// A ring layout op: its sides' color's variable, if it writes one
     /// (`{"set_sides": {"content": …, "color": "var(x)"}}`, which a
-    /// refusal calls `sides`). It shows nothing; listed as [`Self::text`]
-    /// is.
+    /// refusal calls `set_sides`). It shows nothing; listed as
+    /// [`Self::text`] is.
     fn layout(&mut self, op: &'a LayoutOpDto) {
         match op {
             LayoutOpDto::SetSides(Some(SidesDto::Object(SidesObjectDto { content: _, color }))) => {
                 if let Some(color) = color {
-                    self.at(&[Seg::Key("set_sides")], |w| w.color_in(color, "sides", "color"));
+                    self.at(&[Seg::Key("set_sides")], |w| {
+                        w.color_in(color, "set_sides", "color")
+                    });
                 }
             }
             LayoutOpDto::SetSides(Some(SidesDto::Off | SidesDto::Text(_)) | None)

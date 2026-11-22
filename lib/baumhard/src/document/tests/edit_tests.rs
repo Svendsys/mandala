@@ -2199,14 +2199,14 @@ fn test_the_names_an_edit_mentions_are_the_ones_a_run_refuses() {
         (
             "ring sides color",
             Named::Variable,
-            "sides",
+            "set_sides",
             "mutations[0].ring.layout.set_sides.color".into(),
             format!(r#""target":"rings","mutations":[{{"ring":{sides}}}]"#),
         ),
         (
             "frame sides color",
             Named::Variable,
-            "sides",
+            "set_sides",
             "mutations[0].frame.layout.set_sides.color".into(),
             format!(r#""target":"frame","mutations":[{{"frame":{sides}}}]"#),
         ),
@@ -2216,6 +2216,18 @@ fn test_the_names_an_edit_mentions_are_the_ones_a_run_refuses() {
             "set_click",
             format!("{macro_path}.node.set_click"),
             below("node", "node", r#"{"node":{"set_click":"go"}}"#),
+        ),
+        (
+            "a verb below a macro's and an instruction's children",
+            Named::Verb,
+            "set_click",
+            "mutator.macro.children[1].instruction.children[1].macro.mutations[0].node.set_click".into(),
+            r#""target":"node","mutator":{"macro":{"kind":"node","channel":0,"mutations":[],"children":[
+                {"void":{"kind":"node","channel":0,"children":[]}},
+                {"instruction":{"kind":"node","channel":0,"instruction":"repeat_while_always_true","children":[
+                  {"void":{"kind":"node","channel":0,"children":[]}},
+                  {"macro":{"kind":"node","channel":0,"mutations":[{"node":{"set_click":"go"}}]}}]}}]}}"#
+                .to_string(),
         ),
         (
             "a repeat_while test's palette",

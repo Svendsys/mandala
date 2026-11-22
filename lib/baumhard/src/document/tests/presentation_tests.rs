@@ -2025,13 +2025,13 @@ fn test_a_refused_starts_text_from_the_file_is_escaped() {
 /// reports, and `Mention::is_defined_in` answers as a start does: for
 /// each place a presentation can write a verb, a theme variable or a
 /// palette, the one name it writes is reported with the key the file
-/// writes it at as its field and its JSON path, a map that defines it starts the presentation, and a map that
-/// does not refuses the start with exactly the refusal
-/// `Mention::presentation_refusal` words.
+/// writes it at as its field and its JSON path, a map that defines it
+/// starts the presentation, and a map that does not refuses the start
+/// with exactly the refusal `Mention::presentation_refusal` words.
 ///
 /// Controls, each run red: `is_defined_in` answering `true` for a palette
 /// fails the palette cases on the bare map; answering `false` fails them
-/// on the full one; dropping `Walk::color_in`s `Var` arm fails the variable
+/// on the full one; dropping `Walk::color_in`'s `Var` arm fails the variable
 /// case, and the filter `on_click` arm its case.
 #[test]
 fn test_the_names_a_presentation_mentions_are_the_ones_a_start_refuses() {

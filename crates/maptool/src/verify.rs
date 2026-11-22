@@ -101,8 +101,9 @@
 //!   (`mutations[1].node.text.set_color`,
 //!   `filter.fields[0][0].background`), so that a name written in
 //!   several places is several warnings that can be told apart, and the
-//!   field it names is the key the file writes there. Fonts are not names a map defines; the loader's font rules decide
-//!   them (`format/fonts.md`).
+//!   field it names is the key the file writes there. Fonts are not
+//!   names a map defines; the loader's font rules decide them
+//!   (`format/fonts.md`).
 //!
 //! The edits and presentations read are the map's own, its `edits` and
 //! its `presentations`. The App and User tiers (`assets/edits.json`,

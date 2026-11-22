@@ -587,7 +587,7 @@ fn sides(dto: &SidesDto, names: Names<'_>) -> Resolved<Sides> {
         },
         SidesDto::Object(object) => Sides::On {
             content: content(&object.content)?,
-            color: opt(&object.color, |c| color("sides", c, names))?,
+            color: opt(&object.color, |c| color("set_sides", c, names))?,
         },
     })
 }

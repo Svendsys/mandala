@@ -3306,9 +3306,10 @@ loads but is probably a mistake (a verb nothing refers to, a
 presentation no verb's step names, a node saved hidden that nothing can
 reveal, a visible frame with no rings, a portal whose ends both draw
 nothing, a verb, theme variable or palette a map's own edit or
-presentation names that the map does not define). What it counts includes the map's edits
-(`EditDef::mentions`, one walk that names every edit step, so a step
-added to the format does not compile there until it is counted): a verb
+presentation names that the map does not define). What it counts
+includes the map's edits (`EditDef::mentions`, one walk that names every
+edit step, so a step added to the format does not compile there until it
+is counted): a verb
 an edit names — `set_click`, `set_hover`, a span's `set_link` to a
 verb, a filter's `on_click` or `on_hover`, anywhere in it (its filter
 or its body), at any depth — is referred to, whether or not anything
