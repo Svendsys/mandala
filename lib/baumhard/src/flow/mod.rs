@@ -103,6 +103,11 @@ pub use place::{
 /// being one line: what the projection harness's bound reads a ring's
 /// line breaks as (#387).
 pub(crate) use shape::is_paragraph_separator;
+/// The `.notdef` passes every reshape that shaped paid, a test counter:
+/// what a frame's lay pays, which the projection harness's exclusion is
+/// held to (#387).
+#[cfg(test)]
+pub(crate) use shape::RESHAPE_NOTDEF_STEPS;
 pub use shape::{shape_box, shape_run, GlyphMetrics, Ink, ShapedBox, ShapedRun, FILLER_SPAN};
 pub use span::{point_size, span_attrs, FlowSpan, LINE_HEIGHT_FACTOR};
 

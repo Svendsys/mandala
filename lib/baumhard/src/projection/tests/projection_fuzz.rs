@@ -108,8 +108,9 @@
 //! font system maps all of (`may_lay_notdef`).
 //!
 //! - **A frame laid by halves that may pay them is excluded, not counted**
-//!   (`frame_may_shape_notdef`): one with a side ornament, or `Fit` with a
-//!   tab in its text, a line of which may lay a `.notdef`. Its lay may
+//!   (`frame_may_shape_notdef`): one with a side ornament or a `once`
+//!   filler, or `Fit` with a tab in its text, a line of which may lay a
+//!   `.notdef`. Its lay may
 //!   shape such a line dozens of times, each a pass a glyph, and no cap of
 //!   the engine's holds that below a lay's share here, so there is no count
 //!   to grade it by. What that costs: such frames are never projected by a
@@ -118,8 +119,9 @@
 //!   draws beside an ornament, or `Fit` with a tab, though it lays none.
 //! - **A directional ring's one shaping is counted, exactly**
 //!   (`directional_notdef_steps`): where a line of it may lay a `.notdef`,
-//!   the bound shapes its texts as the lay does and adds what that reshape
-//!   charges (`flow::reshape_steps`), on any host and any face.
+//!   the bound shapes its texts, at the least size, which the charge does
+//!   not depend on, and adds what that reshape charges
+//!   (`flow::reshape_steps`), on any host and any face.
 //! - A `Repeat` ring of spans alone shapes nothing as it lays, and pays no
 //!   pass.
 //!
@@ -919,11 +921,16 @@ pub(crate) fn frame_steps(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId) 
 /// carries a filler: so a lay shapes again where it has a side ornament
 /// (each build shapes the `x` and the ornament its copy is sized by, and
 /// the text with the ornament appended, `halves::side_run`; a `once`
-/// filler is the frame's sides where they are unset), or where it is
-/// `Fit` and its text holds a tab (R27's reshapes and the shrink's). Its
-/// lines: the text, the ornament, the `x`, and a `once` filler, which R27
-/// appends where the frame's halves cannot be measured
-/// (`lines::place_lines_in`) — each read apart ([`may_lay_notdef`]).
+/// filler is the frame's sides where they are unset), where it has a
+/// `once` filler — sides or none, `sides: false` included: R27 appends it
+/// to the text where the frame's halves cannot be measured
+/// (`lines::place_lines_in`), whether or not that branch is reachable
+/// from a map — or where it is `Fit` and its text holds a tab (R27's
+/// reshapes and the shrink's). Its lines: the text, the ornament, the `x`
+/// and the filler, each read apart ([`may_lay_notdef`]). On an outline
+/// whose halves can be measured a filler is shaped only as the sides it
+/// is where they are unset, so a frame excluded for a filler's line alone
+/// pays no pass there: an exclusion for the other branch.
 ///
 /// Why not counted. One lay may make dozens of such shapings — R27's 1 +
 /// `FIT_ROUNDS`, twice on the branch whose halves cannot be measured, the
@@ -949,8 +956,9 @@ pub(crate) fn frame_may_shape_notdef(tree: &Tree<DocElement>, ring: NodeId) -> b
         })
         .collect();
     let sides = resolved.sides.as_ref().map(|sides| sides.content.as_str());
-    let shapes_again =
-        sides.is_some() || (matches!(resolved.fit, FitMode::Fit { .. }) && text.contains('\t'));
+    let shapes_again = sides.is_some()
+        || filler.is_some()
+        || (matches!(resolved.fit, FitMode::Fit { .. }) && text.contains('\t'));
     let metrics = face_metrics();
     shapes_again
         && [Some(text.as_str()), sides, sides.map(|_| "x"), filler]
@@ -991,11 +999,19 @@ fn least_style(style: ResolvedText, least_rect: Rect) -> ResolvedText {
 
 /// The glyph steps one lay of `ring`, a `Repeat` ring of `frame` that
 /// lays text by direction, charges its one reshape, where a line it
-/// shapes may lay a `.notdef` (#387): its spans' text, shaped as the
-/// projection shapes it, with its `vertical` text and its corners
-/// appended on a line of their own, weighed as the lay weighs it
-/// (`flow::reshape_steps`) — exactly, `.notdef` passes and all, on any
-/// host and any face, a decomposing one included. Nothing where neither
+/// shapes may lay a `.notdef` (#387): its spans' text, each span in its
+/// own style, with its `vertical` text and its corners appended on a line
+/// of their own, weighed as the lay weighs it (`flow::reshape_steps`) —
+/// exactly, `.notdef` passes and all, on any host and any face, a
+/// decomposing one included. It is shaped at the least size its ring can
+/// be (`min_size`, D5), where the projection shapes it at the size the
+/// node is drawn at, and the charge does not depend on the size: the
+/// buffers are laid out with no wrap and no width, so its layout lines are
+/// its buffer lines at any size; harfrust shapes in font units; the
+/// weights read only which glyphs were shaped, the faces they are in and
+/// the lines they are on (`halves::shaping_steps`, `halves::notdef_steps`);
+/// and neither a tab's measure nor the least font size changes a glyph.
+/// Nothing where neither
 /// line may lay a `.notdef` ([`may_lay_notdef`], the cheap gate: the
 /// shaping of a line one face draws is what `RING_STEPS_A_GLYPH` was
 /// measured with), and for any other ring — a `Repeat` ring of spans

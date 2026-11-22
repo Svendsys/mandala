@@ -567,6 +567,13 @@ fn new_buffer(
 
 #[cfg(test)]
 thread_local! {
+    /// Test counter (#387): the `.notdef` passes' glyph steps
+    /// (`halves::notdef_steps`) of every [`reshape`] on this thread that
+    /// shaped — what a frame laid by halves pays for them, a frame's
+    /// charged shapings being its reshapes and the shapings of its side
+    /// ornament's `x` and ornament alone, the ornament shaped again on a
+    /// line of its own in the same build's reshape.
+    pub(crate) static RESHAPE_NOTDEF_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test hook (R24.2): while it names a face on a thread, the
     /// last-resort check ([`non_finite_lines`]) counts every tab glyph
     /// laid out in that face as a width that is not finite — what a
@@ -1159,6 +1166,11 @@ pub(crate) fn reshape(
     #[cfg(test)]
     crate::flow::place::halves::SHAPED_STEPS
         .with(|count| count.set(count.get() + crate::flow::place::halves::resizing_steps(&run, shaped)));
+    #[cfg(test)]
+    if shaped {
+        RESHAPE_NOTDEF_STEPS
+            .with(|count| count.set(count.get() + crate::flow::place::halves::notdef_steps(&run)));
+    }
     (run, shaped)
 }
 

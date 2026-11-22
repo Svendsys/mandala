@@ -154,6 +154,9 @@ enum Held {
     Outside,
     /// A directional ring the bound admits with its pass counted.
     Inside,
+    /// A directional ring of text one face draws: no pass counted, though
+    /// its reshape is charged, the shaping the rates were measured with.
+    Drawn,
 }
 
 /// A map of one node at the origin, `min_size` across, framed by `ring`.
@@ -170,8 +173,10 @@ fn framed(min_size: f32, ring: serde_json::Value) -> String {
 /// whose characters some face maps and no one face maps together (an
 /// Egyptian hieroglyph, which only its face maps, and U+0301, which that
 /// face does not), all excluded; and `Repeat` rings that lay text by
-/// direction, whose one shaping holds such text, round a node 10 across:
-/// four the bound admits with their pass counted — one in Galatia SIL,
+/// direction, round a node 10 across: one of text one face draws, which
+/// the bound counts no pass for though its reshape is charged — the gate
+/// in front of the count ([`may_lay_notdef`]) — and, whose one shaping
+/// holds such text, four the bound admits with their pass counted — one in Galatia SIL,
 /// whose U+1EB0 it decomposes to three glyphs, and one round a node its
 /// section draws wider than its `min_size`, whose text the lay shapes at
 /// a larger size than the bound does — and two it holds outside by their
@@ -226,6 +231,11 @@ fn blind_spot_maps() -> Vec<(&'static str, String, Held)> {
             "a tab beside a cluster no one face draws",
             frame(json!({"fit": "fit", "spans": [{"text": "\t\u{13000}\u{301}abcdefgh"}]})),
             Held::Excluded,
+        ),
+        (
+            "a directional ring of text one face draws",
+            directional(None, "-=-", "|", Some(["+", "+", "+", "+"])),
+            Held::Drawn,
         ),
         (
             "a directional ring of a keycap's cluster and a letter",
@@ -356,7 +366,8 @@ fn report_ring(what: &str, map: &str) {
 /// review of #388, two `.notdef` passes a character of the lines, not the
 /// reshape's charge, red on every directional ring, and on Galatia SIL's
 /// twenty U+1EB0 — 63 glyphs of 23 characters — 101,200 where the
-/// reshape charged 137,829.
+/// reshape charged 137,829; the gate in front of the count dropped, the
+/// ring of text one face draws counted its whole charge, 562.
 #[test]
 fn test_every_lay_that_may_pay_a_notdef_pass_is_excluded_or_counted() {
     let name = this_test!();
@@ -429,6 +440,14 @@ fn test_every_lay_that_may_pay_a_notdef_pass_is_excluded_or_counted() {
                 );
                 want(count == 0, "a frame counted no pass");
             }
+            Held::Drawn => {
+                want(!excluded && inside, "a directional ring one face draws, admitted");
+                want(count == 0, "no pass counted where no line may lay one");
+                want(
+                    charged.parse::<usize>().is_ok_and(|charged| charged > 0),
+                    "precondition, its reshape charged",
+                );
+            }
             Held::Outside | Held::Inside => {
                 want(!excluded, "a directional ring is no frame to exclude");
                 want(count > 0, "a pass counted");
@@ -484,83 +503,124 @@ fn test_every_lay_that_may_pay_a_notdef_pass_is_excluded_or_counted() {
     }
 }
 
+/// What a frame of [`test_a_frame_that_may_shape_a_notdef_again_is_excluded`]
+/// is to the bound, and what its lay pays the shaper's `.notdef` passes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Frame {
+    /// Excluded, and its lay pays a pass.
+    Pays,
+    /// Excluded for a `once` filler's line alone, which only the branch
+    /// whose halves cannot be measured shapes: its lay round a measurable
+    /// outline pays none.
+    Branch,
+    /// Admitted, and its lay pays no pass.
+    Clean,
+}
+
 /// **A frame that may shape a `.notdef` again is excluded** (#387): the
 /// predicate the bound excludes a frame laid by halves by
-/// ([`frame_may_shape_notdef`]), held to each of its terms both ways, on
-/// the compiled faces alone. A lay shapes a line again where the frame
-/// has a side ornament — set, or a `once` filler's — or is `Fit` with a
-/// tab in its text, and the predicate is true exactly there, where a line
-/// it shapes (the text, the ornament, the `x`, the filler) may lay a
+/// ([`frame_may_shape_notdef`]), held to each of its terms both ways and to
+/// what the engine's lay pays, on the compiled faces alone. A lay shapes a
+/// line again where the frame has a side ornament — set, or a `once`
+/// filler's — or a `once` filler, `sides: false` included, or is `Fit` with
+/// a tab in its text, and the predicate is true exactly there, where a
+/// line it shapes (the text, the ornament, the `x`, the filler) may lay a
 /// `.notdef`. Each frame it is true of is outside the bound, and each it
-/// is false of inside.
+/// is false of inside. Laid, each frame it is false of pays exactly no
+/// pass, the passes every reshape of its lay that shaped paid
+/// (`flow::RESHAPE_NOTDEF_STEPS`: a frame's charged shapings are its
+/// reshapes and its ornament's `x` and ornament alone, the ornament shaped
+/// again on a line of its own in the same build's reshape); each it is
+/// true of for its text or its ornament pays one; and each it is true of
+/// for a filler's line alone pays none round this outline, whose halves
+/// can be measured — an exclusion for the branch that appends the filler.
 ///
 /// Controls, each run and seen red: with a side ornament not read as
-/// shaping again, the two ornaments' rings and the two fillers' no face
-/// draws; with a `Fit` frame shaping again whatever its text, the untabbed
-/// `fit` ring; with any tabbed frame shaping again, `spread`'s; with the
-/// filler's line not read, the filler no face draws beside a set ornament;
-/// with "may lay a `.notdef`" read as "holds a character no face maps",
-/// the cluster no one face draws; with no frame excluded from the bound,
-/// each frame the predicate is true of inside it.
+/// shaping again, the two ornaments' rings (the filler that is the sides
+/// is held by the filler's term too); with a `Fit` frame shaping again whatever its text, the untabbed
+/// `fit` ring; with any tabbed frame shaping again, `spread`'s; with a
+/// `once` filler not read as shaping again, the fillers under `sides:
+/// false`; with the filler's line not read, the two fillers no face draws
+/// beside sides set or off; with "may lay a `.notdef`" read as "holds a
+/// character no face maps", the cluster no one face draws; with no frame
+/// excluded from the bound, each frame the predicate is true of inside it;
+/// and with the predicate and its expectation wrong together — no side
+/// ornament read as shaping again, and the ornaments' rows written as
+/// admitted — the engine's side, the ornaments' lays paying a pass.
 #[test]
 fn test_a_frame_that_may_shape_a_notdef_again_is_excluded() {
     let name = this_test!();
     let frame = |ring: serde_json::Value| framed(0.0, ring);
-    let cases: Vec<(&str, String, bool)> = vec![
+    let cases: Vec<(&str, String, Frame)> = vec![
         (
             "an ornament beside text no face draws",
             frame(json!({"sides": "*", "spans": [{"text": "a\u{1}\u{20e3}b"}]})),
-            true,
+            Frame::Pays,
         ),
         (
             "an ornament no face draws",
             frame(json!({"sides": "\u{1}", "spans": [{"text": "abc"}]})),
-            true,
+            Frame::Pays,
         ),
         (
             "an ornament beside text one face draws",
             frame(json!({"sides": "*", "spans": [{"text": "abc"}]})),
-            false,
+            Frame::Clean,
         ),
         (
             "a `once` filler, its sides, no face draws",
             frame(json!({"fit": {"once": {"filler": "\u{1}"}}, "spans": [{"text": "abc"}]})),
-            true,
+            Frame::Pays,
         ),
         (
             "a `once` filler no face draws beside a set ornament",
             frame(json!({"fit": {"once": {"filler": "\u{1}"}}, "sides": "*", "spans": [{"text": "abc"}]})),
-            true,
+            Frame::Branch,
         ),
         (
             "a `once` filler one face draws beside a set ornament",
             frame(json!({"fit": {"once": {"filler": "-"}}, "sides": "*", "spans": [{"text": "abc"}]})),
-            false,
+            Frame::Clean,
+        ),
+        (
+            "a `once` filler no face draws, `sides: false`",
+            frame(json!({"fit": {"once": {"filler": "\u{1}"}}, "sides": false, "spans": [{"text": "abc"}]})),
+            Frame::Branch,
+        ),
+        (
+            "a `once` filler one face draws, `sides: false`, beside text no face draws",
+            frame(json!({"fit": {"once": {"filler": "-"}}, "sides": false, "spans": [{"text": "ab\u{1}"}]})),
+            Frame::Branch,
+        ),
+        (
+            "a `once` filler one face draws, `sides: false`",
+            frame(json!({"fit": {"once": {"filler": "-"}}, "sides": false, "spans": [{"text": "abc"}]})),
+            Frame::Clean,
         ),
         (
             "`fit` with a tab beside a code point no face draws",
             frame(json!({"fit": "fit", "spans": [{"text": "\tab\u{1}"}]})),
-            true,
+            Frame::Pays,
         ),
         (
             "`fit` with a tab beside text one face draws",
             frame(json!({"fit": "fit", "spans": [{"text": "\tabc"}]})),
-            false,
+            Frame::Clean,
         ),
         (
             "`fit` with no tab beside a code point no face draws",
             frame(json!({"fit": "fit", "spans": [{"text": "ab\u{1}\u{20e3}"}]})),
-            false,
+            Frame::Clean,
         ),
         (
             "`spread` with a tab beside a code point no face draws",
             frame(json!({"fit": "spread", "spans": [{"text": "\tab\u{1}\u{20e3}"}]})),
-            false,
+            Frame::Clean,
         ),
         (
             "`fit` with a tab beside a cluster no one face draws",
             frame(json!({"fit": "fit", "spans": [{"text": "\t\u{13000}\u{301}"}]})),
-            true,
+            Frame::Pays,
         ),
     ];
     if std::env::var(CHILD).as_deref() == Ok("frames") {
@@ -568,11 +628,12 @@ fn test_a_frame_that_may_shape_a_notdef_again_is_excluded() {
         for (what, map, _) in &cases {
             let doc = load(map).unwrap_or_else(|why| panic!("{what}: does not load: {why}"));
             let (_, ring) = the_ring(&doc);
-            println!(
-                "REPORT FRAME {what}: excluded {} inside {}",
-                frame_may_shape_notdef(doc.tree(), ring),
-                within_bound(&doc)
-            );
+            let excluded = frame_may_shape_notdef(doc.tree(), ring);
+            let inside = within_bound(&doc);
+            crate::flow::RESHAPE_NOTDEF_STEPS.with(|paid| paid.set(0));
+            drop(Projected::new(doc));
+            let paid = crate::flow::RESHAPE_NOTDEF_STEPS.with(std::cell::Cell::get);
+            println!("REPORT FRAME {what}: excluded {excluded} inside {inside} paid {paid}");
         }
         return;
     }
@@ -582,19 +643,33 @@ fn test_a_frame_that_may_shape_a_notdef_again_is_excluded() {
     for report in &reports {
         eprintln!("{report}");
     }
-    let wrong: Vec<String> = cases
-        .iter()
-        .filter(|(what, _, excluded)| {
-            let want = format!("FRAME {what}: excluded {excluded} inside {}", !excluded);
-            !reports.contains(&want)
-        })
-        .map(|(what, _, excluded)| format!("{what}: excluded {excluded} wanted"))
-        .collect();
     assert_eq!(
         reports.len(),
         cases.len(),
         "precondition: every frame reported: {reports:#?}"
     );
+    let mut wrong = Vec::new();
+    for (what, _, held) in &cases {
+        let Some(report) = reports
+            .iter()
+            .find_map(|r| r.strip_prefix(&format!("FRAME {what}: ")))
+        else {
+            wrong.push(format!("{what}: not reported"));
+            continue;
+        };
+        let excluded = *held != Frame::Clean;
+        if !report.starts_with(&format!("excluded {excluded} inside {} ", !excluded)) {
+            wrong.push(format!("{what}: excluded {excluded} wanted: {report}"));
+        }
+        let paid = number(report, " paid ");
+        let pays = match held {
+            Frame::Pays => paid > 0,
+            Frame::Branch | Frame::Clean => paid == 0,
+        };
+        if !pays {
+            wrong.push(format!("{what}: the engine's side, {held:?} wanted: {report}"));
+        }
+    }
     assert!(wrong.is_empty(), "{wrong:#?}\n{reports:#?}");
 }
 

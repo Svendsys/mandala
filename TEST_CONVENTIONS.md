@@ -847,13 +847,14 @@ What they hold, in short (each module's docs are the full list):
   excluded, not counted (`projection_fuzz::frame_may_shape_notdef`): it
   may shape the line dozens of times and no cap of the engine's holds
   them below a lay's share, so frames of text no one face draws beside an
-  ornament, or `Fit` with a tab — CI's own finding on CI's faces among
-  them — are never projected by a check. A directional ring's one shaping
-  is counted exactly: the bound shapes its texts as the lay does and adds
-  what that reshape charges
-  (`projection_fuzz::directional_notdef_steps`). The check's own edit
-  lays the map as edited, which the bound never read, so the check reads
-  the bound again after each change and abandons a map its edit took out
+  ornament or a `once` filler, or `Fit` with a tab — CI's own finding on
+  CI's faces among them — are never projected by a check. A directional
+  ring's one shaping is counted exactly: the bound shapes its texts, at
+  the least size, which the charge does not depend on, and adds what that
+  reshape charges (`projection_fuzz::directional_notdef_steps`). The
+  check's own edit lays the map as edited, which the bound never read, so
+  the check reads the bound again after each change and abandons a map
+  its edit took out
   (`projection_fuzz::projection_left`). A map outside the bound is skipped
   and counted, as are, apart, those cut short and those an edit took out;
   the targets print the counts at every power of two and every 256 inputs,
