@@ -155,6 +155,7 @@ impl InputHandlerContext<'_> {
         let changed = match (self.document.as_mut(), self.view.as_mut()) {
             (Some(doc), Some(view)) => {
                 view.follow_mode(self.interaction_mode);
+                view.follow_picker(color_picker_flow::session::picking(self.color_picker_state));
                 view.sync(doc, self.renderer)
             }
             _ => false,

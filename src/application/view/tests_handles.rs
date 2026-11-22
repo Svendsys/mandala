@@ -233,3 +233,133 @@ fn test_a_press_grabs_the_nearest_shown_handle() {
         "out of reach"
     );
 }
+
+/// A node with a frame of one ring and two sections, and a child with a
+/// connector: what the picker's stand-down is read against.
+fn framed() -> MindMapDocument {
+    MindMapDocument::from_json_str(
+        r#"{"format": 1, "name": "Framed", "nodes": [
+            {"id": 1, "position": [0.0, 0.0],
+             "sections": [{"spans": [{"text": "one"}]}, {"channel": 1, "offset": [0.0, 30.0], "spans": [{"text": "two"}]}],
+             "frame": {"rings": [{"spans": [{"text": "*"}]}]}},
+            {"id": 2, "parent": 1, "position": [300.0, 0.0], "sections": [{"spans": [{"text": "kid"}]}],
+             "connector": {"content": "-"}}
+        ]}"#,
+        None,
+        50,
+    )
+    .expect("the map loads")
+}
+
+/// **While a contextual picker is open, the selection tint stands down
+/// where the picker's axis colors its targets** (#248's ruling on the
+/// picker's preview), so the color it stages is what is drawn:
+///
+/// - picking text, a selected node keeps the tint on its frame's ring and
+///   not on its sections, and a selected path stands down whole;
+/// - picking the frame color, the node keeps it on its sections and not
+///   on its ring;
+/// - a ring rewritten by the projector while it stands is drawn in the
+///   tint again (the overlay re-stamps a part of a node, not only a node);
+/// - with the picker gone the tint is back where it was.
+///
+/// Control, seen red: the picker followed and nothing stood down
+/// (`stand_down` returning its targets), and the re-stamp matching owners
+/// only (`overlay::target_of` replaced by `owner_of`).
+#[test]
+fn test_the_tint_stands_down_where_the_picker_colors() {
+    use crate::application::keybinds::ColorAxis;
+    use baumhard::document::mutation::ops::{RingOp, TextOp};
+    use baumhard::document::values::{ColorRef, Rgba};
+    let mut doc = framed();
+    let mut view = MapView::for_test(&doc);
+    let n1 = node(&doc, 1);
+    let n2 = node(&doc, 2);
+    let connector = children_of_kind(doc.doc(), n2, DocKind::Connector)
+        .next()
+        .expect("a connector");
+    let frame = children_of_kind(doc.doc(), n1, DocKind::Frame)
+        .next()
+        .expect("a frame");
+    let ring = children_of_kind(doc.doc(), frame, DocKind::Ring)
+        .next()
+        .expect("a ring");
+    let sections: Vec<NodeId> = children_of_kind(doc.doc(), n1, DocKind::Section).collect();
+    doc.selection.set([n1, connector]);
+    view.sync_for_test(&mut doc).expect("the selection is tinted");
+    assert_eq!(
+        view.tinted(),
+        &[n1, connector],
+        "control: the whole node and the path wear the tint"
+    );
+    let runs = |view: &MapView, doc: &MindMapDocument, of: &[NodeId]| {
+        let mut all: Vec<_> = of
+            .iter()
+            .flat_map(|&e| view.runs_of_for_test(doc.doc(), e))
+            .collect();
+        all.sort_unstable_by_key(|&(l, g)| (l.index(), g));
+        all
+    };
+    // The runs drawn in the tint, read off the layers: what a projector
+    // rewrite wipes, not the overlay's own record of what it stamped.
+    let everything = runs(&view, &doc, &[n1, connector]);
+    let stamped = |view: &MapView| {
+        everything
+            .iter()
+            .copied()
+            .filter(|&(layer, glyph)| view.run_is_tinted(layer, glyph))
+            .collect::<Vec<_>>()
+    };
+    let picked = [n1, connector];
+
+    view.follow_picker(Some((ColorAxis::Text, &picked)));
+    view.sync_for_test(&mut doc).expect("the tint stands down");
+    assert_eq!(
+        view.tinted(),
+        &[ring],
+        "picking text: the ring keeps the tint, the rest stands down"
+    );
+    assert_eq!(
+        stamped(&view),
+        runs(&view, &doc, &[ring]),
+        "and only the ring's runs are stamped"
+    );
+    assert!(!runs(&view, &doc, &sections).is_empty());
+
+    // A rewrite of the ring's run keeps its stamp.
+    let steps = baumhard::document::mutation::compose::set(
+        doc.doc(),
+        DocKind::Ring,
+        vec![DocMutation::Ring(RingOp::Text(TextOp::SetColor(Some(
+            ColorRef::Rgba(Rgba::opaque(1, 2, 3)),
+        ))))],
+        &[ring],
+    )
+    .expect("composes");
+    doc.apply(EditRequest::new(steps, "test: ring color"), ChangeSource::Action)
+        .expect("applies");
+    let report = view.sync_for_test(&mut doc).expect("the ring is rewritten");
+    assert!(
+        !report.rewritten.is_empty(),
+        "precondition: the projector rewrote runs"
+    );
+    assert_eq!(
+        stamped(&view),
+        runs(&view, &doc, &[ring]),
+        "the rewritten ring is stamped again"
+    );
+
+    view.follow_picker(Some((ColorAxis::Border, &picked)));
+    view.sync_for_test(&mut doc).expect("the tint moves");
+    assert_eq!(
+        view.tinted(),
+        sections.as_slice(),
+        "picking the frame color: the sections keep the tint"
+    );
+    assert_eq!(stamped(&view), runs(&view, &doc, &sections));
+
+    view.follow_picker(None);
+    view.sync_for_test(&mut doc).expect("the tint is back");
+    assert_eq!(view.tinted(), &[n1, connector]);
+    assert_eq!(stamped(&view), runs(&view, &doc, &[n1, connector]));
+}

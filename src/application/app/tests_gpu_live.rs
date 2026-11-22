@@ -1313,3 +1313,46 @@ fn test_a_pan_writes_no_chrome_and_a_selection_does() {
     );
     assert!(moved != at, "and its end handle moved with it");
 }
+
+/// **An open picker's target draws the color it stages** (#248's ruling on
+/// the picker's preview): with node 2 still selected, the selection tint
+/// stands down on its text while the picker is open, so a hovered color is
+/// what node 2 is drawn in — its runs carry no tint, and the document holds
+/// the hovered color — and the tint is back once the picker closes.
+///
+/// Control: before the picker opens, node 2 wears the tint (the stand-down
+/// is the picker's doing, not a selection that tints nothing).
+#[test]
+fn test_an_open_pickers_target_draws_the_staged_color() {
+    let Some(mut app) = app() else { return };
+    let init = &mut app.init;
+    let n2 = node(init, 2);
+    document_mut(init).selection.select_only(n2);
+    frame(init);
+    let tinted_runs = |init: &InitState| {
+        let view = init.view.as_ref().expect("a view");
+        let own = view.runs_of_for_test(document(init).doc(), n2);
+        let stamped = view.tinted_runs();
+        own.iter().filter(|run| stamped.contains(run)).count()
+    };
+    assert!(tinted_runs(init) > 0, "control: the selected node wears the tint");
+
+    open_picker(init);
+    let slot = layout(init).hue_slot_positions[9];
+    move_on_surface(init, slot);
+    frame(init);
+    assert_eq!(tinted_runs(init), 0, "the tint stood down on the picker's target");
+    let shown = init.color_picker_state.as_open().expect("open").shown_hsv();
+    let [r, g, b] = baumhard::util::color_conversion::hsv_to_rgb(shown.0, shown.1, shown.2);
+    let byte = |c: f32| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let drawn = baumhard::document::resolve::resolve_text(document(init).doc().tree(), n2, &mut ()).color;
+    assert_eq!(
+        drawn.0[..3],
+        [byte(r), byte(g), byte(b)],
+        "node 2 is drawn in the hovered color"
+    );
+
+    tap(init, "Escape");
+    frame(init);
+    assert!(tinted_runs(init) > 0, "the tint is back once the picker closes");
+}

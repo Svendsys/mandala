@@ -90,7 +90,9 @@ use baumhard::projection::{GlyphLayers, Hit, LayerChanges, Projector};
 use glam::Vec2;
 
 use crate::application::document::MindMapDocument;
+use crate::application::keybinds::ColorAxis;
 use crate::application::renderer::{LayerRenderer, Renderer};
+use baumhard::document::ids::Document;
 
 use self::chrome::{ChromeBuilder, PassChanges};
 use self::overlay::{Overlay, OverlayJournals, SELECTION_HIGHLIGHT, SOURCE_HIGHLIGHT, TARGET_HIGHLIGHT};
@@ -147,6 +149,12 @@ pub(crate) struct MapView {
     mode: crate::application::app::InteractionMode,
     /// The active mode's status line, drawn over the document's.
     mode_line: Option<String>,
+    /// The contextual color picker's axis and targets while one is open
+    /// ([`Self::follow_picker`]): on those targets the selection tint
+    /// stands down on what the axis colors, so the color the picker
+    /// stages shows. Native, with the picker; always `None` in the
+    /// browser.
+    picking: Option<(ColorAxis, Vec<NodeId>)>,
     /// What a rubber band covers while one is out — the highlight's
     /// targets, not a preview of any document change: the highlight
     /// follows them instead of the selection, whose highlight stands down
@@ -238,6 +246,7 @@ impl MapView {
             #[cfg(not(target_arch = "wasm32"))]
             mode: Default::default(),
             mode_line: None,
+            picking: None,
             band_targets: None,
             feed: Vec::new(),
             shown_status: None,
@@ -496,6 +505,7 @@ impl MapView {
             sources,
             source_targets,
             band_targets,
+            picking,
             projector,
             layers,
             stage,
@@ -506,6 +516,9 @@ impl MapView {
             None => doc.selection.iter().collect(),
         };
         targets.retain(|target| !source_targets.contains(target));
+        if let Some((axis, picked)) = picking {
+            targets = stand_down(doc.doc(), targets, *axis, picked);
+        }
         let hovered: Option<NodeId> =
             hover_target.filter(|target| !targets.contains(target) && !source_targets.contains(target));
         let mut overlays: [(&mut Overlay, &[NodeId]); 3] = [
@@ -580,6 +593,60 @@ impl MapView {
         if self.source_targets.is_empty() {
             self.hover_target = None;
         }
+    }
+
+    /// Follow the contextual color picker: while one is open on
+    /// `picking`'s targets, the selection tint stands down on what its
+    /// axis colors there ([`stand_down`]), so the staged color is what is
+    /// drawn; with `None` — no picker, or the standalone palette — the
+    /// tint is back. Takes effect at the next [`Self::sync`]. O(the
+    /// targets) to compare. Native, with the picker.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn follow_picker(&mut self, picking: Option<(ColorAxis, &[NodeId])>) {
+        let same = match (&self.picking, picking) {
+            (None, None) => true,
+            (Some((axis, targets)), Some((now, picked))) => *axis == now && targets.as_slice() == picked,
+            _ => false,
+        };
+        if !same {
+            self.picking = picking.map(|(axis, picked)| (axis, picked.to_vec()));
+        }
+    }
+
+    /// The selection tint's targets as the overlay holds them. Test
+    /// builds only.
+    #[cfg(test)]
+    pub(crate) fn tinted(&self) -> &[NodeId] {
+        self.highlight.targets()
+    }
+
+    /// Every run the selection tint stamps now. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn tinted_runs(&self) -> Vec<(baumhard::projection::Layer, NodeId)> {
+        self.highlight.stamped_runs()
+    }
+
+    /// Whether the run `glyph` of `layer` is drawn in the selection tint:
+    /// a color override of the tint on it, as the layers hold it — what a
+    /// projector rewrite wipes and a re-stamp writes again. Test builds
+    /// only.
+    #[cfg(test)]
+    pub(crate) fn run_is_tinted(&self, layer: baumhard::projection::Layer, glyph: NodeId) -> bool {
+        self.layers
+            .tree(layer)
+            .get(glyph)
+            .and_then(|node| node.get().glyph_run())
+            .is_some_and(|run| run.overrides().color().contains(&Some(SELECTION_HIGHLIGHT)))
+    }
+
+    /// The runs `element` draws, by layer. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn runs_of_for_test(
+        &self,
+        doc: &Document,
+        element: NodeId,
+    ) -> Vec<(baumhard::projection::Layer, NodeId)> {
+        inspect::runs_of(doc, &self.projector, &self.layers, element)
     }
 
     /// The nodes tinted as a mode's sources.
@@ -901,6 +968,44 @@ pub(crate) struct SyncReport {
     /// The chrome elements the pass's chrome journal touched: the
     /// handles' and the chrome builders'.
     pub(crate) chrome: Vec<NodeId>,
+}
+
+/// The selection tint's targets with a contextual color picker on
+/// `picked`, picking `axis`: a picked element keeps its tint only where
+/// the axis does not color it, so the staged color shows (#248's ruling on
+/// the picker's preview). A node picked for its text keeps the tint on its
+/// frame's rings; picked for its frame or its rings, on its sections; a
+/// section picked for its text, and a path picked for its one color, stand
+/// down whole. Every other target is kept as it is. O(the targets and the
+/// picked nodes' children).
+fn stand_down(doc: &Document, targets: Vec<NodeId>, axis: ColorAxis, picked: &[NodeId]) -> Vec<NodeId> {
+    use crate::application::fields::style::frame_of;
+    use crate::application::view::inspect::children_of_kind;
+    use baumhard::document::element::DocKind;
+    let mut out = Vec::with_capacity(targets.len());
+    for target in targets {
+        if !picked.contains(&target) {
+            out.push(target);
+            continue;
+        }
+        match (
+            crate::application::document::selection::kind_of(doc, target),
+            axis,
+        ) {
+            (Some(DocKind::Node), ColorAxis::Text) => {
+                if let Some(frame) = frame_of(doc, target) {
+                    out.extend(children_of_kind(doc, frame, DocKind::Ring));
+                }
+            }
+            (Some(DocKind::Node), ColorAxis::Border | ColorAxis::Ring) => {
+                out.extend(children_of_kind(doc, target, DocKind::Section));
+            }
+            (Some(DocKind::Section), ColorAxis::Text)
+            | (Some(DocKind::Connector | DocKind::Link), ColorAxis::Text | ColorAxis::Border) => {}
+            _ => out.push(target),
+        }
+    }
+    out
 }
 
 /// An empty chrome layer: a `Void` root, drawn after the five glyph

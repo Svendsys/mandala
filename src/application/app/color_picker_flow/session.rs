@@ -276,8 +276,20 @@ fn close(ctx: &mut InputHandlerContext<'_>) {
 fn finish(ctx: &mut InputHandlerContext<'_>) {
     rebuild_color_picker_overlay(ctx.color_picker_state, ctx.app_scene, ctx.renderer);
     if let (Some(doc), Some(view)) = (ctx.document.as_mut(), ctx.view.as_mut()) {
+        view.follow_picker(picking(ctx.color_picker_state));
         view.sync(doc, ctx.renderer);
     }
+}
+
+/// What the view's selection tint stands down for
+/// (`MapView::follow_picker`): an open contextual picker's axis and the
+/// elements it colors; `None` for the standalone palette, which previews
+/// nothing on the map, and with no picker open. O(1).
+pub(in crate::application::app) fn picking(
+    state: &ColorPickerState,
+) -> Option<(ColorAxis, &[baumhard::arena::NodeId])> {
+    let target = state.as_open()?.target()?;
+    Some((target.axis, target.selection.items()))
 }
 
 /// An HSV triple bit for bit, so a picker that was never moved compares

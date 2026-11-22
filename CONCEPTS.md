@@ -2324,7 +2324,10 @@ moving nodes (with their subtrees unless Alt; the selection with Shift),
 moving a section, a node's or a section's resize handle, a path's
 anchor, control point or midpoint handle, a label, a portal end. The
 contextual picker begins at its opening, stages the color it shows once
-a frame and commits on ࿕; the standalone palette holds none. There is
+a frame and commits on ࿕; the standalone palette holds none. While a
+contextual picker is open, the selection tint stands down where its axis
+colors its targets (`MapView::follow_picker`), so the staged color is
+what the map draws. There is
 no preview mechanism: what a drag shows is the document, through the
 projector, so a presentation plays on top of it.
 

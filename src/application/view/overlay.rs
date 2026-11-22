@@ -39,7 +39,13 @@
 //! its frame's rings' runs; a connector or a link owns its body, its caps
 //! and its label; a link owns its portal ends and their labels. A
 //! selected node is tinted where its text and its frame are drawn, and a
-//! selected path where it is.
+//! selected path where it is. A target may also be a part of one that
+//! owns runs of its own — a section, a ring: while a contextual color
+//! picker is open, the selection tint stands down where the picker's axis
+//! colors its targets and stays on the rest (`MapView::follow_picker`),
+//! so a picked node keeps it on its ring and not on its text. A run the
+//! projector rewrites is stamped again for the nearest target on its way
+//! up to its owner.
 
 use baumhard::arena::NodeId;
 use baumhard::document::element::DocKind;
@@ -147,6 +153,13 @@ impl Overlay {
         &self.targets
     }
 
+    /// Every run stamped now, by layer and glyph element. Test builds
+    /// only.
+    #[cfg(test)]
+    pub(crate) fn stamped_runs(&self) -> Vec<(Layer, NodeId)> {
+        self.stamped.keys().copied().collect()
+    }
+
     /// Bring the stamps up to date: with `targets` as the elements to
     /// stamp from now on, and `changes`, when an update was made, as what
     /// the projector just wrote. Returns the journals of what was written.
@@ -189,11 +202,8 @@ impl Overlay {
                         self.stamped.remove(&(layer, glyph));
                         continue;
                     }
-                    let Some(owner) = owner_of(doc, projector, layer, glyph) else {
-                        continue;
-                    };
-                    if targets.contains(&owner) {
-                        self.stamped.insert((layer, glyph), owner);
+                    if let Some(target) = target_of(doc, projector, layer, glyph, targets) {
+                        self.stamped.insert((layer, glyph), target);
                         stamp[layer.index()].push(glyph);
                     }
                 }
@@ -275,6 +285,35 @@ fn write(
 /// connector, a link or a node. `None` for a group, and for a glyph the
 /// projector names no element for. O(the depth to the owner, at most
 /// three).
+/// The target of `targets` a run belongs to: its element, or the first
+/// element above it up to its owner ([`owner_of`]) that is one — so a
+/// target may be a node or a path, or a part of one that owns runs of its
+/// own (a section, a ring: what the selection tint stands on while the
+/// color picker stands it down on the rest, `MapView::follow_picker`).
+/// `None` for a group, and for a run no target holds. O(the depth to the
+/// owner, at most three, times the targets).
+fn target_of(
+    doc: &Document,
+    projector: &Projector,
+    layer: Layer,
+    glyph: NodeId,
+    targets: &[NodeId],
+) -> Option<NodeId> {
+    let mut at = projector.element_of(layer, glyph)?;
+    if kind_of(doc, at)? == DocKind::Node {
+        return None;
+    }
+    loop {
+        if targets.contains(&at) {
+            return Some(at);
+        }
+        match kind_of(doc, at)? {
+            DocKind::Node | DocKind::Connector | DocKind::Link => return None,
+            _ => at = doc.parent(at)?,
+        }
+    }
+}
+
 pub(super) fn owner_of(doc: &Document, projector: &Projector, layer: Layer, glyph: NodeId) -> Option<NodeId> {
     let mut at = projector.element_of(layer, glyph)?;
     // A node draws nothing of its own, only groups: a glyph whose element

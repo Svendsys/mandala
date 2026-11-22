@@ -46,6 +46,11 @@ impl Selection {
         self.items.iter().copied()
     }
 
+    /// The selected elements, oldest first, as a slice. O(1).
+    pub fn items(&self) -> &[NodeId] {
+        &self.items
+    }
+
     /// Whether `id` is selected. O(the selection).
     pub fn contains(&self, id: NodeId) -> bool {
         self.items.contains(&id)
