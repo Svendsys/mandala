@@ -840,9 +840,23 @@ What they hold, in short (each module's docs are the full list):
   (`projection_fuzz::FRAME_STEPS_A_LAY`). The rates are measured, so every
   check holds each ring it lays to them
   (`projection_fuzz::rings_within_their_work`), and a fuzz run finds the
-  input that breaks one. The check's own edit lays the map as edited,
-  which the bound never read, so the check reads the bound again after
-  each change and abandons a map its edit took out
+  input that breaks one. The shaper's `.notdef` passes are past any rate
+  a sweep of drawn text measures, 2,200 steps each, so the rates do not
+  hold a lay that may pay them (#387): one that shapes a line again — a
+  frame's tabbed reshapes, its side ornament's shapings, a directional
+  ring's shaping of its texts — where no one face of the font system maps
+  all of that line (`projection_fuzz::may_lay_notdef`). Such a frame is
+  excluded, not counted (`projection_fuzz::frame_may_shape_notdef`): it
+  may shape the line dozens of times and no cap of the engine's holds
+  them below a lay's share, so frames of text no one face draws beside an
+  ornament or a `once` filler, or `Fit` with a tab — CI's own finding on
+  CI's faces among them — are never projected by a check. A directional
+  ring's one shaping is counted exactly: the bound shapes its texts, at
+  the least size, which the charge does not depend on, and adds what that
+  reshape charges (`projection_fuzz::directional_notdef_steps`). The
+  check's own edit lays the map as edited, which the bound never read, so
+  the check reads the bound again after each change and abandons a map
+  its edit took out
   (`projection_fuzz::projection_left`). A map outside the bound is skipped
   and counted, as are, apart, those cut short and those an edit took out;
   the targets print the counts at every power of two and every 256 inputs,
@@ -850,7 +864,8 @@ What they hold, in short (each module's docs are the full list):
   structured maps to fewer than half skipped. The engine bounds a
   placement and a frame, never a whole map (#316), which is why the bound
   is the harness's. It bounds the steps of laying glyphs and of
-  untangling, not of shaping: every full projection shapes every flow
+  untangling, and a directional ring's `.notdef` passes, not the shaping
+  of a projection: every full projection shapes every flow
   again, and no step counts it (#383). `projection_edits` runs the oracle
   — the updated layers equal a full projection — after every step of a
   generated edit sequence: field and structural edits, a rebinding near
@@ -886,7 +901,15 @@ What they hold, in short (each module's docs are the full list):
   is; within a thousandth of the limit either way, only what every
   placement owes is held. The sweep's precondition is that it holds
   placements on both sides, and flow_structured has a seed just within
-  the limit and one just past it.
+  the limit and one just past it. A far-out frame with sides lays them as
+  its twin round the same outline at the origin does, no junction empty or
+  kept short and no fewer copies than a bound the twin's count and the
+  coordinates' spacing set, wherever the coordinates hold its glyphs apart
+  (#362): held by the suite,
+  `test_generated_far_frames_lay_their_sides_as_their_twins_at_the_origin`,
+  over the frames the structured generator draws, with none of its other
+  properties checked, and not by the targets, where a twin would be a
+  second budgeted frame an input past the per-input bound below.
 - **Glyph-layer mutations.** No panic; no non-finite box reaches an
   ancestor; a run's overrides are empty or exactly as long as its
   placed glyphs, whatever range is named; `same_state` is reflexive and

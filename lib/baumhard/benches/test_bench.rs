@@ -2561,6 +2561,18 @@ fn criterion_benchmark(c: &mut Criterion) {
         "flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap",
         |b| b.iter(do_flow_halves_the_tangent_line_root_holds_where_little_is_owed_of_a_wide_gap),
     );
+    c.bench_function(
+        "flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors",
+        |b| b.iter(do_flow_halves_a_line_root_its_bisection_cannot_tell_from_its_neighbors),
+    );
+    c.bench_function(
+        "flow_halves_a_line_root_reads_its_axes_where_they_move_slowly",
+        |b| b.iter(do_flow_halves_a_line_root_reads_its_axes_where_they_move_slowly),
+    );
+    c.bench_function(
+        "flow_halves_a_bisection_steps_either_way_from_a_start_read_as_owed",
+        |b| b.iter(do_flow_halves_a_bisection_steps_either_way_from_a_start_read_as_owed),
+    );
     c.bench_function("flow_halves_a_side_arc_is_filled_from_its_model_lays", |b| {
         b.iter(do_flow_halves_a_side_arc_is_filled_from_its_model_lays)
     });

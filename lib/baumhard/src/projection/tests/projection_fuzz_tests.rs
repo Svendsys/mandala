@@ -1041,25 +1041,17 @@ fn measured_frames() -> Vec<(&'static str, serde_json::Value)> {
 /// The densest frames laid by halves the bound admits (ruling B47.3), by
 /// the steps their lay took in the sweep `FRAME_STEPS_A_GLYPH` is stated
 /// from: 151 letters `spread` round an ellipse 1,000 across, the most steps
-/// a lay; 151 characters of seven scripts `once` with a `✦`, the slowest;
-/// and 40 letters `spread` with a `✦` round one 100 across, the nearest its
-/// bound.
+/// a lay; and 40 letters `spread` with a `✦` round one 100 across, the
+/// nearest its bound. (151 characters of seven scripts `once` with a `✦`,
+/// the slowest the sweep found, is excluded since #387: no one face draws
+/// its seven scripts, so its side shapings may pay `.notdef` passes the
+/// bound does not count — [`seven_scripts_with_sides`].)
 fn densest_admitted_frames() -> Vec<(&'static str, serde_json::Value)> {
     let latin = text_of("MANDALA mindmap glyph ring text ", 151);
     vec![
         (
             "151 letters `spread`, 1,000 across",
             framed_text(1000.0, json!("spread"), 0.05, &latin, None),
-        ),
-        (
-            "151 characters of seven scripts `once`, a `✦`, 100 across",
-            framed_text(
-                100.0,
-                json!({"once": {"filler": "·"}}),
-                0.5,
-                &text_of("Aא你😀ب Ωж", 151),
-                Some("✦"),
-            ),
         ),
         (
             "40 letters `spread`, a `✦`, 100 across",
@@ -1074,6 +1066,20 @@ fn densest_admitted_frames() -> Vec<(&'static str, serde_json::Value)> {
     ]
 }
 
+/// 151 characters of seven scripts `once` with a `✦` round an ellipse 100
+/// across: the slowest frame the sweep `FRAME_STEPS_A_GLYPH` is stated
+/// from found the bound to admit, most of its time shaping its text in the
+/// faces its scripts fall back to, which no step counts.
+fn seven_scripts_with_sides() -> serde_json::Value {
+    framed_text(
+        100.0,
+        json!({"once": {"filler": "·"}}),
+        0.5,
+        &text_of("Aא你😀ب Ωж", 151),
+        Some("✦"),
+    )
+}
+
 /// A frame laid by halves is laid once in each projection a check makes,
 /// up to [`RING_LAYS_A_CHECK`], and its work is held to that (ruling
 /// B47.3), not to the one lay the flow harnesses budget a frame for. Each
@@ -1083,7 +1089,11 @@ fn densest_admitted_frames() -> Vec<(&'static str, serde_json::Value)> {
 /// bound admits ([`densest_admitted_frames`]), projected, takes no more
 /// than [`frame_steps`] read for it (`LAST_FRAME`), as every check of a
 /// fuzz run holds it ([`rings_within_their_work`]), and ten of its lays
-/// fit the share.
+/// fit the share. The seven scripts with a side ornament
+/// ([`seven_scripts_with_sides`]) are excluded, the cost of the bound
+/// reading a line in one face (#387): with no face that maps all of a
+/// text, it cannot tell where a cluster none draws whole would fall, and a
+/// frame that may shape such a line again is excluded, not counted.
 ///
 /// Controls, each run and seen red: with no frame's work bounded, the
 /// first measured frame inside; with its side ornament's glyphs not
@@ -1123,6 +1133,10 @@ fn test_every_text_frame_the_bound_admits_fits_the_share() {
             );
         }
     }
+    assert!(
+        !within_bound(&load_map(seven_scripts_with_sides())),
+        "the seven scripts with a side ornament: inside the bound"
+    );
     for (what, map) in densest_admitted_frames() {
         let doc = load_map(map);
         assert!(within_bound(&doc), "{what}: outside the bound");

@@ -24,6 +24,10 @@ mod hide_tests;
 mod hit_tests;
 /// Maps written as `.mandala.json`, and their elements found again.
 pub mod maps;
+/// The work bound's count of the shaper's `.notdef` passes (#387), on the
+/// compiled faces alone.
+#[cfg(test)]
+mod notdef_bound_tests;
 /// The oracle's sweeps over the corpus.
 #[cfg(test)]
 mod oracle_tests;
