@@ -16,7 +16,7 @@
 
 use super::Command;
 use crate::application::console::parser::Args;
-use crate::application::console::predicates::path_selected;
+use crate::application::console::predicates::line_path_selected;
 use crate::application::console::spec::descent::Stop;
 use crate::application::console::spec::kvs::{self, Pair};
 use crate::application::console::spec::route::{self, Routes};
@@ -79,7 +79,7 @@ pub const COMMAND: Command = Command {
     name: "label",
     aliases: &[],
     summary: "Set the text, place and offset of the selected paths' labels, or delete them",
-    applicable: path_selected,
+    applicable: line_path_selected,
     grammar: &GRAMMAR,
     synonyms: &["connector", "edge", "caption", "position"],
     execute: execute_label,

@@ -35,43 +35,31 @@ pub(in crate::application::app) fn dispatch(
     action: &Action,
     core: &mut InputContextCore<'_>,
 ) -> Option<DispatchOutcome> {
-    if !owns(action) {
-        return None;
-    }
     let doc = core.document.as_deref_mut()?;
-    let outcome = run(action, doc);
+    let outcome = run(action, doc)?;
     if let Some(mut vc) = view_ctx!(core, doc) {
         vc.sync();
     }
     Some(outcome)
 }
 
-/// Whether `action` is this family's.
-fn owns(action: &Action) -> bool {
-    matches!(
-        action,
-        Action::SetPathAnchor { .. }
-            | Action::SetPathContent(_)
-            | Action::SetPathCap { .. }
-            | Action::SetLinkKind(_)
-            | Action::ResetPath
-            | Action::SetLabelText(_)
-            | Action::SetLabelPosition { .. }
-            | Action::SetPathSpacing(_)
-    )
-}
-
-/// Run `action`, one of this family's, on `doc`. Pure of the view, so
+/// Run `action` on `doc`: its answer, or `None` for an Action this
+/// family does not own, which then touches nothing. Pure of the view, so
 /// the tests drive it on a document alone.
-pub(in crate::application::app) fn run(action: &Action, doc: &mut MindMapDocument) -> DispatchOutcome {
-    let (steps, label) = steps(action, doc);
-    answer(fields::apply(doc, steps, label, ChangeSource::Action))
+pub(in crate::application::app) fn run(
+    action: &Action,
+    doc: &mut MindMapDocument,
+) -> Option<DispatchOutcome> {
+    let (steps, label) = steps(action, doc)?;
+    Some(answer(fields::apply(doc, steps, label, ChangeSource::Action)))
 }
 
-/// The steps of a one-request Action, and the label its entry carries.
-fn steps(action: &Action, doc: &MindMapDocument) -> (path::Built, &'static str) {
+/// The steps of a one-request Action of this family, and the label its
+/// entry carries; `None` for any other Action. Its one match is the
+/// family's one list of Actions.
+fn steps(action: &Action, doc: &MindMapDocument) -> Option<(path::Built, &'static str)> {
     let fields = |fields: Result<PathFields, String>| -> path::Built { Ok(path::set(doc, &fields?)?) };
-    match action {
+    Some(match action {
         Action::SetPathAnchor { from, to } => (
             fields(values::anchor(from).and_then(|from| {
                 Ok(PathFields {
@@ -138,8 +126,8 @@ fn steps(action: &Action, doc: &MindMapDocument) -> (path::Built, &'static str) 
                 .and_then(|fields| path::label(doc, &fields)),
             "label position",
         ),
-        _ => (Ok(Vec::new()), ""),
-    }
+        _ => return None,
+    })
 }
 
 /// `SetLabelPosition`'s fields: each of `t` and `offset` left as it is

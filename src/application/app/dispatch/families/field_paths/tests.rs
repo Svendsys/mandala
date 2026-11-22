@@ -103,13 +103,18 @@ enum Input {
     Act(fn() -> Action),
 }
 
+/// Run `action`, one of the family's, on `doc` through its body.
+fn act(action: &Action, doc: &mut MindMapDocument) -> DispatchOutcome {
+    run(action, doc).unwrap_or_else(|| panic!("{action:?} is the path family's"))
+}
+
 /// Run `input` on `doc`: `Ok` with what a console line printed, or the
 /// Action's outcome; `Err` with a console line's refusal, or an Action's
 /// outcome other than `Handled`.
 fn run_input(doc: &mut MindMapDocument, input: Input) -> Result<String, String> {
     match input {
         Input::Line(line) => run_line(doc, line),
-        Input::Act(action) => match run(&action(), doc) {
+        Input::Act(action) => match act(&action(), doc) {
             DispatchOutcome::Handled => Ok("handled".to_string()),
             other => Err(format!("{other:?}")),
         },
@@ -544,6 +549,45 @@ fn test_a_link_made_a_portal_and_a_line_again_round_trips() {
     assert_eq!(bytes(&doc), FIXTURE, "the undo gives the label back");
 }
 
+/// **The family answers its own Actions and no other**: `steps`' one
+/// match is its one list, so an Action it lacks a body for is not
+/// claimed, and touches nothing. Control: each of its Actions is
+/// claimed.
+#[test]
+fn test_the_family_claims_its_actions_and_no_other() {
+    let mut doc = fixture();
+    select(&mut doc, &[C2]);
+    for foreign in [Action::Undo, Action::CycleFrameContent, Action::SelectAll] {
+        assert_eq!(
+            run(&foreign, &mut doc),
+            None,
+            "{foreign:?} is not the path family's"
+        );
+    }
+    assert_eq!(bytes(&doc), FIXTURE);
+    for own in [
+        Action::SetPathAnchor {
+            from: "x".into(),
+            to: "y".into(),
+        },
+        Action::SetPathContent("x".into()),
+        Action::SetPathCap {
+            from: "x".into(),
+            to: "".into(),
+        },
+        Action::SetLinkKind("x".into()),
+        Action::ResetPath,
+        Action::SetLabelText("x".into()),
+        Action::SetLabelPosition {
+            t: "x".into(),
+            offset: "".into(),
+        },
+        Action::SetPathSpacing("x".into()),
+    ] {
+        assert!(run(&own, &mut doc).is_some(), "control: {own:?} is claimed");
+    }
+}
+
 /// **`SetLinkKind` on a connector is refused, with the reason on the
 /// status line, and changes nothing.** Control: the same Action on a
 /// link is accepted.
@@ -553,7 +597,7 @@ fn test_set_link_kind_on_a_connector_is_refused() {
     select(&mut doc, &[C2]);
     let revision = doc.revision();
     assert_eq!(
-        run(&Action::SetLinkKind("portal".into()), &mut doc),
+        act(&Action::SetLinkKind("portal".into()), &mut doc),
         DispatchOutcome::Refused(LINK_KIND_ON_A_CONNECTOR)
     );
     assert_eq!(
@@ -566,7 +610,7 @@ fn test_set_link_kind_on_a_connector_is_refused() {
 
     select(&mut doc, &[L13]);
     assert_eq!(
-        run(&Action::SetLinkKind("portal".into()), &mut doc),
+        act(&Action::SetLinkKind("portal".into()), &mut doc),
         DispatchOutcome::Handled,
         "control: a link takes it"
     );
@@ -579,7 +623,7 @@ fn test_a_label_on_a_portal_link_is_refused() {
     let mut doc = fixture();
     select(&mut doc, &[P14]);
     assert_eq!(
-        run(&Action::SetLabelText("x".into()), &mut doc),
+        act(&Action::SetLabelText("x".into()), &mut doc),
         DispatchOutcome::Refused(LABEL_ON_A_PORTAL)
     );
     assert!(LABEL_ON_A_PORTAL.contains("V1-C8 (#249)"));
@@ -591,7 +635,7 @@ fn test_a_label_on_a_portal_link_is_refused() {
     assert_eq!(bytes(&doc), FIXTURE);
     select(&mut doc, &[L13]);
     assert_eq!(
-        run(&Action::SetLabelText("x".into()), &mut doc),
+        act(&Action::SetLabelText("x".into()), &mut doc),
         DispatchOutcome::Handled,
         "control: a line link takes it"
     );
@@ -623,10 +667,26 @@ fn test_each_verb_refuses_naming_what_to_select() {
         (&[P14], "portal size=3", "portal: give end=0"),
         // Empty text is refused on all four text keys, each in its own
         // words.
-        (&[C2], "path content=\"\"", "path: give the text it draws, or `none` to inherit"),
-        (&[P14], "portal end=0 content=\"\"", "portal: give the marker's text, or `none` to inherit"),
-        (&[C2], "path cap start=\"\"", "path cap: give a cap's text, or `none` to remove it"),
-        (&[C2], "label text=\"\"", "label: give the label's text, or `label delete` to remove it"),
+        (
+            &[C2],
+            "path content=\"\"",
+            "path: give the text it draws, or `none` to inherit",
+        ),
+        (
+            &[P14],
+            "portal end=0 content=\"\"",
+            "portal: give the marker's text, or `none` to inherit",
+        ),
+        (
+            &[C2],
+            "path cap start=\"\"",
+            "path cap: give a cap's text, or `none` to remove it",
+        ),
+        (
+            &[C2],
+            "label text=\"\"",
+            "label: give the label's text, or `label delete` to remove it",
+        ),
     ];
     for (paths, line, message) in refusals {
         let mut doc = fixture();
@@ -650,7 +710,7 @@ fn test_each_verb_refuses_naming_what_to_select() {
         },
     ] {
         assert_eq!(
-            run(&action, &mut doc),
+            act(&action, &mut doc),
             DispatchOutcome::Unhandled,
             "{action:?} with nothing selected"
         );
@@ -668,7 +728,7 @@ fn test_empty_content_is_refused_and_none_is_matched_exactly() {
     let mut doc = fixture();
     select(&mut doc, &[C2]);
     assert_eq!(
-        run(&Action::SetPathContent(String::new()), &mut doc),
+        act(&Action::SetPathContent(String::new()), &mut doc),
         DispatchOutcome::Unhandled,
         "an empty content applies nothing"
     );

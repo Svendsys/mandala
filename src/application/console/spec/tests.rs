@@ -1062,30 +1062,30 @@ fn test_a_repeated_key_resolves_to_its_last_occurrence() {
     use super::kvs::{value, Pair};
     use super::{free, Key};
 
-    static GLYPH: Key = Key::new("glyph", "edge body glyph", free("name"));
+    static KIND: Key = Key::new("kind", "how the link is drawn", free("kind"));
     static SIZE: Key = Key::new("size", "point size", free("pt"));
 
     let pairs = vec![
         Pair {
-            key: &GLYPH,
-            value: "dash",
+            key: &KIND,
+            value: "line",
         },
         Pair {
             key: &SIZE,
             value: "12",
         },
         Pair {
-            key: &GLYPH,
-            value: "dot",
+            key: &KIND,
+            value: "portal",
         },
     ];
-    assert_eq!(value(&pairs, "glyph"), Some("dot"));
+    assert_eq!(value(&pairs, "kind"), Some("portal"));
     // The other key is unaffected by the repetition beside it, and a
     // key that is not on the line is still `None` — the two failures
     // an `rfind` over the wrong predicate would produce.
     assert_eq!(value(&pairs, "size"), Some("12"));
     assert_eq!(value(&pairs, "absent"), None);
-    assert_eq!(value(&[], "glyph"), None);
+    assert_eq!(value(&[], "kind"), None);
 }
 
 /// Every subverb dispatcher in the registry: a name for failure

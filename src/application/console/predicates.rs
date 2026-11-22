@@ -13,11 +13,13 @@
 //! The vocabulary is deliberately *selection-shaped*: the selection
 //! holds nodes and paths (connectors and links,
 //! `document::selection`), and each predicate asks which of those it
-//! holds, never what they hold.
+//! holds — a link's kind included, since a portal link and a line link
+//! take different verbs — never what they hold.
 
 use super::ConsoleContext;
 use crate::application::document::selection::kind_of;
-use baumhard::document::element::DocKind;
+use baumhard::document::element::{DocElement, DocKind};
+use baumhard::document::values::LinkKind;
 
 pub fn always(_: &ConsoleContext) -> bool {
     true
@@ -34,24 +36,42 @@ pub fn node_or_section_selected(ctx: &ConsoleContext) -> bool {
         .any(|id| matches!(kind_of(doc, id), Some(DocKind::Node | DocKind::Section)))
 }
 
-/// A path — a connector or a link — is selected: the target of the
-/// path verbs (`path`, `label`).
-pub fn path_selected(ctx: &ConsoleContext) -> bool {
+/// The kind of link `id` is, or `None` when it is not a link.
+fn link_kind(doc: &baumhard::document::ids::Document, id: baumhard::arena::NodeId) -> Option<LinkKind> {
+    match doc.get(id) {
+        Some(DocElement::Link(link)) => Some(link.kind),
+        _ => None,
+    }
+}
+
+/// A line path — a connector, or a line link — is selected: what `path`
+/// and `label` reach. A portal link draws no path, and its labels are
+/// its ends' (`crate::application::fields::path`), so it does not count.
+pub fn line_path_selected(ctx: &ConsoleContext) -> bool {
     let doc = ctx.document.doc();
     ctx.document
         .selection
         .iter()
-        .any(|id| matches!(kind_of(doc, id), Some(DocKind::Connector | DocKind::Link)))
+        .any(|id| kind_of(doc, id) == Some(DocKind::Connector) || link_kind(doc, id) == Some(LinkKind::Line))
 }
 
-/// A link is selected, of either kind: the target of `link` and
-/// `portal`. A connector does not count, being always a line (D22).
+/// A link is selected, of either kind: what `link` reaches. A connector
+/// does not count, being always a line (D22).
 pub fn link_selected(ctx: &ConsoleContext) -> bool {
     let doc = ctx.document.doc();
     ctx.document
         .selection
         .iter()
         .any(|id| kind_of(doc, id) == Some(DocKind::Link))
+}
+
+/// A portal link is selected: what `portal` reaches, one of its ends.
+pub fn portal_selected(ctx: &ConsoleContext) -> bool {
+    let doc = ctx.document.doc();
+    ctx.document
+        .selection
+        .iter()
+        .any(|id| link_kind(doc, id) == Some(LinkKind::Portal))
 }
 
 #[cfg(test)]
@@ -109,10 +129,10 @@ mod tests {
         assert!(!admits(&doc), "a connector alone");
     }
 
-    /// The path verbs want a path: a node alone is not one, the child's
-    /// connector is.
+    /// The path verbs want a line path: a node alone is not one, the
+    /// child's connector is.
     #[test]
-    fn test_the_path_predicate_admits_a_connector_and_not_a_node() {
+    fn test_the_line_path_predicate_admits_a_connector_and_not_a_node() {
         let mut doc = two_nodes();
         let child = every_node(doc.doc()).nth(1).expect("the child");
         let connector = doc
@@ -121,8 +141,8 @@ mod tests {
             .find(|&c| kind_of(doc.doc(), c) == Some(DocKind::Connector))
             .expect("a child has a connector");
         doc.selection.select_only(child);
-        assert!(!path_selected(&ConsoleContext::from_document(&doc)));
+        assert!(!line_path_selected(&ConsoleContext::from_document(&doc)));
         doc.selection.select_only(connector);
-        assert!(path_selected(&ConsoleContext::from_document(&doc)));
+        assert!(line_path_selected(&ConsoleContext::from_document(&doc)));
     }
 }

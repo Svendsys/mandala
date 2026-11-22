@@ -13,7 +13,7 @@
 
 use super::Command;
 use crate::application::console::parser::Args;
-use crate::application::console::predicates::link_selected;
+use crate::application::console::predicates::portal_selected;
 use crate::application::console::spec::kvs::{self, Pair};
 use crate::application::console::spec::{free_words, usage, Bare, Form, Grammar, Key, Vocabulary, Word};
 use crate::application::console::{ConsoleEffects, ExecResult};
@@ -65,7 +65,7 @@ pub const COMMAND: Command = Command {
     name: "portal",
     aliases: &[],
     summary: "Place one end of the selected portal links, and set its marker",
-    applicable: link_selected,
+    applicable: portal_selected,
     grammar: &GRAMMAR,
     synonyms: &["marker", "portal_end"],
     execute: execute_portal,

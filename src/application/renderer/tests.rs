@@ -1374,8 +1374,8 @@ fn chrome_literal_chars() -> Vec<(char, String)> {
 /// the shipping code of the console, the field edits, the renderer and
 /// the view spells ([`chrome_literal_chars`]) — the console's prompt,
 /// cursor, gutter, completion marker and frame, the rubber band's
-/// corners and dashes, the `body` presets, the boxes the frame cycle
-/// sets a ring to (#338), and whatever a new chrome surface adds. Each is
+/// corners and dashes, the boxes the frame cycle sets a ring to (#338),
+/// and whatever a new chrome surface adds. Each is
 /// drawn in the default family, so its look must not depend on the
 /// machine: a glyph neither face holds is drawn in whatever face the
 /// host has, as a `.notdef` box where it has none and in the browser, or

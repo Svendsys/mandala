@@ -23,7 +23,7 @@
 
 use super::Command;
 use crate::application::console::parser::Args;
-use crate::application::console::predicates::path_selected;
+use crate::application::console::predicates::line_path_selected;
 use crate::application::console::spec::descent::Stop;
 use crate::application::console::spec::kvs::{self, Pair};
 use crate::application::console::spec::route::{self, Routes};
@@ -137,7 +137,7 @@ pub const COMMAND: Command = Command {
     name: "path",
     aliases: &[],
     summary: "Set the selected connectors' and line links' content, fit, spacing, size, color, anchors and caps; straighten, curve or reset them",
-    applicable: path_selected,
+    applicable: line_path_selected,
     grammar: &GRAMMAR,
     synonyms: &["connector", "edge", "line", "body", "glyph", "dotted", "dashed", "anchor", "arrow"],
     execute: execute_path,
