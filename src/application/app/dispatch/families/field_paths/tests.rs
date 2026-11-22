@@ -160,7 +160,10 @@ const L14_TEXT: &str = r#"{"to": 4, "kind": "line", "content": "─", "label": {
 const P14_TEXT: &str = r#"{"to": 4, "kind": "portal"}"#;
 const L32_TEXT: &str =
     r##"{"to": 2, "kind": "line", "color": "#00ff00", "straight": true, "visible": false}"##;
-const L41_TEXT: &str = r#"{"to": 1, "kind": "line", "control_points": [[0.0, -30.0]], "zoom": {"min": 0.5}, "spans": [{"text": "~"}]}"#;
+const L41_TEXT: &str = r#"{"to": 1, "kind": "line", "fit": "repeat", "spacing": 2.0, "size": 9.0, "anchors": ["top", "left"], "control_points": [[0.0, -30.0]], "zoom": {"min": 0.5}, "spans": [{"text": "~"}]}"#;
+/// Node 4's link once reset: every field it inherits gone, the zoom
+/// window and the span kept.
+const L41_RESET: &str = r#"{"to": 1, "kind": "line", "zoom": {"min": 0.5}, "spans": [{"text": "~"}]}"#;
 
 /// Every console form and every Action of the family.
 const CASES: &[Case] = &[
@@ -214,10 +217,18 @@ const CASES: &[Case] = &[
                 r##""color": "#00ff00", "content": "·", "##,
             ),
             (
-                r#""kind": "line", "control_points""#,
-                r#""kind": "line", "content": "·", "control_points""#,
+                r#""size": 9.0, "anchors""#,
+                r#""size": 9.0, "content": "·", "anchors""#,
             ),
         ],
+    },
+    // `none` is the keyword spelled exactly; any other capitalization is
+    // text the path draws.
+    Case {
+        name: "path content=None is text",
+        select: &[C2],
+        input: Input::Line("path content=None"),
+        edits: &[(r#"{"content": "─","#, r#"{"content": "None","#)],
     },
     Case {
         name: "SetPathContent none",
@@ -263,10 +274,13 @@ const CASES: &[Case] = &[
         edits: &[(r#""control_points": [[0.0, -30.0]], "#, "")],
     },
     Case {
-        name: "path reset keeps visible",
-        select: &[L32],
+        name: "path reset keeps visible and the zoom",
+        select: &[L32, L41],
         input: Input::Line("path reset"),
-        edits: &[(L32_TEXT, r#"{"to": 2, "kind": "line", "visible": false}"#)],
+        edits: &[
+            (L32_TEXT, r#"{"to": 2, "kind": "line", "visible": false}"#),
+            (L41_TEXT, L41_RESET),
+        ],
     },
     Case {
         name: "ResetPath on a connector and two links is one entry",
@@ -275,7 +289,7 @@ const CASES: &[Case] = &[
         edits: &[
             (r#"{"content": "─", "#, "{"),
             (L32_TEXT, r#"{"to": 2, "kind": "line", "visible": false}"#),
-            (r#""control_points": [[0.0, -30.0]], "#, ""),
+            (L41_TEXT, L41_RESET),
         ],
     },
     // ── path cap ──
@@ -308,6 +322,29 @@ const CASES: &[Case] = &[
             L13_TEXT,
             r#"{"to": 3, "kind": "line", "cap_start": {"spans": [{"text": "o"}]}}"#,
         )],
+    },
+    // A connector that has caps beside a link that has none: one request
+    // replaces the one and inserts the other (`give`'s two halves).
+    Case {
+        name: "path cap on a capped connector and a bare link",
+        select: &[C2, L13],
+        input: Input::Line("path cap start=x end=y"),
+        edits: &[
+            (
+                r#""cap_end": {"spans": [{"text": ">"}]}"#,
+                r#""cap_start": {"spans": [{"text": "x"}]}, "cap_end": {"spans": [{"text": "y"}]}"#,
+            ),
+            (
+                L13_TEXT,
+                r#"{"to": 3, "kind": "line", "cap_start": {"spans": [{"text": "x"}]}, "cap_end": {"spans": [{"text": "y"}]}}"#,
+            ),
+        ],
+    },
+    Case {
+        name: "path cap end=none removes the one there is",
+        select: &[C2, L13],
+        input: Input::Line("path cap end=none"),
+        edits: &[(r#", "cap_end": {"spans": [{"text": ">"}]}"#, "")],
     },
     // ── link ──
     Case {
@@ -388,6 +425,29 @@ const CASES: &[Case] = &[
             offset: "".into(),
         }),
         edits: &[(r#"{"t": 0.5, "#, "{")],
+    },
+    // A connector with a label beside a link with none: one request
+    // replaces the one, sets its place, and inserts the other with it.
+    Case {
+        name: "label text= on a labeled connector and a bare link",
+        select: &[C2, L13],
+        input: Input::Line("label text=hey t=0.2"),
+        edits: &[
+            (
+                r#""label": {"t": 0.5, "spans": [{"text": "child"}]}"#,
+                r#""label": {"t": 0.2, "spans": [{"text": "hey"}]}"#,
+            ),
+            (
+                L13_TEXT,
+                r#"{"to": 3, "kind": "line", "label": {"t": 0.2, "spans": [{"text": "hey"}]}}"#,
+            ),
+        ],
+    },
+    Case {
+        name: "label delete removes the one there is",
+        select: &[C2, L13],
+        input: Input::Line("label delete"),
+        edits: &[(r#", "label": {"t": 0.5, "spans": [{"text": "child"}]}"#, "")],
     },
     // ── portal ──
     Case {
@@ -561,6 +621,12 @@ fn test_each_verb_refuses_naming_what_to_select() {
         (&[], "portal end=0 size=3", "portal: select a portal link"),
         (&[L13], "portal end=0 size=3", "portal: select a portal link"),
         (&[P14], "portal size=3", "portal: give end=0"),
+        // Empty text is refused on all four text keys, each in its own
+        // words.
+        (&[C2], "path content=\"\"", "path: give the text it draws, or `none` to inherit"),
+        (&[P14], "portal end=0 content=\"\"", "portal: give the marker's text, or `none` to inherit"),
+        (&[C2], "path cap start=\"\"", "path cap: give a cap's text, or `none` to remove it"),
+        (&[C2], "label text=\"\"", "label: give the label's text, or `label delete` to remove it"),
     ];
     for (paths, line, message) in refusals {
         let mut doc = fixture();
@@ -590,6 +656,35 @@ fn test_each_verb_refuses_naming_what_to_select() {
         );
     }
     assert_eq!(bytes(&doc), FIXTURE);
+}
+
+/// **An empty content is refused from an Action too, and `none` is the
+/// keyword only as spelled**: `SetPathContent("")` applies nothing, and
+/// `node palette=None` names a palette, which this map does not have,
+/// rather than unbinding one. Control: the lowercase `none` is accepted
+/// as the keyword (node 1 has nothing to unbind).
+#[test]
+fn test_empty_content_is_refused_and_none_is_matched_exactly() {
+    let mut doc = fixture();
+    select(&mut doc, &[C2]);
+    assert_eq!(
+        run(&Action::SetPathContent(String::new()), &mut doc),
+        DispatchOutcome::Unhandled,
+        "an empty content applies nothing"
+    );
+    assert_eq!(bytes(&doc), FIXTURE);
+
+    let n1 = node(&doc, 1);
+    doc.selection.select_only(n1);
+    assert_eq!(
+        run_line(&mut doc, "node palette=None"),
+        Err("'None' is not a palette of this map".to_string()),
+        "`None` is a palette's name, not the keyword"
+    );
+    assert!(
+        run_line(&mut doc, "node palette=none").is_ok(),
+        "control: the keyword is read as the keyword"
+    );
 }
 
 /// **`path content="·"` changes what is drawn on the next projection,

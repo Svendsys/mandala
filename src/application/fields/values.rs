@@ -202,10 +202,12 @@ pub(crate) fn zoom_bound(text: &str) -> Result<Option<f32>, String> {
         .ok_or_else(|| format!("'{text}' is not a zoom: a positive number or `unset`"))
 }
 
-/// Text a path, a cap or a portal end draws, or `None` for [`NONE`]: any
-/// other text is taken as it is, since content is text (D8).
+/// Text a path, a cap or a portal end draws, or `None` for [`NONE`],
+/// spelled exactly so: any other text — `None` and `NONE` among it — is
+/// taken as it is, since content is text (D8). Empty text is the
+/// caller's to refuse, in the words of the key it was given to.
 pub(crate) fn content(text: &str) -> Option<String> {
-    (!text.eq_ignore_ascii_case(NONE)).then(|| text.to_string())
+    (text != NONE).then(|| text.to_string())
 }
 
 /// Where a path attaches, as the file spells it: `auto`, `top`, `right`,

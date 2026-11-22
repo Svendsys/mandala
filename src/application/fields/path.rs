@@ -152,6 +152,9 @@ impl PathFields {
 /// The steps that set `fields` on every selected connector and line
 /// link.
 pub(crate) fn set(doc: &MindMapDocument, fields: &PathFields) -> Steps {
+    if matches!(&fields.content, Some(Some(text)) if text.is_empty()) {
+        return Err("path: give the text it draws, or `none` to inherit".to_string());
+    }
     let ops = fields.ops();
     if ops.is_empty() {
         return Err("path: give content=, fit=, spacing=, size=, color=, anchors= or visible=".to_string());
@@ -445,6 +448,9 @@ impl PortalFields {
 /// The steps that set `fields` on end `end` — 0 the source, 1 the target
 /// — of every selected portal link.
 pub(crate) fn portal(doc: &MindMapDocument, end: u8, fields: &PortalFields) -> Steps {
+    if matches!(&fields.content, Some(Some(text)) if text.is_empty()) {
+        return Err("portal: give the marker's text, or `none` to inherit".to_string());
+    }
     let ops = fields.ops();
     if ops.is_empty() {
         return Err("portal: give border_t=, offset=, content=, size= or color=".to_string());

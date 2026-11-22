@@ -30,7 +30,7 @@ pub(crate) struct NodeFields {
 
 /// The palette `name` names in `doc`, or `none` to unbind.
 pub(crate) fn palette(doc: &MindMapDocument, name: &str) -> Result<Option<PaletteId>, String> {
-    if name.eq_ignore_ascii_case("none") {
+    if name == super::values::NONE {
         return Ok(None);
     }
     doc.doc()

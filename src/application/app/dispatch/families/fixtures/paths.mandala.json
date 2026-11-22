@@ -25,7 +25,7 @@
       "id": 4,
       "position": [300.0, 300.0],
       "sections": [{"spans": [{"text": "Four"}]}],
-      "links": [{"to": 1, "kind": "line", "control_points": [[0.0, -30.0]], "zoom": {"min": 0.5}, "spans": [{"text": "~"}]}]
+      "links": [{"to": 1, "kind": "line", "fit": "repeat", "spacing": 2.0, "size": 9.0, "anchors": ["top", "left"], "control_points": [[0.0, -30.0]], "zoom": {"min": 0.5}, "spans": [{"text": "~"}]}]
     }
   ]
 }
