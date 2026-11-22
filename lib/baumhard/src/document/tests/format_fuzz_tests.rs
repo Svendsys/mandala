@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 /// Every minimized input a fuzz target found, by the symptom it had.
 /// Each is replayed through every property here; its own test below
 /// pins the symptom. The fuzz targets read these files as seeds.
-const FINDINGS: [(&str, &[u8]); 10] = [
+const FINDINGS: [(&str, &[u8]); 11] = [
     (
         "c1_control_saved_raw",
         include_bytes!("fuzz_findings/c1_control_saved_raw.mandala.json"),
@@ -82,6 +82,16 @@ const FINDINGS: [(&str, &[u8]); 10] = [
     (
         "a_ring_unspaced_too_far_out_to_project_in_time",
         include_bytes!("fuzz_findings/a_ring_unspaced_too_far_out_to_project_in_time.mandala.json"),
+    ),
+    // A harness finding (CI's load_structured job on #380; #387): a frame
+    // of a tab beside code points no compiled face draws, whose `.notdef`
+    // pass the projection's work bound did not count. Its input, the
+    // target's choices, beside it (`structured_a_tabbed_ring_of_notdefs`);
+    // `projection::tests::notdef_bound_tests` replays both on the compiled
+    // faces alone.
+    (
+        "a_tabbed_ring_of_notdefs",
+        include_bytes!("fuzz_findings/a_tabbed_ring_of_notdefs.mandala.json"),
     ),
 ];
 

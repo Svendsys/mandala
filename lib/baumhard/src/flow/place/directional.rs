@@ -155,6 +155,12 @@ thread_local! {
     /// ring laid by its spans alone. `None` before any.
     #[cfg(test)]
     pub(crate) static LAST_DIRECTIONAL: Cell<Option<(usize, usize)>> = const { Cell::new(None) };
+    /// Test counter (#387): the glyph steps the last directional ring laid
+    /// on this thread charged its one reshape, the run with its vertical
+    /// text and corners appended — what [`reshape_steps`] predicts. `None`
+    /// before any.
+    #[cfg(test)]
+    pub(crate) static LAST_RESHAPE: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
 /// The lays of a run held back for whenever its count or its spacing
@@ -447,6 +453,42 @@ struct Parts {
     corners: [Vec<Cluster>; 4],
 }
 
+/// `run`, a `repeat` ring's spans as shaped, with `glyphs`' vertical text
+/// and corners shaped after it as a line of their own in `flow`, the
+/// ring's own text style ([`appended`]), as [`place_directional`] shapes
+/// it; whether that reshape shaped, which one with text appended always
+/// does (`shape::reshape`); and each part's bytes of the appended text.
+/// Cost: one reshape of the run with the appended text.
+pub(crate) fn combined_run(
+    run: &ShapedRun,
+    glyphs: &DirectionalGlyphs,
+    flow: &ResolvedText,
+    fs: &mut crate::font::FontSystem,
+) -> (ShapedRun, bool, Vec<Range<usize>>) {
+    let (text, ranges) = appended(glyphs);
+    let (combined, shaped) = reshape(run, 1.0, Some((text.as_str(), flow)), fs);
+    (combined, shaped, ranges)
+}
+
+/// The glyph steps a lay of a directional ring of `run`, `glyphs` and
+/// `flow` charges its one reshape: [`combined_run`]'s, weighed by
+/// `halves::resizing_steps` as [`place_directional`] weighs it — the
+/// shaping and its `.notdef` passes (`halves::notdef_steps`) — before the
+/// lay reads its budget (#387). Exactly what that lay charges for the same
+/// run, glyphs and style, the reshape being the same function: what a
+/// harness that bounds a ring's work before laying it reads. A lay that
+/// finds its outline too small for two runs makes no reshape, and charges
+/// none. Cost: [`combined_run`]'s.
+pub(crate) fn reshape_steps(
+    run: &ShapedRun,
+    glyphs: &DirectionalGlyphs,
+    flow: &ResolvedText,
+    fs: &mut crate::font::FontSystem,
+) -> usize {
+    let (combined, shaped, _) = combined_run(run, glyphs, flow, fs);
+    resizing_steps(&combined, shaped)
+}
+
 /// The text of `glyphs`' vertical text and corners shaped as one line
 /// after the ring's spans, as a filler is: each part its paragraph
 /// separators left out, a space between two, which no part's ink reads.
@@ -596,8 +638,7 @@ pub(super) fn place_directional(
         table_spacing(run, &FitMode::Repeat, flow),
     );
     let runs = runs(&arc, path, line_height, glyphs.corners.is_some())?;
-    let (text, ranges) = appended(glyphs);
-    let (combined, shaped) = reshape(run, 1.0, Some((text.as_str(), flow)), fs.fonts());
+    let (combined, shaped, ranges) = combined_run(run, glyphs, flow, fs.fonts());
     let letters = combined.glyphs.iter().any(|g| g.letter);
     let measured;
     let m = if letters {
@@ -662,7 +703,10 @@ pub(super) fn place_directional(
     let need = needs.iter().copied().fold(0, usize::saturating_add);
     let estimate = need.saturating_add(corner_glyphs).min(cap);
     let work = RingWork::new(&arc, widest(level_clusters), letters, line_height, estimate, cap);
-    work.took(resizing_steps(&combined, shaped));
+    let reshaped = resizing_steps(&combined, shaped);
+    #[cfg(test)]
+    LAST_RESHAPE.with(|last| last.set(Some(reshaped)));
+    work.took(reshaped);
     if letters {
         work.took(inking_steps(&combined));
     }

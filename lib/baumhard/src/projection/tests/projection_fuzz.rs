@@ -95,6 +95,41 @@
 //! break them: the check holds each ring the fuzzer lays to them
 //! (`rings_within_their_work`), so a fuzz run finds the next one.
 //!
+//! **The shaper's `.notdef` passes are not measured** (#387). A lay that
+//! shapes text again — a frame's reshape of a text that holds a tab, its
+//! side ornament's shapings, a directional ring's one shaping of its texts
+//! — pays the shaper's passes for a glyph no face draws: 2,200 steps for
+//! each `.notdef` of one code point, and for each glyph of a line holding a
+//! `.notdef` of several (`flow::place::halves::notdef_steps`), past any
+//! rate a sweep of drawn text measured. CI's load_structured job on #380
+//! found a frame of a tab beside U+0001 and a keycap no compiled face
+//! draws, whose lay took 14,157 steps where the rates gave it 9,344. Which
+//! line may lay a `.notdef` is read from the map: one no one face of the
+//! font system maps all of (`may_lay_notdef`).
+//!
+//! - **A frame laid by halves that may pay them is excluded, not counted**
+//!   (`frame_may_shape_notdef`): one with a side ornament or a `once`
+//!   filler, or `Fit` with a tab in its text, a line of which may lay a
+//!   `.notdef`. Its lay may
+//!   shape such a line dozens of times, each a pass a glyph, and no cap of
+//!   the engine's holds that below a lay's share here, so there is no count
+//!   to grade it by. What that costs: such frames are never projected by a
+//!   check — CI's own finding among them, on CI's faces, though it lays a
+//!   third of the share — nor is a frame of several scripts no one face
+//!   draws beside an ornament, or `Fit` with a tab, though it lays none.
+//! - **A directional ring's one shaping is counted, exactly**
+//!   (`directional_notdef_steps`): where a line of it may lay a `.notdef`,
+//!   the bound shapes its texts, at the least size, which the charge does
+//!   not depend on, and adds what that reshape charges
+//!   (`flow::reshape_steps`), on any host and any face.
+//! - A `Repeat` ring of spans alone shapes nothing as it lays, and pays no
+//!   pass.
+//!
+//! The faces are the font system's, the host's with the compiled ones, as
+//! the shaper's are: on CI's runner U+0001 is drawn by no face, and on a
+//! host with Unifont it is, and in each the bound reads what that host
+//! lays.
+//!
 //! **The check's own edit is held to the bound too** (the review of #378).
 //! The bound reads the map as loaded; the check then edits it, and every
 //! projection after the edit lays the map as edited. An edit can take an
@@ -133,7 +168,14 @@
 //! (`DEFAULT_IGNORABLE`;
 //! `test_a_side_ornament_of_default_ignorables_lays_within_its_bound`).
 //! That a `Repeat` ring steps along its outline no less than its clusters'
-//! least steps over `RING_STEP_SLACK`. And the rates above. The end-to-end
+//! least steps over `RING_STEP_SLACK`. That a face whose `cmap` maps every
+//! character of a cluster lays none of it as `.notdef`; that the shaper
+//! tries every face before it gives a glyph up; and that a face that draws
+//! a missing cluster forms it from the same characters, so its cluster
+//! starts where the missing glyph does, which the fallback's merge needs
+//! to take it — a face that ligated a character the first face drew with
+//! one it lacked would not be taken (`may_lay_notdef`). And the rates
+//! above. The end-to-end
 //! properties (`test_every_ring_the_bound_admits_lies_within_the_extent`,
 //! and in every check `rings_within_their_work`) hold the bound's own
 //! cases, the reviews' probes and every map the fuzzer lays to them.
@@ -757,14 +799,24 @@ pub(crate) fn least_steps(run: &crate::flow::ShapedRun) -> (f64, usize) {
 }
 
 /// Whether every `Repeat` ring of `frame` may lay no more glyphs than
-/// [`MOST_RING_GLYPHS`] ([`repeat_glyphs`]; ruling B47.3). O(its rings'
-/// texts).
+/// [`MOST_RING_GLYPHS`] ([`repeat_glyphs`]; ruling B47.3), and one lay of
+/// it, a directional one's `.notdef` passes counted (#387), take no more
+/// than its share of the input's, `flow_fuzz::INPUT_STEPS` over
+/// [`RING_LAYS_A_CHECK`] ([`ring_steps`]) — which a ring of no `.notdef`
+/// count takes whenever it lays no more than `MOST_RING_GLYPHS`. O(its
+/// rings' texts × the faces).
 fn repeat_rings_fit(tree: &Tree<DocElement>, frame: NodeId) -> bool {
     let arena = tree.arena();
     frame
         .children(arena)
         .filter(|&ring| matches!(arena[ring].get(), DocElement::Ring(_)))
-        .all(|ring| repeat_glyphs(tree, frame, ring).is_none_or(|glyphs| glyphs <= MOST_RING_GLYPHS))
+        .all(|ring| {
+            repeat_glyphs(tree, frame, ring).is_none_or(|glyphs| {
+                glyphs <= MOST_RING_GLYPHS
+                    && ring_steps(tree, frame, ring)
+                        .is_some_and(|steps| steps <= INPUT_STEPS / RING_LAYS_A_CHECK)
+            })
+        })
 }
 
 /// The most glyph steps a frame laid by halves — a ring of text of any fit
@@ -803,13 +855,16 @@ pub const FRAME_SETUP_STEPS: usize = 8_192;
 /// ten would have taken a minute. Under ASan (`cargo fuzz run load_raw
 /// <file> -- -runs=1`, the load average some 2.5), the densest frame this
 /// admits by its steps, 151 letters `spread` round an ellipse 1,000 across,
-/// 22,872 steps a lay, ran its input in 0.50 s. The slowest it admits, 151
-/// characters of seven scripts `once` with a `✦` round one 100 across,
+/// 22,872 steps a lay, ran its input in 0.50 s. The slowest it admitted,
+/// 151 characters of seven scripts `once` with a `✦` round one 100 across,
 /// 21,702 steps a lay, ran in 3.1 s in three lays, some 10 s in ten, under
 /// the 20 s timeout: most of its time is shaping its text in the faces its
 /// scripts fall back to, which a full projection does again and no step
-/// counts. That shaping is what a check's projections cost for every flow,
-/// a section's and a path's too, and this bound does not hold it.
+/// counts. It is excluded since #387: no one face draws its seven scripts,
+/// so its side shapings may pay `.notdef` passes the bound cannot count
+/// (`frame_may_shape_notdef`). That shaping is what a check's projections
+/// cost for every flow, a section's and a path's too, and this bound does
+/// not hold it.
 pub const FRAME_STEPS_A_LAY: usize = INPUT_STEPS / RING_LAYS_A_CHECK;
 
 /// The most glyphs the side ornament `sides` of a frame laid by halves may
@@ -854,6 +909,156 @@ pub(crate) fn frame_steps(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId) 
             .saturating_add(FRAME_STEPS_A_SIDE_GLYPH.saturating_mul(sides))
             .saturating_add(FRAME_SETUP_STEPS),
     )
+}
+
+/// Whether a lay of `ring`, a ring laid by halves, may shape again a line
+/// that may lay a `.notdef` (#387), and so pay the shaper's `.notdef`
+/// passes, past any rate a sweep of drawn text measured: such a frame is
+/// excluded from the bound ([`text_frames_fit`]), not counted. A frame's
+/// reshapes take their run's shaping and lay it out at another size, which
+/// shapes nothing (`flow::shape::reshape`), but where its text holds a tab
+/// — a ring's run is one line, so nothing else stops it — or the run
+/// carries a filler: so a lay shapes again where it has a side ornament
+/// (each build shapes the `x` and the ornament its copy is sized by, and
+/// the text with the ornament appended, `halves::side_run`; a `once`
+/// filler is the frame's sides where they are unset), where it has a
+/// `once` filler — sides or none, `sides: false` included: R27 appends it
+/// to the text where the frame's halves cannot be measured
+/// (`lines::place_lines_in`), whether or not that branch is reachable
+/// from a map — or where it is `Fit` and its text holds a tab (R27's
+/// reshapes and the shrink's). Its lines: the text, the ornament, the `x`
+/// and the filler, each read apart ([`may_lay_notdef`]). On an outline
+/// whose halves can be measured a filler is shaped only as the sides it
+/// is where they are unset, so a frame excluded for a filler's line alone
+/// pays no pass there: an exclusion for the other branch.
+///
+/// Why not counted. One lay may make dozens of such shapings — R27's 1 +
+/// `FIT_ROUNDS`, twice on the branch whose halves cannot be measured, the
+/// shrink's 1 + `SHRINK_ROUNDS`, three a build beside an ornament — each
+/// up to `SHAPE_NOTDEF_STEPS` a glyph of its line, and no cap the engine
+/// sets holds them below the share a lay has here ([`FRAME_STEPS_A_LAY`]),
+/// its budget being 400,000 steps at the least. A count that held every
+/// such lay would admit no frame it counted anything for. O(its texts ×
+/// the faces), and once a process [`face_metrics`].
+pub(crate) fn frame_may_shape_notdef(tree: &Tree<DocElement>, ring: NodeId) -> bool {
+    let arena = tree.arena();
+    let resolved = resolve_ring_in(tree, ring, Binding::Carried(None), &mut ());
+    let filler = match &resolved.fit {
+        FitMode::Repeat => return false,
+        FitMode::Once { filler } => filler.as_deref(),
+        _ => None,
+    };
+    let text: String = ring
+        .children(arena)
+        .filter_map(|span| match arena[span].get() {
+            DocElement::Span(span) => Some(span.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let sides = resolved.sides.as_ref().map(|sides| sides.content.as_str());
+    let shapes_again = sides.is_some()
+        || filler.is_some()
+        || (matches!(resolved.fit, FitMode::Fit { .. }) && text.contains('\t'));
+    let metrics = face_metrics();
+    shapes_again
+        && [Some(text.as_str()), sides, sides.map(|_| "x"), filler]
+            .into_iter()
+            .flatten()
+            .any(|line| may_lay_notdef(metrics, line.chars()))
+}
+
+/// Each text of `ring` its run is shaped from, a span's, in its own
+/// style at the least size its ring can be ([`least_style`]); spans of no
+/// text left out. O(its spans).
+fn least_spans(tree: &Tree<DocElement>, ring: NodeId, least_rect: Rect) -> Vec<(ResolvedText, &str)> {
+    let arena = tree.arena();
+    ring.children(arena)
+        .filter_map(|span| match arena[span].get() {
+            DocElement::Span(text) => Some((
+                least_style(
+                    resolve_text_in(tree, span, Binding::Carried(None), &mut ()),
+                    least_rect,
+                ),
+                text.text.as_str(),
+            )),
+            _ => None,
+        })
+        .filter(|(_, text)| !text.is_empty())
+        .collect()
+}
+
+/// `style` at the size it has in a node drawn as `least_rect`, the least
+/// rectangle a node is drawn as and so the least size a ring's text is
+/// shaped at (D5). O(1).
+fn least_style(style: ResolvedText, least_rect: Rect) -> ResolvedText {
+    ResolvedText {
+        size: FontSize::Pt(geometry::points(style.size, least_rect)),
+        ..style
+    }
+}
+
+/// The glyph steps one lay of `ring`, a `Repeat` ring of `frame` that
+/// lays text by direction, charges its one reshape, where a line it
+/// shapes may lay a `.notdef` (#387): its spans' text, each span in its
+/// own style, with its `vertical` text and its corners appended on a line
+/// of their own, weighed as the lay weighs it (`flow::reshape_steps`) —
+/// exactly, `.notdef` passes and all, on any host and any face, a
+/// decomposing one included. It is shaped at the least size its ring can
+/// be (`min_size`, D5), where the projection shapes it at the size the
+/// node is drawn at, and the charge does not depend on the size: the
+/// buffers are laid out with no wrap and no width, so its layout lines are
+/// its buffer lines at any size; harfrust shapes in font units; the
+/// weights read only which glyphs were shaped, the faces they are in and
+/// the lines they are on (`halves::shaping_steps`, `halves::notdef_steps`);
+/// and neither a tab's measure nor the least font size changes a glyph.
+/// Nothing where neither
+/// line may lay a `.notdef` ([`may_lay_notdef`], the cheap gate: the
+/// shaping of a line one face draws is what `RING_STEPS_A_GLYPH` was
+/// measured with), and for any other ring — a `Repeat` ring of spans
+/// alone shapes nothing as it lays. A lay that finds its outline too
+/// small for two runs reshapes nothing, and this is then more than it
+/// charges. O(its texts × the faces), and a shaping of them.
+pub(crate) fn directional_notdef_steps(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId) -> usize {
+    use crate::flow::{shape_run, FlowSpan};
+    let arena = tree.arena();
+    let resolved = resolve_ring_in(tree, ring, Binding::Carried(None), &mut ());
+    if !matches!(resolved.fit, FitMode::Repeat) || !resolved.directional.is_set() {
+        return 0;
+    }
+    let Some(DocElement::Node(data)) = frame.parent(arena).map(|node| arena[node].get()) else {
+        return 0;
+    };
+    let least_rect = Rect::new(Vec2::ZERO, geometry::usable_size(data.min_size));
+    let spans = least_spans(tree, ring, least_rect);
+    let text: String = spans.iter().map(|(_, text)| *text).collect();
+    let appended: Vec<&str> = resolved
+        .directional
+        .vertical
+        .iter()
+        .chain(resolved.directional.corners.iter().flatten())
+        .map(String::as_str)
+        .collect();
+    let appended = appended.join(" ");
+    let metrics = face_metrics();
+    if !may_lay_notdef(metrics, text.chars()) && !may_lay_notdef(metrics, appended.chars()) {
+        return 0;
+    }
+    let style = least_style(
+        resolve_text_in(tree, ring, Binding::Carried(None), &mut ()),
+        least_rect,
+    );
+    crate::font::fonts::init();
+    let mut lease = FontSystemLease::new("the projection's work bound");
+    let flow_spans: Vec<FlowSpan<'_>> = spans
+        .iter()
+        .map(|(style, text)| FlowSpan {
+            text,
+            style,
+            link: None,
+        })
+        .collect();
+    let run = shape_run(&flow_spans, 1.0, &mut lease);
+    crate::flow::reshape_steps(&run, &resolved.directional, &style, lease.fonts())
 }
 
 /// The glyphs one lay of `ring`, a ring of `frame` laid by halves, may
@@ -901,14 +1106,19 @@ pub(crate) fn frame_glyphs(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId)
 }
 
 /// Whether one lay of every ring of `frame` laid by halves may take no
-/// more than [`FRAME_STEPS_A_LAY`] ([`frame_steps`]; ruling B47.3).
-/// O(its rings' texts).
+/// more than [`FRAME_STEPS_A_LAY`] ([`frame_steps`]; ruling B47.3), and
+/// none may shape again a line that may lay a `.notdef`
+/// ([`frame_may_shape_notdef`], #387), which excludes it. O(its rings'
+/// texts × the faces).
 fn text_frames_fit(tree: &Tree<DocElement>, frame: NodeId) -> bool {
     let arena = tree.arena();
     frame
         .children(arena)
         .filter(|&ring| matches!(arena[ring].get(), DocElement::Ring(_)))
-        .all(|ring| frame_steps(tree, frame, ring).is_none_or(|steps| steps <= FRAME_STEPS_A_LAY))
+        .all(|ring| {
+            !frame_may_shape_notdef(tree, ring)
+                && frame_steps(tree, frame, ring).is_none_or(|steps| steps <= FRAME_STEPS_A_LAY)
+        })
 }
 
 /// How many spaces on a tab is laid to its next stop at most: the tab
@@ -992,6 +1202,11 @@ pub(crate) struct FaceMetrics {
     /// The narrowest `.notdef` of any face: what a character no face maps
     /// advances by at least.
     pub(crate) notdef: f32,
+    /// For each face, every code point its `cmap` maps to a glyph other
+    /// than `.notdef` (glyph 0): what [`may_lay_notdef`] reads (#387).
+    /// Held once a process with the rest, every mapped code point of every
+    /// face: some 57,000 for Unifont alone.
+    pub(crate) drawn: Vec<FxHashSet<u32>>,
 }
 
 /// The code points the bound reads as advancing by nothing (the review of
@@ -1037,6 +1252,107 @@ pub(crate) fn default_ignorable(c: char) -> bool {
     DEFAULT_IGNORABLE
         .iter()
         .any(|&(first, last)| (first..=last).contains(&code))
+}
+
+/// The code points the shaper hides, so that none is ever laid as a
+/// `.notdef` (#387): harfrust 0.5.2's default ignorables (its
+/// `hb/unicode.rs`), which its hiding pass (`hb/ot_shape.rs`) lays as the
+/// face's space glyph, or deletes where the face has none, unless a
+/// substitution has made it a glyph of the face's own. cosmic-text sets
+/// neither `PRESERVE_DEFAULT_IGNORABLES` nor a not-found variation
+/// selector on the buffer, either of which would keep one. It is
+/// [`DEFAULT_IGNORABLE`] less what harfrust lays as any other character:
+/// the Hangul fillers (U+115F, U+1160, U+3164, U+FFA0), the shorthand
+/// format controls (U+1BCA0–U+1BCA3) and U+180F.
+/// `test_the_shaper_hides_every_code_point_the_bound_reads_as_hidden`
+/// holds the shaper to it.
+pub(crate) const SHAPER_HIDDEN: [(u32, u32); 13] = [
+    (0x00AD, 0x00AD),
+    (0x034F, 0x034F),
+    (0x061C, 0x061C),
+    (0x17B4, 0x17B5),
+    (0x180B, 0x180E),
+    (0x200B, 0x200F),
+    (0x202A, 0x202E),
+    (0x2060, 0x206F),
+    (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF),
+    (0xFFF0, 0xFFF8),
+    (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0FFF),
+];
+
+/// Whether the shaper hides `c` ([`SHAPER_HIDDEN`]). O(1).
+pub(crate) fn shaper_hidden(c: char) -> bool {
+    let code = u32::from(c);
+    SHAPER_HIDDEN
+        .iter()
+        .any(|&(first, last)| (first..=last).contains(&code))
+}
+
+/// Whether shaping `text`, one line, may lay a `.notdef` (glyph 0) in a
+/// font system of `metrics`' faces, and so cost the shaper's `.notdef`
+/// passes (`flow::place::halves::notdef_steps`, #387): unless one face
+/// maps every character of it the shaper is handed, other than those it
+/// hides ([`SHAPER_HIDDEN`]), a tab and a line break each handed over as a
+/// space (`flow::is_paragraph_separator`; cosmic-text lays a tab as a
+/// space).
+///
+/// Why one face, and not each character mapped by some face. The shaper
+/// gives up a glyph only where no face of the font system draws the whole
+/// cluster it is part of: each fallback face shapes the run, and its
+/// glyphs replace a missing cluster's only where it lays none of that
+/// cluster's as glyph 0 (cosmic-text's fallback,
+/// `vendor/cosmic-text/src/shape.rs`). A cluster can be several characters
+/// — a base and its marks, a variation selector, a
+/// joined sequence, a syllable of a complex script — each of which some
+/// face maps and no one face maps together, and then it is a `.notdef` of
+/// several code points, which costs a pass a glyph of its line. Which
+/// characters harfrust joins into one cluster is its own, script by
+/// script, and this reads none of it: a face that maps all of the text
+/// draws every cluster of it whole, however it is formed. Nor does it read
+/// where cosmic-text parts a line into the runs it shapes apart, which no
+/// cluster crosses: its words, from line-break opportunities, whitespace
+/// and ligature probes, a run of which can hold a space (`a )`). A line is
+/// the least it can be sure no cluster crosses, and a run appended on a
+/// line of its own — an ornament, a filler — is shaped apart from the
+/// text, so each line is read on its own.
+///
+/// What it takes on trust: that a face whose `cmap` maps each character of
+/// a cluster to a glyph other than 0 lays none of it as glyph 0 — no
+/// substitution of its own yields `.notdef`; that the fallback tries every
+/// face before it gives a glyph up, as cosmic-text's does; and that the
+/// face that draws a missing cluster forms it from the same characters, so
+/// that its cluster starts where the missing glyph does, which the
+/// fallback's merge requires before it takes one (cosmic-text's merge in
+/// `vendor/cosmic-text/src/shape.rs`): harfrust joins a mark, a variation
+/// selector, a joiner, a keycap or a modifier to its base whatever the
+/// face, but a face that ligated a character the first face drew with one
+/// it lacked would start its cluster at the drawn one, and leave the
+/// `.notdef`. It reads
+/// the faces the font system holds, the host's with the compiled ones, as
+/// the shaper does: what it answers for a text is the host's, and so is
+/// what the shaper lays. O(its characters × the faces).
+pub(crate) fn may_lay_notdef(metrics: &FaceMetrics, text: impl IntoIterator<Item = char>) -> bool {
+    let mut wanted: Vec<u32> = text
+        .into_iter()
+        .map(|c| {
+            if c == '\t' || crate::flow::is_paragraph_separator(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .filter(|&c| !shaper_hidden(c))
+        .map(u32::from)
+        .collect();
+    wanted.sort_unstable();
+    wanted.dedup();
+    !wanted.is_empty()
+        && !metrics
+            .drawn
+            .iter()
+            .any(|face| wanted.iter().all(|code| face.contains(code)))
 }
 
 impl FaceMetrics {
@@ -1120,6 +1436,7 @@ pub(crate) fn face_metrics() -> &'static FaceMetrics {
             narrowest: FxHashMap::default(),
             family: FxHashMap::default(),
             notdef: f32::INFINITY,
+            drawn: Vec::new(),
         };
         for face in db.faces() {
             db.with_face_data(face.id, |data, index| {
@@ -1136,6 +1453,7 @@ pub(crate) fn face_metrics() -> &'static FaceMetrics {
                 for &(code, least) in &face_read.codes {
                     narrowest_into(&mut metrics.narrowest, code, least);
                 }
+                metrics.drawn.push(face_read.drawn);
                 if compiled.contains(&face.id) {
                     compiled_maps.insert(source, face_read.codes);
                 }
@@ -1171,6 +1489,8 @@ struct FaceAdvances {
     notdef: f32,
     /// Each code point it maps, with the narrowest its glyph can be.
     codes: Vec<(u32, f32)>,
+    /// Each code point it maps to a glyph other than `.notdef`.
+    drawn: FxHashSet<u32>,
 }
 
 /// The advances of the face `index` of `data`, in ems: each glyph's
@@ -1247,18 +1567,23 @@ fn face_advances(data: &[u8], index: u32) -> Option<FaceAdvances> {
             }
         }
     }
-    let codes = font
-        .charmap()
-        .mappings()
-        .filter_map(|(code, glyph)| {
-            let &(least, _) = range.get(glyph.to_u32() as usize)?;
-            Some((code, least / units))
-        })
-        .collect();
+    // One walk of the charmap: each code point's narrowest advance, and
+    // whether it maps to a glyph other than `.notdef`.
+    let mut codes = Vec::new();
+    let mut drawn = FxHashSet::default();
+    for (code, glyph) in font.charmap().mappings() {
+        if glyph.to_u32() != 0 {
+            drawn.insert(code);
+        }
+        if let Some(&(least, _)) = range.get(glyph.to_u32() as usize) {
+            codes.push((code, least / units));
+        }
+    }
     Some(FaceAdvances {
         widest: range.iter().map(|&(_, most)| most).fold(0.0f32, f32::max) / units,
         notdef: range.first().map_or(f32::INFINITY, |&(least, _)| least / units),
         codes,
+        drawn,
     })
 }
 
@@ -1376,12 +1701,8 @@ pub(crate) fn rings_within_their_work(p: &Projected, most: usize) -> Result<usiz
             if placed > bound {
                 return Err(format!("ring {id:?} laid {placed} glyphs, its bound {bound}"));
             }
-            allowed = allowed.max(
-                RING_STEPS_A_GLYPH
-                    .saturating_mul(bound)
-                    .saturating_add(RING_SETUP_STEPS),
-            );
-        } else if let Some(steps) = frame_steps(tree, frame, id) {
+        }
+        if let Some(steps) = ring_steps(tree, frame, id) {
             allowed = allowed.max(steps);
         }
     }
@@ -1393,6 +1714,25 @@ pub(crate) fn rings_within_their_work(p: &Projected, most: usize) -> Result<usiz
     #[cfg(test)]
     LAID_AFTER.with(|laid| laid.set(laid.get().map(|_| most)));
     Ok(most)
+}
+
+/// The most glyph steps one lay of `ring`, a ring of `frame`, may take
+/// inside the bound (ruling B47.3): a `Repeat` ring's
+/// [`RING_STEPS_A_GLYPH`] a glyph of its bound ([`repeat_glyphs`]) and
+/// [`RING_SETUP_STEPS`], and a directional one's `.notdef` passes
+/// ([`directional_notdef_steps`], #387), or a ring laid by halves'
+/// [`frame_steps`]. `None` for a ring of no text, which the setup bounds.
+/// O(its texts × the faces).
+pub(crate) fn ring_steps(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId) -> Option<usize> {
+    match repeat_glyphs(tree, frame, ring) {
+        Some(bound) => Some(
+            RING_STEPS_A_GLYPH
+                .saturating_mul(bound)
+                .saturating_add(RING_SETUP_STEPS)
+                .saturating_add(directional_notdef_steps(tree, frame, ring)),
+        ),
+        None => frame_steps(tree, frame, ring),
+    }
 }
 
 /// [`check_projects`] once the map is inside the bound, under the ceiling

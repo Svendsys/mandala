@@ -60,11 +60,19 @@ pub(crate) use path::ArcPath;
 /// measured on, its table's and the projection's samples' (#313, #356).
 pub(crate) use path::Local;
 pub use path::{MAX_PATH_LENGTH, MAX_TABLE_SAMPLES};
+/// The glyph steps a directional ring's one reshape charges, before its
+/// lay reads its budget: what the projection harness's bound counts for
+/// such a ring (#387).
+pub(crate) use place::directional::reshape_steps;
 /// The last directional ring laid on this thread, its glyphs and its work,
 /// a test counter: what the projection harness's bound is held to for a
 /// ring that lays text by direction (ruling B47.2).
 #[cfg(test)]
 pub(crate) use place::directional::LAST_DIRECTIONAL;
+/// The last directional ring's reshape, as it charged it, a test counter:
+/// what the projection harness's count is held to (#387).
+#[cfg(test)]
+pub(crate) use place::directional::LAST_RESHAPE;
 /// A run with every glyph's ink measured, text too: what a text ring's
 /// paths stop at (#296).
 pub(crate) use place::halves::inked;
@@ -73,6 +81,10 @@ pub(crate) use place::halves::inked;
 /// frame's work to (ruling B47.3).
 #[cfg(test)]
 pub(crate) use place::halves::LAST_FRAME;
+/// The glyph steps a `.notdef` pass is weighed at, a test's yardstick for
+/// a lay that paid none (#387).
+#[cfg(test)]
+pub(crate) use place::halves::SHAPE_NOTDEF_STEPS;
 /// The last `Repeat` ring laid round a closed path on this thread, a test
 /// counter (#310): what the projection harness's bound is held to
 /// (ruling B47.1).
@@ -87,6 +99,15 @@ pub use place::{
     pattern_gap, place_at_point, place_on_closed, place_on_open, place_pitched, PathEnd, PlacedGlyph,
     PlacedRun, RingLayout, MAX_PLACED_GLYPHS,
 };
+/// Whether shaping hands a character to cosmic-text as a space, a run
+/// being one line: what the projection harness's bound reads a ring's
+/// line breaks as (#387).
+pub(crate) use shape::is_paragraph_separator;
+/// The `.notdef` passes every reshape that shaped paid, a test counter:
+/// what a frame's lay pays, which the projection harness's exclusion is
+/// held to (#387).
+#[cfg(test)]
+pub(crate) use shape::RESHAPE_NOTDEF_STEPS;
 pub use shape::{shape_box, shape_run, GlyphMetrics, Ink, ShapedBox, ShapedRun, FILLER_SPAN};
 pub use span::{point_size, span_attrs, FlowSpan, LINE_HEIGHT_FACTOR};
 
