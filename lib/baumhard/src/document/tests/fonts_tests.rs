@@ -17,12 +17,13 @@ use crate::document::writer::{ChangeSource, EditRequest};
 use crate::font::fonts::AppFont;
 
 /// A map that names the installed family `Nope Sans` on a node, a
-/// section, two spans and the defaults' span style, `Other Missing` on
-/// one span, and the compiled `Public Pixel` on another; an edit and a
-/// presentation name `Nope Sans` too. No machine this runs on has either
-/// installed family.
+/// section, two spans and all six of the defaults' text styles — the
+/// node's, a section's, a frame's, a ring's, a label's and a span's —
+/// `Other Missing` on one span, and the compiled `Public Pixel` on
+/// another; an edit and a presentation name `Nope Sans` too. No machine
+/// this runs on has either installed family.
 const MAP: &str = r#"{"format":1,"name":"fonts",
-  "defaults":{"span":{"font":"Nope Sans"}},
+  "defaults":{"node":{"font":"Nope Sans"},"section":{"font":"Nope Sans"},"frame":{"font":"Nope Sans"},"ring":{"font":"Nope Sans"},"label":{"font":"Nope Sans"},"span":{"font":"Nope Sans"}},
   "edits":[{"id":"e","name":"E","reach":"subtree","target":"spans","mutations":[{"span":{"text":{"set_font":"Nope Sans"}}}]}],
   "presentations":[{"id":"p","name":"P","play":"hold","target":"spans","mutations":[{"span":{"text":{"set_font":"Nope Sans"}}}]}],
   "nodes":[
@@ -38,14 +39,27 @@ fn family(name: &str) -> FamilyName {
     }
 }
 
-/// Every element's own font, and the defaults' span font, in tree order.
+/// Every element's own font, in tree order, then each of the defaults'
+/// six text styles' — the node's, a section's, a frame's, a ring's, a
+/// label's and a span's — read field by field here, not through the
+/// walk the code under test uses.
 fn fonts(doc: &Document) -> Vec<(NodeId, Option<FontRef>)> {
     let mut out: Vec<(NodeId, Option<FontRef>)> = doc
         .tree()
         .descendants()
         .filter_map(|id| Some((id, doc.get(id)?.text_style()?.font.clone())))
         .collect();
-    out.push((doc.root(), doc.defaults().span.font.clone()));
+    let defaults = doc.defaults();
+    for style in [
+        &defaults.node.text,
+        &defaults.section,
+        &defaults.frame.text,
+        &defaults.ring.text,
+        &defaults.label.text,
+        &defaults.span,
+    ] {
+        out.push((doc.root(), style.font.clone()));
+    }
     out
 }
 
@@ -66,18 +80,19 @@ fn rows(named: &[NamedFamily]) -> Vec<(String, usize, Vec<String>)> {
 #[test]
 fn test_the_report_names_every_installed_family_and_counts_where_the_map_names_it() {
     // Exact counts: `Nope Sans` on the node, the first section, two
-    // spans and the defaults' span style is 5; `Other Missing` on one
-    // span is 1; the compiled family is not listed; the edit and the
+    // spans and the defaults' six text styles is 10; `Other Missing` on
+    // one span is 1; the compiled family is not listed; the edit and the
     // presentation that name `Nope Sans` are listed by id. Neither family
     // is installed anywhere this runs, so the missing report is the same.
-    // Controls: counting only spans turns the first count red at 2;
-    // skipping the defaults turns it red at 4; listing a compiled family
-    // adds a row; not walking the presentations drops its id.
+    // Controls: counting only spans turns the first count red at 8;
+    // skipping the defaults turns it red at 4; dropping any one of the
+    // six from `defaults_styles` turns it red at 9; listing a compiled
+    // family adds a row; not walking the presentations drops its id.
     let doc = load(MAP).expect("the map loads");
     let expected = vec![
         (
             "Nope Sans".to_string(),
-            5,
+            10,
             vec!["edit `e`".to_string(), "presentation `p`".to_string()],
         ),
         ("Other Missing".to_string(), 1, Vec::new()),
@@ -114,7 +129,9 @@ fn test_a_replacement_rewrites_every_reference_as_one_edit_that_undo_reverts() {
     // report lists it with no element and both definitions.
     //
     // Controls: `replace_steps` without the defaults' step turns the
-    // defaults arm red (still `Nope Sans`); with one request per kind
+    // defaults arms red (still `Nope Sans`); dropping any one of the six
+    // from `defaults_styles_mut` turns that style's arm red; with one
+    // request per kind
     // instead of one request, the history grows by 3 and turns its arm
     // red; a step that sets every element's font turns the untouched arm
     // red.
@@ -127,7 +144,7 @@ fn test_a_replacement_rewrites_every_reference_as_one_edit_that_undo_reverts() {
         .iter()
         .filter(|(_, font)| font.as_ref().and_then(FontRef::installed) == Some(&from))
         .count();
-    assert_eq!(named, 5, "precondition: the map names the family five times");
+    assert_eq!(named, 10, "precondition: the map names the family ten times");
     let steps = replace_steps(&doc, &from, &to).expect("the steps");
     doc.apply(EditRequest::new(steps, "font replace"), ChangeSource::Action)
         .expect("the replacement applies");
