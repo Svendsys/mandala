@@ -68,7 +68,7 @@ const KEYS: &[Key] = &[
     Key::new("color", "its text color", super::color::COLOR_VOCAB),
     Key::new(
         "anchors",
-        "where it attaches at its start and end: <from>,<to>, each auto|top|right|bottom|left",
+        "where it attaches at its start and end, <from>,<to>: each auto, top, right, bottom or left",
         free("from,to"),
     ),
     Key::new("visible", "whether it is drawn", Vocabulary::Words(BOOLS)),

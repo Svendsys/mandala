@@ -149,7 +149,7 @@ pub const EXEC_CORPUS: &[(Sel, &str)] = &[
     (Sel::Path, "link kind=bogus kind=line"),
     (Sel::Path, "label x=1"),
     (Sel::Path, "label text=hi t=end"),
-    (Sel::Path, "label t=2"),
+    (Sel::Path, "label text=hi t=2"),
     (Sel::Path, "label DELETE"),
     (Sel::Path, "portal end=0 content=x"),
     (Sel::Path, "portal size=3"),
