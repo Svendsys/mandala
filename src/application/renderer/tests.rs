@@ -1972,3 +1972,131 @@ fn test_every_input_shaping_reads_reshapes_its_area_and_only_it() {
         "control: the other area's stamps stayed put"
     );
 }
+
+/// **A color-picker hover reshapes exactly the cell it recolors** (#248,
+/// the note from V1-C3 #322): the real wheel, the real dynamic-phase
+/// mutator — which writes color regions, hover scale and hex text into
+/// every slot on every hover frame — and the overlay rebuild's per-area
+/// reuse (`overlay_dispatch::reshape_overlays`). Pinned to an exact
+/// count, as on `main`: a fraction would tolerate a tenfold regression.
+/// If a future wheel legitimately recolors more than one cell on a hue
+/// hover, this number is re-read and updated, not widened.
+///
+/// Controls: the first rebuild shapes every area (the wheel has many);
+/// re-asserting the state already on screen shapes none; and a store
+/// that forgot its keys shapes every area again.
+#[test]
+fn test_picker_hover_reshapes_a_small_part_of_the_wheel() {
+    use super::overlay_dispatch::{reshape_overlays, OverlayShapes};
+    use crate::application::color_picker::tests::fixtures::sample_geometry;
+    use crate::application::color_picker::{compute_color_picker_layout, PickerHit};
+    use crate::application::color_picker_overlay;
+    use baumhard::gfx_structs::scene::Scene;
+
+    baumhard::font::fonts::init();
+    let geometry = sample_geometry();
+    let layout = compute_color_picker_layout(&geometry, 1280.0, 720.0);
+    let built = color_picker_overlay::build(&geometry, &layout);
+    let mut scene = Scene::new();
+    let id = scene.insert(built.tree, 0, Vec2::ZERO);
+    let mut shapes = OverlayShapes::default();
+    reshape_overlays(&mut shapes, &scene, &[id]);
+    let areas = shapes.shaped;
+    assert!(
+        areas > 30,
+        "control: the wheel has many cells, or one reshaped says nothing: {areas}"
+    );
+
+    let idempotent = color_picker_overlay::build_dynamic_mutator(&geometry, &layout);
+    scene.apply_mutator(id, &idempotent);
+    reshape_overlays(&mut shapes, &scene, &[id]);
+    assert_eq!(
+        shapes.shaped, areas,
+        "a hover frame that changed nothing must not reshape a single cell"
+    );
+
+    let mut hovered = sample_geometry();
+    hovered.hovered_hit = Some(PickerHit::Hue(3));
+    let hover = color_picker_overlay::build_dynamic_mutator(&hovered, &layout);
+    scene.apply_mutator(id, &hover);
+    reshape_overlays(&mut shapes, &scene, &[id]);
+    assert_eq!(
+        shapes.shaped - areas,
+        1,
+        "hovering one hue slot recolors exactly that cell, so exactly one of the wheel's {areas} areas \
+         is reshaped"
+    );
+
+    let mut forgot = OverlayShapes::default();
+    reshape_overlays(&mut forgot, &scene, &[id]);
+    assert_eq!(forgot.shaped, areas, "control: without the keys every area is shaped");
+}
+
+/// **A color-picker drag-move shapes nothing, and lands every buffer where
+/// a cold pass over the moved wheel puts it** (#248, the note from V1-C3
+/// #322). A drag-move changes `center_override` and nothing else, and the
+/// app answers it with the layout-phase mutator, which writes every
+/// variable field of every cell: every cell moves, none is reshaped — a
+/// moved area keeps its buffers, written at its new place.
+///
+/// Controls: re-asserting the layout already on screen shapes nothing
+/// and moves nothing; the drag does move the wheel's buffers (the zero
+/// is not a drag that never happened); and a cold pass over the moved
+/// wheel, which shapes every area, draws the same buffers at the same
+/// places.
+#[test]
+fn test_picker_drag_move_patches_every_cell_and_shapes_none() {
+    use super::overlay_dispatch::{reshape_overlays, OverlayShapes};
+    use crate::application::color_picker::compute_color_picker_layout;
+    use crate::application::color_picker::tests::fixtures::sample_geometry;
+    use crate::application::color_picker_overlay;
+    use baumhard::gfx_structs::scene::Scene;
+
+    baumhard::font::fonts::init();
+    let geometry = sample_geometry();
+    let layout = compute_color_picker_layout(&geometry, 1280.0, 720.0);
+    let built = color_picker_overlay::build(&geometry, &layout);
+    let mut scene = Scene::new();
+    let id = scene.insert(built.tree, 0, Vec2::ZERO);
+    let mut shapes = OverlayShapes::default();
+    reshape_overlays(&mut shapes, &scene, &[id]);
+    let areas = shapes.shaped;
+    let positions = |shapes: &OverlayShapes| -> Vec<(f32, f32)> { shapes.elements.iter().map(|b| b.pos).collect() };
+    let before = positions(&shapes);
+
+    let idempotent = color_picker_overlay::build_mutator(&geometry, &layout);
+    scene.apply_mutator(id, &idempotent);
+    reshape_overlays(&mut shapes, &scene, &[id]);
+    assert_eq!(shapes.shaped, areas, "re-asserting the layout shapes nothing");
+    assert_eq!(positions(&shapes), before, "and moves nothing");
+
+    let mut dragged = sample_geometry();
+    let (cx, cy) = layout.center;
+    dragged.center_override = Some((cx + 40.0, cy + 25.0));
+    let dragged_layout = compute_color_picker_layout(&dragged, 1280.0, 720.0);
+    let drag = color_picker_overlay::build_mutator(&dragged, &dragged_layout);
+    scene.apply_mutator(id, &drag);
+    reshape_overlays(&mut shapes, &scene, &[id]);
+    assert_eq!(
+        shapes.shaped, areas,
+        "a drag-move repositions the wheel and changes nothing shaping reads, so not one of its \
+         {areas} areas is reshaped"
+    );
+    let after = positions(&shapes);
+    let moved = before.iter().zip(&after).filter(|(a, b)| a != b).count();
+    assert!(
+        moved > 50 && moved == after.len(),
+        "control: the drag moved every buffer of the wheel ({moved} of {})",
+        after.len()
+    );
+
+    let mut cold = OverlayShapes::default();
+    reshape_overlays(&mut cold, &scene, &[id]);
+    assert_eq!(cold.shaped, areas, "control: the cold pass shapes every area");
+    assert_eq!(
+        after,
+        positions(&cold),
+        "every buffer of the moved wheel — every halo stamp of every outlined cell — sits where \
+         shaping the dragged wheel cold puts it"
+    );
+}

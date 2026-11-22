@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The picker's open path: Standalone (persistent palette). The
-//! Contextual open, bound to a target, returns with V1-C7 (#248). The shared `open_picker_inner` performs the
+//! The picker's open path: Standalone (persistent palette), and the
+//! widget half of the Contextual open, whose transaction its session
+//! begins first (`session::open_contextual`). The shared
+//! `open_picker_inner` performs the
 //! one-time font-system measurement pass that seeds
 //! `max_cell_advance`, `max_ring_advance`, and the per-glyph ink
 //! offsets the pure-function layout later consumes.

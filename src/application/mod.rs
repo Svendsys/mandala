@@ -77,17 +77,8 @@ pub(crate) mod clipboard;
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) mod clock;
 // Picker layout math + state. Driver: `app::color_picker_flow`,
-// native-gated pending the browser modal shell. Its target-bound mode
-// and its error flash have no producer until the picker is a
-// transaction (V1-C7, #248).
+// native-gated pending the browser modal shell.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-#[cfg_attr(
-    not(target_arch = "wasm32"),
-    expect(
-        dead_code,
-        reason = "the picker's target-bound mode and error flash return with V1-C7 (#248)"
-    )
-)]
 pub(crate) mod color_picker;
 // Picker glyph-area builders. Same driver, same gate, as
 // [`color_picker`].

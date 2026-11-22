@@ -848,9 +848,8 @@ fn test_action_for_gesture_falls_back_to_unmodified_binding() {
 }
 
 /// A `Ctrl+RightDrag` binding resolves to its Action through the
-/// gesture lookup. The binding is the test's own: `FastResizeStart`
-/// ships unbound until V1-C7 (#248) rebuilds it, and a user's keybinds
-/// naming it still load.
+/// gesture lookup: `FastResizeStart`'s default, which a user's keybinds
+/// can rebind (the tests below).
 #[test]
 fn test_a_ctrl_right_drag_binding_resolves_to_fast_resize_start() {
     let r = KeybindConfig {
@@ -919,21 +918,22 @@ fn test_user_rebind_to_bare_right_drag_works() {
 }
 
 /// A `LongPress` binding resolves to its Action through the gesture
-/// lookup — the touch peer of the keyboard's `r`. The binding is the
-/// test's own: `EnterResizeMode` ships unbound until V1-C7 (#248)
-/// rebuilds it.
+/// lookup — the touch peer of the keyboard's `r` — as `EnterResizeMode`
+/// ships bound. Control: a config that clears it resolves nothing.
 #[test]
 fn test_a_long_press_binding_resolves_to_enter_resize_mode() {
-    let r = KeybindConfig {
-        enter_resize_mode: vec!["r".into(), "LongPress".into()],
-        ..KeybindConfig::default()
-    }
-    .resolve();
+    let r = KeybindConfig::default().resolve();
     assert_eq!(
         r.action_for_gesture("longpress", false, false, false),
         Some(Action::EnterResizeMode),
         "LongPress should be the touch peer of `r` for EnterResizeMode"
     );
+    let cleared = KeybindConfig {
+        enter_resize_mode: Vec::new(),
+        ..KeybindConfig::default()
+    }
+    .resolve();
+    assert_eq!(cleared.action_for_gesture("longpress", false, false, false), None);
 }
 
 /// **Two fingers reach no binding at all**, and that is the shape
@@ -953,8 +953,8 @@ fn test_a_long_press_binding_resolves_to_enter_resize_mode() {
 ///
 /// 1. `FastResizeStart` ships bound to `Ctrl+RightDrag` alone, which
 ///    needs a mouse. The touch route to a resize is `LongPress` →
-///    `EnterResizeMode`, then a finger on a handle, which returns with
-///    the resize mode in V1-C7 (#248).
+///    `EnterResizeMode`, then a finger on a handle (`app::touch_handle`,
+///    native).
 /// 2. An existing `keybinds.json` naming `"TwoFingerDrag"` used to
 ///    be **silently accepted and never match**: `KeyBind::parse`
 ///    takes any non-modifier word as a key, so a retired token parsed
@@ -1435,18 +1435,12 @@ fn test_picker_context_falls_through_to_document() {
     );
 }
 
-/// The picker's own binding outranks the Document's on the same key.
-/// The picker's keys are the test's own: they ship unbound until
-/// V1-C7 (#248) rebuilds the picker. Control: the Document context
-/// still answers `ExitMode` on that key.
+/// The picker's own binding outranks the Document's on the same key, as
+/// the picker's keys ship: Escape cancels the picker while the Document
+/// context still answers `ExitMode` on that key (the control).
 #[test]
 fn test_picker_context_prefers_picker_action_over_document() {
-    let resolved = KeybindConfig {
-        picker_cancel: vec!["Escape".into()],
-        picker_commit: vec!["Enter".into()],
-        ..KeybindConfig::default()
-    }
-    .resolve();
+    let resolved = KeybindConfig::default().resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "escape", false, false, false),
         Some(Action::ExitMode),
@@ -1629,9 +1623,9 @@ fn test_action_for_context_document_filters_component_actions() {
     );
 }
 
-/// A config survives a JSON round trip in every context. The picker,
-/// label and text editor keys are the test's own: they ship unbound
-/// until V1-C7 (#248) and V1-C8 (#249) rebuild them.
+/// A config survives a JSON round trip in every context. The label and
+/// text editor keys are the test's own: they ship unbound until V1-C8
+/// (#249) rebuilds them.
 #[test]
 fn test_json_roundtrip_all_contexts() {
     let cfg = KeybindConfig {
