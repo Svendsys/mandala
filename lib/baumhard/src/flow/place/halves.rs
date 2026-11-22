@@ -2618,7 +2618,7 @@ fn along(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f32 {
     let near = |m: f32| m < 0.0 || (m <= 0.0 && owed <= 0.0);
     let on = near(at);
     // A bracket from here, doubled until it holds the step.
-    let unit = (owed + reach.max_element()).max(INK_TOLERANCE);
+    let unit = along_unit(reach, owed);
     let sign = if on { 1.0 } else { -1.0 };
     let (mut inside, mut outside) = (0.0_f32, sign * unit);
     let mut doublings = 0;
@@ -2639,6 +2639,14 @@ fn along(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> f32 {
         }
     }
     outside
+}
+
+/// The far end of [`along`]'s first bracket, a step from the start: what
+/// is owed and the reach, no less than [`INK_TOLERANCE`]. Shared with the
+/// width its bisection is held to (`along_resolution_seam`, #384), so that
+/// the two cannot part.
+fn along_unit(reach: Vec2, owed: f32) -> f32 {
+    (owed + reach.max_element()).max(INK_TOLERANCE)
 }
 
 /// How many more of its letters a model lay may read from the path than
@@ -8352,16 +8360,16 @@ pub(crate) fn line_root_seam(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> 
 /// Test seam (#384): how far, in steps, the step [`along`] returns,
 /// `step`, may lie from where its reading of the gap changes, for what is
 /// owed and the reach — the width of the last bracket it stops at, read
-/// from its code. Its first bracket runs from the start to `unit`, what is
-/// owed and the reach (no less than [`INK_TOLERANCE`]), and while its far
-/// end reads as the start does it is doubled, `k` times, to `[unit·2^(k−1),
-/// unit·2^k]`: `unit` wide where `k` is none, else `unit·2^(k−1)`, its inner
+/// from its code. Its first bracket runs from the start to `unit`
+/// ([`along_unit`]), and while its far end reads as the start does it is
+/// doubled, `k` times, to `[unit·2^(k−1), unit·2^k]`: `unit` wide where
+/// `k` is none, else `unit·2^(k−1)`, its inner
 /// end, past which the step it returns lies. So it is no wider than
 /// `unit` or the step, whichever is more; [`ALONG_ROUNDS`] halvings of it
 /// leave `2^−ALONG_ROUNDS` of that, and the step returned is the bracket's
 /// far end.
 pub(crate) fn along_resolution_seam(reach: Vec2, owed: f32, step: f32) -> f64 {
-    let unit = (owed + reach.max_element()).max(INK_TOLERANCE);
+    let unit = along_unit(reach, owed);
     f64::from(unit).max(f64::from(step).abs()) / (1u64 << ALONG_ROUNDS) as f64
 }
 
