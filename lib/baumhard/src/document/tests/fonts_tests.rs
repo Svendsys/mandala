@@ -93,7 +93,9 @@ fn test_the_report_names_every_installed_family_and_counts_where_the_map_names_i
 #[test]
 fn test_a_map_that_names_only_compiled_families_reports_none() {
     // Control: the same report on a map without an installed family is
-    // empty, so the rows above come from what the map names.
+    // empty, so the rows above come from what the map names; and its own
+    // control, the tree walk counting compiled faces under their names
+    // too, turns the first arm red.
     let doc = load(r#"{"format":1,"name":"f","nodes":[{"id":1,"position":[0.0,0.0],"font":"Public Pixel","sections":[{"spans":[{"text":"a","font":"Galatia SIL"}]}]}]}"#)
         .expect("the map loads");
     assert!(installed_families(&doc).is_empty());
@@ -168,6 +170,9 @@ fn test_a_replacement_may_be_an_installed_family_and_never_the_default_face() {
     // A replacement is any family a map can name: another installed one
     // is, the default face is not (a file cannot name it), and replacing
     // a family with itself, or one the map names nowhere, is no step.
+    // Controls: `replace_steps` not refusing a face no file can name turns
+    // the default-face arm red; not returning early for a family replaced
+    // by itself turns the self-replacement arm red.
     let doc = load(MAP).expect("the map loads");
     let from = family("Nope Sans");
     let other = FontRef::Installed(family("Other Missing"));

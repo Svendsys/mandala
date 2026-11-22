@@ -461,13 +461,18 @@ fn test_a_compiled_family_maps_its_name_only_where_its_face_holds_every_letter()
 /// letters does not map a word, a family no compiled face bears maps
 /// nothing, and whitespace never counts. Which compiled families cannot
 /// draw their own name is listed exactly, so a face changed or added
-/// that cannot is seen here (the console draws such a family's row in
-/// the default face, #329). Controls: a check that ignored the map
-/// (always `true`) turns the list red, empty; one that counted
-/// whitespace turns `Inter Variable` red.
+/// that cannot is seen here (the console asks the same of a font row's
+/// sample, #329). Controls: a check that ignored the map (always `true`)
+/// turns the list red, empty; one that counted whitespace turns the
+/// ideographic-space arm red, since the default face does not map
+/// U+3000.
 pub fn do_a_compiled_family_maps_its_name_only_where_its_face_holds_every_letter() {
     use crate::font::fonts::compiled_family_maps;
     assert!(compiled_family_maps("Inter Variable", "Inter Variable"));
+    assert!(
+        compiled_family_maps("Inter Variable", "Inter\u{3000}Variable"),
+        "whitespace never counts, though the face lacks the ideographic space"
+    );
     assert!(compiled_family_maps(
         "Inter Variable",
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"

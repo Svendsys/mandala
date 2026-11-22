@@ -228,7 +228,10 @@ fn test_a_font_must_have_a_name_a_file_can_write_for_files_and_edits() {
     // has a family name, always; and an installed family, by its name,
     // whether or not this machine has it (#329). (Every face this build
     // compiles in has a name, so the "no family name" half of the rule is
-    // reached only by `Any` here.)
+    // reached only by `Any` here.) Controls: the mutation verifier
+    // accepting every font turns the edit arm red at `Compiled(Any)`; the
+    // saver writing the fallback face under the default face's name turns
+    // the file arm red there.
     use crate::document::values::FontRef;
     let installed = crate::document::format::font("Nope Sans").expect("a family name reads");
     assert!(

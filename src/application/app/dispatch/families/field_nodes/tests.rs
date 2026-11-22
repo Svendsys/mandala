@@ -970,8 +970,10 @@ fn test_a_frame_preview_leaves_another_interactions_transaction_alone() {
 /// (`format::font`): a compiled family is set on the node, an installed
 /// one too, by its name, whether or not this machine has it (#329), and
 /// a name the loader refuses — one that holds a control character — is
-/// refused with the reason, applying nothing. Control: the accepted
-/// faces are ones the loader reads, and the refusal changes no revision.
+/// refused with the reason, applying nothing. Controls: the accepted
+/// faces are ones the loader reads, and the refusal changes no revision;
+/// `values::font` taking a refused name as a reset turns the refusal arm
+/// red.
 #[test]
 fn test_font_family_takes_what_the_loader_takes() {
     let face = baumhard::font::fonts::compiled_families()
@@ -1005,9 +1007,11 @@ fn test_font_family_takes_what_the_loader_takes() {
 /// **`ReplaceFontFamily` rewrites the map's references to an installed
 /// family as one undo entry** (#329), whatever is selected, and leaves
 /// the missing-font notice saying what is still missing; undo restores
-/// the family. Controls: an Action that applied one request per kind
-/// would grow the history by more than one; a family the map names
-/// nowhere applies nothing and is `Unhandled`.
+/// the family. The family is named on two nodes and a section, so the
+/// replacement's steps are of two kinds. Controls: `missing_fonts::replace`
+/// applying one request per step turns the one-entry arm red (two
+/// entries); a family the map names nowhere applies nothing and is
+/// `Unhandled`.
 #[test]
 fn test_replace_font_family_is_one_undo_entry_across_the_map() {
     let mut doc = fixture();
@@ -1015,10 +1019,12 @@ fn test_replace_font_family_is_one_undo_entry_across_the_map() {
     run_line(&mut doc, "font family=\"Nope Sans\"").expect("an installed family is taken");
     doc.selection.select_only(node(&doc, 1));
     run_line(&mut doc, "font family=\"Nope Sans\"").expect("on a second node");
+    doc.selection.select_only(child(&doc, 3, DocKind::Section, 0));
+    run_line(&mut doc, "font family=\"Nope Sans\"").expect("on a section");
     assert_eq!(
         bytes(&doc).matches("\"font\": \"Nope Sans\"").count(),
-        2,
-        "precondition"
+        3,
+        "precondition: two nodes and a section"
     );
     doc.selection.clear();
     let depth = doc.doc().history().count();
@@ -1033,13 +1039,13 @@ fn test_replace_font_family_is_one_undo_entry_across_the_map() {
         !saved.contains("Nope Sans"),
         "every reference is rewritten: {saved}"
     );
-    assert_eq!(saved.matches("\"font\": \"Public Pixel\"").count(), 2);
+    assert_eq!(saved.matches("\"font\": \"Public Pixel\"").count(), 3);
     assert_eq!(doc.font_notice(), None, "nothing is missing any more");
     doc.undo();
     assert_eq!(
         bytes(&doc).matches("\"font\": \"Nope Sans\"").count(),
-        2,
-        "undo restores both"
+        3,
+        "undo restores all three"
     );
     assert_eq!(
         run(&replace, &mut doc),

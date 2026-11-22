@@ -232,7 +232,9 @@ mod tests {
     /// with nothing missing leaves a closed console closed. Controls:
     /// the second half, and the completion's rows being the replacement
     /// slot's (no subverb row), so the line is the one the user goes on
-    /// from.
+    /// from; the console reopened with an empty history, the cursor left
+    /// at 0, and the completion not recomputed each turn their own arm
+    /// red.
     #[test]
     fn test_the_missing_font_prompt_opens_on_the_replacement() {
         let doc = MindMapDocument::from_json_str(

@@ -369,8 +369,9 @@ mod tests {
     /// **Opening a map that names fonts this machine lacks says so**: the
     /// notice names both families, by name, sorted, with the stand-in;
     /// a map that names only compiled families gets none, and the
-    /// status line's dismissal clears it. Control: the compiled map,
-    /// through the same `on_open`, leaves no notice.
+    /// status line's dismissal clears it. Controls: the compiled map,
+    /// through the same `on_open`, leaves no notice; `on_open` not noting
+    /// what is missing turns the notice arm red.
     #[test]
     fn test_opening_a_map_with_missing_fonts_sets_the_notice() {
         let mut doc = doc();
@@ -397,7 +398,8 @@ mod tests {
 
     /// **The prompt's report says which, where, in what, and how out**:
     /// a heading, a line per family with its count, and the two ways
-    /// out; the pre-filled line names the first family.
+    /// out; the pre-filled line names the first family. Control: the
+    /// report counting no element turns the first family's line red.
     #[test]
     fn test_the_prompt_reports_each_missing_family_and_both_ways_out() {
         let missing = baumhard::document::fonts::missing_families(doc().doc());
@@ -552,6 +554,7 @@ mod tests {
 
     /// `font rescan` asks the executor for the rescan, which reports and
     /// projects (`console_input::exec`); the verb itself changes nothing.
+    /// Control: the verb asking for no side effect turns it red.
     #[test]
     fn test_font_rescan_asks_for_the_rescan() {
         let mut doc = doc();
@@ -565,7 +568,8 @@ mod tests {
 
     /// `font list` marks every installed family `(installed)` and no
     /// compiled one. On a host with no installed family the mark is
-    /// untested, and the test says so.
+    /// untested, and the test says so. Control: an installed family's
+    /// line without its mark turns that line red.
     #[test]
     fn test_font_list_marks_the_installed_families() {
         use baumhard::font::fonts::{loaded_families, FamilySource};

@@ -887,8 +887,10 @@ fn test_every_listed_family_loads_as_its_source() {
     // family as its compiled face, an installed one (native, #228) by its
     // name (#329). A host with no installed family has nothing for the
     // second arm, and says so. Controls: `format::font` answering every
-    // name as installed turns the compiled arm red; answering every name
-    // as `AppFont::Any` turns both red.
+    // name as installed, or every name as `AppFont::Any`, turns the
+    // compiled arm red at its first family (`212 Keyboard`); answering a
+    // name no compiled face bears as `AppFont::Any` turns the installed
+    // arm red (`Caladea`, where the host has it).
     use crate::document::values::FontRef;
     use crate::font::fonts::{loaded_families, FamilySource};
     let (mut compiled, mut installed) = (0, 0);
