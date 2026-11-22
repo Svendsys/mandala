@@ -1341,9 +1341,12 @@ fn test_both_frame_preview_targets_take_the_same_fields() {
 /// — raises it with what a typo probably meant; replacing a family
 /// clears it from the notice; undoing the replacement brings it back;
 /// redoing clears it again. A notice the user dismissed stays dismissed
-/// across a change that leaves what is missing as it was.
+/// across a change that leaves what is missing as it was. An animated edit
+/// that names a missing family, committed by the next animated edit's
+/// `begin` (the writer yields it, D28), updates the notice too.
 ///
-/// Controls: `undo` not refreshing the notice turns the undo arm red
+/// Controls: `run_edit` not refreshing after its `begin` turns the
+/// animated arm red; `undo` not refreshing the notice turns the undo arm red
 /// (the notice still without `Nope Sans`); the notice shown whenever it
 /// is recomputed, whether or not what is missing changed, turns the
 /// dismissed arm red; no notice refresh after `apply` turns the first
@@ -1402,5 +1405,42 @@ fn test_the_missing_font_notice_follows_edits_undo_and_redo() {
             "\"Galatia\" is not installed here, drawn in Inter Variable (did you mean \"Galatia SIL\"?)"
         ),
         "{said}"
+    );
+    // An animated edit that names a missing family, staged, then committed
+    // by the next animated edit's `begin`.
+    let animated = |doc: &mut MindMapDocument, ident: u32| {
+        use baumhard::document::mutation::{compose, ops::TextOp};
+        let at = node(doc, ident);
+        let font = baumhard::document::format::font("Animated Gone").expect("a family name");
+        let mutation = TextOp::SetFont(Some(font))
+            .on(DocKind::Node)
+            .expect("a node's text op");
+        let steps = compose::set(doc.doc(), DocKind::Node, vec![mutation], &[at]).expect("the steps");
+        let animate = baumhard::document::edit::Animate {
+            ms: 1_000,
+            delay_ms: 0,
+            easing: baumhard::document::edit::Easing::Linear,
+            snap: baumhard::engine::interpolate::Snap::End,
+        };
+        doc.run_edit(
+            baumhard::document::writer::EditRequest::new(steps, "animated font"),
+            Some(animate),
+            baumhard::document::writer::ChangeSource::Action,
+            0.0,
+        )
+        .expect("the animated edit is staged");
+    };
+    animated(&mut doc, 3);
+    assert!(
+        !doc.font_notice()
+            .is_some_and(|notice| notice.contains("Animated Gone")),
+        "precondition: staged, not committed"
+    );
+    animated(&mut doc, 1);
+    assert!(
+        doc.font_notice()
+            .is_some_and(|notice| notice.contains("\"Animated Gone\"")),
+        "the edit the next one's begin committed is in the notice: {:?}",
+        doc.font_notice()
     );
 }

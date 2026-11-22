@@ -998,6 +998,16 @@ impl Projector {
                 for slot in &mut unit.slots {
                     slot.want = None;
                 }
+                // Nor does it keep its shapings — a line's body, caps and
+                // label, a portal's markers and labels. It reads no text
+                // while it is not drawn, so it reads no installed family,
+                // and a rescan that finds one does not reach it
+                // (`Projector::update_faces`): kept, a shaping in the
+                // stand-in would be found again by its unchanged key when
+                // the path is drawn again. Dropped, it shapes anew then, in
+                // the faces the font system has then (#329, the review of
+                // #390). Once per hide and show.
+                unit.body.forget_shapings();
                 match &mut unit.body {
                     UnitBody::Line(line) => {
                         line.drawn = false;

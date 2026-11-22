@@ -261,10 +261,12 @@ fn glyphs(layers: &GlyphLayers, fonts: &mut FontSystemLease) -> Vec<String> {
             let Some(run) = tree.arena()[id].get().glyph_run() else {
                 continue;
             };
-            let RunShape::Box(shaped) = run.shaped() else {
-                continue;
+            // A box's lines, or a path's run (a link's body, its caps).
+            let buffer = match run.shaped() {
+                RunShape::Box(shaped) => &shaped.buffer,
+                RunShape::Path { run, .. } => &run.buffer,
             };
-            for line in shaped.buffer.layout_runs() {
+            for line in buffer.layout_runs() {
                 for glyph in line.glyphs {
                     let face = fs
                         .db()
@@ -332,7 +334,10 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
     // compiled fallback); `shadows_a_compiled_family` answering `true`
     // for every face turns the found list red; the build pushing every
     // host face and removing the shadowing ones after turns the order arm
-    // red (`order false false`); the metric caches keyed without the
+    // red (`order false false`); a path not drawn keeping its shapings
+    // (no `forget_shapings` in `path_resolve`'s undrawn branch) turns the
+    // link arm red, its Hebrew still the compiled fallback's; the metric
+    // caches keyed without the
     // face-set generation turn the measured arm red (`true false true`,
     // the stale `.notdef` advance); `forget_shapings` dropping nothing turns
     // the kept projection's arm red (its Hebrew still the compiled
@@ -355,6 +360,18 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
         };
         println!("REPORT missing {:?}", names(&doc));
         println!("REPORT before {:?}", drawn(&text));
+        // A line link and a portal drawn in the planted family, whose
+        // target is hidden across the rescan and shown after it: a path not
+        // drawn reads no text, so the rescan does not reach it, and it must
+        // shape anew when it is drawn again.
+        let mut link_doc = load(&link_map()).expect("the link map loads");
+        link_doc.take_changes();
+        let mut link_layers = GlyphLayers::new();
+        let mut link_view = {
+            let mut fonts = FontSystemLease::new("tests/installed_fonts::link");
+            Projector::project_full(&link_doc, &mut link_layers, &mut fonts)
+        };
+        set_hidden(&mut link_doc, &mut link_view, &mut link_layers, true);
         // A projection kept across the rescan, as an open map's view is.
         let mut kept_layers = GlyphLayers::new();
         let mut kept = {
@@ -433,6 +450,19 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
             let mut fonts = FontSystemLease::new("tests/installed_fonts::update_faces");
             let _ = kept.update_faces(&doc, &[], &[PLANTED], &mut kept_layers, &mut fonts);
             println!("REPORT updated {:?}", glyphs(&kept_layers, &mut fonts));
+        }
+        {
+            let mut fonts = FontSystemLease::new("tests/installed_fonts::link_faces");
+            let _ = link_view.update_faces(&link_doc, &[], &[PLANTED], &mut link_layers, &mut fonts);
+        }
+        set_hidden(&mut link_doc, &mut link_view, &mut link_layers, false);
+        {
+            let mut fonts = FontSystemLease::new("tests/installed_fonts::link_glyphs");
+            let hebrew: Vec<String> = glyphs(&link_layers, &mut fonts)
+                .into_iter()
+                .filter(|glyph| glyph.starts_with(|c: char| ('\u{0590}'..='\u{05FF}').contains(&c)))
+                .collect();
+            println!("REPORT link {hebrew:?}");
         }
         let (faces_first, generation_first) = (faces(), face_set_generation());
         println!(
@@ -582,6 +612,20 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
         "the installed family is no longer missing"
     );
     let after = parse_list(line("after "));
+    let link = parse_list(line("link "));
+    assert_eq!(
+        link.len(),
+        8,
+        "precondition: every Hebrew glyph of both links is read, the line's body and the portal's marker and label ({link:?})"
+    );
+    let stale: Vec<&String> = link
+        .iter()
+        .filter(|glyph| !glyph.contains(" HostSansHebrew-Regular "))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "links hidden across the rescan draw in the found family once shown; still in another face: {stale:?}"
+    );
     assert_eq!(
         parse_list(line("updated ")),
         after,
@@ -656,6 +700,44 @@ fn test_the_first_open_at_launch_rescans_nothing_the_build_just_scanned() {
         ],
         "host font scans, in a fresh process"
     );
+}
+
+/// A map of two nodes and two links from the first to the second, each
+/// in the planted family: a line link whose body is four Hebrew letters,
+/// and a portal whose source end's marker and label are two each.
+fn link_map() -> String {
+    let font = serde_json::json!(PLANTED);
+    format!(
+        r#"{{"format":1,"name":"link","nodes":[{{"id":1,"position":[0.0,0.0],"sections":[{{"spans":[{{"text":"a"}}]}}],"links":[{{"to":2,"kind":"line","spans":[{{"text":"שלום","font":{font}}}]}},{{"to":2,"kind":"portal","ends":[{{"spans":[{{"text":"בג","font":{font}}}],"label":{{"spans":[{{"text":"דה","font":{font}}}]}}}},{{}}]}}]}},{{"id":2,"position":[600.0,0.0],"sections":[{{"spans":[{{"text":"b"}}]}}]}}]}}"#
+    )
+}
+
+/// Hide or show node 2 of `doc` through the writer, and bring `projector`
+/// and `layers` up to date with the change.
+fn set_hidden(
+    doc: &mut baumhard::document::ids::Document,
+    projector: &mut Projector,
+    layers: &mut GlyphLayers,
+    hidden: bool,
+) {
+    use baumhard::document::element::DocKind;
+    use baumhard::document::ids::NodeIdent;
+    use baumhard::document::mutation::compose;
+    use baumhard::document::mutation::ops::{DocMutation, NodeOp};
+    use baumhard::document::writer::{ChangeSource, EditRequest};
+    let node = doc.node_by_ident(NodeIdent(2)).expect("node 2");
+    let steps = compose::set(
+        doc,
+        DocKind::Node,
+        vec![DocMutation::Node(NodeOp::SetHidden(hidden))],
+        &[node],
+    )
+    .expect("the steps");
+    doc.apply(EditRequest::new(steps, "hide"), ChangeSource::Action)
+        .expect("the change applies");
+    let changes = doc.take_changes();
+    let mut fonts = FontSystemLease::new("tests/installed_fonts::set_hidden");
+    let _ = projector.update(doc, &changes, layers, &mut fonts);
 }
 
 /// A list a child printed with `{:?}`, read back.

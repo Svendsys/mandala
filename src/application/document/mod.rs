@@ -315,7 +315,10 @@ impl MindMapDocument {
     /// preview stages into. A refusal is reported as [`Self::apply`]'s
     /// is, and `false` returned.
     pub fn begin(&mut self, source: ChangeSource, kind: TransactionKind, interaction: Interaction) -> bool {
-        match self.doc.begin(source, kind) {
+        // The writer may finish and commit an animated edit first (D28):
+        // the notice follows that commit as it follows any.
+        let from = self.doc.pending_changes().len();
+        let begun = match self.doc.begin(source, kind) {
             Ok(transaction) => {
                 self.transaction = Some((transaction, interaction));
                 // An animated edit the writer finished first (D28) no
@@ -328,7 +331,9 @@ impl MindMapDocument {
                 self.report_refusal("begin", &error);
                 false
             }
-        }
+        };
+        self.refresh_font_notice(from);
+        begun
     }
 
     /// What the open transaction is for, or `None` when none is open.
@@ -589,7 +594,12 @@ impl MindMapDocument {
             return self.apply(req, source).map(|_| ());
         };
         let label = req.label.clone();
-        let tx = match self.doc.begin(source, TransactionKind::Animated) {
+        let from = self.doc.pending_changes().len();
+        let begun = self.doc.begin(source, TransactionKind::Animated);
+        // `begin` finished and committed the animation it found, if any:
+        // the notice follows that commit as it follows any.
+        self.refresh_font_notice(from);
+        let tx = match begun {
             Ok(tx) => tx,
             Err(error) => {
                 self.report_refusal(&label, &error);
