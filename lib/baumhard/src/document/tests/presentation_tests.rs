@@ -1090,11 +1090,15 @@ fn test_own_is_the_maps_element_under_whatever_plays() {
 /// mutations not walked, `go` is not, and nothing is revealed.
 #[test]
 fn test_a_presentation_mentions_the_verbs_it_names_and_what_it_can_show() {
-    use crate::document::edit::Shows;
+    use crate::document::edit::{Named, Shows};
     let said = |json: &str| {
         let def = presentation(json);
         let mut verbs: Vec<String> = Vec::new();
-        let shows = def.mentions(|verb| verbs.push(verb.to_string()));
+        let shows = def.mentions(|mention| {
+            if mention.kind == Named::Verb {
+                verbs.push(mention.name.to_string());
+            }
+        });
         (verbs, shows)
     };
     let nothing = Shows::default();
@@ -1908,7 +1912,7 @@ fn test_a_start_resolves_names_and_refuses_what_the_map_lacks() {
     let refused = lacking.start_presentation(&tint, &[one], 0.0).unwrap_err();
     assert_eq!(
         refused.to_string(),
-        "presentation `tint`: `color` names theme variable `accent`, which this map does not define"
+        "presentation `tint`: `set_color` names theme variable `accent`, which this map does not define"
     );
     assert_eq!(lacking.presentations().count(), 0);
     assert_eq!(lacking.presentation_epoch(), 0);
@@ -2015,4 +2019,104 @@ fn test_a_refused_starts_text_from_the_file_is_escaped() {
             "{error:?} shows its text escaped: {shown}"
         );
     }
+}
+
+/// What a presentation writes that its map must define is what `mentions`
+/// reports, and `Mention::is_defined_in` answers as a start does: for
+/// each place a presentation can write a verb, a theme variable or a
+/// palette, the one name it writes is reported with the key the file
+/// writes it at as its field and its JSON path, a map that defines it
+/// starts the presentation, and a map that does not refuses the start
+/// with exactly the refusal `Mention::presentation_refusal` words.
+///
+/// Controls, each run red: `is_defined_in` answering `true` for a palette
+/// fails the palette cases on the bare map; answering `false` fails them
+/// on the full one; dropping `Walk::color_in`'s `Var` arm fails the variable
+/// case, and the filter `on_click` arm its case.
+#[test]
+fn test_the_names_a_presentation_mentions_are_the_ones_a_start_refuses() {
+    use crate::document::edit::{Mention, Named};
+
+    const NODE: &str = r#"{"id":1,"position":[0,0],"sections":[{"spans":[{"text":"x"}]}]}"#;
+    let load_full = || {
+        load(&format!(
+            r##"{{"format":1,"name":"t","theme":{{"active":"d","variants":{{"d":{{"accent":"#ff0000"}}}}}},
+            "verbs":[{{"id":"go","name":"Go","steps":[]}}],
+            "palettes":{{"warm":[{{"frame":"#ff0000","text":"#ff0000"}}]}},"nodes":[{NODE}]}}"##
+        ))
+        .unwrap()
+    };
+    let load_bare = || load(&format!(r#"{{"format":1,"name":"t","nodes":[{NODE}]}}"#)).unwrap();
+    let filtered = |field: &str| {
+        format!(
+            r#""filter":{{"fields":[[{field},{{"Equals":false}}]]}},"mutations":[{{"node":{{"set_folded":true}}}}]"#
+        )
+    };
+    let cases: Vec<(&str, Named, &str, &str, String)> = vec![
+        (
+            "set_click",
+            Named::Verb,
+            "set_click",
+            "mutations[0].node.set_click",
+            r#""mutations":[{"node":{"set_click":"go"}}]"#.to_string(),
+        ),
+        (
+            "set_palette",
+            Named::Palette,
+            "set_palette",
+            "mutations[0].node.set_palette",
+            r#""mutations":[{"node":{"set_palette":"warm"}}]"#.to_string(),
+        ),
+        (
+            "text color",
+            Named::Variable,
+            "set_color",
+            "mutations[0].node.text.set_color",
+            r#""mutations":[{"node":{"text":{"set_color":"var(accent)"}}}]"#.to_string(),
+        ),
+        (
+            "on_click",
+            Named::Verb,
+            "on_click",
+            "filter.fields[0][0].on_click",
+            filtered(r#"{"on_click":"go"}"#),
+        ),
+        (
+            "palette",
+            Named::Palette,
+            "palette",
+            "filter.fields[0][0].palette",
+            filtered(r#"{"palette":"warm"}"#),
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (way, kind, field, path, body) in &cases {
+        let def = presentation(&format!(
+            r#"{{"id":"p","name":"P","play":"hold","target":"node",{body}}}"#
+        ));
+        let mut said: Vec<Mention<'_>> = Vec::new();
+        def.mentions(|mention| said.push(mention));
+        let [mention] = said.as_slice() else {
+            wrong.push(format!("{way}: mentions {said:?}, not one name"));
+            continue;
+        };
+        if (mention.kind, mention.field, mention.path.as_str()) != (*kind, *field, *path) {
+            wrong.push(format!("{way}: mentions {mention:?}"));
+        }
+        let start = |mut doc: Document| {
+            let one = n(&doc, 1);
+            doc.start_presentation(&def, &[one], 0.0).err()
+        };
+        if !mention.is_defined_in(&load_full()) || start(load_full()).is_some() {
+            wrong.push(format!("{way}: not defined, or refused, on the full map"));
+        }
+        if mention.is_defined_in(&load_bare())
+            || start(load_bare()) != Some(mention.presentation_refusal("p"))
+        {
+            wrong.push(format!(
+                "{way}: defined, or not refused as worded, on the bare map"
+            ));
+        }
+    }
+    assert_eq!(wrong, Vec::<String>::new());
 }

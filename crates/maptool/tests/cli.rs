@@ -295,8 +295,10 @@ fn test_verify_passes_every_fixture_and_converted_map() {
     assert_eq!(warned, 3, "precondition: the three warning fixtures were checked");
 }
 
-/// One map earning all four warnings prints them in the file's order —
-/// node 1's hidden, frame and portal, then the verb — and still exits 0.
+/// One map earning every kind of warning prints them in `warnings`' order —
+/// node 1's hidden, frame and portal, then the names an edit and a
+/// presentation write that the map does not define, then the
+/// presentation no verb names, then the verb — and still exits 0.
 #[test]
 fn test_verify_prints_each_kind_of_warning() {
     let dir = TempDir::new("maptool-verify-warnings");
@@ -306,6 +308,10 @@ fn test_verify_prints_each_kind_of_warning() {
         r#"{"format": 1, "name": "w",
             "defaults": {"portal_end": {"content": ""}},
             "verbs": [{"id": "used", "name": "Used", "steps": []}, {"id": "unused", "name": "Unused", "steps": []}],
+            "edits": [{"id": "tint", "name": "Tint", "reach": "self", "target": "node",
+                       "mutations": [{"node": {"set_palette": "warm"}}]}],
+            "presentations": [{"id": "glow", "name": "Glow", "play": "hold", "target": "node",
+                               "mutations": [{"node": {"set_hover": "nowhere"}}]}],
             "nodes": [
               {"id": 1, "position": [0, 0], "hidden": true, "on": {"click": "used"},
                "frame": {}, "links": [{"to": 2, "kind": "portal"}]},
@@ -320,8 +326,11 @@ fn test_verify_prints_each_kind_of_warning() {
             "warning: #1: hidden, and no edit in the map, verb or presentation can reveal it\n\
              warning: #1 frame: visible with no rings\n\
              warning: #1 links[0]: a portal whose ends both have no content, and no edit in the map gives one\n\
+             warning: edits[0].mutations[0].node.set_palette: edit `tint`: `set_palette` names palette `warm`, which this map does not define\n\
+             warning: presentations[0].mutations[0].node.set_hover: presentation `glow`: `set_hover` names verb `nowhere`, which this map does not define\n\
+             warning: presentations[0] \"glow\": defined, and no verb starts or stops it\n\
              warning: verbs[1] \"unused\": defined, and nothing refers to it\n\
-             {}: valid, 4 warning(s)\n",
+             {}: valid, 7 warning(s)\n",
             shown(&map)
         )
     );
