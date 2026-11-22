@@ -283,7 +283,8 @@ The two ornament faces hold the ornaments the demo maps draw (sides,
 characters of testament's custom sides and of the maps' directional
 rings' corners, and the glyphs of the app's own
 chrome: the console's frame, prompt, cursor, gutter and completion
-marker, the rubber band's corners and dashes, and the `body` presets —
+marker, the rubber band's corners and dashes, and the box-drawing glyphs
+the frame cycle gives a ring —
 **and no code point the default face holds** (#228). So a letter, digit,
 space or punctuation mark is drawn by a text face, never by an ornament
 face, whatever face a span pins: a decorative face that lacks a space or

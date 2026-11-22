@@ -2889,12 +2889,17 @@ the line executor, `execute_console_line`, sits with the native
 shell in `app/console_input/exec.rs`). Native-only today. The verbs
 are the
 `COMMANDS` table in `console/commands/mod.rs`, in its order: `help`,
-`anchor`, `body`, `border`, `canvas`, `cap`, `color`, `edge`, `font`,
-`fps`, `spacing`, `label`, `mode`, `mutation` (with `list`, `help`,
-`apply`, `inspect` subverbs), `save`, `screenshot` (see
+`color`, `edit` (with `list`, `apply`, `help`, `inspect` subverbs),
+`present`, `verb`, `font`, `fps`, `mode`, `save`, `screenshot` (see
 [Screenshot capture](#screenshot-capture)), `record` (see
 [Frame-sequence recording](#frame-sequence-recording)), `clock` (see
-[App clock](#app-clock)), `open`, `new`, `node`, `section`, `zoom`.
+[App clock](#app-clock)), `open`, `new`, `node`, `section`, `frame`,
+`range`, `path`, `link`, `label`, `portal`, `theme`, `defaults`,
+`zoom`. The field verbs (`color`, `font`, `node`, `section`,
+`frame`, `range`, `theme`, `defaults`, `zoom`; V1-C5) and the path
+verbs (`path`, `link`, `label`, `portal`; V1-C6) are thin readers over
+`crate::application::fields`, which the keybinds' Actions share, one
+request and one undo entry a line.
 Visuals draw a rounded box-drawing frame; content is clipped via
 `grapheme_chad::truncate_to_display_width` so wide CJK
 characters never overflow.
@@ -3163,7 +3168,7 @@ conversion and `resolve()` — which is where "`set_color`'s first
 arg has to be a real `ColorAxis`" lives, and which the const
 check, reading two lists of identifiers, cannot see.
 
-Tuple rows (`SetPathContent(glyph)`) sit outside the const
+Tuple rows (`SetPathContent(content)`) sit outside the const
 check by construction rather than by omission: their names are
 local bindings the table invents, and the pattern that binds
 them and the constructor that consumes them are the same macro
