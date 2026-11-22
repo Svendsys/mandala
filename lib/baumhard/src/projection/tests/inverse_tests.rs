@@ -137,7 +137,9 @@ fn drawn(line: &Outline, (border_t, offset): (f32, f32), reach: &dyn Fn(Vec2) ->
 /// not move moves nothing.
 ///
 /// Control: the point moved inward reads a smaller offset (the sign is
-/// the inverse's, not a coincidence).
+/// the inverse's, not a coincidence). Seen red: the inverse with no solve
+/// for an offset inward (`geometry::solve_offset`), at the places where
+/// the offset curve folds round a sharp corner.
 #[test]
 fn test_portal_at_draws_the_end_where_it_was_read() {
     for (shape, line) in outlines() {
