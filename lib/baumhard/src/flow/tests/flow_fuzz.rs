@@ -1227,11 +1227,28 @@ fn line_root_held(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32, by_width: bool
 /// is (#384, review 6007364071): read in units of the line's movement, not
 /// of its step, so that how slowly the way moves does not matter.
 ///
-/// - Its gap, in `f64`, is within `closed_form_rounding` of what is owed.
+/// What it is held within is its own rounding: `closed_form_rounding`, the
+/// rounding of a step's arithmetic, and the movement over the width of the
+/// last bracket the bisection stops at (`along_resolution_seam`, read from
+/// its code: `2^−24` of what is owed and the reach, or of the step if that
+/// is more), `|dir|` times that width, since a box moved by `v` moves its
+/// gap by no more than `|v|` — and four roundings of `f64` in reading that
+/// gap back, since the step may lie a whole width from where the reading
+/// changes, as on that finding. The closed form's rounding is relative to
+/// the line's own measures, and where they are all none it is all but
+/// none; the bisection's last bracket is not (#384's CI finding on
+/// 4f9b8092: two inks at one point, reach none, owed nothing, the
+/// bisection a bracket's width of `2^−24 · 10⁻³` on, its gap 2.6·10⁻¹²,
+/// the closed form's rounding 1.2·10⁻⁷⁰). It reads the step under test to
+/// size that width, which a step moved by `δ` widens by `2^−24 δ` of
+/// movement: no plant is absorbed by it.
+///
+/// - Its gap, in `f64`, is within that rounding of what is owed.
 /// - Its step lies among those whose gap is (`root_window`), on the side of
 ///   the start the root lies, or on either where the start's gap is itself
-///   within that rounding of what is owed: the start then reads as what is
-///   owed, the step that way is a rounding from it, and which side of it
+///   within the bisection's own reading of it (`reading_rounding` at the
+///   start, review 6008742068) of what is owed: the start then reads as
+///   what is owed, the step that way is a rounding from it, and which side of it
 ///   the bisection's `f32` reading of the start sends it is not a thing the
 ///   line's inputs decide. On seed 62017 of `check_slow_line_root`'s sweep
 ///   the start's gap is 4.8·10⁻⁷ short of 8.604, `f32` reads it further,
@@ -1240,7 +1257,7 @@ fn line_root_held(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32, by_width: bool
 ///   3.1·10⁻⁵
 ///   (`test_flow_halves_a_bisection_steps_either_way_from_a_start_read_as_owed`).
 /// - Where the line places its step (`placed_within`), it is within that
-///   reach of the root.
+///   reach of the root and the last bracket's width.
 pub(crate) fn bisection_placed(
     delta: Vec2,
     dir: Vec2,
@@ -1251,7 +1268,10 @@ pub(crate) fn bisection_placed(
 ) -> Result<(), String> {
     let what = format!("inks {delta} apart, reach {reach}, stepped along {dir}, owed {owed}");
     let owed64 = f64::from(owed);
-    let rounding = closed_form_rounding(delta, dir, reach, owed, truth);
+    let width = crate::flow::place::halves::along_resolution_seam(reach, owed, bisected);
+    let speed = f64::from(dir.x).hypot(f64::from(dir.y));
+    let rounding =
+        closed_form_rounding(delta, dir, reach, owed, truth) + speed * width * (1.0 + 4.0 * f64::EPSILON);
     let at = f64::from(bisected);
     let off = gap_in_f64(delta, dir, reach, at) - owed64;
     if off.is_nan() || off.abs() > rounding {
@@ -1262,7 +1282,7 @@ pub(crate) fn bisection_placed(
     }
     let (lo, hi) = root_window(delta, dir, reach, owed, truth, rounding);
     let start = gap_in_f64(delta, dir, reach, 0.0) - owed64;
-    let other = (start.abs() <= rounding).then(|| {
+    let other = (start.abs() <= reading_rounding(delta, dir, reach, 0.0)).then(|| {
         let back = if truth < 0.0 { 1.0 } else { -1.0 };
         let end = back * read_as_owed_from_start(delta, dir, reach, owed64, back, rounding);
         (end.min(0.0), end.max(0.0))
@@ -1275,7 +1295,7 @@ pub(crate) fn bisection_placed(
         ));
     }
     if let Some(reach_of) = placed_within(delta, dir, reach, owed, truth) {
-        if (at - truth).abs() > reach_of {
+        if (at - truth).abs() > reach_of + width {
             return Err(format!(
                 "{what}: the bisection steps {bisected}, the line's root is {truth}"
             ));
@@ -1479,6 +1499,21 @@ const CLOSED_FORM_ROUNDINGS: f64 = 16.0;
 /// Both are bounds far past the miss: on the second CI finding the closed
 /// form's gap is 3.9·10⁻⁷ short of 6, and this is 6·10⁻⁵. Where the line
 /// places its step, `CLOSED_FORM_REACH` holds the closed form tighter.
+///
+/// And the step's own rounding, an absolute floor under both (#384's CI
+/// finding on 4f9b8092). The closed form returns an `f32`, its step
+/// rounded to within half a spacing of `f32`, which is `2⁻²⁴` of the step
+/// where it is a normal `f32` and `2⁻¹⁵⁰` absolutely where it is
+/// subnormal. The relative part is among the roundings counted above,
+/// `|dir| · |step| ≤ ΣX`; the absolute part is not, and where every one of
+/// the line's measures is none both bounds fall to all but none with them
+/// — 1.2·10⁻⁷⁰ at two inks at one point, reach none and owed nothing —
+/// while a subnormal step's rounding does not. So the floor owed is the
+/// movement over that: `|dir| · 2⁻¹⁴⁹`, twice it for room. On
+/// `check_line_root`'s lines it is never reached: every measure there is
+/// none or at least a hundredth, and where all are none the closed form's
+/// step is the start's stop, exactly none, its gap exactly none. It
+/// changes no bound above the subnormal range.
 pub(crate) fn closed_form_rounding(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32, truth: f64) -> f64 {
     let owed = f64::from(owed);
     let far = |at: f32, w: f32, r: f32| f64::from(at).abs() + (f64::from(w) * truth).abs() + f64::from(r);
@@ -1491,7 +1526,8 @@ pub(crate) fn closed_form_rounding(delta: Vec2, dir: Vec2, reach: Vec2, owed: f3
         gm.sqrt()
     };
     let reach_sum = far(delta.x, dir.x, reach.x) + far(delta.y, dir.y, reach.y) + owed;
-    if linear_holds(delta, dir, reach, owed, truth, reach_sum) {
+    let step = f64::from(dir.x).hypot(f64::from(dir.y)) * f64::from(f32::from_bits(1));
+    step + if linear_holds(delta, dir, reach, owed, truth, reach_sum) {
         quadratic.min(gamma * reach_sum)
     } else {
         quadratic

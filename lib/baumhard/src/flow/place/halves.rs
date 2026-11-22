@@ -8349,6 +8349,22 @@ pub(crate) fn line_root_seam(delta: Vec2, dir: Vec2, reach: Vec2, owed: f32) -> 
     (line_root(delta, dir, reach, owed), along(delta, dir, reach, owed))
 }
 
+/// Test seam (#384): how far, in steps, the step [`along`] returns,
+/// `step`, may lie from where its reading of the gap changes, for what is
+/// owed and the reach — the width of the last bracket it stops at, read
+/// from its code. Its first bracket runs from the start to `unit`, what is
+/// owed and the reach (no less than [`INK_TOLERANCE`]), and while its far
+/// end reads as the start does it is doubled, `k` times, to `[unit·2^(k−1),
+/// unit·2^k]`: `unit` wide where `k` is none, else `unit·2^(k−1)`, its inner
+/// end, past which the step it returns lies. So it is no wider than
+/// `unit` or the step, whichever is more; [`ALONG_ROUNDS`] halvings of it
+/// leave `2^−ALONG_ROUNDS` of that, and the step returned is the bracket's
+/// far end.
+pub(crate) fn along_resolution_seam(reach: Vec2, owed: f32, step: f32) -> f64 {
+    let unit = (owed + reach.max_element()).max(INK_TOLERANCE);
+    f64::from(unit).max(f64::from(step).abs()) / (1u64 << ALONG_ROUNDS) as f64
+}
+
 /// Test seam (#294, ruling R50.1): whether two of `boxes`, each with
 /// ink, touch, but for the pairs `exempt` excuses — by [`touch_scan`],
 /// or with `strips`, by [`stripped`] alone across that axis — and the

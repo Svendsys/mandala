@@ -4956,6 +4956,39 @@ fn test_flow_structured_finding_a_line_root_owed_its_gap_at_the_start_replays() 
     }
 }
 
+/// The flow_structured finding of CI's run on #384 at 4f9b8092 (job
+/// 137013010713), in the property's own bound rather than the engine: a
+/// slowed line (`check_slow_line_root`) of two inks at one point, reach
+/// none, owed nothing, stepped along `(-0.0432, -3.78e-9)`. Its root is the
+/// start, and the bisection (`along`) steps the width of its last bracket
+/// on, `2^−24` of `INK_TOLERANCE`, 6.0·10⁻¹¹, its gap 2.6·10⁻¹² there. It
+/// was held within the closed form's rounding, relative to the line's own
+/// measures and so 1.2·10⁻⁷⁰ where they are all none; it is held within
+/// its own now, that and the movement over its last bracket
+/// (`bisection_placed`, `along_resolution_seam`). 277 bytes, as found
+/// (sha1 d7d47cc3…).
+///
+/// Control: with the bisection held within the closed form's rounding
+/// alone, red ("the bisection steps 0.00000000005960465, its gap
+/// 2.574920621345458e-12 from what is owed, past its rounding
+/// 1.1869460719860866e-70").
+#[test]
+fn test_flow_structured_finding_a_line_root_bisection_owed_nothing_of_boxes_at_one_point_replays() {
+    let found =
+        include_bytes!("fuzz_findings/structured_line_root_bisection_owed_nothing_of_boxes_at_one_point");
+    for (what, checked) in [
+        (
+            "fuzzed",
+            crate::flow::tests::flow_fuzz::check_flow_structured(found),
+        ),
+        ("as found", check_flow_structured_as_found(found)),
+    ] {
+        if let Err(why) = checked {
+            panic!("{what}: {why}");
+        }
+    }
+}
+
 /// The flow_structured_every_face finding of CI's run on #360 at
 /// 59826cfd (job 132771815404), after 5,055 runs: a directional ring
 /// (#324) of its vertical text alone, `spacing` 10³⁰, round a rounded
