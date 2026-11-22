@@ -47,7 +47,7 @@ fn color_rows(ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
             text: row.clone(),
             display: row,
             hint: None,
-            font_family: None,
+            sample_face: None,
         })
         .collect()
 }

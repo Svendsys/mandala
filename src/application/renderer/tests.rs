@@ -28,18 +28,18 @@ fn sample_console_geometry() -> ConsoleOverlayGeometry {
             ConsoleOverlayLine {
                 text: "> help".to_string(),
                 kind: ConsoleOverlayLineKind::Input,
-                font_family: None,
+                sample_face: None,
             },
             ConsoleOverlayLine {
                 text: "commands:".to_string(),
                 kind: ConsoleOverlayLineKind::Output,
-                font_family: None,
+                sample_face: None,
             },
         ],
         completions: vec![ConsoleOverlayCompletion {
             text: "top".to_string(),
             hint: None,
-            font_family: None,
+            sample_face: None,
         }],
         selected_completion: Some(0),
         default_font: None,
@@ -91,13 +91,13 @@ fn test_console_frame_height_linear_in_scrollback_rows() {
     g_one.scrollback.push(ConsoleOverlayLine {
         text: "one".into(),
         kind: ConsoleOverlayLineKind::Output,
-        font_family: None,
+        sample_face: None,
     });
     let mut g_two = g_one.clone();
     g_two.scrollback.push(ConsoleOverlayLine {
         text: "two".into(),
         kind: ConsoleOverlayLineKind::Output,
-        font_family: None,
+        sample_face: None,
     });
     let h0 = compute_console_frame_layout(&g_empty, 1920.0, 1080.0).frame_height;
     let h1 = compute_console_frame_layout(&g_one, 1920.0, 1080.0).frame_height;
@@ -114,7 +114,7 @@ fn test_console_scrollback_clamped_to_max_rows() {
         geometry.scrollback.push(ConsoleOverlayLine {
             text: format!("line {i}"),
             kind: ConsoleOverlayLineKind::Output,
-            font_family: None,
+            sample_face: None,
         });
     }
     let layout = compute_console_frame_layout(&geometry, 1920.0, 1080.0);
@@ -128,7 +128,7 @@ fn test_console_completions_clamped_to_max_rows() {
         geometry.completions.push(ConsoleOverlayCompletion {
             text: format!("cmd_{i}"),
             hint: None,
-            font_family: None,
+            sample_face: None,
         });
     }
     let layout = compute_console_frame_layout(&geometry, 1920.0, 1080.0);
@@ -154,7 +154,7 @@ fn test_console_frame_width_independent_of_scrollback_len() {
     huge.scrollback.push(ConsoleOverlayLine {
         text: "x".repeat(500),
         kind: ConsoleOverlayLineKind::Output,
-        font_family: None,
+        sample_face: None,
     });
     let long = compute_console_frame_layout(&huge, 1920.0, 1080.0).frame_width;
     assert_eq!(short, long);
@@ -170,7 +170,7 @@ fn test_console_frame_width_stable_for_wide_char_scrollback() {
     g.scrollback.push(ConsoleOverlayLine {
         text: "日本語".repeat(200),
         kind: ConsoleOverlayLineKind::Output,
-        font_family: None,
+        sample_face: None,
     });
     let layout = compute_console_frame_layout(&g, 1920.0, 1080.0);
     let (bd_left, _, bd_w, _) = layout.backdrop_rect();
@@ -239,18 +239,18 @@ fn test_console_prompt_y_sits_below_scrollback_and_completions() {
         ConsoleOverlayLine {
             text: "one".into(),
             kind: ConsoleOverlayLineKind::Output,
-            font_family: None,
+            sample_face: None,
         },
         ConsoleOverlayLine {
             text: "two".into(),
             kind: ConsoleOverlayLineKind::Output,
-            font_family: None,
+            sample_face: None,
         },
     ];
     g.completions = vec![ConsoleOverlayCompletion {
         text: "help".into(),
         hint: None,
-        font_family: None,
+        sample_face: None,
     }];
     g.selected_completion = Some(0);
     let layout = compute_console_frame_layout(&g, 1920.0, 1080.0);
@@ -393,7 +393,7 @@ fn console_signature_shifts_on_scrollback_grow() {
     g_one.scrollback = vec![ConsoleOverlayLine {
         text: "> help".into(),
         kind: ConsoleOverlayLineKind::Input,
-        font_family: None,
+        sample_face: None,
     }];
     let layout_one = compute_console_frame_layout(&g_one, 1280.0, 720.0);
 
@@ -402,12 +402,12 @@ fn console_signature_shifts_on_scrollback_grow() {
         ConsoleOverlayLine {
             text: "> help".into(),
             kind: ConsoleOverlayLineKind::Input,
-            font_family: None,
+            sample_face: None,
         },
         ConsoleOverlayLine {
             text: "new output line".into(),
             kind: ConsoleOverlayLineKind::Output,
-            font_family: None,
+            sample_face: None,
         },
     ];
     let layout_two = compute_console_frame_layout(&g_two, 1280.0, 720.0);
@@ -443,7 +443,7 @@ fn console_overlay_areas_degrades_when_scrollback_shorter_than_layout_rows() {
         .map(|i| ConsoleOverlayLine {
             text: format!("line {i}"),
             kind: ConsoleOverlayLineKind::Output,
-            font_family: None,
+            sample_face: None,
         })
         .collect();
     g.completions = Vec::new();
@@ -476,7 +476,7 @@ fn console_overlay_areas_degrades_when_completions_shorter_than_layout_rows() {
         .map(|i| ConsoleOverlayCompletion {
             text: format!("cand{i}"),
             hint: None,
-            font_family: None,
+            sample_face: None,
         })
         .collect();
     g.selected_completion = Some(0);
@@ -520,14 +520,15 @@ fn fonts_on_channel(areas: &[(usize, GlyphArea)], channel: usize) -> Vec<Option<
     area.regions.all_regions().iter().map(|r| r.font).collect()
 }
 
-/// A geometry exercising every way a console row can arrive: unpinned,
-/// pinned to a loaded face, and pinned to a family that is not loaded;
-/// plus a pinned completion with a hint and an unpinned one.
+/// A geometry exercising every way a console row can arrive: with no
+/// sample, with a sample in a loaded face, and with a sample in a family
+/// that is not loaded; plus a sampled completion with a hint and one
+/// with no sample.
 fn console_geometry_with_faces(default_font: Option<AppFont>, pinned_family: &str) -> ConsoleOverlayGeometry {
-    let line = |text: &str, font_family: Option<&str>| ConsoleOverlayLine {
+    let line = |text: &str, sample_face: Option<&str>| ConsoleOverlayLine {
         text: text.to_string(),
         kind: ConsoleOverlayLineKind::Output,
-        font_family: font_family.map(str::to_string),
+        sample_face: sample_face.map(str::to_string),
     };
     ConsoleOverlayGeometry {
         input: "font family=".to_string(),
@@ -541,12 +542,12 @@ fn console_geometry_with_faces(default_font: Option<AppFont>, pinned_family: &st
             ConsoleOverlayCompletion {
                 text: pinned_family.to_string(),
                 hint: Some("a family".to_string()),
-                font_family: Some(pinned_family.to_string()),
+                sample_face: Some(pinned_family.to_string()),
             },
             ConsoleOverlayCompletion {
                 text: "list".to_string(),
                 hint: None,
-                font_family: None,
+                sample_face: None,
             },
         ],
         selected_completion: Some(0),
@@ -555,10 +556,11 @@ fn console_geometry_with_faces(default_font: Option<AppFont>, pinned_family: &st
     }
 }
 
-/// `console_font` reaches every part of the console that does not pin
-/// a face of its own — the frame, the gutters, the prompt, unpinned
-/// rows, a completion's marker and hint, and a row whose pinned family
-/// is not loaded — while a row pinned to a loaded face keeps it. This
+/// `console_font` reaches every part of the console but a font row's
+/// sample — the frame, the gutters, the prompt, every row's text, a
+/// completion's marker, name and hint, and a row whose sample family is
+/// not loaded, which draws no sample at all — while a sample in a loaded
+/// face is drawn in it, after the name (#329's font-picker form). This
 /// is the consumer end of the setting: before #125 the overlay carried
 /// the family and no area read it.
 #[test]
@@ -595,13 +597,39 @@ fn test_console_default_font_reaches_every_unpinned_area() {
     assert_eq!(fonts_on_channel(&configured, CONSOLE_CHANNEL_PROMPT), vec![d, d]);
     assert_eq!(
         fonts_on_channel(&configured, CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE + 1),
-        vec![Some(pinned_face)],
-        "a row pinned to a loaded face keeps it"
+        vec![d, Some(pinned_face)],
+        "a sampled row draws its text in console_font and its sample in the face"
     );
     assert_eq!(
         fonts_on_channel(&configured, CONSOLE_CHANNEL_COMPLETION_BASE),
         vec![d, Some(pinned_face), d],
-        "a pinned candidate shapes its text in its face and its marker and hint in console_font"
+        "a sampled candidate draws its marker, name and hint in console_font and its sample in its face"
+    );
+    let text_on = |areas: &[(usize, GlyphArea)], channel: usize| {
+        let (_, area) = areas
+            .iter()
+            .find(|(c, _)| *c == channel)
+            .expect("the channel's area");
+        area.text.clone()
+    };
+    let sample = format!(
+        "{}{}",
+        crate::application::console::FONT_SAMPLE_GAP,
+        crate::application::console::FONT_SAMPLE
+    );
+    assert_eq!(
+        text_on(&configured, CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE + 1),
+        format!("pinned{sample}")
+    );
+    assert_eq!(
+        text_on(&configured, CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE + 2),
+        "pinned to nothing loaded",
+        "a family not loaded draws no sample, not the sample in console_font"
+    );
+    assert!(
+        text_on(&configured, CONSOLE_CHANNEL_COMPLETION_BASE)
+            .ends_with(&format!("{pinned_family}{sample}    a family")),
+        "the sample follows the name, ahead of the hint"
     );
 
     // Control: with no console_font, the same unpinned areas carry no
@@ -623,24 +651,29 @@ fn test_console_default_font_reaches_every_unpinned_area() {
     }
     assert_eq!(
         fonts_on_channel(&unconfigured, CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE + 1),
-        vec![Some(pinned_face)]
+        vec![None, Some(pinned_face)]
     );
 }
 
-/// A completion row splits into marker / candidate / hint, each clamped
-/// to what survived truncation, and never yields an empty or
-/// out-of-bounds region.
+/// A row splits into what precedes its sample / the sample / the hint,
+/// the sample alone in its face, each clamped to what survived
+/// truncation; a row with no sample is one region; and no row yields an
+/// empty or out-of-bounds region.
 #[test]
-fn test_completion_row_regions_split_and_clamp_to_the_shown_width() {
+fn test_sampled_row_regions_split_and_clamp_to_the_shown_width() {
     baumhard::font::fonts::init();
     let ((_, d), (_, c)) = two_distinct_console_faces();
     let color = [1.0, 1.0, 1.0, 1.0];
-    let spans_of = |marker, text, shown| {
-        completion_row_regions(
-            CompletionRowSpans { marker, text, shown },
+    let spans_of = |before, sample, shown, sample_font| {
+        sampled_row_regions(
+            SampledRowSpans {
+                before,
+                sample,
+                shown,
+            },
             color,
             Some(d),
-            Some(c),
+            sample_font,
         )
         .all_regions()
         .iter()
@@ -648,19 +681,27 @@ fn test_completion_row_regions_split_and_clamp_to_the_shown_width() {
         .collect::<Vec<_>>()
     };
 
-    // `▸ ` + `Norse` + `    a family`, all shown.
+    // `▸ ` + `Norse` + `  ` + `Aa` + `    a family`, all shown.
     assert_eq!(
-        spans_of(2, 5, 19),
-        vec![(0, 2, Some(d)), (2, 7, Some(c)), (7, 19, Some(d))]
+        spans_of(9, 2, 23, Some(c)),
+        vec![(0, 9, Some(d)), (9, 11, Some(c)), (11, 23, Some(d))]
     );
-    // No hint: nothing after the candidate, so no trailing region.
-    assert_eq!(spans_of(2, 5, 7), vec![(0, 2, Some(d)), (2, 7, Some(c))]);
-    // Truncated inside the candidate: its region stops at the edge.
-    assert_eq!(spans_of(2, 5, 4), vec![(0, 2, Some(d)), (2, 4, Some(c))]);
-    // Truncated inside the marker: only the marker's shown part.
-    assert_eq!(spans_of(2, 5, 1), vec![(0, 1, Some(d))]);
+    // No hint: nothing after the sample, so no trailing region.
+    assert_eq!(
+        spans_of(9, 2, 11, Some(c)),
+        vec![(0, 9, Some(d)), (9, 11, Some(c))]
+    );
+    // Truncated inside the sample: its region stops at the edge.
+    assert_eq!(
+        spans_of(9, 2, 10, Some(c)),
+        vec![(0, 9, Some(d)), (9, 10, Some(c))]
+    );
+    // Truncated before the sample: one region, in the console's face.
+    assert_eq!(spans_of(9, 2, 4, Some(c)), vec![(0, 4, Some(d))]);
+    // No sample: one region, whatever the row says.
+    assert_eq!(spans_of(7, 0, 19, None), vec![(0, 19, Some(d))]);
     // Nothing shown: no regions at all.
-    assert_eq!(spans_of(2, 5, 0), vec![]);
+    assert_eq!(spans_of(9, 2, 0, Some(c)), vec![]);
 }
 
 /// A shipped face that tiles the console's border at a different

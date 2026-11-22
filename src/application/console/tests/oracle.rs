@@ -125,7 +125,7 @@ pub fn completion_signature(line: &str, sel: Sel) -> String {
             if let Some(h) = &c.hint {
                 s.push_str(&format!(" [{}]", h));
             }
-            if let Some(f) = &c.font_family {
+            if let Some(f) = &c.sample_face {
                 s.push_str(&format!(" <{}>", f));
             }
             escape(&s)
@@ -244,7 +244,7 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
             families,
             "`{line}<TAB>` offers one row per family a map can name"
         );
-        // The shaped face is the fourth channel
+        // The sample's face is the fourth channel
         // `completion_signature` renders, and the only one no
         // pinned row exercises — every corpus line whose popup
         // carries a family is a font vocabulary, and those are
@@ -252,18 +252,26 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
         // reason above. `is_some()` alone left the channel
         // effectively unchecked: replacing every family tag with
         // one constant sentinel kept all four oracle tests green.
-        // The row must name *its own* family, not merely some
-        // family — where its face can draw its name; a face whose
-        // character map lacks a letter of it draws the row in the
-        // console's default face, never in `.notdef` boxes (#329).
-        // Control: pinning every row to its family turns the
+        // The row's sample must be in *its own* family, not merely
+        // some family — on a compiled family whose face maps every
+        // character of the sample; a face that lacks one, and an
+        // installed family, show no sample, never `.notdef` boxes
+        // (#329's font-picker form: the name is in the console's
+        // face). Control: sampling every row in its family turns the
         // symbol faces' rows red.
         for c in &rows {
-            let own = baumhard::font::fonts::compiled_family_maps(&c.display, &c.text);
+            let compiled = loaded.iter().any(|f| {
+                f.name == c.display && matches!(f.source, baumhard::font::fonts::FamilySource::Compiled(_))
+            });
+            let own = compiled
+                && baumhard::font::fonts::compiled_family_maps(
+                    &c.display,
+                    crate::application::console::FONT_SAMPLE,
+                );
             assert_eq!(
-                c.font_family.as_deref(),
+                c.sample_face.as_deref(),
                 own.then_some(c.display.as_str()),
-                "each family row of `{line}<TAB>` shapes its own label where its face can"
+                "each family row of `{line}<TAB>` samples its own face where the face can"
             );
             // Tab-accept has to produce a line the verb accepts.
             // A family whose name carries whitespace is one token

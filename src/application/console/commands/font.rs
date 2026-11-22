@@ -11,9 +11,11 @@
 //! one, whether or not this machine has it (#329). `reset` on any key
 //! clears the element's own, so it inherits.
 //!
-//! `font list` prints every loaded family, each in its own face, an
-//! installed one marked `(installed)`; the completion of `family=` marks
-//! it the same way.
+//! `font list` prints every loaded family in the font-picker form, as
+//! the completion of `family=` lists them: the name in the console's
+//! face, then a sample `Aa` in a compiled family's own face where it
+//! maps those letters. An installed family is marked `(installed)` and
+//! shows no sample.
 //!
 //! `font replace <family> <font>` rewrites every reference the map makes
 //! to the installed family `<family>` to `<font>`, as one undoable edit
@@ -164,11 +166,12 @@ pub const COMMAND: Command = Command {
 /// Build font-family completions: one entry per loaded family a map can
 /// name (`format::font`) whose name starts with `partial`
 /// (case-insensitive) — the compiled ones, and on native the installed
-/// ones, hinted `installed` (#329). Each entry carries
-/// `font_family = Some(<name>)` so the popup row shapes the candidate
-/// label in that very face — where the face maps every character of the
-/// name ([`row_face`]); a symbol face that lacks them, and an installed
-/// family, are drawn in the console's default face.
+/// ones, hinted `installed` (#329). Each row is the standard font-picker
+/// form: the name in the console's face, then a
+/// [`FONT_SAMPLE`](crate::application::console::FONT_SAMPLE) in the
+/// family's own face, where a compiled face of it maps the sample
+/// ([`sample_face`]). A face that cannot draw the sample — a symbol or
+/// picture face — and an installed family show no sample.
 ///
 /// Family names that contain whitespace are returned with the
 /// inserted `text` wrapped in double quotes — the tokenizer would
@@ -197,22 +200,26 @@ pub(crate) fn font_family_completions(partial: &str) -> Vec<Completion> {
         .filter(|f| baumhard::document::format::font(&f.name).is_ok())
         .map(|family| {
             let hint = (family.source == FamilySource::Installed).then(|| INSTALLED.to_string());
-            family_completion(&family.name, hint, true)
+            let sample = matches!(family.source, FamilySource::Compiled(_));
+            family_completion(&family.name, hint, sample)
         })
         .collect()
 }
 
-/// The face a row naming the family `name`, and drawing `drawn` — the
-/// name, quoted where the completion inserts it quoted — is drawn in:
-/// its own, where a compiled face of it maps every character of `drawn`
-/// (its character map, `compiled_family_maps`), so the row shows the
-/// face; else none — the console's default face — so a face that lacks
-/// a letter of its own name, or the quote around it, draws no `.notdef`
-/// boxes, and an installed family, which the console cannot pin, is
-/// drawn as it would be anyway. Cost: one character-map read per face of
-/// the family.
-pub(crate) fn row_face(name: &str, drawn: &str) -> Option<String> {
-    baumhard::font::fonts::compiled_family_maps(name, drawn).then(|| name.to_string())
+/// The family whose face draws the
+/// [`FONT_SAMPLE`](crate::application::console::FONT_SAMPLE) of a row
+/// naming the compiled family `name`: `name`, where a compiled face of it
+/// maps every character of the sample (its character map,
+/// `compiled_family_maps`); else none, and the row shows no sample — so
+/// a symbol or script face that lacks the letters draws no `.notdef`
+/// box. A face that maps them draws what it maps them to, which is the
+/// face's own design (212 Keyboard's keycaps); the row's name, in the
+/// console's face, reads whatever it is. An installed family, which the
+/// console cannot pin, has no compiled face and so no sample. Cost: one
+/// character-map read per face of the family.
+pub(crate) fn sample_face(name: &str) -> Option<String> {
+    baumhard::font::fonts::compiled_family_maps(name, crate::application::console::FONT_SAMPLE)
+        .then(|| name.to_string())
 }
 
 /// What `font list` and the completion mark an installed family with.
@@ -224,28 +231,30 @@ const MISSING: &str = "missing";
 
 /// One completion row for the family `name`, quoted where it holds
 /// whitespace so tab-accept produces a line the tokenizer keeps whole;
-/// drawn in its own face where `own_face` asks for it and the face can
-/// draw the row ([`row_face`]), else in the console's default face.
-fn family_completion(name: &str, hint: Option<String>, own_face: bool) -> Completion {
+/// its name in the console's face, followed by a sample in its own face
+/// where `sample` asks for one and the face can draw it
+/// ([`sample_face`]).
+fn family_completion(name: &str, hint: Option<String>, sample: bool) -> Completion {
     let text = if name.chars().any(char::is_whitespace) {
         format!("\"{name}\"")
     } else {
         name.to_string()
     };
-    let font_family = if own_face { row_face(name, &text) } else { None };
+    let sample_face = if sample { sample_face(name) } else { None };
     Completion {
         text,
         display: name.to_string(),
         hint,
-        font_family,
+        sample_face,
     }
 }
 
 /// The installed families the open map names whose name starts with
 /// `partial` (case-insensitive), for `font replace`'s first slot: those
-/// this machine lacks hinted `missing` and drawn in the console's face,
-/// the rest hinted `installed` and drawn in their own. Cost: one walk of
-/// the map ([`baumhard::document::fonts::installed_families`]).
+/// this machine lacks hinted `missing`, the rest hinted `installed`. No
+/// row has a sample: an installed family has no compiled face the
+/// console can pin ([`sample_face`]). Cost: one walk of the map
+/// ([`baumhard::document::fonts::installed_families`]).
 fn named_family_completions(ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
     let partial_lc = partial.to_ascii_lowercase();
     baumhard::document::fonts::installed_families(ctx.document.doc())
@@ -259,11 +268,12 @@ fn named_family_completions(ctx: &ConsoleContext, partial: &str) -> Vec<Completi
         })
         .map(|named| {
             let name = named.family.as_str();
-            if baumhard::font::fonts::installed_family_loaded(name) {
-                family_completion(name, Some(INSTALLED.to_string()), true)
+            let hint = if baumhard::font::fonts::installed_family_loaded(name) {
+                INSTALLED
             } else {
-                family_completion(name, Some(MISSING.to_string()), false)
-            }
+                MISSING
+            };
+            family_completion(name, Some(hint.to_string()), false)
         })
         .collect()
 }
@@ -296,16 +306,20 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
     if let Stop::Matched(subverb) = descent.stop {
         return match route::lookup(ROUTES, subverb) {
             Some(Route::List) => {
+                // The font-picker form, as the completion's: the name in
+                // the console's face, a sample after it in a compiled
+                // family's own (`sample_face`).
                 let lines = baumhard::font::fonts::loaded_families()
                     .iter()
-                    .map(|family| OutputLine {
-                        text: match family.source {
-                            baumhard::font::fonts::FamilySource::Installed => {
-                                format!("{}  ({INSTALLED})", family.name)
-                            }
-                            baumhard::font::fonts::FamilySource::Compiled(_) => family.name.clone(),
+                    .map(|family| match family.source {
+                        baumhard::font::fonts::FamilySource::Installed => OutputLine {
+                            text: format!("{}  ({INSTALLED})", family.name),
+                            sample_face: None,
                         },
-                        font_family: row_face(&family.name, &family.name),
+                        baumhard::font::fonts::FamilySource::Compiled(_) => OutputLine {
+                            text: family.name.clone(),
+                            sample_face: sample_face(&family.name),
+                        },
                     })
                     .collect();
                 ExecResult::Lines(lines)

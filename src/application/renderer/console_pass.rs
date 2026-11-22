@@ -86,6 +86,8 @@ pub(super) fn console_overlay_areas(
         ACCENT_COLOR, BORDER_COLOR, CURSOR_GLYPH, ERROR_COLOR, GUTTER_GLYPH, INPUT_ECHO_COLOR,
         SCROLLBACK_MIN_ALPHA, SELECTED_COMPLETION_MARKER, TEXT_COLOR, UNSELECTED_COMPLETION_MARKER,
     };
+    use crate::application::console::{FONT_SAMPLE, FONT_SAMPLE_GAP};
+    use baumhard::util::grapheme_chad::count_grapheme_clusters;
 
     let &ConsoleFrameLayout {
         left,
@@ -100,14 +102,27 @@ pub(super) fn console_overlay_areas(
         completion_rows,
     } = layout;
 
-    // Everything the console draws shapes in `default_font` unless a
-    // row pins a face of its own. A pinned family that is not loaded
-    // falls back to the console default rather than to cosmic-text's,
-    // so a `console_font` the user chose holds for every row that
-    // cannot honor its own pin — never a panic per §9.
+    // Everything the console draws shapes in `default_font`, so a
+    // `console_font` the user chose holds for every row, the names of
+    // fonts included. The one exception is a font row's sample, drawn in
+    // the family it names — the standard font-picker form. A family no
+    // loaded compiled face bears draws no sample at all, rather than the
+    // sample in a face it does not show; never a panic per §9.
     let default_font = geometry.default_font;
-    let face_or_default =
-        |font_family: Option<&str>| font_family.and_then(app_font_by_family).or(default_font);
+    let sample_font = |sample_face: Option<&str>| sample_face.and_then(app_font_by_family);
+    // `text`, followed by the sample where a face draws one.
+    let with_sample = |text: &str, sample: Option<AppFont>| match sample {
+        Some(_) => format!("{text}{FONT_SAMPLE_GAP}{FONT_SAMPLE}"),
+        None => text.to_string(),
+    };
+    // Where the sample after `before` sits in a row whose shown part is
+    // `shown`: none where no face draws one.
+    let sample_spans = |before: &str, sample: Option<AppFont>, shown: &str| SampledRowSpans {
+        before: count_grapheme_clusters(before)
+            + sample.map_or(0, |_| count_grapheme_clusters(FONT_SAMPLE_GAP)),
+        sample: sample.map_or(0, |_| count_grapheme_clusters(FONT_SAMPLE)),
+        shown: count_grapheme_clusters(shown),
+    };
 
     let mk_area = |text: &str,
                    color: Color,
@@ -236,6 +251,7 @@ pub(super) fn console_overlay_areas(
             continue;
         };
         let y = content_top + row_height * slot as f32;
+        let sample = sample_font(line.sample_face.as_deref());
         let (gutter_text, gutter_color, text_str, text_color) = {
             let newness = if visible_count <= 1 {
                 1.0
@@ -260,7 +276,8 @@ pub(super) fn console_overlay_areas(
                     GUTTER_GLYPH,
                 ),
             };
-            let clipped = baumhard::util::grapheme_chad::truncate_to_display_width(&line.text, content_cols);
+            let sampled = with_sample(&line.text, sample);
+            let clipped = baumhard::util::grapheme_chad::truncate_to_display_width(&sampled, content_cols);
             let gutter = if gutter_glyph == " " {
                 String::new()
             } else {
@@ -280,18 +297,24 @@ pub(super) fn console_overlay_areas(
                 default_font,
             ),
         ));
-        texts.push((
-            CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE + slot,
-            mk_area(
-                &text_str,
-                text_color,
-                font_size,
-                row_height,
-                (content_left, y),
-                (content_width, row_height),
-                face_or_default(line.font_family.as_deref()),
-            ),
-        ));
+        let mut text_area = mk_area(
+            &text_str,
+            text_color,
+            font_size,
+            row_height,
+            (content_left, y),
+            (content_width, row_height),
+            default_font,
+        );
+        if sample.is_some() {
+            text_area.regions = sampled_row_regions(
+                sample_spans(&line.text, sample, &text_str),
+                cosmic_color_to_rgba(text_color),
+                default_font,
+                sample,
+            );
+        }
+        texts.push((CONSOLE_CHANNEL_SCROLLBACK_TEXT_BASE + slot, text_area));
     }
     out.append(&mut texts);
 
@@ -321,9 +344,11 @@ pub(super) fn console_overlay_areas(
         } else {
             UNSELECTED_COMPLETION_MARKER
         };
+        let sample = sample_font(c.sample_face.as_deref());
+        let named = format!("{marker}{}", c.text);
         let line = match &c.hint {
-            Some(hint) => format!("{marker}{}    {}", c.text, hint),
-            None => format!("{marker}{}", c.text),
+            Some(hint) => format!("{}    {}", with_sample(&named, sample), hint),
+            None => with_sample(&named, sample),
         };
         let clipped = baumhard::util::grapheme_chad::truncate_to_display_width(&line, content_cols);
         let mut area = GlyphArea::new_with_str(
@@ -333,15 +358,11 @@ pub(super) fn console_overlay_areas(
             Vec2::new(content_left, y),
             Vec2::new(content_width, row_height),
         );
-        area.regions = completion_row_regions(
-            CompletionRowSpans {
-                marker: baumhard::util::grapheme_chad::count_grapheme_clusters(marker),
-                text: baumhard::util::grapheme_chad::count_grapheme_clusters(&c.text),
-                shown: baumhard::util::grapheme_chad::count_grapheme_clusters(clipped),
-            },
+        area.regions = sampled_row_regions(
+            sample_spans(&named, sample, clipped),
             cosmic_color_to_rgba(color),
             default_font,
-            face_or_default(c.font_family.as_deref()),
+            sample,
         );
         out.push((CONSOLE_CHANNEL_COMPLETION_BASE + slot, area));
     }
@@ -392,37 +413,42 @@ pub(super) fn console_overlay_areas(
     out
 }
 
-/// Grapheme-cluster lengths of one completion row's three parts, as
-/// laid out in `marker ++ text ++ hint`: the selection marker, the
-/// candidate text, and `shown` — how many clusters of the whole row
-/// survived truncation to the popup's width. Whatever follows
-/// `marker + text` is the hint and its separator.
+/// Where a row's sample sits, in grapheme clusters: `before` clusters
+/// in the console's face ahead of it — a completion's marker and name, or
+/// an output line's text, and the gap — then `sample` of the sample (0
+/// for a row with none), out of the `shown` that survived truncation.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct CompletionRowSpans {
-    pub(super) marker: usize,
-    pub(super) text: usize,
+pub(super) struct SampledRowSpans {
+    pub(super) before: usize,
+    pub(super) sample: usize,
     pub(super) shown: usize,
 }
 
-/// Regions for one completion row: the candidate text in
-/// `candidate_font`, the marker before it and the hint after it in
-/// `default_font`, all in `color`. Each range is clamped to
-/// `spans.shown`, so a row truncated mid-text or mid-marker still
-/// yields only in-bounds, non-empty regions.
-pub(super) fn completion_row_regions(
-    spans: CompletionRowSpans,
+/// Regions for one console row: the sample in `sample_font`, everything
+/// else — marker, name, gap and hint — in `default_font`, all in
+/// `color`. A row with no sample is one region. Each range is clamped to
+/// `spans.shown`, so a row truncated mid-name or mid-sample still yields
+/// only in-bounds, non-empty regions, and never a sample region the row
+/// does not show.
+pub(super) fn sampled_row_regions(
+    spans: SampledRowSpans,
     color: FloatRgba,
     default_font: Option<AppFont>,
-    candidate_font: Option<AppFont>,
+    sample_font: Option<AppFont>,
 ) -> ColorFontRegions {
-    let text_start = spans.marker.min(spans.shown);
-    let text_end = (spans.marker + spans.text).min(spans.shown);
+    let sample_start = spans.before.min(spans.shown);
+    let sample_end = (spans.before + spans.sample).min(spans.shown);
     let mut regions = ColorFontRegions::new_empty();
-    for (start, end, font) in [
-        (0, text_start, default_font),
-        (text_start, text_end, candidate_font),
-        (text_end, spans.shown, default_font),
-    ] {
+    let runs: &[(usize, usize, Option<AppFont>)] = if sample_font.is_some() && sample_start < sample_end {
+        &[
+            (0, sample_start, default_font),
+            (sample_start, sample_end, sample_font),
+            (sample_end, spans.shown, default_font),
+        ]
+    } else {
+        &[(0, spans.shown, default_font)]
+    };
+    for &(start, end, font) in runs {
         if start < end {
             regions.submit_region(ColorFontRegion::new(
                 ColorFontRange::new(start, end),

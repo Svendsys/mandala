@@ -13,7 +13,7 @@ use crate::application::view::MapView;
 
 use super::super::input_context::InputHandlerContext;
 use super::super::DragState;
-use super::{push_scrollback_error, push_scrollback_output, push_scrollback_output_in_font};
+use super::{push_scrollback_error, push_scrollback_output, push_scrollback_output_with_sample};
 
 /// What one [`execute_console_line`] did.
 #[must_use = "a console line's outcome is its only report: print it, log it, or return it"]
@@ -323,7 +323,7 @@ pub(in crate::application::app) fn print_console_line(
         LineOutcome::Ran(ExecResult::Ok(s)) if !s.is_empty() => push_scrollback_output(console_state, s),
         LineOutcome::Ran(ExecResult::Lines(lines)) => {
             for line in lines {
-                push_scrollback_output_in_font(console_state, line.text, line.font_family);
+                push_scrollback_output_with_sample(console_state, line.text, line.sample_face);
             }
         }
         // Blank lines, empty successes, and the failures handled above.

@@ -23,7 +23,7 @@ fn open_state(input: &str, cursor: usize, candidates: &[&str]) -> ConsoleState {
                 text: c.to_string(),
                 display: c.to_string(),
                 hint: None,
-                font_family: None,
+                sample_face: None,
             })
             .collect(),
         completion_idx: if candidates.is_empty() { None } else { Some(0) },

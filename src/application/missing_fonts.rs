@@ -250,6 +250,7 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::application::console::parser::{parse, Args, ParseResult};
     use crate::application::console::{ConsoleEffects, ConsoleSideEffect, ExecResult};
 
@@ -377,33 +378,72 @@ mod tests {
         assert_eq!(doc.font_notice(), None);
     }
 
-    /// **A row naming a family whose face cannot draw that name is drawn
-    /// in the default face** (#329): `Critters1DC`'s character map lacks
-    /// most of its own letters, so its completion row and its `font list`
-    /// row pin no face, where `Inter Variable`'s pin their own. Control:
-    /// `row_face` pinning every family to itself turns the `Critters1DC`
-    /// arms red, the row drawn half in `.notdef`-prone symbols.
+    /// **Every font row is the font-picker form** (#329): the family's
+    /// name in the console's face, then a sample in the family's own
+    /// face — on a compiled family whose face maps every character of
+    /// the sample, and on no other row. Checked on every completion row
+    /// and every `font list` line, against the families' character maps:
+    /// `Critters1DC` (which maps no `Aa`) has none, `212 Keyboard` (whose
+    /// `Aa` are keycaps, but mapped) and `Inter Variable` have theirs,
+    /// and an installed family has none, where this machine has one —
+    /// none here skips that arm with a note, and fails where
+    /// `MANDALA_REQUIRE_FONTCONFIG_HOSTS` is set, as CI sets it.
+    ///
+    /// Controls: `sample_face` sampling every family turns the
+    /// `Critters1DC` arm red; dropping the sample on every row turns the
+    /// `Inter Variable` arm red; giving installed rows the sample of a
+    /// compiled family (`sample` ignoring the source) turns the
+    /// installed arm red on a machine with an installed family.
     #[test]
-    fn test_a_family_whose_face_cannot_draw_its_name_is_listed_in_the_default_face() {
+    fn test_every_font_row_is_its_name_then_a_sample_the_face_can_draw() {
         use crate::application::console::commands::font::font_family_completions;
-        assert!(
-            !baumhard::font::fonts::compiled_family_maps("Critters1DC", "Critters1DC"),
-            "precondition: the face lacks letters of its name"
-        );
+        use crate::application::console::FONT_SAMPLE;
+        use baumhard::font::fonts::{compiled_family_maps, loaded_families, FamilySource};
+        let expected = |name: &str| -> Option<String> {
+            match loaded_families()
+                .iter()
+                .find(|family| family.name == name)
+                .map(|f| f.source)
+            {
+                Some(FamilySource::Compiled(_)) => {
+                    compiled_family_maps(name, FONT_SAMPLE).then(|| name.to_string())
+                }
+                Some(FamilySource::Installed) | None => None,
+            }
+        };
         let rows = font_family_completions("");
+        assert!(!rows.is_empty(), "the completion offers families");
+        for row in &rows {
+            assert_eq!(
+                row.sample_face,
+                expected(&row.display),
+                "the completion row of {}",
+                row.display
+            );
+        }
         let row = |name: &str| {
             rows.iter()
                 .find(|row| row.display == name)
                 .unwrap_or_else(|| panic!("{name} is offered"))
-                .font_family
+                .sample_face
                 .clone()
         };
-        assert_eq!(row("Critters1DC"), None, "drawn in the default face");
-        assert_eq!(
-            row("Inter Variable").as_deref(),
-            Some("Inter Variable"),
-            "drawn in its own"
-        );
+        assert_eq!(row("Critters1DC"), None, "a face that maps no sample shows none");
+        assert_eq!(row("212 Keyboard").as_deref(), Some("212 Keyboard"));
+        assert_eq!(row("Inter Variable").as_deref(), Some("Inter Variable"));
+        let installed = rows
+            .iter()
+            .filter(|row| row.hint.as_deref() == Some("installed"))
+            .count();
+        if installed == 0 {
+            assert!(
+                std::env::var_os("MANDALA_REQUIRE_FONTCONFIG_HOSTS").is_none(),
+                "no installed family is loaded, so the installed arm went untested"
+            );
+            baumhard::util::test_skip::note_skipped(
+                "the font rows met no installed family this machine has; that arm is untested here",
+            );
+        }
         let ParseResult::Ok { cmd, args } = parse("font list") else {
             panic!("font list parses");
         };
@@ -412,16 +452,15 @@ mod tests {
         let ExecResult::Lines(lines) = (cmd.execute)(&Args::new(&args), &mut effects) else {
             panic!("font list lists");
         };
-        let listed = |name: &str| {
-            lines
-                .iter()
-                .find(|line| line.text == name)
-                .unwrap_or_else(|| panic!("{name} is listed"))
-                .font_family
-                .clone()
-        };
-        assert_eq!(listed("Critters1DC"), None);
-        assert_eq!(listed("Inter Variable").as_deref(), Some("Inter Variable"));
+        assert_eq!(lines.len(), loaded_families().len(), "one line per family");
+        for (line, family) in lines.iter().zip(loaded_families().iter()) {
+            assert_eq!(
+                line.sample_face,
+                expected(&family.name),
+                "the font list line of {}",
+                family.name
+            );
+        }
     }
 
     /// `font rescan` asks the executor for the rescan, which reports and

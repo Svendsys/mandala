@@ -152,7 +152,7 @@ fn console_line_json(line: &ConsoleLine) -> Value {
 /// last [`CONSOLE_SCROLLBACK_TAIL`] lines, the rest counted in
 /// `scrollback_len`.
 ///
-/// **Omitted by name:** each output line's pinned `font_family`, the
+/// **Omitted by name:** each output line's pinned `sample_face`, the
 /// completion rows (only their count and the highlighted index are
 /// reported) and the wheel accumulator.
 pub(super) fn console_to_ipc_json(state: &ConsoleState) -> Value {

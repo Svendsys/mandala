@@ -53,7 +53,7 @@ fn palette_rows(ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
             text: name.clone(),
             display: name,
             hint: None,
-            font_family: None,
+            sample_face: None,
         })
         .collect()
 }

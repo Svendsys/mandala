@@ -46,7 +46,7 @@ pub(in crate::application::app) fn open_missing_font_prompt(
         *console_state = ConsoleState::open(history.to_vec());
     }
     for report in crate::application::missing_fonts::report_lines(missing) {
-        push_scrollback_output_in_font(console_state, report.text, report.font_family);
+        push_scrollback_output_with_sample(console_state, report.text, report.sample_face);
     }
     if let ConsoleState::Open { input, cursor, .. } = console_state {
         *cursor = baumhard::util::grapheme_chad::count_grapheme_clusters(&line);
@@ -91,7 +91,7 @@ pub(super) fn push_scrollback_output(state: &mut ConsoleState, text: String) {
     {
         scrollback.push(ConsoleLine::Output {
             text,
-            font_family: None,
+            sample_face: None,
         });
         // New output should be visible — pin the view to the bottom
         // so the user's eyes don't have to chase it.
@@ -99,13 +99,15 @@ pub(super) fn push_scrollback_output(state: &mut ConsoleState, text: String) {
     }
 }
 
-/// Push an output line whose text shapes in `font_family` (or the
-/// console default when `None`). The font dispatch uses this for
-/// `font list` so each row renders in its own face.
-pub(super) fn push_scrollback_output_in_font(
+/// Push an output line, in the console's face, followed by a
+/// [`FONT_SAMPLE`](crate::application::console::FONT_SAMPLE) in the
+/// family `sample_face` names (none when `None`). The font dispatch uses
+/// this for `font list`, so each compiled family shows what it looks
+/// like.
+pub(super) fn push_scrollback_output_with_sample(
     state: &mut ConsoleState,
     text: String,
-    font_family: Option<String>,
+    sample_face: Option<String>,
 ) {
     if let ConsoleState::Open {
         scrollback,
@@ -113,7 +115,7 @@ pub(super) fn push_scrollback_output_in_font(
         ..
     } = state
     {
-        scrollback.push(ConsoleLine::Output { text, font_family });
+        scrollback.push(ConsoleLine::Output { text, sample_face });
         *scroll_offset = 0;
     }
 }
@@ -184,17 +186,17 @@ pub(super) fn rebuild_console_overlay(
             ConsoleLine::Input(t) => ConsoleOverlayLine {
                 text: t.clone(),
                 kind: ConsoleOverlayLineKind::Input,
-                font_family: None,
+                sample_face: None,
             },
-            ConsoleLine::Output { text, font_family } => ConsoleOverlayLine {
+            ConsoleLine::Output { text, sample_face } => ConsoleOverlayLine {
                 text: text.clone(),
                 kind: ConsoleOverlayLineKind::Output,
-                font_family: font_family.clone(),
+                sample_face: sample_face.clone(),
             },
             ConsoleLine::Error(t) => ConsoleOverlayLine {
                 text: t.clone(),
                 kind: ConsoleOverlayLineKind::Error,
-                font_family: None,
+                sample_face: None,
             },
         })
         .collect();
@@ -203,7 +205,7 @@ pub(super) fn rebuild_console_overlay(
         .map(|c| ConsoleOverlayCompletion {
             text: c.text.clone(),
             hint: c.hint.clone(),
-            font_family: c.font_family.clone(),
+            sample_face: c.sample_face.clone(),
         })
         .collect();
     let geometry = ConsoleOverlayGeometry {
@@ -225,7 +227,8 @@ mod tests {
     /// **The missing-font prompt opens the console on the replacement**
     /// (#329): the report in the scrollback, `font replace "<family>" `
     /// on the input line with the cursor at its end, and the completion
-    /// offering the fonts a map can name, each in its own face. A map
+    /// offering the fonts a map can name, each by name with a sample in
+    /// its face where the face can draw one. A map
     /// with nothing missing leaves a closed console closed. Controls:
     /// the second half, and the completion's rows being the replacement
     /// slot's (no subverb row), so the line is the one the user goes on
@@ -265,14 +268,14 @@ mod tests {
         assert!(
             completions
                 .iter()
-                .any(|c| c.display == "Public Pixel" && c.font_family.as_deref() == Some("Public Pixel")),
-            "the completion offers the compiled families, each in its face"
+                .any(|c| c.display == "Public Pixel" && c.sample_face.as_deref() == Some("Public Pixel")),
+            "the completion offers the compiled families, each with a sample in its face"
         );
         assert!(
             completions
                 .iter()
-                .all(|c| c.font_family.is_none() || c.font_family.as_deref() == Some(c.display.as_str())),
-            "every row is a family, drawn in its own face or the default one"
+                .all(|c| c.sample_face.is_none() || c.sample_face.as_deref() == Some(c.display.as_str())),
+            "every row is a family, its sample in its own face or no sample"
         );
         assert!(
             completions.iter().all(|c| c.display != "reset"),

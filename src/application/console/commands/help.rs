@@ -47,7 +47,7 @@ fn command_rows(_ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
             text: c.name.to_string(),
             display: c.name.to_string(),
             hint: Some(c.summary.to_string()),
-            font_family: None,
+            sample_face: None,
         })
         .collect()
 }

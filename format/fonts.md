@@ -176,16 +176,22 @@ that machine has the family.
   the status line names the missing families, and on native the console
   opens over the map with the report (which families, how many elements
   name each) and a pre-filled `font replace "<family>" ` line whose
-  completion offers every family a map can name, each drawn in its own
-  face. The prompt holds nothing: the map is loaded and drawn behind it,
+  completion offers every family a map can name, in the font-picker
+  form: each family's name in the console's face, followed by a sample
+  `Aa` in the family's own face where a compiled face of it maps those
+  letters. A face that does not (a symbol or script face) and an
+  installed family show their name alone. The prompt holds nothing: the map is loaded and drawn behind it,
   and Escape closes it as it closes any console line. IPC's
   `query.fonts` gives the same report ([`ipc.md`](./ipc.md)), and
   `maptool verify` warns of each missing family.
 - **Two ways out.** *Install the font*: the app looks the host up again
   for the missing families each time a map is opened, and on
   `font rescan` (the `RescanFonts` Action), adding the faces it finds
-  after every face it holds, so no face is renumbered and a map that
-  names none of them lays out as before. *Pick a replacement*:
+  after every face it holds, so no face is renumbered. A map that names
+  none of them lays out as before wherever an earlier face holds each
+  character it draws; a character no earlier face holds reaches the
+  font system's last fallback pass, which may now find it in a newly
+  added face. *Pick a replacement*:
   `font replace "<family>" <font>` (the `ReplaceFontFamily` Action, which
   IPC's `act.action` reaches on both targets) rewrites every reference
   the map's tree makes to the family — each element that names it in
