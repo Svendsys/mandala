@@ -167,7 +167,9 @@ pub(crate) fn mutation(dto: &MutationDto, names: Names<'_>) -> Resolved<DocMutat
         MutationDto::PortalEnd(op) => DocMutation::PortalEnd(match op {
             PortalEndOpDto::SetBorderT(t) => PortalEndOp::SetBorderT(*t),
             PortalEndOpDto::SetOffset(offset) => PortalEndOp::SetOffset(*offset),
-            PortalEndOpDto::SetColor(color) => PortalEndOp::SetColor(opt(color, |c| self::color(c, names))?),
+            PortalEndOpDto::SetColor(color) => {
+                PortalEndOp::SetColor(opt(color, |c| self::color("set_color", c, names))?)
+            }
             PortalEndOpDto::SetSize(size) => PortalEndOp::SetSize(*size),
             PortalEndOpDto::SetContent(content) => PortalEndOp::SetContent(content.clone()),
         }),
@@ -267,7 +269,7 @@ fn field(dto: &FieldDto, names: Names<'_>) -> Resolved<DocField> {
         F::Align(align) => DocField::Align((*align).into()),
         F::Font(family) => DocField::Font(font(family)?),
         F::FontSize(size) => DocField::FontSize((*size).into()),
-        F::Color(color) => DocField::Color(self::color(color, names)?),
+        F::Color(color) => DocField::Color(self::color("color", color, names)?),
         F::Weight(weight) => DocField::Weight(self::weight(*weight)?.get()),
         F::Italic(value) => DocField::Italic(*value),
         F::Visible(value) => DocField::Visible(*value),
@@ -298,7 +300,7 @@ fn text_op(dto: &TextOpDto, kind: DocKind, names: Names<'_>) -> Resolved<TextOp>
         })),
         TextOpDto::GrowSize(delta) => TextOp::GrowSize(*delta),
         TextOpDto::ScaleSize(factor) => TextOp::ScaleSize(*factor),
-        TextOpDto::SetColor(color) => TextOp::SetColor(opt(color, |c| self::color(c, names))?),
+        TextOpDto::SetColor(color) => TextOp::SetColor(opt(color, |c| self::color("set_color", c, names))?),
         TextOpDto::SetWeight(value) => TextOp::SetWeight(opt(value, |w| weight(*w))?),
         TextOpDto::SetItalic(value) => TextOp::SetItalic(*value),
     })
@@ -405,7 +407,7 @@ fn path_op(dto: &PathOpDto, names: Names<'_>) -> Resolved<PathOp> {
         PathOpDto::SetFit(value) => PathOp::SetFit(opt(value, fit)?),
         PathOpDto::SetSpacing(value) => PathOp::SetSpacing(*value),
         PathOpDto::SetSize(value) => PathOp::SetSize(*value),
-        PathOpDto::SetColor(color) => PathOp::SetColor(opt(color, |c| self::color(c, names))?),
+        PathOpDto::SetColor(color) => PathOp::SetColor(opt(color, |c| self::color("set_color", c, names))?),
         PathOpDto::SetContent(content) => PathOp::SetContent(content.clone()),
         PathOpDto::SetAnchors(from, to) => PathOp::SetAnchors((*from).into(), (*to).into()),
         PathOpDto::SetControlPoints(points) => {
@@ -425,12 +427,12 @@ fn opt<T, U>(value: &Option<T>, f: impl FnOnce(&T) -> Resolved<U>) -> Resolved<O
     value.as_ref().map(f).transpose()
 }
 
-/// A color, its variable by name.
-fn color(dto: &ColorDto, names: Names<'_>) -> Resolved<ColorRef> {
+/// A color the key `field` writes, its variable by name.
+fn color(field: &'static str, dto: &ColorDto, names: Names<'_>) -> Resolved<ColorRef> {
     Ok(match dto {
         ColorDto::Hex(hex) => ColorRef::Rgba(Rgba(hex.0)),
         ColorDto::Var(name) => ColorRef::Var(var_of(names, name).ok_or_else(|| Fault::Unknown {
-            field: "color",
+            field,
             kind: NameKind::Variable,
             name: name.to_string(),
         })?),
@@ -440,7 +442,7 @@ fn color(dto: &ColorDto, names: Names<'_>) -> Resolved<ColorRef> {
 
 /// A color with no palette field: the map's background.
 fn plain_color(field: &'static str, dto: &ColorDto, names: Names<'_>) -> Resolved<PlainColor> {
-    match color(dto, names)? {
+    match color(field, dto, names)? {
         ColorRef::Rgba(rgba) => Ok(PlainColor::Rgba(rgba)),
         ColorRef::Var(var) => Ok(PlainColor::Var(var)),
         ColorRef::Palette(_) => Err(Fault::Invalid {
@@ -585,7 +587,7 @@ fn sides(dto: &SidesDto, names: Names<'_>) -> Resolved<Sides> {
         },
         SidesDto::Object(object) => Sides::On {
             content: content(&object.content)?,
-            color: opt(&object.color, |c| color(c, names))?,
+            color: opt(&object.color, |c| color("sides", c, names))?,
         },
     })
 }

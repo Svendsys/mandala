@@ -3305,8 +3305,8 @@ as Markdown and `verify` the loader's verdict plus warnings for what
 loads but is probably a mistake (a verb nothing refers to, a
 presentation no verb's step names, a node saved hidden that nothing can
 reveal, a visible frame with no rings, a portal whose ends both draw
-nothing, a verb, theme variable or palette a map's own edit names that
-the map does not define). What it counts includes the map's edits
+nothing, a verb, theme variable or palette a map's own edit or
+presentation names that the map does not define). What it counts includes the map's edits
 (`EditDef::mentions`, one walk that names every edit step, so a step
 added to the format does not compile there until it is counted): a verb
 an edit names — `set_click`, `set_hover`, a span's `set_link` to a
@@ -3319,17 +3319,20 @@ map that writes `set_hidden: false` no hidden node is reported, and
 with one that writes a portal end's non-empty `set_content` no empty
 portal is. No edit can add a ring, so none can make an empty frame
 draw something, and that warning stands. The same walk reports each
-verb, theme variable (`var(name)` in any color) and palette an edit
-writes, and `verify` asks the document whether it defines each by the
-probes a run resolves it by (`Mention::is_defined_in`): a name it does
-not is a warning, in the words of the run's refusal, for every such name
+verb, theme variable (`var(name)` in any color) and palette an edit or a
+presentation writes (`PresentationDef::mentions`), with the key the file
+writes it at and its JSON path, and `verify` asks the document whether
+it defines each by the probes a run resolves it by
+(`Mention::is_defined_in`): a name it does not is a warning, in the
+words of the run's refusal (`Mention::refusal`,
+`Mention::presentation_refusal`), led by its path, for every such name
 and not the first alone. A map's verbs, variables and palettes are the
 file's own and no operation changes them, so the file decides what a run
 would refuse; whether a run is ever asked for is not the file's to say.
-Only the map's own edits are
-read: the App and User tiers also run on a map, and are outside what a
-map file can be judged on. `apply` pipes the text of each section a
-line of which matches through a command and replaces its spans as one
+Only the map's own edits and presentations are read: the App and User
+tiers also run on a map, and are outside what a map file can be judged
+on. `apply` pipes the text of each section a line of which matches
+through a command and replaces its spans as one
 `EditRequest` through `Document::apply` — the only way a document
 changes — then prints the map, writes it back (`-i`, through
 `format::file::write`, as the app's save does: a link is resolved to

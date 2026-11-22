@@ -139,8 +139,10 @@ its connections with it.
   ([`edits.md`](./edits.md#names-are-resolved-when-the-edit-runs)): a
   theme variable, a palette, a font and a verb are written by name. A
   name the map lacks refuses the start —
-  ``presentation `glow`: `color` names theme variable `accent`, which this map does not define`` —
-  and nothing starts.
+  ``presentation `glow`: `set_color` names theme variable `accent`, which this map does not define`` —
+  and nothing starts. A map's own presentation is the one case a file
+  can judge, and `maptool verify` warns of each verb, theme variable and
+  palette it writes that the map does not define, in those words.
 - **Its elements are resolved when it starts**, once: the target
   within the node, kept by the filter, read from the map itself. An
   element an edit later removes is skipped while it is gone; an

@@ -13,6 +13,7 @@
 
 use crate::document::edit::mentions::Walk;
 use crate::document::edit::{Filter, Mention, Mutations, Shows};
+use crate::document::format::presentations::{GlyphOpDto, RunOverrideDto};
 use crate::document::presentation::{GlyphOps, PresentationBody, PresentationDef};
 
 impl PresentationDef {
@@ -35,7 +36,7 @@ impl PresentationDef {
     /// it is started on, and is not narrowed here.
     ///
     /// Cost: one walk of the definition, one call of `mention` per name it
-    /// writes, and no allocation.
+    /// writes, and the allocation of that name's path.
     pub fn mentions<'a>(&'a self, mut mention: impl FnMut(Mention<'a>)) -> Shows {
         let PresentationDef {
             id: _,
@@ -55,8 +56,26 @@ impl PresentationDef {
         }
         match body {
             PresentationBody::Mutations(Mutations(mutations)) => walk.mutations(mutations),
-            PresentationBody::Glyph(GlyphOps(_)) => {}
+            PresentationBody::Glyph(GlyphOps(ops)) => glyph(ops),
         }
         walk.shows
+    }
+}
+
+/// A glyph-layer body names nothing and shows nothing: it writes runs
+/// that are already drawn, and its colors are literal. Every op is
+/// listed, so that one that takes a name fails to compile here until it
+/// is counted.
+fn glyph(ops: &[GlyphOpDto]) {
+    for op in ops {
+        match op {
+            GlyphOpDto::Opacity(_) | GlyphOpDto::Origin(_) => {}
+            GlyphOpDto::Overrides(overrides) => match overrides {
+                RunOverrideDto::Offset { range: _, value: _ }
+                | RunOverrideDto::Color { range: _, value: _ }
+                | RunOverrideDto::Scale { range: _, value: _ }
+                | RunOverrideDto::Clear => {}
+            },
+        }
     }
 }
