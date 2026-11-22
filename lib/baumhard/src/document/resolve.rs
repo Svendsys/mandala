@@ -222,6 +222,15 @@ pub trait ReadRecorder {
     /// `input` was read. Called once per input per tier that looked at
     /// it; the same input may be reported more than once.
     fn read(&mut self, input: Input);
+
+    /// A text resolution ([`resolve_text_in`]) resolved to draw in `font`:
+    /// what a recorder keyed on the faces its work draws in reads — the
+    /// projection, whose units shaped in an installed family are shaped
+    /// again when a rescan adds that family's faces (#329). Called once
+    /// per text resolution, after its reads. Records nothing by default.
+    fn font(&mut self, font: &FontRef) {
+        let _ = font;
+    }
 }
 
 /// Records nothing: for a resolution whose inputs nobody tracks.
@@ -903,7 +912,9 @@ pub fn resolve_text_in(
     }
 
     // 5. BUILT_IN.
-    got.finish(flow.built_in())
+    let resolved = got.finish(flow.built_in());
+    inputs.rec.font(&resolved.font);
+    resolved
 }
 
 /// The `Defaults` struct of a path of `kind`.

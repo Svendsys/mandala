@@ -191,6 +191,53 @@ fn renamed(data: &[u8]) -> Vec<u8> {
     out
 }
 
+/// `data`, a copy of the compiled Noto Sans Hebrew, with the character
+/// map's Hebrew-letter segment (U+05D0–U+05EA) moved up one code point,
+/// in every format 4 subtable: so the face also maps U+05EB
+/// ([`UNASSIGNED`]), which Unicode leaves unassigned and no compiled face
+/// maps — a cluster only this face can draw, which is what a measurement
+/// cached before it was installed would get wrong. The segment's glyphs
+/// are found through its range offset, so each code point maps to its
+/// neighbor's glyph, and the next segment starts at U+05F0, so the
+/// segments stay sorted.
+fn mapping_unassigned(data: &[u8]) -> Vec<u8> {
+    let u16_at = |data: &[u8], at: usize| u16::from_be_bytes([data[at], data[at + 1]]) as usize;
+    let u32_at =
+        |at: usize| u32::from_be_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]) as usize;
+    let mut out = data.to_vec();
+    let cmap = (0..u16_at(data, 4))
+        .map(|i| 12 + 16 * i)
+        .find(|&record| &data[record..record + 4] == b"cmap")
+        .map(|record| u32_at(record + 8))
+        .expect("precondition: the face has a character map");
+    let mut moved = 0;
+    for k in 0..u16_at(data, cmap + 2) {
+        let table = cmap + u32_at(cmap + 4 + 8 * k + 4);
+        if u16_at(data, table) != 4 {
+            continue;
+        }
+        let segments = u16_at(data, table + 6) / 2;
+        let (ends, starts) = (table + 14, table + 16 + 2 * segments);
+        for i in 0..segments {
+            if u16_at(data, starts + 2 * i) == 0x05D0 && u16_at(data, ends + 2 * i) == 0x05EA {
+                out[starts + 2 * i..starts + 2 * i + 2].copy_from_slice(&0x05D1u16.to_be_bytes());
+                out[ends + 2 * i..ends + 2 * i + 2].copy_from_slice(&0x05EBu16.to_be_bytes());
+                moved += 1;
+            }
+        }
+    }
+    assert!(
+        moved > 0,
+        "precondition: the face maps the Hebrew letters in one segment"
+    );
+    out
+}
+
+/// A code point Unicode leaves unassigned, inside the Hebrew block: no
+/// compiled face maps it, and the planted face does
+/// ([`mapping_unassigned`]).
+const UNASSIGNED: &str = "\u{05EB}";
+
 /// The installed family the rescan test plants.
 const PLANTED: &str = "Host Sans Hebrew";
 
@@ -201,6 +248,11 @@ fn drawn(text: &str) -> Vec<String> {
     let mut layers = GlyphLayers::new();
     let mut fonts = FontSystemLease::new("tests/installed_fonts");
     Projector::project_full(&doc, &mut layers, &mut fonts);
+    glyphs(&layers, &mut fonts)
+}
+
+/// Every glyph `layers` hold, as [`drawn`] lists them.
+fn glyphs(layers: &GlyphLayers, fonts: &mut FontSystemLease) -> Vec<String> {
     let fs = fonts.fonts();
     let mut out = Vec::new();
     for layer in Layer::ALL {
@@ -250,7 +302,9 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
     // the span's weight. Once the family is installed, a rescan adds its
     // faces after every face the font system holds — renumbering none,
     // every added id greater than every earlier one, iterating last —
-    // and the map, projected again, draws in it. A rescan that finds
+    // and the map, projected again, draws in it — and so does a projection
+    // kept from before, updated for the found family alone
+    // (`Projector::update_faces`). A rescan that finds
     // nothing new changes nothing: the faces and the face-set generation
     // are exactly as they were. Two rescans that overlap — both looking
     // at the host before either adds — add the face once and move the
@@ -278,7 +332,11 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
     // compiled fallback); `shadows_a_compiled_family` answering `true`
     // for every face turns the found list red; the build pushing every
     // host face and removing the shadowing ones after turns the order arm
-    // red (`order false false`); `add_found` not checking again under the
+    // red (`order false false`); the metric caches keyed without the
+    // face-set generation turn the measured arm red (`true false true`,
+    // the stale `.notdef` advance); `forget_shapings` dropping nothing turns
+    // the kept projection's arm red (its Hebrew still the compiled
+    // fallback's); `add_found` not checking again under the
     // write lock turns the overlap arm red (the face added again, the
     // generation moved again).
     if std::env::var(CHILD).as_deref() == Ok("rescan") {
@@ -297,6 +355,12 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
         };
         println!("REPORT missing {:?}", names(&doc));
         println!("REPORT before {:?}", drawn(&text));
+        // A projection kept across the rescan, as an open map's view is.
+        let mut kept_layers = GlyphLayers::new();
+        let mut kept = {
+            let mut fonts = FontSystemLease::new("tests/installed_fonts::kept");
+            Projector::project_full(&doc, &mut kept_layers, &mut fonts)
+        };
         let (faces_before, generation_before) = (faces(), face_set_generation());
         println!(
             "REPORT held {:?}",
@@ -315,7 +379,19 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
         let hebrew =
             root().join("lib/baumhard/src/font/fonts/noto-sans-hebrew-font/NotoSansHebrew-Regular.ttf");
         let data = std::fs::read(&hebrew).expect("the compiled Hebrew face");
-        std::fs::write(dir.join("HostSansHebrew.ttf"), renamed(&data)).expect("a planted face");
+        // Measured before the family is installed: a cluster no face maps.
+        let measure = || {
+            (
+                baumhard::font::metric_cache::glyph_advance(None, 16.0, UNASSIGNED),
+                baumhard::font::metric_cache::glyph_ink(None, 16.0, UNASSIGNED).advance,
+            )
+        };
+        let unmapped = measure();
+        std::fs::write(
+            dir.join("HostSansHebrew.ttf"),
+            renamed(&mapping_unassigned(&data)),
+        )
+        .expect("a planted face");
         // Two rescans that overlap: both look at the host before either
         // adds what it found.
         let (first, second) = (scan_for_installed([PLANTED]), scan_for_installed([PLANTED]));
@@ -324,6 +400,15 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
             second.expect("found twice"),
         );
         println!("REPORT rescan-2 {:?}", add_found(first));
+        // Measured again once it is: the planted face maps it to the glyph
+        // of tav, whose advance the compiled Hebrew face measures.
+        let tav = baumhard::font::metric_cache::glyph_advance(None, 16.0, "\u{05EA}");
+        println!(
+            "REPORT measured {} {} {}",
+            unmapped != (tav, tav),
+            measure() == (tav, tav),
+            unmapped.0 != tav
+        );
         let after = faces();
         let added: Vec<&(ID, String)> = after.iter().filter(|face| !faces_before.contains(face)).collect();
         println!(
@@ -342,6 +427,13 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
                 .all(|(id, _)| faces_before.iter().all(|(before, _)| id > before)),
             after.last().is_some_and(|last| added.contains(&last))
         );
+        // The kept projection, told the family's faces came: what the view
+        // of an open map does after a rescan that found it.
+        {
+            let mut fonts = FontSystemLease::new("tests/installed_fonts::update_faces");
+            let _ = kept.update_faces(&doc, &[], &[PLANTED], &mut kept_layers, &mut fonts);
+            println!("REPORT updated {:?}", glyphs(&kept_layers, &mut fonts));
+        }
         let (faces_first, generation_first) = (faces(), face_set_generation());
         println!(
             "REPORT overlap {:?} {} {}",
@@ -469,6 +561,11 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
         "the added face's id is greater than every earlier face's, and it iterates last"
     );
     assert_eq!(
+        line("measured "),
+        "true true true",
+        "a cluster measured before the rescan is measured again after it, in the face it added"
+    );
+    assert_eq!(
         line("overlap "),
         "[] true true",
         "an overlapping rescan adds nothing the first added, and moves no generation"
@@ -485,6 +582,11 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
         "the installed family is no longer missing"
     );
     let after = parse_list(line("after "));
+    assert_eq!(
+        parse_list(line("updated ")),
+        after,
+        "the projection kept across the rescan, updated for the found family, draws what a full projection does"
+    );
     let hebrew: Vec<&String> = after
         .iter()
         .filter(|glyph| !glyph.starts_with(|c: char| c.is_ascii()))

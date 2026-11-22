@@ -57,6 +57,25 @@ pub enum ProjectionInput {
     /// sections' text and its rings' inks, and its outline. Marked when it
     /// changed, once every ring is placed.
     Region(NodeId),
+    /// The faces of an installed family, by a hash of its name
+    /// ([`installed_family`]): read by every resolution of a unit whose
+    /// text resolved to draw in it, whether or not this machine has it.
+    /// Marked by [`Projector::update_faces`](crate::projection::Projector::update_faces)
+    /// when a rescan added the family's faces (#329): a unit's shape key
+    /// names the family, not its faces, so it does not change when they
+    /// come, and its readers are resolved and shaped again with their
+    /// kept shapings dropped. Two names that hash alike only reshape a
+    /// unit more often than they need, never less.
+    InstalledFamily(u64),
+}
+
+/// The [`ProjectionInput::InstalledFamily`] of the family `name`: a hash
+/// of the name, as the map spells it. O(the name's length).
+pub fn installed_family(name: &str) -> ProjectionInput {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = rustc_hash::FxHasher::default();
+    name.hash(&mut hasher);
+    ProjectionInput::InstalledFamily(hasher.finish())
 }
 
 /// The stage of a unit's projection a dependency belongs to: what has to
@@ -185,5 +204,14 @@ pub(crate) struct Reads<'a>(pub(crate) &'a mut Vec<ProjectionInput>);
 impl ReadRecorder for Reads<'_> {
     fn read(&mut self, input: DocInput) {
         self.0.push(ProjectionInput::Doc(input));
+    }
+
+    /// An installed family is read as its faces
+    /// ([`ProjectionInput::InstalledFamily`]); a compiled face's are
+    /// never added to, so it is no input.
+    fn font(&mut self, font: &crate::document::values::FontRef) {
+        if let Some(family) = font.installed() {
+            self.0.push(installed_family(family.as_str()));
+        }
     }
 }

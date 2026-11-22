@@ -156,7 +156,9 @@ pub(crate) struct MapView {
 
 impl MapView {
     /// Project `doc` whole and load the renderer with it: what installing
-    /// a document does, and the only full pass in its life (§3 "Load").
+    /// a document does, and the only full pass in its life (§3 "Load"). A
+    /// rescan that finds a font does not come back here: it reshapes the
+    /// units that drew in the family ([`Self::faces_added`]).
     /// Any change records the document holds are dropped: the projection
     /// is of the document as it now stands.
     ///
@@ -263,8 +265,39 @@ impl MapView {
     /// builder's reading of the changes, the renderer's apply (the
     /// elements the journals name); O(1) for the status line.
     pub(crate) fn sync(&mut self, doc: &mut MindMapDocument, renderer: &mut Renderer) -> bool {
+        self.sync_with_faces(doc, renderer, &[])
+    }
+
+    /// [`Self::sync`] after a rescan added the faces of the installed
+    /// `families` (#329, `missing_fonts::rescan`): in the same pass, every
+    /// unit that drew in one of them is resolved and shaped again in its
+    /// new faces (`Projector::update_faces`), though its key did not
+    /// change. Proportional to those units, as any pass is to what it
+    /// reaches (design §20 rules 4–5): nothing is projected whole. The
+    /// change records the document held are drained into the feed as any
+    /// pass drains them, so none is lost, and the view's mode and status
+    /// line are its own and stay. Returns whether it did anything.
+    ///
+    /// Cost: [`Self::sync`]'s, and the units that drew in the families.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn faces_added(
+        &mut self,
+        doc: &mut MindMapDocument,
+        renderer: &mut Renderer,
+        families: &[String],
+    ) -> bool {
+        self.sync_with_faces(doc, renderer, families)
+    }
+
+    /// The body of [`Self::sync`] and [`Self::faces_added`].
+    fn sync_with_faces(
+        &mut self,
+        doc: &mut MindMapDocument,
+        renderer: &mut Renderer,
+        families: &[String],
+    ) -> bool {
         let status_changed = self.show_status(doc, renderer);
-        let Some(pass) = self.advance(doc) else {
+        let Some(pass) = self.advance(doc, families) else {
             return status_changed;
         };
         let projected = pass
@@ -354,15 +387,18 @@ impl MapView {
     }
 
     /// The renderer-free half of [`Self::sync`]: drain the records once,
-    /// update the projection, re-stamp the overlay, keep the records for
-    /// the event stream. `None` when there is nothing to do.
-    fn advance(&mut self, doc: &mut MindMapDocument) -> Option<Pass> {
+    /// update the projection — with the units that drew in `families`
+    /// reshaped, after a rescan found them ([`Self::faces_added`]) —
+    /// re-stamp the overlay, keep the records for the event stream. `None`
+    /// when there is nothing to do.
+    fn advance(&mut self, doc: &mut MindMapDocument, families: &[String]) -> Option<Pass> {
         let records = doc.take_changes();
-        let changes: Option<LayerChanges> = (!records.is_empty()).then(|| {
+        let changes: Option<LayerChanges> = (!records.is_empty() || !families.is_empty()).then(|| {
             doc.retain_live_selection();
             let mut fonts = FontSystemLease::new("view::sync");
+            let families: Vec<&str> = families.iter().map(String::as_str).collect();
             self.projector
-                .update(doc.doc(), &records, &mut self.layers, &mut fonts)
+                .update_faces(doc.doc(), &records, &families, &mut self.layers, &mut fonts)
         });
         // One tint per node, by construction: a mode's sources wear their
         // own instead of the selection's, and the target tint goes only on
@@ -526,7 +562,18 @@ impl MapView {
     /// when it found nothing to do.
     #[cfg(test)]
     pub(crate) fn sync_for_test(&mut self, doc: &mut MindMapDocument) -> Option<SyncReport> {
-        let pass = self.advance(doc)?;
+        self.faces_added_for_test(doc, &[])
+    }
+
+    /// [`Self::faces_added`] without a renderer, as [`Self::sync_for_test`]
+    /// is [`Self::sync`].
+    #[cfg(test)]
+    pub(crate) fn faces_added_for_test(
+        &mut self,
+        doc: &mut MindMapDocument,
+        families: &[String],
+    ) -> Option<SyncReport> {
+        let pass = self.advance(doc, families)?;
         let projected = pass.changes.as_ref().map_or(0, |changes| {
             LayerRenderer::journals_of(changes)
                 .map(|(_, j)| j.touched().count())

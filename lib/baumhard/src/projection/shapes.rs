@@ -31,11 +31,18 @@
 //! all hold the one key.
 //!
 //! **The face set.** A shaping is also a function of the faces installed.
-//! The font system registers them once, at `fonts::init`, before anything
-//! is shaped (the precondition of every shaping call), and never changes
-//! them after; the cache records the faces' generation
-//! ([`face_set_generation`](crate::font::fonts::face_set_generation))
-//! and lets everything go if it ever moves.
+//! The font system registers them at `fonts::init`, before anything is
+//! shaped (the precondition of every shaping call), and a rescan that
+//! finds an installed family a map names adds that family's faces after
+//! them (#329, `fonts::rescan_installed`). The cache records the faces'
+//! generation
+//! ([`face_set_generation`](crate::font::fonts::face_set_generation)),
+//! which every such addition moves, and lets everything go when it
+//! moves. What the cache does not decide is which units shape again: a
+//! unit keeps its own shaping while its key is unchanged, and a key names
+//! a family, not its faces, so the projector reshapes the units that
+//! drew in a family a rescan found
+//! ([`Projector::update_faces`](crate::projection::Projector::update_faces)).
 //!
 //! **The font lock.** A hit reads no font, so an update whose every key
 //! is cached takes no lock; a miss shapes through the lease the caller

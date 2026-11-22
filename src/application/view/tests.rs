@@ -589,3 +589,42 @@ fn test_a_hovered_target_that_is_selected_keeps_the_selections_tint() {
         "and keeps it when the hover leaves"
     );
 }
+
+/// **A rescan that found a font reshapes the view in one pass that loses
+/// nothing** (#329, the review of #390): a change made just before the
+/// rescan, not yet synced, reaches the change feed — the IPC event
+/// stream's source — and the reparent mode the view was following, its
+/// sources and its status line, are still the view's after it.
+///
+/// Control: replacing the view, as the rescan did before
+/// (`MapView::load`, here `MapView::for_test`), turns both arms red: the
+/// feed is empty and the mode is gone.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_a_rescan_that_found_a_font_keeps_the_feed_and_the_mode() {
+    use crate::application::app::InteractionMode;
+    let mut doc = MindMapDocument::from_json_str(
+        r#"{"format":1,"name":"f","nodes":[{"id":1,"position":[0.0,0.0],"font":"Nope Sans","sections":[{"spans":[{"text":"a"}]}]},{"id":2,"position":[300.0,0.0],"sections":[{"spans":[{"text":"b"}]}]}]}"#,
+        None,
+        50,
+    )
+    .expect("the map loads");
+    let mut view = MapView::for_test(&doc);
+    let a = doc
+        .doc()
+        .node_by_ident(baumhard::document::ids::NodeIdent(1))
+        .expect("node 1");
+    view.follow_mode(&InteractionMode::Reparent { sources: vec![a] });
+    view.sync_for_test(&mut doc);
+    let before = view.pending_feed().len();
+    let revision = doc.create_root_for_test();
+    view.faces_added_for_test(&mut doc, &["Nope Sans".to_string()]);
+    assert!(
+        view.pending_feed()[before.min(view.pending_feed().len())..]
+            .iter()
+            .any(|record| record.revision == revision),
+        "the change made just before the rescan reaches the feed"
+    );
+    assert_eq!(view.sources(), [a], "the mode's sources survive");
+    assert!(view.mode_line.is_some(), "and its status line");
+}

@@ -108,7 +108,7 @@ pub mod equivalent;
 pub mod tests;
 
 pub use hit::Hit;
-pub use input::{Dependent, ProjectionInput, Stage};
+pub use input::{installed_family, Dependent, ProjectionInput, Stage};
 pub use layers::{GlyphLayers, Layer, LayerChanges, CHILD_GROUP_CHANNEL, RUN_CHANNEL};
 pub use presentation::glyph_mutations;
 
@@ -213,6 +213,27 @@ impl Projector {
         layers: &mut GlyphLayers,
         fonts: &mut FontSystemLease,
     ) -> LayerChanges {
+        self.update_faces(doc, changes, &[], layers, fonts)
+    }
+
+    /// [`Self::update`], when the font system has also gained the faces of
+    /// the installed `families` since the last call — what a rescan that
+    /// found them did (#329): every unit whose text resolved to draw in
+    /// one is resolved and shaped again in the new faces, though its
+    /// shape key did not change, in the same pass as `changes`, and
+    /// nothing else is. Found through the dependency index
+    /// ([`ProjectionInput::InstalledFamily`]), never by a walk.
+    ///
+    /// Cost: [`Self::update`]'s, and per family the units that drew in it
+    /// resolved, shaped and placed again.
+    pub fn update_faces(
+        &mut self,
+        doc: &Document,
+        changes: &[ChangeRecord],
+        families: &[&str],
+        layers: &mut GlyphLayers,
+        fonts: &mut FontSystemLease,
+    ) -> LayerChanges {
         let mut work = PhaseWork::default();
         let mut out = LayerBuilders::new();
         let tree = doc.tree();
@@ -221,6 +242,16 @@ impl Projector {
         let touched = structure::TouchedElements::of(changes);
         self.restructure(tree, &touched, &mut work, layers, &mut out);
         self.seed(tree, changes, &touched, &mut work);
+        for family in families {
+            let input = input::installed_family(family);
+            let readers: Vec<Dependent> = self.deps.dependents(&input).to_vec();
+            for reader in readers {
+                if let Some(unit) = self.units.get_mut(&reader.unit) {
+                    unit.body.forget_shapings();
+                }
+                self.queue(&mut work, reader);
+            }
+        }
         self.run_phases(doc, &mut work, fonts);
         self.write_update(tree, &mut work, layers, &mut out);
         #[cfg(test)]

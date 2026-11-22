@@ -404,6 +404,33 @@ pub(crate) enum UnitBody {
     Portal(Box<PortalState>),
 }
 
+impl UnitBody {
+    /// Drop every shaping the unit keeps, its placements left as they
+    /// are: what makes its next resolution shape again, though its keys
+    /// are unchanged, when the faces they name have changed (#329,
+    /// `Projector::update_faces`). Its placement compares what it lays
+    /// with what it laid, so a run that comes out the same writes
+    /// nothing. O(its flows).
+    pub(crate) fn forget_shapings(&mut self) {
+        match self {
+            UnitBody::Section(section) => section.flow = None,
+            UnitBody::Ring(ring) => ring.flow.flow = None,
+            UnitBody::Line(line) => {
+                for flow in &mut line.flows {
+                    flow.flow = None;
+                }
+                line.label.flow = None;
+            }
+            UnitBody::Portal(portal) => {
+                for end in &mut portal.end {
+                    end.marker.flow = None;
+                    end.label.flow = None;
+                }
+            }
+        }
+    }
+}
+
 /// The layers of a line's slots, in slot order.
 pub(crate) const LINE_SLOTS: [Layer; 4] = [
     Layer::Connections,
