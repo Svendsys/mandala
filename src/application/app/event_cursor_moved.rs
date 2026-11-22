@@ -273,13 +273,9 @@ fn promote_left_drag(
             _ => None,
         };
         match gesture {
-            Some(gesture) => start_drag(
-                ctx,
-                gesture,
-                MouseButton::Left,
-                cursor_canvas - start_canvas,
-                cursor_canvas,
-            ),
+            Some(gesture) => {
+                start_drag(ctx, gesture, MouseButton::Left, cursor_canvas - start_canvas);
+            }
             None => log::debug!("drag: the press's {} is gone; nothing is dragged", grab.word()),
         }
         return;
@@ -290,7 +286,7 @@ fn promote_left_drag(
             .as_ref()
             .is_some_and(|doc| kind_of(doc.doc(), node) == Some(DocKind::Node))
         {
-            move_nodes_drag(ctx, node, cursor_canvas - start_canvas, cursor_canvas);
+            move_nodes_drag(ctx, node, cursor_canvas - start_canvas);
             return;
         }
     }
@@ -330,14 +326,15 @@ fn promote_left_drag(
 
 /// A drag of `node` past the threshold: it moves, and — for a Shift
 /// drag — every node selected before the press, each with its subtree
-/// unless Alt is held (`live::grab::move_nodes`), as on `main`. The node
-/// becomes the selection when it was not in it, so the selection's tint
-/// follows what moves.
-fn move_nodes_drag(ctx: &mut InputHandlerContext<'_>, node: NodeId, total: Vec2, cursor: Vec2) {
+/// unless Alt is held (`live::grab::move_nodes`), as on `main`. Once the
+/// drag has begun, the selection's tint follows what moves: a node not
+/// in the selection becomes it, or for a Shift drag joins it. A drag the
+/// writer refuses (D28) changes nothing, the selection included.
+fn move_nodes_drag(ctx: &mut InputHandlerContext<'_>, node: NodeId, total: Vec2) {
     *ctx.last_click = None;
     *ctx.drag_state = DragState::None;
     let (shift, alone) = (ctx.modifiers.shift_key(), ctx.modifiers.alt_key());
-    let Some(doc) = ctx.document.as_mut() else {
+    let Some(doc) = ctx.document.as_ref() else {
         return;
     };
     let with: Vec<NodeId> = if shift {
@@ -345,33 +342,44 @@ fn move_nodes_drag(ctx: &mut InputHandlerContext<'_>, node: NodeId, total: Vec2,
     } else {
         Vec::new()
     };
-    if !doc.selection.contains(node) {
-        doc.selection.select_only(node);
-    }
     let Some(gesture) = live::grab::move_nodes(doc.doc(), node, &with, alone) else {
         return;
     };
-    start_drag(ctx, gesture, MouseButton::Left, total, cursor);
+    if !start_drag(ctx, gesture, MouseButton::Left, total) {
+        return;
+    }
+    let Some(doc) = ctx.document.as_mut() else {
+        return;
+    };
+    if !doc.selection.contains(node) {
+        if shift {
+            let extended: Vec<NodeId> = doc.selection.items().iter().copied().chain([node]).collect();
+            doc.selection.set(extended);
+        } else {
+            doc.selection.select_only(node);
+        }
+    }
 }
 
 /// Open `gesture`'s transaction and hold it in the drag state, `held_by`
-/// that button, with `total` and `cursor` pending for the next frame's
-/// drain (`live::Live::begin`). A refusal — another interactive
-/// transaction is open (D28) — leaves no drag; the status line says why.
+/// that button, with `total` pending for the next frame's drain
+/// (`live::Live::begin`), and say whether it began. A refusal — another
+/// interactive transaction is open (D28) — leaves no drag; the status
+/// line says why.
 pub(super) fn start_drag(
     ctx: &mut InputHandlerContext<'_>,
     gesture: live::Gesture,
     held_by: MouseButton,
     total: Vec2,
-    cursor: Vec2,
-) {
+) -> bool {
     let Some(doc) = ctx.document.as_mut() else {
-        return;
+        return false;
     };
-    *ctx.drag_state = match live::Live::begin(doc, gesture, held_by, total, cursor) {
+    *ctx.drag_state = match live::Live::begin(doc, gesture, held_by, total) {
         Some(live) => DragState::Dragging(Box::new(live)),
         None => DragState::None,
     };
+    matches!(ctx.drag_state, DragState::Dragging(_))
 }
 
 /// The cursor a drag shows while it runs: a resize's, by its handle, as

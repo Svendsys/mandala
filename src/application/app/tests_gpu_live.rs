@@ -191,7 +191,7 @@ fn one_apply_of_the_drag(init: &InitState, before: &Document) -> Document {
     let projector = init.view.as_ref().expect("a view").projector();
     let steps = live
         .gesture
-        .steps(before, projector, live.total(), live.cursor())
+        .steps(before, projector, live.total())
         .expect("the drag's request builds");
     let mut expected = before.clone();
     expected
@@ -677,13 +677,12 @@ fn test_a_section_move_is_one_transaction() {
     move_to(init, from, &[]);
     button(init, "left", "press", from, &[]);
     let gesture = super::live::grab::move_section(document(init).doc(), section).expect("a section");
-    super::event_cursor_moved::start_drag(
+    assert!(super::event_cursor_moved::start_drag(
         &mut init.input_context(),
         gesture,
         crate::application::platform::input::MouseButton::Left,
         Vec2::ZERO,
-        from,
-    );
+    ));
     for k in 1..=3 {
         move_to(init, from + Vec2::new(6.0, 4.0) * k as f32, &[]);
         frame(init);
@@ -864,50 +863,144 @@ fn test_a_label_drag_is_one_transaction() {
     assert_committed_once(init, &expected, &baseline, "label drag");
 }
 
-/// **A portal end slides round its node**: pressing the end's label and
-/// dragging it stages the end's `border_t` and offset, one entry.
-#[test]
-fn test_a_portal_end_drag_is_one_transaction() {
-    let Some(mut app) = app() else { return };
-    let init = &mut app.init;
-    let baseline = bytes(init);
-    let before = document(init).doc().clone();
-    let n1 = node(init, 1);
-    let link = child(init, n1, DocKind::Link, 0);
-    let end = child(init, link, DocKind::PortalEnd, 0);
-    let label = child(init, end, DocKind::Label, 0);
-    let from = init
-        .view
+/// Where the projection draws portal end `end`'s marker, and the label
+/// `label`'s box: what a portal-end drag is held to, read where it is
+/// drawn rather than from the place the drag wrote.
+fn drawn_marker(init: &InitState, end: NodeId) -> Vec2 {
+    init.view
+        .as_ref()
+        .expect("a view")
+        .projector()
+        .portal_end_pos(document(init).doc(), end)
+        .expect("the end is drawn")
+}
+
+/// See [`drawn_marker`].
+fn drawn_label(init: &InitState, label: NodeId) -> Vec2 {
+    init.view
         .as_ref()
         .expect("a view")
         .projector()
         .label_pos(label)
-        .expect("drawn");
-    let at = drag(init, from, &[Vec2::new(10.0, 20.0), Vec2::new(20.0, 40.0)], &[]);
+        .expect("the label is drawn")
+}
+
+/// Drag what is under `from` to `to` in four moves, a frame after each,
+/// and release there.
+fn drag_to(init: &mut InitState, from: Vec2, to: Vec2) {
+    let travel: Vec<Vec2> = (1..=4).map(|k| (to - from) * (k as f32 / 4.0)).collect();
+    let at = drag(init, from, &travel, &[]);
+    button(init, "left", "release", at, &[]);
+    frame(init);
+}
+
+/// **A portal-end drag puts what it holds under the pointer** (#395's
+/// review): the end's label, grabbed off its center, is drawn where the
+/// pointer takes it — at the place on it the press held — for the
+/// review's own drag of `(20, 40)`, then below node 1's bottom side and
+/// past its bottom-right corner, where the offset curve sweeps round; the
+/// marker, grabbed itself, past the top-right corner; a re-grab of the
+/// label that moves 6 px moves it 6 px; and a press that does not move
+/// moves nothing. Read where they are drawn (`Projector::label_pos`,
+/// `Projector::portal_end_pos`), not from the place the drag wrote. Each
+/// drag is one apply of its request mid-drag and one entry; undoing them
+/// all gives back the map.
+///
+/// Every target is out past where the end draws what it holds with no
+/// offset (the label is some 90 units out from node 1, whose marker is
+/// taller than the node): nearer, the end would have to sit inside the
+/// node, whose offset curve inward folds over (`geometry::portal_at`).
+///
+/// Controls, seen red: the inverse that leaves out the marker's and the
+/// label's reach (`Projector::portal_place_at` handing `portal_at` no
+/// reach); the corner-blind inverse (the place's own normal in a sharp
+/// corner's wedge); a drag that puts the pointer, not the grabbed point,
+/// where the end goes (`start` the press's pointer).
+#[test]
+fn test_a_portal_end_drag_puts_what_it_holds_under_the_pointer() {
+    let Some(mut app) = app() else { return };
+    let init = &mut app.init;
+    let baseline = bytes(init);
+    let n1 = node(init, 1);
+    let link = child(init, n1, DocKind::Link, 0);
+    let end = child(init, link, DocKind::PortalEnd, 0);
+    let label = child(init, end, DocKind::Label, 0);
+    let r = rect(init, n1);
+    let held = Vec2::new(3.0, 2.0);
+
+    // The review's drag: the label, off its center, by (20, 40). Mid-drag
+    // one apply of the request, and drawn where the pointer took it.
+    let before = document(init).doc().clone();
+    let from = drawn_label(init, label) + held;
+    let to = from + Vec2::new(20.0, 40.0);
+    let travel: Vec<Vec2> = (1..=4).map(|k| (to - from) * (k as f32 / 4.0)).collect();
+    let at = drag(init, from, &travel, &[]);
     assert!(
         matches!(&init.drag_state, DragState::Dragging(live) if live.gesture.word() == "PortalEnd"),
         "the press grabbed the end"
     );
     let expected = one_apply_of_the_drag(init, &before);
     assert_same_document(document(init).doc(), &expected, "mid-drag");
-    let (place, _) = init
-        .view
-        .as_ref()
-        .expect("a view")
-        .projector()
-        .portal_place_at(n1, at)
-        .expect("drawn");
-    match document(init).doc().get(end) {
-        Some(DocElement::PortalEnd(data)) => assert_eq!(
-            data.style.border_t,
-            Some(place),
-            "the end is at the pointer's place"
-        ),
-        other => panic!("{other:?}"),
-    }
+    let drawn = drawn_label(init, label);
+    assert!(
+        (drawn + held).distance(at) < 1.0,
+        "mid-drag, the label is drawn at {drawn}, the pointer at {at} holding it at {held}"
+    );
     button(init, "left", "release", at, &[]);
     frame(init);
-    assert_committed_once(init, &expected, &baseline, "portal end drag");
+    assert_eq!(entries(init), 1, "one entry");
+
+    // A re-grab at its drawn center that moves 6 px moves it 6 px.
+    let grabbed = drawn_label(init, label);
+    drag_to(init, grabbed, grabbed + Vec2::new(6.0, 0.0));
+    let moved = drawn_label(init, label);
+    assert!(
+        moved.distance(grabbed + Vec2::new(6.0, 0.0)) < 1.0,
+        "a 6 px re-grab drew the label at {moved}, from {grabbed}"
+    );
+    assert_eq!(entries(init), 2);
+
+    // Below the bottom side, then past the bottom-right corner, where the
+    // offset curve sweeps round it.
+    let side = Vec2::new(r.center().x + 10.0, r.max().y + 130.0);
+    drag_to(init, moved + held, side);
+    let drawn = drawn_label(init, label);
+    assert!(
+        (drawn + held).distance(side) < 1.0,
+        "at a side: {drawn} for {side}"
+    );
+    let corner = r.max() + Vec2::new(90.0, 110.0);
+    drag_to(init, drawn + held, corner);
+    let swept = drawn_label(init, label);
+    assert!(
+        (swept + held).distance(corner) < 1.0,
+        "past a corner, the label is drawn at {swept} for {corner}"
+    );
+
+    // The marker itself past the top-right corner.
+    let marker = drawn_marker(init, end);
+    let corner = Vec2::new(r.max().x + 50.0, r.origin.y - 60.0);
+    drag_to(init, marker, corner);
+    let drawn = drawn_marker(init, end);
+    assert!(
+        drawn.distance(corner) < 1.0,
+        "past a corner, the marker is drawn at {drawn} for {corner}"
+    );
+    assert_eq!(entries(init), 5, "each drag made one entry");
+
+    // A press on the label that does not move moves nothing, and makes no
+    // entry (last, so no press after it pairs with it as a double-click).
+    let still = drawn_label(init, label);
+    button(init, "left", "press", still, &[]);
+    button(init, "left", "release", still, &[]);
+    frame(init);
+    assert!(drawn_label(init, label).distance(still) < 1e-3);
+    assert_eq!(entries(init), 5, "a press that did not move makes no entry");
+    for _ in 0..5 {
+        assert_eq!(act(init, json!("Undo")), "handled");
+        frame(init);
+    }
+    assert_eq!(bytes(init), baseline, "undoing them all gives back the saved map");
 }
 
 /// **A fast resize — Ctrl and the right button, dragged on a node — grabs

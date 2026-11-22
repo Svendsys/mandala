@@ -23,10 +23,13 @@
 //!
 //! **Updated only when what it is built from changes**: the selection
 //! or the mode (`MapView::sync` compares the targets it wants against
-//! the ones it shows), or a sync pass whose changes touch a target
-//! ([`super::chrome::PassChanges::touches`]). A pan or a zoom changes
-//! none of them and writes no chrome: the renderer applies the camera to
-//! the chrome at draw time, as to every layer (§12.4).
+//! the ones it shows), or a sync pass whose projection may have moved a
+//! target's geometry ([`baumhard::projection::Projector::geometry_moved`]
+//! — a node's drawn rectangle, a section's box or its node's, a path's
+//! curve). On geometry, not on the runs a target owns, which a node that
+//! draws no frame does not write when it grows (#395's review). A pan or
+//! a zoom changes none of them and writes no chrome: the renderer applies
+//! the camera to the chrome at draw time, as to every layer (§12.4).
 //!
 //! **Hit testing is the chrome's own** ([`Handles::at`]): the centers
 //! the sets show, kept here, against the pointer, before anything asks
@@ -330,7 +333,7 @@ impl HandleSet {
     }
 
     /// The set's index in [`Self::ALL`]. O(1).
-    fn index(self) -> usize {
+    pub(crate) fn index(self) -> usize {
         match self {
             HandleSet::Node => 0,
             HandleSet::Section => 1,

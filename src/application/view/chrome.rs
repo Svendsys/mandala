@@ -17,9 +17,12 @@
 //! `MapView::apply_chrome` when the gesture moves. The handle chrome
 //! (`view::handles`, V1-C7) follows the document *and* the selection and
 //! the mode, which no builder is handed, so the view keeps it itself: a
-//! sync pass asks [`PassChanges::touches`] of each set's target, and
-//! compares the targets the selection and the mode want with the ones
-//! shown, in the pass that also writes the builders' chrome.
+//! sync pass asks the projector whether it may have moved each set's
+//! target's geometry (`Projector::geometry_moved`) — a handle sits on a
+//! drawn rectangle or curve, which can change though the target writes
+//! no run of its own — and compares the targets the selection and the
+//! mode want with the ones shown, in the pass that also writes the
+//! builders' chrome.
 
 use baumhard::arena::NodeId;
 use baumhard::document::ids::Document;
@@ -58,16 +61,21 @@ pub(crate) struct PassChanges<'a> {
 impl PassChanges<'_> {
     /// Whether the pass wrote a run `element` owns — a node's, through
     /// its sections, frames and labels, or a connector's or a link's —
-    /// in any layer, a removal included: the question a handle or a
-    /// caret asks of its target. A node deleted, hidden or folded away
-    /// is touched by the removal of what it drew, which is read from the
-    /// owner the projector recorded when it wrote the removal
-    /// ([`LayerChanges::removed_owner`]), since by now it has forgotten
-    /// the glyph. An element the run's owner merely descends from is not
-    /// touched by it.
+    /// in any layer, a removal included: the question a caret asks of
+    /// its target (a handle asks of geometry instead, which a target can
+    /// change without writing a run: `Projector::geometry_moved`). A node
+    /// deleted, hidden or folded away is touched by the removal of what it
+    /// drew, which is read from the owner the projector recorded when it
+    /// wrote the removal ([`LayerChanges::removed_owner`]), since by now
+    /// it has forgotten the glyph. An element the run's owner merely
+    /// descends from is not touched by it.
     ///
     /// Cost: O(the elements the pass wrote × the depth to each one's
     /// owner, at most three); no walk of a layer or of the document.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "V1-C8's caret is its first reader (#249)")
+    )]
     pub(crate) fn touches(&self, element: NodeId) -> bool {
         Layer::ALL.into_iter().any(|layer| {
             self.changes.journal(layer).touched().any(|(glyph, touch)| {

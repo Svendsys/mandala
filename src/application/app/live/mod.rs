@@ -17,9 +17,12 @@
 //!   transaction already open — a frame preview, an editor — refuses it
 //!   (D28): nothing is committed, no drag starts, and the status line
 //!   says why.
-//! - **Every cursor move** updates the drag's total since the press, or
-//!   its latest pointer for a label and a portal end, and nothing else
-//!   ([`Live::moved`]): input never writes the document.
+//! - **Every cursor move** updates the drag's total since the press, and
+//!   nothing else ([`Live::moved`]): input never writes the document. A
+//!   label and a portal end are moved by it too, from where they were
+//!   drawn at the press — what the press grabbed goes where the pointer
+//!   goes, at the place on it the press held, so a press that does not
+//!   move moves nothing.
 //! - **Once per frame** the drain stages the request for that total
 //!   ([`Live::drain`]): built from the values recorded at the press, so
 //!   each stage is absolute from the press and never accumulates, and
@@ -131,13 +134,19 @@ pub(in crate::application::app) enum Gesture {
         label: NodeId,
         /// The path it is on.
         path: NodeId,
+        /// Where its box centered at the press.
+        start: Vec2,
     },
-    /// A portal end slid round its node's outline and off it.
+    /// A portal end slid round its node's outline and off it, by its
+    /// marker or by its label.
     PortalEnd {
         /// The end.
         end: NodeId,
-        /// The node it sits beside.
-        node: NodeId,
+        /// Whether the press grabbed its label rather than its marker:
+        /// what the drag puts where the pointer goes.
+        by_label: bool,
+        /// Where what the press grabbed centered at the press.
+        start: Vec2,
     },
 }
 
@@ -156,13 +165,6 @@ pub(in crate::application::app) struct PathStart {
 }
 
 impl Gesture {
-    /// Whether the drag follows the pointer itself rather than its
-    /// travel: a label's and a portal end's place is where the pointer
-    /// is, as on `main`. O(1).
-    fn latches(&self) -> bool {
-        matches!(self, Gesture::Label { .. } | Gesture::PortalEnd { .. })
-    }
-
     /// The history entry's label. O(1).
     pub(in crate::application::app) fn label(&self) -> &'static str {
         match self {
@@ -190,21 +192,22 @@ impl Gesture {
     }
 
     /// The steps the drag stages for `total`, its travel since the press
-    /// in canvas units, or for `cursor`, the pointer on the canvas, for a
-    /// gesture that latches it: built from what the press recorded, so
-    /// the same total always stages the same request (never an
-    /// accumulation). Geometry the request needs — a path's curve, a
-    /// node's outline — is the projector's. `Err` names why it cannot be
-    /// built (an element gone, a path no longer drawn).
+    /// in canvas units: built from what the press recorded, so the same
+    /// total always stages the same request (never an accumulation). A
+    /// label and a portal end are staged where they draw what the press
+    /// grabbed at `start + total`, through the projector's inverse of
+    /// where it draws them. Geometry the request needs — a path's curve,
+    /// a node's outline — is the projector's. `Err` names why it cannot
+    /// be built (an element gone, a path no longer drawn).
     ///
     /// Cost: one step per node moved; O(1) otherwise, and for a label or
-    /// a portal end one nearest-point search.
+    /// a portal end one nearest-point search (and for a portal end one of
+    /// its offset curve).
     pub(in crate::application::app) fn steps(
         &self,
         doc: &Document,
         projector: &Projector,
         total: Vec2,
-        cursor: Vec2,
     ) -> Result<Vec<DocStep>, String> {
         let set = |kind, mutations: Vec<DocMutation>, element: NodeId| {
             compose::set(doc, kind, mutations, &[element]).map_err(|e| e.to_string())
@@ -286,9 +289,9 @@ impl Gesture {
                 };
                 set(*kind, vec![DocMutation::Path(op)], *path)
             }
-            Gesture::Label { label, path } => {
+            Gesture::Label { label, path, start } => {
                 let (t, offset) = projector
-                    .label_place_at(*path, cursor)
+                    .label_place_at(*path, *start + total)
                     .ok_or("the label's path is not drawn")?;
                 set(
                     DocKind::Label,
@@ -299,10 +302,10 @@ impl Gesture {
                     *label,
                 )
             }
-            Gesture::PortalEnd { end, node } => {
+            Gesture::PortalEnd { end, by_label, start } => {
                 let (border_t, offset) = projector
-                    .portal_place_at(*node, cursor)
-                    .ok_or("the portal end's node is not drawn")?;
+                    .portal_place_at(doc, *end, *by_label, *start + total)
+                    .ok_or("the portal end is not drawn")?;
                 set(
                     DocKind::PortalEnd,
                     vec![
@@ -359,8 +362,6 @@ pub(in crate::application::app) struct Live {
     pub(in crate::application::app) held_by: MouseButton,
     /// Its travel since the press, in canvas units.
     total: Vec2,
-    /// The pointer, on the canvas, as last moved.
-    cursor: Vec2,
     /// Whether input moved it since the last stage.
     dirty: bool,
     /// Paces the drain under load.
@@ -385,14 +386,13 @@ impl Live {
     /// transaction (`ChangeSource::Input`). `None` when the writer
     /// refuses it — another interactive transaction is open (D28) — which
     /// [`MindMapDocument::begin`] has reported on the status line. With
-    /// `total` (its travel to the crossing) and `cursor` (the pointer
-    /// there) pending, so the frame that follows stages it.
+    /// `total`, its travel to the crossing, pending, so the frame that
+    /// follows stages it.
     pub(in crate::application::app) fn begin(
         doc: &mut MindMapDocument,
         gesture: Gesture,
         held_by: MouseButton,
         total: Vec2,
-        cursor: Vec2,
     ) -> Option<Live> {
         if !doc.begin(
             ChangeSource::Input,
@@ -405,35 +405,26 @@ impl Live {
             gesture,
             held_by,
             total,
-            cursor,
             dirty: true,
             throttle: MutationFrequencyThrottle::with_default_budget(),
         })
     }
 
     /// The pointer moved from `prev` to `cursor`, both on the canvas: the
-    /// total and the latest pointer follow, and the next frame stages
-    /// them. Nothing is written here. O(1).
+    /// total follows, and the next frame stages it. Nothing is written
+    /// here. O(1).
     pub(in crate::application::app) fn moved(&mut self, prev: Vec2, cursor: Vec2) {
         let step = cursor - prev;
-        if step == Vec2::ZERO && cursor == self.cursor {
+        if step == Vec2::ZERO {
             return;
         }
         self.total += step;
-        self.cursor = cursor;
         self.dirty = true;
     }
 
     /// Its travel since the press. O(1).
     pub(in crate::application::app) fn total(&self) -> Vec2 {
         self.total
-    }
-
-    /// The pointer on the canvas, as last moved: what a label's and a
-    /// portal end's request is built from. O(1).
-    #[cfg(test)]
-    pub(in crate::application::app) fn cursor(&self) -> Vec2 {
-        self.cursor
     }
 
     /// Whether input moved it since its last stage: a stage the next
@@ -479,7 +470,7 @@ impl Live {
     /// stands.
     fn stage(&mut self, doc: &mut MindMapDocument, projector: &Projector) {
         self.dirty = false;
-        let steps = match self.gesture.steps(doc.doc(), projector, self.total, self.cursor) {
+        let steps = match self.gesture.steps(doc.doc(), projector, self.total) {
             Ok(steps) => steps,
             Err(why) => {
                 log::debug!("drag: {} not staged: {why}", self.gesture.label());
@@ -490,9 +481,9 @@ impl Live {
     }
 
     /// The release: stage what input left pending, then commit the
-    /// transaction as one history entry. A drag that went nowhere —
-    /// a travel of nothing, for a drag by travel — is cancelled instead
-    /// and makes no entry. Returns the entry's revision, or `None`.
+    /// transaction as one history entry. A drag that went nowhere — a
+    /// travel of nothing — is cancelled instead and makes no entry.
+    /// Returns the entry's revision, or `None`.
     pub(in crate::application::app) fn release(
         mut self,
         doc: &mut MindMapDocument,
@@ -501,7 +492,7 @@ impl Live {
         if doc.open_interaction() != Some(Interaction::Drag) {
             return None;
         }
-        if !self.gesture.latches() && self.total == Vec2::ZERO {
+        if self.total == Vec2::ZERO {
             doc.cancel(Interaction::Drag);
             return None;
         }

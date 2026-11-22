@@ -361,11 +361,16 @@ impl MapView {
 
     /// The handle chrome's mutators for this pass ([`handles`]): a set is
     /// shown again where what it is shown on changed — the selection, the
-    /// resize mode's target — or where `changes` touch its target. Nothing
-    /// for a pass that changed neither, which is a pan's and a zoom's.
+    /// resize mode's target — or where the projection that produced
+    /// `changes` may have moved its target's geometry
+    /// ([`Projector::geometry_moved`]): a node's drawn rectangle, a
+    /// section's box or its node's, a path's curve. On geometry, not on
+    /// the runs a target owns: a node that draws no frame grows without
+    /// writing a run of its own (#395's review). Nothing for a pass that
+    /// projected nothing, which is a pan's and a zoom's.
     ///
-    /// Cost: O(1) to compare the targets; each set rebuilt, its slots;
-    /// for each set's target, [`chrome::PassChanges::touches`].
+    /// Cost: O(1) to compare the targets and to ask of each; each set
+    /// shown again, its slots.
     fn follow_handles(
         &mut self,
         doc: &MindMapDocument,
@@ -373,14 +378,13 @@ impl MapView {
     ) -> Vec<(GfxMutatorTree, Anchors)> {
         let targets = handles::targets_for(doc.doc(), &doc.selection, self.resize_target());
         let follow = match changes {
-            Some(changes) => {
-                let pass = PassChanges {
-                    changes,
-                    doc: doc.doc(),
-                    projector: &self.projector,
-                };
-                targets.map(|target| target.is_some_and(|target| pass.touches(target)))
-            }
+            Some(_) => handles::HandleSet::ALL.map(|set| {
+                targets[set.index()].is_some_and(|target| {
+                    let moved = |element| self.projector.geometry_moved(element);
+                    moved(target)
+                        || (set == handles::HandleSet::Section && doc.doc().parent(target).is_some_and(moved))
+                })
+            }),
             None => [false; 3],
         };
         self.handles.update(targets, follow, doc.doc(), &self.projector)

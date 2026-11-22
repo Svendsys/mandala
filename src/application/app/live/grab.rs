@@ -16,7 +16,7 @@
 //! projector's geometry (design §12.2; nothing reads a glyph layer).
 
 use baumhard::arena::NodeId;
-use baumhard::document::element::{DocElement, DocKind};
+use baumhard::document::element::DocKind;
 use baumhard::document::ids::Document;
 use baumhard::projection::{Hit, Projector};
 use glam::Vec2;
@@ -42,8 +42,9 @@ pub(in crate::application::app) enum Grab {
     PortalEnd {
         /// The end.
         end: NodeId,
-        /// The node it sits beside.
-        node: NodeId,
+        /// The end's label, when the press landed on it rather than on
+        /// the marker.
+        label: Option<NodeId>,
     },
 }
 
@@ -91,28 +92,19 @@ pub(in crate::application::app) fn press_grab(
                     label: element,
                     path: host,
                 }),
-                DocKind::PortalEnd => portal_end(doc, host),
+                DocKind::PortalEnd => Some(Grab::PortalEnd {
+                    end: host,
+                    label: Some(element),
+                }),
                 _ => None,
             }
         }
-        DocKind::PortalEnd => portal_end(doc, element),
+        DocKind::PortalEnd => Some(Grab::PortalEnd {
+            end: element,
+            label: None,
+        }),
         _ => None,
     }
-}
-
-/// The grab of portal end `end`: with the node it sits beside — the
-/// link's own node for end 0, the node it leads to for end 1. O(1).
-fn portal_end(doc: &Document, end: NodeId) -> Option<Grab> {
-    let DocElement::PortalEnd(data) = doc.get(end)? else {
-        return None;
-    };
-    let link = doc.parent(end)?;
-    let node = match (data.end, doc.get(link)?) {
-        (0, _) => doc.parent(link)?,
-        (_, DocElement::Link(link)) => link.to,
-        _ => return None,
-    };
-    Some(Grab::PortalEnd { end, node })
 }
 
 /// The gesture a drag of `grab` starts, with its start values read now:
@@ -136,9 +128,20 @@ pub(in crate::application::app) fn gesture_for(
             path_handle(doc, projector, path, which, at)
         }
         Grab::Label { label, path } => (doc.get(label).is_some() && projector.curve(path).is_some())
-            .then_some(Gesture::Label { label, path }),
-        Grab::PortalEnd { end, node } => (doc.get(end).is_some() && projector.node_rect(node).is_some())
-            .then_some(Gesture::PortalEnd { end, node }),
+            .then(|| projector.label_pos(label))
+            .flatten()
+            .map(|start| Gesture::Label { label, path, start }),
+        Grab::PortalEnd { end, label } => {
+            let start = match label {
+                None => projector.portal_end_pos(doc, end),
+                Some(label) => projector.label_pos(label),
+            }?;
+            Some(Gesture::PortalEnd {
+                end,
+                by_label: label.is_some(),
+                start,
+            })
+        }
     }
 }
 

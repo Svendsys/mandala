@@ -119,14 +119,7 @@ fn fast_resize_start(
     let cursor = ctx
         .renderer
         .screen_to_canvas(ctx.cursor_pos.0 as f32, ctx.cursor_pos.1 as f32);
-    super::super::super::event_cursor_moved::start_drag(
-        ctx,
-        gesture,
-        held_by,
-        cursor - hit.canvas_pos,
-        cursor,
-    );
-    if matches!(*ctx.drag_state, super::super::super::DragState::Dragging(_)) {
+    if super::super::super::event_cursor_moved::start_drag(ctx, gesture, held_by, cursor - hit.canvas_pos) {
         Ok(())
     } else {
         Err(ResizeRefusal::BUSY)

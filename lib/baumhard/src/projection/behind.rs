@@ -378,9 +378,12 @@ impl Projector {
     /// [`ProjectionInput::Region`], which they read, and those with a glyph
     /// or a label the new one meets queued to be hidden again. A node no
     /// longer visible, or one that now draws nothing, leaves the index; an
-    /// element that is no node was never in it. O(its units, and the new
-    /// region's cells in the paths' index).
+    /// element that is no node was never in it. Notes `id` as an element
+    /// whose drawn geometry the update may have moved
+    /// ([`Projector::geometry_moved`]). O(its units, and the new region's
+    /// cells in the paths' index).
     pub(crate) fn rehide(&mut self, id: NodeId, work: &mut PhaseWork) {
+        self.moved.insert(id);
         let region = self.region(id);
         if self.regions.get(id) == region {
             return;
@@ -406,11 +409,14 @@ impl Projector {
     /// of its label on each side; a label hidden hides nothing of its
     /// path. Records reading the region, opacity and zoom window of each
     /// node it meets, and sets where its glyphs and its label are. A path
-    /// not drawn has nothing hidden, and leaves the paths' index.
+    /// not drawn has nothing hidden, and leaves the paths' index. Every
+    /// path laid again is hidden again, so `id` is noted as one whose
+    /// curve the update may have moved ([`Projector::geometry_moved`]).
     ///
     /// Cost: O(its glyphs and its label's, and the regions in each glyph's
     /// cells and its label's).
     pub(crate) fn hide(&mut self, id: NodeId) {
+        self.moved.insert(id);
         let Some(UnitBody::Line(line)) = self.units.get(&id).map(|u| &u.body) else {
             return;
         };
