@@ -63,10 +63,14 @@ const FORBIDDEN: &[&str] = &["mindmap", "gfx_structs", "parent_id", "edge_type",
 /// `Type.field` (a tuple field by its index, an enum's by its variant),
 /// and a frame's sides ornament, which #291 adds beside the `once`
 /// filler it stands in for on a frame, and a ring's glyphs by direction,
-/// which #324 adds beside its spans: text it draws, as they are.
+/// which #324 adds beside its spans: text it draws, as they are; and an
+/// installed font family's name, which #329 holds as the map names it,
+/// since the machine opening the map may not have the family to resolve
+/// it to.
 const ALLOWED_STRINGS: &[&str] = &[
     "DirectionalGlyphs.corners",
     "DirectionalGlyphs.vertical",
+    "FamilyName.0",
     "FitMode::Once.filler",
     "FlowStyle.content",
     "LinkTarget::Url.0",
@@ -2346,6 +2350,58 @@ hidden_items!();
                     defaults(&|d| d.connector = content()),
                     defaults(&|d| d.link = content()),
                 ],
+                // An installed font family named by every text style an
+                // element or the defaults hold (#329).
+                "FamilyName.0" => {
+                    let font = || Some(crate::document::format::font(TEXT).expect("a family name"));
+                    let node = crate::document::element::NodeData {
+                        ident: crate::document::ids::NodeIdent(1),
+                        channel: 0,
+                        position: glam::Vec2::ZERO,
+                        min_size: None,
+                        style: crate::document::element::NodeStyle {
+                            shape: None,
+                            text: crate::document::element::TextStyle {
+                                font: font(),
+                                ..Default::default()
+                            },
+                        },
+                        palette: None,
+                        zoom: None,
+                        folded: false,
+                        hidden: false,
+                        opacity: crate::document::defaults::DEFAULT_OPACITY,
+                        on: crate::document::element::Triggers::default(),
+                    };
+                    let mut section = crate::document::element::SectionData::default();
+                    section.text.font = font();
+                    let mut span = SpanData::default();
+                    span.style.font = font();
+                    let mut frame = FrameData::default();
+                    frame.style.text.font = font();
+                    let mut ring = RingData::default();
+                    ring.style.text.font = font();
+                    let mut cap = crate::document::element::CapData::default();
+                    cap.text.font = font();
+                    let mut label = crate::document::element::LabelData::default();
+                    label.style.text.font = font();
+                    vec![
+                        DocElement::Node(node),
+                        DocElement::Section(section),
+                        DocElement::Span(span),
+                        DocElement::Frame(frame),
+                        DocElement::Ring(ring),
+                        DocElement::CapStart(cap.clone()),
+                        DocElement::CapEnd(cap),
+                        DocElement::Label(label),
+                        defaults(&|d| d.node.text.font = font()),
+                        defaults(&|d| d.section.font = font()),
+                        defaults(&|d| d.frame.text.font = font()),
+                        defaults(&|d| d.ring.text.font = font()),
+                        defaults(&|d| d.label.text.font = font()),
+                        defaults(&|d| d.span.font = font()),
+                    ]
+                }
                 "LinkTarget::Url.0" => vec![DocElement::Span(SpanData {
                     link: Some(LinkTarget::Url(TEXT.to_string())),
                     ..SpanData::default()
