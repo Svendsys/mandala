@@ -158,7 +158,7 @@ impl MapView {
     /// Project `doc` whole and load the renderer with it: what installing
     /// a document does, and the only full pass in its life (§3 "Load"). A
     /// rescan that finds a font does not come back here: it reshapes the
-    /// units that drew in the family ([`Self::faces_added`]).
+    /// units that drew in the family (`MapView::faces_added`, native).
     /// Any change records the document holds are dropped: the projection
     /// is of the document as it now stands.
     ///
@@ -289,7 +289,7 @@ impl MapView {
         self.sync_with_faces(doc, renderer, families)
     }
 
-    /// The body of [`Self::sync`] and [`Self::faces_added`].
+    /// The body of [`Self::sync`] and `MapView::faces_added` (native).
     fn sync_with_faces(
         &mut self,
         doc: &mut MindMapDocument,
@@ -388,7 +388,7 @@ impl MapView {
 
     /// The renderer-free half of [`Self::sync`]: drain the records once,
     /// update the projection — with the units that drew in `families`
-    /// reshaped, after a rescan found them ([`Self::faces_added`]) —
+    /// reshaped, after a rescan found them (`MapView::faces_added`, native) —
     /// re-stamp the overlay, keep the records for the event stream. `None`
     /// when there is nothing to do.
     fn advance(&mut self, doc: &mut MindMapDocument, families: &[String]) -> Option<Pass> {

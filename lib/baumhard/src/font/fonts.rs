@@ -633,7 +633,7 @@ pub fn family_name_of(app_font: AppFont) -> Option<&'static str> {
 /// **Nothing the font system holds is changed.** No face is removed or
 /// renumbered, and every face added takes an id greater than every face
 /// held, so it sorts and iterates after them: the build frees no slot
-/// for a later push to reuse ([`complete_font_system`]). A compiled
+/// for a later push to reuse (`complete_font_system`). A compiled
 /// name, a name already loaded, and a host face that bears a compiled
 /// family's name are skipped (`shadows_a_compiled_family`). So a map
 /// that names none of `names` lays out as it did wherever an earlier
@@ -720,7 +720,7 @@ pub fn scan_for_installed<'a>(names: impl IntoIterator<Item = &'a str>) -> Optio
 /// overlapping this one, added it — is skipped, so no face is added
 /// twice and the generation moves once. The new family index is
 /// published, and the generation moved, before the lock is released
-/// ([`FAMILY_INDEX`]); when nothing is added, neither moves.
+/// (`FAMILY_INDEX`); when nothing is added, neither moves.
 ///
 /// Cost: the font system's write lock for one walk of the faces it holds,
 /// one insert per face added and, when any is, one walk to rebuild the

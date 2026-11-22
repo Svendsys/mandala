@@ -83,7 +83,7 @@ pub const EXEC_EXPECTED: &[&str] = &[
     "ERR color ring: nothing selected takes a ring color",
     "ERR color pick: rebuilt on the one writer by V1-C7 (#248); not available yet",
     "OK font: applied",
-    "OK font: applied",
+    "OK font: applied; \"Nope Sans\" is not installed here, drawn in Inter Variable",
     "OK zoom: applied",
     "OK zoom clear: applied",
     "ERR usage: frame\\n  visibility: on | off\\n  rings:      ring\\n  preview:    preview | commit | cancel\\n  fields:     <key>=<value> …",
