@@ -185,9 +185,11 @@ that machine has the family.
   `query.fonts` gives the same report ([`ipc.md`](./ipc.md)), and
   `maptool verify` warns of each missing family.
 - **Two ways out.** *Install the font*: the app looks the host up again
-  for the missing families each time a map is opened, and on
+  for the missing families each time a map is opened after launch (at
+  launch the font system has just scanned the host), and on
   `font rescan` (the `RescanFonts` Action), adding the faces it finds
-  after every face it holds, so no face is renumbered. A map that names
+  after every face it holds, so no face is renumbered, and drawing the
+  text that names them in them. A map that names
   none of them lays out as before wherever an earlier face holds each
   character it draws; a character no earlier face holds reaches the
   font system's last fallback pass, which may now find it in a newly
