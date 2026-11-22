@@ -671,7 +671,7 @@ pub fn edit_named(
                 Some(DocElement::Link(l)) if l.kind == LinkKind::Line => LinkKind::Portal,
                 _ => LinkKind::Line,
             };
-            EditRequest::new(compose::set_link_kind(doc, link, kind).ok()?, name)
+            EditRequest::new(compose::set_link_kind(doc, &[link], kind).ok()?, name)
         }
         "compose::style_range" => {
             let section = pick(c, doc, K::Section)?;

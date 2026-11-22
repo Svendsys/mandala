@@ -450,27 +450,57 @@ fn test_document_compose_switches_link_kind() {
 
 /// A line link becomes a portal with its two ends and nothing of a
 /// line's; a portal becomes a line without its ends; a link already of
-/// the kind takes no step.
+/// the kind takes no step. A slice of both kinds switches only the ones
+/// that differ, in the same number of steps as one link, each a walk
+/// anchored at every switching link.
 pub fn do_document_compose_switches_link_kind() {
     let (mut doc, ids) = built();
-    let steps = set_link_kind(&doc, ids.line, LinkKind::Portal).unwrap();
+    let kinds_under = |doc: &Document, link| -> Vec<DocKind> {
+        doc.children(link)
+            .filter_map(|c| doc.get(c).map(DocElement::kind))
+            .collect()
+    };
+    let kind_of = |doc: &Document, link| match doc.get(link) {
+        Some(DocElement::Link(l)) => Some(l.kind),
+        _ => None,
+    };
+    let steps = set_link_kind(&doc, &[ids.line, ids.portal], LinkKind::Portal).unwrap();
     assert_eq!(steps.len(), 3, "two ends, then the switch");
+    let mut probe = doc.clone();
+    let both = set_link_kind(&probe, &[ids.line, ids.portal], LinkKind::Portal).unwrap();
+    let mixed = run(&mut probe, both);
+    assert!(
+        mixed.is_ok(),
+        "a selection of both kinds is one valid request, the portal left as it is: {mixed:?}"
+    );
     apply(&mut doc, steps);
-    let kinds: Vec<DocKind> = doc
-        .children(ids.line)
-        .filter_map(|c| doc.get(c).map(DocElement::kind))
-        .collect();
-    assert_eq!(kinds, vec![DocKind::PortalEnd, DocKind::PortalEnd]);
-    assert!(matches!(doc.get(ids.line), Some(DocElement::Link(l)) if l.kind == LinkKind::Portal));
+    assert_eq!(kinds_under(&doc, ids.line), vec![DocKind::PortalEnd, DocKind::PortalEnd]);
+    assert_eq!(kind_of(&doc, ids.line), Some(LinkKind::Portal));
+    assert_eq!(
+        kinds_under(&doc, ids.portal),
+        vec![DocKind::PortalEnd, DocKind::PortalEnd],
+        "the portal already of the kind keeps its two ends, not four"
+    );
 
-    let steps = set_link_kind(&doc, ids.portal, LinkKind::Line).unwrap();
+    let steps = set_link_kind(&doc, &[ids.line, ids.portal], LinkKind::Line).unwrap();
+    assert_eq!(steps.len(), 1, "one switch for both");
     apply(&mut doc, steps);
-    assert!(doc.children(ids.portal).next().is_none());
-    assert!(matches!(doc.get(ids.portal), Some(DocElement::Link(l)) if l.kind == LinkKind::Line));
+    for link in [ids.line, ids.portal] {
+        assert!(doc.children(link).next().is_none(), "a line holds no ends");
+        assert_eq!(kind_of(&doc, link), Some(LinkKind::Line));
+    }
 
-    assert!(set_link_kind(&doc, ids.portal, LinkKind::Line)
+    assert!(set_link_kind(&doc, &[ids.portal, ids.line], LinkKind::Line)
         .unwrap()
         .is_empty());
+    assert!(set_link_kind(&doc, &[], LinkKind::Portal).unwrap().is_empty());
+    assert!(
+        matches!(
+            set_link_kind(&doc, &[ids.line, ids.b_connector], LinkKind::Portal),
+            Err(MutationError::NotA { element, .. }) if element == ids.b_connector
+        ),
+        "a connector among the links is refused, naming it"
+    );
 }
 
 #[test]
