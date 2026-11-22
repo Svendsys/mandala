@@ -72,7 +72,7 @@ pub struct ConsoleOverlayLine {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConsoleOverlayLineKind {
-    /// Echo of a user-entered command (e.g. `> anchor set from top`).
+    /// Echo of a user-entered command (e.g. `> path anchors=top,auto`).
     Input,
     /// Normal output line from a successful command.
     Output,

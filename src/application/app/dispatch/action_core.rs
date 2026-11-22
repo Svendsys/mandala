@@ -72,6 +72,9 @@ fn dispatch_arms(
     if let Some(outcome) = families::field_nodes::dispatch(action, core) {
         return outcome;
     }
+    if let Some(outcome) = families::field_paths::dispatch(action, core) {
+        return outcome;
+    }
     if let Some(outcome) = families::dispatch(action) {
         return outcome;
     }

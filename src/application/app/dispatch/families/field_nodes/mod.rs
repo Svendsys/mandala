@@ -181,6 +181,7 @@ fn answer(result: Result<bool, Refused>) -> DispatchOutcome {
         Ok(true) => DispatchOutcome::Handled,
         Ok(false) => DispatchOutcome::Unhandled,
         Err(Refused::Busy) => DispatchOutcome::Refused(TRANSACTION_OPEN_STATUS),
+        Err(Refused::Declined(why)) => DispatchOutcome::Refused(why),
         Err(Refused::Because(why)) => {
             log::warn!("field edit: {why}");
             DispatchOutcome::Unhandled

@@ -35,13 +35,23 @@ pub fn node_or_section_selected(ctx: &ConsoleContext) -> bool {
 }
 
 /// A path — a connector or a link — is selected: the target of the
-/// path verbs (`anchor`, `body`, `cap`, `spacing`, `label`).
+/// path verbs (`path`, `label`).
 pub fn path_selected(ctx: &ConsoleContext) -> bool {
     let doc = ctx.document.doc();
     ctx.document
         .selection
         .iter()
         .any(|id| matches!(kind_of(doc, id), Some(DocKind::Connector | DocKind::Link)))
+}
+
+/// A link is selected, of either kind: the target of `link` and
+/// `portal`. A connector does not count, being always a line (D22).
+pub fn link_selected(ctx: &ConsoleContext) -> bool {
+    let doc = ctx.document.doc();
+    ctx.document
+        .selection
+        .iter()
+        .any(|id| kind_of(doc, id) == Some(DocKind::Link))
 }
 
 #[cfg(test)]

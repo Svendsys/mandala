@@ -73,7 +73,7 @@ use super::bind::KeyBind;
 /// arm for the values that stay stringly-typed.
 ///
 /// Args are positional rather than keyed so the same shape covers
-/// single-payload (1 arg, e.g. `set_path_content(["dash"])`),
+/// single-payload (1 arg, e.g. `set_link_kind(["portal"])`),
 /// from/to (2 args, e.g. `set_path_anchor(["top", "auto"])`), and
 /// field/value (2 args) variants. Per-variant arg names come from
 /// the payload field names in the `keybind_surface!` table and are
@@ -313,7 +313,7 @@ pub const fn field_names_eq(a: &[&str], b: &[&str]) -> bool {
 /// ## Why tuple variants expand to nothing
 ///
 /// The second rule is deliberately empty. A tuple row's names
-/// (`SetPathContent(glyph)`) are local bindings invented by the
+/// (`SetPathContent(content)`) are local bindings invented by the
 /// table, not declared anywhere, and the pattern that binds them and
 /// the constructor that consumes them are the *same* macro
 /// repetition — so there is no second order for them to disagree
@@ -365,7 +365,7 @@ macro_rules! keybind_field_order_check {
 ///     }
 ///     parametric {
 ///         SetPathAnchor { from, to } => set_path_anchor,
-///         SetPathContent(glyph) => set_path_content,
+///         SetPathContent(content) => set_path_content,
 ///     }
 ///     unbindable {
 ///         // Variant => the reason it has no key surface. The reason

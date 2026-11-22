@@ -200,24 +200,6 @@ pub const fn free_words(placeholder: &'static str, words: &'static [Word]) -> Vo
     Vocabulary::FreeWords { placeholder, words }
 }
 
-/// Lift a plain name list into a hint-less vocabulary at const-fn
-/// time.
-///
-/// A closed vocabulary of bare enum values is its own explanation —
-/// `top` needs no sentence beside it — so the `&[&str]` list a
-/// verb's parser validates against stays the source and the
-/// `&[Word]` the engine reads derives from it. One declaration, two
-/// readers.
-pub const fn bare_words<const N: usize>(names: &'static [&'static str]) -> [Word; N] {
-    let mut out = [Word::bare(""); N];
-    let mut i = 0;
-    while i < N {
-        out[i] = Word::bare(names[i]);
-        i += 1;
-    }
-    out
-}
-
 /// One `key=value` the level accepts.
 ///
 /// `hint` is the sentence the popup shows beside `key=`; it is also

@@ -79,9 +79,6 @@ use crate::application::console::completion::{Completion, CompletionState};
 use crate::application::console::parser::Args;
 use crate::application::console::spec::{self, Grammar};
 
-pub mod anchor;
-pub mod body;
-pub mod cap;
 pub mod clock;
 pub mod color;
 pub mod defaults;
@@ -91,17 +88,19 @@ pub mod fps;
 pub mod frame;
 pub mod help;
 pub mod label;
+pub mod link;
 pub mod mode;
 pub mod new;
 pub mod node;
 pub mod open;
+pub mod path;
+pub mod portal;
 pub mod present;
 pub mod range;
 pub mod record;
 pub mod save;
 pub mod screenshot;
 pub mod section;
-pub mod spacing;
 pub mod theme;
 pub mod verb;
 pub mod zoom;
@@ -163,17 +162,12 @@ impl Command {
 /// listing iterates this slice in declaration order.
 pub const COMMANDS: &[Command] = &[
     help::COMMAND,
-    anchor::COMMAND,
-    body::COMMAND,
-    cap::COMMAND,
     color::COMMAND,
     edit::COMMAND,
     present::COMMAND,
     verb::COMMAND,
     font::COMMAND,
     fps::COMMAND,
-    spacing::COMMAND,
-    label::COMMAND,
     mode::COMMAND,
     save::COMMAND,
     screenshot::COMMAND,
@@ -185,6 +179,10 @@ pub const COMMANDS: &[Command] = &[
     section::COMMAND,
     frame::COMMAND,
     range::COMMAND,
+    path::COMMAND,
+    link::COMMAND,
+    label::COMMAND,
+    portal::COMMAND,
     theme::COMMAND,
     defaults::COMMAND,
     zoom::COMMAND,
@@ -198,10 +196,6 @@ pub fn command_by_name(name: &str) -> Option<&'static Command> {
     })
 }
 
-/// The owner of the connector, link and label verbs (`anchor`,
-/// `body`, `cap`, `label`, `spacing`), as a refusal names it.
-pub(super) const FIELD_PATHS_OWNER: &str = "V1-C6 (#247)";
-
 /// The owner of Resize mode and its handle drags (`mode resize`), as a
 /// refusal names it.
 pub(super) const TRANSACTIONS_OWNER: &str = "V1-C7 (#248)";
@@ -209,25 +203,13 @@ pub(super) const TRANSACTIONS_OWNER: &str = "V1-C7 (#248)";
 /// The owner of node editing (`mode node-edit`), as a refusal names it.
 pub(super) const TEXT_OWNER: &str = "V1-C8 (#249)";
 
-/// The verbs an owner rebuilds on the one writer, with the owner each
-/// refusal names: what the tests hold the refusals and the registry
-/// against.
-#[cfg(test)]
-pub(crate) const REBUILT_VERBS: &[(&str, &str)] = &[
-    ("anchor", FIELD_PATHS_OWNER),
-    ("body", FIELD_PATHS_OWNER),
-    ("cap", FIELD_PATHS_OWNER),
-    ("label", FIELD_PATHS_OWNER),
-    ("spacing", FIELD_PATHS_OWNER),
-];
-
 /// Run a field edit from the console (`crate::application::fields`):
 /// its steps as one request declared `ChangeSource::Console`, so one
 /// line is one undo entry. Answers `<label>: applied`, `<label>: no
 /// change`, or the refusal's words.
-pub(super) fn edit(
+pub(super) fn edit<E: Into<crate::application::fields::Refused>>(
     eff: &mut ConsoleEffects,
-    steps: crate::application::fields::Steps,
+    steps: Result<Vec<baumhard::document::mutation::step::DocStep>, E>,
     label: &str,
 ) -> ExecResult {
     let source = baumhard::document::writer::ChangeSource::Console;
@@ -283,13 +265,13 @@ mod tests {
     #[test]
     fn test_command_by_name_lookup() {
         assert!(command_by_name("HELP").is_some());
-        assert!(command_by_name("AnChOr").is_some());
+        assert!(command_by_name("PaTh").is_some());
         assert_eq!(command_by_name("?").map(|c| c.name), Some("help"));
         assert_eq!(command_by_name("visibility").map(|c| c.name), Some("zoom"));
         assert!(command_by_name("nope").is_none());
 
         for name in [
-            "help", "anchor", "body", "cap", "color", "font", "fps", "spacing", "label", "save", "open",
+            "help", "path", "link", "label", "portal", "color", "font", "fps", "save", "open",
             "new", "zoom",
         ] {
             assert!(
@@ -299,30 +281,21 @@ mod tests {
         }
     }
 
-    /// A verb an owner rebuilds refuses with the owner named, whatever
-    /// the line, takes no write on the document, and stays registered
-    /// with its grammar for help and completion.
+    /// **The path verbs V1-C6 (#247) replaced are gone, with no alias**:
+    /// `edge`, `anchor`, `body`, `cap` and `spacing` name no verb, so a
+    /// line naming one is refused as unknown rather than run by its
+    /// replacement. Control: each replacement is registered under its own
+    /// name.
     #[test]
-    fn test_a_rebuilt_verb_refuses_naming_its_owner() {
-        for &(verb, owner) in REBUILT_VERBS {
-            let command = command_by_name(verb).expect("registered");
-            let mut doc = crate::application::document::MindMapDocument::new_blank(None, 50);
-            let revision = doc.revision();
-            let mut eff = ConsoleEffects::new(&mut doc);
-            let line = format!("{verb} x=1");
-            let crate::application::console::ParseResult::Ok { args, .. } =
-                crate::application::console::parse(&line)
-            else {
-                panic!("{line} parses");
-            };
-            let args = crate::application::console::parser::Args::new(&args);
-            match (command.execute)(&args, &mut eff) {
-                ExecResult::Err(message) => assert!(message.contains(owner), "{verb}: {message}"),
-                other => panic!("{verb} must refuse, ran: {other:?}"),
-            }
-            drop(eff);
-            assert_eq!(doc.revision(), revision, "{verb} must not change the document");
-            assert!(!command.usage_forms().is_empty(), "{verb} keeps its grammar");
+    fn test_the_replaced_path_verbs_name_nothing() {
+        for gone in ["edge", "anchor", "body", "cap", "spacing"] {
+            assert!(
+                command_by_name(gone).is_none(),
+                "`{gone}` was replaced and must not resolve"
+            );
+        }
+        for name in ["path", "link", "label", "portal"] {
+            assert_eq!(command_by_name(name).map(|c| c.name), Some(name), "control: `{name}`");
         }
     }
 }

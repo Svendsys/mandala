@@ -15,11 +15,17 @@
 use baumhard::document::format;
 use baumhard::document::ids::Document;
 use baumhard::document::values::{
-    Align, ColorRef, Direction, FitMode, FontRef, LineSpan, Shape, Sides, StartPoint, Weight,
+    Align, Anchor, ColorRef, Direction, FitMode, FontRef, LineSpan, LinkKind, Shape, Sides, StartPoint,
+    Weight,
 };
 
 /// The word that clears a field so it inherits.
 pub(crate) const RESET: &str = "reset";
+
+/// The word that sets no text where a path, a cap or a portal end takes
+/// one: a path or an end then inherits its content, and a cap is
+/// removed.
+pub(crate) const NONE: &str = "none";
 
 /// `text` as a value of `what`, or `None` for [`RESET`]: what `read`
 /// gives, with the message naming the field.
@@ -194,4 +200,56 @@ pub(crate) fn zoom_bound(text: &str) -> Result<Option<f32>, String> {
         .filter(|v| *v > 0.0)
         .map(Some)
         .ok_or_else(|| format!("'{text}' is not a zoom: a positive number or `unset`"))
+}
+
+/// Text a path, a cap or a portal end draws, or `None` for [`NONE`]: any
+/// other text is taken as it is, since content is text (D8).
+pub(crate) fn content(text: &str) -> Option<String> {
+    (!text.eq_ignore_ascii_case(NONE)).then(|| text.to_string())
+}
+
+/// Where a path attaches, as the file spells it: `auto`, `top`, `right`,
+/// `bottom` or `left` (`format::anchor`).
+pub(crate) fn anchor(text: &str) -> Result<Anchor, String> {
+    format::anchor(text)
+        .ok_or_else(|| format!("'{text}' is not an anchor: `auto`, `top`, `right`, `bottom` or `left`"))
+}
+
+/// A path's two anchors, its start's and its end's, as `<from>,<to>`.
+pub(crate) fn anchors(text: &str) -> Result<(Anchor, Anchor), String> {
+    let (from, to) = text.split_once(',').ok_or_else(|| {
+        format!("'{text}' is not two anchors: `<from>,<to>`, each `auto`, `top`, `right`, `bottom` or `left`")
+    })?;
+    Ok((anchor(from.trim())?, anchor(to.trim())?))
+}
+
+/// What a link draws, as the file spells it: `line` or `portal`
+/// (`format::link_kind`).
+pub(crate) fn link_kind(text: &str) -> Result<LinkKind, String> {
+    format::link_kind(text).ok_or_else(|| format!("'{text}' is not a link kind: `line` or `portal`"))
+}
+
+/// A label's place along its path: a number from 0 (its start) to 1 (its
+/// end), or `start`, `middle` and `end` for 0, 0.5 and 1. The bound is
+/// the writer's, whose refusal names the field.
+pub(crate) fn label_t(text: &str) -> Result<f32, String> {
+    match text.to_ascii_lowercase().as_str() {
+        "start" => Ok(0.0),
+        "middle" => Ok(0.5),
+        "end" => Ok(1.0),
+        _ => number(text)
+            .map_err(|_| format!("'{text}' is not a place along the path: 0-1, `start`, `middle` or `end`")),
+    }
+}
+
+/// Which end of a portal: `0`, the source end beside the link's node, or
+/// `1`, the target end.
+pub(crate) fn portal_end(text: &str) -> Result<u8, String> {
+    match text {
+        "0" => Ok(0),
+        "1" => Ok(1),
+        _ => Err(format!(
+            "'{text}' is not a portal end: `0` (the source) or `1` (the target)"
+        )),
+    }
 }

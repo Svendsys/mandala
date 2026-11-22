@@ -1055,7 +1055,7 @@ fn test_a_committed_positional_narrows_a_subverb_to_the_form_that_declares_it() 
 /// untested and unpinned.
 ///
 /// Asserted here at its new home, and pinned end to end by the
-/// `body glyph=dash glyph=dot` / `body glyph=dot glyph=dash` pair in
+/// `link kind=line kind=bogus` / `link kind=bogus kind=line` pair in
 /// `EXEC_CORPUS`, which swap answers under a first-wins reader.
 #[test]
 fn test_a_repeated_key_resolves_to_its_last_occurrence() {
@@ -1096,7 +1096,8 @@ fn test_a_repeated_key_resolves_to_its_last_occurrence() {
 /// serves.
 fn dispatchers() -> Vec<(&'static str, Vec<&'static Grammar>, Vec<&'static str>)> {
     use crate::application::console::commands::{
-        clock, color, edit, font, fps, frame, mode, node, present, record, section, theme, verb, zoom,
+        clock, color, edit, font, fps, frame, label, mode, node, path, present, record, section, theme, verb,
+        zoom,
     };
     vec![
         ("fps", vec![&fps::GRAMMAR], fps::routed_names()),
@@ -1117,6 +1118,8 @@ fn dispatchers() -> Vec<(&'static str, Vec<&'static Grammar>, Vec<&'static str>)
         ("font", vec![&font::GRAMMAR], font::routed_names()),
         ("zoom", vec![&zoom::GRAMMAR], zoom::routed_names()),
         ("theme", vec![&theme::GRAMMAR], theme::routed_names()),
+        ("path", vec![&path::GRAMMAR], path::routed_names()),
+        ("label", vec![&label::GRAMMAR], label::routed_names()),
     ]
 }
 
@@ -1185,14 +1188,6 @@ fn test_every_level_with_subverbs_has_a_listed_dispatcher() {
         .collect();
     for (verb, grammar) in all_levels() {
         if grammar.subverbs().all(|s| s.child.is_some()) {
-            continue;
-        }
-        // A verb its owner rebuilds refuses whole and routes nothing
-        // until then (`commands::rebuilt_by`).
-        if crate::application::console::commands::REBUILT_VERBS
-            .iter()
-            .any(|(rebuilt, _)| *rebuilt == verb)
-        {
             continue;
         }
         assert!(

@@ -20,9 +20,9 @@ fn test_help_no_args_returns_lines() {
 #[test]
 fn test_help_with_known_command_prints_usage() {
     let mut doc = load_test_doc();
-    match run("help anchor", &mut doc) {
+    match run("help path", &mut doc) {
         ExecResult::Lines(lines) => {
-            assert!(lines.iter().any(|l| l.text.contains("anchor")));
+            assert!(lines.iter().any(|l| l.text.contains("path")));
             assert!(lines.iter().any(|l| l.text.contains("usage:")));
         }
         other => panic!("expected Lines, got {:?}", other),
