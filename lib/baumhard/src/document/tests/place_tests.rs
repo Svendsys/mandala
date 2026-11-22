@@ -225,28 +225,38 @@ fn test_a_span_in_a_ring_sets_no_size_for_files_and_edits() {
 #[test]
 fn test_a_font_must_have_a_name_a_file_can_write_for_files_and_edits() {
     // The rule: the fallback face never; every compiled-in face, which
-    // has a family name, always. (Every face this build compiles in has
-    // one, so the "no family name" half of the rule is reached only by
-    // `Any` here.)
-    assert!(!nameable_font(AppFont::Any));
-    assert!(nameable_font(AppFont::Evilz));
-    let faces: Vec<AppFont> = std::iter::once(AppFont::Any)
+    // has a family name, always; and an installed family, by its name,
+    // whether or not this machine has it (#329). (Every face this build
+    // compiles in has a name, so the "no family name" half of the rule is
+    // reached only by `Any` here.)
+    use crate::document::values::FontRef;
+    let installed = crate::document::format::font("Nope Sans").expect("a family name reads");
+    assert!(
+        installed.installed().is_some(),
+        "precondition: no compiled face is Nope Sans"
+    );
+    assert!(!nameable_font(&AppFont::Any.into()));
+    assert!(nameable_font(&AppFont::Evilz.into()));
+    assert!(nameable_font(&installed));
+    let faces: Vec<FontRef> = std::iter::once(AppFont::Any)
         .chain(crate::font::fonts::FONT_DATA.iter().map(|(font, _)| *font))
+        .map(FontRef::from)
+        .chain(std::iter::once(installed))
         .collect();
     assert!(faces.len() > 10, "precondition: {} faces", faces.len());
     for font in faces {
         let doc = map_with(|builder, node, _, _| {
-            builder.edit_node(node, |data| data.style.text.font = Some(font));
+            builder.edit_node(node, |data| data.style.text.font = Some(font.clone()));
         });
         let saves = check_savable(&doc);
         let edits = validate(
             &at_root(
                 DocKind::Node,
-                DocMutation::Node(NodeOp::Text(TextOp::SetFont(Some(font)))),
+                DocMutation::Node(NodeOp::Text(TextOp::SetFont(Some(font.clone())))),
             ),
             &doc,
         );
-        let expected = nameable_font(font);
+        let expected = nameable_font(&font);
         assert_eq!(saves.is_ok(), expected, "{font:?}: the file says {saves:?}");
         assert_eq!(edits.is_ok(), expected, "{font:?}: the edit says {edits:?}");
         if !expected {

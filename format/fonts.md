@@ -14,8 +14,9 @@ the default family, and text a map pins to a compiled family, are drawn
 in the same faces on a machine with a hundred families installed, in a
 container with none, and in the browser, wherever the compiled faces
 hold the characters (#228). The host's fonts serve what no compiled
-face holds, and are offered by `font list` and the console's
-completion; a map naming one is #329.
+face holds, are offered by `font list`, the console's completion and
+IPC's `query.fonts`, and a map may name one
+([Installed families](#installed-families), #329).
 
 ## The default face
 
@@ -59,23 +60,31 @@ A map may also pin `Inter Variable` by name, like any compiled family.
 
 A span's `font` names a family ([`schema.md`](./schema.md)); a span
 without one inherits its element's, and so on up to the map's defaults.
-Each name resolves through `baumhard::font::fonts::app_font_by_family`
-to the build-time `AppFont` enum, and the loader refuses a name that
-resolves to no compiled-in face (`LoadErrorKind::UnknownFont`), so a map
-names only families that load, and draw, the same on every target. An
-installed family resolves to the fallback face `AppFont::Any`, which has
-no name a file could write back, and is refused the same way until #329
-lets a map name one, and tells its reader what to install or pick in its
-place when the family is missing. A span that names none is drawn in the
+The loader reads each name once (`baumhard::document::format::font`):
+
+- a name a compiled face bears is that face, the build-time `AppFont`
+  (`FontRef::Compiled`), compared byte for byte, case included — one of
+  [the compiled families](#the-compiled-families), which load and draw
+  the same on every target;
+- any other name is an **installed family**, held by its name
+  (`FontRef::Installed`), whether or not the machine reading the map has
+  it ([Installed families](#installed-families)).
+
+A name that cannot be a family is refused: an empty one
+(`LoadErrorKind::EmptyName`), one with a control or bidi character
+(`NameNotPrintable`), the rule every name in a map follows, and one
+longer than **256 bytes** (`FontFamilyTooLong`,
+`document::bounds::MAX_FONT_FAMILY_BYTES`): a family name in a font's
+name table is a few dozen bytes, so a longer one names nothing anything
+installs. A map whose every `font` names a compiled family reads, and
+draws, exactly as before #329. A span that names none is drawn in the
 default face, which the file need not name.
 
-## The families a map can name
+## The compiled families
 
-A map's `font` may name exactly these families: every compiled family,
-spelled as the face's name table spells it, which is how the loader
-compares it (byte for byte, case included). Each loads, and draws, on
-every target.
-`font::tests::fonts_tests::test_format_fonts_lists_exactly_the_families_a_map_can_name`
+These are the compiled families, spelled as the face's name table
+spells them: a map that names one is drawn in it on every target.
+`font::tests::fonts_tests::test_format_fonts_lists_exactly_the_compiled_families`
 holds this list to the loader's own rule both ways, and
 `test_every_compiled_face_has_a_family_a_map_can_name` holds every
 compiled face to having one of them, so a face cannot be compiled in
@@ -150,10 +159,62 @@ newly meets in it is the private-use code points it lists at
 U+F020–U+F0FF, all but U+F034–U+F068, where `NIGHTCROW` comes first. No
 map, built-in style or chrome glyph uses either range.
 
+## Installed families
+
+A map may name a font family installed on the machine it was made on
+(#329), by the name its faces bear: `"font": "DejaVu Serif"`. The file
+holds the name, and the map loads wherever it is opened, whether or not
+that machine has the family.
+
+- **Where the machine has it**, its text is drawn in its faces, pinned
+  as a compiled family is: at the nearest weight they have
+  ([below](#weight-within-a-pinned-family)), a character none of them
+  holds falling back as any span's does.
+- **Where the machine lacks it** — a *missing* family — its text is
+  drawn in the **stand-in**, the default face, `Inter Variable`, at the
+  span's own weight and slant, until the user decides. The app says so:
+  the status line names the missing families, and on native the console
+  opens over the map with the report (which families, how many elements
+  name each) and a pre-filled `font replace "<family>" ` line whose
+  completion offers every family a map can name, each drawn in its own
+  face. The prompt holds nothing: the map is loaded and drawn behind it,
+  and Escape closes it as it closes any console line. IPC's
+  `query.fonts` gives the same report ([`ipc.md`](./ipc.md)), and
+  `maptool verify` warns of each missing family.
+- **Two ways out.** *Install the font*: the app looks the host up again
+  for the missing families each time a map is opened, and on
+  `font rescan` (the `RescanFonts` Action), adding the faces it finds
+  after every face it holds, so no face is renumbered and a map that
+  names none of them lays out as before. *Pick a replacement*:
+  `font replace "<family>" <font>` (the `ReplaceFontFamily` Action, which
+  IPC's `act.action` reaches on both targets) rewrites every reference
+  the map's tree makes to the family — each element that names it in
+  its own style, and the defaults — to the replacement, a compiled
+  family or another installed one, as **one undoable edit**.
+- **The edits and presentations a map defines** are not rewritten by a
+  replacement: a map's definitions do not change while it is open
+  (design §5.7). The report lists the ones that name a missing family,
+  and one that runs sets that family again, drawn in the stand-in.
+- **Saving never drops or rewrites a family the user has not replaced**:
+  an installed family is written back by the name it was read with,
+  missing or not.
+- **Reading a map costs no host font scan.** The loader, the saver and
+  the name checks read the compiled faces' names alone, so `maptool show`
+  and every other reader of a map pay for the host's fonts only when
+  they draw text or ask which installed families the machine lacks —
+  and then once per process, plus one targeted rescan per open of a map
+  with a missing family.
+- **The browser reads no installed font.** Every installed family a map
+  names is missing there and drawn in the stand-in; the status line says
+  so, and IPC offers the replacement. The Local Font Access API, which
+  only some browsers have, behind a permission prompt, is the route to
+  parity (CLAUDE.md "Dual-target status").
+
 ## Weight within a pinned family
 
-A pinned family is drawn only in its compiled faces, at the nearest
-weight they have (ruling R30 on #278). A request for a weight the
+A pinned family is drawn only in its compiled faces — an installed
+family in its faces on this machine — at the nearest weight they have
+(ruling R30 on #278). A request for a weight the
 family's compiled faces lack — `"bold"` on a single-weight face, `300`
 on SilhousTwo — is matched within the family as CSS Fonts 4 §5.2
 matches `font-weight`, and nothing is synthesized: a weight the family
@@ -288,11 +349,17 @@ everywhere by compiling a face for it in.
 
 `font family=<name>` sets the face of every selected element, on the
 document's one writer, and takes exactly the names a map's `font` key
-takes: a compiled family. An installed host font cannot be named by a
-map yet (#329), so `family=` refuses it as the loader does. When the
+takes: a compiled family, or an installed one, present or not. When the
 cursor sits on the value of `font family=`, the popup shows every
-family a map can name whose name starts with the typed prefix
-(case-insensitive), each candidate row pre-shaped in that very face;
-`font list` prints every loaded family, the host's included on native. A
-`console_font` that names no compiled family is drawn in the default
-face, with a `warn!` when it names no loaded family at all.
+loaded family whose name starts with the typed prefix
+(case-insensitive), each candidate row pre-shaped in that very face where
+the face maps every character of its name (a symbol face that does not,
+and an installed family, are drawn in the console's default face), and
+an installed one hinted `installed`; `font list` prints every loaded
+family, the host's included on native, an installed one marked
+`(installed)`. `font replace <family> <font>` and `font rescan` are the
+missing-font prompt's two ways out ([Installed families](#installed-families));
+the first slot of `font replace` completes the installed families the
+map names, hinted `missing` or `installed`. A `console_font` that names
+no compiled family is drawn in the default face, with a `warn!` when it
+names no loaded family at all.

@@ -37,7 +37,7 @@ use glam::Vec2;
 /// A text style with every field set.
 fn rich_text(size: FontSize) -> TextStyle {
     TextStyle {
-        font: Some(AppFont::Any),
+        font: Some(AppFont::Any.into()),
         size: Some(size),
         color: Some(ColorRef::Rgba(Rgba::opaque(1, 2, 3))),
         weight: Some(Weight::BOLD),

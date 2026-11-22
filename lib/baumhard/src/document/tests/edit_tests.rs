@@ -366,18 +366,18 @@ fn test_a_load_refuses_what_no_map_could_run() {
         invalid(&format!(r#"{{{base},"target":"spans","handler":"flower"}}"#)),
         "edits[0].target"
     );
-    // A face no map could name, refused when it is read.
+    // A font family name that cannot be one, refused when it is read; a
+    // family no compiled face bears is an installed one, and reads
+    // (#329).
     assert_eq!(
         refusal(&format!(
-            r#"{{{base},"target":"spans","mutations":[{{"span":{{"text":{{"set_font":"Nope Sans"}}}}}}]}}"#
+            r#"{{{base},"target":"spans","mutations":[{{"span":{{"text":{{"set_font":""}}}}}}]}}"#
         )),
-        (
-            "edits[0].mutations[0]".to_string(),
-            LoadErrorKind::UnknownFont {
-                family: "Nope Sans".to_string()
-            }
-        )
+        ("edits[0].mutations[0]".to_string(), LoadErrorKind::EmptyName)
     );
+    edit(&format!(
+        r#"{{{base},"target":"spans","mutations":[{{"span":{{"text":{{"set_font":"Nope Sans"}}}}}}]}}"#
+    ));
     // An authored edit holds no structure: there is no spelling for a
     // move or an insert, so either is an unknown variant, at its path.
     for op in [

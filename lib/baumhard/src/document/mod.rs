@@ -40,6 +40,9 @@ pub mod edit;
 /// [`DocKind`](element::DocKind), [`DocElement`](element::DocElement)
 /// and the per-kind data, and the engine instantiation.
 pub mod element;
+/// The installed font families a map names, the report of those this
+/// machine lacks, and the edit that replaces one (#329).
+pub mod fonts;
 pub mod format;
 /// [`NodeIdent`](ids::NodeIdent), [`Document`](ids::Document) and its
 /// read API.

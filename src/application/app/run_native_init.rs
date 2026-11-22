@@ -296,7 +296,7 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
 
     // The screen-space overlays' scene: the console and the color
     // picker register their trees in it while they are open.
-    let app_scene = crate::application::scene_host::AppScene::new();
+    let mut app_scene = crate::application::scene_host::AppScene::new();
 
     // The user's settings, before any document: the history limit is
     // the document's from the moment it is installed (D18).
@@ -310,6 +310,10 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
     // the two targets from reporting the same failure differently —
     // the browser's peer call is `wasm_startup_document`.
     let mut doc = startup_load::native_startup_document(&options.mindmap_path, settings.history_limit);
+    // The fonts the map names that this machine lacks, before the view is
+    // projected: a font installed since launch is found by the rescan
+    // and drawn by the projection below (#329).
+    let missing_fonts = crate::application::missing_fonts::on_open(&mut doc);
 
     // The one full projection of the document's life (§3 "Load"), the
     // renderer loaded with it and cleared to the map's background, and
@@ -333,6 +337,23 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
     // Cross-session history loaded from disk on startup; appended
     // to on every Enter; written back on close.
     let console_history: Vec<String> = load_console_history();
+    // The missing-font prompt, open over the map when it names a font
+    // this machine lacks (#329); the console stays closed otherwise.
+    let mut console_state = ConsoleState::Closed;
+    if super::console_input::open_missing_font_prompt(
+        &mut console_state,
+        &console_history,
+        &doc,
+        &missing_fonts,
+    ) {
+        super::console_input::rebuild_console_overlay(
+            &console_state,
+            &doc,
+            &mut app_scene,
+            &mut renderer,
+            &keybinds,
+        );
+    }
 
     // The App and User tiers from the platform loaders. Body is
     // `macros::loader::build_macro_registry`, which the browser's init
@@ -364,7 +385,7 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
         cursor_pos: (0.0, 0.0),
         drag_state: DragState::None,
         interaction_mode: InteractionMode::Default,
-        console_state: ConsoleState::Closed,
+        console_state,
         console_history,
         color_picker_state: crate::application::color_picker::ColorPickerState::Closed,
         last_click: None,

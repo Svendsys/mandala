@@ -352,7 +352,7 @@ fn section_style(align: Option<Align>, style: &TextStyle, sections: Vec<NodeId>)
     let text = |op| DocMutation::Section(SectionOp::Text(op));
     let mutations = vec![
         DocMutation::Section(SectionOp::SetAlign(align)),
-        text(TextOp::SetFont(style.font)),
+        text(TextOp::SetFont(style.font.clone())),
         text(TextOp::SetSize(style.size)),
         text(TextOp::SetColor(style.color)),
         text(TextOp::SetWeight(style.weight)),

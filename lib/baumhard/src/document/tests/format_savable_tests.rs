@@ -297,13 +297,13 @@ fn test_a_palette_or_a_verb_the_map_lacks_has_no_spelling() {
 
 #[test]
 fn test_the_fallback_face_has_no_family_name_to_write() {
-    let builder = with_node(|node| node.style.text.font = Some(AppFont::Any));
+    let builder = with_node(|node| node.style.text.font = Some(AppFont::Any.into()));
     refuses(builder, "nodes[0].font", SaveErrorKind::NoFamilyName);
     // And in the defaults, which the file spells the same way.
     let mut builder = DocumentBuilder::new();
     builder.defaults(DefaultsData {
         section: TextStyle {
-            font: Some(AppFont::Any),
+            font: Some(AppFont::Any.into()),
             ..TextStyle::default()
         },
         ..DefaultsData::default()

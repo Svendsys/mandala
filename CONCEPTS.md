@@ -1247,6 +1247,18 @@ a fallback family is matched only at the exact weight a span asks for
 or within a variable face's axis. A span whose own family holds the
 glyph still draws it. See `format/fonts.md`.
 
+**Installed families** (#329, `document::fonts`, `missing_fonts`). A
+map may name a family no compiled face bears: it is held by its name
+(`FontRef::Installed`), drawn in its faces where the machine has them
+and in the default face, the stand-in, where it does not, and written
+back as it was read. Reading a map scans no host font: names resolve
+against the compiled faces alone (`compiled_families`), and the host
+scan waits for the first shaping or the first question of what is
+missing. The app reports a missing family (the status line; on native
+the console prompt), and offers a targeted rescan (`rescan_installed`)
+and a replacement that rewrites every reference as one undoable edit
+(`document::fonts::replace_steps`).
+
 **The shaper is patched** (#304, `vendor/cosmic-text`). cosmic-text
 0.19.0 is vendored and every crate's `cosmic-text` is pointed at it by
 the root manifest's `[patch.crates-io]` (and the fuzz crate's, and the
@@ -1370,8 +1382,8 @@ replaces; nothing in the app uses it until the cut-over (V1-C3).
   children in: a node's sections, frame, connector, links, then child
   nodes. A mutator for one kind never lands on another.
 - **Typed values** (`document::values`): a color is a `ColorRef`
-  (a literal, a theme variable, or a palette field), a font an
-  `AppFont`, a size a `FontSize` (`Pt`, or `Rel` — a fraction of the
+  (a literal, a theme variable, or a palette field), a font a `FontRef`
+  (a compiled `AppFont`, or an installed family by name, #329), a size a `FontSize` (`Pt`, or `Rel` — a fraction of the
   node's shorter side, for frames), a shape a `Shape`. Strings are
   parsed once, at load.
 - **Identity** (`document::ids`): in memory an element is its arena

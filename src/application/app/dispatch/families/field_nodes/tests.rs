@@ -967,13 +967,17 @@ fn test_a_frame_preview_leaves_another_interactions_transaction_alone() {
 }
 
 /// **`font family=` takes exactly the faces a map's `font` key takes**
-/// (`format::font`): a compiled family is set on the node, and a name the
-/// loader refuses is refused with the reason, applying nothing. Control:
-/// the accepted face is one the loader reads.
+/// (`format::font`): a compiled family is set on the node, an installed
+/// one too, by its name, whether or not this machine has it (#329), and
+/// a name the loader refuses — one that holds a control character — is
+/// refused with the reason, applying nothing. Control: the accepted
+/// faces are ones the loader reads, and the refusal changes no revision.
 #[test]
 fn test_font_family_takes_what_the_loader_takes() {
-    let face = baumhard::font::fonts::loaded_families_iter()
-        .find(|family| baumhard::document::format::font(family).is_some())
+    let face = baumhard::font::fonts::compiled_families()
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .find(|family| baumhard::document::format::font(family).is_ok())
         .expect("a compiled face")
         .to_string();
     let mut doc = fixture();
@@ -984,12 +988,74 @@ fn test_font_family_takes_what_the_loader_takes() {
         bytes(&doc).contains(&format!("\"font\": \"{face}\"")),
         "{face} is saved"
     );
+    run_line(&mut doc, "font family=\"Nope Sans\"").expect("an installed family is taken");
+    assert!(
+        bytes(&doc).contains("\"font\": \"Nope Sans\""),
+        "Nope Sans is saved by its name"
+    );
     let revision = doc.revision();
-    assert!(run_line(&mut doc, "font family=\"Nope Sans\"").is_err());
+    assert!(run_line(&mut doc, "font family=\"Bell\u{7}\"").is_err());
     assert_eq!(doc.revision(), revision, "a refused face applies nothing");
     assert_eq!(
-        run(&Action::SetFontFamily("Nope Sans".into()), &mut doc),
+        run(&Action::SetFontFamily("Bell\u{7}".into()), &mut doc),
         DispatchOutcome::Unhandled
+    );
+}
+
+/// **`ReplaceFontFamily` rewrites the map's references to an installed
+/// family as one undo entry** (#329), whatever is selected, and leaves
+/// the missing-font notice saying what is still missing; undo restores
+/// the family. Controls: an Action that applied one request per kind
+/// would grow the history by more than one; a family the map names
+/// nowhere applies nothing and is `Unhandled`.
+#[test]
+fn test_replace_font_family_is_one_undo_entry_across_the_map() {
+    let mut doc = fixture();
+    doc.selection.select_only(node(&doc, 3));
+    run_line(&mut doc, "font family=\"Nope Sans\"").expect("an installed family is taken");
+    doc.selection.select_only(node(&doc, 1));
+    run_line(&mut doc, "font family=\"Nope Sans\"").expect("on a second node");
+    assert_eq!(
+        bytes(&doc).matches("\"font\": \"Nope Sans\"").count(),
+        2,
+        "precondition"
+    );
+    doc.selection.clear();
+    let depth = doc.doc().history().count();
+    let replace = Action::ReplaceFontFamily {
+        family: "Nope Sans".into(),
+        with: "Public Pixel".into(),
+    };
+    assert_eq!(run(&replace, &mut doc), DispatchOutcome::Handled);
+    assert_eq!(doc.doc().history().count(), depth + 1, "one undo entry");
+    let saved = bytes(&doc);
+    assert!(
+        !saved.contains("Nope Sans"),
+        "every reference is rewritten: {saved}"
+    );
+    assert_eq!(saved.matches("\"font\": \"Public Pixel\"").count(), 2);
+    assert_eq!(doc.font_notice(), None, "nothing is missing any more");
+    doc.undo();
+    assert_eq!(
+        bytes(&doc).matches("\"font\": \"Nope Sans\"").count(),
+        2,
+        "undo restores both"
+    );
+    assert_eq!(
+        run(&replace, &mut doc),
+        DispatchOutcome::Handled,
+        "and it runs again"
+    );
+    assert_eq!(
+        run(
+            &Action::ReplaceFontFamily {
+                family: "Named Nowhere".into(),
+                with: "Public Pixel".into(),
+            },
+            &mut doc
+        ),
+        DispatchOutcome::Unhandled,
+        "a family the map names nowhere changes nothing"
     );
 }
 

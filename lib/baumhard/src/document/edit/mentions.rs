@@ -47,6 +47,22 @@ impl EditDef {
     /// Cost: one walk of the definition, one call of `verb` per verb id it
     /// writes, and no allocation.
     pub fn mentions<'a>(&'a self, mut verb: impl FnMut(&'a str)) -> Shows {
+        self.walk(&mut verb, &mut |_| {})
+    }
+
+    /// Calls `font` with each font family name this edit writes — a text
+    /// op's `set_font`, a filter's `font` field — wherever in it, as
+    /// [`Self::mentions`] finds verbs: what tells the missing-font report
+    /// which definitions name a family a replacement does not rewrite
+    /// (#329). Cost: one walk of the definition, one call of `font` per
+    /// name, and no allocation.
+    pub fn fonts<'a>(&'a self, mut font: impl FnMut(&'a str)) {
+        self.walk(&mut |_| {}, &mut font);
+    }
+
+    /// One walk of the definition, handing its verbs to `verb` and its
+    /// font family names to `font`.
+    fn walk<'a>(&'a self, verb: &mut dyn FnMut(&'a str), font: &mut dyn FnMut(&'a str)) -> Shows {
         let EditDef {
             id: _,
             name: _,
@@ -57,7 +73,7 @@ impl EditDef {
             body,
             animate: _,
         } = self;
-        let mut walk = Walk::new(&mut verb);
+        let mut walk = Walk::new(verb, font);
         if let Some(Filter(filter)) = filter {
             walk.filter(filter);
         }
@@ -75,15 +91,21 @@ impl EditDef {
 /// and what it has found it can show.
 pub(in crate::document) struct Walk<'a, 'f> {
     verb: &'f mut dyn FnMut(&'a str),
+    font: &'f mut dyn FnMut(&'a str),
     pub(in crate::document) shows: Shows,
 }
 
 impl<'a, 'f> Walk<'a, 'f> {
-    /// A walk that hands each verb id it meets to `verb`, having found
-    /// nothing yet.
-    pub(in crate::document) fn new(verb: &'f mut dyn FnMut(&'a str)) -> Self {
+    /// A walk that hands each verb id it meets to `verb`, and each font
+    /// family name to `font` — a text op's `set_font`, a filter's `font`
+    /// field — having found nothing yet.
+    pub(in crate::document) fn new(
+        verb: &'f mut dyn FnMut(&'a str),
+        font: &'f mut dyn FnMut(&'a str),
+    ) -> Self {
         Walk {
             verb,
+            font,
             shows: Shows::default(),
         }
     }
@@ -128,6 +150,7 @@ impl<'a, 'f> Walk<'a, 'f> {
         for (field, _) in fields {
             match field {
                 FieldDto::OnClick(verb) | FieldDto::OnHover(verb) => (self.verb)(verb),
+                FieldDto::Font(family) => (self.font)(family),
                 FieldDto::Kind(_)
                 | FieldDto::Background(_)
                 | FieldDto::Channel(_)
@@ -146,7 +169,6 @@ impl<'a, 'f> Walk<'a, 'f> {
                 | FieldDto::OffsetX(_)
                 | FieldDto::OffsetY(_)
                 | FieldDto::Align(_)
-                | FieldDto::Font(_)
                 | FieldDto::FontSize(_)
                 | FieldDto::Color(_)
                 | FieldDto::Weight(_)
@@ -174,7 +196,7 @@ impl<'a, 'f> Walk<'a, 'f> {
             match mutation {
                 MutationDto::Node(op) => self.node(op),
                 MutationDto::Section(op) => match op {
-                    SectionOpDto::Text(op) => text(op),
+                    SectionOpDto::Text(op) => self.text(op),
                     SectionOpDto::SetOffset(_)
                     | SectionOpDto::Nudge(_)
                     | SectionOpDto::SetMinSize(_)
@@ -184,14 +206,14 @@ impl<'a, 'f> Walk<'a, 'f> {
                 MutationDto::Span(op) => match op {
                     SpanOpDto::SetLink(Some(LinkTargetDto::Verb(verb))) => (self.verb)(verb),
                     SpanOpDto::SetLink(Some(LinkTargetDto::Url(_)) | None) => {}
-                    SpanOpDto::Text(op) => text(op),
+                    SpanOpDto::Text(op) => self.text(op),
                     SpanOpDto::SetText(_)
                     | SpanOpDto::InsertText { at: _, text: _ }
                     | SpanOpDto::DeleteText { start: _, end: _ } => {}
                 },
                 MutationDto::Frame(op) => match op {
                     FrameOpDto::Layout(op) => layout(op),
-                    FrameOpDto::Text(op) => text(op),
+                    FrameOpDto::Text(op) => self.text(op),
                     FrameOpDto::SetVisible(_)
                     | FrameOpDto::SetStart(_)
                     | FrameOpDto::SetDirection(_)
@@ -201,7 +223,7 @@ impl<'a, 'f> Walk<'a, 'f> {
                 },
                 MutationDto::Ring(op) => match op {
                     RingOpDto::Layout(op) => layout(op),
-                    RingOpDto::Text(op) => text(op),
+                    RingOpDto::Text(op) => self.text(op),
                     RingOpDto::SetFit(_) | RingOpDto::SetChannel(_) => {}
                 },
                 MutationDto::Path(op) => match op {
@@ -216,9 +238,9 @@ impl<'a, 'f> Walk<'a, 'f> {
                     | PathOpDto::SetVisible(_)
                     | PathOpDto::SetZoom(_) => {}
                 },
-                MutationDto::Cap(op) => text(op),
+                MutationDto::Cap(op) => self.text(op),
                 MutationDto::Label(op) => match op {
-                    LabelOpDto::Text(op) => text(op),
+                    LabelOpDto::Text(op) => self.text(op),
                     LabelOpDto::SetT(_) | LabelOpDto::SetOffset(_) => {}
                 },
                 MutationDto::PortalEnd(op) => match op {
@@ -241,7 +263,7 @@ impl<'a, 'f> Walk<'a, 'f> {
                 verb.iter().for_each(|verb| (self.verb)(verb))
             }
             NodeOpDto::SetHidden(hidden) => self.shows.reveals |= !hidden,
-            NodeOpDto::Text(op) => text(op),
+            NodeOpDto::Text(op) => self.text(op),
             NodeOpDto::SetPosition(_)
             | NodeOpDto::Nudge(_)
             | NodeOpDto::SetMinSize(_)
@@ -254,24 +276,26 @@ impl<'a, 'f> Walk<'a, 'f> {
             | NodeOpDto::SetChannel(_) => {}
         }
     }
-}
 
-/// A text style op names no verb and shows nothing; listed so that one
-/// added that does fails to compile.
-fn text(op: &TextOpDto) {
-    match op {
-        TextOpDto::SetFont(_)
-        | TextOpDto::SetSize(_)
-        | TextOpDto::GrowSize(_)
-        | TextOpDto::ScaleSize(_)
-        | TextOpDto::SetColor(_)
-        | TextOpDto::SetWeight(_)
-        | TextOpDto::SetItalic(_) => {}
+    /// A text style op names no verb and shows nothing; its `set_font`
+    /// names a font family. Every op is listed, so that one added that
+    /// names something fails to compile.
+    fn text(&mut self, op: &'a TextOpDto) {
+        match op {
+            TextOpDto::SetFont(Some(family)) => (self.font)(family),
+            TextOpDto::SetFont(None)
+            | TextOpDto::SetSize(_)
+            | TextOpDto::GrowSize(_)
+            | TextOpDto::ScaleSize(_)
+            | TextOpDto::SetColor(_)
+            | TextOpDto::SetWeight(_)
+            | TextOpDto::SetItalic(_) => {}
+        }
     }
 }
 
-/// A ring layout op names no verb and shows nothing; listed as
-/// [`text`] is.
+/// A ring layout op names no verb, no font and shows nothing; listed so
+/// that one added that does fails to compile.
 fn layout(op: &LayoutOpDto) {
     match op {
         LayoutOpDto::SetSpan(_) | LayoutOpDto::SetSides(_) | LayoutOpDto::SetSpacing(_) => {}

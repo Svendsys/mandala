@@ -794,15 +794,29 @@ pub(crate) fn color_of(
 }
 
 /// The face the font family name `family` stands for, as the loader
-/// reads a `font` key: a family this build compiles in and a file can
-/// name ([`nameable_font`](crate::document::place::nameable_font)), or
-/// `None` — for an unknown name, and for one that is only an installed
-/// system font (#329). One rule for a file and for a typed name, so the
-/// console accepts exactly the faces a load does.
+/// reads a `font` key: the compiled face that bears the name, or else the
+/// installed family of that name (#329) — whether or not this machine
+/// has it, since a map names a family and the machine it is opened on
+/// may lack it ([`FontRef::Installed`](crate::document::values::FontRef::Installed)).
+/// Refused only for a name that cannot be one
+/// ([`family_fault`](crate::document::place::family_fault)). One rule for
+/// a file and for a typed name, so the console accepts exactly the faces
+/// a load does.
 ///
-/// Cost: a scan of the compiled-in families (about 30).
-pub fn font(family: &str) -> Option<crate::font::fonts::AppFont> {
-    crate::font::fonts::app_font_by_family(family).filter(|font| crate::document::place::nameable_font(*font))
+/// Builds no font system and scans no host font: an unaffected map is
+/// read, and laid out, as it was.
+///
+/// Cost: a binary search of the compiled families, and for an installed
+/// one the name's length and one allocation.
+pub fn font(family: &str) -> Result<crate::document::values::FontRef, crate::document::place::FamilyFault> {
+    use crate::document::values::{FamilyName, FontRef};
+    if let Some(fault) = crate::document::place::family_fault(family) {
+        return Err(fault);
+    }
+    Ok(match crate::font::fonts::app_font_by_family(family) {
+        Some(font) => FontRef::Compiled(font),
+        None => FontRef::Installed(FamilyName::checked(family)),
+    })
 }
 
 /// `rgba` in the file's spelling: `#rrggbb`, or `#rrggbbaa` when it is

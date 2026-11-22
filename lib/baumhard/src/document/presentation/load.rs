@@ -38,7 +38,7 @@ use crate::document::bounds::{
     MAX_DEFINITION_PARTS,
 };
 use crate::document::edit::load::check_nesting;
-use crate::document::edit::resolve::{self, Fault, NameKind};
+use crate::document::edit::resolve::{self, Fault};
 use crate::document::edit::{Animate, Easing, Filter, Mutations, Target};
 use crate::document::format::edits::{AnimateDto, SnapDto};
 use crate::document::format::error::{render_path, LoadError, LoadErrorKind, Seg};
@@ -331,12 +331,7 @@ pub(crate) fn to_dto(def: &PresentationDef) -> PresentationDto {
 /// A refusal of a resolution at load, under `segs`.
 fn fault(segs: Vec<Seg>, fault: Fault) -> (Vec<Seg>, LoadErrorKind) {
     let kind = match fault {
-        Fault::Unknown {
-            kind: NameKind::Font,
-            name,
-            ..
-        } => LoadErrorKind::UnknownFont { family: name },
-        // Every other name answers at load, against no map.
+        // Every name answers at load, against no map.
         Fault::Unknown { field, name, .. } => LoadErrorKind::InvalidPresentation {
             message: format!("`{field}`: `{name}` is not a name"),
         },
@@ -344,6 +339,7 @@ fn fault(segs: Vec<Seg>, fault: Fault) -> (Vec<Seg>, LoadErrorKind) {
         Fault::Invalid { message, .. } => LoadErrorKind::InvalidPresentation {
             message: message.to_string(),
         },
+        Fault::Family { fault, .. } => fault.into(),
     };
     (segs, kind)
 }

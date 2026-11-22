@@ -249,7 +249,25 @@ the parity trajectory (or why none is owed):
   64-bit wasm target, which is not this project's to schedule.
 - **Clipboard OS layer** (`src/application/clipboard.rs`) — native
   is backed by `arboard`; WASM is stubbed pending async-clipboard
-  integration (CONCEPTS §6 "Clipboard"). The browser's Copy, Cut and
+  integration (CONCEPTS §6 "Clipboard").
+- **Installed font families** (`baumhard::font::fonts`'
+  `complete_font_system` and `rescan_installed`,
+  `src/application/missing_fonts.rs`; #329) — a map may name a font
+  family installed on the machine it was made on (`format/fonts.md`
+  "Installed families"). Native loads the host's installed fonts, draws
+  a named family that is there, and rescans for a missing one when a
+  map is opened or on `font rescan` (`RescanFonts`, a `NativeOnly`
+  Action the browser answers `unsupported`). **The browser reads no
+  installed font**, so every installed family a map names is missing
+  there: the map loads, its text is drawn in the stand-in (the default
+  face), the name is saved back as it was read, the status line says so,
+  and IPC offers the same report and replacement (`query.fonts`,
+  `act.action ReplaceFontFamily`), both served on both targets. The
+  console prompt is native because the console shell is (above). Parity
+  is the Local Font Access API (`window.queryLocalFonts`), which only
+  Chromium-based browsers have, behind a permission prompt the user
+  must trigger, and which hands back font bytes the wasm font system
+  would load asynchronously after the map; not yet scheduled. The browser's Copy, Cut and
   Paste use the app's own clipboard, which the document holds on both
   targets (`clipboard::Clipboard`), so they work within the page and
   reach no other app. Parity is the async-clipboard integration, not

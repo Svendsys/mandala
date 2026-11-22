@@ -31,10 +31,9 @@ use baumhard::document::element::DocElement;
 use baumhard::document::format::load;
 use baumhard::document::ids::Document;
 use baumhard::document::resolve::resolve_node;
-use baumhard::document::values::{Shape, ZoomWindow};
+use baumhard::document::values::{FontRef, Shape, ZoomWindow};
 use baumhard::flow::FILLER_SPAN;
 use baumhard::font::fallback::fallback_families;
-use baumhard::font::fonts::AppFont;
 use baumhard::gfx_structs::run::{GlyphRunData, RunShape};
 use baumhard::projection::{GlyphLayers, Layer, Projector};
 use glam::Vec2;
@@ -363,7 +362,7 @@ fn shaped_glyphs(run: &GlyphRunData) -> Vec<(String, glyphon::fontdb::ID, u16)> 
 /// family's bold face), read by name from the font system as a pin is
 /// matched, and the fallback's (#228, #297): the default face, the
 /// ornament faces and the script faces.
-fn allowed_faces(fs: &glyphon::FontSystem, fonts: &[AppFont]) -> Vec<glyphon::fontdb::ID> {
+fn allowed_faces(fs: &glyphon::FontSystem, fonts: &[FontRef]) -> Vec<glyphon::fontdb::ID> {
     let compiled = &baumhard::font::fonts::COMPILED_FONT_ID_MAP;
     let families_of = |ids: &[glyphon::fontdb::ID]| -> Vec<String> {
         ids.iter()
@@ -373,7 +372,7 @@ fn allowed_faces(fs: &glyphon::FontSystem, fonts: &[AppFont]) -> Vec<glyphon::fo
     };
     let pinned: Vec<String> = fonts
         .iter()
-        .filter_map(|font| compiled.get(font))
+        .filter_map(|font| font.compiled().and_then(|font| compiled.get(&font)))
         .flat_map(|ids| families_of(ids))
         .collect();
     let mut allowed: Vec<glyphon::fontdb::ID> = compiled
@@ -424,7 +423,7 @@ fn test_demo_maps_draw_every_glyph_in_a_face_they_pin_or_the_fallback() {
         let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
         let doc = load(&text).unwrap_or_else(|e| panic!("{name} must load: {e}"));
         let projected = with_fonts(|fs| project(&doc, fs));
-        unpinned += usize::from(projected.fonts.contains(&AppFont::Any));
+        unpinned += usize::from(projected.fonts.contains(&FontRef::DEFAULT));
         with_fonts(|fs| {
             let fs = fs.fonts();
             let allowed = allowed_faces(fs, &projected.fonts);

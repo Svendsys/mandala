@@ -114,8 +114,8 @@ pub enum MutationError {
         /// The cluster after the last one named.
         end: usize,
     },
-    /// A face that names no compiled-in font: `AppFont::Any` is the
-    /// shaper's fallback, which a map never stores (ruling R11.2 on #236).
+    /// A face no file can name: `AppFont::Any`, the shaper's fallback,
+    /// which a map never stores (ruling R11.2 on #236).
     AnyFont {
         /// Where.
         at: MutatorPath,

@@ -48,12 +48,11 @@ use crate::document::ids::{Definitions, Document, IdentIndex, NodeIdent};
 use crate::document::keyed::KeyedMap;
 use crate::document::shape::validate_shape;
 use crate::document::values::{
-    ColorRef, FitMode, FontSize, Percent, PlainColor, Rgba, Shape, StartPoint, VarId, VerbId, Weight,
-    ZoomWindow,
+    ColorRef, FitMode, FontRef, FontSize, Percent, PlainColor, Rgba, Shape, StartPoint, VarId, VerbId,
+    Weight, ZoomWindow,
 };
 use crate::document::writer::Derived;
 use crate::engine::tree::{Placement, Tree};
-use crate::font::fonts::AppFont;
 use glam::Vec2;
 
 /// What every step of the builder returns.
@@ -154,9 +153,9 @@ pub(super) struct Builder {
     pub highest: u32,
     /// The links to resolve once every node is built.
     pub links: Vec<PendingLink>,
-    /// The font families already looked up: `None` for one this build
-    /// has no face for.
-    pub fonts: KeyedMap<String, Option<AppFont>>,
+    /// The font families already looked up, each with what it stands
+    /// for, or why it cannot be a family name.
+    pub fonts: KeyedMap<String, Result<FontRef, crate::document::place::FamilyFault>>,
     /// The definitions the header carries, for the document.
     pub definitions: Definitions,
     /// What the document derives from its tree, gathered as it is
@@ -616,31 +615,22 @@ impl Builder {
         self.bounded("weight", Weight::new(value))
     }
 
-    /// The face a font family name stands for. A name this build has no
-    /// face for is an error, and so is one that is only an installed
-    /// system font: it resolves to the fallback face
-    /// ([`AppFont::Any`]), which has no name a file could write, so
-    /// the document could not save it back (#329 lets a map name one).
-    /// Which faces a document may hold is
-    /// [`nameable_font`](crate::document::place::nameable_font), the rule
-    /// the mutations share.
-    pub fn font(&mut self, family: &str) -> LoadResult<AppFont> {
+    /// The face a font family name stands for ([`super::font`]): a
+    /// compiled face, or an installed family by name, whether or not this
+    /// machine has it (#329). Only a name that cannot be one is an error
+    /// ([`family_fault`](crate::document::place::family_fault)). Each
+    /// name is read once per load, so every span of one installed family
+    /// holds one shared copy of its name.
+    pub fn font(&mut self, family: &str) -> LoadResult<FontRef> {
         let found = match self.fonts.get(family) {
-            Some(found) => *found,
+            Some(found) => found.clone(),
             None => {
                 let found = super::font(family);
-                self.fonts.insert(family.to_string(), found);
+                self.fonts.insert(family.to_string(), found.clone());
                 found
             }
         };
-        found.ok_or_else(|| {
-            self.error_at(
-                "font",
-                LoadErrorKind::UnknownFont {
-                    family: family.to_string(),
-                },
-            )
-        })
+        found.map_err(|fault| self.error_at("font", fault.into()))
     }
 
     /// A theme variable by name.

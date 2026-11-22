@@ -110,6 +110,111 @@ pub enum FontSize {
     Rel(f32),
 }
 
+/// The name of an installed font family a map names: one no compiled
+/// face bears (#329). Held, not parsed: the family is looked up by this
+/// name among the faces the machine has installed, and when it has none,
+/// its text is drawn in the default face, its stand-in, until the user
+/// installs it or picks a replacement. Shared, so every span of one
+/// family in a load holds one copy; compared by its text. Made only by
+/// [`format::font`](crate::document::format::font), which holds it to
+/// [`family_fault`](crate::document::place::family_fault) and to naming
+/// no compiled family.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FamilyName(std::sync::Arc<str>);
+
+impl FamilyName {
+    /// The name `format::font` checked. Crate-private: a name is made
+    /// only where it is checked.
+    pub(crate) fn checked(name: &str) -> Self {
+        FamilyName(name.into())
+    }
+
+    /// The family name, as the map spells it. O(1).
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for FamilyName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A face as a text style stores it: a compiled face, or an installed
+/// family by name (#329).
+///
+/// Serialized as the family name a map's `font` key writes — a compiled
+/// face's first name ([`family_name_of`](crate::font::fonts::family_name_of)),
+/// an installed family's own — and read back as the loader reads that
+/// key ([`format::font`](crate::document::format::font)), so a predicate
+/// spells a face as the file does.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum FontRef {
+    /// A compiled face, drawn alike on every target.
+    /// [`AppFont::Any`](crate::font::fonts::AppFont::Any) is the default
+    /// face, which no element stores explicitly.
+    Compiled(crate::font::fonts::AppFont),
+    /// An installed family, drawn in its faces where this machine has
+    /// them and in the default face where it does not.
+    Installed(FamilyName),
+}
+
+impl FontRef {
+    /// The default face: what text that names no family is drawn in, and
+    /// a missing family's stand-in.
+    pub const DEFAULT: FontRef = FontRef::Compiled(crate::font::fonts::AppFont::Any);
+
+    /// The family name a map writes for this face; `None` for the
+    /// default face, which a file never names. O(the compiled families)
+    /// for a compiled face, O(1) for an installed one.
+    pub fn family(&self) -> Option<&str> {
+        match self {
+            FontRef::Compiled(font) => crate::font::fonts::family_name_of(*font),
+            FontRef::Installed(family) => Some(family.as_str()),
+        }
+    }
+
+    /// The compiled face this names, if it is one. O(1).
+    pub fn compiled(&self) -> Option<crate::font::fonts::AppFont> {
+        match self {
+            FontRef::Compiled(font) => Some(*font),
+            FontRef::Installed(_) => None,
+        }
+    }
+
+    /// The installed family this names, if it is one. O(1).
+    pub fn installed(&self) -> Option<&FamilyName> {
+        match self {
+            FontRef::Installed(family) => Some(family),
+            FontRef::Compiled(_) => None,
+        }
+    }
+}
+
+impl From<crate::font::fonts::AppFont> for FontRef {
+    /// The compiled face `font`. O(1).
+    fn from(font: crate::font::fonts::AppFont) -> Self {
+        FontRef::Compiled(font)
+    }
+}
+
+impl Serialize for FontRef {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.family() {
+            Some(family) => serializer.serialize_str(family),
+            None => Err(serde::ser::Error::custom("the default face has no family name")),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FontRef {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let family = Cow::<'de, str>::deserialize(deserializer)?;
+        crate::document::format::font(&family).map_err(serde::de::Error::custom)
+    }
+}
+
 /// A percentage, `0..=100`. The constructor clamps, so a `Percent` is
 /// in range by construction.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -51,13 +51,13 @@ use baumhard::document::resolve::{
     resolve_background, resolve_frame, resolve_node, resolve_path, resolve_ring, resolve_text, Content,
     ResolvedText,
 };
-use baumhard::document::values::{Align, FitMode, FontSize, LinkKind};
+use baumhard::document::values::{Align, FitMode, FontRef, FontSize, LinkKind};
 use baumhard::engine::tree::Placement;
 use baumhard::flow::{
     offset, outline, place_on_closed, ring_offset, shape_box, shape_run, FlowSpan, PlacedRun, Rect,
     RingLayout, ShapedRun,
 };
-use baumhard::font::fonts::{self, AppFont, FontSystemLease};
+use baumhard::font::fonts::{self, FontSystemLease};
 use baumhard::gfx_structs::camera::Camera2D;
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
@@ -103,14 +103,14 @@ pub(super) struct Projected {
     /// node id and place.
     pub(super) labels: Vec<String>,
     /// The face every span shaped asks for, and every ring's own (its
-    /// sides' face), each once: what the map pins, `AppFont::Any` for a
+    /// sides' face), each once: what the map pins, `FontRef::DEFAULT` for a
     /// span that pins nothing.
-    pub(super) fonts: Vec<AppFont>,
+    pub(super) fonts: Vec<FontRef>,
 }
 
 impl Projected {
     /// Record `fonts` in [`Projected::fonts`], each once.
-    fn pin(&mut self, fonts: impl IntoIterator<Item = AppFont>) {
+    fn pin(&mut self, fonts: impl IntoIterator<Item = FontRef>) {
         for font in fonts {
             if !self.fonts.contains(&font) {
                 self.fonts.push(font);
@@ -271,7 +271,7 @@ pub(super) fn project(doc: &Document, fs: &mut FontSystemLease) -> Projected {
                 continue;
             };
             let spans = spans_of(doc, section, 0.0);
-            out.pin(spans.iter().map(|(_, style)| style.font));
+            out.pin(spans.iter().map(|(_, style)| style.font.clone()));
             let shaped = shape_box(
                 &flow_spans(&spans),
                 s.min_size,
@@ -310,7 +310,12 @@ pub(super) fn project(doc: &Document, fs: &mut FontSystemLease) -> Projected {
                 let d = ring_offset(f.inset, f.gap, &heights);
                 let path = offset(&base, d);
                 let style = in_points(resolve_text(tree, ring, &mut ()), side);
-                out.pin(spans.iter().map(|(_, style)| style.font).chain([style.font]));
+                out.pin(
+                    spans
+                        .iter()
+                        .map(|(_, style)| style.font.clone())
+                        .chain([style.font.clone()]),
+                );
                 let resolved = resolve_ring(tree, ring, &mut ());
                 let shaped = shape_run(&flow_spans(&spans), 1.0, fs);
                 let (rescaled, placed) = place_on_closed(
@@ -379,7 +384,11 @@ pub(super) fn project(doc: &Document, fs: &mut FontSystemLease) -> Projected {
         };
         // The faces it asks for: its spans', or its text's style's.
         match resolve_path(tree, path, &mut ()).content {
-            Content::Spans => out.pin(spans_of(doc, path, 0.0).iter().map(|(_, style)| style.font)),
+            Content::Spans => out.pin(
+                spans_of(doc, path, 0.0)
+                    .iter()
+                    .map(|(_, style)| style.font.clone()),
+            ),
             Content::Text(_) => out.pin([resolve_text(tree, path, &mut ()).font]),
         }
         let moved = GlyphRunData::new(

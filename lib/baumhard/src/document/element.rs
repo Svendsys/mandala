@@ -25,11 +25,10 @@
 
 use crate::arena::NodeId;
 use crate::document::values::{
-    Align, Anchor, ColorRef, Direction, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteId,
-    PlainColor, Rgba, Shape, Sides, StartPoint, VerbId, Weight, ZoomWindow,
+    Align, Anchor, ColorRef, Direction, FitMode, FontRef, FontSize, LineSpan, LinkKind, LinkTarget,
+    PaletteId, PlainColor, Rgba, Shape, Sides, StartPoint, VerbId, Weight, ZoomWindow,
 };
 use crate::engine::element::TreeElement;
-use crate::font::fonts::AppFont;
 use crate::util::grapheme_chad::split_off_graphemes;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
@@ -114,7 +113,7 @@ impl DocKind {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TextStyle {
     /// The face.
-    pub font: Option<AppFont>,
+    pub font: Option<FontRef>,
     /// The size. `Rel` only inside a frame.
     pub size: Option<FontSize>,
     /// The color.

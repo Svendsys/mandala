@@ -272,7 +272,7 @@ fn test_a_color_reads_in_every_spelling_the_schema_lists() {
 fn test_a_font_reads_by_family_name_and_saves_by_family_name() {
     let doc = load_node(r#","font":"Public Pixel","sections":[{"align":"left"}]"#).unwrap();
     let (one, data) = node(&doc, 1);
-    assert_eq!(data.style.text.font, Some(AppFont::PublicPixel));
+    assert_eq!(data.style.text.font, Some(AppFont::PublicPixel.into()));
     let DocElement::Section(section) = kid(&doc, one, DocKind::Section, 0).1 else { panic!("a section") };
     assert_eq!(section.align, Some(Align::Left));
     assert!(written(&doc).contains("\"font\": \"Public Pixel\""));

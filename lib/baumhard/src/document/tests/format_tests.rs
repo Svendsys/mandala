@@ -162,7 +162,7 @@ pub fn do_format_full_fixture_reads_as_written() {
                 radius: Percent::new(10)
             }),
             text: TextStyle {
-                font: Some(AppFont::PublicPixel),
+                font: Some(AppFont::PublicPixel.into()),
                 size: Some(FontSize::Pt(20.0)),
                 color: Some(ColorRef::Var(VarId(2))),
                 weight: Some(Weight::NORMAL),
@@ -192,7 +192,7 @@ pub fn do_format_full_fixture_reads_as_written() {
                 spacing: Some(2.0),
             },
             text: TextStyle {
-                font: Some(AppFont::PublicPixel),
+                font: Some(AppFont::PublicPixel.into()),
                 size: Some(FontSize::Rel(0.05)),
                 color: Some(ColorRef::Var(VarId(0))),
                 weight: Some(Weight::BOLD),
@@ -210,7 +210,7 @@ pub fn do_format_full_fixture_reads_as_written() {
                 spacing: Some(0.0),
             },
             text: TextStyle {
-                font: Some(AppFont::Novem),
+                font: Some(AppFont::Novem.into()),
                 size: Some(FontSize::Rel(0.06)),
                 color: Some(ColorRef::Rgba(Rgba::opaque(0x30, 0xb0, 0x82))),
                 weight: Some(Weight::NORMAL),
@@ -227,7 +227,7 @@ pub fn do_format_full_fixture_reads_as_written() {
             t: Some(0.5),
             offset: Some(6.0),
             text: TextStyle {
-                font: Some(AppFont::PublicPixel),
+                font: Some(AppFont::PublicPixel.into()),
                 size: Some(FontSize::Pt(13.2)),
                 color: Some(ColorRef::Var(VarId(2))),
                 weight: Some(Weight::NORMAL),
@@ -273,7 +273,7 @@ pub fn do_format_full_fixture_reads_as_written() {
     assert_eq!(
         data.style.text,
         TextStyle {
-            font: Some(AppFont::PublicPixel),
+            font: Some(AppFont::PublicPixel.into()),
             size: Some(FontSize::Pt(28.0)),
             color: Some(ColorRef::Palette(PaletteField::Text)),
             weight: Some(Weight::BOLD),
@@ -351,7 +351,7 @@ pub fn do_format_full_fixture_reads_as_written() {
         cap,
         &DocElement::CapStart(CapData {
             text: TextStyle {
-                font: Some(AppFont::Novem),
+                font: Some(AppFont::Novem.into()),
                 size: Some(FontSize::Pt(16.0)),
                 color: Some(ColorRef::Rgba(Rgba::opaque(0xff, 0, 0))),
                 weight: Some(Weight::BOLD),
@@ -489,7 +489,7 @@ fn builder_documents() -> Vec<(&'static str, crate::document::ids::Document)> {
         });
         a.folded = true;
         a.opacity = 0.5;
-        a.style.text.font = Some(AppFont::Novem);
+        a.style.text.font = Some(AppFont::Novem.into());
         a.style.text.size = Some(FontSize::Pt(31.0));
         a.style.text.color = Some(ColorRef::Var(VarId(1)));
         a.style.text.weight = Some(Weight::new(300).unwrap());

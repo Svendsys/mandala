@@ -1000,7 +1000,7 @@ mod cold_process {
     fn shaped_cold() -> String {
         let mut fs = FontSystemLease::new("flow::cold");
         let heading = crate::document::resolve::ResolvedText {
-            font: AppFont::Any,
+            font: AppFont::Any.into(),
             size: FontSize::Pt(74.0),
             weight: crate::document::values::Weight::BOLD,
             ..style(12.0)

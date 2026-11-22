@@ -64,7 +64,7 @@ const FAR: Vec2 = Vec2::new(100_000.0, 100_000.0);
 
 fn style(font: AppFont, points: f32, color: Rgba) -> ResolvedText {
     ResolvedText {
-        font,
+        font: font.into(),
         size: FontSize::Pt(points),
         color,
         weight: Weight::NORMAL,

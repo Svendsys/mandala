@@ -269,6 +269,41 @@ pub(super) const FAMILY: Family = Family {
             run: undo,
         },
         CommandSpec {
+            name: "query.fonts",
+            summary: "The fonts: every family a map can name here, compiled or installed, and the installed \
+                      families the open map names, each with whether this machine has it (#329).",
+            params: &[],
+            result: &[
+                ResultSpec::new(
+                    "families",
+                    ParamType::Array,
+                    "Every family the font system holds, sorted by name: {name, source}, source \"compiled\" \
+                     or \"installed\". The browser lists the compiled ones alone.",
+                ),
+                ResultSpec::new(
+                    "named",
+                    ParamType::Array,
+                    "The installed families the map names, sorted by name: {family, installed, elements, \
+                     definitions}. elements counts the elements, and the defaults' text styles, that name it; \
+                     definitions lists the edits and presentations that do, which a replacement leaves as they \
+                     are.",
+                ),
+                ResultSpec::new(
+                    "missing",
+                    ParamType::Array,
+                    "The names in named this machine lacks: their text is drawn in stand_in until one is \
+                     installed (then act.action RescanFonts) or replaced (act.action ReplaceFontFamily).",
+                ),
+                ResultSpec::new(
+                    "stand_in",
+                    ParamType::String,
+                    "The face a missing family's text is drawn in: Inter Variable, at the span's weight and slant.",
+                ),
+            ],
+            support: Support::Everywhere,
+            run: fonts,
+        },
+        CommandSpec {
             name: "query.animations",
             summary: "What is animating: the presentation instances playing, a running animated edit, and the map \
                       verbs running.",
@@ -511,6 +546,10 @@ fn undo(call: &mut Call<'_>) -> Reply {
     with_document(call, |doc, _| doc.ipc_undo_json(limit))
 }
 
+fn fonts(call: &mut Call<'_>) -> Reply {
+    with_document(call, |doc, _| crate::application::missing_fonts::ipc_json(doc))
+}
+
 fn animations(call: &mut Call<'_>) -> Reply {
     with_document(call, |doc, app| doc.ipc_animations_json(app.clock().now_ms()))
 }
@@ -643,7 +682,7 @@ mod tests {
         }
     }
 
-    const ALL_QUERIES: [&str; 8] = [
+    const ALL_QUERIES: [&str; 9] = [
         r#"{"id":1,"cmd":"query.document"}"#,
         r#"{"id":1,"cmd":"query.selection"}"#,
         r#"{"id":1,"cmd":"query.camera"}"#,
@@ -652,6 +691,7 @@ mod tests {
         r#"{"id":1,"cmd":"query.editors"}"#,
         r#"{"id":1,"cmd":"query.undo"}"#,
         r#"{"id":1,"cmd":"query.animations"}"#,
+        r#"{"id":1,"cmd":"query.fonts"}"#,
     ];
 
     /// Every query answers `no_document` with no app attached, and
@@ -665,7 +705,44 @@ mod tests {
         }
     }
 
-    /// With the app up but its initial load failed, the four queries
+    /// **`query.fonts` reports the installed families the map names, and
+    /// which this machine lacks** (#329): on a map naming the installed
+    /// family `Nope Sans` on two elements, `named` holds it with that
+    /// count and `installed: false`, `missing` names it, `stand_in` is the
+    /// default face, and `families` lists every compiled family as
+    /// `compiled`. Controls: the fixture alone (no installed family)
+    /// reports `named` and `missing` empty; a reply reading only spans
+    /// would count 1.
+    #[test]
+    fn test_query_fonts_reports_the_missing_families_and_every_family_a_map_can_name() {
+        let json = r#"{"format":1,"name":"f","nodes":[{"id":1,"position":[0.0,0.0],"font":"Nope Sans","sections":[{"spans":[{"text":"a","font":"Nope Sans"},{"text":"b","font":"Public Pixel"}]}]}]}"#;
+        let mut app = LoadedApp {
+            doc: Some(MindMapDocument::from_json_str(json, None, 50).expect("the map loads")),
+            clock: crate::application::clock::AppClock::default(),
+        };
+        let (reply, repaint) = run_attached(r#"{"id":1,"cmd":"query.fonts"}"#, &mut app);
+        assert!(!repaint, "a query never asks for a frame");
+        let result = &reply["result"];
+        assert_eq!(
+            result["named"],
+            json!([{"family": "Nope Sans", "installed": false, "elements": 2, "definitions": []}])
+        );
+        assert_eq!(result["missing"], json!(["Nope Sans"]));
+        assert_eq!(result["stand_in"], json!("Inter Variable"));
+        let families = result["families"].as_array().expect("families");
+        for (name, _) in baumhard::font::fonts::compiled_families() {
+            assert!(
+                families.contains(&json!({"name": name, "source": "compiled"})),
+                "{name} is listed as compiled"
+            );
+        }
+        let mut control = LoadedApp::with_fixture();
+        let (reply, _) = run_attached(r#"{"id":1,"cmd":"query.fonts"}"#, &mut control);
+        assert_eq!(reply["result"]["named"], json!([]), "control: {reply}");
+        assert_eq!(reply["result"]["missing"], json!([]));
+    }
+
+    /// With the app up but its initial load failed, the five queries
     /// that read the document say so, in words that tell the agent
     /// how to load one; the four shell queries need no document.
     #[test]
@@ -674,7 +751,13 @@ mod tests {
             doc: None,
             clock: crate::application::clock::AppClock::default(),
         };
-        for frame in [ALL_QUERIES[0], ALL_QUERIES[1], ALL_QUERIES[6], ALL_QUERIES[7]] {
+        for frame in [
+            ALL_QUERIES[0],
+            ALL_QUERIES[1],
+            ALL_QUERIES[6],
+            ALL_QUERIES[7],
+            ALL_QUERIES[8],
+        ] {
             let (reply, repaint) = run_attached(frame, &mut app);
             assert_eq!(reply["error"]["code"], json!("no_document"), "{frame}");
             assert!(

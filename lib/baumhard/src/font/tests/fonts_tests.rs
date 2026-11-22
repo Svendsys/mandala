@@ -11,8 +11,8 @@ use cosmic_text::SwashCache;
 use crate::font::fallback::DEFAULT_FACE;
 use crate::font::fonts;
 use crate::font::fonts::{
-    acquire_font_system_write, app_font_by_family, family_name_of, list_loaded_families,
-    loaded_families_iter, measure_glyph_ink_bounds, measure_text_block_unbounded, AppFont,
+    acquire_font_system_write, app_font_by_family, compiled_families, family_name_of, list_loaded_families,
+    loaded_families, measure_glyph_ink_bounds, measure_text_block_unbounded, AppFont, FamilySource,
 };
 
 #[test]
@@ -386,67 +386,214 @@ fn test_app_font_by_family_round_trips() {
     do_app_font_by_family_round_trips();
 }
 
-/// Every family name from `loaded_families_iter` resolves back to
-/// some `AppFont` via `app_font_by_family`. This is the
-/// round-trip contract `font set <name>` relies on: a name picked
-/// from the popup must always resolve when the user submits it.
+/// Every loaded family resolves through `app_font_by_family` exactly
+/// when it is compiled: a compiled one to the `AppFont` the family index
+/// attributes it to, an installed one to `None`, since a map names an
+/// installed family by its name (#329). Controls: `app_font_by_family`
+/// answering every name with `AppFont::Any` turns the installed arm red
+/// (on a host with an installed family), and answering every name with
+/// `None` turns the compiled arm red.
 pub fn do_app_font_by_family_round_trips() {
     fonts::init();
-    for family in loaded_families_iter() {
-        assert!(
-            app_font_by_family(family).is_some(),
-            "family '{}' should resolve to some AppFont",
-            family
-        );
+    let families = loaded_families();
+    assert!(
+        families.len() >= compiled_families().len(),
+        "precondition: every compiled family is loaded"
+    );
+    for family in families.iter() {
+        match family.source {
+            FamilySource::Compiled(font) => assert_eq!(
+                app_font_by_family(&family.name),
+                Some(font),
+                "compiled family '{}' resolves to its face",
+                family.name
+            ),
+            FamilySource::Installed => assert_eq!(
+                app_font_by_family(&family.name),
+                None,
+                "installed family '{}' names no compiled face",
+                family.name
+            ),
+        }
     }
 }
 
 /// `family_name_of` reverses `app_font_by_family` for every
-/// loaded family — the post-mutation reverse-converter relies on
-/// the round-trip when rolling tree-side `ColorFontRegion.font:
-/// Option<AppFont>` back into the model's
-/// `TextRun.font: String`. Empty / unknown families resolve to
-/// `None` rather than panicking, matching the optional-pin
-/// contract on `app_font_by_family`.
+/// compiled family: what the format's writer relies on to write a
+/// compiled face back under a name that loads it. A face with several
+/// names (aliases collapse to the alphabetical first) writes a name
+/// that loads the same face.
 #[test]
 fn test_family_name_of_round_trips() {
     do_family_name_of_round_trips();
 }
 
 pub fn do_family_name_of_round_trips() {
-    fonts::init();
-    for family in loaded_families_iter() {
-        let app_font = app_font_by_family(family).expect("loaded family resolves");
+    for (family, _) in compiled_families() {
+        let family = family.as_str();
+        let app_font = app_font_by_family(family).expect("compiled family resolves");
         // Every loaded AppFont has at least one family name back —
         // not necessarily *this* exact name (multiple aliases per
         // AppFont collapse to alphabetical-first), but always
         // some non-empty name.
         let back = family_name_of(app_font);
         assert!(
-            back.is_some_and(|s| !s.is_empty()),
-            "family '{}' (AppFont {:?}) must reverse to a non-empty name",
+            back.is_some_and(|s| !s.is_empty() && app_font_by_family(s) == Some(app_font)),
+            "family '{}' (AppFont {:?}) must reverse to a name that loads it, got {back:?}",
             family,
             app_font
         );
     }
+    assert_eq!(
+        family_name_of(AppFont::Any),
+        None,
+        "the fallback face has no name"
+    );
 }
 
 #[test]
-fn test_loaded_families_iter_matches_owned_list() {
-    do_loaded_families_iter_matches_owned_list();
+fn test_a_compiled_family_maps_its_name_only_where_its_face_holds_every_letter() {
+    do_a_compiled_family_maps_its_name_only_where_its_face_holds_every_letter();
 }
 
-/// `loaded_families_iter` yields the same names, in the same
-/// order, as the owned `list_loaded_families` helper — the iterator
-/// helper is a zero-allocation alternative, not a different shape.
-pub fn do_loaded_families_iter_matches_owned_list() {
-    fonts::init();
-    let owned = list_loaded_families();
-    let borrowed: Vec<&'static str> = loaded_families_iter().collect();
-    assert_eq!(owned.len(), borrowed.len());
-    for (a, b) in owned.iter().zip(borrowed.iter()) {
-        assert_eq!(a, b);
+/// `compiled_family_maps` reads a face's own character map: the default
+/// face maps its name and every Latin letter, a symbol face that lacks
+/// letters does not map a word, a family no compiled face bears maps
+/// nothing, and whitespace never counts. Which compiled families cannot
+/// draw their own name is listed exactly, so a face changed or added
+/// that cannot is seen here (the console draws such a family's row in
+/// the default face, #329). Controls: a check that ignored the map
+/// (always `true`) turns the list red, empty; one that counted
+/// whitespace turns `Inter Variable` red.
+pub fn do_a_compiled_family_maps_its_name_only_where_its_face_holds_every_letter() {
+    use crate::font::fonts::compiled_family_maps;
+    assert!(compiled_family_maps("Inter Variable", "Inter Variable"));
+    assert!(compiled_family_maps(
+        "Inter Variable",
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    ));
+    assert!(
+        !compiled_family_maps("Nope Sans", "Nope Sans"),
+        "an installed family maps nothing"
+    );
+    let unable: Vec<&str> = compiled_families()
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .filter(|name| !compiled_family_maps(name, name))
+        .collect();
+    assert_eq!(
+        unable,
+        [
+            "Critters1DC",
+            "Culinary Art",
+            "Flowers3",
+            "Mandala Emoji",
+            "Mandala Ornaments",
+            "Noto Sans Devanagari",
+            "Noto Sans Egyptian Hieroglyphs",
+            "Noto Sans Hebrew",
+            "Noto Serif Tibetan",
+            "Regal",
+            "Ships",
+            "Symbols1",
+            "picto people",
+        ],
+        "the compiled families whose faces cannot draw their own names"
+    );
+}
+
+/// The installed-pin cache is bounded, and no answer depends on the
+/// bound (#329): a family planted in a font system of its own pins its
+/// face; after more names than the cache holds — the planted one
+/// evicted with them — it pins the same face again, recomputed, and a
+/// name the database lacks stays unpinned. The cache never answers one
+/// font system with another's: `FONT_SYSTEM`, which lacks the family,
+/// pins nothing for it in between, and the planted one still pins it
+/// after. Controls: an eviction made wrong — the cache never emptied at
+/// its bound — turns the bound red at 257; a cache keyed without the
+/// font system's state turns the last pin red (`None`, `FONT_SYSTEM`'s
+/// answer). (No `do_*` twin: it builds a font system of its own.)
+#[test]
+fn test_an_installed_pin_is_recomputed_right_after_its_cache_is_evicted() {
+    use crate::font::fonts::{installed_pinned_family, installed_pins_held, INSTALLED_PINS_HELD};
+    let mut fs = crate::font::fonts::compiled_font_system();
+    let hebrew = fonts::COMPILED_FONT_ID_MAP[&AppFont::NotoSansHebrewRegular][0];
+    let mut planted = fs.db().face(hebrew).cloned().expect("the compiled Hebrew face");
+    planted.families = vec![(
+        "Planted Family".to_string(),
+        cosmic_text::fontdb::Language::English_UnitedStates,
+    )];
+    planted.id = cosmic_text::fontdb::ID::dummy();
+    let id = fs.db_mut().push_face_info(planted);
+    let first = installed_pinned_family(&fs, "Planted Family").expect("the planted family pins");
+    assert_eq!(first.faces, vec![id], "it pins the planted face alone");
+    for k in 0..=INSTALLED_PINS_HELD {
+        assert_eq!(installed_pinned_family(&fs, &format!("Absent {k}")), None);
+        assert!(
+            installed_pins_held() <= INSTALLED_PINS_HELD,
+            "the cache holds at most its bound, at name {k}"
+        );
     }
+    assert_eq!(
+        installed_pinned_family(&fs, "Planted Family"),
+        Some(first.clone()),
+        "recomputed after the eviction, the same pin"
+    );
+    assert_eq!(
+        installed_pinned_family(&fs, "Absent 0"),
+        None,
+        "an evicted absence stays absent"
+    );
+    let global = fonts::acquire_font_system_read("fonts_tests::installed_pin");
+    assert_eq!(
+        installed_pinned_family(&global, "Planted Family"),
+        None,
+        "another font system, which lacks the family, pins nothing"
+    );
+    drop(global);
+    assert_eq!(
+        installed_pinned_family(&fs, "Planted Family"),
+        Some(first),
+        "and is never answered for this one"
+    );
+}
+
+#[test]
+fn test_loaded_families_list_every_compiled_family_as_compiled() {
+    do_loaded_families_list_every_compiled_family_as_compiled();
+}
+
+/// The loaded families hold every compiled family, attributed to the
+/// face the compiled index names, and mark every other family installed
+/// — what `font list`, the completion and `query.fonts` mark apart
+/// (#329). The owned `list_loaded_families` yields the same names in the
+/// same order. Controls: every family marked `Installed` in
+/// `build_family_index` turns the compiled arm red; every family marked
+/// compiled as `AppFont::Any` turns it red too.
+pub fn do_loaded_families_list_every_compiled_family_as_compiled() {
+    fonts::init();
+    let families = loaded_families();
+    for (name, font) in compiled_families() {
+        let found = families.iter().find(|family| family.name == *name);
+        assert_eq!(
+            found.map(|family| family.source),
+            Some(FamilySource::Compiled(*font)),
+            "compiled family '{name}' is loaded as compiled"
+        );
+    }
+    for family in families
+        .iter()
+        .filter(|family| family.source == FamilySource::Installed)
+    {
+        assert!(
+            !compiled_families().iter().any(|(name, _)| *name == family.name),
+            "installed family '{}' bears no compiled name",
+            family.name
+        );
+    }
+    let owned = list_loaded_families();
+    let names: Vec<&str> = families.iter().map(|family| family.name.as_str()).collect();
+    assert_eq!(owned, names, "the owned list is the index's names");
 }
 
 #[test]
@@ -955,7 +1102,11 @@ pub fn do_every_compiled_face_has_a_family_a_map_can_name() {
     let fs = fonts::acquire_font_system_read("fonts_tests::do_*");
     for (font, family) in &faces {
         let resolved = crate::document::format::font(family);
-        let bears = resolved.is_some_and(|resolved| {
+        let compiled = resolved
+            .as_ref()
+            .ok()
+            .and_then(crate::document::values::FontRef::compiled);
+        let bears = compiled.is_some_and(|resolved| {
             fonts::COMPILED_FONT_ID_MAP[&resolved]
                 .iter()
                 .filter_map(|id| fs.db().face(*id))
@@ -981,7 +1132,7 @@ pub fn do_every_compiled_face_has_a_family_a_map_can_name() {
 /// name": the code span that opens each `- ` line of that section.
 fn families_listed(doc: &str) -> Vec<String> {
     doc.lines()
-        .skip_while(|line| *line != "## The families a map can name")
+        .skip_while(|line| *line != "## The compiled families")
         .skip(1)
         .take_while(|line| !line.starts_with("## "))
         .filter_map(|line| line.strip_prefix("- `"))
@@ -991,22 +1142,22 @@ fn families_listed(doc: &str) -> Vec<String> {
 }
 
 #[test]
-fn test_format_fonts_lists_exactly_the_families_a_map_can_name() {
-    do_format_fonts_lists_exactly_the_families_a_map_can_name();
+fn test_format_fonts_lists_exactly_the_compiled_families() {
+    do_format_fonts_lists_exactly_the_compiled_families();
 }
 
-/// #355: `format/fonts.md` lists exactly the families a map's `font` may
-/// name: every family the font system holds that the loader's own rule
-/// ([`crate::document::format::font`]) accepts, and nothing else. A
-/// host's installed family is offered by `font list` but refused by the
-/// loader (#329), so it is not listed. The list is read from the
+/// #355: `format/fonts.md` lists exactly the compiled families: every
+/// family a compiled face bears that the loader's own rule
+/// ([`crate::document::format::font`]) reads as that compiled face, and
+/// nothing else. An installed family a map may name too (#329), but it is
+/// not compiled in, so it is not listed. The list is read from the
 /// document, which shares nothing with the font system.
 ///
 /// Controls: a family deleted from the list, red naming it unlisted; a
 /// family added that no face bears, red naming it listed and not
 /// nameable; and the face as published restored over the repaired
 /// Scrapbook Chinese, red on `Scrapbook Chinese` listed and not nameable.
-pub fn do_format_fonts_lists_exactly_the_families_a_map_can_name() {
+pub fn do_format_fonts_lists_exactly_the_compiled_families() {
     let doc = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../format/fonts.md"))
         .expect("format/fonts.md is read");
     let mut listed = families_listed(&doc);
@@ -1015,10 +1166,16 @@ pub fn do_format_fonts_lists_exactly_the_families_a_map_can_name() {
     let total = listed.len();
     listed.dedup();
     assert_eq!(listed.len(), total, "a family is listed twice");
-    fonts::init();
-    let nameable: Vec<String> = loaded_families_iter()
-        .filter(|family| crate::document::format::font(family).is_some())
-        .map(str::to_string)
+    let nameable: Vec<String> = compiled_families()
+        .iter()
+        .map(|(family, _)| family)
+        .filter(|family| {
+            matches!(
+                crate::document::format::font(family),
+                Ok(crate::document::values::FontRef::Compiled(_))
+            )
+        })
+        .cloned()
         .collect();
     let unlisted: Vec<&String> = nameable
         .iter()

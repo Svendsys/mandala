@@ -50,7 +50,7 @@ fn facts(run: &ShapedRun) -> (String, Vec<String>) {
 /// `style` in `font`.
 fn in_face(points: f32, font: AppFont) -> ResolvedText {
     ResolvedText {
-        font,
+        font: font.into(),
         ..style(points)
     }
 }

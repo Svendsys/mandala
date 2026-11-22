@@ -51,8 +51,9 @@ rise and fall together.
 - **Font** through `baumhard::font::fonts`. `fonts::init()` once at
   startup; acquire `FONT_SYSTEM` through `acquire_font_system_write`
   (or its `try_` / `_read` siblings — there is no other way in);
-  resolve families through `app_font_by_family` /
-  `loaded_families_iter`. Region-styled text reaches cosmic-text only
+  resolve a map's family names through `document::format::font`, and
+  list families through `loaded_families` (compiled and installed) or
+  `compiled_families`. Region-styled text reaches cosmic-text only
   through `baumhard::font::attrs` (`attrs_list_from_regions`,
   `RegionFamilies`, `rich_text_spans_from_regions`). New code does
   not reach into `cosmic_text` from the app crate, with the renderer

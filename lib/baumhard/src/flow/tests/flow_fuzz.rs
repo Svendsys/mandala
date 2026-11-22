@@ -1902,8 +1902,8 @@ fn check_generated_pinning(
         })
         .collect();
     let flow = style(choices, faces);
-    pinned.extend(styles.iter().map(|style| style.font));
-    pinned.push(flow.font);
+    pinned.extend(styles.iter().filter_map(|style| style.font.compiled()));
+    pinned.extend(flow.font.compiled());
     let mut fs = FontSystemLease::new("flow fuzz");
     let layout = choices.below(4);
     // Collecting far frames, only the frames round an outline are laid.
@@ -2098,7 +2098,7 @@ fn check_generated_pinning(
                                         fit: fit.clone(),
                                         layout: layout.clone(),
                                         outward,
-                                        flow,
+                                        flow: flow.clone(),
                                         scale,
                                         cap,
                                         laid: None,
@@ -2162,7 +2162,7 @@ fn check_generated_pinning(
                                         fit: fit.clone(),
                                         layout: layout.clone(),
                                         outward,
-                                        flow,
+                                        flow: flow.clone(),
                                         scale,
                                         cap,
                                         laid: Some((placed.1.clone(), trace.clone())),
@@ -2298,7 +2298,7 @@ fn check_generated_pinning(
 /// the face lacks still falls back, as it would in a map.
 fn plain_style() -> ResolvedText {
     ResolvedText {
-        font: AppFont::GalatiaSIL,
+        font: AppFont::GalatiaSIL.into(),
         size: FontSize::Pt(16.0),
         color: Rgba::new(255, 255, 255, 255),
         weight: Weight::NORMAL,
@@ -2383,7 +2383,7 @@ fn style(choices: &mut Choices<'_>, faces: &[AppFont]) -> ResolvedText {
         _ => any_f32(choices),
     };
     ResolvedText {
-        font: *choices.pick(faces),
+        font: (*choices.pick(faces)).into(),
         size: FontSize::Pt(size),
         color: Rgba::new(255, 255, 255, choices.below(256) as u8),
         weight: Weight::new(100 * (1 + choices.below(9) as u16)).unwrap_or(Weight::NORMAL),
@@ -4037,10 +4037,7 @@ pub fn shapes_in_pinned_faces(
 ) -> Result<(), String> {
     let pins: Vec<Option<crate::font::fonts::PinnedFamily>> = spans
         .iter()
-        .map(|span| match span.style.font {
-            AppFont::Any => None,
-            font => crate::font::fonts::pinned_family(fs, font),
-        })
+        .map(|span| crate::flow::shape::font_pin(fs, &span.style.font))
         .collect();
     for (face, span, text) in glyphs {
         let Some(Some(pin)) = pins.get(span) else {

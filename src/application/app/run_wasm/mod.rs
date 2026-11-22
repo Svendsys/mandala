@@ -704,6 +704,13 @@ pub(super) fn run(mut app: Application) {
         // reaches this file, so there is nowhere here for the two
         // targets to start disagreeing.
         let mut doc = startup_load::wasm_startup_document(&mindmap_path, settings.history_limit).await;
+        // The fonts the map names that this browser cannot draw: every
+        // installed family, since the browser reads no installed font
+        // (#329, CLAUDE.md "Dual-target status"). The status line says
+        // so; the browser has no console to prompt in, and IPC's
+        // `query.fonts` and `act.action ReplaceFontFamily` offer the
+        // choice.
+        crate::application::missing_fonts::on_open(&mut doc);
 
         // The one full projection of the document's life, the renderer
         // loaded with it and cleared to the map's background, and the

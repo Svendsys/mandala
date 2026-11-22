@@ -151,8 +151,11 @@ thing on two maps whose themes list their variables in other orders.
 A name the open map does not define refuses that run with a message that
 names the edit, the field and the name —
 ``edit `tint`: `color` names theme variable `accent`, which this map does not define`` —
-and nothing is applied. A font family this build has no face for is
-refused when the edit is read, since no map could answer it.
+and nothing is applied. A font family is not such a name: one no
+compiled face bears is an installed family, which the edit sets as it
+is, whether or not this machine has it ([`fonts.md`](./fonts.md#installed-families)).
+Only a name that cannot be a family — empty, holding a control or bidi
+character, or longer than 256 bytes — is refused, when the edit is read.
 
 ### Mutator
 

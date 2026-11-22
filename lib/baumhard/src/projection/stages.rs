@@ -742,7 +742,7 @@ impl Projector {
                     .spans
                     .iter()
                     .zip(&state.spans)
-                    .all(|((kt, ks), (t, s))| kt == t && *ks == in_points(*s, rect))
+                    .all(|((kt, ks), (t, s))| kt == t && *ks == in_points(s.clone(), rect))
         });
         self.deps.record(Dependent::new(id, Stage::Shape), &reads);
         if !same_key {
@@ -752,7 +752,7 @@ impl Projector {
                 spans: state
                     .spans
                     .iter()
-                    .map(|(t, s)| (t.clone(), in_points(*s, rect)))
+                    .map(|(t, s)| (t.clone(), in_points(s.clone(), rect)))
                     .collect(),
             };
             let Some(unit) = self.units.get_mut(&id) else {
@@ -815,7 +815,7 @@ impl Projector {
             }
             before = tree.node(prev).and_then(|n| n.previous_sibling());
         }
-        let text = state.text.map(|t| in_points(t, rect));
+        let text = state.text.clone().map(|t| in_points(t, rect));
         let resolved = RingResolved {
             frame: frame.clone(),
             ring: ring.clone(),
@@ -1052,7 +1052,10 @@ impl Projector {
         }
         let (body_ids, body_spans) = match &resolved.content {
             Content::Spans => resolve_spans(tree, id, binding, NO_RECT, &mut reads),
-            Content::Text(content) => (Vec::new(), vec![(content.clone(), in_points(text, NO_RECT))]),
+            Content::Text(content) => (
+                Vec::new(),
+                vec![(content.clone(), in_points(text.clone(), NO_RECT))],
+            ),
         };
         let cap_flows: Vec<Option<CapSpans>> = caps
             .iter()

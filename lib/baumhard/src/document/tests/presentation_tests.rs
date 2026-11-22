@@ -1788,17 +1788,26 @@ fn test_a_load_refuses_what_no_start_could_play() {
         "a color is written, `null` included"
     );
 
-    // An unknown key, an unknown play, a face this build lacks.
+    // An unknown key, an unknown play, a font family name that cannot be
+    // one; a family no compiled face bears reads, as an installed one
+    // (#329).
     let (path, _) =
         refusal(r#"{"id":"p","name":"P","play":"hold","target":"node","mutations":[],"reach":"self"}"#);
     assert_eq!(path, "presentations[0].reach");
     let (path, _) = refusal(r#"{"id":"p","name":"P","play":"toggle","target":"node","mutations":[]}"#);
     assert_eq!(path, "presentations[0].play");
     let (path, kind) = refusal(
-        r#"{"id":"p","name":"P","play":"hold","target":"spans","mutations":[{"span":{"text":{"set_font":"No Such Face"}}}]}"#,
+        r#"{"id":"p","name":"P","play":"hold","target":"spans","mutations":[{"span":{"text":{"set_font":"Bell\u0007"}}}]}"#,
     );
     assert_eq!(path, "presentations[0].mutations[0]");
-    assert!(matches!(kind, LoadErrorKind::UnknownFont { .. }), "{kind:?}");
+    assert_eq!(kind, LoadErrorKind::NameNotPrintable { code_point: 7 });
+    assert!(
+        parse_presentations(
+            r#"{"presentations":[{"id":"p","name":"P","play":"hold","target":"spans","mutations":[{"span":{"text":{"set_font":"No Such Face"}}}]}]}"#
+        )
+        .is_ok(),
+        "an installed family, present or not, reads"
+    );
     // Ids are unique within a file.
     let twice = r#"{"presentations":[{"id":"p","name":"P","play":"hold","target":"node","mutations":[]},{"id":"p","name":"Q","play":"hold","target":"node","mutations":[]}]}"#;
     let error = parse_presentations(twice).unwrap_err();

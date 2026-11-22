@@ -498,9 +498,12 @@ fn console_overlay_areas_degrades_when_completions_shorter_than_layout_rows() {
 /// one for a row to pin, so "the row kept its own face" and "the row
 /// took the default" are different observations.
 fn two_distinct_console_faces() -> ((String, AppFont), (String, AppFont)) {
-    let mut faces = baumhard::font::fonts::loaded_families_iter().filter_map(|family| {
-        baumhard::font::fonts::app_font_by_family(family).map(|f| (family.to_string(), f))
-    });
+    let mut faces = baumhard::font::fonts::compiled_families()
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .filter_map(|family| {
+            baumhard::font::fonts::app_font_by_family(family).map(|f| (family.to_string(), f))
+        });
     let first = faces.next().expect("the build ships at least one family");
     let second = faces
         .find(|(_, face)| *face != first.1)
@@ -674,7 +677,9 @@ fn face_with_distinct_rule_advance(fs: &mut baumhard::font::FontSystem, size: f3
         glyph_advance_with(fs, face, size, "\u{2500}").max(glyph_advance_with(fs, face, size, "\u{2502}"))
     };
     let default_w = pitch(None);
-    baumhard::font::fonts::loaded_families_iter()
+    baumhard::font::fonts::compiled_families()
+        .iter()
+        .map(|(name, _)| name.as_str())
         .filter_map(baumhard::font::fonts::app_font_by_family)
         .find_map(|face| {
             let w = pitch(Some(face));

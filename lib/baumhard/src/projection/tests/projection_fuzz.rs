@@ -227,7 +227,7 @@ use crate::arena::NodeId;
 use crate::document::element::{DocElement, RingData, SectionData};
 use crate::document::ids::Document;
 use crate::document::resolve::{resolve_frame, resolve_ring_in, resolve_text_in, Binding, ResolvedText};
-use crate::document::values::{FitMode, FontSize};
+use crate::document::values::{FitMode, FontRef, FontSize};
 use crate::document::writer::transaction::TransactionKind;
 use crate::document::writer::ChangeSource;
 use crate::engine::interpolate::Snap;
@@ -876,7 +876,7 @@ pub const FRAME_STEPS_A_LAY: usize = INPUT_STEPS / RING_LAYS_A_CHECK;
 /// ([`DEFAULT_IGNORABLE`]); and a copy more at each of the two breaks it
 /// fills. The cap, `MAX_PLACED_GLYPHS`, where a copy can advance by
 /// nothing. What it takes on trust is the module docs'. O(its text).
-fn side_glyphs(sides: &str, font: AppFont, size: f64, perimeter: f64) -> usize {
+fn side_glyphs(sides: &str, font: &FontRef, size: f64, perimeter: f64) -> usize {
     use unicode_segmentation::UnicodeSegmentation;
     let faces = face_metrics();
     let chars = sides.chars().count();
@@ -1098,7 +1098,7 @@ pub(crate) fn frame_glyphs(tree: &Tree<DocElement>, frame: NodeId, ring: NodeId)
                 .max(f64::from(crate::font::fonts::MIN_FONT_SIZE_PT));
             let drawn = drawn_bound(tree, node);
             let perimeter = 2.0 * f64::from(drawn.size.x + drawn.size.y) + 8.0 * outline_reach(tree, frame);
-            side_glyphs(&sides.content, style.font, size, perimeter)
+            side_glyphs(&sides.content, &style.font, size, perimeter)
         }
         None => 0,
     };
@@ -1362,19 +1362,21 @@ impl FaceMetrics {
     /// family's faces map it to, where one maps it — the shaper lays a
     /// character in the family it is pinned to, or the default face, whenever
     /// a face of it holds the character — or the narrowest any face maps it
-    /// to, where none does, or `.notdef`'s. O(1).
-    pub(crate) fn narrowest_char(&self, font: AppFont, c: char) -> f32 {
+    /// to, where none does, or `.notdef`'s. An installed family (#329) is
+    /// read as any face: it is drawn in its faces on this machine, or in
+    /// the default face where it is missing, and the narrowest any face
+    /// maps the character to bounds both. O(1).
+    pub(crate) fn narrowest_char(&self, font: &FontRef, c: char) -> f32 {
         if default_ignorable(c) {
             return 0.0;
         }
-        let font = if font == AppFont::Any {
-            DEFAULT_FACE.0
-        } else {
-            font
+        let family = match font {
+            FontRef::Compiled(AppFont::Any) => self.family.get(&DEFAULT_FACE.0),
+            FontRef::Compiled(font) => self.family.get(font),
+            FontRef::Installed(_) => None,
         };
         let code = u32::from(c);
-        self.family
-            .get(&font)
+        family
             .and_then(|family| family.get(&code))
             .or_else(|| self.narrowest.get(&code))
             .copied()
@@ -1388,7 +1390,7 @@ impl FaceMetrics {
     /// base or into one glyph with it, in whichever face holds the whole
     /// cluster — and nothing where one of them is [`default_ignorable`].
     /// O(its characters).
-    pub(crate) fn narrowest_cluster(&self, font: AppFont, cluster: &str) -> f32 {
+    pub(crate) fn narrowest_cluster(&self, font: &FontRef, cluster: &str) -> f32 {
         let mut chars = cluster.chars();
         match (chars.next(), chars.next()) {
             (Some(c), None) => self.narrowest_char(font, c),

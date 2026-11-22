@@ -34,6 +34,21 @@ impl PresentationDef {
     /// Cost: one walk of the definition, one call of `verb` per verb id
     /// it writes, and no allocation.
     pub fn mentions<'a>(&'a self, mut verb: impl FnMut(&'a str)) -> Shows {
+        self.walk(&mut verb, &mut |_| {})
+    }
+
+    /// Calls `font` with each font family name this presentation writes —
+    /// a text op's `set_font`, a filter's `font` field — as
+    /// [`EditDef::fonts`](crate::document::edit::EditDef::fonts) does for
+    /// an edit (#329). Cost: one walk of the definition, one call of
+    /// `font` per name, and no allocation.
+    pub fn fonts<'a>(&'a self, mut font: impl FnMut(&'a str)) {
+        self.walk(&mut |_| {}, &mut font);
+    }
+
+    /// One walk of the definition, handing its verbs to `verb` and its
+    /// font family names to `font`.
+    fn walk<'a>(&'a self, verb: &mut dyn FnMut(&'a str), font: &mut dyn FnMut(&'a str)) -> Shows {
         let PresentationDef {
             id: _,
             name: _,
@@ -46,7 +61,7 @@ impl PresentationDef {
             animate: _,
             ret: _,
         } = self;
-        let mut walk = Walk::new(&mut verb);
+        let mut walk = Walk::new(verb, font);
         if let Some(Filter(filter)) = filter {
             walk.filter(filter);
         }

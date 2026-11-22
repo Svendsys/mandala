@@ -24,6 +24,38 @@ pub(super) use dispatch::handle_console_key;
 pub(super) use exec::save_document_to_bound_path;
 pub(super) use history::{load_console_history, save_console_history};
 
+/// Open the missing-font prompt (#329) when `missing` holds a family:
+/// the console, opened if it is closed, with the report
+/// (`missing_fonts::report_lines`) in its scrollback and
+/// `font replace "<family>" ` on its input line, the completion showing
+/// the fonts it can be replaced with. The map stays loaded and drawn
+/// behind it; Escape closes it as it closes any console line. Returns
+/// whether it changed the console, which the caller then draws
+/// ([`rebuild_console_overlay`]). Nothing for a map no font is missing
+/// from.
+pub(in crate::application::app) fn open_missing_font_prompt(
+    console_state: &mut ConsoleState,
+    history: &[String],
+    doc: &MindMapDocument,
+    missing: &[baumhard::document::fonts::MissingFamily],
+) -> bool {
+    let Some(line) = crate::application::missing_fonts::replace_line(missing) else {
+        return false;
+    };
+    if !console_state.is_open() {
+        *console_state = ConsoleState::open(history.to_vec());
+    }
+    for report in crate::application::missing_fonts::report_lines(missing) {
+        push_scrollback_output_in_font(console_state, report.text, report.font_family);
+    }
+    if let ConsoleState::Open { input, cursor, .. } = console_state {
+        *cursor = baumhard::util::grapheme_chad::count_grapheme_clusters(&line);
+        *input = line;
+    }
+    completion::recompute_console_completions(console_state, Some(doc));
+    true
+}
+
 /// Wheel-driven scrollback adjustment. Used by the platform event
 /// loop (native today; WASM in a future commit) to translate
 /// accumulated wheel deltas into integer-line scroll steps. Same
@@ -184,4 +216,70 @@ pub(super) fn rebuild_console_overlay(
         font_size: keybinds.console_font_size,
     };
     renderer.rebuild_console_overlay_buffers(app_scene, Some(&geometry));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **The missing-font prompt opens the console on the replacement**
+    /// (#329): the report in the scrollback, `font replace "<family>" `
+    /// on the input line with the cursor at its end, and the completion
+    /// offering the fonts a map can name, each in its own face. A map
+    /// with nothing missing leaves a closed console closed. Controls:
+    /// the second half, and the completion's rows being the replacement
+    /// slot's (no subverb row), so the line is the one the user goes on
+    /// from.
+    #[test]
+    fn test_the_missing_font_prompt_opens_on_the_replacement() {
+        let doc = MindMapDocument::from_json_str(
+            r#"{"format":1,"name":"f","nodes":[{"id":1,"position":[0.0,0.0],"font":"Nope Sans"}]}"#,
+            None,
+            50,
+        )
+        .expect("the map loads");
+        let missing = baumhard::document::fonts::missing_families(doc.doc());
+        let mut state = ConsoleState::Closed;
+        assert!(open_missing_font_prompt(
+            &mut state,
+            &["earlier".to_string()],
+            &doc,
+            &missing
+        ));
+        let ConsoleState::Open {
+            input,
+            cursor,
+            history,
+            scrollback,
+            completions,
+            ..
+        } = &state
+        else {
+            panic!("the prompt opens the console");
+        };
+        assert_eq!(input, "font replace \"Nope Sans\" ");
+        assert_eq!(*cursor, input.chars().count(), "the cursor ends the line");
+        assert_eq!(history, &["earlier".to_string()], "the history is kept");
+        let report = crate::application::missing_fonts::report_lines(&missing);
+        assert_eq!(scrollback.len(), report.len(), "the report, line for line");
+        assert!(
+            completions
+                .iter()
+                .any(|c| c.display == "Public Pixel" && c.font_family.as_deref() == Some("Public Pixel")),
+            "the completion offers the compiled families, each in its face"
+        );
+        assert!(
+            completions
+                .iter()
+                .all(|c| c.font_family.is_none() || c.font_family.as_deref() == Some(c.display.as_str())),
+            "every row is a family, drawn in its own face or the default one"
+        );
+        assert!(
+            completions.iter().all(|c| c.display != "reset"),
+            "the replacement slot offers no sentinel"
+        );
+        let mut closed = ConsoleState::Closed;
+        assert!(!open_missing_font_prompt(&mut closed, &[], &doc, &[]));
+        assert!(!closed.is_open(), "control: nothing missing, nothing opens");
+    }
 }

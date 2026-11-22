@@ -103,6 +103,11 @@ pub enum ConsoleSideEffect {
     /// the open map, on the app clock (`app::console_input`), and its
     /// report becomes the line's output.
     Verb(commands::verb::VerbLine),
+    /// Look the host up again for the fonts the map lacks. Set by
+    /// `font rescan`, which only reads the line; the executor rescans
+    /// (`missing_fonts::rescan`), projects the view again when it found
+    /// any, and its report becomes the line's output (#329).
+    RescanFonts,
 }
 
 impl std::fmt::Debug for ConsoleSideEffect {
@@ -121,6 +126,7 @@ impl std::fmt::Debug for ConsoleSideEffect {
             Self::Edit(line) => f.debug_tuple("Edit").field(line).finish(),
             Self::Present(line) => f.debug_tuple("Present").field(line).finish(),
             Self::Verb(line) => f.debug_tuple("Verb").field(line).finish(),
+            Self::RescanFonts => write!(f, "RescanFonts"),
         }
     }
 }

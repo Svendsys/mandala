@@ -229,6 +229,9 @@ fn dispatch_native_arms(action: Action, ctx: &mut InputHandlerContext<'_>) -> Di
         Action::OpenDocument(ref path) => run_console_line_for("open", Some(path), ctx),
         Action::SaveDocumentAs(ref path) => run_console_line_for("save", Some(path), ctx),
         Action::NewDocumentAt(ref path) => run_console_line_for("new", Some(path), ctx),
+        // As the line it mirrors, so the rescan, its report and the
+        // view's projection are the one body (#329).
+        Action::RescanFonts => run_console_line_for("font rescan", None, ctx),
         _ => {
             log::debug!("dispatch: {:?} not handled at Document context", action);
             DispatchOutcome::Unhandled

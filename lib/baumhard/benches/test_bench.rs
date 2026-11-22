@@ -1172,8 +1172,8 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("every_compiled_face_has_a_family_a_map_can_name", |b| {
         b.iter(do_every_compiled_face_has_a_family_a_map_can_name)
     });
-    c.bench_function("format_fonts_lists_exactly_the_families_a_map_can_name", |b| {
-        b.iter(do_format_fonts_lists_exactly_the_families_a_map_can_name)
+    c.bench_function("format_fonts_lists_exactly_the_compiled_families", |b| {
+        b.iter(do_format_fonts_lists_exactly_the_compiled_families)
     });
     // The ornament fallback (#297): two character-map reads, one file
     // read and parse, and a pinned-family lookup under the font guard.
@@ -1390,12 +1390,16 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("app_font_by_family_unknown_returns_none", |b| {
         b.iter(do_app_font_by_family_unknown_returns_none)
     });
-    c.bench_function("loaded_families_iter_matches_owned_list", |b| {
-        b.iter(do_loaded_families_iter_matches_owned_list)
+    c.bench_function("loaded_families_list_every_compiled_family_as_compiled", |b| {
+        b.iter(do_loaded_families_list_every_compiled_family_as_compiled)
     });
     c.bench_function("family_name_of_round_trips", |b| {
         b.iter(do_family_name_of_round_trips)
     });
+    c.bench_function(
+        "a_compiled_family_maps_its_name_only_where_its_face_holds_every_letter",
+        |b| b.iter(do_a_compiled_family_maps_its_name_only_where_its_face_holds_every_letter),
+    );
     // scene + hit-test //
     c.bench_function("descendant_at_hits_single_area", |b| {
         b.iter(do_descendant_at_hits_single_area)

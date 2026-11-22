@@ -113,6 +113,11 @@ pub struct MindMapDocument {
     /// The status line the last refusal or decline left, until the next
     /// change the writer accepts.
     status: Option<&'static str>,
+    /// The notice that the map names fonts this machine lacks
+    /// (`missing_fonts::notice`, #329): set when the map is opened, and
+    /// again when the user replaces a family or rescans, never by an
+    /// edit; dismissed with the status line ([`Self::dismiss_status`]).
+    font_notice: Option<String>,
     /// What Copy and Cut last took from this map (`clipboard`). Kept with
     /// the document because a copied section names its theme and faces.
     pub clipboard: Option<crate::application::clipboard::Clipboard>,
@@ -155,6 +160,7 @@ impl MindMapDocument {
             transaction: None,
             animation: None,
             status: None,
+            font_notice: None,
             clipboard: None,
             load_failure: false,
             generation: NEXT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -377,10 +383,24 @@ impl MindMapDocument {
         self.status
     }
 
-    /// Dismiss the status line a refusal or a decline left: what
-    /// `ExitMode` does. O(1).
+    /// Dismiss the status line a refusal or a decline left, and the
+    /// missing-font notice: what `ExitMode` does. O(1).
     pub fn dismiss_status(&mut self) {
         self.status = None;
+        self.font_notice = None;
+    }
+
+    /// The notice that the map names fonts this machine lacks, if it is
+    /// showing (#329): the status line shows it when no mode and no
+    /// refusal has one. O(1).
+    pub fn font_notice(&self) -> Option<&str> {
+        self.font_notice.as_deref()
+    }
+
+    /// Show `notice` as the missing-font notice, or clear it (`None`).
+    /// O(1).
+    pub fn set_font_notice(&mut self, notice: Option<String>) {
+        self.font_notice = notice;
     }
 
     /// The one report of a refused change (D28): a `warn!` naming the

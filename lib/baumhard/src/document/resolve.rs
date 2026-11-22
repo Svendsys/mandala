@@ -107,11 +107,10 @@ use crate::document::element::{
 };
 use crate::document::ids::{defaults, owning_node, palette, theme};
 use crate::document::values::{
-    ColorRef, Direction, FitMode, FontSize, LineSpan, PaletteField, PaletteId, PlainColor, Rgba, Shape,
-    Sides, StartPoint, VarId, Weight,
+    ColorRef, Direction, FitMode, FontRef, FontSize, LineSpan, PaletteField, PaletteId, PlainColor, Rgba,
+    Shape, Sides, StartPoint, VarId, Weight,
 };
 use crate::engine::tree::Tree;
-use crate::font::fonts::AppFont;
 
 /// An input a resolution read. Each names as little as the read
 /// needed, so a change dirties only the resolutions that read what
@@ -238,10 +237,10 @@ impl ReadRecorder for Vec<Input> {
 }
 
 /// Resolved text: what a span draws with.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedText {
     /// The face.
-    pub font: AppFont,
+    pub font: FontRef,
     /// The size. Still [`Rel`](FontSize::Rel) inside a frame; the
     /// projection converts it with the node's drawn size.
     pub size: FontSize,
@@ -663,7 +662,7 @@ impl Fields {
 /// The text fields resolved so far.
 #[derive(Default)]
 struct Partial {
-    font: Option<AppFont>,
+    font: Option<FontRef>,
     size: Option<FontSize>,
     color: Option<Rgba>,
     weight: Option<Weight>,
@@ -681,7 +680,9 @@ impl Partial {
     /// Take every unset field among `fields` that `style` sets.
     fn take_text<R: ReadRecorder>(&mut self, style: &TextStyle, fields: Fields, inputs: &mut Inputs<'_, R>) {
         if fields.rest {
-            self.font = self.font.or(style.font);
+            if self.font.is_none() {
+                self.font.clone_from(&style.font);
+            }
             self.weight = self.weight.or(style.weight);
             self.italic = self.italic.or(style.italic);
         }

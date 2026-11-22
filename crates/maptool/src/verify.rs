@@ -94,7 +94,8 @@ use crate::map::{ident, is, link, text_owners, Nodes};
 /// Every warning `doc` earns, in the file's order: the nodes' in
 /// pre-order — each node's own, then its frame's, then its links' — then
 /// the presentations', in the order `presentations` lists them, then the
-/// verbs', in the order `verbs` lists them.
+/// verbs', in the order `verbs` lists them, then one per installed font
+/// family the map names that this machine lacks, by name.
 ///
 /// Cost: one walk of each edit and each presentation, one scan of the
 /// verbs per verb one of them names, one walk of the nodes and every
@@ -210,6 +211,18 @@ pub fn warnings(doc: &Document) -> Vec<String> {
             ));
         }
     }
+    // The installed fonts the map names that this machine lacks (#329):
+    // the map loads, and their text is drawn in the stand-in. Only a map
+    // that names an installed family asks the font system, whose build
+    // scans the host's fonts.
+    for missing in baumhard::document::fonts::missing_families(doc) {
+        out.push(format!(
+            "font {:?}: not installed on this machine, named by {} element(s); drawn in {} until it is installed or replaced",
+            missing.family.as_str(),
+            missing.elements,
+            baumhard::document::fonts::STAND_IN
+        ));
+    }
     out
 }
 
@@ -253,6 +266,26 @@ mod tests {
             .into_iter()
             .filter(|warning| !warning.starts_with("presentations["))
             .collect()
+    }
+
+    /// An installed font the map names that this machine lacks is
+    /// reported once, by name, with how many elements name it (#329); a
+    /// compiled one is not. Control: the same map naming `Public Pixel`
+    /// earns no warning.
+    #[test]
+    fn test_verify_warns_of_an_installed_font_this_machine_lacks() {
+        let missing = r#"{"id": 1, "position": [0, 0], "font": "Nope Sans", "sections": [{"spans": [{"text": "a", "font": "Nope Sans"}]}]}"#;
+        assert_eq!(
+            warned("", missing),
+            [
+                r#"font "Nope Sans": not installed on this machine, named by 2 element(s); drawn in Inter Variable until it is installed or replaced"#
+            ]
+        );
+        let compiled = r#"{"id": 1, "position": [0, 0], "font": "Public Pixel", "sections": [{"spans": [{"text": "a"}]}]}"#;
+        assert!(
+            warned("", compiled).is_empty(),
+            "control: a compiled font is no warning"
+        );
     }
 
     /// A verb nothing refers to is reported by its place in `verbs`; one

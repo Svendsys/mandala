@@ -232,7 +232,9 @@ mod tests {
             .into_iter()
             .find_map(|glyph| {
                 let default_w = measure_max_glyph_advance(&mut fs, None, &[glyph], size);
-                baumhard::font::fonts::loaded_families_iter()
+                baumhard::font::fonts::compiled_families()
+                    .iter()
+                    .map(|(name, _)| name.as_str())
                     .filter_map(baumhard::font::fonts::app_font_by_family)
                     .find_map(|face| {
                         let w = measure_max_glyph_advance(&mut fs, Some(face), &[glyph], size);

@@ -56,7 +56,7 @@ use crate::document::ids::{Document, VerbDef};
 use crate::document::keyed::{KeyedMap, KeyedSet};
 use crate::document::place::{nameable_font, sizes_its_own_text, Unit};
 use crate::document::values::{
-    Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LinkKind, LinkTarget, PaletteField,
+    Align, Anchor, ColorRef, Direction, Edge, FitMode, FontRef, FontSize, LinkKind, LinkTarget, PaletteField,
     PlainColor, Shape, Sides, ZoomWindow,
 };
 use crate::font::fonts::{family_name_of, AppFont};
@@ -470,21 +470,30 @@ impl<'a> Saver<'a> {
         }))
     }
 
-    /// A font's family name. The fallback face has none, and neither has
-    /// a face this build cannot name: the file could not say which it
-    /// was.
-    fn font(&mut self, font: Option<AppFont>) -> SaveResult<Option<Cow<'a, str>>> {
-        let Some(font) = font else {
-            return Ok(None);
-        };
-        let name = *self.core.fonts.borrow_mut().entry(font).or_insert_with(|| {
-            if nameable_font(font) {
-                family_name_of(font)
-            } else {
-                None
+    /// A font's family name: a compiled face's first, an installed
+    /// family's as it is — whether or not this machine has it, so a
+    /// family nobody replaced is never dropped or rewritten (#329). The
+    /// fallback face has none, and neither has a face this build cannot
+    /// name: the file could not say which it was.
+    fn font(&mut self, font: Option<&'a FontRef>) -> SaveResult<Option<Cow<'a, str>>> {
+        let name = match font {
+            None => return Ok(None),
+            Some(installed @ FontRef::Installed(family)) => {
+                nameable_font(installed).then_some(Cow::Borrowed(family.as_str()))
             }
-        });
-        name.map(|name| Some(Cow::Borrowed(name)))
+            Some(FontRef::Compiled(font)) => {
+                let font = *font;
+                let name = *self.core.fonts.borrow_mut().entry(font).or_insert_with(|| {
+                    if nameable_font(&FontRef::Compiled(font)) {
+                        family_name_of(font)
+                    } else {
+                        None
+                    }
+                });
+                name.map(Cow::Borrowed)
+            }
+        };
+        name.map(Some)
             .ok_or_else(|| self.error_at("font", SaveErrorKind::NoFamilyName))
     }
 
@@ -512,7 +521,7 @@ impl<'a> Saver<'a> {
     /// The five text-style keys.
     fn text(&mut self, style: &'a TextStyle, unit: Unit) -> SaveResult<TextOut<'a>> {
         Ok(TextOut {
-            font: self.font(style.font)?,
+            font: self.font(style.font.as_ref())?,
             size: self.size(style.size, unit)?,
             color: self.color("color", style.color)?,
             weight: style.weight.map(|weight| WeightDto(weight.get())),

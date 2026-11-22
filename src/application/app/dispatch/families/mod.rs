@@ -124,6 +124,7 @@ mod tests {
         ActionKind::OpenDocument,
         ActionKind::SaveDocumentAs,
         ActionKind::NewDocumentAt,
+        ActionKind::RescanFonts,
         // The structure family, rebuilt (`structure::dispatch`).
         ActionKind::DeleteSelection,
         ActionKind::CreateOrphanNode,
@@ -139,6 +140,7 @@ mod tests {
         ActionKind::SetColor,
         ActionKind::SetFont,
         ActionKind::SetFontFamily,
+        ActionKind::ReplaceFontFamily,
         ActionKind::SetZoom,
         ActionKind::ClearZoom,
         ActionKind::SetFrameField,

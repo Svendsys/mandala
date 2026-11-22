@@ -194,7 +194,7 @@ fn test_keys_equal_but_for_the_sign_of_a_zero_share_one_shaping() {
     let style = BUILT_IN.section;
     let boxed = |min: glam::Vec2, cache: &mut ShapeCache| {
         let mut key = Arc::new(BoxKey {
-            spans: vec![("zero".to_string(), style)],
+            spans: vec![("zero".to_string(), style.clone())],
             min: Some(min),
             align: Align::Left,
         });

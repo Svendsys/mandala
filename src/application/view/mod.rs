@@ -181,6 +181,9 @@ impl MapView {
         renderer.load_view(&view.layers, &view.chrome);
         renderer.set_background(resolve_background(doc.doc().tree(), &mut ()).0);
         stamps.discard(&mut view.layers);
+        // The status line the map opens with: its missing-font notice,
+        // when it names a font this machine lacks (#329).
+        view.show_status(doc, renderer);
         view
     }
 
@@ -336,10 +339,11 @@ impl MapView {
     }
 
     /// Hand the status line to the renderer when it is not the one last
-    /// shown: the active mode's (`follow_mode`), or else the document's.
-    /// Returns whether it changed.
+    /// shown: the active mode's (`follow_mode`), or else the document's
+    /// refusal, or else its missing-font notice (#329). Returns whether
+    /// it changed.
     fn show_status(&mut self, doc: &MindMapDocument, renderer: &mut Renderer) -> bool {
-        let status = self.mode_line.as_deref().or(doc.status());
+        let status = self.mode_line.as_deref().or(doc.status()).or(doc.font_notice());
         if status == self.shown_status.as_deref() {
             return false;
         }

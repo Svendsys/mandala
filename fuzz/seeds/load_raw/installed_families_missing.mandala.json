@@ -1,0 +1,9 @@
+{"format":1,"name":"installed families",
+ "defaults":{"span":{"font":"Nope Sans"},"ring":{"font":"Other Missing"}},
+ "edits":[{"id":"e","name":"E","reach":"subtree","target":"spans","mutations":[{"span":{"text":{"set_font":"Nope Sans"}}}]}],
+ "nodes":[
+  {"id":1,"position":[0.0,0.0],"font":"Nope Sans","weight":"bold","sections":[
+    {"font":"Other Missing","spans":[{"text":"a","font":"Nope Sans","italic":true},{"text":"שלום","font":"Other Missing"},{"text":"b","font":"Public Pixel"}]}],
+   "frame":{"rings":[{"spans":[{"text":"ring text","font":"Nope Sans"}]}]}},
+  {"id":2,"parent":1,"position":[0.0,200.0],"connector":{"spans":[{"text":"~","font":"Nope Sans"}]},
+   "sections":[{"spans":[{"text":"c"}]}]}]}

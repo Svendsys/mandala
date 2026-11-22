@@ -27,8 +27,7 @@ use baumhard::document::mutation::compose;
 use baumhard::document::mutation::ops::{
     DocMutation, FrameOp, LabelOp, NodeOp, PathOp, PortalEndOp, RingOp, SectionOp, SpanOp, TextOp,
 };
-use baumhard::document::values::{ColorRef, FontSize, Weight, ZoomWindow};
-use baumhard::font::fonts::AppFont;
+use baumhard::document::values::{ColorRef, FontRef, FontSize, Weight, ZoomWindow};
 
 use super::{Groups, Steps};
 use crate::application::document::selection::kind_of;
@@ -116,9 +115,9 @@ pub(crate) fn color(doc: &MindMapDocument, axis: ColorAxis, color: Option<ColorR
 
 /// What a `font` line or Action sets: each field given, `None` inside
 /// the field to inherit.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Font {
-    pub family: Option<Option<AppFont>>,
+    pub family: Option<Option<FontRef>>,
     pub size: Option<Option<f32>>,
     pub weight: Option<Option<Weight>>,
     pub italic: Option<Option<bool>>,
@@ -130,7 +129,7 @@ impl Font {
     /// whose size is not a text style's.
     fn ops(&self, with_size: bool) -> Vec<TextOp> {
         let mut ops = Vec::new();
-        ops.extend(self.family.map(TextOp::SetFont));
+        ops.extend(self.family.clone().map(TextOp::SetFont));
         if with_size {
             ops.extend(self.size.map(|size| TextOp::SetSize(size.map(FontSize::Pt))));
         }

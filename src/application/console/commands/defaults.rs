@@ -159,8 +159,10 @@ mod tests {
     fn test_every_declared_default_is_a_field_the_verb_sets() {
         let doc = MindMapDocument::new_blank(None, 50);
         let base = doc.doc().defaults().clone();
-        let face = baumhard::font::fonts::loaded_families_iter()
-            .find(|family| baumhard::document::format::font(family).is_some())
+        let face = baumhard::font::fonts::compiled_families()
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .find(|family| baumhard::document::format::font(family).is_ok())
             .expect("a compiled face a map can name");
         let sample = |key: &str| match key.rsplit('.').next().unwrap_or_default() {
             "shape" => "ellipse",

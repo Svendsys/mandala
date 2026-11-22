@@ -1062,7 +1062,7 @@ PR that implements them.
 |---|---|---|---|
 | *(bootstrap)* | `meta.rs` | IPC-02; registry by IPC-03 | `describe`, `ping` |
 | `act` | `act.rs` | IPC-03; `act.verb` by V1-D3 (#252) | `act.action`, `act.console`, `act.macro`, `act.verb` |
-| `query` | `query.rs` | IPC-04; `query.animations` by V1-D2 (#251) | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.editors`, `query.undo`, `query.animations` |
+| `query` | `query.rs` | IPC-04; `query.animations` by V1-D2 (#251); `query.fonts` by V1-B24 (#329) | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.editors`, `query.undo`, `query.animations`, `query.fonts` |
 | `scene` | `scene.rs` | IPC-05 | `scene.dump`, `scene.visible_set`, `scene.node_geometry`, `scene.hit_test`, `scene.find_text` |
 | `input` | `input.rs` | IPC-06 | `input.mouse_move`, `input.mouse_button`, `input.wheel`, `input.key`, `input.text`, `input.touch`, `input.drag`, `input.click_node`, `input.pending` |
 | `capture` | `capture.rs` | IPC-07, IPC-08 | `capture.screenshot`, `capture.record_start`, `capture.record_stop` |
@@ -1083,7 +1083,7 @@ the two are the same answer.
 
 | answers | commands |
 |---|---|
-| **the map itself** | `query.document` (every field: `document` is what a save writes, and a save never holds a presentation), `query.undo`; `scene.node_geometry`'s `model`, the one part of a `scene` reply that is the document's; every reply's `document_revision` and the `document_changed` event, which a presentation never moves or raises; what an `act.action`, `act.console` or `act.macro` reads to build its change, and the console's readouts of the map (`section show`, `edit inspect`) |
+| **the map itself** | `query.document` (every field: `document` is what a save writes, and a save never holds a presentation), `query.undo`, `query.fonts`; `scene.node_geometry`'s `model`, the one part of a `scene` reply that is the document's; every reply's `document_revision` and the `document_changed` event, which a presentation never moves or raises; what an `act.action`, `act.console` or `act.macro` reads to build its change, and the console's readouts of the map (`section show`, `edit inspect`) |
 | **what is drawn** | every `scene.*` command (the runs the projector drew, whether a node is in the scene — its `folded` and `hidden` as they show — and the text as it reads); `capture.screenshot` and its geometry sidecar, and a recording's frames; where an `input.*` command lands (`input.click_node` aims at the node where it is drawn, and a click hits what is drawn there); the Actions that move the camera or change the selection by what can be seen (`ZoomFit`, `CenterOnSelection`, `SelectAll`, `InvertSelection`: a node under a fold a presentation closed is not selected) |
 | **the performance** | `query.animations`, `clock.wait until=animations_complete`, and the console's `present list` |
 | **neither** (the app's own state, which no presentation writes) | `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.editors`, `clock.status`, `clock.wait until=settled`, `input.pending`, `events.revision`, `describe`, `ping`; the console's `help`, `mode`, `clock status`, `edit list` and `edit help` |
@@ -1308,9 +1308,10 @@ of the verb runs.
 ## `query` — application state (IPC-04)
 
 Read-only views of what the application knows: what a person reads off
-the screen chrome, and the app's mental state. Eight commands:
+the screen chrome, and the app's mental state. Nine commands:
 `query.document`, `query.selection`, `query.camera`, `query.mode`,
-`query.status`, `query.editors`, `query.undo`, `query.animations`.
+`query.status`, `query.editors`, `query.undo`, `query.animations`,
+`query.fonts`.
 Which of them answer the map itself while a presentation plays, and
 which what is drawn, is under
 [The map itself, or what is drawn](#the-map-itself-or-what-is-drawn).
@@ -1342,8 +1343,8 @@ selection, `scene.*`, `input.click_node`, the capture sidecar — uses
 this one shape.
 
 **Errors.** Before the app exists every query answers `no_document`.
-After it, the four queries that read the document (`query.document`,
-`query.selection`, `query.undo`, `query.animations`) answer
+After it, the five queries that read the document (`query.document`,
+`query.selection`, `query.undo`, `query.animations`, `query.fonts`) answer
 `no_document` when its initial load failed. `query.camera`,
 `query.mode`, `query.status` and `query.editors` need no document and
 answer regardless. A query's own parameter failures are
@@ -1496,6 +1497,42 @@ Start and stop them with the console's `present` verb
 (`act.console`): `present start <id> [node…]`, `present stop <id>
 [node…]`, `present list`; run the map's verbs with
 [`act.verb`](#actverb) or the console's `verb run`.
+
+### `query.fonts`
+
+Params: none. The fonts (#329, `format/fonts.md` "Installed
+families"): every family a map can name here, and the installed
+families the open map names, each with whether this machine has it.
+Served on both targets; the browser reads no installed font, so there
+it lists the compiled families alone and every installed family the map
+names is missing.
+
+| result field | type | meaning |
+|---|---|---|
+| `families` | array | Every family the font system holds, sorted by name: `{"name", "source"}`, `source` `"compiled"` or `"installed"`. On native it includes the host's installed families; asking for it pays for the host's font scan if nothing has yet. |
+| `named` | array | The installed families the map names, sorted by name: `{"family", "installed", "elements", "definitions"}`. `elements` counts the elements whose own text style names it, each of the defaults' text styles counted as one; `definitions` lists the map's edits and presentations that name it (`"edit \`id\`"`, `"presentation \`id\`"`), which a replacement leaves as they are (design §5.7). |
+| `missing` | array | The names in `named` this machine lacks: their text is drawn in `stand_in`. |
+| `stand_in` | string | The face a missing family's text is drawn in: `"Inter Variable"`, the default face, at the span's own weight and slant. |
+
+```jsonc
+{"id": 1, "cmd": "query.fonts"}
+{"id": 1, "ok": true, "result": {
+  "families": [{"name": "212 Keyboard", "source": "compiled"}, …, {"name": "DejaVu Serif", "source": "installed"}, …],
+  "named": [{"family": "Garamond Premier Pro", "installed": false, "elements": 2, "definitions": []}],
+  "missing": ["Garamond Premier Pro"], "stand_in": "Inter Variable"}}
+```
+
+The two ways out are Actions, through [`act.action`](#actaction):
+`{"ReplaceFontFamily": {"family": "<installed family>", "with": "<font>"}}`
+rewrites every reference the map's tree makes to the family — each
+element that names it in its own style, and the defaults — to `with`,
+as one undo entry, on both targets; `RescanFonts` looks the host up
+again for the missing families once one is installed, and redraws what
+it finds (native only: the browser answers it `unsupported`). Opening a
+map with a missing family on native also opens the console with the
+missing-font prompt, so `query.mode`'s `key_owner` reads `console`
+until it is closed (`ConsoleClose`, twice: the first closes the
+completion list).
 
 ## `scene` — laid-out scene introspection (IPC-05)
 
