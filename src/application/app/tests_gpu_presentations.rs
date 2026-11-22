@@ -402,6 +402,7 @@ fn payloads(kind: &str, dir: &TempDir) -> Vec<Value> {
         "SetEdgeType" | "SetLinkKind" => one(json!("portal")),
         "ResetPath" => one(json!("straight")),
         "SetFontFamily" => one(json!("Galatia SIL")),
+        "ReplaceFontFamily" => one(json!({"family": "Nope Sans", "with": "Galatia SIL"})),
         "SetFont" => [("size", "20"), ("weight", "bold"), ("italic", "true")]
             .into_iter()
             .map(|(slot, value)| json!({ kind: {"slot": slot, "value": value} }))
@@ -579,6 +580,7 @@ const AFTER_ANOTHER: &[&str] = &[
     "CancelFramePreview",
     "ReparentToTarget",
     "ConnectToTarget",
+    "ReplaceFontFamily",
 ];
 
 /// Every console verb, as the lines that run it. A verb of the registry
@@ -639,6 +641,13 @@ fn sequences() -> Vec<Vec<Step>> {
             act("Undo"),
         ],
         vec![act("CreateOrphanNode"), act("Undo"), act("Redo")],
+        // A replacement rewrites an installed family the map names, so
+        // one is named first (#329).
+        vec![
+            Step::Act(json!({"SetFontFamily": "Nope Sans"})),
+            Step::Act(json!({"ReplaceFontFamily": {"family": "Nope Sans", "with": "Galatia SIL"}})),
+            act("Undo"),
+        ],
         vec![
             line("edit apply nudge-right-50"),
             line("edit apply flower"),

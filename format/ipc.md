@@ -1062,7 +1062,7 @@ PR that implements them.
 |---|---|---|---|
 | *(bootstrap)* | `meta.rs` | IPC-02; registry by IPC-03 | `describe`, `ping` |
 | `act` | `act.rs` | IPC-03; `act.verb` by V1-D3 (#252) | `act.action`, `act.console`, `act.macro`, `act.verb` |
-| `query` | `query.rs` | IPC-04; `query.animations` by V1-D2 (#251); `query.fonts` by V1-B24 (#329) | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.editors`, `query.undo`, `query.animations`, `query.fonts` |
+| `query` | `query.rs` | IPC-04; `query.animations` by V1-D2 (#251); `query.fonts` by V1-B24 (#329) | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.editors`, `query.undo`, `query.fonts`, `query.animations` |
 | `scene` | `scene.rs` | IPC-05 | `scene.dump`, `scene.visible_set`, `scene.node_geometry`, `scene.hit_test`, `scene.find_text` |
 | `input` | `input.rs` | IPC-06 | `input.mouse_move`, `input.mouse_button`, `input.wheel`, `input.key`, `input.text`, `input.touch`, `input.drag`, `input.click_node`, `input.pending` |
 | `capture` | `capture.rs` | IPC-07, IPC-08 | `capture.screenshot`, `capture.record_start`, `capture.record_stop` |
@@ -1310,8 +1310,8 @@ of the verb runs.
 Read-only views of what the application knows: what a person reads off
 the screen chrome, and the app's mental state. Nine commands:
 `query.document`, `query.selection`, `query.camera`, `query.mode`,
-`query.status`, `query.editors`, `query.undo`, `query.animations`,
-`query.fonts`.
+`query.status`, `query.editors`, `query.undo`, `query.fonts`,
+`query.animations`.
 Which of them answer the map itself while a presentation plays, and
 which what is drawn, is under
 [The map itself, or what is drawn](#the-map-itself-or-what-is-drawn).
