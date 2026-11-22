@@ -614,15 +614,15 @@ mod tests {
         }
     }
 
-    /// `act.console` running a verb its owner rebuilds answers with the
+    /// `act.console` running a subverb its owner rebuilds answers with the
     /// refusal as a `console_error`, naming the owner — the same text the
     /// console prints — and the document is left as it was.
     #[test]
     fn test_act_console_reports_a_rebuilt_verbs_refusal() {
         let mut doc = crate::application::document::tests_common::testament();
         let revision = doc.revision();
-        let ParseResult::Ok { cmd, args } = parse("anchor from=top") else {
-            panic!("`anchor` must parse");
+        let ParseResult::Ok { cmd, args } = parse("mode resize") else {
+            panic!("`mode resize` must parse");
         };
         let mut effects = ConsoleEffects::new(&mut doc);
         let outcome = LineOutcome::Ran((cmd.execute)(&Args::new(&args), &mut effects));
@@ -630,11 +630,11 @@ mod tests {
         assert!(!outcome.applied(), "a refused line did not apply");
         let message = console_output(outcome).expect_err("the refusal is an error reply");
         assert!(
-            message.starts_with("anchor: "),
+            message.starts_with("mode resize: "),
             "the verb names itself: {message}"
         );
         assert!(
-            message.contains("V1-C6 (#247)"),
+            message.contains("V1-C7 (#248)"),
             "the error names the owner: {message}"
         );
         assert_eq!(doc.revision(), revision);

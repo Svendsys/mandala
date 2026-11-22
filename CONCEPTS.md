@@ -2958,7 +2958,7 @@ Four things the shape is load-bearing for:
   (`console/commands/section`).
 - **No verb sees a raw token index.** `spec::descent` is the
   only reader of token order. A handler asks
-  `descent.subverb()`, `descent.parent_name(0)` and
+  `descent.subverb()`, `descent.level` and
   `descent.slot_value(args)`. Eight completion sites used to
   do their lookahead with `tokens.get(N)` while the arms they
   fed were keyed on the *positional* index, and the two

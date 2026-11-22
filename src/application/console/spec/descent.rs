@@ -42,11 +42,11 @@ pub enum Stop {
     KvForm,
 }
 
-/// How deep the walk can go. The declaration's deepest path today
-/// is `canvas section-frame focused preview`, which is three
-/// descents; the array is sized past that so a fourth nesting level
-/// does not need this constant found and changed, and
-/// [`descend`] refuses to go deeper rather than overrunning it.
+/// How deep the walk goes. The declaration's deepest path today is
+/// `frame ring …`, one descent; the bound sits well past that, so a
+/// deeper nesting does not need this constant found and changed, and
+/// [`descend`] stops there rather than following a declaration that
+/// nests without end.
 pub const MAX_DEPTH: usize = 6;
 
 /// The outcome of one grammar descent.
@@ -57,36 +57,12 @@ pub struct Descent<'a> {
     /// What was found at that level's subverb slot.
     pub stop: Stop,
     /// Positional index of that level's subverb slot: `0` for
-    /// `border …`, `1` for `canvas border …`, `2` for
-    /// `canvas section-frame focused …`.
+    /// `frame …`, `1` for `frame ring …`.
     pub slot: usize,
     /// The positional token sitting at [`Self::slot`], in the
     /// user's own spelling. Every rejection quotes this rather than
     /// the normalized copy it matched on.
     pub typed: Option<&'a str>,
-    /// The subverbs the walk *descended through* — those with a
-    /// child level — outermost first. `["border"]` for
-    /// `canvas border show`, `["section-frame", "focused"]` for
-    /// `canvas section-frame focused preset heavy`. Empty when the
-    /// walk never left the verb's own level.
-    // On wasm32 the console shell is native, so the whole `Descent` is
-    // unconstructed there and the field-level lint never fires.
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        expect(
-            dead_code,
-            reason = "no live verb reaches it: the field verbs V1-C5 (#246) rebuilt read their level directly; V1-C6 (#247) rebuilds the path verbs"
-        )
-    )]
-    path: [Option<&'static Subverb>; MAX_DEPTH],
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        expect(
-            dead_code,
-            reason = "no live verb reaches it: the field verbs V1-C5 (#246) rebuilt read their level directly; V1-C6 (#247) rebuilds the path verbs"
-        )
-    )]
-    depth: usize,
 }
 
 impl<'a> Descent<'a> {
@@ -96,30 +72,6 @@ impl<'a> Descent<'a> {
             Stop::Matched(s) => Some(s),
             _ => None,
         }
-    }
-
-    /// The subverb the walk descended through at step `i`, counting
-    /// from the verb's own level. This is how a handler asks "which
-    /// branch am I in" without ever seeing a token index.
-    #[expect(
-        dead_code,
-        reason = "no live verb reaches it: the field verbs V1-C5 (#246) rebuilt read their level directly; V1-C6 (#247) rebuilds the path verbs"
-    )]
-    pub fn parent(&self, i: usize) -> Option<&'static Subverb> {
-        if i >= self.depth {
-            return None;
-        }
-        self.path.get(i).copied().flatten()
-    }
-
-    /// The name of [`Self::parent`] at step `i`, for the `match` a
-    /// handler writes.
-    #[expect(
-        dead_code,
-        reason = "no live verb reaches it: the field verbs V1-C5 (#246) rebuilt read their level directly; V1-C6 (#247) rebuilds the path verbs"
-    )]
-    pub fn parent_name(&self, i: usize) -> Option<&'static str> {
-        self.parent(i).map(|s| s.name)
     }
 
     /// Where the matched form's slot 0 sits among the positionals.
@@ -225,7 +177,6 @@ pub fn descend<'a>(root: &'static Grammar, tokens: &'a [String]) -> Descent<'a> 
 pub fn descend_at<'a>(root: &'static Grammar, tokens: &'a [String], start_slot: usize) -> Descent<'a> {
     let mut level = root;
     let mut slot = start_slot;
-    let mut path: [Option<&'static Subverb>; MAX_DEPTH] = [None; MAX_DEPTH];
     let mut depth = 0usize;
     loop {
         let Some(word) = positional_at(tokens, slot) else {
@@ -234,8 +185,6 @@ pub fn descend_at<'a>(root: &'static Grammar, tokens: &'a [String], start_slot: 
                 stop: Stop::Bare,
                 slot,
                 typed: None,
-                path,
-                depth,
             };
         };
         // A level that declares no subverbs cannot report an
@@ -249,8 +198,6 @@ pub fn descend_at<'a>(root: &'static Grammar, tokens: &'a [String], start_slot: 
                 stop: Stop::Bare,
                 slot,
                 typed: Some(word),
-                path,
-                depth,
             };
         }
         let positional_form = subverb_slot_is_positional(tokens, slot);
@@ -267,14 +214,12 @@ pub fn descend_at<'a>(root: &'static Grammar, tokens: &'a [String], start_slot: 
         };
         match stop {
             // A child level is a step deeper — unless the
-            // declaration nests past what the path array can hold,
-            // in which case the walk stops here and the level
-            // answers as if the subverb were its own terminal. The
-            // guard is unreachable at `MAX_DEPTH` = 6 against a
-            // grammar three deep, and it is what makes the fixed
-            // array safe rather than merely large enough today.
+            // declaration nests past `MAX_DEPTH`, in which case the
+            // walk stops here and the level answers as if the
+            // subverb were its own terminal. The guard is unreachable
+            // against a grammar one deep; it is what bounds the walk
+            // over a declaration that nests without end.
             Stop::Matched(sv) if sv.child.is_some() && depth < MAX_DEPTH => {
-                path[depth] = Some(sv);
                 depth += 1;
                 if let Some(child) = sv.child {
                     level = child;
@@ -288,8 +233,6 @@ pub fn descend_at<'a>(root: &'static Grammar, tokens: &'a [String], start_slot: 
                     stop,
                     slot,
                     typed: Some(word),
-                    path,
-                    depth,
                 }
             }
         }
