@@ -7,8 +7,9 @@
 //! [`file::read`](baumhard::document::format::file::read), and a refusal
 //! is printed as the loader words it, with its JSON path; nothing here
 //! judges what the loader judges. Once a map has loaded, [`warnings`]
-//! looks for five things, as #253 lists them, its amendment E1.1
-//! (issue comment 6870828150) rules, and V1-D3 (#252) completes:
+//! looks for six things, as #253 lists them, its amendment E1.1
+//! (issue comment 6870828150) rules and V1-D3 (#252) completes, and a
+//! sixth V1-B40 (#359) adds:
 //!
 //! - **A verb nothing refers to.** A verb is referred to by a node's `on`
 //!   (`click`, `hover`), by a span's `link` (`{"verb": …}`), and by an
@@ -69,6 +70,30 @@
 //!   give an end spans or change the defaults. A presentation cannot
 //!   mark a portal end at all: it has no mutator, and none of its
 //!   targets is a portal end.
+//! - **A name a map's own edit writes that the map does not define**
+//!   (V1-B40, #359): a verb, a theme variable (`var(name)`, in any color
+//!   an edit writes) or a palette. App and User edits resolve their
+//!   names when they run (`format/edits.md`, "Names are resolved when
+//!   the edit runs"), so the loader cannot judge one against a map, and
+//!   a map whose own edit names something it lacks loads and then has
+//!   every run of that edit refused. The names come from the same walk
+//!   as everything above
+//!   ([`EditDef::mentions`](baumhard::document::edit::EditDef::mentions),
+//!   in which a step that can name one fails to compile until it is
+//!   counted), and "defined" is
+//!   [`Mention::is_defined_in`](baumhard::document::edit::Mention::is_defined_in),
+//!   the probes of the document a run resolves the name by, so this
+//!   warns exactly where a run would be refused for a name and nowhere
+//!   else. It reports every such name an
+//!   edit writes, in the order the edit writes them, in the words of the
+//!   refusal (`EditError::UnknownName`), not the first alone as a run
+//!   stops at. A map's verbs, theme variables and palettes are the
+//!   file's own, and no operation adds, removes or renames one, so the
+//!   file decides. What it cannot say is whether a run is ever asked
+//!   for, and that is not a defect of the name: keybinds, the console
+//!   and macros run an edit by id from outside the map. A presentation
+//!   writes the same names and is refused the same way when it starts,
+//!   but only edits are judged here: the issue asks for edits.
 //!
 //! The edits and presentations read are the map's own, its `edits` and
 //! its `presentations`. The App and User tiers (`assets/edits.json`,
@@ -82,7 +107,7 @@
 //! below the node, or a definition's path for a verb.
 
 use baumhard::arena::NodeId;
-use baumhard::document::edit::Shows;
+use baumhard::document::edit::{Mention, Named, Shows};
 use baumhard::document::element::{DocElement, DocKind, Triggers};
 use baumhard::document::ids::Document;
 use baumhard::document::resolve::{resolve_frame, resolve_portal_end, Content};
@@ -107,14 +132,26 @@ pub fn warnings(doc: &Document) -> Vec<String> {
     // What each definition names and can show, an edit or a
     // presentation: every field of `Shows` by name, so one added fails
     // to compile here instead of going uncounted.
-    let mut name = |name: &str| {
-        if let Some(n) = definitions.verbs.iter().position(|verb| verb.id == name) {
-            referenced[n] = true;
+    let mut name = |mention: Mention| {
+        if let Named::Verb = mention.kind {
+            if let Some(n) = definitions.verbs.iter().position(|verb| verb.id == mention.name) {
+                referenced[n] = true;
+            }
         }
     };
     let mut shown = Vec::new();
-    for edit in &definitions.edits {
-        shown.push(edit.mentions(&mut name));
+    // A map's own edit names things the map must define when it runs
+    // (`format/edits.md`, "Names are resolved when the edit runs"): each
+    // name it writes that the map does not is a warning, from the same
+    // walk, and by the same probes of the document, a run resolves by.
+    let mut undefined = Vec::new();
+    for (n, edit) in definitions.edits.iter().enumerate() {
+        shown.push(edit.mentions(|mention| {
+            name(mention);
+            if !mention.is_defined_in(doc) {
+                undefined.push(format!("edits[{n}]: {}", mention.refusal(edit.id.as_str())));
+            }
+        }));
     }
     for presentation in &definitions.presentations {
         shown.push(presentation.mentions(&mut name));
@@ -194,6 +231,7 @@ pub fn warnings(doc: &Document) -> Vec<String> {
             }
         }
     }
+    out.extend(undefined);
     for (n, presentation) in definitions.presentations.iter().enumerate() {
         if !played[n] {
             out.push(format!(
@@ -587,5 +625,95 @@ mod tests {
         let nodes = r#"{"id": 1, "position": [0, 0], "hidden": true, "links": [{"to": 2, "kind": "portal"}]},
                        {"id": 2, "position": [0, 0]}"#;
         assert_eq!(warned(header, nodes), Vec::<String>::new());
+    }
+
+    /// The map `defines` (a header fragment: its verbs, theme or palettes,
+    /// or nothing) and its one edit `e`, written as `body`.
+    fn with_edit(defines: &str, body: &str) -> String {
+        format!(r#"{defines} "edits": [{{"id": "e", "name": "E", "reach": "self", {body}}}],"#)
+    }
+
+    const NODE: &str = r#"{"id": 1, "position": [0, 0], "sections": [{"spans": [{"text": "a"}]}]}"#;
+    const THEME: &str = r##""theme": {"active": "d", "variants": {"d": {"accent": "#ff0000"}}},"##;
+    const PALETTE: &str = r##""palettes": {"warm": [{"frame": "#ff0000", "text": "#ff0000"}]},"##;
+
+    /// A map's own edit that names a verb the map does not define is
+    /// reported, naming the edit, the field and the name as the refusal of
+    /// a run words them (`format/edits.md`); one naming a verb the map
+    /// defines is not.
+    ///
+    /// Controls, each run: `Mention::is_defined_in` answering `true` for a
+    /// verb fails the first assertion with no warning; answering `false`
+    /// fails the second with the warning of a name the map defines.
+    #[test]
+    fn test_verify_warns_of_a_verb_an_edit_names_that_the_map_lacks() {
+        let body = r#""target": "node", "mutations": [{"node": {"set_click": "nowhere"}}]"#;
+        assert_eq!(
+            warned(&with_edit("", body), NODE),
+            ["edits[0]: edit `e`: `set_click` names verb `nowhere`, which this map does not define"]
+        );
+        let defined = r#""verbs": [{"id": "nowhere", "name": "N", "steps": []}],"#;
+        assert_eq!(warned(&with_edit(defined, body), NODE), Vec::<String>::new());
+    }
+
+    /// The same for a theme variable: `var(accent)` in a color, on a map
+    /// whose theme has no `accent`.
+    ///
+    /// Controls, each run: `Walk::color` not reporting a `Var` fails the
+    /// first assertion with no warning; `is_defined_in` answering `false`
+    /// for a variable fails the second.
+    #[test]
+    fn test_verify_warns_of_a_theme_variable_an_edit_names_that_the_map_lacks() {
+        let body = r#""target": "spans", "mutations": [{"span": {"text": {"set_color": "var(accent)"}}}]"#;
+        assert_eq!(
+            warned(&with_edit("", body), NODE),
+            ["edits[0]: edit `e`: `color` names theme variable `accent`, which this map does not define"]
+        );
+        assert_eq!(warned(&with_edit(THEME, body), NODE), Vec::<String>::new());
+    }
+
+    /// The same for a palette: a node's `set_palette`, on a map with no
+    /// palette `warm`.
+    ///
+    /// Controls, each run: the `set_palette` arm not reporting its name
+    /// fails the first assertion with no warning; `is_defined_in`
+    /// answering `false` for a palette fails the second.
+    #[test]
+    fn test_verify_warns_of_a_palette_an_edit_names_that_the_map_lacks() {
+        let body = r#""target": "node", "mutations": [{"node": {"set_palette": "warm"}}]"#;
+        assert_eq!(
+            warned(&with_edit("", body), NODE),
+            ["edits[0]: edit `e`: `set_palette` names palette `warm`, which this map does not define"]
+        );
+        assert_eq!(warned(&with_edit(PALETTE, body), NODE), Vec::<String>::new());
+    }
+
+    /// Every name an edit writes that the map lacks is reported, not the
+    /// first alone, in the order the edit writes them and under the
+    /// edit's own place in `edits`; a name the map defines is not. An edit
+    /// naming nothing the map lacks, and a handler, which names nothing,
+    /// earn no warning.
+    ///
+    /// Controls, each run: reporting only the first undefined name fails
+    /// with the second and third warnings missing; reporting every name,
+    /// defined or not, adds `go`'s.
+    #[test]
+    fn test_verify_warns_of_every_name_an_edit_lacks_in_the_order_it_writes_them() {
+        let header = r#""verbs": [{"id": "go", "name": "Go", "steps": []}],
+               "edits": [
+                 {"id": "a", "name": "A", "reach": "self", "target": "node", "mutations": [{"node": {"set_folded": true}}]},
+                 {"id": "b", "name": "B", "reach": "self", "target": "node", "mutations": [
+                   {"node": {"set_click": "go"}}, {"node": {"set_hover": "nowhere"}},
+                   {"node": {"set_palette": "warm"}}, {"node": {"text": {"set_color": "var(accent)"}}}]},
+                 {"id": "c", "name": "C", "reach": "self", "target": "node", "handler": "flower"}
+               ],"#;
+        assert_eq!(
+            warned(header, NODE),
+            [
+                "edits[1]: edit `b`: `set_hover` names verb `nowhere`, which this map does not define",
+                "edits[1]: edit `b`: `set_palette` names palette `warm`, which this map does not define",
+                "edits[1]: edit `b`: `color` names theme variable `accent`, which this map does not define",
+            ]
+        );
     }
 }

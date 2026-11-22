@@ -114,7 +114,12 @@ Commands:
                                 with no rings, and a portal whose ends
                                 both have no content (none while an edit
                                 in the map writes a portal end's
-                                non-empty 'set_content'). In general,
+                                non-empty 'set_content'), and a verb,
+                                theme variable or palette an edit in the
+                                map names that the map does not define
+                                (every run of it would be refused; each
+                                name is reported, not the first alone).
+                                In general,
                                 which elements an edit reaches is
                                 decided when it runs, and a
                                 presentation's when it starts, so verify

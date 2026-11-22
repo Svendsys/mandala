@@ -3305,7 +3305,8 @@ as Markdown and `verify` the loader's verdict plus warnings for what
 loads but is probably a mistake (a verb nothing refers to, a
 presentation no verb's step names, a node saved hidden that nothing can
 reveal, a visible frame with no rings, a portal whose ends both draw
-nothing). What it counts includes the map's edits
+nothing, a verb, theme variable or palette a map's own edit names that
+the map does not define). What it counts includes the map's edits
 (`EditDef::mentions`, one walk that names every edit step, so a step
 added to the format does not compile there until it is counted): a verb
 an edit names — `set_click`, `set_hover`, a span's `set_link` to a
@@ -3317,7 +3318,15 @@ when it runs, so `verify` does not narrow by reach: with an edit in the
 map that writes `set_hidden: false` no hidden node is reported, and
 with one that writes a portal end's non-empty `set_content` no empty
 portal is. No edit can add a ring, so none can make an empty frame
-draw something, and that warning stands. Only the map's own edits are
+draw something, and that warning stands. The same walk reports each
+verb, theme variable (`var(name)` in any color) and palette an edit
+writes, and `verify` asks the document whether it defines each by the
+probes a run resolves it by (`Mention::is_defined_in`): a name it does
+not is a warning, in the words of the run's refusal, for every such name
+and not the first alone. A map's verbs, variables and palettes are the
+file's own and no operation changes them, so the file decides what a run
+would refuse; whether a run is ever asked for is not the file's to say.
+Only the map's own edits are
 read: the App and User tiers also run on a map, and are outside what a
 map file can be judged on. `apply` pipes the text of each section a
 line of which matches through a command and replaces its spans as one

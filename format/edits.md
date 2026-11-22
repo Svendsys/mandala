@@ -154,6 +154,20 @@ names the edit, the field and the name —
 and nothing is applied. A font family this build has no face for is
 refused when the edit is read, since no map could answer it.
 
+A map's **own** edit is the one case a file can judge: the map it will
+run on is the file it is in, and a map's verbs, theme variables and
+palettes are fixed by the file (no operation adds, removes or renames
+one). So `maptool verify` warns of each verb, theme variable and palette
+a Map-tier edit writes that the map does not define, in the words of the
+refusal above, for every such name and not the first alone, though the
+load accepts the map. It uses the probes a run uses, so it warns
+exactly where a run would be refused for a name. Two things a file
+cannot say: whether the edit is ever run (keybinds, the console and
+macros run an edit by id from outside the map), and anything about an
+App or User edit, which `verify` does not read. A presentation's names
+are resolved the same way when it starts, and `verify` does not judge
+them yet.
+
 ### Mutator
 
 The advanced body: the mutator AST of [`mutations.md`](./mutations.md#mutator--the-mutatornode-ast)

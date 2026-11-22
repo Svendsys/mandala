@@ -124,7 +124,7 @@ type Names<'d> = Option<&'d Document>;
 /// One probe of the document's index (`Document::variable_named`), so a
 /// presentation or an edit started by a trigger costs O(1) a name
 /// (ruling D3.3 item 2 on #252).
-fn var_of(names: Names<'_>, name: &str) -> Option<VarId> {
+pub(crate) fn var_of(names: Names<'_>, name: &str) -> Option<VarId> {
     match names {
         Some(doc) => doc.variable_named(name),
         None => Some(VarId(0)),
@@ -133,7 +133,7 @@ fn var_of(names: Names<'_>, name: &str) -> Option<VarId> {
 
 /// A palette by name. One probe of the document's index
 /// (`Document::palette_named`).
-fn palette_of(names: Names<'_>, name: &str) -> Option<PaletteId> {
+pub(crate) fn palette_of(names: Names<'_>, name: &str) -> Option<PaletteId> {
     match names {
         Some(doc) => doc.palette_named(name),
         None => Some(PaletteId(0)),
@@ -142,7 +142,7 @@ fn palette_of(names: Names<'_>, name: &str) -> Option<PaletteId> {
 
 /// A verb by id: its position among the map's verbs. One probe of the
 /// definitions' index (`Definitions::verb_by_id`).
-fn verb_of(names: Names<'_>, id: &str) -> Option<VerbId> {
+pub(crate) fn verb_of(names: Names<'_>, id: &str) -> Option<VerbId> {
     match names {
         Some(doc) => doc.definitions().verb_by_id(id).map(|(verb, _)| verb),
         None => Some(VerbId(0)),

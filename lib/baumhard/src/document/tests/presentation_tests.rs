@@ -1090,11 +1090,15 @@ fn test_own_is_the_maps_element_under_whatever_plays() {
 /// mutations not walked, `go` is not, and nothing is revealed.
 #[test]
 fn test_a_presentation_mentions_the_verbs_it_names_and_what_it_can_show() {
-    use crate::document::edit::Shows;
+    use crate::document::edit::{Named, Shows};
     let said = |json: &str| {
         let def = presentation(json);
         let mut verbs: Vec<String> = Vec::new();
-        let shows = def.mentions(|verb| verbs.push(verb.to_string()));
+        let shows = def.mentions(|mention| {
+            if mention.kind == Named::Verb {
+                verbs.push(mention.name.to_string());
+            }
+        });
         (verbs, shows)
     };
     let nothing = Shows::default();

@@ -2013,3 +2013,156 @@ fn test_a_refused_runs_text_from_the_map_is_escaped() {
         );
     }
 }
+
+/// What an edit writes that its map must define is what `mentions`
+/// reports, and `Mention::is_defined_in` answers as a run does: for each
+/// place an edit can write a verb, a theme variable or a palette — each
+/// op that holds a color, each filter field that holds a name, a macro
+/// below a mutator's root and a `repeat_while` test among them — the one
+/// name it writes is reported with the field a refusal names, a map
+/// that defines it runs the edit, and a map that does not refuses the
+/// run with exactly the refusal `Mention::refusal` words.
+///
+/// Controls, each run red: dropping `Walk::color`'s `Var` arm fails every
+/// case that writes `var(accent)`; dropping the `set_palette` arm or the
+/// filter `palette` arm fails its own case; dropping `Walk::text`'s
+/// `SetColor` arm fails the seven text cases, the cap's included;
+/// answering `true` for a palette in `is_defined_in` fails the palette
+/// cases on the bare map; answering `false` fails them on the full one.
+#[test]
+fn test_the_names_an_edit_mentions_are_the_ones_a_run_refuses() {
+    use crate::document::edit::{Mention, Named};
+
+    const NODE: &str = r#"{"id":1,"position":[0,0],"sections":[{"spans":[{"text":"x"}]}]}"#;
+    let full = load(&format!(
+        r##"{{"format":1,"name":"t","theme":{{"active":"d","variants":{{"d":{{"accent":"#ff0000"}}}}}},
+        "verbs":[{{"id":"go","name":"Go","steps":[]}}],
+        "palettes":{{"warm":[{{"frame":"#ff0000","text":"#ff0000"}}]}},"nodes":[{NODE}]}}"##
+    ))
+    .unwrap();
+    let bare = load(&format!(r#"{{"format":1,"name":"t","nodes":[{NODE}]}}"#)).unwrap();
+
+    let node = |ops: &str| format!(r#""target":"node","mutations":[{ops}]"#);
+    let text = |kind: &str, target: &str| {
+        format!(r#""target":"{target}","mutations":[{{"{kind}":{{"text":{{"set_color":"var(accent)"}}}}}}]"#)
+    };
+    let below = |root: &str, kind: &str, ops: &str| {
+        format!(
+            r#""target":"{root}","mutator":{{"void":{{"kind":"{}","channel":0,"children":[
+                 {{"macro":{{"kind":"{kind}","channel":0,"mutations":[{ops}]}}}}]}}}}"#,
+            // The target `links` anchors a `link`.
+            root.trim_end_matches('s')
+        )
+    };
+    let filtered = |field: &str| {
+        format!(
+            r#""target":"node","filter":{{"fields":[[{field},{{"Equals":false}}]]}},
+               "mutations":[{{"node":{{"set_folded":true}}}}]"#
+        )
+    };
+    let color = r#"{"set_color":"var(accent)"}"#;
+    let sides = r#"{"layout":{"set_sides":{"content":"*","color":"var(accent)"}}}"#;
+    let cases: Vec<(&str, Named, &str, String)> = vec![
+        ("set_click", Named::Verb, "set_click", node(r#"{"node":{"set_click":"go"}}"#)),
+        ("set_hover", Named::Verb, "set_hover", node(r#"{"node":{"set_hover":"go"}}"#)),
+        (
+            "set_link",
+            Named::Verb,
+            "set_link",
+            r#""target":"spans","mutations":[{"span":{"set_link":{"verb":"go"}}}]"#.to_string(),
+        ),
+        ("on_click", Named::Verb, "on_click", filtered(r#"{"on_click":"go"}"#)),
+        ("on_hover", Named::Verb, "on_hover", filtered(r#"{"on_hover":"go"}"#)),
+        (
+            "set_palette",
+            Named::Palette,
+            "set_palette",
+            node(r#"{"node":{"set_palette":"warm"}}"#),
+        ),
+        ("palette", Named::Palette, "palette", filtered(r#"{"palette":"warm"}"#)),
+        ("filter color", Named::Variable, "color", filtered(r#"{"color":"var(accent)"}"#)),
+        (
+            "filter background",
+            Named::Variable,
+            "color",
+            filtered(r#"{"background":"var(accent)"}"#),
+        ),
+        ("node text", Named::Variable, "color", text("node", "node")),
+        ("section text", Named::Variable, "color", text("section", "sections")),
+        ("span text", Named::Variable, "color", text("span", "spans")),
+        ("frame text", Named::Variable, "color", text("frame", "frame")),
+        ("ring text", Named::Variable, "color", text("ring", "rings")),
+        ("label text", Named::Variable, "color", text("label", "labels")),
+        (
+            "cap text",
+            Named::Variable,
+            "color",
+            below("connector", "cap_start", r#"{"cap":{"set_color":"var(accent)"}}"#),
+        ),
+        (
+            "path color",
+            Named::Variable,
+            "color",
+            format!(r#""target":"connector","mutations":[{{"path":{color}}}]"#),
+        ),
+        (
+            "portal end color",
+            Named::Variable,
+            "color",
+            below("links", "portal_end", &format!(r#"{{"portal_end":{color}}}"#)),
+        ),
+        (
+            "ring sides color",
+            Named::Variable,
+            "color",
+            format!(r#""target":"rings","mutations":[{{"ring":{sides}}}]"#),
+        ),
+        (
+            "frame sides color",
+            Named::Variable,
+            "color",
+            format!(r#""target":"frame","mutations":[{{"frame":{sides}}}]"#),
+        ),
+        (
+            "a macro's verb, in a mutator",
+            Named::Verb,
+            "set_click",
+            below("node", "node", r#"{"node":{"set_click":"go"}}"#),
+        ),
+        (
+            "a repeat_while test's palette",
+            Named::Palette,
+            "palette",
+            r#""target":"node","mutator":{"instruction":{"kind":"node","channel":0,
+                "instruction":{"repeat_while":{"fields":[[{"palette":"warm"},{"Equals":false}]]}},
+                "children":[{"macro":{"kind":"node","channel":0,"mutations":[{"node":{"set_folded":true}}]}}]}}"#
+                .to_string(),
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (way, kind, field, body) in &cases {
+        let def = edit(&format!(r#"{{"id":"e","name":"E","reach":"self",{body}}}"#));
+        let mut said: Vec<Mention<'_>> = Vec::new();
+        def.mentions(|mention| said.push(mention));
+        let [mention] = said.as_slice() else {
+            wrong.push(format!("{way}: mentions {said:?}, not one name"));
+            continue;
+        };
+        if (mention.kind, mention.field) != (*kind, *field) {
+            wrong.push(format!("{way}: mentions {mention:?}"));
+        }
+        let run = |doc: &Document| {
+            let one = n(doc, 1);
+            def.request(doc, &Boxes::of(doc), &registry(), &[one]).err()
+        };
+        if !mention.is_defined_in(&full) || run(&full).is_some() {
+            wrong.push(format!("{way}: not defined, or refused, on the full map"));
+        }
+        if mention.is_defined_in(&bare) || run(&bare) != Some(mention.refusal("e")) {
+            wrong.push(format!(
+                "{way}: defined, or not refused as worded, on the bare map"
+            ));
+        }
+    }
+    assert_eq!(wrong, Vec::<String>::new());
+}
