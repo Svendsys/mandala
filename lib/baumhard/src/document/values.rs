@@ -115,18 +115,21 @@ pub enum FontSize {
 /// name among the faces the machine has installed, and when it has none,
 /// its text is drawn in the default face, its stand-in, until the user
 /// installs it or picks a replacement. Shared, so every span of one
-/// family in a load holds one copy; compared by its text. Made only by
+/// family in a load holds one copy; compared by its text. A thin pointer
+/// (`Arc<String>`, one word), so a text style that names a font grows the
+/// element by as little as a name held elsewhere can: wasm32's memory
+/// model counts every byte of an element three times. Made only by
 /// [`format::font`](crate::document::format::font), which holds it to
 /// [`family_fault`](crate::document::place::family_fault) and to naming
 /// no compiled family.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct FamilyName(std::sync::Arc<str>);
+pub struct FamilyName(std::sync::Arc<String>);
 
 impl FamilyName {
     /// The name `format::font` checked. Crate-private: a name is made
     /// only where it is checked.
     pub(crate) fn checked(name: &str) -> Self {
-        FamilyName(name.into())
+        FamilyName(std::sync::Arc::new(name.to_string()))
     }
 
     /// The family name, as the map spells it. O(1).

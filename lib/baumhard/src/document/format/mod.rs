@@ -158,10 +158,12 @@ pub const WASM32_BYTES_PER_TEXT_BYTE: u64 = 6;
 /// nodes and held by one — at the load's peak and at the save's, and
 /// rounded up to 16 bytes. It is essentially three arena slots: the
 /// arena's old buffer and its new one, twice the size, while it doubles.
-/// 480 since V1-A7 (#301) compacted the slot — 124 bytes for a
-/// document element on wasm32, from 144 — measured by the probe at
-/// 479.99 (empty sections and empty rings on one node); 576 before.
-pub const WASM32_BYTES_PER_ELEMENT: u64 = 480;
+/// 512 since V1-B24 (#329) let a text style name an installed font family
+/// by a shared name, a pointer where a compiled face's one byte was —
+/// measured by the probe at 501.5 (empty sections and empty rings on one
+/// node); 480 from V1-A7 (#301), which compacted the slot (124 bytes for
+/// a document element on wasm32, from 144); 576 before that.
+pub const WASM32_BYTES_PER_ELEMENT: u64 = 512;
 
 /// wasm32's ceiling on a map's text: half of [`WASM32_MEMORY_BUDGET`]
 /// over [`WASM32_BYTES_PER_TEXT_BYTE`].

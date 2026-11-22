@@ -163,7 +163,7 @@ pub extern "C" fn flow_shape_and_place() -> u32 {
     install_hook();
     fonts::init();
     let style = ResolvedText {
-        font: AppFont::GalatiaSIL,
+        font: AppFont::GalatiaSIL.into(),
         size: FontSize::Pt(14.0),
         color: Rgba::opaque(255, 255, 255),
         weight: Weight::BOLD,
@@ -218,7 +218,7 @@ pub extern "C" fn ornaments_fall_back_to_their_compiled_faces() -> u32 {
     install_hook();
     fonts::init();
     let pinned = ResolvedText {
-        font: AppFont::GalatiaSIL,
+        font: AppFont::GalatiaSIL.into(),
         size: FontSize::Pt(14.0),
         color: Rgba::opaque(255, 255, 255),
         weight: Weight::NORMAL,
@@ -257,7 +257,7 @@ pub extern "C" fn default_text_is_drawn_in_the_default_face() -> u32 {
     install_hook();
     fonts::init();
     let regular = ResolvedText {
-        font: AppFont::Any,
+        font: AppFont::Any.into(),
         size: FontSize::Pt(14.0),
         color: Rgba::opaque(255, 255, 255),
         weight: Weight::NORMAL,
