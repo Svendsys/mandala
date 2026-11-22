@@ -168,10 +168,10 @@ fn builders() -> Vec<(&'static str, Builder)> {
             reparent(doc, &[ids.b], doc.root()).unwrap()
         }),
         ("line to portal", |doc, ids| {
-            set_link_kind(doc, ids.line, LinkKind::Portal).unwrap()
+            set_link_kind(doc, &[ids.line], LinkKind::Portal).unwrap()
         }),
         ("portal to line", |doc, ids| {
-            set_link_kind(doc, ids.portal, LinkKind::Line).unwrap()
+            set_link_kind(doc, &[ids.portal], LinkKind::Line).unwrap()
         }),
         ("style_range", |doc, ids| {
             style_range(doc, ids.a_title, 1, 3, vec![TextOp::SetItalic(Some(true))]).unwrap()
@@ -1059,7 +1059,7 @@ fn random_request(doc: &Document, rng: &mut Lcg) -> Option<EditRequest> {
             } else {
                 LinkKind::Portal
             };
-            set_link_kind(doc, link, kind).ok()?
+            set_link_kind(doc, &[link], kind).ok()?
         }
     };
     Some(EditRequest::new(steps, "random"))

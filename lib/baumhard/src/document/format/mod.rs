@@ -85,7 +85,7 @@ pub(crate) mod verbs;
 mod writer;
 
 pub use error::{LoadError, LoadErrorKind, NodeContext, SaveError, SaveErrorKind, TextPosition};
-pub use read::{align, direction, edge, fit, line_span, shape, sides, start, weight};
+pub use read::{align, anchor, direction, edge, fit, line_span, link_kind, shape, sides, start, weight};
 
 use crate::document::format::context::{dto_excerpt, offset_in, peek_excerpt, peek_id, position_at};
 use crate::document::format::dto::{MapHeaderDto, NodeDto};

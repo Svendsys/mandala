@@ -22,8 +22,8 @@ fn empty_console_geometry() -> ConsoleOverlayGeometry {
 
 fn sample_console_geometry() -> ConsoleOverlayGeometry {
     ConsoleOverlayGeometry {
-        input: "anchor set from t".to_string(),
-        cursor_grapheme: 17,
+        input: "path anchors=top,t".to_string(),
+        cursor_grapheme: 18,
         scrollback: vec![
             ConsoleOverlayLine {
                 text: "> help".to_string(),
@@ -319,13 +319,13 @@ fn console_mutator_round_trips_to_fresh_build() {
     baumhard::font::fonts::init();
 
     let mut g_a = sample_console_geometry();
-    g_a.input = "anchor".into();
-    g_a.cursor_grapheme = 6;
+    g_a.input = "path".into();
+    g_a.cursor_grapheme = 4;
     let layout_a = compute_console_frame_layout(&g_a, 1280.0, 720.0);
 
     let mut g_b = sample_console_geometry();
-    g_b.input = "anchor set".into();
-    g_b.cursor_grapheme = 10;
+    g_b.input = "path cap".into();
+    g_b.cursor_grapheme = 8;
     let layout_b = compute_console_frame_layout(&g_b, 1280.0, 720.0);
 
     // Same scrollback_rows / completion_rows means the
@@ -1374,8 +1374,8 @@ fn chrome_literal_chars() -> Vec<(char, String)> {
 /// the shipping code of the console, the field edits, the renderer and
 /// the view spells ([`chrome_literal_chars`]) — the console's prompt,
 /// cursor, gutter, completion marker and frame, the rubber band's
-/// corners and dashes, the `body` presets, the boxes the frame cycle
-/// sets a ring to (#338), and whatever a new chrome surface adds. Each is
+/// corners and dashes, the boxes the frame cycle sets a ring to (#338),
+/// and whatever a new chrome surface adds. Each is
 /// drawn in the default family, so its look must not depend on the
 /// machine: a glyph neither face holds is drawn in whatever face the
 /// host has, as a `.notdef` box where it has none and in the browser, or
@@ -1388,12 +1388,13 @@ fn chrome_literal_chars() -> Vec<(char, String)> {
 /// The chrome's named glyphs are the scan's precondition: it must find
 /// each of them. Controls: with the pre-chrome `Mandala Ornaments`
 /// (#228's first subset, which held the frame alone), red on
-/// `❯ ▌ ▏ ▸ ┄ ┆ ═ ∼ ⋯`; with a `"\u{272A}"` constant planted in
+/// `❯ ▌ ▏ ▸ ┄ ┆ ═`, and on the `∼ ⋯` of the `body` presets the console
+/// had then (V1-C6, #247, deleted them: a path's content is text, D8);
+/// with a `"\u{272A}"` constant planted in
 /// `console/visuals.rs`, red on it, drawn in a host face; with the
 /// `Mandala Ornaments` of #324, red on the frame cycle's `║ ╔ ╗ ╝ ╚`.
 #[test]
 fn test_every_chrome_glyph_is_drawn_by_the_default_or_an_ornament_face() {
-    use crate::application::console::commands::body::PRESETS;
     use crate::application::console::visuals::{
         CURSOR_GLYPH, GUTTER_GLYPH, PROMPT_GLYPH, SELECTED_COMPLETION_MARKER,
     };
@@ -1424,8 +1425,7 @@ fn test_every_chrome_glyph_is_drawn_by_the_default_or_an_ornament_face() {
         + &CYCLE
             .iter()
             .flat_map(|set| [set.level, set.vertical].into_iter().chain(set.corners))
-            .collect::<String>()
-        + &PRESETS.iter().map(|(_, glyph)| *glyph).collect::<String>();
+            .collect::<String>();
     for c in named.chars().filter(|c| !c.is_ascii() && !c.is_whitespace()) {
         assert!(
             scanned.iter().any(|(found, _)| *found == c),
@@ -1754,12 +1754,12 @@ fn test_console_keystroke_reshapes_only_the_prompt_line() {
 
     baumhard::font::fonts::init();
     let mut before = sample_console_geometry();
-    before.input = "anchor".into();
-    before.cursor_grapheme = 6;
+    before.input = "path".into();
+    before.cursor_grapheme = 4;
     let layout_before = compute_console_frame_layout(&before, 1280.0, 720.0);
     let mut after = sample_console_geometry();
-    after.input = "anchors".into();
-    after.cursor_grapheme = 7;
+    after.input = "paths".into();
+    after.cursor_grapheme = 5;
     let layout_after = compute_console_frame_layout(&after, 1280.0, 720.0);
     assert_eq!(
         console_overlay_signature(&layout_before),

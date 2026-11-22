@@ -4,7 +4,7 @@
 //! — a console line, a keybind's argument — rather than from a map:
 //! `format::color` and `format::font` beside them in [`super`], and here
 //! the start points, edges, directions, alignments, shapes, weights,
-//! line spans, sides and fit modes.
+//! line spans, sides, fit modes, anchors and link kinds.
 //!
 //! Each reads the very spelling type the loader reads
 //! (`format::spelling`, `format::dto`) and holds the value to the same
@@ -20,13 +20,13 @@
 use serde::Deserialize;
 
 use crate::document::bounds;
-use crate::document::format::dto::{AlignDto, DirectionDto};
+use crate::document::format::dto::{AlignDto, AnchorDto, DirectionDto, LinkKindDto};
 use crate::document::format::spelling::{
     EdgeDto, FitDto, LineSpanDto, ShapeDto, SidesDto, StartDto, WeightDto,
 };
 use crate::document::ids::Document;
 use crate::document::values::{
-    Align, Direction, Edge, FitMode, LineSpan, Percent, Shape, Sides, StartPoint, Weight,
+    Align, Anchor, Direction, Edge, FitMode, LineSpan, LinkKind, Percent, Shape, Sides, StartPoint, Weight,
 };
 
 /// `text` as a value of the file's spelling type `T`: the text as JSON
@@ -96,6 +96,17 @@ pub fn direction(text: &str) -> Option<Direction> {
 /// A section's alignment: `left`, `center` or `right`.
 pub fn align(text: &str) -> Option<Align> {
     read::<AlignDto>(text).map(Align::from)
+}
+
+/// Where a path attaches to a node: `auto`, `top`, `right`, `bottom` or
+/// `left`, one of a connector's or a line link's `anchors`.
+pub fn anchor(text: &str) -> Option<Anchor> {
+    read::<AnchorDto>(text).map(Anchor::from)
+}
+
+/// What a link draws: `line` or `portal`.
+pub fn link_kind(text: &str) -> Option<LinkKind> {
+    read::<LinkKindDto>(text).map(LinkKind::from)
 }
 
 /// A node's outline: `ellipse`, or `{"rectangle": {"radius": …}}` with

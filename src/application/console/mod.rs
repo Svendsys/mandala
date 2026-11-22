@@ -7,8 +7,9 @@
 //! A verb that changes the map hands an `EditRequest` to the document's
 //! one writer (`MindMapDocument::apply`); the view brings the canvas up
 //! to date from the change feed after the line, whatever the verb did.
-//! The verbs that edited the old model are rebuilt on the writer by the
-//! issues their refusals name (`commands::rebuilt_by`).
+//! The subverbs that edited the old model and are not rebuilt yet — the
+//! editors, resize mode, the color picker — refuse naming the issue that
+//! rebuilds them (`commands::rebuilt_by`).
 //!
 //! Completion is contextual and prefix-matched. The popup recomputes
 //! on every keystroke; `↑`/`↓` move the highlight (falling back to
@@ -310,7 +311,7 @@ impl ExecResult {
 /// `Input` echoes and `Error` lines carry none.
 #[derive(Clone, Debug)]
 pub enum ConsoleLine {
-    /// Echo of a user-entered command (`> anchor set from auto`).
+    /// Echo of a user-entered command (`> path anchors=top,auto`).
     Input(String),
     /// Normal output line from a command.
     Output {

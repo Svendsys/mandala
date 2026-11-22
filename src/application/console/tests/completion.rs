@@ -22,31 +22,31 @@ fn test_complete_command_name_empty_input() {
     let ctx = ConsoleContext::from_document(&doc);
     let results = complete("", 0, &ctx);
     assert!(results.iter().any(|c| c.text == "help"));
-    // Non-applicable commands (e.g. `anchor` without a path selected)
+    // Non-applicable commands (e.g. `path` without a path selected)
     // should be hidden.
-    assert!(!results.iter().any(|c| c.text == "anchor"));
+    assert!(!results.iter().any(|c| c.text == "path"));
 }
 
 #[test]
-fn test_complete_anchor_kv_keys() {
+fn test_complete_path_kv_keys() {
     let mut doc = load_test_doc();
     let _ = select_first_path(&mut doc);
     let ctx = ConsoleContext::from_document(&doc);
-    let results = complete("anchor ", 7, &ctx);
+    let results = complete("path ", 5, &ctx);
     let names: Vec<&str> = results.iter().map(|c| c.text.as_str()).collect();
-    assert!(names.contains(&"from="));
-    assert!(names.contains(&"to="));
+    assert!(names.contains(&"content="));
+    assert!(names.contains(&"anchors="));
+    assert!(names.contains(&"straight"));
 }
 
 #[test]
-fn test_complete_anchor_kv_values() {
+fn test_complete_path_kv_values() {
     let mut doc = load_test_doc();
     let _ = select_first_path(&mut doc);
     let ctx = ConsoleContext::from_document(&doc);
-    let results = complete("anchor from=", 12, &ctx);
+    let results = complete("path visible=", 13, &ctx);
     let names: Vec<&str> = results.iter().map(|c| c.text.as_str()).collect();
-    assert!(names.contains(&"auto"));
-    assert!(names.contains(&"top"));
+    assert_eq!(names, ["true", "false"]);
 }
 
 #[test]

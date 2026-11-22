@@ -1055,37 +1055,37 @@ fn test_a_committed_positional_narrows_a_subverb_to_the_form_that_declares_it() 
 /// untested and unpinned.
 ///
 /// Asserted here at its new home, and pinned end to end by the
-/// `body glyph=dash glyph=dot` / `body glyph=dot glyph=dash` pair in
+/// `link kind=line kind=bogus` / `link kind=bogus kind=line` pair in
 /// `EXEC_CORPUS`, which swap answers under a first-wins reader.
 #[test]
 fn test_a_repeated_key_resolves_to_its_last_occurrence() {
     use super::kvs::{value, Pair};
     use super::{free, Key};
 
-    static GLYPH: Key = Key::new("glyph", "edge body glyph", free("name"));
+    static KIND: Key = Key::new("kind", "how the link is drawn", free("kind"));
     static SIZE: Key = Key::new("size", "point size", free("pt"));
 
     let pairs = vec![
         Pair {
-            key: &GLYPH,
-            value: "dash",
+            key: &KIND,
+            value: "line",
         },
         Pair {
             key: &SIZE,
             value: "12",
         },
         Pair {
-            key: &GLYPH,
-            value: "dot",
+            key: &KIND,
+            value: "portal",
         },
     ];
-    assert_eq!(value(&pairs, "glyph"), Some("dot"));
+    assert_eq!(value(&pairs, "kind"), Some("portal"));
     // The other key is unaffected by the repetition beside it, and a
     // key that is not on the line is still `None` — the two failures
     // an `rfind` over the wrong predicate would produce.
     assert_eq!(value(&pairs, "size"), Some("12"));
     assert_eq!(value(&pairs, "absent"), None);
-    assert_eq!(value(&[], "glyph"), None);
+    assert_eq!(value(&[], "kind"), None);
 }
 
 /// Every subverb dispatcher in the registry: a name for failure
@@ -1096,7 +1096,8 @@ fn test_a_repeated_key_resolves_to_its_last_occurrence() {
 /// serves.
 fn dispatchers() -> Vec<(&'static str, Vec<&'static Grammar>, Vec<&'static str>)> {
     use crate::application::console::commands::{
-        clock, color, edit, font, fps, frame, mode, node, present, record, section, theme, verb, zoom,
+        clock, color, edit, font, fps, frame, label, mode, node, path, present, record, section, theme, verb,
+        zoom,
     };
     vec![
         ("fps", vec![&fps::GRAMMAR], fps::routed_names()),
@@ -1117,6 +1118,8 @@ fn dispatchers() -> Vec<(&'static str, Vec<&'static Grammar>, Vec<&'static str>)
         ("font", vec![&font::GRAMMAR], font::routed_names()),
         ("zoom", vec![&zoom::GRAMMAR], zoom::routed_names()),
         ("theme", vec![&theme::GRAMMAR], theme::routed_names()),
+        ("path", vec![&path::GRAMMAR], path::routed_names()),
+        ("label", vec![&label::GRAMMAR], label::routed_names()),
     ]
 }
 
@@ -1185,14 +1188,6 @@ fn test_every_level_with_subverbs_has_a_listed_dispatcher() {
         .collect();
     for (verb, grammar) in all_levels() {
         if grammar.subverbs().all(|s| s.child.is_some()) {
-            continue;
-        }
-        // A verb its owner rebuilds refuses whole and routes nothing
-        // until then (`commands::rebuilt_by`).
-        if crate::application::console::commands::REBUILT_VERBS
-            .iter()
-            .any(|(rebuilt, _)| *rebuilt == verb)
-        {
             continue;
         }
         assert!(

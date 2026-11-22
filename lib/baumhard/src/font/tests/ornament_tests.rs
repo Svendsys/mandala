@@ -24,10 +24,11 @@ use crate::font::fonts::{self, acquire_font_system_write, AppFont, FONT_SOURCES}
 /// box-drawing characters of the console's frame (`─ │ ╭ ╮ ╯ ╰`), of
 /// testament's custom sides (`━ ┃`), of the maps' directional rings'
 /// corners (`┌ ┐ └ ┘ ┏ ┓ ┗ ┛`, #324) and of the frame cycle's double box
-/// (`║ ╔ ╗ ╝ ╚`, #338), and the rest of the app's chrome:
-/// the console's prompt, cursor, gutter and completion marker
-/// (`❯ ▌ ▏ ▸`), the rubber band's dashes (`┄ ┆`) and the `body` presets'
-/// `═ ∼ ⋯` — with `∽` and `❮`, the mirrored forms of `∼` and `❯`, which
+/// (`═ ║ ╔ ╗ ╝ ╚`, #338), the rest of the app's chrome — the console's
+/// prompt, cursor, gutter and completion marker (`❯ ▌ ▏ ▸`) and the
+/// rubber band's dashes (`┄ ┆`) — and `∼ ⋯`, line ornaments a path's
+/// content may name (content is text, D8) — with `∽` and `❮`, the
+/// mirrored forms of `∼` and `❯`, which
 /// the subsetter keeps for a right-to-left run. The default face holds
 /// none of them. `scripts/ornament_fonts.sh` subsets the face to exactly
 /// these.

@@ -455,26 +455,33 @@ pub fn connect(doc: &Document, sources: &[NodeId], target: NodeId) -> Result<Vec
     Ok(vec![DocStep::fixed(walk_at(insert, from))])
 }
 
-/// Switch `link` to `kind`, with the children the new kind holds: a
-/// portal gets two portal ends with nothing set and loses its spans,
-/// caps and label; a line loses its portal ends (with their markers and
-/// labels).
+/// Switch every one of `links` to `kind`, with the children the new
+/// kind holds: a portal gets two portal ends with nothing set and loses
+/// its spans, caps and label; a line loses its portal ends (with their
+/// markers and labels). A link already of `kind` is left as it is, so a
+/// selection of both kinds switches only the ones that differ. A link
+/// named twice is walked once, as every anchor list is.
 ///
-/// Errors: [`MutationError::NotA`] when `link` is not a link. No step
-/// when it already is of `kind`; one to a line; three to a portal —
-/// each end is its own insert, then the switch with the removals.
-pub fn set_link_kind(doc: &Document, link: NodeId, kind: LinkKind) -> Result<Vec<DocStep>, MutationError> {
-    require(doc, link, DocKind::Link, "a link")?;
-    let current = match doc.get(link) {
-        Some(DocElement::Link(data)) => data.kind,
-        _ => {
-            return Err(MutationError::NotA {
-                element: link,
-                expected: "a link",
-            })
+/// Errors: [`MutationError::NotA`] when one of `links` is not a link.
+/// No step when every link already is of `kind`; one to a line; three to
+/// a portal — each end is its own insert, then the switch with the
+/// removals — however many links switch, each step one walk anchored at
+/// all of them.
+///
+/// Cost: O(links).
+pub fn set_link_kind(
+    doc: &Document,
+    links: &[NodeId],
+    kind: LinkKind,
+) -> Result<Vec<DocStep>, MutationError> {
+    let mut switching = Vec::with_capacity(links.len());
+    for &link in links {
+        require(doc, link, DocKind::Link, "a link")?;
+        if matches!(doc.get(link), Some(DocElement::Link(data)) if data.kind != kind) {
+            switching.push(link);
         }
-    };
-    if current == kind {
+    }
+    if switching.is_empty() {
         return Ok(Vec::new());
     }
     let switch = single(DocMutation::Link(LinkOp::SetKind(kind)), DocKind::Link);
@@ -487,10 +494,10 @@ pub fn set_link_kind(doc: &Document, link: NodeId, kind: LinkKind) -> Result<Vec
                     BranchKey::new(DocKind::PortalEnd, 1),
                 ],
             )?;
-            Ok(vec![DocStep::fixed(walk_at(switch, vec![link]))])
+            Ok(vec![DocStep::fixed(walk_at(switch, switching))])
         }
         LinkKind::Portal => {
-            let end = |end: u8| {
+            let end = |end: u8, at: Vec<NodeId>| {
                 let insert = command(
                     StructOp::Insert {
                         subtree: Subtree::leaf(DocElement::PortalEnd(PortalEndData {
@@ -501,7 +508,7 @@ pub fn set_link_kind(doc: &Document, link: NodeId, kind: LinkKind) -> Result<Vec
                     },
                     DocKind::Link,
                 );
-                DocStep::fixed(walk_at(insert, vec![link]))
+                DocStep::fixed(walk_at(insert, at))
             };
             let switch = removing(
                 switch,
@@ -512,7 +519,11 @@ pub fn set_link_kind(doc: &Document, link: NodeId, kind: LinkKind) -> Result<Vec
                     BranchKey::new(DocKind::Label, 0),
                 ],
             )?;
-            Ok(vec![end(0), end(1), DocStep::fixed(walk_at(switch, vec![link]))])
+            Ok(vec![
+                end(0, switching.clone()),
+                end(1, switching.clone()),
+                DocStep::fixed(walk_at(switch, switching)),
+            ])
         }
     }
 }

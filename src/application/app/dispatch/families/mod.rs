@@ -10,7 +10,7 @@
 //! |---|---|---|
 //! | [`structure`] | create, delete, reparent, orphan, connect, clipboard | V1-C4 (#245), rebuilt |
 //! | [`field_nodes`] | node, section, frame, theme and defaults fields; selection-wide style | V1-C5 (#246), rebuilt |
-//! | [`field_paths`] | connector, link, label and portal fields | V1-C6 (#247) |
+//! | [`field_paths`] | connector, link, label and portal fields | V1-C6 (#247), rebuilt |
 //! | [`transactions`] | drags, resizes, the color picker, handle chrome | V1-C7 (#248) |
 //! | [`text`] | text editing on spans, node editing | V1-C8 (#249) |
 //! | [`edits`] | the edit funnel: keys bound to edits, the macro `Edit` step, the console | V1-D1 (#250), rebuilt |
@@ -23,9 +23,10 @@
 //! have here is [`the_map`](super::the_map): every Action that reads the
 //! map runs with them set aside.
 //!
-//! [`structure`] and [`field_nodes`] have landed: their Actions run
-//! ([`structure::dispatch`], [`field_nodes::dispatch`]), asked first on
-//! both targets. Until its owner lands, each other family
+//! [`structure`], [`field_nodes`] and [`field_paths`] have landed: their
+//! Actions run ([`structure::dispatch`], [`field_nodes::dispatch`],
+//! [`field_paths::dispatch`]), asked first on both targets. Until its
+//! owner lands, each other family
 //! answers its Actions
 //! [`DispatchOutcome::Unhandled`] with a `debug!` naming the owner
 //! ([`unhandled`]) — the only temporary scaffolding the cut-over allows,
@@ -35,6 +36,8 @@
 pub(in crate::application::app) mod edits;
 pub(in crate::application::app) mod field_nodes;
 pub(in crate::application::app) mod field_paths;
+#[cfg(test)]
+mod projected;
 pub(in crate::application::app) mod structure;
 pub(in crate::application::app) mod text;
 pub(in crate::application::app) mod transactions;
@@ -64,8 +67,7 @@ impl Family {
 
 /// Every family whose Actions still answer `Unhandled`, in the table's
 /// order.
-pub(in crate::application::app) const FAMILIES: [&Family; 3] =
-    [&field_paths::FAMILY, &transactions::FAMILY, &text::FAMILY];
+pub(in crate::application::app) const FAMILIES: [&Family; 2] = [&transactions::FAMILY, &text::FAMILY];
 
 /// The answer a removed Action gets until `owner` rebuilds it: logged at
 /// `debug!` with the owner named, and `Unhandled`, as an Action that does
@@ -157,6 +159,15 @@ mod tests {
         ActionKind::AddSection,
         ActionKind::DeleteSection,
         ActionKind::SplitSection,
+        // The path family, rebuilt (`field_paths::dispatch`).
+        ActionKind::SetPathAnchor,
+        ActionKind::SetPathContent,
+        ActionKind::SetPathCap,
+        ActionKind::SetLinkKind,
+        ActionKind::ResetPath,
+        ActionKind::SetLabelText,
+        ActionKind::SetLabelPosition,
+        ActionKind::SetPathSpacing,
     ];
 
     /// Every Action is the app's, the console modal's, or owned by
@@ -185,10 +196,7 @@ mod tests {
     fn test_a_familys_action_is_unhandled_and_the_apps_is_not_claimed() {
         assert_eq!(dispatch(&Action::DeleteSelection), None);
         assert_eq!(dispatch(&Action::CycleFrameContent), None);
-        assert_eq!(
-            dispatch(&Action::ResetPath("style".into())),
-            Some(DispatchOutcome::Unhandled)
-        );
+        assert_eq!(dispatch(&Action::ResetPath), None);
         assert_eq!(
             dispatch(&Action::EnterResizeMode),
             Some(DispatchOutcome::Unhandled)

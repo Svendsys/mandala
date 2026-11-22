@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "name": "Paths",
+  "nodes": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "sections": [{"spans": [{"text": "One"}]}],
+      "links": [{"to": 3, "kind": "line"}, {"to": 4, "kind": "line", "content": "─", "label": {"spans": [{"text": "see"}]}}, {"to": 4, "kind": "portal"}]
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "position": [300.0, 0.0],
+      "sections": [{"spans": [{"text": "Two"}]}],
+      "connector": {"content": "─", "cap_end": {"spans": [{"text": ">"}]}, "label": {"t": 0.5, "spans": [{"text": "child"}]}}
+    },
+    {
+      "id": 3,
+      "position": [0.0, 300.0],
+      "sections": [{"spans": [{"text": "Three"}]}],
+      "links": [{"to": 2, "kind": "line", "color": "#00ff00", "straight": true, "visible": false}]
+    },
+    {
+      "id": 4,
+      "position": [300.0, 300.0],
+      "sections": [{"spans": [{"text": "Four"}]}],
+      "links": [{"to": 1, "kind": "line", "fit": "repeat", "spacing": 2.0, "size": 9.0, "anchors": ["top", "left"], "control_points": [[0.0, -30.0]], "zoom": {"min": 0.5}, "spans": [{"text": "~"}]}]
+    }
+  ]
+}

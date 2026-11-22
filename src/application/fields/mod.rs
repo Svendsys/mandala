@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Field editing I (V1-C5, #246): the fields of nodes, sections, frames
-//! and their rings, the theme and the defaults, and the style every
-//! selected element takes whatever its kind — on the one writer
-//! (design §8).
+//! Field editing on the one writer (design §8): the fields of nodes,
+//! sections, frames and their rings, the theme and the defaults, and the
+//! style every selected element takes whatever its kind (V1-C5, #246);
+//! and the paths between nodes — connectors, links, their caps and
+//! labels, and portal ends ([`path`], V1-C6, #247).
 //!
 //! **One user action is one request.** Each function here reads the
 //! document and the selection and returns the ordered steps of one
@@ -11,11 +12,11 @@
 //! [`MindMapDocument::apply`] as one [`EditRequest`], so a key, a
 //! console line or an IPC command is one undo entry however many
 //! elements it reaches. The keybinds' Actions
-//! (`app::dispatch::families::field_nodes`) and the console verbs
-//! (`node`, `section`, `frame`, `color`, `font`, `zoom`, `range`,
-//! `theme`, `defaults`) are thin readers of their arguments over these
-//! bodies, so the two surfaces cannot disagree about what an edit
-//! does.
+//! (`app::dispatch::families::field_nodes` and `field_paths`) and the
+//! console verbs (`node`, `section`, `frame`, `color`, `font`, `zoom`,
+//! `range`, `theme`, `defaults`; `path`, `link`, `label`, `portal`) are
+//! thin readers of their arguments over these bodies, so the two
+//! surfaces cannot disagree about what an edit does.
 //!
 //! **Elements are grouped by what they receive.** Every element that
 //! takes the same mutations is an anchor of one walk
@@ -32,6 +33,7 @@
 pub(crate) mod frame;
 pub(crate) mod map;
 pub(crate) mod node;
+pub(crate) mod path;
 pub(crate) mod section;
 pub(crate) mod style;
 pub(crate) mod values;
@@ -64,6 +66,11 @@ pub(crate) enum Refused {
     /// The edit could not be built, or the writer refused it: the
     /// message names what and why.
     Because(String),
+    /// The edit does not apply to what is selected, for a reason the
+    /// user is told on the status line, and which `act.action` answers
+    /// (`DispatchOutcome::Refused`, #194): a link kind asked of a
+    /// connector, a label asked of a portal link.
+    Declined(&'static str),
 }
 
 impl Refused {
@@ -72,20 +79,38 @@ impl Refused {
         match self {
             Refused::Busy => TRANSACTION_OPEN_STATUS,
             Refused::Because(why) => why,
+            Refused::Declined(why) => why,
         }
+    }
+}
+
+impl From<String> for Refused {
+    fn from(why: String) -> Self {
+        Refused::Because(why)
     }
 }
 
 /// Apply `steps` as one request called `label`, declared by `source`.
 /// `Ok(false)` when there was nothing to apply; a refusal of the writer
 /// is reported on the status line by [`MindMapDocument::apply`] as well.
-pub(crate) fn apply(
+/// The steps' error is a message ([`Steps`]) or, for a body that can
+/// decline, a [`Refused`] already; a [`Refused::Declined`] is said on
+/// the status line ([`MindMapDocument::decline`]), as a D28 refusal is,
+/// whichever surface asked.
+pub(crate) fn apply<E: Into<Refused>>(
     doc: &mut MindMapDocument,
-    steps: Steps,
+    steps: Result<Vec<DocStep>, E>,
     label: &str,
     source: ChangeSource,
 ) -> Result<bool, Refused> {
-    let steps = steps.map_err(Refused::Because)?;
+    let steps = match steps.map_err(Into::into) {
+        Ok(steps) => steps,
+        Err(Refused::Declined(why)) => {
+            doc.decline(why);
+            return Err(Refused::Declined(why));
+        }
+        Err(refused) => return Err(refused),
+    };
     if steps.is_empty() {
         return Ok(false);
     }

@@ -1670,7 +1670,7 @@ fn test_json_roundtrip_all_contexts() {
 // ─────────────────────────────────────────────────────────────────
 
 #[test]
-fn test_parametric_set_edge_anchor_resolves_with_two_args() {
+fn test_parametric_set_path_anchor_resolves_with_two_args() {
     let cfg = KeybindConfig {
         set_path_anchor: vec![ParametricBinding {
             combo: "Ctrl+Shift+a".into(),
@@ -1689,18 +1689,18 @@ fn test_parametric_set_edge_anchor_resolves_with_two_args() {
 }
 
 #[test]
-fn test_parametric_set_edge_body_glyph_resolves_with_one_arg() {
+fn test_parametric_set_path_content_resolves_with_one_arg() {
     let cfg = KeybindConfig {
         set_path_content: vec![ParametricBinding {
             combo: "Ctrl+b".into(),
-            args: vec!["dash".into()],
+            args: vec!["·".into()],
         }],
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "b", true, false, false),
-        Some(Action::SetPathContent("dash".into())),
+        Some(Action::SetPathContent("·".into())),
     );
 }
 
@@ -1737,7 +1737,7 @@ fn test_parametric_binding_round_trips_through_json() {
         }],
         set_path_content: vec![ParametricBinding {
             combo: "Ctrl+b".into(),
-            args: vec!["dash".into()],
+            args: vec!["·".into()],
         }],
         ..KeybindConfig::default()
     };
@@ -1810,34 +1810,76 @@ fn test_parametric_color_axes_resolve() {
 }
 
 #[test]
-fn test_parametric_edge_structural_resolve() {
+fn test_parametric_link_kind_and_reset_path_resolve() {
     let cfg = KeybindConfig {
-        set_edge_type: vec![ParametricBinding {
-            combo: "F4".into(),
-            args: vec!["cross_link".into()],
-        }],
         set_link_kind: vec![ParametricBinding {
             combo: "F5".into(),
             args: vec!["portal".into()],
         }],
-        reset_path: vec![ParametricBinding {
-            combo: "F6".into(),
-            args: vec!["style".into()],
-        }],
+        reset_path: vec!["F6".into()],
         ..KeybindConfig::default()
     };
     let resolved = cfg.resolve();
-    assert_eq!(
-        resolved.action_for_context(InputContext::Document, "f4", false, false, false),
-        Some(Action::SetEdgeType("cross_link".into())),
-    );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f5", false, false, false),
         Some(Action::SetLinkKind("portal".into())),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f6", false, false, false),
-        Some(Action::ResetPath("style".into())),
+        Some(Action::ResetPath),
+    );
+}
+
+/// **`SetEdgeType` is deleted with its key, and `reset_path` takes no
+/// arguments** (V1-C6, #247; D22): a user's `set_edge_type` binding is
+/// an unrecognized key, warned about and dropped, and a `reset_path`
+/// written with the arguments it used to take is a malformed value that
+/// keeps its built-in default. Control: `set_link_kind` beside them,
+/// spelled as it is now, loads and resolves.
+#[test]
+fn test_set_edge_type_is_gone_and_reset_path_takes_no_args() {
+    let json = r#"{
+        "set_edge_type": [{ "combo": "F4", "args": ["cross_link"] }],
+        "reset_path": [{ "combo": "F6", "args": ["style"] }],
+        "set_link_kind": [{ "combo": "F5", "args": ["line"] }]
+    }"#;
+    use baumhard::util::log::capture::capture;
+
+    baumhard::util::test_logger::install();
+    let (cfg, captured) = capture(|| KeybindConfig::from_json(json));
+    let cfg = cfg.expect("a JSON object loads");
+    let named = |key: &str| -> Vec<&str> {
+        captured
+            .records
+            .iter()
+            .map(|r| r.message.as_str())
+            .filter(|m| m.contains(&format!("'{key}'")))
+            .collect()
+    };
+    assert!(
+        named("set_edge_type")
+            .iter()
+            .any(|m| m.contains("unrecognized key")),
+        "`set_edge_type` is reported as an unrecognized key: {:?}",
+        named("set_edge_type")
+    );
+    assert!(
+        named("reset_path")
+            .iter()
+            .any(|m| m.contains("has a malformed value")),
+        "`reset_path` with arguments is reported as malformed: {:?}",
+        named("reset_path")
+    );
+    let resolved = cfg.resolve();
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f6", false, false, false),
+        None,
+        "the malformed `reset_path` binds nothing"
+    );
+    assert_eq!(
+        resolved.action_for_context(InputContext::Document, "f5", false, false, false),
+        Some(Action::SetLinkKind("line".into())),
+        "control: the binding beside them loads"
     );
 }
 
@@ -1901,11 +1943,11 @@ fn test_parametric_label_text_position_resolve() {
         }],
         set_label_position: vec![ParametricBinding {
             combo: "F10".into(),
-            args: vec!["middle".into()],
+            args: vec!["middle".into(), "".into()],
         }],
         set_path_spacing: vec![ParametricBinding {
             combo: "F11".into(),
-            args: vec!["wide".into()],
+            args: vec!["6".into()],
         }],
         ..KeybindConfig::default()
     };
@@ -1916,11 +1958,14 @@ fn test_parametric_label_text_position_resolve() {
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f10", false, false, false),
-        Some(Action::SetLabelPosition("middle".into())),
+        Some(Action::SetLabelPosition {
+            t: "middle".into(),
+            offset: "".into(),
+        }),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "f11", false, false, false),
-        Some(Action::SetPathSpacing("wide".into())),
+        Some(Action::SetPathSpacing("6".into())),
     );
 }
 
@@ -2156,11 +2201,11 @@ fn test_a_malformed_value_under_any_known_key_costs_only_that_key() {
 }
 
 #[test]
-fn test_parametric_set_edge_cap_resolves_with_two_args() {
+fn test_parametric_set_path_cap_resolves_with_two_args() {
     let cfg = KeybindConfig {
         set_path_cap: vec![ParametricBinding {
             combo: "Ctrl+Shift+c".into(),
-            args: vec!["arrow".into(), "none".into()],
+            args: vec!["<".into(), "none".into()],
         }],
         ..KeybindConfig::default()
     };
@@ -2168,7 +2213,7 @@ fn test_parametric_set_edge_cap_resolves_with_two_args() {
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "c", true, true, false),
         Some(Action::SetPathCap {
-            from: "arrow".into(),
+            from: "<".into(),
             to: "none".into(),
         }),
     );
@@ -2263,14 +2308,14 @@ fn test_parametric_binding_user_partial_config_only_overrides_listed_field() {
     // at its default.
     let json = r#"{
         "set_path_content": [
-            { "combo": "Ctrl+b", "args": ["dash"] }
+            { "combo": "Ctrl+b", "args": ["·"] }
         ]
     }"#;
     let cfg = KeybindConfig::from_json(json).unwrap();
     let resolved = cfg.resolve();
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "b", true, false, false),
-        Some(Action::SetPathContent("dash".into())),
+        Some(Action::SetPathContent("·".into())),
     );
     assert_eq!(
         resolved.action_for_context(InputContext::Document, "z", true, false, false),
@@ -2348,8 +2393,8 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         ),
         (
             "set_path_content",
-            &["dash"],
-            Action::SetPathContent("dash".into()),
+            &["\u{2500}"],
+            Action::SetPathContent("\u{2500}".into()),
         ),
         (
             "set_frame_field",
@@ -2361,9 +2406,9 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         ),
         (
             "set_path_cap",
-            &["arrow", "none"],
+            &["<", "none"],
             Action::SetPathCap {
-                from: "arrow".into(),
+                from: "<".into(),
                 to: "none".into(),
             },
         ),
@@ -2384,13 +2429,7 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
                 value: "top".into(),
             },
         ),
-        (
-            "set_edge_type",
-            &["cross_link"],
-            Action::SetEdgeType("cross_link".into()),
-        ),
         ("set_link_kind", &["portal"], Action::SetLinkKind("portal".into())),
-        ("reset_path", &["style"], Action::ResetPath("style".into())),
         (
             "set_font_family",
             &["Norse"],
@@ -2415,14 +2454,13 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
         ("set_label_text", &["hello"], Action::SetLabelText("hello".into())),
         (
             "set_label_position",
-            &["middle"],
-            Action::SetLabelPosition("middle".into()),
+            &["0.25", "12"],
+            Action::SetLabelPosition {
+                t: "0.25".into(),
+                offset: "12".into(),
+            },
         ),
-        (
-            "set_path_spacing",
-            &["wide"],
-            Action::SetPathSpacing("wide".into()),
-        ),
+        ("set_path_spacing", &["6"], Action::SetPathSpacing("6".into())),
         (
             "set_zoom",
             &["min", "0.5"],

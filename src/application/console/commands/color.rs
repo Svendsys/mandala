@@ -150,7 +150,7 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         return ExecResult::err(usage::no_arguments_message(&GRAMMAR));
     }
     let doc = eff.document();
-    let mut steps = Ok(Vec::new());
+    let mut steps: crate::application::fields::Steps = Ok(Vec::new());
     for pair in &pairs {
         let axis: ColorAxis = match pair.key.name.parse() {
             Ok(axis) => axis,

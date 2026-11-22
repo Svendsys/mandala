@@ -8,7 +8,8 @@
 # The faces are what the shaper reaches, after a span's own face and the
 # default face (Inter), for the ornament glyphs the demo maps, the
 # built-in styles and the app's own chrome (the console, the rubber band,
-# the `body` presets) draw
+# the frame cycle) draw, and for the line ornaments a path's content may
+# name
 # (`baumhard::font::fallback::ORNAMENT_FALLBACK`, `format/fonts.md`
 # "Fallback"), so that every target draws the same glyph for them. They
 # hold no code point the default face holds (#228): a letter, digit,
@@ -69,8 +70,9 @@ FONTTOOLS_VERSION=4.68.0
 # ┌ ┐ └ ┘ ┏ ┓ ┗ ┛: the corners of the maps' directional rings (#324);
 # ║ ╔ ╗ ╝ ╚: the double box the app's frame cycle sets (#338), beside its
 # `═`; and the rest of the app's chrome: the console's prompt `❯`, cursor
-# `▌`, gutter `▏` and completion marker `▸`, the rubber band's dashed
-# edges `┄ ┆`, and the `body` presets' `═ ∼ ⋯`; with `∽` and `❮`, the
+# `▌`, gutter `▏` and completion marker `▸`, and the rubber band's
+# dashed edges `┄ ┆`; `∼ ⋯`, line ornaments a path's content may name
+# (content is text, D8); with `∽` and `❮`, the
 # mirrored forms of `∼` and `❯`, which pyftsubset keeps beside them so a
 # right-to-left run can mirror them. The default face holds none of
 # them; it holds the space, `+ ~ ·` and `♪`, which this face held until

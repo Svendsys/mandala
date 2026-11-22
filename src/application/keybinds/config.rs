@@ -512,6 +512,10 @@ keybind_surface! {
         NewDocument => new_document = [],
         /// Drop both zoom clamps on the selection (`zoom clear`).
         ClearZoom => clear_zoom = [],
+        /// Give the selected connectors and line links back every field
+        /// they inherit, the default curve and `auto` anchors
+        /// (`path reset`).
+        ResetPath => reset_path = [],
         /// Flip the selected section back to fill-parent
         /// (`section resize fill`).
         SetSectionSizeFillParent => set_section_size_fill_parent = [],
@@ -529,16 +533,21 @@ keybind_surface! {
     // and they pick each field's `ArgValue` conversion.
     // ─────────────────────────────────────────────────────────────
     parametric {
-        /// `anchor from=<side> to=<side>` on the selected edge.
-        /// Sides: `auto|top|right|bottom|left`.
+        /// `args = [from, to]`, each `auto|top|right|bottom|left`:
+        /// `path anchors=<from>,<to>` on the selected connectors and line
+        /// links. Maps to [`Action::SetPathAnchor`].
         SetPathAnchor { from, to } => set_path_anchor,
-        /// `body glyph=<dot|dash|double|wave|chain>`.
-        SetPathContent(glyph) => set_path_content,
+        /// `args = [content]`: the text the selected paths draw when they
+        /// have no spans, or `none` (`path content=`). Maps to
+        /// [`Action::SetPathContent`].
+        SetPathContent(content) => set_path_content,
         /// One field of the selected nodes' frames, named by `field`
         /// as `frame <field>=<value>` names it. Maps to
         /// [`Action::SetFrameField`].
         SetFrameField { field, value } => set_frame_field,
-        /// `cap from=<arrow|circle|diamond|none> to=<…>`.
+        /// `args = [from, to]`: each a cap's text, `none` to remove the
+        /// cap, or `""` to leave that end (`path cap start= end=`). Maps
+        /// to [`Action::SetPathCap`].
         SetPathCap { from, to } => set_path_cap,
         /// `args = [axis, value]` where `axis` is `text|border|ring`
         /// and `value` is a color as a map spells one (`#rrggbb[aa]`,
@@ -550,13 +559,9 @@ keybind_surface! {
         /// and `value` are as `frame preview <field>=<value>` names them.
         /// Maps to [`Action::SetFramePreview`].
         SetFramePreview { target_kind, field, value } => set_frame_preview,
-        /// The selected path's kind: `cross_link|parent_child`.
-        SetEdgeType(edge_type) => set_edge_type,
-        /// How the selected link is drawn: `line|portal`.
-        SetLinkKind(display_mode) => set_link_kind,
-        /// Reset part of the selected path:
-        /// `straight|curve|style|position`.
-        ResetPath(reset_kind) => reset_path,
+        /// `args = [kind]`, `line|portal`: how the selected links are
+        /// drawn (`link kind=`). Maps to [`Action::SetLinkKind`].
+        SetLinkKind(kind) => set_link_kind,
         /// `font family=<family>` on the current selection.
         SetFontFamily(family) => set_font_family,
         /// `args = [family, with]`: `font replace <family> <with>`,
@@ -567,12 +572,17 @@ keybind_surface! {
         /// `size|weight|italic`, as the `font` verb spells each. Maps
         /// to [`Action::SetFont`].
         SetFont { slot, value } => set_font,
-        /// `label text=<text>`; an empty payload clears the label.
+        /// `args = [text]`: `label text=<text>`; an empty payload
+        /// removes the label (`label delete`). Maps to
+        /// [`Action::SetLabelText`].
         SetLabelText(text) => set_label_text,
-        /// `label position=<start|middle|end>`.
-        SetLabelPosition(position) => set_label_position,
-        /// `spacing value=<tight|normal|wide|<float>>`.
-        SetPathSpacing(value) => set_path_spacing,
+        /// `args = [t, offset]`: `label t=<0-1|start|middle|end>
+        /// offset=<px>`, each `reset` to inherit or `""` to leave it.
+        /// Maps to [`Action::SetLabelPosition`].
+        SetLabelPosition { t, offset } => set_label_position,
+        /// `args = [spacing]`: a number, or `reset` (`path spacing=`).
+        /// Maps to [`Action::SetPathSpacing`].
+        SetPathSpacing(spacing) => set_path_spacing,
         /// `args = [bound, value]` where `bound` is `min|max` and
         /// `value` is `"unset"`, `""`, or a positive finite float
         /// string. Maps to [`Action::SetZoom`].

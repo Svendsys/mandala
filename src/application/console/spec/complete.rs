@@ -235,11 +235,16 @@ fn key_rows(grammar: &'static Grammar, names: &[&'static str], partial: &str) ->
 
 /// The rows one vocabulary offers for `partial`.
 ///
-/// Closed words and sentinels filter case-insensitively, matching
-/// the parsers that read them (`eq_ignore_ascii_case` on every
-/// sentinel in the console). Document-derived rows own their own
-/// filtering, because only they know how their values compare — a
-/// palette name is stored verbatim and found case-insensitively.
+/// Closed words and sentinels filter case-insensitively. The parsers
+/// read the sentinels `reset` and `unset` case-insensitively too
+/// (`eq_ignore_ascii_case`), but not `none`: it is matched exactly
+/// wherever it sits beside free text — a path's, a cap's or a portal
+/// end's content, a node's palette — so that `None` can be text or a
+/// name (ruling 7082892169 on #247). A row the popup offers is inserted
+/// in its own spelling, so accepting `none` from it always reads as the
+/// keyword. Document-derived rows own their own filtering, because only
+/// they know how their values compare — a palette name is stored
+/// verbatim and matched exactly.
 pub fn vocabulary_rows(vocab: &Vocabulary, ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
     match vocab {
         Vocabulary::Free { .. } => Vec::new(),

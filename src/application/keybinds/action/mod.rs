@@ -111,8 +111,9 @@ pub enum ZoomBound {
 ///
 /// **The Actions that edit the map are owned by the issues that
 /// rebuild them on the one writer** (`app::dispatch::families`: V1-C4
-/// to V1-C8, D1 and D3); V1-C4's structure Actions have landed. Until
-/// its owner lands, each other one answers
+/// to V1-C8, D1 and D3); the structure (V1-C4), field (V1-C5, V1-C6),
+/// edit (V1-D1) and verb (V1-D3) families have landed. Until its owner
+/// lands, each other one answers
 /// `unhandled` with a `debug!` naming the owner; the variants stay so a
 /// user's keybinds and macros naming them still load. Their docs say
 /// what each is for and name the owner.
@@ -122,7 +123,8 @@ pub enum ZoomBound {
 /// variants are cloned at lookup time in
 /// [`super::resolved::ResolvedKeybinds::action_for_context`]. Each
 /// keypress allocates one short string per `String`-payload variant
-/// (two for `SetPathAnchor` / `SetPathCap` / `SetFrameField`). For
+/// (two for `SetPathAnchor` / `SetPathCap` / `SetLabelPosition` /
+/// `SetFrameField`). For
 /// the typical interactive cadence (≤10 keypresses/sec) the cost is
 /// inconsequential; for a synthetic load of macros firing thousands
 /// of `Action`s/sec, switch the lookup to return `&Action` and clone
@@ -624,17 +626,18 @@ pub enum Action {
     // without a console line. Free-form `String` payloads are parsed
     // when dispatched. V1-C5 (#246) rebuilt the ones for nodes,
     // sections, frames and style across the selection
-    // (`app::dispatch::families::field_nodes`); V1-C6 (#247) owns the
-    // ones for connectors, links and labels, which answer `unhandled`
-    // until it lands.
-    /// Set the selected connector's anchor sides, `from` and `to`:
-    /// `auto|top|right|bottom|left`.
-    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
+    // (`app::dispatch::families::field_nodes`), and V1-C6 (#247) the
+    // ones for connectors, links, labels and portal ends
+    // (`app::dispatch::families::field_paths`). Each value reads as the
+    // console verb that sets the same field reads it.
+    /// Set where each selected connector and line link attaches, at its
+    /// start (`from`) and at its end (`to`): `auto|top|right|bottom|left`
+    /// (`path anchors=<from>,<to>`).
     #[action(context = Document, wasm = Compatible)]
     SetPathAnchor { from: String, to: String },
-    /// Set the selected connector's path content: the glyph its ring
-    /// draws (`dot|dash|double|wave|chain`).
-    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
+    /// Set the text each selected connector and line link draws when it
+    /// has no spans: the text itself — `·` dots it, `━` makes it heavy
+    /// (D8, D13) — or `none` to inherit (`path content=`).
     #[action(context = Document, wasm = Compatible)]
     SetPathContent(String),
     /// Set one field of the selected nodes' frames, named by `field`
@@ -677,9 +680,10 @@ pub enum Action {
     /// Default-bound to nothing: `ExitMode` reverts it first.
     #[action(context = Document, wasm = Compatible)]
     CancelFramePreview,
-    /// Set the selected connector's end caps, `from` and `to`:
-    /// `arrow|circle|diamond|none`.
-    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
+    /// Set the caps of each selected connector and line link, at its
+    /// start (`from`) and at its end (`to`): each the cap's text, one
+    /// span, the cap inserted where there is none; `none` to remove it;
+    /// or empty to leave that end as it is (`path cap start= end=`).
     #[action(context = Document, wasm = Compatible)]
     SetPathCap { from: String, to: String },
     /// Set one color of every selected element, whatever its kind:
@@ -688,21 +692,18 @@ pub enum Action {
     /// `var(name)`, `palette(field)`), or `reset` to inherit.
     #[action(context = Document, wasm = Compatible)]
     SetColor { axis: ColorAxis, value: String },
-    /// Set the selected path's kind: a connector between parent and
-    /// child, or a cross link.
-    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
-    #[action(context = Document, wasm = Compatible)]
-    SetEdgeType(String),
-    /// Set how the selected link is drawn: a line, or a portal at each
-    /// end.
-    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
+    /// Set how each selected link is drawn: `line`, or `portal`, a
+    /// marker at each end (`link kind=`). A connector is always a line
+    /// (D22): selected alone it is refused, with the reason on the
+    /// status line.
     #[action(context = Document, wasm = Compatible)]
     SetLinkKind(String),
-    /// Reset one part of the selected path to its default:
-    /// `straight|curve|style|position`.
-    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
+    /// Give each selected connector and line link back every field it
+    /// inherits, the default curve and `auto` anchors, keeping its
+    /// spans, caps, label, `visible` and zoom (`path reset`). No
+    /// payload, so one key resets.
     #[action(context = Document, wasm = Compatible)]
-    ResetPath(String),
+    ResetPath,
     /// Set the selection's font family by name: a family a map may
     /// name, as the loader reads one.
     #[action(context = Document, wasm = Compatible)]
@@ -723,18 +724,20 @@ pub enum Action {
     /// points, the weight or the slant ([`FontSlot`]).
     #[action(context = Document, wasm = Compatible)]
     SetFont { slot: FontSlot, value: String },
-    /// Set the selected path's label text; an empty payload clears it.
-    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
+    /// Set the label text of each selected connector and line link, one
+    /// span, giving a path with no label one (`label text=`); an empty
+    /// payload removes the label (`label delete`).
     #[action(context = Document, wasm = Compatible)]
     SetLabelText(String),
-    /// Set where along the selected path its label sits:
-    /// `start|middle|end`.
-    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
+    /// Set where the label of each selected connector and line link
+    /// sits: `t` along the path, from 0 to 1 or `start|middle|end`, and
+    /// `offset`, its distance from the path (`label t= offset=`). Each is
+    /// `reset` to inherit, or empty to leave it as it is.
     #[action(context = Document, wasm = Compatible)]
-    SetLabelPosition(String),
-    /// Set the spacing of the selected path's glyphs:
-    /// `tight|normal|wide`, or a number.
-    /// Answers `unhandled` until V1-C6 (#247) rebuilds it.
+    SetLabelPosition { t: String, offset: String },
+    /// Set the extra space between the glyphs of each selected connector
+    /// and line link: a number, or `reset` to inherit (`path
+    /// spacing=`).
     #[action(context = Document, wasm = Compatible)]
     SetPathSpacing(String),
     /// Set one bound of the zoom range the selected nodes and paths

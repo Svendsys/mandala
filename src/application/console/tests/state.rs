@@ -6,7 +6,7 @@ use crate::application::console::ConsoleState;
 
 #[test]
 fn test_console_state_open_seeds_history_and_resets_cursor() {
-    let history = vec!["help".to_string(), "anchor set from auto".to_string()];
+    let history = vec!["help".to_string(), "path anchors=top,auto".to_string()];
     let open = ConsoleState::open(history.clone());
     assert!(open.is_open());
     assert!(!ConsoleState::Closed.is_open());

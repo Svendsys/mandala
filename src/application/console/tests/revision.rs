@@ -2,9 +2,9 @@
 
 //! The corpus held against the document. A console line edits only
 //! through the one writer, so a line the console refuses — an unknown
-//! key, a value that does not read, a verb its owner has not rebuilt
-//! (V1-C6) — leaves the document as it was, its saved form and its
-//! revision alike; and a line that edits is one history entry.
+//! key, a value that does not read, a subverb its owner has not rebuilt
+//! — leaves the document as it was, its saved form and its revision
+//! alike; and a line that edits is one history entry.
 
 use crate::application::console::parser::{parse, Args, ParseResult};
 use crate::application::console::{ConsoleEffects, ExecResult};

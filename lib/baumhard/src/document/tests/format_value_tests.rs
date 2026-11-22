@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! `format::start`, `edge`, `direction`, `align`, `shape`, `weight`,
-//! `line_span`, `sides` and `fit`: the file's spellings of single values, read
+//! `line_span`, `sides`, `fit`, `anchor` and `link_kind`: the file's spellings of single values, read
 //! from typed text (`format/read.rs`). Each is held to the loader
 //! itself: a spelling reads to the value a map carrying it at that key
 //! loads with, and one the loader refuses reads to nothing.
@@ -207,4 +207,81 @@ fn test_format_value_readers_read_what_the_loader_reads() {
         );
     }
     assert!(format::edge("top").is_some() && format::edge("middle").is_none());
+}
+
+/// A two-node map whose child's connector attaches with `anchor` at both
+/// ends and whose root links to the child with a link of `kind`, or the
+/// loader's refusal.
+fn paths_with(anchor: &str, kind: &str) -> Result<Document, format::LoadError> {
+    let map = serde_json::json!({"format": 1, "name": "p", "nodes": [
+        {"id": 1, "position": [0.0, 0.0], "links": [{"to": 2, "kind": as_json(kind)}]},
+        {"id": 2, "parent": 1, "position": [200.0, 0.0],
+         "connector": {"anchors": [as_json(anchor), as_json(anchor)]}}
+    ]});
+    load(&map.to_string())
+}
+
+/// **`format::anchor` and `format::link_kind` read what the loader reads
+/// at a connector's `anchors` and a link's `kind`, and refuse what it
+/// refuses.** Each spelling is loaded in a map once, the other key held
+/// to a spelling the loader takes, and the reader must agree with the
+/// element the map loads with — or read nothing where the map is
+/// refused. Control: each reader meets spellings of both kinds, so
+/// neither half passes by finding none.
+#[test]
+fn test_format_anchor_and_link_kind_read_what_the_loader_reads() {
+    use crate::document::values::{Anchor, LinkKind};
+    let (mut accepted, mut refused) = (0, 0);
+    for text in ["auto", "top", "right", "bottom", "left", "middle", "Top", "1"] {
+        match paths_with(text, "line") {
+            Ok(doc) => {
+                let loaded = first(&doc, |e| match e {
+                    DocElement::Connector(c) => Some(c.path.anchors.0),
+                    _ => None,
+                });
+                assert_eq!(format::anchor(text), loaded, "anchor {text:?} reads as it loads");
+                accepted += 1;
+            }
+            Err(_) => {
+                assert_eq!(
+                    format::anchor(text),
+                    None,
+                    "anchor {text:?} is refused by the loader"
+                );
+                refused += 1;
+            }
+        }
+    }
+    assert!(
+        accepted == 5 && refused == 3,
+        "control: both kinds met ({accepted}, {refused})"
+    );
+    assert_eq!(format::anchor("bottom"), Some(Anchor::Bottom));
+
+    let (mut accepted, mut refused) = (0, 0);
+    for text in ["line", "portal", "Portal", "cross_link", "parent_child"] {
+        match paths_with("auto", text) {
+            Ok(doc) => {
+                let loaded = first(&doc, |e| match e {
+                    DocElement::Link(l) => Some(l.kind),
+                    _ => None,
+                });
+                assert_eq!(format::link_kind(text), loaded, "kind {text:?} reads as it loads");
+                accepted += 1;
+            }
+            Err(_) => {
+                assert_eq!(
+                    format::link_kind(text),
+                    None,
+                    "kind {text:?} is refused by the loader"
+                );
+                refused += 1;
+            }
+        }
+    }
+    assert!(
+        accepted == 2 && refused == 3,
+        "control: both kinds met ({accepted}, {refused})"
+    );
+    assert_eq!(format::link_kind("portal"), Some(LinkKind::Portal));
 }
