@@ -1214,6 +1214,47 @@ pub(crate) fn portal_point(outline: &Outline, s: f32, offset: f32) -> (Vec2, Vec
     (point.point, point.normal)
 }
 
+/// The inverse of [`label_center`]: the label place nearest `point` on
+/// `path` — the fraction of the curve's arc length at the point of it
+/// nearest `point`, and `point`'s distance from there along the curve's
+/// left normal, which is the offset that moves a label's center onto
+/// `point` there. `(0.5, 0)` for a path of no length, the place
+/// [`label_center`] reads a `t` that is not a number as. What a label
+/// drag (V1-C7) writes for the pointer.
+///
+/// Cost: one arc-length table of the curve (none for a line) and one
+/// nearest-point search ([`ArcPath::nearest`]).
+pub(crate) fn label_at(path: &[Curve], point: Vec2) -> (f32, f32) {
+    let arc = ArcPath::open(path, POINT_TABLE_SPACING);
+    let length = arc.length();
+    if length.is_nan() || length <= 0.0 || !point.is_finite() {
+        return (0.5, 0.0);
+    }
+    let s = arc.nearest(point);
+    let (on, tangent) = arc.at(s);
+    ((s / length).clamp(0.0, 1.0), (point - on).dot(left_normal(tangent)))
+}
+
+/// The inverse of [`portal_along`] and [`portal_point`] for a portal end
+/// placed where its `border_t` says: the place round `outline` nearest
+/// `point` — as a fraction of the perimeter from the start of its top
+/// side, clockwise — and `point`'s distance from there along the
+/// outline's outward normal, negative inside it. `(0, 0)` for an outline
+/// of no length. What a portal-end drag (V1-C7) writes for the pointer.
+///
+/// Cost: one arc-length walk of the outline (a table for an ellipse) and
+/// one nearest-point search.
+pub(crate) fn portal_at(outline: &Outline, point: Vec2) -> (f32, f32) {
+    let arc = portal_arc(outline);
+    let length = arc.length();
+    if length.is_nan() || length <= 0.0 || !point.is_finite() {
+        return (0.0, 0.0);
+    }
+    let s = arc.nearest(point);
+    let on = arc.offset_at(s, 0.0);
+    ((s / length).clamp(0.0, 1.0), (point - on.point).dot(on.normal))
+}
+
 /// `outline` walked once clockwise from the start of its top side: what
 /// a portal end's place along the perimeter is measured on.
 fn portal_arc(outline: &Outline) -> ArcPath {

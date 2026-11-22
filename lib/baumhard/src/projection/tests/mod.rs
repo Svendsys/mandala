@@ -22,6 +22,9 @@ mod hide_tests;
 /// Hit testing.
 #[cfg(test)]
 mod hit_tests;
+/// The inverses of label and portal-end placement a drag writes from.
+#[cfg(test)]
+mod inverse_tests;
 /// Maps written as `.mandala.json`, and their elements found again.
 pub mod maps;
 /// The work bound's count of the shaper's `.notdef` passes (#387), on the

@@ -352,6 +352,35 @@ impl Projector {
         }
     }
 
+    /// A drawn section's box on the canvas: its node's drawn top-left
+    /// moved by the box it was placed in, its offset and its shaped
+    /// size — the box its node's drawn rectangle grows to hold (D5).
+    /// O(1).
+    pub fn section_rect(&self, section: NodeId) -> Option<Rect> {
+        let unit = self.units.get(&section)?;
+        let UnitBody::Section(state) = &unit.body else {
+            return None;
+        };
+        let local = state.local?;
+        Some(Rect::new(self.nodes.get(&unit.node)?.rect.origin + local.origin, local.size))
+    }
+
+    /// Where a label on the drawn path `path` centers nearest `point`, as
+    /// the label's `(t, offset)`: the inverse of where the projection
+    /// centers one. `None` until the path is placed. Cost: one arc-length
+    /// table of its curves and a nearest-point search.
+    pub fn label_place_at(&self, path: NodeId, point: Vec2) -> Option<(f32, f32)> {
+        Some(geometry::label_at(self.curve(path)?, point))
+    }
+
+    /// Where round the drawn node `node`'s outline a portal end sits
+    /// nearest `point`, as the end's `(border_t, offset)`: the inverse of
+    /// where the projection puts one whose `border_t` is set. Cost: one
+    /// arc-length walk of the outline and a nearest-point search.
+    pub fn portal_place_at(&self, node: NodeId, point: Vec2) -> Option<(f32, f32)> {
+        Some(geometry::portal_at(&self.nodes.get(&node)?.outline, point))
+    }
+
     /// How many (input, work) pairs the dependency index holds: what the
     /// test that holds it linear in a deep chain reads. Test builds only.
     #[cfg(test)]
@@ -373,6 +402,21 @@ pub trait Geometry {
     fn curve(&self, path: NodeId) -> Option<&[Curve]>;
     /// Where a drawn label centers.
     fn label_pos(&self, label: NodeId) -> Option<Vec2>;
+    /// A drawn section's box on the canvas. `None` from a reader that
+    /// draws no sections, which an edit handler's double is.
+    fn section_rect(&self, _section: NodeId) -> Option<Rect> {
+        None
+    }
+    /// The `(t, offset)` a label on a drawn path takes to center nearest
+    /// a point. `None` from a reader that draws no paths.
+    fn label_place_at(&self, _path: NodeId, _point: Vec2) -> Option<(f32, f32)> {
+        None
+    }
+    /// The `(border_t, offset)` a portal end at a drawn node takes to sit
+    /// nearest a point. `None` from a reader that draws no outlines.
+    fn portal_place_at(&self, _node: NodeId, _point: Vec2) -> Option<(f32, f32)> {
+        None
+    }
     /// The visible nodes whose drawn rectangles `rect` meets, insides
     /// overlapping (a shared edge does not count), in ascending node id.
     fn nodes_meeting(&self, rect: Rect) -> Vec<NodeId>;
@@ -390,6 +434,15 @@ impl Geometry for Projector {
     }
     fn label_pos(&self, label: NodeId) -> Option<Vec2> {
         Projector::label_pos(self, label)
+    }
+    fn section_rect(&self, section: NodeId) -> Option<Rect> {
+        Projector::section_rect(self, section)
+    }
+    fn label_place_at(&self, path: NodeId, point: Vec2) -> Option<(f32, f32)> {
+        Projector::label_place_at(self, path, point)
+    }
+    fn portal_place_at(&self, node: NodeId, point: Vec2) -> Option<(f32, f32)> {
+        Projector::portal_place_at(self, node, point)
     }
     fn nodes_meeting(&self, rect: Rect) -> Vec<NodeId> {
         Projector::nodes_meeting(self, rect)
