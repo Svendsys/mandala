@@ -1694,8 +1694,12 @@ pub(crate) fn under_ceiling<R>(check: impl FnOnce() -> R) -> (R, bool) {
 /// more steps than the most any body of the map may take
 /// ([`line_body_steps`], #387) — its budget and what may run past it, its
 /// one reshape included. Before #387 no property of the projection read a
-/// body's lay at all. That is each lay held to its own bound, not the
-/// map's bodies together held to the timeout, which #316 owns.
+/// body's lay at all. What is checked is the most any body's lay took
+/// against the most any body of the map may take, as for rings: a body
+/// that runs past its own bound passes beside a body of the same map
+/// whose bound is larger. Holding each lay to its own bound, rings' and
+/// bodies' alike, is #397's; the map's bodies together held to the
+/// timeout is #316's.
 ///
 /// O(its rings and their texts, and its lines' bodies, each predicted).
 #[cfg(any(test, fuzzing))]

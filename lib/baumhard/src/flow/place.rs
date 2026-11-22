@@ -3175,7 +3175,9 @@ fn open_spacing(spacing: f32) -> f32 {
 /// its placement reads; the flow harnesses hold theirs to the cap they
 /// lay them at (`ring_work_steps` of it).
 ///
-/// Cost: its path's tables built, and the reshape's prediction.
+/// Cost: its path's tables built, and the reshape's prediction: for a
+/// `Once` with a filler, one shaping of the text and the filler, which
+/// gives both its widest cluster and its reshape's steps.
 #[cfg(any(test, fuzzing))]
 pub(crate) fn open_work_steps(
     run: &ShapedRun,
@@ -3187,13 +3189,21 @@ pub(crate) fn open_work_steps(
 ) -> usize {
     let arc = open_path(run, curve, fit, flow);
     let cap = placed_cap();
-    let reshape = path_reshape_steps(run, fit, flow, fs);
-    let (glyphs, copy) = match fit {
+    // A `Once` with a filler shaped once: its filled run's widest cluster,
+    // and its shaping's own steps, which `path_reshape_steps` reads too.
+    let (glyphs, copy, reshape) = match fit {
         FitMode::Once { filler: Some(filler) } => {
-            let (filled, _) = lines::filling(run, filler, flow, fs);
-            (cap, widest(&clusters_of(&filled.glyphs, 0..filled.glyphs.len())))
+            let (filled, steps) = lines::filling(run, filler, flow, fs);
+            (
+                cap,
+                widest(&clusters_of(&filled.glyphs, 0..filled.glyphs.len())),
+                steps,
+            )
         }
-        _ => scaled_by(run, &arc, false, fit, open_spacing(spacing), cap),
+        _ => {
+            let (glyphs, copy) = scaled_by(run, &arc, false, fit, open_spacing(spacing), cap);
+            (glyphs, copy, path_reshape_steps(run, fit, flow, fs))
+        }
     };
     ring::ring_work_steps(glyphs, copy, arc.table_samples(), reshape)
 }

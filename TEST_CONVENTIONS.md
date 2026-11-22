@@ -1099,9 +1099,10 @@ round, so at most one runs past it: the harnesses predict that one
 (`Trace::reshaped`) and count it in the cap, and where no cap holds its
 whole text they cut the text until one does, or lay a `Once` with no
 filler where its filler's shaping leaves no cap even for no text, and
-count it (`open_in_time`). The projection harness holds each
-connector's and line link's body to its own bound the same way
-(`place::open_work_steps`, `MOST_OPEN_LAY`).
+count it (`open_in_time`). The projection harness holds the most any
+connector's or line link's body took to the most any body of its map
+may take (`place::open_work_steps`, `MOST_OPEN_LAY`), as it holds rings:
+holding each lay to its own bound is #397's.
 flow_structured draws, one time in four, its outline or its curve far
 from the origin, from 10⁶ to 10²² (`far_out`): a far frame with sides, its
 side ornament's lays counting their path reads (#313), and a far

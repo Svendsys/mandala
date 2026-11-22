@@ -942,6 +942,8 @@ pub(crate) fn check_open(
     let mut trace = Trace::default();
     let placed = place_on_open_capped(run, curve, fit, spacing, flow, fs, cap, Some(&mut trace));
     work.open(run, cap, tables, reshape, &placed.1, &trace, "the placement")?;
+    #[cfg(test)]
+    LAST_CHECKED_OPEN.with(|last| *last.borrow_mut() = Some((run.clone(), placed.1.clone(), trace.clone())));
     // `Spread` and `Fit` solve the gap; the spacing does not enter
     // (ruling R6, reading 7).
     // Owed whole only where the coordinates hold its glyphs apart (ruling
@@ -1034,6 +1036,11 @@ thread_local! {
     /// ([`open_in_time`]).
     pub(crate) static OPEN_CUT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static OPEN_FILLER_LEFT_OUT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The last placement along an open path [`check_open`] laid on this
+    /// thread: the run it laid, as cut where it was ([`open_in_time`]),
+    /// the placement, and its trace (#387).
+    pub(crate) static LAST_CHECKED_OPEN: std::cell::RefCell<Option<(ShapedRun, PlacedRun, Trace)>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// `run` laid as whole glyphs along `path` and on along a line past its

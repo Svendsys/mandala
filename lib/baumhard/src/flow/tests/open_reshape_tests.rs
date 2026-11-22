@@ -232,11 +232,13 @@ fn test_flow_open_counts_each_reshape_and_runs_one_past_its_budget() {
 ///
 /// - in `Fit`, its reshape — a shaping, a `.notdef` pass a code point — is
 ///   past what any cap leaves, the whole text is held by none; it is cut,
-///   counted, and laid within the timeout, its reshape charged as
-///   predicted for the run it is laid as;
+///   counted, and laid within the timeout, and as it fits the cut run
+///   reshapes, charging what `path_reshape_steps` predicts for that run
+///   (`Trace::reshaped`, read from what `check_open` laid,
+///   `LAST_CHECKED_OPEN`);
 /// - as a `Once` filler of "MANDALA", the filler's shaping leaves no cap
 ///   even for no text: it is left off, counted, and "MANDALA" is laid
-///   whole within the timeout;
+///   within the timeout with no loss and all 7 of its glyphs;
 /// - replaying a finding, neither is cut nor left off, and each is held
 ///   to the most it may take with its reshape.
 ///
@@ -245,7 +247,12 @@ fn test_flow_open_counts_each_reshape_and_runs_one_past_its_budget() {
 ///
 /// Controls, each run and seen red: `open_cap` reading no reshape, the
 /// `Fit` laid whole past the timeout; `open_in_time` cutting nothing, the
-/// same; `open_in_time` keeping every filler, the filler not left off.
+/// same; `open_in_time` keeping every filler, the filler not left off;
+/// `check_open` laying at a cap of 3, "MANDALA" laid with a loss; laying
+/// it along a line 20 long, which cuts it and says nothing, and owing it
+/// nothing whole, fewer than its 7 glyphs; `fit_to` charging no reshape,
+/// the cut run's reshape unseen;
+/// the record holding the run as given, its reshape not the cut run's.
 #[test]
 fn test_flow_open_a_reshape_that_leaves_no_cap_is_cut_and_counted() {
     use crate::util::tests::compiled_faces::{on_compiled_faces, report_hosts, this_test, CHILD};
@@ -279,7 +286,7 @@ fn test_flow_open_a_reshape_that_leaves_no_cap_is_cut_and_counted() {
 fn cut_counted() {
     use crate::flow::place::ring::ring_work_steps;
     use crate::flow::tests::flow_fuzz::{
-        check_open, open_tables, INPUT_STEPS, OPEN_CUT, OPEN_FILLER_LEFT_OUT,
+        check_open, open_tables, INPUT_STEPS, LAST_CHECKED_OPEN, OPEN_CUT, OPEN_FILLER_LEFT_OUT,
     };
     let flow = style(POINTS);
     let line = Curve::Line(Vec2::ZERO, Vec2::new(2_000.0, 0.0));
@@ -313,8 +320,9 @@ fn cut_counted() {
                 style: &flow,
                 link: None,
             }];
-            let (whole, cuts, left, checked) = with_fonts(|fs| {
+            let (whole, cuts, left, checked, laid) = with_fonts(|fs| {
                 let run = shape_run(&spans, 1.0, fs);
+                LAST_CHECKED_OPEN.with(|last| *last.borrow_mut() = None);
                 let reshape = path_reshape_steps(&run, &fit, &flow, fs.fonts());
                 // What it may take whole at no cap at all, its reshape
                 // counted: read apart from `open_cap`, so that the cut is
@@ -335,7 +343,16 @@ fn cut_counted() {
                     });
                 let cuts = OPEN_CUT.with(std::cell::Cell::get) - c0;
                 let left = OPEN_FILLER_LEFT_OUT.with(std::cell::Cell::get) - l0;
-                (whole, cuts, left, checked)
+                // What it laid — the run as cut, the placement and its
+                // trace — and the reshape of that run predicted afresh.
+                let laid =
+                    LAST_CHECKED_OPEN
+                        .with(|last| last.borrow_mut().take())
+                        .map(|(run, placed, trace)| {
+                            let predicted = path_reshape_steps(&run, &fit, &flow, fs.fonts());
+                            (run, placed, trace, predicted)
+                        });
+                (whole, cuts, left, checked, laid)
             });
             println!("REPORT OPEN {what}, held to the timeout {bounded}: whole at no cap {whole}, cut {cuts}, filler left off {left}, {checked:?}");
             assert!(
@@ -353,6 +370,25 @@ fn cut_counted() {
                     usize::from(!cut),
                     "{what}: its filler left off, and counted"
                 );
+                let (laid_run, placed, trace, predicted) = laid.expect("precondition: a placement was laid");
+                if cut {
+                    assert!(trace.reshaped > 0, "{what}: the cut run reshaped as it fit");
+                    assert_eq!(
+                        trace.reshaped, predicted,
+                        "{what}: its reshape charged as predicted for the run it is laid as"
+                    );
+                    assert!(
+                        laid_run.glyphs.len() < text.chars().count(),
+                        "{what}: and that run is the cut one"
+                    );
+                } else {
+                    assert!(
+                        trace.ring.is_none(),
+                        "{what}: \"MANDALA\" laid with no loss, {:?}",
+                        trace.ring
+                    );
+                    assert_eq!(placed.glyphs.len(), 7, "{what}: all 7 glyphs of \"MANDALA\" laid");
+                }
             } else {
                 assert_eq!((cuts, left), (0, 0), "{what}: replaying a finding, laid as found");
             }
