@@ -326,25 +326,32 @@ pub(crate) fn cluster_steps(glyphs: usize) -> usize {
 }
 
 /// The most glyph steps a ring of `glyphs` glyphs a copy may take past
-/// its budget (#310): its setup ([`RING_STEPS`]) and its path's table of
-/// `tables` samples ([`table_steps`], ruling B16.3a), counted before its
-/// budget is first read, and the cluster whose walk found it spent
+/// its budget (#310): its setup ([`RING_STEPS`]), its path's table of
+/// `tables` samples ([`table_steps`], ruling B16.3a), and, for a ring laid
+/// by direction, the `setup` steps it charges for its reshape and its
+/// inking (`directional::setup_steps`, #387), all counted before its
+/// budget is first read; and the cluster whose walk found it spent
 /// ([`cluster_steps`]). Every other cluster laid past it is held back
-/// for ([`phase_two_steps`]).
-pub(crate) fn ring_overshoot(glyphs: usize, tables: usize) -> usize {
+/// for ([`phase_two_steps`]). A directional ring's reshape is its own
+/// shaping's work, `.notdef` passes and all, which no rate of glyphs
+/// bounds: past its budget where its text holds code points no face draws
+/// (#387).
+pub(crate) fn ring_overshoot(glyphs: usize, tables: usize, setup: usize) -> usize {
     RING_STEPS
         .saturating_add(table_steps(tables))
+        .saturating_add(setup)
         .saturating_add(cluster_steps(glyphs))
 }
 
 /// The most glyph steps a ring of `copy` glyphs a copy, its budget scaled
-/// by `glyphs` ([`ring_glyphs`]), its path's table of `tables` samples,
-/// may take in all: its budget ([`frame_budget`]) and the most past it
-/// ([`ring_overshoot`]). What the flow fuzzers hold an input's ring to
-/// (ruling R45.1), its glyphs at most the cap they lay it with (ruling
-/// B17.2b).
-pub(crate) fn ring_work_steps(glyphs: usize, copy: usize, tables: usize) -> usize {
-    frame_budget(glyphs).saturating_add(ring_overshoot(copy, tables))
+/// by `glyphs` ([`ring_glyphs`]), its path's table of `tables` samples, a
+/// directional one's reshape and inking `setup` steps (nothing for any
+/// other), may take in all: its budget ([`frame_budget`]) and the most
+/// past it ([`ring_overshoot`]). What the flow fuzzers hold an input's
+/// ring to (ruling R45.1), its glyphs at most the cap they lay it with
+/// (ruling B17.2b).
+pub(crate) fn ring_work_steps(glyphs: usize, copy: usize, tables: usize, setup: usize) -> usize {
+    frame_budget(glyphs).saturating_add(ring_overshoot(copy, tables, setup))
 }
 
 /// How a ring's budget, or its cap, left it (#310), when it stopped its

@@ -353,7 +353,7 @@ fn test_flow_ring_budget_a_ring_past_its_budget_takes_its_overshoot_at_most() {
             own.glyphs
         );
         for laid in &case.rings {
-            let allowed = ring_overshoot(laid.copy, laid.tables);
+            let allowed = ring_overshoot(laid.copy, laid.tables, 0);
             if laid.past > allowed || laid.spent > laid.budget + allowed {
                 broken.push(format!(
                     "{}: {} past its budget of {}, {} in all, against {allowed} allowed past it",

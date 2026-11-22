@@ -364,6 +364,11 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
     &[
         (
             "flow/tests/directional_tests.rs",
+            "test_flow_directional_counts_its_setup_past_its_budget",
+            CannotCompileIntoTheLibrary,
+        ),
+        (
+            "flow/tests/directional_tests.rs",
             "test_flow_directional_holds_to_its_budget",
             CannotCompileIntoTheLibrary,
         ),

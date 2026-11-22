@@ -19,8 +19,6 @@
 //! skips with a note; CI runs on Linux and sets
 //! `MANDALA_REQUIRE_FONTCONFIG_HOSTS`, under which it fails instead.
 
-use std::process::Command;
-
 use serde_json::json;
 
 use crate::document::element::DocElement;
@@ -31,9 +29,7 @@ use crate::projection::tests::projection_fuzz::{
     projection_counts, ring_steps, within_bound, SHAPER_HIDDEN,
 };
 use crate::projection::tests::support::Projected;
-
-/// The variable a child reads: which check it makes.
-const CHILD: &str = "BAUMHARD_NOTDEF_BOUND_CHILD";
+use crate::util::tests::compiled_faces::{on_compiled_faces, report_hosts, this_test, CHILD};
 
 /// CI's finding (job 136906833586 on #380): the map its input made, and the
 /// input itself, the load_structured target's choices.
@@ -41,98 +37,6 @@ const FINDING: &[u8] =
     include_bytes!("../../document/tests/fuzz_findings/a_tabbed_ring_of_notdefs.mandala.json");
 const FINDING_CHOICES: &[u8] =
     include_bytes!("../../document/tests/fuzz_findings/structured_a_tabbed_ring_of_notdefs");
-
-/// The path libtest runs the test this is written in under, as `--exact`
-/// takes it: its own, read from the type of a function inside it, so it
-/// cannot drift from the test's name or its module's.
-macro_rules! this_test {
-    () => {{
-        fn here() {}
-        let path = std::any::type_name_of_val(&here);
-        let path = path.strip_suffix("::here").expect("a function's path");
-        path.split_once("::").expect("a path in the crate").1.to_string()
-    }};
-}
-
-/// The lines a child of `test` (its path under the crate, [`this_test`])
-/// reported in mode `mode`, from a font system of the compiled faces alone;
-/// `None`, with a note, where this target cannot make one. Its first report
-/// is how many host faces its font system holds: none, or the target reads
-/// no `FONTCONFIG_FILE`. A child that made no such report ran no check, and
-/// fails the test wherever it runs.
-fn on_compiled_faces(test: &str, mode: &str) -> Option<Vec<String>> {
-    let scratch = std::env::temp_dir().join(format!("baumhard_notdef_bound_{}_{mode}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&scratch);
-    let (empty, home) = (scratch.join("empty"), scratch.join("home"));
-    for dir in [&empty, &home] {
-        std::fs::create_dir_all(dir).expect("a scratch directory");
-    }
-    let conf = scratch.join("fonts.conf");
-    std::fs::write(
-        &conf,
-        format!(
-            "<?xml version=\"1.0\"?>\n<!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">\n<fontconfig><dir>{}</dir></fontconfig>\n",
-            empty.display()
-        ),
-    )
-    .expect("a fontconfig file");
-    let out = Command::new(std::env::current_exe().expect("the test binary has a path"))
-        .args(["--exact", test, "--nocapture", "--test-threads=1"])
-        .env(CHILD, mode)
-        .env("FONTCONFIG_FILE", &conf)
-        .env("HOME", &home)
-        .env("XDG_CONFIG_HOME", home.join(".config"))
-        .env("XDG_DATA_HOME", home.join(".local/share"))
-        .output()
-        .expect("the test binary runs");
-    let _ = std::fs::remove_dir_all(&scratch);
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(out.status.success(), "{mode}: {text}");
-    // libtest prints the test's name on the line a report starts, so a
-    // report is found within a line.
-    let reports: Vec<String> = text
-        .lines()
-        .filter_map(|line| line.split_once("REPORT ").map(|(_, report)| report.to_string()))
-        .collect();
-    let hosts: usize = reports
-        .first()
-        .and_then(|first| first.strip_prefix("HOSTS "))
-        .and_then(|hosts| hosts.parse().ok())
-        .unwrap_or_else(|| {
-            panic!("{test}: the child ran no check, and made no report of its font system: {text}")
-        });
-    if hosts == 0 {
-        return Some(reports[1..].to_vec());
-    }
-    assert!(
-        std::env::var_os("MANDALA_REQUIRE_FONTCONFIG_HOSTS").is_none(),
-        "precondition: the child's font system holds the compiled faces alone, not {hosts} host faces"
-    );
-    crate::util::test_skip::note_skipped(&format!(
-        "{test}: this target does not read FONTCONFIG_FILE, so no child holds the compiled faces alone"
-    ));
-    None
-}
-
-/// In a child: report how many host faces its font system holds, the
-/// first report every child makes. Whether a face is the host's is read
-/// from its source, as `test_flow_shape_a_glyph_no_face_draws_has_no_ink`
-/// reads it.
-fn report_hosts() {
-    crate::font::fonts::init();
-    let mut lease = crate::font::fonts::FontSystemLease::new("the notdef bound's child");
-    let hosts = lease
-        .fonts()
-        .db()
-        .faces()
-        .filter(|face| !matches!(face.source, cosmic_text::fontdb::Source::Binary(_)))
-        .count();
-    println!("REPORT HOSTS {hosts}");
-}
 
 /// The number after `key` in `report`.
 fn number(report: &str, key: &str) -> usize {

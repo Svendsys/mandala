@@ -26,7 +26,7 @@ mod hit_tests;
 pub mod maps;
 /// The work bound's count of the shaper's `.notdef` passes (#387), on the
 /// compiled faces alone.
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod notdef_bound_tests;
 /// The oracle's sweeps over the corpus.
 #[cfg(test)]

@@ -146,7 +146,7 @@ fn frame(sides: &str, shape: &Outline, budget: Option<usize>) -> Laid {
         let run = real_run(TEXT, &flow, fs);
         let ornament = ornament_run(&layout, &flow, 1.0, fs);
         let tables = crate::flow::place::setup_table_samples(&run, shape, &fit, &flow);
-        overshoot_steps(&run, ornament.as_ref(), false, tables)
+        overshoot_steps(&run, ornament.as_ref(), false, tables, 0)
     });
     let counters = [
         &SIDE_READS,

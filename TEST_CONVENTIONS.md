@@ -1045,7 +1045,15 @@ R51.2) and long mixed side ornaments, up to 200 bytes of a wide glyph
 among thin ones (`long_ornament`, R50.3), the ornament cut
 until a frame of no text beside it fits, and then the frame's text, to
 leave their shaping and inking room within the per-input bound below
-(`sides_in_time`, `framed`). A glyph no compiled face holds shapes as a
+(`sides_in_time`, `framed`). A frame round an outline whose halves
+cannot be measured keeps R27's placement, and there shapes its text
+with its `Once` filler appended before it first reads its budget: that
+shaping, `.notdef` passes and all, is counted past the budget too,
+predicted by the function the engine's branch calls
+(`halves::filler_steps`) and held to the charge the frame records
+(`Trace::filled`); a filler whose shaping leaves no frame of no text
+within its share is left off, and counted (`filler_in_time`, #387).
+A glyph no compiled face holds shapes as a
 host face holds it, or as a `.notdef`, weighed 2,200 steps, where none
 does — on CI, which has few host faces — so a harness counts what it
 shapes on the host it runs on, and a fixture names glyphs the compiled
@@ -1065,7 +1073,11 @@ from its input). A `Repeat` ring round an outline is budgeted as a
 frame is (#310) — by the glyphs it will lay, its work counted in its
 path's reads and the glyphs it sets, its reading-order lay held back
 for as its copies are laid, past its budget at most its setup and one
-cluster (`ring_work_steps`) — so it is an input's one frame too:
+cluster (`ring_work_steps`), and for a ring laid by direction its
+reshape and inking, which its lay charges before it reads its budget —
+`.notdef` passes and all — and which the harnesses predict
+(`flow::setup_steps`), laying it by its spans alone where they leave no
+cap within an input (#387) — so it is an input's one frame too:
 flow_structured lays it as its outline's, and flow_raw draws it in
 place of its frame one input in four. The harnesses lay it at most
 `MAX_RING_GLYPHS` (154) glyphs, the most whose budget fits an input

@@ -18,6 +18,10 @@ pub mod directional_tests;
 /// coordinates hold its glyphs apart (#362).
 #[cfg(test)]
 mod far_sides_tests;
+/// A frame that keeps R27's placement counts its `Once` filler's shaping
+/// (#387).
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod filler_tests;
 pub mod fit_tests;
 /// TextFlow's fuzz properties, which the `fuzz/` targets call
 /// (TEST_CONVENTIONS §T14).

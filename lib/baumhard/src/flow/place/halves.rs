@@ -124,16 +124,17 @@
 //! reported as left empty or kept short ([`Unheld::sides`]). So a frame
 //! overshoots its budget by at most [`overshoot_steps`] (ruling R47.2):
 //! what runs before the budget is first read — its setup, R27's first
-//! reshape and one build's shaping and inking — the lay of each line that
-//! finds it spent, and the touch checks that end the frame; no copy of its
-//! sides is laid past what the budget leaves for their check. A frame whose
-//! budget runs out while two of its inks still touch keeps the longest run
-//! of its inks that touch nothing ([`untouched`], within a share of the
-//! budget held back for it), and says it was cut ([`Trace::cut_apart`]). A
-//! frame's text is cut to [`MAX_PLACED_GLYPHS`] at a cluster before its
-//! lines are prepared (ruling R44.1), its sides placing no more than the
-//! cap leaves, so the budget is at most `STEPS_PER_GLYPH ×
-//! MAX_PLACED_GLYPHS`.
+//! reshape and one build's shaping and inking, and where it keeps R27's
+//! placement its text's shaping with a `Once` filler (#387) — the lay of
+//! each line that finds it spent, and the touch checks that end the frame;
+//! no copy of its sides is laid past what the budget leaves for their
+//! check. A frame whose budget runs out while two of its inks still touch
+//! keeps the longest run of its inks that touch nothing ([`untouched`],
+//! within a share of the budget held back for it), and says it was cut
+//! ([`Trace::cut_apart`]). A frame's text is cut to [`MAX_PLACED_GLYPHS`]
+//! at a cluster before its lines are prepared (ruling R44.1), its sides
+//! placing no more than the cap leaves, so the budget is at most
+//! `STEPS_PER_GLYPH × MAX_PLACED_GLYPHS`.
 //!
 //! **Sides.** With `sides`, an ornament closes what the lines leave
 //! round each junction: whole copies, at least one and at most
@@ -1117,24 +1118,27 @@ pub(crate) fn build_steps(text: &ShapedRun, ornament: Option<&ShapedRun>) -> usi
 /// ([`CLUSTERS_A_STEP`] a step) — and its reshape at that size
 /// ([`predicted_resizing_steps`]) — the inking its lines are parted on
 /// (`parting_run`, #333; [`inking_steps`]), one build's shaping and inking
-/// ([`build_steps`]), and a lay of each line ([`OVERSHOOT_TRACKS`]
-/// `track`s of every glyph, each with its path's reads, [`track_steps`]),
-/// which the touch checks that end the frame
-/// fall within. A budget is read before each build, each reshape of
-/// R27's fit, each lay and each copy of a side ornament, so no more than
-/// one of each runs past it; [`untouched`] runs within the budget, which
-/// holds its share back, and so does a side arc's touch check, held back
-/// before each copy ([`check_steps`], ruling R48.2). That rests on three
-/// assumptions, which the flow fuzz property holds every frame to: that
-/// no touch check looks at more than [`touch_looks`] pairs a box of the
-/// classes of height it holds; that no side arc's check holds more
-/// classes than its arc held back for ([`reachable_classes`], over the
-/// text's boxes and the ornament's inks, placed where the frame lies,
-/// before the fill; rulings R51.2, B46.1); and that no check of
-/// [`untouched`] holds more than its share was held back for (ruling
-/// B46.2). A check's looks are the inks near each
-/// box, whatever the tallest box ([`stripped`], ruling R50.1), and a few
-/// for each class of height it holds (ruling R51.2); the structured
+/// ([`build_steps`]), a lay of each line ([`OVERSHOOT_TRACKS`] `track`s of
+/// every glyph, each with its path's reads, [`track_steps`]), which the
+/// touch checks that end the frame fall within, and, for a frame that
+/// keeps R27's placement with a `Once` filler, the `filled` steps of
+/// shaping its text with the filler appended ([`filler_steps`], #387;
+/// nothing for any other frame), which a text of code points no face
+/// draws makes past any rate of its glyphs. A budget is read before each
+/// build, each reshape of R27's fit, each lay and each copy of a side
+/// ornament, so no more than one of each runs past it; [`untouched`] runs
+/// within the budget, which holds its share back, and so does a side
+/// arc's touch check, held back before each copy ([`check_steps`], ruling
+/// R48.2). That rests on three assumptions, which the flow fuzz property
+/// holds every frame to: that no touch check looks at more than
+/// [`touch_looks`] pairs a box of the classes of height it holds; that no
+/// side arc's check holds more classes than its arc held back for
+/// ([`reachable_classes`], over the text's boxes and the ornament's inks,
+/// placed where the frame lies, before the fill; rulings R51.2, B46.1);
+/// and that no check of [`untouched`] holds more than its share was held
+/// back for (ruling B46.2). A check's looks are the inks near each box,
+/// whatever the tallest box ([`stripped`], ruling R50.1), and a few for
+/// each class of height it holds (ruling R51.2); the structured
 /// fuzzer draws long mixed side ornaments and texts of up to 16 sizes, as
 /// a map may hold (rulings R50.3, R51.2), so a geometry that breaks it is
 /// a finding. The first build holds `untouched`'s share after the frame's
@@ -1149,6 +1153,7 @@ pub(crate) fn overshoot_steps(
     ornament: Option<&ShapedRun>,
     sized: bool,
     tables: usize,
+    filled: usize,
 ) -> usize {
     // (Until #304 every reshape counted a shaping, and the build's, which
     // a build at the text's own size never makes, held R27's walks.)
@@ -1165,19 +1170,23 @@ pub(crate) fn overshoot_steps(
         .saturating_add(build_steps(text, ornament))
         .saturating_add(inking_steps(text))
         .saturating_add(OVERSHOOT_TRACKS.saturating_mul(track_steps(text.glyphs.len())))
+        .saturating_add(filled)
 }
 
 /// The most glyph steps a frame of `text` may take in all, its paths'
-/// tables of `tables` samples: its budget ([`frame_budget`]) and the most
-/// it may take past it ([`overshoot_steps`]). What the flow fuzzers hold
-/// an input's frames to, at their cost a step under ASan (ruling R45.1).
+/// tables of `tables` samples, a frame that keeps R27's placement with a
+/// `Once` filler its `filled` steps of shaping it ([`filler_steps`],
+/// nothing for any other): its budget ([`frame_budget`]) and the most it
+/// may take past it ([`overshoot_steps`]). What the flow fuzzers hold an
+/// input's frames to, at their cost a step under ASan (ruling R45.1).
 pub(crate) fn frame_work_steps(
     text: &ShapedRun,
     ornament: Option<&ShapedRun>,
     sized: bool,
     tables: usize,
+    filled: usize,
 ) -> usize {
-    frame_budget(text.glyphs.len()).saturating_add(overshoot_steps(text, ornament, sized, tables))
+    frame_budget(text.glyphs.len()).saturating_add(overshoot_steps(text, ornament, sized, tables, filled))
 }
 
 /// The glyph steps a look at `boxes` ink boxes for a touch counts.
@@ -1615,6 +1624,11 @@ thread_local! {
     /// that share: all a frame does past its budget.
     #[cfg(test)]
     pub(crate) static PAST_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter (#387): the most glyph steps a frame charged on this
+    /// thread for shaping its text with a `Once` filler, keeping R27's
+    /// placement (`Work::filled`).
+    #[cfg(test)]
+    pub(crate) static MOST_FILLED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test counter (ruling B47.3): the glyphs of the text the last frame
     /// laid on this thread by halves was given, and the glyph steps it
     /// spent, its work in all, as `LAST_RING` keeps them for a `Repeat`
@@ -3444,6 +3458,11 @@ pub(super) struct Work {
     glyphs: Cell<usize>,
     budget: Cell<usize>,
     reserve: Cell<usize>,
+    /// The glyph steps it took shaping its text with a `Once` filler
+    /// appended, counted in `spent` ([`filled`](Self::filled), #387): a
+    /// frame that keeps R27's placement takes them before it first reads
+    /// its budget.
+    filled: Cell<usize>,
     /// The classes of height its text's inks can take placed
     /// ([`Layout::text_bound`]), what [`untouched`]'s share is held back
     /// for: one until the text is inked.
@@ -3473,6 +3492,7 @@ impl Work {
             glyphs: Cell::new(0),
             budget: Cell::new(TRACK_BUDGET),
             reserve: Cell::new(0),
+            filled: Cell::new(0),
             classes: Cell::new(1),
             looks: Cell::new(Looks::default()),
             last_classes: Cell::new(0),
@@ -3505,6 +3525,16 @@ impl Work {
     /// Count shaping `run` (ruling R46.1).
     pub(super) fn shaped(&self, run: &ShapedRun) {
         self.take(shaping_steps(run));
+    }
+
+    /// Count `steps` glyph steps of shaping the text with a `Once` filler
+    /// appended (`lines::filling`, #387), and note them
+    /// ([`Trace::filled`](super::Trace::filled)).
+    pub(super) fn filled(&self, steps: usize) {
+        self.filled.set(self.filled.get().saturating_add(steps));
+        #[cfg(test)]
+        MOST_FILLED.with(|most| most.set(most.get().max(steps)));
+        self.take(steps);
     }
 
     /// Count a reshape to `run`, as the reshape reported it: `shaped`, or
@@ -7516,6 +7546,63 @@ pub(crate) fn to_cap_seam(run: &ShapedRun, range: Range<usize>, left: usize) -> 
     (range.start..end, cut, left)
 }
 
+/// Whether a frame of `run` round its outline's paths `level` lays
+/// nothing, its outline too long to lay (#363): only where it has text to
+/// lay, as a frame of none lays nothing, its filler and its sides
+/// included. What [`place_halves`] reads first, and [`filler_steps`]
+/// with it.
+fn lays_nothing(run: &ShapedRun, level: &[(ArcPath, Range<f32>); 2]) -> bool {
+    !run.glyphs.is_empty() && level.iter().any(|(path, _)| path.too_long())
+}
+
+/// Whether a frame round `halves` keeps R27's placement (#387): an
+/// outline whose halves cannot be measured — one with a side that is not
+/// a number — keeps it, which holds every position finite there. (An
+/// outline of numbers too large for its length to be an `f32` is too long
+/// to lay, [`lays_nothing`].) [`place_halves`]'s branch, and what
+/// [`filler_steps`] reads of it.
+fn keeps_r27(halves: &Halves) -> bool {
+    let ends = [
+        halves.junctions[0],
+        halves.junctions[1],
+        (halves.apexes[0], halves.apexes[1]),
+    ];
+    !(halves.length.is_finite() && ends.iter().all(|(a, b)| a.is_finite() && b.is_finite()))
+}
+
+/// The glyph steps a frame of `run` in `fit`, round `outline` in `flow`'s
+/// style, charges before it first reads its budget for its `Once` filler
+/// (#387), which its budget therefore does not bound: where it keeps
+/// R27's placement ([`keeps_r27`]), the shaping of its text with the
+/// filler appended (`lines::filling`), `.notdef` passes and all, which
+/// R27 lays it from; nothing for any other frame — one in another fit,
+/// with no filler, too long to lay ([`lays_nothing`]), or whose halves
+/// can be measured, which is laid by halves and never shapes its filler
+/// (the resolver gives a filler to a frame as its sides,
+/// [`resolve_ring`](crate::document::resolve::resolve_ring)). Read as
+/// [`place_halves`] reads it, by the same functions, over the same paths
+/// and the same parting run, so the prediction is the charge.
+///
+/// Cost: the frame's paths and their tables; where it keeps R27's
+/// placement, an inking of the run and a shaping of it with the filler.
+pub(crate) fn filler_steps(
+    run: &ShapedRun,
+    outline: &Outline,
+    fit: &FitMode,
+    flow: &ResolvedText,
+    fs: &mut FontSystemLease,
+) -> usize {
+    let FitMode::Once { filler: Some(filler) } = fit else {
+        return 0;
+    };
+    let level = frame_halves(outline, table_spacing(run, fit, flow));
+    if lays_nothing(run, &level) || !keeps_r27(&Halves::new(outline, level)) {
+        return 0;
+    }
+    let parting = parting_run(run, fs.fonts());
+    super::lines::filling(&parting, filler, flow, fs.fonts()).1
+}
+
 /// Place `run` as a text frame around `outline` (rulings R27, R32, R33,
 /// R33.1, R34): its two lines laid at `layout.span` along the diagonal
 /// halves, each junction a break, `layout.sides` closing what the lines
@@ -7580,7 +7667,7 @@ pub(super) fn place_halves(
     // An outline too long to lay is not laid (#363): its halves are one
     // outline's, and either says so — where the frame has text to lay: a
     // frame of none lays nothing, its filler and its sides included.
-    if !run.glyphs.is_empty() && level.iter().any(|(path, _)| path.too_long()) {
+    if lays_nothing(run, &level) {
         let tables = level.iter().map(|(path, _)| path.table_samples()).sum();
         return (None, too_long_to_lay(trace, tables));
     }
@@ -7619,16 +7706,7 @@ pub(super) fn place_halves(
         )
     };
     let halves = Halves::new(outline, level);
-    // An outline whose halves cannot be measured — one with a side that
-    // is not a number — keeps R27's placement, which holds every
-    // position finite there. (An outline of numbers too large for its
-    // length to be an `f32` is too long to lay, above.)
-    let ends = [
-        halves.junctions[0],
-        halves.junctions[1],
-        (halves.apexes[0], halves.apexes[1]),
-    ];
-    if !(halves.length.is_finite() && ends.iter().all(|(a, b)| a.is_finite() && b.is_finite())) {
+    if keeps_r27(&halves) {
         // Laid from the parting run, whose glyphs and their indices are
         // `run`'s, so that a glyph that draws nothing takes no room at a
         // line's end here either (#333).
@@ -7655,6 +7733,7 @@ pub(super) fn place_halves(
             trace.reserve = work.reserve();
             trace.glyphs = work.glyphs.get();
             trace.looks = work.looks.get();
+            trace.filled = work.filled.get();
         }
         return placed;
     }
@@ -8213,6 +8292,7 @@ pub(super) fn place_halves(
         trace.reserve = lay.work.reserve();
         trace.glyphs = lay.work.glyphs.get();
         trace.looks = lay.work.looks.get();
+        trace.filled = lay.work.filled.get();
     }
     #[cfg(test)]
     LAST_FRAME.with(|last| last.set(Some((run.glyphs.len(), lay.work.spent.get()))));
