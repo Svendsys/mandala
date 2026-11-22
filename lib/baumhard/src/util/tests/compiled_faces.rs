@@ -109,4 +109,27 @@ pub(crate) fn report_hosts() {
     println!("REPORT HOSTS {hosts}");
 }
 
+/// `count` code points no face of `fs`'s font system maps, none of which
+/// the shaper hides or hands over as a space: from the C0 and C1 controls
+/// but the tab and the line breaks, and the private use area, in that
+/// order, read against every face's `cmap`. What a shaping lays as
+/// `.notdef`, each its own on any host; on the compiled faces alone, a
+/// child's, there are hundreds.
+pub(crate) fn undrawn(fs: &mut crate::font::fonts::FontSystemLease, count: usize) -> Vec<char> {
+    let ids: Vec<_> = fs.fonts().db().faces().map(|face| face.id).collect();
+    let fonts: Vec<_> = ids
+        .into_iter()
+        .filter_map(|id| fs.fonts().get_font(id, crate::font::FontWeight::NORMAL))
+        .collect();
+    let candidates = (0x01u32..0x20)
+        .chain(0x80..0xA0)
+        .chain(0xE000..0xF900)
+        .filter_map(char::from_u32)
+        .filter(|&c| !matches!(c, '\t' | '\n' | '\r' | '\u{1C}' | '\u{1D}' | '\u{1E}' | '\u{85}'));
+    candidates
+        .filter(|&c| fonts.iter().all(|font| font.as_swash().charmap().map(c) == 0))
+        .take(count)
+        .collect()
+}
+
 pub(crate) use this_test;

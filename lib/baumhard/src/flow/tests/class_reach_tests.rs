@@ -409,11 +409,11 @@ fn test_the_flow_properties_find_a_check_past_the_classes_held_back_for_it() {
     let run = with_fonts(|fs| real_run("plain text", &style(16.0), fs));
     let frame = |looks: Looks| {
         let trace = Trace {
-            spent: frame_work_steps(&run, None, false, 0),
+            spent: frame_work_steps(&run, None, false, 0, 0),
             looks,
             ..Trace::default()
         };
-        InputWork::default().frame(&run, None, false, 0, &trace, "a frame")
+        InputWork::default().frame(&run, None, false, 0, 0, &trace, "a frame")
     };
     let side = |classes, reserved| Looks {
         classes,
@@ -481,7 +481,7 @@ fn shrinking_frame(
     };
     let share = SHARE_CLASSES.with(std::cell::Cell::get);
     let shaped = with_fonts(|fs| real_run(text, &style(22.0), fs));
-    let most = trace.budget + overshoot_steps(&shaped, None, true, trace.tables);
+    let most = trace.budget + overshoot_steps(&shaped, None, true, trace.tables, 0);
     (run, trace, share, most)
 }
 

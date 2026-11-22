@@ -1138,28 +1138,6 @@ mod held {
         );
     }
 
-    /// `count` code points no face of `fs`'s font system maps, none of
-    /// which the shaper hides or hands over as a space: from the C0 and C1
-    /// controls but the tab and the line breaks, and the private use area,
-    /// in that order, read against every face's `cmap`. What a shaping
-    /// lays as `.notdef`, each its own on any host.
-    fn undrawn(fs: &mut crate::font::fonts::FontSystemLease, count: usize) -> Vec<char> {
-        let ids: Vec<_> = fs.fonts().db().faces().map(|face| face.id).collect();
-        let fonts: Vec<_> = ids
-            .into_iter()
-            .filter_map(|id| fs.fonts().get_font(id, crate::font::FontWeight::NORMAL))
-            .collect();
-        let candidates = (0x01u32..0x20)
-            .chain(0x80..0xA0)
-            .chain(0xE000..0xF900)
-            .filter_map(char::from_u32)
-            .filter(|&c| !matches!(c, '\t' | '\n' | '\r' | '\u{1C}' | '\u{1D}' | '\u{1E}' | '\u{85}'));
-        candidates
-            .filter(|&c| fonts.iter().all(|font| font.as_swash().charmap().map(c) == 0))
-            .take(count)
-            .collect()
-    }
-
     /// **A directional ring's setup is counted** (#387): a `Repeat` ring
     /// laid by direction charges its one reshape and its inking before it
     /// first reads its budget (`Trace::setup`), which its budget therefore
@@ -1185,7 +1163,7 @@ mod held {
     /// On the compiled faces alone, in a child process
     /// (`util::tests::compiled_faces`): where a host face maps every C0 and
     /// C1 control and every private-use code point, as one here does,
-    /// [`undrawn`] finds none to lay.
+    /// `compiled_faces::undrawn` finds none to lay.
     ///
     /// Controls, each run and seen red: `ring_overshoot` with no setup,
     /// the two rings laid past their work as read before #387 past it now,
@@ -1254,7 +1232,7 @@ mod held {
             ..RingLayout::whole()
         };
         let rings = with_fonts(|fs| {
-            let undrawn = undrawn(fs, 250);
+            let undrawn = crate::util::tests::compiled_faces::undrawn(fs, 250);
             assert_eq!(undrawn.len(), 250, "precondition: 250 code points no face draws");
             let mut cluster: String = undrawn[..149].iter().collect();
             cluster.push('\u{20E3}');

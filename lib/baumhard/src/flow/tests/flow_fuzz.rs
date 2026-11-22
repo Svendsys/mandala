@@ -61,7 +61,7 @@ use crate::document::resolve::ResolvedText;
 use crate::document::values::{
     Align, Direction, Edge, FitMode, FontSize, LineSpan, Percent, Rgba, Shape, StartPoint, Weight,
 };
-use crate::flow::place::halves::{frame_budget, frame_work_steps, table_steps, touch_looks, NEARER};
+use crate::flow::place::halves::{self, frame_budget, frame_work_steps, table_steps, touch_looks, NEARER};
 use crate::flow::place::pitch::place_pitched_capped;
 use crate::flow::place::ring::{ring_work_steps, RingLoss, RING_STEPS};
 use crate::flow::place::{
@@ -326,13 +326,22 @@ pub const fn frame_steps(frames: usize) -> usize {
 
 /// Whether a frame's text shaped as `run`, its sides as `ornament`, its
 /// paths' tables of `tables` samples (`setup_table_samples`, ruling
-/// B16.3a), is one the harnesses lay (rulings R45.1, R46.3): at most
-/// [`MAX_FRAME_GLYPHS`] glyphs, and laid to the whole of its budget and
-/// past it (`frame_work_steps`, a `Fit` frame's as the most) within its
-/// share of [`INPUT_STEPS`] among `frames` frames.
-pub fn fits_in_time(run: &ShapedRun, ornament: Option<&ShapedRun>, frames: usize, tables: usize) -> bool {
+/// B16.3a), and, where it keeps R27's placement with a `Once` filler, its
+/// `filled` steps of shaping it with the filler (`halves::filler_steps`,
+/// #387; nothing for any other frame), is one the harnesses lay (rulings
+/// R45.1, R46.3): at most [`MAX_FRAME_GLYPHS`] glyphs, and laid to the
+/// whole of its budget and past it (`frame_work_steps`, a `Fit` frame's
+/// as the most) within its share of [`INPUT_STEPS`] among `frames`
+/// frames.
+pub fn fits_in_time(
+    run: &ShapedRun,
+    ornament: Option<&ShapedRun>,
+    frames: usize,
+    tables: usize,
+    filled: usize,
+) -> bool {
     run.glyphs.len() <= MAX_FRAME_GLYPHS
-        && frame_work_steps(run, ornament, true, tables) <= frame_steps(frames.max(1))
+        && frame_work_steps(run, ornament, true, tables, filled) <= frame_steps(frames.max(1))
 }
 
 /// The work an input's frames may take, counted as they are laid
@@ -346,10 +355,14 @@ pub(crate) struct InputWork {
 
 impl InputWork {
     /// Count a frame of `run` (sides shaped as `ornament`, a `Fit` frame
-    /// `sized`, its paths' tables of `tables` samples), laid with `trace`:
-    /// the most it may take, `frame_work_steps`. The engine counts the
-    /// tables its setup builds, as many samples as `setup_table_samples`
-    /// said before it was laid (ruling B16.3a), scales a frame's budget
+    /// `sized`, its paths' tables of `tables` samples, its `Once` filler's
+    /// shaping predicted at `filled` steps, `halves::filler_steps`), laid
+    /// with `trace`: the most it may take, `frame_work_steps`. The engine
+    /// counts the tables its setup builds, as many samples as
+    /// `setup_table_samples` said before it was laid (ruling B16.3a), and
+    /// what it charged for its filler (`Trace::filled`) exactly as
+    /// predicted: the shaping where it kept R27's placement, nothing
+    /// otherwise (#387). It scales a frame's budget
     /// by its text's glyphs once cut, never more than the run has, spends
     /// no more than its budget and its overshoot, and no touch check of it
     /// looks at more than `touch_looks` pairs a box of the classes of
@@ -357,17 +370,25 @@ impl InputWork {
     /// arc held back for, nor a check of `untouched` more than its share
     /// was held back for — what overshoot rests on (rulings R48.2, R51.2,
     /// B46.2): properties.
+    #[allow(clippy::too_many_arguments)] // a frame's lay, and what it was predicted to charge.
     pub(crate) fn frame(
         &mut self,
         run: &ShapedRun,
         ornament: Option<&ShapedRun>,
         sized: bool,
         tables: usize,
+        filled: usize,
         trace: &Trace,
         what: &str,
     ) -> Result<(), String> {
         let budget = frame_budget(run.glyphs.len());
-        let most = frame_work_steps(run, ornament, sized, tables);
+        let most = frame_work_steps(run, ornament, sized, tables, filled);
+        if trace.filled != filled {
+            return Err(format!(
+                "{what}: a frame charged {} glyph steps for its filler, not the {filled} predicted (#387)",
+                trace.filled
+            ));
+        }
         if trace.tables != tables {
             return Err(format!(
                 "{what}: a frame's setup counted tables of {} samples, not the {tables} its outline gives (ruling B16.3a)",
@@ -984,11 +1005,18 @@ fn frames_round_a_rectangle(
         at: 0.0,
     };
     // Held to the timeout, the frames drawn, a `Repeat` ring among them
-    // (#310); replaying a finding, a ring and every frame, as found.
-    let laid: Vec<&FitMode> = if bounded {
-        fits.iter().collect()
+    // (#310), each `Once` filler left off where it leaves no frame within
+    // the timeout (#387) — which none does round this rounded rectangle,
+    // whose halves can be measured; replaying a finding, a ring and every
+    // frame, as found.
+    let laid: Vec<FitMode> = if bounded {
+        fits.iter()
+            .map(|fit| filler_in_time(fit, &path, style, 1.0, fits.len(), fs))
+            .collect()
     } else {
-        std::iter::once(&FitMode::Repeat).chain(fits).collect()
+        std::iter::once(FitMode::Repeat)
+            .chain(fits.iter().cloned())
+            .collect()
     };
     // The tables its frames' setups build, the most of any it lays
     // (ruling B16.3a): none, round a rounded rectangle, so they are not
@@ -1000,16 +1028,26 @@ fn frames_round_a_rectangle(
             .max()
             .unwrap_or(0)
     };
+    // The most any of its frames charges for a `Once` filler before it
+    // first reads its budget (#387).
+    let filled = |run: &ShapedRun, fs: &mut FontSystemLease| {
+        laid.iter()
+            .map(|fit| halves::filler_steps(run, &path, fit, style, fs))
+            .max()
+            .unwrap_or(0)
+    };
     // Its sides, then its text, held to what its frames lay inside the
     // timeout (rulings R45.1, R50.3).
     let (layout, ornament) = if bounded {
-        sides_in_time(layout, style, 1.0, fits.len(), &tables, fs)
+        sides_in_time(layout, style, 1.0, fits.len(), &tables, &filled, fs)
     } else {
         (layout.clone(), ornament_run(layout, style, 1.0, fs))
     };
     let layout = &layout;
-    let fits_in_time = |run: &ShapedRun| fits_in_time(run, ornament.as_ref(), fits.len(), tables(run));
-    let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
+    let fits_in_time = |run: &ShapedRun, fs: &mut FontSystemLease| {
+        fits_in_time(run, ornament.as_ref(), fits.len(), tables(run), filled(run, fs))
+    };
+    let as_found = |run: &ShapedRun, _: &mut FontSystemLease| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
     let framed = framed(
         &[text.to_string()],
         std::slice::from_ref(style),
@@ -1023,7 +1061,7 @@ fn frames_round_a_rectangle(
         link: None,
     }];
     let frame_run = shape_run(&frame_spans, 1.0, fs);
-    for fit in laid {
+    for fit in &laid {
         let tables = setup_table_samples(&frame_run, &path, fit, style);
         // A directional ring's reshape and inking, predicted, or its
         // directional texts left out where they leave no cap (#387).
@@ -1058,11 +1096,15 @@ fn frames_round_a_rectangle(
             )?;
         } else {
             let sized = matches!(fit, FitMode::Fit { .. });
+            // Its `Once` filler's shaping where it keeps R27's placement,
+            // predicted (#387).
+            let filled = halves::filler_steps(&frame_run, &path, fit, style, fs);
             work.frame(
                 &frame_run,
                 ornament.as_ref(),
                 sized,
                 tables,
+                filled,
                 &trace,
                 "around a rectangle",
             )?;
@@ -1937,6 +1979,17 @@ pub fn check_flow_structured_every_face(bytes: &[u8]) -> Result<(), String> {
     check_generated(&mut Choices::new(bytes), true, &every_face())
 }
 
+/// [`check_flow_structured_every_face`] with a frame's text held to what a
+/// frame laid when the committed findings were found, as
+/// [`check_flow_structured_as_found`] holds the flow_structured target's:
+/// what a committed flow_structured_every_face finding replays through,
+/// so that it still exercises the frame it was found in, each frame held
+/// to the most it may take (#387). It is not held to the per-input work
+/// bound, which is the fuzz timeout's, and a test has none.
+pub fn check_flow_structured_every_face_as_found(bytes: &[u8]) -> Result<(), String> {
+    check_generated(&mut Choices::new(bytes), false, &every_face())
+}
+
 /// [`check_flow_generated`] over `faces`, and the faces its spans and
 /// its flow's own style were pinned to, in the order drawn: what a sweep
 /// over [`every_face`] reads to know it met each fallback face.
@@ -2111,23 +2164,51 @@ fn check_generated_pinning(
                             if laid_texts.len() > 1 && *frame_texts == texts {
                                 FOUND_TEXT_LAID.with(|n| n.set(n.get() + 1));
                             }
-                            // The frame's sides and then its text, held to what
-                            // its frame lays inside the timeout (rulings R45.1,
-                            // R46.3, R50.3) — or, replaying a finding, its text
-                            // to what a frame laid when it was found.
+                            // The frame's `Once` filler, its sides and then its
+                            // text, held to what its frame lays inside the
+                            // timeout (rulings R45.1, R46.3, R50.3; #387) — or,
+                            // replaying a finding, its text to what a frame laid
+                            // when it was found.
+                            let fit = if bounded {
+                                filler_in_time(&fit, path, &flow, scale, STRUCTURED_FRAMES, &mut fs)
+                            } else {
+                                fit.clone()
+                            };
                             // Its paths' tables, counted in its setup (ruling
-                            // B16.3a), for the text it is laid with.
+                            // B16.3a), for the text it is laid with; and what it
+                            // charges for its `Once` filler before it first
+                            // reads its budget, where it keeps R27's placement
+                            // (#387).
                             let tables = |run: &ShapedRun| setup_table_samples(run, path, &fit, &flow);
+                            let filled = |run: &ShapedRun, fs: &mut FontSystemLease| {
+                                halves::filler_steps(run, path, &fit, &flow, fs)
+                            };
                             let (layout, ornament) = if bounded {
-                                sides_in_time(layout, &flow, scale, STRUCTURED_FRAMES, &tables, &mut fs)
+                                sides_in_time(
+                                    layout,
+                                    &flow,
+                                    scale,
+                                    STRUCTURED_FRAMES,
+                                    &tables,
+                                    &filled,
+                                    &mut fs,
+                                )
                             } else {
                                 (layout.clone(), ornament_run(layout, &flow, scale, &mut fs))
                             };
                             let layout = &layout;
-                            let fits_in_time = |run: &ShapedRun| {
-                                fits_in_time(run, ornament.as_ref(), STRUCTURED_FRAMES, tables(run))
+                            let fits_in_time = |run: &ShapedRun, fs: &mut FontSystemLease| {
+                                fits_in_time(
+                                    run,
+                                    ornament.as_ref(),
+                                    STRUCTURED_FRAMES,
+                                    tables(run),
+                                    filled(run, fs),
+                                )
                             };
-                            let as_found = |run: &ShapedRun| run.glyphs.len() <= FOUND_FRAME_GLYPHS;
+                            let as_found = |run: &ShapedRun, _: &mut FontSystemLease| {
+                                run.glyphs.len() <= FOUND_FRAME_GLYPHS
+                            };
                             let framed = framed(
                                 frame_texts,
                                 frame_styles,
@@ -2270,6 +2351,7 @@ fn check_generated_pinning(
                                     ornament.as_ref(),
                                     sized,
                                     laid_tables,
+                                    filled(&run, &mut fs),
                                     &trace,
                                     "around an outline",
                                 )
@@ -2571,13 +2653,68 @@ pub fn directional(choices: &mut Choices<'_>) -> DirectionalGlyphs {
     DirectionalGlyphs { vertical, corners }
 }
 
+/// `fit`, for a frame round `outline` in `style` at `scale` among
+/// `frames` frames — or, where a frame of no text in it keeps R27's
+/// placement with a `Once` filler whose shaping (`halves::filler_steps`,
+/// #387) leaves it outside its share of [`INPUT_STEPS`], laid to the
+/// whole of its budget and its overshoot, `Once` with no filler: so the
+/// sides cut after ([`sides_in_time`]) and the text cut after them
+/// ([`framed`]) always find a frame that fits, whatever the filler's
+/// glyphs cost to shape on this host — glyphs no face holds included,
+/// which no text cut makes room for, as the filler shapes on a line of
+/// its own. A filler left off is counted (`FILLER_LEFT_OUT`, a test
+/// counter).
+///
+/// Cost: where `fit` has a filler, the frame's paths and, where it keeps
+/// R27's placement, a shaping of the filler.
+pub fn filler_in_time(
+    fit: &FitMode,
+    outline: &Outline,
+    style: &ResolvedText,
+    scale: f32,
+    frames: usize,
+    fs: &mut FontSystemLease,
+) -> FitMode {
+    if !matches!(fit, FitMode::Once { filler: Some(_) }) {
+        return fit.clone();
+    }
+    let empty = shape_run(
+        &[FlowSpan {
+            text: "",
+            style,
+            link: None,
+        }],
+        scale,
+        fs,
+    );
+    let filled = halves::filler_steps(&empty, outline, fit, style, fs);
+    let tables = setup_table_samples(&empty, outline, fit, style);
+    if fits_in_time(&empty, None, frames, tables, filled) {
+        return fit.clone();
+    }
+    #[cfg(test)]
+    FILLER_LEFT_OUT.with(|n| n.set(n.get() + 1));
+    FitMode::Once { filler: None }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test counter (#387): the `Once` fillers a harness left off on this
+    /// thread, their shaping leaving no frame within the timeout
+    /// ([`filler_in_time`]).
+    pub(crate) static FILLER_LEFT_OUT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// `layout` with its sides cut, and their ornament shaped alone in
 /// `style` at `scale`, so that a frame of no text beside them, laid to
-/// the whole of its budget and its overshoot, fits its share of
-/// [`INPUT_STEPS`] among `frames` frames (rulings R45.1, R50.3): halved
-/// until it fits, and left off once nothing is left. So the text cut after ([`framed`]) always finds a frame
-/// that fits, whatever the ornament's glyphs cost to shape on this host —
-/// a glyph no face holds included, which no text cut makes room for.
+/// the whole of its budget and its overshoot — its `Once` filler's
+/// shaping, `filled` (`halves::filler_steps`, #387), with them — fits its
+/// share of [`INPUT_STEPS`] among `frames` frames (rulings R45.1, R50.3):
+/// halved until it fits, and left off once nothing is left. So the text
+/// cut after ([`framed`]) always finds a frame that fits, whatever the
+/// ornament's glyphs cost to shape on this host — a glyph no face holds
+/// included, which no text cut makes room for — where a frame of no text
+/// fits with no sides ([`filler_in_time`]).
 ///
 /// Cost: a shaping of the ornament, and one more each halving.
 pub fn sides_in_time(
@@ -2586,6 +2723,7 @@ pub fn sides_in_time(
     scale: f32,
     frames: usize,
     tables: &dyn Fn(&ShapedRun) -> usize,
+    filled: &dyn Fn(&ShapedRun, &mut FontSystemLease) -> usize,
     fs: &mut FontSystemLease,
 ) -> (RingLayout, Option<ShapedRun>) {
     let empty = shape_run(
@@ -2603,7 +2741,7 @@ pub fn sides_in_time(
         let Some(shaped) = &ornament else {
             return (layout, None);
         };
-        if fits_in_time(&empty, Some(shaped), frames, tables(&empty)) {
+        if fits_in_time(&empty, Some(shaped), frames, tables(&empty), filled(&empty, fs)) {
             return (layout, ornament);
         }
         let cut = layout.sides.as_ref().and_then(|(text, color)| {
@@ -2749,8 +2887,9 @@ pub fn mixed_sizes(
 }
 
 /// `texts`, in `styles`, at `scale`, each cut to the same share of its
-/// characters — halved until their run `fits`: what a frame lays here
-/// (rulings R44.2, R45.1, R46.3). The harnesses' rule: at most
+/// characters — halved until their run `fits`, which may shape with the
+/// font system (a `Once` filler's, `halves::filler_steps`): what a frame
+/// lays here (rulings R44.2, R45.1, R46.3). The harnesses' rule: at most
 /// [`MAX_FRAME_GLYPHS`] glyphs, and its frames' work, laid to their
 /// budgets and past them, within [`INPUT_STEPS`]. Texts whose run fits
 /// already are returned whole; with no characters left, the empty texts.
@@ -2761,7 +2900,7 @@ pub fn framed(
     styles: &[ResolvedText],
     scale: f32,
     fs: &mut FontSystemLease,
-    fits: &dyn Fn(&ShapedRun) -> bool,
+    fits: &dyn Fn(&ShapedRun, &mut FontSystemLease) -> bool,
 ) -> Vec<String> {
     let mut share = usize::MAX;
     loop {
@@ -2787,7 +2926,10 @@ pub fn framed(
                 link: None,
             })
             .collect();
-        if share == 0 || fits(&shape_run(&spans, scale, fs)) {
+        if share == 0 || {
+            let run = shape_run(&spans, scale, fs);
+            fits(&run, fs)
+        } {
             return cut;
         }
         share = if share == usize::MAX { 512 } else { share / 2 };

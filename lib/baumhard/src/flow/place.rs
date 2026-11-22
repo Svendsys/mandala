@@ -713,6 +713,12 @@ pub(crate) struct Trace {
     /// other placement, and for a ring whose outline is too small for two
     /// runs, which is laid by its spans alone.
     pub(crate) setup: usize,
+    /// For a text frame that keeps R27's placement with a `Once` filler,
+    /// the glyph steps it charged for shaping its text with the filler
+    /// appended, counted in `spent`: before it first reads its budget,
+    /// `.notdef` passes and all (`halves::filler_steps`, #387). Nothing for
+    /// any other placement.
+    pub(crate) filled: usize,
     /// For a text frame, the share of its budget held back for its last
     /// resort's cut to the inks that touch nothing (`halves::untouched_steps`,
     /// ruling R46.1).
