@@ -57,7 +57,7 @@ fn node(doc: &MindMapDocument, ident: u32) -> NodeId {
 
 /// One path of the fixture.
 #[derive(Clone, Copy, Debug)]
-enum Path {
+enum PathRef {
     /// Node `ident`'s connector.
     Connector(u32),
     /// Node `ident`'s link `nth`, in document order.
@@ -65,23 +65,23 @@ enum Path {
 }
 
 /// Node 2's connector.
-const C2: Path = Path::Connector(2);
+const C2: PathRef = PathRef::Connector(2);
 /// Node 1's bare line link to node 3.
-const L13: Path = Path::Link(1, 0);
+const L13: PathRef = PathRef::Link(1, 0);
 /// Node 1's labeled line link to node 4.
-const L14: Path = Path::Link(1, 1);
+const L14: PathRef = PathRef::Link(1, 1);
 /// Node 1's portal link to node 4.
-const P14: Path = Path::Link(1, 2);
+const P14: PathRef = PathRef::Link(1, 2);
 /// Node 3's straight, hidden line link.
-const L32: Path = Path::Link(3, 0);
+const L32: PathRef = PathRef::Link(3, 0);
 /// Node 4's line link through one control point.
-const L41: Path = Path::Link(4, 0);
+const L41: PathRef = PathRef::Link(4, 0);
 
 /// The element `path` names.
-fn path(doc: &MindMapDocument, path: Path) -> NodeId {
+fn path(doc: &MindMapDocument, path: PathRef) -> NodeId {
     let (ident, kind, nth) = match path {
-        Path::Connector(ident) => (ident, DocKind::Connector, 0),
-        Path::Link(ident, nth) => (ident, DocKind::Link, nth),
+        PathRef::Connector(ident) => (ident, DocKind::Connector, 0),
+        PathRef::Link(ident, nth) => (ident, DocKind::Link, nth),
     };
     children_of_kind(doc.doc(), node(doc, ident), kind)
         .nth(nth)
@@ -89,7 +89,7 @@ fn path(doc: &MindMapDocument, path: Path) -> NodeId {
 }
 
 /// Select exactly `paths`, in order.
-fn select(doc: &mut MindMapDocument, paths: &[Path]) {
+fn select(doc: &mut MindMapDocument, paths: &[PathRef]) {
     let ids: Vec<NodeId> = paths.iter().map(|&p| path(doc, p)).collect();
     doc.selection.set(ids);
 }
@@ -148,7 +148,7 @@ fn expected(edits: &[(&str, &str)]) -> String {
 /// changes.
 struct Case {
     name: &'static str,
-    select: &'static [Path],
+    select: &'static [PathRef],
     input: Input,
     edits: &'static [(&'static str, &'static str)],
 }
@@ -543,7 +543,7 @@ fn test_a_label_on_a_portal_link_is_refused() {
 /// what they edit apply (the cases above).
 #[test]
 fn test_each_verb_refuses_naming_what_to_select() {
-    let refusals: &[(&[Path], &str, &str)] = &[
+    let refusals: &[(&[PathRef], &str, &str)] = &[
         (&[], "path content=x", "path: select a connector or a line link"),
         (&[P14], "path content=x", "path: a portal link draws no path"),
         (&[], "path straight", "path: select a connector or a line link"),
