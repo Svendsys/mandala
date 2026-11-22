@@ -401,9 +401,9 @@ impl Projector {
 
     /// The points the drawn connector or line link `path` passes through,
     /// in order (D34): the midpoint of the side it starts at, each of its
-    /// control points where the projection placed it — the point `k / (n
-    /// + 1)` of the way from end to end, moved by control point `k - 1` —
-    /// and the midpoint of the side it ends at. A straight path passes
+    /// control points where the projection placed it — the point
+    /// `k / (n + 1)` of the way from end to end, moved by control point
+    /// `k - 1` — and the midpoint of the side it ends at. A straight path passes
     /// through its two ends only. `None` until it is placed, and for a
     /// path that is not drawn. O(its control points); one allocation.
     pub fn through_points(&self, path: NodeId) -> Option<Vec<Vec2>> {

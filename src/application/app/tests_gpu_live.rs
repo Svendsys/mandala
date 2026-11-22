@@ -9,7 +9,7 @@
 //!
 //! ```text
 //! 1 "Root" ── portal ── 5 "Far" (two sections, min_size 160 × 80)
-//! └─ 2 "Child", connector labelled "via"
+//! └─ 2 "Child", connector labeled "via"
 //!    └─ 4 "Grand"
 //! 3 "Other" ── line link to 2, one control point
 //! ```
@@ -294,7 +294,11 @@ fn test_a_node_drag_is_one_apply_of_its_final_request_and_one_entry() {
 }
 
 /// **Alt drags a node alone; Shift drags every selected node with it**,
-/// as on `main`. Controls: the plain drag above moves the child.
+/// as on `main`, and the node a Shift drag grabbed joins the selection,
+/// so the tint covers every node that moves (#395's review).
+///
+/// Controls: the plain drag above moves the child; and a plain drag of a
+/// node not selected makes it the whole selection.
 #[test]
 fn test_alt_drags_a_node_alone_and_shift_drags_the_selection() {
     let Some(mut app) = app() else { return };
@@ -322,6 +326,22 @@ fn test_alt_drags_a_node_alone_and_shift_drags_the_selection() {
         "the selected node moved as far"
     );
     assert_eq!(entries(init), 2, "each drag is one entry");
+    assert_eq!(
+        document(init).selection.items(),
+        &[n3, n2],
+        "the Shift drag's node joined the selection"
+    );
+
+    document_mut(init).selection.set([n3]);
+    let from = rect(init, n2).center();
+    let at = drag(init, from, &gentle(), &[]);
+    button(init, "left", "release", at, &[]);
+    frame(init);
+    assert_eq!(
+        document(init).selection.items(),
+        &[n2],
+        "control: a plain drag makes the node the selection"
+    );
 }
 
 /// **A stage is absolute from the press, never accumulated**: a drag to
@@ -449,16 +469,18 @@ fn test_undo_during_a_drag_cancels_it() {
 
 /// **A drag while another interactive transaction is open is refused**
 /// (D28): nothing is committed, no drag starts, the open transaction is
-/// still open, and the status line says why.
+/// still open, the selection is as it was (#395's review: the press
+/// reselected before the refusal), and the status line says why.
 ///
-/// Control: once that transaction is cancelled the same drag moves the
-/// node.
+/// Control: once that transaction is canceled the same drag moves the
+/// node, and makes it the selection.
 #[test]
 fn test_a_drag_while_another_transaction_is_open_is_refused() {
     let Some(mut app) = app() else { return };
     let init = &mut app.init;
-    let n2 = node(init, 2);
+    let (n2, n3) = (node(init, 2), node(init, 3));
     let p2 = position(init, n2);
+    document_mut(init).selection.set([n3]);
     assert!(document_mut(init).begin(
         ChangeSource::Action,
         TransactionKind::Interactive,
@@ -486,6 +508,11 @@ fn test_a_drag_while_another_transaction_is_open_is_refused() {
     button(init, "left", "release", at, &[]);
     frame(init);
     assert_eq!(entries(init), 0, "nothing was committed");
+    assert_eq!(
+        document(init).selection.items(),
+        &[n3],
+        "the selection is as it was"
+    );
 
     assert!(document_mut(init).cancel(Interaction::Test));
     let at = drag(init, from, &gentle(), &[]);
@@ -496,6 +523,7 @@ fn test_a_drag_while_another_transaction_is_open_is_refused() {
         "control: with it closed, the drag moves the node"
     );
     assert_eq!(entries(init), 1);
+    assert_eq!(document(init).selection.items(), &[n2], "control: and selects it");
 }
 
 /// **A lost focus cancels a drag**: no release will commit it, so the map
@@ -528,6 +556,62 @@ fn min_size(init: &InitState, node: NodeId) -> Option<Vec2> {
 fn resize_mode(init: &mut InitState) {
     assert_eq!(act(init, json!("EnterResizeMode")), "handled");
     frame(init);
+}
+
+/// **The handles follow a resize of a node that draws no frame** (#395's
+/// review): node 2 draws none, so growing it writes no run it owns. Its
+/// south-east handle, dragged, stays on the drawn corner —
+/// `node_rect().max()` — mid-drag, after the commit, after an undo and
+/// after a redo: the handle chrome follows the projector's geometry
+/// (`Projector::geometry_moved`), not the runs a node owns.
+///
+/// Controls, seen red: following on the runs the target owns
+/// (`PassChanges::touches`, the code #395 shipped with), and following
+/// nothing once the targets are shown. And here, the corner moved: a
+/// handle that stayed put would not be on it.
+#[test]
+fn test_the_handles_follow_a_frameless_nodes_resize() {
+    let Some(mut app) = app() else { return };
+    let init = &mut app.init;
+    let n2 = node(init, 2);
+    let se = Handle::Node {
+        node: n2,
+        side: ResizeSide::SE,
+    };
+    document_mut(init).selection.select_only(n2);
+    resize_mode(init);
+    let start = rect(init, n2);
+    assert!(
+        handle_at(init, se).distance(start.max()) < 1e-3,
+        "the handle is on the drawn corner"
+    );
+    let on_the_corner = |init: &InitState, what: &str| {
+        let corner = rect(init, n2).max();
+        let center = handle_at(init, se);
+        assert!(
+            center.distance(corner) < 1e-3,
+            "{what}: the handle is at {center}, the corner at {corner}"
+        );
+        corner
+    };
+    let travel: Vec<Vec2> = (1..=4).map(|k| Vec2::new(25.0, 12.0) * k as f32).collect();
+    let at = drag(init, start.max(), &travel, &[]);
+    let grown = on_the_corner(init, "mid-drag");
+    assert!(
+        grown.distance(start.max()) > 50.0,
+        "control: the corner moved, from {} to {grown}",
+        start.max()
+    );
+    button(init, "left", "release", at, &[]);
+    frame(init);
+    assert_eq!(entries(init), 1);
+    assert!(on_the_corner(init, "after the commit").distance(grown) < 1e-3);
+    assert_eq!(act(init, json!("Undo")), "handled");
+    frame(init);
+    assert!(on_the_corner(init, "after an undo").distance(start.max()) < 1e-3);
+    assert_eq!(act(init, json!("Redo")), "handled");
+    frame(init);
+    assert!(on_the_corner(init, "after a redo").distance(grown) < 1e-3);
 }
 
 /// **A resize handle is a transaction**: in the resize mode on node 5,
@@ -1100,6 +1184,55 @@ fn test_a_finger_on_a_resize_handle_resizes_as_the_mouse_does() {
     );
 }
 
+/// **An OS cancel of a finger on a resize handle cancels the resize**
+/// (#395's review): the OS takes the touch away (a system gesture, a
+/// call) mid-resize, no lift is coming, and the transaction is canceled
+/// — the map as saved, no entry, no drag left — as a lost focus cancels
+/// one; the next finger on the handle resizes from scratch.
+///
+/// Control: the same resize ended by a lift commits one entry (the
+/// cancel is the OS's doing, not a resize that staged nothing). And
+/// seen red: `Phase::Cancelled` routed to the release, as #395 shipped.
+#[test]
+fn test_an_os_touch_cancel_cancels_a_handle_resize() {
+    let Some(mut app) = app() else { return };
+    let init = &mut app.init;
+    let baseline = bytes(init);
+    let n5 = node(init, 5);
+    document_mut(init).selection.select_only(n5);
+    resize_mode(init);
+    let from = handle_at(
+        init,
+        Handle::Node {
+            node: n5,
+            side: ResizeSide::SE,
+        },
+    );
+    let saved = min_size(init, n5);
+    let finger = |init: &mut InitState, end: &str| {
+        touch(init, "started", from);
+        for k in 1..=4 {
+            touch(init, "moved", from + Vec2::new(8.0, 4.0) * k as f32);
+            frame(init);
+        }
+        assert!(
+            matches!(init.drag_state, DragState::Dragging(_)),
+            "the finger drives the resize"
+        );
+        assert_ne!(min_size(init, n5), saved, "a size is staged");
+        touch(init, end, from + Vec2::new(32.0, 16.0));
+        frame(init);
+    };
+    finger(init, "canceled");
+    assert!(matches!(init.drag_state, DragState::None), "no drag is left");
+    assert_eq!(document(init).open_interaction(), None, "no transaction is left");
+    assert_eq!(entries(init), 0, "a cancel makes no entry");
+    assert_eq!(bytes(init), baseline, "the map is as saved");
+
+    finger(init, "ended");
+    assert_eq!(entries(init), 1, "control: the lift commits one entry");
+}
+
 /// The open picker's layout.
 fn layout(init: &InitState) -> crate::application::color_picker::ColorPickerLayout {
     init.color_picker_state
@@ -1405,6 +1538,48 @@ fn test_a_pan_writes_no_chrome_and_a_selection_does() {
         },
     );
     assert!(moved != at, "and its end handle moved with it");
+}
+
+/// **A stage owed keeps the loop running until a frame stages it**: a
+/// drag the pointer moved, and a contextual picker whose hover changed,
+/// each owe their transaction a stage the frame has not run — what a
+/// throttled frame also leaves — so the loop is not let park
+/// (`InitState::needs_continuation`); once a frame has staged it, nothing
+/// is owed. #395's review: the picker's held-back stage parked the loop
+/// with the wheel showing a color its target did not.
+///
+/// Controls: before the move and the hover nothing is owed (the loop is
+/// idle on this map), and seen red: the picker's owed stage left out of
+/// `needs_continuation`.
+#[test]
+fn test_a_stage_owed_keeps_the_loop_running() {
+    let Some(mut app) = app() else { return };
+    let init = &mut app.init;
+    assert!(!init.needs_continuation(), "control: an idle map owes nothing");
+    let n3 = node(init, 3);
+    let from = rect(init, n3).center();
+    button(init, "left", "press", from, &[]);
+    move_to(init, from + Vec2::new(8.0, 0.0), &[]);
+    frame(init);
+    assert!(!init.needs_continuation(), "the drag is staged");
+    move_to(init, from + Vec2::new(20.0, 0.0), &[]);
+    assert!(init.needs_continuation(), "a move owes the drag a stage");
+    frame(init);
+    assert!(!init.needs_continuation(), "the frame staged it");
+    button(init, "left", "release", from + Vec2::new(20.0, 0.0), &[]);
+    frame(init);
+
+    let n2 = node(init, 2);
+    document_mut(init).selection.select_only(n2);
+    open_picker(init);
+    frame(init);
+    assert!(!init.needs_continuation(), "the picker staged what it shows");
+    move_on_surface(init, layout(init).hue_slot_positions[9]);
+    assert!(init.needs_continuation(), "a hover owes the picker a stage");
+    frame(init);
+    assert!(!init.needs_continuation(), "the frame staged it");
+    tap(init, "Escape");
+    frame(init);
 }
 
 /// **An open picker's target draws the color it stages** (#248's ruling on

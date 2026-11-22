@@ -425,8 +425,11 @@ pub(crate) fn path_data(doc: &Document, path: NodeId) -> Option<&baumhard::docum
 
 /// Where the handles of `set` on `target` center, slot by slot — `None`
 /// for a slot the target shows no handle in — read from the projector's
-/// geometry and the document. Every slot `None` for a target that is not
-/// drawn. Cost: O(the set's slots), one hash read each.
+/// geometry — a box's drawn rectangle, the points a path passes through
+/// (`Projector::through_points`) and its middle — and the document.
+/// Every slot `None` for a target that is not drawn. Cost: O(the set's
+/// slots), one hash read each; for a path's set one allocation, and for
+/// its midpoint one arc-length table of its curves.
 pub(crate) fn centers(
     set: HandleSet,
     target: Option<NodeId>,
@@ -451,22 +454,23 @@ pub(crate) fn centers(
             }
         }
         HandleSet::Path => {
-            let (Some(curves), Some(data)) = (projector.curve(target), path_data(doc, target)) else {
+            let (Some(points), Some(data)) = (projector.through_points(target), path_data(doc, target))
+            else {
                 return out;
             };
-            let (Some(first), Some(last)) = (curves.first(), curves.last()) else {
+            let (Some(&first), Some(&last)) = (points.first(), points.last()) else {
                 return out;
             };
-            out[PathHandle::Start.slot()] = Some(first.point(0.0));
-            out[PathHandle::End.slot()] = Some(last.point(1.0));
-            let n = data.control_points.len();
-            if n == 0 && !data.straight {
-                out[PathHandle::Midpoint.slot()] = midpoint(curves);
-            } else if let Some(body) = body(curves, n) {
-                // The path passes through each control point: the body's
-                // curve `k` ends at point `k` (D34).
-                for (k, curve) in body.iter().take(n.min(CONTROL_SLOTS)).enumerate() {
-                    out[PathHandle::Control(k).slot()] = Some(curve.point(1.0));
+            out[PathHandle::Start.slot()] = Some(first);
+            out[PathHandle::End.slot()] = Some(last);
+            if data.control_points.is_empty() && !data.straight {
+                out[PathHandle::Midpoint.slot()] = midpoint(projector, target);
+            } else {
+                // The path passes through each control point where the
+                // projection placed it (D34), between its two ends.
+                let inner = &points[1..points.len() - 1];
+                for (k, &point) in inner.iter().take(CONTROL_SLOTS).enumerate() {
+                    out[PathHandle::Control(k).slot()] = Some(point);
                 }
             }
         }
@@ -474,23 +478,12 @@ pub(crate) fn centers(
     out
 }
 
-/// The body of a drawn path with `n` control points: its `n + 1` curves
-/// between the straight leads its ends run out along first
-/// (`projection::geometry::path_through`), each from a point it passes
-/// through to the next — the ends, then the control points in order.
-/// `None` for a chain that is not such a path's. O(1).
-pub(crate) fn body(curves: &[baumhard::flow::Curve], n: usize) -> Option<&[baumhard::flow::Curve]> {
-    let lead =
-        usize::from(curves.len() > n + 1 && matches!(curves.first(), Some(baumhard::flow::Curve::Line(..))));
-    curves.get(lead..lead + n + 1)
-}
-
 /// Where a path with no control points draws its midpoint handle: the
-/// middle of its body's one curve, by parameter — where the control point
-/// a drag of it adds starts, so the path does not move until the pointer
-/// does. `None` for a chain that is not such a path's. O(1).
-pub(crate) fn midpoint(curves: &[baumhard::flow::Curve]) -> Option<Vec2> {
-    Some(body(curves, 0)?.first()?.point(0.5))
+/// middle of the drawn path, by arc length (`Projector::point_along`) —
+/// where the control point a drag of it adds starts. `None` for a path
+/// not drawn. Cost: one arc-length table of its curves.
+pub(crate) fn midpoint(projector: &Projector, path: NodeId) -> Option<Vec2> {
+    projector.point_along(path, 0.5)
 }
 
 /// One handle set as it is planted and shown.

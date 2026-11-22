@@ -61,7 +61,7 @@ use log::{info, warn};
 /// ([`MindMapDocument::transaction`]) holds interactions only — a drag,
 /// an editor, a preview — so an interaction that begins while an edit
 /// animates (and so, by D28, fast-forwards and commits it) can never be
-/// staged into, committed or cancelled by the edit's tick: the tick
+/// staged into, committed or canceled by the edit's tick: the tick
 /// reaches nothing but this handle, and stops the moment the writer says
 /// it is no longer open.
 #[derive(Debug)]
@@ -495,7 +495,7 @@ impl MindMapDocument {
     }
 
     /// Undo the newest history entry. With a transaction open, the
-    /// writer settles it first (an interactive one is cancelled and that
+    /// writer settles it first (an interactive one is canceled and that
     /// is the undo; ruling R36 on #238). Returns the new revision, or
     /// `None` when nothing changed.
     pub fn undo(&mut self) -> Option<Revision> {
@@ -554,7 +554,7 @@ impl MindMapDocument {
     }
 
     /// Drop each transaction handle the writer has closed: an
-    /// interaction an undo or a redo cancelled, and an animated edit
+    /// interaction an undo or a redo canceled, and an animated edit
     /// another change, an undo or a redo finished (D28, R36). Each is
     /// asked of the writer by its own handle.
     fn forget_closed_transaction(&mut self) {

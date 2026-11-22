@@ -123,7 +123,7 @@ pub(in crate::application::app) fn dispatch_action(
 }
 
 /// Cancel the drag that edits the map, if one runs: its transaction is
-/// cancelled, the drag state ends, and the view draws the map as it was
+/// canceled, the drag state ends, and the view draws the map as it was
 /// before the press. Returns whether one ran.
 fn cancel_drag(ctx: &mut InputHandlerContext<'_>) -> bool {
     if !matches!(*ctx.drag_state, DragState::Dragging(_)) {

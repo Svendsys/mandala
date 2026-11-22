@@ -30,7 +30,7 @@ pub const WINDOW_SIZE: usize = 8;
 
 /// Maximum drain divisor. At 60 fps, `N = 8` means the dragged node
 /// updates every ~133ms — laggy but still tracking. Past this, visual
-/// tracking becomes so stale that capping is the kinder behaviour; the
+/// tracking becomes so stale that capping is the kinder behavior; the
 /// remaining budget shortfall has to be addressed by the companion
 /// techniques (culling, incremental rebuild, shape-once reuse).
 pub const MAX_N: u32 = 8;

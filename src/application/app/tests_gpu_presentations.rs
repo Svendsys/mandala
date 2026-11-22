@@ -691,7 +691,7 @@ fn sequences() -> Vec<Vec<Step>> {
         ],
         vec![line("link kind=portal"), line(PORTAL_LINE), act("Undo")],
         // The contextual picker: a nudge staged on the selection, then
-        // committed as one entry, or cancelled; and the standalone
+        // committed as one entry, or canceled; and the standalone
         // palette's commit, one `apply` (V1-C7).
         vec![
             line("color text"),

@@ -5,7 +5,7 @@
 //! (`rebuild_color_picker_overlay`), and its session on the one writer
 //! ([`session`]): the contextual picker is an interactive transaction —
 //! opened with `begin`, its color staged on its target once a frame,
-//! committed by the ࿕ click and cancelled by Esc or a click outside it
+//! committed by the ࿕ click and canceled by Esc or a click outside it
 //! (V1-C7, #248). The standalone palette holds none.
 //!
 //! The picker's Actions (`OpenColorPicker`, `CloseColorPicker`,

@@ -2318,16 +2318,25 @@ another interactive transaction is open); every cursor move updates the
 drag's total since the press and writes nothing; the frame's drain
 stages the request built from the values the press recorded and that
 total — once a frame, absolute from the press, never accumulated — and
-the release commits one history entry. Escape, a lost focus and an undo
-cancel it, and the map is as it was. The gestures (`live::Gesture`):
-moving nodes (with their subtrees unless Alt; the selection with Shift),
-moving a section, a node's or a section's resize handle, a path's
-anchor, control point or midpoint handle, a label, a portal end. The
-contextual picker begins at its opening, stages the color it shows once
-a frame and commits on ࿕; the standalone palette holds none. While a
+the release commits one history entry. Escape, a lost focus, an OS
+cancel of the touch driving it and an undo cancel it, and the map is as
+it was; a drag refused changes nothing, the selection included. The
+gestures (`live::Gesture`): moving nodes (with their subtrees unless
+Alt; the selection with Shift, which the grabbed node joins), moving a
+section, a node's or a section's resize handle, a path's anchor, control
+point or midpoint handle, a label, a portal end. A label and a portal
+end are drawn where the pointer takes them, at the place on them the
+press held: the drag's travel from where they were drawn at the press,
+through the projector's inverses of where it draws them
+(`Projector::label_place_at`, `Projector::portal_place_at`, which takes
+off a portal end's marker and label reach and solves a sharp corner on
+its offset curve). The contextual picker begins at its opening, stages
+the color it shows once a frame and commits on ࿕; the standalone
+palette (`color picker on`, `OpenColorPicker`) holds none. While a
 contextual picker is open, the selection tint stands down where its axis
 colors its targets (`MapView::follow_picker`), so the staged color is
-what the map draws. There is
+what the map draws. A stage a frame owes — a move or a hover not yet
+staged, or held back by the throttle — keeps the loop running. There is
 no preview mechanism: what a drag shows is the document, through the
 projector, so a presentation plays on top of it.
 
@@ -2337,12 +2346,15 @@ The grab handles of the live interactions, as view-only glyphs in the
 chrome layer (`src/application/view/handles.rs`): the resize mode's
 eight handles on its node or section, and a selected path's anchors,
 control points and midpoint. Built from the selection, the mode and the
-projector's geometry reads, never from a glyph layer; rewritten only
-when the selection or the mode changes or a sync pass touches a target,
-so a pan writes none. Each set sits in its own group on its own channel
-range, so updating two sets in place never lets one's keys reach the
-other's runs. A press asks the handles before the projector
-(`MapView::handle_at`).
+projector's geometry reads — drawn rectangles, the points a path passes
+through (`Projector::through_points`) — never from a glyph layer;
+shown again only when the selection or the mode changes or a sync pass
+may have moved a target's geometry (`Projector::geometry_moved`: on
+geometry, not on the runs a target owns, which a node with no frame
+does not write when it grows), so a pan writes none. Each set sits in
+its own group on its own channel range, so updating two sets in place
+never lets one's keys reach the other's runs. A press asks the handles
+before the projector (`MapView::handle_at`).
 
 ### `MutationFrequencyThrottle` (and `frame_throttle`)
 

@@ -58,18 +58,20 @@ use super::{animation, color_picker_flow, drain_frame, record_flow};
 /// Whether the loop owes another iteration without further input: a
 /// queued injected sample, or a running animation
 /// ([`animation::keeps_ticking`]), under a real clock; and, under either,
-/// a drag that edits the map with a stage still owed, which a throttled
-/// frame held back (`app::live`). Under a virtual clock a queued sample
-/// and an animation's next frame are owed to future instants only a step
-/// reaches, and a loop that polled for them would spin with nothing to
-/// do; a drag's stage is owed to the next frame, whenever it runs.
+/// a stage still owed to an open interactive transaction (`stage_owed`)
+/// — a drag that edits the map (`app::live`) or a contextual color
+/// picker (`OpenPicker::owes_stage`) that input moved and a frame has not
+/// staged, or a throttled frame held back. Under a virtual clock a queued
+/// sample and an animation's next frame are owed to future instants only
+/// a step reaches, and a loop that polled for them would spin with
+/// nothing to do; a stage is owed to the next frame, whenever it runs.
 pub(super) fn needs_continuation(
     injected: &InjectedQueue,
     clock: &AppClock,
     document: Option<&crate::application::document::MindMapDocument>,
-    drag_owed: bool,
+    stage_owed: bool,
 ) -> bool {
-    drag_owed
+    stage_owed
         || (!injected.is_empty() && clock.mode() == ClockMode::Real)
         || animation::keeps_ticking(document, clock)
 }

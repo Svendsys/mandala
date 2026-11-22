@@ -206,13 +206,12 @@ pub(in crate::application::app) fn path_handle(
 ) -> Option<Gesture> {
     let kind = kind_of(doc, path)?;
     let data = handles::path_data(doc, path)?;
-    let curves = projector.curve(path)?;
+    let through = projector.through_points(path)?;
     let (mut handle, mut points, mut node) = (which, data.control_points.clone(), None);
     match which {
         PathHandle::Midpoint => {
-            let (first, last) = (curves.first()?, curves.last()?);
-            let chord_middle = (first.point(0.0) + last.point(1.0)) * 0.5;
-            points = vec![handles::midpoint(curves)? - chord_middle];
+            let chord_middle = (*through.first()? + *through.last()?) * 0.5;
+            points = vec![handles::midpoint(projector, path)? - chord_middle];
             handle = PathHandle::Control(0);
         }
         PathHandle::Start | PathHandle::End => {

@@ -376,7 +376,7 @@ pub(in crate::application::app) enum Drained {
     /// It staged its total, this long ago, for the throttle to be told
     /// what the frame cost once the view has drawn it.
     Staged(std::time::Instant),
-    /// Its transaction is no longer open — an undo cancelled it — so the
+    /// Its transaction is no longer open — an undo canceled it — so the
     /// drag is over.
     Ended,
 }
@@ -482,7 +482,7 @@ impl Live {
 
     /// The release: stage what input left pending, then commit the
     /// transaction as one history entry. A drag that went nowhere — a
-    /// travel of nothing — is cancelled instead and makes no entry.
+    /// travel of nothing — is canceled instead and makes no entry.
     /// Returns the entry's revision, or `None`.
     pub(in crate::application::app) fn release(
         mut self,

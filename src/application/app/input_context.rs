@@ -287,7 +287,9 @@ impl InputHandlerContext<'_> {
     /// for, through the same `on_*` entry points a mouse reaches: the
     /// press grabs the handle, the moves begin and drive the resize's
     /// transaction (`app::live`), and the lift commits it, one history
-    /// entry. Returns whether to request a redraw.
+    /// entry. An OS cancel ends the drag state with no release, which
+    /// cancels the transaction (`DragState::end_without_release`), and
+    /// moves no pointer. Returns whether to request a redraw.
     fn drive_handle_finger(
         &mut self,
         step: super::touch_handle::HandleStep,
@@ -295,12 +297,18 @@ impl InputHandlerContext<'_> {
     ) -> bool {
         use super::touch_handle::HandleStep;
         use crate::application::platform::input::{ElementState, MouseButton};
-        let moved = self.on_cursor_moved(location);
-        match step {
-            HandleStep::Press => self.on_mouse_input(ElementState::Pressed, MouseButton::Left),
-            HandleStep::Move => moved,
-            HandleStep::Release => self.on_mouse_input(ElementState::Released, MouseButton::Left),
-        }
+        let button = match step {
+            HandleStep::Cancel => {
+                let was_idle = matches!(*self.drag_state, DragState::None);
+                self.drag_state.end_without_release(self.document.as_mut());
+                return !was_idle;
+            }
+            HandleStep::Move => return self.on_cursor_moved(location),
+            HandleStep::Press => ElementState::Pressed,
+            HandleStep::Release => ElementState::Released,
+        };
+        self.on_cursor_moved(location);
+        self.on_mouse_input(button, MouseButton::Left)
     }
 
     /// `WindowEvent::MouseInput`. Returns whether to request a redraw.
@@ -423,15 +431,15 @@ impl InputHandlerContext<'_> {
     /// `WindowEvent::Focused(false)`: the window may never deliver the
     /// release any in-flight gesture is waiting for, so resolve them
     /// all now (#153) rather than leave one unreachable: the drag state
-    /// ends at `None`, a drag that edits the map cancelled
-    /// (`DragState::end_on_focus_loss`). Returns whether to request a
+    /// ends at `None`, a drag that edits the map canceled
+    /// (`DragState::end_without_release`). Returns whether to request a
     /// redraw.
     pub(super) fn on_focus_lost(&mut self) -> bool {
         // A finger holding a resize handle loses its claim with the drag
         // it was driving, which the cancel below ends.
         self.touch_handle.forget();
         let was_idle = matches!(*self.drag_state, DragState::None);
-        self.drag_state.end_on_focus_loss(self.document.as_mut());
+        self.drag_state.end_without_release(self.document.as_mut());
         let released = event_cursor_moved::release_hover_if_outside(self);
         !was_idle || released
     }

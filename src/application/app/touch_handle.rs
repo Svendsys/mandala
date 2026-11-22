@@ -15,10 +15,12 @@
 //! press, cursor-move and release handlers, so it grabs the handle,
 //! begins the resize's transaction at the drag threshold, has its
 //! travel staged once a frame and commits one history entry on lift
-//! (`app::live`) — the path a mouse takes, with nothing duplicated. It is never fed to the recognizer, so it
-//! cannot also pan. Every other touch, in every mode, goes to the
-//! recognizer exactly as before: one-finger pan and pinch keep their
-//! meaning everywhere off a handle.
+//! (`app::live`) — the path a mouse takes, with nothing duplicated. An
+//! OS cancel of the touch cancels the transaction instead, as a lost
+//! focus does: the lift that would commit it is not coming. It is never
+//! fed to the recognizer, so it cannot also pan. Every other touch, in
+//! every mode, goes to the recognizer exactly as before: one-finger pan
+//! and pinch keep their meaning everywhere off a handle.
 //!
 //! Native-only because the drag state is. The browser draws the
 //! handle chrome but has no resize mode and no handle drag (CLAUDE.md,
@@ -50,12 +52,15 @@ pub(super) enum HandleStep {
     Press,
     /// The finger moved: the pointer moves with it.
     Move,
-    /// The finger lifted, or the OS canceled it: the pointer moves
-    /// there, then the left button comes up, which commits the drag. A
-    /// cancel commits too, for the reason focus loss does
-    /// (`throttled_interaction::release::Release::FocusLost`): the
-    /// lift that would have ended the drag is not coming.
+    /// The finger lifted: the pointer moves there, then the left button
+    /// comes up, which commits the drag — one history entry.
     Release,
+    /// The OS took the touch away (a system gesture, an incoming call):
+    /// no lift is coming, so nothing commits. The drag state ends with no
+    /// release, as on a lost focus (`DragState::end_without_release`): a
+    /// drag that edits the map is canceled and the document is as it was
+    /// before the press, and a press not yet a drag is no click.
+    Cancel,
 }
 
 /// Which finger, if any, holds a resize handle. One per app, beside
@@ -88,9 +93,13 @@ impl HandleTouch {
         match self.finger {
             Some(held) if held == id => match phase {
                 Phase::Moved => TouchRoute::Handle(HandleStep::Move),
-                Phase::Ended | Phase::Cancelled => {
+                Phase::Ended => {
                     self.finger = None;
                     TouchRoute::Handle(HandleStep::Release)
+                }
+                Phase::Cancelled => {
+                    self.finger = None;
+                    TouchRoute::Handle(HandleStep::Cancel)
                 }
                 // The same id starting again means its lift was never
                 // delivered. End the drag it holds; the new touch
@@ -110,8 +119,8 @@ impl HandleTouch {
     }
 
     /// Forget the finger holding a handle without driving its release.
-    /// For focus loss, which resolves the drag itself
-    /// (`DragState::end_on_focus_loss`): the lift, if it ever arrives,
+    /// For focus loss, which cancels the drag itself
+    /// (`DragState::end_without_release`): the lift, if it ever arrives,
     /// then has nothing left to end and goes to the recognizer.
     pub(super) fn forget(&mut self) {
         self.finger = None;
@@ -195,19 +204,27 @@ mod tests {
         );
     }
 
-    /// A cancel commits like a lift, and a lost lift is ended by the
-    /// same id starting again — neither leaves the handle held by a
-    /// finger that is gone. `forget` drops the claim without a release,
-    /// for focus loss, which commits the drag itself.
+    /// An OS cancel cancels the drag rather than lift it, and a lost
+    /// lift is ended by the same id starting again — neither leaves the
+    /// handle held by a finger that is gone. `forget` drops the claim
+    /// without a step, for focus loss, which cancels the drag itself.
+    ///
+    /// Control: the lift of the same finger is a release, not a cancel.
     #[test]
     fn test_no_way_out_leaves_a_handle_held() {
         let mut touch = HandleTouch::default();
         touch.route(Phase::Started, 1, true, true);
         assert_eq!(
             touch.route(Phase::Cancelled, 1, true, true),
-            TouchRoute::Handle(HandleStep::Release)
+            TouchRoute::Handle(HandleStep::Cancel)
         );
         assert_eq!(touch, HandleTouch::default());
+        touch.route(Phase::Started, 1, true, true);
+        assert_eq!(
+            touch.route(Phase::Ended, 1, true, true),
+            TouchRoute::Handle(HandleStep::Release),
+            "control"
+        );
 
         touch.route(Phase::Started, 1, true, true);
         assert_eq!(

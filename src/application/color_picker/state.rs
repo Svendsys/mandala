@@ -245,6 +245,16 @@ impl OpenPicker {
             PickerMode::Standalone => None,
         }
     }
+
+    /// Whether a contextual picker owes its target a stage: the color it
+    /// shows is not the one it last staged — a hover the frame has not
+    /// staged yet, or one a throttled frame held back. What keeps the
+    /// loop running until it is staged, as a drag's owed stage does
+    /// (`app::heartbeat::needs_continuation`). Never for the standalone
+    /// palette, which stages nothing. O(1).
+    pub fn owes_stage(&self) -> bool {
+        self.target().is_some() && self.staged != Some(self.shown_hsv())
+    }
 }
 
 /// Snapshot of the picker state the dynamic phase writes against.

@@ -98,11 +98,15 @@ fn outlines() -> Vec<(Shape, Outline)> {
     .collect()
 }
 
+/// How far past a portal end's place what a drag holds is drawn, for the
+/// normal there.
+type Reach = Box<dyn Fn(Vec2) -> f32>;
+
 /// The reaches a drag takes off past the end's place: none, a marker's
 /// (a box of 14 by 18, its reach turning with the normal), and a label's
 /// past it (the marker's twice, an offset of 3 and a 40 by 16 label's
 /// reach) — what `Projector::portal_place_at` hands the inverse.
-fn reaches() -> Vec<(&'static str, Box<dyn Fn(Vec2) -> f32>)> {
+fn reaches() -> Vec<(&'static str, Reach)> {
     let marker = Vec2::new(14.0, 18.0);
     let label = Vec2::new(40.0, 16.0);
     vec![

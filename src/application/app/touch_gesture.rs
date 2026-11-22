@@ -532,7 +532,7 @@ impl TouchGestureRecognizer {
         }
     }
 
-    /// `may_tap` is false when the system cancelled the touch: the
+    /// `may_tap` is false when the system canceled the touch: the
     /// slot clears exactly as it does for a deliberate lift, and no
     /// gesture is emitted.
     fn on_lifted(&mut self, id: u64, now: Instant, may_tap: bool) -> Option<RecognizedGesture> {
@@ -854,7 +854,7 @@ mod tests {
             .is_none());
     }
 
-    /// **A cancelled touch is not a tap.** The system taking the
+    /// **A canceled touch is not a tap.** The system taking the
     /// finger away — a notification shade, palm rejection — clears
     /// the slot exactly as a lift does, and commits nothing.
     ///
@@ -875,7 +875,7 @@ mod tests {
         assert!(rec.tick(t + Duration::from_millis(50)).is_none());
     }
 
-    /// A cancelled finger out of a pair leaves the survivor tracked,
+    /// A canceled finger out of a pair leaves the survivor tracked,
     /// exactly as a lift does — the system took one finger, not the
     /// gesture.
     #[test]

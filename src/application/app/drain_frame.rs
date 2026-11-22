@@ -57,7 +57,7 @@ pub(super) fn drain_rect_select(
 
 /// Stage the drag that edits the map, once, when input moved it since
 /// the last frame and the frame is due (`live::Live::drain`). A drag
-/// whose transaction is no longer open — an undo cancelled it — ends
+/// whose transaction is no longer open — an undo canceled it — ends
 /// here. Returns when it staged, for the throttle to be told the frame's
 /// cost once the view has drawn it.
 pub(super) fn drain_drag(

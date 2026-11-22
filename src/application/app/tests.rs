@@ -415,7 +415,7 @@ mod abandonment_guard {
             },
         ] {
             let before = std::mem::discriminant(&drag);
-            drag.end_on_focus_loss(None);
+            drag.end_without_release(None);
             assert!(
                 matches!(drag, DragState::None),
                 "{before:?} must not outlive focus loss"

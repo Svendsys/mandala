@@ -109,7 +109,7 @@ fn seed_of(doc: &mut MindMapDocument, selection: &Selection, axis: ColorAxis) ->
 /// picker does not open when nothing selected takes the color, or when
 /// the writer refuses the transaction (D28) — reported on the status
 /// line as every refusal is. An open picker of either mode is replaced:
-/// a contextual one is cancelled first.
+/// a contextual one is canceled first.
 pub(in crate::application::app) fn open_contextual(
     ctx: &mut InputHandlerContext<'_>,
     axis: ColorAxis,
@@ -146,7 +146,7 @@ pub(in crate::application::app) fn open_contextual(
 /// open, stage the color the wheel shows on its target when it differs
 /// from the one staged and the frame is due — always when `throttled` is
 /// false (a virtual clock). A contextual picker whose transaction was
-/// closed under it — an undo cancelled it — closes. Returns when it
+/// closed under it — an undo canceled it — closes. Returns when it
 /// staged, for the throttle to be told what the frame cost.
 pub(in crate::application::app) fn drain(
     state: &mut ColorPickerState,
@@ -161,7 +161,7 @@ pub(in crate::application::app) fn drain(
         return None;
     }
     let shown = picker.shown_hsv();
-    if picker.staged == Some(shown) || (throttled && !picker.throttle.should_drain()) {
+    if !picker.owes_stage() || (throttled && !picker.throttle.should_drain()) {
         return None;
     }
     let started = std::time::Instant::now();
@@ -241,7 +241,7 @@ pub(in crate::application::app) fn commit(ctx: &mut InputHandlerContext<'_>) -> 
 }
 
 /// Cancel the contextual picker (`PickerCancel`, Esc, a click outside
-/// it): its transaction is cancelled, and the target is as it was; the
+/// it): its transaction is canceled, and the target is as it was; the
 /// picker closes. Returns whether one was open.
 pub(in crate::application::app) fn cancel(ctx: &mut InputHandlerContext<'_>) -> bool {
     let contextual = ctx
@@ -256,7 +256,7 @@ pub(in crate::application::app) fn cancel(ctx: &mut InputHandlerContext<'_>) -> 
     true
 }
 
-/// Close whatever picker is open — a contextual one cancelled — with no
+/// Close whatever picker is open — a contextual one canceled — with no
 /// sync: what replacing it, and `CloseColorPicker`, start with.
 fn close(ctx: &mut InputHandlerContext<'_>) {
     let contextual = ctx

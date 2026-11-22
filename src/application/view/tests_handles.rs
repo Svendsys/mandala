@@ -234,6 +234,125 @@ fn test_a_press_grabs_the_nearest_shown_handle() {
     );
 }
 
+/// **A frameless node's handles follow its resize** (#395's review, the
+/// reviewer's own reproduction): node 2 draws no frame, so a grown
+/// minimum size writes no run node 2 owns; the pass that projects it
+/// still shows the south-east handle on the new corner, and writes the
+/// chrome. An undo and a redo of the resize move it back and forth too.
+///
+/// Control, seen red: following on the runs the target owns
+/// (`PassChanges::touches`) leaves the handle at the old corner and
+/// writes no chrome.
+#[test]
+fn test_a_frameless_nodes_handles_follow_its_resize() {
+    let mut doc = live();
+    let mut view = MapView::for_test(&doc);
+    let n2 = node(&doc, 2);
+    let se = Handle::Node {
+        node: n2,
+        side: ResizeSide::SE,
+    };
+    doc.selection.select_only(n2);
+    view.follow_mode(&InteractionMode::Resize {
+        target: ResizeTarget::Node(n2),
+    });
+    view.sync_for_test(&mut doc).expect("the mode shows the handles");
+    let start = view.projector().node_rect(n2).expect("drawn");
+    assert_eq!(view.handle_center(se), Some(start.max()));
+    let steps = compose::set(
+        doc.doc(),
+        DocKind::Node,
+        vec![DocMutation::Node(NodeOp::SetMinSize(Some(
+            start.size + Vec2::new(100.0, 50.0),
+        )))],
+        &[n2],
+    )
+    .expect("composes");
+    doc.apply(EditRequest::new(steps, "test: grow"), ChangeSource::Action)
+        .expect("applies");
+    let report = view.sync_for_test(&mut doc).expect("the grow projects");
+    let grown = view.projector().node_rect(n2).expect("drawn");
+    assert!(
+        (grown.size - start.size - Vec2::new(100.0, 50.0)).length() < 1e-3,
+        "control: the node grew, {} to {}",
+        start.size,
+        grown.size
+    );
+    assert_eq!(
+        view.handle_center(se),
+        Some(grown.max()),
+        "the handle is on the new corner"
+    );
+    let node_runs: Vec<NodeId> = view
+        .handles()
+        .group(HandleSet::Node)
+        .children(view.chrome().arena())
+        .collect();
+    assert!(
+        report.chrome.iter().any(|id| node_runs.contains(id)),
+        "the pass wrote the node set's chrome"
+    );
+    assert!(doc.undo().is_some());
+    view.sync_for_test(&mut doc).expect("the undo projects");
+    assert_eq!(view.handle_center(se), Some(start.max()), "after an undo");
+    assert!(doc.redo().is_some());
+    view.sync_for_test(&mut doc).expect("the redo projects");
+    assert_eq!(view.handle_center(se), Some(grown.max()), "after a redo");
+}
+
+/// **`Projector::through_points` is where the drawn path passes**: for
+/// the line link from node 3 to node 2, with one control point, its
+/// start and its end are the drawn chain's, and its middle point is the
+/// chord's middle moved by the control point (D34) — the end of one of
+/// the drawn curves, and where the path set shows control point 0's
+/// handle. A connector with no control points passes through its ends
+/// only.
+///
+/// Control: the control point's offset itself is no curve's end.
+#[test]
+fn test_through_points_are_where_the_drawn_path_passes() {
+    let mut doc = live();
+    let mut view = MapView::for_test(&doc);
+    let (n2, n3) = (node(&doc, 2), node(&doc, 3));
+    let link = children_of_kind(doc.doc(), n3, DocKind::Link)
+        .next()
+        .expect("a line link");
+    let points = view.projector().through_points(link).expect("drawn");
+    let curves = view.projector().curve(link).expect("drawn").to_vec();
+    assert_eq!(points.len(), 3);
+    assert_eq!(points[0], curves[0].point(0.0));
+    assert_eq!(points[2], curves.last().expect("a curve").point(1.0));
+    let via = Vec2::new(0.0, -40.0);
+    assert!(
+        points[1].distance((points[0] + points[2]) * 0.5 + via) < 1e-3,
+        "the control point's place: {}",
+        points[1]
+    );
+    let ends: Vec<Vec2> = curves.iter().map(|c| c.point(1.0)).collect();
+    assert!(
+        ends.iter().any(|e| e.distance(points[1]) < 1e-3),
+        "the path passes through it"
+    );
+    assert!(!ends.iter().any(|e| e.distance(via) < 1e-3), "control");
+    doc.selection.select_only(link);
+    view.sync_for_test(&mut doc)
+        .expect("the path's handles are shown");
+    assert_eq!(
+        view.handle_center(Handle::Path {
+            path: link,
+            handle: PathHandle::Control(0),
+        }),
+        Some(points[1])
+    );
+    let connector = children_of_kind(doc.doc(), n2, DocKind::Connector)
+        .next()
+        .expect("a connector");
+    assert_eq!(
+        view.projector().through_points(connector).map(|p| p.len()),
+        Some(2)
+    );
+}
+
 /// A node with a frame of one ring and two sections, and a child with a
 /// connector: what the picker's stand-down is read against.
 fn framed() -> MindMapDocument {

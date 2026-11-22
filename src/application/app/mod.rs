@@ -533,14 +533,15 @@ impl DragState {
         matches!(self, Self::Panning { .. })
     }
 
-    /// Resolve the drag state when the window loses focus: every
-    /// gesture's owning release is now one the window may never
-    /// deliver, so none is left waiting for it. A press whose release
-    /// never came is not a click, so neither the click nor the
-    /// `RightClick` binding fires; a pan and a rubber band end; a drag
-    /// that edits the map is cancelled, since no release will commit it,
-    /// and the document is as it was before its press.
-    fn end_on_focus_loss(&mut self, document: Option<&mut MindMapDocument>) {
+    /// Resolve the drag state when the release it waits on may never
+    /// come — the window lost focus, or the OS took away the touch that
+    /// drives it (`touch_handle::HandleStep::Cancel`) — so none is left
+    /// waiting for it. A press whose release never came is not a click,
+    /// so neither the click nor the `RightClick` binding fires; a pan
+    /// and a rubber band end; a drag that edits the map is canceled,
+    /// since no release will commit it, and the document is as it was
+    /// before its press.
+    fn end_without_release(&mut self, document: Option<&mut MindMapDocument>) {
         if let (Self::Dragging(live), Some(doc)) = (std::mem::replace(self, Self::None), document) {
             live.cancel(doc);
         }

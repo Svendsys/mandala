@@ -264,7 +264,11 @@ impl InitState {
             &self.injected,
             &self.clock,
             self.document.as_ref(),
-            self.drag_state.live().is_some_and(super::live::Live::owes_stage),
+            self.drag_state.live().is_some_and(super::live::Live::owes_stage)
+                || self
+                    .color_picker_state
+                    .as_open()
+                    .is_some_and(crate::application::color_picker::OpenPicker::owes_stage),
         )
     }
 }
