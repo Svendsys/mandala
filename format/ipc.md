@@ -1438,7 +1438,7 @@ Params: none.
 
 | result field | type | meaning |
 |---|---|---|
-| `interaction_mode` | object | `kind`: `Default`, `Reparent` or `Connect`. `Reparent` and `Connect` (native: `EnterReparentMode`, `EnterConnectMode`) carry `sources`, the nodes the next click moves or links, by integer id, in selection order (`null` for one the document no longer holds). Resize returns with V1-C7 and node editing with V1-C8. |
+| `interaction_mode` | object | `kind`: `Default`, `Reparent`, `Connect` or `Resize`. `Reparent` and `Connect` (native: `EnterReparentMode`, `EnterConnectMode`) carry `sources`, the nodes the next click moves or links, by integer id, in selection order (`null` for one the document no longer holds). `Resize` (native: `EnterResizeMode`) carries its `target`: `kind` `"node"` or `"section"`, and the `element` its handles resize, named as `scene` names an element (`null` for one the document no longer holds). Node editing returns with V1-C8. |
 | `drag_state` | object | `kind`: `None`, `Pending`, `PendingRight`, `Panning` or `SelectingRect`. `Pending` carries `start_pos` (surface pixels) and `hit`, the element the press landed on (`null` over empty canvas). `PendingRight` carries `start_pos`, `start_canvas` and `hit`. `Panning` carries its `owner`, which is what ends it: `"button"` with the `button` that holds it (`"left"`, `"right"`, `"middle"`, as `input.mouse_button` spells them) or `"key"` with the `key` name that holds it — each ends on that input's release and no other — or `"toggled"`, a pan armed by a dispatch with no release behind it (`act.action`, `act.console`, `act.macro`), which the next `PanCanvas` ends. `SelectingRect` carries `start_canvas` and `current_canvas`. |
 | `modals` | array | Every open modal, in the order the keyboard handler consults them: `console`, `color_picker`. The console takes **every** key. The color picker claims **only its own** keys; every other key falls through. `query.editors` has each one's state. |
 | `key_owner` | string | Who receives an *ordinary* key right now: `console`, or `none` (normal dispatch). Never `color_picker`, which claims only its own keys. |
@@ -2371,8 +2371,9 @@ Everything the app *does* by time reads the app clock: double-click
 and long-press timing, a recording's frame times, `ping`, and the
 animation tick of an animated edit and of a presentation: a step
 lands an animation on exact instants. Everything that
-*measures* — the FPS overlay, the `FreezeWatchdog`, an encode's
-cost, a `clock.wait` deadline —
+*measures* — the FPS overlay, the `FreezeWatchdog`, the live
+interactions' drain throttle, an encode's cost, a `clock.wait`
+deadline —
 reads the wall clock in both modes, because a stepped or frozen clock
 would hide a stall rather than time it.
 

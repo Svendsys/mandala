@@ -355,7 +355,7 @@ pub(super) fn warn_unhandled_native_only_once(
 // Re-export the mode enum so the console layer can carry
 // `InteractionMode` inside `ConsoleSideEffect` and consumers across
 // `application::*` reach a uniform path.
-pub(in crate::application) use interaction_mode::InteractionMode;
+pub(in crate::application) use interaction_mode::{InteractionMode, ResizeTarget};
 
 /// An input that is *held*: it is down now and will come up, and
 /// coming up is how the user says "stop". The two kinds the window

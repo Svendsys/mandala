@@ -79,6 +79,14 @@ impl InteractionMode {
             InteractionMode::Default => json!({ "kind": "Default" }),
             InteractionMode::Reparent { sources } => json!({ "kind": "Reparent", "sources": ids(sources) }),
             InteractionMode::Connect { sources } => json!({ "kind": "Connect", "sources": ids(sources) }),
+            InteractionMode::Resize { target } => {
+                let (what, element) = match target {
+                    super::interaction_mode::ResizeTarget::Node(node) => ("node", *node),
+                    super::interaction_mode::ResizeTarget::Section(section) => ("section", *section),
+                };
+                let element = doc.map_or(Value::Null, |doc| crate::application::view::inspect::element_ref(doc, element));
+                json!({ "kind": "Resize", "target": { "kind": what, "element": element } })
+            }
         }
     }
 }

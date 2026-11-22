@@ -39,6 +39,8 @@
 //!   resolve and gate against.
 //! - [`user_config`] — XDG / web-storage shared loader
 //!   plumbing for keybinds / mutations / macros.
+//! - `frame_throttle` — how often a live interaction's stage runs
+//!   under load (native, with the drags it paces).
 //! - [`view`] — the map's view: projector, glyph layers, chrome and
 //!   overlays, and the one pipeline that syncs them with the document.
 //! - [`common`] — small shared types: `RenderDecree` and
@@ -111,6 +113,12 @@ pub(crate) mod fields;
 // toward `mandalactl bridge` in the browser (`format/ipc.md`
 // §Transport; CLAUDE.md "Dual-target status").
 pub(crate) mod ipc;
+// Adaptive drain-rate math for the live interactions — the drags and
+// the color picker — whose per-frame drain stages their transaction
+// (`app::live`). Native, with the drag-state machine and the picker
+// it paces.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod frame_throttle;
 pub(crate) mod keybinds;
 pub(crate) mod macros;
 // The missing-font prompt (#329): the report of the installed families a

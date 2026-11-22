@@ -352,6 +352,16 @@ impl Projector {
         }
     }
 
+    /// The node a drawn connector or line link starts at and the node it
+    /// ends at: whose sides its two anchors name. `None` until it is
+    /// placed, and for a path that is not drawn. O(1).
+    pub fn path_ends(&self, path: NodeId) -> Option<(NodeId, NodeId)> {
+        match &self.units.get(&path)?.body {
+            UnitBody::Line(line) if line.drawn => line.ends,
+            _ => None,
+        }
+    }
+
     /// A drawn section's box on the canvas: its node's drawn top-left
     /// moved by the box it was placed in, its offset and its shaped
     /// size — the box its node's drawn rectangle grows to hold (D5).

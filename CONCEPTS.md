@@ -2301,6 +2301,33 @@ accelerator by design (#160). **An existing `keybinds.json` naming
 refused at parse time through the `RETIRED_NAMES` table, with a
 diagnostic saying what replaced it.
 
+### `MutationFrequencyThrottle` (and `frame_throttle`)
+
+An adaptive frame-counter throttle that gates how often a live
+interaction's **stage** runs under load while leaving *acceptance*
+of input untouched.
+
+When per-frame work threatens the GPU
+budget, the system must degrade gracefully. The non-negotiable
+rule is **responsiveness is never traded for fidelity**: the
+cursor must stay current with the hardware pointer at all
+times, even if the dragged node updates only every fourth
+frame. The throttle samples actual work duration into a moving
+average; if the average exceeds budget, it raises `n` (the
+"drain divisor"); if work is well under budget with hysteresis
+margin, it lowers `n` toward 1.
+
+`src/application/frame_throttle.rs` (`MutationFrequencyThrottle`).
+`DEFAULT_BUDGET` is the per-frame budget (a 60 Hz frame minus a
+safety margin), `WINDOW_SIZE` the moving-average window, `MAX_N` the
+ceiling `n` clamps to above 1; the hysteresis band is a factor in
+the arithmetic of the adjust step rather than a named constant, so
+read it there. Each live interaction owns one (`app::live`): its
+cursor samples only update the total since the press, and the
+per-frame drain stages that total on its transaction when the
+throttle says the frame is due — always under a virtual clock, where
+a frame's cost is not what the run measures.
+
 ### `Renderer`
 
 The GPU resource holder and command-buffer builder;
@@ -2715,8 +2742,8 @@ what *measures* reads.
 
 A reproducible run, a screenshot of an animation's middle, a test of a
 double-click at exactly its window all need time to hold still and
-move on command, while the FPS overlay and the freeze watchdog
-must keep measuring real cost. So the old
+move on command, while the FPS overlay, the freeze watchdog and the
+live interactions' drain throttle must keep measuring real cost. So the old
 single `now_ms()` bridge became two names, and every reader was
 dispositioned to one of them (`work_plans/LLM_IPC.md` §D9 has the
 table). The clock is threaded through `InputHandlerContext` and
