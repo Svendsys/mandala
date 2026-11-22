@@ -64,6 +64,10 @@ pub use path::{MAX_PATH_LENGTH, MAX_TABLE_SAMPLES};
 /// lay reads its budget: what the projection harness's bound counts for
 /// such a ring (#387).
 pub(crate) use place::directional::reshape_steps;
+/// The glyph steps a directional ring charges before its lay reads its
+/// budget, its reshape and its inking: what the flow harnesses bound such
+/// a ring's work by before they lay it (#387).
+pub(crate) use place::directional::setup_steps;
 /// The last directional ring laid on this thread, its glyphs and its work,
 /// a test counter: what the projection harness's bound is held to for a
 /// ring that lays text by direction (ruling B47.2).

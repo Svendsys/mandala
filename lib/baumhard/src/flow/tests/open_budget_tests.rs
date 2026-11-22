@@ -323,7 +323,7 @@ fn test_flow_open_budget_a_placement_past_its_budget_takes_its_overshoot_at_most
             own.loss
         );
         for laid in &case.laid {
-            let allowed = ring_overshoot(laid.copy, laid.tables);
+            let allowed = ring_overshoot(laid.copy, laid.tables, 0);
             if laid.past > allowed || laid.spent > laid.budget + allowed {
                 broken.push(format!(
                     "{}: {} past its budget of {}, {} in all, against {allowed} allowed past it",
@@ -450,7 +450,7 @@ fn test_flow_open_budget_a_fillers_wide_cluster_is_its_overshoots_cluster() {
             "budget {budget}: its copy is the filler's cluster, {wide} glyphs, not {}",
             laid.copy
         );
-        let allowed = ring_overshoot(laid.copy, laid.tables);
+        let allowed = ring_overshoot(laid.copy, laid.tables, 0);
         assert!(
             laid.past <= allowed && laid.crossed.is_none_or(|c| c <= allowed),
             "budget {budget}: {} past its budget, crossed {:?}, against {allowed}",

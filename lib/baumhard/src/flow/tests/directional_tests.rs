@@ -848,8 +848,10 @@ mod held {
             ..RingLayout::whole()
         };
         let mut trace = Trace::default();
+        let mut setup = 0;
         let (input, replaced, placed) = with_fonts(|fs| {
             let input = real_run(set.0, &text, fs);
+            setup = crate::flow::setup_steps(&input, &layout.directional, &text, fs.fonts());
             let (replaced, placed) = place_on_closed_capped(
                 &input,
                 path,
@@ -869,7 +871,8 @@ mod held {
             (input.clone(), replaced.unwrap_or(input), placed)
         });
         let tables = setup_table_samples(&input, path, &FitMode::Repeat, &text);
-        let checked = InputWork::default().ring(&input, cap, tables, &placed, &trace, "a directional ring");
+        let checked =
+            InputWork::default().ring(&input, cap, tables, setup, &placed, &trace, "a directional ring");
         (
             parts(&replaced, &placed, set, with_corners),
             placed,
@@ -1133,6 +1136,224 @@ mod held {
             0,
             "nothing is laid past a budget its setup spends but its corners"
         );
+    }
+
+    /// **A directional ring's setup is counted** (#387): a `Repeat` ring
+    /// laid by direction charges its one reshape and its inking before it
+    /// first reads its budget (`Trace::setup`), which its budget therefore
+    /// does not bound — a `.notdef` pass a glyph of its line for a text of
+    /// code points no face draws. Round an ellipse 400 across, `vertical:
+    /// "|"`, with no cap but the harnesses' most:
+    ///
+    /// - 150 distinct code points no face draws, a `.notdef` of several
+    ///   code points among them (one with U+20E3 after it), and 250 with
+    ///   none: each charges its setup exactly as predicted
+    ///   (`flow::setup_steps`), lays past the ring's work as the flow
+    ///   harnesses read it before #387 — `ring_work_steps` with no setup —
+    ///   and within it with its setup, which the harnesses' check of a ring
+    ///   holds it to and refuses it without; held to the timeout, the
+    ///   harnesses lay it by its spans alone ([`directional_setup`]), its
+    ///   setup leaving no cap, and replaying a finding, as drawn. 150 with
+    ///   none, a pass each, 330,000 steps, lay within the work as read
+    ///   before, under the harnesses' cap, and are counted as exactly;
+    /// - a ring of letters one face draws charges its reshape and its
+    ///   inking, exactly as predicted, and is laid as drawn held to the
+    ///   timeout.
+    ///
+    /// On the compiled faces alone, in a child process
+    /// (`util::tests::compiled_faces`): where a host face maps every C0 and
+    /// C1 control and every private-use code point, as one here does,
+    /// `compiled_faces::undrawn` finds none to lay.
+    ///
+    /// Controls, each run and seen red: `ring_overshoot` with no setup,
+    /// the two rings laid past their work as read before #387 past it now,
+    /// and every ring of code points no face draws laid as drawn held to
+    /// the timeout; the predictor without its inking, the ring of letters'
+    /// setup, 897, past its prediction, 630; the lay recording its setup
+    /// without its inking, the same the other way round; the harnesses'
+    /// check reading no setup, the rings within their old work held with
+    /// none predicted; every ring laid as drawn held to the timeout, the
+    /// three rings of code points no face draws so laid.
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))] // a compiled-faces child: spawns its own test binary.
+    fn test_flow_directional_counts_its_setup_past_its_budget() {
+        use crate::util::tests::compiled_faces::{on_compiled_faces, report_hosts, this_test, CHILD};
+        let name = this_test!();
+        if std::env::var(CHILD).as_deref() == Ok("setup") {
+            report_hosts();
+            directional_setup_counted();
+            println!("REPORT SETUP counted");
+            return;
+        }
+        let Some(reports) = on_compiled_faces(&name, "setup") else {
+            return;
+        };
+        for report in &reports {
+            eprintln!("{report}");
+        }
+        assert_eq!(
+            reports.len(),
+            5,
+            "the child's four rings and its check: {reports:#?}"
+        );
+        assert_eq!(
+            reports.last().map(String::as_str),
+            Some("SETUP counted"),
+            "the child's check"
+        );
+    }
+
+    /// How a ring of [`directional_setup_counted`] lays against the work
+    /// the harnesses read before #387, with no setup.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Past {
+        /// Code points no face draws, laid past it.
+        Yes,
+        /// Code points no face draws, laid within it: too few passes.
+        No,
+        /// Text one face draws.
+        Drawn,
+    }
+
+    /// [`test_flow_directional_counts_its_setup_past_its_budget`]'s check,
+    /// in its child.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn directional_setup_counted() {
+        use crate::document::values::Shape;
+        use crate::flow::place::ring::ring_work_steps;
+        use crate::flow::tests::flow_fuzz::{directional_setup, MAX_RING_GLYPHS};
+        use crate::flow::{outline, FlowSpan};
+        let flow = style(POINTS);
+        let path = outline(Rect::new(Vec2::ZERO, Vec2::splat(400.0)), Shape::Ellipse);
+        let layout = RingLayout {
+            directional: DirectionalGlyphs {
+                vertical: Some("|".into()),
+                corners: None,
+            },
+            spacing: 2.0,
+            ..RingLayout::whole()
+        };
+        let rings = with_fonts(|fs| {
+            let undrawn = crate::util::tests::compiled_faces::undrawn(fs, 250);
+            assert_eq!(undrawn.len(), 250, "precondition: 250 code points no face draws");
+            let mut cluster: String = undrawn[..149].iter().collect();
+            cluster.push('\u{20E3}');
+            let singles: String = undrawn[..150].iter().collect();
+            let more: String = undrawn.iter().collect();
+            [
+                (
+                    "150 code points no face draws, a cluster among them",
+                    cluster,
+                    Past::Yes,
+                ),
+                ("150 code points no face draws, one apiece", singles, Past::No),
+                ("250 code points no face draws, one apiece", more, Past::Yes),
+                (
+                    "letters one face draws",
+                    "MANDALA mindmap".to_string(),
+                    Past::Drawn,
+                ),
+            ]
+            .map(|(what, text, undrawn)| {
+                let run = crate::flow::shape_run(
+                    &[FlowSpan {
+                        text: &text,
+                        style: &flow,
+                        link: None,
+                    }],
+                    1.0,
+                    fs,
+                );
+                let predicted = crate::flow::setup_steps(&run, &layout.directional, &flow, fs.fonts());
+                let tables = setup_table_samples(&run, &path, &FitMode::Repeat, &flow);
+                let held = directional_setup(&run, &FitMode::Repeat, &layout, &flow, tables, true, fs);
+                let found = directional_setup(&run, &FitMode::Repeat, &layout, &flow, tables, false, fs);
+                let cap = MAX_RING_GLYPHS;
+                let mut trace = Trace::default();
+                let (_, placed) = place_on_closed_capped(
+                    &run,
+                    &path,
+                    StartPoint {
+                        edge: Edge::Top,
+                        at: 0.0,
+                    },
+                    Direction::Clockwise,
+                    &FitMode::Repeat,
+                    &layout,
+                    true,
+                    &flow,
+                    fs,
+                    cap,
+                    Some(&mut trace),
+                );
+                (
+                    what, undrawn, run, predicted, tables, held, found, cap, trace, placed,
+                )
+            })
+        });
+        let mut wrong = Vec::new();
+        for (what, undrawn, run, predicted, tables, held, found, cap, trace, placed) in rings {
+            let copy = run.glyphs.len();
+            let (with, without) = (
+                ring_work_steps(cap, copy, tables, predicted),
+                ring_work_steps(cap, copy, tables, 0),
+            );
+            println!(
+                "REPORT RING {what}: {copy} glyphs, setup {} predicted {predicted}, spent {}, work {with} with its setup and {without} without",
+                trace.setup, trace.spent
+            );
+            let mut want = |holds: bool, why: &str| {
+                if !holds {
+                    wrong.push(format!(
+                        "{what}: {why} (setup {} predicted {predicted}, spent {}, work {with} / {without})",
+                        trace.setup, trace.spent
+                    ));
+                }
+            };
+            want(
+                predicted > 0 && trace.setup == predicted,
+                "its setup, exactly as predicted",
+            );
+            want(trace.spent <= with, "within its work with its setup");
+            want(
+                InputWork::default()
+                    .ring(&run, cap, tables, predicted, &placed, &trace, what)
+                    .is_ok(),
+                "held by the harnesses' check with its setup",
+            );
+            want(
+                InputWork::default()
+                    .ring(&run, cap, tables, 0, &placed, &trace, what)
+                    .is_err(),
+                "refused by the harnesses' check with none predicted",
+            );
+            want(
+                found == (None, predicted),
+                "replaying a finding, laid as drawn with its setup",
+            );
+            match undrawn {
+                Past::Yes | Past::No => {
+                    if undrawn == Past::Yes {
+                        want(
+                            trace.spent > without,
+                            "precondition, past its work without its setup",
+                        );
+                    } else {
+                        want(
+                            trace.spent <= without,
+                            "within its work without its setup, its passes fewer",
+                        );
+                    }
+                    want(
+                        held.0.as_ref().is_some_and(|spans| !spans.directional.is_set()) && held.1 == 0,
+                        "held to the timeout, laid by its spans alone",
+                    );
+                }
+                Past::Drawn => want(held == (None, predicted), "held to the timeout, laid as drawn"),
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
     }
 }
 

@@ -460,6 +460,26 @@ pub(crate) fn frame_lines(
     lay_lines(run, halves, fit, outward, flow, fs, trace, false, work)
 }
 
+/// A `Once` frame's text `run` shaped with its `filler` appended in
+/// `flow`'s style, on a line of its own, as R27 lays it
+/// ([`place_lines`]), and the glyph steps that shaping counts
+/// (`halves::shaping_steps`), `.notdef` passes and all (#387): the run
+/// the lay places and what it charges for it, before it first reads its
+/// budget where a frame keeps R27's placement — and so what
+/// `halves::filler_steps` predicts, by this same function.
+///
+/// Cost: a shaping of the text and the filler.
+pub(crate) fn filling(
+    run: &ShapedRun,
+    filler: &str,
+    flow: &ResolvedText,
+    fs: &mut FontSystem,
+) -> (ShapedRun, usize) {
+    let (filled, _) = reshape(run, 1.0, Some((filler, flow)), fs);
+    let steps = super::halves::shaping_steps(&filled);
+    (filled, steps)
+}
+
 /// [`place_lines`] round `halves` ([`frame_halves`]), each line centered
 /// or spread as R27 lays it, or not ([`Lines::centered`]), its work
 /// counted in `work`.
@@ -523,10 +543,10 @@ fn lay_lines(
             )
         }
         FitMode::Once { filler: Some(filler) } => {
-            let (filled, _) = reshape(run, 1.0, Some((filler, flow)), fs.fonts());
+            let (filled, steps) = filling(run, filler, flow, fs.fonts());
             #[cfg(test)]
             super::halves::note_reshape();
-            work.shaped(&filled);
+            work.filled(steps);
             (Some(filled), Some(()))
         }
         _ => (None, None),

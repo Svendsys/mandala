@@ -3613,7 +3613,7 @@ fn test_a_long_fuzzed_ornament_fits_the_per_input_bound() {
                     );
                     (
                         notdefs,
-                        frame_work_steps(&text, Some(&shaped), true, 0),
+                        frame_work_steps(&text, Some(&shaped), true, 0, 0),
                         build_steps(&text, Some(&shaped)) - build_steps(&text, None),
                     )
                 });
@@ -3688,8 +3688,8 @@ fn test_a_long_ornament_no_face_holds_is_cut_to_fit() {
             1.0,
             fs,
         );
-        let (cut, ornament) = sides_in_time(&layout, &flow, 1.0, 1, &|_| 0, fs);
-        (frame_work_steps(&empty, ornament.as_ref(), true, 0), cut)
+        let (cut, ornament) = sides_in_time(&layout, &flow, 1.0, 1, &|_| 0, &|_, _| 0, fs);
+        (frame_work_steps(&empty, ornament.as_ref(), true, 0, 0), cut)
     });
     let kept = cut.sides.as_ref().map_or(0, |(s, _)| s.chars().count());
     assert!(
@@ -3763,7 +3763,9 @@ fn test_a_fuzzed_frame_is_held_to_what_one_frame_lays_in_the_timeout() {
     use crate::flow::place::halves::frame_work_steps;
     use crate::flow::tests::flow_fuzz::{fits_in_time, frame_steps, framed, MAX_FRAME_GLYPHS};
     let flow = style(16.0);
-    let fits = |run: &crate::flow::ShapedRun| fits_in_time(run, None, 1, 0);
+    let fits = |run: &crate::flow::ShapedRun, _: &mut crate::font::fonts::FontSystemLease| {
+        fits_in_time(run, None, 1, 0, 0)
+    };
     // Sixty noncharacters, distinct code points no face holds (`.notdef`).
     let heavy_text = noncharacters(60);
     assert_eq!(
@@ -3775,7 +3777,7 @@ fn test_a_fuzzed_frame_is_held_to_what_one_frame_lays_in_the_timeout() {
         let cut = |text: String, fs: &mut crate::font::fonts::FontSystemLease| {
             let kept = framed(&[text], std::slice::from_ref(&flow), 1.0, fs, &fits);
             let run = real_run(&kept[0], &flow, fs);
-            (run.glyphs.len(), frame_work_steps(&run, None, true, 0), kept)
+            (run.glyphs.len(), frame_work_steps(&run, None, true, 0, 0), kept)
         };
         (
             cut("word ".repeat(400), fs),
@@ -3835,7 +3837,7 @@ fn test_a_rings_cap_holds_the_copy_its_tables_leave() {
     use crate::flow::MAX_TABLE_SAMPLES;
     let table = MAX_TABLE_SAMPLES + 1;
     assert_eq!(
-        ring_cap(MAX_FRAME_GLYPHS, true, 0),
+        ring_cap(MAX_FRAME_GLYPHS, true, 0, 0),
         MAX_RING_GLYPHS,
         "with no table, the cap is the most that fits"
     );
@@ -3849,14 +3851,17 @@ fn test_a_rings_cap_holds_the_copy_its_tables_leave() {
     });
     let mut broken = Vec::new();
     for samples in [0, 1 << 10, 1 << 14, 1 << 17, 1 << 19, table] {
-        let Some(copy) = runs.iter().rposition(|run| fits_in_time(run, None, 1, samples)) else {
+        let Some(copy) = runs
+            .iter()
+            .rposition(|run| fits_in_time(run, None, 1, samples, 0))
+        else {
             broken.push(format!(
                 "beside a table of {samples} samples, no copy fits a frame"
             ));
             continue;
         };
-        let cap = ring_cap(copy, true, samples);
-        let ring = ring_work_steps(cap, MAX_FRAME_GLYPHS, samples);
+        let cap = ring_cap(copy, true, samples, 0);
+        let ring = ring_work_steps(cap, MAX_FRAME_GLYPHS, samples, 0);
         eprintln!("table {samples}: the cut leaves {copy} glyphs, the cap {cap}, {ring} glyph steps of {INPUT_STEPS}");
         if cap < copy {
             broken.push(format!(
@@ -3868,7 +3873,7 @@ fn test_a_rings_cap_holds_the_copy_its_tables_leave() {
                 "beside a table of {samples} samples, a ring of the cap of {cap} takes {ring} glyph steps, past {INPUT_STEPS}"
             ));
         }
-        if cap < MAX_RING_GLYPHS && ring_work_steps(cap + 1, MAX_FRAME_GLYPHS, samples) <= INPUT_STEPS {
+        if cap < MAX_RING_GLYPHS && ring_work_steps(cap + 1, MAX_FRAME_GLYPHS, samples, 0) <= INPUT_STEPS {
             broken.push(format!(
                 "beside a table of {samples} samples, a cap of {} glyphs fits too: {cap} is not the most",
                 cap + 1
@@ -3881,10 +3886,10 @@ fn test_a_rings_cap_holds_the_copy_its_tables_leave() {
     };
     let (fits, steps, kept) = with_fonts(|fs| {
         let empty = real_run("", &flow, fs);
-        let (cut, ornament) = sides_in_time(&layout, &flow, 1.0, 1, &|_| 2 * table, fs);
+        let (cut, ornament) = sides_in_time(&layout, &flow, 1.0, 1, &|_| 2 * table, &|_, _| 0, fs);
         (
-            fits_in_time(&empty, ornament.as_ref(), 1, 2 * table),
-            frame_work_steps(&empty, ornament.as_ref(), true, 2 * table),
+            fits_in_time(&empty, ornament.as_ref(), 1, 2 * table, 0),
+            frame_work_steps(&empty, ornament.as_ref(), true, 2 * table, 0),
             cut.sides.is_some(),
         )
     });
@@ -3963,10 +3968,11 @@ fn test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout() {
                 Some(&ornament),
                 true,
                 0,
+                0,
             )
         };
         (
-            frame_work_steps(&empty, Some(&ornament), true, 0),
+            frame_work_steps(&empty, Some(&ornament), true, 0, 0),
             at(MAX_FRAME_GLYPHS, fs),
             at(MAX_FRAME_GLYPHS + 1, fs),
         )
@@ -3996,8 +4002,8 @@ fn test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout() {
     use crate::flow::place::ring::ring_work_steps;
     use crate::flow::tests::flow_fuzz::MAX_RING_GLYPHS;
     let (ring, more) = (
-        ring_work_steps(MAX_RING_GLYPHS, MAX_FRAME_GLYPHS, 0),
-        ring_work_steps(MAX_RING_GLYPHS + 1, MAX_FRAME_GLYPHS, 0),
+        ring_work_steps(MAX_RING_GLYPHS, MAX_FRAME_GLYPHS, 0, 0),
+        ring_work_steps(MAX_RING_GLYPHS + 1, MAX_FRAME_GLYPHS, 0, 0),
     );
     assert!(
         ring <= frame_steps(1) && more > frame_steps(1) && MAX_RING_GLYPHS >= MAX_FRAME_GLYPHS,
@@ -4006,7 +4012,7 @@ fn test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout() {
         seconds(more),
         frame_steps(1)
     );
-    let beside = floor + ring_work_steps(0, 0, 0);
+    let beside = floor + ring_work_steps(0, 0, 0, 0);
     assert!(
         beside > INPUT_STEPS,
         "a ring beside a frame takes {beside} glyph steps, {:.2} s, within an input's {:.2} s: lay it besides",
@@ -4145,7 +4151,7 @@ fn test_the_flow_properties_find_a_frame_past_its_work() {
     let run = with_fonts(|fs| real_run("plain text", &flow, fs));
     let tables = 1_000 * TABLE_SAMPLES_A_STEP;
     for samples in [0, tables] {
-        let most = frame_work_steps(&run, None, false, samples);
+        let most = frame_work_steps(&run, None, false, samples, 0);
         let mut trace = Trace {
             spent: most,
             tables: samples,
@@ -4153,20 +4159,20 @@ fn test_the_flow_properties_find_a_frame_past_its_work() {
         };
         assert!(
             InputWork::default()
-                .frame(&run, None, false, samples, &trace, "a frame")
+                .frame(&run, None, false, samples, 0, &trace, "a frame")
                 .is_ok(),
             "precondition: a frame that takes its budget and its overshoot holds, its tables of {samples} samples among them"
         );
         trace.spent = most + 1;
         assert!(
             InputWork::default()
-                .frame(&run, None, false, samples, &trace, "a frame")
+                .frame(&run, None, false, samples, 0, &trace, "a frame")
                 .is_err(),
             "a frame past its budget and its overshoot fails, its tables of {samples} samples among them"
         );
     }
     assert!(
-        frame_work_steps(&run, None, false, tables) == frame_work_steps(&run, None, false, 0) + 1_000,
+        frame_work_steps(&run, None, false, tables, 0) == frame_work_steps(&run, None, false, 0, 0) + 1_000,
         "a frame's tables are what it may take past its budget, at their samples a step"
     );
     for counted in [tables - 1, tables + 1] {
@@ -4177,7 +4183,7 @@ fn test_the_flow_properties_find_a_frame_past_its_work() {
         };
         assert!(
             InputWork::default()
-                .frame(&run, None, false, tables, &trace, "a frame")
+                .frame(&run, None, false, tables, 0, &trace, "a frame")
                 .is_err(),
             "a frame whose setup counted {counted} table samples, not the {tables} its outline gives, fails"
         );
@@ -4203,7 +4209,7 @@ fn test_the_flow_properties_find_a_ring_past_its_work() {
     let flow = style(16.0);
     let run = with_fonts(|fs| real_run("· ", &flow, fs));
     let cap = MAX_RING_GLYPHS;
-    let (budget, most) = (frame_budget(cap), ring_work_steps(cap, run.glyphs.len(), 0));
+    let (budget, most) = (frame_budget(cap), ring_work_steps(cap, run.glyphs.len(), 0, 0));
     let glyph = PlacedGlyph {
         glyph: 0,
         pos: Vec2::ZERO,
@@ -4219,8 +4225,9 @@ fn test_the_flow_properties_find_a_ring_past_its_work() {
         glyphs: cap,
         ..Trace::default()
     };
-    let ring =
-        |placed: &PlacedRun, trace: &Trace| InputWork::default().ring(&run, cap, 0, placed, trace, "a ring");
+    let ring = |placed: &PlacedRun, trace: &Trace| {
+        InputWork::default().ring(&run, cap, 0, 0, placed, trace, "a ring")
+    };
     assert!(
         ring(&whole, &trace).is_ok(),
         "precondition: a ring that takes its budget and its overshoot holds"
@@ -4266,7 +4273,7 @@ fn test_the_flow_properties_find_a_ring_past_its_work() {
     // counted as `setup_table_samples` says it is built.
     use crate::flow::place::halves::TABLE_SAMPLES_A_STEP;
     let tables = 1_000 * TABLE_SAMPLES_A_STEP;
-    let tabled = ring_work_steps(cap, run.glyphs.len(), tables);
+    let tabled = ring_work_steps(cap, run.glyphs.len(), tables, 0);
     assert!(
         tabled == most + 1_000,
         "a ring's table is what it may take past its budget, at its samples a step"
@@ -4278,7 +4285,8 @@ fn test_the_flow_properties_find_a_ring_past_its_work() {
         tables,
         ..Trace::default()
     };
-    let tabled_ring = |trace: &Trace| InputWork::default().ring(&run, cap, tables, &whole, trace, "a ring");
+    let tabled_ring =
+        |trace: &Trace| InputWork::default().ring(&run, cap, tables, 0, &whole, trace, "a ring");
     assert!(
         tabled_ring(&trace).is_ok(),
         "precondition: a ring that takes its budget and its overshoot, its table among them, holds"
@@ -4384,8 +4392,8 @@ fn test_an_open_placement_is_an_input_s_one_budgeted_placement() {
         for tables in tables {
             let cap = open_cap(copy, tables, true).expect("a cap holds a placement along an open path");
             let (at, more) = (
-                ring_work_steps(cap, copy, tables),
-                ring_work_steps(cap + 1, copy, tables),
+                ring_work_steps(cap, copy, tables, 0),
+                ring_work_steps(cap + 1, copy, tables, 0),
             );
             assert!(
                 at <= INPUT_STEPS && (cap == MAX_RING_GLYPHS || more > INPUT_STEPS) && cap >= 100,
@@ -4405,8 +4413,11 @@ fn test_an_open_placement_is_an_input_s_one_budgeted_placement() {
         );
     }
     let flow = style(16.0);
-    let floor = with_fonts(|fs| frame_work_steps(&real_run("", &flow, fs), None, true, 0));
-    let (open, pitched) = (floor + ring_work_steps(0, 1, 0), floor + pitched_work_steps(0, 0));
+    let floor = with_fonts(|fs| frame_work_steps(&real_run("", &flow, fs), None, true, 0, 0));
+    let (open, pitched) = (
+        floor + ring_work_steps(0, 1, 0, 0),
+        floor + pitched_work_steps(0, 0),
+    );
     assert!(
         open > INPUT_STEPS && pitched > INPUT_STEPS,
         "beside a frame at its floor, a placement along a line takes {open} glyph steps and a whole-glyph one {pitched}, within the {INPUT_STEPS} an input may take: lay them besides"
@@ -4453,7 +4464,7 @@ fn test_the_flow_properties_find_an_open_placement_past_its_work() {
     };
     let whole = laid(cap, false);
     let base = Trace {
-        spent: ring_work_steps(cap, run.glyphs.len(), tables),
+        spent: ring_work_steps(cap, run.glyphs.len(), tables, 0),
         budget,
         glyphs: cap,
         tables,
@@ -4665,7 +4676,7 @@ fn test_flow_structured_finding_a_ring_whose_inks_its_floats_cannot_part_replays
     // The harness's cap beside its path's table (ruling B16.3a): the
     // table counted in its setup, the most of [`MAX_RING_GLYPHS`] that
     // fits the timeout beside it.
-    let harness_cap = ring_cap(ring.copy, true, ring.tables);
+    let harness_cap = ring_cap(ring.copy, true, ring.tables, 0);
     assert!(
         ring.cap == harness_cap && ring.cap < MAX_RING_GLYPHS && ring.glyphs == ring.cap,
         "precondition: the ring is laid at the harness's cap beside its table, {harness_cap} glyphs, its estimate past it ({ring:?})"
@@ -4682,7 +4693,7 @@ fn test_flow_structured_finding_a_ring_whose_inks_its_floats_cannot_part_replays
         ring.placed,
         ring.cap
     );
-    let most = ring_work_steps(ring.cap, ring.copy, ring.tables);
+    let most = ring_work_steps(ring.cap, ring.copy, ring.tables, 0);
     assert!(
         ring.spent <= most && lookups <= most * READS_A_STEP,
         "the ring of {} glyphs a copy took {} glyph steps and looked up {lookups} points, past the {most} steps its cap's budget and overshoot give, {} lookups",
