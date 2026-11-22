@@ -475,7 +475,12 @@ mod tests {
 
     /// A native-only action is refused on the browser, naming the
     /// action, and only there: the same action runs on native, and a
-    /// `Compatible` one is refused nowhere.
+    /// `Compatible` one is refused nowhere. The font Actions split as
+    /// decided on #329: `RescanFonts` reads the host's installed fonts,
+    /// which the browser has none of, so the browser's `act.action
+    /// RescanFonts` is refused `unsupported`; `ReplaceFontFamily` edits
+    /// the map and runs on both. Control: flipping either one's `wasm`
+    /// classification turns its line red.
     #[test]
     fn test_a_native_only_action_is_refused_on_the_browser_only() {
         let refused = native_only_refusal(&Action::OpenConsole, true).expect("OpenConsole is native-only");
@@ -486,6 +491,12 @@ mod tests {
         assert_eq!(native_only_refusal(&Action::OpenConsole, false), None);
         assert_eq!(native_only_refusal(&Action::ZoomIn, true), None);
         assert_eq!(native_only_refusal(&Action::ZoomIn, false), None);
+        assert!(native_only_refusal(&Action::RescanFonts, true).is_some());
+        let replace = Action::ReplaceFontFamily {
+            family: "Nope Sans".into(),
+            with: "Norse".into(),
+        };
+        assert!(native_only_refusal(&replace, true).is_none());
     }
 
     /// A malformed `action` payload is a structured `invalid_params`,

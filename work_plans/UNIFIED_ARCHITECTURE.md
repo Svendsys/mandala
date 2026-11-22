@@ -142,8 +142,10 @@ These are the tests every V1 sub-issue's review applies.
    sizes, resolved colors, sibling order) is computed and never
    saved.
 3. **Typed at rest.** Strings are parsed once, at load, into enums,
-   RGBA values, interned font ids and theme-variable indices. No
-   projection, drag drain or frame parses a string.
+   RGBA values, font references and theme-variable indices. No
+   projection, drag drain or frame parses a string. (A font reference is
+   a compiled face, or an installed family held by its name and shared
+   across the load, #329.)
 4. **Work proportional to change.** After load, every stage handles
    exactly what changed: a document journal names the touched
    elements, the projector re-projects those and their dependents,
@@ -483,7 +485,7 @@ bindings (triggers are node-level, D14).
 | Concept | Type | Replaces |
 |---|---|---|
 | Color | `ColorRef = Rgba([u8;4]) \| Var(VarId) \| Palette(PaletteField)` | hex / `var(--x)` strings resolved per build |
-| Font | `FontId` (interned at load) | family-name strings scanned per run per build |
+| Font | `FontRef = Compiled(AppFont) \| Installed(FamilyName)`: a compiled face, or an installed family held by its name, shared across the load (#329; amended by the owner's decision on that issue: "People should be able to use fonts that are installed on their machines") | family-name strings scanned per run per build |
 | Font size | `FontSize = Pt(f32) \| Rel(f32)` — `Rel` is a fraction of the node's shorter side (frames only) | `size_pt` collapsed to a max |
 | Shape | `Shape::{Rectangle { radius: Percent }, Ellipse}` | `shape: String` parsed twice per node per build |
 | Anchors | `Anchor::{Auto, Top, Right, Bottom, Left}` | `anchor_from` / `anchor_to` strings matched per frame |
@@ -1246,7 +1248,12 @@ is a moved block of lines. `grep '"parent": 7,'` finds a node's children.
   - an unknown key, or a wrong type (`null` is not an absent key);
   - a duplicate key;
   - a reference that names nothing (a `parent`, a link's `to`, a verb,
-    a palette, a theme variable, a font);
+    a palette, a theme variable). A font family is not such a reference
+    (#329, the owner's decision on that issue: a map that names a family
+    the machine lacks "never fails to load"): a name no compiled face
+    bears is an installed family, which the machine opening the map may
+    lack. Only a name that cannot be one is refused — empty, holding a
+    control or bidi character, or longer than 256 bytes;
   - a number outside its bound, which is never clamped.
 
   The first error ends the load and no partial document is returned.
@@ -1255,7 +1262,8 @@ is a moved block of lines. `grep '"parent": 7,'` finds a node's children.
 - **Typed on read.** `"var(accent)"`, palette names, font families,
   shapes, anchors, fit modes, weights and verb references become their
   typed forms (§5.3) while the file is read. The document never holds
-  the string forms.
+  the string forms, but for an installed font family, which is held by
+  the name the file gives it (#329).
 - **The text.**
   - It must be UTF-8.
   - A byte-order mark is refused (`ByteOrderMark`).
@@ -1394,13 +1402,13 @@ is a moved block of lines. `grep '"parent": 7,'` finds a node's children.
   `RandomState`, with a warning.
 - **Platform limits.** On wasm32, memory is the only limit, and a map
   costs it on two axes. Its peak while loading and then saving is at
-  most `text × 6 + elements × 480` bytes
+  most `text × 6 + elements × 512` bytes
   (`WASM32_BYTES_PER_TEXT_BYTE`, `WASM32_BYTES_PER_ELEMENT`, measured
   by the wasm32 probe). Each axis takes half of the 3 GiB
   `WASM32_MEMORY_BUDGET`:
   - `MAX_MAP_BYTES` is `WASM32_MAX_MAP_BYTES`, 268,435,456 bytes. A
     larger text is refused before parsing (`TooLarge`).
-  - `MAX_ELEMENTS` is `WASM32_MAX_ELEMENTS`, 3,355,443. Each verb,
+  - `MAX_ELEMENTS` is `WASM32_MAX_ELEMENTS`, 3,145,728. Each verb,
     edit and presentation counts as one element. The element past the
     limit is refused at its path before it is built
     (`TooManyElements`).

@@ -14,7 +14,7 @@ use baumhard::document::resolve::ResolvedText;
 use baumhard::document::values::{Align, FontSize, Weight};
 use baumhard::engine::tree::Placement;
 use baumhard::flow::{shape_box, FlowSpan, Rect};
-use baumhard::font::fonts::{AppFont, FontSystemLease};
+use baumhard::font::fonts::FontSystemLease;
 use baumhard::font::metrics::monospace_advance;
 use baumhard::gfx_structs::element::GfxElement;
 use baumhard::gfx_structs::run::{GlyphOverrides, GlyphRunData, RunShape};
@@ -93,7 +93,7 @@ pub(super) fn runs_for(rect: Option<Rect>) -> [GlyphRunData; 4] {
 pub(super) fn run_of(text: &str, origin: Vec2, opacity: f32, fonts: &mut FontSystemLease) -> GlyphRunData {
     let [r, g, b, _] = SELECTION_HIGHLIGHT.0;
     let style = ResolvedText {
-        font: AppFont::Any,
+        font: baumhard::document::values::FontRef::DEFAULT,
         size: FontSize::Pt(BAND_SIZE_PT),
         color: baumhard::document::values::Rgba::new(r, g, b, BAND_ALPHA),
         weight: Weight::NORMAL,

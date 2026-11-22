@@ -309,6 +309,13 @@ pub fn check_unit_interval(value: f32) -> Result<f32, BoundError> {
     in_closed(value, 0.0, 1.0)
 }
 
+/// The longest a font family name a map names may be, in bytes (#329). A
+/// family no compiled face bears is held by its name, which the shaper
+/// compares with every installed face's names, the report prints and the
+/// file writes back; a family name in a font's name table is a few dozen
+/// bytes, so a longer one names no font anything installs.
+pub const MAX_FONT_FAMILY_BYTES: usize = 256;
+
 /// The longest a frame's [`Sides`](crate::document::values::Sides)
 /// ornament may be, in bytes: one copy is laid many times round each
 /// junction, every glyph of it solved against the last, so a long one

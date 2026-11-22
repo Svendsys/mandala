@@ -19,7 +19,8 @@
 //! - a **span inside a ring** sets no size of its own
 //!   ([`sizes_its_own_text`](crate::document::place::sizes_its_own_text)): the ring sizes its text;
 //! - a **font** a document holds has a family name a file can write
-//!   ([`nameable_font`](crate::document::place::nameable_font));
+//!   ([`nameable_font`](crate::document::place::nameable_font)), and a
+//!   family name a map names is one ([`family_fault`](crate::document::place::family_fault));
 //! - a **name** an author chose is not empty and holds no control or
 //!   bidi character ([`name_fault`](crate::document::place::name_fault)).
 //!   The verifier holds an inserted theme's variant and variable names
@@ -33,7 +34,7 @@
 //!   both already call).
 
 use crate::document::element::DocKind;
-use crate::document::values::FontSize;
+use crate::document::values::{FontRef, FontSize};
 use crate::font::fonts::{family_name_of, AppFont};
 
 /// What a text size may be where it sits.
@@ -89,11 +90,61 @@ pub fn sizes_its_own_text(kind: DocKind, parent: Option<DocKind>) -> bool {
 
 /// Whether a document may hold `font` as an explicit face: one with a
 /// family name a file can write. Not the fallback face,
-/// [`AppFont::Any`], and not a face this build cannot name — a file
-/// could not say which it was, so a map holding it could not be saved.
-/// O(the compiled-in families, about 30): a scan of a cached table.
-pub fn nameable_font(font: AppFont) -> bool {
-    font != AppFont::Any && family_name_of(font).is_some()
+/// [`AppFont::Any`], and not a compiled face this build cannot name — a
+/// file could not say which it was, so a map holding it could not be
+/// saved. An installed family is held by its name, which the file writes
+/// as it is, once the name is one a map may name ([`family_fault`]).
+/// O(the compiled-in families, about 50) for a compiled face, O(the
+/// name's length) for an installed one. Builds no font system (#329).
+pub fn nameable_font(font: &FontRef) -> bool {
+    match font {
+        FontRef::Compiled(font) => *font != AppFont::Any && family_name_of(*font).is_some(),
+        FontRef::Installed(family) => {
+            family_fault(family.as_str()).is_none()
+                && crate::font::fonts::app_font_by_family(family.as_str()).is_none()
+        }
+    }
+}
+
+/// Why a font family name cannot be one a map names (#329).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FamilyFault {
+    /// It is not a name ([`name_fault`]).
+    Name(NameFault),
+    /// It is longer than
+    /// [`MAX_FONT_FAMILY_BYTES`](crate::document::bounds::MAX_FONT_FAMILY_BYTES);
+    /// the length in bytes.
+    TooLong(usize),
+}
+
+impl std::fmt::Display for FamilyFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FamilyFault::Name(NameFault::Empty) => write!(f, "a font family name is empty"),
+            FamilyFault::Name(NameFault::NotPrintable(c)) => write!(
+                f,
+                "a font family name holds the character U+{:04X}, which does not print",
+                u32::from(*c)
+            ),
+            FamilyFault::TooLong(bytes) => write!(
+                f,
+                "a font family name is {bytes} bytes long, past the {} a map may name",
+                crate::document::bounds::MAX_FONT_FAMILY_BYTES
+            ),
+        }
+    }
+}
+
+/// Whether `family` may be a font family a map names: any [`name_fault`]
+/// name of at most
+/// [`MAX_FONT_FAMILY_BYTES`](crate::document::bounds::MAX_FONT_FAMILY_BYTES),
+/// a compiled family's or not (#329). `None` when it may, else why not.
+/// O(length of the name).
+pub fn family_fault(family: &str) -> Option<FamilyFault> {
+    if family.len() > crate::document::bounds::MAX_FONT_FAMILY_BYTES {
+        return Some(FamilyFault::TooLong(family.len()));
+    }
+    name_fault(family).map(FamilyFault::Name)
 }
 
 /// Why a name an author chose cannot be one (design B.8).

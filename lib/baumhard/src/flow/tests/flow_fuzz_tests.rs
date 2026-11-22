@@ -552,7 +552,7 @@ fn test_the_placement_property_finds_a_position_that_is_not_finite() {
 /// tests never met a zero-width space there.
 fn zero_width_space_style() -> ResolvedText {
     ResolvedText {
-        font: AppFont::SilhousTwo,
+        font: AppFont::SilhousTwo.into(),
         size: FontSize::Pt(16.0),
         color: Rgba::new(255, 255, 255, 255),
         weight: Weight::NORMAL,
@@ -823,7 +823,7 @@ fn test_a_tab_the_up_front_check_lets_through_is_laid_out_again_as_a_space() {
     use crate::flow::shape::{failing_lines, TABS_NOT_FINITE_IN, TABS_RELAID};
     let plain = style(16.0);
     let other = ResolvedText {
-        font: AppFont::Novem,
+        font: AppFont::Novem.into(),
         ..style(16.0)
     };
     let first_on = |shaped: &crate::flow::ShapedBox, line: usize| {
@@ -1923,7 +1923,7 @@ fn test_a_shrunk_frame_lays_a_bounded_number_of_lines() {
     let (tracks, builds) = counted(&mut || {
         (pinned, truncated) = with_fonts(|fs| {
             let run = real_run(quatrain, &flow, fs);
-            let pinned = crate::font::fonts::pinned_family(fs.fonts(), flow.font)
+            let pinned = crate::flow::shape::font_pin(fs.fonts(), &flow.font)
                 .is_some_and(|pins| run.layout_glyphs().all(|g| pins.faces.contains(&g.font_id)));
             let start = StartPoint {
                 edge: Edge::Top,
@@ -3584,7 +3584,7 @@ fn test_a_long_fuzzed_ornament_fits_the_per_input_bound() {
             (Weight::new(700).unwrap_or(Weight::NORMAL), true),
         ] {
             let style = ResolvedText {
-                font: face,
+                font: face.into(),
                 size: FontSize::Pt(16.0),
                 color: Rgba::new(255, 255, 255, 255),
                 weight,

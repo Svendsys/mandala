@@ -21,7 +21,7 @@
 
 use std::collections::HashMap;
 
-use baumhard::font::fonts::{app_font_by_family, loaded_families_iter, AppFont};
+use baumhard::font::fonts::{app_font_by_family, installed_family_loaded, loaded_families, AppFont};
 use log::warn;
 use serde::Serialize;
 use strum::IntoEnumIterator;
@@ -518,6 +518,8 @@ keybind_surface! {
         /// Delete the selected section (`section delete`). Errors
         /// when the node has only one section — the model invariant.
         DeleteSection => delete_section = [],
+        /// Look for the map's missing fonts again (`font rescan`).
+        RescanFonts => rescan_fonts = [],
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -557,6 +559,10 @@ keybind_surface! {
         ResetPath(reset_kind) => reset_path,
         /// `font family=<family>` on the current selection.
         SetFontFamily(family) => set_font_family,
+        /// `args = [family, with]`: `font replace <family> <with>`,
+        /// the map's references to an installed family rewritten.
+        /// Maps to [`Action::ReplaceFontFamily`].
+        ReplaceFontFamily { family, with } => replace_font_family,
         /// `args = [slot, value]` where `slot` is
         /// `size|weight|italic`, as the `font` verb spells each. Maps
         /// to [`Action::SetFont`].
@@ -799,11 +805,18 @@ pub(super) fn resolve_console_font(name: &str) -> Option<AppFont> {
         return None;
     }
     let face = app_font_by_family(name);
-    if face.is_none() {
-        match loaded_families_iter().find(|family| family.eq_ignore_ascii_case(name)) {
+    // An installed family draws the console in the default face, as it
+    // did before #329, without a warning: it is loaded.
+    if face.is_none() && !installed_family_loaded(name) {
+        let families = loaded_families();
+        match families
+            .iter()
+            .find(|family| family.name.eq_ignore_ascii_case(name))
+        {
             Some(canonical) => warn!(
                 "keybinds: console_font '{name}' is not a loaded family (did you mean \
-                 '{canonical}'? family names are case-sensitive); falling back to the default face"
+                 '{}'? family names are case-sensitive); falling back to the default face",
+                canonical.name
             ),
             None => warn!(
                 "keybinds: console_font '{name}' is not a loaded family; falling back to the \

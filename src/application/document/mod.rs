@@ -113,6 +113,18 @@ pub struct MindMapDocument {
     /// The status line the last refusal or decline left, until the next
     /// change the writer accepts.
     status: Option<&'static str>,
+    /// The notice that the map names fonts this machine lacks
+    /// (`missing_fonts::notice`, #329): shown when the map is opened, when
+    /// the user replaces a family or rescans ([`Self::note_missing_fonts`]),
+    /// and whenever a change — an edit, an undo, a redo — changes which
+    /// families are missing ([`Self::refresh_font_notice`]); dismissed
+    /// with the status line ([`Self::dismiss_status`]), and kept dismissed
+    /// until what is missing changes again.
+    font_notice: Option<String>,
+    /// The families [`Self::font_notice`] was last computed for, by name
+    /// and sorted: what tells a change that altered what is missing from
+    /// one that did not.
+    missing_fonts: Vec<String>,
     /// What Copy and Cut last took from this map (`clipboard`). Kept with
     /// the document because a copied section names its theme and faces.
     pub clipboard: Option<crate::application::clipboard::Clipboard>,
@@ -155,6 +167,8 @@ impl MindMapDocument {
             transaction: None,
             animation: None,
             status: None,
+            font_notice: None,
+            missing_fonts: Vec::new(),
             clipboard: None,
             load_failure: false,
             generation: NEXT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -279,12 +293,14 @@ impl MindMapDocument {
     /// change clears the status line.
     pub fn apply(&mut self, req: EditRequest, source: ChangeSource) -> Result<Revision, ApplyError> {
         let label = req.label.clone();
+        let from = self.doc.pending_changes().len();
         match self.doc.apply(req, source) {
             Ok(revision) => {
                 self.status = None;
                 // An animated transaction was finished and committed
                 // first (D28): its handle no longer names anything.
                 self.forget_closed_transaction();
+                self.refresh_font_notice(from);
                 Ok(revision)
             }
             Err(error) => {
@@ -299,7 +315,10 @@ impl MindMapDocument {
     /// preview stages into. A refusal is reported as [`Self::apply`]'s
     /// is, and `false` returned.
     pub fn begin(&mut self, source: ChangeSource, kind: TransactionKind, interaction: Interaction) -> bool {
-        match self.doc.begin(source, kind) {
+        // The writer may finish and commit an animated edit first (D28):
+        // the notice follows that commit as it follows any.
+        let from = self.doc.pending_changes().len();
+        let begun = match self.doc.begin(source, kind) {
             Ok(transaction) => {
                 self.transaction = Some((transaction, interaction));
                 // An animated edit the writer finished first (D28) no
@@ -312,7 +331,9 @@ impl MindMapDocument {
                 self.report_refusal("begin", &error);
                 false
             }
-        }
+        };
+        self.refresh_font_notice(from);
+        begun
     }
 
     /// What the open transaction is for, or `None` when none is open.
@@ -344,7 +365,10 @@ impl MindMapDocument {
     /// changed nothing or no transaction of `interaction` is open.
     pub fn commit(&mut self, interaction: Interaction) -> Option<Revision> {
         let tx = self.take_transaction(interaction)?;
-        self.doc.commit(tx)
+        let from = self.doc.pending_changes().len();
+        let revision = self.doc.commit(tx);
+        self.refresh_font_notice(from);
+        revision
     }
 
     /// Cancel the transaction `interaction` began: the document is as it
@@ -377,10 +401,63 @@ impl MindMapDocument {
         self.status
     }
 
-    /// Dismiss the status line a refusal or a decline left: what
-    /// `ExitMode` does. O(1).
+    /// Dismiss the status line a refusal or a decline left, and the
+    /// missing-font notice: what `ExitMode` does. O(1).
     pub fn dismiss_status(&mut self) {
         self.status = None;
+        self.font_notice = None;
+    }
+
+    /// The notice that the map names fonts this machine lacks, if it is
+    /// showing (#329): the status line shows it when no mode and no
+    /// refusal has one. O(1).
+    pub fn font_notice(&self) -> Option<&str> {
+        self.font_notice.as_deref()
+    }
+
+    /// Show the notice for `missing`, the families the map names that this
+    /// machine lacks, or clear it when there are none: what opening a map,
+    /// a replacement and a rescan do (`missing_fonts`), each a moment the
+    /// user is told about fonts whatever was dismissed before. O(the
+    /// names' length).
+    pub fn note_missing_fonts(&mut self, missing: &[baumhard::document::fonts::MissingFamily]) {
+        self.missing_fonts = missing.iter().map(|missing| missing.family.to_string()).collect();
+        self.font_notice = crate::application::missing_fonts::notice(missing);
+    }
+
+    /// Keep the missing-font notice true to the map after a change, read
+    /// from the records the change left on the feed past `from` (#329, the
+    /// review of #390): an undo of a replacement brings its family back,
+    /// and `font family="Nope Sans"` names one. When which families are
+    /// missing changed, the notice shows the new set (or clears, when
+    /// none is); when it did not, the notice is left as it is, so one the
+    /// user dismissed stays dismissed.
+    ///
+    /// Proportional: [`missing_families`](baumhard::document::fonts::missing_families)
+    /// walks the map only when the change wrote an installed family where
+    /// it wrote ([`touched_names_installed`](baumhard::document::fonts::touched_names_installed)),
+    /// or a family is missing and the change wrote a style or the
+    /// defaults, or put an element in the tree or took one out
+    /// ([`touched_style`](baumhard::document::fonts::touched_style)) —
+    /// the only changes that can add or take away a missing family. A map
+    /// that names no installed family pays one read per element touched.
+    fn refresh_font_notice(&mut self, from: usize) {
+        let pending = self.doc.pending_changes();
+        let records = &pending[from.min(pending.len())..];
+        if records.is_empty() {
+            return;
+        }
+        let may_add = baumhard::document::fonts::touched_names_installed(&self.doc, records);
+        let may_take = !self.missing_fonts.is_empty() && baumhard::document::fonts::touched_style(records);
+        if !may_add && !may_take {
+            return;
+        }
+        let missing = baumhard::document::fonts::missing_families(&self.doc);
+        let names: Vec<String> = missing.iter().map(|missing| missing.family.to_string()).collect();
+        if names != self.missing_fonts {
+            self.missing_fonts = names;
+            self.font_notice = crate::application::missing_fonts::notice(&missing);
+        }
     }
 
     /// The one report of a refused change (D28): a `warn!` naming the
@@ -410,17 +487,21 @@ impl MindMapDocument {
     /// is the undo; ruling R36 on #238). Returns the new revision, or
     /// `None` when nothing changed.
     pub fn undo(&mut self) -> Option<Revision> {
+        let from = self.doc.pending_changes().len();
         let revision = self.doc.undo();
         self.forget_closed_transaction();
         self.after_history_move();
+        self.refresh_font_notice(from);
         revision
     }
 
     /// Redo the history entry undone last. See [`Self::undo`].
     pub fn redo(&mut self) -> Option<Revision> {
+        let from = self.doc.pending_changes().len();
         let revision = self.doc.redo();
         self.forget_closed_transaction();
         self.after_history_move();
+        self.refresh_font_notice(from);
         revision
     }
 
@@ -484,7 +565,9 @@ impl MindMapDocument {
     pub fn finish_animation(&mut self) {
         self.forget_closed_transaction();
         if let Some(animation) = self.animation.take() {
+            let from = self.doc.pending_changes().len();
             self.doc.commit(animation.tx);
+            self.refresh_font_notice(from);
         }
     }
 
@@ -511,7 +594,12 @@ impl MindMapDocument {
             return self.apply(req, source).map(|_| ());
         };
         let label = req.label.clone();
-        let tx = match self.doc.begin(source, TransactionKind::Animated) {
+        let from = self.doc.pending_changes().len();
+        let begun = self.doc.begin(source, TransactionKind::Animated);
+        // `begin` finished and committed the animation it found, if any:
+        // the notice follows that commit as it follows any.
+        self.refresh_font_notice(from);
+        let tx = match begun {
             Ok(tx) => tx,
             Err(error) => {
                 self.report_refusal(&label, &error);

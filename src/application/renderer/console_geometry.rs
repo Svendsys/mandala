@@ -56,17 +56,18 @@ pub struct ConsoleOverlayGeometry {
 /// One line in the scrollback, carrying its kind so the renderer can
 /// color input echoes, normal output, and errors differently.
 ///
-/// `font_family` pins the shaped face for the line's text. `None`
-/// means "use the console default" (`ConsoleOverlayGeometry::default_font`),
-/// and so does a family that is not loaded. Set by output-producing
-/// commands like `font list` so each row shapes in its own face;
-/// input echoes and errors always set `None`. The gutter glyph
-/// beside the line always shapes in the console default.
+/// The line's text, and the gutter glyph beside it, shape in the console
+/// default (`ConsoleOverlayGeometry::default_font`). `sample_face` is the
+/// family a [`FONT_SAMPLE`](crate::application::console::FONT_SAMPLE)
+/// after the text is drawn in; `None`, or a family no compiled face of
+/// which is loaded, draws no sample, so a sample is never drawn in a face
+/// it does not show. Set by `font list`; input echoes and errors always
+/// set `None`.
 #[derive(Clone, Debug)]
 pub struct ConsoleOverlayLine {
     pub text: String,
     pub kind: ConsoleOverlayLineKind,
-    pub font_family: Option<String>,
+    pub sample_face: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,18 +83,18 @@ pub enum ConsoleOverlayLineKind {
 /// One completion candidate: the replacement text plus an optional
 /// dim hint printed to the right (e.g. the command's summary).
 ///
-/// `font_family` pins the shaped face for the candidate's `text`;
-/// the selection marker before it and the hint after it stay in the
-/// console default font, so a face that lacks those glyphs cannot
-/// turn them into tofu. Set by the font-name completer so each
-/// candidate row renders in its own face — `font family=A` shows every
-/// "A..." family pre-shaped in that family. `None` (or a family that
-/// is not loaded) means "use the console's default font".
+/// The selection marker, the candidate's `text` and the hint shape in
+/// the console default font, so every row reads whatever face it names.
+/// `sample_face` is the family a
+/// [`FONT_SAMPLE`](crate::application::console::FONT_SAMPLE) after the
+/// text is drawn in — the standard font-picker form, set by the
+/// font-name completer; `None`, or a family that is not loaded, draws no
+/// sample.
 #[derive(Clone, Debug)]
 pub struct ConsoleOverlayCompletion {
     pub text: String,
     pub hint: Option<String>,
-    pub font_family: Option<String>,
+    pub sample_face: Option<String>,
 }
 
 /// Pure-function output of the console-overlay layout pass. Holds

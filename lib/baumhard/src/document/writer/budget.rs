@@ -18,9 +18,10 @@
 
 use crate::document::element::{
     DefaultsData, DirectionalGlyphs, DocElement, FlowStyle, FrameData, FrameStyle, MapData, PaletteData,
-    PortalEndData, PortalEndStyle, RingData, RingLayoutStyle, RingStyle, SpanData, ThemeData, ThemeVariant,
+    PortalEndData, PortalEndStyle, RingData, RingLayoutStyle, RingStyle, SpanData, TextStyle, ThemeData,
+    ThemeVariant,
 };
-use crate::document::values::{FitMode, LinkTarget, Sides};
+use crate::document::values::{FitMode, FontRef, LinkTarget, Sides};
 
 /// A document's cost on the two axes.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -46,7 +47,8 @@ impl Budget {
     }
 }
 
-/// The bytes of every string `element` holds: a span's text and URL, the
+/// The bytes of every string `element` holds: the installed font family
+/// its text style names, a span's text and URL, the
 /// map's name, the theme's variable and variant names, a palette's name,
 /// a path's or a portal end's content, a fit mode's filler — on the
 /// element and, for the defaults, in every style they carry. Every
@@ -55,6 +57,12 @@ impl Budget {
 ///
 /// O(the element's strings); reads lengths only.
 pub fn text_bytes(element: &DocElement) -> u64 {
+    element.text_style().map_or(0, text_style) + strings(element)
+}
+
+/// [`text_bytes`] but for the installed font family the element's own text
+/// style names, which [`text_style`] counts.
+fn strings(element: &DocElement) -> u64 {
     match element {
         DocElement::Map(MapData { name, .. }) => len(name),
         DocElement::Theme(ThemeData {
@@ -72,17 +80,23 @@ pub fn text_bytes(element: &DocElement) -> u64 {
         DocElement::Palette(PaletteData { name, groups: _ }) => len(name.as_str()),
         DocElement::Defaults(defaults) => {
             let DefaultsData {
-                node: _,
-                section: _,
+                node,
+                section,
                 frame,
                 ring,
                 connector,
                 link,
-                label: _,
+                label,
                 portal_end,
-                span: _,
+                span,
             } = &**defaults;
-            frame_style(frame)
+            text_style(&node.text)
+                + text_style(section)
+                + text_style(&frame.text)
+                + text_style(&ring.text)
+                + text_style(&label.text)
+                + text_style(span)
+                + frame_style(frame)
                 + ring_style(ring)
                 + flow(connector)
                 + flow(link)
@@ -110,6 +124,23 @@ pub fn text_bytes(element: &DocElement) -> u64 {
         | DocElement::Label(_)
         | DocElement::Node(_) => 0,
     }
+}
+
+/// A text style's strings: the installed font family it names (#329), by
+/// its name's length; a compiled face holds none. The name is shared
+/// between the elements of a load that name it, so this counts it once
+/// for each — an upper bound, as the budget wants.
+fn text_style(style: &TextStyle) -> u64 {
+    let TextStyle {
+        font,
+        size: _,
+        color: _,
+        weight: _,
+        italic: _,
+    } = style;
+    font.as_ref()
+        .and_then(FontRef::installed)
+        .map_or(0, |family| len(family.as_str()))
 }
 
 /// A string's length in bytes.

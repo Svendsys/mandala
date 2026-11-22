@@ -38,6 +38,22 @@ impl PresentationDef {
     /// Cost: one walk of the definition, one call of `mention` per name it
     /// writes, and the allocation of that name's path.
     pub fn mentions<'a>(&'a self, mut mention: impl FnMut(Mention<'a>)) -> Shows {
+        self.walk(Walk::new(Some(&mut mention), &mut |_| {}))
+    }
+
+    /// Calls `font` with each font family name this presentation writes —
+    /// a text op's `set_font`, a filter's `font` field — as
+    /// [`EditDef::fonts`](crate::document::edit::EditDef::fonts) does for
+    /// an edit. A glyph-layer body writes none.
+    ///
+    /// Cost: one walk of the definition, one call of `font` per name, and
+    /// no allocation.
+    pub fn fonts<'a>(&'a self, mut font: impl FnMut(&'a str)) {
+        self.walk(Walk::new(None, &mut font));
+    }
+
+    /// `walk` over this presentation's filter and body.
+    fn walk<'a>(&'a self, mut walk: Walk<'a, '_>) -> Shows {
         let PresentationDef {
             id: _,
             name: _,
@@ -50,7 +66,6 @@ impl PresentationDef {
             animate: _,
             ret: _,
         } = self;
-        let mut walk = Walk::new(&mut mention);
         if let Some(Filter(filter)) = filter {
             walk.filter(filter);
         }

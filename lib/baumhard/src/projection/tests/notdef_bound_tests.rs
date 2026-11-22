@@ -760,7 +760,7 @@ fn test_the_shaper_hides_every_code_point_the_bound_reads_as_hidden() {
     if std::env::var(CHILD).as_deref() == Ok("hidden") {
         report_hosts();
         let style = ResolvedText {
-            font: AppFont::Any,
+            font: AppFont::Any.into(),
             size: FontSize::Pt(16.0),
             color: Rgba::opaque(255, 255, 255),
             weight: Weight::NORMAL,

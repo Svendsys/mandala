@@ -16,6 +16,8 @@ mod edit_fuzz_tests;
 mod edit_tests;
 pub mod element_tests;
 #[cfg(test)]
+mod fonts_tests;
+#[cfg(test)]
 mod format_color_tests;
 /// R13's deep chain, shared with the wasm32 probe.
 pub mod format_depth;

@@ -34,12 +34,11 @@ use crate::document::element::{
 };
 use crate::document::mutation::inherited::DocInherited;
 use crate::document::values::{
-    Align, Anchor, ColorRef, Direction, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteId,
-    PlainColor, Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
+    Align, Anchor, ColorRef, Direction, FitMode, FontRef, FontSize, LineSpan, LinkKind, LinkTarget,
+    PaletteId, PlainColor, Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
 };
 use crate::engine::mutation::Mutation;
 use crate::engine::tree::MutatorTree;
-use crate::font::fonts::AppFont;
 use crate::util::grapheme_chad::{delete_grapheme_range, insert_str_at_grapheme};
 use glam::Vec2;
 use log::{debug, error};
@@ -90,7 +89,7 @@ pub enum DocMutation {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TextOp {
     /// Set the face; `None` inherits.
-    SetFont(Option<AppFont>),
+    SetFont(Option<FontRef>),
     /// Set the size; `None` inherits. A ring's and a frame's size is
     /// [`Rel`](FontSize::Rel), everything else's [`Pt`](FontSize::Pt)
     /// (ruling R10 on #237).
@@ -378,6 +377,25 @@ pub enum MapOp {
     SetBackground(PlainColor),
 }
 
+impl TextOp {
+    /// This op as the payload of an element of `kind`, reached through
+    /// its owner's payload: `Node(Text(..))`, `Cap(..)` and so on. `None`
+    /// for a kind with no text style of its own (a path, a portal end,
+    /// the map row). O(1).
+    pub fn on(self, kind: DocKind) -> Option<DocMutation> {
+        Some(match kind {
+            DocKind::Node => DocMutation::Node(NodeOp::Text(self)),
+            DocKind::Section => DocMutation::Section(SectionOp::Text(self)),
+            DocKind::Span => DocMutation::Span(SpanOp::Text(self)),
+            DocKind::Frame => DocMutation::Frame(FrameOp::Text(self)),
+            DocKind::Ring => DocMutation::Ring(RingOp::Text(self)),
+            DocKind::Label => DocMutation::Label(LabelOp::Text(self)),
+            DocKind::CapStart | DocKind::CapEnd => DocMutation::Cap(self),
+            _ => return None,
+        })
+    }
+}
+
 impl DocMutation {
     /// Whether this payload applies to an element of `kind`: its own
     /// kind, both path kinds for [`Path`](Self::Path), both caps for
@@ -569,7 +587,7 @@ fn nudge(position: Vec2, delta: Vec2) -> Vec2 {
 /// parent handed down `inherited`. O(1).
 fn apply_text(op: &TextOp, style: &mut TextStyle, kind: DocKind, inherited: &DocInherited) {
     match op {
-        TextOp::SetFont(font) => style.font = *font,
+        TextOp::SetFont(font) => style.font.clone_from(font),
         TextOp::SetSize(size) => style.size = *size,
         TextOp::GrowSize(delta) => style.size = Some(relative(style, kind, inherited, |v| v + delta)),
         TextOp::ScaleSize(factor) => style.size = Some(relative(style, kind, inherited, |v| v * factor)),

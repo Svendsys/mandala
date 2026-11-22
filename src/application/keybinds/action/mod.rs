@@ -707,6 +707,18 @@ pub enum Action {
     /// name, as the loader reads one.
     #[action(context = Document, wasm = Compatible)]
     SetFontFamily(String),
+    /// Rewrite every reference the map makes to the installed font
+    /// family `family` — every element's text style and the defaults' —
+    /// to `with`, a family a map may name, as one undoable edit: the
+    /// missing-font prompt's replacement (#329, `font replace`).
+    #[action(context = Document, wasm = Compatible)]
+    ReplaceFontFamily { family: String, with: String },
+    /// Look the host up again for the installed families the map names
+    /// that this machine lacks, once the user has installed one, and
+    /// draw what it finds (#329, `font rescan`). Native only: the
+    /// browser reads no installed font.
+    #[action(context = Document, wasm = NativeOnly)]
+    RescanFonts,
     /// Set one text field of the selection: `slot` picks the size in
     /// points, the weight or the slant ([`FontSlot`]).
     #[action(context = Document, wasm = Compatible)]

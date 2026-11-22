@@ -1174,7 +1174,9 @@ fn test_default_console_font_size_is_16() {
 /// cosmic-text's default no matter what the user configured.
 #[test]
 fn test_resolve_exposes_console_style_fields() {
-    let family = baumhard::font::fonts::loaded_families_iter()
+    let family = baumhard::font::fonts::compiled_families()
+        .iter()
+        .map(|(name, _)| name.as_str())
         .next()
         .expect("the build ships at least one family");
     let cfg = KeybindConfig {
@@ -1233,7 +1235,9 @@ fn test_resolve_console_font_warns_only_for_an_unloaded_family() {
 
     // Control: a loaded family resolves to its face and does not warn,
     // so the warning above is the miss path's and not every lookup's.
-    let family = baumhard::font::fonts::loaded_families_iter()
+    let family = baumhard::font::fonts::compiled_families()
+        .iter()
+        .map(|(name, _)| name.as_str())
         .next()
         .expect("the build ships at least one family");
     let (face, captured) = capture(|| resolve_console_font(family));
@@ -1258,7 +1262,9 @@ fn test_resolve_console_font_suggests_the_canonical_case() {
 
     baumhard::util::test_logger::install();
 
-    let (canonical, miscased) = baumhard::font::fonts::loaded_families_iter()
+    let (canonical, miscased) = baumhard::font::fonts::compiled_families()
+        .iter()
+        .map(|(name, _)| name.as_str())
         .find_map(|family| {
             let upper = family.to_ascii_uppercase();
             (upper != family && baumhard::font::fonts::app_font_by_family(&upper).is_none())
@@ -2389,6 +2395,14 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
             "set_font_family",
             &["Norse"],
             Action::SetFontFamily("Norse".into()),
+        ),
+        (
+            "replace_font_family",
+            &["Nope Sans", "Norse"],
+            Action::ReplaceFontFamily {
+                family: "Nope Sans".into(),
+                with: "Norse".into(),
+            },
         ),
         (
             "set_font",

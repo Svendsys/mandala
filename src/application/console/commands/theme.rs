@@ -49,7 +49,7 @@ fn variable_rows(ctx: &ConsoleContext, partial: &str) -> Vec<Completion> {
             text: format!("{name}="),
             display: name.clone(),
             hint: None,
-            font_family: None,
+            sample_face: None,
         })
         .collect()
 }

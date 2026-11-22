@@ -29,7 +29,7 @@
 //! refusal a user meets is the definition bound, never the reader's.
 
 use crate::document::bounds::{check_animate_ms, MAX_DEFINITION_DEPTH, MAX_DEFINITION_PARTS};
-use crate::document::edit::resolve::{self, Fault, NameKind};
+use crate::document::edit::resolve::{self, Fault};
 use crate::document::edit::{Animate, EditBody, EditDef, Filter, Mutations, MutatorAst, Target};
 use crate::document::format::context::{offset_in, position_at};
 use crate::document::format::edits::{EditDto, EditsFileDto, InstructionDto, MutatorDto, ReachDto, SnapDto};
@@ -302,12 +302,7 @@ pub(crate) fn to_dto(def: &EditDef) -> EditDto {
 /// A refusal of a resolution at load, under `segs`.
 fn fault(segs: Vec<Seg>, fault: Fault) -> (Vec<Seg>, LoadErrorKind) {
     let kind = match fault {
-        Fault::Unknown {
-            kind: NameKind::Font,
-            name,
-            ..
-        } => LoadErrorKind::UnknownFont { family: name },
-        // Every other name answers at load, against no map.
+        // Every name answers at load, against no map.
         Fault::Unknown { field, name, .. } => LoadErrorKind::InvalidEdit {
             message: format!("`{field}`: `{name}` is not a name"),
         },
@@ -315,6 +310,7 @@ fn fault(segs: Vec<Seg>, fault: Fault) -> (Vec<Seg>, LoadErrorKind) {
         Fault::Invalid { message, .. } => LoadErrorKind::InvalidEdit {
             message: message.to_string(),
         },
+        Fault::Family { fault, .. } => fault.into(),
     };
     (segs, kind)
 }

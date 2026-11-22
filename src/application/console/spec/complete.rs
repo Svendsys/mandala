@@ -227,7 +227,7 @@ fn key_rows(grammar: &'static Grammar, names: &[&'static str], partial: &str) ->
                 display: text.clone(),
                 text,
                 hint: (!k.hint.is_empty()).then(|| k.hint.to_string()),
-                font_family: None,
+                sample_face: None,
             }
         })
         .collect()
@@ -266,6 +266,6 @@ fn row(name: &str, hint: &str) -> Completion {
         text: name.to_string(),
         display: name.to_string(),
         hint: (!hint.is_empty()).then(|| hint.to_string()),
-        font_family: None,
+        sample_face: None,
     }
 }

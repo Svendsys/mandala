@@ -163,7 +163,7 @@ pub extern "C" fn flow_shape_and_place() -> u32 {
     install_hook();
     fonts::init();
     let style = ResolvedText {
-        font: AppFont::GalatiaSIL,
+        font: AppFont::GalatiaSIL.into(),
         size: FontSize::Pt(14.0),
         color: Rgba::opaque(255, 255, 255),
         weight: Weight::BOLD,
@@ -218,7 +218,7 @@ pub extern "C" fn ornaments_fall_back_to_their_compiled_faces() -> u32 {
     install_hook();
     fonts::init();
     let pinned = ResolvedText {
-        font: AppFont::GalatiaSIL,
+        font: AppFont::GalatiaSIL.into(),
         size: FontSize::Pt(14.0),
         color: Rgba::opaque(255, 255, 255),
         weight: Weight::NORMAL,
@@ -257,7 +257,7 @@ pub extern "C" fn default_text_is_drawn_in_the_default_face() -> u32 {
     install_hook();
     fonts::init();
     let regular = ResolvedText {
-        font: AppFont::Any,
+        font: AppFont::Any.into(),
         size: FontSize::Pt(14.0),
         color: Rgba::opaque(255, 255, 255),
         weight: Weight::NORMAL,
@@ -338,6 +338,7 @@ deep_scenario!(deep_document_deep_subtree_validates_and_inserts, baumhard::docum
 deep_scenario!(deep_document_deep_chain_resolves_at_the_leaf, baumhard::document::tests::deep_tests::do_document_deep_chain_resolves_at_the_leaf);
 deep_scenario!(deep_document_deep_chain_through_the_writer, baumhard::document::tests::deep_tests::do_document_deep_chain_through_the_writer);
 deep_scenario!(deep_document_validate_walks_a_deep_insert, baumhard::document::tests::mutation_validate_tests::do_document_validate_walks_a_deep_insert);
+deep_scenario!(deep_document_fonts_report_and_replace, baumhard::document::tests::deep_tests::do_document_deep_chain_reports_and_replaces_an_installed_family);
 deep_scenario!(deep_projection_deep_chain, baumhard::projection::tests::deep_tests::do_projection_deep_chain_projects_edits_hides_moves_and_hits);
 
 /// The arena's id, link and slot sizes, pinned for wasm32 (V1-A7,

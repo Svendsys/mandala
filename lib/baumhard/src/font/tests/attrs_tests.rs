@@ -98,7 +98,9 @@ pub fn do_attrs_list_pins_family_name_when_region_carries_app_font() {
     use cosmic_text::FamilyOwned;
 
     crate::font::fonts::init();
-    let family = crate::font::fonts::loaded_families_iter()
+    let family = crate::font::fonts::compiled_families()
+        .iter()
+        .map(|(name, _)| name.as_str())
         .next()
         .expect("at least one loaded family");
     let app_font = crate::font::fonts::app_font_by_family(family).expect("first family must round-trip");
@@ -301,7 +303,9 @@ fn test_rich_text_spans_pin_family_name_when_region_has_app_font() {
 /// `set_rich_text` API shape.
 pub fn do_rich_text_spans_pin_family_name_when_region_has_app_font() {
     crate::font::fonts::init();
-    let family = crate::font::fonts::loaded_families_iter()
+    let family = crate::font::fonts::compiled_families()
+        .iter()
+        .map(|(name, _)| name.as_str())
         .next()
         .expect("at least one loaded family");
     let app_font = crate::font::fonts::app_font_by_family(family).expect("first family must round-trip");

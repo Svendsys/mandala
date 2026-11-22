@@ -113,6 +113,11 @@ pub(crate) mod fields;
 pub(crate) mod ipc;
 pub(crate) mod keybinds;
 pub(crate) mod macros;
+// The missing-font prompt (#329): the report of the installed families a
+// map names that this machine lacks, its notice and console prompt, and
+// the replacement and rescan they offer, on both targets (the rescan and
+// the console prompt native).
+pub(crate) mod missing_fonts;
 /// Platform-input value types — the inward seam over winit's
 /// `Key` / `Modifiers` / `MouseButton` / `CursorIcon` / etc. so
 /// only the bootstrap (`app/run_native.rs`, `app/run_wasm/`)

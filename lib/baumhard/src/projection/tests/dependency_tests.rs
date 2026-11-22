@@ -1165,3 +1165,51 @@ fn test_projection_a_label_of_a_path_not_drawn_has_no_position() {
     );
     p.check().unwrap();
 }
+
+/// **A family a rescan found reshapes exactly the units that drew in it**
+/// (#329, the review of #390): `update_faces` resolves and shapes again
+/// the sections whose text resolved to the family — the one whose span
+/// names it, and the one that inherits it from its node — though no key
+/// changed, and no other section; it ends on the oracle. A family no unit
+/// drew in reaches nothing.
+///
+/// Controls: the compiled section is the untouched element of the first
+/// arm, and the second arm reaches nothing; `Reads` recording no font
+/// (`ReadRecorder::font` left at its default) turns the first arm red,
+/// with nothing resolved.
+#[test]
+fn test_projection_found_faces_reach_exactly_the_units_that_drew_in_the_family() {
+    let doc = load_map(json!({"nodes": [
+        text_node(1, None, 0.0, json!({"text": "named", "font": "Nope Sans"}), json!({})),
+        text_node(2, None, 300.0, json!({"text": "inherited"}), json!({"font": "Nope Sans"})),
+        text_node(3, None, 600.0, json!({"text": "compiled", "font": "Public Pixel"}), json!({})),
+    ]}));
+    let (named, inherited, compiled) = (
+        section_of(&doc, 1).0,
+        section_of(&doc, 2).0,
+        section_of(&doc, 3).0,
+    );
+    let mut p = Projected::new(doc);
+    let changes = p
+        .projector
+        .update_faces(&p.doc, &[], &["Nope Sans"], &mut p.layers, &mut p.fonts);
+    let resolved = ran(&p, Stage::Resolve);
+    assert_eq!(
+        resolved,
+        [named, inherited].into_iter().collect(),
+        "the sections that drew in the family resolve again"
+    );
+    assert!(!resolved.contains(&compiled), "a compiled section does not");
+    changes.discard(&mut p.layers);
+    p.check().unwrap();
+    let changes = p
+        .projector
+        .update_faces(&p.doc, &[], &["Drawn Nowhere"], &mut p.layers, &mut p.fonts);
+    assert!(
+        p.projector.ran.is_empty(),
+        "a family no unit drew in reaches nothing: {:?}",
+        p.projector.ran
+    );
+    changes.discard(&mut p.layers);
+    p.check().unwrap();
+}

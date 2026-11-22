@@ -1195,7 +1195,7 @@ fn test_a_cluster_whose_advances_sum_negative_is_read_as_stepping_back() {
     use crate::projection::tests::projection_fuzz::{glyphs_round, least_steps, RING_STEP_SLACK};
     crate::font::fonts::init();
     let style = ResolvedText {
-        font: AppFont::Any,
+        font: AppFont::Any.into(),
         size: FontSize::Pt(20.0),
         color: Rgba::opaque(255, 255, 255),
         weight: Weight::NORMAL,
@@ -1270,7 +1270,6 @@ fn test_a_cluster_whose_advances_sum_negative_is_read_as_stepping_back() {
 /// holds and U+180F's ornament lays 238 glyphs of its bound's cap.
 #[test]
 fn test_a_side_ornament_of_default_ignorables_lays_within_its_bound() {
-    use crate::font::fonts::AppFont;
     use crate::projection::state::UnitBody;
     use crate::projection::tests::projection_fuzz::{face_metrics, frame_glyphs, DEFAULT_IGNORABLE};
     let mut past = Vec::new();
@@ -1322,7 +1321,7 @@ fn test_a_side_ornament_of_default_ignorables_lays_within_its_bound() {
         for c in (first..=last).filter_map(char::from_u32) {
             read += 1;
             assert_eq!(
-                faces.narrowest_char(AppFont::Any, c),
+                faces.narrowest_char(&crate::document::values::FontRef::DEFAULT, c),
                 0.0,
                 "U+{:04X} read as advancing",
                 u32::from(c)

@@ -66,12 +66,12 @@ use std::sync::Arc;
 use glam::Vec2;
 
 use crate::document::resolve::ResolvedText;
-use crate::document::values::Align;
+use crate::document::values::{Align, FontRef};
 use crate::flow::span::{span_attrs, FlowSpan, LINE_HEIGHT_FACTOR};
 use crate::flow::Rect;
 use crate::font::fonts::{
-    clamp_font_metric, glyph_draws, glyph_outline_ink, pinned_family, AppFont, FontSystemLease, PinnedFamily,
-    MIN_FONT_SIZE_PT,
+    clamp_font_metric, glyph_draws, glyph_outline_ink, installed_pinned_family, pinned_family, AppFont,
+    FontSystemLease, PinnedFamily, MIN_FONT_SIZE_PT,
 };
 use crate::font::{Attrs, Buffer, FontSystem, LayoutGlyph, Metrics, SwashCache, Wrap, SHAPING_ADVANCED};
 use crate::util::grapheme_chad;
@@ -484,18 +484,28 @@ fn assemble<'f>(
     assembly
 }
 
-/// Each span's pinned family and its compiled weights, resolved once against `fs`:
-/// `None` for `AppFont::Any`, or a face the font system does not know.
+/// Each span's pinned family and the weights its faces have, resolved
+/// once against `fs`: `None` for `AppFont::Any`, for a face the font
+/// system does not know, and for an installed family this machine lacks
+/// — whose text is drawn in the default face, its stand-in, until the
+/// user installs it or picks a replacement (#329).
 fn families_of<'s>(
     styles: impl Iterator<Item = &'s ResolvedText>,
     fs: &FontSystem,
 ) -> Vec<Option<PinnedFamily>> {
-    styles
-        .map(|style| match style.font {
-            AppFont::Any => None,
-            font => pinned_family(fs, font),
-        })
-        .collect()
+    styles.map(|style| font_pin(fs, &style.font)).collect()
+}
+
+/// The family `font` pins, resolved against `fs` ([`families_of`]'s, per
+/// span): `None` for the default face, and for an installed family this
+/// machine lacks, which is drawn in the default face. Cost: one
+/// [`pinned_family`] or [`installed_pinned_family`].
+pub(crate) fn font_pin(fs: &FontSystem, font: &FontRef) -> Option<PinnedFamily> {
+    match font {
+        FontRef::Compiled(AppFont::Any) => None,
+        FontRef::Compiled(font) => pinned_family(fs, *font),
+        FontRef::Installed(family) => installed_pinned_family(fs, family.as_str()),
+    }
 }
 
 /// A buffer with no wrapping, no size limit and metrics no smaller than

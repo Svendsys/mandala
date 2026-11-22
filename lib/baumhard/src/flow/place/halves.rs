@@ -7055,7 +7055,7 @@ fn side_run(
     let at = |text: &str, size: f32, fs: &mut FontSystemLease| {
         let style = ResolvedText {
             size: FontSize::Pt(size),
-            ..*flow
+            ..flow.clone()
         };
         let shaped = shape_run(
             &[FlowSpan {
@@ -7087,7 +7087,7 @@ fn side_run(
     let style = ResolvedText {
         size: FontSize::Pt(ornament),
         color: *color,
-        ..*flow
+        ..flow.clone()
     };
     let fsys = fs.fonts();
     let (with, _) = reshape(run, 1.0, Some((content.as_str(), &style)), fsys);

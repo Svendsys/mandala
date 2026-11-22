@@ -34,7 +34,7 @@ pub(crate) const FACE: AppFont = AppFont::GalatiaSIL;
 /// A plain resolved style at `points`, in [`FACE`].
 pub(crate) fn style(points: f32) -> ResolvedText {
     ResolvedText {
-        font: FACE,
+        font: FACE.into(),
         size: FontSize::Pt(points),
         color: Rgba::opaque(255, 255, 255),
         weight: Weight::NORMAL,

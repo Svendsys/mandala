@@ -132,9 +132,9 @@ fn test_the_native_ceiling_is_none_and_the_browser_is_bounded() {
         Some(crate::document::format::WASM32_MAX_ELEMENTS)
     );
     // The derived values, written out: half of 3 GiB over 6 bytes per
-    // byte of text, and over 480 bytes per element.
+    // byte of text, and over 512 bytes per element.
     assert_eq!(crate::document::format::WASM32_MAX_MAP_BYTES, 268_435_456);
-    assert_eq!(crate::document::format::WASM32_MAX_ELEMENTS, 3_355_443);
+    assert_eq!(crate::document::format::WASM32_MAX_ELEMENTS, 3_145_728);
 }
 
 #[test]
@@ -795,60 +795,132 @@ fn test_a_palette_the_map_does_not_define_is_refused() {
     );
 }
 
+/// The face the one node of `map` sets, as loaded.
+fn node_font(map: &str) -> Option<crate::document::values::FontRef> {
+    let doc = load(map).expect("the map loads");
+    doc.tree()
+        .descendants()
+        .find_map(|id| {
+            doc.get(id)
+                .and_then(|element| element.as_node())
+                .map(|node| node.style.text.font.clone())
+        })
+        .flatten()
+}
+
+/// **Only a font family name that cannot be one is refused** (#329): an
+/// empty name, one with a character that does not print, and one past
+/// `MAX_FONT_FAMILY_BYTES` — each where a map can set a font. A name no
+/// compiled face bears loads, as an installed family, whether or not this
+/// machine has it, and a name of exactly the bound loads.
+///
+/// Controls: the bound moved to 255 turns the 256-byte arm red (refused);
+/// `family_fault` without its length check turns the 257-byte arm red
+/// (loads); and `format::font` refusing every non-compiled name, as it
+/// did before #329, turns the `No Such Font` arm red.
 #[test]
-fn test_a_font_this_build_has_no_face_for_is_refused() {
-    let unknown = |family: &str| LoadErrorKind::UnknownFont {
-        family: family.to_string(),
-    };
-    rejects(
-        &map_of(r#","font":"No Such Font""#),
-        "nodes[0].font",
-        unknown("No Such Font"),
+fn test_a_font_family_that_cannot_be_one_is_refused() {
+    use crate::document::bounds::MAX_FONT_FAMILY_BYTES;
+    use crate::document::values::FontRef;
+    let long = "F".repeat(MAX_FONT_FAMILY_BYTES + 1);
+    let longest = "F".repeat(MAX_FONT_FAMILY_BYTES);
+    let quoted = |family: &str| serde_json::to_string(family).expect("a string serializes");
+    let refusals = [
+        ("", LoadErrorKind::EmptyName),
+        ("Bell\u{7}", LoadErrorKind::NameNotPrintable { code_point: 7 }),
+        (
+            "Turn\u{202E}ed",
+            LoadErrorKind::NameNotPrintable { code_point: 0x202E },
+        ),
+        (
+            long.as_str(),
+            LoadErrorKind::FontFamilyTooLong {
+                bytes: MAX_FONT_FAMILY_BYTES + 1,
+            },
+        ),
+    ];
+    for (family, kind) in refusals {
+        rejects(
+            &map_of(&format!(r#","font":{}"#, quoted(family))),
+            "nodes[0].font",
+            kind.clone(),
+        );
+        rejects(
+            &map_of(&format!(
+                r#","sections":[{{"spans":[{{"text":"a","font":{}}}]}}]"#,
+                quoted(family)
+            )),
+            "nodes[0].sections[0].spans[0].font",
+            kind.clone(),
+        );
+        rejects(
+            &map_with(
+                &format!(r#","defaults":{{"ring":{{"font":{}}}}}"#, quoted(family)),
+                "",
+            ),
+            "defaults.ring.font",
+            kind,
+        );
+    }
+    for family in ["No Such Font", longest.as_str()] {
+        let font = node_font(&map_of(&format!(r#","font":{}"#, quoted(family))));
+        assert_eq!(
+            font.as_ref()
+                .and_then(FontRef::installed)
+                .map(|name| name.as_str()),
+            Some(family),
+            "{} bytes: loads as the installed family it names",
+            family.len()
+        );
+    }
+    assert_eq!(
+        node_font(&map_of(r#","font":"Public Pixel""#)),
+        Some(FontRef::Compiled(crate::font::fonts::AppFont::PublicPixel)),
+        "a compiled family loads as its face"
     );
-    rejects(
-        &map_of(r#","sections":[{"spans":[{"text":"a","font":"No Such Font"}]}]"#),
-        "nodes[0].sections[0].spans[0].font",
-        unknown("No Such Font"),
-    );
-    rejects(
-        &map_with(r#","defaults":{"ring":{"font":"No Such Font"}}"#, ""),
-        "defaults.ring.font",
-        unknown("No Such Font"),
-    );
-    rejects(&map_of(r#","font":"""#), "nodes[0].font", unknown(""));
-    // A compiled-in face loads.
-    assert!(load(&map_of(r#","font":"Public Pixel""#)).is_ok());
 }
 
 #[test]
-fn test_a_listed_family_loads_if_compiled_and_is_refused_if_only_installed() {
+fn test_every_listed_family_loads_as_its_source() {
     // Every family the font listing offers (`font list`, the console's
-    // completion, a `console_font`) is either a compiled face, which a map
-    // can name and load, or, on native, an installed system font (#228),
-    // attributed to the fallback face `AppFont::Any`, which has no name a
-    // file could write back: the loader refuses it until #329 lets a map
-    // name an installed family. A host with no installed family has
-    // nothing for the second arm, and says so.
-    use crate::font::fonts::{app_font_by_family, loaded_families_iter, AppFont};
+    // completion, `query.fonts`) loads when a map names it: a compiled
+    // family as its compiled face, an installed one (native, #228) by its
+    // name (#329). A host with no installed family has nothing for the
+    // second arm, and says so. Controls: `format::font` answering every
+    // name as installed, or every name as `AppFont::Any`, turns the
+    // compiled arm red at its first family (`212 Keyboard`); answering a
+    // name no compiled face bears as `AppFont::Any` turns the installed
+    // arm red (`Caladea`, where the host has it).
+    use crate::document::values::FontRef;
+    use crate::font::fonts::{loaded_families, FamilySource};
     let (mut compiled, mut installed) = (0, 0);
-    for family in loaded_families_iter() {
-        let map = map_of(&format!(r#","font":{}"#, serde_json::to_string(family).unwrap()));
-        match app_font_by_family(family) {
-            Some(AppFont::Any) => {
+    for family in loaded_families().iter() {
+        let map = map_of(&format!(
+            r#","font":{}"#,
+            serde_json::to_string(&family.name).unwrap()
+        ));
+        let font = node_font(&map);
+        match family.source {
+            FamilySource::Installed => {
                 installed += 1;
-                rejects(
-                    &map,
-                    "nodes[0].font",
-                    LoadErrorKind::UnknownFont {
-                        family: family.to_string(),
-                    },
+                assert_eq!(
+                    font.as_ref()
+                        .and_then(FontRef::installed)
+                        .map(|name| name.as_str()),
+                    Some(family.name.as_str()),
+                    "the installed family {:?} loads by its name",
+                    family.name
                 );
             }
-            Some(_) => {
+            FamilySource::Compiled(face) => {
                 compiled += 1;
-                assert!(load(&map).is_ok(), "the compiled family {family:?} does not load");
+                assert_eq!(
+                    font,
+                    Some(FontRef::Compiled(face)),
+                    "the compiled family {:?} loads as its face",
+                    family.name
+                );
             }
-            None => panic!("the listed family {family:?} resolves to no face"),
         }
     }
     assert!(

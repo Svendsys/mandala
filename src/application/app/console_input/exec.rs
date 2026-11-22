@@ -13,7 +13,7 @@ use crate::application::view::MapView;
 
 use super::super::input_context::InputHandlerContext;
 use super::super::DragState;
-use super::{push_scrollback_error, push_scrollback_output, push_scrollback_output_in_font};
+use super::{push_scrollback_error, push_scrollback_output, push_scrollback_output_with_sample};
 
 /// What one [`execute_console_line`] did.
 #[must_use = "a console line's outcome is its only report: print it, log it, or return it"]
@@ -143,6 +143,17 @@ pub(in crate::application::app) fn execute_console_line(
         });
     }
 
+    // So is a font rescan's: what it found, and what is still missing.
+    // One that found a font reshapes the units that drew in it, so the
+    // window owes a frame.
+    if let Some(ConsoleSideEffect::RescanFonts) = &side_effect {
+        let (result, changed_view) = rescan_fonts(ctx);
+        return Some(LineRun {
+            outcome: LineOutcome::Ran(result),
+            changed_view,
+        });
+    }
+
     // So is an edit's: what it lists, describes or ran. One that ran
     // changed the map, which the sync below draws.
     let mut edit_report = None;
@@ -204,9 +215,42 @@ pub(in crate::application::app) fn execute_console_line(
     })
 }
 
-/// Perform the side effect a verb asked for. The six that are a
+/// Look the host up again for the fonts the open map lacks
+/// (`missing_fonts::rescan`): `font rescan`, and the `RescanFonts`
+/// Action, which runs as that line. A rescan that found a font reshapes
+/// the units that drew in it (`MapView::faces_added`), since their
+/// glyphs move from the stand-in to the family's own faces, in one pass
+/// of the view that also delivers any change not yet synced; one that
+/// found nothing changes nothing. Returns the report and whether the
+/// view changed.
+fn rescan_fonts(ctx: &mut InputHandlerContext<'_>) -> (ExecResult, bool) {
+    let Some(doc) = ctx.document.as_mut() else {
+        return (ExecResult::err("font rescan: no map is open"), false);
+    };
+    let (found, still) = crate::application::missing_fonts::rescan(doc);
+    if !found.is_empty() {
+        match ctx.view.as_mut() {
+            Some(view) => {
+                view.faces_added(doc, ctx.renderer, &found);
+            }
+            None => *ctx.view = Some(MapView::load(doc, ctx.renderer)),
+        }
+    }
+    let found_line = if found.is_empty() {
+        "font rescan: no missing font is installed yet".to_string()
+    } else {
+        format!("font rescan: found {}", found.join(", "))
+    };
+    let report = match doc.font_notice() {
+        Some(still_line) if !still.is_empty() => format!("{found_line}; {still_line}"),
+        _ => format!("{found_line}; no font is missing"),
+    };
+    (ExecResult::ok_msg(report), !found.is_empty())
+}
+
+/// Perform the side effect a verb asked for. The seven that are a
 /// line's whole report (`Record`, `Clock`, `Edit`, `Present`, `Verb`,
-/// `Screenshot`) are taken by
+/// `Screenshot`, `RescanFonts`) are taken by
 /// [`execute_console_line`] before this is reached.
 fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffect) {
     match effect {
@@ -225,7 +269,8 @@ fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffec
         | ConsoleSideEffect::Clock(_)
         | ConsoleSideEffect::Edit(_)
         | ConsoleSideEffect::Present(_)
-        | ConsoleSideEffect::Verb(_) => {
+        | ConsoleSideEffect::Verb(_)
+        | ConsoleSideEffect::RescanFonts => {
             log::error!("console: {effect:?} reached the side-effect handler; it is taken before — ignoring");
         }
     }
@@ -246,7 +291,13 @@ fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffec
 /// moves, when `event_cursor_moved` recomputes it.
 fn install_document(ctx: &mut InputHandlerContext<'_>, new_doc: MindMapDocument) {
     let doc = ctx.document.insert(new_doc);
+    // Before the view is projected: a font installed since launch is
+    // found by the rescan, and drawn by this projection (#329).
+    let missing = crate::application::missing_fonts::on_open(doc, false);
     *ctx.view = Some(MapView::load(doc, ctx.renderer));
+    if super::open_missing_font_prompt(ctx.console_state, ctx.console_history, doc, &missing) {
+        super::rebuild_console_overlay(ctx.console_state, doc, ctx.app_scene, ctx.renderer, ctx.keybinds);
+    }
     *ctx.color_picker_state = ColorPickerState::Closed;
     *ctx.drag_state = DragState::None;
     *ctx.last_click = None;
@@ -279,7 +330,7 @@ pub(in crate::application::app) fn print_console_line(
         LineOutcome::Ran(ExecResult::Ok(s)) if !s.is_empty() => push_scrollback_output(console_state, s),
         LineOutcome::Ran(ExecResult::Lines(lines)) => {
             for line in lines {
-                push_scrollback_output_in_font(console_state, line.text, line.font_family);
+                push_scrollback_output_with_sample(console_state, line.text, line.sample_face);
             }
         }
         // Blank lines, empty successes, and the failures handled above.

@@ -103,6 +103,12 @@ pub enum ConsoleSideEffect {
     /// the open map, on the app clock (`app::console_input`), and its
     /// report becomes the line's output.
     Verb(commands::verb::VerbLine),
+    /// Look the host up again for the fonts the map lacks. Set by
+    /// `font rescan`, which only reads the line; the executor rescans
+    /// (`missing_fonts::rescan`), reshapes the units that drew in what it
+    /// found (`MapView::faces_added`), and its report becomes the line's
+    /// output (#329).
+    RescanFonts,
 }
 
 impl std::fmt::Debug for ConsoleSideEffect {
@@ -121,6 +127,7 @@ impl std::fmt::Debug for ConsoleSideEffect {
             Self::Edit(line) => f.debug_tuple("Edit").field(line).finish(),
             Self::Present(line) => f.debug_tuple("Present").field(line).finish(),
             Self::Verb(line) => f.debug_tuple("Verb").field(line).finish(),
+            Self::RescanFonts => write!(f, "RescanFonts"),
         }
     }
 }
@@ -242,14 +249,25 @@ impl LineOutcome {
     }
 }
 
-/// One line of multi-line console output. Default-shaped (font
-/// family unset) unless the producing command pins a face — used
-/// today by `font list` so each row renders in the family it
-/// names.
+/// The sample a font row draws in the family it names, after the name:
+/// the standard font-picker form, in which the name itself is in the
+/// console's face so it always reads, and the sample shows the face.
+/// Drawn only where the family's compiled face maps every character of
+/// it ([`crate::application::console::commands::font::sample_face`]).
+pub const FONT_SAMPLE: &str = "Aa";
+
+/// What separates a row's text from its [`FONT_SAMPLE`], in the
+/// console's face.
+pub const FONT_SAMPLE_GAP: &str = "  ";
+
+/// One line of multi-line console output, in the console's face.
+/// `sample_face` is the family a [`FONT_SAMPLE`] after the text is drawn
+/// in, or `None` for no sample — set by `font list`, so each compiled
+/// family that can draw it shows what it looks like.
 #[derive(Clone, Debug, Default)]
 pub struct OutputLine {
     pub text: String,
-    pub font_family: Option<String>,
+    pub sample_face: Option<String>,
 }
 
 impl OutputLine {
@@ -257,7 +275,7 @@ impl OutputLine {
     pub fn plain(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
-            font_family: None,
+            sample_face: None,
         }
     }
 }
@@ -286,10 +304,10 @@ impl ExecResult {
 }
 
 /// One rendered line in the scrollback. Colored at render time by
-/// variant. The `Output` variant additionally carries an optional
-/// `font_family` — set by `font list` so each font name shapes in
-/// its own face. `Input` echoes and `Error` lines always use the
-/// console default font.
+/// variant, and drawn in the console's face. The `Output` variant
+/// additionally carries an optional `sample_face` — set by `font list`
+/// so a [`FONT_SAMPLE`] after a family's name is drawn in that family.
+/// `Input` echoes and `Error` lines carry none.
 #[derive(Clone, Debug)]
 pub enum ConsoleLine {
     /// Echo of a user-entered command (`> anchor set from auto`).
@@ -297,10 +315,9 @@ pub enum ConsoleLine {
     /// Normal output line from a command.
     Output {
         text: String,
-        /// Pinned font family for this line, or `None` for the
-        /// console default. Set by commands like `font list` that
-        /// want each row in its own face.
-        font_family: Option<String>,
+        /// The family a [`FONT_SAMPLE`] after the text is drawn in,
+        /// or `None` for no sample ([`OutputLine::sample_face`]).
+        sample_face: Option<String>,
     },
     /// Error output from a failed command.
     Error(String),

@@ -27,10 +27,9 @@
 
 use crate::document::element::{DocElement, DocKind, TextStyle};
 use crate::document::values::{
-    Align, Anchor, ColorRef, Direction, Edge, FitMode, FontSize, LinkKind, PlainColor, Shape,
+    Align, Anchor, ColorRef, Direction, Edge, FitMode, FontRef, FontSize, LinkKind, PlainColor, Shape,
 };
 use crate::engine::predicate::{Comparator, Inspect};
-use crate::font::fonts::AppFont;
 use serde::{Deserialize, Serialize};
 
 /// A facet of a document element a predicate can test, with the value
@@ -85,7 +84,7 @@ pub enum DocField {
     Align(Align),
     /// The face of an element's text style: a node's, section's,
     /// span's, frame's, ring's, cap's or label's.
-    Font(AppFont),
+    Font(FontRef),
     /// The text size: a text style's, a path's (in points) or a portal
     /// end's (in points).
     FontSize(FontSize),

@@ -125,7 +125,7 @@ pub fn completion_signature(line: &str, sel: Sel) -> String {
             if let Some(h) = &c.hint {
                 s.push_str(&format!(" [{}]", h));
             }
-            if let Some(f) = &c.font_family {
+            if let Some(f) = &c.sample_face {
                 s.push_str(&format!(" <{}>", f));
             }
             escape(&s)
@@ -210,14 +210,17 @@ fn test_console_oracle_completions_are_unchanged() {
 /// One slot offers it, `font family=<TAB>`, from one body
 /// ([`crate::application::console::commands::font::font_family_completions`]),
 /// and it offers exactly the families a map can name
-/// (`format::font`), which is what `family=` accepts: a host font the
-/// loader would refuse (#329) is never offered. A second body once
-/// lacked the quoting asserted below, so 43 of a host's 77 families
-/// tab-accepted into a line the verb refused.
+/// (`format::font`), which is what `family=` accepts: every loaded one,
+/// compiled or installed (#329), an installed one hinted `installed`. A
+/// second body once lacked the quoting asserted below, so 43 of a host's
+/// 77 families tab-accepted into a line the verb refused.
 #[test]
 fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
-    let families: Vec<&str> = baumhard::font::fonts::loaded_families_iter()
-        .filter(|family| baumhard::document::format::font(family).is_some())
+    let loaded = baumhard::font::fonts::loaded_families();
+    let families: Vec<&str> = loaded
+        .iter()
+        .map(|family| family.name.as_str())
+        .filter(|family| baumhard::document::format::font(family).is_ok())
         .collect();
     assert!(
         !families.is_empty(),
@@ -228,7 +231,9 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
     let ctx = ConsoleContext::from_document(&doc);
     for (line, sentinels) in [("font family=", &["reset"][..] as &[&str])] {
         let all = complete(line, line.len(), &ctx);
-        let (rows, extra): (Vec<_>, Vec<_>) = all.into_iter().partition(|c| c.font_family.is_some());
+        let (extra, rows): (Vec<_>, Vec<_>) = all
+            .into_iter()
+            .partition(|c| sentinels.contains(&c.display.as_str()));
         assert_eq!(
             extra.iter().map(|c| c.display.as_str()).collect::<Vec<_>>(),
             sentinels,
@@ -239,7 +244,7 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
             families,
             "`{line}<TAB>` offers one row per family a map can name"
         );
-        // The shaped face is the fourth channel
+        // The sample's face is the fourth channel
         // `completion_signature` renders, and the only one no
         // pinned row exercises — every corpus line whose popup
         // carries a family is a font vocabulary, and those are
@@ -247,13 +252,26 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
         // reason above. `is_some()` alone left the channel
         // effectively unchecked: replacing every family tag with
         // one constant sentinel kept all four oracle tests green.
-        // The row must name *its own* family, not merely some
-        // family.
+        // The row's sample must be in *its own* family, not merely
+        // some family — on a compiled family whose face maps every
+        // character of the sample; a face that lacks one, and an
+        // installed family, show no sample, never `.notdef` boxes
+        // (#329's font-picker form: the name is in the console's
+        // face). Control: sampling every row in its family turns the
+        // symbol faces' rows red.
         for c in &rows {
+            let compiled = loaded.iter().any(|f| {
+                f.name == c.display && matches!(f.source, baumhard::font::fonts::FamilySource::Compiled(_))
+            });
+            let own = compiled
+                && baumhard::font::fonts::compiled_family_maps(
+                    &c.display,
+                    crate::application::console::FONT_SAMPLE,
+                );
             assert_eq!(
-                c.font_family.as_deref(),
-                Some(c.display.as_str()),
-                "each family row of `{line}<TAB>` shapes its own label"
+                c.sample_face.as_deref(),
+                own.then_some(c.display.as_str()),
+                "each family row of `{line}<TAB>` samples its own face where the face can"
             );
             // Tab-accept has to produce a line the verb accepts.
             // A family whose name carries whitespace is one token
@@ -267,6 +285,18 @@ fn test_console_oracle_font_vocabularies_track_the_loaded_families() {
             assert_eq!(
                 c.text, want,
                 "`{line}<TAB>` must insert a parseable token for {:?}",
+                c.display
+            );
+            // An installed family is marked apart from the compiled
+            // ones (#329). Control: no hint on any row turns an
+            // installed row red, where the host has one.
+            let installed = loaded.iter().any(|family| {
+                family.name == c.display && family.source == baumhard::font::fonts::FamilySource::Installed
+            });
+            assert_eq!(
+                c.hint.as_deref(),
+                installed.then_some("installed"),
+                "`{line}<TAB>` marks {:?} by where it comes from",
                 c.display
             );
         }

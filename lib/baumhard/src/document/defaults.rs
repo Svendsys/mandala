@@ -20,9 +20,8 @@
 
 use crate::document::resolve::{BorderPoint, ResolvedText};
 use crate::document::values::{
-    Direction, Edge, FitMode, FontSize, LineSpan, Percent, Rgba, Shape, Sides, StartPoint, Weight,
+    Direction, Edge, FitMode, FontRef, FontSize, LineSpan, Percent, Rgba, Shape, Sides, StartPoint, Weight,
 };
-use crate::font::fonts::AppFont;
 
 /// The map's background when the file does not give one: black
 /// (V1-B12, "a single background color, default black").
@@ -68,10 +67,10 @@ pub const LABEL_SIZE_FACTOR: f32 = 1.1;
 /// The text every flow falls back to before its size and color: no
 /// pinned face — today's run font, `"LiberationSans"`, names no
 /// compiled-in face and resolves to none, so text draws in the
-/// shaper's fallback face (`AppFont::Any`) — regular weight, upright.
+/// default face ([`FontRef::DEFAULT`]) — regular weight, upright.
 const fn text(size: FontSize, color: Rgba) -> ResolvedText {
     ResolvedText {
-        font: AppFont::Any,
+        font: FontRef::DEFAULT,
         size,
         color,
         weight: Weight::NORMAL,

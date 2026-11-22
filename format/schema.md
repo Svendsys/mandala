@@ -85,7 +85,9 @@ What holds for every value:
   without alpha digits), they read to the same value and the saver
   writes the canonical one.
 - **A reference that names nothing is an error:** a `parent`, a link's
-  `to`, a verb, a palette, a theme variable, a font.
+  `to`, a verb, a palette, a theme variable. A font is not one: a name
+  no compiled face bears is an installed family, which the machine
+  opening the map may lack ([Fonts](#fonts)).
 - **Names become indices when the file is read and never again.** A
   `var(accent)` is a variable of the theme, resolved by name. The
   document holds indices; the file never does, because an index is
@@ -364,7 +366,7 @@ The five text-style keys, on everything that has text.
 
 | Key | Type | Required | Default | Meaning |
 |---|---|---|---|---|
-| `font` | string | no | unset | A font family name. It must be a face compiled into this build (see [Fonts](#fonts)). |
+| `font` | string | no | unset | A font family name: a compiled one, or an installed one, present on this machine or not (see [Fonts](#fonts)). |
 | `size` | number | no | unset | Points, `0.5` to `4096`; or, inside a frame, a [fraction](#size-units). |
 | `color` | [color](#colors) | no | unset | The text color. |
 | `weight` | [weight](#weight) | no | unset | The weight. |
@@ -990,14 +992,19 @@ by the ring.
 
 ### Fonts
 
-`font` is a font family name that resolves to a face compiled into this
-build, for example `"Public Pixel"`. A family that is not compiled in is
-an error, including one that happens to be installed on this machine:
-such a family resolves to the fallback face, which has no name a file
-can write back, and the same map would mean something else on another
-machine (naming an installed family is #329, [`fonts.md`](./fonts.md)). A face with several family names loads
-under any of them and is written under the first. A span that names no
-family is drawn in the default face, Inter.
+`font` is a font family name: a family compiled into this build, for
+example `"Public Pixel"`, drawn alike on every target; or any other
+name, an **installed family**, for example `"DejaVu Serif"`, drawn in
+its faces where the machine has it and, where it does not, in the
+default face until the user installs it or picks a replacement
+([`fonts.md`](./fonts.md#installed-families), #329). A map never fails
+to load for a family it names. A name that cannot be a family is an
+error: an empty one, one with a control or bidi character, and one
+longer than 256 bytes. A compiled face with several family names loads
+under any of them and is written under the first; an installed family
+is written back by the name it was read with, whether or not this
+machine has it. A span that names no family is drawn in the default
+face, Inter.
 
 ### Numbers
 
@@ -1103,8 +1110,8 @@ would have had in the file.
 | Limit | Value |
 |---|---|
 | The text | Unbounded on native. On wasm32 the text is refused above `MAX_MAP_BYTES`, 268,435,456 bytes, before it is parsed (`TooLarge`). |
-| Elements | On native, at most 4,294,967,294 (`u32::MAX - 1`, the arena's slot count). On wasm32 a map may become at most `MAX_ELEMENTS`, 3,355,443 elements. Each verb, edit and presentation counts as one; the one past either bound is refused, before it is built, at its path (`TooManyElements`). |
-| Why those two | On wasm32 memory is the only limit, and a map costs memory by its text and by its elements: its peak while it loads and is saved is at most `text × 6 + elements × 480` bytes, measured on the densest maps the format allows, by the browser's own allocator. Each limit takes half of a 3 GiB budget, so a map under both never traps the page. A document that would be refused there cannot be saved there. |
+| Elements | On native, at most 4,294,967,294 (`u32::MAX - 1`, the arena's slot count). On wasm32 a map may become at most `MAX_ELEMENTS`, 3,145,728 elements. Each verb, edit and presentation counts as one; the one past either bound is refused, before it is built, at its path (`TooManyElements`). |
+| Why those two | On wasm32 memory is the only limit, and a map costs memory by its text and by its elements: its peak while it loads and is saved is at most `text × 6 + elements × 512` bytes, measured on the densest maps the format allows, by the browser's own allocator. Each limit takes half of a 3 GiB budget, so a map under both never traps the page. A document that would be refused there cannot be saved there. |
 | The tree's depth | **None.** Every walk is iterative. |
 | The number of nodes | None beyond the ids there are and, on wasm32, the element bound above. |
 | A node's JSON nesting | At most 9 levels below the node object, by the schema: a portal end's label's span's link target is the deepest. The JSON reader allows 128, and reads each node on its own, so a valid file never comes near it; a text that does is refused, never a crash. |

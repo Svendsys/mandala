@@ -18,7 +18,11 @@
 //!
 //! **Strict.** Every object denies unknown keys, a wrong type is an
 //! error, and a reference — a `parent`, a link's `to`, a verb, a
-//! palette, a theme variable, a font — that names nothing is an error.
+//! palette, a theme variable — that names nothing is an error. A font is
+//! not a reference to anything the map defines: any valid family name
+//! loads, as a compiled face or as an installed family, whether or not
+//! any machine has it, and only a name that cannot be a family is
+//! refused (#329, `format/fonts.md` "Installed families").
 //! A row listed out of order (nodes, sections, rings) is refused, never
 //! sorted. There is no preserved-unknown-keys mechanism and no
 //! skipped-construct report: a file is a document or it does not load,
@@ -29,8 +33,11 @@
 //! file is read (`"var(accent)"` to a
 //! [`VarId`](crate::document::values::VarId), a palette name to a
 //! [`PaletteId`](crate::document::values::PaletteId), a family name to
-//! an [`AppFont`](crate::font::fonts::AppFont)); the document never
-//! holds a string form. Every number goes through
+//! a [`FontRef`](crate::document::values::FontRef)). The one name the
+//! document keeps as text is an installed family's, since no index can
+//! stand for a family that need not be on this machine
+//! ([`FamilyName`](crate::document::values::FamilyName)); everything
+//! else holds no string form. Every number goes through
 //! [`bounds`](crate::document::bounds).
 //!
 //! **Deterministic on write.** An unchanged document saves
@@ -158,10 +165,12 @@ pub const WASM32_BYTES_PER_TEXT_BYTE: u64 = 6;
 /// nodes and held by one — at the load's peak and at the save's, and
 /// rounded up to 16 bytes. It is essentially three arena slots: the
 /// arena's old buffer and its new one, twice the size, while it doubles.
-/// 480 since V1-A7 (#301) compacted the slot — 124 bytes for a
-/// document element on wasm32, from 144 — measured by the probe at
-/// 479.99 (empty sections and empty rings on one node); 576 before.
-pub const WASM32_BYTES_PER_ELEMENT: u64 = 480;
+/// 512 since V1-B24 (#329) let a text style name an installed font family
+/// by a shared name, a pointer where a compiled face's one byte was —
+/// measured by the probe at 501.5 (empty sections and empty rings on one
+/// node); 480 from V1-A7 (#301), which compacted the slot (124 bytes for
+/// a document element on wasm32, from 144); 576 before that.
+pub const WASM32_BYTES_PER_ELEMENT: u64 = 512;
 
 /// wasm32's ceiling on a map's text: half of [`WASM32_MEMORY_BUDGET`]
 /// over [`WASM32_BYTES_PER_TEXT_BYTE`].
@@ -794,15 +803,29 @@ pub(crate) fn color_of(
 }
 
 /// The face the font family name `family` stands for, as the loader
-/// reads a `font` key: a family this build compiles in and a file can
-/// name ([`nameable_font`](crate::document::place::nameable_font)), or
-/// `None` — for an unknown name, and for one that is only an installed
-/// system font (#329). One rule for a file and for a typed name, so the
-/// console accepts exactly the faces a load does.
+/// reads a `font` key: the compiled face that bears the name, or else the
+/// installed family of that name (#329) — whether or not this machine
+/// has it, since a map names a family and the machine it is opened on
+/// may lack it ([`FontRef::Installed`](crate::document::values::FontRef::Installed)).
+/// Refused only for a name that cannot be one
+/// ([`family_fault`](crate::document::place::family_fault)). One rule for
+/// a file and for a typed name, so the console accepts exactly the faces
+/// a load does.
 ///
-/// Cost: a scan of the compiled-in families (about 30).
-pub fn font(family: &str) -> Option<crate::font::fonts::AppFont> {
-    crate::font::fonts::app_font_by_family(family).filter(|font| crate::document::place::nameable_font(*font))
+/// Builds no font system and scans no host font: an unaffected map is
+/// read, and laid out, as it was.
+///
+/// Cost: a binary search of the compiled families, and for an installed
+/// one the name's length and one allocation.
+pub fn font(family: &str) -> Result<crate::document::values::FontRef, crate::document::place::FamilyFault> {
+    use crate::document::values::{FamilyName, FontRef};
+    if let Some(fault) = crate::document::place::family_fault(family) {
+        return Err(fault);
+    }
+    Ok(match crate::font::fonts::app_font_by_family(family) {
+        Some(font) => FontRef::Compiled(font),
+        None => FontRef::Installed(FamilyName::checked(family)),
+    })
 }
 
 /// `rgba` in the file's spelling: `#rrggbb`, or `#rrggbbaa` when it is

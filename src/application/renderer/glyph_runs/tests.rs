@@ -51,7 +51,7 @@ const SIZE: f32 = 20.0;
 
 fn style(points: f32, color: Rgba) -> ResolvedText {
     ResolvedText {
-        font: FACE,
+        font: FACE.into(),
         size: FontSize::Pt(points),
         color,
         weight: Weight::NORMAL,

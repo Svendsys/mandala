@@ -51,8 +51,9 @@ rise and fall together.
 - **Font** through `baumhard::font::fonts`. `fonts::init()` once at
   startup; acquire `FONT_SYSTEM` through `acquire_font_system_write`
   (or its `try_` / `_read` siblings — there is no other way in);
-  resolve families through `app_font_by_family` /
-  `loaded_families_iter`. Region-styled text reaches cosmic-text only
+  resolve a map's family names through `document::format::font`, and
+  list families through `loaded_families` (compiled and installed) or
+  `compiled_families`. Region-styled text reaches cosmic-text only
   through `baumhard::font::attrs` (`attrs_list_from_regions`,
   `RegionFamilies`, `rich_text_spans_from_regions`). New code does
   not reach into `cosmic_text` from the app crate, with the renderer
@@ -538,11 +539,8 @@ industrial cost/benefit reasoning. This is not license for speculation.
   poisoned, re-entrant or unavailable guard raises — a message rather
   than an `expect` only because the helper has no `Result` to hand
   back: a lock that cannot be had is not something the caller can
-  recover from. And `COMPILED_IDS.get`, where the compiled font table
-  reads the ids the font system's build recorded: the build sets them
-  before the lock holds it, so an unset table is that invariant broken,
-  and an empty one in its place would resolve every compiled pin to
-  nothing in silence (#323). Two
+  recover from. (The compiled font table needs no such read since #329:
+  it is parsed in place on first use, and has nothing unset to find.) Two
   things in the phase list cannot fail, and are inside the boundary
   rather than exceptions to it: `fonts::init` itself returns `()`, and
   the query-string extractor is infallible by construction —

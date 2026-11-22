@@ -298,6 +298,16 @@ pub const VERBS: &[Verb] = &[
         example: "mandalactl query.undo 5",
     },
     Verb {
+        name: "query.fonts",
+        summary: "The fonts a map can name here, compiled or installed, and the installed fonts the map names \
+                  that this machine lacks.",
+        params: &[],
+        positional: &[],
+        effect: Effect::Reads,
+        render: Render::Flat,
+        example: "mandalactl query.fonts",
+    },
+    Verb {
         name: "query.animations",
         summary:
             "What is animating: each presentation instance playing (node, t, direction) and a running animated edit.",

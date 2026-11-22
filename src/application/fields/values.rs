@@ -15,9 +15,8 @@
 use baumhard::document::format;
 use baumhard::document::ids::Document;
 use baumhard::document::values::{
-    Align, ColorRef, Direction, FitMode, LineSpan, Shape, Sides, StartPoint, Weight,
+    Align, ColorRef, Direction, FitMode, FontRef, LineSpan, Shape, Sides, StartPoint, Weight,
 };
-use baumhard::font::fonts::AppFont;
 
 /// The word that clears a field so it inherits.
 pub(crate) const RESET: &str = "reset";
@@ -49,10 +48,12 @@ pub(crate) fn color(doc: &Document, text: &str) -> Result<Option<ColorRef>, Stri
     })
 }
 
-/// A font family a map may name, as the loader reads one, or [`RESET`].
-pub(crate) fn font(text: &str) -> Result<Option<AppFont>, String> {
+/// A font family a map may name, as the loader reads one — a compiled
+/// face, or an installed family, whether or not this machine has it
+/// (#329) — or [`RESET`].
+pub(crate) fn font(text: &str) -> Result<Option<FontRef>, String> {
     or_reset(text, |text| {
-        format::font(text).ok_or_else(|| format!("'{text}' is not a font a map can name"))
+        format::font(text).map_err(|fault| format!("'{text}': {fault}"))
     })
 }
 

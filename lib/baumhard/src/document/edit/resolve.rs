@@ -28,14 +28,14 @@ use crate::document::inspect::DocField;
 use crate::document::mutation::ops::{
     DocMutation, FrameOp, LabelOp, LayoutOp, NodeOp, PathOp, PortalEndOp, RingOp, SectionOp, SpanOp, TextOp,
 };
-use crate::document::place::{nameable_font, Unit};
+use crate::document::place::{FamilyFault, Unit};
 use crate::document::values::{
-    check_link_url, Anchor, ColorRef, FitMode, FontSize, LineSpan, LinkKind, LinkRefusal, LinkTarget,
-    PaletteId, Percent, PlainColor, Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
+    check_link_url, Anchor, ColorRef, FitMode, FontRef, FontSize, LineSpan, LinkKind, LinkRefusal,
+    LinkTarget, PaletteId, Percent, PlainColor, Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight,
+    ZoomWindow,
 };
 use crate::engine::builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
 use crate::engine::predicate::Predicate;
-use crate::font::fonts::{app_font_by_family, AppFont};
 use glam::Vec2;
 
 /// What a name names, for a refusal.
@@ -47,8 +47,6 @@ pub(crate) enum NameKind {
     Palette,
     /// A verb.
     Verb,
-    /// A font family.
-    Font,
 }
 
 /// Why an authored value could not be made concrete.
@@ -77,6 +75,14 @@ pub(crate) enum Fault {
         /// Why.
         message: &'static str,
     },
+    /// A font family name that cannot be one (#329): any other names a
+    /// compiled face or an installed family, present or not.
+    Family {
+        /// The field.
+        field: &'static str,
+        /// Why.
+        fault: FamilyFault,
+    },
 }
 
 impl Fault {
@@ -94,12 +100,12 @@ impl Fault {
                         NameKind::Variable => "theme variable",
                         NameKind::Palette => "palette",
                         NameKind::Verb => "verb",
-                        NameKind::Font => "font family",
                     }
                 )),
             ),
             Fault::Bound { field, error } => (field, Err(error.to_string())),
             Fault::Invalid { field, message } => (field, Err(message.to_string())),
+            Fault::Family { field, fault } => (field, Err(fault.to_string())),
         }
     }
 
@@ -470,16 +476,12 @@ fn verb(field: &'static str, id: &str, names: Names<'_>) -> Resolved<VerbId> {
     })
 }
 
-/// A compiled-in face by family name, as the loader reads one: a name
-/// this build has no nameable face for is refused, on every map.
-fn font(family: &str) -> Resolved<AppFont> {
-    app_font_by_family(family)
-        .filter(|font| nameable_font(*font))
-        .ok_or_else(|| Fault::Unknown {
-            field: "font",
-            kind: NameKind::Font,
-            name: family.to_string(),
-        })
+/// A face by family name, as the loader reads a map's `font` key
+/// ([`format::font`](crate::document::format::font)): a compiled face,
+/// or an installed family, whether or not this machine has it (#329). A
+/// name that cannot be a family is refused, on every map.
+fn font(family: &str) -> Resolved<FontRef> {
+    crate::document::format::font(family).map_err(|fault| Fault::Family { field: "font", fault })
 }
 
 /// A channel, held to [`bounds::MAX_CHANNEL`] as the loader holds one.

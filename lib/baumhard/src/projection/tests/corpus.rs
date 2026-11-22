@@ -345,7 +345,7 @@ fn text_op(c: &mut Choices, rel: bool) -> (&'static str, TextOp) {
     match c.below(7) {
         0 => (
             "Text::SetFont",
-            TextOp::SetFont(c.one_in(2).then_some(AppFont::Novem)),
+            TextOp::SetFont(c.one_in(2).then_some(AppFont::Novem.into())),
         ),
         1 => (
             "Text::SetSize",

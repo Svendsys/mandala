@@ -422,7 +422,7 @@ in `snake_case`, beside the same comparators as above:
 | `zoom_min`, `zoom_max` | number | node, connector, link |
 | `offset_x`, `offset_y` | number | section |
 | `align` | `"left"`, `"center"`, `"right"` | section |
-| `font` | a compiled-in face, as `AppFont` spells it | node, section, span, frame, ring, cap, label |
+| `font` | a font family name, as a map's `font` key spells it: a compiled family, or an installed one | node, section, span, frame, ring, cap, label |
 | `font_size` | `{"pt": n}` or `{"rel": n}` | those, plus connector, link and portal end (points) |
 | `color` | a color | those, plus connector, link and portal end |
 | `weight` | 100–900 | node, section, span, frame, ring, cap, label |

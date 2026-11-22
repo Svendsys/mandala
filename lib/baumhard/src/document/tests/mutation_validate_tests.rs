@@ -976,10 +976,10 @@ pub fn do_document_validate_refuses_the_fallback_font() {
         )
     };
     assert!(matches!(
-        validate(&set_font(Some(AppFont::Any)), &doc),
+        validate(&set_font(Some(AppFont::Any.into())), &doc),
         Err(MutationError::AnyFont { .. })
     ));
-    assert_eq!(validate(&set_font(Some(AppFont::Evilz)), &doc), Ok(()));
+    assert_eq!(validate(&set_font(Some(AppFont::Evilz.into())), &doc), Ok(()));
     assert_eq!(validate(&set_font(None), &doc), Ok(()));
 
     let section_with = |font| {
@@ -1001,11 +1001,11 @@ pub fn do_document_validate_refuses_the_fallback_font() {
             },
         )
     };
-    match validate(&section_with(AppFont::Any), &doc) {
+    match validate(&section_with(AppFont::Any.into()), &doc) {
         Err(MutationError::AnyFont { at }) => assert_eq!(at.subtree, Some(vec![0])),
         other => panic!("expected the fallback font refused, got {other:?}"),
     }
-    assert_eq!(validate(&section_with(AppFont::Evilz), &doc), Ok(()));
+    assert_eq!(validate(&section_with(AppFont::Evilz.into()), &doc), Ok(()));
 
     let replace = |font| {
         let mut defaults = DefaultsData::default();
@@ -1016,10 +1016,10 @@ pub fn do_document_validate_refuses_the_fallback_font() {
         )
     };
     assert!(matches!(
-        validate(&replace(AppFont::Any), &doc),
+        validate(&replace(AppFont::Any.into()), &doc),
         Err(MutationError::AnyFont { .. })
     ));
-    assert_eq!(validate(&replace(AppFont::Evilz), &doc), Ok(()));
+    assert_eq!(validate(&replace(AppFont::Evilz.into()), &doc), Ok(()));
 }
 
 #[test]
@@ -1249,7 +1249,7 @@ pub fn do_document_validate_walks_a_deep_insert() {
         bottom = &mut bottom.children[1];
     }
     if let DocElement::Node(node) = &mut bottom.root {
-        node.style.text.font = Some(crate::font::fonts::AppFont::Any);
+        node.style.text.font = Some(crate::font::fonts::AppFont::Any.into());
     }
     let bad = insert(bad);
     match validate(&bad, &doc) {

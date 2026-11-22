@@ -6,7 +6,9 @@
 //! `maptool verify` reads it, so that a verb an edit names is not
 //! reported as unreferenced, a node or portal an edit can show is not
 //! reported as never shown, and a name an edit writes that its map does
-//! not define is reported ([`Mention::is_defined_in`]).
+//! not define is reported ([`Mention::is_defined_in`]). The same walk
+//! finds the font families an edit writes ([`EditDef::fonts`]), which
+//! the missing-font report reads.
 //!
 //! Every edit type is walked by name: structs are destructured without
 //! `..` and enums matched without a wildcard, so a step added to the
@@ -41,7 +43,8 @@ pub struct Shows {
 /// What a name an edit or a presentation writes names, and so what the
 /// map must define for a run to resolve it. Fonts are not here: a font
 /// is not a name a map defines, and the loader's font rules decide it
-/// (`format/fonts.md`).
+/// (`format/fonts.md`); [`EditDef::fonts`] reports the families a
+/// definition writes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Named {
     /// A verb, by id: a node's `set_click` or `set_hover`, a span's
@@ -149,6 +152,24 @@ impl EditDef {
     /// Cost: one walk of the definition, one call of `mention` per name
     /// it writes, and the allocation of that name's path.
     pub fn mentions<'a>(&'a self, mut mention: impl FnMut(Mention<'a>)) -> Shows {
+        self.walk(Walk::new(Some(&mut mention), &mut |_| {}))
+    }
+
+    /// Calls `font` with each font family name this edit writes — a text
+    /// op's `set_font`, a filter's `font` field — wherever in it, in the
+    /// order [`Self::mentions`] walks: what tells the missing-font report
+    /// which definitions name a family a replacement does not rewrite
+    /// (#329). A family is not a [`Mention`]: any valid name loads, as a
+    /// compiled or an installed family (`format/fonts.md`).
+    ///
+    /// Cost: one walk of the definition, one call of `font` per name, and
+    /// no allocation.
+    pub fn fonts<'a>(&'a self, mut font: impl FnMut(&'a str)) {
+        self.walk(Walk::new(None, &mut font));
+    }
+
+    /// `walk` over this edit's filter and body.
+    fn walk<'a>(&'a self, mut walk: Walk<'a, '_>) -> Shows {
         let EditDef {
             id: _,
             name: _,
@@ -159,7 +180,6 @@ impl EditDef {
             body,
             animate: _,
         } = self;
-        let mut walk = Walk::new(&mut mention);
         if let Some(Filter(filter)) = filter {
             walk.filter(filter);
         }
@@ -177,17 +197,26 @@ impl EditDef {
 /// go, where in the definition the walk is, and what it has found it can
 /// show.
 pub(in crate::document) struct Walk<'a, 'f> {
-    mention: &'f mut dyn FnMut(Mention<'a>),
+    /// Where each name goes; `None` for a walk that wants only fonts,
+    /// which then renders no path.
+    mention: Option<&'f mut dyn FnMut(Mention<'a>)>,
+    /// Where each font family name goes.
+    font: &'f mut dyn FnMut(&'a str),
     path: Vec<Seg>,
     pub(in crate::document) shows: Shows,
 }
 
 impl<'a, 'f> Walk<'a, 'f> {
-    /// A walk that hands each name it meets to `mention`, having found
-    /// nothing yet.
-    pub(in crate::document) fn new(mention: &'f mut dyn FnMut(Mention<'a>)) -> Self {
+    /// A walk that hands each name it meets to `mention`, if there is
+    /// one, and each font family name to `font`, having found nothing
+    /// yet.
+    pub(in crate::document) fn new(
+        mention: Option<&'f mut dyn FnMut(Mention<'a>)>,
+        font: &'f mut dyn FnMut(&'a str),
+    ) -> Self {
         Walk {
             mention,
+            font,
             path: Vec::new(),
             shows: Shows::default(),
         }
@@ -205,8 +234,14 @@ impl<'a, 'f> Walk<'a, 'f> {
     /// Reports `name`, a `kind` that the key `leaf` below the walk writes
     /// and a refusal calls `field`.
     fn name(&mut self, kind: Named, field: &'static str, leaf: &'static str, name: &'a str) {
+        if self.mention.is_none() {
+            return;
+        }
         let path = self.at(&[Seg::Key(leaf)], |w| render_path(&w.path));
-        (self.mention)(Mention {
+        let Some(mention) = self.mention.as_mut() else {
+            return;
+        };
+        mention(Mention {
             kind,
             field,
             name,
@@ -301,6 +336,7 @@ impl<'a, 'f> Walk<'a, 'f> {
             FieldDto::Palette(palette) => self.name(Named::Palette, "palette", "palette", palette),
             FieldDto::Background(color) => self.color(color, "background"),
             FieldDto::Color(color) => self.color(color, "color"),
+            FieldDto::Font(family) => (self.font)(family),
             FieldDto::Kind(_)
             | FieldDto::Channel(_)
             | FieldDto::Ident(_)
@@ -317,7 +353,6 @@ impl<'a, 'f> Walk<'a, 'f> {
             | FieldDto::OffsetX(_)
             | FieldDto::OffsetY(_)
             | FieldDto::Align(_)
-            | FieldDto::Font(_)
             | FieldDto::FontSize(_)
             | FieldDto::Weight(_)
             | FieldDto::Italic(_)
@@ -445,13 +480,14 @@ impl<'a, 'f> Walk<'a, 'f> {
         self.at(&[Seg::Key("text")], |w| w.text(op));
     }
 
-    /// A text style op: its color's variable, if it writes one. It shows
-    /// nothing; the others are listed so that one added that names
-    /// something fails to compile.
+    /// A text style op: its color's variable, if it writes one, and its
+    /// `set_font`'s family. It shows nothing; the others are listed so
+    /// that one added that names something fails to compile.
     fn text(&mut self, op: &'a TextOpDto) {
         match op {
             TextOpDto::SetColor(color) => self.color_opt(color, "set_color"),
-            TextOpDto::SetFont(_)
+            TextOpDto::SetFont(Some(family)) => (self.font)(family),
+            TextOpDto::SetFont(None)
             | TextOpDto::SetSize(_)
             | TextOpDto::GrowSize(_)
             | TextOpDto::ScaleSize(_)

@@ -967,13 +967,19 @@ fn test_a_frame_preview_leaves_another_interactions_transaction_alone() {
 }
 
 /// **`font family=` takes exactly the faces a map's `font` key takes**
-/// (`format::font`): a compiled family is set on the node, and a name the
-/// loader refuses is refused with the reason, applying nothing. Control:
-/// the accepted face is one the loader reads.
+/// (`format::font`): a compiled family is set on the node, an installed
+/// one too, by its name, whether or not this machine has it (#329), and
+/// a name the loader refuses — one that holds a control character — is
+/// refused with the reason, applying nothing. Controls: the accepted
+/// faces are ones the loader reads, and the refusal changes no revision;
+/// `values::font` taking a refused name as a reset turns the refusal arm
+/// red.
 #[test]
 fn test_font_family_takes_what_the_loader_takes() {
-    let face = baumhard::font::fonts::loaded_families_iter()
-        .find(|family| baumhard::document::format::font(family).is_some())
+    let face = baumhard::font::fonts::compiled_families()
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .find(|family| baumhard::document::format::font(family).is_ok())
         .expect("a compiled face")
         .to_string();
     let mut doc = fixture();
@@ -984,12 +990,78 @@ fn test_font_family_takes_what_the_loader_takes() {
         bytes(&doc).contains(&format!("\"font\": \"{face}\"")),
         "{face} is saved"
     );
+    run_line(&mut doc, "font family=\"Nope Sans\"").expect("an installed family is taken");
+    assert!(
+        bytes(&doc).contains("\"font\": \"Nope Sans\""),
+        "Nope Sans is saved by its name"
+    );
     let revision = doc.revision();
-    assert!(run_line(&mut doc, "font family=\"Nope Sans\"").is_err());
+    assert!(run_line(&mut doc, "font family=\"Bell\u{7}\"").is_err());
     assert_eq!(doc.revision(), revision, "a refused face applies nothing");
     assert_eq!(
-        run(&Action::SetFontFamily("Nope Sans".into()), &mut doc),
+        run(&Action::SetFontFamily("Bell\u{7}".into()), &mut doc),
         DispatchOutcome::Unhandled
+    );
+}
+
+/// **`ReplaceFontFamily` rewrites the map's references to an installed
+/// family as one undo entry** (#329), whatever is selected, and leaves
+/// the missing-font notice saying what is still missing; undo restores
+/// the family. The family is named on two nodes and a section, so the
+/// replacement's steps are of two kinds. Controls: `missing_fonts::replace`
+/// applying one request per step turns the one-entry arm red (two
+/// entries); a family the map names nowhere applies nothing and is
+/// `Unhandled`.
+#[test]
+fn test_replace_font_family_is_one_undo_entry_across_the_map() {
+    let mut doc = fixture();
+    doc.selection.select_only(node(&doc, 3));
+    run_line(&mut doc, "font family=\"Nope Sans\"").expect("an installed family is taken");
+    doc.selection.select_only(node(&doc, 1));
+    run_line(&mut doc, "font family=\"Nope Sans\"").expect("on a second node");
+    doc.selection.select_only(child(&doc, 3, DocKind::Section, 0));
+    run_line(&mut doc, "font family=\"Nope Sans\"").expect("on a section");
+    assert_eq!(
+        bytes(&doc).matches("\"font\": \"Nope Sans\"").count(),
+        3,
+        "precondition: two nodes and a section"
+    );
+    doc.selection.clear();
+    let depth = doc.doc().history().count();
+    let replace = Action::ReplaceFontFamily {
+        family: "Nope Sans".into(),
+        with: "Public Pixel".into(),
+    };
+    assert_eq!(run(&replace, &mut doc), DispatchOutcome::Handled);
+    assert_eq!(doc.doc().history().count(), depth + 1, "one undo entry");
+    let saved = bytes(&doc);
+    assert!(
+        !saved.contains("Nope Sans"),
+        "every reference is rewritten: {saved}"
+    );
+    assert_eq!(saved.matches("\"font\": \"Public Pixel\"").count(), 3);
+    assert_eq!(doc.font_notice(), None, "nothing is missing any more");
+    doc.undo();
+    assert_eq!(
+        bytes(&doc).matches("\"font\": \"Nope Sans\"").count(),
+        3,
+        "undo restores all three"
+    );
+    assert_eq!(
+        run(&replace, &mut doc),
+        DispatchOutcome::Handled,
+        "and it runs again"
+    );
+    assert_eq!(
+        run(
+            &Action::ReplaceFontFamily {
+                family: "Named Nowhere".into(),
+                with: "Public Pixel".into(),
+            },
+            &mut doc
+        ),
+        DispatchOutcome::Unhandled,
+        "a family the map names nowhere changes nothing"
     );
 }
 
@@ -1259,4 +1331,116 @@ fn test_both_frame_preview_targets_take_the_same_fields() {
     assert_eq!(doc.doc().history().count(), entries + 1, "one entry");
     doc.undo();
     assert_eq!(bytes(&doc), FIXTURE);
+}
+
+/// **The missing-font notice follows the map through edits, undo and
+/// redo** (#329, the review of #390). `font family="Nope Sans"` on a map
+/// that names only compiled families raises it, naming the family, and
+/// its message says the family is not installed and is drawn in the
+/// stand-in; the `SetFontFamily` Action — the keybinds' and IPC's route
+/// — raises it with what a typo probably meant; replacing a family
+/// clears it from the notice; undoing the replacement brings it back;
+/// redoing clears it again. A notice the user dismissed stays dismissed
+/// across a change that leaves what is missing as it was. An animated edit
+/// that names a missing family, committed by the next animated edit's
+/// `begin` (the writer yields it, D28), updates the notice too.
+///
+/// Controls: `run_edit` not refreshing after its `begin` turns the
+/// animated arm red; `undo` not refreshing the notice turns the undo arm red
+/// (the notice still without `Nope Sans`); the notice shown whenever it
+/// is recomputed, whether or not what is missing changed, turns the
+/// dismissed arm red; no notice refresh after `apply` turns the first
+/// notice arm red (`None`); the `font` verb dropping the hint from its
+/// message turns the first arm red (`font: applied`).
+#[test]
+fn test_the_missing_font_notice_follows_edits_undo_and_redo() {
+    let mut doc = fixture();
+    assert_eq!(
+        doc.font_notice(),
+        None,
+        "precondition: the fixture names no installed family"
+    );
+    doc.selection.select_only(node(&doc, 3));
+    let said = run_line(&mut doc, "font family=\"Nope Sans\"").expect("an installed family is taken");
+    assert_eq!(
+        said,
+        "font: applied; \"Nope Sans\" is not installed here, drawn in Inter Variable"
+    );
+    assert_eq!(
+        doc.font_notice(),
+        Some("1 font missing, drawn in Inter Variable: \"Nope Sans\"")
+    );
+    doc.dismiss_status();
+    doc.selection.select_only(node(&doc, 1));
+    run_line(&mut doc, "font family=\"Nope Sans\"").expect("on a second node");
+    assert_eq!(
+        doc.font_notice(),
+        None,
+        "the same family missing on one more node: still dismissed"
+    );
+    assert_eq!(
+        run(&Action::SetFontFamily("public pixel".into()), &mut doc),
+        DispatchOutcome::Handled
+    );
+    let both = "2 fonts missing, drawn in Inter Variable: \"Nope Sans\", \"public pixel\" (did you mean \"Public Pixel\"?)";
+    assert_eq!(doc.font_notice(), Some(both), "a new family missing shows again");
+    let replace = Action::ReplaceFontFamily {
+        family: "Nope Sans".into(),
+        with: "Norse".into(),
+    };
+    assert_eq!(run(&replace, &mut doc), DispatchOutcome::Handled);
+    let one = "1 font missing, drawn in Inter Variable: \"public pixel\" (did you mean \"Public Pixel\"?)";
+    assert_eq!(doc.font_notice(), Some(one));
+    doc.undo();
+    assert_eq!(
+        doc.font_notice(),
+        Some(both),
+        "undo brings the replaced family back"
+    );
+    doc.redo();
+    assert_eq!(doc.font_notice(), Some(one), "redo replaces it again");
+    let said = run_line(&mut doc, "font family=Galatia").expect("a prefix is a name a map can hold");
+    assert!(
+        said.ends_with(
+            "\"Galatia\" is not installed here, drawn in Inter Variable (did you mean \"Galatia SIL\"?)"
+        ),
+        "{said}"
+    );
+    // An animated edit that names a missing family, staged, then committed
+    // by the next animated edit's `begin`.
+    let animated = |doc: &mut MindMapDocument, ident: u32| {
+        use baumhard::document::mutation::{compose, ops::TextOp};
+        let at = node(doc, ident);
+        let font = baumhard::document::format::font("Animated Gone").expect("a family name");
+        let mutation = TextOp::SetFont(Some(font))
+            .on(DocKind::Node)
+            .expect("a node's text op");
+        let steps = compose::set(doc.doc(), DocKind::Node, vec![mutation], &[at]).expect("the steps");
+        let animate = baumhard::document::edit::Animate {
+            ms: 1_000,
+            delay_ms: 0,
+            easing: baumhard::document::edit::Easing::Linear,
+            snap: baumhard::engine::interpolate::Snap::End,
+        };
+        doc.run_edit(
+            baumhard::document::writer::EditRequest::new(steps, "animated font"),
+            Some(animate),
+            baumhard::document::writer::ChangeSource::Action,
+            0.0,
+        )
+        .expect("the animated edit is staged");
+    };
+    animated(&mut doc, 3);
+    assert!(
+        !doc.font_notice()
+            .is_some_and(|notice| notice.contains("Animated Gone")),
+        "precondition: staged, not committed"
+    );
+    animated(&mut doc, 1);
+    assert!(
+        doc.font_notice()
+            .is_some_and(|notice| notice.contains("\"Animated Gone\"")),
+        "the edit the next one's begin committed is in the notice: {:?}",
+        doc.font_notice()
+    );
 }

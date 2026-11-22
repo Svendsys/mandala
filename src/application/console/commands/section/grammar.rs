@@ -183,7 +183,7 @@ pub(crate) fn section_idx_completions(ctx: &ConsoleContext, partial: &str) -> Ve
                 text: idx.to_string(),
                 display: idx.to_string(),
                 hint: Some(hint),
-                font_family: None,
+                sample_face: None,
             }
         })
         .collect()

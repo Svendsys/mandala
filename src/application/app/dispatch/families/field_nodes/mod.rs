@@ -53,6 +53,7 @@ fn owns(action: &Action) -> bool {
         Action::SetColor { .. }
             | Action::SetFont { .. }
             | Action::SetFontFamily(_)
+            | Action::ReplaceFontFamily { .. }
             | Action::SetZoom { .. }
             | Action::ClearZoom
             | Action::SetFrameField { .. }
@@ -83,6 +84,11 @@ pub(in crate::application::app) fn run(action: &Action, doc: &mut MindMapDocumen
             field,
             value,
         } => frame::preview(doc, *target_kind, &[(field, value)], ChangeSource::Action).map(|()| true),
+        // The missing-font prompt's replacement: the map's references,
+        // not the selection's (#329).
+        Action::ReplaceFontFamily { family, with } => {
+            crate::application::missing_fonts::replace(doc, family, with, ChangeSource::Action)
+        }
         other => {
             let (steps, label) = steps(other, doc);
             fields::apply(doc, steps, label, ChangeSource::Action)

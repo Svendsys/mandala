@@ -7,9 +7,9 @@
 //! [`file::read`](baumhard::document::format::file::read), and a refusal
 //! is printed as the loader words it, with its JSON path; nothing here
 //! judges what the loader judges. Once a map has loaded, [`warnings`]
-//! looks for six things: five as #253 lists them, its amendment E1.1
-//! (issue comment 6870828150) rules and V1-D3 (#252) completes, and a
-//! sixth that V1-B40 (#359) adds:
+//! looks for seven things: five as #253 lists them, its amendment E1.1
+//! (issue comment 6870828150) rules and V1-D3 (#252) completes, a sixth
+//! that V1-B40 (#359) adds, and a seventh that V1-B24 (#329) adds:
 //!
 //! - **A verb nothing refers to.** A verb is referred to by a node's `on`
 //!   (`click`, `hover`), by a span's `link` (`{"verb": …}`), and by an
@@ -103,7 +103,20 @@
 //!   several places is several warnings that can be told apart, and the
 //!   field it names is the key the file writes there. Fonts are not
 //!   names a map defines; the loader's font rules decide them
-//!   (`format/fonts.md`).
+//!   (`format/fonts.md`), and the warning below is about the machine,
+//!   not the map.
+//! - **An installed font family the map names that this machine lacks**
+//!   (V1-B24, #329): a family no compiled face bears, which the loader
+//!   accepts as an installed family whether or not any machine has it
+//!   (`format/fonts.md`, "Installed families"). The map loads and its
+//!   text is drawn in the stand-in until the family is installed or
+//!   replaced, so this is a warning about where `verify` runs, not a
+//!   defect of the file: another machine may have the family. One
+//!   warning per family, by name, saying how many of the map's elements
+//!   name it and which of its edits and presentations do
+//!   ([`missing_families`](baumhard::document::fonts::missing_families)).
+//!   Only a map that names an installed family asks the font system, so
+//!   only it costs a scan of the host's fonts.
 //!
 //! The edits and presentations read are the map's own, its `edits` and
 //! its `presentations`. The App and User tiers (`assets/edits.json`,
@@ -133,8 +146,9 @@ use crate::map::{ident, is, link, text_owners, Nodes};
 /// filter, then its mutations or its mutator, in order), then the
 /// presentations' names likewise, then the presentations no verb names,
 /// in the order `presentations` lists them, then the verbs', in the
-/// order `verbs` lists them. It is not the file's order, which writes
-/// the nodes last.
+/// order `verbs` lists them, then one per installed font family the map
+/// names that this machine lacks, by name. It is not the file's order,
+/// which writes the nodes last.
 ///
 /// Cost: one walk of each edit and each presentation, one scan of the
 /// verbs per verb one of them names, one walk of the nodes and every
@@ -278,6 +292,23 @@ pub fn warnings(doc: &Document) -> Vec<String> {
             ));
         }
     }
+    // The installed fonts the map names that this machine lacks (#329):
+    // the map loads, and their text is drawn in the stand-in. Only a map
+    // that names an installed family asks the font system, whose build
+    // scans the host's fonts.
+    for missing in baumhard::document::fonts::missing_families(doc) {
+        let mut by = Vec::new();
+        if missing.elements > 0 {
+            by.push(format!("{} element(s)", missing.elements));
+        }
+        by.extend(missing.definitions);
+        out.push(format!(
+            "font {:?}: not installed on this machine, named by {}; drawn in {} until it is installed or replaced",
+            missing.family.as_str(),
+            by.join(", "),
+            baumhard::document::fonts::STAND_IN
+        ));
+    }
     out
 }
 
@@ -321,6 +352,38 @@ mod tests {
             .into_iter()
             .filter(|warning| !warning.starts_with("presentations["))
             .collect()
+    }
+
+    /// An installed font the map names that this machine lacks is
+    /// reported once, by name, with how many elements name it and which
+    /// edits do (#329); one only an edit names is reported by the edit
+    /// alone, not as "0 element(s)"; a compiled one is not reported.
+    /// Control: the same map naming `Public Pixel` earns no warning;
+    /// pushing the element count unconditionally fails the edit-only
+    /// case with `named by 0 element(s), edit `e``.
+    #[test]
+    fn test_verify_warns_of_an_installed_font_this_machine_lacks() {
+        let missing = r#"{"id": 1, "position": [0, 0], "font": "Nope Sans", "sections": [{"spans": [{"text": "a", "font": "Nope Sans"}]}]}"#;
+        assert_eq!(
+            warned("", missing),
+            [
+                r#"font "Nope Sans": not installed on this machine, named by 2 element(s); drawn in Inter Variable until it is installed or replaced"#
+            ]
+        );
+        let edit = r#""edits": [{"id": "e", "name": "E", "reach": "self", "target": "node",
+                       "mutations": [{"node": {"text": {"set_font": "Nope Serif"}}}]}],"#;
+        assert_eq!(
+            warned(edit, missing),
+            [
+                r#"font "Nope Sans": not installed on this machine, named by 2 element(s); drawn in Inter Variable until it is installed or replaced"#,
+                r#"font "Nope Serif": not installed on this machine, named by edit `e`; drawn in Inter Variable until it is installed or replaced"#
+            ]
+        );
+        let compiled = r#"{"id": 1, "position": [0, 0], "font": "Public Pixel", "sections": [{"spans": [{"text": "a"}]}]}"#;
+        assert!(
+            warned("", compiled).is_empty(),
+            "control: a compiled font is no warning"
+        );
     }
 
     /// A verb nothing refers to is reported by its place in `verbs`; one

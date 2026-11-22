@@ -443,6 +443,14 @@ impl Document {
         self.writer.history.redo_len()
     }
 
+    /// The change feed as it stands, every record since it was last
+    /// drained, oldest first, without draining it: for a caller that
+    /// must read what a change touched before the view's sync takes the
+    /// records ([`Self::take_changes`]). O(1); no allocation.
+    pub fn pending_changes(&self) -> &[ChangeRecord] {
+        &self.writer.feed
+    }
+
     /// Drain the change feed: every record since the last call, oldest
     /// first. O(1); the records are moved out.
     pub fn take_changes(&mut self) -> Vec<ChangeRecord> {

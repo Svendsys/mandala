@@ -43,8 +43,8 @@ use crate::document::mutation::ops::{
 use crate::document::place::{name_fault, nameable_font, sizes_its_own_text, Unit};
 use crate::document::shape::validate_shape;
 use crate::document::values::{
-    check_link_url, ColorRef, FitMode, FontSize, LinkKind, LinkRefusal, LinkTarget, PaletteId, PlainColor,
-    Sides, StartPoint, VarId, VerbId, ZoomWindow,
+    check_link_url, ColorRef, FitMode, FontRef, FontSize, LinkKind, LinkRefusal, LinkTarget, PaletteId,
+    PlainColor, Sides, StartPoint, VarId, VerbId, ZoomWindow,
 };
 use crate::engine::journal::{Journal, Touch};
 use crate::engine::key::BranchKey;
@@ -52,7 +52,6 @@ use crate::engine::membership::Membership;
 use crate::engine::mutator::{Instruction, Mutator};
 use crate::engine::structure::{StructOp, Subtree};
 use crate::engine::tree::Tree;
-use crate::font::fonts::AppFont;
 use glam::Vec2;
 use rustc_hash::FxHashSet;
 
@@ -465,14 +464,16 @@ impl<'d> Validator<'d> {
     }
 
     fn text_style(&self, style: &TextStyle, unit: Unit) -> Result<(), MutationError> {
-        self.font(style.font)?;
+        self.font(style.font.as_ref())?;
         self.size("text.size", style.size, unit)?;
         self.color(style.color.as_ref())
     }
 
-    /// A face that names a font: never the fallback, `AppFont::Any`,
-    /// which no map stores (ruling R11.2 on #236).
-    fn font(&self, font: Option<AppFont>) -> Result<(), MutationError> {
+    /// A face that names a font a file can write ([`nameable_font`]):
+    /// never the fallback, `AppFont::Any`, which no map stores (ruling
+    /// R11.2 on #236). An installed family, present here or not, is one
+    /// (#329).
+    fn font(&self, font: Option<&FontRef>) -> Result<(), MutationError> {
         if font.is_some_and(|font| !nameable_font(font)) {
             Err(MutationError::AnyFont { at: self.at() })
         } else {
@@ -482,7 +483,7 @@ impl<'d> Validator<'d> {
 
     fn text_op(&self, op: &TextOp, unit: Unit) -> Result<(), MutationError> {
         match op {
-            TextOp::SetFont(font) => self.font(*font),
+            TextOp::SetFont(font) => self.font(font.as_ref()),
             TextOp::SetWeight(_) | TextOp::SetItalic(_) => Ok(()),
             TextOp::SetSize(size) => self.size("text.size", *size, unit),
             TextOp::GrowSize(delta) => {

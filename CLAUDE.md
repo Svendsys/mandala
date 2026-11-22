@@ -75,7 +75,9 @@ draws them.
   that can unhide a node — silences that warning; a verb, theme variable
   or palette a map's own edit or presentation names that the map does
   not define is a warning of its own, where a run or a start would be
-  refused, and leads with where the name is written; the App's and the
+  refused, and leads with where the name is written; an installed font
+  family the map names that this machine lacks is warned of by name,
+  the map still loading; the App's and the
   User's edits and presentations, which also run on a map, are outside
   what a map file can be judged on and are not read) and
   `apply` (pipe matching sections' text through
@@ -216,10 +218,10 @@ the parity trajectory (or why none is owed):
   limit and a map's cost grows both with its text and with the
   elements (and definitions) it becomes, and a short text can
   become many elements. A map's peak while it loads, and while it
-  is then saved, is modeled as `text × 6 + elements × 480` bytes
+  is then saved, is modeled as `text × 6 + elements × 512` bytes
   (`WASM32_BYTES_PER_TEXT_BYTE`, `WASM32_BYTES_PER_ELEMENT`), and
   each limit takes half of a 3 GiB budget: **268,435,456 bytes of
-  text** (256 MiB, refused before parsing) and **3,355,443
+  text** (256 MiB, refused before parsing) and **3,145,728
   elements** (counted as the builder appends them, the one past it
   refused with `TooManyElements`). The two costs are measured, not
   chosen: the densest shape of each kind of content (empty
@@ -257,14 +259,36 @@ the parity trajectory (or why none is owed):
   targets (`clipboard::Clipboard`), so they work within the page and
   reach no other app. Parity is the async-clipboard integration, not
   yet scheduled.
+- **Installed font families** (`baumhard::font::fonts`'
+  `complete_font_system` and `rescan_installed`,
+  `src/application/missing_fonts.rs`; #329) — a map may name a font
+  family installed on the machine it was made on (`format/fonts.md`
+  "Installed families"). Native loads the host's installed fonts, draws
+  a named family that is there, and rescans for a missing one when a
+  map is opened after launch (at launch the font system's own scan has
+  just run) or on `font rescan` (`RescanFonts`, a `NativeOnly` Action,
+  which `act.action` refuses `unsupported` on the browser as it refuses
+  every `NativeOnly` Action; `describe` lists IPC commands, not
+  Actions). A rescan that finds a family reshapes only the units that
+  drew in it (`Projector::update_faces`). **The browser reads no
+  installed font**, so every installed family a map names is missing
+  there: the map loads, its text is drawn in the stand-in (the default
+  face), the name is saved back as it was read, the status line says so,
+  and IPC offers the same report and replacement (`query.fonts`,
+  `act.action ReplaceFontFamily`), both served on both targets. The
+  console prompt is native because the console shell is (above). Parity
+  is the Local Font Access API (`window.queryLocalFonts`), which only
+  Chromium-based browsers have, behind a permission prompt the user
+  must trigger, and which hands back font bytes the wasm font system
+  would load asynchronously after the map; not yet scheduled.
 - **Reparent and connect modes** (`EnterReparentMode`,
   `EnterConnectMode` and the click that ends them;
   `app/dispatch/families/structure.rs`, `app/event_mouse_click.rs`,
   `app/event_cursor_moved.rs`) — native-only, as on `main`: the click
   that picks the target and the hover that tints it come from native's
   pointer handlers. The four Actions are `wasm = NativeOnly`, so over
-  IPC the browser refuses them `unsupported` (`describe` reports them
-  unsupported, and `act.action` refuses them by name), and it never
+  IPC the browser refuses them `unsupported` (`act.action` refuses them
+  by name; `describe` lists IPC commands, not Actions), and it never
   shows their source tint or status line. Every other structure Action
   — create, delete, orphan, copy, cut, paste — runs on both targets,
   and so does the overlay the target tint is stamped by

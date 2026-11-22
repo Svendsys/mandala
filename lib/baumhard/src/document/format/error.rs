@@ -284,10 +284,14 @@ pub enum LoadErrorKind {
         /// The variable name.
         name: String,
     },
-    /// A `font` names no font compiled into this build.
-    UnknownFont {
-        /// The family name.
-        family: String,
+    /// A `font` names a family longer than
+    /// [`MAX_FONT_FAMILY_BYTES`](crate::document::bounds::MAX_FONT_FAMILY_BYTES)
+    /// bytes, which no installed font bears (#329). Any other name that
+    /// is a name loads: a compiled family's, or an installed family's,
+    /// whether or not this machine has it.
+    FontFamilyTooLong {
+        /// The name's length, in bytes.
+        bytes: usize,
     },
     /// The theme's `active` names no variant.
     ActiveNotAVariant {
@@ -424,6 +428,23 @@ pub enum LoadErrorKind {
     },
 }
 
+impl From<crate::document::place::FamilyFault> for LoadErrorKind {
+    /// The load error a font family name that cannot be one is: the
+    /// error any other name has for an empty or unprintable name, and
+    /// [`FontFamilyTooLong`](LoadErrorKind::FontFamilyTooLong) past the
+    /// bound. O(1).
+    fn from(fault: crate::document::place::FamilyFault) -> Self {
+        use crate::document::place::{FamilyFault, NameFault};
+        match fault {
+            FamilyFault::Name(NameFault::Empty) => LoadErrorKind::EmptyName,
+            FamilyFault::Name(NameFault::NotPrintable(c)) => LoadErrorKind::NameNotPrintable {
+                code_point: u32::from(c),
+            },
+            FamilyFault::TooLong(bytes) => LoadErrorKind::FontFamilyTooLong { bytes },
+        }
+    }
+}
+
 impl fmt::Display for LoadErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -555,9 +576,11 @@ impl fmt::Display for LoadErrorKind {
             LoadErrorKind::UnknownVariable { name } => {
                 write!(f, "the theme defines no variable `{}`", shown(name))
             }
-            LoadErrorKind::UnknownFont { family } => {
-                write!(f, "no font named `{}` is compiled into this build", shown(family))
-            }
+            LoadErrorKind::FontFamilyTooLong { bytes } => write!(
+                f,
+                "a font family name is {bytes} bytes long, past the {} a map may name",
+                crate::document::bounds::MAX_FONT_FAMILY_BYTES
+            ),
             LoadErrorKind::ActiveNotAVariant { name } => {
                 write!(f, "`{}` is not one of the theme's variants", shown(name))
             }

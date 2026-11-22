@@ -607,6 +607,13 @@ pub(crate) const PLAIN_TESTS: &[(&str, &str, PlainShape)] = {
             "test_acquire_font_system_write_panics_on_timeout",
             DrivesAPanic,
         ),
+        // Builds a font system of its own (`compiled_font_system`) and
+        // reads the pin cache's size, both `cfg(test)` (#329).
+        (
+            "font/tests/fonts_tests.rs",
+            "test_an_installed_pin_is_recomputed_right_after_its_cache_is_evicted",
+            CannotCompileIntoTheLibrary,
+        ),
         // Calls every bench body of its file over and over, as a bench
         // does: the repetition is the subject, and each body it repeats
         // has its own bench entry (#304).

@@ -193,7 +193,7 @@ pub fn do_document_resolve_built_in_tier() {
     let (mut builder, _, _, span) = unbound_span();
     assert_eq!(text(&builder, span).0, BUILT_IN.section);
     let other = TextStyle {
-        font: Some(AppFont::Novem),
+        font: Some(AppFont::Novem.into()),
         size: Some(FontSize::Pt(31.0)),
         color: rgba(MAGENTA),
         weight: Some(Weight::BOLD),
@@ -207,7 +207,7 @@ pub fn do_document_resolve_built_in_tier() {
     assert_eq!(
         text(&builder, span).0,
         ResolvedText {
-            font: AppFont::Novem,
+            font: AppFont::Novem.into(),
             size: FontSize::Pt(31.0),
             color: MAGENTA,
             weight: Weight::BOLD,
@@ -226,13 +226,13 @@ fn test_document_resolve_is_per_field() {
 /// from inheriting.
 pub fn do_document_resolve_is_per_field() {
     let (mut builder, _, section, span) = unbound_span();
-    style(&mut builder, span, |s| s.font = Some(AppFont::Novem));
+    style(&mut builder, span, |s| s.font = Some(AppFont::Novem.into()));
     style(&mut builder, section, |s| {
         s.color = rgba(GREEN);
-        s.font = Some(AppFont::Regal);
+        s.font = Some(AppFont::Regal.into());
     });
     let resolved = text(&builder, span).0;
-    assert_eq!(resolved.font, AppFont::Novem);
+    assert_eq!(resolved.font, AppFont::Novem.into());
     assert_eq!(resolved.color, GREEN);
     assert_eq!(resolved.size, BUILT_IN.section.size);
 }
@@ -418,11 +418,11 @@ pub fn do_document_resolve_node_text_stays_out_of_other_flows() {
         }
     }
     let (mut builder, _) = example();
-    defaults(&mut builder, |d| d.node.text.font = Some(AppFont::Novem));
+    defaults(&mut builder, |d| d.node.text.font = Some(AppFont::Novem.into()));
     for id in flows.into_iter().chain([ids.a_body_span]) {
         assert_eq!(
             text(&builder, id).0.font,
-            AppFont::Novem,
+            AppFont::Novem.into(),
             "the face keeps the whole chain"
         );
     }
@@ -735,7 +735,7 @@ pub fn do_document_records_only_the_span_for_a_complete_rgba_span() {
     let (mut builder, _, _, span) = unbound_span();
     style(&mut builder, span, |s| {
         *s = TextStyle {
-            font: Some(AppFont::Novem),
+            font: Some(AppFont::Novem.into()),
             size: Some(FontSize::Pt(12.0)),
             color: rgba(RED),
             weight: Some(Weight::NORMAL),
@@ -806,7 +806,7 @@ pub fn do_document_records_the_palette_binding() {
     let (mut builder, ids) = example();
     style(&mut builder, ids.b_span, |s| {
         *s = TextStyle {
-            font: Some(AppFont::Novem),
+            font: Some(AppFont::Novem.into()),
             size: Some(FontSize::Pt(12.0)),
             color: Some(ColorRef::Palette(PaletteField::Text)),
             weight: Some(Weight::NORMAL),
@@ -875,7 +875,7 @@ pub fn do_document_records_node_and_frame_reads() {
 
     style(&mut builder, ids.ring, |s| {
         *s = TextStyle {
-            font: Some(AppFont::Novem),
+            font: Some(AppFont::Novem.into()),
             size: Some(FontSize::Rel(0.1)),
             color: rgba(RED),
             weight: Some(Weight::NORMAL),

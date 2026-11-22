@@ -308,7 +308,7 @@ fn dismiss_popup_clears_completions_when_present() {
             text: "help".into(),
             display: "help".into(),
             hint: None,
-            font_family: None,
+            sample_face: None,
         });
         *completion_idx = Some(0);
     }
@@ -336,7 +336,7 @@ fn adjust_scroll_clamps_to_valid_range() {
         for i in 0..total {
             scrollback.push(ConsoleLine::Output {
                 text: format!("line {i}"),
-                font_family: None,
+                sample_face: None,
             });
         }
     }
@@ -434,7 +434,7 @@ fn scroll_by_lines_handles_positive_and_negative_deltas() {
         for i in 0..MAX_CONSOLE_SCROLLBACK_ROWS * 3 {
             scrollback.push(ConsoleLine::Output {
                 text: format!("line {i}"),
-                font_family: None,
+                sample_face: None,
             });
         }
     }

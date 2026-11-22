@@ -107,11 +107,10 @@ use crate::document::element::{
 };
 use crate::document::ids::{defaults, owning_node, palette, theme};
 use crate::document::values::{
-    ColorRef, Direction, FitMode, FontSize, LineSpan, PaletteField, PaletteId, PlainColor, Rgba, Shape,
-    Sides, StartPoint, VarId, Weight,
+    ColorRef, Direction, FitMode, FontRef, FontSize, LineSpan, PaletteField, PaletteId, PlainColor, Rgba,
+    Shape, Sides, StartPoint, VarId, Weight,
 };
 use crate::engine::tree::Tree;
-use crate::font::fonts::AppFont;
 
 /// An input a resolution read. Each names as little as the read
 /// needed, so a change dirties only the resolutions that read what
@@ -223,6 +222,15 @@ pub trait ReadRecorder {
     /// `input` was read. Called once per input per tier that looked at
     /// it; the same input may be reported more than once.
     fn read(&mut self, input: Input);
+
+    /// A text resolution ([`resolve_text_in`]) resolved to draw in `font`:
+    /// what a recorder keyed on the faces its work draws in reads — the
+    /// projection, whose units shaped in an installed family are shaped
+    /// again when a rescan adds that family's faces (#329). Called once
+    /// per text resolution, after its reads. Records nothing by default.
+    fn font(&mut self, font: &FontRef) {
+        let _ = font;
+    }
 }
 
 /// Records nothing: for a resolution whose inputs nobody tracks.
@@ -238,10 +246,10 @@ impl ReadRecorder for Vec<Input> {
 }
 
 /// Resolved text: what a span draws with.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedText {
     /// The face.
-    pub font: AppFont,
+    pub font: FontRef,
     /// The size. Still [`Rel`](FontSize::Rel) inside a frame; the
     /// projection converts it with the node's drawn size.
     pub size: FontSize,
@@ -663,7 +671,7 @@ impl Fields {
 /// The text fields resolved so far.
 #[derive(Default)]
 struct Partial {
-    font: Option<AppFont>,
+    font: Option<FontRef>,
     size: Option<FontSize>,
     color: Option<Rgba>,
     weight: Option<Weight>,
@@ -681,7 +689,9 @@ impl Partial {
     /// Take every unset field among `fields` that `style` sets.
     fn take_text<R: ReadRecorder>(&mut self, style: &TextStyle, fields: Fields, inputs: &mut Inputs<'_, R>) {
         if fields.rest {
-            self.font = self.font.or(style.font);
+            if self.font.is_none() {
+                self.font.clone_from(&style.font);
+            }
             self.weight = self.weight.or(style.weight);
             self.italic = self.italic.or(style.italic);
         }
@@ -902,7 +912,9 @@ pub fn resolve_text_in(
     }
 
     // 5. BUILT_IN.
-    got.finish(flow.built_in())
+    let resolved = got.finish(flow.built_in());
+    inputs.rec.font(&resolved.font);
+    resolved
 }
 
 /// The `Defaults` struct of a path of `kind`.

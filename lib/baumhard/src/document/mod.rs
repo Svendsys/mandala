@@ -14,8 +14,10 @@
 //! nesting (D3).
 //!
 //! Every value is typed at rest ([`values`](crate::document::values)): a color is a
-//! [`ColorRef`](crate::document::values::ColorRef), a font an
-//! [`AppFont`](crate::font::fonts::AppFont), a shape a
+//! [`ColorRef`](crate::document::values::ColorRef), a font a
+//! [`FontRef`](crate::document::values::FontRef) — a compiled
+//! [`AppFont`](crate::font::fonts::AppFont), or an installed family held
+//! by its name (#329) — a shape a
 //! [`Shape`](crate::document::values::Shape), each parsed once at load. Every style
 //! field is optional, and [`resolve`](crate::document::resolve) computes what an element draws
 //! with field by field — through its owners, its palette, the map's
@@ -40,6 +42,9 @@ pub mod edit;
 /// [`DocKind`](element::DocKind), [`DocElement`](element::DocElement)
 /// and the per-kind data, and the engine instantiation.
 pub mod element;
+/// The installed font families a map names, the report of those this
+/// machine lacks, and the edit that replaces one (#329).
+pub mod fonts;
 pub mod format;
 /// [`NodeIdent`](ids::NodeIdent), [`Document`](ids::Document) and its
 /// read API.

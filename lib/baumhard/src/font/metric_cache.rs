@@ -55,7 +55,15 @@
 //!   acquire is a guaranteed deadlock. This mirrors the
 //!   `measure_glyph_ink_bounds` / `measure_text_block_unbounded`
 //!   composable design in `font/fonts.rs`.
-//! - Invalidation: implicit. When the user swaps the active
+//! - Invalidation: by the face set, and implicitly by the key. Each
+//!   cache records the face-set generation its entries were measured
+//!   at ([`face_set_generation`](crate::font::fonts::face_set_generation)),
+//!   as the projector's shaping cache does, and lets every entry go
+//!   when it moves: a rescan that adds an installed family's faces
+//!   (#329) can change what a cluster no compiled face holds measures,
+//!   since cosmic-text's last fallback pass may now find it in a new
+//!   face. A value measured under faces the cache has moved past is
+//!   dropped, not stored. Otherwise, when the user swaps the active
 //!   font, the new `AppFont` discriminator produces a different
 //!   outer key; the previous face's inner map becomes dead memory
 //!   until process exit.
@@ -118,7 +126,8 @@ use rustc_hash::FxHashMap;
 use std::sync::{Mutex, RwLock};
 
 use crate::font::fonts::{
-    acquire_font_system_write, ensure_warm, measure_glyph_ink_bounds, pinned_family, regular_attrs, AppFont,
+    acquire_font_system_write, ensure_warm, face_set_generation, measure_glyph_ink_bounds, pinned_family,
+    regular_attrs, AppFont,
 };
 
 /// Outer cache key: the face pin plus the size in points. `Copy`,
@@ -129,12 +138,29 @@ use crate::font::fonts::{
 /// and every `NaN` together.
 type SizedFace = (Option<AppFont>, OrderedFloat<f32>);
 
-/// A measured-metric cache: `(face, size) -> cluster -> value`.
+/// A measured-metric cache: `(face, size) -> cluster -> value`, and the
+/// face-set generation every value in it was measured at.
 ///
 /// The nesting is not organization, it is the probe. See the module
 /// header's "Cache discipline" for why one flat tuple key cannot be
 /// looked up without allocating and this can.
-type MetricCache<V> = FxHashMap<SizedFace, FxHashMap<String, V>>;
+struct MetricCache<V> {
+    /// The face-set generation the values were measured at.
+    generation: u64,
+    /// The values.
+    values: FxHashMap<SizedFace, FxHashMap<String, V>>,
+}
+
+impl<V> Default for MetricCache<V> {
+    /// Empty, at generation 0: the font system's before it is built, so
+    /// the first store, under the built one, starts it.
+    fn default() -> Self {
+        MetricCache {
+            generation: 0,
+            values: FxHashMap::default(),
+        }
+    }
+}
 
 /// Read `cache` for an already-measured value.
 ///
@@ -145,7 +171,11 @@ type MetricCache<V> = FxHashMap<SizedFace, FxHashMap<String, V>>;
 /// rather than failing, which is the same posture the code this
 /// replaced took.
 ///
-/// Cost: one read-guard acquire and two hash lookups. No allocation.
+/// A value measured under another face set than the font system's now
+/// is a miss: what a rescan that added faces leaves behind (#329).
+///
+/// Cost: one read-guard acquire, one atomic load and two hash lookups.
+/// No allocation.
 fn probe<V: Copy>(
     cache: &RwLock<MetricCache<V>>,
     face: Option<AppFont>,
@@ -153,7 +183,14 @@ fn probe<V: Copy>(
     grapheme: &str,
 ) -> Option<V> {
     let guard = cache.read().ok()?;
-    guard.get(&(face, OrderedFloat(size_pt)))?.get(grapheme).copied()
+    if guard.generation != face_set_generation() {
+        return None;
+    }
+    guard
+        .values
+        .get(&(face, OrderedFloat(size_pt)))?
+        .get(grapheme)
+        .copied()
 }
 
 /// Record a freshly measured value.
@@ -163,11 +200,33 @@ fn probe<V: Copy>(
 /// lifetime. A poisoned lock drops the value silently: the next
 /// caller measures it again.
 ///
+/// `generation` is the face-set generation `value` was measured at, read
+/// while the font system's lock was held for the measurement, so no
+/// rescan could move it in between. A store at a newer generation than
+/// the cache's lets every older value go first; one at an older
+/// generation is dropped, since it measured faces the font system no
+/// longer has alone.
+///
 /// Cost: one write-guard acquire, two hash lookups, and one `String`
 /// allocation on the first store for a cluster.
-fn store<V>(cache: &RwLock<MetricCache<V>>, face: Option<AppFont>, size_pt: f32, grapheme: &str, value: V) {
+fn store<V>(
+    cache: &RwLock<MetricCache<V>>,
+    generation: u64,
+    face: Option<AppFont>,
+    size_pt: f32,
+    grapheme: &str,
+    value: V,
+) {
     if let Ok(mut guard) = cache.write() {
+        if generation < guard.generation {
+            return;
+        }
+        if generation > guard.generation {
+            guard.values.clear();
+            guard.generation = generation;
+        }
         guard
+            .values
             .entry((face, OrderedFloat(size_pt)))
             .or_default()
             .insert(grapheme.to_string(), value);
@@ -204,8 +263,8 @@ pub struct InkExtent {
 }
 
 lazy_static! {
-    static ref ADVANCE_CACHE: RwLock<MetricCache<f32>> = RwLock::new(FxHashMap::default());
-    static ref INK_EXTENT_CACHE: RwLock<MetricCache<InkExtent>> = RwLock::new(FxHashMap::default());
+    static ref ADVANCE_CACHE: RwLock<MetricCache<f32>> = RwLock::new(MetricCache::default());
+    static ref INK_EXTENT_CACHE: RwLock<MetricCache<InkExtent>> = RwLock::new(MetricCache::default());
     /// Singleton `SwashCache` for the `glyph_ink` measurement
     /// path. `measure_glyph_ink_bounds` requires a mutable
     /// `SwashCache` to rasterize glyphs; we hold one process-
@@ -227,7 +286,8 @@ lazy_static! {
 ///
 /// First call per `(face, size_pt, grapheme)` shapes through
 /// cosmic-text and caches. Subsequent calls return the cached
-/// value. The cache is process-lifetime.
+/// value until the face set changes (a rescan that added faces,
+/// #329), when the cache starts again.
 pub fn glyph_advance(face: Option<AppFont>, size_pt: f32, grapheme: &str) -> f32 {
     // Fast path: a cache hit needs no `FONT_SYSTEM` access at all,
     // and probes with the borrowed cluster rather than an owned copy.
@@ -259,8 +319,11 @@ pub fn glyph_advance_with(
     if let Some(v) = probe(&ADVANCE_CACHE, face, size_pt, grapheme) {
         return v;
     }
+    // The caller holds the font system's lock, so the generation read
+    // here is the one the measurement is of: a rescan adds faces under it.
+    let generation = face_set_generation();
     let measured = shape_advance_with(font_system, face, size_pt, grapheme);
-    store(&ADVANCE_CACHE, face, size_pt, grapheme, measured);
+    store(&ADVANCE_CACHE, generation, face, size_pt, grapheme, measured);
     measured
 }
 
@@ -320,8 +383,10 @@ pub fn glyph_ink_with(
     if let Some(v) = probe(&INK_EXTENT_CACHE, face, size_pt, grapheme) {
         return v;
     }
+    // As in `glyph_advance_with`: read under the caller's lock.
+    let generation = face_set_generation();
     let measured = shape_ink_extent_with(font_system, face, size_pt, grapheme);
-    store(&INK_EXTENT_CACHE, face, size_pt, grapheme, measured);
+    store(&INK_EXTENT_CACHE, generation, face, size_pt, grapheme, measured);
     measured
 }
 
