@@ -73,8 +73,9 @@ impl HandleTouch {
     /// one. A finger claims the handle when it **starts a gesture**
     /// (the recognizer tracks no other finger: a second finger landing
     /// on a handle is the other half of a pinch, and stays one) **on a
-    /// handle** (`on_handle`, from `event_mouse_click::resize_handle_press`,
-    /// which answers nothing outside `Resize` mode). Both are the
+    /// handle** (`on_handle`, from the handle chrome's own hit test,
+    /// `MapView::handle_at`, which shows no resize handle outside `Resize`
+    /// mode). Both are the
     /// caller's to compute, so this stays a plain-value decision the
     /// harness can drive.
     pub(super) fn route(

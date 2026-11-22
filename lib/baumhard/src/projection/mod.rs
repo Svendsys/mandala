@@ -420,16 +420,6 @@ pub trait Geometry {
     fn section_rect(&self, _section: NodeId) -> Option<Rect> {
         None
     }
-    /// The `(t, offset)` a label on a drawn path takes to center nearest
-    /// a point. `None` from a reader that draws no paths.
-    fn label_place_at(&self, _path: NodeId, _point: Vec2) -> Option<(f32, f32)> {
-        None
-    }
-    /// The `(border_t, offset)` a portal end at a drawn node takes to sit
-    /// nearest a point. `None` from a reader that draws no outlines.
-    fn portal_place_at(&self, _node: NodeId, _point: Vec2) -> Option<(f32, f32)> {
-        None
-    }
     /// The visible nodes whose drawn rectangles `rect` meets, insides
     /// overlapping (a shared edge does not count), in ascending node id.
     fn nodes_meeting(&self, rect: Rect) -> Vec<NodeId>;
@@ -450,12 +440,6 @@ impl Geometry for Projector {
     }
     fn section_rect(&self, section: NodeId) -> Option<Rect> {
         Projector::section_rect(self, section)
-    }
-    fn label_place_at(&self, path: NodeId, point: Vec2) -> Option<(f32, f32)> {
-        Projector::label_place_at(self, path, point)
-    }
-    fn portal_place_at(&self, node: NodeId, point: Vec2) -> Option<(f32, f32)> {
-        Projector::portal_place_at(self, node, point)
     }
     fn nodes_meeting(&self, rect: Rect) -> Vec<NodeId> {
         Projector::nodes_meeting(self, rect)
