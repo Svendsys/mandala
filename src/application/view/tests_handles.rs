@@ -300,6 +300,41 @@ fn test_a_frameless_nodes_handles_follow_its_resize() {
     assert_eq!(view.handle_center(se), Some(grown.max()), "after a redo");
 }
 
+/// **A section's handles follow its node**: a section's box on the canvas
+/// is its node's drawn top-left plus its own box, so moving node 5 moves
+/// the resize handles of its second section by the move, though the
+/// section's own box within the node did not change.
+///
+/// Control, seen red: following a section on its own geometry only (the
+/// node's left out), which leaves the handles where the node was.
+#[test]
+fn test_a_sections_handles_follow_its_node() {
+    let mut doc = live();
+    let mut view = MapView::for_test(&doc);
+    let n5 = node(&doc, 5);
+    let section = children_of_kind(doc.doc(), n5, DocKind::Section)
+        .nth(1)
+        .expect("a second section");
+    let se = Handle::Section {
+        section,
+        side: ResizeSide::SE,
+    };
+    doc.selection.select_only(section);
+    view.follow_mode(&InteractionMode::Resize {
+        target: ResizeTarget::Section(section),
+    });
+    view.sync_for_test(&mut doc).expect("the mode shows the handles");
+    let before = view.handle_center(se).expect("shown");
+    assert_eq!(Some(before), view.projector().section_rect(section).map(|r| r.max()));
+    nudge(&mut doc, n5, Vec2::new(30.0, 20.0));
+    view.sync_for_test(&mut doc).expect("the move projects");
+    let after = view.handle_center(se).expect("shown");
+    assert!(
+        after.distance(before + Vec2::new(30.0, 20.0)) < 1e-3,
+        "the handle moved with the node: {before} to {after}"
+    );
+}
+
 /// **`Projector::through_points` is where the drawn path passes**: for
 /// the line link from node 3 to node 2, with one control point, its
 /// start and its end are the drawn chain's, and its middle point is the

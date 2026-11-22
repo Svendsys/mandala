@@ -1168,6 +1168,10 @@ thread_local! {
     /// thread listing the lanes near a cell, one for each lane it read in
     /// the nine cells round it.
     pub(crate) static UNTANGLE_LISTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter: the times [`portal_at`] has had to solve for an
+    /// offset on this thread, its first estimate drawing the end off the
+    /// point it read ([`solve_offset`]).
+    pub(crate) static PORTAL_SOLVES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `size` in points, for shaping: a relative size — a fraction of the
@@ -1362,6 +1366,8 @@ fn solve_offset(
     s: f32,
     drawn: &impl Fn(f32, f32) -> Vec2,
 ) -> (f32, f32) {
+    #[cfg(test)]
+    PORTAL_SOLVES.with(|count| count.set(count.get() + 1));
     // `point`'s distance out from the end drawn nearest it at `offset`,
     // and the place it is drawn at.
     let out = |offset: f32, near: f32| {

@@ -997,9 +997,9 @@ fn drag_to(init: &mut InitState, from: Vec2, to: Vec2) {
 ///
 /// Controls, seen red: the inverse that leaves out the marker's and the
 /// label's reach (`Projector::portal_place_at` handing `portal_at` no
-/// reach); the corner-blind inverse (the place's own normal in a sharp
-/// corner's wedge); a drag that puts the pointer, not the grabbed point,
-/// where the end goes (`start` the press's pointer).
+/// reach); a drag that puts the pointer, not the grabbed point, where the
+/// end goes (`start` the press's pointer). How a sharp corner is solved
+/// is held where it is computed (`projection::tests::inverse_tests`).
 #[test]
 fn test_a_portal_end_drag_puts_what_it_holds_under_the_pointer() {
     let Some(mut app) = app() else { return };

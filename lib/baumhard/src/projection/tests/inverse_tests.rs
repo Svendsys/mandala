@@ -166,34 +166,46 @@ fn test_portal_at_draws_the_end_where_it_was_read() {
     }
 }
 
-/// **In a sharp corner's wedge the end is drawn under the pointer**: for
-/// pointers below and right of the bottom-right corner, right of the
-/// top-right one and above and left of the top-left one — none on a
-/// side's normal — what the projection draws for the pair read is where
-/// the pointer is, for each reach.
+/// **In a sharp corner's wedge the end is drawn under the pointer, by
+/// the first estimate**: for pointers below and right of the bottom-right
+/// corner, right of the top-right one and above and left of the top-left
+/// one — none on a side's normal, every one past the reach — what the
+/// projection draws for the pair read is where the pointer is, for each
+/// reach, and the corner's swept normal and the place found on the
+/// offset curve put it there with no solve (`geometry::PORTAL_SOLVES`):
+/// the solve is for an offset inward, where the curve folds.
 ///
-/// Control: the inverse that ignores the corner — the outline's place
+/// Controls: the inverse that ignores the corner — the outline's place
 /// nearest the pointer and its distance along that place's normal, less
 /// the reach (the shape #395's review measured 88 units off) — misses
-/// by more than a unit, so these pointers are where the corner matters.
+/// by more than a unit, so these pointers are where the corner matters;
+/// and seen red, the corner-blind normal (the place's own) and the place
+/// on the outline (not the offset curve) each leave the end to the solve.
 #[test]
 fn test_portal_at_in_a_sharp_corners_wedge_is_under_the_pointer() {
+    use crate::projection::geometry::PORTAL_SOLVES;
     let (_, line) = outlines().remove(0);
     // Each pointer with the corner it is beside, by its `border_t` round
     // the 600-unit perimeter clockwise from the top-left corner.
     let pointers = [
-        (Vec2::new(240.0 + 21.0, 120.0 + 39.0), 300.0 / 600.0),
-        (Vec2::new(240.0 + 60.0, 120.0 + 9.0), 300.0 / 600.0),
-        (Vec2::new(240.0 + 30.0, 20.0 - 30.0), 200.0 / 600.0),
-        (Vec2::new(40.0 - 25.0, 20.0 - 50.0), 0.0),
+        (Vec2::new(240.0 + 40.0, 120.0 + 60.0), 300.0 / 600.0),
+        (Vec2::new(240.0 + 90.0, 120.0 + 15.0), 300.0 / 600.0),
+        (Vec2::new(240.0 + 50.0, 20.0 - 50.0), 200.0 / 600.0),
+        (Vec2::new(40.0 - 45.0, 20.0 - 70.0), 0.0),
     ];
     for (name, reach) in reaches() {
         for (pointer, corner_t) in pointers {
+            let solves = PORTAL_SOLVES.with(|count| count.get());
             let read = portal_at(&line, pointer, reach.as_ref());
             let at = drawn(&line, read, reach.as_ref());
             assert!(
                 at.distance(pointer) < 0.05,
                 "{name}: drawn at {at}, the pointer at {pointer} ({read:?})"
+            );
+            assert_eq!(
+                PORTAL_SOLVES.with(|count| count.get()),
+                solves,
+                "{name}: the first estimate drew the end at {pointer}, with no solve"
             );
             // Every point of the wedge is nearest the corner itself.
             let (s, _) = portal_along(&line, BorderPoint::At(corner_t), Vec2::ZERO);
