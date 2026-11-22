@@ -13,12 +13,13 @@
 //! click outside cancels. Keyboard fallback: h/H nudges hue, s/S sat,
 //! v/V value, Enter commits, Esc cancels.
 //!
-//! **What it writes to returns with V1-C7 (#248).** The picker is a
-//! transaction there: opening it is `Document::begin`, each hover
-//! change stages the color op for its target, a click commits and a
-//! close or cancel cancels. This module is the widget — layout,
-//! hit-testing, glyph tables, its modal state — and nothing in it reads
-//! or writes the document.
+//! **The contextual picker is a transaction** (V1-C7, #248;
+//! `app::color_picker_flow`): opening it is `Document::begin`, each
+//! hover or pick stages the color op for its target once a frame, the
+//! ࿕ click commits and a close or cancel cancels. The standalone
+//! palette holds no transaction: its ࿕ click is one `apply`. This module
+//! is the widget — layout, hit-testing, glyph tables, its modal state —
+//! and nothing in it reads or writes the document.
 //!
 //! Pure-function layout (`compute_color_picker_layout`) and hit-testing
 //! (`hit_test_picker`) are extracted so unit tests don't need a GPU.
@@ -64,4 +65,7 @@ pub use glyph_tables::hue_ring_font_scale;
 #[cfg(not(target_arch = "wasm32"))]
 pub use hit::hit_test_picker;
 #[cfg(not(target_arch = "wasm32"))]
-pub use state::{ColorPickerState, OpenPicker, PickerDynamicApplyKey, PickerGesture, PickerMode};
+pub use state::{
+    request_error_flash, ColorPickerState, FlashKind, OpenPicker, PickerDynamicApplyKey, PickerGesture, PickerMode,
+    PickerTarget,
+};

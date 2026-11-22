@@ -36,7 +36,7 @@
 //! has the drags that grab them (CLAUDE.md "Dual-target status").
 
 use baumhard::arena::NodeId;
-use baumhard::document::element::{DocElement, DocKind};
+use baumhard::document::element::DocElement;
 use baumhard::document::ids::Document;
 use baumhard::document::resolve::ResolvedText;
 use baumhard::document::values::{Align, FontSize, Weight};
@@ -53,7 +53,6 @@ use glam::Vec2;
 use std::sync::Arc;
 
 use super::overlay::SELECTION_HIGHLIGHT;
-use crate::application::document::selection::kind_of;
 use crate::application::document::Selection;
 
 /// The glyph a resize handle draws: a small open square, as on `main`.
@@ -431,10 +430,9 @@ pub(crate) fn midpoint(curves: &[baumhard::flow::Curve]) -> Option<Vec2> {
 
 /// One handle set as it is planted and shown.
 struct Planted {
-    /// The set's group under the chrome's root.
+    /// The set's group under the chrome's root, which holds one run per
+    /// slot, on the set's channels.
     group: NodeId,
-    /// One run per slot, on the set's channels.
-    runs: Vec<NodeId>,
     /// Half each slot's run, to center it on its handle.
     half: Vec<Vec2>,
     /// What the set is shown on.
@@ -461,31 +459,22 @@ impl Handles {
                     Placement::Last,
                 )
                 .expect("the chrome's root takes a group");
-            let mut runs = Vec::with_capacity(set.len());
             let mut half = Vec::with_capacity(set.len());
             for slot in 0..set.len() {
                 let (run, size) = handle_run(set.glyph(slot), &mut fonts);
                 half.push(size * 0.5);
-                runs.push(
-                    chrome
-                        .insert_child(group, GfxElement::new_run(run, set.channel(slot), 0), Placement::Last)
-                        .expect("a handle group takes its handles"),
-                );
+                chrome
+                    .insert_child(group, GfxElement::new_run(run, set.channel(slot), 0), Placement::Last)
+                    .expect("a handle group takes its handles");
             }
             Planted {
                 group,
-                runs,
                 half,
                 target: None,
                 shown: vec![None; set.len()],
             }
         });
         Handles { sets }
-    }
-
-    /// What each set is shown on now. O(1).
-    pub(crate) fn targets(&self) -> Targets {
-        [self.sets[0].target, self.sets[1].target, self.sets[2].target]
     }
 
     /// The chrome mutators that show each set on `targets`, where the
@@ -557,12 +546,11 @@ impl Handles {
         planted.shown.get(slot).copied().flatten()
     }
 
-    /// The runs of `set`, slot by slot, and its group: for the tests that
-    /// read what the chrome holds.
+    /// The group of `set`, which holds its runs slot by slot: for the
+    /// tests that read what the chrome holds.
     #[cfg(test)]
-    pub(crate) fn planted(&self, set: HandleSet) -> (NodeId, &[NodeId]) {
-        let planted = &self.sets[set.index()];
-        (planted.group, &planted.runs)
+    pub(crate) fn group(&self, set: HandleSet) -> NodeId {
+        self.sets[set.index()].group
     }
 }
 
@@ -628,10 +616,4 @@ fn handle_run(glyph: &str, fonts: &mut FontSystemLease) -> (GlyphRunData, Vec2) 
     let run = GlyphRunData::new(RunShape::Box(Arc::new(shaped)), Vec2::ZERO, GlyphOverrides::none(), 0.0, None)
         .expect("a run with no overrides is always built");
     (run, size)
-}
-
-/// Whether `id`, in `doc`, is a section: what a resize target of a
-/// section must be. O(1).
-pub(crate) fn is_section(doc: &Document, id: NodeId) -> bool {
-    kind_of(doc, id) == Some(DocKind::Section)
 }

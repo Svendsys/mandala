@@ -31,6 +31,8 @@ fn make_standalone_open(hue: f32, sat: f32, val: f32) -> ColorPickerState {
         hover_preview: None,
         pending_error_flash: false,
         last_dynamic_apply: None,
+        staged: None,
+        throttle: crate::application::frame_throttle::MutationFrequencyThrottle::with_default_budget(),
     }))
 }
 

@@ -110,6 +110,13 @@ pub enum ConsoleSideEffect {
     /// found (`MapView::faces_added`), and its report becomes the line's
     /// output (#329).
     RescanFonts,
+    /// Open the contextual color picker, the standalone palette, or
+    /// close the open one. Set by the `color` verb's picker subverbs; the
+    /// executor hands it to the picker's session
+    /// (`app::color_picker_flow::session`), whose report — a refusal of
+    /// a busy writer, a selection that takes no such color — becomes the
+    /// line's output.
+    Picker(commands::color::PickerLine),
 }
 
 impl std::fmt::Debug for ConsoleSideEffect {
@@ -129,6 +136,7 @@ impl std::fmt::Debug for ConsoleSideEffect {
             Self::Present(line) => f.debug_tuple("Present").field(line).finish(),
             Self::Verb(line) => f.debug_tuple("Verb").field(line).finish(),
             Self::RescanFonts => write!(f, "RescanFonts"),
+            Self::Picker(line) => f.debug_tuple("Picker").field(line).finish(),
         }
     }
 }

@@ -11,7 +11,7 @@
 //! | [`structure`] | create, delete, reparent, orphan, connect, clipboard | V1-C4 (#245), rebuilt |
 //! | [`field_nodes`] | node, section, frame, theme and defaults fields; selection-wide style | V1-C5 (#246), rebuilt |
 //! | [`field_paths`] | connector, link, label and portal fields | V1-C6 (#247), rebuilt |
-//! | [`transactions`] | drags, resizes, the color picker, handle chrome | V1-C7 (#248) |
+//! | [`transactions`] | the resize mode, the fast resize, the color picker (the drags are not Actions: `app::live`) | V1-C7 (#248), rebuilt |
 //! | [`text`] | text editing on spans, node editing | V1-C8 (#249) |
 //! | [`edits`] | the edit funnel: keys bound to edits, the macro `Edit` step, the console | V1-D1 (#250), rebuilt |
 //! | [`verbs`] | map verbs: click, hover and link triggers, the console, IPC, the macro `Verb` step | V1-D3 (#252), landed |
@@ -25,7 +25,10 @@
 //!
 //! [`structure`], [`field_nodes`] and [`field_paths`] have landed: their
 //! Actions run ([`structure::dispatch`], [`field_nodes::dispatch`],
-//! [`field_paths::dispatch`]), asked first on both targets. Until its
+//! [`field_paths::dispatch`]), asked first on both targets.
+//! `transactions` has landed too, natively — its Actions are
+//! `NativeOnly` — and the native funnel asks it after the cross-platform
+//! stage (`transactions::dispatch`). Until its
 //! owner lands, each other family
 //! answers its Actions
 //! [`DispatchOutcome::Unhandled`] with a `debug!` naming the owner
@@ -67,7 +70,7 @@ impl Family {
 
 /// Every family whose Actions still answer `Unhandled`, in the table's
 /// order.
-pub(in crate::application::app) const FAMILIES: [&Family; 2] = [&transactions::FAMILY, &text::FAMILY];
+pub(in crate::application::app) const FAMILIES: [&Family; 1] = [&text::FAMILY];
 
 /// The answer a removed Action gets until `owner` rebuilds it: logged at
 /// `debug!` with the owner named, and `Unhandled`, as an Action that does

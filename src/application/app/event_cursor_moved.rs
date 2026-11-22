@@ -1,34 +1,43 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Cursor-move dispatch. Owns the drag-state transitions (a pending
-//! press crossing the threshold becomes a pan, a rubber band, or
-//! whatever the `LeftDrag` / `RightDrag` gesture is bound to), the pan's
-//! camera steps, the rubber band's corner, the hand cursor over what a
-//! click triggers something on, and the hover a node's `on.hover` verb
-//! is held for (`families::verbs`).
+//! press crossing the threshold becomes a drag that edits the map, a
+//! pan, a rubber band, or whatever the `LeftDrag` / `RightDrag` gesture
+//! is bound to), the pan's camera steps, the rubber band's corner, a
+//! drag's travel, the hand cursor over what a click triggers something
+//! on, and the hover a node's `on.hover` verb is held for
+//! (`families::verbs`).
 //!
-//! The drags that edit the map — moving and resizing nodes and
-//! sections, the connector handles, the labels — return as transactions
-//! with V1-C7 (#248).
+//! **A drag that edits the map** — moving nodes, resizing a node or a
+//! section, a path's handles, a label, a portal end — is a transaction
+//! (`app::live`): the crossing opens it, a move here updates its total
+//! and nothing else, and the frame's drain stages it once.
 
 #![cfg(not(target_arch = "wasm32"))]
 
 use crate::application::platform::window::{CursorIcon, PhysicalPosition};
 
+use super::color_picker_flow::handle_color_picker_mouse_move;
 use super::dispatch::families::edits::Projected;
 use super::dispatch::families::structure::valid_reparent_target;
 use super::dispatch::families::verbs;
 use super::input_context::InputHandlerContext;
 use super::shell::Shell;
+use super::live::{self, grab::Grab};
 use super::{ClickHit, DragState, HeldInput, InteractionMode};
+use crate::application::document::selection::kind_of;
+use baumhard::arena::NodeId;
+use baumhard::document::element::DocKind;
+use glam::Vec2;
 use crate::application::common::RenderDecree;
 use crate::application::keybinds::MouseGesture;
 use crate::application::platform::input::MouseButton;
 
 /// `WindowEvent::CursorMoved`: place the cursor, update its icon and the
-/// hover, and advance the drag state. Returns whether the hover changed:
+/// hover, and advance the drag state. Returns whether the hover changed —
 /// a verb it invoked or released may have started or stopped what is
-/// drawn.
+/// drawn — or the color picker took the move, whose wheel the next frame
+/// draws.
 pub(super) fn handle_cursor_moved(
     position: PhysicalPosition<f64>,
     shell: &Shell,
@@ -37,6 +46,7 @@ pub(super) fn handle_cursor_moved(
     let prev_pos = *ctx.cursor_pos;
     *ctx.cursor_pos = (position.x, position.y);
     let cursor = *ctx.cursor_pos;
+
     // Inside or out by where the move is, not by its being a move: a
     // captured drag reports moves outside the window (ruling D3.4 item 3).
     *ctx.pointer_inside = super::within_surface(
@@ -45,12 +55,32 @@ pub(super) fn handle_cursor_moved(
         ctx.renderer.surface_height(),
     );
 
+    // Over the color picker, the move is the picker's: its hover, or its
+    // wheel's move or resize — what the wheel shows, never the map. The
+    // frame draws the wheel and stages the color it shows once
+    // (`color_picker_flow::session::drain`), so the move only asks for a
+    // frame. Not during a drag already in flight on the canvas; and the
+    // standalone palette lets a move outside it reach the canvas, as on
+    // `main`.
+    if ctx.color_picker_state.is_open()
+        && matches!(*ctx.drag_state, DragState::None)
+        && handle_color_picker_mouse_move(cursor, ctx.color_picker_state)
+    {
+        return true;
+    }
+
     // Idle: a hand over what a click triggers something on, the default
     // elsewhere, and the hover follows the pointer. During a gesture the
     // cursor stays as the gesture began, and so does the hover.
     // `set_cursor` goes through `cursor_icon_last` because winit dedupes
     // it on macOS / X11 but not on Windows or Wayland.
     let mut hover_changed = false;
+    if let Some(icon) = ctx.drag_state.live().and_then(|live| drag_cursor(&live.gesture)) {
+        if icon != *ctx.cursor_icon_last {
+            shell.set_cursor(icon);
+            *ctx.cursor_icon_last = icon;
+        }
+    }
     if matches!(*ctx.drag_state, DragState::None) {
         let (points, changed) = follow_pointer(ctx, cursor);
         hover_changed = changed;
@@ -171,10 +201,18 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev: (f64, f64), curso
         DragState::SelectingRect { current_canvas, .. } => {
             *current_canvas = ctx.renderer.screen_to_canvas(cursor.0 as f32, cursor.1 as f32);
         }
-        DragState::Pending { start_pos, hit, .. } => {
-            let (start_pos, hit) = (*start_pos, *hit);
+        DragState::Dragging(live) => {
+            // The travel in canvas units, move by move, as on `main`: a
+            // zoom mid-drag changes what a pixel is worth from then on.
+            let from = ctx.renderer.screen_to_canvas(prev.0 as f32, prev.1 as f32);
+            live.moved(from, ctx.renderer.screen_to_canvas(cursor.0 as f32, cursor.1 as f32));
+        }
+        DragState::Pending {
+            start_pos, hit, grab, ..
+        } => {
+            let (start_pos, hit, grab) = (*start_pos, *hit, *grab);
             if past_threshold(start_pos, cursor) {
-                promote_left_drag(ctx, start_pos, hit, cursor);
+                promote_left_drag(ctx, start_pos, hit, grab, cursor);
             }
         }
         DragState::PendingRight { start_pos, .. } => {
@@ -204,24 +242,53 @@ fn advance_drag_state(ctx: &mut InputHandlerContext<'_>, prev: (f64, f64), curso
     }
 }
 
-/// A left press crossed the threshold: Shift on empty canvas starts a
-/// rubber band; anything else dispatches the `LeftDrag` binding (by
-/// default `Action::PanCanvas`) with the press's hit, and a pan it arms
-/// is held by the left button and moves the camera from the press
-/// already, so the first frame of the drag is not lost.
+/// A left press crossed the threshold. What it grabbed — a handle, a
+/// label, a portal end — is dragged; a press whose grab's target went
+/// away starts nothing, rather than turn into another drag (as on
+/// `main`). Otherwise Shift on empty canvas starts a rubber band; a
+/// press on a node moves it (`move_nodes_drag`); anything else
+/// dispatches the `LeftDrag` binding (by default `Action::PanCanvas`)
+/// with the press's hit, and a pan it arms is held by the left button and
+/// moves the camera from the press already, so the first frame of the
+/// drag is not lost.
 fn promote_left_drag(
     ctx: &mut InputHandlerContext<'_>,
     start_pos: (f64, f64),
     hit: ClickHit,
+    grab: Option<Grab>,
     cursor: (f64, f64),
 ) {
     let start_canvas = ctx
         .renderer
         .screen_to_canvas(start_pos.0 as f32, start_pos.1 as f32);
+    let cursor_canvas = ctx.renderer.screen_to_canvas(cursor.0 as f32, cursor.1 as f32);
+    if let Some(grab) = grab {
+        *ctx.last_click = None;
+        *ctx.drag_state = DragState::None;
+        let gesture = match (ctx.document.as_ref(), ctx.view.as_ref()) {
+            (Some(doc), Some(view)) => live::grab::gesture_for(grab, doc.doc(), view),
+            _ => None,
+        };
+        match gesture {
+            Some(gesture) => start_drag(ctx, gesture, MouseButton::Left, cursor_canvas - start_canvas, cursor_canvas),
+            None => log::debug!("drag: the press's {} is gone; nothing is dragged", grab.word()),
+        }
+        return;
+    }
+    if let ClickHit::Element(node) = hit {
+        if ctx
+            .document
+            .as_ref()
+            .is_some_and(|doc| kind_of(doc.doc(), node) == Some(DocKind::Node))
+        {
+            move_nodes_drag(ctx, node, cursor_canvas - start_canvas, cursor_canvas);
+            return;
+        }
+    }
     if ctx.modifiers.shift_key() && hit == ClickHit::Empty {
         *ctx.drag_state = DragState::SelectingRect {
             start_canvas,
-            current_canvas: ctx.renderer.screen_to_canvas(cursor.0 as f32, cursor.1 as f32),
+            current_canvas: cursor_canvas,
         };
         return;
     }
@@ -250,4 +317,66 @@ fn promote_left_drag(
             (cursor.1 - start_pos.1) as f32,
         ));
     }
+}
+
+/// A drag of `node` past the threshold: it moves, and — for a Shift
+/// drag — every node selected before the press, each with its subtree
+/// unless Alt is held (`live::grab::move_nodes`), as on `main`. The node
+/// becomes the selection when it was not in it, so the selection's tint
+/// follows what moves.
+fn move_nodes_drag(ctx: &mut InputHandlerContext<'_>, node: NodeId, total: Vec2, cursor: Vec2) {
+    *ctx.last_click = None;
+    *ctx.drag_state = DragState::None;
+    let (shift, alone) = (ctx.modifiers.shift_key(), ctx.modifiers.alt_key());
+    let Some(doc) = ctx.document.as_mut() else {
+        return;
+    };
+    let with: Vec<NodeId> = if shift {
+        doc.selection.nodes(doc.doc()).collect()
+    } else {
+        Vec::new()
+    };
+    if !doc.selection.contains(node) {
+        doc.selection.select_only(node);
+    }
+    let Some(gesture) = live::grab::move_nodes(doc.doc(), node, &with, alone) else {
+        return;
+    };
+    start_drag(ctx, gesture, MouseButton::Left, total, cursor);
+}
+
+/// Open `gesture`'s transaction and hold it in the drag state, `held_by`
+/// that button, with `total` and `cursor` pending for the next frame's
+/// drain (`live::Live::begin`). A refusal — another interactive
+/// transaction is open (D28) — leaves no drag; the status line says why.
+pub(super) fn start_drag(
+    ctx: &mut InputHandlerContext<'_>,
+    gesture: live::Gesture,
+    held_by: MouseButton,
+    total: Vec2,
+    cursor: Vec2,
+) {
+    let Some(doc) = ctx.document.as_mut() else {
+        return;
+    };
+    *ctx.drag_state = match live::Live::begin(doc, gesture, held_by, total, cursor) {
+        Some(live) => DragState::Dragging(Box::new(live)),
+        None => DragState::None,
+    };
+}
+
+/// The cursor a drag shows while it runs: a resize's, by its handle, as
+/// on `main`; `None` (the cursor as the drag began) for the others.
+fn drag_cursor(gesture: &live::Gesture) -> Option<CursorIcon> {
+    use crate::application::view::handles::ResizeSide as S;
+    let side = match gesture {
+        live::Gesture::ResizeNode { side, .. } | live::Gesture::ResizeSection { side, .. } => *side,
+        _ => return None,
+    };
+    Some(match side {
+        S::NW | S::SE => CursorIcon::NwseResize,
+        S::NE | S::SW => CursorIcon::NeswResize,
+        S::N | S::S => CursorIcon::NsResize,
+        S::E | S::W => CursorIcon::EwResize,
+    })
 }

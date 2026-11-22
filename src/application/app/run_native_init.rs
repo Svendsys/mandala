@@ -100,6 +100,9 @@ pub(super) struct InitState {
     /// `WasmInputState.touch_recognizer`. See `app/touch_gesture.rs`
     /// for the machine and CONCEPTS §5 for where each emission goes.
     pub(super) touch_recognizer: super::touch_gesture::TouchGestureRecognizer,
+    /// The finger holding a resize handle in Resize mode, if one does:
+    /// the one touch the recognizer is not fed (`app/touch_handle.rs`).
+    pub(super) touch_handle: super::touch_handle::HandleTouch,
     /// Raw input the IPC `input` family queued for the heartbeat,
     /// applied one sample per frame ahead of `drain_inputs`
     /// (`format/ipc.md` §`input`). Always empty without `--ipc`.
@@ -161,6 +164,7 @@ impl InitState {
             watchdog: &self.watchdog,
             shell: &self.shell,
             touch_recognizer: &mut self.touch_recognizer,
+            touch_handle: &mut self.touch_handle,
             injected: &mut self.injected,
             clock: &mut self.clock,
             quit_requested: &mut self.quit_requested,
@@ -256,7 +260,12 @@ impl InitState {
     /// park until next OS event) and `ControlFlow::Poll` (continuous
     /// frames).
     pub(super) fn needs_continuation(&self) -> bool {
-        heartbeat::needs_continuation(&self.injected, &self.clock, self.document.as_ref())
+        heartbeat::needs_continuation(
+            &self.injected,
+            &self.clock,
+            self.document.as_ref(),
+            self.drag_state.live().is_some_and(super::live::Live::owes_stage),
+        )
     }
 }
 
@@ -411,6 +420,7 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
         // Touch gesture recognizer. State machine starts Idle;
         // first `WindowEvent::Touch` lands a finger.
         touch_recognizer: super::touch_gesture::TouchGestureRecognizer::new(),
+        touch_handle: super::touch_handle::HandleTouch::default(),
         injected: InjectedQueue::default(),
         artifacts: Artifacts::for_this_process(),
         recorder: Recorder::default(),

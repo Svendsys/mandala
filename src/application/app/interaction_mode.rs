@@ -63,11 +63,21 @@ pub enum ResizeTarget {
 }
 
 impl ResizeTarget {
-    /// The element resized. O(1).
+    /// What the resize mode resizes for `selection` of `doc`: its one
+    /// element, when that is a node or a section (a section is selected
+    /// only by node editing, V1-C8). `None` for anything else. What
+    /// `Action::EnterResizeMode` and `mode resize` enter on. O(1).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    pub fn element(self) -> NodeId {
-        match self {
-            ResizeTarget::Node(id) | ResizeTarget::Section(id) => id,
+    pub fn of(doc: &baumhard::document::ids::Document, selection: &crate::application::document::Selection) -> Option<Self> {
+        use baumhard::document::element::DocKind;
+        let mut selected = selection.iter();
+        let (Some(only), None) = (selected.next(), selected.next()) else {
+            return None;
+        };
+        match crate::application::document::selection::kind_of(doc, only)? {
+            DocKind::Node => Some(ResizeTarget::Node(only)),
+            DocKind::Section => Some(ResizeTarget::Section(only)),
+            _ => None,
         }
     }
 }

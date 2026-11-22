@@ -4,7 +4,9 @@
 //! bodies on native. Mouse handlers and the keyboard handler funnel
 //! through here. The cross-platform stage (`action_core`, which asks
 //! the owner families first) runs before the native-only arms below:
-//! the console, the pan the drag state machine holds, and the files.
+//! the transactions family (the resize mode, the fast resize and the
+//! color picker), the console, the pan the drag state machine holds,
+//! and the files.
 //! Adding a new behavior is variant + default + arm, in that order;
 //! never inline a body in a handler.
 
@@ -101,6 +103,12 @@ pub(in crate::application::app) fn dispatch_action(
     ctx: &mut InputHandlerContext<'_>,
     hit: Option<&DispatchHit>,
 ) -> DispatchOutcome {
+    // Escape during a drag that edits the map cancels it, and that is the
+    // whole of the key's work: the document is as it was before the
+    // press, and the mode stays (`app::live`).
+    if action == Action::ExitMode && cancel_drag(ctx) {
+        return DispatchOutcome::Handled;
+    }
     let cross_outcome = {
         let (mut core, _) = ctx.split_borrow();
         super::action_core::dispatch_compatible(&action, &mut core, hit)
@@ -108,7 +116,29 @@ pub(in crate::application::app) fn dispatch_action(
     if !matches!(cross_outcome, DispatchOutcome::Unhandled) || super::families::dispatch(&action).is_some() {
         return cross_outcome;
     }
+    if let Some(outcome) = super::families::transactions::dispatch(&action, ctx, hit) {
+        return outcome;
+    }
     dispatch_native_arms(action, ctx)
+}
+
+/// Cancel the drag that edits the map, if one runs: its transaction is
+/// cancelled, the drag state ends, and the view draws the map as it was
+/// before the press. Returns whether one ran.
+fn cancel_drag(ctx: &mut InputHandlerContext<'_>) -> bool {
+    if !matches!(*ctx.drag_state, DragState::Dragging(_)) {
+        return false;
+    }
+    let DragState::Dragging(live) = std::mem::replace(ctx.drag_state, DragState::None) else {
+        return false;
+    };
+    if let Some(doc) = ctx.document.as_mut() {
+        live.cancel(doc);
+        if let Some(view) = ctx.view.as_mut() {
+            view.sync(doc, ctx.renderer);
+        }
+    }
+    true
 }
 
 /// [`dispatch_action`] on behalf of a *held* input — a mouse button

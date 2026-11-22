@@ -31,7 +31,7 @@ use baumhard::document::values::{ColorRef, FontRef, FontSize, Weight, ZoomWindow
 
 use super::{Groups, Steps};
 use crate::application::document::selection::kind_of;
-use crate::application::document::MindMapDocument;
+use crate::application::document::{MindMapDocument, Selection};
 use crate::application::keybinds::{ColorAxis, ZoomBound};
 use crate::application::view::inspect::children_of_kind;
 
@@ -52,9 +52,15 @@ pub(crate) fn text_op(kind: DocKind, op: TextOp) -> Option<DocMutation> {
 
 /// The selection's range, when it has one and its element is a section.
 fn range(doc: &MindMapDocument) -> Option<(NodeId, usize, usize)> {
-    doc.selection
+    range_of(doc.doc(), &doc.selection)
+}
+
+/// `selection`'s range, when it has one and its element is a section of
+/// `doc`.
+fn range_of(doc: &Document, selection: &Selection) -> Option<(NodeId, usize, usize)> {
+    selection
         .range()
-        .filter(|&(section, _, _)| kind_of(doc.doc(), section) == Some(DocKind::Section))
+        .filter(|&(section, _, _)| kind_of(doc, section) == Some(DocKind::Section))
 }
 
 /// The frame of `node`, if it has one.
@@ -65,15 +71,21 @@ pub(crate) fn frame_of(doc: &Document, node: NodeId) -> Option<NodeId> {
 /// The steps that set color `axis` to `color` (`None` inherits) on
 /// every selected element it reaches.
 pub(crate) fn color(doc: &MindMapDocument, axis: ColorAxis, color: Option<ColorRef>) -> Steps {
-    let d = doc.doc();
+    color_of(doc.doc(), &doc.selection, axis, color)
+}
+
+/// [`color`] on `selection` rather than the document's own: what the
+/// color picker stages on the selection it was opened on (V1-C7), which
+/// holds while it is open whatever selects something else.
+pub(crate) fn color_of(d: &Document, selection: &Selection, axis: ColorAxis, color: Option<ColorRef>) -> Steps {
     let key: &'static str = axis.into();
-    if let (ColorAxis::Text, Some((section, start, end))) = (axis, range(doc)) {
+    if let (ColorAxis::Text, Some((section, start, end))) = (axis, range_of(d, selection)) {
         return compose::style_range(d, section, start, end, vec![TextOp::SetColor(color)])
             .map_err(|e| e.to_string());
     }
     let mut groups = Groups::default();
     let text = |kind| text_op(kind, TextOp::SetColor(color));
-    for id in doc.selection.iter() {
+    for id in selection.iter() {
         let Some(kind) = kind_of(d, id) else { continue };
         match (kind, axis) {
             (DocKind::Connector | DocKind::Link, ColorAxis::Text | ColorAxis::Border) => {

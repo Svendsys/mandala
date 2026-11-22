@@ -33,8 +33,9 @@
 //!
 //! **Modal state machines.** `console_input` steals keyboard input
 //! while the console is open (the §3 carve-out for modals that own the
-//! literal `winit::Key` payload). The map's own editors return with
-//! V1-C8 (#249), the color picker with V1-C7 (#248).
+//! literal `winit::Key` payload), and so does the color picker
+//! (`color_picker_flow`), whose contextual mode is a transaction. The
+//! map's own editors return with V1-C8 (#249).
 //!
 //! **Cross-platform shape.** Pure logic (gesture recognition,
 //! viewport math, hit testing, `Action` resolution) lives in
@@ -61,16 +62,9 @@ mod animation;
 // See CLAUDE.md "Dual-target status".
 #[cfg(not(target_arch = "wasm32"))]
 mod capture_flow;
-// The picker's open, draw and input paths, kept for V1-C7 (#248) to
-// put on a transaction: nothing opens the picker until then
-// (`Action::OpenColorPicker` is unhandled, the `color pick` console
-// form refuses), so the whole module is unreachable. The `expect`
-// fires the day it is reachable again, and goes with it.
+// The picker's open, draw and input paths, and its session on the one
+// writer: the contextual picker is a transaction (V1-C7, #248).
 #[cfg(not(target_arch = "wasm32"))]
-#[expect(
-    dead_code,
-    reason = "the color picker returns on a transaction with V1-C7 (#248)"
-)]
 mod color_picker_flow;
 #[cfg(not(target_arch = "wasm32"))]
 mod console_input;
@@ -84,6 +78,8 @@ mod event_keyboard;
 mod event_mouse_click;
 #[cfg(not(target_arch = "wasm32"))]
 mod freeze_watchdog;
+#[cfg(not(target_arch = "wasm32"))]
+mod live;
 #[cfg(not(target_arch = "wasm32"))]
 mod heartbeat;
 #[cfg(not(target_arch = "wasm32"))]
@@ -118,6 +114,8 @@ mod shell;
 // failure differently (CODE_CONVENTIONS §4).
 mod startup_load;
 mod touch_gesture;
+#[cfg(not(target_arch = "wasm32"))]
+mod touch_handle;
 
 // Drift surface for a new `InputHandlerContext` field: the struct in
 // `input_context.rs`, the `InitState::input_context()` builder in
@@ -161,6 +159,25 @@ use crate::application::view::MapView;
 /// exists for — but the *number* scales with the display: on a 2x
 /// screen 5 physical px is 2.5 logical px of slop, not 5.
 const POINTER_DRAG_THRESHOLD_PX: f64 = 5.0;
+
+/// How near a press must land to a handle's center, in surface pixels,
+/// to grab it (`view::handles`): `main`'s. Measured on the screen, so a
+/// handle is as easy to grab at any zoom; [`handle_tolerance`] turns it
+/// into canvas units for the hit test.
+#[cfg(not(target_arch = "wasm32"))]
+const HANDLE_HIT_TOLERANCE_PX: f32 = 8.0;
+
+/// [`HANDLE_HIT_TOLERANCE_PX`] in canvas units at the renderer's zoom.
+/// O(1).
+#[cfg(not(target_arch = "wasm32"))]
+fn handle_tolerance(renderer: &crate::application::renderer::Renderer) -> f32 {
+    let zoom = renderer.camera_zoom();
+    if zoom.is_finite() && zoom > 0.0 {
+        HANDLE_HIT_TOLERANCE_PX / zoom
+    } else {
+        HANDLE_HIT_TOLERANCE_PX
+    }
+}
 
 /// [`POINTER_DRAG_THRESHOLD_PX`] squared — the form every
 /// comparison actually uses, so no pointer path pays a `sqrt` per
@@ -403,11 +420,12 @@ enum PanOwner {
 
 /// Tracks the current drag interaction state.
 ///
-/// The drags that edit the map — moving a node or a section, resizing,
-/// the connector handles and the labels — return as transactions with
-/// V1-C7 (#248). Until then a left drag dispatches whatever `LeftDrag`
-/// is bound to (by default `Action::PanCanvas`), wherever it starts,
-/// and a Shift+drag on empty canvas is the rubber band.
+/// A left drag past the threshold becomes what its press grabbed
+/// (`live::grab`): a handle's resize or path drag, a label's or a portal
+/// end's slide, or a move of the node it landed on — each a transaction,
+/// [`DragState::Dragging`] (`app::live`). A Shift drag on empty canvas is
+/// the rubber band; any other is whatever `LeftDrag` is bound to (by
+/// default `Action::PanCanvas`).
 #[cfg(not(target_arch = "wasm32"))]
 enum DragState {
     /// No drag in progress.
@@ -423,6 +441,9 @@ enum DragState {
         /// trigger reads at the release ([`press_hit`]): `hit` is what
         /// the selection takes of it.
         landed: Option<baumhard::projection::Hit>,
+        /// What the press grabbed — a handle, a label, a portal end —
+        /// which a drag past the threshold drags (`live::grab`).
+        grab: Option<live::grab::Grab>,
     },
     /// The right button is down and the cursor has not moved past the
     /// drag threshold yet. The threshold cross dispatches whatever
@@ -455,6 +476,11 @@ enum DragState {
         /// Canvas-space corner at current cursor position.
         current_canvas: Vec2,
     },
+    /// A drag that edits the map, on its transaction: what it edits, its
+    /// travel since the press and the button whose release commits it
+    /// (`app::live`). Boxed: a gesture records the values it started
+    /// from, which would make every drag state that large.
+    Dragging(Box<live::Live>),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -462,11 +488,12 @@ impl DragState {
     /// True when overwriting this state with a freshly-armed gesture
     /// would abandon one that nothing else will finish: a
     /// `PendingRight` holds a user-named gesture (`RightClick`, or
-    /// whatever `RightDrag` is bound to) that has not fired yet.
-    /// `Pending` / `Panning` / `SelectingRect` owe nothing and are
-    /// re-derived from the next press or the next cursor sample.
+    /// whatever `RightDrag` is bound to) that has not fired yet, and a
+    /// `Dragging` holds an open transaction only its button's release
+    /// commits. `Pending` / `Panning` / `SelectingRect` owe nothing and
+    /// are re-derived from the next press or the next cursor sample.
     fn would_abandon_gesture(&self) -> bool {
-        matches!(self, Self::PendingRight { .. })
+        matches!(self, Self::PendingRight { .. } | Self::Dragging(_))
     }
 
     /// True when this is a pan `input` holds, i.e. one that `input`'s
@@ -510,9 +537,21 @@ impl DragState {
     /// gesture's owning release is now one the window may never
     /// deliver, so none is left waiting for it. A press whose release
     /// never came is not a click, so neither the click nor the
-    /// `RightClick` binding fires; a pan and a rubber band end.
-    fn end_on_focus_loss(&mut self) {
-        *self = Self::None;
+    /// `RightClick` binding fires; a pan and a rubber band end; a drag
+    /// that edits the map is cancelled, since no release will commit it,
+    /// and the document is as it was before its press.
+    fn end_on_focus_loss(&mut self, document: Option<&mut MindMapDocument>) {
+        if let (Self::Dragging(live), Some(doc)) = (std::mem::replace(self, Self::None), document) {
+            live.cancel(doc);
+        }
+    }
+
+    /// The drag that edits the map, while one runs. O(1).
+    fn live(&self) -> Option<&live::Live> {
+        match self {
+            Self::Dragging(live) => Some(live),
+            _ => None,
+        }
     }
 
     /// The hit a `RightDrag` threshold cross dispatches with, built from

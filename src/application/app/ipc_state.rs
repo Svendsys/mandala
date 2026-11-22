@@ -105,10 +105,13 @@ impl DragState {
         let canvas = |point: glam::Vec2| json!({ "x": f32_json(point.x), "y": f32_json(point.y) });
         match self {
             DragState::None => json!({ "kind": "None" }),
-            DragState::Pending { start_pos, hit, .. } => json!({
+            DragState::Pending {
+                start_pos, hit, grab, ..
+            } => json!({
                 "kind": "Pending",
                 "start_pos": xy_f64(*start_pos),
                 "hit": element(*hit),
+                "grab": grab.map(|grab| grab.word()),
             }),
             DragState::PendingRight {
                 start_pos,
@@ -141,6 +144,39 @@ impl DragState {
                 "start_canvas": canvas(*start_canvas),
                 "current_canvas": canvas(*current_canvas),
             }),
+            DragState::Dragging(live) => {
+                let named = |id| match doc {
+                    Some(doc) => crate::application::view::inspect::element_ref(doc.doc(), id),
+                    None => Value::Null,
+                };
+                let mut out = json!({
+                    "kind": "Dragging",
+                    "gesture": live.gesture.word(),
+                    "button": crate::application::ipc::injected::button_word(live.held_by),
+                    "total": canvas(live.total()),
+                });
+                let acting = match &live.gesture {
+                    super::live::Gesture::MoveNodes { nodes } => {
+                        json!({ "nodes": nodes.iter().map(|&(node, _)| named(node)).collect::<Vec<_>>() })
+                    }
+                    super::live::Gesture::MoveSection { section, .. } => json!({ "element": named(*section) }),
+                    super::live::Gesture::ResizeNode { node, side, .. } => {
+                        json!({ "element": named(*node), "side": side.word() })
+                    }
+                    super::live::Gesture::ResizeSection { section, side, .. } => {
+                        json!({ "element": named(*section), "side": side.word() })
+                    }
+                    super::live::Gesture::PathHandle { path, handle, .. } => {
+                        json!({ "element": named(*path), "handle": handle.word() })
+                    }
+                    super::live::Gesture::Label { label, .. } => json!({ "element": named(*label) }),
+                    super::live::Gesture::PortalEnd { end, .. } => json!({ "element": named(*end) }),
+                };
+                if let (Some(out), Value::Object(acting)) = (out.as_object_mut(), acting) {
+                    out.extend(acting);
+                }
+                out
+            }
         }
     }
 }
@@ -206,9 +242,10 @@ impl OpenPicker {
     fn to_ipc_json(&self) -> Value {
         let mode = match &self.mode {
             PickerMode::Standalone => json!({ "kind": "Standalone" }),
-            PickerMode::Contextual { seed_hsv } => json!({
+            PickerMode::Contextual { seed_hsv, target } => json!({
                 "kind": "Contextual",
                 "seed_hsv": { "h": f32_json(seed_hsv.0), "s": f32_json(seed_hsv.1), "v": f32_json(seed_hsv.2) },
+                "axis": <&'static str>::from(target.axis),
             }),
         };
         let gesture = self.gesture.as_ref().map(|g| match g {
@@ -415,6 +452,8 @@ mod tests {
             hover_preview: None,
             pending_error_flash: false,
             last_dynamic_apply: None,
+            staged: None,
+            throttle: crate::application::frame_throttle::MutationFrequencyThrottle::with_default_budget(),
         }))
     }
 

@@ -181,6 +181,23 @@ pub(in crate::application::app) fn execute_console_line(
         });
     }
 
+    // So is the color picker's: it opened, or why it did not — a busy
+    // writer (D28), a selection that takes no such color. One that
+    // opened closes the console, as on `main`, and its wheel is drawn by
+    // the next frame; one refused leaves the console open on the reason.
+    if let Some(ConsoleSideEffect::Picker(line)) = &side_effect {
+        let result = super::super::color_picker_flow::session::take(ctx, *line);
+        let ran = matches!(result, ExecResult::Ok(_));
+        if ran && close_after {
+            *ctx.console_state = ConsoleState::Closed;
+            ctx.renderer.rebuild_console_overlay_buffers(ctx.app_scene, None);
+        }
+        return Some(LineRun {
+            outcome: LineOutcome::Ran(result),
+            changed_view: true,
+        });
+    }
+
     // A screenshot's report is the line's output, so it is taken here,
     // before anything else could run, and replaces the verb's silent
     // `Ok`. It draws through a camera of its own and changes nothing
@@ -248,9 +265,9 @@ fn rescan_fonts(ctx: &mut InputHandlerContext<'_>) -> (ExecResult, bool) {
     (ExecResult::ok_msg(report), !found.is_empty())
 }
 
-/// Perform the side effect a verb asked for. The seven that are a
+/// Perform the side effect a verb asked for. The eight that are a
 /// line's whole report (`Record`, `Clock`, `Edit`, `Present`, `Verb`,
-/// `Screenshot`, `RescanFonts`) are taken by
+/// `Picker`, `Screenshot`, `RescanFonts`) are taken by
 /// [`execute_console_line`] before this is reached.
 fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffect) {
     match effect {
@@ -265,6 +282,7 @@ fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffec
         // Per CODE_CONVENTIONS §9 (interactive paths must not panic),
         // log + soft-skip instead of `unreachable!`.
         ConsoleSideEffect::Screenshot(_)
+        | ConsoleSideEffect::Picker(_)
         | ConsoleSideEffect::Record(_)
         | ConsoleSideEffect::Clock(_)
         | ConsoleSideEffect::Edit(_)

@@ -5,8 +5,9 @@
 //! `work_plans/LLM_IPC.md` §D9).
 //!
 //! **A frame has an input-driven half and a time-driven half.** The
-//! input-driven half — the rubber band — flushes what input already
-//! did, and needs no clock. The time-driven half — one sample of the IPC
+//! input-driven half — the rubber band, and the stage of the drag that
+//! edits the map — flushes what input already did, and needs no clock
+//! (a real clock only paces how often the stage runs under load). The time-driven half — one sample of the IPC
 //! injected-input queue and a recording's frame — is a function of
 //! *when* the frame runs. In real time the two always run together, once
 //! per event-loop iteration. Under a virtual clock, time moves only when
@@ -52,20 +53,25 @@ use super::capture_flow::CaptureScene;
 use super::input_context::InputHandlerContext;
 use super::ipc_scene::surface_of;
 use super::step::{run_step, Beat, Steps};
-use super::{animation, drain_frame, record_flow};
+use super::{animation, color_picker_flow, drain_frame, record_flow};
 
 /// Whether the loop owes another iteration without further input: a
 /// queued injected sample, or a running animation
-/// ([`animation::keeps_ticking`]), under a real clock. Under a virtual
-/// clock a queued sample and an animation's next frame are owed to
-/// future instants only a step reaches, and a loop that polled for them
-/// would spin with nothing to do.
+/// ([`animation::keeps_ticking`]), under a real clock; and, under either,
+/// a drag that edits the map with a stage still owed, which a throttled
+/// frame held back (`app::live`). Under a virtual clock a queued sample
+/// and an animation's next frame are owed to future instants only a step
+/// reaches, and a loop that polled for them would spin with nothing to
+/// do; a drag's stage is owed to the next frame, whenever it runs.
 pub(super) fn needs_continuation(
     injected: &InjectedQueue,
     clock: &AppClock,
     document: Option<&crate::application::document::MindMapDocument>,
+    drag_owed: bool,
 ) -> bool {
-    (!injected.is_empty() && clock.mode() == ClockMode::Real) || animation::keeps_ticking(document, clock)
+    drag_owed
+        || (!injected.is_empty() && clock.mode() == ClockMode::Real)
+        || animation::keeps_ticking(document, clock)
 }
 
 impl InputHandlerContext<'_> {
@@ -117,9 +123,10 @@ impl InputHandlerContext<'_> {
         self.drain_inputs()
     }
 
-    /// The per-frame drains: the rubber band (`drain_frame`), the view's
-    /// following of the mode (`view::MapView::follow_mode`), then the
-    /// view's sync — the one pipeline (`view::MapView::sync`) — so a
+    /// The per-frame drains: the rubber band and the drag that edits the
+    /// map, staged once (`drain_frame`), the view's following of the mode
+    /// (`view::MapView::follow_mode`), then the view's sync — the one
+    /// pipeline (`view::MapView::sync`), which projects the stage — so a
     /// change any path made reaches the layers this frame even if the
     /// path did not sync it itself; a sync with nothing to do does
     /// nothing. Does **not** render: the event loop decides whether to
@@ -129,13 +136,33 @@ impl InputHandlerContext<'_> {
     /// changed.
     pub(super) fn drain_inputs(&mut self) -> bool {
         drain_frame::drain_rect_select(self.drag_state, self.document, self.view, self.renderer);
-        match (self.document.as_mut(), self.view.as_mut()) {
+        // Real time is what the user waits on, so only a real clock's
+        // frame is paced by what it costs (`frame_throttle`).
+        let throttled = self.clock.mode() == ClockMode::Real;
+        let staged = drain_frame::drain_drag(self.drag_state, self.document, self.view, throttled);
+        // The color picker's wheel, drawn once a frame from what input
+        // left it showing — a no-op when nothing it draws changed — and
+        // the contextual picker's color staged on its target.
+        let picker_open = self.color_picker_state.is_open();
+        let picker_staged = color_picker_flow::session::drain(self.color_picker_state, self.document, throttled);
+        let wheel_drawn = picker_open
+            && color_picker_flow::rebuild_color_picker_overlay(self.color_picker_state, self.app_scene, self.renderer);
+        let changed = match (self.document.as_mut(), self.view.as_mut()) {
             (Some(doc), Some(view)) => {
                 view.follow_mode(self.interaction_mode);
                 view.sync(doc, self.renderer)
             }
             _ => false,
+        };
+        if throttled {
+            if let (Some(started), super::DragState::Dragging(live)) = (staged, &mut *self.drag_state) {
+                live.record_frame(started);
+            }
+            if let (Some(started), Some(picker)) = (picker_staged, self.color_picker_state.as_open_mut()) {
+                picker.throttle.record_work_duration(started.elapsed());
+            }
         }
+        changed || wheel_drawn
     }
 
     /// Take the active recording's next frame if one is due: a no-op
@@ -400,19 +427,19 @@ mod tests {
         let real = AppClock::default();
         let frozen = virtual_clock();
         assert!(
-            needs_continuation(&queued, &real, None),
+            needs_continuation(&queued, &real, None, false),
             "queued input on a real clock"
         );
         assert!(
-            !needs_continuation(&queued, &frozen, None),
+            !needs_continuation(&queued, &frozen, None, false),
             "queued input on a virtual clock"
         );
         assert!(
-            !needs_continuation(&empty, &real, None),
+            !needs_continuation(&empty, &real, None, false),
             "nothing on a real clock"
         );
         assert!(
-            !needs_continuation(&empty, &frozen, None),
+            !needs_continuation(&empty, &frozen, None, false),
             "nothing on a virtual clock"
         );
     }

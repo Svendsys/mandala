@@ -106,6 +106,9 @@ pub(in crate::application::app) struct InputHandlerContext<'a> {
     pub shell: &'a super::shell::Shell,
     /// Touch gesture state machine (`super::touch_gesture`).
     pub touch_recognizer: &'a mut super::touch_gesture::TouchGestureRecognizer,
+    /// The finger holding a resize handle, if one does: the one touch
+    /// the recognizer is not fed (`super::touch_handle`).
+    pub touch_handle: &'a mut super::touch_handle::HandleTouch,
     /// Raw input the IPC `input` family queued for the heartbeat
     /// (`format/ipc.md` §`input`). Always empty without `--ipc`.
     pub injected: &'a mut crate::application::ipc::injected::InjectedQueue,
@@ -216,6 +219,17 @@ impl InputHandlerContext<'_> {
         // reaches its arm.
         let phase = super::dispatch::touch_phase(phase);
         let pos = (location.x, location.y);
+        // A finger that starts a gesture on a resize handle is the left
+        // button instead (#160, `touch_handle`), and never reaches the
+        // recognizer. The handle question is asked only of the one event
+        // that can claim a handle.
+        let recognizer_idle = self.touch_recognizer.is_idle();
+        let on_handle = phase == Phase::Started && recognizer_idle && self.finger_lands_on_resize_handle(pos);
+        match self.touch_handle.route(phase, id, recognizer_idle, on_handle) {
+            super::touch_handle::TouchRoute::Recognizer => {}
+            super::touch_handle::TouchRoute::Ignore => return false,
+            super::touch_handle::TouchRoute::Handle(step) => return self.drive_handle_finger(step, location),
+        }
         // No gesture recognized — but the recognizer may have moved
         // its internal state (e.g. Started → OneFinger). The caller
         // still wants a redraw on Started/Moved so any
@@ -247,6 +261,41 @@ impl InputHandlerContext<'_> {
                 super::dispatch::apply_touch_effect(effect, &mut core);
                 true
             }
+        }
+    }
+
+    /// True when a finger at `pos` (surface pixels) lands on a resize
+    /// handle — the resize mode's, which only that mode shows — the same
+    /// question a left press asks of the handle chrome
+    /// (`MapView::handle_at`), so a finger and a mouse cannot disagree
+    /// about what is a handle.
+    fn finger_lands_on_resize_handle(&self, pos: (f64, f64)) -> bool {
+        use crate::application::view::handles::Handle;
+        if !matches!(*self.interaction_mode, super::InteractionMode::Resize { .. }) {
+            return false;
+        }
+        let canvas = self.renderer.screen_to_canvas(pos.0 as f32, pos.1 as f32);
+        self.view.as_ref().is_some_and(|view| {
+            matches!(
+                view.handle_at(canvas, super::handle_tolerance(self.renderer)),
+                Some(Handle::Node { .. } | Handle::Section { .. })
+            )
+        })
+    }
+
+    /// Run a handle finger's step as the left-button events it stands
+    /// for, through the same `on_*` entry points a mouse reaches: the
+    /// press grabs the handle, the moves begin and drive the resize's
+    /// transaction (`app::live`), and the lift commits it, one history
+    /// entry. Returns whether to request a redraw.
+    fn drive_handle_finger(&mut self, step: super::touch_handle::HandleStep, location: PhysicalPosition<f64>) -> bool {
+        use super::touch_handle::HandleStep;
+        use crate::application::platform::input::{ElementState, MouseButton};
+        let moved = self.on_cursor_moved(location);
+        match step {
+            HandleStep::Press => self.on_mouse_input(ElementState::Pressed, MouseButton::Left),
+            HandleStep::Move => moved,
+            HandleStep::Release => self.on_mouse_input(ElementState::Released, MouseButton::Left),
         }
     }
 
@@ -370,11 +419,15 @@ impl InputHandlerContext<'_> {
     /// `WindowEvent::Focused(false)`: the window may never deliver the
     /// release any in-flight gesture is waiting for, so resolve them
     /// all now (#153) rather than leave one unreachable: the drag state
-    /// ends at `None` (`DragState::end_on_focus_loss`). Returns whether
-    /// to request a redraw.
+    /// ends at `None`, a drag that edits the map cancelled
+    /// (`DragState::end_on_focus_loss`). Returns whether to request a
+    /// redraw.
     pub(super) fn on_focus_lost(&mut self) -> bool {
+        // A finger holding a resize handle loses its claim with the drag
+        // it was driving, which the cancel below ends.
+        self.touch_handle.forget();
         let was_idle = matches!(*self.drag_state, DragState::None);
-        self.drag_state.end_on_focus_loss();
+        self.drag_state.end_on_focus_loss(self.document.as_mut());
         let released = event_cursor_moved::release_hover_if_outside(self);
         !was_idle || released
     }

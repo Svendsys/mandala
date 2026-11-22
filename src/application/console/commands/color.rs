@@ -14,9 +14,14 @@
 //! range of a section's text takes `text` on the spans in it; any other
 //! part of a section's text is the `range` verb's.
 //!
-//! The axis subverbs (`color text`, `color border`, `color pick`,
-//! `color picker on|off`) open the glyph-wheel picker, which V1-C7
-//! (#248) rebuilds; until then they refuse, naming that issue.
+//! The axis subverbs open the glyph-wheel picker on the selection:
+//! `color text` and `color border` on that axis, `color pick` on the text
+//! axis (a node draws no fill, D12, so `main`'s default of its fill is its
+//! text). The contextual picker is a transaction (V1-C7,
+//! `app::color_picker_flow::session`): what it shows is staged on the
+//! selection, its ࿕ commits one entry, and Esc leaves the map as it was.
+//! `color picker on|off` opens and closes the standalone palette, which
+//! holds no transaction.
 
 use super::Command;
 use crate::application::console::completion::Completion;
@@ -91,19 +96,32 @@ const SUBVERBS: &[Subverb] = &[
         .gated(),
 ];
 
-/// Which handler each declared subverb runs (`spec::route`): every
-/// one is the picker's.
+/// Which handler each declared subverb runs (`spec::route`): the
+/// contextual picker on an axis, or the standalone palette.
 #[derive(Clone, Copy)]
 enum Route {
-    Picker,
+    Pick(ColorAxis),
+    Palette,
 }
 
 const ROUTES: &Routes<Route> = &[
-    ("text", Route::Picker),
-    ("border", Route::Picker),
-    ("pick", Route::Picker),
-    ("picker", Route::Picker),
+    ("text", Route::Pick(ColorAxis::Text)),
+    ("border", Route::Pick(ColorAxis::Border)),
+    ("pick", Route::Pick(ColorAxis::Text)),
+    ("picker", Route::Palette),
 ];
+
+/// What a picker subverb asks of the app, which owns the picker
+/// (`app::color_picker_flow::session`): its report is the line's output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickerLine {
+    /// Open the contextual picker on the selection's color `axis`.
+    Open(ColorAxis),
+    /// Open the standalone palette (`color picker on`).
+    Palette,
+    /// Close whatever picker is open (`color picker off`).
+    Close,
+}
 
 /// The names [`ROUTES`] handles, for the registry test in
 /// `console::spec::tests`.
@@ -139,12 +157,18 @@ fn execute_color(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         Err(msg) => return ExecResult::err(msg),
     };
     if let Stop::Matched(subverb) = descent.stop {
-        return match route::lookup(ROUTES, subverb) {
-            Some(Route::Picker) => {
-                super::rebuilt_by(&format!("color {}", subverb.name), super::TRANSACTIONS_OWNER)
-            }
-            None => ExecResult::err(route::miss(descent.level, subverb)),
+        let line = match route::lookup(ROUTES, subverb) {
+            Some(Route::Pick(axis)) => PickerLine::Open(axis),
+            Some(Route::Palette) => match descent.slot_value(args).get(0).map(str::to_ascii_lowercase).as_deref() {
+                Some("on") => PickerLine::Palette,
+                Some("off") => PickerLine::Close,
+                _ => return ExecResult::err(usage::subverb_usage(descent.level, subverb)),
+            },
+            None => return ExecResult::err(route::miss(descent.level, subverb)),
         };
+        eff.side_effect = Some(crate::application::console::ConsoleSideEffect::Picker(line));
+        eff.close_console = true;
+        return ExecResult::ok_empty();
     }
     if pairs.is_empty() {
         return ExecResult::err(usage::no_arguments_message(&GRAMMAR));

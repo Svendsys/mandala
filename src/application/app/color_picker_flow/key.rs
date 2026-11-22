@@ -401,6 +401,8 @@ mod tests {
             hover_preview: None,
             pending_error_flash: false,
             last_dynamic_apply: None,
+            staged: None,
+            throttle: crate::application::frame_throttle::MutationFrequencyThrottle::with_default_budget(),
         }))
     }
 
