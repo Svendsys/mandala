@@ -32,6 +32,8 @@ use crate::document::mutation::error::MutationError;
 use crate::document::mutation::ops::{DefaultsOp, DocMutation, TextOp};
 use crate::document::mutation::step::DocStep;
 use crate::document::values::{FamilyName, FontRef};
+use crate::document::writer::feed::ChangeRecord;
+use crate::engine::journal::Touch;
 use crate::font::fallback::DEFAULT_FACE;
 
 /// The face a missing family's text is drawn in until the user installs
@@ -200,6 +202,53 @@ pub fn replace_steps(doc: &Document, from: &FamilyName, to: &FontRef) -> Result<
         }
     }
     Ok(steps)
+}
+
+/// Whether the change `records` describe left an installed family named
+/// where it wrote: an element they put in the tree or changed names one
+/// in its own text style as it now is, or they changed the defaults and
+/// the defaults name one. What tells a caller that keeps the missing-font
+/// notice whether a change can have added a missing family, without the
+/// walk of [`missing_families`]: a change that writes no installed family
+/// cannot add one. (Whether it took one away the records cannot say — an
+/// element removed is no longer readable — so a caller that knows a
+/// family is missing asks [`missing_families`] again on any change of
+/// style; [`touched_style`].)
+///
+/// Cost: one read per element the records touched; no allocation.
+pub fn touched_names_installed(doc: &Document, records: &[ChangeRecord]) -> bool {
+    let names_installed = |style: &TextStyle| style.font.as_ref().and_then(FontRef::installed).is_some();
+    records.iter().any(|record| {
+        record.touched.iter().any(|(id, touch)| match touch {
+            Touch::Field | Touch::Inserted | Touch::Moved => doc.get(*id).is_some_and(|element| {
+                if element.kind() == DocKind::Defaults {
+                    defaults_styles(doc.defaults()).any(names_installed)
+                } else {
+                    element.text_style().is_some_and(names_installed)
+                }
+            }),
+            Touch::Removed => false,
+        })
+    })
+}
+
+/// Whether the change `records` describe can have changed which fonts
+/// the map names at all: one wrote an element's style or the defaults,
+/// or put an element in the tree or took one out. A change of placement,
+/// palette binding, row or theme alone cannot. Cost: one look per element
+/// the records touched; no allocation.
+pub fn touched_style(records: &[ChangeRecord]) -> bool {
+    use crate::document::deps::InputKind;
+    records.iter().any(|record| {
+        record
+            .touched
+            .iter()
+            .any(|(_, touch)| matches!(touch, Touch::Inserted | Touch::Removed))
+            || record
+                .inputs
+                .iter()
+                .any(|(_, kind)| matches!(kind, InputKind::Style | InputKind::Defaults))
+    })
 }
 
 /// The defaults' text styles: the node's, a section's, a frame's, a

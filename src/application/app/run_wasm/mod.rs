@@ -710,7 +710,7 @@ pub(super) fn run(mut app: Application) {
         // so; the browser has no console to prompt in, and IPC's
         // `query.fonts` and `act.action ReplaceFontFamily` offer the
         // choice.
-        crate::application::missing_fonts::on_open(&mut doc);
+        crate::application::missing_fonts::on_open(&mut doc, true);
 
         // The one full projection of the document's life, the renderer
         // loaded with it and cleared to the map's background, and the

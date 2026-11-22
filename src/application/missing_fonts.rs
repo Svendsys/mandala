@@ -8,7 +8,9 @@
 //!
 //! The report itself is the document's
 //! ([`baumhard::document::fonts::missing_families`]), computed when it is
-//! asked for and never kept up per edit. This module says it:
+//! asked for; the notice is kept true to the map by the document after
+//! every change that can alter what is missing
+//! (`MindMapDocument::refresh_font_notice`). This module says it:
 //!
 //! - **[`on_open`]**, when a map is opened (at startup, and by `open` /
 //!   `new`), before its view is projected: on native, one targeted
@@ -16,7 +18,13 @@
 //!   installed since launch is drawn without a restart; then the notice.
 //! - **The notice** ([`notice`]), on the status line, on both targets,
 //!   until the user dismisses it (`ExitMode`, the status line's own
-//!   dismissal) or resolves the last missing family.
+//!   dismissal) or resolves the last missing family, and again whenever
+//!   what is missing changes — an undo that brings a family back, a
+//!   `font family=` that names one. A family that differs from a loaded
+//!   one only in case, or begins exactly one, is offered as what was
+//!   probably meant ([`suggestion`]): a name a map can hold need not be
+//!   installed anywhere (#329), so a typo is not refused, and this is
+//!   where it shows.
 //! - **The prompt** (`report_lines`, `replace_line`): on native the
 //!   console opens with the report and a pre-filled
 //!   `font replace "<family>" ` line, its completion offering every
@@ -45,19 +53,32 @@ use crate::application::fields::{self, Refused};
 /// font installed since this process started is drawn; then set the
 /// notice. Returns the families still missing.
 ///
+/// `at_launch` is the first open, at startup: there the font system has
+/// just been built with a scan of the host, so the rescan is skipped
+/// while that scan is the latest
+/// (`baumhard::font::fonts::rescan_installed_at_launch`) — one scan at
+/// launch, not two back to back. Every later open (`open`, `new`)
+/// rescans.
+///
 /// A map that names only compiled families returns at once: no rescan,
 /// no font system read. The browser reads no installed font, so there
 /// every installed family a map names is missing.
 ///
 /// Cost: [`missing_families`]; when one is missing on native, one host
-/// font scan.
-pub(crate) fn on_open(doc: &mut MindMapDocument) -> Vec<MissingFamily> {
+/// font scan, unless `at_launch` and the build's scan is the latest.
+pub(crate) fn on_open(doc: &mut MindMapDocument, at_launch: bool) -> Vec<MissingFamily> {
     #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
     let mut missing = missing_families(doc.doc());
+    #[cfg(target_arch = "wasm32")]
+    let _ = at_launch;
     #[cfg(not(target_arch = "wasm32"))]
     if !missing.is_empty() {
-        let found =
-            baumhard::font::fonts::rescan_installed(missing.iter().map(|missing| missing.family.as_str()));
+        let names = missing.iter().map(|missing| missing.family.as_str());
+        let found = if at_launch {
+            baumhard::font::fonts::rescan_installed_at_launch(names)
+        } else {
+            baumhard::font::fonts::rescan_installed(names)
+        };
         if !found.is_empty() {
             log::info!("fonts: found {found:?} installed since this process started");
             missing.retain(|missing| !found.iter().any(|name| name == missing.family.as_str()));
@@ -70,12 +91,15 @@ pub(crate) fn on_open(doc: &mut MindMapDocument) -> Vec<MissingFamily> {
             names(&missing)
         );
     }
-    doc.set_font_notice(notice(&missing));
+    doc.note_missing_fonts(&missing);
     missing
 }
 
 /// The status line's notice for `missing`: `None` when nothing is.
-/// Short, because it is a status line. O(the names' length).
+/// Short, because it is a status line; each family that looks like a
+/// typo of a loaded one is followed by what was probably meant
+/// ([`suggestion`]). O(the names' length), and one scan of the loaded
+/// families per missing one.
 pub(crate) fn notice(missing: &[MissingFamily]) -> Option<String> {
     if missing.is_empty() {
         return None;
@@ -83,8 +107,71 @@ pub(crate) fn notice(missing: &[MissingFamily]) -> Option<String> {
     Some(format!(
         "{} missing, drawn in {STAND_IN}: {}",
         plural(missing.len(), "font", "fonts"),
-        names(missing)
+        missing
+            .iter()
+            .map(|missing| {
+                let name = missing.family.as_str();
+                match suggestion(name) {
+                    Some(meant) => format!("\"{name}\" (did you mean \"{meant}\"?)"),
+                    None => format!("\"{name}\""),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     ))
+}
+
+/// The loaded family `name` probably meant, when it is not one: the one
+/// whose name differs from it only in case, else the one loaded family
+/// whose name begins with it, ignoring case (`Galatia` for
+/// `Galatia SIL`). `None` for a loaded family's own name, and where no
+/// family, or more than one, begins with it. What a family that is not
+/// installed here — which a map may hold, so a typo is not refused — is
+/// offered (#329, the review of #390).
+///
+/// Cost: [`loaded_families`](baumhard::font::fonts::loaded_families) and
+/// one scan of it.
+pub(crate) fn suggestion(name: &str) -> Option<String> {
+    let families = baumhard::font::fonts::loaded_families();
+    if families.iter().any(|family| family.name == name) {
+        return None;
+    }
+    if let Some(family) = families
+        .iter()
+        .find(|family| family.name.eq_ignore_ascii_case(name))
+    {
+        return Some(family.name.clone());
+    }
+    let lower = name.to_lowercase();
+    let mut begun = families
+        .iter()
+        .filter(|family| family.name.to_lowercase().starts_with(&lower));
+    match (begun.next(), begun.next()) {
+        (Some(family), None) if !lower.is_empty() => Some(family.name.clone()),
+        _ => None,
+    }
+}
+
+/// What the console says after setting the family `font`, when this
+/// machine does not have it: that its text is drawn in the stand-in, and
+/// what was probably meant ([`suggestion`]). `None` for a compiled face
+/// and for an installed family this machine has. One body for every
+/// verb that sets a family. Cost: [`suggestion`], for an installed
+/// family this machine lacks.
+pub(crate) fn not_installed(font: &FontRef) -> Option<String> {
+    let FontRef::Installed(family) = font else {
+        return None;
+    };
+    let name = family.as_str();
+    if baumhard::font::fonts::installed_family_loaded(name) {
+        return None;
+    }
+    Some(match suggestion(name) {
+        Some(meant) => {
+            format!("\"{name}\" is not installed here, drawn in {STAND_IN} (did you mean \"{meant}\"?)")
+        }
+        None => format!("\"{name}\" is not installed here, drawn in {STAND_IN}"),
+    })
 }
 
 /// The prompt's report: which families are missing, where the map names
@@ -162,7 +249,7 @@ pub(crate) fn replace(
         baumhard::document::fonts::replace_steps(doc.doc(), &from, &to).map_err(|error| error.to_string());
     let applied = fields::apply(doc, steps, "font replace", source)?;
     let missing = missing_families(doc.doc());
-    doc.set_font_notice(notice(&missing));
+    doc.note_missing_fonts(&missing);
     Ok(applied)
 }
 
@@ -184,7 +271,7 @@ pub(crate) fn rescan(doc: &mut MindMapDocument) -> (Vec<String>, Vec<MissingFami
         .into_iter()
         .filter(|missing| !found.iter().any(|name| name == missing.family.as_str()))
         .collect();
-    doc.set_font_notice(notice(&still));
+    doc.note_missing_fonts(&still);
     (found, still)
 }
 
@@ -287,7 +374,7 @@ mod tests {
     #[test]
     fn test_opening_a_map_with_missing_fonts_sets_the_notice() {
         let mut doc = doc();
-        let missing = on_open(&mut doc);
+        let missing = on_open(&mut doc, false);
         assert_eq!(
             missing.iter().map(|m| m.family.to_string()).collect::<Vec<_>>(),
             ["Nope Sans", "Other Missing"]
@@ -302,7 +389,7 @@ mod tests {
             50,
         )
         .expect("the map loads");
-        assert!(on_open(&mut compiled).is_empty());
+        assert!(on_open(&mut compiled, false).is_empty());
         assert_eq!(compiled.font_notice(), None, "control: nothing is missing");
         doc.dismiss_status();
         assert_eq!(doc.font_notice(), None, "dismissed with the status line");
@@ -345,7 +432,7 @@ mod tests {
     #[test]
     fn test_font_replace_rewrites_the_map_and_reports_what_is_still_missing() {
         let mut doc = doc();
-        on_open(&mut doc);
+        on_open(&mut doc, false);
         let depth = doc.doc().history().count();
         let (refused, _) = line(&mut doc, "font replace \"Public Pixel\" Norse");
         assert_eq!(

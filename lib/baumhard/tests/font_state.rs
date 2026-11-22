@@ -524,7 +524,7 @@ fn test_every_shipped_map_lays_out_alike_whatever_the_host_has_installed() {
     //
     // Controls: with a script's `SCRIPT_FALLBACK` entry removed, red on
     // that script at the heavier weights, drawn in the planted bold face;
-    // with the shadowing faces kept (no `remove_shadowing_faces`), red on
+    // with the shadowing faces kept (no `shadows_a_compiled_family`), red on
     // the planted host's shadows (and, with Inter's italic face planted
     // beside it, on the fixture's italic text drawn in it); with the
     // host's fonts loaded before the compiled ones, red on the layouts,

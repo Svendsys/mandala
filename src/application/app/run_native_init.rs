@@ -313,7 +313,7 @@ pub(super) fn build(options: &Options, shell: Shell, watchdog: FreezeWatchdog) -
     // The fonts the map names that this machine lacks, before the view is
     // projected: a font installed since launch is found by the rescan
     // and drawn by the projection below (#329).
-    let missing_fonts = crate::application::missing_fonts::on_open(&mut doc);
+    let missing_fonts = crate::application::missing_fonts::on_open(&mut doc, true);
 
     // The one full projection of the document's life (§3 "Load"), the
     // renderer loaded with it and cleared to the map's background, and

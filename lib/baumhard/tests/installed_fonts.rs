@@ -8,17 +8,22 @@
 //! Each test runs its body in a child process of this binary, so the
 //! process-wide font state — the font system, built once; the count of
 //! host scans — starts empty and nothing another test does reaches it.
-//! The rescan test's child reads a fontconfig that names one directory of
-//! its own, empty until the test plants a face in it, as #327's
+//! The rescan test's child reads a fontconfig that names directories of
+//! its own — a face that shadows a compiled family, a face that does
+//! not, and one empty until the test plants a face in it — as #327's
 //! `font_state` hosts do.
 
 use std::path::{Path, PathBuf};
 
 use baumhard::document::fonts::{installed_families, missing_families, STAND_IN};
 use baumhard::document::format::{load, save};
-use baumhard::font::fonts::{face_set_generation, host_scans, rescan_installed, FontSystemLease};
+use baumhard::font::fonts::{
+    add_found, face_set_generation, host_scans, rescan_installed, rescan_installed_at_launch,
+    scan_for_installed, FontSystemLease,
+};
 use baumhard::gfx_structs::run::RunShape;
 use baumhard::projection::{GlyphLayers, Layer, Projector};
+use cosmic_text::fontdb::ID;
 
 /// Set in a child process: which body it runs.
 const CHILD: &str = "BAUMHARD_INSTALLED_FONTS_CHILD";
@@ -142,11 +147,15 @@ fn test_reading_a_map_scans_no_host_font_and_asking_what_is_missing_scans_once()
     );
 }
 
-/// A fontconfig file that lists `dir` as the host's one font directory.
-fn fontconfig(dir: &Path) -> String {
+/// A fontconfig file that lists `dirs` as the host's font directories,
+/// in that order.
+fn fontconfig(dirs: &[&Path]) -> String {
+    let dirs: String = dirs
+        .iter()
+        .map(|dir| format!("<dir>{}</dir>", dir.display()))
+        .collect();
     format!(
-        "<?xml version=\"1.0\"?>\n<!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">\n<fontconfig><dir>{}</dir></fontconfig>\n",
-        dir.display()
+        "<?xml version=\"1.0\"?>\n<!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">\n<fontconfig>{dirs}</fontconfig>\n"
     )
 }
 
@@ -222,15 +231,15 @@ fn drawn(text: &str) -> Vec<String> {
     out
 }
 
-/// Every face the font system holds, as `id name`, in the database's
-/// order.
-fn faces() -> Vec<String> {
+/// Every face the font system holds, as its id and `id name`, in the
+/// database's order — the order it iterates in.
+fn faces() -> Vec<(ID, String)> {
     let mut fonts = FontSystemLease::new("tests/installed_fonts::faces");
     fonts
         .fonts()
         .db()
         .faces()
-        .map(|face| format!("{:?} {}", face.id, face.post_script_name))
+        .map(|face| (face.id, format!("{:?} {}", face.id, face.post_script_name)))
         .collect()
 }
 
@@ -239,16 +248,26 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
     // #329: a map naming a family this machine lacks loads, reports it
     // missing, and draws its text in the stand-in, the default face, at
     // the span's weight. Once the family is installed, a rescan adds its
-    // faces after every face the font system holds — renumbering none —
+    // faces after every face the font system holds — renumbering none,
+    // every added id greater than every earlier one, iterating last —
     // and the map, projected again, draws in it. A rescan that finds
     // nothing new changes nothing: the faces and the face-set generation
-    // are exactly as they were.
+    // are exactly as they were. Two rescans that overlap — both looking
+    // at the host before either adds — add the face once and move the
+    // generation once.
     //
-    // The child's fontconfig names one directory, empty until the child
-    // plants a renamed copy of Noto Sans Hebrew in it (`Host Sans
-    // Hebrew`). The host is an adversary only where fontdb reads
-    // `FONTCONFIG_FILE` (Linux), so a target where the empty directory is
-    // not what the host index holds skips with a note, and fails where
+    // The child's fontconfig names three directories, in order: the
+    // compiled Noto Sans Hebrew unrenamed, which shadows a compiled family
+    // and so is kept out when the font system is built; a renamed copy of
+    // Noto Sans Devanagari (`Host Sans Devanagari`), a host face that
+    // joins it; and one empty until the child plants a renamed copy of
+    // Noto Sans Hebrew in it (`Host Sans Hebrew`). The first is the
+    // adversary of "after every face": fontdb's slot map gives a freed
+    // slot to the next face pushed, so a face removed at the build would
+    // hand the rescanned face an id among the host's (the review of #390
+    // reproduced it). The host is an adversary only where fontdb reads
+    // `FONTCONFIG_FILE` (Linux), so a target where the host index is not
+    // what the fontconfig names skips with a note, and fails where
     // `MANDALA_REQUIRE_FONTCONFIG_HOSTS` is set, as CI sets it.
     //
     // Controls: `rescan_installed` adding no face turns the "after
@@ -256,13 +275,18 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
     // `rescan_installed` bumping the generation unconditionally turns the
     // "nothing new" arms red; `font_pin` ignoring an installed family
     // turns the drawing after the rescan red (Noto Sans Hebrew, the
-    // compiled fallback); `remove_shadowing_faces`-style skipping of every
-    // face turns the found list red.
+    // compiled fallback); `shadows_a_compiled_family` answering `true`
+    // for every face turns the found list red; the build pushing every
+    // host face and removing the shadowing ones after turns the order arm
+    // red (`order false false`); `add_found` not checking again under the
+    // write lock turns the overlap arm red (the face added again, the
+    // generation moved again).
     if std::env::var(CHILD).as_deref() == Ok("rescan") {
         let dir = PathBuf::from(std::env::var_os(FONT_DIR).expect("the font directory"));
         let mut host = cosmic_text::fontdb::Database::new();
         host.load_system_fonts();
-        println!("REPORT host {}", host.len());
+        let host_names: Vec<String> = host.faces().map(|face| face.post_script_name.clone()).collect();
+        println!("REPORT host {host_names:?}");
         let text = map(&[("Shalom ", Some(PLANTED), 700), ("שלום", Some(PLANTED), 400)]);
         let doc = load(&text).expect("the map loads");
         let names = |doc: &baumhard::document::ids::Document| -> Vec<String> {
@@ -274,6 +298,14 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
         println!("REPORT missing {:?}", names(&doc));
         println!("REPORT before {:?}", drawn(&text));
         let (faces_before, generation_before) = (faces(), face_set_generation());
+        println!(
+            "REPORT held {:?}",
+            faces_before
+                .iter()
+                .filter(|(_, face)| face.contains(" HostSans"))
+                .map(|(_, face)| face.split_once(' ').map_or(face.as_str(), |(_, name)| name))
+                .collect::<Vec<_>>()
+        );
         println!("REPORT rescan-1 {:?}", rescan_installed([PLANTED]));
         println!(
             "REPORT unchanged-1 {} {}",
@@ -284,17 +316,38 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
             root().join("lib/baumhard/src/font/fonts/noto-sans-hebrew-font/NotoSansHebrew-Regular.ttf");
         let data = std::fs::read(&hebrew).expect("the compiled Hebrew face");
         std::fs::write(dir.join("HostSansHebrew.ttf"), renamed(&data)).expect("a planted face");
-        println!("REPORT rescan-2 {:?}", rescan_installed([PLANTED]));
+        // Two rescans that overlap: both look at the host before either
+        // adds what it found.
+        let (first, second) = (scan_for_installed([PLANTED]), scan_for_installed([PLANTED]));
+        let (first, second) = (
+            first.expect("the planted face is found"),
+            second.expect("found twice"),
+        );
+        println!("REPORT rescan-2 {:?}", add_found(first));
         let after = faces();
+        let added: Vec<&(ID, String)> = after.iter().filter(|face| !faces_before.contains(face)).collect();
         println!(
             "REPORT kept {} added {:?} generation {}",
             faces_before.iter().all(|face| after.contains(face)),
-            after
+            added
                 .iter()
-                .filter(|face| !faces_before.contains(face))
-                .map(|face| face.split_once(' ').map_or(face.as_str(), |(_, name)| name))
+                .map(|(_, face)| face.split_once(' ').map_or(face.as_str(), |(_, name)| name))
                 .collect::<Vec<_>>(),
             face_set_generation() - generation_before
+        );
+        println!(
+            "REPORT order {} {}",
+            added
+                .iter()
+                .all(|(id, _)| faces_before.iter().all(|(before, _)| id > before)),
+            after.last().is_some_and(|last| added.contains(&last))
+        );
+        let (faces_first, generation_first) = (faces(), face_set_generation());
+        println!(
+            "REPORT overlap {:?} {} {}",
+            add_found(second),
+            faces() == faces_first,
+            face_set_generation() == generation_first
         );
         let (faces_found, generation_found) = (faces(), face_set_generation());
         println!("REPORT rescan-3 {:?}", rescan_installed([PLANTED]));
@@ -310,12 +363,26 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
     }
     let scratch = std::env::temp_dir().join(format!("baumhard_installed_fonts_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
-    let (fonts, home) = (scratch.join("fonts"), scratch.join("home"));
-    for dir in [&fonts, &home] {
+    let (shadowing, joining, fonts, home) = (
+        scratch.join("shadowing"),
+        scratch.join("joining"),
+        scratch.join("fonts"),
+        scratch.join("home"),
+    );
+    for dir in [&shadowing, &joining, &fonts, &home] {
         std::fs::create_dir_all(dir).expect("a scratch directory");
     }
+    let compiled = root().join("lib/baumhard/src/font/fonts");
+    std::fs::copy(
+        compiled.join("noto-sans-hebrew-font/NotoSansHebrew-Regular.ttf"),
+        shadowing.join("NotoSansHebrew-Regular.ttf"),
+    )
+    .expect("a shadowing face");
+    let devanagari = std::fs::read(compiled.join("noto-sans-devanagari-font/NotoSansDevanagari-Regular.ttf"))
+        .expect("the compiled Devanagari face");
+    std::fs::write(joining.join("HostSansDevanagari.ttf"), renamed(&devanagari)).expect("a joining face");
     let conf = scratch.join("fonts.conf");
-    std::fs::write(&conf, fontconfig(&fonts)).expect("a fontconfig file");
+    std::fs::write(&conf, fontconfig(&[&shadowing, &joining, &fonts])).expect("a fontconfig file");
     let report = in_a_child(
         "test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned",
         "rescan",
@@ -328,7 +395,9 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
         ],
     );
     let _ = std::fs::remove_dir_all(&scratch);
-    if report.first().map(String::as_str) != Some("host 0") {
+    if report.first().map(String::as_str)
+        != Some(r#"host ["NotoSansHebrew-Regular", "HostSansDevanagari-Regular"]"#)
+    {
         assert!(
             std::env::var_os(REQUIRE_HOSTS).is_none(),
             "precondition: the child's host font index holds what its fontconfig names ({:?})",
@@ -377,6 +446,11 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
             .any(|glyph| glyph.contains(" NotoSansHebrew-Regular ")),
         "the Hebrew is the compiled fallback's while the family is missing: {before:?}"
     );
+    assert_eq!(
+        line("held "),
+        r#"["HostSansDevanagari-Regular"]"#,
+        "the host face that shadows no compiled family joins the font system"
+    );
     assert_eq!(line("rescan-1 "), "[]");
     assert_eq!(
         line("unchanged-1 "),
@@ -388,6 +462,16 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
         line("kept "),
         r#"true added ["HostSansHebrew-Regular"] generation 1"#,
         "the rescan adds the planted face, renumbering none, and moves the generation once"
+    );
+    assert_eq!(
+        line("order "),
+        "true true",
+        "the added face's id is greater than every earlier face's, and it iterates last"
+    );
+    assert_eq!(
+        line("overlap "),
+        "[] true true",
+        "an overlapping rescan adds nothing the first added, and moves no generation"
     );
     assert_eq!(line("rescan-3 "), "[]");
     assert_eq!(
@@ -416,6 +500,60 @@ fn test_a_missing_family_draws_in_the_stand_in_until_installed_and_rescanned() {
             "the installed family draws its text once found: {glyph}"
         );
     }
+}
+
+#[test]
+fn test_the_first_open_at_launch_rescans_nothing_the_build_just_scanned() {
+    // #329, the review of #390: at launch the font system is built with a
+    // scan of the host, and the first map's missing families would be
+    // looked up again milliseconds later — two scans of every installed
+    // font where one suffices. `rescan_installed_at_launch` skips the
+    // second while the build's scan is the latest; once anything has
+    // scanned since, it rescans, as every later open does.
+    //
+    // Control: `rescan_installed_at_launch` calling `rescan_installed`
+    // unconditionally turns the first two counts red (2 and 3).
+    if std::env::var(CHILD).as_deref() == Ok("launch") {
+        let text = map(&[("Lord", Some("Nope Sans"), 400)]);
+        let doc = load(&text).expect("the map loads");
+        let missing: Vec<String> = missing_families(&doc)
+            .iter()
+            .map(|missing| missing.family.to_string())
+            .collect();
+        println!("REPORT built {}", host_scans());
+        let names = || missing.iter().map(String::as_str);
+        println!(
+            "REPORT at-launch {:?} {}",
+            rescan_installed_at_launch(names()),
+            host_scans()
+        );
+        println!("REPORT at-launch-again {}", {
+            let _ = rescan_installed_at_launch(names());
+            host_scans()
+        });
+        println!("REPORT rescan {:?} {}", rescan_installed(names()), host_scans());
+        println!("REPORT at-launch-after {}", {
+            let _ = rescan_installed_at_launch(names());
+            host_scans()
+        });
+        return;
+    }
+    let report = in_a_child(
+        "test_the_first_open_at_launch_rescans_nothing_the_build_just_scanned",
+        "launch",
+        &[],
+    );
+    assert_eq!(
+        report,
+        [
+            "built 1",
+            "at-launch [] 1",
+            "at-launch-again 1",
+            "rescan [] 2",
+            "at-launch-after 3",
+        ],
+        "host font scans, in a fresh process"
+    );
 }
 
 /// A list a child printed with `{:?}`, read back.

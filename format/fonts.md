@@ -250,9 +250,11 @@ cosmic-text resolves a family by name, and among every face of that
 name fontdb picks the best weight and slant: a host's Inter Variable
 Italic would take every italic span of default text from the compiled
 upright face, and the Noto Sans Hebrew a Debian desktop installs would
-answer for the compiled one. So once the host's faces are loaded,
-every one that bears a compiled family's name is removed
-(`remove_shadowing_faces`). A pin, and the default family, then name the
+answer for the compiled one. So of the host's faces, every one that
+bears a compiled family's name is left out
+(`shadows_a_compiled_family`) — checked before it is added, so the font
+system never removes a face, and never frees a slot that a face added
+later would take (#329). A pin, and the default family, then name the
 compiled faces on every machine. The host's other families stay.
 
 ## Fallback

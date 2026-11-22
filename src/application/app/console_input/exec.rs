@@ -286,7 +286,7 @@ fn install_document(ctx: &mut InputHandlerContext<'_>, new_doc: MindMapDocument)
     let doc = ctx.document.insert(new_doc);
     // Before the view is projected: a font installed since launch is
     // found by the rescan, and drawn by this projection (#329).
-    let missing = crate::application::missing_fonts::on_open(doc);
+    let missing = crate::application::missing_fonts::on_open(doc, false);
     *ctx.view = Some(MapView::load(doc, ctx.renderer));
     if super::open_missing_font_prompt(ctx.console_state, ctx.console_history, doc, &missing) {
         super::rebuild_console_overlay(ctx.console_state, doc, ctx.app_scene, ctx.renderer, ctx.keybinds);

@@ -1326,3 +1326,75 @@ fn test_both_frame_preview_targets_take_the_same_fields() {
     doc.undo();
     assert_eq!(bytes(&doc), FIXTURE);
 }
+
+/// **The missing-font notice follows the map through edits, undo and
+/// redo** (#329, the review of #390). `font family="Nope Sans"` on a map
+/// that names only compiled families raises it, naming the family, and
+/// its message says the family is not installed and is drawn in the
+/// stand-in; the `SetFontFamily` Action — the keybinds' and IPC's route
+/// — raises it with what a typo probably meant; replacing a family
+/// clears it from the notice; undoing the replacement brings it back;
+/// redoing clears it again. A notice the user dismissed stays dismissed
+/// across a change that leaves what is missing as it was.
+///
+/// Controls: `undo` not refreshing the notice turns the undo arm red
+/// (the notice still without `Nope Sans`); the notice shown whenever it
+/// is recomputed, whether or not what is missing changed, turns the
+/// dismissed arm red; no notice refresh after `apply` turns the first
+/// notice arm red (`None`); the `font` verb dropping the hint from its
+/// message turns the first arm red (`font: applied`).
+#[test]
+fn test_the_missing_font_notice_follows_edits_undo_and_redo() {
+    let mut doc = fixture();
+    assert_eq!(
+        doc.font_notice(),
+        None,
+        "precondition: the fixture names no installed family"
+    );
+    doc.selection.select_only(node(&doc, 3));
+    let said = run_line(&mut doc, "font family=\"Nope Sans\"").expect("an installed family is taken");
+    assert_eq!(
+        said,
+        "font: applied; \"Nope Sans\" is not installed here, drawn in Inter Variable"
+    );
+    assert_eq!(
+        doc.font_notice(),
+        Some("1 font missing, drawn in Inter Variable: \"Nope Sans\"")
+    );
+    doc.dismiss_status();
+    doc.selection.select_only(node(&doc, 1));
+    run_line(&mut doc, "font family=\"Nope Sans\"").expect("on a second node");
+    assert_eq!(
+        doc.font_notice(),
+        None,
+        "the same family missing on one more node: still dismissed"
+    );
+    assert_eq!(
+        run(&Action::SetFontFamily("public pixel".into()), &mut doc),
+        DispatchOutcome::Handled
+    );
+    let both = "2 fonts missing, drawn in Inter Variable: \"Nope Sans\", \"public pixel\" (did you mean \"Public Pixel\"?)";
+    assert_eq!(doc.font_notice(), Some(both), "a new family missing shows again");
+    let replace = Action::ReplaceFontFamily {
+        family: "Nope Sans".into(),
+        with: "Norse".into(),
+    };
+    assert_eq!(run(&replace, &mut doc), DispatchOutcome::Handled);
+    let one = "1 font missing, drawn in Inter Variable: \"public pixel\" (did you mean \"Public Pixel\"?)";
+    assert_eq!(doc.font_notice(), Some(one));
+    doc.undo();
+    assert_eq!(
+        doc.font_notice(),
+        Some(both),
+        "undo brings the replaced family back"
+    );
+    doc.redo();
+    assert_eq!(doc.font_notice(), Some(one), "redo replaces it again");
+    let said = run_line(&mut doc, "font family=Galatia").expect("a prefix is a name a map can hold");
+    assert!(
+        said.ends_with(
+            "\"Galatia\" is not installed here, drawn in Inter Variable (did you mean \"Galatia SIL\"?)"
+        ),
+        "{said}"
+    );
+}

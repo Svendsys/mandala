@@ -49,7 +49,7 @@ fn load_font_sources() -> FxHashMap<AppFont, Source> {
 /// compiled-in face, each static [`fallback::fallback_families`] face at
 /// every weight ([`fallback::register_every_weight`], #297) — and on
 /// native, after them, the host's installed faces, less any that bears a
-/// compiled family's name ([`remove_shadowing_faces`], ruling R30.1).
+/// compiled family's name ([`shadows_a_compiled_family`], ruling R30.1).
 /// The copy keeps the compiled faces' ids, so [`COMPILED_FONT_ID_MAP`]
 /// names them in this font system too.
 ///
@@ -83,23 +83,51 @@ fn complete_font_system() -> FontSystem {
     let compiled = compiled();
     #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
     let mut db = compiled.db.clone();
-    // The host's faces, after every compiled one (#228). The browser has
+    // The host's faces, after every compiled one (#228), less those that
+    // shadow one. Filtered before they are pushed, not removed after: a
+    // removal frees its slot in fontdb's slot map, which the next push
+    // takes, so a face a rescan adds would sort and iterate among the
+    // host's faces instead of after them (#329). Nothing is ever removed
+    // from this database, so every later push appends. The browser has
     // none to load.
     #[cfg(not(target_arch = "wasm32"))]
     {
         for face in scan_host().faces() {
-            db.push_face_info(face.clone());
+            if shadows_a_compiled_family(face) {
+                debug!(
+                    "skipped {}: it bears a compiled family's name",
+                    face.post_script_name
+                );
+            } else {
+                db.push_face_info(face.clone());
+            }
         }
-        remove_shadowing_faces(&mut db, &compiled.ids);
+        BUILD_SCANS.store(HOST_SCANS.load(Ordering::Acquire), Ordering::Release);
     }
     let font_system = fallback::new_font_system(db);
     FACE_SET_GENERATION.fetch_add(1, Ordering::Release);
     font_system
 }
 
+/// [`HOST_SCANS`] as the scan that built [`FONT_SYSTEM`] left it; `0`
+/// until it is built, and on wasm32, which scans nothing. While
+/// [`HOST_SCANS`] still equals it, the build's scan is the latest one this
+/// process made ([`host_scanned_since_build`]).
+static BUILD_SCANS: AtomicU64 = AtomicU64::new(0);
+
+/// Whether this process has scanned the host's installed fonts since the
+/// scan that built the font system — `false` while the build's scan is
+/// the latest, and before the font system is built. What lets the first
+/// open at launch skip a rescan the build has just made
+/// (`rescan_installed_at_launch`). Reads no lock. Cost: two atomic
+/// loads.
+pub fn host_scanned_since_build() -> bool {
+    HOST_SCANS.load(Ordering::Acquire) != BUILD_SCANS.load(Ordering::Acquire)
+}
+
 /// How many times this process has scanned the host's installed fonts
 /// ([`scan_host`]): once when [`FONT_SYSTEM`] is built on native, and once
-/// per [`rescan_installed`] that had a family to look for. Never on
+/// per [`scan_for_installed`] that had a family to look for. Never on
 /// wasm32.
 static HOST_SCANS: AtomicU64 = AtomicU64::new(0);
 
@@ -243,38 +271,23 @@ fn compiled_database() -> (
     (db, compiled_font_id_map)
 }
 
-/// Remove from `db` every face that is not compiled in and bears a
-/// compiled family's name (ruling R30.1 on #278).
+/// Whether the host face `face` bears a compiled family's name, and so is
+/// kept out of the font system (ruling R30.1 on #278): neither the build
+/// ([`complete_font_system`]) nor a rescan ([`add_found`]) adds it.
 ///
 /// cosmic-text resolves a family by name, and fontdb's query picks the
 /// best weight and slant among every face of that name: a host's Inter
 /// Variable Italic would take every italic span of default text from the
 /// compiled upright face, and a host's Galatia SIL at a weight the
-/// compiled one lacks would take a span pinned to it. With them gone, the
-/// default face and every pin name the compiled faces on every machine.
-/// The host's other families stay. Cost: one walk over every face in the
-/// database, and one removal per shadowing face.
+/// compiled one lacks would take a span pinned to it. With them kept out,
+/// the default face and every pin name the compiled faces on every
+/// machine. The host's other families join. Cost: one binary search of
+/// the compiled families per name the face bears.
 #[cfg(not(target_arch = "wasm32"))]
-fn remove_shadowing_faces(
-    db: &mut cosmic_text::fontdb::Database,
-    compiled: &FxHashMap<AppFont, TinyVec<[ID; 8]>>,
-) {
-    let compiled_ids: Vec<ID> = compiled.values().flat_map(|ids| ids.iter().copied()).collect();
-    let names: Vec<String> = compiled_ids
+fn shadows_a_compiled_family(face: &cosmic_text::fontdb::FaceInfo) -> bool {
+    face.families
         .iter()
-        .filter_map(|id| db.face(*id))
-        .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
-        .collect();
-    let shadowing: Vec<(ID, String)> = db
-        .faces()
-        .filter(|face| !compiled_ids.contains(&face.id))
-        .filter(|face| face.families.iter().any(|(name, _)| names.contains(name)))
-        .map(|face| (face.id, face.post_script_name.clone()))
-        .collect();
-    for (id, name) in shadowing {
-        debug!("removed {name}: it bears a compiled family's name");
-        db.remove_face(id);
-    }
+        .any(|(name, _)| app_font_by_family(name).is_some())
 }
 
 /// How many times the font system's set of faces has been changed: once,
@@ -442,14 +455,19 @@ pub struct LoadedFamily {
 }
 
 /// Every family the font system holds, sorted by name: built on first
-/// access by [`loaded_families`], and replaced by a [`rescan_installed`]
-/// that adds faces. Never held while the font system's lock is taken, so
-/// the two locks have no order to get wrong.
+/// access by [`loaded_families`], and replaced by a rescan that adds
+/// faces (`add_found`). The one order the two locks are taken in is the
+/// font system's, then this: `add_found` publishes the new index while
+/// it still holds the write guard over the faces it indexes, so no
+/// reader sees the faces, or the generation that says they moved, with
+/// the old index. Nothing takes the font system's lock while holding this
+/// one ([`loaded_families`] releases it before reading the faces), so
+/// the order cannot deadlock.
 static FAMILY_INDEX: parking_lot::Mutex<Option<Arc<[LoadedFamily]>>> = parking_lot::Mutex::new(None);
 
 /// Every family name a face in `db` bears, each once, attributed to the
 /// compiled face that bears it — no host face bears a compiled family's
-/// name (`remove_shadowing_faces`) — or to [`FamilySource::Installed`];
+/// name (`shadows_a_compiled_family`) — or to [`FamilySource::Installed`];
 /// sorted by name. A face with no family name is skipped with a warning,
 /// a localized alias kept beside the English one (as
 /// [`compiled_family_index`] does). Cost: one walk over every face's
@@ -610,67 +628,140 @@ pub fn family_name_of(app_font: AppFont) -> Option<&'static str> {
 /// after every face it holds: what lets a font installed after this
 /// process started be drawn when its map is opened again, or when the
 /// user asks (`font rescan`), without a restart (#329). Returns the names
-/// it found.
+/// it found. [`scan_for_installed`], then [`add_found`].
 ///
 /// **Nothing the font system holds is changed.** No face is removed or
-/// renumbered; a compiled name, a name already loaded, and a host face
-/// that bears a compiled family's name are skipped, as
-/// `remove_shadowing_faces` skips it at the first scan. So a map that
-/// names none of `names` lays out as it did, but where a character only
-/// a newly added face holds reaches cosmic-text's last pass. The
-/// face-set generation moves, and the family index is rebuilt, only when
-/// a face was added: a rescan that finds nothing new changes nothing.
+/// renumbered, and every face added takes an id greater than every face
+/// held, so it sorts and iterates after them: the build frees no slot
+/// for a later push to reuse ([`complete_font_system`]). A compiled
+/// name, a name already loaded, and a host face that bears a compiled
+/// family's name are skipped (`shadows_a_compiled_family`). So a map
+/// that names none of `names` lays out as it did wherever an earlier
+/// face holds each character it draws; a character no earlier face holds
+/// reaches cosmic-text's last pass, which may now find it in a new face.
+/// The face-set generation moves, and the family index is rebuilt, only
+/// when a face was added: a rescan that finds nothing new changes
+/// nothing.
 ///
 /// No scan runs when no name is missing. The browser reads no installed
 /// font, and has no rescan.
 ///
 /// Cost: when a name is missing, one host font scan, one walk over its
-/// faces, and the font system's write lock for one insert per face found
-/// and one walk to rebuild the family index.
+/// faces, and the font system's write lock for one walk of the faces it
+/// holds, one insert per face found and one walk to rebuild the family
+/// index.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn rescan_installed<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    let wanted: Vec<&str> = names
+    scan_for_installed(names).map_or_else(Vec::new, add_found)
+}
+
+/// [`rescan_installed`] for the first open at launch: none when the scan
+/// that built the font system is the latest this process made
+/// ([`host_scanned_since_build`]), since a rescan milliseconds after it
+/// can find only a font installed in between — two scans of every
+/// installed font's tables where one suffices. Only the launch path
+/// calls it: an open later in the session rescans, since a font may have
+/// been installed since. Builds the font system if nothing has.
+///
+/// Cost: [`loaded_families`] while the build's scan is the latest, else
+/// [`rescan_installed`] too.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn rescan_installed_at_launch<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let _ = loaded_families();
+    if !host_scanned_since_build() {
+        return Vec::new();
+    }
+    rescan_installed(names)
+}
+
+/// What one look at the host found for a rescan, before any of it is
+/// added: the names asked for and missing when it looked, and the host
+/// faces bearing one of them ([`scan_for_installed`]). Applied by
+/// [`add_found`], which checks again under the font system's write lock,
+/// so two looks taken before either is applied add each face once.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct HostScan {
+    wanted: Vec<String>,
+    found: Vec<cosmic_text::fontdb::FaceInfo>,
+}
+
+/// The first half of [`rescan_installed`], taking no font system lock:
+/// the names among `names` that are not compiled and not loaded, and, if
+/// any, one scan of the host for the faces that bear one of them, less
+/// those that shadow a compiled family. `None` when no name is missing —
+/// no scan — or the host has none of them.
+///
+/// Cost: [`loaded_families`]; when a name is missing, one host font scan
+/// and one walk over its faces.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn scan_for_installed<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<HostScan> {
+    let wanted: Vec<String> = names
         .into_iter()
         .filter(|name| app_font_by_family(name).is_none() && !installed_family_loaded(name))
+        .map(str::to_string)
         .collect();
     if wanted.is_empty() {
-        return Vec::new();
+        return None;
     }
     let host = scan_host();
-    let bears_compiled_name = |face: &cosmic_text::fontdb::FaceInfo| {
-        face.families
-            .iter()
-            .any(|(name, _)| app_font_by_family(name).is_some())
-    };
-    let found: Vec<&cosmic_text::fontdb::FaceInfo> = host
+    let found: Vec<cosmic_text::fontdb::FaceInfo> = host
         .faces()
-        .filter(|face| {
-            face.families
-                .iter()
-                .any(|(name, _)| wanted.contains(&name.as_str()))
-        })
-        .filter(|face| !bears_compiled_name(face))
+        .filter(|face| face.families.iter().any(|(name, _)| wanted.contains(name)))
+        .filter(|face| !shadows_a_compiled_family(face))
+        .cloned()
         .collect();
-    if found.is_empty() {
+    (!found.is_empty()).then_some(HostScan { wanted, found })
+}
+
+/// The second half of [`rescan_installed`]: add `scan`'s faces to the
+/// font system, after every face it holds, and return the names added.
+/// Checked again under the write lock: a face bearing a name the font
+/// system has come to hold since `scan` was taken — another rescan,
+/// overlapping this one, added it — is skipped, so no face is added
+/// twice and the generation moves once. The new family index is
+/// published, and the generation moved, before the lock is released
+/// ([`FAMILY_INDEX`]); when nothing is added, neither moves.
+///
+/// Cost: the font system's write lock for one walk of the faces it holds,
+/// one insert per face added and, when any is, one walk to rebuild the
+/// family index.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn add_found(scan: HostScan) -> Vec<String> {
+    let HostScan { wanted, found } = scan;
+    let mut font_system = acquire_font_system_write("rescan_installed");
+    let held: Vec<&String> = {
+        let db = font_system.db();
+        wanted
+            .iter()
+            .filter(|name| {
+                db.faces()
+                    .any(|face| face.families.iter().any(|(family, _)| family == *name))
+            })
+            .collect()
+    };
+    let added: Vec<&cosmic_text::fontdb::FaceInfo> = found
+        .iter()
+        .filter(|face| !face.families.iter().any(|(family, _)| held.contains(&family)))
+        .collect();
+    if added.is_empty() {
         return Vec::new();
     }
-    let mut font_system = acquire_font_system_write("rescan_installed");
-    for face in &found {
+    for face in &added {
         debug!("rescan: added {}", face.post_script_name);
         font_system.db_mut().push_face_info((*face).clone());
     }
     let index = build_family_index(font_system.db());
+    *FAMILY_INDEX.lock() = Some(index);
     FACE_SET_GENERATION.fetch_add(1, Ordering::Release);
     drop(font_system);
-    *FAMILY_INDEX.lock() = Some(index);
     let mut names: Vec<String> = wanted
         .iter()
         .filter(|name| {
-            found
+            added
                 .iter()
                 .any(|face| face.families.iter().any(|(family, _)| family == *name))
         })
-        .map(|name| name.to_string())
+        .cloned()
         .collect();
     names.sort();
     names.dedup();
@@ -828,7 +919,7 @@ pub(crate) fn pinned_family(
 /// the font system holds no face of that name — a family this machine
 /// lacks, whose text is drawn in the default face, its stand-in (#329).
 /// No compiled face bears an installed family's name, and no host face a
-/// compiled one's (`remove_shadowing_faces`), so the two never meet.
+/// compiled one's (`shadows_a_compiled_family`), so the two never meet.
 ///
 /// Resolved once per name and font-system state ([`INSTALLED_PINS`]): a
 /// shaping path pins per span, and the host's faces are many. The cache

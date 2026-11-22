@@ -353,6 +353,15 @@ fn execute_font(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
         }
         Ok::<_, String>(font)
     });
+    let hint = font
+        .as_ref()
+        .ok()
+        .and_then(|font| font.family.as_ref())
+        .and_then(|family| family.as_ref())
+        .and_then(missing_fonts::not_installed);
     let steps = font.and_then(|font| style::font(eff.document(), font));
-    super::edit(eff, steps, "font")
+    match (super::edit(eff, steps, "font"), hint) {
+        (ExecResult::Ok(message), Some(hint)) => ExecResult::ok_msg(format!("{message}; {hint}")),
+        (result, _) => result,
+    }
 }

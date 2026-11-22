@@ -813,7 +813,7 @@ fn test_no_host_face_bears_a_compiled_name_or_comes_before_a_compiled_face() {
 /// after the compiled ones, so the faces text is drawn in where the
 /// compiled faces hold it do not depend on the host:
 /// - no face that is not compiled bears a compiled family's name
-///   (ruling R30.1, `remove_shadowing_faces`), so a pin, and the default
+///   (ruling R30.1, `shadows_a_compiled_family`), so a pin, and the default
 ///   face, name the compiled faces alone;
 /// - every compiled face's id comes before every other face's, so in
 ///   cosmic-text's last pass, which goes by id only among faces equal in
