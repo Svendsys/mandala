@@ -17,7 +17,7 @@
 //! - **The notice** ([`notice`]), on the status line, on both targets,
 //!   until the user dismisses it (`ExitMode`, the status line's own
 //!   dismissal) or resolves the last missing family.
-//! - **The prompt** ([`report_lines`], [`replace_line`]): on native the
+//! - **The prompt** (`report_lines`, `replace_line`): on native the
 //!   console opens with the report and a pre-filled
 //!   `font replace "<family>" ` line, its completion offering every
 //!   family a map can name. It does not hold the map: the map is drawn
@@ -41,7 +41,7 @@ use crate::application::fields::{self, Refused};
 /// What opening `doc` does about the fonts it names, before its view is
 /// projected: on native, look the host up again for the installed
 /// families it names that the font system lacks
-/// ([`rescan_installed`](baumhard::font::fonts::rescan_installed)), so a
+/// (`baumhard::font::fonts::rescan_installed`, native only), so a
 /// font installed since this process started is drawn; then set the
 /// notice. Returns the families still missing.
 ///
