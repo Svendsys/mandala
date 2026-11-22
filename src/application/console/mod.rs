@@ -105,8 +105,9 @@ pub enum ConsoleSideEffect {
     Verb(commands::verb::VerbLine),
     /// Look the host up again for the fonts the map lacks. Set by
     /// `font rescan`, which only reads the line; the executor rescans
-    /// (`missing_fonts::rescan`), projects the view again when it found
-    /// any, and its report becomes the line's output (#329).
+    /// (`missing_fonts::rescan`), reshapes the units that drew in what it
+    /// found (`MapView::faces_added`), and its report becomes the line's
+    /// output (#329).
     RescanFonts,
 }
 

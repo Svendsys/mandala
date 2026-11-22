@@ -257,9 +257,9 @@ pub(crate) fn replace(
 /// that this machine lacks: what `font rescan` and the `RescanFonts`
 /// Action do once the user has installed one. Returns the families found
 /// and those still missing, and sets the notice. A caller that found any
-/// projects the view again, since every glyph of a found family moves
-/// from the stand-in to its own face. Native only: the browser reads no
-/// installed font.
+/// reshapes the units that drew in them (`MapView::faces_added`), since
+/// their glyphs move from the stand-in to the family's own faces. Native
+/// only: the browser reads no installed font.
 ///
 /// Cost: [`missing_families`]; when one is missing, one host font scan.
 #[cfg(not(target_arch = "wasm32"))]

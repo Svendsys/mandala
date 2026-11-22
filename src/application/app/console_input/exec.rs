@@ -144,8 +144,8 @@ pub(in crate::application::app) fn execute_console_line(
     }
 
     // So is a font rescan's: what it found, and what is still missing.
-    // One that found a font projects the view again, so the window owes
-    // a frame.
+    // One that found a font reshapes the units that drew in it, so the
+    // window owes a frame.
     if let Some(ConsoleSideEffect::RescanFonts) = &side_effect {
         let (result, changed_view) = rescan_fonts(ctx);
         return Some(LineRun {
