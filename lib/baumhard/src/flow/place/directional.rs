@@ -489,6 +489,39 @@ pub(crate) fn reshape_steps(
     resizing_steps(&combined, shaped)
 }
 
+/// The glyph steps a lay of a directional ring of `run`, `glyphs` and
+/// `flow` charges before it first reads its budget, which its budget
+/// therefore does not bound (#387): its one reshape ([`reshape_steps`]),
+/// and its inking of the combined run where it holds a letter
+/// (`halves::inking_steps`) — [`setup_charges`], as the lay charges them,
+/// for the same run, glyphs and style, and so exactly what it records as
+/// `Trace::setup`. A lay that finds its outline too small for two runs
+/// charges none, and this is then more than it charges. Cost:
+/// [`combined_run`]'s.
+pub(crate) fn setup_steps(
+    run: &ShapedRun,
+    glyphs: &DirectionalGlyphs,
+    flow: &ResolvedText,
+    fs: &mut crate::font::FontSystem,
+) -> usize {
+    let (combined, shaped, _) = combined_run(run, glyphs, flow, fs);
+    let (reshaped, inked) = setup_charges(&combined, shaped);
+    reshaped.saturating_add(inked)
+}
+
+/// What a lay of a directional ring charges for `combined`, its run with
+/// the appended text ([`combined_run`]), shaped where `shaped`, before it
+/// first reads its budget: its reshape (`halves::resizing_steps`), and its
+/// inking where it holds a letter (`halves::inking_steps`), else nothing.
+/// O(its glyphs).
+fn setup_charges(combined: &ShapedRun, shaped: bool) -> (usize, usize) {
+    let letters = combined.glyphs.iter().any(|g| g.letter);
+    (
+        resizing_steps(combined, shaped),
+        if letters { inking_steps(combined) } else { 0 },
+    )
+}
+
 /// The text of `glyphs`' vertical text and corners shaped as one line
 /// after the ring's spans, as a filler is: each part its paragraph
 /// separators left out, a space between two, which no part's ink reads.
@@ -703,13 +736,11 @@ pub(super) fn place_directional(
     let need = needs.iter().copied().fold(0, usize::saturating_add);
     let estimate = need.saturating_add(corner_glyphs).min(cap);
     let work = RingWork::new(&arc, widest(level_clusters), letters, line_height, estimate, cap);
-    let reshaped = resizing_steps(&combined, shaped);
+    let (reshaped, inked) = setup_charges(&combined, shaped);
     #[cfg(test)]
     LAST_RESHAPE.with(|last| last.set(Some(reshaped)));
     work.took(reshaped);
-    if letters {
-        work.took(inking_steps(&combined));
-    }
+    work.took(inked);
     let (budget, glyph_budget, _) = work.budget();
     // Whether the budget stopped the ring, and whether its cap held it.
     let stopped = Cell::new(false);
@@ -908,6 +939,7 @@ pub(super) fn place_directional(
         trace.tables = work.tables();
         trace.budget = budget;
         trace.glyphs = glyph_budget;
+        trace.setup = reshaped.saturating_add(inked);
         trace.ring = work.loss();
     }
     #[cfg(test)]

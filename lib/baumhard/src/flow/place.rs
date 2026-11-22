@@ -706,6 +706,13 @@ pub(crate) struct Trace {
     /// (ruling B17.1a, #313).
     pub(crate) budget: usize,
     pub(crate) glyphs: usize,
+    /// For a `Repeat` ring laid by direction, the glyph steps it charged
+    /// before it first read its budget, counted in `spent`: its one
+    /// reshape, `.notdef` passes and all, and its inking where its run
+    /// holds a letter (`directional::setup_steps`, #387). Nothing for any
+    /// other placement, and for a ring whose outline is too small for two
+    /// runs, which is laid by its spans alone.
+    pub(crate) setup: usize,
     /// For a text frame, the share of its budget held back for its last
     /// resort's cut to the inks that touch nothing (`halves::untouched_steps`,
     /// ruling R46.1).

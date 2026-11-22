@@ -120,8 +120,10 @@ pub const MAX_FRAME_GLYPHS: usize = 151;
 pub const MAX_RING_GLYPHS: usize = 154;
 
 /// The cap a harness lays a `Repeat` ring of `copy` glyphs a copy with,
-/// its path's table of `tables` samples (`setup_table_samples`): held to
-/// the timeout (`bounded`), the most glyphs, [`MAX_RING_GLYPHS`] at most,
+/// its path's table of `tables` samples (`setup_table_samples`), and a
+/// directional one's reshape and inking `setup` steps
+/// ([`directional_setup`], nothing for any other ring): held to the
+/// timeout (`bounded`), the most glyphs, [`MAX_RING_GLYPHS`] at most,
 /// whose ring of a copy of [`MAX_FRAME_GLYPHS`] glyphs fits
 /// [`INPUT_STEPS`] (`ring_work_steps`) — no fewer than the glyphs of the
 /// longest copy a frame's cut leaves beside a table of as many samples
@@ -129,15 +131,61 @@ pub const MAX_RING_GLYPHS: usize = 154;
 /// (`test_a_rings_cap_holds_the_copy_its_tables_leave`); replaying a finding, as many glyphs as one copy at least, as a
 /// finding's frame text is laid as found ([`FOUND_FRAME_GLYPHS`]), so
 /// that its ring is laid once whole.
-pub(crate) fn ring_cap(copy: usize, bounded: bool, tables: usize) -> usize {
+pub(crate) fn ring_cap(copy: usize, bounded: bool, tables: usize, setup: usize) -> usize {
     if bounded {
         (0..=MAX_RING_GLYPHS)
             .rev()
-            .find(|&cap| ring_work_steps(cap, MAX_FRAME_GLYPHS, tables) <= INPUT_STEPS)
+            .find(|&cap| ring_work_steps(cap, MAX_FRAME_GLYPHS, tables, setup) <= INPUT_STEPS)
             .unwrap_or(0)
     } else {
         MAX_RING_GLYPHS.max(copy)
     }
+}
+
+/// What a harness lays a ring of `run`, of fit `fit` and laid as `layout`
+/// round a path of `tables` samples, with, where it lays text by direction
+/// (#387): a `Repeat` ring's reshape and inking, which its lay charges
+/// before it first reads its budget, predicted (`flow::setup_steps`), so
+/// that its cap and the input's share count them ([`ring_cap`],
+/// `ring_work_steps`). Held to the timeout (`bounded`), a ring whose
+/// predicted setup leaves no cap within [`INPUT_STEPS`] — a text of code
+/// points no face draws, each a `.notdef` pass past any rate — is laid by
+/// its spans alone, its directional texts left out, as the harnesses cut a
+/// frame's text to what fits: the layout so laid, and a setup of nothing.
+/// Otherwise `None` for the layout, which is laid as drawn, and its
+/// setup: nothing for any other ring. Cost: a reshape of `run`, for a
+/// directional ring.
+pub(crate) fn directional_setup(
+    run: &ShapedRun,
+    fit: &FitMode,
+    layout: &RingLayout,
+    flow: &ResolvedText,
+    tables: usize,
+    bounded: bool,
+    fs: &mut FontSystemLease,
+) -> (Option<RingLayout>, usize) {
+    if !matches!(fit, FitMode::Repeat) || !layout.directional.is_set() {
+        return (None, 0);
+    }
+    let setup = crate::flow::setup_steps(run, &layout.directional, flow, fs.fonts());
+    if !bounded || ring_work_steps(0, MAX_FRAME_GLYPHS, tables, setup) <= INPUT_STEPS {
+        return (None, setup);
+    }
+    #[cfg(test)]
+    DIRECTIONAL_LEFT_OUT.with(|n| n.set(n.get() + 1));
+    let spans_alone = RingLayout {
+        directional: DirectionalGlyphs::default(),
+        ..layout.clone()
+    };
+    (Some(spans_alone), 0)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test counter (#387): the directional rings a harness laid by their
+    /// spans alone on this thread, their predicted setup leaving no cap
+    /// within the timeout ([`directional_setup`]).
+    pub(crate) static DIRECTIONAL_LEFT_OUT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The samples of the arc-length tables a harness counts a path of
@@ -170,7 +218,7 @@ pub(crate) fn open_cap(copy: usize, tables: usize, bounded: bool) -> Option<usiz
     }
     (0..=MAX_RING_GLYPHS)
         .rev()
-        .find(|&cap| ring_work_steps(cap, copy, tables) <= INPUT_STEPS)
+        .find(|&cap| ring_work_steps(cap, copy, tables, 0) <= INPUT_STEPS)
 }
 
 /// The glyph steps a whole-glyph placement along an open path
@@ -364,8 +412,13 @@ impl InputWork {
     }
 
     /// Count a `Repeat` ring of copies of `run`, laid at most `cap`
-    /// glyphs as `placed`, with `trace`: the most it may take,
-    /// `ring_work_steps` of its cap (#310, rulings B17.1a, B17.2b). The
+    /// glyphs as `placed`, with `trace`, a directional one's reshape and
+    /// inking predicted at `setup` steps ([`directional_setup`], #387): the
+    /// most it may take, `ring_work_steps` of its cap and that setup (#310,
+    /// rulings B17.1a, B17.2b). What its lay charged before it first read
+    /// its budget (`Trace::setup`) is never past the prediction, and is
+    /// exactly it where the lay reshaped — nothing where its outline was
+    /// too small for two runs, and it was laid by its spans alone. The
     /// engine scales a ring's budget by the glyphs it will lay, never more
     /// than its cap, places no more than its cap, spends no more than its
     /// budget and the one cluster past it that found it spent, and reports
@@ -376,18 +429,26 @@ impl InputWork {
     /// ring its budget stopped after whole copies is not cut — it keeps
     /// them, unclosed — so this does not see it; the ring grid's silence
     /// check does (`ring_budget_tests`, ruling B17.1c).
+    #[allow(clippy::too_many_arguments)] // a ring's lay, and what it was predicted to charge.
     pub(crate) fn ring(
         &mut self,
         run: &ShapedRun,
         cap: usize,
         tables: usize,
+        setup: usize,
         placed: &PlacedRun,
         trace: &Trace,
         what: &str,
     ) -> Result<(), String> {
         let copy = run.glyphs.len();
         let budget = frame_budget(cap);
-        let most = ring_work_steps(cap, copy, tables);
+        let most = ring_work_steps(cap, copy, tables, setup);
+        if trace.setup > setup || (trace.setup != 0 && trace.setup != setup) {
+            return Err(format!(
+                "{what}: a ring charged {} glyph steps before it read its budget, where {setup} were predicted (#387)",
+                trace.setup
+            ));
+        }
         if trace.tables != tables {
             return Err(format!(
                 "{what}: a ring's setup counted a table of {} samples, not the {tables} its outline gives (ruling B16.3a)",
@@ -456,7 +517,7 @@ impl InputWork {
                 trace.budget, trace.glyphs
             ));
         }
-        let most = ring_work_steps(cap, copy, trace.tables);
+        let most = ring_work_steps(cap, copy, trace.tables, 0);
         if trace.spent > most {
             return Err(format!(
                 "{what}: a placement took {} glyph steps, past its budget of {} and its overshoot, {most} in all ({:?})",
@@ -470,7 +531,7 @@ impl InputWork {
             ));
         }
         self.frames += 1;
-        self.steps += ring_work_steps(cap, copy, tables);
+        self.steps += ring_work_steps(cap, copy, tables, 0);
         Ok(())
     }
 
@@ -964,9 +1025,13 @@ fn frames_round_a_rectangle(
     let frame_run = shape_run(&frame_spans, 1.0, fs);
     for fit in laid {
         let tables = setup_table_samples(&frame_run, &path, fit, style);
+        // A directional ring's reshape and inking, predicted, or its
+        // directional texts left out where they leave no cap (#387).
+        let (spans_alone, setup) = directional_setup(&frame_run, fit, layout, style, tables, bounded, fs);
+        let layout = spans_alone.as_ref().unwrap_or(layout);
         // A ring's cap (rulings B17.2a, B17.2b): what fits the timeout, or
         // replaying a finding, a copy at least.
-        let cap = ring_cap(frame_run.glyphs.len(), bounded, tables);
+        let cap = ring_cap(frame_run.glyphs.len(), bounded, tables, setup);
         let mut trace = Trace::default();
         let placed = place_on_closed_capped(
             &frame_run,
@@ -982,7 +1047,15 @@ fn frames_round_a_rectangle(
             Some(&mut trace),
         );
         if matches!(fit, FitMode::Repeat) {
-            work.ring(&frame_run, cap, tables, &placed.1, &trace, "around a rectangle")?;
+            work.ring(
+                &frame_run,
+                cap,
+                tables,
+                setup,
+                &placed.1,
+                &trace,
+                "around a rectangle",
+            )?;
         } else {
             let sized = matches!(fit, FitMode::Fit { .. });
             work.frame(
@@ -2079,7 +2152,13 @@ fn check_generated_pinning(
                             let mut trace = Trace::default();
                             // A ring's cap (rulings B17.2a, B17.2b).
                             let laid_tables = tables(&run);
-                            let cap = ring_cap(run.glyphs.len(), bounded, laid_tables);
+                            // A directional ring's reshape and inking,
+                            // predicted, or its directional texts left out
+                            // where they leave no cap (#387).
+                            let (spans_alone, setup) =
+                                directional_setup(&run, &fit, layout, &flow, laid_tables, bounded, &mut fs);
+                            let layout = spans_alone.as_ref().unwrap_or(layout);
+                            let cap = ring_cap(run.glyphs.len(), bounded, laid_tables, setup);
                             // Collecting far frames, one the twin property
                             // holds nothing of is recorded and not laid.
                             #[cfg(test)]
@@ -2176,7 +2255,15 @@ fn check_generated_pinning(
                             let mut work = InputWork::default();
                             let sized = matches!(fit, FitMode::Fit { .. });
                             let counted = if matches!(fit, FitMode::Repeat) {
-                                work.ring(&run, cap, laid_tables, &placed.1, &trace, "around an outline")
+                                work.ring(
+                                    &run,
+                                    cap,
+                                    laid_tables,
+                                    setup,
+                                    &placed.1,
+                                    &trace,
+                                    "around an outline",
+                                )
                             } else {
                                 work.frame(
                                     &run,

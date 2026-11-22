@@ -7,6 +7,10 @@ pub mod choices;
 #[cfg(test)]
 mod choices_tests;
 pub mod color_tests;
+/// A test's check run again on the compiled faces alone, in a child
+/// process (#387). Spawns its own test binary, which wasm32 cannot.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod compiled_faces;
 /// The fuzz targets and their seeds, held to the properties on stable.
 /// Reads `fuzz/` off the filesystem, which wasm32 does not have.
 #[cfg(all(test, not(target_arch = "wasm32")))]
