@@ -989,6 +989,13 @@ registry is the same table on every target; what differs per target is
 `unsupported` with that reason before its parameters are looked at
 ([Browser](#browser) lists them).
 
+`describe` lists IPC commands, not Actions. Whether a target runs an
+Action is reported by `act.action`'s answer to it: an Action that is
+`NativeOnly` (`RescanFonts`, the reparent and connect modes, …) is
+refused `unsupported` on the browser, naming the Action, while
+`act.action` itself stays `supported` there, since it runs every other
+Action.
+
 The two unnamespaced bootstrap commands report `"family":
 "bootstrap"`. The `events` array lists the three transport-level
 classes and every subscribable class, in name order.

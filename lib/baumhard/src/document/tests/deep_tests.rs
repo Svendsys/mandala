@@ -6,8 +6,9 @@
 //! `RepeatWhile` descent to the leaf, an anchored walk at the leaf, a
 //! journaled edit there reverted and replayed, a move of the whole
 //! chain under a new parent, `validate_subtree` and an insert of a
-//! subtree as deep, and the inherited state and the style resolution
-//! at the leaf — on a default test thread, and through the wasm32 node
+//! subtree as deep, the inherited state and the style resolution at
+//! the leaf, and the installed-font report and replacement (#329) — on
+//! a default test thread, and through the wasm32 node
 //! probe (`tests/wasm_font_lock.rs`, TEST_CONVENTIONS §T9) on wasm32's
 //! default stack in a debug build.
 //!
@@ -483,4 +484,61 @@ pub fn do_document_deep_chain_through_the_writer() {
     doc.redo().unwrap();
     assert_eq!(doc.node_by_ident(first), None);
     assert!(doc.incoming_links(leaf).is_empty());
+}
+
+#[test]
+fn test_document_deep_chain_reports_and_replaces_an_installed_family() {
+    do_document_deep_chain_reports_and_replaces_an_installed_family();
+}
+
+/// §20 rule 11 for the installed-font walks (#329): a chain of [`DEEP`]
+/// nodes, the top and the leaf naming the installed family `Nope Sans`,
+/// is reported missing (two elements) by
+/// [`missing_families`](crate::document::fonts::missing_families) and
+/// replaced (both) by one request of
+/// [`replace_steps`](crate::document::fonts::replace_steps), on a
+/// default test thread natively and under wasm32 debug in the §T9 node
+/// probe (`deep_document_fonts_report_and_replace`): neither recurses.
+/// Control: `installed_families` walking the tree by recursion instead
+/// of `Tree::descendants` overflows the stack here.
+pub fn do_document_deep_chain_reports_and_replaces_an_installed_family() {
+    use crate::document::fonts::{missing_families, replace_steps};
+    use crate::document::values::FontRef;
+    use crate::document::writer::{ChangeSource, EditRequest};
+    use crate::font::fonts::AppFont;
+    let Ok(FontRef::Installed(family)) = crate::document::format::font("Nope Sans") else {
+        panic!("precondition: `Nope Sans` is an installed family");
+    };
+    let mut builder = DocumentBuilder::new();
+    let root = builder.root();
+    let mut at = builder.node(root);
+    let top = at;
+    for _ in 0..DEEP {
+        at = builder.node(at);
+    }
+    let nope = FontRef::Installed(family.clone());
+    for node in [top, at] {
+        builder.edit_node(node, |data| data.style.text.font = Some(nope.clone()));
+    }
+    let mut doc = builder.build().expect("the chain builds");
+    let missing = missing_families(&doc);
+    assert_eq!(
+        missing
+            .iter()
+            .map(|missing| (missing.family.to_string(), missing.elements))
+            .collect::<Vec<_>>(),
+        vec![("Nope Sans".to_string(), 2)]
+    );
+    let steps = replace_steps(&doc, &family, &FontRef::Compiled(AppFont::Evilz)).expect("the steps");
+    doc.apply(EditRequest::new(steps, "font replace"), ChangeSource::Action)
+        .expect("the replacement applies");
+    for node in [top, at] {
+        assert_eq!(
+            doc.get(node)
+                .and_then(DocElement::as_node)
+                .and_then(|data| data.style.text.font.clone()),
+            Some(FontRef::Compiled(AppFont::Evilz))
+        );
+    }
+    assert!(missing_families(&doc).is_empty());
 }

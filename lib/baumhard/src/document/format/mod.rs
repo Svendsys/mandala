@@ -18,7 +18,11 @@
 //!
 //! **Strict.** Every object denies unknown keys, a wrong type is an
 //! error, and a reference — a `parent`, a link's `to`, a verb, a
-//! palette, a theme variable, a font — that names nothing is an error.
+//! palette, a theme variable — that names nothing is an error. A font is
+//! not a reference to anything the map defines: any valid family name
+//! loads, as a compiled face or as an installed family, whether or not
+//! any machine has it, and only a name that cannot be a family is
+//! refused (#329, `format/fonts.md` "Installed families").
 //! A row listed out of order (nodes, sections, rings) is refused, never
 //! sorted. There is no preserved-unknown-keys mechanism and no
 //! skipped-construct report: a file is a document or it does not load,
@@ -29,8 +33,11 @@
 //! file is read (`"var(accent)"` to a
 //! [`VarId`](crate::document::values::VarId), a palette name to a
 //! [`PaletteId`](crate::document::values::PaletteId), a family name to
-//! an [`AppFont`](crate::font::fonts::AppFont)); the document never
-//! holds a string form. Every number goes through
+//! a [`FontRef`](crate::document::values::FontRef)). The one name the
+//! document keeps as text is an installed family's, since no index can
+//! stand for a family that need not be on this machine
+//! ([`FamilyName`](crate::document::values::FamilyName)); everything
+//! else holds no string form. Every number goes through
 //! [`bounds`](crate::document::bounds).
 //!
 //! **Deterministic on write.** An unchanged document saves

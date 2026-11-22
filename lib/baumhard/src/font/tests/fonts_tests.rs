@@ -510,9 +510,11 @@ pub fn do_a_compiled_family_maps_its_name_only_where_its_face_holds_every_letter
 /// font system with another's: `FONT_SYSTEM`, which lacks the family,
 /// pins nothing for it in between, and the planted one still pins it
 /// after. Controls: an eviction made wrong — the cache never emptied at
-/// its bound — turns the bound red at 257; a cache keyed without the
-/// font system's state turns the last pin red (`None`, `FONT_SYSTEM`'s
-/// answer). (No `do_*` twin: it builds a font system of its own.)
+/// its bound — turns the bound red at 257; a cache keyed by name alone,
+/// without the font system's state, turns the `FONT_SYSTEM` lookup red
+/// (`Some`, the planted system's pin, where `None` is expected): the
+/// recomputed pin was cached by the planted system just before. (No
+/// `do_*` twin: it builds a font system of its own.)
 #[test]
 fn test_an_installed_pin_is_recomputed_right_after_its_cache_is_evicted() {
     use crate::font::fonts::{installed_pinned_family, installed_pins_held, INSTALLED_PINS_HELD};

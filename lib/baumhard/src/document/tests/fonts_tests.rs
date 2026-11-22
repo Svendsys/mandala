@@ -2,16 +2,16 @@
 
 //! Installed font families a map names (#329): the report of where it
 //! names each ([`installed_families`], [`missing_families`]) and the one
-//! undoable edit that replaces one ([`replace_steps`]).
+//! undoable edit that replaces one ([`replace_steps`]). Both over a chain
+//! as deep as memory allows are `deep_tests`'
+//! `do_document_deep_chain_reports_and_replaces_an_installed_family`,
+//! which the wasm32 probe and the benches share.
 
 use crate::arena::NodeId;
-use crate::document::element::DocElement;
 use crate::document::fonts::{installed_families, missing_families, replace_steps, NamedFamily};
 use crate::document::format::{self, load};
 use crate::document::ids::Document;
 use crate::document::mutation::error::MutationError;
-use crate::document::tests::deep_tests::DEEP;
-use crate::document::tests::test_support::DocumentBuilder;
 use crate::document::values::{FamilyName, FontRef};
 use crate::document::writer::{ChangeSource, EditRequest};
 use crate::font::fonts::AppFont;
@@ -182,41 +182,4 @@ fn test_a_replacement_may_be_an_installed_family_and_never_the_default_face() {
     assert!(replace_steps(&doc, &family("Named Nowhere"), &other)
         .expect("the steps")
         .is_empty());
-}
-
-#[test]
-fn test_the_report_and_the_replacement_walk_a_chain_as_deep_as_memory_allows() {
-    // §20 rule 11: a chain of DEEP nodes, the top and the leaf naming the
-    // family, is reported (two elements) and replaced (both) by one loop
-    // each, on a default test thread: neither recurses. Control: a
-    // recursive walk overflows the stack here.
-    let mut builder = DocumentBuilder::new();
-    let root = builder.root();
-    let mut at = builder.node(root);
-    let top = at;
-    for _ in 0..DEEP {
-        at = builder.node(at);
-    }
-    let nope = FontRef::Installed(family("Nope Sans"));
-    for node in [top, at] {
-        builder.edit_node(node, |data| data.style.text.font = Some(nope.clone()));
-    }
-    let mut doc = builder.build().expect("the chain builds");
-    assert_eq!(
-        rows(&missing_families(&doc)),
-        vec![("Nope Sans".to_string(), 2, Vec::new())]
-    );
-    let steps =
-        replace_steps(&doc, &family("Nope Sans"), &FontRef::Compiled(AppFont::Evilz)).expect("the steps");
-    doc.apply(EditRequest::new(steps, "font replace"), ChangeSource::Action)
-        .expect("the replacement applies");
-    for node in [top, at] {
-        assert_eq!(
-            doc.get(node)
-                .and_then(DocElement::as_node)
-                .and_then(|data| data.style.text.font.clone()),
-            Some(FontRef::Compiled(AppFont::Evilz))
-        );
-    }
-    assert!(missing_families(&doc).is_empty());
 }

@@ -254,15 +254,23 @@ the parity trajectory (or why none is owed):
   64-bit wasm target, which is not this project's to schedule.
 - **Clipboard OS layer** (`src/application/clipboard.rs`) — native
   is backed by `arboard`; WASM is stubbed pending async-clipboard
-  integration (CONCEPTS §6 "Clipboard").
+  integration (CONCEPTS §6 "Clipboard"). The browser's Copy, Cut and
+  Paste use the app's own clipboard, which the document holds on both
+  targets (`clipboard::Clipboard`), so they work within the page and
+  reach no other app. Parity is the async-clipboard integration, not
+  yet scheduled.
 - **Installed font families** (`baumhard::font::fonts`'
   `complete_font_system` and `rescan_installed`,
   `src/application/missing_fonts.rs`; #329) — a map may name a font
   family installed on the machine it was made on (`format/fonts.md`
   "Installed families"). Native loads the host's installed fonts, draws
   a named family that is there, and rescans for a missing one when a
-  map is opened or on `font rescan` (`RescanFonts`, a `NativeOnly`
-  Action the browser answers `unsupported`). **The browser reads no
+  map is opened after launch (at launch the font system's own scan has
+  just run) or on `font rescan` (`RescanFonts`, a `NativeOnly` Action,
+  which `act.action` refuses `unsupported` on the browser as it refuses
+  every `NativeOnly` Action; `describe` lists IPC commands, not
+  Actions). A rescan that finds a family reshapes only the units that
+  drew in it (`Projector::update_faces`). **The browser reads no
   installed font**, so every installed family a map names is missing
   there: the map loads, its text is drawn in the stand-in (the default
   face), the name is saved back as it was read, the status line says so,
@@ -272,19 +280,15 @@ the parity trajectory (or why none is owed):
   is the Local Font Access API (`window.queryLocalFonts`), which only
   Chromium-based browsers have, behind a permission prompt the user
   must trigger, and which hands back font bytes the wasm font system
-  would load asynchronously after the map; not yet scheduled. The browser's Copy, Cut and
-  Paste use the app's own clipboard, which the document holds on both
-  targets (`clipboard::Clipboard`), so they work within the page and
-  reach no other app. Parity is the async-clipboard integration, not
-  yet scheduled.
+  would load asynchronously after the map; not yet scheduled.
 - **Reparent and connect modes** (`EnterReparentMode`,
   `EnterConnectMode` and the click that ends them;
   `app/dispatch/families/structure.rs`, `app/event_mouse_click.rs`,
   `app/event_cursor_moved.rs`) — native-only, as on `main`: the click
   that picks the target and the hover that tints it come from native's
   pointer handlers. The four Actions are `wasm = NativeOnly`, so over
-  IPC the browser refuses them `unsupported` (`describe` reports them
-  unsupported, and `act.action` refuses them by name), and it never
+  IPC the browser refuses them `unsupported` (`act.action` refuses them
+  by name; `describe` lists IPC commands, not Actions), and it never
   shows their source tint or status line. Every other structure Action
   — create, delete, orphan, copy, cut, paste — runs on both targets,
   and so does the overlay the target tint is stamped by

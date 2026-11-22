@@ -1914,6 +1914,10 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("document_validate_walks_a_deep_insert", |b| {
         b.iter(do_document_validate_walks_a_deep_insert)
     });
+    c.bench_function(
+        "document_deep_chain_reports_and_replaces_an_installed_family",
+        |b| b.iter(do_document_deep_chain_reports_and_replaces_an_installed_family),
+    );
     c.bench_function("projection_full_projection_of_a_generated_map", |b| {
         b.iter(do_projection_full_projection_of_a_generated_map)
     });
