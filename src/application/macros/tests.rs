@@ -199,6 +199,10 @@ fn step_allowed(step: &MacroStep, src: SourceTier) -> bool {
         // An edit has no per-step privilege gate: it is one undoable
         // document change with no I/O, open to every tier.
         MacroStep::Edit { .. } => true,
+        // A map verb is sandboxed (design §11.3): it starts and stops
+        // presentations, applies the map's edits and waits, so it is open
+        // to every tier as an edit is.
+        MacroStep::Verb { .. } => true,
     }
 }
 

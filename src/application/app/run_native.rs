@@ -304,6 +304,18 @@ impl InitState {
             } => {
                 redraw_after = self.input_context().on_cursor_moved(position);
             }
+            Event::WindowEvent {
+                event: WindowEvent::CursorLeft { .. },
+                ..
+            } => {
+                redraw_after = self.input_context().on_cursor_left();
+            }
+            Event::WindowEvent {
+                event: WindowEvent::CursorEntered { .. },
+                ..
+            } => {
+                redraw_after = self.input_context().on_cursor_entered();
+            }
             //// TOUCH ////
             Event::WindowEvent {
                 event: WindowEvent::Touch(touch),

@@ -1,0 +1,1 @@
+[{"id": "a", "name": "A", "steps": [{"console": "save /tmp/x"}, {"action": "Quit"}, {}]}]

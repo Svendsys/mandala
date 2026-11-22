@@ -218,6 +218,15 @@ pub const VERBS: &[Verb] = &[
         example: "mandalactl act.macro steps='[{\"kind\":\"Action\",\"action\":\"ZoomFit\"}]'",
     },
     Verb {
+        name: "act.verb",
+        summary: "Run one of the open map's verbs, on the node with this id or on none, as a trigger runs it.",
+        params: &[param("verb", STRING, true), param("node", INTEGER, false)],
+        positional: &["verb", "node"],
+        effect: Effect::Mutates,
+        render: Render::Flat,
+        example: "mandalactl act.verb reveal 4",
+    },
+    Verb {
         name: "query.document",
         summary:
             "The open document: path, dirty flag, undo depth, counts; pointer= or fields= reads the model.",

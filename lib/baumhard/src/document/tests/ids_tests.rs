@@ -165,7 +165,7 @@ fn test_document_map_reads() {
 pub fn do_document_map_reads() {
     let (mut builder, _) = example();
     builder.palette(crate::document::element::PaletteData {
-        name: "second".to_string(),
+        name: crate::document::keyed::name("second"),
         groups: Vec::new(),
     });
     let mut defaults = crate::document::element::DefaultsData::default();
@@ -259,7 +259,7 @@ pub fn do_document_refuses_more_than_an_index_addresses() {
     let with_variables = |n: usize| {
         let mut builder = DocumentBuilder::new();
         builder.theme(ThemeData {
-            variables: vec![String::new(); n],
+            variables: vec![crate::document::keyed::name(""); n],
             variants: Vec::new(),
             active: 0,
         });
@@ -277,8 +277,10 @@ pub fn do_document_refuses_more_than_an_index_addresses() {
     let with_verbs = |n: usize| {
         let mut builder = DocumentBuilder::new();
         let verb = VerbDef {
-            id: String::new(),
+            id: crate::document::keyed::name(""),
             name: String::new(),
+            description: String::new(),
+            steps: Vec::new(),
         };
         builder.definitions(Definitions {
             verbs: vec![verb; n],
@@ -316,31 +318,24 @@ fn test_the_ident_counter_starts_above_every_ident_the_map_names() {
     assert_eq!(first_free_ident(3, [u32::MAX]), u32::MAX);
 }
 
-/// A placeholder for ruling R20's end-to-end test of Q3, and one that
-/// cannot fail today: [`idents_named_by`](crate::document::ids::idents_named_by)
-/// yields nothing until definitions have targets, so the hook and an
-/// empty list agree (TEST_CONVENTIONS §T13). The end-to-end test deletes
-/// the highest node, keeps a verb naming it, saves, reloads and adds a
-/// node, whose id must not be the deleted one; its control, the old rule
-/// that ignores named ids, turns it red. It arrives with V1-D3 (#252),
-/// which gives verbs targets, and is recorded there.
+/// **A loaded map starts its counter through the one hook** (ruling R20,
+/// Q3; D32): the ids a verb's `{ "nodes": [ids] }` target names count, a
+/// named 9 above the highest node, 7, starting it at 10 — and an id in
+/// no target, and a presentation, which names no node, count for
+/// nothing. The end-to-end case, a deleted node a verb names, is
+/// `verb_tests::test_a_deleted_node_a_verb_names_never_gives_its_id_to_a_new_node`.
+///
+/// Control, seen red: `idents_named_by` yielding nothing starts the
+/// counter at 8.
 #[test]
 fn test_a_loaded_map_starts_its_counter_through_the_one_hook() {
-    use crate::document::ids::{first_free_ident, idents_named_by};
+    use crate::document::ids::idents_named_by;
     use crate::document::tests::format_text::{map_with, node_of};
-    // A map whose verbs name no node yet (their targets arrive with
-    // V1-D3) and whose presentation names none, being started on the
-    // nodes it plays on: the counter is one above the highest node,
-    // through the same hook that will count a verb's.
     let json = map_with(
-        r#","verbs":[{"id":"v","name":"V"}],"presentations":[{"id":"p","name":"P","play":"hold","target":"node","mutations":[]}]"#,
+        r#","presentations":[{"id":"p","name":"P","play":"hold","target":"node","mutations":[]}],"verbs":[{"id":"v","name":"V","steps":[{"present":"p","on":{"nodes":[9,3]}},{"wait":1},{"stop":"p","on":"self"}]}]"#,
         &format!("{},{}", node_of(7, ""), node_of(3, "")),
     );
     let doc = crate::document::format::load(&json).expect("the map loads");
-    assert_eq!(idents_named_by(doc.definitions()).count(), 0);
-    assert_eq!(
-        doc.next_ident(),
-        Some(NodeIdent(first_free_ident(7, idents_named_by(doc.definitions()))))
-    );
-    assert_eq!(doc.next_ident(), Some(NodeIdent(8)));
+    assert_eq!(idents_named_by(doc.definitions()).collect::<Vec<_>>(), [9, 3]);
+    assert_eq!(doc.next_ident(), Some(NodeIdent(10)));
 }

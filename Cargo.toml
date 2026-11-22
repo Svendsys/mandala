@@ -318,6 +318,11 @@ web-time = "1.1.0"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster = "1.0.1"
 arboard = "3.7.0"
+# Opens a span link's `http`, `https` or `mailto` address in the
+# platform's handler (`src/application/platform/opener.rs`, #252):
+# `xdg-open`, `open`, `start`. Native-only: the browser opens a link
+# with `window.open`, through `web-sys`. MIT.
+open = "5.4.5"
 # The screenshot engine's encoder (`src/application/capture/png.rs`).
 # Native-only with the engine: the readback blocks on a buffer map,
 # which a browser cannot. `arboard` already brings this exact version

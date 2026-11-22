@@ -61,10 +61,7 @@ impl super::WasmApp {
             // time — `Beat::Loop`, as native's loop frame reads it: under
             // a virtual clock they are a step's (`run_wasm::step`).
             if Beat::Loop.moves_time(&borrowed.input.clock) {
-                crate::application::app::animation::tick(
-                    Some(&mut borrowed.input.document),
-                    &borrowed.input.clock,
-                );
+                borrowed.tick_animations();
             }
             borrowed.sync_view();
             continuing = borrowed.needs_continuation();

@@ -67,6 +67,7 @@ impl Derived {
             edits,
             presentations,
             verbs,
+            verb_ids: _,
         } = definitions;
         let count = edits.len() + presentations.len() + verbs.len();
         self.budget.elements = self

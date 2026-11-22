@@ -453,7 +453,10 @@ pub fn do_format_builder_documents_round_trip() {
 /// The documents `do_format_builder_documents_round_trip` saves.
 fn builder_documents() -> Vec<(&'static str, crate::document::ids::Document)> {
     let theme = || ThemeData {
-        variables: vec!["accent".to_string(), "fg".to_string()],
+        variables: vec![
+            crate::document::keyed::name("accent"),
+            crate::document::keyed::name("fg"),
+        ],
         variants: vec![
             ThemeVariant {
                 name: "dark".to_string(),

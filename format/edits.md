@@ -112,7 +112,7 @@ one aimed at another kind is refused at load, at its path.
 |---|---|---|
 | `node` | a node | `set_position` `[x, y]`, `nudge` `[dx, dy]`, `set_min_size` `[w, h]`, `set_shape`, `set_palette` (a palette name), `set_zoom` `{min, max}`, `set_folded`, `toggle_folded`, `set_hidden`, `set_opacity`, `set_click` / `set_hover` (a verb id), `set_channel`, `text` |
 | `section` | a section | `set_offset`, `nudge`, `set_min_size`, `set_align`, `set_channel`, `text` |
-| `span` | a span | `set_text`, `insert_text` `{at, text}`, `delete_text` `{start, end}` (grapheme clusters), `set_link` (`{"url": …}` or `{"verb": …}`), `text` |
+| `span` | a span | `set_text`, `insert_text` `{at, text}`, `delete_text` `{start, end}` (grapheme clusters), `set_link` (`{"url": …}` — `http`, `https` or `mailto` only, a `mailto` naming only `to`, `cc`, `bcc`, `subject`, `body` and `in-reply-to`, in its query and its address part, under both readings ([`verbs.md`](./verbs.md#links)) — or `{"verb": …}`), `text` |
 | `frame` | a frame | `set_visible`, `set_start`, `set_direction`, `set_fit`, `set_gap`, `set_inset`, `layout`, `text` |
 | `ring` | a ring | `set_fit`, `layout`, `set_channel`, `text` |
 | `path` | a connector or a link | `set_fit`, `set_spacing`, `set_size` (points), `set_color`, `set_content`, `set_anchors`, `set_control_points`, `move_control_point` `{index, to}`, `set_visible`, `set_zoom` |

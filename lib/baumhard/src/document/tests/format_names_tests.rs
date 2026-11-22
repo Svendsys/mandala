@@ -31,7 +31,7 @@ fn map_naming(slot: usize, name: &str) -> String {
         pick(5, "v"),
     );
     format!(
-        r##"{{"format":1,"name":"t","theme":{{"active":"{variant}","variants":{{"{variant}":{{"{variable}":"#000000"}}}}}},"palettes":{{"{palette}":[{{"frame":"#000000","text":"#000000"}}]}},"edits":[{{"id":"{edit}","name":"E","reach":"self","target":"node","handler":"flower"}}],"presentations":[{{"id":"{presentation}","name":"S","play":"hold","target":"node","mutations":[]}}],"verbs":[{{"id":"{verb}","name":"V"}}]}}"##
+        r##"{{"format":1,"name":"t","theme":{{"active":"{variant}","variants":{{"{variant}":{{"{variable}":"#000000"}}}}}},"palettes":{{"{palette}":[{{"frame":"#000000","text":"#000000"}}]}},"edits":[{{"id":"{edit}","name":"E","reach":"self","target":"node","handler":"flower"}}],"presentations":[{{"id":"{presentation}","name":"S","play":"hold","target":"node","mutations":[]}}],"verbs":[{{"id":"{verb}","name":"V","steps":[]}}]}}"##
     )
 }
 
@@ -108,7 +108,7 @@ fn test_a_document_holding_a_name_the_file_refuses_cannot_be_saved() {
     let saved = |name: &str| {
         let mut builder = DocumentBuilder::new();
         builder.palette(PaletteData {
-            name: name.to_string(),
+            name: crate::document::keyed::name(name),
             groups: Vec::new(),
         });
         check_savable(&builder.build().expect("a document"))

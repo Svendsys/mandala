@@ -74,6 +74,7 @@ pub(crate) mod rows;
 pub(crate) mod spelling;
 mod strict;
 pub(crate) mod to_dto;
+pub(crate) mod verbs;
 mod writer;
 
 pub use error::{LoadError, LoadErrorKind, NodeContext, SaveError, SaveErrorKind, TextPosition};

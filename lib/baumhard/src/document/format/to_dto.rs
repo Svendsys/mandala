@@ -43,7 +43,7 @@ use crate::document::format::dto::{
     AlignDto, AnchorDto, CapDto, DefaultsDto, DirectionDto, FlowDefaultsDto, FrameDefaultsDto, FrameDto,
     LabelDefaultsDto, LabelDto, LinkDto, LinkKindDto, LinkTargetDto, MapHeaderDto, NodeDefaultsDto, NodeDto,
     OnDto, PaletteGroupDto, PathDto, PortalEndDefaultsDto, PortalEndDto, RingDefaultsDto, RingDto,
-    SectionDto, SpanDto, TextDefaultsDto, ThemeDto, VerbDto, ZoomDto,
+    SectionDto, SpanDto, TextDefaultsDto, ThemeDto, ZoomDto,
 };
 use crate::document::format::error::{render_path, NodeContext, SaveError, SaveErrorKind, Seg};
 use crate::document::format::index::FORMAT;
@@ -83,7 +83,7 @@ struct TextOut<'a> {
 struct Core<'a> {
     doc: &'a Document,
     /// The theme's variable names, in the order a `VarId` indexes.
-    vars: &'a [String],
+    vars: &'a [crate::document::keyed::Name],
     /// The palette names, in the order a `PaletteId` indexes.
     palettes: Vec<&'a str>,
     /// The verbs, in the order a `VerbId` indexes.
@@ -258,12 +258,21 @@ impl<'a> Saver<'a> {
         };
         let palettes = self.palettes()?;
         let defaults = self.key("defaults", |s| s.defaults(doc.defaults()))?;
-        self.definitions("edits", definitions.edits.iter().map(|d| (&d.id, &d.name)))?;
+        self.definitions(
+            "edits",
+            definitions.edits.iter().map(|d| (d.id.as_str(), d.name.as_str())),
+        )?;
         self.definitions(
             "presentations",
-            definitions.presentations.iter().map(|d| (&d.id, &d.name)),
+            definitions
+                .presentations
+                .iter()
+                .map(|d| (d.id.as_str(), d.name.as_str())),
         )?;
-        let verbs = self.definitions("verbs", definitions.verbs.iter().map(|d| (&d.id, &d.name)))?;
+        let verbs = self.definitions(
+            "verbs",
+            definitions.verbs.iter().map(|d| (d.id.as_str(), d.name.as_str())),
+        )?;
         Ok(MapHeaderDto {
             format: FORMAT,
             name,
@@ -281,7 +290,15 @@ impl<'a> Saver<'a> {
                 .iter()
                 .map(crate::document::presentation::load::to_dto)
                 .collect(),
-            verbs: verbs.into_iter().map(|(id, name)| VerbDto { id, name }).collect(),
+            verbs: verbs
+                .into_iter()
+                .zip(&definitions.verbs)
+                .map(|(_, def)| {
+                    crate::document::verb::load::to_dto(def, definitions).ok_or_else(|| {
+                        self.error_at("verbs", SaveErrorKind::UnknownStepName { list: "verbs" })
+                    })
+                })
+                .collect::<SaveResult<Vec<_>>>()?,
         })
     }
 
@@ -290,18 +307,18 @@ impl<'a> Saver<'a> {
     fn definitions<'d>(
         &mut self,
         key: &'static str,
-        entries: impl Iterator<Item = (&'d String, &'d String)>,
+        entries: impl Iterator<Item = (&'d str, &'d str)>,
     ) -> SaveResult<Vec<(String, String)>> {
         let mut seen: KeyedSet<&str> = KeyedSet::default();
         let mut out = Vec::new();
         self.key(key, |s| {
             for (index, (id, name)) in entries.enumerate() {
-                if !seen.insert(id.as_str()) {
+                if !seen.insert(id) {
                     return s.at(Seg::Index(index), |s| {
-                        Err(s.error_at("id", SaveErrorKind::DuplicateDefinition { id: id.clone() }))
+                        Err(s.error_at("id", SaveErrorKind::DuplicateDefinition { id: id.to_string() }))
                     });
                 }
-                out.push((id.clone(), name.clone()));
+                out.push((id.to_string(), name.to_string()));
             }
             Ok(())
         })?;
@@ -342,7 +359,7 @@ impl<'a> Saver<'a> {
                     .variables
                     .iter()
                     .zip(&variant.values)
-                    .map(|(name, rgba)| (name.clone(), HexDto(rgba.0)))
+                    .map(|(name, rgba)| (name.to_string(), HexDto(rgba.0)))
                     .collect();
                 values.sort_by(|a, b| a.0.cmp(&b.0));
                 if let Some(pair) = values.windows(2).find(|pair| pair[0].0 == pair[1].0) {
@@ -391,7 +408,7 @@ impl<'a> Saver<'a> {
         let mut palettes: Vec<(String, Vec<PaletteGroupDto>)> = Vec::new();
         self.key("palettes", |s| {
             for (_, palette) in doc.palettes() {
-                let groups = s.at(Seg::Name(palette.name.clone()), |s| {
+                let groups = s.at(Seg::Name(palette.name.to_string()), |s| {
                     let mut groups = Vec::with_capacity(palette.groups.len());
                     for (index, group) in palette.groups.iter().enumerate() {
                         groups.push(s.at(Seg::Index(index), |s| {
@@ -404,7 +421,7 @@ impl<'a> Saver<'a> {
                     }
                     Ok(groups)
                 })?;
-                palettes.push((palette.name.clone(), groups));
+                palettes.push((palette.name.to_string(), groups));
             }
             palettes.sort_by(|a, b| a.0.cmp(&b.0));
             if let Some(pair) = palettes.windows(2).find(|pair| pair[0].0 == pair[1].0) {

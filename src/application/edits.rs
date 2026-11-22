@@ -55,6 +55,14 @@ pub(crate) struct EditRegistry {
     handlers: Handlers,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test counter (ruling D3.3 item 2 on #252): how many times
+    /// [`EditRegistry::find`] has looked an edit up by name on this
+    /// thread.
+    pub(crate) static FINDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl EditRegistry {
     /// The registry of `app` and `user` edits.
     pub(crate) fn new(app: Vec<EditDef>, user: Vec<EditDef>) -> Self {
@@ -90,8 +98,12 @@ impl EditRegistry {
     }
 
     /// The edit `id` runs on `doc`, and the tier it came from: the
-    /// map's, else the user's, else the app's. O(edits).
+    /// map's, else the user's, else the app's. O(edits): what a key, a
+    /// macro and the console name an edit by; a verb's step names one of
+    /// the map's by index and never comes here (ruling D3.3 item 2).
     pub(crate) fn find<'a>(&'a self, doc: &'a Document, id: &str) -> Option<(&'a EditDef, EditTier)> {
+        #[cfg(test)]
+        FINDS.with(|finds| finds.set(finds.get() + 1));
         let find = |list: &'a [EditDef]| list.iter().find(|edit| edit.id == id);
         find(&doc.definitions().edits)
             .map(|edit| (edit, EditTier::Map))

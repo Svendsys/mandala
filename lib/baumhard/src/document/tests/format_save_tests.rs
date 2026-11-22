@@ -359,7 +359,7 @@ fn test_a_float_survives_the_text_exactly() {
 fn test_a_document_of_every_kind_saves_the_same_text_twice() {
     let (mut builder, _) = example();
     builder.theme(ThemeData {
-        variables: vec!["a".to_string()],
+        variables: vec![crate::document::keyed::name("a")],
         variants: vec![ThemeVariant {
             name: "d".to_string(),
             values: vec![Rgba::opaque(0, 0, 0)],

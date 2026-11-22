@@ -7,8 +7,8 @@
 //! [`file::read`](baumhard::document::format::file::read), and a refusal
 //! is printed as the loader words it, with its JSON path; nothing here
 //! judges what the loader judges. Once a map has loaded, [`warnings`]
-//! looks for four things, as #253 lists them and its amendment E1.1
-//! (issue comment 6870828150) rules:
+//! looks for five things, as #253 lists them, its amendment E1.1
+//! (issue comment 6870828150) rules, and V1-D3 (#252) completes:
 //!
 //! - **A verb nothing refers to.** A verb is referred to by a node's `on`
 //!   (`click`, `hover`), by a span's `link` (`{"verb": …}`), and by an
@@ -18,25 +18,34 @@
 //!   its body)
 //!   ([`EditDef::mentions`](baumhard::document::edit::EditDef::mentions),
 //!   [`PresentationDef::mentions`](baumhard::document::presentation::PresentationDef::mentions))
-//!   — and by nothing else in the format. An edit refers to what it names
-//!   whether or not anything runs it: keybinds, the console and macros run
-//!   an edit by id from outside the map, so a file cannot say an edit is
-//!   never run; the console starts a presentation the same way. The
-//!   issue's other half, a presentation nothing refers to, has no meaning
-//!   until something in a map can refer to a presentation; E1.1 moves it
-//!   to V1-D3 (#252), which adds the verb steps that will.
+//!   — by another verb's `verb` step (V1-D3), and by nothing else in the
+//!   format. An edit refers to what it names whether or not anything runs
+//!   it: keybinds, the console and macros run an edit by id from outside
+//!   the map, so a file cannot say an edit is never run; the console
+//!   starts a presentation the same way.
+//! - **A presentation nothing refers to** (E1.1 item 1, moved to V1-D3):
+//!   what refers to one of the map's presentations is a verb's `present`
+//!   or `stop` step, and nothing else in the format. A presentation no
+//!   step names can still be started from the console by its id, as an
+//!   unreferenced verb can be run from there, and is reported all the
+//!   same: the map itself never plays it.
 //! - **A node saved hidden that nothing can reveal.** What reveals a node
 //!   is an edit that writes `set_hidden: false`, a presentation that
 //!   plays on nodes and writes it (V1-D2, #251: the node is shown for as
-//!   long as it plays), or a step of a verb — and a verb is an id and a
-//!   name until V1-D3 (#252) gives it steps. In general, which elements
+//!   long as it plays), or a step of a verb — and a verb's steps (V1-D3,
+//!   #252) reveal a node only by running one of the map's own edits or
+//!   presentations (§11.3), which this already counts, so a verb narrows
+//!   nothing it does not: a map whose edits and presentations reveal
+//!   nothing has no verb that can either. In general, which elements
 //!   an edit reaches is decided when it runs — by the anchors it is run
 //!   at, and by its filter and its mutator's keys against the map as it
 //!   stands then, which other edits change — and a presentation's by the
 //!   nodes it is started on, so `verify` does not narrow by reach: with
 //!   an edit or a presentation in the map that writes `set_hidden: false`
-//!   no hidden node is reported, and without one, as E1.1 rules, every
-//!   node saved with `"hidden": true` is, until D3 narrows it. The known case
+//!   no hidden node is reported, and without one every node saved with
+//!   `"hidden": true` is. Narrowing by reach is not sound: the console
+//!   starts any of the map's presentations, and runs any of its edits, on
+//!   any node, whatever the verbs' targets name. The known case
 //!   where this is conservative is an edit whose filter fixes its node: on
 //!   `target: "node"`, a first test of `ident` `Equals` decides for every
 //!   node, and no op changes an id, so that edit only ever reaches the one
@@ -78,12 +87,14 @@ use baumhard::document::element::{DocElement, DocKind, Triggers};
 use baumhard::document::ids::Document;
 use baumhard::document::resolve::{resolve_frame, resolve_portal_end, Content};
 use baumhard::document::values::{LinkKind, LinkTarget, VerbId};
+use baumhard::document::verb::Step;
 
 use crate::map::{ident, is, link, text_owners, Nodes};
 
 /// Every warning `doc` earns, in the file's order: the nodes' in
 /// pre-order — each node's own, then its frame's, then its links' — then
-/// the verbs', in the order `verbs` lists them.
+/// the presentations', in the order `presentations` lists them, then the
+/// verbs', in the order `verbs` lists them.
 ///
 /// Cost: one walk of each edit and each presentation, one scan of the
 /// verbs per verb one of them names, one walk of the nodes and every
@@ -115,6 +126,27 @@ pub fn warnings(doc: &Document) -> Vec<String> {
     {
         reveals |= reveal;
         marks_portal_ends |= marks;
+    }
+    // What the verbs' steps name: the presentations they start and
+    // stop, and the verbs they run. Every step kind by name, so one added
+    // fails to compile here instead of going uncounted.
+    let mut played = vec![false; definitions.presentations.len()];
+    for verb in &definitions.verbs {
+        for step in &verb.steps {
+            match step {
+                Step::Present { presentation, .. } | Step::Stop { presentation, .. } => {
+                    if let Some(flag) = played.get_mut(usize::from(presentation.0)) {
+                        *flag = true;
+                    }
+                }
+                Step::Verb { verb } => {
+                    if let Some(flag) = referenced.get_mut(usize::from(verb.0)) {
+                        *flag = true;
+                    }
+                }
+                Step::Edit { .. } | Step::Wait { .. } => {}
+            }
+        }
     }
     let mut refer = |verb: VerbId| {
         if let Some(flag) = referenced.get_mut(usize::from(verb.0)) {
@@ -162,6 +194,14 @@ pub fn warnings(doc: &Document) -> Vec<String> {
             }
         }
     }
+    for (n, presentation) in definitions.presentations.iter().enumerate() {
+        if !played[n] {
+            out.push(format!(
+                "presentations[{n}] {:?}: defined, and no verb starts or stops it",
+                presentation.id
+            ));
+        }
+    }
     for (n, verb) in definitions.verbs.iter().enumerate() {
         if !referenced[n] {
             out.push(format!(
@@ -205,6 +245,16 @@ mod tests {
         warnings(&doc)
     }
 
+    /// [`warned`], without the warnings of presentations no verb names:
+    /// for the cases about what a presentation's body counts, whose
+    /// presentations no verb plays.
+    fn warned_but_unplayed(header: &str, nodes: &str) -> Vec<String> {
+        warned(header, nodes)
+            .into_iter()
+            .filter(|warning| !warning.starts_with("presentations["))
+            .collect()
+    }
+
     /// A verb nothing refers to is reported by its place in `verbs`; one
     /// a node's `on` or a span's `link` names is not.
     ///
@@ -213,7 +263,7 @@ mod tests {
     /// `verbs[0]` warning the case expects to be absent.
     #[test]
     fn test_verify_warns_of_a_verb_nothing_refers_to() {
-        let verbs = r#""verbs": [{"id": "go", "name": "Go"}, {"id": "stay", "name": "Stay"}],"#;
+        let verbs = r#""verbs": [{"id": "go", "name": "Go", "steps": []}, {"id": "stay", "name": "Stay", "steps": []}],"#;
         let plain = r#"{"id": 1, "position": [0, 0], "sections": [{"spans": [{"text": "a"}]}]}"#;
         assert_eq!(
             warned(verbs, plain),
@@ -232,6 +282,26 @@ mod tests {
         assert_eq!(
             warned(verbs, by_span),
             [r#"verbs[1] "stay": defined, and nothing refers to it"#]
+        );
+    }
+
+    /// A presentation no verb step names is reported by its place in
+    /// `presentations`; one a `present` or a `stop` step names is not, and
+    /// a verb only another verb's `verb` step names is referred to.
+    ///
+    /// Controls, each seen red: not marking `Stop` steps reports `p`;
+    /// not counting `Verb` steps reports `inner`.
+    #[test]
+    fn test_verify_warns_of_a_presentation_no_verb_names() {
+        let header = r#""presentations": [{"id": "p", "name": "P", "play": "hold", "target": "node", "mutations": []},
+                {"id": "q", "name": "Q", "play": "hold", "target": "node", "mutations": []},
+                {"id": "r", "name": "R", "play": "hold", "target": "node", "mutations": []}],
+            "verbs": [{"id": "inner", "name": "I", "steps": [{"stop": "p", "on": "selection"}]},
+                {"id": "outer", "name": "O", "steps": [{"present": "q", "on": "selection"}, {"verb": "inner"}]}],"#;
+        let node = r#"{"id": 1, "position": [0, 0], "on": {"click": "outer"}}"#;
+        assert_eq!(
+            warned(header, node),
+            [r#"presentations[2] "r": defined, and no verb starts or stops it"#]
         );
     }
 
@@ -313,7 +383,7 @@ mod tests {
     /// to it`.
     #[test]
     fn test_verify_counts_a_verb_an_edit_names() {
-        let header = r#""verbs": [{"id": "go", "name": "Go"}],
+        let header = r#""verbs": [{"id": "go", "name": "Go", "steps": []}],
             "edits": [{"id": "c", "name": "C", "reach": "self", "target": "node",
                        "mutations": [{"node": {"set_click": "go"}}]}],"#;
         assert_eq!(
@@ -325,7 +395,7 @@ mod tests {
     /// The map's verbs `go` and `stay`, and `edit` as its one edit.
     fn edit_naming(edit: &str) -> String {
         format!(
-            r#""verbs": [{{"id": "go", "name": "Go"}}, {{"id": "stay", "name": "Stay"}}],
+            r#""verbs": [{{"id": "go", "name": "Go", "steps": []}}, {{"id": "stay", "name": "Stay", "steps": []}}],
                "edits": [{{"id": "e", "name": "E", "reach": "self", {edit}}}],"#
         )
     }
@@ -449,20 +519,20 @@ mod tests {
     /// `definitions.presentations` loop) reports `go` in both cases.
     #[test]
     fn test_verify_counts_a_verb_a_presentation_names() {
-        let verbs = r#""verbs": [{"id": "go", "name": "Go"}, {"id": "stay", "name": "Stay"}],"#;
+        let verbs = r#""verbs": [{"id": "go", "name": "Go", "steps": []}, {"id": "stay", "name": "Stay", "steps": []}],"#;
         let stay = [r#"verbs[1] "stay": defined, and nothing refers to it"#];
         let node = r#"{"id": 1, "position": [0, 0]}"#;
         let by_mutation = format!(
             r#"{verbs} "presentations": [{{"id": "p", "name": "P", "play": "hold", "target": "node",
                 "mutations": [{{"node": {{"set_click": "go"}}}}]}}],"#
         );
-        assert_eq!(warned(&by_mutation, node), stay);
+        assert_eq!(warned_but_unplayed(&by_mutation, node), stay);
         let by_filter = format!(
             r#"{verbs} "presentations": [{{"id": "p", "name": "P", "play": "hold", "target": "node",
                 "filter": {{"fields": [[{{"on_hover": "go"}}, {{"Equals": false}}]]}},
                 "mutations": [{{"node": {{"set_opacity": 0.5}}}}]}}],"#
         );
-        assert_eq!(warned(&by_filter, node), stay);
+        assert_eq!(warned_but_unplayed(&by_filter, node), stay);
     }
 
     /// A presentation that plays on nodes and writes `set_hidden: false`
@@ -482,11 +552,14 @@ mod tests {
         };
         let node = r#"{"id": 4, "position": [0, 0], "hidden": true}"#;
         let warning = ["#4: hidden, and no edit in the map, verb or presentation can reveal it"];
-        assert_eq!(warned(&presentation(false), node), Vec::<String>::new());
-        assert_eq!(warned(&presentation(true), node), warning);
+        assert_eq!(
+            warned_but_unplayed(&presentation(false), node),
+            Vec::<String>::new()
+        );
+        assert_eq!(warned_but_unplayed(&presentation(true), node), warning);
         let glyph = r#""presentations": [{"id": "g", "name": "G", "play": "hold", "layer": "glyph",
             "target": "sections", "glyph": [{"run_opacity": 1.0}]}],"#;
-        assert_eq!(warned(glyph, node), warning);
+        assert_eq!(warned_but_unplayed(glyph, node), warning);
     }
 
     /// What one edit counts stays counted when later edits count
@@ -501,7 +574,7 @@ mod tests {
     #[test]
     fn test_verify_keeps_what_an_earlier_edit_counts() {
         let header = r#""defaults": {"portal_end": {"content": ""}},
-            "verbs": [{"id": "go", "name": "Go"}],
+            "verbs": [{"id": "go", "name": "Go", "steps": []}],
             "edits": [
               {"id": "a", "name": "A", "reach": "self", "target": "node",
                "mutations": [{"node": {"set_hidden": false}}, {"node": {"set_click": "go"}}]},

@@ -65,6 +65,11 @@ pub(in crate::application::app) trait MacroDispatchTarget {
     /// it ran.
     fn run_edit(&mut self, id: &str, at: &crate::application::macros::MacroTarget) -> bool;
 
+    /// Run a `Verb` step: the open map's verb `id` on the node `at`
+    /// resolves, through the runner every route takes
+    /// (`families::verbs::run_step`). Returns whether it ran.
+    fn run_verb(&mut self, id: &str, at: &crate::application::macros::MacroTarget) -> bool;
+
     /// A step has run to completion (a skipped or gate-rejected one
     /// has not). The seam an observer hangs between steps on: the IPC
     /// `verbose` event level reports one change per step instead of
@@ -156,6 +161,14 @@ pub(in crate::application::app) fn run_macro_steps<T: MacroDispatchTarget>(
                     any_ran = true;
                 }
             }
+            MacroStep::Verb { id, target: at } => {
+                // A map verb starts and stops presentations, applies the
+                // map's own edits and waits, and nothing else (design
+                // §11.3): every tier may run one.
+                if target.run_verb(id, at) {
+                    any_ran = true;
+                }
+            }
             MacroStep::ConsoleLine { line } => {
                 // **Privilege gate.** `ConsoleLine` runs an arbitrary
                 // console verb, including filesystem-touching ones.
@@ -239,6 +252,10 @@ mod tests {
         }
         fn run_edit(&mut self, id: &str, at: &MacroTarget) -> bool {
             self.calls.push(format!("edit:{id}:{at:?}"));
+            self.edit_ran
+        }
+        fn run_verb(&mut self, id: &str, at: &MacroTarget) -> bool {
+            self.calls.push(format!("verb:{id}:{at:?}"));
             self.edit_ran
         }
     }
@@ -356,6 +373,26 @@ mod tests {
         let mut t = MockTarget::new(registry_with(vec![(only.clone(), SourceTier::App)]));
         assert!(dispatch_macro("only", &mut t), "an App-tier edit step runs");
         assert_eq!(t.calls, vec!["edit:nudge:NodeId(3)".to_string()]);
+        let mut refused = MockTarget::new(registry_with(vec![(only, SourceTier::User)]));
+        refused.edit_ran = false;
+        assert!(!dispatch_macro("only", &mut refused));
+        assert_eq!(refused.calls.len(), 1, "it was asked");
+    }
+
+    /// The verb step runs the map verb at its target, at every tier —
+    /// the App tier included, which may not run a console line — and
+    /// counts as having run when the verb did. Control: a verb that did
+    /// not run does not count.
+    #[test]
+    fn test_a_verb_step_runs_at_every_tier() {
+        let verb = MacroStep::Verb {
+            id: "reveal".into(),
+            target: MacroTarget::NodeId(4),
+        };
+        let only = macro_with_steps("only", vec![verb]);
+        let mut t = MockTarget::new(registry_with(vec![(only.clone(), SourceTier::App)]));
+        assert!(dispatch_macro("only", &mut t), "an App-tier verb step runs");
+        assert_eq!(t.calls, vec!["verb:reveal:NodeId(4)".to_string()]);
         let mut refused = MockTarget::new(registry_with(vec![(only, SourceTier::User)]));
         refused.edit_ran = false;
         assert!(!dispatch_macro("only", &mut refused));

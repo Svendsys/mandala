@@ -1607,13 +1607,65 @@ presentation changes what is drawn and is stopped.
   `clock.wait until=animations_complete` waits for them to come to
   rest.
 
-**Caveat:** nothing starts a presentation from the canvas yet — the
-console's `present` verb and the API do; a map's `hover` and `click`
-verbs are V1-D3's.
+From the canvas a presentation is started by the map's verbs, which a
+node's click or hover runs (next).
 
 `lib/baumhard/src/document/presentation/`,
 `src/application/presentations.rs`, `src/application/view/present.rs`,
 `src/application/app/dispatch/the_map.rs`.
+
+### Verbs — `VerbDef`, `Step`, `On`, `Runs`, the `Performer`
+
+**A map's public interface** (design §11, D7; V1-D3, #252;
+[`format/verbs.md`](./format/verbs.md)): named sequences of steps that
+make a map interactive. A node's click and hover, a span's link, the
+console (`verb run`), IPC (`act.verb`) and the user's and the app's
+macros (`Verb` step) invoke them; they replace the map- and node-level
+macro tiers, which could run console lines from a map someone sent.
+
+- **The definition** (`VerbDef`) is an id, a name and its `Step`s, of
+  five kinds and no other — `Present` and `Stop` (the map's own
+  presentations), `Edit` (the map's own edits, by id), `Wait` and
+  `Verb` (another of the map's verbs, inline). That closed set is the
+  sandbox (§11.3): nothing a verb can spell reaches a console line, an
+  Action, a file or the process. The load holds every name to the map's
+  own lists, the calls to an acyclic graph at most eight verbs deep,
+  and a verb to `MAX_DEFINITION_PARTS` once its calls are expanded, so
+  a run's work is bounded however its calls fan out.
+- **Targets** (`On`) — `self`, `children`, `descendants`, `selection`,
+  `nodes`, a `channel` within `self` or the map — are resolved when the
+  step runs (`On::nodes`). A node a target names by id that the map no
+  longer has is skipped with a warning (D27), and its id is never given
+  to a new node while a verb names it (D32, `ids::idents_named_by`).
+- **A run** (`verb::run`) is the verb, its `self`, where it is in its
+  steps and the time it has reached; `present`, `stop`, `edit` and
+  `verb` steps run at once, a `wait` suspends it, and the frame
+  (`app::animation::tick`) resumes it at the time the wait ends, so a
+  run is deterministic on a virtual clock. A **held** run — a hover's —
+  is kept until the pointer leaves the node: then its remaining steps
+  are skipped and every `while` instance it started plays its way out.
+- **The runner never writes.** What a step does to the map goes through
+  a `Performer`, which the app implements over its open map
+  (`dispatch::families::verbs::Host`): a presentation started on the
+  document, an edit through the one edit funnel (one history entry,
+  `ChangeSource::Verb`, yielding to an open interactive transaction,
+  D28). A presentation started by a verb never settles an animated edit
+  first: a hover must not cut short the change the user watches.
+- **Links.** A span's `link` runs a verb with `self` the span's node,
+  or opens an `http`, `https` or `mailto` address
+  (`platform::opener`: the `open` crate on native, `window.open` with
+  `noopener` in the browser); any other scheme, and a `mailto` naming
+  a header other than RFC 6068's six (`to`, `cc`, `bcc`, `subject`,
+  `body`, `in-reply-to`) in its query or its address part, under either
+  of two readings, or holding a control character raw, or decoded
+  anywhere but a line break or a tab inside its `body`, is refused at
+  load and at apply — and some values
+  that only look like headers are refused too (the list:
+  [`format/verbs.md`](./format/verbs.md#links)).
+
+`lib/baumhard/src/document/verb/`,
+`src/application/app/dispatch/families/verbs.rs`,
+`src/application/platform/opener.rs`.
 
 ### TextFlow — `FlowSpan`, `ShapedRun`, `ShapedBox`, `PlacedRun`, `Outline`, `Curve`
 
@@ -3166,7 +3218,8 @@ The `App < User` ladder in `src/application/source_tier.rs`, which
 the macro registry is keyed by. The ladder means two things at once:
 **precedence** (`User` overrides `App` on an id collision, which the
 derived `Ord` encodes) and **trust** (`App` ships with the binary and
-`User` is the user's own file; a map's own verbs are V1-D3's). The
+`User` is the user's own file; a map's own verbs are not on the
+ladder at all, since what they can spell is sandboxed — see "Verbs"). The
 macro dispatcher's privilege gates —
 `allows_console_line`, `allows_action`, both `impl SourceTier`
 blocks in `src/application/macros/mod.rs` — key off exactly that
@@ -3249,9 +3302,10 @@ each named by its path below
 the node (`#3 links[1].ends[0]: …`, `#3 connector.content: …`,
 `#3 frame.rings[0].corners[1]: …`), `export` the tree
 as Markdown and `verify` the loader's verdict plus warnings for what
-loads but is probably a mistake (a verb nothing refers to, a node saved
-hidden that nothing can reveal, a visible frame with no rings, a portal
-whose ends both draw nothing). What it counts includes the map's edits
+loads but is probably a mistake (a verb nothing refers to, a
+presentation no verb's step names, a node saved hidden that nothing can
+reveal, a visible frame with no rings, a portal whose ends both draw
+nothing). What it counts includes the map's edits
 (`EditDef::mentions`, one walk that names every edit step, so a step
 added to the format does not compile there until it is counted): a verb
 an edit names — `set_click`, `set_hover`, a span's `set_link` to a

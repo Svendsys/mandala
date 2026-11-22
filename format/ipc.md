@@ -24,7 +24,7 @@ it. The Rust-side implementation lives under `src/application/ipc/`
 > envelope, `hello` / `connection_rejected` / `shutdown`, and the
 > bootstrap commands `describe` and `ping` (IPC-02, #62); the command
 > registry, reply `warnings`, and the `act` family — `act.action`,
-> `act.console`, `act.macro` (IPC-03, #63); the `query` family — `query.document`,
+> `act.console`, `act.macro` (IPC-03, #63), and `act.verb` (V1-D3, #252); the `query` family — `query.document`,
 > `query.selection`, `query.camera`, `query.mode`, `query.status`,
 > `query.editors`, `query.undo` (IPC-04, #64); the
 > `scene` family — `scene.dump`, `scene.visible_set`,
@@ -330,7 +330,7 @@ browser that is:
 
 | command | why |
 |---|---|
-| `act.console` | no console runtime: the shell that executes a line is native until console parity lands (CONCEPTS §6 "Console"). `act.action` and `act.macro` run on both. |
+| `act.console` | no console runtime: the shell that executes a line is native until console parity lands (CONCEPTS §6 "Console"). `act.action`, `act.macro` and `act.verb` run on both. |
 | `capture.record_start`, `capture.record_stop` | no files and no frame recorder. `capture.screenshot` is served, inline (below). |
 
 Beside those, `act.action` with an `Action` whose body is
@@ -1061,7 +1061,7 @@ PR that implements them.
 | family | module (`src/application/ipc/commands/`) | owner | commands |
 |---|---|---|---|
 | *(bootstrap)* | `meta.rs` | IPC-02; registry by IPC-03 | `describe`, `ping` |
-| `act` | `act.rs` | IPC-03 | `act.action`, `act.console`, `act.macro` |
+| `act` | `act.rs` | IPC-03; `act.verb` by V1-D3 (#252) | `act.action`, `act.console`, `act.macro`, `act.verb` |
 | `query` | `query.rs` | IPC-04; `query.animations` by V1-D2 (#251) | `query.document`, `query.selection`, `query.camera`, `query.mode`, `query.status`, `query.editors`, `query.undo`, `query.animations` |
 | `scene` | `scene.rs` | IPC-05 | `scene.dump`, `scene.visible_set`, `scene.node_geometry`, `scene.hit_test`, `scene.find_text` |
 | `input` | `input.rs` | IPC-06 | `input.mouse_move`, `input.mouse_button`, `input.wheel`, `input.key`, `input.text`, `input.touch`, `input.drag`, `input.click_node`, `input.pending` |
@@ -1253,7 +1253,7 @@ body that runs macro steps.
 | param | type | required | meaning |
 |---|---|---|---|
 | `macro_id` | string | one of | Run the registered macro with this id (named `macro_id`, not `id`, per the [reserved-word rule](#request)). It runs under the tier its loader pinned (see [Trust model](#trust-model)). An id registered in no tier is `not_found`. |
-| `steps` | array | one of | Run these steps, an anonymous macro in the on-disk step form of `format/macros.md`: `{"kind": "Action", "action": …}`, `{"kind": "Edit", "id": …, "target"?: …}`, `{"kind": "ConsoleLine", "line": …}`. They run at the `User` tier: the IPC client authored them, and IPC executes as `User`. A list that does not parse is `invalid_params` naming `steps`. |
+| `steps` | array | one of | Run these steps, an anonymous macro in the on-disk step form of `format/macros.md`: `{"kind": "Action", "action": …}`, `{"kind": "Edit", "id": …, "target"?: …}`, `{"kind": "Verb", "id": …, "target"?: …}`, `{"kind": "ConsoleLine", "line": …}`. They run at the `User` tier: the IPC client authored them, and IPC executes as `User`. A list that does not parse is `invalid_params` naming `steps`. |
 
 Exactly one of `macro_id` / `steps`: neither, or both, is
 `invalid_params`.
@@ -1272,6 +1272,38 @@ naming the refused step.
   {"kind": "ConsoleLine", "line": "fps on"}]}
 {"id": 3, "ok": true, "result": {"ran": true}}
 ```
+
+### `act.verb`
+
+Run one of the open map's verbs (`format/verbs.md`) through the runner
+a node's click takes (`dispatch::families::verbs`), on both targets:
+its steps run up to its first `wait`, and the frame goes on with it on
+the app clock — under a virtual clock, `clock.step` brings it on.
+
+| param | type | required | meaning |
+|---|---|---|---|
+| `verb` | string | yes | The verb's id, as the map's `verbs` list gives it. |
+| `node` | integer | no | The id of the node to run it on: its `self`. Required by a verb that acts on `self`, its children, its descendants or a channel within it — its own step or a step of a verb it runs. |
+
+Refused before anything runs: a missing `verb` or a `node` that is not a
+whole number is `invalid_params` naming it; a verb the map does not
+define, and a `node` the map does not have, are `not_found`; a verb that
+acts on `self` sent with no `node` is `invalid_params` naming `node`.
+
+Result: `changes_the_map` (boolean): whether the verb has an `edit`
+step, its own or one of a verb it runs — a change of the map, one
+history entry per step, reported by the `document_changed` events —
+or is a performance, which moves only the presentation epoch. A verb's
+`edit` step that the writer refuses (an interactive transaction is open,
+D28) is skipped, logged and reported as a `log_warn` warning; the rest
+of the verb runs.
+
+```jsonc
+{"id": 4, "cmd": "act.verb", "verb": "next-1"}
+{"id": 4, "ok": true, "result": {"changes_the_map": false}}
+```
+
+`mandalactl act.verb <verb> [node]` sends it (ruling D3.1 on #252).
 
 ## `query` — application state (IPC-04)
 
@@ -1439,27 +1471,31 @@ the unit the editors use, and the one a user counts as characters.
 ### `query.animations`
 
 Params: none. What time is moving on the map: the presentation
-instances playing (`format/presentations.md`), and an animated edit
-still running (`format/edits.md` "Animated edits").
+instances playing (`format/presentations.md`), an animated edit
+still running (`format/edits.md` "Animated edits"), and the map verbs
+running (`format/verbs.md` "Running").
 
 | result field | type | meaning |
 |---|---|---|
-| `moving` | boolean | Whether time moves what is drawn: an edit is animating, or an instance is on its way in or out. An instance that holds — a `hold` or a `while` fully in — is playing and not moving. `false` is what `clock.wait until=animations_complete` waits for. |
+| `moving` | boolean | Whether time moves what is drawn: an edit is animating, an instance is on its way in or out, or a verb waits on the clock to go on with its steps. An instance that holds — a `hold` or a `while` fully in — is playing and not moving. `false` is what `clock.wait until=animations_complete` waits for. |
 | `epoch` | integer | The presentation epoch: it advances with every start, stop and move of an instance, and with an instance's end, never with an edit's own writes — an edit that frees the node an instance waits on ends that instance, and that advances it. (The document's `revision` is the other way round: it never moves for a presentation.) |
 | `edit` | object | The animated edit running — `{"elapsed_ms", "t", "ms", "delay_ms", "easing"}`: how long ago it began by the app clock, its eased progress in `[0, 1]`, and its timing as the edit spells it — or `null`. |
 | `count` | integer | How many instances are playing. |
 | `presentations` | array | The instances, in start order, which is the order they are applied in. Each is `{"id", "presentation", "node", "layer", "play", "t", "direction", "moving", "elements", "refusal"}`: the instance's number (unique for the life of the document), the presentation's id, the node it plays on by integer id (`null` once an edit has taken the node out of the map; the instance comes back with an undo), `"document"` or `"glyph"`, the lifecycle (`"while"`, `"once"`, `"loop"`, `"hold"`), the eased progress in `[0, 1]` as of the last frame, `"in"` / `"hold"` / `"out"`, whether it is on its way, how many elements it plays on, and — when the document refuses what it would write, which leaves it playing and showing nothing — the refusal in the writer's words (`null` otherwise). |
+| `verbs` | array | The map verbs running, in the order they were invoked. Each is `{"id", "verb", "node", "held", "resumes_at_ms"}`: the run's number, the verb's id, the node it runs on by integer id (`null` for none, or once it has left the map), whether it is held (a hover's, kept until the pointer leaves the node), and the app-clock reading a `wait` resumes it at (`null` when it is not waiting: a held run whose steps have all run). |
 
 ```jsonc
 {"id": 1, "cmd": "query.animations"}
 {"id": 1, "ok": true, "result": {"moving": true, "epoch": 3, "edit": null, "count": 1,
   "presentations": [{"id": 0, "presentation": "lift", "node": 2, "layer": "document",
-    "play": "while", "t": 0.42, "direction": "in", "moving": true, "elements": 1, "refusal": null}]}}
+    "play": "while", "t": 0.42, "direction": "in", "moving": true, "elements": 1, "refusal": null}],
+  "verbs": [{"id": 0, "verb": "lift", "node": 2, "held": true, "resumes_at_ms": null}]}}
 ```
 
 Start and stop them with the console's `present` verb
 (`act.console`): `present start <id> [node…]`, `present stop <id>
-[node…]`, `present list`.
+[node…]`, `present list`; run the map's verbs with
+[`act.verb`](#actverb) or the console's `verb run`.
 
 ## `scene` — laid-out scene introspection (IPC-05)
 

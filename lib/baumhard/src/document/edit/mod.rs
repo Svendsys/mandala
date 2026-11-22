@@ -201,7 +201,7 @@ pub enum EditBody {
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditDef {
     /// The id keybinds, the console, macros and verbs name it by.
-    pub id: String,
+    pub id: crate::document::keyed::Name,
     /// The name shown to the user, and the history entry's label.
     pub name: String,
     /// What it does.
@@ -340,7 +340,7 @@ impl EditDef {
     pub fn elements(&self, doc: &Document, anchors: &[NodeId]) -> Result<Vec<NodeId>, EditError> {
         let filter = match &self.filter {
             Some(filter) => {
-                Some(resolve::predicate(&filter.0, Some(doc)).map_err(|f| f.into_error(&self.id))?)
+                Some(resolve::predicate(&filter.0, Some(doc)).map_err(|f| f.into_error(self.id.as_str()))?)
             }
             None => None,
         };
@@ -390,16 +390,16 @@ impl EditDef {
                     .iter()
                     .map(|m| resolve::mutation(m, Some(doc)))
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|f| f.into_error(&self.id))?;
+                    .map_err(|f| f.into_error(self.id.as_str()))?;
                 MutatorTree::new_with(Mutator::new_macro(
                     mutations,
                     BranchKey::new(self.target.kind(), 0),
                 ))
             }
             EditBody::Mutator(ast) => {
-                let node = resolve::mutator(&ast.0, Some(doc)).map_err(|f| f.into_error(&self.id))?;
+                let node = resolve::mutator(&ast.0, Some(doc)).map_err(|f| f.into_error(self.id.as_str()))?;
                 build(&node, &NoRuntime).map_err(|e| EditError::Build {
-                    edit: self.id.clone(),
+                    edit: self.id.to_string(),
                     message: e.to_string(),
                 })?
             }
@@ -407,11 +407,11 @@ impl EditDef {
                 let handler = handlers
                     .get(name.as_str())
                     .ok_or_else(|| EditError::UnknownHandler {
-                        edit: self.id.clone(),
+                        edit: self.id.to_string(),
                         handler: name.clone(),
                     })?;
                 let walks = handler(doc, geometry, &elements).map_err(|message| EditError::Handler {
-                    edit: self.id.clone(),
+                    edit: self.id.to_string(),
                     message,
                 })?;
                 return Ok(walks

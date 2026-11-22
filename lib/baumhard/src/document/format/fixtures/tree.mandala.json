@@ -39,7 +39,8 @@
   "verbs": [
     {
       "id": "reveal-days",
-      "name": "Reveal the days"
+      "name": "Reveal the days",
+      "steps": []
     }
   ],
   "nodes": [

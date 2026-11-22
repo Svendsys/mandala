@@ -439,7 +439,7 @@ pub fn do_document_interpolation_follows_the_listed_fields() {
 
     let theme = |v: u8| {
         DocElement::Theme(ThemeData {
-            variables: vec!["a".to_string()],
+            variables: vec![crate::document::keyed::name("a")],
             variants: vec![ThemeVariant {
                 name: "v".to_string(),
                 values: vec![Rgba::opaque(v, v, v)],
@@ -454,7 +454,7 @@ pub fn do_document_interpolation_follows_the_listed_fields() {
         let mut group = palette_group(n);
         group.title = Some(PlainColor::Rgba(Rgba::opaque(n, n, n)));
         DocElement::Palette(PaletteData {
-            name: "p".to_string(),
+            name: crate::document::keyed::name("p"),
             groups: vec![group],
         })
     };

@@ -17,6 +17,7 @@ mod history;
 mod presentations;
 mod record;
 mod screenshot;
+mod verbs;
 
 pub(in crate::application::app) use dispatch::dispatch_console_action;
 pub(super) use dispatch::handle_console_key;

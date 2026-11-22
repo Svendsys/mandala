@@ -20,8 +20,10 @@
 //!
 //! A map carries no macros (its verbs replace them, V1-D3 #252), so
 //! the two document tiers this ladder once had — the map's and a
-//! node's — are gone; content a stranger's map supplies is placed on
-//! the ladder deliberately when it returns.
+//! node's — are gone. A stranger's map supplies verbs, which are not on
+//! this ladder: they are sandboxed by what they can spell — the map's
+//! own presentations and edits, waits and calls, and no console line,
+//! Action or file (design §11.3, `format/verbs.md`).
 
 /// Which layer a macro was loaded from.
 ///

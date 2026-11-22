@@ -485,6 +485,9 @@ const LINES: &[(&str, &[&str])] = &[
         "present",
         &["present list", "present start lift", "present stop p-node"],
     ),
+    // A map verb whose edit step reads an opacity a presentation writes
+    // (`fade-opaque`'s filter): it must read the map itself.
+    ("verb", &["verb list", "verb run fade 1"]),
     (
         "font",
         &[
@@ -930,7 +933,7 @@ fn test_a_presentation_from_the_console_is_drawn_reported_and_never_in_the_docum
     let idle = result(init, json!({"id": 1, "cmd": "query.animations"}));
     assert_eq!(
         idle,
-        json!({"moving": false, "epoch": idle["epoch"], "edit": null, "count": 0, "presentations": []})
+        json!({"moving": false, "epoch": idle["epoch"], "edit": null, "count": 0, "presentations": [], "verbs": []})
     );
     assert!(at_rest(init), "nothing moves: the wait holds at once");
 

@@ -270,14 +270,16 @@ pub(super) const FAMILY: Family = Family {
         },
         CommandSpec {
             name: "query.animations",
-            summary: "What is animating: the presentation instances playing, and a running animated edit.",
+            summary: "What is animating: the presentation instances playing, a running animated edit, and the map \
+                      verbs running.",
             params: &[],
             result: &[
                 ResultSpec::new(
                     "moving",
                     ParamType::Boolean,
-                    "Whether time moves what is drawn: an edit is animating, or an instance is on its way in or \
-                     out. False is what clock.wait until=animations_complete waits for.",
+                    "Whether time moves what is drawn: an edit is animating, an instance is on its way in or \
+                     out, or a map verb waits on the clock to go on with its steps. False is what clock.wait \
+                     until=animations_complete waits for.",
                 ),
                 ResultSpec::new(
                     "epoch",
@@ -298,6 +300,13 @@ pub(super) const FAMILY: Family = Family {
                     ParamType::Array,
                     "The instances, in start order: {id, presentation, node, layer, play, t, direction, \
                      moving, elements, refusal}.",
+                ),
+                ResultSpec::new(
+                    "verbs",
+                    ParamType::Array,
+                    "The map verbs running, in the order they were invoked: {id, verb, node, held, \
+                     resumes_at_ms}. A run a wait suspends resumes at resumes_at_ms; a held run (a hover's) \
+                     stays until the pointer leaves its node, with resumes_at_ms null once its steps ran.",
                 ),
             ],
             support: Support::Everywhere,
@@ -555,6 +564,9 @@ mod tests {
         }
         fn run_macro(&mut self, _: &str, _: &mut dyn FnMut(Observed<'_>)) -> bool {
             panic!("a query must not run a macro");
+        }
+        fn run_verb(&mut self, _: &str, _: Option<u32>) -> Result<(), String> {
+            panic!("a query must not run a verb");
         }
         fn run_macro_steps(&mut self, _: &[MacroStep], _: &mut dyn FnMut(Observed<'_>)) -> bool {
             panic!("a query must not run macro steps");

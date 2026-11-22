@@ -196,7 +196,7 @@ pub fn text_text(shape: &str, length: usize) -> String {
                 if verb > 0 {
                     text.push(',');
                 }
-                text.push_str(&format!(r#"{{"id":"{verb}","name":""}}"#));
+                text.push_str(&format!(r#"{{"id":"{verb}","name":"","steps":[]}}"#));
                 verb += 1;
             }
             text.push_str(&format!("],\"nodes\":[{one}]}}"));

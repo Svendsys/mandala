@@ -109,7 +109,10 @@ impl InputHandlerContext<'_> {
             }
         }
         if beat.moves_time(self.clock) {
-            animation::tick(self.document.as_mut(), self.clock);
+            let (document, clock, edits) = (self.document.as_mut(), &*self.clock, self.edits);
+            super::dispatch::families::edits::with_drawn(self.view.as_mut(), self.renderer, |drawn| {
+                animation::tick(document, drawn, edits, clock)
+            });
         }
         self.drain_inputs()
     }

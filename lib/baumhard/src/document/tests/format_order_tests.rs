@@ -408,7 +408,10 @@ fn test_an_index_never_reaches_the_file() {
 
     let mut builder = DocumentBuilder::new();
     builder.theme(ThemeData {
-        variables: vec!["zed".to_string(), "alpha".to_string()],
+        variables: vec![
+            crate::document::keyed::name("zed"),
+            crate::document::keyed::name("alpha"),
+        ],
         variants: vec![ThemeVariant {
             name: "only".to_string(),
             values: vec![Rgba::opaque(1, 1, 1), Rgba::opaque(2, 2, 2)],
@@ -417,7 +420,7 @@ fn test_an_index_never_reaches_the_file() {
     });
     let mut palette = |name: &str| {
         builder.palette(PaletteData {
-            name: name.to_string(),
+            name: crate::document::keyed::name(name),
             groups: Vec::new(),
         })
     };

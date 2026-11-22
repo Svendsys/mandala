@@ -772,6 +772,8 @@ decoders and every regression test compile and run on stable, in every
 | `edits_structured` | the same, edits built from choices | `document::tests::edit_fuzz::check_edits_structured` |
 | `presentations_raw` | presentations (D2), any bytes as a presentations file, each one that reads played on a map with edits made under it | `document::tests::presentation_fuzz::check_presentations_json` |
 | `presentations_structured` | the same, presentations and the edits under them built from choices | `document::tests::presentation_fuzz::check_presentations_structured` |
+| `verbs_raw` | a map's verbs (D3), any bytes as its `verbs` value, each verb that loads invoked, framed through its waits and released | `document::tests::verb_fuzz::check_verbs_json` |
+| `verbs_structured` | the same, verbs built from choices and held to a reference model's verdict, and span links of drawn schemes at load and at apply | `document::tests::verb_fuzz::check_verbs_structured` |
 
 What they hold, in short (each module's docs are the full list):
 
@@ -936,16 +938,30 @@ What they hold, in short (each module's docs are the full list):
   glyph-layer body's run mutations are not checked again here: the
   glyph-layer properties above hold for every run mutation, whatever
   spells it, so no body could turn such a check red.
+- **Verbs.** No panic, in the reader, an invocation, a frame or a
+  release; a refusal is under `verbs`; the map loads exactly when a
+  reference model that shares no code with the loader accepts its verbs
+  — every step one of the five kinds with the map's own names, every id
+  one a node can carry, every wait within a minute, the calls acyclic
+  and at most eight verbs deep, and at most 65,536 parts once they are
+  expanded (ruling D3.1 on #252); an invocation reaches the performer
+  at most as often as its verb has parts after expansion, and every run
+  is over once its waits have passed; a step reaches no node the map
+  lacks (D27); a span link loads, and a `set_link` applies, exactly when
+  its scheme is `http`, `https` or `mailto` and it is no `mailto`
+  naming a header outside RFC 6068's six (ruling D3.3); and a map that
+  loads saves
+  and reloads to the same bytes.
 
 **Where their tests live.** A property module is `pub`, in its
-surface's tests tree (`format_fuzz`, `edit_fuzz`, `presentation_fuzz`,
+surface's tests tree (`format_fuzz`, `edit_fuzz`, `presentation_fuzz`, `verb_fuzz`,
 `flow_fuzz`, `glyph_layer_fuzz`, `projection_fuzz`, and the choice
 decoder `util::tests::choices`), because its functions
 are the reusable surface: the fuzz targets call them from outside the
 crate. The tests that hold those properties to account — sweeps, named
 seeds, findings and their controls — are not reused, and live in a
 `#[cfg(test)]` sibling of their module (`format_fuzz_tests`,
-`edit_fuzz_tests`, `presentation_fuzz_tests`, `flow_fuzz_tests`,
+`edit_fuzz_tests`, `presentation_fuzz_tests`, `verb_fuzz_tests`, `flow_fuzz_tests`,
 `glyph_layer_fuzz_tests`, `choices_tests`, `fuzz_seed_tests`). A
 `cfg(test)` tree carries no bench obligation
 (`lib/baumhard/CONVENTIONS.md` §B8), so this is a stated rule, not an
@@ -962,7 +978,8 @@ own sweeps (`test_generated_maps_hold_every_loader_property`,
 `test_generated_flows_hold_every_flow_property`,
 `test_generated_glyph_mutations_hold_every_property`,
 `test_generated_edits_hold_every_property`,
-`test_generated_presentations_hold_every_property`). A seed is written
+`test_generated_presentations_hold_every_property`,
+`test_generated_verbs_hold_every_property`). A seed is written
 by hand with `choices::encode`, or taken from a sweep with
 `Choices::replay`.
 

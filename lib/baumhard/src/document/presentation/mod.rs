@@ -93,7 +93,7 @@ pub enum PresentationBody {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PresentationDef {
     /// The id the console and verbs name it by.
-    pub id: String,
+    pub id: crate::document::keyed::Name,
     /// The name shown to the user.
     pub name: String,
     /// What it does.

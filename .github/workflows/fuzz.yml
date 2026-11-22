@@ -97,6 +97,8 @@ jobs:
           - edits_structured
           - presentations_raw
           - presentations_structured
+          - verbs_raw
+          - verbs_structured
     steps:
       - uses: actions/checkout@v7
 

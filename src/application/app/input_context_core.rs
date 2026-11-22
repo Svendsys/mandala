@@ -96,6 +96,11 @@ pub(in crate::application::app) struct InputContextCore<'a> {
     /// High-level interaction mode. Cross-platform; see
     /// `super::interaction_mode::InteractionMode`.
     pub interaction_mode: &'a mut super::InteractionMode,
+    /// The edits' App and User tiers and the handlers: what a map verb's
+    /// `edit` step a tap triggers runs through (`families::verbs`).
+    pub edits: &'a crate::application::edits::EditRegistry,
+    /// The app clock: when a tap's trigger runs.
+    pub clock: &'a crate::application::clock::AppClock,
 }
 
 /// Native-only extension carrying the modal / console / picker /

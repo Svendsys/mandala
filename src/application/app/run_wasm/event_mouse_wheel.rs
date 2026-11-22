@@ -30,8 +30,6 @@ impl super::Borrowed<'_> {
     pub(super) fn on_mouse_wheel(&mut self, delta: MouseScrollDelta) -> bool {
         let lines = wheel_lines(delta);
         let gesture_name = wheel_gesture(lines).key_name();
-        let input = &mut *self.input;
-        let renderer = &mut *self.renderer;
         // A scroll mid-click invalidates the pending selection: the
         // canvas coord the user pressed over has shifted to a new
         // screen position, so committing the pending click on the
@@ -40,7 +38,11 @@ impl super::Borrowed<'_> {
         // release falls through to empty-click handling. Runs
         // regardless of what (if anything) the wheel is bound to: the
         // press-time coordinate is stale either way.
-        input.pending_click = None;
+        self.input.pending_click = None;
+        // The press is over: a hover the pointer left during it goes.
+        self.release_hover_if_outside();
+        let input = &mut *self.input;
+        let renderer = &mut *self.renderer;
 
         // `action_for_gesture` falls back to the unmodified binding
         // when no exact-modifier match exists, so Ctrl+Wheel keeps

@@ -125,7 +125,12 @@ fn test_under_the_virtual_clock_an_edit_lands_on_its_eased_curve() {
     assert_eq!(animate.ms, 150);
     for fraction in [0.25_f64, 0.5, 0.75] {
         clock.advance_to(start + fraction * 150.0);
-        assert!(animation::tick(Some(&mut doc), &clock));
+        assert!(animation::tick(
+            Some(&mut doc),
+            &mut Undrawn,
+            &EditRegistry::new(Vec::new(), Vec::new()),
+            &clock
+        ));
         let eased = animate.easing.ease(fraction as f32);
         let x = position(&doc, node).x;
         assert!(
@@ -141,10 +146,23 @@ fn test_under_the_virtual_clock_an_edit_lands_on_its_eased_curve() {
     assert!(!animation::keeps_ticking(Some(&doc), &clock));
     assert!(animation::keeps_ticking(Some(&doc), &AppClock::default()));
     clock.advance_to(start + 150.0);
-    assert!(animation::tick(Some(&mut doc), &clock));
+    assert!(animation::tick(
+        Some(&mut doc),
+        &mut Undrawn,
+        &EditRegistry::new(Vec::new(), Vec::new()),
+        &clock
+    ));
     assert_eq!(position(&doc, node).x, x0 + 50.0);
     assert!(!animation::keeps_ticking(Some(&doc), &AppClock::default()));
-    assert!(!animation::tick(Some(&mut doc), &clock), "nothing left to write");
+    assert!(
+        !animation::tick(
+            Some(&mut doc),
+            &mut Undrawn,
+            &EditRegistry::new(Vec::new(), Vec::new()),
+            &clock
+        ),
+        "nothing left to write"
+    );
 }
 
 #[test]

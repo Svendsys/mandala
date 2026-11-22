@@ -198,7 +198,10 @@ fn rich_portal_end() -> DocElement {
 
 fn rich_theme() -> DocElement {
     DocElement::Theme(ThemeData {
-        variables: vec!["accent".to_string(), "fg".to_string()],
+        variables: vec![
+            crate::document::keyed::name("accent"),
+            crate::document::keyed::name("fg"),
+        ],
         variants: vec![
             ThemeVariant {
                 name: "dark".to_string(),
@@ -215,7 +218,7 @@ fn rich_theme() -> DocElement {
 
 fn rich_palette() -> DocElement {
     DocElement::Palette(PaletteData {
-        name: "rainbow".to_string(),
+        name: crate::document::keyed::name("rainbow"),
         groups: vec![palette_group(1), palette_group(2)],
     })
 }

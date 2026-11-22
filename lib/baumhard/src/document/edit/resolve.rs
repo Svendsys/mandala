@@ -30,8 +30,8 @@ use crate::document::mutation::ops::{
 };
 use crate::document::place::{nameable_font, Unit};
 use crate::document::values::{
-    Anchor, ColorRef, FitMode, FontSize, LineSpan, LinkKind, LinkTarget, PaletteId, Percent, PlainColor,
-    Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
+    check_link_url, Anchor, ColorRef, FitMode, FontSize, LineSpan, LinkKind, LinkRefusal, LinkTarget,
+    PaletteId, Percent, PlainColor, Rgba, Shape, Sides, StartPoint, VarId, VerbId, Weight, ZoomWindow,
 };
 use crate::engine::builder::{InstructionSpec, MutationListSrc, MutationSrc, MutatorNode};
 use crate::engine::predicate::Predicate;
@@ -121,31 +121,32 @@ type Resolved<T> = Result<T, Fault>;
 type Names<'d> = Option<&'d Document>;
 
 /// A theme variable by name: its position among the theme's variables.
+/// One probe of the document's index (`Document::variable_named`), so a
+/// presentation or an edit started by a trigger costs O(1) a name
+/// (ruling D3.3 item 2 on #252).
 fn var_of(names: Names<'_>, name: &str) -> Option<VarId> {
-    let Some(doc) = names else {
-        return Some(VarId(0));
-    };
-    let position = doc.theme().variables.iter().position(|known| known == name)?;
-    u16::try_from(position).ok().map(VarId)
+    match names {
+        Some(doc) => doc.variable_named(name),
+        None => Some(VarId(0)),
+    }
 }
 
-/// A palette by name.
+/// A palette by name. One probe of the document's index
+/// (`Document::palette_named`).
 fn palette_of(names: Names<'_>, name: &str) -> Option<PaletteId> {
-    let Some(doc) = names else {
-        return Some(PaletteId(0));
-    };
-    doc.palettes()
-        .find(|(_, palette)| palette.name == name)
-        .map(|(id, _)| id)
+    match names {
+        Some(doc) => doc.palette_named(name),
+        None => Some(PaletteId(0)),
+    }
 }
 
-/// A verb by id: its position among the map's verbs.
+/// A verb by id: its position among the map's verbs. One probe of the
+/// definitions' index (`Definitions::verb_by_id`).
 fn verb_of(names: Names<'_>, id: &str) -> Option<VerbId> {
-    let Some(doc) = names else {
-        return Some(VerbId(0));
-    };
-    let position = doc.definitions().verbs.iter().position(|verb| verb.id == id)?;
-    u16::try_from(position).ok().map(VerbId)
+    match names {
+        Some(doc) => doc.definitions().verb_by_id(id).map(|(verb, _)| verb),
+        None => Some(VerbId(0)),
+    }
 }
 
 /// `dto` against `names`.
@@ -344,9 +345,26 @@ fn span_op(dto: &SpanOpDto, names: Names<'_>) -> Resolved<SpanOp> {
             start: *start,
             end: *end,
         },
-        SpanOpDto::SetLink(target) => SpanOp::SetLink(opt(target, |target| match target {
-            LinkTargetDto::Url(url) => Ok(LinkTarget::Url(url.to_string())),
+        SpanOpDto::SetLink(target) => SpanOp::SetLink(opt(target, |target| {
+            match target {
+            LinkTargetDto::Url(url) => match check_link_url(url) {
+                Ok(url) => Ok(LinkTarget::Url(url.to_string())),
+                Err(LinkRefusal::Scheme(_)) => Err(Fault::Invalid {
+                    field: "set_link",
+                    message: "a link opens an `http`, `https` or `mailto` address",
+                }),
+                Err(LinkRefusal::MailHeader { .. }) => Err(Fault::Invalid {
+                    field: "set_link",
+                    message:
+                        "a `mailto` link names only the headers to, cc, bcc, subject, body and in-reply-to",
+                }),
+                Err(LinkRefusal::MailControl { .. }) => Err(Fault::Invalid {
+                    field: "set_link",
+                    message: "a `mailto` link holds a line break or a tab only encoded and only inside its `body`, and no other control character",
+                }),
+            },
             LinkTargetDto::Verb(id) => verb("set_link", id, names).map(LinkTarget::Verb),
+        }
         })?),
         SpanOpDto::Text(op) => SpanOp::Text(text_op(op, DocKind::Span, names)?),
     })
