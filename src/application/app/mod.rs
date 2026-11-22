@@ -768,6 +768,9 @@ mod tests_gpu_glyph_runs;
 mod tests_gpu_layers;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
+mod tests_gpu_live;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 mod tests_gpu_paths;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]

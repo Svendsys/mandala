@@ -625,7 +625,7 @@ impl MapView {
     }
 
     /// [`Self::sync`] without a renderer: what the pass wrote, or `None`
-    /// when it found nothing to do.
+    /// when it found nothing to do — no layer, no overlay, no chrome.
     #[cfg(test)]
     pub(crate) fn sync_for_test(&mut self, doc: &mut MindMapDocument) -> Option<SyncReport> {
         self.faces_added_for_test(doc, &[])
@@ -639,7 +639,35 @@ impl MapView {
         doc: &mut MindMapDocument,
         families: &[String],
     ) -> Option<SyncReport> {
-        let pass = self.advance(doc, families)?;
+        let pass = self.advance(doc, families);
+        // The chrome half, as `sync` writes it: the handles' and the
+        // builders' mutators, under one journal.
+        let changes = pass.as_ref().and_then(|pass| pass.changes.as_ref());
+        let mut mutators = self.follow_handles(doc, changes);
+        if let Some(changes) = changes {
+            mutators.extend(self.follow_chrome(changes, doc));
+        }
+        let chrome: Vec<NodeId> = if mutators.is_empty() {
+            Vec::new()
+        } else {
+            match self.journal_chrome(&mutators) {
+                Ok(journal) => {
+                    let touched = journal.touched().map(|(id, _)| id).collect();
+                    journal.discard(&mut self.chrome);
+                    touched
+                }
+                Err(error) => panic!("a chrome mutator was refused: {error}"),
+            }
+        };
+        let Some(pass) = pass else {
+            return (!chrome.is_empty()).then(|| SyncReport {
+                projected: 0,
+                rewritten: Vec::new(),
+                stamped: Vec::new(),
+                presented: Vec::new(),
+                chrome,
+            });
+        };
         let projected = pass.changes.as_ref().map_or(0, |changes| {
             LayerRenderer::journals_of(changes)
                 .map(|(_, j)| j.touched().count())
@@ -664,17 +692,6 @@ impl MapView {
             .collect();
         presented.sort_unstable_by_key(|&(layer, glyph)| (layer.index(), glyph));
         presented.dedup();
-        let chrome = match &pass.changes {
-            Some(changes) => match self.follow_chrome(changes, doc) {
-                Some(journal) => {
-                    let touched = journal.touched().map(|(id, _)| id).collect();
-                    journal.discard(&mut self.chrome);
-                    touched
-                }
-                None => Vec::new(),
-            },
-            None => Vec::new(),
-        };
         self.finish(pass);
         Some(SyncReport {
             projected,
@@ -861,7 +878,8 @@ pub(crate) struct SyncReport {
     /// The runs the glyph-layer presentations wrote — put back, or
     /// played on — by layer, each once, in layer then id order.
     pub(crate) presented: Vec<(baumhard::projection::Layer, NodeId)>,
-    /// The chrome elements the chrome builders' journal touched.
+    /// The chrome elements the pass's chrome journal touched: the
+    /// handles' and the chrome builders'.
     pub(crate) chrome: Vec<NodeId>,
 }
 

@@ -422,6 +422,13 @@ impl Live {
         self.total
     }
 
+    /// The pointer on the canvas, as last moved: what a label's and a
+    /// portal end's request is built from. O(1).
+    #[cfg(test)]
+    pub(in crate::application::app) fn cursor(&self) -> Vec2 {
+        self.cursor
+    }
+
     /// Whether input moved it since its last stage: a stage the next
     /// frame owes, which keeps the loop running. O(1).
     pub(in crate::application::app) fn owes_stage(&self) -> bool {

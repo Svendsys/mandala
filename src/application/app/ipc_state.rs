@@ -369,6 +369,7 @@ mod tests {
                     start_pos: (1.0, 2.0),
                     hit: ClickHit::Empty,
                     landed: None,
+                    grab: None,
                 },
                 "Pending",
             ),
@@ -394,6 +395,7 @@ mod tests {
             start_pos: (1.0, 2.0),
             hit: ClickHit::Empty,
             landed: None,
+            grab: None,
         };
         assert_eq!(pending.to_ipc_json(None)["hit"], Value::Null);
     }
@@ -458,7 +460,8 @@ mod tests {
     }
 
     /// An open picker reports its mode, the HSV it would commit and its
-    /// gesture; a contextual one carries the seed it opened on. Control:
+    /// gesture; a contextual one carries the seed it opened on and the
+    /// axis it colors. Control:
     /// the closed picker is `null`, so the open reply is the open state's.
     #[test]
     fn test_an_open_picker_reports_its_mode_and_hsv() {
@@ -470,10 +473,14 @@ mod tests {
         assert_eq!(json["gesture"], Value::Null);
         let seeded = picker_to_ipc_json(&open_picker(PickerMode::Contextual {
             seed_hsv: (10.0, 0.5, 0.75),
+            target: crate::application::color_picker::PickerTarget {
+                axis: crate::application::keybinds::ColorAxis::Border,
+                selection: crate::application::document::Selection::new(),
+            },
         }));
         assert_eq!(
             seeded["mode"],
-            json!({ "kind": "Contextual", "seed_hsv": { "h": 10.0, "s": 0.5, "v": 0.75 } })
+            json!({ "kind": "Contextual", "seed_hsv": { "h": 10.0, "s": 0.5, "v": 0.75 }, "axis": "border" })
         );
         assert_eq!(picker_to_ipc_json(&ColorPickerState::Closed), Value::Null);
     }

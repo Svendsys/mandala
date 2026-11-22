@@ -168,6 +168,7 @@ mod tests {
                 start_pos: (0.0, 0.0),
                 hit: ClickHit::Empty,
                 landed: None,
+                grab: None,
             },
             DragState::Panning {
                 owner: PanOwner::Toggled,

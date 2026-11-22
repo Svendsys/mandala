@@ -410,10 +410,10 @@ pub(crate) fn centers(
             let n = data.control_points.len();
             if n == 0 && !data.straight {
                 out[PathHandle::Midpoint.slot()] = midpoint(curves);
-            } else if curves.len() == n + 1 {
-                // The path passes through each control point: curve `k`
-                // ends at point `k` (D34).
-                for (k, curve) in curves.iter().take(n.min(CONTROL_SLOTS)).enumerate() {
+            } else if let Some(body) = body(curves, n) {
+                // The path passes through each control point: the body's
+                // curve `k` ends at point `k` (D34).
+                for (k, curve) in body.iter().take(n.min(CONTROL_SLOTS)).enumerate() {
                     out[PathHandle::Control(k).slot()] = Some(curve.point(1.0));
                 }
             }
@@ -422,10 +422,22 @@ pub(crate) fn centers(
     out
 }
 
+/// The body of a drawn path with `n` control points: its `n + 1` curves
+/// between the straight leads its ends run out along first
+/// (`projection::geometry::path_through`), each from a point it passes
+/// through to the next — the ends, then the control points in order.
+/// `None` for a chain that is not such a path's. O(1).
+pub(crate) fn body(curves: &[baumhard::flow::Curve], n: usize) -> Option<&[baumhard::flow::Curve]> {
+    let lead = usize::from(curves.len() > n + 1 && matches!(curves.first(), Some(baumhard::flow::Curve::Line(..))));
+    curves.get(lead..lead + n + 1)
+}
+
 /// Where a path with no control points draws its midpoint handle: the
-/// middle of its curve, by parameter. `None` for no curve. O(1).
+/// middle of its body's one curve, by parameter — where the control point
+/// a drag of it adds starts, so the path does not move until the pointer
+/// does. `None` for a chain that is not such a path's. O(1).
 pub(crate) fn midpoint(curves: &[baumhard::flow::Curve]) -> Option<Vec2> {
-    baumhard::flow::chain_point(curves, 0.5)
+    Some(body(curves, 0)?.first()?.point(0.5))
 }
 
 /// One handle set as it is planted and shown.

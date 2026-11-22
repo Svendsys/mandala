@@ -380,7 +380,13 @@ mod tests {
     fn open_contextual_picker(hsv: (f32, f32, f32)) -> ColorPickerState {
         use crate::application::color_picker::{PickerMode, CROSSHAIR_CENTER_CELL};
         ColorPickerState::Open(Box::new(OpenPicker {
-            mode: PickerMode::Contextual { seed_hsv: hsv },
+            mode: PickerMode::Contextual {
+                seed_hsv: hsv,
+                target: crate::application::color_picker::PickerTarget {
+                    axis: crate::application::keybinds::ColorAxis::Text,
+                    selection: crate::application::document::Selection::new(),
+                },
+            },
             hue_deg: hsv.0,
             sat: hsv.1,
             val: hsv.2,
