@@ -399,8 +399,7 @@ fn payloads(kind: &str, dir: &TempDir) -> Vec<Value> {
             .into_iter()
             .map(|axis| json!({ kind: {"axis": axis, "value": "#ff0000"} }))
             .collect(),
-        "SetEdgeType" | "SetLinkKind" => one(json!("portal")),
-        "ResetPath" => one(json!("straight")),
+        "SetLinkKind" => one(json!("portal")),
         "SetFontFamily" => one(json!("Galatia SIL")),
         "ReplaceFontFamily" => one(json!({"family": "Nope Sans", "with": "Galatia SIL"})),
         "SetFont" => [("size", "20"), ("weight", "bold"), ("italic", "true")]
@@ -408,7 +407,7 @@ fn payloads(kind: &str, dir: &TempDir) -> Vec<Value> {
             .map(|(slot, value)| json!({ kind: {"slot": slot, "value": value} }))
             .collect(),
         "SetLabelText" => one(json!("hello")),
-        "SetLabelPosition" => one(json!("0.3")),
+        "SetLabelPosition" => one(json!({"t": "0.3", "offset": "4"})),
         "SetPathSpacing" => one(json!("3")),
         "SetZoom" => one(json!({"bound": "min", "value": "0.5"})),
         "SetSectionOffsetDelta" => one(json!({"dx": "4", "dy": "6"})),
@@ -456,9 +455,6 @@ fn every_action(dir: &TempDir) -> Vec<Step> {
 /// `{map}` stands for the fixture's path.
 const LINES: &[(&str, &[&str])] = &[
     ("help", &["help", "help font"]),
-    ("anchor", &["anchor from=top to=bottom"]),
-    ("body", &["body glyph=dot"]),
-    ("cap", &["cap from=arrow"]),
     (
         "color",
         &[
@@ -498,8 +494,6 @@ const LINES: &[(&str, &[&str])] = &[
         ],
     ),
     ("fps", &["fps on", "fps off"]),
-    ("spacing", &["spacing 3"]),
-    ("label", &["label text=hi"]),
     ("mode", &["mode default"]),
     ("save", &["save"]),
     ("screenshot", &["screenshot a.png b.png"]),
@@ -544,6 +538,20 @@ const LINES: &[(&str, &[&str])] = &[
         ],
     ),
     ("range", &["range 0 2 weight=bold", "range 1 3 color=#ff0000"]),
+    (
+        "path",
+        &[
+            "path content=+ size=12 spacing=3",
+            "path anchors=top,bottom visible=false",
+            "path straight",
+            "path curve",
+            "path reset",
+            "path cap start=< end=>",
+        ],
+    ),
+    ("link", &["link kind=portal"]),
+    ("label", &["label text=hi t=0.3"]),
+    ("portal", &[PORTAL_LINE]),
     ("theme", &["theme variant light"]),
     (
         "defaults",
@@ -565,13 +573,17 @@ const REFUSED_LINES: &[(&str, &str)] = &[
     ),
 ];
 
-/// What a path verb answers until V1-C6 (#247) rebuilds it. A line that
-/// answers so runs nothing; once its verb is back the line runs, and is
-/// compared like every other.
+/// What a verb answers until its owner rebuilds it on the one writer. A
+/// line that answers so runs nothing; once its verb is back the line
+/// runs, and is compared like every other.
 const NOT_REBUILT: &str = "rebuilt on the one writer by";
 
-/// The Actions that do nothing alone, each run after the step it needs
-/// by one of [`sequences`].
+/// A portal end's line: the fixture holds no portal link, so it runs
+/// after `link kind=portal` makes one ([`sequences`]).
+const PORTAL_LINE: &str = "portal end=0 content=x size=12";
+
+/// The Actions and console lines that do nothing alone, each run after
+/// the step it needs by one of [`sequences`].
 const AFTER_ANOTHER: &[&str] = &[
     "Undo",
     "Redo",
@@ -581,6 +593,9 @@ const AFTER_ANOTHER: &[&str] = &[
     "ReparentToTarget",
     "ConnectToTarget",
     "ReplaceFontFamily",
+    // A label is placed once a path has one.
+    "SetLabelPosition",
+    PORTAL_LINE,
 ];
 
 /// Every console verb, as the lines that run it. A verb of the registry
@@ -654,6 +669,11 @@ fn sequences() -> Vec<Vec<Step>> {
             act("Undo"),
         ],
         vec![line("present start lift"), line("present stop lift")],
+        vec![
+            Step::Act(json!({"SetLabelText": "hello"})),
+            Step::Act(json!({"SetLabelPosition": {"t": "end", "offset": "6"}})),
+        ],
+        vec![line("link kind=portal"), line(PORTAL_LINE), act("Undo")],
     ]
 }
 
@@ -683,8 +703,8 @@ fn ran(reply: &Value) -> bool {
 /// Why `step` runs under no selection when it is the only step, if this
 /// walk knows a reason: its Action is of a family not yet rebuilt on
 /// the one writer, or a key of the console's own line, or one of
-/// [`AFTER_ANOTHER`]; its line is one of [`REFUSED_LINES`], or of a
-/// verb not yet rebuilt (a reply says so).
+/// [`AFTER_ANOTHER`]; its line is one of [`AFTER_ANOTHER`] or of
+/// [`REFUSED_LINES`], or of a verb not yet rebuilt (a reply says so).
 fn excuse(step: &Step, replies: &[Value]) -> Option<&'static str> {
     match step {
         Step::Act(action) => {
@@ -703,6 +723,9 @@ fn excuse(step: &Step, replies: &[Value]) -> Option<&'static str> {
             } else {
                 None
             }
+        }
+        Step::Line(line) if AFTER_ANOTHER.contains(&line.as_str()) => {
+            Some("it does nothing alone, and is run by a sequence")
         }
         Step::Line(line) => REFUSED_LINES
             .iter()
@@ -763,7 +786,14 @@ fn test_every_action_verb_and_edit_leaves_what_it_leaves_with_nothing_playing() 
         }
     }
     for steps in &sequences {
-        for what in [Pick::Node, Pick::Child, Pick::Section, Pick::Nodes] {
+        for what in [
+            Pick::Node,
+            Pick::Child,
+            Pick::Section,
+            Pick::Nodes,
+            Pick::Connector,
+            Pick::Link,
+        ] {
             cases.push((what, steps.clone()));
         }
     }
