@@ -150,7 +150,7 @@ pub(crate) struct MapView {
     /// The active mode's status line, drawn over the document's.
     mode_line: Option<String>,
     /// The contextual color picker's axis and targets while one is open
-    /// ([`Self::follow_picker`]): on those targets the selection tint
+    /// (`MapView::follow_picker`): on those targets the selection tint
     /// stands down on what the axis colors, so the color the picker
     /// stages shows. Native, with the picker; always `None` in the
     /// browser.

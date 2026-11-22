@@ -459,7 +459,7 @@ impl Projector {
     /// The portal end `end`'s `(border_t, offset)` that draws what a drag
     /// holds — its marker, or with `by_label` its label — centered on
     /// `point`: the inverse of where the projection draws an end whose
-    /// `border_t` is set ([`geometry::portal_at`]). Past the end's place,
+    /// `border_t` is set (`geometry::portal_at`). Past the end's place,
     /// at `offset` out along the outline's normal there, the projection
     /// centers the marker one marker's reach further out, and the label a
     /// further marker's reach, the label's own offset and the label's

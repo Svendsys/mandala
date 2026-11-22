@@ -325,7 +325,10 @@ fn test_a_sections_handles_follow_its_node() {
     });
     view.sync_for_test(&mut doc).expect("the mode shows the handles");
     let before = view.handle_center(se).expect("shown");
-    assert_eq!(Some(before), view.projector().section_rect(section).map(|r| r.max()));
+    assert_eq!(
+        Some(before),
+        view.projector().section_rect(section).map(|r| r.max())
+    );
     nudge(&mut doc, n5, Vec2::new(30.0, 20.0));
     view.sync_for_test(&mut doc).expect("the move projects");
     let after = view.handle_center(se).expect("shown");

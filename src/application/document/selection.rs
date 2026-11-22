@@ -47,6 +47,13 @@ impl Selection {
     }
 
     /// The selected elements, oldest first, as a slice. O(1).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "its readers are native's: the contextual picker's targets and the Shift drag"
+        )
+    )]
     pub fn items(&self) -> &[NodeId] {
         &self.items
     }
