@@ -72,7 +72,12 @@ draws them.
   names, anywhere in it (its filter or its body), counts as referred
   to, whether or not anything runs it, and an edit in the map that can
   unhide a node or give a portal end a marker — or a presentation in it
-  that can unhide a node — silences that warning; the App's and the
+  that can unhide a node — silences that warning; a verb, theme variable
+  or palette a map's own edit or presentation names that the map does
+  not define is a warning of its own, where a run or a start would be
+  refused, and leads with where the name is written; an installed font
+  family the map names that this machine lacks is warned of by name,
+  the map still loading; the App's and the
   User's edits and presentations, which also run on a map, are outside
   what a map file can be judged on and are not read) and
   `apply` (pipe matching sections' text through

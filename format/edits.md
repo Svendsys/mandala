@@ -143,19 +143,39 @@ links needs a handler.
 
 An App or User edit is read before any map is open, so it cannot hold a
 map's index, and an index would name another entry the moment a name
-was added. An edit names theme variables (`"var(accent)"`), palettes,
-fonts and verbs by **name**, and they are resolved against the open map
-each time the edit runs. The same App edit therefore means the same
+was added. An edit names theme variables (`"var(accent)"`), palettes
+and verbs by **name**, and they are resolved against the open map each
+time the edit runs. It names a font by family name too, which is
+resolved against the faces this machine has, not against the map
+(below). The same App edit therefore means the same
 thing on two maps whose themes list their variables in other orders.
 
 A name the open map does not define refuses that run with a message that
 names the edit, the field and the name —
-``edit `tint`: `color` names theme variable `accent`, which this map does not define`` —
+``edit `tint`: `set_color` names theme variable `accent`, which this map does not define`` —
 and nothing is applied. A font family is not such a name: one no
 compiled face bears is an installed family, which the edit sets as it
 is, whether or not this machine has it ([`fonts.md`](./fonts.md#installed-families)).
 Only a name that cannot be a family — empty, holding a control or bidi
 character, or longer than 256 bytes — is refused, when the edit is read.
+
+A map's **own** edit is the one case a file can judge: the map it will
+run on is the file it is in, and a map's verbs, theme variables and
+palettes are fixed by the file (no operation adds, removes or renames
+one). So `maptool verify` warns of each verb, theme variable and palette
+a Map-tier edit writes that the map does not define, each led by its
+path in the definition and in the words of the refusal above, for every
+such name and not the first alone, though the load accepts the map. It
+uses the probes a run uses, so it warns exactly where a run would be
+refused for a name. Two things a file cannot say: whether the edit is
+ever run (keybinds, the console and macros run an edit by id from
+outside the map), and anything about an App or User edit, which `verify`
+does not read. A map's own presentation is judged the same way, against
+the refusal of its start ([`presentations.md`](./presentations.md)).
+Fonts are not names a map defines; the loader's font rules decide them
+([`fonts.md`](./fonts.md)). What `verify` reports about a font is the
+machine it runs on: an installed family the map names, an edit's
+included, that this machine lacks ([`fonts.md`](./fonts.md#installed-families)).
 
 ### Mutator
 

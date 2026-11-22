@@ -288,13 +288,13 @@ fn test_a_name_resolves_against_the_open_map() {
         error,
         EditError::UnknownName {
             edit: "tint".to_string(),
-            field: "color",
+            field: "set_color",
             name: "theme variable `accent`".to_string(),
         }
     );
     assert_eq!(
         error.to_string(),
-        "edit `tint`: `color` names theme variable `accent`, which this map does not define"
+        "edit `tint`: `set_color` names theme variable `accent`, which this map does not define"
     );
     assert_eq!(doc.revision(), revision, "nothing applied");
     assert_eq!(color_of_first_span(&doc), None);
@@ -2012,4 +2012,288 @@ fn test_a_refused_runs_text_from_the_map_is_escaped() {
             "{error:?} shows its text escaped: {shown}"
         );
     }
+}
+
+/// What an edit writes that its map must define is what `mentions`
+/// reports, and `Mention::is_defined_in` answers as a run does: for each
+/// place an edit can write a verb, a theme variable or a palette — each
+/// op that holds a color, each filter field that holds a name, a macro
+/// below a mutator's root and a `repeat_while` test among them — the one
+/// name it writes is reported with the key the file writes it at as its
+/// field and its JSON path, a map that defines it runs the edit, and a
+/// map that does not refuses the run with exactly the refusal
+/// `Mention::refusal` words, which names that key.
+///
+/// Controls, each run red: dropping `Walk::color_in`'s `Var` arm fails
+/// every case that writes `var(accent)`; dropping the `set_palette` arm
+/// or the filter `palette` arm fails its own case; dropping `Walk::text`'s
+/// `SetColor` arm fails the seven text cases, the cap's included;
+/// answering `true` for a palette in `is_defined_in` fails the palette
+/// cases on the bare map; answering `false` fails them on the full one;
+/// `resolve::color` naming `color` whatever key wrote it fails the
+/// cases whose key is another; a `Walk::at` that does not push its
+/// segment fails the cases whose path has it.
+#[test]
+fn test_the_names_an_edit_mentions_are_the_ones_a_run_refuses() {
+    use crate::document::edit::{Mention, Named};
+
+    const NODE: &str = r#"{"id":1,"position":[0,0],"sections":[{"spans":[{"text":"x"}]}]}"#;
+    let full = load(&format!(
+        r##"{{"format":1,"name":"t","theme":{{"active":"d","variants":{{"d":{{"accent":"#ff0000"}}}}}},
+        "verbs":[{{"id":"go","name":"Go","steps":[]}}],
+        "palettes":{{"warm":[{{"frame":"#ff0000","text":"#ff0000"}}]}},"nodes":[{NODE}]}}"##
+    ))
+    .unwrap();
+    let bare = load(&format!(r#"{{"format":1,"name":"t","nodes":[{NODE}]}}"#)).unwrap();
+
+    let node = |ops: &str| format!(r#""target":"node","mutations":[{ops}]"#);
+    let text = |kind: &str, target: &str| {
+        format!(r#""target":"{target}","mutations":[{{"{kind}":{{"text":{{"set_color":"var(accent)"}}}}}}]"#)
+    };
+    let below = |root: &str, kind: &str, ops: &str| {
+        format!(
+            r#""target":"{root}","mutator":{{"void":{{"kind":"{}","channel":0,"children":[
+                 {{"macro":{{"kind":"{kind}","channel":0,"mutations":[{ops}]}}}}]}}}}"#,
+            // The target `links` anchors a `link`.
+            root.trim_end_matches('s')
+        )
+    };
+    let filtered = |field: &str| {
+        format!(
+            r#""target":"node","filter":{{"fields":[[{field},{{"Equals":false}}]]}},
+               "mutations":[{{"node":{{"set_folded":true}}}}]"#
+        )
+    };
+    let color = r#"{"set_color":"var(accent)"}"#;
+    let sides = r#"{"layout":{"set_sides":{"content":"*","color":"var(accent)"}}}"#;
+    let macro_path = "mutator.void.children[0].macro.mutations[0]";
+    // The way, what it names, the key a refusal calls its field, where
+    // the file writes it, and the edit.
+    let cases: Vec<(&str, Named, &str, String, String)> = vec![
+        (
+            "set_click",
+            Named::Verb,
+            "set_click",
+            "mutations[0].node.set_click".into(),
+            node(r#"{"node":{"set_click":"go"}}"#),
+        ),
+        (
+            "set_hover",
+            Named::Verb,
+            "set_hover",
+            "mutations[0].node.set_hover".into(),
+            node(r#"{"node":{"set_hover":"go"}}"#),
+        ),
+        (
+            "set_link",
+            Named::Verb,
+            "set_link",
+            "mutations[0].span.set_link.verb".into(),
+            r#""target":"spans","mutations":[{"span":{"set_link":{"verb":"go"}}}]"#.to_string(),
+        ),
+        (
+            "on_click",
+            Named::Verb,
+            "on_click",
+            "filter.fields[0][0].on_click".into(),
+            filtered(r#"{"on_click":"go"}"#),
+        ),
+        (
+            "on_hover",
+            Named::Verb,
+            "on_hover",
+            "filter.fields[0][0].on_hover".into(),
+            filtered(r#"{"on_hover":"go"}"#),
+        ),
+        (
+            "set_palette",
+            Named::Palette,
+            "set_palette",
+            "mutations[0].node.set_palette".into(),
+            node(r#"{"node":{"set_palette":"warm"}}"#),
+        ),
+        (
+            "palette",
+            Named::Palette,
+            "palette",
+            "filter.fields[0][0].palette".into(),
+            filtered(r#"{"palette":"warm"}"#),
+        ),
+        (
+            "filter color",
+            Named::Variable,
+            "color",
+            "filter.fields[0][0].color".into(),
+            filtered(r#"{"color":"var(accent)"}"#),
+        ),
+        (
+            "filter background",
+            Named::Variable,
+            "background",
+            "filter.fields[0][0].background".into(),
+            filtered(r#"{"background":"var(accent)"}"#),
+        ),
+        (
+            "node text",
+            Named::Variable,
+            "set_color",
+            "mutations[0].node.text.set_color".into(),
+            text("node", "node"),
+        ),
+        (
+            "section text",
+            Named::Variable,
+            "set_color",
+            "mutations[0].section.text.set_color".into(),
+            text("section", "sections"),
+        ),
+        (
+            "span text",
+            Named::Variable,
+            "set_color",
+            "mutations[0].span.text.set_color".into(),
+            text("span", "spans"),
+        ),
+        (
+            "frame text",
+            Named::Variable,
+            "set_color",
+            "mutations[0].frame.text.set_color".into(),
+            text("frame", "frame"),
+        ),
+        (
+            "ring text",
+            Named::Variable,
+            "set_color",
+            "mutations[0].ring.text.set_color".into(),
+            text("ring", "rings"),
+        ),
+        (
+            "label text",
+            Named::Variable,
+            "set_color",
+            "mutations[0].label.text.set_color".into(),
+            text("label", "labels"),
+        ),
+        (
+            "cap text",
+            Named::Variable,
+            "set_color",
+            format!("{macro_path}.cap.set_color"),
+            below("connector", "cap_start", r#"{"cap":{"set_color":"var(accent)"}}"#),
+        ),
+        (
+            "path color",
+            Named::Variable,
+            "set_color",
+            "mutations[0].path.set_color".into(),
+            format!(r#""target":"connector","mutations":[{{"path":{color}}}]"#),
+        ),
+        (
+            "portal end color",
+            Named::Variable,
+            "set_color",
+            format!("{macro_path}.portal_end.set_color"),
+            below("links", "portal_end", &format!(r#"{{"portal_end":{color}}}"#)),
+        ),
+        (
+            "ring sides color",
+            Named::Variable,
+            "set_sides",
+            "mutations[0].ring.layout.set_sides.color".into(),
+            format!(r#""target":"rings","mutations":[{{"ring":{sides}}}]"#),
+        ),
+        (
+            "frame sides color",
+            Named::Variable,
+            "set_sides",
+            "mutations[0].frame.layout.set_sides.color".into(),
+            format!(r#""target":"frame","mutations":[{{"frame":{sides}}}]"#),
+        ),
+        (
+            "a macro's verb, in a mutator",
+            Named::Verb,
+            "set_click",
+            format!("{macro_path}.node.set_click"),
+            below("node", "node", r#"{"node":{"set_click":"go"}}"#),
+        ),
+        (
+            "a verb below a macro's and an instruction's children",
+            Named::Verb,
+            "set_click",
+            "mutator.macro.children[1].instruction.children[1].macro.mutations[0].node.set_click".into(),
+            r#""target":"node","mutator":{"macro":{"kind":"node","channel":0,"mutations":[],"children":[
+                {"void":{"kind":"node","channel":0,"children":[]}},
+                {"instruction":{"kind":"node","channel":0,"instruction":"repeat_while_always_true","children":[
+                  {"void":{"kind":"node","channel":0,"children":[]}},
+                  {"macro":{"kind":"node","channel":0,"mutations":[{"node":{"set_click":"go"}}]}}]}}]}}"#
+                .to_string(),
+        ),
+        (
+            "a repeat_while test's palette",
+            Named::Palette,
+            "palette",
+            "mutator.instruction.instruction.repeat_while.fields[0][0].palette".into(),
+            r#""target":"node","mutator":{"instruction":{"kind":"node","channel":0,
+                "instruction":{"repeat_while":{"fields":[[{"palette":"warm"},{"Equals":false}]]}},
+                "children":[{"macro":{"kind":"node","channel":0,"mutations":[{"node":{"set_folded":true}}]}}]}}"#
+                .to_string(),
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (way, kind, field, path, body) in &cases {
+        let def = edit(&format!(r#"{{"id":"e","name":"E","reach":"self",{body}}}"#));
+        let mut said: Vec<Mention<'_>> = Vec::new();
+        def.mentions(|mention| said.push(mention));
+        let [mention] = said.as_slice() else {
+            wrong.push(format!("{way}: mentions {said:?}, not one name"));
+            continue;
+        };
+        if (mention.kind, mention.field, &mention.path) != (*kind, *field, path) {
+            wrong.push(format!("{way}: mentions {mention:?}"));
+        }
+        let run = |doc: &Document| {
+            let one = n(doc, 1);
+            def.request(doc, &Boxes::of(doc), &registry(), &[one]).err()
+        };
+        if !mention.is_defined_in(&full) || run(&full).is_some() {
+            wrong.push(format!("{way}: not defined, or refused, on the full map"));
+        }
+        if mention.is_defined_in(&bare) || run(&bare) != Some(mention.refusal("e")) {
+            wrong.push(format!(
+                "{way}: defined, or not refused as worded, on the bare map"
+            ));
+        }
+    }
+    assert_eq!(wrong, Vec::<String>::new());
+}
+
+/// An edit that writes one name in several places is reported once at
+/// each, in the order the walk reaches them, each with its own path and
+/// the key the file writes there: here `var(accent)` twice in
+/// `text.set_color` and once in a filter's `background`, the case where
+/// three identical lines told nothing apart.
+///
+/// Controls, each run red: `Walk::at` not popping its segments gives
+/// the later paths the earlier ones' tails; not pushing them gives every
+/// path none; the filter not walked leaves two mentions.
+#[test]
+fn test_one_name_written_in_three_places_is_three_distinguishable_mentions() {
+    let def = edit(
+        r#"{"id":"e","name":"E","reach":"self","target":"node",
+            "filter":{"fields":[[{"background":"var(accent)"},{"Equals":false}]]},
+            "mutations":[{"node":{"text":{"set_color":"var(accent)"}}},
+                         {"node":{"set_folded":true}},
+                         {"node":{"text":{"set_color":"var(accent)"}}}]}"#,
+    );
+    let mut said = Vec::new();
+    def.mentions(|mention| said.push((mention.field, mention.path)));
+    assert_eq!(
+        said,
+        [
+            ("background", "filter.fields[0][0].background".to_string()),
+            ("set_color", "mutations[0].node.text.set_color".to_string()),
+            ("set_color", "mutations[2].node.text.set_color".to_string()),
+        ]
+    );
 }
