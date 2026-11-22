@@ -171,6 +171,19 @@ mod tests {
         ActionKind::SetLabelText,
         ActionKind::SetLabelPosition,
         ActionKind::SetPathSpacing,
+        // The transactions family, rebuilt (`transactions::dispatch`).
+        ActionKind::EnterResizeMode,
+        ActionKind::FastResizeStart,
+        ActionKind::OpenColorPicker,
+        ActionKind::CloseColorPicker,
+        ActionKind::PickerCancel,
+        ActionKind::PickerCommit,
+        ActionKind::PickerNudgeHueDown,
+        ActionKind::PickerNudgeHueUp,
+        ActionKind::PickerNudgeSatDown,
+        ActionKind::PickerNudgeSatUp,
+        ActionKind::PickerNudgeValDown,
+        ActionKind::PickerNudgeValUp,
     ];
 
     /// Every Action is the app's, the console modal's, or owned by
@@ -200,10 +213,7 @@ mod tests {
         assert_eq!(dispatch(&Action::DeleteSelection), None);
         assert_eq!(dispatch(&Action::CycleFrameContent), None);
         assert_eq!(dispatch(&Action::ResetPath), None);
-        assert_eq!(
-            dispatch(&Action::EnterResizeMode),
-            Some(DispatchOutcome::Unhandled)
-        );
+        assert_eq!(dispatch(&Action::EnterResizeMode), None);
         assert_eq!(
             dispatch(&Action::TextEditCommit),
             Some(DispatchOutcome::Unhandled)

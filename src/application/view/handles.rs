@@ -456,6 +456,10 @@ struct Planted {
 /// The three handle sets in the chrome. See the [module docs](self).
 pub(crate) struct Handles {
     sets: [Planted; 3],
+    /// How many times a set's centers were read again: what the tests
+    /// that hold a pan to rebuilding nothing count. Test builds only.
+    #[cfg(test)]
+    rebuilt: u64,
 }
 
 impl Handles {
@@ -486,7 +490,11 @@ impl Handles {
                 shown: vec![None; set.len()],
             }
         });
-        Handles { sets }
+        Handles {
+            sets,
+            #[cfg(test)]
+            rebuilt: 0,
+        }
     }
 
     /// The chrome mutators that show each set on `targets`, where the
@@ -511,6 +519,10 @@ impl Handles {
                 continue;
             }
             let want = centers(set, targets[i], doc, projector);
+            #[cfg(test)]
+            {
+                self.rebuilt += 1;
+            }
             let planted = &mut self.sets[i];
             planted.target = targets[i];
             if let Some(tree) = planted.diff(set, &want) {
@@ -556,6 +568,13 @@ impl Handles {
             return None;
         }
         planted.shown.get(slot).copied().flatten()
+    }
+
+    /// How many times a set was rebuilt since the view was built. Test
+    /// builds only.
+    #[cfg(test)]
+    pub(crate) fn rebuilt(&self) -> u64 {
+        self.rebuilt
     }
 
     /// The group of `set`, which holds its runs slot by slot: for the

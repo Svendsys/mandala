@@ -596,7 +596,23 @@ const AFTER_ANOTHER: &[&str] = &[
     // A label is placed once a path has one.
     "SetLabelPosition",
     PORTAL_LINE,
+    // The picker's keys act on an open picker (V1-C7).
+    "PickerCancel",
+    "PickerCommit",
+    "PickerNudgeHueDown",
+    "PickerNudgeHueUp",
+    "PickerNudgeSatDown",
+    "PickerNudgeSatUp",
+    "PickerNudgeValDown",
+    "PickerNudgeValUp",
+    "CloseColorPicker",
 ];
+
+/// The Actions that act on a pointer gesture no step of this walk can
+/// make: a fast resize starts from a held button's drag (`act.action`
+/// has no button to hold it, and is refused for that, as on `main`), and
+/// is walked through the pointer in `tests_gpu_live`.
+const POINTER_GESTURES: &[&str] = &["FastResizeStart"];
 
 /// Every console verb, as the lines that run it. A verb of the registry
 /// with no row in [`LINES`] is a verb this test does not walk, and
@@ -674,6 +690,24 @@ fn sequences() -> Vec<Vec<Step>> {
             Step::Act(json!({"SetLabelPosition": {"t": "end", "offset": "6"}})),
         ],
         vec![line("link kind=portal"), line(PORTAL_LINE), act("Undo")],
+        // The contextual picker: a nudge staged on the selection, then
+        // committed as one entry, or cancelled; and the standalone
+        // palette's commit, one `apply` (V1-C7).
+        vec![
+            line("color text"),
+            act("PickerNudgeHueUp"),
+            act("PickerNudgeSatDown"),
+            act("PickerNudgeValDown"),
+            act("PickerCommit"),
+        ],
+        vec![
+            line("color border"),
+            act("PickerNudgeHueDown"),
+            act("PickerNudgeSatUp"),
+            act("PickerNudgeValUp"),
+            act("PickerCancel"),
+        ],
+        vec![act("OpenColorPicker"), act("PickerNudgeHueUp"), act("PickerCommit"), act("CloseColorPicker")],
     ]
 }
 
@@ -720,6 +754,8 @@ fn excuse(step: &Step, replies: &[Value]) -> Option<&'static str> {
                 Some("a key of the console's own line, which is not open")
             } else if AFTER_ANOTHER.contains(&kind) {
                 Some("it does nothing alone, and is run by a sequence")
+            } else if POINTER_GESTURES.contains(&kind) {
+                Some("it acts on a pointer gesture, which no step here makes")
             } else {
                 None
             }

@@ -1439,7 +1439,7 @@ Params: none.
 | result field | type | meaning |
 |---|---|---|
 | `interaction_mode` | object | `kind`: `Default`, `Reparent`, `Connect` or `Resize`. `Reparent` and `Connect` (native: `EnterReparentMode`, `EnterConnectMode`) carry `sources`, the nodes the next click moves or links, by integer id, in selection order (`null` for one the document no longer holds). `Resize` (native: `EnterResizeMode`) carries its `target`: `kind` `"node"` or `"section"`, and the `element` its handles resize, named as `scene` names an element (`null` for one the document no longer holds). Node editing returns with V1-C8. |
-| `drag_state` | object | `kind`: `None`, `Pending`, `PendingRight`, `Panning` or `SelectingRect`. `Pending` carries `start_pos` (surface pixels) and `hit`, the element the press landed on (`null` over empty canvas). `PendingRight` carries `start_pos`, `start_canvas` and `hit`. `Panning` carries its `owner`, which is what ends it: `"button"` with the `button` that holds it (`"left"`, `"right"`, `"middle"`, as `input.mouse_button` spells them) or `"key"` with the `key` name that holds it — each ends on that input's release and no other — or `"toggled"`, a pan armed by a dispatch with no release behind it (`act.action`, `act.console`, `act.macro`), which the next `PanCanvas` ends. `SelectingRect` carries `start_canvas` and `current_canvas`. |
+| `drag_state` | object | `kind`: `None`, `Pending`, `PendingRight`, `Panning`, `SelectingRect` or `Dragging`. `Pending` carries `start_pos` (surface pixels), `hit`, the element the press landed on (`null` over empty canvas), and `grab`, what a drag of it past the threshold drags (`"node_resize_handle"`, `"section_resize_handle"`, `"path_handle"`, `"label"`, `"portal_end"`, or `null` for a press that grabbed none: its drag moves the node it landed on, or is the `LeftDrag` binding). `PendingRight` carries `start_pos`, `start_canvas` and `hit`. `Panning` carries its `owner`, which is what ends it: `"button"` with the `button` that holds it (`"left"`, `"right"`, `"middle"`, as `input.mouse_button` spells them) or `"key"` with the `key` name that holds it — each ends on that input's release and no other — or `"toggled"`, a pan armed by a dispatch with no release behind it (`act.action`, `act.console`, `act.macro`), which the next `PanCanvas` ends. `SelectingRect` carries `start_canvas` and `current_canvas`. `Dragging` is a drag that edits the map, on its transaction (each frame stages its total since the press; the release commits one history entry; Escape cancels): it names its `gesture` (`MoveNodes`, `MoveSection`, `ResizeNode`, `ResizeSection`, `PathHandle`, `Label`, `PortalEnd`), the `button` whose release commits it, its `total` travel in canvas units, and what it acts on — `nodes` for a move, else the `element`, with a resize's `side` (`"nw"`, `"n"`, …, `"w"`) and a path handle's `handle` (`"start"`, `"end"`, `"control:<k>"`). The values it started from are omitted: bookkeeping, not identity. |
 | `modals` | array | Every open modal, in the order the keyboard handler consults them: `console`, `color_picker`. The console takes **every** key. The color picker claims **only its own** keys; every other key falls through. `query.editors` has each one's state. |
 | `key_owner` | string | Who receives an *ordinary* key right now: `console`, or `none` (normal dispatch). Never `color_picker`, which claims only its own keys. |
 | `cursor_pos` | object | `{"x", "y"}`: the last known pointer position, in surface pixels. |
@@ -1460,7 +1460,7 @@ Params: none. Each modal's live state, `null` when it is closed.
 | result field | type | meaning |
 |---|---|---|
 | `console` | object | `input`, `cursor` (grapheme index), `history_len`, `history_idx`, `scrollback_len`, `scrollback` (the last 50 lines, each `{"kind": "Input"\|"Output"\|"Error", "text"}`), `completion_count`, `completion_idx`, `scroll_offset`. Omitted: each line's pinned font family, the completion rows, the wheel accumulator. |
-| `color_picker` | object | `mode` (`{"kind": "Standalone"}` or `{"kind": "Contextual", "seed_hsv": {"h", "s", "v"}}`), `hue_deg` (`[0, 360)`), `sat` and `val` (`[0, 1]`), `size_scale`, `gesture` (`Move`, `Resize` or `null`), `hover_preview`. Omitted: the cached layout, glyph-measurement caches and wheel placement, which are geometry (`scene.dump` is where what it looks like lives). |
+| `color_picker` | object | `mode` (`{"kind": "Standalone"}` or `{"kind": "Contextual", "seed_hsv": {"h", "s", "v"}, "axis"}` — a contextual picker is a transaction on the selection it opened on, its `axis` `"text"`, `"border"` or `"ring"`), `hue_deg` (`[0, 360)`), `sat` and `val` (`[0, 1]`), `size_scale`, `gesture` (`Move`, `Resize` or `null`), `hover_preview`. Omitted: the cached layout, glyph-measurement caches and wheel placement, which are geometry (`scene.dump` is where what it looks like lives). |
 
 Both are native: the browser has no console shell and no picker, and
 reports `null` for each, as it reports `{"kind": "None"}` for
@@ -1893,8 +1893,9 @@ One finger event, as `WindowEvent::Touch`, through the native touch
 path: the touch-gesture recognizer (tap, long-press, one-finger pan,
 pinch), with one exception. A finger that *starts a gesture* on a
 resize handle in Resize mode drives the handle drag instead, as the
-left button would, until it lifts (#160): it resizes, commits with
-one undo entry on `ended` or `canceled`, and never reaches the
+left button would, until it lifts (#160): its moves stage the resize,
+`ended` or `canceled` commits it as one history entry, and it never
+reaches the
 recognizer, so it does not pan. Another finger landing meanwhile is
 ignored. The recognizer measures time on the real clock, so a
 long-press is a `started`, a wait, and the finger's next event.
@@ -1911,10 +1912,13 @@ long-press is a `started`, a wait, and the finger's next event.
 Sugar for the drag a hand makes, paced one sample per frame: a move
 to `from`, a press, `steps` moves evenly spaced and ending exactly on
 `to`, and a release — `steps + 3` samples. What it drags is what a
-press at `from` arms: with `"shift"` on empty canvas a rubber-band
-select, and otherwise the `LeftDrag` binding (by default a pan of the
-canvas), wherever the press lands. Moving a node, a section, a handle
-or a label returns with V1-C7 (#248).
+press at `from` arms: a handle's drag (a resize handle in Resize mode,
+a selected path's handle), a label's or a portal end's, a move of the
+node it lands on, with `"shift"` on empty canvas a rubber-band select,
+and otherwise the `LeftDrag` binding (by default a pan of the canvas).
+A drag that edits the map is a transaction: its frames stage it, its
+release commits one history entry (`query.mode`'s `drag_state`
+`Dragging` while it runs).
 
 | param | type | required | meaning |
 |---|---|---|---|

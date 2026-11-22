@@ -418,8 +418,14 @@ fn test_a_drag_while_another_transaction_is_open_is_refused() {
     let p2 = position(init, n2);
     assert!(document_mut(init).begin(ChangeSource::Action, TransactionKind::Interactive, Interaction::Test));
     let from = rect(init, n2).center();
+    button(init, "left", "press", from, &[]);
+    move_to(init, from + Vec2::new(8.0, 0.0), &[]);
+    assert!(
+        matches!(init.drag_state, DragState::None),
+        "the crossing started no drag, before any frame ran"
+    );
     let at = drag(init, from, &gentle(), &[]);
-    assert!(matches!(init.drag_state, DragState::None), "no drag started");
+    assert!(matches!(init.drag_state, DragState::None), "nor did any frame after it");
     assert_eq!(document(init).status(), Some(TRANSACTION_OPEN_STATUS));
     assert_eq!(document(init).open_interaction(), Some(Interaction::Test), "and the other is still open");
     assert_eq!(position(init, n2), p2);
@@ -612,6 +618,14 @@ fn test_a_paths_midpoint_handle_adds_its_control_point() {
     let control = Handle::Path { path: connector, handle: PathHandle::Control(0) };
     assert_eq!(init.view.as_ref().expect("a view").handle_center(control), None);
     let from = handle_at(init, mid);
+    let (t, off) = init
+        .view
+        .as_ref()
+        .expect("a view")
+        .projector()
+        .label_place_at(connector, from)
+        .expect("drawn");
+    assert!((t - 0.5).abs() < 0.05 && off.abs() < 0.5, "the midpoint is halfway along the path: t {t}, off {off}");
     let at = drag(init, from, &[Vec2::new(0.0, 15.0), Vec2::new(0.0, 30.0)], &[]);
     let expected = one_apply_of_the_drag(init, &before);
     assert_same_document(document(init).doc(), &expected, "mid-drag");
@@ -711,8 +725,15 @@ fn test_a_portal_end_drag_is_one_transaction() {
     );
     let expected = one_apply_of_the_drag(init, &before);
     assert_same_document(document(init).doc(), &expected, "mid-drag");
+    let (place, _) = init
+        .view
+        .as_ref()
+        .expect("a view")
+        .projector()
+        .portal_place_at(n1, at)
+        .expect("drawn");
     match document(init).doc().get(end) {
-        Some(DocElement::PortalEnd(data)) => assert!(data.style.border_t.is_some(), "the end has a place"),
+        Some(DocElement::PortalEnd(data)) => assert_eq!(data.style.border_t, Some(place), "the end is at the pointer's place"),
         other => panic!("{other:?}"),
     }
     button(init, "left", "release", at, &[]);
@@ -1029,11 +1050,14 @@ fn test_a_pan_writes_no_chrome_and_a_selection_does() {
     let at = handle_at(init, Handle::Path { path: connector, handle: at_one });
 
     let panned = applies(init);
+    let rebuilt = |init: &InitState| init.view.as_ref().expect("a view").handles().rebuilt();
+    let rebuilt_before = rebuilt(init);
     assert_eq!(act(init, json!("PanCameraEast")), "handled");
     frame(init);
     assert_eq!(act(init, json!("ZoomIn")), "handled");
     frame(init);
     assert_eq!(applies(init), panned, "a pan and a zoom write no chrome");
+    assert_eq!(rebuilt(init), rebuilt_before, "nor rebuild any handle set"); 
 
     // Moving the node the path ends at moves the path's handles.
     let r1 = rect(init, n1);

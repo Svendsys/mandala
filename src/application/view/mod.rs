@@ -66,6 +66,8 @@ pub(crate) mod overlay;
 pub(crate) mod present;
 #[cfg(test)]
 mod tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests_handles;
 #[cfg(test)]
 mod tests_present;
 
