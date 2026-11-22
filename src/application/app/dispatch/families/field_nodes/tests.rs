@@ -20,6 +20,7 @@ use baumhard::document::ids::NodeIdent;
 use baumhard::document::writer::DEFAULT_HISTORY_LIMIT;
 
 use super::run;
+use crate::application::app::dispatch::families::projected::Projected;
 use crate::application::app::dispatch::cross_dispatch::DispatchOutcome;
 use crate::application::console::parser::{parse, Args, ParseResult};
 use crate::application::console::{ConsoleEffects, ExecResult};
@@ -650,48 +651,6 @@ fn test_every_field_edit_makes_its_expected_document_in_one_entry() {
         );
         doc.undo();
         assert_eq!(bytes(&doc), FIXTURE, "{}: undo gives back the fixture", case.name);
-    }
-}
-
-/// A projection of `doc`, kept up to date by [`Projected::sync`]: what
-/// the app's view runs, with no renderer.
-struct Projected {
-    projector: baumhard::projection::Projector,
-    layers: baumhard::projection::GlyphLayers,
-}
-
-impl Projected {
-    fn new(doc: &mut MindMapDocument) -> Self {
-        baumhard::font::fonts::init();
-        let mut layers = baumhard::projection::GlyphLayers::new();
-        let mut fonts = baumhard::font::fonts::FontSystemLease::new("field_nodes tests");
-        let projector = baumhard::projection::Projector::project_full(doc.doc(), &mut layers, &mut fonts);
-        doc.take_changes();
-        Projected { projector, layers }
-    }
-
-    /// Bring the projection up to `doc`, returning the document elements
-    /// whose glyphs the update wrote, in any layer.
-    fn sync(&mut self, doc: &mut MindMapDocument) -> Vec<NodeId> {
-        use baumhard::projection::Layer;
-        let mut fonts = baumhard::font::fonts::FontSystemLease::new("field_nodes tests");
-        let records = doc.take_changes();
-        let changes = self
-            .projector
-            .update(doc.doc(), &records, &mut self.layers, &mut fonts);
-        let mut touched: Vec<NodeId> = Vec::new();
-        for layer in Layer::ALL {
-            for (glyph, _) in changes.journal(layer).touched() {
-                if let Some(element) = self.projector.element_of(layer, glyph) {
-                    if !touched.contains(&element) {
-                        touched.push(element);
-                    }
-                }
-            }
-        }
-        changes.discard(&mut self.layers);
-        touched.sort();
-        touched
     }
 }
 

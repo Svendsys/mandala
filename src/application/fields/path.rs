@@ -64,7 +64,7 @@ pub(crate) const LINK_KIND_ON_A_CONNECTOR: &str =
 /// What a label asked of a portal link alone answers: its labels are
 /// its ends', which the span editors edit.
 pub(crate) const LABEL_ON_A_PORTAL: &str =
-    "label: a portal link's labels are its ends'; they are edited with the span editors (V1-C8, #249)";
+    "label: a portal link's labels are its ends'; they are edited with the span editors of V1-C8 (#249)";
 
 /// The kind of link `id` is, or `None` when it is not a link.
 fn link_kind_of(doc: &Document, id: NodeId) -> Option<LinkKind> {

@@ -6,7 +6,7 @@
       "id": 1,
       "position": [0.0, 0.0],
       "sections": [{"spans": [{"text": "One"}]}],
-      "links": [{"to": 3, "kind": "line"}, {"to": 4, "kind": "line", "label": {"spans": [{"text": "see"}]}}, {"to": 4, "kind": "portal"}]
+      "links": [{"to": 3, "kind": "line"}, {"to": 4, "kind": "line", "content": "─", "label": {"spans": [{"text": "see"}]}}, {"to": 4, "kind": "portal"}]
     },
     {
       "id": 2,

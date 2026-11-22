@@ -36,6 +36,8 @@
 pub(in crate::application::app) mod edits;
 pub(in crate::application::app) mod field_nodes;
 pub(in crate::application::app) mod field_paths;
+#[cfg(test)]
+mod projected;
 pub(in crate::application::app) mod structure;
 pub(in crate::application::app) mod text;
 pub(in crate::application::app) mod transactions;
