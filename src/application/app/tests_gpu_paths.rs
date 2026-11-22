@@ -105,7 +105,11 @@ fn test_the_path_family_runs_through_both_funnels() {
     select(init, DocKind::Link, &[1, 3, 4]);
     assert_eq!(act(init, json!({"SetPathContent": "+"})).0, "handled");
     assert_eq!(entries(init), before + 1, "three links, one entry");
-    assert_eq!(bytes(init).matches(r#""content": "+""#).count(), 3, "each of the three");
+    assert_eq!(
+        bytes(init).matches(r#""content": "+""#).count(),
+        3,
+        "each of the three"
+    );
     assert_eq!(act(init, json!("Undo")).0, "handled");
     assert_eq!(bytes(init), fixture_bytes);
 

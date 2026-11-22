@@ -54,11 +54,7 @@ const KEYS: &[Key] = &[
         "the text it draws when it has no spans",
         free_words("text", NONE),
     ),
-    Key::new(
-        "fit",
-        "what its text does along it",
-        free_words("mode", FITS),
-    ),
+    Key::new("fit", "what its text does along it", free_words("mode", FITS)),
     Key::new(
         "spacing",
         "the extra space between its glyphs",
@@ -85,14 +81,24 @@ const KEYS: &[Key] = &[
 ];
 
 /// The keys the bare form reads, in the order help lists them.
-const FIELD_KEYS: &[&str] = &[
-    "content", "fit", "spacing", "size", "color", "anchors", "visible",
-];
+const FIELD_KEYS: &[&str] = &["content", "fit", "spacing", "size", "color", "anchors", "visible"];
 
 const SUBVERBS: &[Subverb] = &[
-    Subverb::bare("straight", "geometry", "one straight segment, its control points dropped"),
-    Subverb::bare("curve", "geometry", "the default curve, its control points cleared"),
-    Subverb::bare("reset", "geometry", "every field inherited, the default curve, auto anchors"),
+    Subverb::bare(
+        "straight",
+        "geometry",
+        "one straight segment, its control points dropped",
+    ),
+    Subverb::bare(
+        "curve",
+        "geometry",
+        "the default curve, its control points cleared",
+    ),
+    Subverb::bare(
+        "reset",
+        "geometry",
+        "every field inherited, the default curve, auto anchors",
+    ),
     Subverb::bare("cap", "caps", "set or remove the caps at its ends")
         .taking(&[Form::opt(&["start", "end"])]),
 ];
@@ -183,7 +189,9 @@ fn fields(eff: &ConsoleEffects, pairs: &[Pair]) -> Result<PathFields, String> {
     let number = |value| values::or_reset(value, values::number);
     Ok(PathFields {
         content: read("content").map(values::content),
-        fit: read("fit").map(|v| values::or_reset(v, values::fit)).transpose()?,
+        fit: read("fit")
+            .map(|v| values::or_reset(v, values::fit))
+            .transpose()?,
         spacing: read("spacing").map(number).transpose()?,
         size: read("size").map(number).transpose()?,
         color: read("color")

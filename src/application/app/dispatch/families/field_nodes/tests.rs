@@ -20,8 +20,8 @@ use baumhard::document::ids::NodeIdent;
 use baumhard::document::writer::DEFAULT_HISTORY_LIMIT;
 
 use super::run;
-use crate::application::app::dispatch::families::projected::Projected;
 use crate::application::app::dispatch::cross_dispatch::DispatchOutcome;
+use crate::application::app::dispatch::families::projected::Projected;
 use crate::application::console::parser::{parse, Args, ParseResult};
 use crate::application::console::{ConsoleEffects, ExecResult};
 use crate::application::document::MindMapDocument;

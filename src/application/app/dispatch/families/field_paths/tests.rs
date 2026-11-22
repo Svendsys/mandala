@@ -158,9 +158,9 @@ const C2_TEXT: &str = r#""connector": {"content": "─", "cap_end": {"spans": [{
 const L13_TEXT: &str = r#"{"to": 3, "kind": "line"}"#;
 const L14_TEXT: &str = r#"{"to": 4, "kind": "line", "content": "─", "label": {"spans": [{"text": "see"}]}}"#;
 const P14_TEXT: &str = r#"{"to": 4, "kind": "portal"}"#;
-const L32_TEXT: &str = r##"{"to": 2, "kind": "line", "color": "#00ff00", "straight": true, "visible": false}"##;
-const L41_TEXT: &str =
-    r#"{"to": 1, "kind": "line", "control_points": [[0.0, -30.0]], "zoom": {"min": 0.5}, "spans": [{"text": "~"}]}"#;
+const L32_TEXT: &str =
+    r##"{"to": 2, "kind": "line", "color": "#00ff00", "straight": true, "visible": false}"##;
+const L41_TEXT: &str = r#"{"to": 1, "kind": "line", "control_points": [[0.0, -30.0]], "zoom": {"min": 0.5}, "spans": [{"text": "~"}]}"#;
 
 /// Every console form and every Action of the family.
 const CASES: &[Case] = &[
@@ -209,8 +209,14 @@ const CASES: &[Case] = &[
         input: Input::Act(|| Action::SetPathContent("·".into())),
         edits: &[
             (L13_TEXT, r#"{"to": 3, "kind": "line", "content": "·"}"#),
-            (r##""color": "#00ff00", "##, r##""color": "#00ff00", "content": "·", "##),
-            (r#""kind": "line", "control_points""#, r#""kind": "line", "content": "·", "control_points""#),
+            (
+                r##""color": "#00ff00", "##,
+                r##""color": "#00ff00", "content": "·", "##,
+            ),
+            (
+                r#""kind": "line", "control_points""#,
+                r#""kind": "line", "content": "·", "control_points""#,
+            ),
         ],
     },
     Case {
@@ -226,7 +232,10 @@ const CASES: &[Case] = &[
             from: "left".into(),
             to: "auto".into(),
         }),
-        edits: &[(L13_TEXT, r#"{"to": 3, "kind": "line", "anchors": ["left", "auto"]}"#)],
+        edits: &[(
+            L13_TEXT,
+            r#"{"to": 3, "kind": "line", "anchors": ["left", "auto"]}"#,
+        )],
     },
     Case {
         name: "SetPathSpacing",
@@ -413,7 +422,11 @@ fn test_every_path_edit_makes_its_expected_document_in_one_entry() {
         "the fixture is in the saver's spelling"
     );
     for text in [C2_TEXT, L13_TEXT, L14_TEXT, P14_TEXT, L32_TEXT, L41_TEXT] {
-        assert_eq!(FIXTURE.matches(text).count(), 1, "precondition: the fixture spells {text}");
+        assert_eq!(
+            FIXTURE.matches(text).count(),
+            1,
+            "precondition: the fixture spells {text}"
+        );
     }
     for case in CASES {
         let mut doc = fixture();
@@ -483,7 +496,11 @@ fn test_set_link_kind_on_a_connector_is_refused() {
         run(&Action::SetLinkKind("portal".into()), &mut doc),
         DispatchOutcome::Refused(LINK_KIND_ON_A_CONNECTOR)
     );
-    assert_eq!(doc.status(), Some(LINK_KIND_ON_A_CONNECTOR), "the status line says why");
+    assert_eq!(
+        doc.status(),
+        Some(LINK_KIND_ON_A_CONNECTOR),
+        "the status line says why"
+    );
     assert_eq!(doc.revision(), revision, "nothing changed");
     assert_eq!(bytes(&doc), FIXTURE);
 
@@ -530,7 +547,11 @@ fn test_each_verb_refuses_naming_what_to_select() {
         (&[], "path content=x", "path: select a connector or a line link"),
         (&[P14], "path content=x", "path: a portal link draws no path"),
         (&[], "path straight", "path: select a connector or a line link"),
-        (&[], "path cap start=x", "path cap: select a connector or a line link"),
+        (
+            &[],
+            "path cap start=x",
+            "path cap: select a connector or a line link",
+        ),
         (&[C2], "path cap start=\"\"", "path cap: give a cap's text"),
         (&[], "link kind=portal", "link: select a link"),
         (&[C2], "link kind=portal", LINK_KIND_ON_A_CONNECTOR),
@@ -562,7 +583,11 @@ fn test_each_verb_refuses_naming_what_to_select() {
             to: "auto".into(),
         },
     ] {
-        assert_eq!(run(&action, &mut doc), DispatchOutcome::Unhandled, "{action:?} with nothing selected");
+        assert_eq!(
+            run(&action, &mut doc),
+            DispatchOutcome::Unhandled,
+            "{action:?} with nothing selected"
+        );
     }
     assert_eq!(bytes(&doc), FIXTURE);
 }
@@ -584,9 +609,13 @@ fn test_path_content_changes_the_drawn_run_on_the_next_projection() {
             .filter(|&glyph| p.projector.element_of(Layer::Connections, glyph) == Some(connector))
             .filter_map(|glyph| tree.arena()[glyph].get().glyph_run())
             .filter_map(|run| match run.shaped() {
-                baumhard::gfx_structs::run::RunShape::Path { run, .. } => {
-                    Some(run.buffer.lines.iter().map(|line| line.text()).collect::<String>())
-                }
+                baumhard::gfx_structs::run::RunShape::Path { run, .. } => Some(
+                    run.buffer
+                        .lines
+                        .iter()
+                        .map(|line| line.text())
+                        .collect::<String>(),
+                ),
                 _ => None,
             })
             .collect()
@@ -604,7 +633,10 @@ fn test_path_content_changes_the_drawn_run_on_the_next_projection() {
         connections.iter().all(|(_, element, _)| *element == connector),
         "only the connector is written: {connections:?}"
     );
-    let texts: Vec<&str> = connections.iter().filter_map(|(_, _, text)| text.as_deref()).collect();
+    let texts: Vec<&str> = connections
+        .iter()
+        .filter_map(|(_, _, text)| text.as_deref())
+        .collect();
     assert!(
         texts.iter().any(|text| text.contains('·') && !text.contains('─')),
         "the update writes the connector's run as `·`: {texts:?}"
@@ -624,7 +656,9 @@ fn test_path_content_changes_the_drawn_run_on_the_next_projection() {
         .map(|(_, element, text)| (element, text))
         .collect();
     assert!(
-        written.iter().any(|(element, text)| *element == link && text.as_deref() == Some("+")),
+        written
+            .iter()
+            .any(|(element, text)| *element == link && text.as_deref() == Some("+")),
         "control: the link is written as `+`: {written:?}"
     );
     assert!(

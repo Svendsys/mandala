@@ -474,7 +474,10 @@ pub fn do_document_compose_switches_link_kind() {
         "a selection of both kinds is one valid request, the portal left as it is: {mixed:?}"
     );
     apply(&mut doc, steps);
-    assert_eq!(kinds_under(&doc, ids.line), vec![DocKind::PortalEnd, DocKind::PortalEnd]);
+    assert_eq!(
+        kinds_under(&doc, ids.line),
+        vec![DocKind::PortalEnd, DocKind::PortalEnd]
+    );
     assert_eq!(kind_of(&doc, ids.line), Some(LinkKind::Portal));
     assert_eq!(
         kinds_under(&doc, ids.portal),

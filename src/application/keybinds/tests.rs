@@ -1857,12 +1857,16 @@ fn test_set_edge_type_is_gone_and_reset_path_takes_no_args() {
             .collect()
     };
     assert!(
-        named("set_edge_type").iter().any(|m| m.contains("unrecognized key")),
+        named("set_edge_type")
+            .iter()
+            .any(|m| m.contains("unrecognized key")),
         "`set_edge_type` is reported as an unrecognized key: {:?}",
         named("set_edge_type")
     );
     assert!(
-        named("reset_path").iter().any(|m| m.contains("has a malformed value")),
+        named("reset_path")
+            .iter()
+            .any(|m| m.contains("has a malformed value")),
         "`reset_path` with arguments is reported as malformed: {:?}",
         named("reset_path")
     );
@@ -2456,11 +2460,7 @@ fn sentinel_parametric_rows() -> Vec<(&'static str, &'static [&'static str], Act
                 offset: "12".into(),
             },
         ),
-        (
-            "set_path_spacing",
-            &["6"],
-            Action::SetPathSpacing("6".into()),
-        ),
+        ("set_path_spacing", &["6"], Action::SetPathSpacing("6".into())),
         (
             "set_zoom",
             &["min", "0.5"],

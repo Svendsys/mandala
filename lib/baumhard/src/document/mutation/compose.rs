@@ -469,7 +469,11 @@ pub fn connect(doc: &Document, sources: &[NodeId], target: NodeId) -> Result<Vec
 /// all of them.
 ///
 /// Cost: O(links).
-pub fn set_link_kind(doc: &Document, links: &[NodeId], kind: LinkKind) -> Result<Vec<DocStep>, MutationError> {
+pub fn set_link_kind(
+    doc: &Document,
+    links: &[NodeId],
+    kind: LinkKind,
+) -> Result<Vec<DocStep>, MutationError> {
     let mut switching = Vec::with_capacity(links.len());
     for &link in links {
         require(doc, link, DocKind::Link, "a link")?;

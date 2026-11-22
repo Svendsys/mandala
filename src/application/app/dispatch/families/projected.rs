@@ -36,7 +36,11 @@ impl Projected {
     /// Bring the projection up to `doc`, returning the document elements
     /// whose glyphs the update wrote, in any layer, each once, sorted.
     pub(super) fn sync(&mut self, doc: &mut MindMapDocument) -> Vec<NodeId> {
-        let mut touched: Vec<NodeId> = self.update(doc).into_iter().map(|(_, element, _)| element).collect();
+        let mut touched: Vec<NodeId> = self
+            .update(doc)
+            .into_iter()
+            .map(|(_, element, _)| element)
+            .collect();
         touched.sort();
         touched.dedup();
         touched
@@ -62,9 +66,13 @@ impl Projected {
                     .get(glyph)
                     .and_then(|node| node.get().glyph_run())
                     .and_then(|run| match run.shaped() {
-                        RunShape::Path { run, .. } => {
-                            Some(run.buffer.lines.iter().map(|line| line.text()).collect::<String>())
-                        }
+                        RunShape::Path { run, .. } => Some(
+                            run.buffer
+                                .lines
+                                .iter()
+                                .map(|line| line.text())
+                                .collect::<String>(),
+                        ),
                         RunShape::Box(_) => None,
                     });
                 written.push((layer, element, text));

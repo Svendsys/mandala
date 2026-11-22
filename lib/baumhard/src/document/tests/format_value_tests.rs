@@ -243,12 +243,19 @@ fn test_format_anchor_and_link_kind_read_what_the_loader_reads() {
                 accepted += 1;
             }
             Err(_) => {
-                assert_eq!(format::anchor(text), None, "anchor {text:?} is refused by the loader");
+                assert_eq!(
+                    format::anchor(text),
+                    None,
+                    "anchor {text:?} is refused by the loader"
+                );
                 refused += 1;
             }
         }
     }
-    assert!(accepted == 5 && refused == 3, "control: both kinds met ({accepted}, {refused})");
+    assert!(
+        accepted == 5 && refused == 3,
+        "control: both kinds met ({accepted}, {refused})"
+    );
     assert_eq!(format::anchor("bottom"), Some(Anchor::Bottom));
 
     let (mut accepted, mut refused) = (0, 0);
@@ -263,11 +270,18 @@ fn test_format_anchor_and_link_kind_read_what_the_loader_reads() {
                 accepted += 1;
             }
             Err(_) => {
-                assert_eq!(format::link_kind(text), None, "kind {text:?} is refused by the loader");
+                assert_eq!(
+                    format::link_kind(text),
+                    None,
+                    "kind {text:?} is refused by the loader"
+                );
                 refused += 1;
             }
         }
     }
-    assert!(accepted == 2 && refused == 3, "control: both kinds met ({accepted}, {refused})");
+    assert!(
+        accepted == 2 && refused == 3,
+        "control: both kinds met ({accepted}, {refused})"
+    );
     assert_eq!(format::link_kind("portal"), Some(LinkKind::Portal));
 }

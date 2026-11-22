@@ -28,17 +28,17 @@ const ENDS: &[Word] = &[
 ];
 
 const KEYS: &[Key] = &[
-    Key::new("end", "which end: 0 the source, 1 the target", Vocabulary::Words(ENDS)),
+    Key::new(
+        "end",
+        "which end: 0 the source, 1 the target",
+        Vocabulary::Words(ENDS),
+    ),
     Key::new(
         "border_t",
         "its place around its node's outline, 0-1",
         free_words("0-1", RESET),
     ),
-    Key::new(
-        "offset",
-        "its distance from the outline",
-        free_words("px", RESET),
-    ),
+    Key::new("offset", "its distance from the outline", free_words("px", RESET)),
     Key::new(
         "content",
         "the marker it draws when it has no spans",

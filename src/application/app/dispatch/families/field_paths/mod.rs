@@ -70,9 +70,7 @@ pub(in crate::application::app) fn run(action: &Action, doc: &mut MindMapDocumen
 
 /// The steps of a one-request Action, and the label its entry carries.
 fn steps(action: &Action, doc: &MindMapDocument) -> (path::Built, &'static str) {
-    let fields = |fields: Result<PathFields, String>| -> path::Built {
-        Ok(path::set(doc, &fields?)?)
-    };
+    let fields = |fields: Result<PathFields, String>| -> path::Built { Ok(path::set(doc, &fields?)?) };
     match action {
         Action::SetPathAnchor { from, to } => (
             fields(values::anchor(from).and_then(|from| {
@@ -91,10 +89,12 @@ fn steps(action: &Action, doc: &MindMapDocument) -> (path::Built, &'static str) 
             "path content",
         ),
         Action::SetPathSpacing(spacing) => (
-            fields(values::or_reset(spacing, values::number).map(|spacing| PathFields {
-                spacing: Some(spacing),
-                ..PathFields::default()
-            })),
+            fields(
+                values::or_reset(spacing, values::number).map(|spacing| PathFields {
+                    spacing: Some(spacing),
+                    ..PathFields::default()
+                }),
+            ),
             "path spacing",
         ),
         Action::SetPathCap { from, to } => {

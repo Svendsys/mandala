@@ -154,9 +154,7 @@ impl PathFields {
 pub(crate) fn set(doc: &MindMapDocument, fields: &PathFields) -> Steps {
     let ops = fields.ops();
     if ops.is_empty() {
-        return Err(
-            "path: give content=, fit=, spacing=, size=, color=, anchors= or visible=".to_string(),
-        );
+        return Err("path: give content=, fit=, spacing=, size=, color=, anchors= or visible=".to_string());
     }
     on_paths(doc.doc(), &paths(doc, "path")?, ops)
 }
@@ -374,9 +372,9 @@ pub(crate) fn label(doc: &MindMapDocument, fields: &LabelFields) -> Built {
     let d = doc.doc();
     let ops = fields.ops();
     match &fields.text {
-        Some(text) if text.is_empty() => {
-            Err("label: give the label's text, or `label delete` to remove it".to_string().into())
-        }
+        Some(text) if text.is_empty() => Err("label: give the label's text, or `label delete` to remove it"
+            .to_string()
+            .into()),
         Some(text) => {
             let mut steps = give(d, &paths, DocKind::Label, &plain(text), || {
                 holding(DocElement::Label(fields.label()), text)
