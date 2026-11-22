@@ -678,6 +678,10 @@ pub(crate) struct Trace {
     /// For a text frame, what its last resorts left unheld (ruling
     /// R35.2): empty when its halves hold it.
     pub(crate) unheld: Unheld,
+    /// For a text frame, the arcs of its side ornament that kept copies
+    /// (#362): one a junction where it has two lines, one round both where
+    /// it has one.
+    pub(crate) side_arcs: usize,
     /// For a text frame, the halves whose lines were cut, or left out,
     /// because its outline is too thin to hold its two lines apart
     /// (ruling R38.1): never overlap wins over never cut.
