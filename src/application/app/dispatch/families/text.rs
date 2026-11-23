@@ -22,6 +22,13 @@
 //!   answer `Unhandled`, and a double-click on such an element is logged
 //!   at `debug!` ([`opens_single_line`]).
 //!
+//! **Clicks.** In NodeEdit a release inside the node picks there — a
+//! section, or the node — and one outside leaves the mode and goes on to
+//! select what it landed on ([`node_edit_click`], both targets). A drag
+//! on a picked section moves it (`app::live`), and the resize mode on it
+//! resizes it; those drags are native, as every drag is (CLAUDE.md
+//! "Drags that edit the map").
+//!
 //! **Keys.** While an editor is open it steals the keyboard
 //! (`event_keyboard`, `run_wasm::event_keyboard`): a key bound in its
 //! context runs its Action through the funnel — commit, cancel and every
@@ -223,7 +230,7 @@ fn open_text(
     };
     match TextSession::open(doc, section, clean, exit_to_default_on_close) {
         Ok(session) => {
-            *core.text_edit = TextEditor::Open(session);
+            *core.text_edit = TextEditor::Open(Box::new(session));
             resync(core, true);
             DispatchOutcome::Handled
         }
@@ -302,7 +309,7 @@ fn create_orphan(core: &mut InputContextCore<'_>, at: Vec2) -> DispatchOutcome {
     };
     match TextSession::open_orphan(doc, at) {
         Ok(session) => {
-            *core.text_edit = TextEditor::Open(session);
+            *core.text_edit = TextEditor::Open(Box::new(session));
             resync(core, true);
             DispatchOutcome::Handled
         }
@@ -473,13 +480,12 @@ pub(in crate::application::app) fn text_key(
     bound_action(key_name, modifiers, keybinds)
 }
 
-/// The NodeEdit half of a click (native, which routes clicks inside a
-/// node): a click on a section of the node being edited selects that
+/// The NodeEdit half of a click, which both targets' release asks
+/// before the click goes on: a click on a section of the node being edited selects that
 /// section; one elsewhere on that node selects the node; one outside it
 /// leaves NodeEdit — the selection back on the node — and returns `false`
 /// so the click goes on to select what it landed on. Returns whether the
 /// click was NodeEdit's. O(the depth to the element hit).
-#[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) fn node_edit_click(
     doc: &mut MindMapDocument,
     mode: &mut InteractionMode,
@@ -625,7 +631,7 @@ mod native {
         };
         match LineSession::open(doc, target, clean) {
             Ok(session) => {
-                *ctx.single_line_edit = SingleLineEditor::Open(session);
+                *ctx.single_line_edit = SingleLineEditor::Open(Box::new(session));
                 resync(ctx);
                 DispatchOutcome::Handled
             }

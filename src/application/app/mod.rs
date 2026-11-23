@@ -34,8 +34,11 @@
 //! **Modal state machines.** `console_input` steals keyboard input
 //! while the console is open (the §3 carve-out for modals that own the
 //! literal `winit::Key` payload), and so does the color picker
-//! (`color_picker_flow`), whose contextual mode is a transaction. The
-//! map's own editors return with V1-C8 (#249).
+//! (`color_picker_flow`), whose contextual mode is a transaction. So do
+//! the map's own editors while one is open — the section text editor
+//! (`text_edit`, both targets) and the single-line editor
+//! (`single_line_edit`, native): a key bound in the editor's context
+//! dispatches its Action, and any other key is typed.
 //!
 //! **Cross-platform shape.** Pure logic (gesture recognition,
 //! viewport math, hit testing, `Action` resolution) lives in
@@ -784,9 +787,6 @@ mod tests_gpu_layers;
 mod tests_gpu_live;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
-mod tests_gpu_text;
-#[cfg(test)]
-#[cfg(not(target_arch = "wasm32"))]
 mod tests_gpu_paths;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
@@ -794,6 +794,9 @@ mod tests_gpu_presentations;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests_gpu_structure;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_gpu_text;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests_gpu_verbs;

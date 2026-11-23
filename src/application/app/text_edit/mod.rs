@@ -58,8 +58,8 @@ pub(in crate::application::app) enum TextEditor {
     /// No editor is open.
     #[default]
     Closed,
-    /// One session, on one section.
-    Open(TextSession),
+    /// One session, on one section; boxed, so a closed editor is small.
+    Open(Box<TextSession>),
 }
 
 impl TextEditor {
@@ -71,7 +71,7 @@ impl TextEditor {
     /// The open session. O(1).
     pub(in crate::application::app) fn session(&self) -> Option<&TextSession> {
         match self {
-            TextEditor::Open(session) => Some(session),
+            TextEditor::Open(session) => Some(&**session),
             TextEditor::Closed => None,
         }
     }
@@ -79,7 +79,7 @@ impl TextEditor {
     /// The open session, mutably. O(1).
     pub(in crate::application::app) fn session_mut(&mut self) -> Option<&mut TextSession> {
         match self {
-            TextEditor::Open(session) => Some(session),
+            TextEditor::Open(session) => Some(&mut **session),
             TextEditor::Closed => None,
         }
     }
@@ -88,7 +88,7 @@ impl TextEditor {
     /// O(1).
     pub(in crate::application::app) fn take(&mut self) -> Option<TextSession> {
         match std::mem::take(self) {
-            TextEditor::Open(session) => Some(session),
+            TextEditor::Open(session) => Some(*session),
             TextEditor::Closed => None,
         }
     }

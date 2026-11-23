@@ -18,8 +18,9 @@
 //!
 //! A portal link draws no path, and the path fields it keeps are never
 //! saved (`LinkData::path`), so the path edits pass over one; its
-//! labels are its ends', which the span editors edit (V1-C8, #249), so
-//! [`label`] declines on one. A connector is always a line (D22), so
+//! labels are its ends', which the single-line editor edits from a
+//! double-click on one (ruling K4 on #249), so [`label`] declines on one,
+//! naming that route. A connector is always a line (D22), so
 //! [`link_kind`] declines on one. An edit whose selection reaches
 //! nothing it edits is refused, naming what to select.
 //!
@@ -62,9 +63,9 @@ pub(crate) const LINK_KIND_ON_A_CONNECTOR: &str =
     "link: a connector is always a line (D22); select a link to make it a portal";
 
 /// What a label asked of a portal link alone answers: its labels are
-/// its ends', which the span editors edit.
+/// its ends', which a double-click on one edits (ruling K4 on #249).
 pub(crate) const LABEL_ON_A_PORTAL: &str =
-    "label: a portal link's labels are its ends'; they are edited with the span editors of V1-C8 (#249)";
+    "label: a portal link's labels are its ends'; double-click the label beside an end to edit it";
 
 /// The kind of link `id` is, or `None` when it is not a link.
 fn link_kind_of(doc: &Document, id: NodeId) -> Option<LinkKind> {

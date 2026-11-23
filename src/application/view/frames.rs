@@ -159,8 +159,8 @@ impl SectionFrames {
     /// pool's new slots, four by four, in order. O(the group's runs).
     pub(crate) fn adopt(&mut self, chrome: &GfxTree) {
         let runs: Vec<NodeId> = self.group.children(chrome.arena()).collect();
-        for chunk in runs.chunks_exact(4).skip(self.slots.len()) {
-            self.slots.push([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        for &chunk in runs.as_chunks::<4>().0.iter().skip(self.slots.len()) {
+            self.slots.push(chunk);
             self.shown.push(None);
         }
     }

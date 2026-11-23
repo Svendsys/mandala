@@ -96,7 +96,14 @@ fn test_default_config_resolves_every_documented_binding() {
     let cases: &[BindingCase] = &[
         // Document context (the bare-context resolver).
         (None, "z", true, false, false, Action::Undo),
+        (None, "p", true, false, false, Action::EnterReparentMode),
+        (None, "d", true, false, false, Action::EnterConnectMode),
+        (None, "delete", false, false, false, Action::DeleteSelection),
         (None, "escape", false, false, false, Action::ExitMode),
+        (None, "n", true, false, false, Action::CreateOrphanNode),
+        (None, "o", true, false, false, Action::OrphanSelection),
+        (None, "enter", false, false, false, Action::EditSelection),
+        (None, "backspace", false, false, false, Action::EditSelectionClean),
         (None, "undo", false, false, false, Action::Undo), // bare alias
         // Console.
         (
@@ -180,8 +187,80 @@ fn test_default_config_resolves_every_documented_binding() {
             Action::ConsoleInsertSpace,
         ),
         // ColorPicker.
+        (
+            Some(InputContext::ColorPicker),
+            "escape",
+            false,
+            false,
+            false,
+            Action::PickerCancel,
+        ),
+        (
+            Some(InputContext::ColorPicker),
+            "enter",
+            false,
+            false,
+            false,
+            Action::PickerCommit,
+        ),
+        (
+            Some(InputContext::ColorPicker),
+            "h",
+            false,
+            false,
+            false,
+            Action::PickerNudgeHueDown,
+        ),
+        (
+            Some(InputContext::ColorPicker),
+            "h",
+            false,
+            true,
+            false,
+            Action::PickerNudgeHueUp,
+        ),
+        (
+            Some(InputContext::ColorPicker),
+            "s",
+            false,
+            false,
+            false,
+            Action::PickerNudgeSatDown,
+        ),
+        (
+            Some(InputContext::ColorPicker),
+            "v",
+            false,
+            false,
+            false,
+            Action::PickerNudgeValDown,
+        ),
         // LabelEdit.
+        (
+            Some(InputContext::LabelEdit),
+            "escape",
+            false,
+            false,
+            false,
+            Action::LabelEditCancel,
+        ),
+        (
+            Some(InputContext::LabelEdit),
+            "enter",
+            false,
+            false,
+            false,
+            Action::LabelEditCommit,
+        ),
         // TextEdit.
+        (
+            Some(InputContext::TextEdit),
+            "escape",
+            false,
+            false,
+            false,
+            Action::TextEditCancel,
+        ),
     ];
 
     for &(ctx, key, ctrl, shift, alt, ref expected) in cases {
@@ -1623,17 +1702,9 @@ fn test_action_for_context_document_filters_component_actions() {
     );
 }
 
-/// A config survives a JSON round trip in every context. The label and
-/// text editor keys are the test's own: they ship unbound until V1-C8
-/// (#249) rebuilds them.
 #[test]
 fn test_json_roundtrip_all_contexts() {
-    let cfg = KeybindConfig {
-        picker_nudge_hue_down: vec!["h".into()],
-        label_edit_commit: vec!["Enter".into()],
-        text_edit_cancel: vec!["Escape".into()],
-        ..KeybindConfig::default()
-    };
+    let cfg = KeybindConfig::default();
     let json = serde_json::to_string(&cfg).unwrap();
     let parsed = KeybindConfig::from_json(&json).unwrap();
     let resolved = parsed.resolve();
@@ -3136,16 +3207,19 @@ fn test_shipped_keybinds_template_escape_exits_the_mode() {
     );
 }
 
-/// The space bar inserts a space in the console whether or not Shift
+/// The space bar inserts a space in every editor whether or not Shift
 /// is still held: bindings match modifiers exactly, and typing
 /// "New York" quickly presses Space with Shift down from the capital.
-/// The console's insert-space Action answers both forms, and nothing
-/// else in its context claims them. (The text and label editors'
-/// insert-space keys ship unbound until V1-C8 (#249) rebuilds them.)
+/// Each editor's insert-space Action answers both forms, and nothing
+/// else in its context claims them.
 #[test]
-fn test_space_inserts_a_space_with_or_without_shift_in_the_console() {
+fn test_space_inserts_a_space_with_or_without_shift_in_every_editor() {
     let resolved = KeybindConfig::default().resolve();
-    for (context, insert) in [(InputContext::Console, Action::ConsoleInsertSpace)] {
+    for (context, insert) in [
+        (InputContext::Console, Action::ConsoleInsertSpace),
+        (InputContext::TextEdit, Action::TextEditInsertSpace),
+        (InputContext::LabelEdit, Action::LabelEditInsertSpace),
+    ] {
         for shift in [false, true] {
             assert_eq!(
                 resolved.action_for_context(context, "space", false, shift, false),

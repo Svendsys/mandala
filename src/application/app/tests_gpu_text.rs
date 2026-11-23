@@ -46,7 +46,9 @@ fn fixture() -> String {
 }
 
 fn document(init: &InitState) -> &MindMapDocument {
-    init.document.as_ref().expect("the harness always builds a document")
+    init.document
+        .as_ref()
+        .expect("the harness always builds a document")
 }
 
 /// What a save writes: the committed map.
@@ -116,7 +118,10 @@ fn act(init: &mut InitState, action: Value) -> String {
 
 /// Node `ident`.
 fn node(init: &InitState, ident: u32) -> NodeId {
-    document(init).doc().node_by_ident(NodeIdent(ident)).expect("in the fixture")
+    document(init)
+        .doc()
+        .node_by_ident(NodeIdent(ident))
+        .expect("in the fixture")
 }
 
 /// The `index`th child of `parent` of `kind`.
@@ -141,7 +146,8 @@ fn one_replace_spans(init: &InitState, owner: NodeId) -> String {
     let spans = crate::application::app::text_edit::tests::spans(document(init), owner);
     let mut once = crate::application::app::text_edit::tests::text_fixture();
     let steps = replace_spans(once.doc(), &[owner], &spans).expect("composes");
-    once.apply_for_test(EditRequest::new(steps, "once")).expect("applies");
+    once.apply_for_test(EditRequest::new(steps, "once"))
+        .expect("applies");
     format::save(once.doc()).expect("saves")
 }
 
@@ -159,11 +165,28 @@ fn test_the_section_editor_types_commits_and_cancels_through_input() {
     let section = child(init, node(init, 3), DocKind::Section, 0);
 
     double_click(init, section_center(init, section));
-    assert!(init.text_edit.is_open(), "a double-click on a section opens the editor");
-    let caret_before = init.view.as_ref().unwrap().caret().shown().expect("the caret is drawn").0;
+    assert!(
+        init.text_edit.is_open(),
+        "a double-click on a section opens the editor"
+    );
+    let caret_before = init
+        .view
+        .as_ref()
+        .unwrap()
+        .caret()
+        .shown()
+        .expect("the caret is drawn")
+        .0;
     type_text(init, "twenty chars typed!!");
     assert_eq!(entries(init), 0, "typing makes no entry");
-    let caret_after = init.view.as_ref().unwrap().caret().shown().expect("the caret is drawn").0;
+    let caret_after = init
+        .view
+        .as_ref()
+        .unwrap()
+        .caret()
+        .shown()
+        .expect("the caret is drawn")
+        .0;
     assert!(caret_after.x > caret_before.x, "the caret moves with typing");
     assert!(
         crate::application::app::text_edit::tests::spans(document(init), section)
@@ -200,9 +223,16 @@ fn test_a_pan_places_no_caret() {
     double_click(init, section_center(init, section));
     let placed = init.view.as_ref().unwrap().caret().placed();
     assert_eq!(act(init, json!("PanCameraEast")), "handled");
-    assert_eq!(init.view.as_ref().unwrap().caret().placed(), placed, "a pan places nothing");
+    assert_eq!(
+        init.view.as_ref().unwrap().caret().placed(),
+        placed,
+        "a pan places nothing"
+    );
     type_text(init, "x");
-    assert!(init.view.as_ref().unwrap().caret().placed() > placed, "control: typing places it");
+    assert!(
+        init.view.as_ref().unwrap().caret().placed() > placed,
+        "control: typing places it"
+    );
 }
 
 /// **An undo while the editor is open cancels its session**, with
@@ -236,11 +266,23 @@ fn test_the_label_editor_types_and_commits_through_input() {
     // `t = 0.5`, and a press on a handle takes no part in a double-click
     // (#218).
     let at = {
-        let run = init.view.as_ref().unwrap().projector().laid_label(connector).expect("the label is drawn");
+        let run = init
+            .view
+            .as_ref()
+            .unwrap()
+            .projector()
+            .laid_label(connector)
+            .expect("the label is drawn");
         let (top_left, size) = run.bounds();
         top_left + Vec2::new(size.x * 0.1, size.y * 0.5)
     };
-    let center = init.view.as_ref().unwrap().projector().label_pos(label).expect("the label is drawn");
+    let center = init
+        .view
+        .as_ref()
+        .unwrap()
+        .projector()
+        .label_pos(label)
+        .expect("the label is drawn");
     assert!(
         at.distance(center) > 8.0,
         "precondition: the press is clear of the midpoint handle's reach"
@@ -248,7 +290,9 @@ fn test_the_label_editor_types_and_commits_through_input() {
 
     double_click(init, at);
     assert!(
-        init.single_line_edit.session().is_some_and(|s| s.owner() == label),
+        init.single_line_edit
+            .session()
+            .is_some_and(|s| s.owner() == label),
         "a double-click on the label edits the label"
     );
     type_text(init, "ren");
@@ -278,7 +322,10 @@ fn test_a_ring_edits_from_the_console_and_a_portal_label_is_refused() {
     let a = node(init, 1);
     let ring = child(init, child(init, a, DocKind::Frame, 0), DocKind::Ring, 0);
     init.document.as_mut().unwrap().selection.select_only(a);
-    let reply = ipc(init, json!({"id": 1, "cmd": "act.console", "line": "frame ring 0 edit"}));
+    let reply = ipc(
+        init,
+        json!({"id": 1, "cmd": "act.console", "line": "frame ring 0 edit"}),
+    );
     frame(init);
     assert_eq!(reply["ok"], true, "{reply}");
     assert!(init.single_line_edit.session().is_some_and(|s| s.owner() == ring));
@@ -324,7 +371,11 @@ fn test_label_edit_on_a_path_with_no_label_inserts_one() {
     assert_eq!(act(init, json!("LabelEditOnSelection")), "handled");
     type_text(init, "via");
     tap(init, "Enter");
-    assert_eq!((labels(init), entries(init)), (1, 1), "one entry: the label and its text");
+    assert_eq!(
+        (labels(init), entries(init)),
+        (1, 1),
+        "one entry: the label and its text"
+    );
 }
 
 /// **Node editing** (#248's ruling C2): `EnterNodeEdit` on a node of two
@@ -341,12 +392,22 @@ fn test_node_edit_routes_clicks_to_sections_and_starts_their_move_and_resize() {
     init.document.as_mut().unwrap().selection.select_only(a);
     assert_eq!(act(init, json!("EnterNodeEdit")), "handled");
     assert_eq!(init.interaction_mode, InteractionMode::NodeEdit { node: a });
-    assert!(!init.text_edit.is_open(), "a node of two sections waits for a pick");
+    assert!(
+        !init.text_edit.is_open(),
+        "a node of two sections waits for a pick"
+    );
 
     let at = section_center(init, body);
     click(init, at);
-    assert!(document(init).selection.contains(body), "the click picked the section");
-    assert_eq!(init.interaction_mode, InteractionMode::NodeEdit { node: a }, "and stayed in NodeEdit");
+    assert!(
+        document(init).selection.contains(body),
+        "the click picked the section"
+    );
+    assert_eq!(
+        init.interaction_mode,
+        InteractionMode::NodeEdit { node: a },
+        "and stayed in NodeEdit"
+    );
 
     let offset = |init: &InitState| super::live::offset_of(document(init).doc(), body).unwrap_or(Vec2::ZERO);
     let before = offset(init);
@@ -359,7 +420,10 @@ fn test_node_edit_routes_clicks_to_sections_and_starts_their_move_and_resize() {
     );
     for k in 1..=6 {
         let to = at + Vec2::new(4.0, 2.0) * k as f32;
-        input(init, json!({"id": 1, "cmd": "input.mouse_move", "x": to.x, "y": to.y, "space": "canvas"}));
+        input(
+            init,
+            json!({"id": 1, "cmd": "input.mouse_move", "x": to.x, "y": to.y, "space": "canvas"}),
+        );
     }
     let end = at + Vec2::new(24.0, 12.0);
     input(
@@ -368,7 +432,10 @@ fn test_node_edit_routes_clicks_to_sections_and_starts_their_move_and_resize() {
     );
     assert_eq!(entries(init), 1, "the section move is one entry");
     let moved = offset(init) - before;
-    assert!(moved.distance(Vec2::new(24.0, 12.0)) < 1e-3, "moved by the drag: {moved}");
+    assert!(
+        moved.distance(Vec2::new(24.0, 12.0)) < 1e-3,
+        "moved by the drag: {moved}"
+    );
 
     assert_eq!(act(init, json!("EnterResizeMode")), "handled");
     assert_eq!(
@@ -392,10 +459,18 @@ fn test_node_edit_routes_clicks_to_sections_and_starts_their_move_and_resize() {
     );
 
     act(init, json!("ExitMode"));
-    assert_eq!(act(init, json!("EnterNodeEdit")), "handled", "a selected section enters its node's");
+    assert_eq!(
+        act(init, json!("EnterNodeEdit")),
+        "handled",
+        "a selected section enters its node's"
+    );
     assert_eq!(init.interaction_mode, InteractionMode::NodeEdit { node: a });
     click(init, EMPTY);
-    assert_eq!(init.interaction_mode, InteractionMode::Default, "a click outside leaves NodeEdit");
+    assert_eq!(
+        init.interaction_mode,
+        InteractionMode::Default,
+        "a click outside leaves NodeEdit"
+    );
 }
 
 /// **`EnterNodeEdit` on a node of one section opens the editor at once**,
@@ -410,7 +485,11 @@ fn test_enter_node_edit_on_one_section_opens_the_editor_and_leaves_with_it() {
     assert!(init.text_edit.is_open(), "the editor opened at once");
     assert_eq!(init.interaction_mode, InteractionMode::NodeEdit { node: lone });
     tap(init, "Escape");
-    assert_eq!(init.interaction_mode, InteractionMode::Default, "closing it leaves NodeEdit");
+    assert_eq!(
+        init.interaction_mode,
+        InteractionMode::Default,
+        "closing it leaves NodeEdit"
+    );
 }
 
 /// **A double-click on empty canvas creates a node to edit — one
@@ -420,7 +499,8 @@ fn test_enter_node_edit_on_one_section_opens_the_editor_and_leaves_with_it() {
 /// creates nothing.
 #[test]
 fn test_create_orphan_on_empty_canvas_is_one_transaction() {
-    let nodes = |init: &InitState| crate::application::document::selection::every_node(document(init).doc()).count();
+    let nodes =
+        |init: &InitState| crate::application::document::selection::every_node(document(init).doc()).count();
     {
         let Some(mut app) = headless_app(&fixture()) else { return };
         let init = &mut app.init;
@@ -438,7 +518,10 @@ fn test_create_orphan_on_empty_canvas_is_one_transaction() {
     let baseline = bytes(init);
     let count = nodes(init);
     double_click(init, EMPTY);
-    assert!(init.text_edit.session().is_some_and(|s| s.created()), "the orphan's editor is open");
+    assert!(
+        init.text_edit.session().is_some_and(|s| s.created()),
+        "the orphan's editor is open"
+    );
     assert_eq!(nodes(init), count + 1);
     type_text(init, "new");
     click(init, Vec2::new(2000.0, -2000.0));

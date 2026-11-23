@@ -10,9 +10,10 @@
 //!   without `text=` only the paths that have a label are reached;
 //! - `label delete` removes them.
 //!
-//! A portal link's labels are its ends': editing them belongs with the
-//! span editors (V1-C8, #249), so a portal link alone is refused, and
-//! one beside a path is passed over.
+//! A portal link's labels are its ends': the single-line editor edits
+//! one from a double-click on it (ruling K4 on #249), so a portal link
+//! alone is refused, naming that route, and one beside a path is passed
+//! over.
 
 use super::Command;
 use crate::application::console::parser::Args;

@@ -139,8 +139,8 @@ pub(in crate::application::app) enum SingleLineEditor {
     /// No editor is open.
     #[default]
     Closed,
-    /// One session.
-    Open(LineSession),
+    /// One session; boxed, so a closed editor is small.
+    Open(Box<LineSession>),
 }
 
 impl SingleLineEditor {
@@ -152,7 +152,7 @@ impl SingleLineEditor {
     /// The open session. O(1).
     pub(in crate::application::app) fn session(&self) -> Option<&LineSession> {
         match self {
-            SingleLineEditor::Open(session) => Some(session),
+            SingleLineEditor::Open(session) => Some(&**session),
             SingleLineEditor::Closed => None,
         }
     }
@@ -160,7 +160,7 @@ impl SingleLineEditor {
     /// The open session, mutably. O(1).
     pub(in crate::application::app) fn session_mut(&mut self) -> Option<&mut LineSession> {
         match self {
-            SingleLineEditor::Open(session) => Some(session),
+            SingleLineEditor::Open(session) => Some(&mut **session),
             SingleLineEditor::Closed => None,
         }
     }
@@ -168,7 +168,7 @@ impl SingleLineEditor {
     /// Close the editor and hand back its session. O(1).
     pub(in crate::application::app) fn take(&mut self) -> Option<LineSession> {
         match std::mem::take(self) {
-            SingleLineEditor::Open(session) => Some(session),
+            SingleLineEditor::Open(session) => Some(*session),
             SingleLineEditor::Closed => None,
         }
     }

@@ -699,7 +699,8 @@ fn test_a_node_resize_handle_is_one_transaction() {
 }
 
 /// **A section's resize handles resize the section** (the resize mode on a
-/// selected section, which node editing selects; V1-C8 enters it): its
+/// selected section, which a click in node editing selects; here the
+/// harness selects it, and `tests_gpu_text` drives node editing): its
 /// south-east handle dragged `(30, 12)` stages its minimum size, one
 /// entry.
 #[test]
@@ -745,8 +746,8 @@ fn test_a_section_resize_handle_is_one_transaction() {
     assert_committed_once(init, &expected, &baseline, "section resize");
 }
 
-/// **A section move is one transaction** (node editing starts it, V1-C8;
-/// here the harness does): its offset is staged at its start plus the
+/// **A section move is one transaction** (node editing starts it, which
+/// `tests_gpu_text` drives; here the harness does): its offset is staged at its start plus the
 /// travel, one entry.
 #[test]
 fn test_a_section_move_is_one_transaction() {

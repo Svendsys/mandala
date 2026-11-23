@@ -109,14 +109,10 @@ pub enum ZoomBound {
 /// `#[non_exhaustive]` is the structural signal that "review the
 /// gate when extending."
 ///
-/// **The Actions that edit the map are owned by the issues that
-/// rebuild them on the one writer** (`app::dispatch::families`: V1-C4
-/// to V1-C8, D1 and D3); the structure (V1-C4), field (V1-C5, V1-C6),
-/// edit (V1-D1) and verb (V1-D3) families have landed. Until its owner
-/// lands, each other one answers
-/// `unhandled` with a `debug!` naming the owner; the variants stay so a
-/// user's keybinds and macros naming them still load. Their docs say
-/// what each is for and name the owner.
+/// **The Actions that edit the map are rebuilt on the one writer**
+/// (`app::dispatch::families`: V1-C4 to V1-C8, D1 and D3), and every
+/// family has landed: each Action has a body, and none answers
+/// `unhandled` to stand in for one an owner has not rebuilt.
 ///
 /// Some variants carry payload (e.g. `String` paths, kv-shaped
 /// `(field, value)` tuples) so `Copy` is impossible — payload-bearing
@@ -206,30 +202,25 @@ pub enum Action {
     OrphanSelection,
     /// Edit the selection's text with its existing text, the cursor at
     /// the end: a node's spans, or a label's or a ring's single line.
-    /// Answers `unhandled` until V1-C8 (#249) rebuilds it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     EditSelection,
     /// [`Self::EditSelection`], starting from an empty buffer.
-    /// Answers `unhandled` until V1-C8 (#249) rebuilds it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     EditSelectionClean,
     /// Enter node-edit mode on the selected node, where a section is
     /// picked to edit; a node of one section opens its editor at once.
     /// Destructive, since the editor it may open can clear text on the
     /// spot.
-    /// Answers `unhandled` until V1-C8 (#249) rebuilds it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     EnterNodeEdit,
     /// [`Self::EnterNodeEdit`], with the editor it may open starting
     /// from an empty buffer.
-    /// Answers `unhandled` until V1-C8 (#249) rebuilds it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     EnterNodeEditClean,
     /// Open the editor on the picked section while in node-edit mode;
     /// closing it returns to node-edit mode. In
     /// [`InputContext::NodeEdit`], so a key bound to it there does not
     /// shadow the same key at the document level.
-    /// Answers `unhandled` until V1-C8 (#249) rebuilds it.
     #[action(context = NodeEdit, wasm = NativeOnly, destructive)]
     EnterSectionEdit,
     /// Open (or toggle) the CLI console.
@@ -395,9 +386,6 @@ pub enum Action {
     PickerNudgeValUp,
 
     // ── Label Editor ─────────────────────────────────────────────
-    // This section's Actions, and every `TextEdit*` and `LabelEdit*`
-    // below, are owned by V1-C8 (#249), with text editing on spans;
-    // until it lands each answers `unhandled`.
     /// Cancel the inline label editor (discard changes).
     #[action(context = LabelEdit, wasm = NativeOnly)]
     LabelEditCancel,
@@ -422,13 +410,11 @@ pub enum Action {
     /// label's line, or follow a link to its other end. Default-bound
     /// to `DoubleClick`; both targets resolve the gesture through this
     /// table (`cross_dispatch::pointer`).
-    /// Answers `unhandled` until V1-C8 (#249) rebuilds it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     DoubleClickActivate,
     /// Create an unattached node at the cursor and immediately open
     /// its text editor with an empty buffer. Sibling of `CreateOrphanNode`
     /// which only creates and selects (no editor). Default unbound.
-    /// Answers `unhandled` until V1-C8 (#249) rebuilds it.
     #[action(context = Document, wasm = Compatible, destructive)]
     CreateOrphanNodeAndEdit,
     /// Camera pan: while it runs, the canvas follows the pointer.

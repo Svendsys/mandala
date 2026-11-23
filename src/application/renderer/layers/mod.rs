@@ -176,9 +176,9 @@ impl LayerRenderer {
 
     /// The render state of the chrome layer as a whole (design §12.1: the
     /// view-only glyphs built from app state — the rubber band, the
-    /// handles, V1-C8's section frames), drawn above the five glyph
-    /// layers. Replaces what
-    /// was kept, as [`Self::load`] does for those.
+    /// handles, NodeEdit's section frames, a text editor's caret),
+    /// drawn above the five glyph layers. Replaces what was kept, as
+    /// [`Self::load`] does for those.
     ///
     /// Cost: one walk of the layer.
     pub(crate) fn load_chrome(&mut self, chrome: &GfxTree) {

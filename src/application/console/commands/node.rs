@@ -9,8 +9,9 @@
 //!   palette=…` sets those fields (`crate::application::fields::node`).
 //!   A node draws no fill (D12), so there is no `fill` or `fade`.
 //!
-//! `node edit` enters node editing, which V1-C8 (#249) rebuilds; until
-//! then it refuses, naming that issue.
+//! `node edit` enters node editing (`InteractionMode::NodeEdit`) on the
+//! selected node, or on the node of the selected section, where a
+//! section is picked to edit.
 
 use super::Command;
 use crate::application::console::completion::Completion;

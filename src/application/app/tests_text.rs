@@ -66,7 +66,9 @@ fn test_the_caret_moves_with_typing_and_a_pan_places_nothing() {
     let mut doc = text_fixture();
     let mut view = MapView::for_test(&doc);
     let section = child(&doc, node(&doc, 3), DocKind::Section);
-    let mut editor = TextEditor::Open(TextSession::open(&mut doc, section, false, false).expect("opens"));
+    let mut editor = TextEditor::Open(Box::new(
+        TextSession::open(&mut doc, section, false, false).expect("opens"),
+    ));
     view.follow_editor(text_focus(&editor));
     let opened = view.sync_for_test(&mut doc).expect("the caret is shown");
     assert!(!opened.chrome.is_empty(), "the caret was written");
