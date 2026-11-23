@@ -41,7 +41,7 @@ pub(in crate::application::app) mod draft;
 mod session;
 
 #[cfg(test)]
-mod tests;
+pub(in crate::application::app) mod tests;
 
 pub(in crate::application::app) use draft::Draft;
 pub(in crate::application::app) use session::TextSession;
