@@ -196,9 +196,6 @@ pub fn command_by_name(name: &str) -> Option<&'static Command> {
     })
 }
 
-/// The owner of node editing (`mode node-edit`), as a refusal names it.
-pub(super) const TEXT_OWNER: &str = "V1-C8 (#249)";
-
 /// Run a field edit from the console (`crate::application::fields`):
 /// its steps as one request declared `ChangeSource::Console`, so one
 /// line is one undo entry. Answers `<label>: applied`, `<label>: no
@@ -235,17 +232,54 @@ pub(super) fn descend<'a>(
     }
 }
 
-/// The answer a console verb that edited the old model gets until
-/// `owner` rebuilds it on the one writer: an error naming the owner, and
-/// the same at `debug!` — the console's peer of an unhandled Action
-/// (`app::dispatch::families::unhandled`). The verb's grammar stays
-/// registered, so its help and completion are the ones the owner
-/// extends.
-pub(super) fn rebuilt_by(verb: &str, owner: &str) -> ExecResult {
-    log::debug!("console: `{verb}` is rebuilt on the one writer by {owner}; refused until then");
-    ExecResult::err(format!(
-        "{verb}: rebuilt on the one writer by {owner}; not available yet"
-    ))
+/// NodeEdit on the node the selection edits — the one selected node, or
+/// the node of the one selected section — for `mode node-edit` and `node
+/// edit`, as on `main`: the mode is entered and the console closes; a
+/// section is picked, then edited, from there. `verb` names the line in a
+/// refusal.
+pub(super) fn enter_node_edit(eff: &mut ConsoleEffects, verb: &str) -> ExecResult {
+    use baumhard::document::element::DocKind;
+    let doc = eff.document();
+    let node = only_selected(doc).and_then(|only| {
+        match crate::application::document::selection::kind_of(doc.doc(), only)? {
+            DocKind::Node => Some(only),
+            DocKind::Section => doc.doc().parent(only),
+            _ => None,
+        }
+    });
+    let Some(node) = node else {
+        return ExecResult::err(format!("{verb}: select one node or one of its sections"));
+    };
+    eff.side_effect = Some(
+        crate::application::console::ConsoleSideEffect::SetInteractionMode(
+            crate::application::app::InteractionMode::NodeEdit { node },
+        ),
+    );
+    eff.close_console = true;
+    ExecResult::ok_msg(format!("{verb}: editing the node; pick a section"))
+}
+
+/// Open the editor `open` names, closing the console: what the verbs that
+/// open an editor hand the executor. `what` is the line's acknowledgment.
+pub(super) fn open_editor(
+    eff: &mut ConsoleEffects,
+    open: crate::application::console::EditorOpen,
+    what: &str,
+) -> ExecResult {
+    eff.side_effect = Some(crate::application::console::ConsoleSideEffect::OpenEditor(open));
+    eff.close_console = true;
+    ExecResult::ok_msg(what.to_string())
+}
+
+/// The one selected element, when exactly one is selected. O(1).
+pub(super) fn only_selected(
+    doc: &crate::application::document::MindMapDocument,
+) -> Option<baumhard::arena::NodeId> {
+    let mut selected = doc.selection.iter();
+    match (selected.next(), selected.next()) {
+        (Some(only), None) => Some(only),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

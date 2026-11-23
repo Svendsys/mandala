@@ -522,8 +522,8 @@ pub(in crate::application::app) fn leave_node_edit(doc: &mut MindMapDocument, mo
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) use native::{
-    dispatch_native, drop_stale_line, editing_under, line_focus, release_keeps_editing, type_line,
-    type_to_edit,
+    dispatch_native, drop_stale_line, editing_under, line_focus, open_from_console, release_keeps_editing,
+    type_line, type_to_edit,
 };
 
 /// The native half: the single-line editor.
@@ -761,6 +761,40 @@ mod native {
         }
         type_line(ctx, logical_key);
         true
+    }
+
+    /// Open the editor a console line named (`ConsoleSideEffect::OpenEditor`):
+    /// the section editor on a section, the single-line editor on an owner
+    /// or on a path's label. Returns why it did not open.
+    pub(in crate::application::app) fn open_from_console(
+        ctx: &mut InputHandlerContext<'_>,
+        open: crate::application::console::EditorOpen,
+    ) -> Result<(), &'static str> {
+        use crate::application::console::EditorOpen;
+        let target = {
+            let Some(doc) = ctx.document.as_ref() else {
+                return Err(TextRefusal::NO_DOCUMENT);
+            };
+            match open {
+                EditorOpen::Section(section) => {
+                    let (mut core, _) = ctx.split_borrow();
+                    return match super::open_text(&mut core, section, false, false) {
+                        DispatchOutcome::Handled => Ok(()),
+                        DispatchOutcome::Refused(why) => Err(why),
+                        DispatchOutcome::Unhandled => Err(TextRefusal::NO_DOCUMENT),
+                    };
+                }
+                EditorOpen::Line(owner) => {
+                    SingleLineTarget::of_element(doc.doc(), owner).ok_or(LineRefusal::NOT_A_LINE)?
+                }
+                EditorOpen::Label(host) => SingleLineTarget::label_of(doc.doc(), host)?,
+            }
+        };
+        match open_line(ctx, target, false) {
+            DispatchOutcome::Handled => Ok(()),
+            DispatchOutcome::Refused(why) => Err(why),
+            DispatchOutcome::Unhandled => Err(TextRefusal::NO_DOCUMENT),
+        }
     }
 
     /// Whether a press that `landed` is on what an open editor edits: the

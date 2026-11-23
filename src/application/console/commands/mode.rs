@@ -9,9 +9,10 @@
 //!   handles are drawn, and dragging one resizes it, as a transaction
 //!   (`Action::EnterResizeMode`'s mode; V1-C7). Refused for a selection
 //!   that is not one node or section.
-//! - `mode node-edit` — NodeEdit mode on the selection's node, rebuilt
-//!   with node editing by V1-C8 (#249); until then the subverb refuses
-//!   naming that issue.
+//! - `mode node-edit` — NodeEdit mode on the selection's node (V1-C8):
+//!   the other nodes dimmed, its sections outlined, a click on one
+//!   selecting it. Refused for a selection that is not one node or one of
+//!   its sections.
 //!
 //! `mode show` is intentionally absent: no surface reports the active
 //! mode to the console, so there is no verb for it.
@@ -116,7 +117,7 @@ fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
                 None => ExecResult::err(RESIZE_NEEDS_ONE),
             }
         }
-        Route::NodeEdit => super::rebuilt_by("mode node-edit", super::TEXT_OWNER),
+        Route::NodeEdit => super::enter_node_edit(eff, "mode node-edit"),
     }
 }
 

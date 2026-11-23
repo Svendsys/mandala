@@ -573,11 +573,6 @@ const REFUSED_LINES: &[(&str, &str)] = &[
     ),
 ];
 
-/// What a verb answers until its owner rebuilds it on the one writer. A
-/// line that answers so runs nothing; once its verb is back the line
-/// runs, and is compared like every other.
-const NOT_REBUILT: &str = "rebuilt on the one writer by";
-
 /// A portal end's line: the fixture holds no portal link, so it runs
 /// after `link kind=portal` makes one ([`sequences`]).
 const PORTAL_LINE: &str = "portal end=0 content=x size=12";
@@ -612,7 +607,7 @@ const AFTER_ANOTHER: &[&str] = &[
 /// make: a fast resize starts from a held button's drag (`act.action`
 /// has no button to hold it, and is refused for that, as on `main`), and
 /// is walked through the pointer in `tests_gpu_live`.
-const POINTER_GESTURES: &[&str] = &["FastResizeStart"];
+const POINTER_GESTURES: &[&str] = &["FastResizeStart", "DoubleClickActivate"];
 
 /// Every console verb, as the lines that run it. A verb of the registry
 /// with no row in [`LINES`] is a verb this test does not walk, and
@@ -740,8 +735,8 @@ fn ran(reply: &Value) -> bool {
 }
 
 /// Why `step` runs under no selection when it is the only step, if this
-/// walk knows a reason: its Action is of a family not yet rebuilt on
-/// the one writer, or a key of the console's own line, or one of
+/// walk knows a reason: its Action is a key of an open text editor's or
+/// of the console's own line, or one of
 /// [`AFTER_ANOTHER`]; its line is one of [`AFTER_ANOTHER`] or of
 /// [`REFUSED_LINES`], or of a verb not yet rebuilt (a reply says so).
 fn excuse(step: &Step, replies: &[Value]) -> Option<&'static str> {
@@ -753,8 +748,13 @@ fn excuse(step: &Step, replies: &[Value]) -> Option<&'static str> {
                 _ => "",
             };
             let action: Action = serde_json::from_value(action.clone()).expect("an Action");
-            if super::dispatch::families::dispatch(&action).is_some() {
-                Some("its family is not rebuilt on the one writer yet")
+            let context = crate::application::keybinds::ActionKind::from(&action).context();
+            if matches!(
+                context,
+                crate::application::keybinds::InputContext::TextEdit
+                    | crate::application::keybinds::InputContext::LabelEdit
+            ) {
+                Some("a key of an open text editor's, which no step here opens")
             } else if kind.starts_with("Console") {
                 Some("a key of the console's own line, which is not open")
             } else if AFTER_ANOTHER.contains(&kind) {
@@ -771,14 +771,7 @@ fn excuse(step: &Step, replies: &[Value]) -> Option<&'static str> {
         Step::Line(line) => REFUSED_LINES
             .iter()
             .find(|(refused, _)| refused == line)
-            .map(|(_, why)| *why)
-            .or_else(|| {
-                replies
-                    .iter()
-                    .filter_map(|reply| reply["error"]["message"].as_str())
-                    .any(|message| message.contains(NOT_REBUILT))
-                    .then_some("its verb is not rebuilt on the one writer yet")
-            }),
+            .map(|(_, why)| *why),
     }
 }
 

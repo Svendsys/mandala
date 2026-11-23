@@ -198,6 +198,24 @@ pub(in crate::application::app) fn execute_console_line(
         });
     }
 
+    // So is an editor's: it opened, or why it did not — a busy writer
+    // (D28), an owner the editor does not edit. One that opened closes
+    // the console; one refused leaves the console open on the reason.
+    if let Some(ConsoleSideEffect::OpenEditor(open)) = &side_effect {
+        let result = match super::super::dispatch::families::text::open_from_console(ctx, *open) {
+            Ok(()) => result,
+            Err(why) => ExecResult::err(why),
+        };
+        if matches!(result, ExecResult::Ok(_)) && close_after {
+            *ctx.console_state = ConsoleState::Closed;
+            ctx.renderer.rebuild_console_overlay_buffers(ctx.app_scene, None);
+        }
+        return Some(LineRun {
+            outcome: LineOutcome::Ran(result),
+            changed_view: true,
+        });
+    }
+
     // A screenshot's report is the line's output, so it is taken here,
     // before anything else could run, and replaces the verb's silent
     // `Ok`. It draws through a camera of its own and changes nothing
@@ -265,9 +283,9 @@ fn rescan_fonts(ctx: &mut InputHandlerContext<'_>) -> (ExecResult, bool) {
     (ExecResult::ok_msg(report), !found.is_empty())
 }
 
-/// Perform the side effect a verb asked for. The eight that are a
+/// Perform the side effect a verb asked for. The nine that are a
 /// line's whole report (`Record`, `Clock`, `Edit`, `Present`, `Verb`,
-/// `Picker`, `Screenshot`, `RescanFonts`) are taken by
+/// `Picker`, `OpenEditor`, `Screenshot`, `RescanFonts`) are taken by
 /// [`execute_console_line`] before this is reached.
 fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffect) {
     match effect {
@@ -288,6 +306,7 @@ fn apply_side_effect(ctx: &mut InputHandlerContext<'_>, effect: ConsoleSideEffec
         | ConsoleSideEffect::Edit(_)
         | ConsoleSideEffect::Present(_)
         | ConsoleSideEffect::Verb(_)
+        | ConsoleSideEffect::OpenEditor(_)
         | ConsoleSideEffect::RescanFonts => {
             log::error!("console: {effect:?} reached the side-effect handler; it is taken before — ignoring");
         }

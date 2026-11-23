@@ -432,6 +432,18 @@ fn rings_at(doc: &MindMapDocument, index: usize) -> Result<Vec<NodeId>, String> 
         .collect()
 }
 
+/// Ring `index` of the one selected node's frame, for `frame ring <i>
+/// edit`: the single-line editor opens on one ring. Refused for a
+/// selection of other than one node, and for a frame with no such ring.
+pub(crate) fn ring_to_edit(doc: &MindMapDocument, index: usize) -> Result<NodeId, String> {
+    match rings_at(doc, index)?.as_slice() {
+        [only] => Ok(*only),
+        _ => Err(format!(
+            "frame ring {index} edit: the editor opens on one ring; select one node"
+        )),
+    }
+}
+
 /// What `frame ring <i>` sets on the ring: each given.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct RingFields {

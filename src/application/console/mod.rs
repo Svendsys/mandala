@@ -7,9 +7,9 @@
 //! A verb that changes the map hands an `EditRequest` to the document's
 //! one writer (`MindMapDocument::apply`); the view brings the canvas up
 //! to date from the change feed after the line, whatever the verb did.
-//! The subverbs that edited the old model and are not rebuilt yet — the
-//! editors, resize mode, the color picker — refuse naming the issue that
-//! rebuilds them (`commands::rebuilt_by`).
+//! A verb that opens an editor — `section edit`, `frame ring <i> edit`,
+//! `path edit`, `path label edit` — hands the app what to open
+//! ([`ConsoleSideEffect::OpenEditor`]), and the console closes on it.
 //!
 //! Completion is contextual and prefix-matched. The popup recomputes
 //! on every keystroke; `↑`/`↓` move the highlight (falling back to
@@ -117,6 +117,24 @@ pub enum ConsoleSideEffect {
     /// a busy writer, a selection that takes no such color — becomes the
     /// line's output.
     Picker(commands::color::PickerLine),
+    /// Open a text editor. Set by `section edit`, `frame ring <i> edit`,
+    /// `path edit` and `path label edit`; the executor opens it
+    /// (`dispatch::families::text`), and a refusal — a busy writer (D28),
+    /// an owner the single-line editor does not edit — becomes the line's
+    /// output and leaves the console open.
+    OpenEditor(EditorOpen),
+}
+
+/// What [`ConsoleSideEffect::OpenEditor`] opens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditorOpen {
+    /// The section text editor on this section.
+    Section(baumhard::arena::NodeId),
+    /// The single-line editor on this owner: a ring, or a path's content.
+    Line(baumhard::arena::NodeId),
+    /// The single-line editor on the label of this path — inserted when it
+    /// has none (ruling K3 on #249).
+    Label(baumhard::arena::NodeId),
 }
 
 impl std::fmt::Debug for ConsoleSideEffect {
@@ -137,6 +155,7 @@ impl std::fmt::Debug for ConsoleSideEffect {
             Self::Verb(line) => f.debug_tuple("Verb").field(line).finish(),
             Self::RescanFonts => write!(f, "RescanFonts"),
             Self::Picker(line) => f.debug_tuple("Picker").field(line).finish(),
+            Self::OpenEditor(open) => f.debug_tuple("OpenEditor").field(open).finish(),
         }
     }
 }

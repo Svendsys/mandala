@@ -166,7 +166,7 @@ fn execute_node(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             let steps = node::min_size(eff.document(), None);
             super::edit(eff, steps, "node fit")
         }
-        Some(Route::Edit) => super::rebuilt_by("node edit", super::TEXT_OWNER),
+        Some(Route::Edit) => super::enter_node_edit(eff, "node edit"),
         None => ExecResult::err(route::miss(descent.level, subverb)),
     }
 }
