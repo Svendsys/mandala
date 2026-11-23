@@ -1879,9 +1879,6 @@ version that preserves the property is V2-13 (#271).
 
 Selection tint, NodeEdit dimming, hover chrome and `glyph`-layer
 presentations are glyph mutators applied over the projected layers.
-NodeEdit's dim writes the runs' `fade` channel, neutral at `1.0` and
-multiplied into alpha at emit, so it composes with what the other
-overlays write (ruling K2 on #249).
 When the projector rewrites glyph elements, overlays are re-stamped on
 exactly those elements (glyph journal ∩ overlay targets) — not on a
 fresh tree each frame, as `overlay_tree` does today.
