@@ -132,6 +132,10 @@ struct Laid {
     text: usize,
     copy: usize,
     tables: usize,
+    /// The one reshape of its run predicted (`place::path_reshape_steps`,
+    /// #387), and the most one charged (`Trace::reshaped`).
+    reshape: usize,
+    reshaped: usize,
     /// How far past what its budget left after its hold for phase 2 it
     /// was when a walk first found it spent, and the probes of phase 2's
     /// solves it began with its budget spent (`LAST_OPEN`).
@@ -155,6 +159,7 @@ fn open(text: &str, curve: &Curve, fit: &FitMode, budget: Option<usize>, cap: us
         with_fonts(|fs| {
             let flow = style(POINTS);
             let run = real_run(text, &flow, fs);
+            let reshape = crate::flow::place::path_reshape_steps(&run, fit, &flow, fs.fonts());
             let mut trace = Trace::default();
             PAST_BUDGET.with(|past| past.set(0));
             let (_, placed) = place_on_open_capped(&run, curve, fit, 0.0, &flow, fs, cap, Some(&mut trace));
@@ -169,6 +174,8 @@ fn open(text: &str, curve: &Curve, fit: &FitMode, budget: Option<usize>, cap: us
                 text: run.glyphs.len(),
                 copy: last.copy,
                 tables: trace.tables,
+                reshape,
+                reshaped: trace.reshaped,
                 crossed,
                 late,
                 held: last.held.0,
@@ -323,7 +330,13 @@ fn test_flow_open_budget_a_placement_past_its_budget_takes_its_overshoot_at_most
             own.loss
         );
         for laid in &case.laid {
-            let allowed = ring_overshoot(laid.copy, laid.tables, 0);
+            let allowed = ring_overshoot(laid.copy, laid.tables, laid.reshape);
+            if laid.reshaped != 0 && laid.reshaped != laid.reshape {
+                broken.push(format!(
+                    "{}: a reshape charged {}, where {} were predicted (#387)",
+                    laid.what, laid.reshaped, laid.reshape
+                ));
+            }
             if laid.past > allowed || laid.spent > laid.budget + allowed {
                 broken.push(format!(
                     "{}: {} past its budget of {}, {} in all, against {allowed} allowed past it",
@@ -450,7 +463,7 @@ fn test_flow_open_budget_a_fillers_wide_cluster_is_its_overshoots_cluster() {
             "budget {budget}: its copy is the filler's cluster, {wide} glyphs, not {}",
             laid.copy
         );
-        let allowed = ring_overshoot(laid.copy, laid.tables, 0);
+        let allowed = ring_overshoot(laid.copy, laid.tables, laid.reshape);
         assert!(
             laid.past <= allowed && laid.crossed.is_none_or(|c| c <= allowed),
             "budget {budget}: {} past its budget, crossed {:?}, against {allowed}",

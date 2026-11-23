@@ -35,6 +35,9 @@ pub mod lines_tests;
 /// A placement along an open path's work budget (#313).
 #[cfg(test)]
 mod open_budget_tests;
+/// A placement along an open path counts its reshapes (#387).
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod open_reshape_tests;
 pub mod outline_tests;
 pub mod pitch_tests;
 pub mod place_tests;
