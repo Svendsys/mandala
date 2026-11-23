@@ -209,16 +209,18 @@ pub(crate) fn open_tables(curves: &[Curve]) -> usize {
 /// scaled by them and what it may take past it, a ring's
 /// (`ring_work_steps`), the one cluster that may find it spent no wider
 /// than its whole text — fits [`INPUT_STEPS`] as an input's one budgeted
-/// placement; `None` where not even none does. Its whole text and path
-/// are laid, so a path far from the origin is walked there, over fewer
-/// glyphs. Replaying a finding, [`MAX_PLACED_GLYPHS`], as a map lays it.
-pub(crate) fn open_cap(copy: usize, tables: usize, bounded: bool) -> Option<usize> {
+/// placement, with the one `reshape` of its run that may run past its
+/// budget (`path_reshape_steps`, #387; nothing for a fit that makes none);
+/// `None` where not even none does. Its whole text and path are laid, so
+/// a path far from the origin is walked there, over fewer glyphs.
+/// Replaying a finding, [`MAX_PLACED_GLYPHS`], as a map lays it.
+pub(crate) fn open_cap(copy: usize, tables: usize, bounded: bool, reshape: usize) -> Option<usize> {
     if !bounded {
         return Some(MAX_PLACED_GLYPHS);
     }
     (0..=MAX_RING_GLYPHS)
         .rev()
-        .find(|&cap| ring_work_steps(cap, copy, tables, 0) <= INPUT_STEPS)
+        .find(|&cap| ring_work_steps(cap, copy, tables, reshape) <= INPUT_STEPS)
 }
 
 /// The glyph steps a whole-glyph placement along an open path
@@ -510,25 +512,37 @@ impl InputWork {
 
     /// Count a placement of `run` along an open path, laid at most `cap`
     /// glyphs as `placed`, with `trace`, its path's tables of `tables`
-    /// samples at most ([`open_tables`]): the most it may take,
-    /// `ring_work_steps` of its cap (#313, as a ring's). The engine
-    /// counts tables of no more samples, scales its budget by no more
-    /// than its cap, places no more than its cap, and spends no more than
-    /// its budget and the one cluster past it that found it spent:
+    /// samples at most ([`open_tables`]), one reshape of its run predicted
+    /// at `reshape` steps (`path_reshape_steps`, #387): the most it may
+    /// take, `ring_work_steps` of its cap and that reshape (#313, as a
+    /// ring's). The engine counts tables of no more samples, scales its
+    /// budget by no more than its cap, places no more than its cap,
+    /// charges each reshape exactly as predicted (`Trace::reshaped`, the
+    /// most one charged: the prediction where it reshaped, nothing where
+    /// it made none), and spends no more than its budget, the one reshape
+    /// past it and the one cluster past it that found it spent:
     /// properties. Its silence is the engine's grid's to hold
     /// (`open_budget_tests`): a placement along an open path is cut by its
     /// path too, which says nothing.
+    #[allow(clippy::too_many_arguments)] // a placement's lay, and what it was predicted to charge.
     pub(crate) fn open(
         &mut self,
         run: &ShapedRun,
         cap: usize,
         tables: usize,
+        reshape: usize,
         placed: &PlacedRun,
         trace: &Trace,
         what: &str,
     ) -> Result<(), String> {
         let copy = run.glyphs.len();
         let budget = frame_budget(cap);
+        if trace.reshaped != 0 && trace.reshaped != reshape {
+            return Err(format!(
+                "{what}: a placement charged {} glyph steps for one reshape, where {reshape} were predicted (#387)",
+                trace.reshaped
+            ));
+        }
         if trace.tables > tables {
             return Err(format!(
                 "{what}: a placement's setup counted tables of {} samples, past the {tables} its path's curves hold",
@@ -541,7 +555,7 @@ impl InputWork {
                 trace.budget, trace.glyphs
             ));
         }
-        let most = ring_work_steps(cap, copy, trace.tables, 0);
+        let most = ring_work_steps(cap, copy, trace.tables, reshape);
         if trace.spent > most {
             return Err(format!(
                 "{what}: a placement took {} glyph steps, past its budget of {} and its overshoot, {most} in all ({:?})",
@@ -555,7 +569,7 @@ impl InputWork {
             ));
         }
         self.frames += 1;
-        self.steps += ring_work_steps(cap, copy, tables, 0);
+        self.steps += ring_work_steps(cap, copy, tables, reshape);
         Ok(())
     }
 
@@ -617,7 +631,7 @@ impl InputWork {
     /// timeout on every input, as
     /// `test_each_flow_harness_lays_an_input_in_three_quarters_of_the_timeout`
     /// holds its constants.
-    fn within_the_timeout(&self) -> Result<(), String> {
+    pub(crate) fn within_the_timeout(&self) -> Result<(), String> {
         if self.steps > INPUT_STEPS {
             return Err(format!(
                 "an input's {} frames may take {} glyph steps, past the {INPUT_STEPS} one input may take",
@@ -860,7 +874,7 @@ pub(crate) fn check_raw(
     for laid in lines {
         match laid {
             RawLine::Open(fit) => check_open(
-                &spans, &run, &curve, &fit, 1.0, bounded, &style, &mut work, &mut fs,
+                &spans, &run, &curve, &fit, 1.0, 1.0, bounded, &style, &mut work, &mut fs,
             )
             .map_err(|why| format!("along a line: {why}"))?,
             RawLine::Pitched => check_pitched(&run, &[curve], 1.0, bounded, &mut work)?,
@@ -877,26 +891,59 @@ pub(crate) fn check_raw(
 /// `work` ([`InputWork::open`], #313): the placement's properties
 /// ([`check_placed`]), a text a placement its budget or its cap stopped
 /// owed no longer whole — it says so (`Trace::ring`). Laid at none where
-/// no cap holds it.
+/// no cap holds it. Held to the timeout, its text — shaped at `scale` —
+/// and its fit are cut to what holds it with its one predicted reshape
+/// ([`open_in_time`], #387).
 #[allow(clippy::too_many_arguments)] // A placement's inputs, and the work it is counted in.
-fn check_open(
+pub(crate) fn check_open(
     spans: &[FlowSpan<'_>],
     run: &ShapedRun,
     curve: &Curve,
     fit: &FitMode,
     spacing: f32,
+    scale: f32,
     bounded: bool,
     flow: &ResolvedText,
     work: &mut InputWork,
     fs: &mut FontSystemLease,
 ) -> Result<(), String> {
     let tables = open_tables(std::slice::from_ref(curve));
-    let Some(cap) = open_cap(run.glyphs.len(), tables, bounded) else {
+    if open_cap(run.glyphs.len(), tables, bounded, 0).is_none() {
         return Ok(());
+    }
+    let (fit, cut) = if bounded {
+        open_in_time(spans, run, fit, flow, tables, scale, fs)
+    } else {
+        (fit.clone(), None)
+    };
+    let fit = &fit;
+    let cut_spans: Option<Vec<FlowSpan<'_>>> = cut.as_ref().map(|(texts, _)| {
+        texts
+            .iter()
+            .zip(spans)
+            .map(|(text, span)| FlowSpan {
+                text,
+                style: span.style,
+                link: span.link,
+            })
+            .collect()
+    });
+    let (spans, run) = match (&cut_spans, &cut) {
+        (Some(spans), Some((_, run))) => (spans.as_slice(), run),
+        _ => (spans, run),
+    };
+    let reshape = crate::flow::place::path_reshape_steps(run, fit, flow, fs.fonts());
+    let Some(cap) = open_cap(run.glyphs.len(), tables, bounded, reshape) else {
+        return Err(format!(
+            "the placement: no cap holds a run of {} glyphs with a reshape of {reshape} steps after its cut",
+            run.glyphs.len()
+        ));
     };
     let mut trace = Trace::default();
     let placed = place_on_open_capped(run, curve, fit, spacing, flow, fs, cap, Some(&mut trace));
-    work.open(run, cap, tables, &placed.1, &trace, "the placement")?;
+    work.open(run, cap, tables, reshape, &placed.1, &trace, "the placement")?;
+    #[cfg(test)]
+    LAST_CHECKED_OPEN.with(|last| *last.borrow_mut() = Some((run.clone(), placed.1.clone(), trace.clone())));
     // `Spread` and `Fit` solve the gap; the spacing does not enter
     // (ruling R6, reading 7).
     // Owed whole only where the coordinates hold its glyphs apart (ruling
@@ -911,6 +958,89 @@ fn check_open(
         && trace.ring.is_none()
         && limit == Limit::Within;
     check_placed(spans, run, placed, whole, "the placement")
+}
+
+/// What a placement along an open path of `spans`, shaped as `run` at
+/// `scale` in `fit`, its path's tables of `tables` samples, is laid with
+/// held to the timeout (#387): its fit, and, where they are cut, its texts
+/// and their run. Its one reshape that may run past its budget predicted
+/// (`path_reshape_steps`) — a `Fit`'s, or a `Once` filler's shaping,
+/// `.notdef` passes and all, which a text of code points no face draws
+/// makes past any rate of its glyphs — and counted with the rest of its
+/// work, a run that no cap holds is cut, each span to the same share of
+/// its characters, halved until one does ([`framed`]). A `Once` whose
+/// filler's shaping leaves no cap even for no text is laid with no filler
+/// first, as a frame's is ([`filler_in_time`]). A cut and a filler left
+/// off are counted (`OPEN_CUT`, `OPEN_FILLER_LEFT_OUT`, test counters).
+/// A path whose tables leave no cap for the run even with no reshape is
+/// the caller's, which lays nothing there.
+///
+/// Cost: a prediction of the reshape, and where the run is cut, a shaping
+/// and a prediction each halving.
+pub fn open_in_time(
+    spans: &[FlowSpan<'_>],
+    run: &ShapedRun,
+    fit: &FitMode,
+    flow: &ResolvedText,
+    tables: usize,
+    scale: f32,
+    fs: &mut FontSystemLease,
+) -> (FitMode, Option<(Vec<String>, ShapedRun)>) {
+    let holds = |run: &ShapedRun, fit: &FitMode, fs: &mut FontSystemLease| {
+        let reshape = crate::flow::place::path_reshape_steps(run, fit, flow, fs.fonts());
+        open_cap(run.glyphs.len(), tables, true, reshape).is_some()
+    };
+    if holds(run, fit, fs) {
+        return (fit.clone(), None);
+    }
+    let texts: Vec<String> = spans.iter().map(|span| span.text.to_string()).collect();
+    let styles: Vec<ResolvedText> = spans.iter().map(|span| span.style.clone()).collect();
+    let shaped = |texts: &[String], fs: &mut FontSystemLease| {
+        let cut: Vec<FlowSpan<'_>> = texts
+            .iter()
+            .zip(spans)
+            .map(|(text, span)| FlowSpan {
+                text,
+                style: span.style,
+                link: span.link,
+            })
+            .collect();
+        shape_run(&cut, scale, fs)
+    };
+    let mut fit = fit.clone();
+    if matches!(fit, FitMode::Once { filler: Some(_) }) {
+        let none: Vec<String> = texts.iter().map(|_| String::new()).collect();
+        let empty = shaped(&none, fs);
+        if !holds(&empty, &fit, fs) {
+            #[cfg(test)]
+            OPEN_FILLER_LEFT_OUT.with(|n| n.set(n.get() + 1));
+            fit = FitMode::Once { filler: None };
+            if holds(run, &fit, fs) {
+                return (fit, None);
+            }
+        }
+    }
+    let cut = framed(&texts, &styles, scale, fs, &|run, fs| holds(run, &fit, fs));
+    #[cfg(test)]
+    OPEN_CUT.with(|n| n.set(n.get() + 1));
+    let run = shaped(&cut, fs);
+    (fit, Some((cut, run)))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test counters (#387): the placements along an open path a harness
+    /// cut on this thread, their one predicted reshape leaving no cap
+    /// within the timeout for their whole text, and the `Once` fillers it
+    /// left off, their shaping leaving none even for no text
+    /// ([`open_in_time`]).
+    pub(crate) static OPEN_CUT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static OPEN_FILLER_LEFT_OUT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The last placement along an open path [`check_open`] laid on this
+    /// thread: the run it laid, as cut where it was ([`open_in_time`]),
+    /// the placement, and its trace (#387).
+    pub(crate) static LAST_CHECKED_OPEN: std::cell::RefCell<Option<(ShapedRun, PlacedRun, Trace)>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// `run` laid as whole glyphs along `path` and on along a line past its
@@ -2439,7 +2569,7 @@ fn check_generated_pinning(
                         let mut work = InputWork::default();
                         if !bounded || !pitched {
                             check_open(
-                                &spans, &run, curve, fit, spacing, bounded, &flow, &mut work, &mut fs,
+                                &spans, &run, curve, fit, spacing, scale, bounded, &flow, &mut work, &mut fs,
                             )
                             .map_err(|why| format!("along a curve: {why}"))?;
                         }

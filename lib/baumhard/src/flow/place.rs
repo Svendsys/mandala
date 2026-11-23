@@ -720,6 +720,14 @@ pub(crate) struct Trace {
     /// `.notdef` passes and all (`halves::filler_steps`, #387). Nothing for
     /// any other placement.
     pub(crate) filled: usize,
+    /// For a placement along an open path, the most glyph steps one
+    /// reshape of its run charged, counted in `spent` (#387): a `Fit`'s at
+    /// a scale, each a round of its fit (`halves::resizing_steps`), or a
+    /// `Once` filler's shaping with the text (`lines::filling`), `.notdef`
+    /// passes and all — what [`path_reshape_steps`] predicts. Nothing for
+    /// any other placement, and for one that made no reshape: a `Fit` laid
+    /// at its own size, or a `Once` whose text left no room for its filler.
+    pub(crate) reshaped: usize,
     /// For a text frame, the share of its budget held back for its last
     /// resort's cut to the inks that touch nothing (`halves::untouched_steps`,
     /// ruling R46.1).
@@ -886,6 +894,13 @@ thread_local! {
     /// in a fuzz build as in a test.
     #[cfg(any(test, fuzzing))]
     pub(crate) static MOST_RING_LAY: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test and fuzz counter (#387): the most glyph steps one placement
+    /// along an open path — a connector's or a line link's body — has
+    /// taken on this thread since it was last cleared, its reshapes
+    /// included: what the projection harness holds every body it lays to
+    /// (`place::open_work_steps`), in a fuzz build as in a test.
+    #[cfg(any(test, fuzzing))]
+    pub(crate) static MOST_OPEN_LAY: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// Test counter (ruling B17.2c): what the last `Repeat` ring laid round
     /// a closed path on this thread estimated its glyphs from — its glyphs
     /// a copy, a copy's advance and its path's length
@@ -3091,17 +3106,106 @@ pub(crate) fn place_on_open_capped(
     cap: usize,
     trace: Option<&mut Trace>,
 ) -> (Option<ShapedRun>, PlacedRun) {
-    let table = table_spacing(run, fit, flow);
-    let arc = ArcPath::open(curve, table);
-    let spacing = if spacing.is_finite() {
-        spacing.max(0.0)
-    } else {
-        0.0
-    };
+    let arc = open_path(run, curve, fit, flow);
+    let spacing = open_spacing(spacing);
     let laid = place(run, &arc, false, fit, spacing, false, flow, fs, cap, trace);
     #[cfg(test)]
     identity::note(&laid);
     laid
+}
+
+/// The most glyph steps one reshape of `run` charges a placement along an
+/// open path in `fit` and `flow`'s style (#387), which its budget does not
+/// bound: a `Fit`'s at any scale (`halves::predicted_resizing_steps`, the
+/// reshape's own gate predicting whether it shapes), or a `Once` filler's
+/// shaping with the text (`lines::filling`, the function the placement
+/// shapes and charges with), `.notdef` passes and all. Nothing for any
+/// other fit. A placement reads its budget before each further round of
+/// a `Fit`, so at most one such reshape runs past it. It records the most
+/// one charged (`Trace::reshaped`): this, where it reshaped, and nothing
+/// where it made none.
+///
+/// Cost: for a `Fit`, O(its glyphs); for a `Once` with a filler, a shaping
+/// of the text and the filler.
+pub(crate) fn path_reshape_steps(
+    run: &ShapedRun,
+    fit: &FitMode,
+    flow: &ResolvedText,
+    fs: &mut FontSystem,
+) -> usize {
+    match fit {
+        FitMode::Fit { .. } => halves::predicted_resizing_steps(run),
+        FitMode::Once { filler: Some(filler) } => lines::filling(run, filler, flow, fs).1,
+        _ => 0,
+    }
+}
+
+/// The path a placement of `run` in `fit` and `flow`'s style lays along
+/// `curve` ([`place_on_open_capped`]): its curves with arc-length tables
+/// at the spacing its run and fit want (`table_spacing`). Cost: its
+/// tables.
+fn open_path(
+    run: &ShapedRun,
+    curve: &(impl AsRef<[Curve]> + ?Sized),
+    fit: &FitMode,
+    flow: &ResolvedText,
+) -> ArcPath {
+    ArcPath::open(curve, table_spacing(run, fit, flow))
+}
+
+/// The spacing a placement along an open path lays at: `spacing`, at
+/// least zero, and zero where it is not a number.
+fn open_spacing(spacing: f32) -> f32 {
+    if spacing.is_finite() {
+        spacing.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+/// The most glyph steps a placement of `run` along the open path of
+/// `curve`, in `fit` with `spacing` and `flow`'s style, at most
+/// [`MAX_PLACED_GLYPHS`] glyphs, may take (#387): its budget, scaled as
+/// [`place`] scales it ([`scaled_by`]; a `Once` with a filler, which
+/// scales by its copies too, at its cap), and what may run past it
+/// (`ring::ring_work_steps`): its setup and its path's table, the one
+/// cluster that finds it spent — its widest, the filler's with one — and
+/// its one reshape ([`path_reshape_steps`]). What the projection harness
+/// holds a connector's or a line link's body to, read by the functions
+/// its placement reads; the flow harnesses hold theirs to the cap they
+/// lay them at (`ring_work_steps` of it).
+///
+/// Cost: its path's tables built, and the reshape's prediction: for a
+/// `Once` with a filler, one shaping of the text and the filler, which
+/// gives both its widest cluster and its reshape's steps.
+#[cfg(any(test, fuzzing))]
+pub(crate) fn open_work_steps(
+    run: &ShapedRun,
+    curve: &(impl AsRef<[Curve]> + ?Sized),
+    fit: &FitMode,
+    spacing: f32,
+    flow: &ResolvedText,
+    fs: &mut FontSystem,
+) -> usize {
+    let arc = open_path(run, curve, fit, flow);
+    let cap = placed_cap();
+    // A `Once` with a filler shaped once: its filled run's widest cluster,
+    // and its shaping's own steps, which `path_reshape_steps` reads too.
+    let (glyphs, copy, reshape) = match fit {
+        FitMode::Once { filler: Some(filler) } => {
+            let (filled, steps) = lines::filling(run, filler, flow, fs);
+            (
+                cap,
+                widest(&clusters_of(&filled.glyphs, 0..filled.glyphs.len())),
+                steps,
+            )
+        }
+        _ => {
+            let (glyphs, copy) = scaled_by(run, &arc, false, fit, open_spacing(spacing), cap);
+            (glyphs, copy, path_reshape_steps(run, fit, flow, fs))
+        }
+    };
+    ring::ring_work_steps(glyphs, copy, arc.table_samples(), reshape)
 }
 
 /// What a placement along a path too long to lay is
@@ -3427,25 +3531,7 @@ fn place(
     // An open path's cap is the one every walk but a ring's has: in a
     // test, the frame's cap seam's (`placed_cap`).
     let cap = cap.min(if closed { MAX_PLACED_GLYPHS } else { placed_cap() });
-    let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
-    let glyphs = if matches!(fit, FitMode::Repeat) {
-        let advance = ring::copy_advance(&run.glyphs, clusters.len(), spacing);
-        #[cfg(test)]
-        if closed {
-            LAST_RING_ESTIMATE.with(|last| last.set(Some((run.glyphs.len(), advance, path.length()))));
-        }
-        ring::ring_glyphs(run.glyphs.len(), advance, path.length(), cap)
-    } else {
-        run.glyphs.len().min(cap)
-    };
-    // What bounds the one cluster that may find its budget spent past it
-    // (`ring::ring_overshoot`): a ring's copy, as #310 has it; along an
-    // open path, its widest cluster — its text is one copy, laid once.
-    let copy = if closed {
-        run.glyphs.len()
-    } else {
-        widest(&clusters)
-    };
+    let (glyphs, copy) = scaled_by(run, path, closed, fit, spacing, cap);
     let work = RingWork::new(
         path,
         copy,
@@ -3485,6 +3571,8 @@ fn place(
     #[cfg(any(test, fuzzing))]
     if closed {
         MOST_RING_LAY.with(|most| most.set(most.get().max(spent)));
+    } else {
+        MOST_OPEN_LAY.with(|most| most.set(most.get().max(spent)));
     }
     let (budget, glyphs, _) = work.budget();
     if let Some(trace) = trace {
@@ -3493,6 +3581,7 @@ fn place(
         trace.budget = budget;
         trace.glyphs = glyphs;
         trace.ring = work.loss();
+        trace.reshaped = work.most_reshaped();
     }
     // All the placement takes past its budget (ruling R50.4): what is held
     // back for phase 2 is within it.
@@ -3525,6 +3614,43 @@ fn place(
     #[cfg(test)]
     GLYPHS_PLACED.with(|count| count.set(count.get() + placed.1.glyphs.len()));
     placed
+}
+
+/// What a placement of `run` along `path` (`closed`, or open) in `fit`
+/// with `spacing`, at most `cap` glyphs, scales its budget by and bounds
+/// its one cluster past it by ([`place`]): the glyphs it will lay — a
+/// ring of repeats' and a `Repeat` along an open path's by the copies its
+/// path holds (#310, #313; rulings B17.1a, B17.2a), any other's by its
+/// text, at most `cap` — and what bounds the one cluster that may find its
+/// budget spent (`ring::ring_overshoot`): a ring's copy, as #310 has it;
+/// along an open path, its widest cluster — its text is one copy, laid
+/// once. A `Once` with a filler scales by its copies too once the filler
+/// is shaped (`once`).
+fn scaled_by(
+    run: &ShapedRun,
+    path: &ArcPath,
+    closed: bool,
+    fit: &FitMode,
+    spacing: f32,
+    cap: usize,
+) -> (usize, usize) {
+    let clusters = clusters_of(&run.glyphs, 0..run.glyphs.len());
+    let glyphs = if matches!(fit, FitMode::Repeat) {
+        let advance = ring::copy_advance(&run.glyphs, clusters.len(), spacing);
+        #[cfg(test)]
+        if closed {
+            LAST_RING_ESTIMATE.with(|last| last.set(Some((run.glyphs.len(), advance, path.length()))));
+        }
+        ring::ring_glyphs(run.glyphs.len(), advance, path.length(), cap)
+    } else {
+        run.glyphs.len().min(cap)
+    };
+    let copy = if closed {
+        run.glyphs.len()
+    } else {
+        widest(&clusters)
+    };
+    (glyphs, copy)
 }
 
 /// The most glyphs any of `clusters` holds, at least one.
@@ -3572,6 +3698,9 @@ fn once_text(run: &ShapedRun, walk: &PathWalk<'_>, gap: f32) -> (Walked, Option<
 
 /// `Once`: the text once from the start; then, with a filler and room
 /// left, whole copies of the filler until the next would pass the end.
+/// Its text shaped with the filler appended (`lines::filling`) is counted
+/// in the placement's work (#387), `.notdef` passes and all, after its
+/// text's walk and before its copies' lay reads the budget again.
 fn once<'p>(
     run: &ShapedRun,
     gap: f32,
@@ -3584,7 +3713,10 @@ fn once<'p>(
     let (Some(filler), Some(_)) = (filler, next) else {
         return placed;
     };
-    let (filled, _) = reshape(run, 1.0, Some((filler, flow)), fs);
+    let (filled, steps) = lines::filling(run, filler, flow, fs);
+    if let Some(work) = walk_for(run).work {
+        work.reshaped(steps);
+    }
     let text_glyphs = filled.glyphs.iter().take_while(|g| g.span != FILLER_SPAN).count();
     if text_glyphs == filled.glyphs.len() {
         return placed;
@@ -4087,8 +4219,13 @@ fn solve_gap_until(miss: impl Fn(f32) -> f32, length: f32, guess: f32, stop: &dy
 ///
 /// Each round reshapes the run at its scale, so a `Fit` reshapes at most
 /// `FIT_ROUNDS + BRACKET_ROUNDS` times — 40, where before the bracket it
-/// reshaped at most 16 — and no reshape is counted against the ring's
-/// budget, which counts steps along the path; shaping's cost is #304's.
+/// reshaped at most 16 — and each reshape is counted in the placement's
+/// work (`halves::resizing_steps`, #387), `.notdef` passes and all, as a
+/// frame's R27 counts its own. A round reshapes only after the round
+/// before it found the budget able to afford its phase 2, so at most one
+/// reshape runs past the budget: a placement whose budget runs out
+/// mid-fit keeps the round it has and reports its scale not solved
+/// (`RingLoss::Uneven`).
 fn fit_to<'p>(
     run: &ShapedRun,
     path: &'p ArcPath,
@@ -4138,7 +4275,13 @@ fn fit_to<'p>(
     let mut bracketing: Option<usize> = None;
     let mut fitted: Option<(f32, Walked)> = None;
     loop {
-        let rescaled = (scale != 1.0).then(|| reshape(run, scale, None, fs).0);
+        let rescaled = (scale != 1.0).then(|| {
+            let (rescaled, shaped) = reshape(run, scale, None, fs);
+            if let Some(work) = walk.work {
+                work.reshaped(halves::resizing_steps(&rescaled, shaped));
+            }
+            rescaled
+        });
         let placed_run = rescaled.as_ref().unwrap_or(run);
         let slack = if scale > least { SOLVE_TOLERANCE } else { 0.0 };
         let placed_walk = walk_for(placed_run);

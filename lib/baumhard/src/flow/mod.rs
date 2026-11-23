@@ -89,16 +89,30 @@ pub(crate) use place::halves::LAST_FRAME;
 /// a lay that paid none (#387).
 #[cfg(test)]
 pub(crate) use place::halves::SHAPE_NOTDEF_STEPS;
+/// What a connector's or a line link's body may take, its one reshape
+/// included: what the projection harness holds each body to (#387).
+#[cfg(any(test, fuzzing))]
+pub(crate) use place::open_work_steps;
 /// The last `Repeat` ring laid round a closed path on this thread, a test
 /// counter (#310): what the projection harness's bound is held to
 /// (ruling B47.1).
 #[cfg(test)]
 pub(crate) use place::LAST_RING;
+/// The most steps a placement along an open path took: what the
+/// projection harness holds each connector's and line link's body to
+/// (#387).
+#[cfg(any(test, fuzzing))]
+pub(crate) use place::MOST_OPEN_LAY;
 /// The most glyph steps a ring's placement has taken on this thread since
 /// it was cleared, a test and fuzz counter: what the projection harness
 /// holds each ring's work to (ruling B47.3).
 #[cfg(any(test, fuzzing))]
 pub(crate) use place::MOST_RING_LAY;
+/// The one reshape a placement along an open path may run past its
+/// budget, and the frame budget's test seam, which the projection's test
+/// of a connector's body reads (#387).
+#[cfg(test)]
+pub(crate) use place::{halves::BUDGET_OVERRIDE, path_reshape_steps};
 pub use place::{
     pattern_gap, place_at_point, place_on_closed, place_on_open, place_pitched, PathEnd, PlacedGlyph,
     PlacedRun, RingLayout, MAX_PLACED_GLYPHS,

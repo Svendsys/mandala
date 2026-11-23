@@ -160,6 +160,14 @@ pub(crate) const GLYPHS_A_STEP: usize = 8;
 /// more than 13 steps past them.
 pub(crate) const RING_STEPS: usize = 256;
 
+#[cfg(test)]
+thread_local! {
+    /// Test counter (#387): the reshapes placements along a path have
+    /// counted on this thread ([`RingWork::reshaped`]): a `Fit`'s rounds,
+    /// and a `Once` filler's shaping.
+    pub(crate) static RESHAPES_ALONG: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The times phase 2 handles each glyph a ring places, past its walks'
 /// reads: moving it with its cluster (`PathWalk::lay_readable`),
 /// copying it into the trace, and gathering those kept.
@@ -416,8 +424,13 @@ pub(crate) struct RingWork {
     fit: Cell<bool>,
     fit_held: Cell<usize>,
     /// The glyph steps of work it counts past its reads and its glyphs:
-    /// a directional ring's shaping of its glyphs by direction (#324).
+    /// a directional ring's shaping of its glyphs by direction (#324), and
+    /// a placement along an open path's reshapes (#387).
     took: Cell<usize>,
+    /// The most glyph steps one reshape of its run counted
+    /// ([`reshaped`](Self::reshaped), #387): a `Fit`'s at a scale, or a
+    /// `Once` filler's shaping with the text.
+    reshaped: Cell<usize>,
     /// The glyphs its walks have set, and the glyph steps held back for
     /// phase 2 over those its first walk set: its work on them, and its
     /// run on past where its walk would end were it stopped now.
@@ -473,6 +486,7 @@ impl RingWork {
             fit: Cell::new(false),
             fit_held: Cell::new(0),
             took: Cell::new(0),
+            reshaped: Cell::new(0),
             set: Cell::new(0),
             reserve: Cell::new(0),
             run_on: Cell::new(steps_of(run_on_reads(0.0, length, line_height))),
@@ -514,6 +528,22 @@ impl RingWork {
     /// its glyphs (#324).
     pub(crate) fn took(&self, steps: usize) {
         self.took.set(self.took.get().saturating_add(steps));
+    }
+
+    /// Count `steps` glyph steps of one reshape of its run (#387), taken
+    /// apart ([`took`](Self::took)), and note the most one took
+    /// ([`Trace::reshaped`](super::Trace::reshaped)).
+    pub(crate) fn reshaped(&self, steps: usize) {
+        self.reshaped.set(self.reshaped.get().max(steps));
+        #[cfg(test)]
+        RESHAPES_ALONG.with(|count| count.set(count.get() + 1));
+        self.took(steps);
+    }
+
+    /// The most glyph steps one reshape of its run counted
+    /// ([`reshaped`](Self::reshaped)).
+    pub(crate) fn most_reshaped(&self) -> usize {
+        self.reshaped.get()
     }
 
     /// The glyph steps taken apart from its path's reads and its glyphs

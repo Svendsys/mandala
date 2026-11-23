@@ -219,6 +219,7 @@ fn report_ring(what: &str, map: &str) {
     let count = directional_notdef_steps(doc.tree(), frame, ring);
     let excluded = frame_may_shape_notdef(doc.tree(), ring);
     crate::flow::MOST_RING_LAY.with(|most| most.set(0));
+    crate::flow::MOST_OPEN_LAY.with(|most| most.set(0));
     crate::flow::LAST_RESHAPE.with(|last| last.set(None));
     drop(Projected::new(doc.clone()));
     let laid = crate::flow::MOST_RING_LAY.with(std::cell::Cell::get);

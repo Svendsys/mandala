@@ -1617,7 +1617,7 @@ impl Projector {
             .map(|f| (f.shaped.clone(), f.shaped.size));
         let mut placed: [Option<Placed>; 3] = [None, None, None];
         if let Some(input) = flows[0].flow.as_ref().map(|f| f.shaped.clone()) {
-            let pitched = resolved.fit == FitMode::Repeat && pattern_gap(&input, resolved.spacing).is_some();
+            let pitched = laid_pitched(&input, &resolved);
             let (replaced, p) = if pitched {
                 let inks = [self.reach_inks(from), self.reach_inks(to)];
                 let backs = [self.back(&start), self.back(&end)];
@@ -1861,6 +1861,15 @@ impl Projector {
             portal.end[k].label.center = centers[k].1;
         }
     }
+}
+
+/// Whether a connector's or a line link's body of `input`, resolved as
+/// `resolved`, is laid as whole glyphs (`place_pitched`): a `Repeat`
+/// whose text has a gap to pitch it at (`pattern_gap`). Any other body is
+/// laid along its path as its fit says (`place_on_open`), which the
+/// projection's work bound reads (#387). O(its glyphs).
+pub(crate) fn laid_pitched(input: &ShapedRun, resolved: &crate::document::resolve::ResolvedPath) -> bool {
+    resolved.fit == FitMode::Repeat && pattern_gap(input, resolved.spacing).is_some()
 }
 
 /// A line's own gap between two glyphs, and its glyphs' size: its
