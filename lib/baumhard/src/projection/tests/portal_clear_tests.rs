@@ -15,8 +15,10 @@ use serde_json::{json, Value};
 use crate::arena::NodeId;
 use crate::document::element::DocKind;
 use crate::document::resolve::{resolve_portal_end, BorderPoint};
-use crate::flow::Rect;
-use crate::projection::geometry::{held_apart, held_clear, marker_size, portal_along, portal_point, reach};
+use crate::flow::{Curve, Rect};
+use crate::projection::geometry::{
+    held_apart, held_clear, marker_size, portal_along, portal_point, portal_walls, reach, Leaving,
+};
 use crate::projection::state::{Placed, UnitBody};
 use crate::projection::tests::maps::{ident, kid, kids, load_map, node, text_section};
 use crate::projection::tests::support::Projected;
@@ -258,15 +260,17 @@ fn test_projection_a_portal_end_is_held_again_when_a_connector_leaves_its_side()
         p.apply(request(mutation, vec![two], "move node 2")).unwrap();
         p.check().unwrap();
         let (faced, now) = faced_and_held(&p, portal);
+        // Within a rounding: an end clear of every wall is placed from its
+        // stretch's start and back.
         if clear {
-            assert_eq!(
-                now, held,
-                "precondition: moved back, the end is held where it was"
+            assert!(
+                (now - held).abs() < 1e-3,
+                "precondition: moved back, the end is held where it was, {held}, not {now}"
             );
         } else {
-            assert_eq!(
-                now, faced,
-                "precondition: with no path on its side, the end sits where it faces"
+            assert!(
+                (now - faced).abs() < 1e-3,
+                "precondition: with no path on its side, the end sits where it faces, {faced}, not {now}"
             );
         }
     }
@@ -535,4 +539,311 @@ fn test_projection_portal_ends_keep_clear_of_paths_curving_along_their_node() {
         "precondition: where they face, some marker's ink would touch a connector's"
     );
     p.check().unwrap();
+}
+
+/// **Ends never overlap ends whenever their widths fit the perimeter**,
+/// though a stretch is left overflowing: the review's probe, two walls
+/// 2 wide leaving two stretches 48 long, and three ends 30 wide facing
+/// one of them. Two must share a stretch and overlap its walls; none may
+/// overlap another end, as the widths, 90, fit the perimeter, 100.
+///
+/// Control: the ends left as the stretches pack them, not held apart
+/// after, is red.
+#[test]
+fn test_projection_held_clear_keeps_ends_off_each_other_when_a_stretch_overflows() {
+    let walls = [(0.0, 2.0), (50.0, 2.0)];
+    let ends = [(25.0, 30.0); 3];
+    let held = held_clear(&ends, &walls, 100.0);
+    for k in 0..3 {
+        for j in k + 1..3 {
+            let apart = round(held[k], held[j], 100.0);
+            assert!(
+                apart >= 30.0 - 1e-3,
+                "ends {k} and {j} are {apart} apart, need 30: {held:?}"
+            );
+        }
+    }
+}
+
+/// **A stretch sheds to the nearest stretch with room, either way**: the
+/// review's probe, three walls 10 wide round an outline 300 long, three
+/// ends 40 wide facing 80 in a stretch 90 long and two 45 wide filling
+/// the next one clockwise. The first end goes counterclockwise across
+/// the one wall at the seam, to 275 — not clockwise across the full
+/// stretch and its ends to 225.
+///
+/// Control: the shed always going clockwise is red.
+#[test]
+fn test_projection_held_clear_sheds_counterclockwise_to_the_nearer_room() {
+    let walls = [(0.0, 10.0), (100.0, 10.0), (200.0, 10.0)];
+    let ends = [
+        (80.0, 40.0),
+        (80.0, 40.0),
+        (80.0, 40.0),
+        (150.0, 45.0),
+        (150.0, 45.0),
+    ];
+    let held = held_clear(&ends, &walls, 300.0);
+    for (k, want) in [275.0_f32, 35.0, 75.0, 127.5, 172.5].into_iter().enumerate() {
+        assert!(
+            (held[k] - want).abs() < 1e-3,
+            "end {k}, facing {}, held at {} not {want}: {held:?}",
+            ends[k].0,
+            held[k]
+        );
+    }
+}
+
+/// A rectangle 50 by 20 at the origin, its corners square.
+fn box_50_20() -> crate::flow::Outline {
+    crate::flow::outline(
+        Rect::new(Vec2::ZERO, Vec2::new(50.0, 20.0)),
+        crate::document::values::Shape::Rectangle {
+            radius: crate::document::values::Percent::new(0),
+        },
+    )
+}
+
+/// Whether every whole place from `from` to `to` along an outline lies
+/// within one of `walls`.
+fn walled(walls: &[(f32, f32)], from: f32, to: f32) -> bool {
+    (from as i32..=to as i32).all(|s| {
+        walls
+            .iter()
+            .any(|&(at, width)| (s as f32 - at).abs() <= 0.5 * width + 1e-3)
+    })
+}
+
+/// **A path as long as a lay draws is walled where it runs along the
+/// node**: a line 2 above the top side of a box 50 by 20, running from
+/// `-1e13` to `1e13`, walls the whole top side, as one from `-1e3` to
+/// `1e3` does — the halvings reach down to the piece next to the node.
+///
+/// Control: 24 halvings at most, not 64, is red.
+#[test]
+fn test_projection_portal_walls_reach_along_a_path_as_long_as_a_lay_draws() {
+    for reach in [1e3_f32, 1e13] {
+        let path = Leaving {
+            curves: vec![Curve::Line(Vec2::new(-reach, -2.0), Vec2::new(reach, -2.0))],
+            radius: 1.0,
+        };
+        let walls = portal_walls(&box_50_20(), &[path], (0.0, 20.0));
+        assert!(
+            walled(&walls, 0.0, 50.0),
+            "the line {reach} long leaves the top side unwalled: {} walls",
+            walls.len()
+        );
+    }
+}
+
+/// **One path's walls stop at `WALL_SAMPLE_CAP` points**, as its doc
+/// says: a line 2 above the top side of a box 100 000 by 20, all of it
+/// within the band, is walled from its start for some thousands of
+/// steps, and not halfway along.
+///
+/// Control: a cap of 2²⁰ points, which the line's samples stay under, is
+/// red at the second assertion.
+#[test]
+fn test_projection_portal_walls_stop_at_the_sample_cap() {
+    let wide = crate::flow::outline(
+        Rect::new(Vec2::ZERO, Vec2::new(100_000.0, 20.0)),
+        crate::document::values::Shape::Rectangle {
+            radius: crate::document::values::Percent::new(0),
+        },
+    );
+    let path = Leaving {
+        curves: vec![Curve::Line(Vec2::new(0.0, -2.0), Vec2::new(100_000.0, -2.0))],
+        radius: 1.0,
+    };
+    let walls = portal_walls(&wide, &[path], (0.0, 20.0));
+    assert!(
+        walled(&walls, 0.0, 3000.0),
+        "the line's first 3000 steps are not walled: {} walls",
+        walls.len()
+    );
+    assert!(
+        !walled(&walls, 50_000.0, 50_000.0),
+        "halfway along the line is walled, past the cap: {} walls",
+        walls.len()
+    );
+}
+
+/// **A curve with no finite speed bound is halved, not passed over**: a
+/// quadratic from the right side's midpoint of a box 50 by 20, through
+/// `(3e38, 10)` to `(-3e38, 10)` — legs past the largest `f32` — walls
+/// the place it leaves from, 60 round from the top side's start.
+///
+/// Control: such a piece passed over is red.
+#[test]
+fn test_projection_portal_walls_halve_a_curve_with_no_finite_speed_bound() {
+    let path = Leaving {
+        curves: vec![Curve::Quadratic(
+            Vec2::new(50.0, 10.0),
+            Vec2::new(3e38, 10.0),
+            Vec2::new(-3e38, 10.0),
+        )],
+        radius: 1.0,
+    };
+    let walls = portal_walls(&box_50_20(), &[path], (0.0, 20.0));
+    assert!(
+        walled(&walls, 60.0, 60.0),
+        "the place the curve leaves from is not walled: {walls:?}"
+    );
+}
+
+/// **Ink inside the node is walled as far in as an end drawn inward
+/// reaches**: a line 8 inside the top side of a box 50 by 20 walls the
+/// top side for ends reaching 10 in, and not for ends that reach out
+/// only.
+///
+/// Control: the band's inner edge read as the outline is red.
+#[test]
+fn test_projection_portal_walls_reach_inward_for_ends_drawn_inward() {
+    let path = || Leaving {
+        curves: vec![Curve::Line(Vec2::new(5.0, 8.0), Vec2::new(45.0, 8.0))],
+        radius: 1.0,
+    };
+    let inward = portal_walls(&box_50_20(), &[path()], (-10.0, 20.0));
+    assert!(
+        walled(&inward, 10.0, 40.0),
+        "the line 8 inside is not walled for ends reaching 10 in: {inward:?}"
+    );
+    let outward = portal_walls(&box_50_20(), &[path()], (0.0, 20.0));
+    assert!(
+        !walled(&outward, 10.0, 40.0),
+        "precondition: for ends reaching out only, it is not walled there"
+    );
+}
+
+/// **A portal end keeps clear of a line link leaving its side**, as of a
+/// connector: the issue's map with node 2 linked to by a line, not a
+/// child.
+///
+/// Precondition: where it faces, the marker's ink would touch the line's.
+///
+/// Control: `held_clear` ignoring the walls is red.
+#[test]
+fn test_projection_a_portal_end_keeps_clear_of_a_line_link_leaving_its_side() {
+    let mut p = Projected::new(load_map(json!({"nodes": [
+        node(1, None, json!({"sections": [text_section("One")], "links": [
+            {"to": 3, "kind": "portal"}, {"to": 2, "kind": "line"}
+        ]})),
+        node(2, None, json!({"position": [300.0, 0.0], "sections": [text_section("Two")]})),
+        node(3, None, json!({"position": [600.0, 0.0], "sections": [text_section("Three")]})),
+    ]})));
+    let links = kids(&p.doc, ident(&p.doc, 1), DocKind::Link);
+    let (mut portal, mut line_inks) = (None, Vec::new());
+    for id in links {
+        match &p.projector.units[&id].body {
+            UnitBody::Portal(_) => portal = Some(id),
+            UnitBody::Line(line) => {
+                line_inks = line
+                    .flows
+                    .iter()
+                    .filter_map(|f| f.placed.as_ref())
+                    .flat_map(inks)
+                    .collect()
+            }
+            _ => {}
+        }
+    }
+    let portal = portal.expect("the portal");
+    assert!(line_inks.len() >= 4, "precondition: the line link draws ink");
+    let (own, center) = marker(&p, portal);
+    let (faced, held) = faced_and_held(&p, portal);
+    let shift = center_at(&p, portal, faced) - center;
+    let there: Vec<Rect> = own.iter().map(|r| Rect::new(r.origin + shift, r.size)).collect();
+    assert!(
+        touch(&there, &line_inks),
+        "precondition: where it faces, {faced}, the marker's ink would touch the line's"
+    );
+    assert!(
+        !touch(&own, &line_inks),
+        "the marker, held at {held} from {faced}, touches the line link's ink"
+    );
+    p.check().unwrap();
+}
+
+/// The ink of the end at node 1 of `portal`: its marker's glyphs, and its
+/// label's box when it has one.
+fn end_ink(p: &Projected, portal: NodeId) -> Vec<Rect> {
+    let UnitBody::Portal(state) = &p.projector.units[&portal].body else {
+        panic!("a portal");
+    };
+    let end = &state.end[0];
+    let mut out = inks(end.marker.placed.as_ref().expect("its marker is placed"));
+    if let (Some(center), Some(flow)) = (end.label.center, end.label.flow.as_ref()) {
+        out.push(Rect::new(center - 0.5 * flow.shaped.size, flow.shaped.size));
+    }
+    out
+}
+
+/// **Swept round the node, ends keep clear of the path and of each
+/// other**: node 2, a child of node 1, at sixteen angles round it; two
+/// portals from node 1 — one with a label — toward nodes a little either
+/// side of node 2's direction, so they face the side its connector
+/// leaves; on node 1 drawn as a rectangle and as an ellipse. In every
+/// layout no marker's ink, and no label's box, touches the connector's
+/// ink, and the two ends' inks do not touch each other.
+///
+/// Precondition: where they face, some end's marker would touch the
+/// connector's ink in some layout.
+///
+/// Controls: `held_clear` returning `held_apart` is red at the
+/// connector; the ends in a stretch moved in from its walls but not held
+/// apart from each other is red at the two ends.
+#[test]
+fn test_projection_portal_ends_swept_round_their_node_keep_clear_of_its_path_and_each_other() {
+    let mut faced_touch = false;
+    for shape in [json!(null), json!("ellipse")] {
+        for step in 0..16 {
+            for skew in [-0.3_f32, 0.0, 0.3] {
+                let angle = step as f32 * std::f32::consts::TAU / 16.0;
+                let at = |turn: f32, far: f32| {
+                    let d = Vec2::from_angle(angle + turn) * far;
+                    json!([d.x, d.y])
+                };
+                let mut one = json!({"sections": [text_section("Node one")], "links": [
+                    {"to": 3, "kind": "portal", "ends": [{"label": {"spans": [{"text": "out"}]}}, {}]},
+                    {"to": 4, "kind": "portal"}
+                ]});
+                if !shape.is_null() {
+                    one["shape"] = shape.clone();
+                }
+                let p = Projected::new(load_map(json!({"nodes": [
+                    node(1, None, one),
+                    node(2, Some(1), json!({"position": at(0.0, 260.0), "sections": [text_section("Two")]})),
+                    node(3, None, json!({"position": at(skew, 600.0), "sections": [text_section("Three")]})),
+                    node(4, None, json!({"position": at(skew + 0.2, 600.0), "sections": [text_section("Four")]})),
+                ]})));
+                let row = format!("shape {shape}, angle {angle}, skew {skew}");
+                let connector = connector_inks(&p);
+                let portals = kids(&p.doc, ident(&p.doc, 1), DocKind::Link);
+                let mut own = Vec::new();
+                for &portal in &portals {
+                    let ink = end_ink(&p, portal);
+                    let (_, center) = marker(&p, portal);
+                    let (faced, _) = faced_and_held(&p, portal);
+                    let shift = center_at(&p, portal, faced) - center;
+                    let there: Vec<Rect> = ink.iter().map(|r| Rect::new(r.origin + shift, r.size)).collect();
+                    faced_touch |= touch(&there, &connector);
+                    own.push(ink);
+                }
+                assert!(
+                    !touch(&own[0], &own[1]),
+                    "{row}: the two ends at node 1 touch each other"
+                );
+                for ink in &own {
+                    assert!(
+                        !touch(ink, &connector),
+                        "{row}: an end at node 1 touches the connector's ink"
+                    );
+                }
+            }
+        }
+    }
+    assert!(
+        faced_touch,
+        "precondition: where they face, some end would touch the connector's ink"
+    );
 }

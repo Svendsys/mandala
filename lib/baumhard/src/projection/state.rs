@@ -390,9 +390,13 @@ pub(crate) struct PortalAt {
     /// The larger side of its marker's box and its label's.
     pub(crate) width: f32,
     /// How far past the outline, along its normal, its marker and label
-    /// reach at most, at any place along it: what the paths leaving the
-    /// node are walled off by, as far out as that (`geometry::portal_walls`).
+    /// reach at most, at any place along it, and how far inside it at
+    /// most, as a distance past it (zero, or less for an end drawn
+    /// inward): the band the paths leaving the node are walled off in
+    /// (`geometry::portal_walls`).
     pub(crate) depth: f32,
+    /// The band's inner edge: see [`depth`](Self::depth).
+    pub(crate) inner: f32,
 }
 
 /// What a unit is, and what it keeps.

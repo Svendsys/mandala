@@ -1466,6 +1466,7 @@ impl Projector {
     /// fanned, which phase C fans first. Each member whose value changed
     /// is queued to be laid again, and no other: a drag that keeps the
     /// order lays the dragged path alone.
+    ///
     /// Returns the nodes at the other ends of the paths a side's fan
     /// changed, whose curves there changed with it: what phase C holds
     /// the portal ends of again.
@@ -1486,9 +1487,8 @@ impl Projector {
     /// ends: O(the members, log them) with no path leaving the node;
     /// with one, an arc-length walk of its outline, a nearest-point
     /// search of it for each sample of each path's curves near it
-    /// (`geometry::portal_walls`), and `held_clear`'s
-    /// O((the members + the free stretches) × the free stretches) at
-    /// worst.
+    /// (`geometry::portal_walls`), and `held_clear`'s O(the members × the
+    /// free stretches²) at worst.
     ///
     /// [`UNTANGLE_ROUNDS`]: geometry::UNTANGLE_ROUNDS
     fn refan(&mut self, key: JunctionKey, work: &mut PhaseWork) -> Vec<NodeId> {
@@ -1566,13 +1566,14 @@ impl Projector {
                 }
             }
             None => {
-                // (along, path, end, width, perimeter, depth)
-                let mut ends: Vec<(f32, NodeId, usize, f32, f32, f32)> = members
+                // (along, path, end, width, perimeter, (inner, depth))
+                type HeldEnd = (f32, NodeId, usize, f32, f32, (f32, f32));
+                let mut ends: Vec<HeldEnd> = members
                     .iter()
                     .filter_map(|p| match at(p) {
                         Some(UnitBody::Portal(portal)) => portal.at.iter().enumerate().find_map(|(k, a)| {
                             a.filter(|a| a.node == key.0)
-                                .map(|a| (a.along, *p, k, a.width, a.perimeter, a.depth))
+                                .map(|a| (a.along, *p, k, a.width, a.perimeter, (a.inner, a.depth)))
                         }),
                         _ => None,
                     })
@@ -1580,12 +1581,15 @@ impl Projector {
                 ends.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
                 let perimeter = ends.first().map_or(0.0, |e| e.4);
                 // The paths leaving the node, walled off as far out as its
-                // deepest end reaches (#394).
+                // farthest end reaches and as far in as its most inward
+                // one (#394).
                 let leaving = self.leaving(key.0);
                 let walls = match self.nodes.get(&key.0) {
                     Some(n) if !leaving.is_empty() => {
-                        let depth = ends.iter().map(|e| e.5).fold(0.0_f32, f32::max);
-                        geometry::portal_walls(&n.outline, &leaving, depth)
+                        let band = ends
+                            .iter()
+                            .fold((0.0_f32, 0.0_f32), |b, e| (b.0.min(e.5 .0), b.1.max(e.5 .1)));
+                        geometry::portal_walls(&n.outline, &leaving, band)
                     }
                     _ => Vec::new(),
                 };
@@ -1809,18 +1813,21 @@ impl Projector {
                 )
             });
             let label = end.label.flow.as_ref().map_or(Vec2::ZERO, |f| f.shaped.size);
-            // How far out `portal_place` draws its marker and its label at
-            // most: each box one reach past the one before it, and a reach
-            // along any normal no more than half the box's diagonal.
+            // How far out and how far in `portal_place` draws its marker
+            // and its label at most, along the outline's normal: the
+            // marker from its offset on, by twice its reach; the label
+            // past that by its own offset, then by twice its reach; a
+            // reach along any normal no more than half the box's diagonal,
+            // and no less than nothing.
             let usable = |v: f32| if v.is_finite() { v } else { 0.0 };
-            let marker_far = usable(resolved.offset) + marker.length();
-            let label_far = match (end.label.id, end.label.flow.as_ref()) {
+            let offset = usable(resolved.offset);
+            let marker_far = offset + marker.length();
+            let (label_near, label_far) = match (end.label.id, end.label.flow.as_ref()) {
                 (Some(id), Some(_)) => {
-                    marker_far
-                        + usable(resolve_label(tree, id, &mut Reads(&mut reads)).offset)
-                        + label.length()
+                    let label_offset = usable(resolve_label(tree, id, &mut Reads(&mut reads)).offset);
+                    (offset + label_offset, marker_far + label_offset + label.length())
                 }
-                _ => marker_far,
+                _ => (offset, marker_far),
             };
             let (along, perimeter) = geometry::portal_along(&outline, border, toward);
             at[k] = Some(PortalAt {
@@ -1829,6 +1836,7 @@ impl Projector {
                 perimeter,
                 width: marker.max(label).max_element(),
                 depth: marker_far.max(label_far).max(0.0),
+                inner: offset.min(label_near).min(0.0),
             });
         }
         self.deps.record(Dependent::new(id, Stage::Geometry), &reads);

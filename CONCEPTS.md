@@ -1920,11 +1920,15 @@ the layers to learn what the document is, and nothing flows back.
   found, and only the paths whose fan changed are laid again. Portal
   ends with no `border_t` that face one way at a node are held apart
   along its outline (`geometry::held_apart`), and clear of the paths
-  leaving the node (#394): wherever a path's ink comes within as far
-  out as the ends reach, it walls off the place along the outline
-  nearest it (`geometry::portal_walls`), and the ends take the nearest
-  free places, a crowded stretch passing ends on across a wall to the
-  nearest one with room (`geometry::held_clear`). A node's sides are
+  leaving the node (#394): wherever a path's body or caps come within
+  the band the ends there take, that ink walls off the place along the
+  outline nearest it (`geometry::portal_walls`), and the ends take the
+  nearest free places (`geometry::held_clear`). A crowded stretch sheds
+  ends, one at a time, to the nearest stretch with room either way
+  round, clockwise on a tie; where neither way has room, to the one an
+  end overflows least, if that lowers the overflow. An end may then sit
+  on a path, but never on another end while their widths fit the
+  perimeter. A node's sides are
   fanned before its portal ends are held, so the walls are the fans';
   its ends are held again whenever a side there is fanned, or a fan at
   a path's other end changes the path. Portal ends never move a path,
