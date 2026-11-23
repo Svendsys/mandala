@@ -1,0 +1,38 @@
+{
+  "format": 1,
+  "name": "Live",
+  "nodes": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "sections": [{"spans": [{"text": "Root"}]}],
+      "links": [{"to": 5, "kind": "portal", "ends": [{"label": {"spans": [{"text": "far"}]}}, {}]}]
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "position": [300.0, 0.0],
+      "color": "#ff8000",
+      "sections": [{"spans": [{"text": "Child"}]}],
+      "connector": {"content": "-", "label": {"t": 0.5, "spans": [{"text": "via"}]}}
+    },
+    {
+      "id": 4,
+      "parent": 2,
+      "position": [600.0, 0.0],
+      "sections": [{"spans": [{"text": "Grand"}]}]
+    },
+    {
+      "id": 3,
+      "position": [0.0, 300.0],
+      "sections": [{"spans": [{"text": "Other"}]}],
+      "links": [{"to": 2, "kind": "line", "content": "-", "control_points": [[0.0, -40.0]]}]
+    },
+    {
+      "id": 5,
+      "position": [300.0, 300.0],
+      "min_size": [160.0, 80.0],
+      "sections": [{"spans": [{"text": "Far"}]}, {"channel": 1, "offset": [0.0, 40.0], "spans": [{"text": "below"}]}]
+    }
+  ]
+}

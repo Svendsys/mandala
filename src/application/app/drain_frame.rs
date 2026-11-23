@@ -2,7 +2,8 @@
 
 //! The frame's input half on native: what runs once per loop iteration
 //! after the queued input has been handled — the rubber band, which
-//! follows the pointer every frame.
+//! follows the pointer every frame, and the drag that edits the map,
+//! whose transaction is staged here once a frame (`app::live`).
 //!
 //! **The rubber band's authority is the drag state**
 //! (`DragState::SelectingRect`). Each frame re-derives its two artifacts
@@ -19,6 +20,7 @@ use glam::Vec2;
 
 use super::dispatch::cross_dispatch::view_ctx;
 use super::input_context::InputHandlerContext;
+use super::live::Drained;
 use super::DragState;
 use crate::application::document::MindMapDocument;
 use crate::application::renderer::Renderer;
@@ -49,6 +51,33 @@ pub(super) fn drain_rect_select(
                 view.set_band_targets(None);
                 view.sync(doc, renderer);
             }
+        }
+    }
+}
+
+/// Stage the drag that edits the map, once, when input moved it since
+/// the last frame and the frame is due (`live::Live::drain`). A drag
+/// whose transaction is no longer open — an undo canceled it — ends
+/// here. Returns when it staged, for the throttle to be told the frame's
+/// cost once the view has drawn it.
+pub(super) fn drain_drag(
+    drag_state: &mut DragState,
+    document: &mut Option<MindMapDocument>,
+    view: &mut Option<MapView>,
+    throttled: bool,
+) -> Option<std::time::Instant> {
+    let DragState::Dragging(live) = drag_state else {
+        return None;
+    };
+    let (Some(doc), Some(view)) = (document.as_mut(), view.as_ref()) else {
+        return None;
+    };
+    match live.drain(doc, view.projector(), throttled) {
+        Drained::Idle => None,
+        Drained::Staged(started) => Some(started),
+        Drained::Ended => {
+            *drag_state = DragState::None;
+            None
         }
     }
 }
@@ -139,6 +168,7 @@ mod tests {
                 start_pos: (0.0, 0.0),
                 hit: ClickHit::Empty,
                 landed: None,
+                grab: None,
             },
             DragState::Panning {
                 owner: PanOwner::Toggled,

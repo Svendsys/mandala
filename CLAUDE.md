@@ -297,29 +297,79 @@ the parity trajectory (or why none is owed):
 - **`fps` console verb** — native because the console shell is; the
   render-side FPS plumbing compiles on both targets and browsers
   expose frame timing via DevTools (CONCEPTS §5 "FPS overlay").
-- **Editing modes and their gestures** — resize (`EnterResizeMode`,
-  `FastResizeStart`, a finger on a handle), the node and section text
-  editors and the edge-label and portal-caption single-line editor
-  were deleted with the old model (V1-C3, #244), on both targets, and
-  are rebuilt on the document's writer by V1-C7 (#248) and V1-C8 (#249).
-  Their Actions stay, answered unhandled with a `debug!` naming the
-  owner, and ship unbound; each owner decides its targets when it lands.
-  The touch vocabulary that reaches no `Action` — tap, one-finger pan and
-  pinch-zoom — runs on both targets through `dispatch::apply_touch_effect`.
+- **Text editing** — the node and section text editors and the
+  edge-label and portal-caption single-line editor were deleted with the
+  old model (V1-C3, #244), on both targets, and are rebuilt on the
+  document's writer by V1-C8 (#249). Their Actions stay, answered
+  unhandled with a `debug!` naming the owner, and ship unbound; the owner
+  decides their targets when it lands.
+- **Drags that edit the map, and the color picker**
+  (`src/application/app/live/`, `app/event_cursor_moved.rs`,
+  `app/drain_frame.rs`, `app/color_picker_flow/`; V1-C7 #248) —
+  native-only, as on `main`, because the drag-state machine and the
+  picker's modal are. Each is a transaction on the document's writer: a
+  press past the threshold begins it, every cursor move only updates the
+  drag's total since the press, the frame's drain stages the request for
+  that total once (absolute from the press, never accumulated), the
+  release commits one history entry, and Escape, a lost focus or an undo
+  cancels it; the contextual picker begins at its opening, stages the
+  color it shows once a frame and commits on its ࿕ click. There is no
+  preview: what a drag shows is the document, drawn through the projector
+  like any change, so a presentation keeps playing on top of it. The
+  browser has no drag-state machine, so nothing it does starts one, and
+  the picker's Actions (`OpenColorPicker`, `CloseColorPicker`,
+  `Picker*`) are `NativeOnly`. **The handle chrome is not gated**
+  (`view::handles`): a selected path's handles are drawn on both targets,
+  as `main` drew them; only the drags that grab them, and the resize mode
+  whose handles they would be, are native. Parity rides on the browser's
+  drag-state machine (**Rubber-band select** below), not yet scheduled.
+- **`LongPress` → `EnterResizeMode`, and a finger on a resize
+  handle** (`src/application/keybinds/config.rs`,
+  `src/application/app/run_wasm/event_touch.rs`,
+  `src/application/app/touch_handle.rs`) — the touch route to a
+  resize, and native-only end to end. **On native** a long-press
+  enters `InteractionMode::Resize` on the selection, and a finger
+  that then starts a gesture on one of its handles drives the handle
+  drag as the left button would (`touch_handle`, #160): it begins the
+  resize's transaction at the threshold, its travel is staged once a
+  frame, and its lift commits one history entry (`app::live`) —
+  without reaching the gesture recognizer, so it cannot also pan.
+  `FastResizeStart` (`Ctrl+RightDrag`) is the mouse's accelerator for
+  the same resize, by design: it has no touch binding, because this is
+  its touch route. **On the browser** neither half exists. `LongPress`
+  is the one touch gesture that resolves through the keybind table, and
+  the one that is native-only. Its default `Action` is `NativeOnly`, so
+  on the browser the dispatch returns `Unhandled` and a one-shot `warn!`
+  names the remedy; the gesture is *recognized* identically on both
+  targets, and only the `Action` it reaches is not. Deliberate rather
+  than pending: long-press is the touch peer of the keyboard's `r`, so
+  rebinding the browser's long-press to some unrelated `Compatible`
+  Action would make one gesture mean two different things on two
+  targets — a worse CODE_CONVENTIONS §4 outcome than a gesture that is
+  honestly unavailable and says so. **The rest of the touch vocabulary
+  is not affected**: tap, one-finger pan and pinch-zoom resolve to no
+  `Action` at all and run on both targets through
+  `dispatch::apply_touch_effect`. Parity is the `InteractionMode::Resize`
+  mode plus its handle drag reaching the browser — the same drag-state
+  machine **Rubber-band select** below is parked on, with
+  `touch_handle`'s routing ported beside it so a finger can hold a
+  handle there too — and flips this `Action` to `Compatible` when it
+  lands.
 - **Rubber-band select** (`DragState::SelectingRect`,
   `src/application/app/drain_frame.rs`, `src/application/view/band.rs`,
   `MapView::{nodes_in, set_band_targets, band_targets, set_band}`) —
   native-only because `DragState` and the per-frame drain are:
   the browser has no drag-state machine and no `AboutToWait` to
   hang a per-frame hit-test off, so there is nothing for a
-  Shift+drag to enter. **The read is deliberately not gated.**
+  Shift+drag to enter — nor for the drags that edit the map, which the
+  same machine holds and the same drain stages (above). **The read is deliberately not gated.**
   The view's overlay (`view::overlay`) tints what a band covers while
   one is out and the selection otherwise, on both targets; only the
   gesture, the band drawn on the chrome layer (`view::band`) and the
   four `MapView` methods they use are native. On wasm32 the band's
   targets are therefore always `None`. The chrome layer's write path
-  (`MapView::apply_chrome`, a sync pass's chrome builders) is both
-  targets'. Parity for the gesture itself
+  (`MapView::apply_chrome`, a sync pass's handles and chrome builders) is
+  both targets'. Parity for the gesture itself
   rides on the browser gaining a drag-state machine — a press
   needs somewhere to be pending before it can promote — and is
   not yet scheduled. What the browser lacks for it is the
@@ -344,7 +394,10 @@ the parity trajectory (or why none is owed):
   its registry of the app's and the user's presentations
   (`application/presentations.rs`) is loaded and waits for V1-D3's
   verbs, which start presentations on both targets. No parity is
-  owed beyond the console's.
+  owed beyond the console's. A drag never pauses them, on either
+  target: a drag is a transaction on the document, and the
+  presentation layer sits on top of whatever the document is, stage
+  and all (§10.2), so `main`'s animation pause during a drag is gone.
 - **Virtual-clock stepping: the native frame it steps**
   (`src/application/app/heartbeat.rs`; IPC-09/#69) — what a step
   runs at each heartbeat on native is native's whole frame: the

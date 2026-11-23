@@ -47,22 +47,14 @@ keybind_surface! {
         /// Enter connect mode on the current selection.
         EnterConnectMode => enter_connect_mode = ["Ctrl+D"],
         /// Enter resize mode on the current selection.
-        ///
-        /// Unbound until V1-C7 (#248) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["r", "LongPress"]`.
-        EnterResizeMode => enter_resize_mode = [],
+        EnterResizeMode => enter_resize_mode = ["r", "LongPress"],
         /// Start a corner-anchored fast-resize gesture from a
         /// right-button drag. Lookup goes through
         /// [`super::ResolvedKeybinds::action_for_gesture`] so the
         /// standard modifier-fallback applies — a user who clears
         /// the default and binds bare `["RightDrag"]` gets
         /// fast-resize on plain right-drag, no Ctrl required.
-        ///
-        /// Unbound until V1-C7 (#248) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Ctrl+RightDrag"]`.
-        FastResizeStart => fast_resize_start = [],
+        FastResizeStart => fast_resize_start = ["Ctrl+RightDrag"],
         /// Delete the current selection.
         DeleteSelection => delete_selection = ["Delete"],
         /// Leave the active interaction mode. Also cancels an active
@@ -169,53 +161,21 @@ keybind_surface! {
 
         // ── Color Picker ─────────────────────────────────────────
         /// Cancel the color picker (contextual mode only).
-        ///
-        /// Unbound until V1-C7 (#248) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Escape"]`.
-        PickerCancel => picker_cancel = [],
+        PickerCancel => picker_cancel = ["Escape"],
         /// Commit the picked color.
-        ///
-        /// Unbound until V1-C7 (#248) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Enter"]`.
-        PickerCommit => picker_commit = [],
+        PickerCommit => picker_commit = ["Enter"],
         /// Nudge hue down.
-        ///
-        /// Unbound until V1-C7 (#248) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["h"]`.
-        PickerNudgeHueDown => picker_nudge_hue_down = [],
+        PickerNudgeHueDown => picker_nudge_hue_down = ["h"],
         /// Nudge hue up.
-        ///
-        /// Unbound until V1-C7 (#248) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Shift+h"]`.
-        PickerNudgeHueUp => picker_nudge_hue_up = [],
+        PickerNudgeHueUp => picker_nudge_hue_up = ["Shift+h"],
         /// Nudge saturation down.
-        ///
-        /// Unbound until V1-C7 (#248) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["s"]`.
-        PickerNudgeSatDown => picker_nudge_sat_down = [],
+        PickerNudgeSatDown => picker_nudge_sat_down = ["s"],
         /// Nudge saturation up.
-        ///
-        /// Unbound until V1-C7 (#248) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Shift+s"]`.
-        PickerNudgeSatUp => picker_nudge_sat_up = [],
+        PickerNudgeSatUp => picker_nudge_sat_up = ["Shift+s"],
         /// Nudge value down.
-        ///
-        /// Unbound until V1-C7 (#248) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["v"]`.
-        PickerNudgeValDown => picker_nudge_val_down = [],
+        PickerNudgeValDown => picker_nudge_val_down = ["v"],
         /// Nudge value up.
-        ///
-        /// Unbound until V1-C7 (#248) rebuilds it on the one writer
-        /// (V1-C3 #244 removed the binding with the body); it shipped
-        /// as `["Shift+v"]`.
-        PickerNudgeValUp => picker_nudge_val_up = [],
+        PickerNudgeValUp => picker_nudge_val_up = ["Shift+v"],
 
         // ── Label Editor ─────────────────────────────────────────
         /// Discard the inline label editor's changes.

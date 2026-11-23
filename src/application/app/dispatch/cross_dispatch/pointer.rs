@@ -25,10 +25,13 @@ use super::click_selection;
 
 /// What a pointer press landed on, carried into a dispatch.
 #[derive(Debug, Clone, Copy)]
-#[expect(
-    dead_code,
-    reason = "read by the Actions that act where the pointer is: FastResizeStart (V1-C7, #248) and \
-              DoubleClickActivate (V1-C8, #249)"
+#[cfg_attr(
+    target_arch = "wasm32",
+    expect(
+        dead_code,
+        reason = "read by the Actions that act where the pointer is: FastResizeStart, which is native, and \
+                  DoubleClickActivate (V1-C8, #249)"
+    )
 )]
 pub struct DispatchHit {
     /// What the press hit (`compute_click_hit`).

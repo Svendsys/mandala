@@ -39,6 +39,8 @@
 //!   resolve and gate against.
 //! - [`user_config`] — XDG / web-storage shared loader
 //!   plumbing for keybinds / mutations / macros.
+//! - [`frame_throttle`] — how often a live interaction's stage runs
+//!   under load (its drags and picker are native).
 //! - [`view`] — the map's view: projector, glyph layers, chrome and
 //!   overlays, and the one pipeline that syncs them with the document.
 //! - [`common`] — small shared types: `RenderDecree` and
@@ -75,17 +77,8 @@ pub(crate) mod clipboard;
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) mod clock;
 // Picker layout math + state. Driver: `app::color_picker_flow`,
-// native-gated pending the browser modal shell. Its target-bound mode
-// and its error flash have no producer until the picker is a
-// transaction (V1-C7, #248).
+// native-gated pending the browser modal shell.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-#[cfg_attr(
-    not(target_arch = "wasm32"),
-    expect(
-        dead_code,
-        reason = "the picker's target-bound mode and error flash return with V1-C7 (#248)"
-    )
-)]
 pub(crate) mod color_picker;
 // Picker glyph-area builders. Same driver, same gate, as
 // [`color_picker`].
@@ -111,6 +104,12 @@ pub(crate) mod fields;
 // toward `mandalactl bridge` in the browser (`format/ipc.md`
 // §Transport; CLAUDE.md "Dual-target status").
 pub(crate) mod ipc;
+// Adaptive drain-rate math for the live interactions — the drags and
+// the color picker — whose per-frame drain stages their transaction
+// (`app::live`). Both targets compile it, as the picker's state that
+// holds one is; only native has the drags and the picker it paces.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) mod frame_throttle;
 pub(crate) mod keybinds;
 pub(crate) mod macros;
 // The missing-font prompt (#329): the report of the installed families a

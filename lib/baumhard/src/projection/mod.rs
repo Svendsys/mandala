@@ -129,6 +129,14 @@ use crate::projection::layers::LayerBuilders;
 use crate::projection::stages::PhaseWork;
 use crate::projection::state::{NodeState, Owner, ProjectedUnit, UnitBody};
 
+/// How many times what the last update moved — at least eight — the
+/// projector's set of moved elements may hold room for before an update
+/// replaces it rather than clear it in place
+/// ([`Projector::geometry_moved`]): a clear writes every slot of the table,
+/// so a set grown by one large edit would make every small edit after it
+/// cost that edit's size.
+const MOVED_SLACK: usize = 4;
+
 /// The projector: the projection state of one document and its glyph
 /// layers. See the [module docs](crate::projection).
 #[derive(Default)]
@@ -161,6 +169,18 @@ pub struct Projector {
     /// One shaping per key, for every unit whose key is equal
     /// ([`shapes`]).
     pub(crate) shapes: shapes::ShapeCache,
+    /// The elements whose drawn geometry the last update may have moved
+    /// ([`Projector::geometry_moved`]): each element phase D found again —
+    /// a node, a section or a ring whose geometry or reach was marked, a
+    /// node a section of which was placed elsewhere or dropped
+    /// (`behind::rehide`) — and each path laid or hidden again
+    /// (`behind::hide`). Emptied at the start of every update, and kept
+    /// proportional to it: the load's set, which holds the whole map, is
+    /// dropped at the end of [`Projector::project_full`], and a set grown
+    /// far past what the last update moved is replaced rather than cleared
+    /// in place, since clearing a table costs its capacity
+    /// ([`MOVED_SLACK`]).
+    pub(crate) moved: rustc_hash::FxHashSet<NodeId>,
     /// Every piece of work the last call ran, in order: what the tests of
     /// the dependency index read. Test builds only: the product keeps no
     /// log of its work.
@@ -188,6 +208,9 @@ impl Projector {
         projector.project_roots(doc.tree(), &mut work);
         projector.run_phases(doc, &mut work, fonts);
         projector.write_full(doc.tree(), layers);
+        // The load moved everything: nothing reads that, and a set the size
+        // of the map would cost every update that clears it.
+        projector.moved = Default::default();
         #[cfg(test)]
         {
             projector.ran = work.ran;
@@ -237,6 +260,11 @@ impl Projector {
         let mut work = PhaseWork::default();
         let mut out = LayerBuilders::new();
         let tree = doc.tree();
+        if self.moved.capacity() > MOVED_SLACK * self.moved.len().max(8) {
+            self.moved = Default::default();
+        } else {
+            self.moved.clear();
+        }
         #[cfg(test)]
         self.key_builds.clear();
         let touched = structure::TouchedElements::of(changes);
@@ -352,6 +380,149 @@ impl Projector {
         }
     }
 
+    /// The node a drawn connector or line link starts at and the node it
+    /// ends at: whose sides its two anchors name. `None` until it is
+    /// placed, and for a path that is not drawn. O(1).
+    pub fn path_ends(&self, path: NodeId) -> Option<(NodeId, NodeId)> {
+        match &self.units.get(&path)?.body {
+            UnitBody::Line(line) if line.drawn => line.ends,
+            _ => None,
+        }
+    }
+
+    /// A drawn section's box on the canvas: its node's drawn top-left
+    /// moved by the box it was placed in, its offset and its shaped
+    /// size — the box its node's drawn rectangle grows to hold (D5).
+    /// O(1).
+    pub fn section_rect(&self, section: NodeId) -> Option<Rect> {
+        let unit = self.units.get(&section)?;
+        let UnitBody::Section(state) = &unit.body else {
+            return None;
+        };
+        let local = state.local?;
+        Some(Rect::new(
+            self.nodes.get(&unit.node)?.rect.origin + local.origin,
+            local.size,
+        ))
+    }
+
+    /// Whether the last update may have moved what `element` draws or
+    /// where: a node's drawn rectangle or shape, a section's box within
+    /// its node, a ring's ink, a path's curve. Every element whose drawn
+    /// geometry changed in it answers yes — a node whose rectangle grew,
+    /// though it draws no frame and wrote no run (#395's review), and a
+    /// path laid again — and nothing the update did not reach does: a
+    /// pan, a zoom or a selection projects nothing, and a section's box
+    /// moves with its node's, so a reader of a section's canvas box asks
+    /// of its node too. What the handle chrome follows (V1-C7). O(1).
+    pub fn geometry_moved(&self, element: NodeId) -> bool {
+        self.moved.contains(&element)
+    }
+
+    /// The points the drawn connector or line link `path` passes through,
+    /// in order (D34): the midpoint of the side it starts at, each of its
+    /// control points where the projection placed it — the point
+    /// `k / (n + 1)` of the way from end to end, moved by control point
+    /// `k - 1` — and the midpoint of the side it ends at. A straight path passes
+    /// through its two ends only. `None` until it is placed, and for a
+    /// path that is not drawn. O(its control points); one allocation.
+    pub fn through_points(&self, path: NodeId) -> Option<Vec<Vec2>> {
+        let UnitBody::Line(line) = &self.units.get(&path)?.body else {
+            return None;
+        };
+        if !line.drawn || line.path.is_empty() {
+            return None;
+        }
+        let [Some(start), Some(end)] = line.attach else {
+            return None;
+        };
+        let via: &[Vec2] = if line.straight { &[] } else { &line.via };
+        Some(geometry::knots(start.point, end.point, via))
+    }
+
+    /// Where the drawn connector or line link `path` is at `t`, a fraction
+    /// of its arc length held to `0..=1`: where a label at `t` with no
+    /// offset centers. `None` until it is placed. Cost: one arc-length
+    /// table of its curves and one lookup.
+    pub fn point_along(&self, path: NodeId, t: f32) -> Option<Vec2> {
+        let curves = self.curve(path).filter(|c| !c.is_empty())?;
+        Some(geometry::label_center(curves, t, 0.0))
+    }
+
+    /// Where a label on the drawn path `path` centers nearest `point`, as
+    /// the label's `(t, offset)`: the inverse of where the projection
+    /// centers one. `None` until the path is placed. Cost: one arc-length
+    /// table of its curves and a nearest-point search.
+    pub fn label_place_at(&self, path: NodeId, point: Vec2) -> Option<(f32, f32)> {
+        Some(geometry::label_at(self.curve(path)?, point))
+    }
+
+    /// The drawn portal link the portal end `end` belongs to, and which
+    /// of its two ends `end` is. `None` for an end of a link not drawn.
+    /// O(1).
+    fn portal_end_of(&self, doc: &Document, end: NodeId) -> Option<(&state::PortalState, usize)> {
+        let link = doc.parent(end)?;
+        let UnitBody::Portal(portal) = &self.units.get(&link)?.body else {
+            return None;
+        };
+        let k = portal.end.iter().position(|e| e.marker.id == Some(end))?;
+        portal.drawn.then_some((portal, k))
+    }
+
+    /// Where the drawn portal end `end` (a portal-end element of `doc`)
+    /// centers its marker. `None` until it is placed. O(1).
+    pub fn portal_end_pos(&self, doc: &Document, end: NodeId) -> Option<Vec2> {
+        let (portal, k) = self.portal_end_of(doc, end)?;
+        portal.end[k].center
+    }
+
+    /// The portal end `end`'s `(border_t, offset)` that draws what a drag
+    /// holds — its marker, or with `by_label` its label — centered on
+    /// `point`: the inverse of where the projection draws an end whose
+    /// `border_t` is set (`geometry::portal_at`). Past the end's place,
+    /// at `offset` out along the outline's normal there, the projection
+    /// centers the marker one marker's reach further out, and the label a
+    /// further marker's reach, the label's own offset and the label's
+    /// reach (`stages::portal_place`): what the inverse takes off again,
+    /// for the normal it finds. `None` for an end not drawn, and with
+    /// `by_label` for an end with no label drawn.
+    ///
+    /// Cost: one arc-length walk of the node's outline, a nearest-point
+    /// search of it and one of its offset curve near there.
+    pub fn portal_place_at(
+        &self,
+        doc: &Document,
+        end: NodeId,
+        by_label: bool,
+        point: Vec2,
+    ) -> Option<(f32, f32)> {
+        let (portal, k) = self.portal_end_of(doc, end)?;
+        let (from, to) = portal.ends?;
+        let outline = self.nodes.get(if k == 0 { &from } else { &to })?.outline;
+        let state = &portal.end[k];
+        let marker = state
+            .marker
+            .flow
+            .as_ref()
+            .map(|f| geometry::marker_size(&f.shaped))?;
+        let label = match (by_label, state.label.id, state.label.flow.as_ref()) {
+            (false, ..) => None,
+            (true, Some(label), Some(flow)) => {
+                let offset = crate::document::resolve::resolve_label(doc.tree(), label, &mut ()).offset;
+                Some((if offset.is_finite() { offset } else { 0.0 }, flow.shaped.size))
+            }
+            (true, ..) => return None,
+        };
+        let reach = |normal: Vec2| {
+            let marker_reach = geometry::reach(normal, marker);
+            match label {
+                None => marker_reach,
+                Some((offset, size)) => 2.0 * marker_reach + offset + geometry::reach(normal, size),
+            }
+        };
+        Some(geometry::portal_at(&outline, point, reach))
+    }
+
     /// How many (input, work) pairs the dependency index holds: what the
     /// test that holds it linear in a deep chain reads. Test builds only.
     #[cfg(test)]
@@ -373,6 +544,11 @@ pub trait Geometry {
     fn curve(&self, path: NodeId) -> Option<&[Curve]>;
     /// Where a drawn label centers.
     fn label_pos(&self, label: NodeId) -> Option<Vec2>;
+    /// A drawn section's box on the canvas. `None` from a reader that
+    /// draws no sections, which an edit handler's double is.
+    fn section_rect(&self, _section: NodeId) -> Option<Rect> {
+        None
+    }
     /// The visible nodes whose drawn rectangles `rect` meets, insides
     /// overlapping (a shared edge does not count), in ascending node id.
     fn nodes_meeting(&self, rect: Rect) -> Vec<NodeId>;
@@ -390,6 +566,9 @@ impl Geometry for Projector {
     }
     fn label_pos(&self, label: NodeId) -> Option<Vec2> {
         Projector::label_pos(self, label)
+    }
+    fn section_rect(&self, section: NodeId) -> Option<Rect> {
+        Projector::section_rect(self, section)
     }
     fn nodes_meeting(&self, rect: Rect) -> Vec<NodeId> {
         Projector::nodes_meeting(self, rect)

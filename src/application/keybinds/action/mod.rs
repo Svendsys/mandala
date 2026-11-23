@@ -276,7 +276,6 @@ pub enum Action {
     /// on its own. The touch route to a resize, as a long-press, which
     /// is why [`Self::FastResizeStart`] needs no touch binding.
     /// NativeOnly while the browser has no drag-state machine.
-    /// Answers `unhandled` until V1-C7 (#248) rebuilds it.
     #[action(context = Document, wasm = NativeOnly)]
     EnterResizeMode,
     /// Start a corner-anchored resize from a held mouse button's drag:
@@ -288,7 +287,6 @@ pub enum Action {
     /// the user's. A mouse accelerator by design (#160): touch reaches
     /// the same resize through [`Self::EnterResizeMode`]. NativeOnly
     /// while the browser has no drag-state machine.
-    /// Answers `unhandled` until V1-C7 (#248) rebuilds it.
     #[action(context = Document, wasm = NativeOnly, destructive)]
     FastResizeStart,
 
@@ -368,14 +366,13 @@ pub enum Action {
     ConsoleScrollHome,
 
     // ── Color Picker ─────────────────────────────────────────────
-    // Owned by V1-C7 (#248), with the picker's transactions; until it
-    // lands each answers `unhandled`.
+    // The contextual picker is a transaction (V1-C7, #248): open
+    // begins it, a hover or a nudge stages the color, commit commits,
+    // cancel cancels.
     /// Cancel the color picker (contextual mode only; ignored in standalone).
-    /// Answers `unhandled` until V1-C7 (#248) rebuilds it.
     #[action(context = ColorPicker, wasm = NativeOnly)]
     PickerCancel,
     /// Commit the current color (contextual: close; standalone: apply to selection).
-    /// Answers `unhandled` until V1-C7 (#248) rebuilds it.
     #[action(context = ColorPicker, wasm = NativeOnly)]
     PickerCommit,
     /// Nudge hue −15°.
@@ -599,11 +596,9 @@ pub enum Action {
 
     // ── Console-verb Actions (Document context) ─────────────────
     /// Open the glyph-wheel color picker as a standalone palette.
-    /// Answers `unhandled` until V1-C7 (#248) rebuilds it.
     #[action(context = Document, wasm = NativeOnly)]
     OpenColorPicker,
     /// Close the glyph-wheel color picker.
-    /// Answers `unhandled` until V1-C7 (#248) rebuilds it.
     #[action(context = Document, wasm = NativeOnly)]
     CloseColorPicker,
     /// Open the inline label editor on the selected connector.

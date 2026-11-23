@@ -263,6 +263,7 @@ mod abandonment_guard {
                 start_pos: (0.0, 0.0),
                 hit: ClickHit::Empty,
                 landed: None,
+                grab: None,
             },
         ] {
             assert!(
@@ -410,10 +411,11 @@ mod abandonment_guard {
                 start_pos: (0.0, 0.0),
                 hit: ClickHit::Empty,
                 landed: None,
+                grab: None,
             },
         ] {
             let before = std::mem::discriminant(&drag);
-            drag.end_on_focus_loss();
+            drag.end_without_release(None);
             assert!(
                 matches!(drag, DragState::None),
                 "{before:?} must not outlive focus loss"

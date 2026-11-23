@@ -292,8 +292,8 @@ impl super::chrome::ChromeBuilder for Follower {
 
 /// **A chrome builder is handed every pass's `LayerChanges`, before the
 /// pass discards them, and its chrome is written in the same pass**
-/// (`view::chrome`, the hook V1-C7's handles and V1-C8's caret register
-/// on). A builder that follows node `a` re-stamps its run when an edit
+/// (`view::chrome`, the hook V1-C8's caret registers on). A builder that
+/// follows node `a` re-stamps its run when an edit
 /// writes `a`'s runs, and the pass's chrome journal names that run and
 /// nothing else.
 ///

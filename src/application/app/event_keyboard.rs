@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Keyboard-event dispatch. Routes `KeyboardInput` (Pressed only)
-//! through the console's steal, then the action table, then the macro
-//! bindings, then the edit bindings.
+//! through the console's steal, then the color picker's, then the
+//! action table, then the macro bindings, then the edit bindings.
 //!
-//! The map's own editors (V1-C8, #249) and the color picker (V1-C7,
-//! #248) return with the issues that rebuild them on the one writer, and
-//! take their places in this ladder then.
+//! The map's own editors (V1-C8, #249) return with the issue that
+//! rebuilds them on the one writer, and take their place in this ladder
+//! then.
 
 #![cfg(not(target_arch = "wasm32"))]
 
 use crate::application::platform::input::Key;
 
+use super::color_picker_flow::{handle_color_picker_clipboard_key, picker_op_for};
 use super::console_input::handle_console_key;
 use super::dispatch::families::edits;
 use super::input_context::InputHandlerContext;
@@ -37,6 +38,38 @@ pub(super) fn handle_keyboard_input(logical_key: Key, ctx: &mut InputHandlerCont
     if ctx.console_state.is_open() {
         handle_console_key(&key_name, &logical_key, ctx);
         return;
+    }
+
+    // The color picker steals the keys it claims (Esc, Enter, the
+    // nudges, and its clipboard's Copy / Paste / Cut); any other key —
+    // the console's `/` among them — falls through, so the standalone
+    // palette never locks the keyboard out. Commit, cancel and the
+    // nudges go through the funnel (`picker_op_for`), as on `main`;
+    // `Unhandled` comes back where the picker declines — a cancel of the
+    // standalone palette — and the key falls through to the document.
+    if ctx.color_picker_state.is_open() {
+        let picker_action = key_name.as_deref().and_then(|n| {
+            ctx.keybinds.action_for_context(
+                crate::application::keybinds::InputContext::ColorPicker,
+                n,
+                ctx.modifiers.control_key(),
+                ctx.modifiers.shift_key(),
+                ctx.modifiers.alt_key(),
+            )
+        });
+        match picker_action {
+            Some(a) if picker_op_for(&a).is_some() => {
+                if super::dispatch::dispatch_action(a, ctx, None) == super::dispatch::DispatchOutcome::Handled
+                {
+                    return;
+                }
+            }
+            other => {
+                if handle_color_picker_clipboard_key(other.as_ref(), ctx.color_picker_state) {
+                    return;
+                }
+            }
+        }
     }
 
     let Some(k) = key_name.as_deref() else {

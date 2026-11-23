@@ -79,6 +79,16 @@ impl InteractionMode {
             InteractionMode::Default => json!({ "kind": "Default" }),
             InteractionMode::Reparent { sources } => json!({ "kind": "Reparent", "sources": ids(sources) }),
             InteractionMode::Connect { sources } => json!({ "kind": "Connect", "sources": ids(sources) }),
+            InteractionMode::Resize { target } => {
+                let (what, element) = match target {
+                    super::interaction_mode::ResizeTarget::Node(node) => ("node", *node),
+                    super::interaction_mode::ResizeTarget::Section(section) => ("section", *section),
+                };
+                let element = doc.map_or(Value::Null, |doc| {
+                    crate::application::view::inspect::element_ref(doc, element)
+                });
+                json!({ "kind": "Resize", "target": { "kind": what, "element": element } })
+            }
         }
     }
 }
@@ -97,10 +107,13 @@ impl DragState {
         let canvas = |point: glam::Vec2| json!({ "x": f32_json(point.x), "y": f32_json(point.y) });
         match self {
             DragState::None => json!({ "kind": "None" }),
-            DragState::Pending { start_pos, hit, .. } => json!({
+            DragState::Pending {
+                start_pos, hit, grab, ..
+            } => json!({
                 "kind": "Pending",
                 "start_pos": xy_f64(*start_pos),
                 "hit": element(*hit),
+                "grab": grab.map(|grab| grab.word()),
             }),
             DragState::PendingRight {
                 start_pos,
@@ -133,6 +146,41 @@ impl DragState {
                 "start_canvas": canvas(*start_canvas),
                 "current_canvas": canvas(*current_canvas),
             }),
+            DragState::Dragging(live) => {
+                let named = |id| match doc {
+                    Some(doc) => crate::application::view::inspect::element_ref(doc.doc(), id),
+                    None => Value::Null,
+                };
+                let mut out = json!({
+                    "kind": "Dragging",
+                    "gesture": live.gesture.word(),
+                    "button": crate::application::ipc::injected::button_word(live.held_by),
+                    "total": canvas(live.total()),
+                });
+                let acting = match &live.gesture {
+                    super::live::Gesture::MoveNodes { nodes } => {
+                        json!({ "nodes": nodes.iter().map(|&(node, _)| named(node)).collect::<Vec<_>>() })
+                    }
+                    super::live::Gesture::MoveSection { section, .. } => {
+                        json!({ "element": named(*section) })
+                    }
+                    super::live::Gesture::ResizeNode { node, side, .. } => {
+                        json!({ "element": named(*node), "side": side.word() })
+                    }
+                    super::live::Gesture::ResizeSection { section, side, .. } => {
+                        json!({ "element": named(*section), "side": side.word() })
+                    }
+                    super::live::Gesture::PathHandle { path, handle, .. } => {
+                        json!({ "element": named(*path), "handle": handle.word() })
+                    }
+                    super::live::Gesture::Label { label, .. } => json!({ "element": named(*label) }),
+                    super::live::Gesture::PortalEnd { end, .. } => json!({ "element": named(*end) }),
+                };
+                if let (Some(out), Value::Object(acting)) = (out.as_object_mut(), acting) {
+                    out.extend(acting);
+                }
+                out
+            }
         }
     }
 }
@@ -198,9 +246,10 @@ impl OpenPicker {
     fn to_ipc_json(&self) -> Value {
         let mode = match &self.mode {
             PickerMode::Standalone => json!({ "kind": "Standalone" }),
-            PickerMode::Contextual { seed_hsv } => json!({
+            PickerMode::Contextual { seed_hsv, target } => json!({
                 "kind": "Contextual",
                 "seed_hsv": { "h": f32_json(seed_hsv.0), "s": f32_json(seed_hsv.1), "v": f32_json(seed_hsv.2) },
+                "axis": <&'static str>::from(target.axis),
             }),
         };
         let gesture = self.gesture.as_ref().map(|g| match g {
@@ -324,6 +373,7 @@ mod tests {
                     start_pos: (1.0, 2.0),
                     hit: ClickHit::Empty,
                     landed: None,
+                    grab: None,
                 },
                 "Pending",
             ),
@@ -349,6 +399,7 @@ mod tests {
             start_pos: (1.0, 2.0),
             hit: ClickHit::Empty,
             landed: None,
+            grab: None,
         };
         assert_eq!(pending.to_ipc_json(None)["hit"], Value::Null);
     }
@@ -407,11 +458,14 @@ mod tests {
             hover_preview: None,
             pending_error_flash: false,
             last_dynamic_apply: None,
+            staged: None,
+            throttle: crate::application::frame_throttle::MutationFrequencyThrottle::with_default_budget(),
         }))
     }
 
     /// An open picker reports its mode, the HSV it would commit and its
-    /// gesture; a contextual one carries the seed it opened on. Control:
+    /// gesture; a contextual one carries the seed it opened on and the
+    /// axis it colors. Control:
     /// the closed picker is `null`, so the open reply is the open state's.
     #[test]
     fn test_an_open_picker_reports_its_mode_and_hsv() {
@@ -423,10 +477,14 @@ mod tests {
         assert_eq!(json["gesture"], Value::Null);
         let seeded = picker_to_ipc_json(&open_picker(PickerMode::Contextual {
             seed_hsv: (10.0, 0.5, 0.75),
+            target: crate::application::color_picker::PickerTarget {
+                axis: crate::application::keybinds::ColorAxis::Border,
+                selection: crate::application::document::Selection::new(),
+            },
         }));
         assert_eq!(
             seeded["mode"],
-            json!({ "kind": "Contextual", "seed_hsv": { "h": 10.0, "s": 0.5, "v": 0.75 } })
+            json!({ "kind": "Contextual", "seed_hsv": { "h": 10.0, "s": 0.5, "v": 0.75 }, "axis": "border" })
         );
         assert_eq!(picker_to_ipc_json(&ColorPickerState::Closed), Value::Null);
     }

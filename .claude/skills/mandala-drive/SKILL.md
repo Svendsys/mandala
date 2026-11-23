@@ -334,8 +334,11 @@ count: 0
 elements: []
 ```
 
-- **Check before you drag.** A drag pans wherever it starts (moving a node
-  returns with V1-C7); with Shift on empty canvas it is a rubber band.
+- **Check before you drag.** A drag that starts on a node moves it (and its
+  subtree; Alt alone, Shift with the selection), one on a selected path's
+  handle, a label or a portal end drags that, and one on empty canvas pans;
+  with Shift on empty canvas it is a rubber band. Each drag that edits the map
+  is one undo entry.
   `scene.hit_test X Y space=surface` tells you what is under a point.
 - **`input.click_node` needs the node on screen** (it clicks where a hand
   would). Pan first, as above; `act.action CenterOnSelection` re-centers once

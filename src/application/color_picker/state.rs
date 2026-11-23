@@ -12,27 +12,47 @@ use super::layout::ColorPickerLayout;
 
 /// Which of the two picker modes is active.
 ///
-/// - **Contextual**: summoned for a specific target. Clicking the
-///   center ࿕ glyph commits the current HSV to that target and closes
-///   the wheel. Esc cancels (restores the original color) and closes.
-///   A click outside the backdrop also cancels. The target itself —
-///   and the transaction the picker holds on it — returns with V1-C7
-///   (#248); until then nothing opens this mode.
+/// - **Contextual**: summoned for a specific target (`color text`,
+///   `color border`, `color pick`): the selection as it stood, on one
+///   color axis. It is an interactive transaction from its opening to
+///   its close (V1-C7, `app::color_picker_flow`): each hover or pick
+///   stages the color on the target, clicking the center ࿕ glyph
+///   commits it — one history entry — and closes the wheel, and Esc or
+///   a click outside the backdrop cancels: the target is exactly as it
+///   was.
 /// - **Standalone**: summoned as a persistent palette
-///   (`color picker on`). No target bound at open time. Clicking ࿕
-///   applies the current HSV to every colorable item in the
-///   document's current selection (supports multi-select), then
-///   stays open. Esc and outside-clicks are ignored. The only way to
-///   dismiss it is `color picker off`. The wheel can also be
-///   dragged around the screen like a floating node.
+///   (`color picker on`). No target bound at open time, and no
+///   transaction (#248's ruling on its C3): while it is up, the map is
+///   edited as ever. Clicking ࿕ applies the current HSV to every
+///   colorable item in the document's current selection (supports
+///   multi-select) as one `apply`, then stays open. Esc and
+///   outside-clicks are ignored. The only way to dismiss it is
+///   `color picker off`. The wheel can also be dragged around the
+///   screen like a floating node.
 #[derive(Debug, Clone)]
 pub enum PickerMode {
     /// Target-bound picker. `seed_hsv` is the HSV the picker opened
-    /// at. Commit writes to the target and closes.
-    Contextual { seed_hsv: (f32, f32, f32) },
+    /// at, `target` what it stages on. Commit writes to the target and
+    /// closes.
+    Contextual {
+        seed_hsv: (f32, f32, f32),
+        target: PickerTarget,
+    },
     /// Persistent palette. Commit writes to the document's current
     /// selection (zero, one, or many items); the wheel stays open.
     Standalone,
+}
+
+/// What a contextual picker colors: `selection`, as it stood when the
+/// picker opened, on color `axis` — what its stages are built on
+/// (`fields::style::color_of`), whatever selects something else while it
+/// is open.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PickerTarget {
+    /// The color the picker sets: text, frame or ring.
+    pub axis: crate::application::keybinds::ColorAxis,
+    /// The elements it sets it on.
+    pub selection: crate::application::document::Selection,
 }
 
 /// Active-gesture bookkeeping for the color picker.
@@ -81,8 +101,8 @@ pub enum PickerGesture {
 }
 
 /// Modal state for the glyph-wheel color picker. Holds no snapshot of
-/// the document: V1-C7 (#248) previews by staging on a transaction,
-/// whose cancel is the restore.
+/// the document: a contextual picker shows its color by staging it on
+/// its transaction, whose cancel is the restore (V1-C7).
 #[derive(Debug, Clone)]
 pub enum ColorPickerState {
     Closed,
@@ -202,6 +222,39 @@ pub struct OpenPicker {
     /// cell set and the next dynamic apply should target the
     /// freshly-written state.
     pub last_dynamic_apply: Option<PickerDynamicApplyKey>,
+    /// The HSV a contextual picker last staged on its target, `None`
+    /// before its first stage: the frame's drain stages again only when
+    /// the color it shows differs (`app::color_picker_flow`).
+    pub staged: Option<(f32, f32, f32)>,
+    /// Paces that drain under load, as a drag's is (`frame_throttle`).
+    pub throttle: crate::application::frame_throttle::MutationFrequencyThrottle,
+}
+
+impl OpenPicker {
+    /// The color the picker shows: the hovered cell's, while one is
+    /// hovered, else the one picked. O(1).
+    pub fn shown_hsv(&self) -> (f32, f32, f32) {
+        self.hover_preview.unwrap_or((self.hue_deg, self.sat, self.val))
+    }
+
+    /// What a contextual picker stages on, `None` for the standalone
+    /// palette. O(1).
+    pub fn target(&self) -> Option<&PickerTarget> {
+        match &self.mode {
+            PickerMode::Contextual { target, .. } => Some(target),
+            PickerMode::Standalone => None,
+        }
+    }
+
+    /// Whether a contextual picker owes its target a stage: the color it
+    /// shows is not the one it last staged — a hover the frame has not
+    /// staged yet, or one a throttled frame held back. What keeps the
+    /// loop running until it is staged, as a drag's owed stage does
+    /// (`app::heartbeat::needs_continuation`). Never for the standalone
+    /// palette, which stages nothing. O(1).
+    pub fn owes_stage(&self) -> bool {
+        self.target().is_some() && self.staged != Some(self.shown_hsv())
+    }
 }
 
 /// Snapshot of the picker state the dynamic phase writes against.

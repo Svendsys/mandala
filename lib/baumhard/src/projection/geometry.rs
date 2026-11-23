@@ -407,7 +407,7 @@ pub(crate) fn path_through(
     let knot = |k: usize| match k {
         0 => q0,
         k if k > n => q1,
-        k => p0 + (p1 - p0) * (k as f32 / (n + 1) as f32) + usable_point(via[k - 1]),
+        k => through(p0, p1, via, k),
     };
     // A lead's handle: along `dir`, as far as the curve reaches that way.
     let handle = |from: Vec2, dir: Vec2, to: Vec2| {
@@ -437,6 +437,26 @@ pub(crate) fn path_through(
         curves.push(Curve::Line(q1, p1));
     }
     curves
+}
+
+/// The point a path from `p0` to `p1` passes through for control point
+/// `k - 1` of `via` (D34), `k` in `1..=via.len()`: the point `k / (n + 1)`
+/// of the way along the straight line from end to end, moved by it; one
+/// that is not finite moves it nothing. O(1).
+fn through(p0: Vec2, p1: Vec2, via: &[Vec2], k: usize) -> Vec2 {
+    p0 + (p1 - p0) * (k as f32 / (via.len() + 1) as f32) + usable_point(via[k - 1])
+}
+
+/// Every point a path from `start` to `end` through `via` passes through,
+/// in order ([`path_through`]): its two ends, and between them the point
+/// of each control point. O(`via`); one allocation.
+pub(crate) fn knots(start: Vec2, end: Vec2, via: &[Vec2]) -> Vec<Vec2> {
+    let (p0, p1) = (usable_point(start), usable_point(end));
+    let mut out = Vec::with_capacity(via.len() + 2);
+    out.push(p0);
+    out.extend((1..=via.len()).map(|k| through(p0, p1, via, k)));
+    out.push(p1);
+    out
 }
 
 /// How many rounds [`untangle`] takes, at most: each halves the handles
@@ -1148,6 +1168,10 @@ thread_local! {
     /// thread listing the lanes near a cell, one for each lane it read in
     /// the nine cells round it.
     pub(crate) static UNTANGLE_LISTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test counter: the times [`portal_at`] has had to solve for an
+    /// offset on this thread, its first estimate drawing the end off the
+    /// point it read ([`solve_offset`]).
+    pub(crate) static PORTAL_SOLVES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `size` in points, for shaping: a relative size — a fraction of the
@@ -1212,6 +1236,263 @@ pub(crate) fn portal_point(outline: &Outline, s: f32, offset: f32) -> (Vec2, Vec
     let offset = if offset.is_finite() { offset } else { 0.0 };
     let point = portal_arc(outline).offset_at(s, offset);
     (point.point, point.normal)
+}
+
+/// The inverse of [`label_center`]: the label place nearest `point` on
+/// `path` — the fraction of the curve's arc length at the point of it
+/// nearest `point`, and `point`'s distance from there along the curve's
+/// left normal, which is the offset that moves a label's center onto
+/// `point` there. `(0.5, 0)` for a path of no length, the place
+/// [`label_center`] reads a `t` that is not a number as. What a label
+/// drag (V1-C7) writes for the pointer.
+///
+/// Cost: one arc-length table of the curve (none for a line) and one
+/// nearest-point search ([`ArcPath::nearest`]).
+pub(crate) fn label_at(path: &[Curve], point: Vec2) -> (f32, f32) {
+    let arc = ArcPath::open(path, POINT_TABLE_SPACING);
+    let length = arc.length();
+    if length.is_nan() || length <= 0.0 || !point.is_finite() {
+        return (0.5, 0.0);
+    }
+    let s = arc.nearest(point);
+    let (on, tangent) = arc.at(s);
+    (
+        (s / length).clamp(0.0, 1.0),
+        (point - on).dot(left_normal(tangent)),
+    )
+}
+
+/// The inverse of where the projection draws a portal end whose
+/// `border_t` is set ([`portal_along`], [`portal_point`]): the
+/// `(border_t, offset)` — a fraction of the perimeter from the start of
+/// the top side, clockwise, and a distance out along the outward normal
+/// there — that centers what a drag holds on `point`, when the projection
+/// centers it `reach(normal)` further out than the end's place on the
+/// offset curve, for that place's normal (`Projector::portal_place_at`:
+/// the marker's reach, or for its label the marker's twice, the label's
+/// offset and its reach). What a portal-end drag (V1-C7) writes.
+///
+/// The outside of the outline is of two kinds. Beside a side or a bend
+/// the place is where the normal through `point` meets the outline, and
+/// the offset is how far out `point` is along it, less the reach. In a
+/// **sharp corner's wedge** — between its two sides' normals, where every
+/// point's nearest place on the outline is the corner itself — the
+/// offset curve sweeps round the corner at the offset's distance
+/// ([`ArcPath::offset_at`]), its normal turning from the side before's to
+/// the side after's: there the normal is the direction from the corner
+/// to `point`, and the offset its distance from the corner, less the
+/// reach for that normal. Either way the place is then found on the
+/// **offset curve** at that offset — the place whose drawn point is
+/// nearest `point` ([`nearest_drawn`]) — not on the outline: within a
+/// corner's sweep the two differ, by as much as the sweep is long, and
+/// the place on the outline would draw the end round the corner from the
+/// pointer; at a corner itself with no offset, where the outline has two
+/// normals, it is the side whose normal draws the end at `point`.
+///
+/// Nearer the outline than the reach, or inside it, the offset is inward,
+/// and at a sharp corner the offset curve folds onto the corner of the
+/// curve inside, its normal turning there while its point stands, so the
+/// first estimate may draw the end off `point`. The offset is then solved
+/// for: as it grows the drawn curve moves out, so `point`'s distance out
+/// from where the end is drawn nearest it, along the normal there, falls
+/// as the offset grows — bracketed from the estimate by doubling steps
+/// and bisected ([`solve_offset`]), the place found again at each.
+/// Outside a fold the first estimate is exact and nothing is solved.
+///
+/// `(0, 0)` for an outline of no length, and for a `point` that is not
+/// finite; a `reach` that is not finite is none.
+///
+/// Cost: one arc-length walk of the outline (a table for an ellipse), one
+/// nearest-point search of it and one of its offset curve near there; in
+/// a fold one more search a step of the solve.
+pub(crate) fn portal_at(outline: &Outline, point: Vec2, reach: impl Fn(Vec2) -> f32) -> (f32, f32) {
+    let arc = portal_arc(outline);
+    let length = arc.length();
+    if length.is_nan() || length <= 0.0 || !point.is_finite() {
+        return (0.0, 0.0);
+    }
+    let reach = |normal: Vec2| {
+        let r = reach(normal);
+        if r.is_finite() {
+            r
+        } else {
+            0.0
+        }
+    };
+    // Where the projection draws what is held for an end at `(s, offset)`.
+    let drawn = |s: f32, offset: f32| {
+        let on = arc.offset_at(s, offset);
+        on.point + on.normal * reach(on.normal)
+    };
+    let near = arc.nearest(point);
+    let on = arc.offset_at(near, 0.0);
+    let away = point - on.point;
+    // Outside, the direction from the place to `point`: the place's own
+    // normal beside a side or a bend, and in a sharp corner's wedge the
+    // swept normal that reaches `point`. Inside, the place's normal.
+    let normal = away
+        .try_normalize()
+        .filter(|&toward| toward.dot(on.normal) > -0.5)
+        .unwrap_or(on.normal);
+    let offset = away.dot(normal) - reach(normal);
+    if !offset.is_finite() {
+        return ((near / length).clamp(0.0, 1.0), 0.0);
+    }
+    let s = nearest_drawn(&arc, offset, point, near, &drawn);
+    let (s, offset) = if drawn(s, offset).distance(point) <= REFINED {
+        (s, offset)
+    } else {
+        solve_offset(&arc, point, offset, s, &drawn)
+    };
+    ((s / length).clamp(0.0, 1.0), offset)
+}
+
+/// [`portal_at`]'s solve for an offset whose first estimate `offset`, at
+/// the place `s`, draws the end off `point`: the place and the offset at
+/// which `point`'s distance out from the nearest drawn point, along the
+/// offset curve's normal there, is none. The distance falls as the offset
+/// grows; a bracket is found from `offset` by steps that double, then
+/// bisected. Of every place and offset it tried, the one that draws the
+/// end nearest `point`: where no offset draws it at `point` — an end
+/// pulled into an outline thinner than twice the offset, whose offset
+/// curve inward folds right over — the end is drawn as near as it comes.
+///
+/// Cost: one [`nearest_drawn`] a step, at most [`REFINE_ROUNDS`] steps of
+/// each kind.
+fn solve_offset(
+    arc: &ArcPath,
+    point: Vec2,
+    offset: f32,
+    s: f32,
+    drawn: &impl Fn(f32, f32) -> Vec2,
+) -> (f32, f32) {
+    #[cfg(test)]
+    PORTAL_SOLVES.with(|count| count.set(count.get() + 1));
+    // `point`'s distance out from the end drawn nearest it at `offset`,
+    // and the place it is drawn at.
+    let out = |offset: f32, near: f32| {
+        let s = nearest_drawn(arc, offset, point, near, drawn);
+        let normal = arc.offset_at(s, offset).normal;
+        let miss = point - drawn(s, offset);
+        (miss.dot(normal), s, miss.length())
+    };
+    let (first, mut near, missed) = out(offset, s);
+    let mut best = (missed, near, offset);
+    let outward = first > 0.0;
+    let (mut inner, mut outer) = (offset, offset);
+    let mut step = first.abs().max(1.0);
+    let mut bracketed = false;
+    for _ in 0..REFINE_ROUNDS {
+        let next = if outward { outer + step } else { inner - step };
+        let (d, at, missed) = out(next, near);
+        near = at;
+        if missed < best.0 {
+            best = (missed, at, next);
+        }
+        if outward {
+            inner = outer;
+            outer = next;
+        } else {
+            outer = inner;
+            inner = next;
+        }
+        if (d > 0.0) != outward || d == 0.0 {
+            bracketed = true;
+            break;
+        }
+        step *= 2.0;
+    }
+    if bracketed {
+        for _ in 0..REFINE_ROUNDS {
+            let middle = 0.5 * (inner + outer);
+            let (d, at, missed) = out(middle, near);
+            near = at;
+            if missed < best.0 {
+                best = (missed, at, middle);
+            }
+            if missed <= REFINED {
+                break;
+            }
+            if d > 0.0 {
+                inner = middle;
+            } else {
+                outer = middle;
+            }
+        }
+    }
+    (best.1, best.2)
+}
+
+/// How far, in canvas units, the end [`portal_at`] reads may be drawn
+/// from the pointer before it solves for the offset.
+const REFINED: f32 = 1e-3;
+
+/// How many steps of each kind [`solve_offset`] takes at most: to bracket
+/// the offset, then to bisect the bracket.
+const REFINE_ROUNDS: usize = 24;
+
+/// How many places either side of where it starts [`nearest_drawn`]
+/// reads before it narrows in.
+const OFFSET_SAMPLES: usize = 32;
+
+/// How many golden-section rounds [`nearest_drawn`] narrows in by.
+const OFFSET_ROUNDS: usize = 34;
+
+/// The place along `arc` at which `drawn` — where the projection draws
+/// what a portal end at that place and `offset` holds — is nearest
+/// `target`, searched within reach of `near`: a corner's sweep outward
+/// reaches `|offset|·|turn| / 2` either side of the corner, and a fold
+/// inward `|offset|·tan(|turn| / 2)` beyond its bend, so for a convex
+/// outline's turns (each under half a turn) the place lies within
+/// `2·|offset|` of `near`, which is within the sweep or the fold — and at
+/// most half the perimeter either way. A sampling, then a golden-section
+/// search between the best sample's neighbors.
+///
+/// Cost: twice [`OFFSET_SAMPLES`] and twice [`OFFSET_ROUNDS`] of `drawn`,
+/// each one offset-curve lookup.
+fn nearest_drawn(
+    arc: &ArcPath,
+    offset: f32,
+    target: Vec2,
+    near: f32,
+    drawn: &impl Fn(f32, f32) -> Vec2,
+) -> f32 {
+    let length = arc.length();
+    let window = (2.0 * offset.abs() + 1.0).min(0.5 * length);
+    let distance = |s: f32| (drawn(s, offset) - target).length();
+    let step = window / OFFSET_SAMPLES as f32;
+    let mut best = (distance(near), near);
+    for k in 0..=2 * OFFSET_SAMPLES {
+        let s = near - window + step * k as f32;
+        let d = distance(s);
+        if d < best.0 {
+            best = (d, s);
+        }
+    }
+    let (mut low, mut high) = (best.1 - step, best.1 + step);
+    let ratio = 0.5 * (5.0_f32.sqrt() - 1.0);
+    for _ in 0..OFFSET_ROUNDS {
+        let a = high - ratio * (high - low);
+        let b = low + ratio * (high - low);
+        if distance(a) <= distance(b) {
+            high = b;
+        } else {
+            low = a;
+        }
+    }
+    let found = 0.5 * (low + high);
+    // The best sample itself, when the narrowing found no nearer: a place
+    // at a corner with no offset, where the drawn point jumps between
+    // the two sides' normals, is a sample's.
+    let found = if distance(found) <= best.0 { found } else { best.1 };
+    found.rem_euclid(length)
+}
+
+/// The box a portal end's marker run draws in: its glyphs' advances by
+/// its line height, centered on its place (`stages::portal_place`). O(its
+/// glyphs).
+pub(crate) fn marker_size(run: &crate::flow::ShapedRun) -> Vec2 {
+    Vec2::new(run.glyphs.iter().map(|g| g.advance).sum(), run.line_height)
 }
 
 /// `outline` walked once clockwise from the start of its top side: what

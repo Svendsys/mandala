@@ -196,10 +196,6 @@ pub fn command_by_name(name: &str) -> Option<&'static Command> {
     })
 }
 
-/// The owner of Resize mode and its handle drags (`mode resize`), as a
-/// refusal names it.
-pub(super) const TRANSACTIONS_OWNER: &str = "V1-C7 (#248)";
-
 /// The owner of node editing (`mode node-edit`), as a refusal names it.
 pub(super) const TEXT_OWNER: &str = "V1-C8 (#249)";
 

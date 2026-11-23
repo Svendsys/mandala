@@ -12,6 +12,7 @@
 
 use crate::application::platform::input::{ElementState, MouseButton};
 
+use super::color_picker_flow::{end_color_picker_gesture, handle_color_picker_click, PickerClick};
 use super::console_input::save_console_history;
 use super::dispatch::cross_dispatch::click_selection;
 use super::dispatch::families::edits::Projected;
@@ -76,6 +77,32 @@ pub(super) fn handle_mouse_input(
         *ctx.console_state = ConsoleState::Closed;
         ctx.renderer.rebuild_console_overlay_buffers(ctx.app_scene, None);
         return;
+    }
+    // The color picker takes the left and right buttons first: a press
+    // on the wheel picks a cell, starts the wheel's move (left) or resize
+    // (right), or names commit or cancel, which the funnel runs; a
+    // release ends the wheel's gesture. The standalone palette lets a
+    // press outside it reach the canvas, so the map can be selected and
+    // edited under it; the contextual picker takes every press, and one
+    // outside it cancels. As on `main`.
+    if ctx.color_picker_state.is_open() && matches!(button, MouseButton::Left | MouseButton::Right) {
+        let consumed = if state == ElementState::Pressed {
+            match handle_color_picker_click(*ctx.cursor_pos, button, ctx.color_picker_state) {
+                PickerClick::Consumed => true,
+                PickerClick::FallThrough => false,
+                PickerClick::Dispatch(action) => {
+                    let _ = super::dispatch::dispatch_action(action, ctx, None);
+                    true
+                }
+            }
+        } else {
+            end_color_picker_gesture(ctx.color_picker_state)
+        };
+        // The wheel the press changed is drawn by the next frame
+        // (`color_picker_flow::session::drain`).
+        if consumed {
+            return;
+        }
     }
     match button {
         MouseButton::Middle => {
@@ -171,6 +198,29 @@ fn handle_left_press(ctx: &mut InputHandlerContext<'_>) {
         .renderer
         .screen_to_canvas(screen_pos.0 as f32, screen_pos.1 as f32);
     let (landed, hit) = press_hit(ctx.document.as_ref(), ctx.view.as_mut(), canvas_pos);
+    let grab = match (ctx.document.as_ref(), ctx.view.as_ref()) {
+        (Some(doc), Some(view)) => super::live::grab::press_grab(
+            doc.doc(),
+            view,
+            landed.as_ref(),
+            canvas_pos,
+            super::handle_tolerance(ctx.renderer),
+        ),
+        _ => None,
+    };
+    // A press on a handle takes no part in a double-click (#218): it
+    // neither completes one nor starts one, so a second press on a
+    // handle grabs it again rather than open an editor under it.
+    if grab.is_some_and(super::live::grab::Grab::is_handle) {
+        *ctx.last_click = None;
+        *ctx.drag_state = DragState::Pending {
+            start_pos: screen_pos,
+            hit,
+            landed,
+            grab,
+        };
+        return;
+    }
     let now = ctx.clock.now_ms();
     let doubled = ctx
         .last_click
@@ -198,25 +248,45 @@ fn handle_left_press(ctx: &mut InputHandlerContext<'_>) {
         start_pos: screen_pos,
         hit,
         landed,
+        grab,
     };
 }
 
-/// A left release: a press that never became a drag is a click; a rubber
-/// band ends by selecting what it covers; a pan the left button holds
+/// A left release: a press that never became a drag is a click — one on
+/// a handle clicks nothing, and in the resize mode any other leaves it;
+/// a rubber band ends by selecting what it covers; a drag the left button
+/// holds commits (`live::Live::release`); a pan the left button holds
 /// ends.
 fn handle_left_release(ctx: &mut InputHandlerContext<'_>) {
     match std::mem::replace(ctx.drag_state, DragState::None) {
-        DragState::Pending { hit, landed, .. } => handle_click(hit, landed, ctx.modifiers.shift_key(), ctx),
+        DragState::Pending { grab: Some(grab), .. } if grab.is_handle() => {}
+        DragState::Pending { hit, landed, .. } => {
+            if matches!(*ctx.interaction_mode, InteractionMode::Resize { .. }) {
+                *ctx.interaction_mode = InteractionMode::Default;
+            }
+            handle_click(hit, landed, ctx.modifiers.shift_key(), ctx)
+        }
         DragState::SelectingRect {
             start_canvas,
             current_canvas,
         } => super::drain_frame::end_rect_select_gesture(ctx, start_canvas, current_canvas),
+        DragState::Dragging(live) if live.held_by == MouseButton::Left => release_drag(*live, ctx),
         other => {
             *ctx.drag_state = other;
             ctx.drag_state
                 .end_pan_held_by(&HeldInput::Button(MouseButton::Left));
         }
     }
+}
+
+/// The release of the button that holds `live`: it commits, as one
+/// history entry, and the view draws the committed map.
+pub(super) fn release_drag(live: super::live::Live, ctx: &mut InputHandlerContext<'_>) {
+    let (Some(doc), Some(view)) = (ctx.document.as_mut(), ctx.view.as_mut()) else {
+        return;
+    };
+    live.release(doc, view.projector());
+    view.sync(doc, ctx.renderer);
 }
 
 /// A click on what its press `landed` on — `hit`, what the selection
@@ -258,6 +328,12 @@ fn handle_right_button(state: ElementState, ctx: &mut InputHandlerContext<'_>) {
             log::debug!("right-button press ignored (drag already in flight); state stays put");
             return;
         }
+        // The resize mode's handles are its resize; a fast resize from
+        // the body would compete with them, as on `main`.
+        if matches!(*ctx.interaction_mode, InteractionMode::Resize { .. }) {
+            log::debug!("right-button press ignored (Resize mode active; use the visible handles)");
+            return;
+        }
         let start_pos = *ctx.cursor_pos;
         let (start_canvas, hit) = hit_under_cursor(ctx);
         *ctx.drag_state = DragState::PendingRight {
@@ -273,6 +349,8 @@ fn handle_right_button(state: ElementState, ctx: &mut InputHandlerContext<'_>) {
                 let _ = super::dispatch::dispatch_action(a, ctx, None);
             }
         }
+        // A fast resize the right button holds (`FastResizeStart`).
+        DragState::Dragging(live) if live.held_by == MouseButton::Right => release_drag(*live, ctx),
         other => {
             *ctx.drag_state = other;
             ctx.drag_state
@@ -375,6 +453,7 @@ mod tests {
                 start_pos: (0.0, 0.0),
                 hit: ClickHit::Empty,
                 landed: None,
+                grab: None,
             },
         ] {
             assert_eq!(

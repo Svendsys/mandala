@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! **The chrome builders' hook** (design §12.1; #244's chrome
-//! amendment): chrome that follows the document — V1-C7's resize
-//! handles, which move "when `LayerChanges` touches a selected
-//! element", and V1-C8's caret — registers a [`ChromeBuilder`] on the
-//! view ([`super::MapView::load_with_chrome`]) instead of editing the
-//! sync pass. Each sync pass that changed the layers hands its
+//! amendment): chrome that follows the document — V1-C8's caret —
+//! registers a [`ChromeBuilder`] on the view
+//! ([`super::MapView::load_with_chrome`]) instead of editing the sync
+//! pass. Each sync pass that changed the layers hands its
 //! [`LayerChanges`] to every builder ([`PassChanges`]) before the pass
 //! discards them; what the builders return is applied to the chrome
 //! layer under one journal, which the renderer applies in the same pass
@@ -15,7 +14,15 @@
 //!
 //! The rubber band (`view::band`) is chrome too, but it follows a
 //! gesture, not the document, so it writes through
-//! `MapView::apply_chrome` when the gesture moves.
+//! `MapView::apply_chrome` when the gesture moves. The handle chrome
+//! (`view::handles`, V1-C7) follows the document *and* the selection and
+//! the mode, which no builder is handed, so the view keeps it itself: a
+//! sync pass asks the projector whether it may have moved each set's
+//! target's geometry (`Projector::geometry_moved`) — a handle sits on a
+//! drawn rectangle or curve, which can change though the target writes
+//! no run of its own — and compares the targets the selection and the
+//! mode want with the ones shown, in the pass that also writes the
+//! builders' chrome.
 
 use baumhard::arena::NodeId;
 use baumhard::document::ids::Document;
@@ -54,22 +61,20 @@ pub(crate) struct PassChanges<'a> {
 impl PassChanges<'_> {
     /// Whether the pass wrote a run `element` owns — a node's, through
     /// its sections, frames and labels, or a connector's or a link's —
-    /// in any layer, a removal included: the question a handle or a
-    /// caret asks of its target. A node deleted, hidden or folded away
-    /// is touched by the removal of what it drew, which is read from the
-    /// owner the projector recorded when it wrote the removal
-    /// ([`LayerChanges::removed_owner`]), since by now it has forgotten
-    /// the glyph. An element the run's owner merely descends from is not
-    /// touched by it.
+    /// in any layer, a removal included: the question a caret asks of
+    /// its target (a handle asks of geometry instead, which a target can
+    /// change without writing a run: `Projector::geometry_moved`). A node
+    /// deleted, hidden or folded away is touched by the removal of what it
+    /// drew, which is read from the owner the projector recorded when it
+    /// wrote the removal ([`LayerChanges::removed_owner`]), since by now
+    /// it has forgotten the glyph. An element the run's owner merely
+    /// descends from is not touched by it.
     ///
     /// Cost: O(the elements the pass wrote × the depth to each one's
     /// owner, at most three); no walk of a layer or of the document.
     #[cfg_attr(
         not(test),
-        expect(
-            dead_code,
-            reason = "V1-C7's handles and V1-C8's caret are its first readers (#248, #249)"
-        )
+        expect(dead_code, reason = "V1-C8's caret is its first reader (#249)")
     )]
     pub(crate) fn touches(&self, element: NodeId) -> bool {
         Layer::ALL.into_iter().any(|layer| {

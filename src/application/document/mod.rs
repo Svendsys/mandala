@@ -14,7 +14,8 @@
 //! change of the document and is drawn by the view's overlay.
 //!
 //! **D28 is reported in one place.** While an interactive transaction
-//! is open (C7's drags, C8's editors), the writer refuses any other
+//! is open (a drag, the color picker, a frame preview, C8's editors),
+//! the writer refuses any other
 //! `apply` or `begin` with [`ApplyError::TransactionOpen`].
 //! [`MindMapDocument::apply`] and [`MindMapDocument::begin`] are the
 //! only entries the app has to the writer's two refusable calls, and
@@ -60,7 +61,7 @@ use log::{info, warn};
 /// ([`MindMapDocument::transaction`]) holds interactions only — a drag,
 /// an editor, a preview — so an interaction that begins while an edit
 /// animates (and so, by D28, fast-forwards and commits it) can never be
-/// staged into, committed or cancelled by the edit's tick: the tick
+/// staged into, committed or canceled by the edit's tick: the tick
 /// reaches nothing but this handle, and stops the moment the writer says
 /// it is no longer open.
 #[derive(Debug)]
@@ -80,12 +81,22 @@ pub const TRANSACTION_OPEN_STATUS: &str = "busy: finish or cancel the edit in pr
 /// What the one open transaction is for: the interaction that began it,
 /// and the only one that may stage into it, commit it or cancel it — so
 /// `frame commit` never ends a drag or an editor session that happens to
-/// be open. Each interaction that opens a transaction (V1-C7's drags,
-/// V1-C8's editors) names itself here.
+/// be open. Each interaction that opens a transaction (the drags and the
+/// color picker, V1-C8's editors) names itself here.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Interaction {
     /// A frame preview (V1-C5): its stage is the previewed frame fields.
     FramePreview,
+    /// A drag that edits the map — a move, a resize, a path handle, a
+    /// label, a portal end (V1-C7, `app::live`): its stage is the request
+    /// for the drag's total since the press. Native, with the drags.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    Drag,
+    /// The contextual color picker (V1-C7, `app::color_picker_flow`):
+    /// open from its opening to its commit or cancel, its stage the color
+    /// it shows on its target. Native, with the picker.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    ColorPicker,
     /// An interaction the tests open, which nothing else stages into.
     #[cfg(test)]
     Test,
@@ -94,7 +105,8 @@ pub enum Interaction {
 /// The open map. See the [module docs](self).
 pub struct MindMapDocument {
     /// The map. Private: it changes only through [`Self::apply`],
-    /// [`Self::undo`] and [`Self::redo`] (and V1-C7's transactions).
+    /// [`Self::undo`], [`Self::redo`] and the transactions
+    /// ([`Self::begin`]).
     doc: Document,
     /// Where the map was loaded from or last saved to; `None` for a map
     /// that has never been on disk, which `save` refuses without a path.
@@ -483,7 +495,7 @@ impl MindMapDocument {
     }
 
     /// Undo the newest history entry. With a transaction open, the
-    /// writer settles it first (an interactive one is cancelled and that
+    /// writer settles it first (an interactive one is canceled and that
     /// is the undo; ruling R36 on #238). Returns the new revision, or
     /// `None` when nothing changed.
     pub fn undo(&mut self) -> Option<Revision> {
@@ -542,7 +554,7 @@ impl MindMapDocument {
     }
 
     /// Drop each transaction handle the writer has closed: an
-    /// interaction an undo or a redo cancelled, and an animated edit
+    /// interaction an undo or a redo canceled, and an animated edit
     /// another change, an undo or a redo finished (D28, R36). Each is
     /// asked of the writer by its own handle.
     fn forget_closed_transaction(&mut self) {

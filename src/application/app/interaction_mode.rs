@@ -5,12 +5,14 @@
 //! The modes that edit the map arrive with the issues that rebuild
 //! their editing on the one writer: reparent and connect with V1-C4
 //! (#245), resize with V1-C7 (#248), node editing with V1-C8 (#249).
+//! A resize of a section is entered from a selected section, which only
+//! node editing (V1-C8) selects.
 //! Every surface that reports a mode — the IPC `query.mode`,
 //! `Action::ExitMode` — reads this type.
 //!
 //! Cross-platform: it carries no GPU handles, so both targets compile
-//! it. Reparent and connect are entered only by native-only Actions (as
-//! on `main`), so nothing on wasm32 constructs them.
+//! it. Reparent, connect and resize are entered only by native-only
+//! Actions (as on `main`), so nothing on wasm32 constructs them.
 
 use baumhard::arena::NodeId;
 
@@ -38,6 +40,49 @@ pub enum InteractionMode {
         /// The nodes to link from, in selection order.
         sources: Vec<NodeId>,
     },
+    /// The resize handles are shown on `target`: dragging one resizes
+    /// it, as a transaction (`app::live`). A click that grabs no handle,
+    /// and `Action::ExitMode`, leave the mode (`Action::EnterResizeMode`).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    Resize {
+        /// What the handles resize.
+        target: ResizeTarget,
+    },
+}
+
+/// What a resize mode's handles resize: a node, or one of its sections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub enum ResizeTarget {
+    /// A node, by its arena id: its minimum size, and for a top or left
+    /// handle its position.
+    Node(NodeId),
+    /// A section, by its arena id: its minimum size, and for a top or
+    /// left handle its offset.
+    Section(NodeId),
+}
+
+impl ResizeTarget {
+    /// What the resize mode resizes for `selection` of `doc`: its one
+    /// element, when that is a node or a section (a section is selected
+    /// only by node editing, V1-C8). `None` for anything else. What
+    /// `Action::EnterResizeMode` and `mode resize` enter on. O(1).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn of(
+        doc: &baumhard::document::ids::Document,
+        selection: &crate::application::document::Selection,
+    ) -> Option<Self> {
+        use baumhard::document::element::DocKind;
+        let mut selected = selection.iter();
+        let (Some(only), None) = (selected.next(), selected.next()) else {
+            return None;
+        };
+        match crate::application::document::selection::kind_of(doc, only)? {
+            DocKind::Node => Some(ResizeTarget::Node(only)),
+            DocKind::Section => Some(ResizeTarget::Section(only)),
+            _ => None,
+        }
+    }
 }
 
 impl InteractionMode {
@@ -47,19 +92,36 @@ impl InteractionMode {
     pub fn sources(&self) -> &[NodeId] {
         match self {
             InteractionMode::Reparent { sources } | InteractionMode::Connect { sources } => sources,
-            InteractionMode::Default => &[],
+            InteractionMode::Default | InteractionMode::Resize { .. } => &[],
+        }
+    }
+
+    /// The resize target while the resize mode is active. O(1).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn resize_target(&self) -> Option<ResizeTarget> {
+        match self {
+            InteractionMode::Resize { target } => Some(*target),
+            _ => None,
         }
     }
 
     /// What the status line says while the mode is active, as on
-    /// `main`: `reparent: 2 sources — click a target node`. `None` for
-    /// the default mode. Derived from the mode, so nothing else that
-    /// writes the status line can erase it while the mode lasts.
+    /// `main`: `reparent: 2 sources — click a target node`, `resize:
+    /// node — drag a corner or edge`. `None` for the default mode.
+    /// Derived from the mode, so nothing else that writes the status
+    /// line can erase it while the mode lasts.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn status_line(&self) -> Option<String> {
         let verb = match self {
             InteractionMode::Reparent { .. } => "reparent",
             InteractionMode::Connect { .. } => "connect",
+            InteractionMode::Resize { target } => {
+                let what = match target {
+                    ResizeTarget::Node(_) => "node",
+                    ResizeTarget::Section(_) => "section",
+                };
+                return Some(format!("resize: {what} \u{2014} drag a corner or edge"));
+            }
             InteractionMode::Default => return None,
         };
         let n = self.sources().len();

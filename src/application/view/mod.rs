@@ -37,11 +37,15 @@
 //!
 //! **Chrome that follows the document** registers a
 //! [`chrome::ChromeBuilder`] at load ([`MapView::load_with_chrome`]):
-//! the hook V1-C7's handles and V1-C8's caret register on, so neither
-//! edits this pass. A pass that changed the layers hands its
-//! `LayerChanges` to every builder before it discards them, and applies
-//! what they return to the chrome layer under one journal in the same
-//! pass ([module docs](chrome)).
+//! the hook V1-C8's caret registers on, so it does not edit this pass. A
+//! pass that changed the layers hands its `LayerChanges` to every builder
+//! before it discards them, and applies what they return to the chrome
+//! layer under one journal in the same pass ([module docs](chrome)). The
+//! **handle chrome** ([`handles`]) follows the selection and the mode as
+//! well as the document, so the view keeps it itself: every pass compares
+//! the handles' targets with the ones shown and asks whether its changes
+//! touch them, and writes them in that same journal — and a pass that
+//! changed none of it, a pan's or a zoom's, writes no chrome.
 //!
 //! **One font lease per pass** (#241, B7's note): a load and a sync each
 //! hold one `FontSystemLease`, taken at the first font read and released
@@ -56,11 +60,14 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod band;
 pub(crate) mod chrome;
+pub(crate) mod handles;
 pub(crate) mod inspect;
 pub(crate) mod overlay;
 pub(crate) mod present;
 #[cfg(test)]
 mod tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests_handles;
 #[cfg(test)]
 mod tests_present;
 
@@ -83,7 +90,9 @@ use baumhard::projection::{GlyphLayers, Hit, LayerChanges, Projector};
 use glam::Vec2;
 
 use crate::application::document::MindMapDocument;
+use crate::application::keybinds::ColorAxis;
 use crate::application::renderer::{LayerRenderer, Renderer};
+use baumhard::document::ids::Document;
 
 use self::chrome::{ChromeBuilder, PassChanges};
 use self::overlay::{Overlay, OverlayJournals, SELECTION_HIGHLIGHT, SOURCE_HIGHLIGHT, TARGET_HIGHLIGHT};
@@ -96,10 +105,10 @@ pub(crate) struct MapView {
     layers: GlyphLayers,
     /// The chrome layer (design §12.1): view-only glyphs built from app
     /// state rather than the document — the rubber band
-    /// (`view::band`, native), and V1-C7's handles and V1-C8's section frames to
-    /// come. Drawn above the five layers; written only under a journal
-    /// the renderer applies — [`Self::apply_chrome`]'s, or a sync
-    /// pass's for its chrome builders.
+    /// (`view::band`, native), the handles ([`handles`]), and V1-C8's
+    /// section frames to come. Drawn above the five layers; written only
+    /// under a journal the renderer applies — [`Self::apply_chrome`]'s,
+    /// or a sync pass's for the handles and the chrome builders.
     chrome: GfxTree,
     /// The chrome that follows the document ([`chrome::ChromeBuilder`]),
     /// in the order they were registered at load: handed every sync
@@ -113,6 +122,9 @@ pub(crate) struct MapView {
     /// with the rubber band.
     #[cfg(not(target_arch = "wasm32"))]
     band_rect: Option<Rect>,
+    /// The handle chrome ([`handles`]): the resize mode's handles and a
+    /// selected path's, in the chrome layer, and where they center.
+    handles: handles::Handles,
     /// The selection tint, stamped on the selection — or, while a rubber
     /// band is out, on what it covers (`band_targets`).
     highlight: Overlay,
@@ -137,6 +149,12 @@ pub(crate) struct MapView {
     mode: crate::application::app::InteractionMode,
     /// The active mode's status line, drawn over the document's.
     mode_line: Option<String>,
+    /// The contextual color picker's axis and targets while one is open
+    /// (`MapView::follow_picker`): on those targets the selection tint
+    /// stands down on what the axis colors, so the color the picker
+    /// stages shows. Native, with the picker; always `None` in the
+    /// browser.
+    picking: Option<(ColorAxis, Vec<NodeId>)>,
     /// What a rubber band covers while one is out — the highlight's
     /// targets, not a preview of any document change: the highlight
     /// follows them instead of the selection, whose highlight stands down
@@ -205,6 +223,7 @@ impl MapView {
         let mut chrome = chrome_layer();
         #[cfg(not(target_arch = "wasm32"))]
         let band = band::plant(&mut chrome);
+        let handles = handles::Handles::plant(&mut chrome);
         for builder in &mut builders {
             builder.plant(&mut chrome);
         }
@@ -217,6 +236,7 @@ impl MapView {
             band,
             #[cfg(not(target_arch = "wasm32"))]
             band_rect: None,
+            handles,
             highlight: Overlay::tint(SELECTION_HIGHLIGHT),
             hover: Overlay::tint(TARGET_HIGHLIGHT),
             hover_target: None,
@@ -226,6 +246,7 @@ impl MapView {
             #[cfg(not(target_arch = "wasm32"))]
             mode: Default::default(),
             mode_line: None,
+            picking: None,
             band_targets: None,
             feed: Vec::new(),
             shown_status: None,
@@ -297,8 +318,12 @@ impl MapView {
         families: &[String],
     ) -> bool {
         let status_changed = self.show_status(doc, renderer);
-        let Some(pass) = self.advance(doc, families) else {
-            return status_changed;
+        let pass = self.advance(doc, families);
+        let mut chrome = self.follow_handles(doc, pass.as_ref().and_then(|pass| pass.changes.as_ref()));
+        let Some(pass) = pass else {
+            let drew = !chrome.is_empty();
+            self.write_chrome(&chrome, renderer);
+            return status_changed || drew;
         };
         let projected = pass
             .changes
@@ -310,51 +335,125 @@ impl MapView {
         renderer.apply_layer_journals(&self.layers, projected.chain(stamped).chain(presented));
         if let Some(changes) = &pass.changes {
             renderer.set_background(resolve_background(doc.doc().tree(), &mut ()).0);
-            if let Some(journal) = self.follow_chrome(changes, doc) {
-                renderer.apply_chrome_journal(&self.chrome, &journal);
-                journal.discard(&mut self.chrome);
-            }
+            chrome.extend(self.follow_chrome(changes, doc));
         }
+        self.write_chrome(&chrome, renderer);
         self.finish(pass);
         true
     }
 
-    /// Hand a pass's `changes` to every chrome builder and apply what
-    /// they return to the chrome layer, under one journal: the chrome
-    /// half of a sync pass. `None` when no builder asked for anything,
-    /// or when a mutator was refused — which reverts everything the
-    /// builders applied in this pass, and is logged.
+    /// Apply `mutators` to the chrome layer under one journal, hand the
+    /// journal to the renderer and discard it: the chrome half of a sync
+    /// pass. Nothing for no mutators; a refusal reverts everything and is
+    /// logged.
+    fn write_chrome(&mut self, mutators: &[(GfxMutatorTree, Anchors)], renderer: &mut Renderer) {
+        if mutators.is_empty() {
+            return;
+        }
+        match self.journal_chrome(mutators) {
+            Ok(journal) => {
+                renderer.apply_chrome_journal(&self.chrome, &journal);
+                journal.discard(&mut self.chrome);
+            }
+            Err(error) => log::warn!("view: a chrome mutator was refused: {error}"),
+        }
+    }
+
+    /// The handle chrome's mutators for this pass ([`handles`]): a set is
+    /// shown again where what it is shown on changed — the selection, the
+    /// resize mode's target — or where the projection that produced
+    /// `changes` may have moved its target's geometry
+    /// ([`Projector::geometry_moved`]): a node's drawn rectangle, a
+    /// section's box or its node's, a path's curve. On geometry, not on
+    /// the runs a target owns: a node that draws no frame grows without
+    /// writing a run of its own (#395's review). Nothing for a pass that
+    /// projected nothing, which is a pan's and a zoom's.
     ///
-    /// Cost: each builder's reading of `changes`; the walks the
-    /// mutators make.
+    /// Cost: O(1) to compare the targets and to ask of each; each set
+    /// shown again, its slots.
+    fn follow_handles(
+        &mut self,
+        doc: &MindMapDocument,
+        changes: Option<&LayerChanges>,
+    ) -> Vec<(GfxMutatorTree, Anchors)> {
+        let targets = handles::targets_for(doc.doc(), &doc.selection, self.resize_target());
+        let follow = match changes {
+            Some(_) => handles::HandleSet::ALL.map(|set| {
+                targets[set.index()].is_some_and(|target| {
+                    let moved = |element| self.projector.geometry_moved(element);
+                    moved(target)
+                        || (set == handles::HandleSet::Section && doc.doc().parent(target).is_some_and(moved))
+                })
+            }),
+            None => [false; 3],
+        };
+        self.handles.update(targets, follow, doc.doc(), &self.projector)
+    }
+
+    /// The resize mode's target, as the view last followed the mode: the
+    /// browser has no resize mode.
+    fn resize_target(&self) -> Option<crate::application::app::ResizeTarget> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.mode.resize_target()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            None
+        }
+    }
+
+    /// The handle a press at `point` grabs, within `tolerance` canvas
+    /// units of its center ([`handles::Handles::at`]): asked before the
+    /// projector is, since the chrome is drawn over the map.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the browser draws the handles; only native's drags grab them"
+        )
+    )]
+    pub(crate) fn handle_at(&self, point: Vec2, tolerance: f32) -> Option<handles::Handle> {
+        self.handles.at(point, tolerance)
+    }
+
+    /// Where `handle` centers while it is shown.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "the browser draws the handles; only native's drags grab them"
+        )
+    )]
+    pub(crate) fn handle_center(&self, handle: handles::Handle) -> Option<Vec2> {
+        self.handles.center_of(handle)
+    }
+
+    /// The handle chrome, for the tests that read what it holds.
+    #[cfg(test)]
+    pub(crate) fn handles(&self) -> &handles::Handles {
+        &self.handles
+    }
+
+    /// Hand a pass's `changes` to every chrome builder, and collect the
+    /// chrome mutators they return: what [`Self::write_chrome`] applies
+    /// beside the handles' in the same pass.
+    ///
+    /// Cost: each builder's reading of `changes`.
     fn follow_chrome(
         &mut self,
         changes: &LayerChanges,
         doc: &MindMapDocument,
-    ) -> Option<Journal<GfxElement>> {
-        if self.chrome_builders.is_empty() {
-            return None;
-        }
+    ) -> Vec<(GfxMutatorTree, Anchors)> {
         let pass = PassChanges {
             changes,
             doc: doc.doc(),
             projector: &self.projector,
         };
-        let mutators: Vec<(GfxMutatorTree, Anchors)> = self
-            .chrome_builders
+        self.chrome_builders
             .iter_mut()
             .flat_map(|builder| builder.follow(&pass))
-            .collect();
-        if mutators.is_empty() {
-            return None;
-        }
-        match self.journal_chrome(&mutators) {
-            Ok(journal) => Some(journal),
-            Err(error) => {
-                log::warn!("view: a chrome builder's mutator was refused: {error}");
-                None
-            }
-        }
+            .collect()
     }
 
     /// Apply `mutators` to the chrome layer under one journal and close
@@ -410,6 +509,7 @@ impl MapView {
             sources,
             source_targets,
             band_targets,
+            picking,
             projector,
             layers,
             stage,
@@ -420,6 +520,9 @@ impl MapView {
             None => doc.selection.iter().collect(),
         };
         targets.retain(|target| !source_targets.contains(target));
+        if let Some((axis, picked)) = picking {
+            targets = stand_down(doc.doc(), targets, *axis, picked);
+        }
         let hovered: Option<NodeId> =
             hover_target.filter(|target| !targets.contains(target) && !source_targets.contains(target));
         let mut overlays: [(&mut Overlay, &[NodeId]); 3] = [
@@ -496,6 +599,60 @@ impl MapView {
         }
     }
 
+    /// Follow the contextual color picker: while one is open on
+    /// `picking`'s targets, the selection tint stands down on what its
+    /// axis colors there ([`stand_down`]), so the staged color is what is
+    /// drawn; with `None` — no picker, or the standalone palette — the
+    /// tint is back. Takes effect at the next [`Self::sync`]. O(the
+    /// targets) to compare. Native, with the picker.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn follow_picker(&mut self, picking: Option<(ColorAxis, &[NodeId])>) {
+        let same = match (&self.picking, picking) {
+            (None, None) => true,
+            (Some((axis, targets)), Some((now, picked))) => *axis == now && targets.as_slice() == picked,
+            _ => false,
+        };
+        if !same {
+            self.picking = picking.map(|(axis, picked)| (axis, picked.to_vec()));
+        }
+    }
+
+    /// The selection tint's targets as the overlay holds them. Test
+    /// builds only.
+    #[cfg(test)]
+    pub(crate) fn tinted(&self) -> &[NodeId] {
+        self.highlight.targets()
+    }
+
+    /// Every run the selection tint stamps now. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn tinted_runs(&self) -> Vec<(baumhard::projection::Layer, NodeId)> {
+        self.highlight.stamped_runs()
+    }
+
+    /// Whether the run `glyph` of `layer` is drawn in the selection tint:
+    /// a color override of the tint on it, as the layers hold it — what a
+    /// projector rewrite wipes and a re-stamp writes again. Test builds
+    /// only.
+    #[cfg(test)]
+    pub(crate) fn run_is_tinted(&self, layer: baumhard::projection::Layer, glyph: NodeId) -> bool {
+        self.layers
+            .tree(layer)
+            .get(glyph)
+            .and_then(|node| node.get().glyph_run())
+            .is_some_and(|run| run.overrides().color().contains(&Some(SELECTION_HIGHLIGHT)))
+    }
+
+    /// The runs `element` draws, by layer. Test builds only.
+    #[cfg(test)]
+    pub(crate) fn runs_of_for_test(
+        &self,
+        doc: &Document,
+        element: NodeId,
+    ) -> Vec<(baumhard::projection::Layer, NodeId)> {
+        inspect::runs_of(doc, &self.projector, &self.layers, element)
+    }
+
     /// The nodes tinted as a mode's sources.
     #[cfg(test)]
     pub(crate) fn sources(&self) -> &[NodeId] {
@@ -559,7 +716,7 @@ impl MapView {
     }
 
     /// [`Self::sync`] without a renderer: what the pass wrote, or `None`
-    /// when it found nothing to do.
+    /// when it found nothing to do — no layer, no overlay, no chrome.
     #[cfg(test)]
     pub(crate) fn sync_for_test(&mut self, doc: &mut MindMapDocument) -> Option<SyncReport> {
         self.faces_added_for_test(doc, &[])
@@ -573,7 +730,35 @@ impl MapView {
         doc: &mut MindMapDocument,
         families: &[String],
     ) -> Option<SyncReport> {
-        let pass = self.advance(doc, families)?;
+        let pass = self.advance(doc, families);
+        // The chrome half, as `sync` writes it: the handles' and the
+        // builders' mutators, under one journal.
+        let changes = pass.as_ref().and_then(|pass| pass.changes.as_ref());
+        let mut mutators = self.follow_handles(doc, changes);
+        if let Some(changes) = changes {
+            mutators.extend(self.follow_chrome(changes, doc));
+        }
+        let chrome: Vec<NodeId> = if mutators.is_empty() {
+            Vec::new()
+        } else {
+            match self.journal_chrome(&mutators) {
+                Ok(journal) => {
+                    let touched = journal.touched().map(|(id, _)| id).collect();
+                    journal.discard(&mut self.chrome);
+                    touched
+                }
+                Err(error) => panic!("a chrome mutator was refused: {error}"),
+            }
+        };
+        let Some(pass) = pass else {
+            return (!chrome.is_empty()).then(|| SyncReport {
+                projected: 0,
+                rewritten: Vec::new(),
+                stamped: Vec::new(),
+                presented: Vec::new(),
+                chrome,
+            });
+        };
         let projected = pass.changes.as_ref().map_or(0, |changes| {
             LayerRenderer::journals_of(changes)
                 .map(|(_, j)| j.touched().count())
@@ -598,17 +783,6 @@ impl MapView {
             .collect();
         presented.sort_unstable_by_key(|&(layer, glyph)| (layer.index(), glyph));
         presented.dedup();
-        let chrome = match &pass.changes {
-            Some(changes) => match self.follow_chrome(changes, doc) {
-                Some(journal) => {
-                    let touched = journal.touched().map(|(id, _)| id).collect();
-                    journal.discard(&mut self.chrome);
-                    touched
-                }
-                None => Vec::new(),
-            },
-            None => Vec::new(),
-        };
         self.finish(pass);
         Some(SyncReport {
             projected,
@@ -681,7 +855,7 @@ impl MapView {
         target_arch = "wasm32",
         expect(
             dead_code,
-            reason = "the chrome's one user so far, the rubber band, is native; V1-C7's and V1-C8's chrome is both targets'"
+            reason = "its one user, the rubber band, is native; the handles, on both targets, write in the sync pass"
         )
     )]
     pub(crate) fn apply_chrome(
@@ -795,8 +969,47 @@ pub(crate) struct SyncReport {
     /// The runs the glyph-layer presentations wrote — put back, or
     /// played on — by layer, each once, in layer then id order.
     pub(crate) presented: Vec<(baumhard::projection::Layer, NodeId)>,
-    /// The chrome elements the chrome builders' journal touched.
+    /// The chrome elements the pass's chrome journal touched: the
+    /// handles' and the chrome builders'.
     pub(crate) chrome: Vec<NodeId>,
+}
+
+/// The selection tint's targets with a contextual color picker on
+/// `picked`, picking `axis`: a picked element keeps its tint only where
+/// the axis does not color it, so the staged color shows (#248's ruling on
+/// the picker's preview). A node picked for its text keeps the tint on its
+/// frame's rings; picked for its frame or its rings, on its sections; a
+/// section picked for its text, and a path picked for its one color, stand
+/// down whole. Every other target is kept as it is. O(the targets and the
+/// picked nodes' children).
+fn stand_down(doc: &Document, targets: Vec<NodeId>, axis: ColorAxis, picked: &[NodeId]) -> Vec<NodeId> {
+    use crate::application::fields::style::frame_of;
+    use crate::application::view::inspect::children_of_kind;
+    use baumhard::document::element::DocKind;
+    let mut out = Vec::with_capacity(targets.len());
+    for target in targets {
+        if !picked.contains(&target) {
+            out.push(target);
+            continue;
+        }
+        match (
+            crate::application::document::selection::kind_of(doc, target),
+            axis,
+        ) {
+            (Some(DocKind::Node), ColorAxis::Text) => {
+                if let Some(frame) = frame_of(doc, target) {
+                    out.extend(children_of_kind(doc, frame, DocKind::Ring));
+                }
+            }
+            (Some(DocKind::Node), ColorAxis::Border | ColorAxis::Ring) => {
+                out.extend(children_of_kind(doc, target, DocKind::Section));
+            }
+            (Some(DocKind::Section), ColorAxis::Text)
+            | (Some(DocKind::Connector | DocKind::Link), ColorAxis::Text | ColorAxis::Border) => {}
+            _ => out.push(target),
+        }
+    }
+    out
 }
 
 /// An empty chrome layer: a `Void` root, drawn after the five glyph

@@ -2184,33 +2184,40 @@ on `InitState`.
 ### `InteractionMode`
 
 What the user is doing at the canvas level. `Default` — a click
-selects, a drag pans, Shift+drag draws a rubber band — and the two
+selects, a drag moves the node it starts on or pans the canvas,
+Shift+drag on empty canvas draws a rubber band — the two
 target-picking modes, `Reparent` and `Connect` (native), which hold
 their source nodes: the sources wear the view's source tint in place
 of the selection's, the status line says what the mode does (as on
 `main`), the pointer's valid target is tinted with the view's target
 overlay, and the next click moves the sources under it or links them
-to it. The resize and node-edit modes return with V1-C7
-(#248) and V1-C8 (#249); until then their Actions answer `unhandled`,
-naming their owner.
+to it — and `Resize { target }` (native, `EnterResizeMode`, a
+long-press, `mode resize`), which shows the [handle chrome](#handle-chrome)'s
+eight resize handles on its node or section (`ResizeTarget`) until a
+click that grabs none or `ExitMode` leaves it. A section is resize's
+target only when one is selected, which node editing does; node
+editing returns with V1-C8 (#249), and until then its Actions answer
+`unhandled`, naming their owner.
 
 `src/application/app/interaction_mode.rs`.
 
 ### `DragState`
 
 The drag state machine: `None` / `Pending` / `PendingRight` /
-`Panning` / `SelectingRect`.
+`Panning` / `SelectingRect` / `Dragging`.
 
 Mouse-down does not commit to a drag yet — the user might be clicking,
-or might be about to drag. `Pending` holds the press's position and
-what it hit (`ClickHit`: an element, or empty canvas, through
-`Projector::hit`); `PendingRight` is its right-button counterpart.
-Once movement crosses the drag threshold the state becomes `Panning`
-or, with Shift on empty canvas, `SelectingRect` — the rubber band,
-whose covered set is `Projector::nodes_in` of the rectangle and which
-the selection highlight tints while it is out. Drags that move or
-resize document elements return with V1-C7 (#248), on writer
-transactions.
+or might be about to drag. `Pending` holds the press's position, what
+it hit (`ClickHit`: an element, or empty canvas, through
+`Projector::hit`) and what it grabbed (`live::grab::Grab`: a handle of
+the [handle chrome](#handle-chrome), asked first, or a label or a
+portal end); `PendingRight` is its right-button counterpart. Once
+movement crosses the drag threshold the state becomes what the press
+grabbed or landed on — `Dragging`, a [live interaction](#live-interaction)
+on its transaction — or `Panning`, or, with Shift on empty canvas,
+`SelectingRect` — the rubber band, whose covered set is
+`Projector::nodes_in` of the rectangle and which the selection
+highlight tints while it is out.
 
 `src/application/app/mod.rs` (`enum DragState`), native-only like the
 per-frame drain that drives it.
@@ -2292,14 +2299,89 @@ the camera instead, and the variant is gone rather than
 default-unbound, because a binding firing on the same event as
 the camera step would be a conflict rather than a choice.
 
-The resize mode and its handle drag went with the old model, and
-V1-C7 (#248) brings them back as transactions — with them the route
-a finger takes onto a handle, which keeps `FastResizeStart` a mouse
-accelerator by design (#160). **An existing `keybinds.json` naming
+The resize mode's handle drag is a [live interaction](#live-interaction)
+on a transaction, and a finger that starts on one of its handles drives
+it as the left button would (`app/touch_handle.rs`), which keeps
+`FastResizeStart` a mouse accelerator by design (#160). **An existing `keybinds.json` naming
 `"TwoFingerDrag"` was silently accepted and never matched**, because
 `KeyBind::parse` takes any non-modifier word; a retired name is now
 refused at parse time through the `RETIRED_NAMES` table, with a
 diagnostic saying what replaced it.
+
+### Live interaction
+
+A drag that edits the map, and the contextual color picker, as a
+**writer transaction** (design §9, D28; V1-C7 #248;
+`src/application/app/live/`, `app/color_picker_flow/session.rs`). The
+press past the threshold begins it (refused, with the status line, while
+another interactive transaction is open); every cursor move updates the
+drag's total since the press and writes nothing; the frame's drain
+stages the request built from the values the press recorded and that
+total — once a frame, absolute from the press, never accumulated — and
+the release commits one history entry. Escape, a lost focus, an OS
+cancel of the touch driving it and an undo cancel it, and the map is as
+it was; a drag refused changes nothing, the selection included. The
+gestures (`live::Gesture`): moving nodes (with their subtrees unless
+Alt; the selection with Shift, which the grabbed node joins), moving a
+section, a node's or a section's resize handle, a path's anchor, control
+point or midpoint handle, a label, a portal end. A label and a portal
+end are drawn where the pointer takes them, at the place on them the
+press held: the drag's travel from where they were drawn at the press,
+through the projector's inverses of where it draws them
+(`Projector::label_place_at`, `Projector::portal_place_at`, which takes
+off a portal end's marker and label reach and solves a sharp corner on
+its offset curve). The contextual picker begins at its opening, stages
+the color it shows once a frame and commits on ࿕; the standalone
+palette (`color picker on`, `OpenColorPicker`) holds none. While a
+contextual picker is open, the selection tint stands down where its axis
+colors its targets (`MapView::follow_picker`), so the staged color is
+what the map draws. A stage a frame owes — a move or a hover not yet
+staged, or held back by the throttle — keeps the loop running. There is
+no preview mechanism: what a drag shows is the document, through the
+projector, so a presentation plays on top of it.
+
+### Handle chrome
+
+The grab handles of the live interactions, as view-only glyphs in the
+chrome layer (`src/application/view/handles.rs`): the resize mode's
+eight handles on its node or section, and a selected path's anchors,
+control points and midpoint. Built from the selection, the mode and the
+projector's geometry reads — drawn rectangles, the points a path passes
+through (`Projector::through_points`) — never from a glyph layer;
+shown again only when the selection or the mode changes or a sync pass
+may have moved a target's geometry (`Projector::geometry_moved`: on
+geometry, not on the runs a target owns, which a node with no frame
+does not write when it grows), so a pan writes none. Each set sits in
+its own group on its own channel range, so updating two sets in place
+never lets one's keys reach the other's runs. A press asks the handles
+before the projector (`MapView::handle_at`).
+
+### `MutationFrequencyThrottle` (and `frame_throttle`)
+
+An adaptive frame-counter throttle that gates how often a live
+interaction's **stage** runs under load while leaving *acceptance*
+of input untouched.
+
+When per-frame work threatens the GPU
+budget, the system must degrade gracefully. The non-negotiable
+rule is **responsiveness is never traded for fidelity**: the
+cursor must stay current with the hardware pointer at all
+times, even if the dragged node updates only every fourth
+frame. The throttle samples actual work duration into a moving
+average; if the average exceeds budget, it raises `n` (the
+"drain divisor"); if work is well under budget with hysteresis
+margin, it lowers `n` toward 1.
+
+`src/application/frame_throttle.rs` (`MutationFrequencyThrottle`).
+`DEFAULT_BUDGET` is the per-frame budget (a 60 Hz frame minus a
+safety margin), `WINDOW_SIZE` the moving-average window, `MAX_N` the
+ceiling `n` clamps to above 1; the hysteresis band is a factor in
+the arithmetic of the adjust step rather than a named constant, so
+read it there. Each live interaction owns one (`app::live`): its
+cursor samples only update the total since the press, and the
+per-frame drain stages that total on its transaction when the
+throttle says the frame is due — always under a virtual clock, where
+a frame's cost is not what the run measures.
 
 ### `Renderer`
 
@@ -2715,8 +2797,8 @@ what *measures* reads.
 
 A reproducible run, a screenshot of an animation's middle, a test of a
 double-click at exactly its window all need time to hold still and
-move on command, while the FPS overlay and the freeze watchdog
-must keep measuring real cost. So the old
+move on command, while the FPS overlay, the freeze watchdog and the
+live interactions' drain throttle must keep measuring real cost. So the old
 single `now_ms()` bridge became two names, and every reader was
 dispositioned to one of them (`work_plans/LLM_IPC.md` §D9 has the
 table). The clock is threaded through `InputHandlerContext` and
@@ -2867,9 +2949,11 @@ with sat/value crosshairs and a central preview glyph.
 `src/application/color_picker_overlay/`. Native-only today.
 `compute_color_picker_layout()` is a pure function over geometry +
 viewport, so layout can be unit-tested without GPU. What the picker
-writes — its previews and its commit — is V1-C7's (#248), on writer
-transactions: the widget is kept, and its commit and hover paths are
-not wired until then.
+writes goes through its session (`app/color_picker_flow/session.rs`):
+the contextual picker is a [live interaction](#live-interaction) on the
+selection it opened on — each hover or pick staged once a frame, ࿕
+commits one entry, Esc cancels — and the standalone palette's ࿕ is one
+`apply` on the selection.
 
 ### Console
 

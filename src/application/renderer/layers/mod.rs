@@ -175,8 +175,9 @@ impl LayerRenderer {
     }
 
     /// The render state of the chrome layer as a whole (design §12.1: the
-    /// view-only glyphs built from app state — V1-C7's handles, V1-C8's
-    /// section frames), drawn above the five glyph layers. Replaces what
+    /// view-only glyphs built from app state — the rubber band, the
+    /// handles, V1-C8's section frames), drawn above the five glyph
+    /// layers. Replaces what
     /// was kept, as [`Self::load`] does for those.
     ///
     /// Cost: one walk of the layer.

@@ -11,7 +11,8 @@
 //! process's monotonic wall clock. [`AppClock::now_ms`] is the app
 //! clock: the wall clock in real mode, a stored reading in virtual
 //! mode. Whatever *measures cost* — the FPS overlay, the freeze
-//! watchdog, an encode's timing, a
+//! watchdog, the live interactions' drain throttle, an encode's
+//! timing, a
 //! deadline that guards a client's liveness — reads the wall clock (or
 //! a `web_time::Instant`, which is the same clock), because a stepped
 //! or frozen clock would make a stall invisible. Whatever *behaves*

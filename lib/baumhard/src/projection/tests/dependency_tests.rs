@@ -839,6 +839,60 @@ fn test_projection_a_nudge_in_a_wide_row_lays_one_connector() {
     p.check().unwrap();
 }
 
+/// **The set of moved elements stays proportional to the edit**
+/// (`Projector::geometry_moved`; #395's verification): the load moves the
+/// whole map and leaves no room for it behind, a one-node edit leaves room
+/// for a few elements, and after one edit that moves every child of the
+/// wide row, one-node edits leave room for a few again: the next one
+/// clears what the big edit moved (a cost proportional to that edit), and
+/// the one after it replaces the set rather than clear it in place, which
+/// would cost its capacity on every edit after it.
+///
+/// Control, seen red: the set cleared in place at each update and kept
+/// after the load (as #395 first shipped it).
+#[test]
+fn test_projection_the_moved_set_keeps_no_room_for_the_whole_map() {
+    let doc = wide_row();
+    let children: Vec<NodeId> = (0..WIDE).map(|i| ident(&doc, 10 + i)).collect();
+    let one = ident(&doc, 10 + WIDE / 2);
+    let mut p = Projected::new(doc);
+    assert_eq!(p.projector.moved.capacity(), 0, "the load keeps no set");
+    let small = 28;
+
+    let nudge = |p: &mut Projected, to: Vec2| {
+        let mutation = single(DocKind::Node, DocMutation::Node(NodeOp::SetPosition(to)));
+        p.apply(request(mutation, vec![one], "nudge one child")).unwrap();
+    };
+    nudge(&mut p, Vec2::new(100.0 + 0.5 * 30.0 + 1.0, 401.0));
+    assert!(p.projector.geometry_moved(one), "control: the nudged child moved");
+    let after_one = p.projector.moved.capacity();
+    assert!(after_one <= small, "a one-node edit keeps room for {after_one}");
+
+    let mutation = single(
+        DocKind::Node,
+        DocMutation::Node(NodeOp::SetPosition(Vec2::new(0.0, 500.0))),
+    );
+    p.apply(request(mutation, children.clone(), "move every child"))
+        .unwrap();
+    let after_all = p.projector.moved.capacity();
+    assert!(
+        after_all > 2 * small,
+        "control: moving every child moved {} and keeps room for {after_all}",
+        p.projector.moved.len()
+    );
+    // The next edit clears what the big one moved, a cost proportional to
+    // that edit; the one after it finds the set far larger than what moved
+    // and replaces it.
+    nudge(&mut p, Vec2::new(40.0, 520.0));
+    nudge(&mut p, Vec2::new(44.0, 520.0));
+    let after = p.projector.moved.capacity();
+    assert!(
+        after <= small,
+        "one-node edits after it keep room for {after}, not {after_all}"
+    );
+    p.check().unwrap();
+}
+
 /// One child added to the wide row resolves and finds the ends of its own
 /// connector alone (ruling B7.5 on #241): no sibling reads the row. Every
 /// connector that leaves node 1's bottom side is laid again — one more

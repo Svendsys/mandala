@@ -29,7 +29,8 @@ use crate::application::keybinds::Action;
 /// A picker-modal effect named by an `Action`. Produced by
 /// [`picker_op_for`]; consumed by the `dispatch_action` arm, which
 /// owns the renderer-driving half ([`apply_picker_nudge`], and the
-/// cancel and commit V1-C7 (#248) rebuilds on transactions).
+/// session's cancel and commit, `session::{cancel, commit}`, on the
+/// picker's transaction).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::application::app) enum PickerOp {
     /// Close without writing the previewed color back
@@ -178,7 +179,8 @@ pub(in crate::application::app) fn nudged_hsv(nudge: PickerNudge, hsv: (f32, f32
 /// Apply a nudge to the open picker: step the selected HSV, drop
 /// any mouse `hover_preview` (the keyboard just took over from the
 /// pointer). Returns `true` when the picker was open and the nudge
-/// landed. The target's preview returns with V1-C7 (#248).
+/// landed. The color it leaves the wheel showing is staged on a
+/// contextual picker's target by the next frame (`session::drain`).
 pub(in crate::application::app) fn apply_picker_nudge(
     nudge: PickerNudge,
     state: &mut ColorPickerState,
@@ -198,8 +200,6 @@ pub(in crate::application::app) fn apply_picker_nudge(
     *sat = ns;
     *val = nv;
     *hover_preview = None;
-    // V1-C7 (#248) stages the previewed color on the picker's
-    // transaction here.
     true
 }
 
@@ -380,7 +380,13 @@ mod tests {
     fn open_contextual_picker(hsv: (f32, f32, f32)) -> ColorPickerState {
         use crate::application::color_picker::{PickerMode, CROSSHAIR_CENTER_CELL};
         ColorPickerState::Open(Box::new(OpenPicker {
-            mode: PickerMode::Contextual { seed_hsv: hsv },
+            mode: PickerMode::Contextual {
+                seed_hsv: hsv,
+                target: crate::application::color_picker::PickerTarget {
+                    axis: crate::application::keybinds::ColorAxis::Text,
+                    selection: crate::application::document::Selection::new(),
+                },
+            },
             hue_deg: hsv.0,
             sat: hsv.1,
             val: hsv.2,
@@ -401,6 +407,8 @@ mod tests {
             hover_preview: None,
             pending_error_flash: false,
             last_dynamic_apply: None,
+            staged: None,
+            throttle: crate::application::frame_throttle::MutationFrequencyThrottle::with_default_budget(),
         }))
     }
 

@@ -5,9 +5,10 @@
 //! Verbs:
 //! - `mode default` — exit any active mode and return to `Default`.
 //!   Equivalent to pressing the `ExitMode` keybind (Esc by default).
-//! - `mode resize` — Resize mode on the current selection. Its chrome
-//!   and its handle drags are a transaction, rebuilt by V1-C7 (#248);
-//!   until then the subverb refuses naming that issue.
+//! - `mode resize` — Resize mode on the selected node (or section): its
+//!   handles are drawn, and dragging one resizes it, as a transaction
+//!   (`Action::EnterResizeMode`'s mode; V1-C7). Refused for a selection
+//!   that is not one node or section.
 //! - `mode node-edit` — NodeEdit mode on the selection's node, rebuilt
 //!   with node editing by V1-C8 (#249); until then the subverb refuses
 //!   naming that issue.
@@ -16,7 +17,10 @@
 //! mode to the console, so there is no verb for it.
 
 use super::Command;
-use crate::application::app::InteractionMode;
+use crate::application::app::{InteractionMode, ResizeTarget};
+
+/// What `mode resize` says for a selection it cannot resize.
+pub(crate) const RESIZE_NEEDS_ONE: &str = "mode resize: select one node or section to resize";
 use crate::application::console::parser::Args;
 use crate::application::console::predicates::always;
 use crate::application::console::spec::descent::{descend, Stop};
@@ -99,7 +103,19 @@ fn execute_mode(args: &Args, eff: &mut ConsoleEffects) -> ExecResult {
             eff.close_console = true;
             ExecResult::ok_msg("mode: returning to Default")
         }
-        Route::Resize => super::rebuilt_by("mode resize", super::TRANSACTIONS_OWNER),
+        Route::Resize => {
+            let doc = eff.document();
+            match ResizeTarget::of(doc.doc(), &doc.selection) {
+                Some(target) => {
+                    eff.side_effect = Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::Resize {
+                        target,
+                    }));
+                    eff.close_console = true;
+                    ExecResult::ok_msg("mode: Resize — drag a corner or edge")
+                }
+                None => ExecResult::err(RESIZE_NEEDS_ONE),
+            }
+        }
         Route::NodeEdit => super::rebuilt_by("mode node-edit", super::TEXT_OWNER),
     }
 }
@@ -140,23 +156,57 @@ mod tests {
         assert!(close);
     }
 
-    /// The modes an owner rebuilds refuse with the owner named, and
-    /// request nothing of the dispatcher.
+    /// `mode resize` enters Resize on the one selected node, and closes
+    /// the console. Controls: with nothing selected, and with two nodes
+    /// selected, it refuses and requests nothing.
     #[test]
-    fn test_mode_resize_and_node_edit_refuse_naming_their_owners() {
-        for (line, owner) in [
-            ("mode resize", super::super::TRANSACTIONS_OWNER),
-            ("mode node-edit", super::super::TEXT_OWNER),
-        ] {
-            let mut doc = MindMapDocument::new_blank(None, 50);
-            let (result, side, close) = run_mode(line, &mut doc);
-            match result {
-                ExecResult::Err(message) => assert!(message.contains(owner), "{line}: {message}"),
-                other => panic!("{line} must refuse: {other:?}"),
-            }
-            assert!(side.is_none(), "{line}");
-            assert!(!close, "{line}");
+    fn test_mode_resize_enters_resize_on_the_one_selected_node() {
+        let mut doc = MindMapDocument::new_blank(None, 50);
+        doc.create_root_for_test();
+        let (refused, side, close) = run_mode("mode resize", &mut doc);
+        assert!(
+            matches!(&refused, ExecResult::Err(m) if m == RESIZE_NEEDS_ONE),
+            "nothing selected: {refused:?}"
+        );
+        assert!(side.is_none() && !close);
+        let node = baumhard::document::ids::NodeIdent(1);
+        let node = doc.doc().node_by_ident(node).expect("the root is node 1");
+        doc.selection.select_only(node);
+        let (result, side, close) = run_mode("mode resize", &mut doc);
+        assert!(matches!(result, ExecResult::Ok { .. }), "{result:?}");
+        assert!(matches!(
+            side,
+            Some(ConsoleSideEffect::SetInteractionMode(InteractionMode::Resize {
+                target: ResizeTarget::Node(n)
+            })) if n == node
+        ));
+        assert!(close);
+        doc.create_root_for_test();
+        let other = doc
+            .doc()
+            .node_by_ident(baumhard::document::ids::NodeIdent(2))
+            .expect("the second root is node 2");
+        doc.selection.set([node, other]);
+        let (refused, side, _) = run_mode("mode resize", &mut doc);
+        assert!(
+            matches!(&refused, ExecResult::Err(m) if m == RESIZE_NEEDS_ONE),
+            "two selected: {refused:?}"
+        );
+        assert!(side.is_none());
+    }
+
+    /// `mode node-edit` refuses with its owner named, and requests
+    /// nothing of the dispatcher.
+    #[test]
+    fn test_mode_node_edit_refuses_naming_its_owner() {
+        let mut doc = MindMapDocument::new_blank(None, 50);
+        let (result, side, close) = run_mode("mode node-edit", &mut doc);
+        match result {
+            ExecResult::Err(message) => assert!(message.contains(super::super::TEXT_OWNER), "{message}"),
+            other => panic!("mode node-edit must refuse: {other:?}"),
         }
+        assert!(side.is_none());
+        assert!(!close);
     }
 
     #[test]

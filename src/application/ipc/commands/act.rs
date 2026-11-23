@@ -621,8 +621,8 @@ mod tests {
     fn test_act_console_reports_a_rebuilt_verbs_refusal() {
         let mut doc = crate::application::document::tests_common::testament();
         let revision = doc.revision();
-        let ParseResult::Ok { cmd, args } = parse("mode resize") else {
-            panic!("`mode resize` must parse");
+        let ParseResult::Ok { cmd, args } = parse("mode node-edit") else {
+            panic!("`mode node-edit` must parse");
         };
         let mut effects = ConsoleEffects::new(&mut doc);
         let outcome = LineOutcome::Ran((cmd.execute)(&Args::new(&args), &mut effects));
@@ -630,11 +630,11 @@ mod tests {
         assert!(!outcome.applied(), "a refused line did not apply");
         let message = console_output(outcome).expect_err("the refusal is an error reply");
         assert!(
-            message.starts_with("mode resize: "),
+            message.starts_with("mode node-edit: "),
             "the verb names itself: {message}"
         );
         assert!(
-            message.contains("V1-C7 (#248)"),
+            message.contains("V1-C8 (#249)"),
             "the error names the owner: {message}"
         );
         assert_eq!(doc.revision(), revision);

@@ -27,18 +27,25 @@ use super::geometry::compute_picker_geometry;
 ///   `Renderer::apply_color_picker_overlay_dynamic_mutator` — which
 ///   writes only the fields that genuinely move per frame
 ///   (`ColorFontRegions`, `scale`, hex `Text`).
+///
+/// Returns whether it drew anything — built, rewrote, or unregistered
+/// the overlay — so a frame that changed nothing the wheel shows asks for
+/// no redraw.
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) fn rebuild_color_picker_overlay(
     state: &mut crate::application::color_picker::ColorPickerState,
     app_scene: &mut crate::application::scene_host::AppScene,
     renderer: &mut Renderer,
-) {
+) -> bool {
     use crate::application::color_picker::{OpenPicker, PickerDynamicApplyKey};
     use crate::application::scene_host::OverlayRole;
     let surface_size = (renderer.surface_width() as f32, renderer.surface_height() as f32);
     let Some((geometry, layout_changed)) = compute_picker_geometry(state, surface_size) else {
+        let registered = app_scene
+            .overlay_id(crate::application::scene_host::OverlayRole::ColorPicker)
+            .is_some();
         renderer.rebuild_color_picker_overlay_buffers(app_scene, None);
-        return;
+        return registered;
     };
     // Compute the key the dynamic path would write against, for the
     // state-change short-circuit below. Captured here while we still
@@ -58,10 +65,10 @@ pub(in crate::application::app) fn rebuild_color_picker_overlay(
         ..
     }) = state.as_open_mut()
     else {
-        return;
+        return false;
     };
     let Some(layout) = state_layout.as_ref() else {
-        return;
+        return false;
     };
     let registered = app_scene.overlay_id(OverlayRole::ColorPicker).is_some();
     if registered {
@@ -76,7 +83,7 @@ pub(in crate::application::app) fn rebuild_color_picker_overlay(
             // so its output is still correct. Cheap bail-out — cursor
             // moves within one cell trigger this routinely.
             if *last_dynamic_apply == Some(apply_key) {
-                return;
+                return false;
             }
             renderer.apply_color_picker_overlay_dynamic_mutator(app_scene, &geometry, layout);
             *last_dynamic_apply = Some(apply_key);
@@ -87,4 +94,5 @@ pub(in crate::application::app) fn rebuild_color_picker_overlay(
         // the next stable-geometry frame short-circuits.
         *last_dynamic_apply = Some(apply_key);
     }
+    true
 }
