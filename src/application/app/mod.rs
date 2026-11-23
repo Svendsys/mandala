@@ -740,6 +740,11 @@ mod tests_edits;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests_presentations;
+// The text editors' view, renderer-free (V1-C8): native, where the
+// single-line editor is.
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests_text;
 
 // Map verbs, their triggers and links (V1-D3).
 #[cfg(test)]

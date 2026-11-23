@@ -10,12 +10,7 @@ use std::collections::BTreeSet;
 use baumhard::arena::NodeId;
 use baumhard::document::element::DocKind;
 use baumhard::document::mutation::compose;
-use baumhard::document::mutation::ops::{DocMutation, DocMutatorTree, NodeOp};
-use baumhard::document::mutation::step::{DocStep, DocWalk};
 use baumhard::document::writer::EditRequest;
-use baumhard::engine::anchor::Anchors;
-use baumhard::engine::key::BranchKey;
-use baumhard::engine::mutator::Mutator;
 
 use super::inspect::{children_of_kind, element_bounds, runs_of};
 use super::MapView;
