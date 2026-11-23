@@ -14,7 +14,9 @@
 //! the tree (box and path runs, fillers among their glyphs, placed
 //! positions that are not finite) and the mutations, with values a JSON
 //! literal can reach (`1e39` reads as infinity) and values it cannot
-//! (`NaN`), ranges from zero to `usize::MAX`, backward and empty.
+//! (`NaN`), ranges from zero to `usize::MAX`, backward and empty — and
+//! the `Fade` override, which no file can spell and NodeEdit's dim
+//! writes.
 //!
 //! After every apply:
 //!
@@ -305,6 +307,13 @@ fn mutation(choices: &mut Choices<'_>) -> GfxMutation {
                 .then(|| Rgba::new(choices.below(256) as u8, 0, 0, choices.below(256) as u8)),
         }),
         4 => GfxMutation::RunOverrides(RunOverrideOp::Scale {
+            range: range(choices),
+            value: any_f32(choices),
+        }),
+        // The fade no file spells, which NodeEdit's dim writes (ruling K2
+        // on #249), shares the last choice with `Clear`, so the inputs
+        // that chose the others decode as they did before it.
+        _ if choices.one_in(2) => GfxMutation::RunOverrides(RunOverrideOp::Fade {
             range: range(choices),
             value: any_f32(choices),
         }),
