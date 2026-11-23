@@ -2873,6 +2873,13 @@ fn criterion_benchmark(c: &mut Criterion) {
         "run_override_ops_write_their_range_and_materialize_the_rest_neutral",
         |b| b.iter(do_run_override_ops_write_their_range_and_materialize_the_rest_neutral),
     );
+    c.bench_function(
+        "run_fade_writes_its_range_beside_the_other_overrides_and_clear_resets_it",
+        |b| b.iter(do_run_fade_writes_its_range_beside_the_other_overrides_and_clear_resets_it),
+    );
+    c.bench_function("run_fade_has_no_json_spelling", |b| {
+        b.iter(do_run_fade_has_no_json_spelling)
+    });
     c.bench_function("run_override_ranges_are_clamped_to_the_placed_glyphs", |b| {
         b.iter(do_run_override_ranges_are_clamped_to_the_placed_glyphs)
     });

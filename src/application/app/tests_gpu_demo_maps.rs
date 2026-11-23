@@ -834,6 +834,7 @@ fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
                     | RunOverrideOp::Color { range, .. }
                     | RunOverrideOp::Scale { range, .. } => range.clone(),
                     RunOverrideOp::Clear => panic!("{name}: `{id}` clears nothing"),
+                    RunOverrideOp::Fade { .. } => panic!("{name}: `{id}`: a map cannot spell a fade"),
                 };
                 assert!(
                     range.end <= scales.len(),
@@ -848,7 +849,7 @@ fn test_demo_presentations_play_on_the_words_they_name_at_a_fixed_time() {
                         RunOverrideOp::Color { value, .. } => {
                             colored[glyph] = value.map(|value| (value.0, *t))
                         }
-                        RunOverrideOp::Clear => {}
+                        RunOverrideOp::Clear | RunOverrideOp::Fade { .. } => {}
                     }
                 }
             }

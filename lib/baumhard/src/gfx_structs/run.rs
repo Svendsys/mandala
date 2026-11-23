@@ -196,25 +196,28 @@ impl RunShape {
     }
 }
 
-/// Per-glyph presentation effects, indexed by placed glyph.
+/// Per-glyph effects, indexed by placed glyph: what the glyph-layer
+/// presentations write, and the view's own overlays (the selection tint,
+/// NodeEdit's dim).
 ///
-/// Each of the three vectors is empty (no override of that kind) or
-/// exactly as long as the run's [`RunShape::glyph_count`], and the three
+/// Each of the four vectors is empty (no override of that kind) or
+/// exactly as long as the run's [`RunShape::glyph_count`], and the four
 /// always have the same length: [`GlyphOverrides::none`] is all empty,
-/// and [`GlyphOverrides::new`] fills all three with neutral values.
+/// and [`GlyphOverrides::new`] fills all four with neutral values.
 /// A range op on a run without overrides first materializes `new(len)`.
 ///
 /// Neutral means "draw the glyph as shaped": a zero offset, no color
-/// (`None`: the glyph's own color) and scale `1.0`.
+/// (`None`: the glyph's own color), scale `1.0` and fade `1.0`.
 #[derive(Debug, Default, PartialEq)]
 pub struct GlyphOverrides {
     offset: Vec<Vec2>,
     color: Vec<Option<Rgba>>,
     scale: Vec<f32>,
+    fade: Vec<f32>,
 }
 
 /// Field-wise, so [`clone_from`](Clone::clone_from) writes into the
-/// three vectors it already has (`Vec::clone_from`): overrides copied
+/// four vectors it already has (`Vec::clone_from`): overrides copied
 /// over others at least as long allocate nothing.
 impl Clone for GlyphOverrides {
     fn clone(&self) -> Self {
@@ -222,32 +225,40 @@ impl Clone for GlyphOverrides {
             offset: self.offset.clone(),
             color: self.color.clone(),
             scale: self.scale.clone(),
+            fade: self.fade.clone(),
         }
     }
 
     /// Destructured, so a field added to the struct is a compile error
     /// here rather than a field this copy leaves behind.
     fn clone_from(&mut self, source: &Self) {
-        let GlyphOverrides { offset, color, scale } = self;
+        let GlyphOverrides {
+            offset,
+            color,
+            scale,
+            fade,
+        } = self;
         offset.clone_from(&source.offset);
         color.clone_from(&source.color);
         scale.clone_from(&source.scale);
+        fade.clone_from(&source.fade);
     }
 }
 
 impl GlyphOverrides {
-    /// No overrides: three empty vectors. O(1), no allocation.
+    /// No overrides: four empty vectors. O(1), no allocation.
     pub fn none() -> Self {
         GlyphOverrides::default()
     }
 
     /// Neutral overrides for `len` placed glyphs: a zero offset, no
-    /// color and scale `1.0` each. O(len); three allocations.
+    /// color, scale `1.0` and fade `1.0` each. O(len); four allocations.
     pub fn new(len: usize) -> Self {
         GlyphOverrides {
             offset: vec![Vec2::ZERO; len],
             color: vec![None; len],
             scale: vec![1.0; len],
+            fade: vec![1.0; len],
         }
     }
 
@@ -280,6 +291,13 @@ impl GlyphOverrides {
         &self.scale
     }
 
+    /// Each placed glyph's fade, multiplied into the alpha it is drawn
+    /// with — its own color's or its override's — after the run's
+    /// opacity; empty when there are no overrides. O(1).
+    pub fn fade(&self) -> &[f32] {
+        &self.fade
+    }
+
     /// Whether `self` and `other` hold the same state: every override,
     /// floats compared so that a `NaN` equals a `NaN`. O(len).
     pub(crate) fn same_state(&self, other: &Self) -> bool {
@@ -292,6 +310,8 @@ impl GlyphOverrides {
             && self.color == other.color
             && self.scale.len() == other.scale.len()
             && self.scale.iter().zip(&other.scale).all(|(a, b)| same_f32(*a, *b))
+            && self.fade.len() == other.fade.len()
+            && self.fade.iter().zip(&other.fade).all(|(a, b)| same_f32(*a, *b))
     }
 
     /// Interpolation writes: the overrides between `from` and `to` at
@@ -332,12 +352,20 @@ impl GlyphOverrides {
                 .map(|(a, b)| f32::lerp(a, b, t))
                 .collect();
         }
+        if from.fade.len() == to.fade.len() {
+            out.fade = from
+                .fade
+                .iter()
+                .zip(&to.fade)
+                .map(|(a, b)| f32::lerp(a, b, t))
+                .collect();
+        }
         out
     }
 }
 
 /// An edit to a run's [`GlyphOverrides`]: what the glyph-layer
-/// presentations write.
+/// presentations write, and the view's overlays.
 ///
 /// `range` indexes placed glyphs and is clamped to the run's glyph
 /// count, so a range past the end is an empty range, not an error.
@@ -367,7 +395,22 @@ pub enum RunOverrideOp {
         /// The scale; `1.0` is as shaped.
         value: f32,
     },
-    /// Drop every override: the run is drawn as shaped.
+    /// Set the fade of every glyph in `range` to `value`, multiplied
+    /// into the alpha it is drawn with: `1.0` draws it as it is, `0.5`
+    /// at half its alpha. What NodeEdit's dim writes (V1-C8).
+    ///
+    /// **Never authored, never serialized**, as `RunSet` is not: it is
+    /// the view's own effect, not a presentation's, so it is
+    /// `#[serde(skip)]` and no file can name it — the presentations'
+    /// spelling (`RunOverrideDto`) has no fade either.
+    #[serde(skip)]
+    Fade {
+        /// The placed glyphs to write.
+        range: Range<usize>,
+        /// The fade; `1.0` is neutral.
+        value: f32,
+    },
+    /// Drop every override, fade included: the run is drawn as shaped.
     Clear,
 }
 
@@ -594,11 +637,12 @@ impl GlyphRunData {
             }
             RunOverrideOp::Offset { range, .. }
             | RunOverrideOp::Color { range, .. }
-            | RunOverrideOp::Scale { range, .. } => clamp_range(range, count),
+            | RunOverrideOp::Scale { range, .. }
+            | RunOverrideOp::Fade { range, .. } => clamp_range(range, count),
         };
         // An op that would write no glyph — an empty range, or one that
         // covers filler only — leaves the run untouched: materializing
-        // would turn `none()` into three neutral vectors, a change of
+        // would turn `none()` into four neutral vectors, a change of
         // state for the journal that draws nothing differently.
         if range.clone().all(|index| self.shaped.is_filler(index)) {
             return;
@@ -614,6 +658,7 @@ impl GlyphRunData {
                 RunOverrideOp::Offset { value, .. } => self.overrides.offset[index] = *value,
                 RunOverrideOp::Color { value, .. } => self.overrides.color[index] = *value,
                 RunOverrideOp::Scale { value, .. } => self.overrides.scale[index] = *value,
+                RunOverrideOp::Fade { value, .. } => self.overrides.fade[index] = *value,
                 RunOverrideOp::Clear => {}
             }
         }

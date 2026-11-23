@@ -679,6 +679,87 @@ fn test_glyph_run_emit_applies_each_override_to_its_own_glyph_and_opacity_to_all
     );
 }
 
+/// **The fade** (V1-C8, ruling K2 on #249). A fade of `1.0` is the
+/// identity: every sprite is the plain run's. A fade of `0.5` multiplies
+/// into each glyph's alpha after the run's opacity and leaves its hue
+/// and its place alone — over a recolored glyph and over a scaled one
+/// as over a plain one — and into the opacity a color glyph is drawn
+/// with alone. Control: the glyph outside the faded range keeps its
+/// alpha.
+#[test]
+fn test_glyph_run_emit_multiplies_a_fade_into_alpha_beside_color_and_scale() {
+    let base = path_run(
+        shaped("ABCD"),
+        vec![
+            at(0, 100.0, 100.0),
+            at(1, 200.0, 100.0),
+            at(2, 300.0, 100.0),
+            at(3, 400.0, 100.0),
+        ],
+        Vec2::ZERO,
+    );
+    let (plain, _) = emit(&base, &identity_camera());
+
+    let neutral = with_overrides(
+        base.clone(),
+        &[RunOverrideOp::Fade {
+            range: 0..4,
+            value: 1.0,
+        }],
+    );
+    let (sprites, _) = emit(&neutral, &identity_camera());
+    for (sprite, plain) in sprites.iter().zip(&plain) {
+        assert_eq!(
+            (sprite.key, sprite.pen, sprite.color, sprite.opacity),
+            (plain.key, plain.pen, plain.color, plain.opacity),
+            "a fade of 1.0 draws the glyph as it is"
+        );
+    }
+
+    let faded = with_overrides(
+        base,
+        &[
+            RunOverrideOp::Color {
+                range: 1..2,
+                value: Some(Rgba([0, 255, 0, 200])),
+            },
+            RunOverrideOp::Scale {
+                range: 2..3,
+                value: 2.0,
+            },
+            RunOverrideOp::Fade {
+                range: 0..3,
+                value: 0.5,
+            },
+        ],
+    );
+    let (sprites, counts) = emit(&faded, &identity_camera());
+    assert_eq!(counts.sprites, 4);
+    assert_eq!(
+        sprites[0].color,
+        [200, 100, 50, 128],
+        "a plain glyph's alpha halved"
+    );
+    assert_eq!(sprites[0].pen, plain[0].pen, "and nothing else about it");
+    assert_eq!(sprites[0].opacity, 0.5, "a color glyph's opacity halved with it");
+    assert_eq!(
+        sprites[1].color,
+        [0, 255, 0, 100],
+        "the override's color, its alpha halved"
+    );
+    assert_eq!(
+        f32::from_bits(sprites[2].key.font_size_bits),
+        SIZE * 2.0,
+        "the scaled glyph keeps its scale"
+    );
+    assert_eq!(sprites[2].color[3], 128, "and is faded too");
+    assert_eq!(
+        (sprites[3].color, sprites[3].opacity),
+        (plain[3].color, plain[3].opacity),
+        "control: the glyph outside the range keeps its alpha"
+    );
+}
+
 /// **A filled run is two buffer lines, and a placement indexes both.**
 /// `Once` with a filler returns the run plus a filler line; the placed
 /// glyphs past the text name the filler's glyph, which is the second

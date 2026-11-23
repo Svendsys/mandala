@@ -165,6 +165,7 @@ pub(crate) fn emit_run<'a>(
         offsets: overrides.offset(),
         colors: overrides.color(),
         scales: overrides.scale(),
+        fades: overrides.fade(),
     };
     let origin = run.origin() + offset;
     match run.shaped() {
@@ -299,6 +300,7 @@ struct GlyphStyle<'r> {
     offsets: &'r [Vec2],
     colors: &'r [Option<Rgba>],
     scales: &'r [f32],
+    fades: &'r [f32],
 }
 
 impl GlyphStyle<'_> {
@@ -347,12 +349,22 @@ impl GlyphStyle<'_> {
             .copied()
             .flatten()
             .unwrap_or_else(|| own_color(laid));
-        let alpha = (f32::from(color[3]) * self.opacity).round() as u8;
+        // The fade multiplies in after the run's opacity: a glyph a
+        // view overlay dims keeps its hue and loses only alpha. A value
+        // outside `0..=1` is held to it, and a `NaN` draws as neutral.
+        let fade = self
+            .fades
+            .get(at.index)
+            .copied()
+            .filter(|f| !f.is_nan())
+            .unwrap_or(1.0);
+        let opacity = self.opacity * fade.clamp(0.0, 1.0);
+        let alpha = (f32::from(color[3]) * opacity).round() as u8;
         sink(GlyphSprite {
             key,
             pen: (x, y),
             color: [color[0], color[1], color[2], alpha],
-            opacity: self.opacity,
+            opacity,
         });
         counts.sprites += 1;
     }
