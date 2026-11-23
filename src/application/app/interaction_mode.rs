@@ -2,17 +2,20 @@
 
 //! `InteractionMode` — what the user is doing at the canvas level.
 //!
-//! The modes that edit the map arrive with the issues that rebuild
+//! The modes that edit the map arrived with the issues that rebuilt
 //! their editing on the one writer: reparent and connect with V1-C4
 //! (#245), resize with V1-C7 (#248), node editing with V1-C8 (#249).
 //! A resize of a section is entered from a selected section, which only
-//! node editing (V1-C8) selects.
+//! node editing selects: in NodeEdit, a click on a section of the
+//! active node selects that section.
 //! Every surface that reports a mode — the IPC `query.mode`,
 //! `Action::ExitMode` — reads this type.
 //!
 //! Cross-platform: it carries no GPU handles, so both targets compile
 //! it. Reparent, connect and resize are entered only by native-only
-//! Actions (as on `main`), so nothing on wasm32 constructs them.
+//! Actions (as on `main`), so nothing on wasm32 constructs them;
+//! NodeEdit is entered on both, by the section editor's openers, as on
+//! `main`.
 
 use baumhard::arena::NodeId;
 
@@ -39,6 +42,17 @@ pub enum InteractionMode {
     Connect {
         /// The nodes to link from, in selection order.
         sources: Vec<NodeId>,
+    },
+    /// Editing inside `node` (`Action::EnterNodeEdit`, `mode node-edit`):
+    /// the other nodes are dimmed and, when it has more than one section,
+    /// its sections are outlined (the view's NodeEdit chrome). A click on
+    /// one of its sections selects that section — which a drag then
+    /// moves, `EnterResizeMode` resizes and `EnterSectionEdit` opens the
+    /// editor on — and a click outside it, or `Action::ExitMode`, leaves
+    /// the mode.
+    NodeEdit {
+        /// The node being edited.
+        node: NodeId,
     },
     /// The resize handles are shown on `target`: dragging one resizes
     /// it, as a transaction (`app::live`). A click that grabs no handle,
@@ -92,7 +106,17 @@ impl InteractionMode {
     pub fn sources(&self) -> &[NodeId] {
         match self {
             InteractionMode::Reparent { sources } | InteractionMode::Connect { sources } => sources,
-            InteractionMode::Default | InteractionMode::Resize { .. } => &[],
+            InteractionMode::Default | InteractionMode::NodeEdit { .. } | InteractionMode::Resize { .. } => {
+                &[]
+            }
+        }
+    }
+
+    /// The node being edited while NodeEdit is active. O(1).
+    pub fn node_edit(&self) -> Option<NodeId> {
+        match self {
+            InteractionMode::NodeEdit { node } => Some(*node),
+            _ => None,
         }
     }
 
@@ -121,6 +145,9 @@ impl InteractionMode {
                     ResizeTarget::Section(_) => "section",
                 };
                 return Some(format!("resize: {what} \u{2014} drag a corner or edge"));
+            }
+            InteractionMode::NodeEdit { .. } => {
+                return Some("node edit: pick a section \u{2014} Enter edits it, Esc leaves".to_string());
             }
             InteractionMode::Default => return None,
         };

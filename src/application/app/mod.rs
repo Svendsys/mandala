@@ -109,10 +109,16 @@ mod run_wasm;
 mod settle;
 #[cfg(not(target_arch = "wasm32"))]
 mod shell;
+// The single-line editor (V1-C8): native, as on `main` (CLAUDE.md
+// "Single-line editor").
+#[cfg(not(target_arch = "wasm32"))]
+mod single_line_edit;
 // Cross-platform: both init paths resolve the initial map load
 // through it, which is what keeps the two from surfacing a load
 // failure differently (CODE_CONVENTIONS §4).
 mod startup_load;
+// The section text editor (V1-C8): both targets, as on `main`.
+mod text_edit;
 mod touch_gesture;
 #[cfg(not(target_arch = "wasm32"))]
 mod touch_handle;

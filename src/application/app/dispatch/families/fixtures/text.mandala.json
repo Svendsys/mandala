@@ -1,0 +1,25 @@
+{
+  "format": 1,
+  "name": "Text",
+  "nodes": [
+    {
+      "id": 1,
+      "position": [0.0, 0.0],
+      "sections": [{"spans": [{"text": "Head"}, {"text": "line", "weight": "bold"}]}, {"spans": [{"text": "Body"}]}],
+      "frame": {"rings": [{"size": 0.1, "spans": [{"text": "a ring of words"}]}]},
+      "links": [{"to": 3, "kind": "line", "content": "─"}, {"to": 3, "kind": "portal", "ends": [{"spans": [{"text": "◆"}], "label": {"spans": [{"text": "far"}]}}, {}]}]
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "position": [320.0, 0.0],
+      "sections": [{"spans": [{"text": "Child"}]}],
+      "connector": {"spans": [{"text": "─"}], "cap_end": {"spans": [{"text": ">"}]}, "label": {"t": 0.5, "spans": [{"text": "child"}]}}
+    },
+    {
+      "id": 3,
+      "position": [0.0, 320.0],
+      "sections": [{"spans": [{"text": "Lone"}]}]
+    }
+  ]
+}

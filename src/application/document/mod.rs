@@ -14,7 +14,7 @@
 //! change of the document and is drawn by the view's overlay.
 //!
 //! **D28 is reported in one place.** While an interactive transaction
-//! is open (a drag, the color picker, a frame preview, C8's editors),
+//! is open (a drag, the color picker, a frame preview, a text editor),
 //! the writer refuses any other
 //! `apply` or `begin` with [`ApplyError::TransactionOpen`].
 //! [`MindMapDocument::apply`] and [`MindMapDocument::begin`] are the
@@ -81,8 +81,8 @@ pub const TRANSACTION_OPEN_STATUS: &str = "busy: finish or cancel the edit in pr
 /// What the one open transaction is for: the interaction that began it,
 /// and the only one that may stage into it, commit it or cancel it — so
 /// `frame commit` never ends a drag or an editor session that happens to
-/// be open. Each interaction that opens a transaction (the drags and the
-/// color picker, V1-C8's editors) names itself here.
+/// be open. Each interaction that opens a transaction (the drags, the
+/// color picker, the text editors) names itself here.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Interaction {
     /// A frame preview (V1-C5): its stage is the previewed frame fields.
@@ -97,6 +97,15 @@ pub enum Interaction {
     /// it shows on its target. Native, with the picker.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     ColorPicker,
+    /// The section text editor (V1-C8, `app::text_edit`): open from its
+    /// opening to its commit or cancel, its stage the edited section's
+    /// spans as the editor's buffer holds them. Both targets.
+    TextEdit,
+    /// The single-line editor (V1-C8, `app::single_line_edit`) on a
+    /// label, a ring, a cap, a portal end or a path's content: its stage
+    /// the edited element's spans. Native, with the editor.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    SingleLineEdit,
     /// An interaction the tests open, which nothing else stages into.
     #[cfg(test)]
     Test,
@@ -363,6 +372,26 @@ impl MindMapDocument {
         let label = req.label.clone();
         let result = match &self.transaction {
             Some((tx, open)) if *open == interaction => self.doc.stage(tx, req),
+            _ => Err(ApplyError::TransactionClosed),
+        };
+        match &result {
+            Ok(()) => self.status = None,
+            Err(error) => self.report_refusal(&label, error),
+        }
+        result
+    }
+
+    /// Apply `req` into the base of the transaction `interaction` began
+    /// (§9, ruling R7 on #238): it stays across stages until the
+    /// transaction commits or is canceled, so what a session creates once
+    /// — the node `CreateOrphanNodeAndEdit` inserts, the label an editor
+    /// opens on a path that had none — keeps its `NodeId` however often
+    /// its text is staged. The current stage is lifted first; the caller
+    /// stages again on top. Refused, and reported, as [`Self::stage`] is.
+    pub fn apply_in(&mut self, interaction: Interaction, req: EditRequest) -> Result<(), ApplyError> {
+        let label = req.label.clone();
+        let result = match &self.transaction {
+            Some((tx, open)) if *open == interaction => self.doc.apply_in(tx, req),
             _ => Err(ApplyError::TransactionClosed),
         };
         match &result {

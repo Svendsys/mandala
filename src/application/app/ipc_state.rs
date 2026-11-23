@@ -79,6 +79,7 @@ impl InteractionMode {
             InteractionMode::Default => json!({ "kind": "Default" }),
             InteractionMode::Reparent { sources } => json!({ "kind": "Reparent", "sources": ids(sources) }),
             InteractionMode::Connect { sources } => json!({ "kind": "Connect", "sources": ids(sources) }),
+            InteractionMode::NodeEdit { node } => json!({ "kind": "NodeEdit", "node": ids(&[*node])[0] }),
             InteractionMode::Resize { target } => {
                 let (what, element) = match target {
                     super::interaction_mode::ResizeTarget::Node(node) => ("node", *node),
