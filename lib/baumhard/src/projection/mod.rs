@@ -129,6 +129,14 @@ use crate::projection::layers::LayerBuilders;
 use crate::projection::stages::PhaseWork;
 use crate::projection::state::{NodeState, Owner, ProjectedUnit, UnitBody};
 
+/// How many times what the last update moved — at least eight — the
+/// projector's set of moved elements may hold room for before an update
+/// replaces it rather than clear it in place
+/// ([`Projector::geometry_moved`]): a clear writes every slot of the table,
+/// so a set grown by one large edit would make every small edit after it
+/// cost that edit's size.
+const MOVED_SLACK: usize = 4;
+
 /// The projector: the projection state of one document and its glyph
 /// layers. See the [module docs](crate::projection).
 #[derive(Default)]
@@ -166,7 +174,12 @@ pub struct Projector {
     /// a node, a section or a ring whose geometry or reach was marked, a
     /// node a section of which was placed elsewhere or dropped
     /// (`behind::rehide`) — and each path laid or hidden again
-    /// (`behind::hide`). Emptied at the start of every update.
+    /// (`behind::hide`). Emptied at the start of every update, and kept
+    /// proportional to it: the load's set, which holds the whole map, is
+    /// dropped at the end of [`Projector::project_full`], and a set grown
+    /// far past what the last update moved is replaced rather than cleared
+    /// in place, since clearing a table costs its capacity
+    /// ([`MOVED_SLACK`]).
     pub(crate) moved: rustc_hash::FxHashSet<NodeId>,
     /// Every piece of work the last call ran, in order: what the tests of
     /// the dependency index read. Test builds only: the product keeps no
@@ -195,6 +208,9 @@ impl Projector {
         projector.project_roots(doc.tree(), &mut work);
         projector.run_phases(doc, &mut work, fonts);
         projector.write_full(doc.tree(), layers);
+        // The load moved everything: nothing reads that, and a set the size
+        // of the map would cost every update that clears it.
+        projector.moved = Default::default();
         #[cfg(test)]
         {
             projector.ran = work.ran;
@@ -244,7 +260,11 @@ impl Projector {
         let mut work = PhaseWork::default();
         let mut out = LayerBuilders::new();
         let tree = doc.tree();
-        self.moved.clear();
+        if self.moved.capacity() > MOVED_SLACK * self.moved.len().max(8) {
+            self.moved = Default::default();
+        } else {
+            self.moved.clear();
+        }
         #[cfg(test)]
         self.key_builds.clear();
         let touched = structure::TouchedElements::of(changes);

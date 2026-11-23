@@ -280,11 +280,6 @@ fn write(
     }
 }
 
-/// The element a run of `layer` belongs to for an overlay: from the
-/// element it draws, the nearest of itself and its owners that is a
-/// connector, a link or a node. `None` for a group, and for a glyph the
-/// projector names no element for. O(the depth to the owner, at most
-/// three).
 /// The target of `targets` a run belongs to: its element, or the first
 /// element above it up to its owner ([`owner_of`]) that is one — so a
 /// target may be a node or a path, or a part of one that owns runs of its
@@ -314,6 +309,11 @@ fn target_of(
     }
 }
 
+/// The element a run of `layer` belongs to for an overlay: from the
+/// element it draws, the nearest of itself and its owners that is a
+/// connector, a link or a node. `None` for a group, and for a glyph the
+/// projector names no element for. O(the depth to the owner, at most
+/// three).
 pub(super) fn owner_of(doc: &Document, projector: &Projector, layer: Layer, glyph: NodeId) -> Option<NodeId> {
     let mut at = projector.element_of(layer, glyph)?;
     // A node draws nothing of its own, only groups: a glyph whose element
