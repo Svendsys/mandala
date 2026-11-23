@@ -2195,9 +2195,19 @@ to it — and `Resize { target }` (native, `EnterResizeMode`, a
 long-press, `mode resize`), which shows the [handle chrome](#handle-chrome)'s
 eight resize handles on its node or section (`ResizeTarget`) until a
 click that grabs none or `ExitMode` leaves it. A section is resize's
-target only when one is selected, which node editing does; node
-editing returns with V1-C8 (#249), and until then its Actions answer
-`unhandled`, naming their owner.
+target only when one is selected, which node editing does — and
+`NodeEdit { node }` (both targets; `EnterNodeEdit`, `EditSelection` on
+a node, `mode node-edit`, `node edit`), where the edited node's sections
+are picked: the view dims every other node and frames each of its
+sections, the picked one heavier ([editor chrome](#editor-chrome)); a
+click inside the node picks a section, or the node; Enter
+(`EnterSectionEdit`) or a double-click opens the
+[section text editor](#modal-editor-ladder) on a section; a drag on a
+picked section moves it and the resize mode on it resizes it (native,
+as every drag is); and a click outside the node, or `ExitMode`, leaves
+the mode, the selection lifted back to the node. A node of one section
+skips the picking: `EnterNodeEdit` opens its editor at once, and
+closing it leaves the mode.
 
 `src/application/app/interaction_mode.rs`.
 
@@ -2323,7 +2333,7 @@ cancel of the touch driving it and an undo cancel it, and the map is as
 it was; a drag refused changes nothing, the selection included. The
 gestures (`live::Gesture`): moving nodes (with their subtrees unless
 Alt; the selection with Shift, which the grabbed node joins), moving a
-section, a node's or a section's resize handle, a path's anchor, control
+section (a press on one node editing picked), a node's or a section's resize handle, a path's anchor, control
 point or midpoint handle, a label, a portal end. A label and a portal
 end are drawn where the pointer takes them, at the place on them the
 press held: the drag's travel from where they were drawn at the press,
@@ -2355,6 +2365,33 @@ does not write when it grows), so a pan writes none. Each set sits in
 its own group on its own channel range, so updating two sets in place
 never lets one's keys reach the other's runs. A press asks the handles
 before the projector (`MapView::handle_at`).
+
+### Editor chrome
+
+What the view draws for an open editor and for node editing, all built
+from app state and the projector's reads, never from a glyph layer
+(K1 on #249: kept by the view, as the handles are). **The caret**
+(`view/caret.rs`) is a chrome glyph placed where the projector drew the
+caret's grapheme: in a section's shaping (`Projector::section_box`), or
+in the run the owner draws — a label's box, the placed glyphs of a
+ring, a cap, a portal end or a path's content, each glyph mapped back
+to its grapheme through the span and bytes shaping recorded for it —
+and, for an owner that draws none of its own text, where the owner is
+drawn (`Projector::label_pos`, `Projector::point_along`). The
+**selected range** tints the glyphs of a shift-select, by the same
+mapping (`view::overlay::RangeTint`). The view follows the editor's
+focus (`MapView::follow_editor`) and rewrites the caret only when the
+focus moved, or a sync pass touched the edited element or moved its
+geometry, so a pan writes none. **Node editing's section frames**
+(`view/frames.rs`) are a pool of chrome outlines, one per section of
+the edited node, the picked one heavy; **its dim**
+(`view::overlay::Dim`) fades the glyphs of every other node — except
+one another overlay tints, so no two overlays share a run — to half
+their alpha through the glyph layers' `fade` override channel
+(`RunOverrideOp::Fade`, neutral at `1.0`, multiplied into alpha at
+emit; ruling K2 on #249). While an editor is open, the selection tint
+stands down on the element it edits and its host, so what is typed is
+drawn in its own color.
 
 ### `MutationFrequencyThrottle` (and `frame_throttle`)
 
@@ -2933,11 +2970,42 @@ parity story for each is honest.
 
 ### Modal editor ladder
 
-The steal / release shell the map's inline text editors will sit in.
-The node text editor and the single-line editor were deleted with the
-old model and return with V1-C8 (#249), on the writer; until then the
-console is the one modal that steals the keyboard, and the color picker
-claims only its own keys.
+The steal / release shell the map's two text editors sit in (design §9;
+V1-C8 #249): the **section text editor** (`src/application/app/text_edit/`,
+both targets), multi-line, on one section's spans, and the **single-line
+editor** (`app/single_line_edit/`, native), on a label, a ring's poem, a
+cap, a portal end's text or a path's content. Each session is a writer
+transaction (`Interaction::TextEdit`, `Interaction::SingleLineEdit`):
+its `Draft` holds an `EditBuffer` — the owner's spans and the style
+they inherit (`baumhard::document::EditBuffer`), edited by grapheme
+cluster, typed text taking the style of the span it lands in — and
+each change stages the spans whole (`compose::replace_spans`); the
+commit is one history entry, a commit that changed nothing is a cancel
+(a `CreateOrphanNodeAndEdit` session keeps the node it made), and an
+undo while it is open cancels it (R36). A double-click edits the exact
+element it hit, and `LabelEditOnSelection` or `path label edit` on a
+path with no label inserts one, which a cancel or an empty commit takes
+away again (ruling K3 on #249); an empty commit on a label that was
+there removes it. A portal link's labels are its ends': asked of the
+link, the single-line editor refuses, naming the double-click on an
+end's label (ruling K4).
+
+While an editor is open it owns the keyboard: the console first, then
+the single-line editor, then the section editor (`event_keyboard.rs`,
+`run_wasm/event_keyboard.rs`; `query.mode`'s `key_owner`). A key bound
+in the editor's input context (`TextEdit`, `LabelEdit`) runs its Action
+through the dispatch funnel — commit, cancel and every cursor and delete
+primitive — and any other key is typed as a literal, which is how an
+IME or dead-key cluster arrives. On a pointer release, one inside what
+is edited (the section editor's node, the single-line editor's owner)
+keeps editing and is consumed; one outside commits through the funnel
+and lets the click route normally, so the new selection lands
+(`families::text::release_keeps_editing`).
+
+`src/application/app/dispatch/families/text.rs` holds both halves: the
+cross-platform `dispatch` (the section editor, node editing,
+`CreateOrphanNodeAndEdit`) and the native `dispatch_native` (the
+single-line editor).
 
 ### Glyph-wheel color picker
 

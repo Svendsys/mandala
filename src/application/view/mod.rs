@@ -367,7 +367,8 @@ impl MapView {
 
     /// Bring the chrome up to date for this pass, under one journal: the
     /// handles ([`Self::follow_handles`]), the caret ([`Self::follow_caret`])
-    /// and the section frames ([`Self::follow_frames`]) — whose pool, when
+    /// and NodeEdit's section frames ([`Self::follow_node_edit`]) — whose
+    /// pool, when
     /// a node has more sections than it has slots, is grown first, in the
     /// same journal. `None` when nothing of it changed, which is a pan's
     /// and a zoom's pass. A refusal reverts everything applied before it.

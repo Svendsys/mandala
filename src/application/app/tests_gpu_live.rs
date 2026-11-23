@@ -566,7 +566,8 @@ fn resize_mode(init: &mut InitState) {
 /// (`Projector::geometry_moved`), not the runs a node owns.
 ///
 /// Controls, seen red: following on the runs the target owns
-/// (`PassChanges::touches`, the code #395 shipped with), and following
+/// (the code #395 shipped with, which `view::caret::touches` still asks
+/// for the caret, beside `Projector::geometry_moved`), and following
 /// nothing once the targets are shown. And here, the corner moved: a
 /// handle that stayed put would not be on it.
 #[test]

@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! [`EditBuffer`]: the working copy of one text owner's spans, which a
-//! text editor changes keystroke by keystroke and stages into the
-//! document whole (design §9: "`replace_spans` from the editor's span
-//! buffer, once per change").
+//! [`EditBuffer`](crate::document::edit_buffer::EditBuffer): the
+//! working copy of one text owner's spans, which a text editor changes
+//! keystroke by keystroke and stages into the document whole (design §9:
+//! "`replace_spans` from the editor's span buffer, once per change").
 //!
 //! It is pure: it reads the document once, at
-//! [`EditBuffer::from_owner`], and never again. Every change after that
-//! is made to the buffer alone, and the editor hands the document its
-//! [`spans`](EditBuffer::spans) through
+//! [`EditBuffer::from_owner`](crate::document::edit_buffer::EditBuffer::from_owner),
+//! and never again. Every change after that is made to the buffer alone,
+//! and the editor hands the document its
+//! [`spans`](crate::document::edit_buffer::EditBuffer::spans) through
 //! [`replace_spans`](crate::document::mutation::compose::replace_spans)
 //! — one request per change, never a growing list of them.
 //!

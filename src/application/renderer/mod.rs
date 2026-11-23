@@ -790,8 +790,8 @@ impl Renderer {
     /// Bring the drawn chrome layer up to date after a glyph mutator was
     /// applied to it, from that change's journal
     /// ([`layers::LayerRenderer::apply_chrome`]): what
-    /// `view::MapView::apply_chrome` or a sync pass's chrome builders
-    /// hand over before the journal is discarded.
+    /// `view::MapView::apply_chrome` or a sync pass's handles, section
+    /// frames and caret hand over before the journal is discarded.
     ///
     /// Cost: O(the elements the journal names).
     pub(crate) fn apply_chrome_journal(&mut self, chrome: &GfxTree, journal: &Journal<GfxElement>) {

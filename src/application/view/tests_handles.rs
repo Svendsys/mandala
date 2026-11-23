@@ -240,8 +240,9 @@ fn test_a_press_grabs_the_nearest_shown_handle() {
 /// still shows the south-east handle on the new corner, and writes the
 /// chrome. An undo and a redo of the resize move it back and forth too.
 ///
-/// Control, seen red: following on the runs the target owns
-/// (`PassChanges::touches`) leaves the handle at the old corner and
+/// Control, seen red: following on the runs the target owns (what
+/// `view::caret::touches` asks for the caret) leaves the handle at the
+/// old corner and
 /// writes no chrome.
 #[test]
 fn test_a_frameless_nodes_handles_follow_its_resize() {

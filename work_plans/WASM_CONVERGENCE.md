@@ -209,9 +209,10 @@ Three funnel gaps closed with them:
   `drain_frame.rs`, so a browser animation started and never
   ticked — first on the click-trigger path, then on this tier.
 
-`DoubleClickActivate` stays `wasm = NativeOnly`: its `EdgeLabel`
-branch still reaches the single-line editor, and the "ANY NativeOnly
-branch" rule classifies on that. Flipping it to `Compatible` waits on
+`DoubleClickActivate` stays `wasm = NativeOnly`: its branch on a
+label, a ring, a cap, a portal end or a path's content still reaches
+the single-line editor (`families::text::dispatch_native`), and the
+"ANY NativeOnly branch" rule classifies on that. Flipping it to `Compatible` waits on
 the browser gaining a single-line editor.
 
 It is a member of the **mixed-branch set**, which is now one list —

@@ -1797,7 +1797,7 @@ glyph layers, and the glyph journals they produce.
 | Connections | one path-flow run per connector / line link, plus cap runs | `Connections` (one `GlyphArea` per glyph) |
 | Labels | one box-flow run per label | `ConnectionLabels` |
 | Portals | marker and label runs per portal end | `Portals` |
-| Chrome | selection, handles, NodeEdit section frames, hover chrome — **view-only**, built from app state, not the document | `EdgeHandles`, `NodeResizeHandles`, `SectionResizeHandles`, `SectionFrames` |
+| Chrome | selection, handles, NodeEdit section frames, a text editor's caret, hover chrome — **view-only**, built from app state, not the document, and kept by the view itself, which writes them in its sync pass from the projector's reads (ruling K1 on #249: the caret follows the editor as the handles follow the selection, so no hook hands the pass's changes to chrome) | `EdgeHandles`, `NodeResizeHandles`, `SectionResizeHandles`, `SectionFrames` |
 
 There is no fill layer (D12): the map's background is not drawn by
 any layer but is the color every frame is cleared to, and nothing else
@@ -1879,6 +1879,9 @@ version that preserves the property is V2-13 (#271).
 
 Selection tint, NodeEdit dimming, hover chrome and `glyph`-layer
 presentations are glyph mutators applied over the projected layers.
+NodeEdit's dim writes the runs' `fade` channel, neutral at `1.0` and
+multiplied into alpha at emit, so it composes with what the other
+overlays write (ruling K2 on #249).
 When the projector rewrites glyph elements, overlays are re-stamped on
 exactly those elements (glyph journal ∩ overlay targets) — not on a
 fresh tree each frame, as `overlay_tree` does today.

@@ -11,9 +11,10 @@
 //! cancel  ─▶ the document exactly as before the editor opened
 //! ```
 //!
-//! The editor holds an [`EditBuffer`] — the working copy of the
-//! section's spans — and a caret and a shift-select anchor in grapheme
-//! clusters of it. It never writes a glyph: what is typed is staged into
+//! The editor holds an
+//! [`EditBuffer`](baumhard::document::edit_buffer::EditBuffer) — the
+//! working copy of the section's spans — and a caret and a shift-select
+//! anchor in grapheme clusters of it. It never writes a glyph: what is typed is staged into
 //! the document, and the projector and the renderer draw it like any
 //! change; the caret and the selected range are the view's chrome
 //! (`MapView::follow_editor`), placed from the projector's shaping of the
