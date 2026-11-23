@@ -23,8 +23,9 @@
 //! its console and its picker; the browser, which has no drag machine,
 //! no console shell and no picker, reports `{"kind": "None"}` and `null`
 //! for them. The interaction mode is both targets', and so is the key
-//! routing, which is over open-flags. The editors on the map — the text
-//! and single-line editors — return with V1-C8 (#249).
+//! routing, which is over open-flags. The section text editor is both
+//! targets'; the single-line editor is native, and the browser reports
+//! `null` for it.
 
 use serde_json::{json, Value};
 
@@ -281,28 +282,100 @@ pub(super) fn picker_to_ipc_json(state: &ColorPickerState) -> Value {
 }
 
 /// Which modals are open, as plain flags: what the key routing and
-/// `query.mode`'s `modals` read. The browser has neither.
+/// `query.mode`'s `modals` read. The browser has only the text editor.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct OpenModals {
     pub(super) console: bool,
     pub(super) picker: bool,
+    /// The single-line editor (native).
+    pub(super) single_line: bool,
+    /// The section text editor.
+    pub(super) text: bool,
 }
 
-/// Where keystrokes go, as the keyboard handler routes them
-/// (`event_keyboard.rs`): the **console**, when open, takes every key;
-/// the **color picker**, when open, claims only its own keys, so it
-/// appears in `modals` and is never the `key_owner`; with neither, a key
-/// reaches normal dispatch (`"none"`).
+/// Where keystrokes go, as the keyboard handlers route them
+/// (`event_keyboard.rs`, as on `main`): the **console**, when open, takes
+/// every key; the **color picker**, when open, claims only its own keys,
+/// so it appears in `modals` and is never the `key_owner`; then the
+/// **single-line editor** and the **section text editor** take every key
+/// that reaches them; with none of them, a key reaches normal dispatch
+/// (`"none"`).
 fn key_routing(open: OpenModals) -> (Vec<&'static str>, &'static str) {
     let mut modals = Vec::new();
-    if open.console {
-        modals.push("console");
+    for (flag, name) in [
+        (open.console, "console"),
+        (open.picker, "color_picker"),
+        (open.single_line, "single_line_edit"),
+        (open.text, "text_edit"),
+    ] {
+        if flag {
+            modals.push(name);
+        }
     }
-    if open.picker {
-        modals.push("color_picker");
-    }
-    let key_owner = if open.console { "console" } else { "none" };
+    let key_owner = if open.console {
+        "console"
+    } else if open.single_line {
+        "single_line_edit"
+    } else if open.text {
+        "text_edit"
+    } else {
+        "none"
+    };
     (modals, key_owner)
+}
+
+/// One text editor as `query.editors` reports it: the `element` its spans
+/// are of, named as `scene` names an element, its `buffer`'s text, its
+/// `caret` and its `anchor` (`null` without a live shift-select), in
+/// grapheme clusters, and `created`: whether the session made what it
+/// edits — a `CreateOrphanNodeAndEdit` node, a label it added — which a
+/// cancel takes away again. Omitted: the buffer's spans and styles, and
+/// the spans the owner held when it opened.
+fn editor_json(
+    doc: Option<&baumhard::document::ids::Document>,
+    draft: &super::text_edit::Draft,
+    created: bool,
+) -> Value {
+    let element = doc.map_or(Value::Null, |doc| {
+        crate::application::view::inspect::element_ref(doc, draft.owner())
+    });
+    json!({
+        "element": element,
+        "buffer": draft.buffer().text(),
+        "caret": draft.caret(),
+        "anchor": draft.anchor(),
+        "created": created,
+    })
+}
+
+/// The section text editor as `query.editors` reports it: `null` when
+/// closed; else [`editor_json`]'s fields, its `node`, and
+/// `exit_to_default_on_close`.
+pub(super) fn text_edit_to_ipc_json(
+    text: &super::text_edit::TextEditor,
+    doc: Option<&baumhard::document::ids::Document>,
+) -> Value {
+    let Some(session) = text.session() else {
+        return Value::Null;
+    };
+    let mut json = editor_json(doc, session.draft(), session.created());
+    json["node"] = doc.map_or(Value::Null, |doc| {
+        crate::application::view::inspect::element_ref(doc, session.node())
+    });
+    json["exit_to_default_on_close"] = json!(session.exit_to_default_on_close());
+    json
+}
+
+/// The single-line editor as `query.editors` reports it: `null` when
+/// closed; else [`editor_json`]'s fields.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn single_line_to_ipc_json(
+    line: &super::single_line_edit::SingleLineEditor,
+    doc: Option<&baumhard::document::ids::Document>,
+) -> Value {
+    line.session().map_or(Value::Null, |session| {
+        editor_json(doc, session.draft(), session.created_label())
+    })
 }
 
 /// `query.mode`'s reply: the interaction mode and the drag state
@@ -330,10 +403,12 @@ pub(super) fn mode_to_ipc_json(
 /// `query.editors`' reply: each modal's live state, as the target
 /// projects it (`null` when closed, and always `null` for one the target
 /// does not have).
-pub(super) fn editors_to_ipc_json(console: Value, picker: Value) -> Value {
+pub(super) fn editors_to_ipc_json(console: Value, picker: Value, single_line: Value, text: Value) -> Value {
     json!({
         "console": console,
         "color_picker": picker,
+        "single_line_edit": single_line,
+        "text_edit": text,
     })
 }
 
@@ -342,23 +417,41 @@ mod tests {
     use super::*;
 
     /// The console steals every key; the picker is a modal that never
-    /// owns an ordinary key; with neither, keys reach dispatch.
+    /// owns an ordinary key; the single-line editor, then the text editor,
+    /// take every key that reaches them; with none, keys reach dispatch.
     #[test]
     fn test_key_routing_names_the_modals_and_the_key_owner() {
         assert_eq!(key_routing(OpenModals::default()), (vec![], "none"));
         assert_eq!(
             key_routing(OpenModals {
-                console: false,
-                picker: true
+                picker: true,
+                ..OpenModals::default()
             }),
             (vec!["color_picker"], "none")
         );
         assert_eq!(
             key_routing(OpenModals {
                 console: true,
-                picker: true
+                picker: true,
+                ..OpenModals::default()
             }),
             (vec!["console", "color_picker"], "console")
+        );
+        assert_eq!(
+            key_routing(OpenModals {
+                picker: true,
+                text: true,
+                ..OpenModals::default()
+            }),
+            (vec!["color_picker", "text_edit"], "text_edit"),
+            "a key the picker does not claim goes to the text editor"
+        );
+        assert_eq!(
+            key_routing(OpenModals {
+                single_line: true,
+                ..OpenModals::default()
+            }),
+            (vec!["single_line_edit"], "single_line_edit")
         );
     }
 
@@ -430,8 +523,8 @@ mod tests {
             CONSOLE_SCROLLBACK_TAIL
         );
         assert_eq!(
-            editors_to_ipc_json(json.clone(), Value::Null),
-            json!({ "console": json, "color_picker": null })
+            editors_to_ipc_json(json.clone(), Value::Null, Value::Null, Value::Null),
+            json!({ "console": json, "color_picker": null, "single_line_edit": null, "text_edit": null })
         );
     }
 

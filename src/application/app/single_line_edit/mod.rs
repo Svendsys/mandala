@@ -40,7 +40,8 @@ use baumhard::document::writer::transaction::TransactionKind;
 use baumhard::document::writer::{ChangeSource, EditRequest, Revision};
 use baumhard::engine::structure::Subtree;
 
-use super::text_edit::{typed_payload, Draft, Edit, Step};
+use super::text_edit::draft::Step;
+use super::text_edit::{typed_payload, Draft, Edit};
 use crate::application::document::selection::kind_of;
 use crate::application::document::{Interaction, MindMapDocument};
 use crate::application::keybinds::{Action, InputContext, ResolvedKeybinds};

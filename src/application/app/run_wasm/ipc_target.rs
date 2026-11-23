@@ -213,14 +213,22 @@ impl CommandTarget for IpcCommandTarget<'_, '_> {
                 &input.interaction_mode,
                 Some(input.document.doc()),
                 ipc_state::no_drag_state_json(),
-                ipc_state::OpenModals::default(),
+                ipc_state::OpenModals {
+                    text: input.text_edit.is_open(),
+                    ..ipc_state::OpenModals::default()
+                },
                 input.cursor_pos,
             ),
             ShellState::Status => json!({
                 "text": self.app.renderer.mode_status_text(),
                 "document": input.document.status(),
             }),
-            ShellState::Editors => ipc_state::editors_to_ipc_json(Value::Null, Value::Null),
+            ShellState::Editors => ipc_state::editors_to_ipc_json(
+                Value::Null,
+                Value::Null,
+                Value::Null,
+                ipc_state::text_edit_to_ipc_json(&input.text_edit, Some(input.document.doc())),
+            ),
         }
     }
 

@@ -77,6 +77,13 @@ impl TextRefusal {
 /// section or a ring, its path for a label, a cap or a path's content, its
 /// link for a portal end and its label. O(the depth to it, at most
 /// three).
+#[cfg_attr(
+    target_arch = "wasm32",
+    expect(
+        dead_code,
+        reason = "its reader is the single-line editor's focus, which is native"
+    )
+)]
 pub(in crate::application::app) fn host_of(doc: &Document, owner: NodeId) -> NodeId {
     let mut at = owner;
     loop {
@@ -111,6 +118,7 @@ fn resync(core: &mut InputContextCore<'_>, follow: bool) {
     if follow {
         view.follow_editor(text_focus(core.text_edit));
     }
+    view.follow_node_edit(core.interaction_mode);
     view.sync(doc, core.renderer);
 }
 
@@ -514,7 +522,8 @@ pub(in crate::application::app) fn leave_node_edit(doc: &mut MindMapDocument, mo
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(in crate::application::app) use native::{
-    dispatch_native, drop_stale_line, line_focus, release_keeps_editing, type_line, type_to_edit,
+    dispatch_native, drop_stale_line, editing_under, line_focus, release_keeps_editing, type_line,
+    type_to_edit,
 };
 
 /// The native half: the single-line editor.
@@ -752,6 +761,22 @@ mod native {
         }
         type_line(ctx, logical_key);
         true
+    }
+
+    /// Whether a press that `landed` is on what an open editor edits: the
+    /// section editor's node, the single-line editor's owner. O(1).
+    pub(in crate::application::app) fn editing_under(
+        ctx: &InputHandlerContext<'_>,
+        landed: Option<&baumhard::projection::Hit>,
+    ) -> bool {
+        let Some(hit) = landed else {
+            return false;
+        };
+        ctx.text_edit.session().is_some_and(|s| hit.node == s.node())
+            || ctx
+                .single_line_edit
+                .session()
+                .is_some_and(|s| hit.element == s.owner())
     }
 
     /// The modal half of a left release, as on `main`: a release on what an

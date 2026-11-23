@@ -199,10 +199,17 @@ impl Borrowed<'_> {
     /// frame runs in `heartbeat::drain_inputs`. Returns whether it
     /// changed anything a frame draws.
     pub(super) fn sync_view(&mut self) -> bool {
-        match self.input.view.as_mut() {
-            Some(view) => view.sync(&mut self.input.document, self.renderer),
-            None => false,
-        }
+        let input = &mut *self.input;
+        let Some(view) = input.view.as_mut() else {
+            return false;
+        };
+        // A text editor whose transaction an undo ended closes, with
+        // nothing written; the view follows the editor and NodeEdit.
+        use crate::application::app::dispatch::families::text;
+        text::drop_stale_text(&mut input.text_edit, &input.document, &mut input.interaction_mode);
+        view.follow_editor(text::text_focus(&input.text_edit));
+        view.follow_node_edit(&input.interaction_mode);
+        view.sync(&mut input.document, self.renderer)
     }
 
     /// Write the animations at the clock's reading — the verbs a `wait`

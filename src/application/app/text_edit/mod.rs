@@ -37,14 +37,14 @@
 //! editors are made of — and in [`session`]; the arms that run it are the
 //! text family's (`dispatch::families::text`).
 
-mod draft;
+pub(in crate::application::app) mod draft;
 mod session;
 
 #[cfg(test)]
 mod tests;
 
-pub(in crate::application::app) use draft::{Draft, Step};
-pub(in crate::application::app) use session::{EditRefusal, TextSession};
+pub(in crate::application::app) use draft::Draft;
+pub(in crate::application::app) use session::TextSession;
 
 use baumhard::util::grapheme_chad;
 

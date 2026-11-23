@@ -92,6 +92,11 @@ fn dispatch_arms(
                     return DispatchOutcome::Handled;
                 }
             }
+            // Leaving NodeEdit lifts a selection inside the node back to
+            // the node, as on `main`.
+            if let Some(doc) = core.document.as_deref_mut() {
+                families::text::leave_node_edit(doc, core.interaction_mode);
+            }
             *core.interaction_mode = InteractionMode::Default;
             // A post-Esc click is not paired with a pre-Esc one.
             *core.last_click = None;

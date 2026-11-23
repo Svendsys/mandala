@@ -27,6 +27,13 @@ use super::click_selection;
 #[derive(Debug, Clone, Copy)]
 pub struct DispatchHit {
     /// What the press hit (`compute_click_hit`).
+    #[cfg_attr(
+        target_arch = "wasm32",
+        expect(
+            dead_code,
+            reason = "read by FastResizeStart, which is native; the browser's double-click reads `element`"
+        )
+    )]
     pub click_hit: ClickHit,
     /// The element the press landed on itself — a section, a ring, a
     /// label, a cap, a portal end, a path, or a node's body — where
