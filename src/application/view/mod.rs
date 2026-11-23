@@ -469,12 +469,6 @@ impl MapView {
         self.editing = focus;
     }
 
-    /// What the view follows of the open editor. O(1).
-    #[cfg(test)]
-    pub(crate) fn editing(&self) -> Option<EditorFocus> {
-        self.editing
-    }
-
     /// The caret, for the tests that read where it is drawn.
     #[cfg(test)]
     pub(crate) fn caret(&self) -> &Caret {

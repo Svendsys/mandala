@@ -784,6 +784,9 @@ mod tests_gpu_layers;
 mod tests_gpu_live;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
+mod tests_gpu_text;
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 mod tests_gpu_paths;
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
